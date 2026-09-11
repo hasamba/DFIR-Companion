@@ -188,7 +188,7 @@ describe("application permissions", () => {
     expect(c.posture).toBe("grants application permission RoleManagement.ReadWrite.Directory");
     expect(c.object).toBe("on Microsoft Graph for svc-sync");
     expect(c.summary).toContain("on Microsoft Graph for svc-sync");
-    expect(c.words).toContain("can assign any directory role, Global Administrator included");
+    expect(c.words).toContain("any directory role, Global Administrator included");
     expect(c.severity).toBe("High");
     expect(c.mitre).toContain("T1098.003");
     expect(c.qualifiers).toContain("assigned, not yet observed in use");
@@ -297,7 +297,7 @@ describe("consent and delegated grants", () => {
     expect(changes[2].consent).toMatchObject({ allUsers: true, principalId: "", entryId: "g2" });
     expect(changes.every((c) => c.capability?.delegated)).toBe(true);
     expect(changes[1].posture).toContain("grants delegated permission Mail.ReadWrite");
-    expect(changes[1].qualifiers).toContain("delegated — bounded by the consenting user's own access");
+    expect(changes[1].qualifiers).toContain("delegated — as the signed-in user, within that user's access");
   });
   it("the API of a consent entry is only an object id: unidentified, and the grade follows the delegated rules", () => {
     const low = decodeEntraAppChanges(
@@ -455,6 +455,48 @@ describe("directory roles", () => {
         ),
       ).severity,
     ).toBe("Low");
+  });
+});
+
+describe("keys and bounds", () => {
+  it("two administrators making the same change are two rows", () => {
+    const rec = (upn: string, id: string) =>
+      graph(
+        "Add member to role",
+        [
+          {
+            type: "User",
+            id: USER,
+            modifiedProperties: [P("Role.DisplayName", "Global Administrator"), P("Role.TemplateId", GA)],
+          },
+        ],
+        { initiatedBy: { user: { id, userPrincipalName: upn, ipAddress: "203.0.113.5" } } },
+      );
+    const a = one(decodeEntraAppChanges(rec("a@example.invalid", USER2)));
+    const b = one(decodeEntraAppChanges(rec("b@example.invalid", "6f1b7a5e-5555-4eee-bfff-000000000005")));
+    expect(a.aggKey).not.toBe(b.aggKey);
+  });
+  it("a consent with more scopes than the bound keeps the bound and adds one overflow row that says how much was cut", () => {
+    const scopes = Array.from({ length: 50 }, (_, i) => `Scope.${i}`).join(" ");
+    const r = graph("Consent to application", [
+      {
+        type: "ServicePrincipal",
+        id: SP,
+        modifiedProperties: [
+          P("ConsentContext.IsAdminConsent", "True"),
+          P(
+            "ConsentAction.Permissions",
+            `[] => [[Id: g1, ClientId: ${SP}, PrincipalId: , ResourceId: ${GRAPH_SP}, ConsentType: AllPrincipals, Scope: ${scopes}, CreatedDateTime: 2024-05-01, ExpiryTime: ]]`,
+          ),
+        ],
+      },
+    ]);
+    const changes = decodeEntraAppChanges(r);
+    expect(changes).toHaveLength(33);
+    const overflow = changes[32];
+    expect(overflow.posture).toBe("consent lists 18 more scopes than are shown");
+    expect(overflow.qualifiers).toContain("truncated — the complete list is in the raw record");
+    expect(overflow.severity).toBe("High");
   });
 });
 

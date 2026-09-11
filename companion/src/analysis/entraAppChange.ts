@@ -3,6 +3,7 @@ import type { Severity } from "./stateTypes.js";
 import {
   capabilityOf,
   classSeverity,
+  DATA_REACH_NOTE,
   KNOWN_APIS,
   LOW_PRIVILEGE_SCOPES,
   roleTier,
@@ -80,10 +81,11 @@ export interface EntraAppChange {
  * other records of the same export that state both (an app-role assignment names the resource's
  * object id and its ServicePrincipalNames). Returns "" when unknown.
  */
-export type Resolver = (objectId: string) => string;
+export type Resolver = (objectId: string, tenant: string) => string;
 
 const NOT_OBSERVED = "assigned, not yet observed in use";
-const DELEGATED_NOTE = "delegated — bounded by the consenting user's own access";
+// Three qualifiers may share the 130-character slot: 33 + 56 + 32 and two separators fit.
+const DELEGATED_NOTE = "delegated — as the signed-in user, within that user's access";
 const UNIDENTIFIED = "API not identified in this record";
 const NAME_MAX = 60;
 const ID_SHORT = 8;
@@ -119,7 +121,7 @@ function apiOf(
   resolve?: Resolver,
 ): { appId: string; api: string } {
   const names = [
-    resourceObjectId && resolve ? resolve(resourceObjectId) : "",
+    resourceObjectId && resolve ? resolve(resourceObjectId, r.tenant) : "",
     ...strings(propOf(r, "TargetId.ServicePrincipalNames")?.newValue),
     ...strings(propOf(r, "ServicePrincipalNames")?.newValue),
     propText(r, "Resource.AppId"),
@@ -198,8 +200,9 @@ function build(b: Base): EntraAppChange {
     words: b.words,
     qualifiers,
     summary,
+    // The initiator is a discriminator too: two administrators making the same change are two rows.
     aggKey:
-      `entra-app|${b.r.tenant}|${b.r.operation}|${b.r.outcome}|${b.subject.id || b.subject.name}|${b.resource.id || "-"}|${b.atomic}`.toLowerCase(),
+      `entra-app|${b.r.tenant}|${b.r.operation}|${b.r.outcome}|${b.r.initiator.id || b.r.initiator.appId || b.r.initiator.upn}|${b.subject.id || b.subject.name}|${b.resource.id || "-"}|${b.atomic}`.toLowerCase(),
   };
 }
 
@@ -322,6 +325,7 @@ function permissionChange(
   const qualifiers = [
     ...(opts.resource.api ? [] : [UNIDENTIFIED]),
     ...(opts.delegated ? [DELEGATED_NOTE] : []),
+    ...(!opts.delegated && (cls === "data read" || cls === "data write/send") ? [DATA_REACH_NOTE] : []),
     ...(removal ? [] : [NOT_OBSERVED]),
   ];
   return build({
@@ -337,8 +341,14 @@ function permissionChange(
     severity,
     mitre,
     qualifiers,
-    words: cap?.allows ?? "",
-    capability: { value: opts.value, class: cls, allows: cap?.allows ?? "", delegated: opts.delegated },
+    // The delegated wording is the scope AS THE SIGNED-IN USER, never the application's reach.
+    words: (opts.delegated ? cap?.delegated : cap?.allows) ?? "",
+    capability: {
+      value: opts.value,
+      class: cls,
+      allows: (opts.delegated ? cap?.delegated : cap?.allows) ?? "",
+      delegated: opts.delegated,
+    },
     consent: opts.consent,
     selfGrant: isSelf(r, opts.subject),
   });
@@ -403,15 +413,23 @@ function delegatedGrantChanges(r: EntraAuditRecord, removal: boolean, resolve?: 
   );
 }
 
+// A record's atomic changes are bounded: a 4 KiB consent value can hold two thousand scopes, and
+// every scope would otherwise become a full row before the importer's event cap is applied. The
+// overflow is one extra row that says how much was cut — never a silent drop.
+const MAX_ENTRIES = 16;
+const MAX_SCOPES = 32;
+
 function consentChanges(r: EntraAuditRecord, resolve?: Resolver): EntraAppChange[] {
   const p = propOf(r, "ConsentAction.Permissions");
-  const entries = parseConsentPermissions(p?.newValue);
-  if (!entries.length) return [];
+  const all = parseConsentPermissions(p?.newValue);
+  if (!all.length) return [];
   const subject = spSubject(r);
   const admin = bool(propOf(r, "ConsentContext.IsAdminConsent")?.newValue);
   const appOnly = bool(propOf(r, "ConsentContext.IsAppOnly")?.newValue) === true;
   const behalfOfAll = bool(propOf(r, "ConsentContext.OnBehalfOfAll")?.newValue);
-  return entries.flatMap((e) => {
+  const entries = all.slice(0, MAX_ENTRIES);
+  let cut = all.slice(MAX_ENTRIES).reduce((n, e) => n + e.scopes.length, 0);
+  const rows = entries.flatMap((e) => {
     const { appId, api } = apiOf(r, e.resourceId, resolve);
     const allUsers = /^allprincipals$/i.test(e.consentType)
       ? true
@@ -421,7 +439,9 @@ function consentChanges(r: EntraAuditRecord, resolve?: Resolver): EntraAppChange
     const consent = { admin, allUsers, principalId: e.principalId, entryId: e.id };
     const grantId = e.id || (allUsers === false && !e.principalId ? `raw:${p?.rawDigest}` : "");
     const resource = { id: e.resourceId, name: "", appId, api };
-    return e.scopes.map((scope) =>
+    const scopes = e.scopes.slice(0, MAX_SCOPES);
+    cut += e.scopes.length - scopes.length;
+    return scopes.map((scope) =>
       permissionChange(r, {
         kind: appOnly ? "app-permission-granted" : "delegated-permission-granted",
         value: scope,
@@ -433,6 +453,25 @@ function consentChanges(r: EntraAuditRecord, resolve?: Resolver): EntraAppChange
       }),
     );
   });
+  if (cut > 0)
+    rows.push(
+      build({
+        r,
+        kind: appOnly ? "app-permission-granted" : "delegated-permission-granted",
+        verb: `consent lists ${cut} more scope${cut === 1 ? "" : "s"} than are shown`,
+        infinitive: `consent to ${cut} more scopes than are shown`,
+        detail: "",
+        object: `for ${subject.name || short(subject.id)}`,
+        subject,
+        resource: { id: "", name: "", appId: "", api: "" },
+        atomic: `overflow:${p?.rawDigest ?? ""}`,
+        severity: "High",
+        mitre: ["T1528"],
+        qualifiers: ["truncated — the complete list is in the raw record"],
+        words: "",
+      }),
+    );
+  return rows;
 }
 
 // ───────────────────────────── roles and owners ─────────────────────────────
@@ -495,8 +534,8 @@ function roleChanges(r: EntraAuditRecord, removal: boolean): EntraAppChange[] {
       severity,
       mitre: ["T1098.003"],
       qualifiers: removal ? [] : [NOT_OBSERVED],
-      words:
-        tier === "tier-0" ? "can take over the tenant" : tier === "admin" ? "administers one service" : "",
+      // The role's documented capability, or nothing — never a generic claim for a role not curated.
+      words: known?.can ?? "",
       role: {
         name: roleName,
         templateId,

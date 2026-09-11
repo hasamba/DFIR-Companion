@@ -21,10 +21,14 @@ describe("entraCapabilities", () => {
       "Global Administrator",
     );
     expect(capabilityOf(GRAPH_APP_ID, "Directory.ReadWrite.All")?.allows).toContain("not role assignments");
-    expect(capabilityOf(GRAPH_APP_ID, "Mail.Send")?.allows).toBe("can send mail as any user");
+    expect(capabilityOf(GRAPH_APP_ID, "Mail.Send")?.allows).toBe("send mail as any user");
     expect(capabilityOf(GRAPH_APP_ID, "Mail.Read")?.class).toBe("data read");
     expect(capabilityOf(GRAPH_APP_ID, "Application.ReadWrite.OwnedBy")?.class).toBe("credential management");
-    expect(capabilityOf(GRAPH_APP_ID, "Tasks.ReadWrite")).toEqual({ class: "other", allows: "" });
+    expect(capabilityOf(GRAPH_APP_ID, "Tasks.ReadWrite")).toEqual({
+      class: "other",
+      allows: "",
+      delegated: "",
+    });
   });
   it("grades every named class High and 'other' Medium", () => {
     expect(classSeverity("data read")).toBe("High");
@@ -32,10 +36,11 @@ describe("entraCapabilities", () => {
     expect(classSeverity("other")).toBe("Medium");
   });
   it("knows the tier-0 and admin roles by template id, and nothing about a custom role", () => {
-    expect(roleTier("62e90394-69f5-4237-9190-012177145e10")).toEqual({
+    expect(roleTier("62e90394-69f5-4237-9190-012177145e10")).toMatchObject({
       name: "Global Administrator",
       tier: "tier-0",
     });
+    expect(roleTier("fe930be7-5e62-47db-91af-98c3a49a38b1")?.can).toContain("non-administrator");
     expect(roleTier("9B895D92-2CD3-44C7-9D02-A6AC2D5EA5C3")?.tier).toBe("tier-0");
     expect(roleTier("29232cdf-9323-42fd-ade2-1d097af3e4de")?.tier).toBe("admin");
     expect(roleTier("00000000-0000-0000-0000-000000000000")).toBeNull();

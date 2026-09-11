@@ -171,6 +171,81 @@ describe("readEntraAuditRecord — UAL shape", () => {
       ["Role.TemplateId", "62e90394-69f5-4237-9190-012177145e10", -1],
     ]);
   });
+  it("reads Microsoft's multi-identifier layout: one actor over UPN, PUID, prefixed id, guid and label; one target likewise", () => {
+    const r = readEntraAuditRecord({
+      Workload: "AzureActiveDirectory",
+      RecordType: 8,
+      Operation: "Add app role assignment to service principal.",
+      ResultStatus: "Success",
+      UserId: "admin@example.invalid",
+      UserType: 2,
+      UserKey: "10030000A6C4D0C6",
+      Actor: [
+        { ID: "admin@example.invalid", Type: 5 },
+        { ID: "10030000A6C4D0C6", Type: 3 },
+        { ID: `User_${USER}`, Type: 2 },
+        { ID: USER, Type: 2 },
+        { ID: "User", Type: 2 },
+      ],
+      Target: [
+        { ID: `ServicePrincipal_${GRAPH_SP}`, Type: 2 },
+        { ID: GRAPH_SP, Type: 2 },
+        { ID: "ServicePrincipal", Type: 2 },
+        { ID: "Microsoft Graph", Type: 1 },
+      ],
+      ModifiedProperties: [],
+    })!;
+    expect(r.initiator).toMatchObject({ kind: "user", id: USER, upn: "admin@example.invalid" });
+    expect(r.initiator.name).not.toBe("10030000A6C4D0C6");
+    expect(r.targets).toEqual([{ type: "ServicePrincipal", id: GRAPH_SP, name: "Microsoft Graph", upn: "" }]);
+  });
+  it("two prefixed ids with different guids are two targets; an application actor is read from UserType", () => {
+    const r = readEntraAuditRecord({
+      Workload: "AzureActiveDirectory",
+      RecordType: 8,
+      Operation: "Add owner to service principal.",
+      ResultStatus: "Success",
+      UserId: "app-1-client-id",
+      UserType: 6,
+      Actor: [
+        { ID: `ServicePrincipal_${SP}`, Type: 2 },
+        { ID: SP, Type: 2 },
+        { ID: "ServicePrincipal", Type: 2 },
+      ],
+      Target: [
+        { ID: `User_${USER}`, Type: 2 },
+        { ID: USER, Type: 2 },
+        { ID: "u@example.invalid", Type: 5 },
+        { ID: "User", Type: 2 },
+        { ID: `ServicePrincipal_${GRAPH_SP}`, Type: 2 },
+        { ID: GRAPH_SP, Type: 2 },
+        { ID: "ServicePrincipal", Type: 2 },
+        { ID: "svc-b", Type: 1 },
+      ],
+      ModifiedProperties: [],
+    })!;
+    expect(r.initiator).toMatchObject({ kind: "app", id: SP });
+    expect(r.targets.map((t) => [t.type, t.id, t.upn || t.name])).toEqual([
+      ["User", USER, "u@example.invalid"],
+      ["ServicePrincipal", GRAPH_SP, "svc-b"],
+    ]);
+  });
+  it("a sign-in record (RecordType 15, or a logon operation without a RecordType) is never a directory record", () => {
+    const sts = {
+      Workload: "AzureActiveDirectory",
+      RecordType: 15,
+      Operation: "UserLoggedIn",
+      ResultStatus: "Succeeded",
+      Actor: [{ ID: "u@example.invalid", Type: 5 }],
+      Target: [{ ID: "Windows Azure Active Directory", Type: 0 }],
+    };
+    expect(isEntraUalRecord(sts)).toBe(false);
+    expect(isEntraUalRecord({ ...sts, RecordType: undefined, Operation: "UserLoginFailed" })).toBe(false);
+    expect(isEntraUalRecord({ ...sts, RecordType: 8, Operation: "Add member to role." })).toBe(true);
+    expect(
+      isEntraUalRecord({ Workload: "AzureActiveDirectory", Operation: "Add member to role.", Target: [] }),
+    ).toBe(true);
+  });
   it("an Actor typed ServicePrincipal is an app initiator", () => {
     const r = readEntraAuditRecord({
       Workload: "AzureActiveDirectory",

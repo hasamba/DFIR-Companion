@@ -369,10 +369,13 @@ Unified Audit Log's AzureActiveDirectory record) now read the same way, one row 
   record are two rows. No secret value exists in the record and none is stored; a removal reads
   `removes …` and is Low.
 - **Application permissions** — `grants application permission RoleManagement.ReadWrite.Directory
-  on Microsoft Graph for Sync — can assign any directory role, Global Administrator included, to
-  any principal`. The words say what the permission allows; the class (grant management,
-  credential management, directory RBAC, identity takeover, data read, data write/send) sets the
-  grade — High for every named class, Medium for anything else on Graph.
+  on Microsoft Graph for Sync — read and write all directory RBAC settings (any directory role,
+  Global Administrator included, to any principal)`. The words are Microsoft's own description of
+  the permission — the nominal grant; a data permission also says `nominal reach — application
+  access policies are not in this record`, because an Exchange access policy can narrow it and the
+  record does not say. The class (grant management, credential management, directory RBAC,
+  identity takeover, data read, data write/send) sets the grade — High for every named class,
+  Medium for anything else on Graph.
 - **The API is identified only by its immutable application id.** A display name can be set to
   "Microsoft Graph" by anyone who owns a custom API, and a custom API can expose a scope spelled
   `Mail.ReadWrite` that reads no mailbox. When a record names its API only by a tenant-specific
@@ -381,17 +384,22 @@ Unified Audit Log's AzureActiveDirectory record) now read the same way, one row 
   object id's application id (an app-role assignment does, a service-principal sign-in does), in
   which case the class applies.
 - **Consent** — `grants delegated permission Mail.Read on Microsoft Graph for Sync (admin consent,
-  for all users)`, one row per scope. `delegated — bounded by the consenting user's own access` is
-  always said: a delegated `Mail.Read` for one user is that user's mail, not every mailbox. A
-  one-user consent to `openid profile User.Read` is Low; other scopes Medium; a data-write or
-  identity scope High; admin consent for all users of a data or identity scope High. `IsAppOnly`
-  consent grants application permissions and reads as such.
+  for all users) — read the signed-in user's mail`, one row per scope. A delegated scope is
+  described as what the app can do AS THE SIGNED-IN USER, and the row says `delegated — as the
+  signed-in user, within that user's access`: a delegated `Mail.Read` reads the mail of whoever is
+  signed in, never every mailbox. A one-user consent to `openid profile User.Read` is Low; other
+  scopes Medium; a data-write or identity scope High; admin consent for all users of a data or
+  identity scope High. `IsAppOnly` consent grants application permissions and reads as such. A
+  consent listing more than 32 scopes shows 32 and one more row saying how many were cut.
 - **Directory roles** — `assigns directory role Global Administrator to service principal Sync —
-  can take over the tenant`: High for a tier-0 role (Global Administrator, Privileged Role
+  can manage everything in the tenant`: each built-in role carries its documented capability
+  (`Application Administrator — can add credentials to any application and consent on its behalf —
+  then sign in as it`); High for a tier-0 role (Global Administrator, Privileged Role
   Administrator, Privileged Authentication Administrator, Application Administrator, Cloud
-  Application Administrator, Partner Tier2 Support, Hybrid Identity Administrator), Medium for a
-  service admin role, the role's name for a custom one. `eligible` and `(PIM activation)` are kept
-  in the words — an eligible assignment is not an active one.
+  Application Administrator, Partner Tier2 Support, Hybrid Identity Administrator), Medium for the
+  other built-in administrator roles, and only the name for a custom role — nothing is claimed
+  about a role the table does not know. `eligible` and `(PIM activation)` are kept in the words —
+  an eligible assignment is not an active one.
 - **Self-grant** — when the initiating application IS the subject (by id, never by name), the row
   starts `self-grant:` and is High.
 - **Attempts** — `attempted to grant application permission … — failed … [requested, not granted]`,
@@ -400,7 +408,10 @@ Unified Audit Log's AzureActiveDirectory record) now read the same way, one row 
   Sync (app-id) token issued → Microsoft Graph from 198.51.100.7 credential: clientSecret k-1`.
   The credential type comes from `clientCredentialType`, never from a key id; a secret is Low, a
   certificate Info. `credential rejected (invalid client secret, AADSTS7000215)` is Medium; any
-  other failure is Low with its code.
+  other failure is Low with its code. Two sign-ins from two addresses, or with two credentials,
+  are two rows. A Unified Audit Log sign-in record (`UserLoggedIn`, `UserLoginFailed`) is never
+  read as a directory change — its `ResultStatus` says the request completed, not that the login
+  succeeded.
 
 Every grant and role row ends `assigned, not yet observed in use`: the row says what was given,
 never that it was used. A sign-in after a credential was added is a separate row, not a link — the

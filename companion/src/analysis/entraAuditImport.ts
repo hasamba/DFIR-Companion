@@ -46,27 +46,43 @@ const WORKLOAD_CREDENTIAL_FAILURES: Record<number, string> = {
 };
 
 /**
- * A tenant-scoped map from a service principal's OBJECT id to its immutable app id, learned from
- * records that state both — an app-role assignment names the resource's object id and its
- * ServicePrincipalNames; a service-principal sign-in names `resourceServicePrincipalId` and
- * `resourceId`. Consent records name the resource by object id only; without this map they cannot
- * identify the API and grade Medium.
+ * A tenant-scoped map from a service principal's OBJECT id to its immutable app id, learned only
+ * from records that state the relationship by construction: an app-role assignment names the
+ * resource's object id (the target that carries the property) and its ServicePrincipalNames,
+ * which Entra populates with the app id; a service-principal sign-in names
+ * `resourceServicePrincipalId` and `resourceId`. Consent records name the resource by object id
+ * only; without this map they cannot identify the API and grade Medium. Two records that disagree
+ * about one object id leave it unresolved — a fact this importer cannot pick between.
  */
 export function learnApiResolver(records: readonly Row[]): Resolver {
   const map = new Map<string, string>();
+  const conflicts = new Set<string>();
+  const learn = (tenant: string, objectId: string, appId: string) => {
+    const k = `${tenant.toLowerCase()}|${objectId.toLowerCase()}`;
+    const prev = map.get(k);
+    if (prev && prev !== appId) conflicts.add(k);
+    else map.set(k, appId);
+  };
   for (const rec of records) {
     const spId = str(getCI(rec, "resourceServicePrincipalId")).trim().toLowerCase();
     const appId = str(getCI(rec, "resourceId")).trim().toLowerCase();
-    if (isGuid(spId) && isGuid(appId) && KNOWN_APIS[appId]) map.set(spId, appId);
+    const tenant = str(getCI(rec, "resourceTenantId")).trim() || str(getCI(rec, "homeTenantId")).trim();
+    if (isGuid(spId) && isGuid(appId) && KNOWN_APIS[appId]) learn(tenant, spId, appId);
     const audit = readEntraAuditRecord(rec);
-    if (!audit) continue;
-    const names = audit.props.find((p) => /^targetid\.serviceprincipalnames$/i.test(p.name))?.newValue;
-    const target = audit.targets[0];
-    if (!target?.id || !Array.isArray(names)) continue;
-    const known = names.map((n) => String(n).trim().toLowerCase()).find((n) => isGuid(n) && KNOWN_APIS[n]);
-    if (known) map.set(target.id.toLowerCase(), known);
+    if (!audit || !/^add app role assignment to service principal$/i.test(audit.operation)) continue;
+    const prop = audit.props.find((p) => /^targetid\.serviceprincipalnames$/i.test(p.name));
+    if (!prop || !Array.isArray(prop.newValue)) continue;
+    const target = prop.targetIndex >= 0 ? audit.targets[prop.targetIndex] : audit.targets[0];
+    if (!target?.id) continue;
+    const known = prop.newValue
+      .map((n) => String(n).trim().toLowerCase())
+      .filter((n) => isGuid(n) && KNOWN_APIS[n]);
+    if (known.length === 1) learn(audit.tenant, target.id, known[0]);
   }
-  return (objectId) => map.get(objectId.trim().toLowerCase()) ?? "";
+  return (objectId, tenant) => {
+    const k = `${tenant.toLowerCase()}|${objectId.trim().toLowerCase()}`;
+    return conflicts.has(k) ? "" : (map.get(k) ?? "");
+  };
 }
 
 function head(r: EntraAuditRecord): { who: string; ip: string; head: string } {
@@ -341,7 +357,7 @@ export function mapSpSignIn(rec: Row, sink: Map<string, SiemIoc>, index: number)
     severity,
     mitre: rejected ? ["T1078.004"] : [],
     aggKey: boundedAggKey(
-      `entra-spsignin|${tenant}|${spId || appId || name}|${resourceSp || resourceAppId}|${credKey || "-"}|${credType}|${outcome}|${code ?? ""}`.toLowerCase(),
+      `entra-spsignin|${tenant}|${spId || appId || name}|${resourceSp || resourceAppId}|${credKey || "-"}|${credType}|${outcome}|${code ?? ""}|${ip}`.toLowerCase(),
     ),
     sources: ["Entra ID"],
     canonical: createCanonicalEvent({

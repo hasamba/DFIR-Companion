@@ -424,8 +424,69 @@ describe("parseM365Audit — Entra application changes (#931 item 1)", () => {
     const r = parseM365Audit(JSON.stringify([consent, grant]), { aggregate: false });
     const mail = r.events.find((e) => e.description.includes("Mail.ReadWrite"))!;
     expect(mail.description).toContain("on Microsoft Graph");
-    expect(mail.description).toContain("can read and change every mailbox");
+    expect(mail.description).toContain("read and write the signed-in user's mail");
+    expect(mail.description).not.toContain("all mailboxes");
     expect(mail.severity).toBe("High");
+  });
+  it("the API resolver is tenant-scoped, learns only from records that state the relationship, and leaves a conflict unresolved", () => {
+    const consent = (tenant: string, rid: string) =>
+      audit(
+        "Consent to application",
+        [
+          {
+            type: "ServicePrincipal",
+            id: SP,
+            displayName: "Sync",
+            modifiedProperties: [
+              prop("ConsentContext.IsAdminConsent", "True"),
+              prop(
+                "ConsentAction.Permissions",
+                `[] => [[Id: ${rid}, ClientId: ${SP}, PrincipalId: , ResourceId: ${GRAPH_SP}, ConsentType: AllPrincipals, Scope: Mail.ReadWrite, CreatedDateTime: 2024-05-01, ExpiryTime: ]]`,
+              ),
+            ],
+          },
+        ],
+        { tenantId: tenant },
+      );
+    const grant = (tenant: string, names: string[]) =>
+      audit(
+        "Add app role assignment to service principal",
+        [
+          {
+            type: "ServicePrincipal",
+            id: GRAPH_SP,
+            displayName: "x",
+            modifiedProperties: [
+              prop("AppRole.Value", "User.Read.All"),
+              prop("ServicePrincipal.ObjectID", SP),
+              prop("TargetId.ServicePrincipalNames", names),
+            ],
+          },
+        ],
+        { tenantId: tenant },
+      );
+    // A fact from another tenant does not resolve this tenant's object id.
+    const cross = parseM365Audit(JSON.stringify([consent("t1", "g1"), grant("t2", [GRAPH_APP])]), {
+      aggregate: false,
+    });
+    expect(cross.events.find((e) => e.description.includes("Mail.ReadWrite"))!.description).toContain(
+      "API not identified",
+    );
+    // Two records that disagree about one object id leave it unresolved.
+    const conflict = parseM365Audit(
+      JSON.stringify([
+        consent("t1", "g1"),
+        grant("t1", [GRAPH_APP]),
+        grant("t1", ["00000002-0000-0ff1-ce00-000000000000"]),
+      ]),
+      { aggregate: false },
+    );
+    expect(conflict.events.find((e) => e.description.includes("Mail.ReadWrite"))!.description).toContain(
+      "API not identified",
+    );
+    // A consent record itself never teaches the resolver (it names no app id).
+    const only = parseM365Audit(JSON.stringify([consent("t1", "g1")]), { aggregate: false });
+    expect(only.events[0].description).toContain("API not identified");
   });
   it("a credential added to a service principal is a High row that names the key, never a secret; the plain row survives for an undecoded change", () => {
     const cred = audit("Add service principal credentials", [
@@ -510,7 +571,7 @@ describe("parseM365Audit — Entra application changes (#931 item 1)", () => {
     const e = r.events[0];
     expect(e.severity).toBe("High");
     expect(e.description).toContain("assigns directory role Global Administrator to service principal Sync");
-    expect(e.description).toContain("can take over the tenant");
+    expect(e.description).toContain("can manage everything in the tenant");
     expect(e.canonical?.cloud?.tenant).toBe("tenant-1");
     expect(e.canonical?.evidence.rawRecords[0]).toMatchObject({ source: "m365-ual", recordId: "ual-1" });
   });
@@ -550,7 +611,7 @@ describe("parseM365Audit — Entra application changes (#931 item 1)", () => {
     expect(d).toMatch(/^Entra audit: Consent to application by p+/);
     expect(d).toContain("grants delegated permission");
     expect(d).toContain("for SSSS");
-    expect(d).toContain("delegated — bounded by the consenting user's own access");
+    expect(d).toContain("delegated — as the signed-in user, within that user's access");
     expect(d).toContain("assigned, not yet observed in use");
   });
 });
@@ -609,10 +670,12 @@ describe("parseM365Audit — service-principal sign-ins (#931 item 1)", () => {
     expect(blocked.description).toContain("failed (AADSTS53003)");
     expect(blocked.mitreTechniques ?? []).toEqual([]);
   });
-  it("keys on tenant, client, resource, credential, type, outcome and code — two credentials are two rows", () => {
+  it("keys on tenant, client, resource, credential, type, outcome, code and address — two credentials or two addresses are two rows", () => {
     const r = parseM365Audit(
       JSON.stringify([spSignIn(), spSignIn({ servicePrincipalCredentialKeyId: "k-2" }), spSignIn()]),
     );
     expect(r.events).toHaveLength(2);
+    const byIp = parseM365Audit(JSON.stringify([spSignIn(), spSignIn({ ipAddress: "198.51.100.8" })]));
+    expect(byIp.events).toHaveLength(2);
   });
 });

@@ -277,49 +277,69 @@ function readGraph(rec: Row): EntraAuditRecord {
   };
 }
 
-// UAL Actor/Target arrays: `[{ID, Type}, …]`. Grouped into identities by SHAPE: a type-label word
-// closes the group of entries before it; a GUID is an object id; an address is a UPN; any other
-// text is a name.
+// UAL Actor/Target arrays: `[{ID, Type}, …]` — Microsoft's IdentityTypeValuePair collection, where
+// ONE identity is spread over several pairs (a UPN, a PUID, a prefixed `ServicePrincipal_<guid>`
+// object id, the bare guid, a type-label word, a display name). The numeric Type enum is not read:
+// its values name the KIND of identifier, not the boundary between identities, and real exports
+// disagree with the enum on the label pairs. An identity boundary is a prefixed `<Type>_<guid>`
+// whose guid differs from the identity being built; every other pair adds an identifier to it.
+const PREFIXED_ID =
+  /^(user|serviceprincipal|application|group|role|device|policy|directory)_([0-9a-f-]{36})$/i;
 function readIdentities(raw: unknown): EntraTarget[] {
   const out: EntraTarget[] = [];
-  let cur: EntraTarget = { type: "", id: "", name: "", upn: "" };
-  let open = false;
+  let cur: EntraTarget | null = null;
+  const start = (): EntraTarget => {
+    const t = { type: "", id: "", name: "", upn: "" };
+    out.push(t);
+    return t;
+  };
   for (const e of Array.isArray(raw) ? raw : []) {
-    const id = isObject(e) ? str(getCI(e, "ID")) || str(getCI(e, "Id")) : "";
+    const id = (isObject(e) ? str(getCI(e, "ID")) || str(getCI(e, "Id")) : "").trim();
     if (!id) continue;
-    const lower = id.trim().toLowerCase();
-    if (TYPE_LABELS.has(lower)) {
-      cur.type = id.trim();
+    const prefixed = PREFIXED_ID.exec(id);
+    if (prefixed) {
+      const guid = prefixed[2].toLowerCase();
+      if (!cur || (cur.id && cur.id.toLowerCase() !== guid)) cur = start();
+      cur.type = cur.type || prefixed[1];
+      cur.id = cur.id || guid;
       continue;
     }
-    if (isGuid(id)) {
-      if (cur.id) {
-        out.push(cur);
-        cur = { type: cur.type, id: "", name: "", upn: "" };
-      }
-      cur.id = id.trim();
-    } else if (id.includes("@")) cur.upn = id.trim();
-    else cur.name = id.trim();
-    open = true;
+    if (!cur) cur = start();
+    const lower = id.toLowerCase();
+    if (TYPE_LABELS.has(lower)) cur.type = cur.type || id;
+    else if (isGuid(id)) cur.id = cur.id || lower;
+    else if (id.includes("@")) cur.upn = cur.upn || id;
+    else if (!/^[0-9a-f]{16}$/i.test(id)) cur.name = cur.name || id; // a 16-hex PUID is not a name
   }
-  if (open && (cur.id || cur.upn || cur.name)) out.push(cur);
-  return out;
+  return out.filter((t) => t.id || t.upn || t.name);
 }
 
+// UserType, as Microsoft documents it: 5 Application, 6 ServicePrincipal; 0 Regular, 2 Admin, 3
+// DcAdmin, 4 System, 7 CustomPolicy, 8 SystemPolicy.
+const APP_USER_TYPES = new Set([5, 6]);
+
 function readUal(rec: Row): EntraAuditRecord {
+  // The actor: the documented top-level fields first (UserId is the actor's UPN or app id, UserType
+  // its kind), the Actor pairs for the object id and the display name.
   const actors = readIdentities(getCI(rec, "Actor"));
   const actor = actors[0];
-  const actorIsApp = actors.some((a) => /^(serviceprincipal|application)$/i.test(a.type));
-  const initiator: EntraInitiator = actor
-    ? {
-        kind: actorIsApp ? "app" : actor.upn || /^user$/i.test(actor.type) ? "user" : "unknown",
-        id: actor.id,
-        upn: actor.upn,
-        appId: "",
-        name: actor.name,
-        ip: str(getCI(rec, "ActorIpAddress")) || str(getCI(rec, "ClientIP")),
-      }
-    : { kind: "unknown", id: "", upn: "", appId: "", name: "", ip: str(getCI(rec, "ActorIpAddress")) };
+  const userType = Number(str(getCI(rec, "UserType")));
+  const userId = str(getCI(rec, "UserId")).trim();
+  const actorIsApp =
+    APP_USER_TYPES.has(userType) || actors.some((a) => /^(serviceprincipal|application)$/i.test(a.type));
+  const upn = userId.includes("@") ? userId : (actor?.upn ?? "");
+  const initiator: EntraInitiator = {
+    kind: actorIsApp
+      ? "app"
+      : upn || /^user$/i.test(actor?.type ?? "") || userType === 0 || userType === 2
+        ? "user"
+        : "unknown",
+    id: actor?.id ?? "",
+    upn,
+    appId: actorIsApp && isGuid(userId) ? userId.toLowerCase() : "",
+    name: actor?.name ?? (actorIsApp && !isGuid(userId) ? userId : ""),
+    ip: str(getCI(rec, "ActorIpAddress")) || str(getCI(rec, "ClientIP")),
+  };
   const props: EntraProp[] = [];
   const mp = getCI(rec, "ModifiedProperties");
   for (const p of Array.isArray(mp) ? mp : []) {
@@ -339,10 +359,20 @@ function readUal(rec: Row): EntraAuditRecord {
   };
 }
 
-/** True for a UAL record that carries Entra directory-audit detail. */
+// RecordType 8 is AzureActiveDirectory — the DIRECTORY audit. 9 (AccountLogon) and 15 (StsLogon)
+// are sign-ins: they carry Actor/Target arrays too, and their ResultStatus says the HTTP call
+// succeeded, not the login, so they must never be read as directory changes.
+const DIRECTORY_RECORD_TYPE = 8;
+const LOGON_OPERATION = /log(?:in|on)|signin|sign-in/i;
+
+/** True for a UAL record that carries Entra DIRECTORY-audit detail (never a sign-in record). */
 export function isEntraUalRecord(rec: Row): boolean {
+  if (!/^azureactivedirectory$/i.test(str(getCI(rec, "Workload")).trim())) return false;
+  const recordType = getCI(rec, "RecordType");
+  if (recordType !== undefined && recordType !== null && String(recordType).trim() !== "")
+    return Number(recordType) === DIRECTORY_RECORD_TYPE;
   return (
-    /^azureactivedirectory/i.test(str(getCI(rec, "Workload"))) &&
+    !LOGON_OPERATION.test(str(getCI(rec, "Operation"))) &&
     (Array.isArray(getCI(rec, "ModifiedProperties")) || Array.isArray(getCI(rec, "Target")))
   );
 }
