@@ -32,7 +32,7 @@ Before importing, you can set a **minimum severity** filter. Events below the fl
 | **Identity provider** | Okta System Log, Google Workspace admin/login audit — severity comes from the event type, not the vendor's own operational grade, so IdP account-takeover tradecraft (MFA/2SV disabled, admin role granted, API token minted, OAuth grant consented, session impersonated, Workspace mail monitor added) grades above Info |
 | **Browser artifacts** | Hindsight JSON or CSV — Chrome/Edge/Brave history, downloads and interpretations. Every row is Info: browser artifacts are evidence, not verdicts, so they land in the super-timeline |
 | **macOS** | Unified log (`log show --style json`), LSQuarantine download provenance — quarantine rows carry both the data URL and the referring origin URL; **persistence artifacts** — LaunchAgent/LaunchDaemon plists, cron and shell profiles (see [Collecting macOS persistence artifacts](#collecting-macos-persistence-artifacts)) |
-| **Mobile** | iLEAPP / ALEAPP TSV exports (iOS and Android extractions), one artifact per import. Generic by design: LEAPP artifacts share no schema beyond a timestamp column, so the parser finds that column and renders the rest |
+| **Mobile** | iLEAPP / ALEAPP TSV exports (iOS and Android extractions), one artifact per import. Generic by design: LEAPP artifacts share no schema, so the parser finds each row's time column and renders the rest. A table with no time column (installed apps, permissions, accounts) is imported **undated** — see below |
 | **Exfiltration tooling** | rclone configuration (`rclone.conf`), rclone transfer log, MEGAsync/megacmd log — recovers remote destinations, file names, outcomes and the byte total. **Credentials are redacted in the parser**, so no token or secret key is ever stored, displayed, exported or sent to an AI |
 | **Malware analysis** | CAPEv2 report.json, CrowdStrike Falcon Sandbox summary JSON, sandbox report arrays, YARA CLI scan output (`yara -s -m`) |
 | **Super-timeline** | Plaso/log2timeline psort CSV (dynamic and l2tcsv) — files over 200 MB are streamed line-by-line automatically; filter your `psort` output first to reduce size |
@@ -232,6 +232,27 @@ A scanner run is bounded: after 64 distinct payloads on one path, the rest fold 
 `[overflow: …]` row per path that names every family seen. A field longer than 64 KiB is not
 inspected at all — the row says `oversized@target (N chars, not inspected)` instead of silently
 scanning a prefix — and a decoded control character is shown as `\x00`, never written as the byte.
+### Mobile evidence with no clock (iLEAPP / ALEAPP)
+
+Most of what a phone examination is for has no timestamp: the installed-apps list, permissions,
+accounts, settings. Those tables used to be refused ("no usable timestamp column") and a row whose
+time cell was empty was dropped. Now:
+
+- **Every row is imported.** A row with no usable time is kept **undated**: it shows as `(undated)`,
+  sorts after every dated row in the super-timeline, stays inside any time window you set (it
+  cannot be proven out of range), and is searchable and promotable like any other row. The import
+  response and the activity line say how many rows carry no clock.
+- **Each row keeps the meaning of its clock.** A LEAPP table often has several time columns
+  (Timestamp, Created, Last Modified) and a row's populated one is not the same for every row. Each
+  row takes its first populated time column and names it in the description —
+  `iLEAPP Files [Last Modified: 2026-05-03 09:00:00]: …` — with the raw text kept as written, so a
+  guessed normalisation is visible. The unused clocks stay in the description as `Header: value`.
+- **Rows that differ only in time are different events.** Two "app opened" rows at two times are two
+  rows, not one row with a count; only byte-identical rows fold.
+- **Every LEAPP row is Info** — evidence, not a verdict — so it lives in the analyst-only
+  super-timeline and reaches the AI only through the deterministic tagger's rules, exactly like the
+  generic import path. The dedicated LEAPP button now runs the same import spine as the generic
+  button: the import lock, the super-timeline copy, the tagger, the import record and undo.
 
 ## Evidence Drop Folder (Auto-Import Inbox)
 

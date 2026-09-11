@@ -33,8 +33,8 @@ import type { HuntUpload, SkippedArtifact } from "../integrations/velociraptor/v
 import { parseVelociraptorJson } from "../analysis/velociraptorImport.js";
 import { maxEventsDefault } from "../analysis/siemImport.js";
 import { applySeverityFloor } from "../analysis/severityFloor.js";
-import { diffTimeline, addedForensicEvents } from "../analysis/timelineDiff.js";
-import { diffIocs } from "../analysis/iocsDiff.js";
+import { diffTimeline } from "../analysis/timelineDiff.js";
+import { settleForensicImport } from "../routes/importSettle.js";
 import { describeImportSource } from "../analysis/importMeta.js";
 import {
   recordDeploy,
@@ -517,28 +517,20 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       let addedIocs = 0;
       if (importedAny && options.stateStore && stateBefore) {
         try {
-          const imported = await options.stateStore.load(caseId);
-          // Dual-write the hunt's new events into the super-timeline FIRST (superset of everything
-          // imported, Info telemetry included); resolve the FULL events from the imported (pre-demote)
-          // state since the diff is lossy.
-          if (options.superTimelineStore) {
-            const superDiff = diffTimeline(stateBefore.forensicTimeline, imported.forensicTimeline);
-            const added = addedForensicEvents(imported.forensicTimeline, superDiff);
-            if (added.length) {
-              try {
-                superTimelineAddedCount += await options.superTimelineStore.append(caseId, added);
-                options.onSuperTimeline?.(caseId);
-              } catch {
-                /* non-fatal */
-              }
-              await autoTagImported(caseId, added);
-            }
-          }
-          // Demote sub-threshold events out of forensic (kept in super), then compute the import-meta
-          // diff + checkpoint decision on the POST-demote state so "+N events" counts only graded signal.
-          const s = await demoteForensicForCase(caseId);
-          const diff = diffTimeline(stateBefore.forensicTimeline, s.forensicTimeline);
-          const iocsDiff = diffIocs(stateBefore.iocs, s.iocs);
+          // The one seam (routes/importSettle.ts): dual-write, tag, demote, diff post-demote.
+          const settled = await settleForensicImport(
+            {
+              stateStore: options.stateStore,
+              superTimelineStore: options.superTimelineStore,
+              onSuperTimeline: options.onSuperTimeline,
+              autoTagImported,
+              demoteForensicForCase,
+            },
+            caseId,
+            stateBefore,
+          );
+          superTimelineAddedCount += settled.superTimelineAddedCount;
+          const { timelineDiff: diff, iocsDiff } = settled;
           addedEvents = diff.added.length;
           addedIocs = iocsDiff.added.length;
           if (options.importMetaStore) {

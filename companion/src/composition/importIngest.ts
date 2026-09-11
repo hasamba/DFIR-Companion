@@ -31,8 +31,7 @@ import { ImporterStore, type ImporterRegistry, type ImporterPrecedence } from ".
 import { detectImportWithCustom } from "../analysis/importDetect.js";
 import { observeImport } from "../analysis/operationalImport.js";
 import { demoteBelowSeverity, resolveForensicMinSeverity } from "../analysis/forensicGate.js";
-import { diffTimeline, addedForensicEvents } from "../analysis/timelineDiff.js";
-import { diffIocs } from "../analysis/iocsDiff.js";
+import { settleForensicImport } from "../routes/importSettle.js";
 import type { InvestigationState, Severity, ForensicEvent } from "../analysis/stateTypes.js";
 import { logLine } from "../logging/serverLogger.js";
 
@@ -427,29 +426,18 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         addedIocs = 0;
       if (options.stateStore && stateBefore) {
         try {
-          const imported = await options.stateStore.load(caseId);
-          // Dual-write the newly-imported events into the super-timeline FIRST so it stays a superset of
-          // everything imported (Info telemetry included). The diff is lossy, so resolve the FULL events
-          // from the imported (pre-demote) state. Best-effort — a side record.
-          if (options.superTimelineStore) {
-            const superDiff = diffTimeline(stateBefore.forensicTimeline, imported.forensicTimeline);
-            const added = addedForensicEvents(imported.forensicTimeline, superDiff);
-            if (added.length) {
-              try {
-                await options.superTimelineStore.append(caseId, added);
-                options.onSuperTimeline?.(caseId);
-              } catch {
-                /* non-fatal */
-              }
-              await autoTagImported(caseId, added);
-            }
-          }
-          // Now demote sub-threshold events out of the forensic timeline (they live on in the super-
-          // timeline). Compute the import-meta diff on the POST-demote state so "+N events" counts only
-          // what actually entered forensic.
-          const s = await demoteForensicForCase(caseId);
-          const tDiff = diffTimeline(stateBefore.forensicTimeline, s.forensicTimeline);
-          const iDiff = diffIocs(stateBefore.iocs, s.iocs);
+          // The one seam (routes/importSettle.ts): dual-write, tag, demote, diff post-demote.
+          const { timelineDiff: tDiff, iocsDiff: iDiff } = await settleForensicImport(
+            {
+              stateStore: options.stateStore,
+              superTimelineStore: options.superTimelineStore,
+              onSuperTimeline: options.onSuperTimeline,
+              autoTagImported,
+              demoteForensicForCase,
+            },
+            caseId,
+            stateBefore,
+          );
           addedEvents = tDiff.added.length;
           addedIocs = iDiff.added.length;
           if (
