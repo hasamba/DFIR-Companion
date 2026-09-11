@@ -800,6 +800,44 @@ describe("parseCloudTrail — identities and credentials (#931 item 5)", () => {
     ).toEqual(["caller-1", "caller-2", "owner-1", "owner-2"]);
     expect(r.events.every((e) => (e.count ?? 1) === 1)).toBe(true);
   });
+  it("an owner-first replica pair keeps the Identity Center caller (type Unknown + onBehalfOf) over the account view", () => {
+    const shared = "shared-ic";
+    const r = parseCloudTrail(
+      envelope(
+        record({
+          eventName: "GetObject",
+          eventSource: "s3.amazonaws.com",
+          readOnly: true,
+          userIdentity: { type: "AWSAccount", principalId: "AIDAEXAMPLE", accountId: ACCT },
+          recipientAccountId: OTHER,
+          eventID: "owner",
+          sharedEventID: shared,
+          requestParameters: { bucketName: "b", key: "k" },
+        }),
+        record({
+          eventName: "GetObject",
+          eventSource: "s3.amazonaws.com",
+          readOnly: true,
+          userIdentity: {
+            type: "Unknown",
+            accountId: ACCT,
+            credentialId: "cred-9",
+            onBehalfOf: {
+              userId: "u-9",
+              identityStoreArn: "arn:aws:identitystore::111122223333:identitystore/d-1",
+            },
+          },
+          recipientAccountId: ACCT,
+          eventID: "caller",
+          sharedEventID: shared,
+          requestParameters: { bucketName: "b", key: "k" },
+        }),
+      ),
+    );
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].description).toContain("IdentityCenterUser key cred-9 (temporary)");
+    expect(r.events[0].canonical?.authentication?.credentialId).toBe("cred-9");
+  });
   it("the cross-account notice survives a kept description that fills 600 characters", () => {
     const shared = "shared-long";
     const longDoc = JSON.stringify({

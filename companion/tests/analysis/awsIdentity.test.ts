@@ -165,6 +165,20 @@ describe("readAwsIdentity — kinds and words", () => {
     });
     expect(ic.credential).toMatchObject({ credentialId: "cred-1", class: "temporary" });
     expect(ic.words).toContain("key cred-1 (temporary)");
+    // AWS documents Identity Center records with type `Unknown` too — onBehalfOf decides.
+    const icUnknown = readAwsIdentity({
+      userIdentity: {
+        type: "Unknown",
+        accountId: ACCT,
+        credentialId: "cred-2",
+        onBehalfOf: {
+          userId: "u-2",
+          identityStoreArn: "arn:aws:identitystore::111122223333:identitystore/d-1",
+        },
+      },
+    });
+    expect(icUnknown.kind).toBe("IdentityCenterUser");
+    expect(icUnknown.credential.class).toBe("temporary");
     const odd = readAwsIdentity({ userIdentity: { type: "SomethingNew", principalId: "x" } });
     expect(odd.kind).toBe("Unknown");
     expect(odd.words).toContain("type SomethingNew");

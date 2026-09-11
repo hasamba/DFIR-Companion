@@ -112,8 +112,11 @@ export function readAwsIdentity(rec: Row): AwsIdentity {
   const ui = get(rec, "userIdentity");
   const rawType = str(get(ui, "type"));
   const hasOnBehalfOf = isObject(get(ui, "onBehalfOf"));
+  // An Identity Center user is recognised by `onBehalfOf`: AWS documents such records with the
+  // type absent OR literally `Unknown` (and `IdentityCenterUser`); the onBehalfOf.userId is the
+  // immutable identity either way.
   const kind: AwsIdentityKind =
-    hasOnBehalfOf && !rawType
+    hasOnBehalfOf && (!rawType || rawType === "Unknown" || rawType === "IdentityCenterUser")
       ? "IdentityCenterUser"
       : KINDS.has(rawType)
         ? (rawType as AwsIdentityKind)
