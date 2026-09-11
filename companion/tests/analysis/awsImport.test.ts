@@ -867,6 +867,41 @@ describe("parseCloudTrail — identities and credentials (#931 item 5)", () => {
       "userIdentity.onBehalfOf.userId",
     ]);
   });
+  it("replica attribution does not depend on input order, even when the caller replica omits its account", () => {
+    const shared = "shared-order";
+    const owner = record({
+      eventName: "GetObject",
+      eventSource: "s3.amazonaws.com",
+      readOnly: true,
+      userIdentity: { type: "AWSAccount", principalId: "AIDAEXAMPLE", accountId: ACCT },
+      recipientAccountId: OTHER,
+      eventID: "owner",
+      sharedEventID: shared,
+      requestParameters: { bucketName: "b", key: "k" },
+    });
+    const caller = record({
+      eventName: "GetObject",
+      eventSource: "s3.amazonaws.com",
+      readOnly: true,
+      userIdentity: {
+        credentialId: "cred-4",
+        onBehalfOf: {
+          userId: "u-4",
+          identityStoreArn: "arn:aws:identitystore::111122223333:identitystore/d-1",
+        },
+      },
+      recipientAccountId: ACCT,
+      eventID: "caller",
+      sharedEventID: shared,
+      requestParameters: { bucketName: "b", key: "k" },
+    });
+    const a = parseCloudTrail(envelope(owner, caller)).events[0];
+    const b = parseCloudTrail(envelope(caller, owner)).events[0];
+    for (const e of [a, b]) {
+      expect(e.canonical?.cloud).toMatchObject({ accountId: ACCT, recipientAccountId: OTHER });
+      expect(e.description).toContain("IdentityCenterUser key cred-4 (temporary)");
+    }
+  });
   it("the cross-account notice survives a kept description that fills 600 characters", () => {
     const shared = "shared-long";
     const longDoc = JSON.stringify({

@@ -53,10 +53,16 @@ export function mergeReplicas(candidates: readonly ReplicaCandidate[]): MappedEv
     // The two accounts of a cross-account action are the caller's (`cloud.accountId`) and the
     // resource owner's: the merged row's `cloud.recipientAccountId` is the one that is NOT the
     // caller's, so a Hunt on either account id finds the action.
-    const caller = kept.event.canonical?.cloud?.accountId ?? "";
-    const ownerCandidate =
-      group.find((c) => c.recipientAccountId && c.recipientAccountId !== caller) ??
-      group.find((c) => c.recipientAccountId);
+    // The caller's account comes from ANY replica that carries it (an Identity Center record may
+    // omit it), and the owner is the unique recipient that is not the caller. With the caller
+    // unknown no owner is chosen — input order must never decide attribution.
+    const caller = group.map((c) => c.event.canonical?.cloud?.accountId ?? "").find(Boolean) ?? "";
+    const recipients = [...new Set(group.map((c) => c.recipientAccountId).filter(Boolean))];
+    const ownerCandidate = caller
+      ? group.find((c) => c.recipientAccountId && c.recipientAccountId !== caller)
+      : recipients.length === 1
+        ? group.find((c) => c.recipientAccountId)
+        : undefined;
     const owner = ownerCandidate?.recipientAccountId ?? "";
     // The value's provenance must point at the REPLICA that carries it: the owner's record, not
     // the kept caller record whose own recipientAccountId is a different account.
@@ -80,7 +86,11 @@ export function mergeReplicas(candidates: readonly ReplicaCandidate[]): MappedEv
         ? {
             canonical: {
               ...kept.event.canonical,
-              cloud: { ...kept.event.canonical.cloud, ...(owner ? { recipientAccountId: owner } : {}) },
+              cloud: {
+                ...kept.event.canonical.cloud,
+                ...(caller && !kept.event.canonical.cloud?.accountId ? { accountId: caller } : {}),
+                ...(owner ? { recipientAccountId: owner } : {}),
+              },
               fieldProvenance: { ...provenance, ...recipientProvenance },
               evidence: {
                 ...kept.event.canonical.evidence,
