@@ -135,6 +135,9 @@ export function createEventAggregator(
           ...(m.sources?.length ? { sources: [...m.sources] } : {}),
           ...(m.fileModified ? { fileModified: m.fileModified } : {}),
           ...(m.yearInferred ? { yearInferred: true } : {}),
+          // Sandbox rows must stay recognisable as lab evidence through aggregation — the origin is
+          // what keeps them out of host correlation. Rows sharing a key share an origin by construction.
+          ...(m.origin ? { origin: m.origin } : {}),
         };
         applyEventIdentity(e, m);
         byKey.set(key, e);

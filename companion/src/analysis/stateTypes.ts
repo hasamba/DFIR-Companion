@@ -53,6 +53,30 @@ export const CONTROL_DISPOSITIONS = [
 export type ControlDisposition = (typeof CONTROL_DISPOSITIONS)[number];
 export type OutcomeSource = "analyst" | "machine";
 
+// Where a row's evidence came from (#932 item 5). Absent = an observation from the incident: a host
+// artifact, a log line, a cloud audit record. `lab` = produced by detonating a sample in a sandbox,
+// which says what the FILE does, not what happened on any host. Lab rows never enter the forensic
+// timeline: ingest appends them straight to the super-timeline, correlation refuses to union a lab
+// row with a host row, and the model learns about the sample through `labIntel` on the sighting
+// event that actually carries the hash. The one contamination this exists to end was a KAPE "file
+// created X.exe" at Info unioned by hash with a CAPE "injects into explorer.exe" at High — the merge
+// made the sandbox row primary, and a real host event was suddenly described as an injection.
+export type EvidenceOrigin = "lab";
+
+// One sandbox detonation of one sample, as recorded in `InvestigationState.labIntel` and rendered on
+// each incident event that carries the same sha256. Keyed by (sha256, source, runId).
+export interface LabIntelRecord {
+  sha256: string; // normalised: trimmed, lowercased, exactly 64 hex — or the record is not written
+  source: string; // "CAPEv2" | "Falcon Sandbox"
+  runId: string; // the report's own analysis/job id; "" when the report has none
+  verdict: "malicious" | "suspicious" | "unknown";
+  score: number; // the sandbox's own scale, as reported (CAPE 0-10, Falcon 0-100)
+  family: string; // malware family the sandbox named, or ""
+  signatures: string[]; // behavioural signature names, capped at 5, in the report's order
+  detonatedAt: string; // the run's start time, normalised; "" when unknown
+  importedAt: string;
+}
+
 // A dismissed finding (e.g. a confirmed false positive) keeps its ORIGINAL `severity` as an audit
 // trail of what the AI/backfill pass first claimed — see the comment on Finding.severity's sibling
 // grounding fields. But every severity-sorted or severity-filtered surface (dashboard panel, Markdown
@@ -321,6 +345,12 @@ export interface ForensicEvent {
   // "[second-look: h2]" onto a raw super-timeline row it promoted to resolve an open hypothesis/question.
   // Rendered as a small chip on the timeline row so the analyst sees the row is machine-surfaced.
   provenance?: string[];
+  // See EvidenceOrigin. Set by the sandbox importer on every row it emits; absent everywhere else.
+  origin?: EvidenceOrigin;
+  // The lab detonations of THIS event's sample, derived at merge time from InvestigationState.labIntel
+  // by sha256 — never stored as a claim of its own, cleared and recomputed on every merge. Rendered to
+  // the model as a <sandbox:…> tag beside <host:…>, so it reads "the sample seen here did X in a lab".
+  labIntel?: LabIntelRecord[];
 }
 
 // Result of validating a parent→child process relationship against behavioral intel
@@ -448,6 +478,11 @@ export interface InvestigationState {
   // outright and never re-created by a future import/AI-synthesis delta (see mergeDelta). Distinct
   // from the global IOC Whitelist, which is reversible and merely marks a match false-positive.
   iocExcludeRules: IocExcludeRule[];
+  // Sandbox detonation registry (#932 item 5), keyed by (sha256, source, runId). Optional so state
+  // files written before it exist load unchanged. Carried by name through mergeDelta and unioned by
+  // key in mergeConcurrentAdditions — a reducer that rebuilds the state object drops what it does not
+  // name, which is how an earlier draft of this would have silently lost every record.
+  labIntel?: LabIntelRecord[];
   updatedAt: string;
 }
 

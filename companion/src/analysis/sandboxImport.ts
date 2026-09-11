@@ -12,7 +12,8 @@
 // auto-detected: CAPEv2 (`info` + `signatures`/`target`) vs Falcon Sandbox (`verdict` +
 // `sha256`/`threat_score`).
 
-import type { Severity } from "./stateTypes.js";
+import type { LabIntelRecord, Severity } from "./stateTypes.js";
+import { SANDBOX_PREFIX } from "./labIntel.js";
 import {
   aggregateEvents,
   cleanIp,
@@ -47,6 +48,10 @@ export interface SandboxParseResult {
   groups: number;
   signatures: number; // signature detections seen
   format: string; // "capev2" | "falcon" | "mixed" | "empty"
+  // One registry record per (sample, run) — what the model learns about the sample, attached at
+  // merge time to the incident events that carry its hash. See labIntel.ts. Records whose sha256
+  // does not normalise are dropped by upsertLabIntel, so this may hold fewer than `total`.
+  labIntel: LabIntelRecord[];
 }
 
 const HEX_HASH = /^[a-f0-9]{32}$|^[a-f0-9]{40}$|^[a-f0-9]{64}$/i;
@@ -121,7 +126,10 @@ function falconSigSeverity(human: string, threatLevel: number): Severity {
 
 // ───────────────────────────── CAPEv2 ─────────────────────────────
 
-function mapCape(report: Row, sink: Map<string, SiemIoc>): MappedEvent[] {
+function mapCape(
+  report: Row,
+  sink: Map<string, SiemIoc>,
+): { events: MappedEvent[]; intel: LabIntelRecord | null } {
   const out: MappedEvent[] = [];
   const tfile = isObject(getPath(report, "target.file")) ? (getPath(report, "target.file") as Row) : {};
   const sha256 = str(getCI(tfile, "sha256"));
@@ -130,6 +138,14 @@ function mapCape(report: Row, sink: Map<string, SiemIoc>): MappedEvent[] {
   const malscore = Number(getCI(report, "malscore") ?? getPath(report, "info.score")) || 0;
   const family = str(getCI(report, "malfamily")) || flatStr(getCI(report, "detections")).split(" ")[0] || "";
   const time = normalizeTime(str(getPath(report, "info.started")));
+  // The report's own analysis id. Two detonations of one sample are two runs — the aggKey carries it
+  // so they stay two rows, and the registry keys on it.
+  const runId = str(getPath(report, "info.id"));
+  // FIRST in every description, before any report-derived text: the super-timeline dedupes on
+  // (time, text, host), so two runs must differ in text, and a marker after a 600-char clip of a
+  // long family name would not survive to make them differ.
+  const runTag = runId ? ` [run ${runId}]` : "";
+  const sigNames: string[] = [];
 
   if (sha256) addHash(sink, sha256);
   if (md5) addHash(sink, md5);
@@ -139,13 +155,14 @@ function mapCape(report: Row, sink: Map<string, SiemIoc>): MappedEvent[] {
   out.push({
     timestamp: time,
     description:
-      `CAPE sandbox: ${family || "analysis"} — ${name || sha256.slice(0, 16) || "sample"}${sha256 ? ` (sha256 ${sha256.slice(0, 12)}…)` : ""} score ${malscore}/10`.slice(
+      `${SANDBOX_PREFIX.capeVerdict}${runTag} ${family || "analysis"} — ${name || sha256.slice(0, 16) || "sample"}${sha256 ? ` (sha256 ${sha256.slice(0, 12)}…)` : ""} score ${malscore}/10`.slice(
         0,
         600,
       ),
     severity: score10Severity(malscore),
     mitre: [],
-    aggKey: `sandbox|cape|sample|${sha256 || name}`.toLowerCase().slice(0, 400),
+    origin: "lab",
+    aggKey: `sandbox|cape|sample|${sha256 || name}|${runId}`.toLowerCase().slice(0, 400),
     sources: ["CAPEv2"],
     ...(sha256 ? { sha256 } : {}),
     ...(md5 && !sha256 ? { md5 } : {}),
@@ -157,6 +174,7 @@ function mapCape(report: Row, sink: Map<string, SiemIoc>): MappedEvent[] {
     const sname = str(getCI(s, "name"));
     const sdesc = str(getCI(s, "description"));
     if (!sname && !sdesc) continue;
+    if (sname) sigNames.push(sname);
     const mitre = mitreFromText(
       flatStr(getCI(s, "ttp")),
       flatStr(getCI(s, "attack")),
@@ -167,13 +185,14 @@ function mapCape(report: Row, sink: Map<string, SiemIoc>): MappedEvent[] {
     out.push({
       timestamp: time,
       description:
-        `CAPE signature: ${sname || sdesc}${sname && sdesc ? ` — ${oneLine(sdesc).slice(0, 200)}` : ""}`.slice(
+        `${SANDBOX_PREFIX.capeSignature}${runTag} ${sname || sdesc}${sname && sdesc ? ` — ${oneLine(sdesc).slice(0, 200)}` : ""}`.slice(
           0,
           600,
         ),
       severity: capeSigSeverity(Number(getCI(s, "severity")) || 1),
       mitre,
-      aggKey: `sandbox|cape|sig|${sname.toLowerCase()}|${sha256}`.slice(0, 400),
+      origin: "lab",
+      aggKey: `sandbox|cape|sig|${sname.toLowerCase()}|${sha256}|${runId}`.slice(0, 400),
       sources: ["CAPEv2"],
       ...(sha256 ? { sha256 } : {}),
     });
@@ -206,12 +225,28 @@ function mapCape(report: Row, sink: Map<string, SiemIoc>): MappedEvent[] {
       if (isObject(dns)) addDomain(sink, getCI(dns, "request"));
     }
   }
-  return out;
+  const intel: LabIntelRecord | null = sha256
+    ? {
+        sha256,
+        source: "CAPEv2",
+        runId,
+        verdict: malscore >= 7 ? "malicious" : malscore >= 4 ? "suspicious" : "unknown",
+        score: malscore,
+        family,
+        signatures: sigNames.slice(0, 5),
+        detonatedAt: time,
+        importedAt: "",
+      }
+    : null;
+  return { events: out, intel };
 }
 
 // ───────────────────────────── Falcon Sandbox ─────────────────────────────
 
-function mapFalcon(report: Row, sink: Map<string, SiemIoc>): MappedEvent[] {
+function mapFalcon(
+  report: Row,
+  sink: Map<string, SiemIoc>,
+): { events: MappedEvent[]; intel: LabIntelRecord | null } {
   const out: MappedEvent[] = [];
   const sha256 = str(getCI(report, "sha256"));
   const md5 = str(getCI(report, "md5"));
@@ -220,6 +255,9 @@ function mapFalcon(report: Row, sink: Map<string, SiemIoc>): MappedEvent[] {
   const score = Number(getCI(report, "threat_score")) || 0;
   const family = str(getCI(report, "vx_family"));
   const time = normalizeTime(str(getCI(report, "analysis_start_time")));
+  const runId = str(getCI(report, "job_id")) || str(getCI(report, "environment_id"));
+  const runTag = runId ? ` [run ${runId}]` : "";
+  const sigNames: string[] = [];
 
   if (sha256) addHash(sink, sha256);
   if (md5) addHash(sink, md5);
@@ -228,13 +266,14 @@ function mapFalcon(report: Row, sink: Map<string, SiemIoc>): MappedEvent[] {
   out.push({
     timestamp: time,
     description:
-      `Falcon Sandbox: ${verdict || "analysis"}${family ? ` (${family})` : ""} — ${name || sha256.slice(0, 16) || "sample"} score ${score}/100`.slice(
+      `${SANDBOX_PREFIX.falconVerdict}${runTag} ${verdict || "analysis"}${family ? ` (${family})` : ""} — ${name || sha256.slice(0, 16) || "sample"} score ${score}/100`.slice(
         0,
         600,
       ),
     severity: falconVerdictSeverity(verdict, score),
     mitre: mitreFromText(flatStr(getCI(report, "mitre_attcks"))),
-    aggKey: `sandbox|falcon|sample|${sha256 || name}`.toLowerCase().slice(0, 400),
+    origin: "lab",
+    aggKey: `sandbox|falcon|sample|${sha256 || name}|${runId}`.toLowerCase().slice(0, 400),
     sources: ["Falcon Sandbox"],
     ...(sha256 ? { sha256 } : {}),
     ...(md5 && !sha256 ? { md5 } : {}),
@@ -245,16 +284,18 @@ function mapFalcon(report: Row, sink: Map<string, SiemIoc>): MappedEvent[] {
     const sname = str(getCI(s, "name"));
     const sdesc = str(getCI(s, "description"));
     if (!sname && !sdesc) continue;
+    if (sname) sigNames.push(sname);
     out.push({
       timestamp: time,
       description:
-        `Falcon signature: ${sname || sdesc}${sname && sdesc ? ` — ${oneLine(sdesc).slice(0, 200)}` : ""}`.slice(
+        `${SANDBOX_PREFIX.falconSignature}${runTag} ${sname || sdesc}${sname && sdesc ? ` — ${oneLine(sdesc).slice(0, 200)}` : ""}`.slice(
           0,
           600,
         ),
       severity: falconSigSeverity(str(getCI(s, "threat_level_human")), Number(getCI(s, "threat_level")) || 0),
       mitre: mitreFromText(str(getCI(s, "attck_id")), sname, sdesc),
-      aggKey: `sandbox|falcon|sig|${sname.toLowerCase()}|${sha256}`.slice(0, 400),
+      origin: "lab",
+      aggKey: `sandbox|falcon|sig|${sname.toLowerCase()}|${sha256}|${runId}`.slice(0, 400),
       sources: ["Falcon Sandbox"],
       ...(sha256 ? { sha256 } : {}),
     });
@@ -275,7 +316,21 @@ function mapFalcon(report: Row, sink: Map<string, SiemIoc>): MappedEvent[] {
   for (const h of [...asArray(getCI(report, "hosts")), ...asArray(getCI(report, "compromised_hosts"))])
     addAnyIp(sink, h);
   for (const d of asArray(getCI(report, "domains"))) addDomain(sink, d);
-  return out;
+  const v = verdict.toLowerCase();
+  const intel: LabIntelRecord | null = sha256
+    ? {
+        sha256,
+        source: "Falcon Sandbox",
+        runId,
+        verdict: v === "malicious" ? "malicious" : v === "suspicious" ? "suspicious" : "unknown",
+        score,
+        family,
+        signatures: sigNames.slice(0, 5),
+        detonatedAt: time,
+        importedAt: "",
+      }
+    : null;
+  return { events: out, intel };
 }
 
 // ───────────────────────────── classification ─────────────────────────────
@@ -311,22 +366,37 @@ export function parseSandboxReport(text: string, opts: SandboxImportOptions = {}
   const reports: Row[] = Array.isArray(root) ? root.filter(isObject) : isObject(root) ? [root] : [];
   const total = reports.length;
   if (total === 0) {
-    return { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, signatures: 0, format: "empty" };
+    return {
+      events: [],
+      iocs: [],
+      total: 0,
+      kept: 0,
+      dropped: 0,
+      groups: 0,
+      signatures: 0,
+      format: "empty",
+      labIntel: [],
+    };
   }
 
   const iocSink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
+  const intel: LabIntelRecord[] = [];
   let sawCape = false,
     sawFalcon = false,
     matched = 0;
 
   for (const r of reports) {
     if (isFalcon(r)) {
-      mapped.push(...mapFalcon(r, iocSink));
+      const m = mapFalcon(r, iocSink);
+      mapped.push(...m.events);
+      if (m.intel) intel.push(m.intel);
       sawFalcon = true;
       matched++;
     } else if (isCape(r)) {
-      mapped.push(...mapCape(r, iocSink));
+      const m = mapCape(r, iocSink);
+      mapped.push(...m.events);
+      if (m.intel) intel.push(m.intel);
       sawCape = true;
       matched++;
     }
@@ -341,6 +411,7 @@ export function parseSandboxReport(text: string, opts: SandboxImportOptions = {}
       groups: 0,
       signatures: 0,
       format: "empty",
+      labIntel: [],
     };
   }
 
@@ -361,5 +432,6 @@ export function parseSandboxReport(text: string, opts: SandboxImportOptions = {}
     groups,
     signatures,
     format,
+    labIntel: intel,
   };
 }

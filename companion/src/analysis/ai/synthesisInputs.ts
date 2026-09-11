@@ -12,6 +12,7 @@ import { renderPlaybookProgressBlock, renderRefutedHypothesesBlock } from "../pr
 import type { ScopeWindow } from "../scope.js";
 import type { ForensicEvent, InvestigationState } from "../stateTypes.js";
 import { loadHuntOutcomes, type HuntContext } from "./hunts.js";
+import { labIntelTag } from "../labIntel.js";
 
 /**
  * The PURE INPUTS to a synthesis run, and the hash that decides whether it needs to happen at all
@@ -175,7 +176,16 @@ export function computeSynthHash(i: SynthHashInput): string {
   return createHash("sha1")
     .update(
       JSON.stringify({
-        ev: i.scopedEvents.map((e) => [e.id, e.severity, e.timestamp, e.description]),
+        // The rendered lab tag is part of what the model reads, so a sandbox verdict landing on an
+        // otherwise-unchanged sighting must change the hash — or the run is skipped as identical
+        // and the verdict never reaches a finding (#932 item 5).
+        ev: i.scopedEvents.map((e) => [
+          e.id,
+          e.severity,
+          e.timestamp,
+          e.description,
+          labIntelTag(e.labIntel),
+        ]),
         io: i.iocs.map((x) => [x.id, x.value, (x.enrichments ?? []).map((e) => e.verdict).join(",")]),
         sc: i.scope,
         lg: i.markers.map((m) => m.id),

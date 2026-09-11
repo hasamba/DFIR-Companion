@@ -418,6 +418,7 @@
     "regexSafety.ts": "analysis/privacy",
     "responseSchema.ts": "shared",
     "sandboxImport.ts": "analysis/ingest",
+    "labIntel.ts": "analysis/timeline",
     "samAccountImport.ts": "analysis/ingest",
     "savedHuntStore.ts": "analysis/hunt",
     "scope.ts": "analysis/workflow",

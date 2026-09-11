@@ -178,6 +178,31 @@ Three things are specific to Intact:
 - **Intact caps its tables.** A table that came back holding the cap is named in the import note:
   rows beyond it were never exported, so absence in that table is not evidence of absence.
 
+### Sandbox reports (CAPEv2, Falcon Sandbox)
+
+A sandbox report says what a **file** does when detonated in a lab. It says nothing about what
+happened on any host, so its rows are handled differently from every other import:
+
+- **Every sandbox row goes to the super-timeline, never the forensic timeline.** The verdict and each
+  behavioural signature are there to search and to promote; the AI never reads them as chronology.
+  A detonation on 10 September is not something that happened on the victim on 10 September.
+- **The sample's verdict reaches the AI through the events that carry its hash.** When any host
+  artifact in the case (a process create, a file listing, an Amcache row) carries the same SHA-256,
+  that event gains a compact `<sandbox:…>` tag naming the source, verdict, family, score and top
+  signatures — at the event's own time and place. Import order does not matter: a report imported
+  last week annotates a sighting that arrives today.
+- **Two detonations of one sample are two records.** The newest shows first; a benign rerun never
+  hides a malicious one.
+- **A sandbox row is never merged with a host row**, even when they share a hash. Before this rule,
+  a KAPE "file created invoice.exe" could come out of correlation described as the sandbox's
+  "injects into explorer.exe" — a real host event narrated with lab behaviour.
+- **The AI is not yet told what the tag means.** The synthesis prompt's tag glossary is a governed
+  built-in (#378): changing it requires a real-model no-regression run against an accepted baseline.
+  Until that lands, the model reads the tag by its own words — `sandbox`, the source, the verdict.
+
+- **Only a real SHA-256 joins.** A report whose sample hash is missing or malformed still produces
+  super-timeline rows and IOCs, but no verdict can attach to a sighting.
+
 ## Evidence Drop Folder (Auto-Import Inbox)
 
 Every case gets a `cases/<id>/drop/` folder on creation. Copy any file into it — at any depth, subfolders included — and a background poller picks it up once the file size/mtime is stable (safe for Dropbox/OneDrive sync), then imports it through the same detection + import chain as the **Import** button. Screenshots are ingested as capture evidence; everything else is imported as an artifact.
