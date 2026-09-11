@@ -63,6 +63,13 @@ describe("upsertLabIntel", () => {
     const c = upsertLabIntel(b, [rec({ runId: "43" }), rec({ source: "Falcon Sandbox", runId: "j1" })]);
     expect(c).toHaveLength(3);
   });
+  // source and runId are identity: sanitising them before keying would fold two runs into one.
+  it("keys on the raw run id, so runs that differ only in a delimiter stay distinct", () => {
+    const out = upsertLabIntel([], [rec({ runId: "run<1" }), rec({ runId: "run>1" })]);
+    expect(out).toHaveLength(2);
+    expect(labIntelTag(out).slice(" <sandbox:".length, -1)).not.toMatch(/[<>]/); // but the TAG body is clean
+  });
+
   it("drops a record whose sha256 does not normalise", () => {
     expect(upsertLabIntel([], [rec({ sha256: "not-a-hash" })])).toEqual([]);
   });

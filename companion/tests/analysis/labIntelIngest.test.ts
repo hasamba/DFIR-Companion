@@ -142,6 +142,38 @@ describe("sandbox import is lab evidence", () => {
     );
   });
 
+  // The dedicated route passes its floor inside opts.sandbox; the unified route as opts.minSeverity.
+  // Neither may thin the lab rows, and a Critical floor must never leave a registry record with no
+  // rows behind it.
+  it("ignores a severity floor from either route — rows still written, all Info, registry intact", async () => {
+    await pipeline.importSandbox("c1", capeReport(), {
+      label: "cape.json",
+      idPrefix: "sb1",
+      importedAt: "2026-09-10T11:00:00Z",
+      sandbox: { minSeverity: "Critical" },
+      minSeverity: "Critical",
+    });
+    const rows = await superTimelineStore.all("c1");
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) expect(r.severity).toBe("Info");
+    expect((await stateStore.load("c1")).labIntel).toHaveLength(1);
+  });
+
+  // The store dedupes on text; the run marker must be where no clip can remove it.
+  it("puts the run marker before any report-derived text, so a long family name cannot clip it", async () => {
+    const long = JSON.parse(capeReport()) as { malfamily: string };
+    long.malfamily = "F".repeat(700);
+    await pipeline.importSandbox("c1", JSON.stringify(long), {
+      label: "cape.json",
+      idPrefix: "sb1",
+      importedAt: "2026-09-10T11:00:00Z",
+    });
+    const verdict = (await superTimelineStore.all("c1")).find((r) =>
+      r.description.startsWith("CAPE sandbox:"),
+    );
+    expect(verdict?.description.startsWith("CAPE sandbox: [run 42] ")).toBe(true);
+  });
+
   it("keeps the hash IOCs — the sample is still an indicator for the case", async () => {
     await importSandbox();
     const state = await stateStore.load("c1");

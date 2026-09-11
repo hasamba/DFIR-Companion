@@ -51,12 +51,16 @@ export function cleanTagText(raw: unknown, max: number): string {
   return s.length > max ? s.slice(0, max - 1) + "…" : s;
 }
 
+// `source` and `runId` are IDENTITY (half the registry key) and are only trimmed — sanitising them
+// here would fold "run<1" and "run>1" into one key and silently drop a detonation. They are cleaned
+// at render, where they are display text. Family and signatures are display text only, so they are
+// cleaned once here and the stored record is already safe and small.
 function cleanRecord(raw: LabIntelRecord, sha256: string): LabIntelRecord {
   return {
     ...raw,
     sha256,
-    source: cleanTagText(raw.source, 24),
-    runId: cleanTagText(raw.runId, 32),
+    source: String(raw.source ?? "").trim(),
+    runId: String(raw.runId ?? "").trim(),
     family: cleanTagText(raw.family, MAX_FAMILY),
     signatures: raw.signatures
       .map((x) => cleanTagText(x, MAX_SIGNATURE))

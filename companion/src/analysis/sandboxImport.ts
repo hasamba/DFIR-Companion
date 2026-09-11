@@ -141,6 +141,10 @@ function mapCape(
   // The report's own analysis id. Two detonations of one sample are two runs — the aggKey carries it
   // so they stay two rows, and the registry keys on it.
   const runId = str(getPath(report, "info.id"));
+  // FIRST in every description, before any report-derived text: the super-timeline dedupes on
+  // (time, text, host), so two runs must differ in text, and a marker after a 600-char clip of a
+  // long family name would not survive to make them differ.
+  const runTag = runId ? ` [run ${runId}]` : "";
   const sigNames: string[] = [];
 
   if (sha256) addHash(sink, sha256);
@@ -151,7 +155,7 @@ function mapCape(
   out.push({
     timestamp: time,
     description:
-      `${SANDBOX_PREFIX.capeVerdict} ${family || "analysis"} — ${name || sha256.slice(0, 16) || "sample"}${sha256 ? ` (sha256 ${sha256.slice(0, 12)}…)` : ""} score ${malscore}/10${runId ? ` [run ${runId}]` : ""}`.slice(
+      `${SANDBOX_PREFIX.capeVerdict}${runTag} ${family || "analysis"} — ${name || sha256.slice(0, 16) || "sample"}${sha256 ? ` (sha256 ${sha256.slice(0, 12)}…)` : ""} score ${malscore}/10`.slice(
         0,
         600,
       ),
@@ -181,7 +185,7 @@ function mapCape(
     out.push({
       timestamp: time,
       description:
-        `${SANDBOX_PREFIX.capeSignature} ${sname || sdesc}${sname && sdesc ? ` — ${oneLine(sdesc).slice(0, 200)}` : ""}${runId ? ` [run ${runId}]` : ""}`.slice(
+        `${SANDBOX_PREFIX.capeSignature}${runTag} ${sname || sdesc}${sname && sdesc ? ` — ${oneLine(sdesc).slice(0, 200)}` : ""}`.slice(
           0,
           600,
         ),
@@ -252,6 +256,7 @@ function mapFalcon(
   const family = str(getCI(report, "vx_family"));
   const time = normalizeTime(str(getCI(report, "analysis_start_time")));
   const runId = str(getCI(report, "job_id")) || str(getCI(report, "environment_id"));
+  const runTag = runId ? ` [run ${runId}]` : "";
   const sigNames: string[] = [];
 
   if (sha256) addHash(sink, sha256);
@@ -261,7 +266,7 @@ function mapFalcon(
   out.push({
     timestamp: time,
     description:
-      `${SANDBOX_PREFIX.falconVerdict} ${verdict || "analysis"}${family ? ` (${family})` : ""} — ${name || sha256.slice(0, 16) || "sample"} score ${score}/100${runId ? ` [run ${runId}]` : ""}`.slice(
+      `${SANDBOX_PREFIX.falconVerdict}${runTag} ${verdict || "analysis"}${family ? ` (${family})` : ""} — ${name || sha256.slice(0, 16) || "sample"} score ${score}/100`.slice(
         0,
         600,
       ),
@@ -283,7 +288,7 @@ function mapFalcon(
     out.push({
       timestamp: time,
       description:
-        `${SANDBOX_PREFIX.falconSignature} ${sname || sdesc}${sname && sdesc ? ` — ${oneLine(sdesc).slice(0, 200)}` : ""}${runId ? ` [run ${runId}]` : ""}`.slice(
+        `${SANDBOX_PREFIX.falconSignature}${runTag} ${sname || sdesc}${sname && sdesc ? ` — ${oneLine(sdesc).slice(0, 200)}` : ""}`.slice(
           0,
           600,
         ),

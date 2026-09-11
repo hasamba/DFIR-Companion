@@ -152,7 +152,10 @@ export async function importSandbox(
   // No severity floor here: the floor gates what reaches the FORENSIC timeline, and nothing from
   // this importer does. Flooring lab rows would only thin the super-timeline copy — and a floor that
   // removed every row would have discarded the sample's registry record with them.
-  const parsed = parseSandboxReport(text, opts.sandbox);
+  // Both routes can carry a floor — the unified one as opts.minSeverity, the dedicated one inside
+  // opts.sandbox — and neither may reach the parser: a Critical floor would remove every row while
+  // the registry record was still written, an annotation with nothing behind it.
+  const parsed = parseSandboxReport(text, { ...opts.sandbox, minSeverity: undefined });
   if (parsed.events.length === 0 && parsed.labIntel.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "Sandbox", parsed.total);
 
