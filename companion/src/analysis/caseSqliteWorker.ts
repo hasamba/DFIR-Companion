@@ -161,6 +161,7 @@ function createEntityWriter(db) {
           rowId, name, value, projection.kind, projection.host, projection.ordinal
         );
       }
+      return rowId;
     },
     update(rowId, projection, entity) {
       updateStatement.run(
@@ -475,6 +476,7 @@ function writeSuperEvents(db, events, max) {
       "SELECT coalesce(max(ordinal), -1) AS n FROM entities WHERE kind='superTimeline'"
     ).get().n) + 1;
     let added = 0;
+    let firstRowId = null; // batch rows have the highest row_ids: survivors are one range count
     const seenIds = new Set();
     const seenContent = new Set();
     for (const event of incoming) {
@@ -484,29 +486,26 @@ function writeSuperEvents(db, events, max) {
           seenContent.has(contentKey) || existingContent.has(contentKey)) continue;
       if (id) seenIds.add(id);
       seenContent.add(contentKey);
-      writer.insert(entityProjection("superTimeline", event, ordinal++, contentKey), event);
+      const rowId = writer.insert(entityProjection("superTimeline", event, ordinal++, contentKey), event);
+      if (firstRowId === null) firstRowId = rowId;
       added++;
     }
     const cap = Number.isFinite(max) ? Math.max(0, Math.floor(max)) : 100000;
     const count = Number(db.prepare("SELECT count(*) AS n FROM entities WHERE kind='superTimeline'").get().n);
+    let deleted = 0; // policy: superTimelineStore.ts "Retention"
     if (count > cap) {
-      const remove = count - cap;
-      db.prepare(
-        "DELETE FROM entities WHERE row_id IN (" +
-          "SELECT row_id FROM entities WHERE kind='superTimeline' " +
-          "ORDER BY coalesce(timestamp_ms, -9007199254740991), row_id LIMIT ?" +
-        ")"
-      ).run(remove);
-      db.prepare(
-        "DELETE FROM super_labels WHERE event_id NOT IN " +
-        "(SELECT entity_id FROM entities WHERE kind='superTimeline' AND entity_id IS NOT NULL)"
-      ).run();
+      deleted = db.prepare(
+        "DELETE FROM entities WHERE row_id IN (SELECT row_id FROM entities WHERE kind='superTimeline' ORDER BY row_id LIMIT ?)"
+      ).run(count - cap).changes;
+      db.prepare("DELETE FROM super_labels WHERE event_id NOT IN " +
+        "(SELECT entity_id FROM entities WHERE kind='superTimeline' AND entity_id IS NOT NULL)").run();
     }
     db.prepare(
       "INSERT INTO entity_counts(kind, count) VALUES('superTimeline', ?) " +
       "ON CONFLICT(kind) DO UPDATE SET count=excluded.count"
-    ).run(Math.min(count, cap));
-    return added;
+    ).run(count - deleted);
+    if (firstRowId === null) return 0; // retained, not inserted: a batch past the cap loses its own head
+    return Number(db.prepare("SELECT count(*) AS n FROM entities WHERE kind='superTimeline' AND row_id>=?").get(firstRowId).n);
   });
 }
 
@@ -558,14 +557,15 @@ function scanSuper(dbPath, query) {
       where.push("(e.timestamp_ms IS NULL OR e.timestamp_ms<=?)");
       params.push(Date.parse(query.to));
     }
+    // Undated rows sort LAST (superTimelineStore.ts "Ordering"); the cursor shares the sentinel.
     const afterMs = query && Number.isFinite(query.afterMs) ? query.afterMs : -9007199254740992;
     const afterRowId = query && Number.isFinite(query.afterRowId) ? query.afterRowId : 0;
-    where.push("(coalesce(e.timestamp_ms, -9007199254740991)>? OR " +
-      "(coalesce(e.timestamp_ms, -9007199254740991)=? AND e.row_id>?))");
+    where.push("(coalesce(e.timestamp_ms, 9007199254740991)>? OR " +
+      "(coalesce(e.timestamp_ms, 9007199254740991)=? AND e.row_id>?))");
     params.push(afterMs, afterMs, afterRowId);
     const limit = Math.max(1, Math.min(10000, Math.floor((query && query.limit) || 1000)));
     const rows = db.prepare(
-      "SELECT e.row_id, coalesce(e.timestamp_ms, -9007199254740991) AS sort_ms, e.payload, " +
+      "SELECT e.row_id, coalesce(e.timestamp_ms, 9007199254740991) AS sort_ms, e.payload, " +
       "CASE WHEN count(l.label)=0 THEN '[]' ELSE json_group_array(l.label) END AS labels " +
       "FROM entities e LEFT JOIN super_labels l ON l.event_id=e.entity_id " +
       "WHERE " + where.join(" AND ") + " GROUP BY e.row_id " +

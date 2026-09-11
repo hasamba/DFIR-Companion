@@ -21,6 +21,20 @@ import type { OperationalMetricsStore, QueryIndex } from "./operationalMetrics.j
 // The super-timeline remains logically separate from the forensic timeline: it has a distinct
 // entity kind, query API, labels, cap, and no path into synthesis. Sharing the case database is a
 // storage detail that makes backup/restore/integrity atomic across both records.
+//
+// ORDERING (#932 item 12). Every read is event time ascending, and a row with NO time sorts after
+// every dated row (the worker's sort sentinel is +MAX; the keyset cursor uses the same one). It used
+// to be the reverse: an installed-apps table, which has no clock, was page one of every query and
+// the first thing a time window returned. Undated rows stay inside a time window — they cannot be
+// proven out of range — but after the dated ones.
+//
+// RETENTION. At `max` rows the cap evicts in INSERTION order: the super-timeline keeps the most
+// recently imported `max` rows, whatever their event time. It used to evict by event time with an
+// undated row counting as the oldest, so an undated import was the first thing a case forgot; the
+// opposite rank — undated as newest — would let undated rows fill the cap and evict every later
+// dated row on arrival while still reporting it added. Insertion order privileges no class of row,
+// and the analyst can re-import what it dropped. `append` returns the rows RETAINED after eviction.
+// Analyst stars and tags do not protect a row under either policy — that gap is #958.
 export const DEFAULT_SUPER_MAX = 100_000;
 export const DEFAULT_SUPER_QUERY_LIMIT = 500;
 const SCAN_BATCH_SIZE = 1_000;

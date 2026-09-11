@@ -71,6 +71,86 @@ describe("SuperTimelineStore", () => {
     expect(filtered.total).toBe(0);
   });
 
+  // #932 item 12 — undated rows sort LAST, and the cap evicts in INSERTION order.
+  //
+  // Before: `coalesce(timestamp_ms, MIN)` put every undated row FIRST in every read (page one of
+  // any query was the rows with no clock) and evicted them first at the cap, so an undated import
+  // was the first thing the case forgot. Flipping the sentinel alone would let undated rows pin the
+  // cap (they would count as the newest rows forever and every later dated row would be evicted on
+  // arrival), so retention is insertion order: no class of row is "newest" by construction.
+  it("sorts undated rows after every dated row, in insertion order among themselves", async () => {
+    await store.append("c1", [
+      ev({ id: "u1", timestamp: "", description: "undated one" }),
+      ev({ id: "d2", timestamp: "2026-06-02T00:00:00Z" }),
+      ev({ id: "u2", timestamp: "", description: "undated two" }),
+      ev({ id: "d1", timestamp: "2026-06-01T00:00:00Z" }),
+    ]);
+    const r = await store.query("c1", {});
+    expect(r.events.map((e) => e.id)).toEqual(["d1", "d2", "u1", "u2"]);
+  });
+
+  it("keeps undated rows inside a time window, after the dated ones", async () => {
+    await store.append("c1", [
+      ev({ id: "u1", timestamp: "", description: "undated" }),
+      ev({ id: "d1", timestamp: "2026-06-01T00:00:00Z" }),
+      ev({ id: "d9", timestamp: "2026-09-01T00:00:00Z" }),
+    ]);
+    const r = await store.query("c1", { from: "2026-05-01T00:00:00Z", to: "2026-07-01T00:00:00Z" });
+    expect(r.events.map((e) => e.id)).toEqual(["d1", "u1"]);
+  });
+
+  it("pages across the dated→undated boundary without a repeat or a skip", async () => {
+    const dated = [1, 2, 3].map((n) => ev({ id: `d${n}`, timestamp: `2026-06-0${n}T00:00:00Z` }));
+    const undated = [1, 2, 3].map((n) => ev({ id: `u${n}`, timestamp: "", description: `undated ${n}` }));
+    await store.append("c1", [...undated, ...dated]);
+    const seen: string[] = [];
+    for await (const batch of store.eventBatches("c1", 2)) seen.push(...batch.map((e) => e.id));
+    expect(seen).toEqual(["d1", "d2", "d3", "u1", "u2", "u3"]);
+  });
+
+  it("evicts the oldest-IMPORTED row at the cap, not the oldest-dated one", async () => {
+    const small = new SuperTimelineStore(cases, 2);
+    // Inserted newest-dated first: date order says "new" should go, insertion order says "new" stays.
+    await small.append("c1", [
+      ev({ id: "new", timestamp: "2026-06-03T00:00:00Z" }),
+      ev({ id: "mid", timestamp: "2026-06-02T00:00:00Z" }),
+    ]);
+    await small.append("c1", [ev({ id: "old", timestamp: "2026-06-01T00:00:00Z" })]);
+    const r = await small.query("c1", {});
+    expect(new Set(r.events.map((e) => e.id))).toEqual(new Set(["mid", "old"]));
+  });
+
+  it("does not evict an undated row for being undated", async () => {
+    const small = new SuperTimelineStore(cases, 2);
+    await small.append("c1", [
+      ev({ id: "d1", timestamp: "2026-06-01T00:00:00Z" }),
+      ev({ id: "d2", timestamp: "2026-06-02T00:00:00Z" }),
+    ]);
+    const retained = await small.append("c1", [ev({ id: "u1", timestamp: "", description: "undated" })]);
+    expect(retained).toBe(1);
+    const r = await small.query("c1", {});
+    expect(r.events.map((e) => e.id)).toEqual(["d2", "u1"]); // d1 was imported first, so d1 went
+  });
+
+  it("reports the rows RETAINED after eviction, never the rows inserted", async () => {
+    const small = new SuperTimelineStore(cases, 4);
+    await small.append("c1", [
+      ev({ id: "a", timestamp: "2026-06-01T00:00:00Z" }),
+      ev({ id: "b", timestamp: "2026-06-02T00:00:00Z" }),
+    ]);
+    // Five more against a cap of four: the two old rows go, and so does the first of this batch.
+    const retained = await small.append(
+      "c1",
+      [1, 2, 3, 4, 5].map((n) => ev({ id: `n${n}`, timestamp: `2026-07-0${n}T00:00:00Z` })),
+    );
+    expect(retained).toBe(4);
+    const r = await small.query("c1", {});
+    expect(r.total).toBe(4);
+    expect(r.events.map((e) => e.id)).toEqual(["n2", "n3", "n4", "n5"]);
+    // A batch that is entirely a re-import inserts nothing and reports nothing.
+    expect(await small.append("c1", [ev({ id: "n5", timestamp: "2026-07-05T00:00:00Z" })])).toBe(0);
+  });
+
   it("keeps labels for events retained after a cap append", async () => {
     const small = new SuperTimelineStore(cases, 2);
     await small.append("c1", [ev({ id: "a", timestamp: "2026-06-02T00:00:00Z" })]);

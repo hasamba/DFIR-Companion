@@ -81,15 +81,14 @@ export function dedupeAppend(existing: ForensicEvent[], incoming: ForensicEvent[
   return [...existing, ...fresh];
 }
 
-// Bound the store: keep the `max` newest events by timestamp (undated events sort as oldest and are
-// dropped first when over the cap). No-op when under the cap.
+// Bound the store: keep the last `max` events APPENDED, whatever their event time — the rule the
+// SQLite store applies (#932 item 12). Keeping the newest by timestamp made an undated row the
+// first to go; ranking undated rows newest would let them pin the cap. No-op when under the cap.
+// `max <= 0` keeps nothing (`slice(-0)` would keep everything).
 export function capEvents(events: ForensicEvent[], max: number): ForensicEvent[] {
+  if (max <= 0) return [];
   if (events.length <= max) return events;
-  const ms = (e: ForensicEvent): number => {
-    const t = Date.parse(e.timestamp);
-    return Number.isNaN(t) ? -Infinity : t;
-  };
-  return [...events].sort((a, b) => ms(b) - ms(a)).slice(0, max);
+  return events.slice(-max);
 }
 
 // Filter + paginate + facet. Undated events are kept under a time filter (can't be proven out of range).
@@ -146,7 +145,12 @@ export function querySuper(
     return true;
   });
 
-  const sorted = [...matched].sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp));
+  // Undated rows sort last, as in the SQLite store; Date.parse("") is NaN and would sort them nowhere.
+  const ms = (e: ForensicEvent): number => {
+    const t = Date.parse(e.timestamp);
+    return Number.isNaN(t) ? Number.MAX_SAFE_INTEGER : t;
+  };
+  const sorted = [...matched].sort((a, b) => ms(a) - ms(b));
 
   const offset = Math.max(0, Math.floor(q.offset ?? 0));
   const limit = q.limit != null ? Math.max(0, Math.floor(q.limit)) : sorted.length;
