@@ -353,8 +353,10 @@ const PROFILES: Profile[] = [
       const fileName = firstStr(row, ["FileName"]);
       if (!fileName) return null;
       const path = (parent ? `${parent.replace(/[\\/]+$/, "")}\\` : "") + fileName;
+      // A record names a FILE, not a process — same rule as the journal mapper above (#913). The
+      // path is the indicator; running every filename on the volume through addProc made documents
+      // into process names that prevalence and the evidence graph then keyed on.
       addFile(sink, path);
-      const proc = addProc(sink, fileName);
       const size = firstStr(row, ["FileSize"]);
       // Timestomp check: MFTECmd emits $SI (Created0x10) and $FN (Created0x30) creation on the same
       // row. Pass the RAW strings (not ezTime, which drops the sub-second the truncation signal needs).
@@ -374,7 +376,6 @@ const PROFILES: Profile[] = [
         ...(ezTime(getCI(row, "LastModified0x10"))
           ? { fileModified: ezTime(getCI(row, "LastModified0x10")) }
           : {}),
-        ...(proc ? { processName: proc } : {}),
       };
     },
   },

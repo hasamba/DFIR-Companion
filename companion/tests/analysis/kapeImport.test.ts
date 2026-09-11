@@ -155,6 +155,46 @@ describe("parseKapeCsv — artifact detection & mapping", () => {
     expect(r.events[0].path).toBe(".\\Users\\bob\\Desktop\\evil.exe");
   });
 
+  // An MFT record names a FILE, not a process — the same rule the journal mapper follows. The MFT
+  // lists every file on the volume, so running its names through addProc turned `report.docx` into
+  // a process indicator AND a processName, which prevalence, chain signatures and the evidence graph
+  // key on (#913). The path stays a file indicator; nothing becomes a process.
+  it("MFT: never turns a filename into a process indicator", () => {
+    const text = csv(
+      [
+        "EntryNumber",
+        "InUse",
+        "ParentPath",
+        "FileName",
+        "Extension",
+        "FileSize",
+        "IsDirectory",
+        "Created0x10",
+        "LastModified0x10",
+      ],
+      [
+        [
+          "100",
+          "True",
+          ".\\Users\\bob\\Documents",
+          "report.docx",
+          ".docx",
+          "12345",
+          "False",
+          "2023-04-01 07:00:00",
+          "2023-04-01 07:00:00",
+        ],
+      ],
+    );
+    const r = parseKapeCsv(text);
+    expect(r.artifact).toBe("MFT");
+    expect(r.iocs.some((i) => i.type === "process")).toBe(false);
+    expect(r.events[0].processName).toBeUndefined();
+    expect(r.iocs.some((i) => i.type === "file" && i.value === ".\\Users\\bob\\Documents\\report.docx")).toBe(
+      true,
+    );
+  });
+
   it("MFT: flags timestomping when $SI (Created0x10) is backdated before $FN (Created0x30)", () => {
     const text = csv(
       [
