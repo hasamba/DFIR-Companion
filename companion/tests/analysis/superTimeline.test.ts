@@ -96,18 +96,21 @@ describe("dedupeAppend", () => {
 });
 
 describe("capEvents", () => {
-  it("keeps the newest N by timestamp when over the cap", () => {
+  // Insertion order, the same rule the SQLite store applies (#932 item 12): the last N appended
+  // stay, whatever their event time, and an undated row is never the first to go.
+  it("keeps the last N appended when over the cap, not the newest by timestamp", () => {
     const events = [
-      ev({ id: "old", timestamp: "2026-06-01T00:00:00Z" }),
-      ev({ id: "mid", timestamp: "2026-06-02T00:00:00Z" }),
       ev({ id: "new", timestamp: "2026-06-03T00:00:00Z" }),
+      ev({ id: "undated", timestamp: "" }),
+      ev({ id: "old", timestamp: "2026-06-01T00:00:00Z" }),
     ];
     const out = capEvents(events, 2);
-    expect(new Set(out.map((e) => e.id))).toEqual(new Set(["mid", "new"]));
+    expect(out.map((e) => e.id)).toEqual(["undated", "old"]);
   });
-  it("returns all when under the cap", () => {
+  it("returns all when under the cap, and nothing at a cap of zero", () => {
     const events = [ev({ id: "a", timestamp: "2026-06-01T00:00:00Z" })];
     expect(capEvents(events, 10)).toHaveLength(1);
+    expect(capEvents(events, 0)).toHaveLength(0);
   });
 });
 

@@ -11,12 +11,16 @@ export interface ParsedCsv {
 // "" escaped quotes. Tolerant of CRLF line endings and a trailing newline. Good
 // enough for tool exports (Velociraptor, Excel, pandas) without a parser dependency.
 //
+// The delimiter is a parameter (default `,`) so a tab-separated export — LEAPP's format — goes
+// through the same quote handling instead of a hand-rolled `split("\t")` that shifts every later
+// column on the first quoted tab or newline.
+//
 // Streaming generator: yields one record (string[]) at a time WITHOUT building the
 // whole file into a 2D array first. Critical for huge exports (e.g. a 400 MB Plaso
 // super-timeline) — a caller that maps+aggregates each record as it streams keeps
 // memory bounded by the distinct-key set, not the (millions of) row count. Fully-empty
 // records (a blank trailing line → [""]) are skipped so the first yield is the header.
-export function* parseCsvRecords(text: string): Generator<string[]> {
+export function* parseCsvRecords(text: string, delimiter = ","): Generator<string[]> {
   let field = "";
   let record: string[] = [];
   let inQuotes = false;
@@ -41,7 +45,7 @@ export function* parseCsvRecords(text: string): Generator<string[]> {
       started = true;
       continue;
     }
-    if (ch === ",") {
+    if (ch === delimiter) {
       record.push(field);
       field = "";
       started = true;
