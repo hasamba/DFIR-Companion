@@ -403,6 +403,7 @@
       ["tags", () => loadTags(caseId)],
       ["pins", () => loadPins(caseId)],
       ["findingWorkflow", () => loadFindingWorkflow(caseId)],
+      ["findingOutcome", () => loadFindingOutcome(caseId)],
       ["notebook", () => loadNotebook(caseId)],
       ["nbAiToggle", () => loadNbAiToggle(caseId)],
       ["hypotheses", () => loadHypotheses(caseId)],
@@ -575,6 +576,8 @@
       } else if (msg.type === "finding_workflow_changed") {
         loadFindingWorkflow(caseId);
         loadCockpit(caseId);
+      } else if (msg.type === "finding_outcome_changed") {
+        loadFindingOutcome(caseId);
       } else if (msg.type === "notebook_changed") {
         loadNotebook(caseId);
         loadNbAiToggle(caseId);

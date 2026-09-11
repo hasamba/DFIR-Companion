@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Attack outcome on two axes** — each finding can state whether the malicious action was observed (execution) and what a security control did (control: blocked, remediated, remediation failed, allowed, none seen), set by the analyst from the finding card and kept in a side file a re-synthesis cannot wipe; the report prints both axes, each attributed, and never collapses them into one verdict. A blocked attack no longer has to be dismissed or left open at High. (part of #930)
 - **Linux persistence artifact analysis** — a new import kind reads SSH authorized keys, cron, systemd units, shell profiles, SUID listings and PATH from one collection, and reports payloads in world-writable directories, root running files a user can rewrite, setuid interpreters, and one key opening two accounts. Nothing is graded for merely existing. (part of #908)
 - **macOS launchd persistence** — LaunchAgent/LaunchDaemon plists read by an XXE-safe parser, with signing status and quarantine records as contributors that never fire alone. (part of #908)
 - **Instance-metadata credential access** — SSRF-shaped requests and credential-path reads graded on process and request context, never on the endpoint alone. (part of #908)
