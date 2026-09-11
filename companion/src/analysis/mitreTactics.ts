@@ -50,6 +50,7 @@ const TECHNIQUE_TACTIC: Record<string, IrisTactic> = {
   T1200: "Initial Access",
   // Execution
   T1059: "Execution",
+  T1651: "Execution",
   T1204: "Execution",
   T1203: "Execution",
   T1106: "Execution",

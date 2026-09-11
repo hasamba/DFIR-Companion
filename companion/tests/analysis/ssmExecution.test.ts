@@ -305,6 +305,19 @@ describe("decodeSsmCall — identity and errors", () => {
     expect(d1.keySegment).toBe(d1again.keySegment);
     expect(d1.note).toContain("denied");
   });
+  it("a denied SendCommand says so in the summary even when a partial response echoes Pending", () => {
+    const d = decodeSsmCall(
+      SSM,
+      "SendCommand",
+      { documentName: "AWS-RunShellScript", instanceIds: ["i-1"] },
+      { command: { commandId: "cmd-1", status: "Pending" } },
+      "AccessDenied",
+      "evt-1",
+    )!;
+    expect(d.summary).toContain("attempted, denied");
+    expect(d.summary).not.toContain("Pending");
+    expect(d.summary).not.toContain("requested");
+  });
   it("is safe on malformed shapes", () => {
     for (const [req, res] of [
       [null, null],

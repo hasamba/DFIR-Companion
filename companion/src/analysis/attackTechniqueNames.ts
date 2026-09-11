@@ -22,6 +22,8 @@ const TECHNIQUE_NAMES: Readonly<Record<string, string>> = {
   "T1003.001": "OS Credential Dumping: LSASS Memory",
   T1055: "Process Injection",
   T1059: "Command and Scripting Interpreter",
+  T1651: "Cloud Administration Command",
+  T1526: "Cloud Service Discovery",
   "T1059.004": "Command and Scripting Interpreter: Unix Shell",
   T1071: "Application Layer Protocol",
   "T1071.001": "Application Layer Protocol: Web Protocols",

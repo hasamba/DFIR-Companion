@@ -244,7 +244,9 @@ export function decodeSsmCall(
   const req: Obj = isObj(request) ? request : {};
   const res: Obj = isObj(response) ? response : {};
   const denied = errorCode.trim() !== "";
-  const deniedNote = denied ? ` denied [${errorCode.trim().slice(0, 60)}] — the request did not run.` : "";
+  const deniedNote = denied
+    ? ` denied [${errorCode.trim().slice(0, 60)}] — the request did not execute.`
+    : "";
 
   if (DISCOVERY.has(lower)) {
     return {
@@ -268,7 +270,8 @@ export function decodeSsmCall(
     const version = text(command.documentVersion, 20);
     const document = version ? `${documentName}@${version}` : documentName;
     const id = raw(command.commandId) || eventId;
-    const status = text(command.status, 30) || (denied ? "denied" : "unknown");
+    // A denied request never echoes a response status ("Pending") as if the request stood.
+    const status = denied ? "attempted, denied" : text(command.status, 30) || "unknown";
     const { display: target, all } = renderTargets(req);
     const params = req.parameters;
     let severity: Severity = "High";
@@ -307,7 +310,7 @@ export function decodeSsmCall(
         note += ` ${reason}.`;
       }
     }
-    // A denied request did not run: an attempt, graded Medium whatever the document — the target
+    // A denied request did not execute: an attempt, graded Medium whatever the document — the target
     // and payload are still the evidence; the effect is not there to grade.
     if (denied) severity = "Medium";
     const targetsDigest = digest(

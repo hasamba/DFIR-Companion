@@ -288,8 +288,8 @@ import with the evidence they carry and with the phases kept apart:
 
 - **Discovery** — `ListDocuments`, `DescribeInstanceInformation`, `GetCommandInvocation` and the
   like are Info: listing what could be run is not running it.
-- **Request** — `SendCommand` is **High** and reads `→ i-0abc… [AWS-RunShellScript@1] cmd-… Pending:
-  requested`, with the commands themselves (`cmd: "…"`) when the document is a shell or PowerShell
+- **Request** — `SendCommand` is **High** and reads `[AWS-RunShellScript@1] cmd-… Pending: requested
+  → i-0abc…`, with the commands themselves (`cmd: "…"`) when the document is a shell or PowerShell
   script. The whole payload is graded by the same tables a shell history is (tradecraft, spilled
   secrets, recon), so a `curl … | sh` sent through SSM grades like one typed at a prompt. The
   status at the call is *Pending*: **the result is not in CloudTrail** — the row says "requested",
@@ -305,7 +305,7 @@ import with the evidence they carry and with the phases kept apart:
 - **Lifecycle** — `TerminateSession` is Info.
 
 Every request and session is its own row (the command or session id is part of the identity);
-a denied call is Medium and says the request did not run. Nothing says which user the command
+a denied call is Medium and says the request did not execute. Nothing says which user the command
 ran as — the SSM agent's configured user does, and guest evidence decides.
 
 Azure `runCommand/action` and the managed `runCommands/write` (on a VM or a scale-set instance)

@@ -249,7 +249,7 @@ describe("parseCloudTrail — SSM remote execution", () => {
     expect(parseCloudTrail(envelope(a, a)).events).toHaveLength(1);
   });
 
-  it("a denied SendCommand is Medium and says the request did not run; two denied attempts stay two rows", () => {
+  it("a denied SendCommand is Medium and says the request did not execute; two denied attempts stay two rows", () => {
     const d1 = ssm(
       "SendCommand",
       { documentName: "AWS-RunShellScript", instanceIds: ["i-1"] },
@@ -265,7 +265,7 @@ describe("parseCloudTrail — SSM remote execution", () => {
     const r = parseCloudTrail(envelope(d1, d2));
     expect(r.events).toHaveLength(2);
     expect(r.events[0].severity).toBe("Medium");
-    expect(r.events[0].description).toContain("did not run");
+    expect(r.events[0].description).toContain("did not execute");
   });
 
   it("a successful TerminateSession is Info at the importer, not the generic mutating-call Low", () => {
