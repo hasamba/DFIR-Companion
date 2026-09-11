@@ -77,9 +77,11 @@ export const SECRET_SPILL_RULES: SecretSpillRule[] = [
   // A database/broker URI carrying inline credentials — `scheme://user:password@host`. The password
   // group is required, so an ordinary credential-free DSN (`postgres://db-01:5432/reports`) does not
   // match. `:` and `@` are excluded from the password class so a bare `host:port` cannot masquerade.
+  // The password is the captured value, so masking is judged on it alone — a redacted USERNAME
+  // beside a real password is still a spill.
   {
     family: "db_uri",
-    re: /\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp|mssql|jdbc:[a-z]+|ftp|sftp):\/\/[^\s:/@]+:[^\s:/@]{4,}@/i,
+    re: /\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|amqp|mssql|jdbc:[a-z]+|ftp|sftp):\/\/[^\s:/@]+:([^\s:/@]{4,})@/i,
   },
 
   // ───────────── Generic assigned secrets ─────────────
@@ -98,18 +100,24 @@ export const SECRET_SPILL_RULES: SecretSpillRule[] = [
 // Every occurrence of the rule is inspected until one is real or the text is exhausted. A
 // masked-shaped occurrence — `AKIAXXXX…` (a vendor's own masked example), `password=****…` — is
 // evidence of correct handling and is skipped, but it must not hide a real token later on the same
-// line, and no occurrence cap is applied: a cap of N is exactly N decoys before the real key. Exhaustion is
-// bounded by the caller's text — every caller passes ONE line (a command, a syslog message, a
-// request line + Referer). The global regex is built per call from the rule's source: a shared
-// `/g` instance carries `lastIndex` between calls, and a leaked index skips the start of the next
-// line.
+// line, and no occurrence cap is applied: a cap of N is exactly N decoys before the real key.
+// Exhaustion is bounded by the caller's text — every caller passes ONE line (a command, a syslog
+// message, a request line + Referer). The global regex is built per call from the rule's source: a
+// shared `/g` instance carries `lastIndex` between calls, and a leaked index skips the start of the
+// next line.
 function hasRealOccurrence(rule: SecretSpillRule, text: string): boolean {
   const re = new RegExp(rule.re.source, rule.re.flags.includes("g") ? rule.re.flags : `${rule.re.flags}g`);
   for (let m = re.exec(text); m; m = re.exec(text)) {
-    // The generic rule captures its value and must clear the key-material gate (which includes the
-    // mask check); the vendor-anchored rules are specific enough that an unmasked match is enough.
-    if (rule.family === "password_generic" ? looksLikeKeyMaterial(m[1] ?? "") : !MASKED.test(m[0]))
+    // Masking is judged on the secret-bearing VALUE (the capture group where a rule has one), not
+    // the whole match: a redacted username beside a real password is still a spill. The generic
+    // rule's value must also clear the key-material gate.
+    const material = m[1] ?? m[0];
+    if (rule.family === "password_generic" ? looksLikeKeyMaterial(material) : !MASKED.test(material))
       return true;
+    // A rejected occurrence may have swallowed the NEXT value — the generic value class runs over
+    // `&`, `=` and `,`, so `TOKEN=xxxxxxxxxxxx&TOKEN=<real>` is one match whose masked head hides
+    // the real tail. Resume just past the rejected match's START, not its end.
+    re.lastIndex = m.index + 1;
   }
   return false;
 }

@@ -181,6 +181,20 @@ describe("secretSpillRules — a masked value never hides a real one on the same
     expect(secretSpillSignal(decoys)).toBeNull();
   });
 
+  it("finds the real value after a masked one even when the two sit in one query string", () => {
+    // The generic value class runs over `&` and `=`, so both assignments are one match whose
+    // masked head must not hide the real tail.
+    const r = secretSpillSignal(`GET /cb?API_TOKEN=xxxxxxxxxxxxxxxx&API_TOKEN=${GENERIC_REAL} HTTP/1.1`);
+    expect(r?.families).toEqual(["password_generic"]);
+  });
+
+  it("judges a database URI on its password, not its username", () => {
+    expect(
+      secretSpillSignal(`${PG}://REDACTED-user:ActualPass9!@db-01.example.com:5432/reports`)?.families,
+    ).toEqual(["db_uri"]);
+    expect(secretSpillSignal(`${PG}://reportsvc:********@db-01.example.com:5432/reports`)).toBeNull();
+  });
+
   it("does not carry scan position from one call into the next", () => {
     // A shared global regex would keep `lastIndex` past the first line's key and skip the start of
     // the second line, where its key sits.
