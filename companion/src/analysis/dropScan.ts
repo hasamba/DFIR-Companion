@@ -140,6 +140,18 @@ export function isOversize(size: number, maxBytes: number): boolean {
   return maxBytes > 0 && size > maxBytes;
 }
 
+export const DEFAULT_DROP_MAX_BYTES = 200 * 1024 * 1024;
+
+/** The drop folder's whole-file ceiling, DFIR_DROP_MAX_BYTES (default 200 MB). One reader, because
+ *  it now bounds two things: the text importers in the sweep, and the HTTP tool upload that buffers
+ *  the whole file (#921) — the spawn transport is handed a path and needs no cap. */
+export function dropMaxBytesFromEnv(env: NodeJS.ProcessEnv = process.env): number {
+  // Finite AND positive: isOversize() reads a non-positive cap as "no cap", so "-1" switched the
+  // cap OFF, and "Infinity" passes Number() and the settings validator and does the same.
+  const n = Number(env.DFIR_DROP_MAX_BYTES);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_DROP_MAX_BYTES;
+}
+
 export interface SettleResult {
   /** Files that were present last poll with identical size+mtime → safe to import now. */
   ready: DropFileStat[];

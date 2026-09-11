@@ -21,7 +21,8 @@
  * through Python's zipfile, which cannot open AES archives at all.
  */
 import { basename, join } from "node:path";
-import { readFile } from "node:fs/promises";
+import { openNoFollow } from "../storage/noFollowRead.js";
+import { FileTooLargeError, readHandleBounded } from "../storage/boundedRead.js";
 import { randomUUID } from "node:crypto";
 import type { Buffer } from "node:buffer";
 import type { ArtifactProvenance, CaseStore } from "../storage/caseStore.js";
@@ -37,7 +38,7 @@ import { runToolAgainstFile, resolveContainedPath } from "../integrations/tools/
 import type { ToolRunCache } from "../integrations/tools/toolProvenance.js";
 import { describeToolRun } from "../integrations/tools/toolProvenance.js";
 import { customToolToConfig, type CustomTool } from "../integrations/tools/customToolStore.js";
-import { RAW_TOOL_EXTS } from "../analysis/dropScan.js";
+import { RAW_TOOL_EXTS, dropMaxBytesFromEnv } from "../analysis/dropScan.js";
 import { extractZipEntries } from "../analysis/zipExtract.js";
 import {
   md5Buffer,
@@ -194,7 +195,31 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
     const cfg = liveToolConfigs().get(toolId);
     if (!cfg) throw new Error(`tool "${toolId}" is not configured`);
     if (cfg.transport === "http") {
-      await startSocratesAnalysis(caseId, { data: await readFile(fullPath), filename: name, dropRelpath });
+      // The sweep dispatches a raw tool input BEFORE its oversize check, because a spawned tool is
+      // handed a path and is size-independent. This transport is not: the upload below buffers the
+      // whole file, so a 4 GB PCAP was read in full and the cap never ran (#921). run-pending reaches
+      // this function from the banner too, so the check lives here rather than at either caller.
+      //
+      // Size and bytes come from ONE descriptor, opened O_NOFOLLOW like every other drop read: a
+      // stat of the path followed by a readFile of the path checks one inode and reads whatever
+      // occupies the path afterwards, so a swap in a synced folder defeated the cap.
+      const maxBytes = dropMaxBytesFromEnv();
+      const handle = await openNoFollow(fullPath);
+      let data: Buffer;
+      try {
+        data = await readHandleBounded(handle, maxBytes);
+      } catch (err) {
+        if (err instanceof FileTooLargeError) {
+          throw new Error(
+            `"${name}" is too large to upload to ${cfg.id} (${Math.ceil(err.size / 1048576)} MB > ` +
+              `${Math.round(maxBytes / 1048576)} MB) — raise DFIR_DROP_MAX_BYTES and restart, or split the capture`,
+          );
+        }
+        throw err;
+      } finally {
+        await handle.close();
+      }
+      await startSocratesAnalysis(caseId, { data, filename: name, dropRelpath });
       return true;
     }
     const r = await runToolAndIngest(caseId, toolId, fullPath, { cache });
