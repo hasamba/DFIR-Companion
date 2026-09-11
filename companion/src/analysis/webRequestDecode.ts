@@ -161,6 +161,9 @@ const ARG = String.raw`[^\s;|&"'<>` + BT + String.raw`]{1,200}`; // one argument
 const PATH_ARG =
   String.raw`(?:[\/\\~]|[A-Za-z]:\\|\.{1,2}[\/\\]|\.\w)[^\s;|&"'<>` + BT + String.raw`]{0,200}`; // a path-shaped argument
 const TAIL = String.raw`(?=$|[\s;|&"'` + BT + String.raw`)\x00-\x1f])`; // what may follow a direct command — never `=`
+// A shell runs a QUOTED command name too (`;'id'`, `cmd="cat" /etc/passwd`), so every command
+// token may be wrapped in one optional quote on each side.
+const Q = String.raw`['"]?`;
 
 // Interpreters and transfer tools fire with ANY argument; file readers (`cat`, `type`) only with a
 // path-shaped one — `{"expr":"x|type string"}` is a filter expression, `|type C:\boot.ini` is not.
@@ -216,19 +219,19 @@ const TEXT_RULES: AttackRule[] = [
 // Rules that run over the query string of a URL (or the whole User-Agent).
 const VALUE_RULES: AttackRule[] = [
   // cmd (a): a separator + an interpreter or transfer tool WITH an argument, or a reader with a path.
-  { family: "cmd", re: new RegExp(String.raw`${SEP}\s*${TOOLS}\s+${ARG}`, "i") },
-  { family: "cmd", re: new RegExp(String.raw`${SEP}\s*${READERS}\s+${PATH_ARG}`, "i") },
+  { family: "cmd", re: new RegExp(String.raw`${SEP}\s*${Q}${TOOLS}${Q}\s+${ARG}`, "i") },
+  { family: "cmd", re: new RegExp(String.raw`${SEP}\s*${Q}${READERS}${Q}\s+${PATH_ARG}`, "i") },
   // cmd (b), free tier: a recon command that is not a plausible field name, after any separator.
-  { family: "cmd", re: new RegExp(String.raw`${SEP}\s*${FREE_TIER}${TAIL}`, "i") },
+  { family: "cmd", re: new RegExp(String.raw`${SEP}\s*${Q}${FREE_TIER}${Q}${TAIL}`, "i") },
   // cmd (b), strict tier: bare after every separator but a bare pipe …
-  { family: "cmd", re: new RegExp(String.raw`${STRICT_SEP}\s*${STRICT_TIER}${TAIL}`, "i") },
+  { family: "cmd", re: new RegExp(String.raw`${STRICT_SEP}\s*${Q}${STRICT_TIER}${Q}${TAIL}`, "i") },
   // … and after a bare pipe only with a flag or an absolute path (`fields=name|id` is filter syntax).
-  { family: "cmd", re: new RegExp(String.raw`\|\s*${STRICT_TIER}\s+(?:-|\/)\S`, "i") },
+  { family: "cmd", re: new RegExp(String.raw`\|\s*${Q}${STRICT_TIER}${Q}\s+(?:-|\/)\S`, "i") },
 ];
 
 // cmd (c): the value of an exec-named parameter, with execution evidence (see EXEC_PARAM).
 const EXEC_VALUE = new RegExp(
-  String.raw`^\s*(?:${TOOLS}\s+${ARG}|${READERS}\s+${PATH_ARG}|${FREE_TIER}${TAIL}|${STRICT_TIER}\s+(?:-|\/)\S|(?:${TOOLS}|${READERS}|${STRICT_TIER})\s*${SEP})`,
+  String.raw`^\s*(?:${Q}${TOOLS}${Q}\s+${ARG}|${Q}${READERS}${Q}\s+${PATH_ARG}|${Q}${FREE_TIER}${Q}${TAIL}|${Q}${STRICT_TIER}${Q}\s+(?:-|\/)\S|${Q}(?:${TOOLS}|${READERS}|${STRICT_TIER})${Q}\s*${SEP})`,
   "i",
 );
 

