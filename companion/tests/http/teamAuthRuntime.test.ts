@@ -97,7 +97,7 @@ describe("team-auth runtime", () => {
       DFIR_AUTH_OIDC_ISSUER: "https://id.example.com",
       DFIR_AUTH_OIDC_CLIENT_ID: "companion",
       DFIR_AUTH_DATA_DIR: join(root, "auth"),
-      DFIR_AUTH_BOOTSTRAP_TOKEN: "bootstrap-token",
+      DFIR_AUTH_BOOTSTRAP_TOKEN: "bootstrap-token-with-enough-entropy-1",
     };
     expect(() => createTeamAuthRuntime(join(root, "cases"), "0.0.0.0", 4773, base)).toThrow(
       /PUBLIC_URL|REDIRECT_URI/,

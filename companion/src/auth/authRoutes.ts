@@ -1,6 +1,12 @@
 import { randomBytes } from "node:crypto";
 import type { Express, Request, Response } from "express";
-import { getLoginLimiter, getLoginIpLimiter, getOidcStartLimiter } from "../http/rateLimiter.js";
+import {
+  BOOTSTRAP_LIMITER_KEY,
+  getBootstrapLimiter,
+  getLoginLimiter,
+  getLoginIpLimiter,
+  getOidcStartLimiter,
+} from "../http/rateLimiter.js";
 import { warnLine } from "../logging/serverLogger.js";
 import { withNonce } from "../http/securityHeaders.js";
 import { readPublicAsset } from "../serverAssets.js";
@@ -264,11 +270,36 @@ export function registerTeamAuthRoutes(app: Express, auth: TeamAuth, cases: Case
       return res.status(409).json({ error: "authentication has already been bootstrapped" });
     }
     const body = bodyObject(req);
-    const suppliedToken = bodyString(body, "bootstrapToken");
-    const bootstrapAllowed = auth.bootstrapToken
-      ? auth.bootstrapTokenMatches(suppliedToken)
-      : auth.isLoopbackRequest(req);
-    if (!bootstrapAllowed) return res.status(403).json({ error: "valid bootstrap token required" });
+    if (auth.bootstrapToken) {
+      // The comparison is constant-time (safeStringEqual), but nothing bounded how often it ran
+      // (#920): with a token configured and the endpoint reachable, a caller could guess as fast as
+      // the server answered until the first identity existed — and the prize is the deployment's
+      // first administrator, whose session cookie comes back in the same response. One token, so
+      // one budget for every client combined; the lockout check and the comparison are ONE
+      // serialized step, exactly as the login route does per account (#872).
+      const outcome = await getBootstrapLimiter().attempt(BOOTSTRAP_LIMITER_KEY, async () =>
+        auth.bootstrapTokenMatches(bodyString(body, "bootstrapToken")),
+      );
+      if (outcome.kind === "locked") {
+        res.setHeader("Retry-After", String(Math.ceil(outcome.retryAfterMs / 1_000)));
+        return res.status(429).json({ error: "too many attempts, try again later" });
+      }
+      if (outcome.kind === "failed") {
+        // The address, never the guess: the audit table is permanent, and a near-miss is a hint.
+        auth.store.addAudit(
+          undefined,
+          "bootstrap-token-rejected",
+          undefined,
+          undefined,
+          `ip=${req.ip ?? "unknown"}`,
+        );
+        return res.status(403).json({ error: "valid bootstrap token required" });
+      }
+    } else if (!auth.isLoopbackRequest(req)) {
+      // Token-less setup is loopback-only. Not a guess, so not counted: a LAN neighbour hammering
+      // this must not lock the operator out of their own console.
+      return res.status(403).json({ error: "valid bootstrap token required" });
+    }
     try {
       const identity = await auth.store.bootstrapLocalAdministrator({
         username: bodyString(body, "username"),
