@@ -284,10 +284,38 @@
     );
   }
 
+  // fpMarkers is ONE page-level global, and four views derive their hidden sets from it: the
+  // Findings panel (fpFindingTitleSet), the MITRE panel, the forensic timeline (fpEventIdSet) and
+  // the IOC panel (fpIocValueSet). It had no case ownership (#937): this function took a case id
+  // and threw it away, so a slow answer for case A that landed after case B loaded installed A's
+  // markers over B and repainted B through them. Findings match by two-way title substring, so
+  // that needs no exact collision. Two guards, the same shape as the asset graph's load token:
+  //
+  //   1. A generation per load. Only the latest load may write; a superseded response — success
+  //      or failure — is ignored entirely.
+  //   2. A case switch clears the global SYNCHRONOUSLY, here, before the request is even sent.
+  //      The panel loaders run in the same tick as the per-case resets (runPanelLoaders drives
+  //      every loader body synchronously; only the fetch lane is queued), so between this call
+  //      and B's response the page renders B unfiltered rather than through A. A refresh for the
+  //      SAME case (the false_positive_changed websocket path) does not clear: the panel stays
+  //      filled until the newer answer replaces it.
+  //
+  // A failed load for a new case therefore leaves it unfiltered — the safe direction: nothing
+  // hidden, rather than hidden by another case's judgement.
+  let fpLoadSeq = 0;
+  let fpLoadedCaseId = null;
   function loadFalsePositives(caseId) {
+    const seq = ++fpLoadSeq;
+    if (caseId !== fpLoadedCaseId) {
+      fpLoadedCaseId = caseId;
+      fpMarkers = [];
+    }
     fetch(`/cases/${caseId}/false-positive`)
       .then((r) => r.json())
-      .then(renderFalsePositives)
+      .then((markers) => {
+        if (seq !== fpLoadSeq) return; // superseded by a newer load — ignore entirely
+        renderFalsePositives(markers);
+      })
       .catch(() => {});
   }
 
