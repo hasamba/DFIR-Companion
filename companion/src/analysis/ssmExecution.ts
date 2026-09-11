@@ -227,10 +227,11 @@ export function renderSsmDescription(
   // The caller's identity words (#931 item 5) take only what the SSM evidence AND a bounded note
   // leave — up to 150 characters, down to nothing — so the document, id, status, target, payload,
   // error detail and the execution caveat ("the result is not in CloudTrail") are never displaced.
-  const NOTE_RESERVE = 120;
+  // The whole note is reserved: every sentence of it is an evidence limitation ("the session's
+  // commands are not in CloudTrail"), and the identity is what yields, never the caveat.
   const evidence = `${head}${summary}${payload}${tail}`;
   const identityRaw = (parts.identity ?? "").trim();
-  const budget = Math.min(150, 600 - evidence.length - Math.min(note.length, NOTE_RESERVE) - 1);
+  const budget = Math.min(150, 600 - evidence.length - note.length - 1);
   const identity =
     identityRaw && budget >= 12
       ? ` ${identityRaw.length > budget ? `${identityRaw.slice(0, budget - 1)}…` : identityRaw}`

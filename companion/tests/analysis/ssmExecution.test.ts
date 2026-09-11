@@ -319,6 +319,32 @@ describe("renderSsmDescription — the identity slot yields to the evidence", ()
   });
 });
 
+describe("renderSsmDescription — a ResumeSession keeps its caveat under a long identity", () => {
+  for (const errorCode of ["", "AccessDenied"]) {
+    it(`the session-commands caveat survives with and without the identity (${errorCode || "success"})`, () => {
+      const d = decodeSsmCall(SSM, "ResumeSession", { sessionId: "s".repeat(96) }, {}, errorCode, "evt")!;
+      const parts = {
+        name: "ResumeSession",
+        source: "ssm",
+        who: "w".repeat(60),
+        from: "2001:db8:0000:0000:0000:0000:0000:0001",
+        region: "us-east-1",
+        client: "c".repeat(40),
+        root: false,
+        errorCode,
+      };
+      const withIdentity = renderSsmDescription(d, {
+        ...parts,
+        identity: `AssumedRole key ASIAEXAMPLEKEY000001 (temporary) ${"z".repeat(200)}`,
+      });
+      const without = renderSsmDescription(d, parts);
+      expect(without).toContain("commands are not in CloudTrail");
+      expect(withIdentity).toContain("commands are not in CloudTrail");
+      expect(withIdentity.length).toBeLessThanOrEqual(600);
+    });
+  }
+});
+
 describe("decodeSsmCall — identity and errors", () => {
   it("keys every request and session on its own id; a denied call keys on the CloudTrail eventID", () => {
     const a = send("AWS-RunShellScript", {}, { commandId: "cmd-A" })!;
