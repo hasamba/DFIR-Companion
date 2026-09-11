@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { extractJsonText, repairTruncatedJson, parseJsonLoose } from "../../src/analysis/extractJson.js";
+import {
+  extractJsonText,
+  repairTruncatedJson,
+  parseJsonLoose,
+  closeTruncatedJsonArray,
+} from "../../src/analysis/extractJson.js";
 
 describe("extractJsonText", () => {
   it("returns plain JSON unchanged", () => {
@@ -177,6 +182,79 @@ describe("repairTruncatedJson / parseJsonLoose", () => {
       const repaired = repairTruncatedJson(truncated);
       expect(() => JSON.parse(repaired), `repair of ${truncated} → ${repaired}`).not.toThrow();
       expect(JSON.parse(repaired)).toEqual(expected);
+    }
+  });
+});
+
+// #953. POST /cases/:id/import-file classifies from a bounded 256 KB head, and a JSON array cut
+// mid-way is not a value, so every array-rooted export over that size read as "unknown" from the one
+// route that exists for large files. The head is completed BEFORE the detector sees it — in the
+// route's own sniff, never inside the detector, which the whole-file paths share (a malformed whole
+// file must still be refused, not classified from its one good row and then imported as nothing).
+//
+// Precision is the whole point, hence a scan rather than repairTruncatedJson's lastIndexOf("}"):
+//   • string-aware — a `}` inside a string value (a command line, an embedded script) is not a
+//     record boundary;
+//   • depth-aware — only a `}` that returns to array depth ends a top-level element, so a cut inside
+//     the FIRST record yields nothing rather than a partial object the generic signatures would
+//     claim as some other kind.
+describe("closeTruncatedJsonArray", () => {
+  const rows = (n: number, extra: Record<string, unknown> = {}) =>
+    Array.from({ length: n }, (_, i) => ({ id: i, nested: { a: 1 }, ...extra }));
+
+  it("leaves text that already parses alone", () => {
+    expect(closeTruncatedJsonArray(JSON.stringify(rows(3)))).toBeNull();
+    expect(closeTruncatedJsonArray("[]")).toBeNull();
+  });
+
+  it("returns null for anything not array-rooted — a partial single object is never a safe sample", () => {
+    const big = JSON.stringify({ info: { id: 1 }, signatures: rows(50) });
+    expect(closeTruncatedJsonArray(big.slice(0, big.length - 40))).toBeNull();
+    expect(closeTruncatedJsonArray("not json")).toBeNull();
+  });
+
+  it("keeps every complete top-level element and drops the cut one", () => {
+    const whole = JSON.stringify(rows(5));
+    // Cut inside the 4th element: after its nested object closed, before its own closing brace.
+    const cut = whole.indexOf('"id":3') + '"id":3,"nested":{"a":1}'.length;
+    const out = closeTruncatedJsonArray(whole.slice(0, cut));
+    expect(out).not.toBeNull();
+    expect(JSON.parse(out!)).toEqual(rows(3));
+  });
+
+  it("is string-aware: a `}` inside a string value is not a record boundary (review P1)", () => {
+    const whole = JSON.stringify(rows(4, { cmd: "powershell -c { Get-Process }" }));
+    // Cut just after the `}` that lives INSIDE the 3rd row's cmd string.
+    const third = whole.indexOf('"id":2');
+    const cut = whole.indexOf("Get-Process }", third) + "Get-Process }".length;
+    const out = closeTruncatedJsonArray(whole.slice(0, cut));
+    expect(out).not.toBeNull();
+    // lastIndexOf("}") would have cut inside the string and produced nothing parseable; the scan
+    // keeps exactly the two complete rows before it.
+    expect(JSON.parse(out!)).toEqual(rows(2, { cmd: "powershell -c { Get-Process }" }));
+  });
+
+  it("is depth-aware: a cut inside the FIRST record yields nothing, not a partial object (review P2)", () => {
+    const whole = JSON.stringify(rows(3));
+    // Inside the first element, after its nested object closed: lastIndexOf("}") finds that nested
+    // brace and a naive repair would manufacture {"id":0,"nested":{"a":1}} as a "complete" record.
+    const cut = whole.indexOf('"nested":{"a":1}') + '"nested":{"a":1}'.length;
+    expect(closeTruncatedJsonArray(whole.slice(0, cut))).toBeNull();
+  });
+
+  it("handles a cut inside a nested object, inside an escape, and between elements", () => {
+    const extra = { s: 'a "quoted" \\ value' };
+    const whole = JSON.stringify(rows(3, extra));
+    const second = whole.indexOf('"id":1');
+    const cases: Array<[string, number, number]> = [
+      ["inside the 2nd row's nested object", second + 20, 1],
+      ["inside the 2nd row's escaped backslash", whole.indexOf("\\\\", second) + 1, 1],
+      ["between the 2nd and 3rd rows", whole.indexOf("},{", second) + 2, 2],
+    ];
+    for (const [label, cut, complete] of cases) {
+      const out = closeTruncatedJsonArray(whole.slice(0, cut));
+      expect(out, label).not.toBeNull();
+      expect(JSON.parse(out!), label).toEqual(rows(complete, extra));
     }
   });
 });
