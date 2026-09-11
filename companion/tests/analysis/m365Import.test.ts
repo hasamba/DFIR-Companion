@@ -816,6 +816,35 @@ describe("parseM365Audit — Exchange mailbox records (#931 item 2)", () => {
       name: OWNER,
     });
   });
+  it("an Outlook-created forwarding rule's envelope targets the recipient", () => {
+    const r = parseM365Audit(
+      JSON.stringify([
+        exchange(
+          {
+            RecordType: 2,
+            Operation: "UpdateInboxRules",
+            ResultStatus: "Succeeded",
+            LogonType: 0,
+            UserId: OWNER,
+            MailboxOwnerUPN: OWNER,
+            OperationProperties: [
+              { Name: "RuleOperation", Value: "AddMailboxRule" },
+              { Name: "RuleName", Value: "." },
+              {
+                Name: "RuleActions",
+                Value: JSON.stringify([
+                  { ActionType: "ForwardToRecipients", Recipients: ["drop@attacker.invalid"] },
+                ]),
+              },
+            ],
+          },
+          2,
+        ),
+      ]),
+    );
+    expect(r.events[0].canonical?.target).toMatchObject({ kind: "other", name: "drop@attacker.invalid" });
+    expect(r.events[0].severity).toBe("High");
+  });
   it("a send's envelope targets the recipients and names the sent-as identity as the subject", () => {
     const r = parseM365Audit(
       JSON.stringify([

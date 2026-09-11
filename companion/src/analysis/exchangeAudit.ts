@@ -332,6 +332,7 @@ function ruleMailboxAudit(c: Common): ExchangeChange | null {
     deltas: [],
   };
   let unparsed = "";
+  const forwardTargets: string[] = [];
   if (rawActions) {
     let parsed: unknown = null;
     try {
@@ -348,6 +349,7 @@ function ruleMailboxAudit(c: Common): ExchangeChange | null {
         .filter(Boolean);
       r.any = true;
       if (/forward|redirect/.test(type) && addrs.length) {
+        forwardTargets.push(...addrs);
         r.actions.push(
           `${/redirect/.test(type) ? "redirects to" : /attachment/.test(type) ? "forwards as attachment to" : "forwards to"} ${addrs.map((x) => withClass(x, c.ownerDomain)).join(", ")}`,
         );
@@ -393,6 +395,7 @@ function ruleMailboxAudit(c: Common): ExchangeChange | null {
     qualifiers: [...(verb === "changes" ? [SET_RULE_NOTE] : []), ...(pp.truncated ? [TRUNCATED_NOTE] : [])],
     ...grade,
     scope: `rule:${op}:${name}:${pp.digest}`,
+    target: forwardTargets.join(", "),
     incompleteScope: pp.truncated,
   });
 }
