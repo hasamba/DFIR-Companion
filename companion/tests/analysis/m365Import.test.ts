@@ -816,6 +816,25 @@ describe("parseM365Audit — Exchange mailbox records (#931 item 2)", () => {
       name: OWNER,
     });
   });
+  it("a cmdlet rule's envelope targets every forwarding and redirect destination", () => {
+    const r = parseM365Audit(
+      JSON.stringify([
+        exchange({
+          RecordType: 1,
+          Operation: "New-InboxRule",
+          ObjectId: `${OWNER}\\r`,
+          Parameters: [
+            { Name: "Name", Value: "r" },
+            { Name: "ForwardTo", Value: "benign@victim.com;drop@attacker.invalid" },
+            { Name: "RedirectTo", Value: "second@attacker.invalid" },
+          ],
+        }),
+      ]),
+    );
+    expect(r.events[0].canonical?.target?.name).toBe(
+      "benign@victim.com, drop@attacker.invalid, second@attacker.invalid",
+    );
+  });
   it("an Outlook-created forwarding rule's envelope targets the recipient", () => {
     const r = parseM365Audit(
       JSON.stringify([

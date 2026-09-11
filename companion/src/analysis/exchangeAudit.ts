@@ -294,7 +294,8 @@ function ruleCmdlet(c: Common, pp: Pairs): ExchangeChange | null {
     : undecoded || (!isSet && !c.attempted && !pp.truncated ? "on every message" : "");
   const words = [clauses.join(", "), conds].filter(Boolean).join(" ");
   const grade = isSet && !r.any ? { severity: "Medium" as Severity, mitre: [] as string[] } : ruleGrade(r);
-  const target = [...ACTION_ADDRESS].flatMap(([k]) => values(p.get(k) ?? ""))[0] ?? "";
+  // Every forwarding and redirect destination the rule names, not the first one.
+  const target = [...ACTION_ADDRESS].flatMap(([k]) => values(p.get(k) ?? "")).join(", ");
   return finish(c, {
     kind: "rule",
     verb: `${isSet ? "changes" : "creates"} inbox rule ${label}`,
