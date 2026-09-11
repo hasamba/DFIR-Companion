@@ -762,6 +762,13 @@ describe("parseCloudTrail — identities and credentials (#931 item 5)", () => {
     // Both accounts are typed: the caller's in cloud.accountId, the resource owner's in
     // cloud.recipientAccountId — a Hunt on either finds the action.
     expect(e.canonical?.cloud).toMatchObject({ accountId: ACCT, recipientAccountId: OTHER });
+    // …and the value's provenance points at the owner's record, the one that carries it.
+    const ownerPointer = e.canonical?.evidence.rawRecords.find((p) => p.recordId === "e-owner")!.locator;
+    expect(e.canonical?.fieldProvenance["cloud.recipientAccountId"]).toMatchObject({
+      origin: "raw",
+      rawFields: ["recipientAccountId"],
+      recordLocators: [ownerPointer],
+    });
   });
   it("two distinct cross-account actions that share every other dimension stay two rows with all four pointers", () => {
     const pair = (shared: string, suffix: string) => [

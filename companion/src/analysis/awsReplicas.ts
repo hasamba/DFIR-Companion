@@ -8,6 +8,7 @@
 // files stay two rows (their ids are import-prefixed); the manual says so.
 
 import type { MappedEvent } from "./siemImport.js";
+import type { CanonicalFieldProvenance } from "./canonicalEvent.js";
 
 export interface ReplicaCandidate {
   event: MappedEvent;
@@ -49,8 +50,25 @@ export function mergeReplicas(candidates: readonly ReplicaCandidate[]): MappedEv
     // resource owner's: the merged row's `cloud.recipientAccountId` is the one that is NOT the
     // caller's, so a Hunt on either account id finds the action.
     const caller = kept.event.canonical?.cloud?.accountId ?? "";
-    const recipients = [...new Set(group.map((c) => c.recipientAccountId).filter(Boolean))];
-    const owner = recipients.find((a) => a !== caller) ?? recipients[0] ?? "";
+    const ownerCandidate =
+      group.find((c) => c.recipientAccountId && c.recipientAccountId !== caller) ??
+      group.find((c) => c.recipientAccountId);
+    const owner = ownerCandidate?.recipientAccountId ?? "";
+    // The value's provenance must point at the REPLICA that carries it: the owner's record, not
+    // the kept caller record whose own recipientAccountId is a different account.
+    const ownerLocator = ownerCandidate?.event.canonical?.evidence.rawRecords[0]?.locator ?? "";
+    const provenance = kept.event.canonical?.fieldProvenance ?? {};
+    const recipientProvenance: Record<string, CanonicalFieldProvenance> =
+      owner && ownerLocator
+        ? {
+            "cloud.recipientAccountId": {
+              origin: "raw",
+              confidence: "high",
+              rawFields: ["recipientAccountId"],
+              recordLocators: [ownerLocator],
+            },
+          }
+        : {};
     return {
       ...kept.event,
       description,
@@ -59,6 +77,7 @@ export function mergeReplicas(candidates: readonly ReplicaCandidate[]): MappedEv
             canonical: {
               ...kept.event.canonical,
               cloud: { ...kept.event.canonical.cloud, ...(owner ? { recipientAccountId: owner } : {}) },
+              fieldProvenance: { ...provenance, ...recipientProvenance },
               evidence: {
                 ...kept.event.canonical.evidence,
                 rawRecords: [...kept.event.canonical.evidence.rawRecords, ...pointers],
