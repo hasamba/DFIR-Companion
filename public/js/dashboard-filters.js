@@ -209,11 +209,13 @@ function findingPassesOriginLens(f, hideAuto, hideGap) {
 // Nothing is persisted. This is a VIEW over state, so dismissing an event takes effect on the next
 // render and un-marking it brings the technique straight back, with no merge and nothing to heal.
 //
-// One knowing divergence from the server, and it is in the NAME only: a row derived from an event
-// id shows the bare id, because the id -> name table is server-side reference data
-// (analysis/attackTechniqueNames.ts) that the dashboard is never sent. Ids and finding links match
-// the server exactly; the parity suite pins that and documents the carve-out.
-function deriveMitreRows(findings, forensicTimeline, table) {
+// `names` is the id -> name map the /cases/:id/state payload carries (state.techniqueNames), built
+// by techniqueNamesFor() from the SAME table analysis/attackTechniqueNames.ts names the server's
+// rows with. It is passed in rather than kept here because a copy of that table in this file
+// is exactly the second source of truth the parity suite exists to prevent. An id the map omits
+// falls back to the bare id, which is what techniqueName() does with an id the table does not know
+// — so the fallback is the same answer as the server's, not a different one.
+function deriveMitreRows(findings, forensicTimeline, table, names) {
   const ft = forensicTimeline || [];
   const surviving = new Set((findings || []).map((f) => f.id));
   const carried = new Set(ft.flatMap((e) => e.mitreTechniques || []));
@@ -232,7 +234,8 @@ function deriveMitreRows(findings, forensicTimeline, table) {
     for (const id of e.mitreTechniques || [])
       if (id && !seen.has(id)) {
         seen.add(id);
-        rows.push({ id, name: id, findingIds: [] });
+        const known = names && names[id];
+        rows.push({ id, name: typeof known === "string" ? known : id, findingIds: [] });
       }
   return rows;
 }

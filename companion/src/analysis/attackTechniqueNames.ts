@@ -76,9 +76,51 @@ const TECHNIQUE_NAMES: Readonly<Record<string, string>> = {
   "T1555.003": "Credentials from Password Stores: Credentials from Web Browsers",
 };
 
+// One guarded read of the table, shared by both exports below.
+//
+// The own-property check is not defensive dressing: a bare `TECHNIQUE_NAMES[id]` reaches the object
+// literal's prototype, so an id of "constructor" or "toString" answers with a function rather than
+// undefined. That mattered little while the table only ever produced a display string on the
+// server; it matters now that techniqueNamesFor() below ships the SAME lookup to the browser, where
+// the client falls back to the bare id for anything the map omits. Both paths have to agree on what
+// the table knows, so both ask the same question.
+function storedName(id: string): string | undefined {
+  return Object.prototype.hasOwnProperty.call(TECHNIQUE_NAMES, id) ? TECHNIQUE_NAMES[id] : undefined;
+}
+
 // Best-effort ATT&CK technique name for a given id (falls back to the bare id).
 export function techniqueName(id: string): string {
-  return TECHNIQUE_NAMES[id] ?? id;
+  return storedName(id) ?? id;
+}
+
+// The id -> name pairs one case's MITRE payload needs, for a consumer that has no table of its own.
+//
+// THE DASHBOARD IS THAT CONSUMER. Its deriveMitreRows() mirrors unionEventTechniques() below
+// and appends a row for every technique an event carries that the stored table lacks, so it needs a
+// name for exactly the ids these two inputs mention. Before this it had none and showed the bare
+// id, so the MITRE panel read "T1490" where the report said "Inhibit System Recovery".
+//
+// SENT WITH THE STATE, NOT SHIPPED AS A SECOND COPY. A generated table in public/js/ would be a
+// duplicate of this one that only a freshness gate keeps honest, and a cached copy of it can
+// outlive the server that generated it. Resolved per request, the names cannot disagree with the
+// build that served them, and this file stays the only place the mapping exists.
+//
+// Ids with no stored name are OMITTED rather than mapped to themselves: techniqueName() falls back
+// to the bare id and so does the client, so an entry like { T9999: "T9999" } would carry no
+// information. Keeping them out is what makes the client's fallback the same answer, not a
+// different one.
+export function techniqueNamesFor(
+  table: ReadonlyArray<{ id: string }>,
+  events: ReadonlyArray<{ mitreTechniques: string[] }>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  const add = (id: string): void => {
+    const name = storedName(id);
+    if (name) out[id] = name;
+  };
+  for (const t of table) add(t.id);
+  for (const e of events) for (const id of e.mitreTechniques) add(id);
+  return out;
 }
 
 // Union the ATT&CK techniques carried by (in-scope) forensic events into the synthesized MITRE

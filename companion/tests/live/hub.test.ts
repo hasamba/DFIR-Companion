@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { LiveHub, type SocketLike } from "../../src/live/hub.js";
-import { emptyState } from "../../src/analysis/stateTypes.js";
+import { techniqueNamesFor } from "../../src/analysis/attackTechniqueNames.js";
+import { emptyState, type InvestigationState } from "../../src/analysis/stateTypes.js";
 
 function fakeSocket(): SocketLike & { sent: string[] } {
   const sent: string[] = [];
@@ -19,6 +20,49 @@ describe("LiveHub", () => {
     expect(a.sent).toHaveLength(1);
     expect(b.sent).toHaveLength(0);
     expect(JSON.parse(a.sent[0]).type).toBe("state");
+  });
+
+  // THE LIVE HALF OF THE MITRE NAME FIX. GET /cases/:id/state attaches an id -> name map so the
+  // dashboard can name a technique row it appends from an event; the dashboard reads that map off
+  // whichever state it was last handed, and a live push replaces the fetched state wholesale. So
+  // the push has to carry the same map, built by the same function, or the first import after
+  // page load sends "Inhibit System Recovery" back to "T1490" until a reload.
+  it("carries the ATT&CK name map the state route sends, built by the same function", () => {
+    const hub = new LiveHub();
+    const s = fakeSocket();
+    hub.subscribe("c1", s);
+    const state = emptyState("c1");
+    state.forensicTimeline = [
+      {
+        id: "e1",
+        timestamp: "2026-05-18T02:10:00Z",
+        description: "vssadmin delete shadows",
+        severity: "High",
+        mitreTechniques: ["T1490", "T9999"],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      },
+    ];
+    hub.broadcast(state);
+    const msg = JSON.parse(s.sent[0]);
+    // The literal, so a map that silently went empty on both paths cannot agree its way past.
+    expect(msg.state.techniqueNames).toEqual({ T1490: "Inhibit System Recovery" });
+    // And the route's own builder over the same inputs, so the two paths cannot drift apart.
+    expect(msg.state.techniqueNames).toEqual(
+      techniqueNamesFor(state.mitreTechniques, state.forensicTimeline),
+    );
+    // The stored state is untouched: the map is a view on the wire, never written back.
+    expect(state).not.toHaveProperty("techniqueNames");
+  });
+
+  // The hub is transport, and its callers include tests that hand it a partial state. A throw
+  // here would surface inside a route that has already saved — the worst place for one.
+  it("tolerates a partial state rather than throwing inside the caller", () => {
+    const hub = new LiveHub();
+    const s = fakeSocket();
+    hub.subscribe("c1", s);
+    expect(() => hub.broadcast({ caseId: "c1" } as InvestigationState)).not.toThrow();
+    expect(JSON.parse(s.sent[0]).state.techniqueNames).toEqual({});
   });
 
   it("drops closed sockets", () => {
