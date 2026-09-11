@@ -39,7 +39,7 @@ export interface IamChange {
   /** Rendered verb phrase — `attaches managed policy`, or `attempted to attach managed policy`. */
   posture: string;
   attempted: boolean;
-  /** `denied (<code>)` when attempted, else "". */
+  /** `denied (<code>)` for an authorisation failure, `failed (<code>)` for any other, "" on success. */
   outcome: string;
   /** The labeled object tuple, display-bounded; the key digests the complete tuple. */
   object: string;
@@ -67,6 +67,11 @@ const READING_PREFIX_ATTEMPT = "requested ";
 const ASSUME_ACTIONS = ["sts:AssumeRole", "sts:AssumeRoleWithSAML", "sts:AssumeRoleWithWebIdentity"];
 const PASSROLE_DENIED = /iam:PassRole on resource:\s*(arn:[^\s"']+)/i;
 const ACCOUNT_ARN = /^arn:[^:]*:(?:iam|sts)::(\d{12}):/i;
+const VERSION_MAX = 20;
+// The error codes that mean the caller was NOT AUTHORISED; every other code is a failure of some
+// other kind (EntityAlreadyExists, LimitExceeded, a validation error) and is worded as one.
+const DENIAL_CODES =
+  /^(?:accessdenied(?:exception)?|unauthorizedoperation|client\.unauthorizedoperation|unauthorizedaccess|forbidden|notauthorized)$/i;
 
 const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
 const raw = (v: unknown): string =>
@@ -79,22 +84,21 @@ const arnName = (arn: string): string => arn.split("/").pop() || arn;
 
 // The verb of the three postures whose wording depends on the request or the outcome.
 function postureVerb(p: Posture, nameLower: string, req: Obj, attempted: boolean): string {
+  const version = raw(getCI(req, "versionId")).slice(0, VERSION_MAX) || "?";
   if (attempted) {
-    const version = nameLower === "deletepolicyversion" ? ` ${raw(req.versionId) || "?"}` : "";
-    return `attempted to ${p.infinitive}${version}`;
+    const v = nameLower === "deletepolicyversion" ? ` ${version}` : "";
+    return `attempted to ${p.infinitive}${v}`;
   }
+  // The record establishes the status REQUESTED, not the status before it: "sets … Active", never
+  // "re-enables" — an idempotent update would otherwise read as a transition that did not happen.
   if (nameLower === "updateaccesskey") {
-    const status = raw(getCI(req, "status")).toLowerCase();
-    return status === "active"
-      ? "re-enables access key"
-      : status === "inactive"
-        ? "disables access key"
-        : p.verb;
+    const status = raw(getCI(req, "status"));
+    return status ? `sets access key status ${status.slice(0, VERSION_MAX)}` : p.verb;
   }
   if (nameLower === "createpolicyversion" && /^true$/i.test(raw(getCI(req, "setAsDefault"))))
     return `${p.verb} and activates it`;
   if (nameLower === "setdefaultpolicyversion" || nameLower === "deletepolicyversion")
-    return `${p.verb} ${raw(getCI(req, "versionId")) || "?"}`;
+    return `${p.verb} ${version}`;
   return p.verb;
 }
 
@@ -162,11 +166,13 @@ function trustReading(reading: PolicyReading, recipient: string): { text: string
     if (!assumed.length) continue;
     const { words, external, any } = principalClasses(st, recipient);
     if (!words.length) continue;
+    // A Condition is shown, not evaluated — it may restrict the principal or be vacuous, and an
+    // unevaluated condition never lowers the grade. Only the WORD "unrestricted" needs its absence.
     const unrestricted = any && !st.hasCondition;
     parts.push(
       `allows ${assumed.join("/")} to ${words.join(", ")}${unrestricted ? " — unrestricted public assumption" : ""}${st.hasCondition ? " (conditional)" : ""}`,
     );
-    if (any || external) floor = worstOf(floor, st.hasCondition ? "Medium" : "High");
+    if (any || external) floor = worstOf(floor, "High");
   }
   return { text: parts.join("; "), floor };
 }
@@ -260,7 +266,8 @@ export function decodeIamChange(
     if (posture.qualifier) qualifiers.push(posture.qualifier);
     if (!attempted && posture.floor) floor = worstOf(floor, posture.floor);
     if (posture.floor) for (const t of posture.mitre ?? []) add(t);
-    if (nameLower === "updateaccesskey" && !attempted && verb.startsWith("re-enables")) {
+    // A key set Active is a credential brought (back) into use — Medium on the requested state.
+    if (nameLower === "updateaccesskey" && !attempted && /\bActive$/i.test(verb)) {
       floor = worstOf(floor, "Medium");
       add("T1098.001");
     }
@@ -307,13 +314,20 @@ export function decodeIamChange(
     add("T1078.004");
   }
   const bindingsText = bindingWords.join("; ");
-  const bindingsDigest = bindings.length
-    ? digest(
-        bindings.map((b) => `${b.label}=${b.role.toLowerCase()}→${b.destination.toLowerCase()}`).join("|"),
-      )
-    : "";
+  // The denied role is a discriminator too: two PassRole denials for two roles on a call this
+  // decoder does not otherwise bind (a Glue endpoint, a Data Pipeline) must stay two rows.
+  const bindingsDigest =
+    bindings.length || deniedRole
+      ? digest(
+          [
+            ...bindings.map((b) => `${b.label}=${b.role.toLowerCase()}→${b.destination.toLowerCase()}`),
+            deniedRole ? `denied=${deniedRole.toLowerCase()}` : "",
+          ].join("|"),
+        )
+      : "";
 
-  const outcome = attempted ? `denied (${errorCode.trim().slice(0, 30)})` : "";
+  const code = errorCode.trim().slice(0, 30);
+  const outcome = attempted ? `${DENIAL_CODES.test(code) ? "denied" : "failed"} (${code})` : "";
   const note = posture && !attempted ? (posture.note ?? "") : "";
   const summary = [verb, object.display, outcome ? `— ${outcome}` : "", note, reading, trust, bindingsText]
     .filter(Boolean)
@@ -334,6 +348,6 @@ export function decodeIamChange(
     mitre,
     qualifiers,
     summary,
-    keySegment: `|iam:${postureId}|${attempted ? "denied" : "ok"}|${object.key || "-"}|${docDigest || "-"}|${bindingsDigest || "-"}`,
+    keySegment: `|iam:${postureId}|${attempted ? "failed" : "ok"}|${object.key || "-"}|${docDigest || "-"}|${bindingsDigest || "-"}`,
   };
 }

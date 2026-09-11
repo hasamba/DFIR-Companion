@@ -11,6 +11,7 @@
 const TOTAL_MAX = 600;
 const HEAD_MAX = 120; // `AWS <name> (<src>) by <who ≤ 50> from <ip> in <region>` — the caller bounds who
 const POSTURE_MAX = 90; // posture + outcome, adjacent to the head
+const OUTCOME_MAX = 40; // `denied (<code ≤ 30>)`
 const OBJECT_MAX = 150;
 const TAIL_MAX = 70; // `[ua ≤ 30] [root] [<errorCode ≤ 30>]` — the caller bounds each part
 const QUALIFIERS_MAX = 130; // sized for the three messages the IAM decoder may need at once (128)
@@ -32,10 +33,10 @@ const clip = (s: string, max: number): string => (s.length <= max ? s : `${s.sli
 
 export function renderAwsDescription(parts: AwsDescriptionParts): string {
   const head = clip(parts.head.trim(), HEAD_MAX);
-  const posture = clip(
-    `${parts.posture.trim()}${parts.outcome ? ` — ${parts.outcome.trim()}` : ""}`.trim(),
-    POSTURE_MAX,
-  );
+  // The outcome is reserved INSIDE the posture slot: a posture that carries record data (a version
+  // id) is clipped to what the outcome leaves, so "denied (…)" is never the part that falls off.
+  const outcome = parts.outcome.trim() ? ` — ${clip(parts.outcome.trim(), OUTCOME_MAX)}` : "";
+  const posture = `${clip(parts.posture.trim(), POSTURE_MAX - outcome.length)}${outcome}`.trim();
   const object = clip(parts.object.trim(), OBJECT_MAX);
   const tail = clip(parts.tail.trim(), TAIL_MAX);
   const qualifiers = clip(parts.qualifiers.filter(Boolean).join("; "), QUALIFIERS_MAX);

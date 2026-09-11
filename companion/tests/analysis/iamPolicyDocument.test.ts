@@ -165,6 +165,47 @@ describe("readPolicyDocument — the reading", () => {
   });
 });
 
+describe("readPolicyDocument — hostile shapes never escape", () => {
+  it("a pattern of thirty thousand stars is matched linearly, not compiled — the import survives", () => {
+    const stars = "*".repeat(30000);
+    expect(actionMatches(stars, "iam:PassRole")).toBe(true);
+    expect(actionMatches(`${stars}x`, "iam:PassRole")).toBe(false);
+    const r = readable(
+      doc([{ Effect: "Allow", Action: [stars, `iam:${"*?".repeat(2000)}`], Resource: "*" }]),
+    );
+    expect(r.broad).toBe(true);
+  });
+  it("a small but very deep parsed object is unreadable, not a stack overflow", () => {
+    let deep: unknown = { Effect: "Allow", Action: "*", Resource: "*" };
+    for (let i = 0; i < 5000; i++) deep = { x: deep };
+    const r = readPolicyDocument({ Statement: [deep] });
+    expect(r.readable).toBe(false);
+    if (!r.readable) expect(r.reason).toMatch(/deep/);
+    const wide = {
+      Statement: Array.from({ length: 30000 }, () => ({
+        Effect: "Allow",
+        Action: "s3:GetObject",
+        Resource: "*",
+      })),
+    };
+    expect(readPolicyDocument(wide).readable).toBe(false);
+  });
+  it("an exclusion or an all-actions grant scoped to named resources is summarised, not promoted", () => {
+    const ex = readable(doc([{ Effect: "Allow", NotAction: "iam:*", Resource: "arn:aws:s3:::b" }]));
+    expect(ex.broad).toBe(false);
+    expect(ex.reading).toContain("all actions except iam:* on 1 resource");
+    const all = readable(doc([{ Effect: "Allow", Action: "*", Resource: "arn:aws:s3:::b" }]));
+    expect(all.broad).toBe(false);
+    expect(all.primitives).toEqual([]);
+    expect(all.reading).toContain("all actions on 1 resource");
+    const svc = readable(
+      doc([{ Effect: "Allow", Action: "iam:*", Resource: "arn:aws:iam::111122223333:user/bob" }]),
+    );
+    expect(svc.broad).toBe(true);
+    expect(svc.primitives).toContain("iam:CreateAccessKey");
+  });
+});
+
 describe("readPolicyDocument — digests", () => {
   it("the same document with reordered keys is one canonical digest; one character apart is two", () => {
     const a = readable(

@@ -320,9 +320,11 @@ holds no before-and-after, so the row now says exactly what the record establish
 more:
 
 - **What the call did** — a verb, never a direction: `attaches managed policy`, `replaces inline
-  policy`, `removes permissions boundary`, `re-enables access key`, `adds user to group`. A detach
-  or a delete stays Low but says so, so an eradication step reads as one. Attaching a Deny policy
-  tightens and detaching one loosens — which is why no row claims "widened" or "narrowed".
+  policy`, `removes permissions boundary`, `sets access key status Active`, `adds user to group`.
+  A detach or a delete stays Low but says so, so an eradication step reads as one. Attaching a Deny
+  policy tightens and detaching one loosens — which is why no row claims "widened" or "narrowed";
+  and a status update says the status requested, not "re-enabled", because the record does not
+  hold the status before it.
 - **What changed** — every identity the record names: the user, role or group, the policy (by
   name), the version, the access-key id, the MFA serial. Identities the response creates — a new
   access key's id, a new policy version's number — are read too. Two policies attached to one role
@@ -334,16 +336,18 @@ more:
   claims nothing about it, `AdministratorAccess` included.
 - **Who a role trusts** — `allows sts:AssumeRole to external account 999988887777` (High), `to any
   principal — unrestricted public assumption` (High), `to same-account`, `to service
-  lambda.amazonaws.com`. A statement with a Condition is marked `conditional — not evaluated here`
-  and is Medium, not High: an external trust with an ExternalId is the normal cross-account
-  pattern, still worth a look.
+  lambda.amazonaws.com`. A statement with a Condition is marked `(conditional)` and the row carries
+  `conditional — not evaluated here`; the word "unrestricted" is dropped, but the grade is not — a
+  condition the row did not evaluate may restrict the principal or may be vacuous, and an
+  unevaluated condition never lowers a grade.
 - **Role passing** — `iam:PassRole` is a permission, not an event. The row for the call that uses
   it names the binding: `passing instance profile … → i-0abc` on `RunInstances` (a profile, not a
   role — the two can differ), `passing role … → my-function` on Lambda, both roles on an ECS task
   definition, the role on a CloudFormation stack. Medium on success. A `PassRole` denial reads
   `role passing denied: <role>` — an attempt, Medium, never "passed".
-- **A denied call is an attempt** — `attempted to replace inline policy — denied (AccessDenied)`,
-  the requested document shown, no High floor: the change did not happen.
+- **A failed call is an attempt** — `attempted to replace inline policy — denied (AccessDenied)`,
+  the requested document shown, no High floor: the change did not happen. Only an authorisation
+  code reads "denied"; any other error (`EntityAlreadyExists`, `LimitExceeded`) reads "failed".
 
 Every row with a document ends with `effective access depends on controls not in this record`:
 permission boundaries, organisation policies and resource policies decide what the grant does, and

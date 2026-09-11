@@ -113,20 +113,17 @@ describe("decodeIamChange — postures say what the call does, never which way a
       expect(d.summary).not.toMatch(/\b(widen|narrow|tighten|escalat)/i);
     });
   }
-  it("UpdateAccessKey reads the status: Inactive disables, Active re-enables (Medium floor)", () => {
+  it("UpdateAccessKey states the status REQUESTED, never a transition; Active is a Medium floor", () => {
     const off = iam("UpdateAccessKey", {
       userName: "u",
       accessKeyId: "AKID-EXAMPLE-0001",
       status: "Inactive",
     });
-    expect(off.posture).toBe("disables access key");
+    expect(off.posture).toBe("sets access key status Inactive");
+    expect(off.summary).not.toMatch(/disables|re-enables/);
     expect(off.severityFloor).toBeNull();
-    const on = iam("UpdateAccessKey", {
-      userName: "u",
-      accessKeyId: "AKID-EXAMPLE-0001",
-      status: "Active",
-    });
-    expect(on.posture).toBe("re-enables access key");
+    const on = iam("UpdateAccessKey", { userName: "u", accessKeyId: "AKID-EXAMPLE-0001", status: "Active" });
+    expect(on.posture).toBe("sets access key status Active");
     expect(on.severityFloor).toBe("Medium");
     expect(on.mitre).toContain("T1098.001");
   });
@@ -203,7 +200,36 @@ describe("decodeIamChange — a denied call is an attempt", () => {
     expect(d.reading).toMatch(/^requested document: /);
     expect(d.reading).toContain("all actions on all resources");
     expect(d.severityFloor).toBe("Medium");
-    expect(d.keySegment).toContain("|denied|");
+    expect(d.keySegment).toContain("|failed|");
+  });
+  it("only an authorisation code is 'denied'; any other error is 'failed' with the code", () => {
+    const dup = iam("CreateUser", { userName: "u" }, {}, "EntityAlreadyExists");
+    expect(dup.outcome).toBe("failed (EntityAlreadyExists)");
+    expect(dup.summary).not.toContain("denied");
+    expect(dup.posture).toBe("attempted to create user");
+    expect(iam("CreateUser", { userName: "u" }, {}, "AccessDenied").outcome).toBe("denied (AccessDenied)");
+    expect(iam("CreateUser", { userName: "u" }, {}, "Client.UnauthorizedOperation").outcome).toBe(
+      "denied (Client.UnauthorizedOperation)",
+    );
+  });
+  it("a failed DeletePolicyVersion with an oversized version id keeps the outcome in the description", () => {
+    const d = iam(
+      "DeletePolicyVersion",
+      { policyArn: "arn:aws:iam::111122223333:policy/p", versionId: "v".repeat(500) },
+      {},
+      "AccessDenied",
+    );
+    const s = renderAwsDescription({
+      head: "AWS DeletePolicyVersion (iam) by bob",
+      posture: d.posture,
+      outcome: d.outcome,
+      object: d.object,
+      optional: [],
+      tail: "[AccessDenied]",
+      qualifiers: [],
+    });
+    expect(s).toContain("denied (AccessDenied)");
+    expect(d.posture.length).toBeLessThan(80);
   });
   it("a denied boundary removal and a denied public trust stay Medium — the High floors are success-only", () => {
     expect(iam("DeleteUserPermissionsBoundary", { userName: "u" }, {}, "AccessDenied").severityFloor).toBe(
@@ -227,14 +253,15 @@ describe("decodeIamChange — trust is literal", () => {
     expect(d.trust).toContain("unrestricted public assumption");
     expect(d.severityFloor).toBe("High");
   });
-  it("the same with a Condition is conditional, not unrestricted (Medium)", () => {
+  it("the same with a Condition drops the word 'unrestricted' but keeps the High floor — a condition is shown, not evaluated", () => {
     const d = iam("UpdateAssumeRolePolicy", {
       roleName: "r",
       policyDocument: trust("*", { Condition: { StringEquals: { "aws:PrincipalOrgID": "o-abc" } } }),
     });
     expect(d.trust).not.toContain("unrestricted");
+    expect(d.trust).toContain("(conditional)");
     expect(d.qualifiers).toContain(CONDITIONAL_NOTE);
-    expect(d.severityFloor).toBe("Medium");
+    expect(d.severityFloor).toBe("High");
   });
   it("external accounts are read from a bare id, a root ARN, a role ARN and an STS assumed-role ARN (High unconditioned)", () => {
     for (const p of [
@@ -249,7 +276,7 @@ describe("decodeIamChange — trust is literal", () => {
       expect(d.severityFloor).toBe("High");
     }
   });
-  it("an external account with an ExternalId condition is Medium and says conditional", () => {
+  it("an external account with an ExternalId condition stays High and says conditional", () => {
     const d = iam("CreateRole", {
       roleName: "r",
       assumeRolePolicyDocument: trust(
@@ -257,7 +284,7 @@ describe("decodeIamChange — trust is literal", () => {
         { Condition: { StringEquals: { "sts:ExternalId": "x" } } },
       ),
     });
-    expect(d.severityFloor).toBe("Medium");
+    expect(d.severityFloor).toBe("High");
     expect(d.qualifiers).toContain(CONDITIONAL_NOTE);
   });
   it("same-account, service and federated principals are named and carry no trust floor", () => {
@@ -461,6 +488,20 @@ describe("decodeIamChange — the key carries every identity", () => {
     expect(put('{"Statement":[{"Effect":"Allow","Action":"s3:*","Resource":"*"}]}')).toBe(
       put('{"Statement":[{"Resource":"*","Action":"s3:*","Effect":"Allow"}]}'),
     );
+  });
+  it("two PassRole denials for two roles on a call the decoder does not otherwise bind are two keys", () => {
+    const denied = (role: string) =>
+      decodeIamChange(
+        "glue.amazonaws.com",
+        "CreateDevEndpoint",
+        { endpointName: "e" },
+        {},
+        "AccessDenied",
+        `User: arn:aws:iam::${ACCT}:user/dev is not authorized to perform: iam:PassRole on resource: arn:aws:iam::${ACCT}:role/${role}`,
+        ACCT,
+      )!.keySegment;
+    expect(denied("a")).not.toBe(denied("b"));
+    expect(denied("a")).toBe(denied("a"));
   });
   it("bindings key on the role AND its destination: two functions on one role, two profiles on one launch", () => {
     const fn = (f: string) =>

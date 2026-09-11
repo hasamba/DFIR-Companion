@@ -107,24 +107,58 @@ const digest = (s: string): string => createHash("sha256").update(s).digest("hex
 const strings = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : typeof v === "string" ? [v] : [];
 
-// Key-sorted JSON, so a document that differs only in key order has one digest.
-function canonical(v: unknown): string {
-  if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+// Key-sorted JSON, so a document that differs only in key order has one digest. Bounded in depth
+// and node count: an already-parsed object can be small in bytes and thousands of levels deep, and
+// an unbounded recursion there would abort the import. Over the bound → a controlled failure the
+// reader turns into "unreadable".
+const CANONICAL_MAX_DEPTH = 32;
+const CANONICAL_MAX_NODES = 20000;
+class DocumentTooLarge extends Error {}
+function canonical(v: unknown, depth = 0, budget = { nodes: 0 }): string {
+  if (depth > CANONICAL_MAX_DEPTH || ++budget.nodes > CANONICAL_MAX_NODES) throw new DocumentTooLarge();
+  if (Array.isArray(v)) return `[${v.map((x) => canonical(x, depth + 1, budget)).join(",")}]`;
   if (isObj(v))
     return `{${Object.keys(v)
       .sort()
-      .map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`)
+      .map((k) => `${JSON.stringify(k)}:${canonical(v[k], depth + 1, budget)}`)
       .join(",")}}`;
   return JSON.stringify(v) ?? "null";
 }
+function canonicalOrNull(v: unknown): string | null {
+  try {
+    return canonical(v);
+  } catch (e) {
+    if (e instanceof DocumentTooLarge) return null;
+    throw e;
+  }
+}
 
-/** AWS action glob: `*` any run, `?` one character, case-insensitive, whole string. */
+/**
+ * AWS action glob: `*` any run, `?` one character, case-insensitive, whole string. A linear
+ * two-pointer matcher, never a RegExp — a document under the size bound can still hold tens of
+ * thousands of `*`, and V8 refuses to compile that pattern, which would abort the whole import.
+ */
 export function actionMatches(pattern: string, action: string): boolean {
-  const re = pattern
-    .split("")
-    .map((ch) => (ch === "*" ? ".*" : ch === "?" ? "." : ch.replace(/[.+^${}()|[\]\\]/g, "\\$&")))
-    .join("");
-  return new RegExp(`^${re}$`, "i").test(action);
+  const p = pattern.toLowerCase().replace(/\*{2,}/g, "*");
+  const a = action.toLowerCase();
+  let pi = 0;
+  let ai = 0;
+  let star = -1;
+  let mark = 0;
+  while (ai < a.length) {
+    if (pi < p.length && (p[pi] === "?" || p[pi] === a[ai])) {
+      pi++;
+      ai++;
+    } else if (pi < p.length && p[pi] === "*") {
+      star = pi++;
+      mark = ai;
+    } else if (star >= 0) {
+      pi = star + 1;
+      ai = ++mark;
+    } else return false;
+  }
+  while (pi < p.length && p[pi] === "*") pi++;
+  return pi === p.length;
 }
 
 const coversAll = (pattern: string): boolean => /^\*+(?::\*+)?$/.test(pattern);
@@ -217,27 +251,29 @@ function allowClause(st: PolicyStatement): { words: string; broad: boolean; prim
       : allResources
         ? "all resources"
         : null;
+  // A bare `*` is the all-actions form, not a list of primitives; every other pattern (`iam:*`,
+  // `iam:Attach*`) names the primitives it covers.
   const primitives =
     actions.op === "Action"
-      ? ESCALATION_PRIMITIVES.filter((p) => actions.values.some((v) => actionMatches(v, p)))
+      ? ESCALATION_PRIMITIVES.filter((p) => actions.values.some((v) => !coversAll(v) && actionMatches(v, p)))
       : [];
   const services =
     actions.op === "Action"
       ? [...new Set(actions.values.map(serviceWildcard).filter((s): s is string => s !== null))]
       : [];
-  if (actionsPart && (resourcesPart || actions.op === "NotAction")) {
-    const where = resourcesPart ?? plural(resources.values.length, "resource");
-    return { words: `${actionsPart} on ${where}`, broad: true, primitives };
-  }
+  // The four broad forms — and only those: an exclusion or an all-actions grant scoped to named
+  // resources is summarised, not promoted.
+  if (actionsPart && resourcesPart)
+    return { words: `${actionsPart} on ${resourcesPart}`, broad: true, primitives };
   const parts: string[] = [];
-  if (allActions) parts.push(`all actions on ${plural(resources.values.length, "resource")}`);
+  if (actionsPart) parts.push(`${actionsPart} on ${plural(resources.values.length, "resource")}`);
   for (const s of services) parts.push(`all ${s} actions`);
   if (primitives.length) parts.push(`grants ${list(primitives)}`);
   if (!parts.length)
     parts.push(
       `${plural(actions.values.length, "action")} on ${resourcesPart ?? plural(resources.values.length, "resource")}`,
     );
-  return { words: parts.join("; "), broad: allActions || primitives.length > 0, primitives };
+  return { words: parts.join("; "), broad: primitives.length > 0, primitives };
 }
 
 function boundReading(text: string): string {
@@ -250,15 +286,23 @@ function boundReading(text: string): string {
  * percent-encoded variant, or an object an exporter parsed already. Never throws.
  */
 export function readPolicyDocument(raw: unknown): PolicyReading | PolicyUnreadable {
-  const text = typeof raw === "string" ? raw : isObj(raw) ? canonical(raw) : "";
+  if (isObj(raw)) {
+    const text = canonicalOrNull(raw);
+    if (text === null)
+      return { readable: false, rawDigest: digest("[too deep]"), reason: "too deep or too many nodes" };
+    return readPolicyDocument(text);
+  }
+  const text = typeof raw === "string" ? raw : "";
   const rawDigest = digest(text);
   if (!text) return { readable: false, rawDigest, reason: "no document" };
   if (text.length > DOCUMENT_MAX) return { readable: false, rawDigest, reason: "over 64 KiB" };
-  const decoded = isObj(raw) ? { doc: raw } : decodeDocument(text);
+  const decoded = decodeDocument(text);
   if ("reason" in decoded) return { readable: false, rawDigest, reason: decoded.reason };
   const doc = decoded.doc;
   if (!isObj(doc) || doc.Statement === undefined)
     return { readable: false, rawDigest, reason: "no Statement" };
+  const canon = canonicalOrNull(doc);
+  if (canon === null) return { readable: false, rawDigest, reason: "too deep or too many nodes" };
   const rawStatements = Array.isArray(doc.Statement) ? doc.Statement : [doc.Statement];
   const statements = rawStatements.map(readStatement).filter((s): s is PolicyStatement => s !== null);
   const allows = statements.filter((s) => s.effect === "Allow");
@@ -269,7 +313,7 @@ export function readPolicyDocument(raw: unknown): PolicyReading | PolicyUnreadab
   return {
     readable: true,
     rawDigest,
-    digest: digest(canonical(doc)),
+    digest: digest(canon),
     statements,
     effect: !statements.length ? "empty" : !allows.length ? "denies" : denies ? "mixed" : "grants",
     reading: boundReading(words.join("; ")),
