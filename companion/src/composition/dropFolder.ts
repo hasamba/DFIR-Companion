@@ -43,6 +43,7 @@ import {
   classifyDropFile,
   shouldIgnoreDropFile,
   isOversize,
+  dropMaxBytesFromEnv,
   DROP_PROCESSED,
   DROP_FAILED,
   DROP_README,
@@ -145,7 +146,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
 
   const watchEnabled = (process.env.DFIR_DROP_ENABLED ?? "on").trim().toLowerCase() !== "off";
   const dropPollMs = Math.min(600, Math.max(2, Number(process.env.DFIR_DROP_POLL_S) || 10)) * 1000;
-  const dropMaxBytes = Number(process.env.DFIR_DROP_MAX_BYTES) || 200 * 1024 * 1024;
+  const dropMaxBytes = dropMaxBytesFromEnv();
   const seen = new Map<string, Map<string, { size: number; mtimeMs: number }>>();
   const scanning = new Set<string>();
   // Files logged as PENDING (relpath per case) so a still-waiting raw-tool file doesn't get a new

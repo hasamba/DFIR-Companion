@@ -1,7 +1,6 @@
 import type { Express, Request, Response } from "express";
-import { decodeImportedText } from "../ingest/decodeText.js";
 import { join, basename } from "node:path";
-import { open, readFile, mkdir, copyFile, stat } from "node:fs/promises";
+import { mkdir, copyFile, stat } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import { parseCsv } from "../analysis/csvImport.js";
 import { parseLogLines } from "../analysis/logImport.js";
@@ -52,6 +51,7 @@ import { registerImportCaseGuard } from "./importCaseGuard.js";
 import { hasParseProgress, isAiDependent, rejectIfAiImportOverBudget } from "./importKinds.js";
 import { createImportJobTracking, IMPORT_JOB_PENDING_DETAIL } from "./importJobTracking.js";
 import { beginImportSection, type ImportSection } from "./importSection.js";
+import { sniffImportFileHead, readImportFileBounded } from "./importFileHead.js";
 
 /**
  * Evidence import domain: unified and per-format imports, import metadata, undo/redo, and evidence
@@ -556,15 +556,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     // "Invalid string length"), so a sample-based sniff is the only way to even classify it.
     let sample: string;
     try {
-      const fh = await open(filePath, "r");
-      try {
-        const buf = Buffer.alloc(1 << 18); // 256 KB — plenty for the header + many rows
-        const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
-        // BOM-aware, so a UTF-16LE artifact is sniffed as text rather than as mojibake.
-        sample = decodeImportedText(buf.subarray(0, bytesRead));
-      } finally {
-        await fh.close();
-      }
+      sample = await sniffImportFileHead(filePath);
     } catch (err) {
       return res.status(400).json({ error: `cannot read file: ${(err as Error).message}` });
     }
@@ -584,12 +576,16 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
 
     // Plaso streams from disk line-by-line (handles 500 MB+ super-timelines that can't be held as a
     // string at all); every other kind is read into one string and dispatched as usual. A non-Plaso
-    // file too big to string-decode fails with a clear, actionable error instead of an OOM crash.
+    // file over DFIR_MAX_IMPORT_FILE_MB is refused by the read itself — the string-length catch
+    // below only fires at ~512 MB, and a heap OOM on a small host arrives first (#921). The check
+    // is on the read's own descriptor, so a swap after the sniff cannot get past it.
     const streaming = kind === "plaso";
     let text = "";
     if (!streaming) {
       try {
-        text = await readFile(filePath, "utf8");
+        const read = await readImportFileBounded(filePath, kind);
+        if (read.tooLarge !== undefined) return res.status(413).json({ error: read.tooLarge });
+        text = read.text;
       } catch (err) {
         const m = (err as Error).message;
         if (/Invalid string length/i.test(m)) {

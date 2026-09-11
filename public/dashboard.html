@@ -1256,6 +1256,7 @@
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_CASES_ROOT">Cases root<span class="sfield-hint">DFIR_CASES_ROOT — <b>read-only here</b>: repointing it at runtime would redirect every case. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_CASES_ROOT" placeholder="./cases" readonly /></div>
           <div class="sfield"><label for="env-DFIR_MAX_BODY_MB">Max body size (MB)<span class="sfield-hint">DFIR_MAX_BODY_MB</span></label><input id="env-DFIR_MAX_BODY_MB" placeholder="256" /></div>
+          <div class="sfield"><label for="env-DFIR_MAX_IMPORT_FILE_MB">Max Import-from-path file (MB)<span class="sfield-hint">DFIR_MAX_IMPORT_FILE_MB — non-Plaso files over this are refused before being read</span></label><input id="env-DFIR_MAX_IMPORT_FILE_MB" placeholder="256" /></div>
         </div>
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_ATOMIC_WRITE_RETRIES">Atomic-save retries<span class="sfield-hint">DFIR_ATOMIC_WRITE_RETRIES — retries on a transient Windows lock (AV/indexer/sync client) during the state save's final rename (default 20)</span></label><input id="env-DFIR_ATOMIC_WRITE_RETRIES" placeholder="20" /></div>
