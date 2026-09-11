@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import { StateLock } from "./stateLock.js";
+import { deriveSemanticKey } from "./semanticKey.js";
 import {
   CONTROL_DISPOSITIONS,
   EXECUTION_OUTCOMES,
@@ -115,8 +116,10 @@ export class FindingOutcomeStore {
       execution,
       control,
       note,
-      semanticKey:
-        patch.semanticKey !== undefined ? String(patch.semanticKey).trim() : (existing?.semanticKey ?? ""),
+      // A key is only ever ADDED or REPLACED by another key, never downgraded to empty: an empty key
+      // applies by id alone, so letting a transient lookup failure blank an existing key would
+      // quietly widen a record that was correctly guarded.
+      semanticKey: String(patch.semanticKey ?? "").trim() || (existing?.semanticKey ?? ""),
       updatedAt: new Date().toISOString(),
       updatedBy: String(patch.updatedBy ?? "").trim(),
     };
@@ -168,8 +171,15 @@ export function withAnalystOutcomes(
   };
 }
 
-function sameClaim(r: FindingOutcome, f: Pick<Finding, "semanticKey">): boolean {
-  return !r.semanticKey || !f.semanticKey || r.semanticKey === f.semanticKey;
+// A keyed record must match the finding's key EXACTLY — derived on the spot when the finding has
+// none stored, with the same function grounding uses to store one, so the two agree. An unkeyed
+// record applies by id: the only way one arises is a deployment with no state store (tests), since
+// the route refuses to store a record it could not key. Sibling stores have no guard at all.
+function sameClaim(
+  r: FindingOutcome,
+  f: Pick<Finding, "semanticKey" | "title" | "mitreTechniques">,
+): boolean {
+  return !r.semanticKey || r.semanticKey === (f.semanticKey || deriveSemanticKey(f));
 }
 
 // The bracketed label a report puts next to a finding's severity. Both axes always render when

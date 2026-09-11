@@ -686,16 +686,7 @@ export const FEATURES: Feature[] = [
     // server-backed like workflow so synthesis cannot wipe them.
     file: "dashboard-finding-outcome.js",
     publish: ["loadFindingOutcome", "findingOutcomeControls", "setFindingExecution", "setFindingControl"],
-    private: [
-      "outcomeByFinding",
-      "activeCase",
-      "EXECUTION_LABELS",
-      "CONTROL_LABELS",
-      "axisControl",
-      "patchFindingOutcome",
-      "bound",
-      "bindOnce",
-    ],
+    private: ["outcomeByFinding", "activeCase", "patchSeq", "EXECUTION_LABELS", "CONTROL_LABELS", "bound"],
   },
   {
     // Pinned findings (#220) — the other half of that banner. Nothing here references the feature

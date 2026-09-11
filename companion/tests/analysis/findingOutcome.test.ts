@@ -11,6 +11,7 @@ import {
 } from "../../src/analysis/findingOutcome.js";
 import { findingHeadingSuffix } from "../../src/analysis/findingGrounding.js";
 import type { Finding, InvestigationState } from "../../src/analysis/stateTypes.js";
+import { deriveSemanticKey } from "../../src/analysis/semanticKey.js";
 
 function finding(over: Partial<Finding> & { id: string }): Finding {
   return {
@@ -93,6 +94,14 @@ describe("FindingOutcomeStore", () => {
     await expect(store.patch("c1", "   ", { execution: "observed" })).rejects.toThrow(/findingId/);
   });
 
+  it("never downgrades a stored claim key to empty — a later unkeyed patch keeps the old key", async () => {
+    await store.patch("c1", "f-1", { control: "blocked", semanticKey: "T1059:x" });
+    const rec = await store.patch("c1", "f-1", { execution: "observed", semanticKey: "" });
+    expect(rec!.semanticKey).toBe("T1059:x");
+    const rec2 = await store.patch("c1", "f-1", { note: "n", semanticKey: "T1021:y" }); // a real key may replace it
+    expect(rec2!.semanticKey).toBe("T1021:y");
+  });
+
   it("persists across store instances — a re-synthesis cannot reach this file", async () => {
     await store.patch("c1", "f-1", { control: "blocked" });
     const again = new FindingOutcomeStore(cases);
@@ -152,20 +161,38 @@ describe("withAnalystOutcomes", () => {
     expect(out.findings[0]!.execution).toBeUndefined();
   });
 
-  it("applies a record when either side has no semanticKey (the id is then all there is)", () => {
-    const s = state([finding({ id: "f-1" })]);
+  it("applies an UNKEYED record by id — the only kind a deployment with no state store can write", () => {
+    const s = state([finding({ id: "f-1", semanticKey: "T1059:powershell dropper" })]);
     const out = withAnalystOutcomes(s, [
       {
         findingId: "f-1",
         execution: "observed",
         control: null,
         note: "",
-        semanticKey: "T1059:x",
+        semanticKey: "",
         updatedAt: "",
         updatedBy: "",
       },
     ]);
     expect(out.findings[0]!.execution).toBe("observed");
+  });
+
+  it("matches a keyed record against a key DERIVED from a finding that has none stored", () => {
+    const f = finding({ id: "f-1", title: "PowerShell dropper executed", mitreTechniques: ["T1059.001"] });
+    const derived = deriveSemanticKey(f);
+    const rec = (key: string) => ({
+      findingId: "f-1",
+      execution: "observed" as const,
+      control: null,
+      note: "",
+      semanticKey: key,
+      updatedAt: "",
+      updatedBy: "",
+    });
+    expect(withAnalystOutcomes(state([f]), [rec(derived)]).findings[0]!.execution).toBe("observed");
+    expect(
+      withAnalystOutcomes(state([f]), [rec("T1021:something else")]).findings[0]!.execution,
+    ).toBeUndefined();
   });
 
   it("does not mutate its input", () => {

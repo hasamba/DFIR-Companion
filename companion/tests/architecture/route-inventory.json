@@ -573,6 +573,7 @@
     "ROUTE GET /js/dashboard-tooltip.js",
     "ROUTE GET /js/dashboard-presentation-mode.js",
     "ROUTE GET /js/dashboard-finding-workflow.js",
+    "ROUTE GET /js/dashboard-finding-outcome.js",
     "ROUTE GET /js/dashboard-pinned-findings.js",
     "ROUTE GET /js/dashboard-palette-registry.js",
     "ROUTE GET /js/dashboard-section-order.js",

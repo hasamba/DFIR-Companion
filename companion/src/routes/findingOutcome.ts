@@ -8,6 +8,7 @@ import {
   type ExecutionOutcome,
 } from "../analysis/stateTypes.js";
 import type { RouteContext } from "./context.js";
+import { deriveSemanticKey } from "../analysis/semanticKey.js";
 
 // Analyst attack-outcome statements per finding (#930 item 8), on the two axes defined in
 // stateTypes.ts: `execution` (was the action itself observed) and `control` (what a security
@@ -58,10 +59,13 @@ export function registerFindingOutcomeRoutes(app: Express, ctx: RouteContext): v
     // as a 400 the dashboard reads as "you sent something wrong".
     if (!String(req.params.findingId ?? "").trim())
       return res.status(400).json({ error: "findingId is required" });
-    // The finding's semanticKey, so the record can refuse to attach to a different claim later. A
-    // finding not in the current state (or no state store) leaves it empty — the id is then all
-    // there is, as for every sibling side store.
-    patch.semanticKey = await semanticKeyOf(options.stateStore, req.params.id, req.params.findingId);
+    // The finding's claim key, so the record can refuse to attach to a different claim later. The
+    // finding must EXIST in the case (404 otherwise — the dashboard only offers findings it has),
+    // and a state that cannot be read is our failure (500), never a reason to store an unguarded
+    // record. Only a deployment with no state store at all leaves the key empty.
+    const keyed = await claimKeyOf(options.stateStore, req.params.id, req.params.findingId);
+    if (keyed.status) return res.status(keyed.status).json({ error: keyed.error });
+    patch.semanticKey = keyed.key;
     try {
       const record = await options.findingOutcomeStore.patch(req.params.id, req.params.findingId, patch);
       options.onFindingOutcome?.(req.params.id);
@@ -82,18 +86,25 @@ export function registerFindingOutcomeRoutes(app: Express, ctx: RouteContext): v
   });
 }
 
-async function semanticKeyOf(
+type ClaimKey =
+  | { key: string; status?: undefined; error?: undefined }
+  | { key?: undefined; status: 404 | 500; error: string };
+
+async function claimKeyOf(
   stateStore: RouteContext["options"]["stateStore"],
   caseId: string,
   findingId: string,
-): Promise<string> {
-  if (!stateStore) return "";
+): Promise<ClaimKey> {
+  if (!stateStore) return { key: "" };
+  let findings;
   try {
-    const state = await stateStore.load(caseId);
-    return state.findings.find((f) => f.id === findingId)?.semanticKey ?? "";
-  } catch {
-    return "";
+    findings = (await stateStore.load(caseId)).findings;
+  } catch (err) {
+    return { status: 500, error: `could not read case state: ${(err as Error).message}` };
   }
+  const f = findings.find((x) => x.id === findingId);
+  if (!f) return { status: 404, error: `finding ${findingId} is not in case ${caseId}` };
+  return { key: f.semanticKey || deriveSemanticKey(f) };
 }
 
 // One axis from a request body: absent → "absent"; null or "" → null (clear); a vocabulary value →

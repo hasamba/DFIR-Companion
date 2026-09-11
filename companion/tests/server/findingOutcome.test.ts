@@ -130,4 +130,34 @@ describe("finding-outcome routes", () => {
     expect(res.status).toBe(500);
     expect(res.body.error).toMatch(/ENOSPC/);
   });
+
+  it("404s a PATCH for a finding that is not in the case, rather than storing an unguarded record", async () => {
+    const store = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-fout-404-")));
+    const { StateStore } = await import("../../src/analysis/stateStore.js");
+    const { emptyState } = await import("../../src/analysis/stateTypes.js");
+    const stateStore = new StateStore(store);
+    const findingOutcomeStore = new FindingOutcomeStore(store);
+    const app = createApp(store, { findingOutcomeStore, stateStore });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    await stateStore.save(emptyState("c1"));
+    const res = await request(app).patch("/cases/c1/findings/ghost/outcome").send({ control: "blocked" });
+    expect(res.status).toBe(404);
+    expect(await findingOutcomeStore.load("c1")).toEqual([]);
+  });
+
+  it("500s when the case state cannot be read, and stores nothing", async () => {
+    const store = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-fout-state500-")));
+    const { StateStore } = await import("../../src/analysis/stateStore.js");
+    const stateStore = new StateStore(store);
+    stateStore.load = async () => {
+      throw new Error("EIO: state unreadable");
+    };
+    const findingOutcomeStore = new FindingOutcomeStore(store);
+    const app = createApp(store, { findingOutcomeStore, stateStore });
+    await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const res = await request(app).patch("/cases/c1/findings/f-1/outcome").send({ control: "blocked" });
+    expect(res.status).toBe(500);
+    expect(res.body.error).toMatch(/EIO/);
+    expect(await findingOutcomeStore.load("c1")).toEqual([]);
+  });
 });

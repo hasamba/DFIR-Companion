@@ -20,6 +20,10 @@
   // the fetch returns, so a slow or failed load can never leave the previous case's outcomes on
   // the new case's cards — ids like "f1" recur across cases.
   let activeCase = "";
+  // Per-finding PATCH generation. Two quick edits to one finding can answer out of order, and a
+  // save for case A can answer after case B has loaded; only the newest request for the active
+  // case may touch the map, the cards, or the toast.
+  const patchSeq = new Map();
   // The vocabularies mirror EXECUTION_OUTCOMES / CONTROL_DISPOSITIONS in stateTypes.ts. The server
   // rejects anything else with a 400, so a drift here shows up as a visible failure, not a silent one.
   const EXECUTION_LABELS = {
@@ -99,7 +103,14 @@
   function patchFindingOutcome(fid, patch) {
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId || !fid) return;
+    const key = String(fid);
+    const seq = (patchSeq.get(key) || 0) + 1;
+    patchSeq.set(key, seq);
+    // Stale = the analyst has since switched case, or edited this finding again. Either way this
+    // response describes a world the page no longer shows.
+    const stale = () => caseId !== activeCase || patchSeq.get(key) !== seq;
     const revert = (why) => {
+      if (stale()) return;
       if (DfirState.lastState()) render(DfirState.lastState());
       if (typeof showToast === "function") showToast(`Attack outcome not saved: ${why}`, "error");
     };
@@ -114,8 +125,9 @@
           revert((data && data.error) || `server returned ${status}`);
           return;
         }
-        if (data.record) outcomeByFinding.set(String(fid), data.record);
-        else outcomeByFinding.delete(String(fid));
+        if (stale()) return;
+        if (data.record) outcomeByFinding.set(key, data.record);
+        else outcomeByFinding.delete(key);
         if (DfirState.lastState()) render(DfirState.lastState());
       })
       .catch((err) => revert((err && err.message) || "network error"));
