@@ -711,6 +711,36 @@ describe("parseCloudTrail — identities and credentials (#931 item 5)", () => {
     expect(e.description).toContain(`[also recorded in account ${OTHER}]`);
     expect(e.canonical?.evidence.rawRecords.map((p) => p.recordId)).toEqual(["e-caller", "e-owner"]);
   });
+  it("two distinct cross-account actions that share every other dimension stay two rows with all four pointers", () => {
+    const pair = (shared: string, suffix: string) => [
+      record({
+        eventName: "GetObject",
+        eventSource: "s3.amazonaws.com",
+        readOnly: true,
+        userIdentity: { type: "AWSAccount", principalId: "AIDAEXAMPLE", accountId: ACCT },
+        recipientAccountId: OTHER,
+        eventID: `owner-${suffix}`,
+        sharedEventID: shared,
+        requestParameters: { bucketName: "b", key: "k" },
+      }),
+      record({
+        eventName: "GetObject",
+        eventSource: "s3.amazonaws.com",
+        readOnly: true,
+        userIdentity: assumedRole(),
+        recipientAccountId: ACCT,
+        eventID: `caller-${suffix}`,
+        sharedEventID: shared,
+        requestParameters: { bucketName: "b", key: "k" },
+      }),
+    ];
+    const r = parseCloudTrail(envelope(...pair("shared-1", "1"), ...pair("shared-2", "2")));
+    expect(r.events).toHaveLength(2);
+    expect(
+      r.events.flatMap((e) => e.canonical?.evidence.rawRecords.map((p) => p.recordId) ?? []).sort(),
+    ).toEqual(["caller-1", "caller-2", "owner-1", "owner-2"]);
+    expect(r.events.every((e) => (e.count ?? 1) === 1)).toBe(true);
+  });
   it("a reused session name under two access keys is two rows", () => {
     const r = parseCloudTrail(
       envelope(

@@ -391,14 +391,18 @@ literally:
   temporary credentials role arn:… session deploy → key ASIA… expires … MFA device … source
   identity … external id supplied`. The issued key id is the row's identity, so a later call can be
   matched to the issuance that minted its credential by the key it carries — never by a role's
-  display name. A denied call is `attempted to assume role … — denied (…)`; a success whose
-  response CloudTrail truncated says `response details unavailable` and never invents a key.
-  `AssumeRoot` (a root session for a member account) is High on success and Medium when denied.
+  display name. A denied call is `attempted to assume role … — denied (…)`; a record with no error
+  and no response (CloudTrail truncates large events) is `requested to assume role … — outcome
+  unknown`, never an issuance, and never invents a key. `AssumeRoot` (a root session for a member
+  account) is High only when the response proves a session was issued; denied or unknown is
+  Medium. `invoked by delegate provider account <id>` names an external product acting with
+  delegated permissions.
 
 Two calls by one session name under two access keys are two rows. The credential, the issuer, the
 kind and the recipient account are typed on every row (`authentication.credentialId`,
 `authentication.issuer`, `authentication.mechanism`, `cloud.recipientAccountId`) and searchable in
-Hunt. The lineage across records — which later calls used the credential an issuance minted, a
+Hunt. A merged cross-account action keys on its `sharedEventID`, so two distinct actions that share
+every other dimension stay two rows. The lineage across records — which later calls used the credential an issuance minted, a
 workload role used from a new source — is a join by access key id, filed as #931 item 5's chain.
 
 ### Entra applications: credentials, grants, roles, sign-ins

@@ -63,6 +63,8 @@ export interface AwsIdentity {
   };
   assumedRoot: boolean;
   invokedBy: string;
+  /** `userIdentity.invokedByDelegate.accountId` — an external provider acting with delegated permissions. */
+  delegateAccountId: string;
   identityProvider: string;
   accounts: { caller: string; recipient: string; crossAccount: boolean };
   /** "IMDSv1" | "IMDSv2" | "SAML" | "WebIdentity" | "console" | "" — the protocol the record names. */
@@ -146,7 +148,7 @@ export function readAwsIdentity(rec: Row): AwsIdentity {
     fromConsole: /^true$/i.test(str(get(rec, "sessionCredentialFromConsole"))),
     ec2RoleDelivery,
     federatedProvider,
-    signInSessionArn: str(get(ui, "signInSessionArn")),
+    signInSessionArn: str(get(sc, "signInSessionArn")) || str(get(ui, "signInSessionArn")),
   };
   const assumedRoot = str(get(sc, "assumedRoot")) === "true";
   const accessKeyId = str(get(ui, "accessKeyId"));
@@ -155,6 +157,7 @@ export function readAwsIdentity(rec: Row): AwsIdentity {
   const caller = str(get(ui, "accountId"));
   const recipient = str(get(rec, "recipientAccountId"));
   const invokedBy = str(get(ui, "invokedBy"));
+  const delegateAccountId = str(path(ui, ["invokedByDelegate", "accountId"]));
   const identityProvider = str(get(ui, "identityProvider"));
   const credentialIdentity =
     accessKeyId ||
@@ -203,6 +206,9 @@ export function readAwsIdentity(rec: Row): AwsIdentity {
     federatedProvider ? `federated via ${bounded(federatedProvider)}` : "",
     identityProvider ? `provider ${bounded(identityProvider)}` : "",
     invokedBy ? `request made by AWS service ${bounded(invokedBy, 60)}` : "",
+    delegateAccountId
+      ? `invoked by delegate provider account ${bounded(delegateAccountId, 20)} (delegated permissions)`
+      : "",
     issuer && issuer.arn ? `issuer ${issuer.type || "unknown"} ${bounded(issuer.arn)}` : "",
   ];
   return {
@@ -216,6 +222,7 @@ export function readAwsIdentity(rec: Row): AwsIdentity {
     session,
     assumedRoot,
     invokedBy,
+    delegateAccountId,
     identityProvider,
     accounts: { caller, recipient, crossAccount: !!caller && !!recipient && caller !== recipient },
     protocol,
@@ -236,6 +243,8 @@ export interface CredentialIssuance {
     | "GetSessionToken"
     | "AssumeRoot";
   attempted: boolean;
+  /** `issued` (positive response evidence), `denied` (an error code), `unknown` (neither — a request only). */
+  result: "issued" | "denied" | "unknown";
   /** The ISSUED credential's key id; "" when denied or when the response is unavailable. */
   issuedKey: string;
   expiration: string;
@@ -319,7 +328,10 @@ export function readCredentialIssuance(
     lower === "getfederationtoken" && get(req, "policy") !== undefined ? "policy supplied" : "",
   ].filter(Boolean);
   // A successful issuance always returns an access key id; without one the response is unusable.
+  // Without positive response evidence a successful-looking record establishes only a REQUEST:
+  // the outcome is unknown, the verb is not affirmative, and no grade for a success applies.
   const responseMissing = !attempted && !issuedKey;
+  const result: CredentialIssuance["result"] = attempted ? "denied" : responseMissing ? "unknown" : "issued";
   const denied = attempted ? ` — denied (${bounded(errorCode.trim(), 30)})` : "";
   let head: string;
   let infinitive: string;
@@ -362,26 +374,37 @@ export function readCredentialIssuance(
   const words = attempted
     ? `attempted to ${infinitive}${denied}`
     : responseMissing
-      ? `${head} — response details unavailable`
+      ? `requested to ${infinitive} — outcome unknown (response details unavailable)`
       : `${head} ${[keyTail, ...tail.filter((t) => !t.startsWith("→ key"))].filter(Boolean).join(" ")}`.trim();
   const discriminator =
     issuedKey || str(get(rec, "requestID")) || str(get(rec, "eventID")) || `record:${index}`;
-  const severity: Severity | null = action === "AssumeRoot" ? (attempted ? "Medium" : "High") : null;
+  const severity: Severity | null =
+    action === "AssumeRoot" ? (result === "issued" ? "High" : "Medium") : null;
   // The verb phrase is what the posture slot holds; the role, session, key and expiration are
   // the object slot's, so a long role ARN never clips the verb or the outcome.
   const colon = head.indexOf(": ");
-  const posture = attempted ? `attempted to ${infinitive}` : colon >= 0 ? head.slice(0, colon) : head;
-  const detail = attempted
-    ? ""
+  const posture = attempted
+    ? `attempted to ${infinitive}`
     : responseMissing
-      ? `${colon >= 0 ? head.slice(colon + 2) : ""} — response details unavailable`.trim()
+      ? `requested to ${infinitive}`
+      : colon >= 0
+        ? head.slice(0, colon)
+        : head;
+  const detail =
+    attempted || responseMissing
+      ? ""
       : [colon >= 0 ? head.slice(colon + 2) : "", keyTail, ...tail.filter((t) => !t.startsWith("→ key"))]
           .filter(Boolean)
           .join(" ");
-  const outcome = attempted ? `denied (${bounded(errorCode.trim(), 30)})` : "";
+  const outcome = attempted
+    ? `denied (${bounded(errorCode.trim(), 30)})`
+    : responseMissing
+      ? "outcome unknown (response details unavailable)"
+      : "";
   return {
     action,
     attempted,
+    result,
     issuedKey,
     expiration,
     role,
@@ -395,7 +418,7 @@ export function readCredentialIssuance(
     detail,
     outcome,
     severity,
-    mitre: action === "AssumeRoot" && !attempted ? ["T1078.004"] : [],
+    mitre: action === "AssumeRoot" && result === "issued" ? ["T1078.004"] : [],
     keySegment: `|issued:${discriminator}|${(roleArn || targetPrincipal || "-").toLowerCase()}`,
   };
 }

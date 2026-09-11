@@ -420,10 +420,31 @@ describe("readCredentialIssuance — each STS action, its own layout", () => {
     ]) {
       const t = ok("AssumeRole", { roleArn: ROLE_ARN, roleSessionName: "deploy" }, response as never)!;
       expect(t.words).toBe(
-        `issues temporary credentials: role ${ROLE_ARN} session deploy — response details unavailable`,
+        `requested to assume role ${ROLE_ARN} session deploy — outcome unknown (response details unavailable)`,
       );
+      expect(t.result).toBe("unknown");
       expect(t.issuedKey).toBe("");
     }
+  });
+  it("an AssumeRoot with no response evidence is a request of unknown outcome — Medium, no technique, never High", () => {
+    const r = ok("AssumeRoot", { targetPrincipal: OTHER, taskPolicyArn: { arn: "x" } }, null)!;
+    expect(r.result).toBe("unknown");
+    expect(r.severity).toBe("Medium");
+    expect(r.mitre).toEqual([]);
+    expect(r.words).toMatch(/^requested to issue ROOT session credentials/);
+  });
+  it("signInSessionArn is read from sessionContext, and a delegate provider account is named", () => {
+    const id = readAwsIdentity(
+      assumed({
+        accessKeyId: "",
+        sessionContext: { signInSessionArn: "arn:aws:sts::111122223333:sign-in-session/s-1" },
+      }),
+    );
+    expect(id.session.signInSessionArn).toBe("arn:aws:sts::111122223333:sign-in-session/s-1");
+    expect(id.credentialIdentity).toBe("arn:aws:sts::111122223333:sign-in-session/s-1");
+    const d = readAwsIdentity(assumed({ invokedByDelegate: { accountId: OTHER } }));
+    expect(d.delegateAccountId).toBe(OTHER);
+    expect(d.words).toContain(`invoked by delegate provider account ${OTHER} (delegated permissions)`);
   });
   it("the discriminator ladder: issued key → requestID → eventID → record index; two same-role calls with nothing else are two rows", () => {
     expect(ok("AssumeRole", { roleArn: ROLE_ARN }, null)!.keySegment).toBe(

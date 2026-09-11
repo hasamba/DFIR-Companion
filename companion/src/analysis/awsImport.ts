@@ -350,7 +350,7 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
       : {}),
     // An STS issuance row: the OBJECT is the role (or federated user) the credentials were issued
     // for, the TARGET the credential itself — its key id is what a later row can be matched on.
-    ...(issuance && !issuance.attempted && (issuance.role?.arn || issuance.federatedUser?.arn)
+    ...(issuance && issuance.result === "issued" && (issuance.role?.arn || issuance.federatedUser?.arn)
       ? {
           object: {
             kind: "cloud_principal",
@@ -449,8 +449,12 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
     // The credential and the session issuer join the key (#931 item 5): a reused session name
     // under two access keys is two rows. The recipient account does NOT — the two records of one
     // cross-account action share a sharedEventID and are merged into one row before aggregation.
+    // A replica group keys on its sharedEventID so two distinct cross-account actions that share
+    // every other dimension never fold under the optional aggregation.
     aggKey: boundedAggKey(
-      `aws|${source}|${name}|${identity.accountId ?? ""}|${identity.id || identity.arn || who}|${failed ? "failed" : "ok"}|${errorCode}|${region}|${ip || rawIp}${ssm?.keySegment ?? ""}${iam?.keySegment ?? ""}${who2.keySegment}${issuance?.keySegment ?? ""}|${client}${objectKey ? `|${resource}` : ""}`.toLowerCase(),
+      who2.replicaId
+        ? `aws|shared:${who2.replicaId}`.toLowerCase()
+        : `aws|${source}|${name}|${identity.accountId ?? ""}|${identity.id || identity.arn || who}|${failed ? "failed" : "ok"}|${errorCode}|${region}|${ip || rawIp}${ssm?.keySegment ?? ""}${iam?.keySegment ?? ""}${who2.keySegment}${issuance?.keySegment ?? ""}|${client}${objectKey ? `|${resource}` : ""}`.toLowerCase(),
     ),
     sources: ["AWS CloudTrail"],
   };

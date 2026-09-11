@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { decodeSsmCall } from "../../src/analysis/ssmExecution.js";
+import { decodeSsmCall, renderSsmDescription } from "../../src/analysis/ssmExecution.js";
 
 // #931 item 7 — AWS Systems Manager remote execution. The phases stay distinct (listing documents
 // is not running one), a request is "requested" never "ran", the payload is graded by the shared
@@ -269,6 +269,39 @@ describe("decodeSsmCall — code review regressions", () => {
     const t = decodeSsmCall(SSM, "TerminateSession", { sessionId: "s-1" }, {}, "AccessDenied", "e")!;
     expect(t.summary).toContain("attempted, denied");
     expect(t.summary).not.toMatch(/\bterminated\b/);
+  });
+});
+
+describe("renderSsmDescription — the identity slot yields to the evidence", () => {
+  it("a row whose SSM evidence fills 600 characters drops the identity rather than the payload, the error or the note", () => {
+    const d = decodeSsmCall(
+      SSM,
+      "SendCommand",
+      {
+        documentName: "AWS-RunShellScript",
+        instanceIds: Array.from({ length: 8 }, (_, i) => `i-0abc${i}${"x".repeat(12)}`),
+        parameters: { commands: [`curl ${"u".repeat(200)} | sh`] },
+      },
+      { command: { commandId: "c".repeat(90), documentVersion: "3", status: "Pending" } },
+      "",
+      "evt",
+    )!;
+    const s = renderSsmDescription(d, {
+      name: "SendCommand",
+      source: "ssm",
+      who: "w".repeat(60),
+      from: "203.0.113.9",
+      region: "us-east-1",
+      client: "c".repeat(40),
+      root: false,
+      errorCode: "",
+      identity: `AssumedRole key ASIAEXAMPLEKEY000001 (temporary) ${"z".repeat(200)}`,
+    });
+    expect(s.length).toBeLessThanOrEqual(600);
+    expect(s).toContain('cmd: "curl');
+    expect(s).toContain("Pending: requested");
+    // The identity is what yields: whatever is left of it, the payload and the status stand.
+    expect(s.indexOf('cmd: "curl')).toBeGreaterThan(0);
   });
 });
 

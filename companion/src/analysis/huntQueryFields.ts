@@ -243,6 +243,12 @@ const definitions: HuntFieldDefinition[] = [
     "Credential the call was signed with (access key id)",
   ),
   canonical("authentication.issuer", "keyword", "authentication.issuer", "Identity that issued the session"),
+  canonical(
+    "authentication.mechanism",
+    "keyword",
+    "authentication.mechanism",
+    "Kind of principal or credential mechanism",
+  ),
   canonical("session.id", "keyword", "session.id", "Normalized session identifier"),
   canonical("session.interactive", "boolean", "session.interactive", "Whether the session is interactive"),
   canonical("cloud.provider", "keyword", "cloud.provider", "Cloud provider"),

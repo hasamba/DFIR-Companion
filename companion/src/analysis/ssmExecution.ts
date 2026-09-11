@@ -224,14 +224,16 @@ export function renderSsmDescription(
   const summary = ` ${ssm.summary.slice(0, 260)}`;
   const payload = ssm.payloadExcerpt ? ` cmd: "${ssm.payloadExcerpt.slice(0, 150)}"` : "";
   const note = ` — ${ssm.note}`;
-  // The caller's identity words (#931 item 5) take what the SSM evidence leaves — between 40 and
-  // 110 characters — so the document, id, status, target and payload never yield to them.
+  // The caller's identity words (#931 item 5) take only what the SSM evidence leaves — up to 150
+  // characters, down to nothing when the evidence fills the row — so the document, id, status,
+  // target, payload, error detail and note are never displaced.
   const evidence = `${head}${summary}${payload}${tail}`;
   const identityRaw = (parts.identity ?? "").trim();
-  const budget = Math.max(40, Math.min(150, 600 - evidence.length - 1));
-  const identity = identityRaw
-    ? ` ${identityRaw.length > budget ? `${identityRaw.slice(0, budget - 1)}…` : identityRaw}`
-    : "";
+  const budget = Math.min(150, 600 - evidence.length - 1);
+  const identity =
+    identityRaw && budget >= 12
+      ? ` ${identityRaw.length > budget ? `${identityRaw.slice(0, budget - 1)}…` : identityRaw}`
+      : "";
   const fixed = `${head}${identity}${summary}${payload}${tail}`;
   return `${fixed}${note.slice(0, Math.max(0, 600 - fixed.length))}`.slice(0, 600);
 }
