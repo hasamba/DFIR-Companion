@@ -50,6 +50,15 @@ const CONDITION_WORDS: Array<[string, string]> = [
   ["headercontainswords", "when a header contains"],
   ["recipientaddresscontainswords", "when a recipient address contains"],
 ];
+const CONDITION_FLAG_WORDS: Record<string, string> = {
+  mynameintobox: "my name is in the To box",
+  mynameinccbox: "my name is in the Cc box",
+  hasattachment: "the message has an attachment",
+  myselfonly: "I am the only recipient",
+  sentonlytome: "sent only to me",
+  withimportance: "marked with importance",
+  withsensitivity: "marked with sensitivity",
+};
 const CONDITION_FLAGS = [
   "mynameintobox",
   "mynameinccbox",
@@ -116,11 +125,16 @@ export function readRuleParams(p: Map<string, string>, ownerDomain: string, isSe
   }
   for (const [param, words] of ACTION_FLAG) {
     const raw = p.get(param);
-    if (raw !== undefined && truthy(raw)) {
+    if (raw === undefined) continue;
+    if (truthy(raw)) {
       r.any = true;
       // Stopping later rules conceals nothing by itself; only delete / move / mark-read do.
       if (param !== "stopprocessingrules") r.hides = true;
       r.actions.push(`${prefix}${words}`);
+    } else if (isSet && falsy(raw)) {
+      // `-DeleteMessage $false` on a Set is a delta too: the action is switched off.
+      r.any = true;
+      r.deltas.push(`no longer ${words}`);
     }
   }
   const move = p.get("movetofolder");
@@ -144,8 +158,11 @@ export function readRuleParams(p: Map<string, string>, ownerDomain: string, isSe
   }
   for (const flag of CONDITION_FLAGS) {
     const raw = p.get(flag);
-    if (raw !== undefined && truthy(raw))
-      r.conditions.push(`when ${flag.replace(/^my/, "my ").replace(/box$/, " box")}`);
+    if (raw === undefined) continue;
+    const words = CONDITION_FLAG_WORDS[flag] ?? flag;
+    if (truthy(raw)) r.conditions.push(`when ${words}`);
+    // Switching a condition OFF on a Set broadens the rule — a delta the row must show.
+    else if (isSet && falsy(raw)) r.deltas.push(`no longer only when ${words}`);
   }
   const known = new Set([...CONDITION_WORDS.map(([k]) => k), ...CONDITION_FLAGS]);
   for (const [name, raw] of p) {

@@ -239,12 +239,30 @@ function finish(
 
 // ───────────────────────────── rules ─────────────────────────────
 
+// `-WhatIf` and `-ValidateOnly` make no change: a successful record of either is a simulation.
+const isDryRun = (p: Map<string, string>): boolean =>
+  ["whatif", "validateonly"].some((k) => p.has(k) && (truthy(p.get(k) ?? "") || p.get(k) === ""));
+const DRY_RUN_NOTE = "dry run (WhatIf/ValidateOnly) — no change was made";
+
 function ruleCmdlet(c: Common, pp: Pairs): ExchangeChange | null {
   const p = pp.map;
   const op = c.operation.toLowerCase();
   const m = /^(new|set|enable|disable|remove)-inboxrule$/.exec(op);
   // A record with no parameters at all cannot be read: the plain row (the table's grade) stands.
   if (!m || p.size === 0) return null;
+  if (isDryRun(p)) {
+    const label = quote(p.get("name") ?? (p.get("identity") ?? "").split("\\").pop() ?? "", NAME_MAX);
+    return finish(c, {
+      kind: "rule",
+      verb: `simulates ${m[1] === "new" ? "creating" : m[1] === "set" ? "changing" : `${m[1] === "remove" ? "removing" : m[1] === "enable" ? "enabling" : "disabling"}`} inbox rule ${label}`,
+      infinitive: `simulate a change to inbox rule ${label}`,
+      words: "",
+      qualifiers: [DRY_RUN_NOTE],
+      severity: "Low",
+      scope: `rule:dryrun:${pp.digest}`,
+      incompleteScope: pp.truncated,
+    });
+  }
   const verb = m[1];
   const name = p.get("name") ?? "";
   const identity = p.get("identity") ?? "";
@@ -379,6 +397,16 @@ function ruleMailboxAudit(c: Common): ExchangeChange | null {
 
 function forwardingCmdlet(c: Common, pp: Pairs): ExchangeChange | null {
   const p = pp.map;
+  if (isDryRun(p))
+    return finish(c, {
+      kind: "forwarding",
+      verb: "simulates a mailbox change",
+      infinitive: "simulate a mailbox change",
+      qualifiers: [DRY_RUN_NOTE],
+      severity: "Low",
+      scope: `forwarding:dryrun:${pp.digest}`,
+      incompleteScope: pp.truncated,
+    });
   const smtp = p.get("forwardingsmtpaddress");
   const addr = p.get("forwardingaddress");
   const deliver = p.get("delivertomailboxandforward");
@@ -449,17 +477,38 @@ function permissionCmdlet(c: Common, pp: Pairs): ExchangeChange | null {
   );
   if (!m) return null;
   const removal = m[1] === "remove";
+  if (isDryRun(p))
+    return finish(c, {
+      kind: "permission",
+      verb: "simulates a permission change",
+      infinitive: "simulate a permission change",
+      qualifiers: [DRY_RUN_NOTE],
+      severity: "Low",
+      scope: `permission:dryrun:${pp.digest}`,
+      incompleteScope: pp.truncated,
+    });
   const trustee = (p.get("trustee") ?? p.get("user") ?? "").trim();
   const rights = (p.get("accessrights") ?? "").trim() || "permission";
   const mailbox = p.get("identity") ?? c.mailbox;
+  // `-Deny` adds or removes a DENY entry: adding one restricts, removing one may widen access —
+  // the opposite direction from an allow entry.
+  const deny = p.has("deny") && (p.get("deny") === "" || truthy(p.get("deny") ?? ""));
   const on = `${rights} on ${mailbox.slice(0, 60)}`;
+  const forWhom = trustee ? ` for ${withClass(trustee, c.ownerDomain)}` : "";
   const to = trustee ? ` ${removal ? "from" : "to"} ${withClass(trustee, c.ownerDomain)}` : "";
+  const verb = deny
+    ? `${removal ? "removes a Deny entry" : "adds a Deny entry"} for ${on}${forWhom}${removal ? " (effective access may widen)" : ""}`
+    : `${removal ? "revokes" : "grants"} ${on}${to}`;
+  const infinitive = deny
+    ? `${removal ? "remove a Deny entry" : "add a Deny entry"} for ${on}${forWhom}`
+    : `${removal ? "revoke" : "grant"} ${on}${to}`;
+  const widens = deny ? removal : !removal;
   return finish(c, {
     kind: "permission",
-    verb: `${removal ? "revokes" : "grants"} ${on}${to}`,
-    infinitive: `${removal ? "revoke" : "grant"} ${on}${to}`,
-    severity: removal ? "Low" : "Medium",
-    mitre: removal ? [] : ["T1098.002"],
+    verb,
+    infinitive,
+    severity: widens ? "Medium" : "Low",
+    mitre: widens ? ["T1098.002"] : [],
     scope: `permission:${pp.digest}`,
     target: trustee,
     incompleteScope: pp.truncated,
@@ -578,9 +627,38 @@ function itemRecord(c: Common): ExchangeChange | null {
       : op === "sendonbehalf"
         ? str(getCI(c.rec, "SendOnBehalfOfUserMailboxGuid")).trim()
         : "";
+  // A move or copy names its destination (a folder, or another mailbox for a cross-mailbox
+  // operation); a send names its recipients — both are evidence and both are identity.
+  const destFolder = str(
+    getCI(isObject(getCI(c.rec, "DestFolder")) ? (getCI(c.rec, "DestFolder") as Row) : {}, "Path"),
+  );
+  const destMailbox =
+    str(getCI(c.rec, "DestMailboxOwnerUPN")).trim() || str(getCI(c.rec, "DestMailboxId")).trim();
+  const cross = truthy(str(getCI(c.rec, "CrossMailboxOperations")));
+  const dest = [
+    destMailbox && (cross || destMailbox.toLowerCase() !== c.mailbox.toLowerCase())
+      ? `to mailbox ${destMailbox}`
+      : "",
+    destFolder ? `to ${quote(destFolder, FOLDER_MAX)}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const recipients = listOf(getCI(c.rec, "recipientList"))
+    .map((x) => str(getCI(x, "Address")) || str(getCI(x, "Name")))
+    .filter(Boolean);
+  const recipientStrings = (
+    Array.isArray(getCI(c.rec, "recipientList")) ? (getCI(c.rec, "recipientList") as unknown[]) : []
+  ).filter((x): x is string => typeof x === "string");
+  const allRecipients = [...recipients, ...recipientStrings];
+  const recipientCount = Number(str(getCI(c.rec, "recipientCount")));
+  const recipientWords = allRecipients.length
+    ? `to ${list(allRecipients.map((x) => withClass(x, c.ownerDomain)))}`
+    : Number.isFinite(recipientCount) && recipientCount > 0
+      ? `to ${plural(recipientCount, "recipient")}`
+      : "";
   const verb = sending
-    ? `${verbs[0]}${op === "send" ? "" : ` ${sentAs}`}`
-    : `${verbs[0]} ${plural(items.length, "item")}${folder ? ` from ${quote(folder, FOLDER_MAX)}` : ""}`;
+    ? `${verbs[0]}${op === "send" ? "" : ` ${sentAs}`}${recipientWords ? ` ${recipientWords}` : ""}`
+    : `${verbs[0]} ${plural(items.length, "item")}${folder ? ` from ${quote(folder, FOLDER_MAX)}` : ""}${dest ? ` ${dest}` : ""}`;
   const infinitive = sending
     ? `${verbs[1]}${op === "send" ? "" : ` ${sentAs}`}`
     : `${verbs[1]} ${plural(items.length, "item")}`;
@@ -590,8 +668,8 @@ function itemRecord(c: Common): ExchangeChange | null {
     infinitive,
     words: subject ? `subject ${quote(subject, SUBJECT_MAX)}` : "",
     severity: accessSeverity(c),
-    scope: `item:${op}:${sentAs}:${sentAsId}:${folder}:${ids.join(",")}`,
-    target: sentAs,
+    scope: `item:${op}:${sentAs}:${sentAsId}:${folder}:${destMailbox}:${destFolder}:${allRecipients.join(",")}:${recipientCount}:${ids.join(",")}`,
+    target: sentAs || destMailbox,
     incompleteScope: items.some((i) => itemIds(i) === "//") || items.length === 0,
   });
 }

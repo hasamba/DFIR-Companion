@@ -493,6 +493,128 @@ describe("code review regressions", () => {
   });
 });
 
+describe("code review round 2", () => {
+  it("a WhatIf or ValidateOnly cmdlet is a simulation: no change, Low, no technique", () => {
+    const c = one(admin("New-InboxRule", { Name: "r", ForwardTo: "x@attacker.invalid", WhatIf: "True" }));
+    expect(c.posture).toBe('simulates creating inbox rule "r"');
+    expect(c.qualifiers).toContain("dry run (WhatIf/ValidateOnly) — no change was made");
+    expect(c.severity).toBe("Low");
+    expect(c.mitre).toEqual([]);
+    expect(
+      one(
+        admin("Set-Mailbox", {
+          Identity: OWNER,
+          ForwardingSmtpAddress: "smtp:x@attacker.invalid",
+          WhatIf: "",
+        }),
+      ).posture,
+    ).toBe("simulates a mailbox change");
+    expect(
+      one(
+        admin("Add-MailboxPermission", {
+          Identity: OWNER,
+          User: "u@attacker.invalid",
+          AccessRights: "FullAccess",
+          ValidateOnly: "True",
+        }),
+      ).severity,
+    ).toBe("Low");
+  });
+  it("a Deny entry reads in its own direction: adding restricts (Low), removing may widen (Medium)", () => {
+    const add = one(
+      admin("Add-MailboxPermission", {
+        Identity: OWNER,
+        User: "u@example.invalid",
+        AccessRights: "FullAccess",
+        Deny: "True",
+      }),
+    );
+    expect(add.posture).toBe(
+      "adds a Deny entry for FullAccess on alice@example.invalid for u@example.invalid (inside the mailbox's domain)",
+    );
+    expect(add.severity).toBe("Low");
+    expect(add.mitre).toEqual([]);
+    const rm = one(
+      admin("Remove-MailboxPermission", {
+        Identity: OWNER,
+        User: "u@example.invalid",
+        AccessRights: "FullAccess",
+        Deny: "",
+      }),
+    );
+    expect(rm.posture).toContain(
+      "removes a Deny entry for FullAccess on alice@example.invalid for u@example.invalid",
+    );
+    expect(rm.posture).toContain("(effective access may widen)");
+    expect(rm.severity).toBe("Medium");
+    expect(rm.mitre).toEqual(["T1098.002"]);
+  });
+  it("a move or copy names its destination mailbox and folder; a send names its recipients — in the words and the key", () => {
+    const cp = one(
+      base({
+        RecordType: 3,
+        Operation: "Copy",
+        LogonType: 2,
+        MailboxOwnerUPN: OWNER,
+        Folder: { Path: "\\Inbox" },
+        DestFolder: { Path: "\\Archive" },
+        DestMailboxOwnerUPN: "drop@attacker.invalid",
+        CrossMailboxOperations: "True",
+        AffectedItems: [{ Id: "a" }, { Id: "b" }],
+      }),
+    );
+    expect(cp.posture).toBe('copies 2 items from "\\Inbox" to mailbox drop@attacker.invalid to "\\Archive"');
+    expect(cp.target).toBe("drop@attacker.invalid");
+    const cp2 = one(
+      base({
+        RecordType: 3,
+        Operation: "Copy",
+        LogonType: 2,
+        MailboxOwnerUPN: OWNER,
+        Folder: { Path: "\\Inbox" },
+        DestFolder: { Path: "\\Archive" },
+        DestMailboxOwnerUPN: "other@attacker.invalid",
+        CrossMailboxOperations: "True",
+        AffectedItems: [{ Id: "a" }, { Id: "b" }],
+      }),
+    );
+    expect(cp.key).not.toBe(cp2.key);
+    const send = one(
+      base({
+        RecordType: 2,
+        Operation: "SendAs",
+        LogonType: 2,
+        MailboxOwnerUPN: OWNER,
+        SendAsUserSmtp: OWNER,
+        Item: { Id: "i1" },
+        recipientList: [{ Address: "cfo@example.invalid" }, "x@attacker.invalid"],
+        recipientCount: 2,
+      }),
+    );
+    expect(send.posture).toBe(
+      "sends as alice@example.invalid to cfo@example.invalid (inside the mailbox's domain), x@attacker.invalid (outside the mailbox's domain)",
+    );
+    const countOnly = one(
+      base({
+        RecordType: 2,
+        Operation: "Send",
+        LogonType: 0,
+        UserId: OWNER,
+        MailboxOwnerUPN: OWNER,
+        Item: { Id: "i1" },
+        recipientCount: 3,
+      }),
+    );
+    expect(countOnly.posture).toBe("sends to 3 recipients");
+  });
+  it("a Set-InboxRule that switches an action or a condition off is a delta, not a generic change", () => {
+    const c = one(admin("Set-InboxRule", { Identity: "r", DeleteMessage: "False", MyNameInToBox: "False" }));
+    expect(c.words).toContain("no longer deletes the message");
+    expect(c.words).toContain("no longer only when my name is in the To box");
+    expect(c.words).not.toContain("conditions supplied, not decoded");
+  });
+});
+
 describe("item operations (RecordType 2 and 3)", () => {
   it("SendAs by a non-owner is Low with a bounded subject and no technique", () => {
     const c = one(

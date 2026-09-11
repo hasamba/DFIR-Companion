@@ -448,7 +448,10 @@ delegate binding to ten mailboxes folded into one row. Each record now reads for
   addresses are set the row says `ForwardingAddress takes precedence`. Every partial change says
   `effective forwarding state not in this record`.
 - **Permissions** — `grants FullAccess on alice@… to helper@… (outside the mailbox's domain)`,
-  Medium; `Add-RecipientPermission` names its `Trustee`; removals Low.
+  Medium; `Add-RecipientPermission` names its `Trustee`; removals Low. A `-Deny` entry reads in its
+  own direction: `adds a Deny entry …` restricts (Low), `removes a Deny entry … (effective access
+  may widen)` is Medium. A `-WhatIf` or `-ValidateOnly` cmdlet reads `simulates …` — no change
+  was made.
 - **Access** (`MailItemsAccessed`) — `binds 5 items in 2 folders (7 operations) on alice@… as
   delegate via REST session sess-…`. The item count is the items the record LISTS;
   `OperationCount` counts operations and is shown separately, never as messages. `Sync` is folder
@@ -459,9 +462,11 @@ delegate binding to ten mailboxes folded into one row. Each record now reads for
   access Info. `AppId`/`ClientAppId` is shown as `client app …` — the client, not the actor,
   unless the record's `UserType` says the actor is an application. A throttled record says the
   item list is incomplete.
-- **Send and delete** — `sends as ceo@…` (the identity the record's own `SendAsUserSmtp` names;
-  a non-owner: Low, the subject bounded), `hard-deletes 3 items from "\Inbox"` (the items the
-  record lists; one `Item` on a single-item record).
+- **Send, move and delete** — `sends as ceo@… to cfo@… (inside the mailbox's domain), x@…
+  (outside the mailbox's domain)` (the identity the record's own `SendAsUserSmtp` names, the
+  recipients it lists; a non-owner: Low, the subject bounded), `copies 2 items from "\Inbox" to
+  mailbox drop@… to "\Archive"` (a cross-mailbox destination is named), `hard-deletes 3 items
+  from "\Inbox"` (the items the record lists; one `Item` on a single-item record).
 - **A failed or unknown result is an attempt** — `attempted to create inbox rule "r" — failed`,
   Medium, no technique. A `PartiallySucceeded` result reads `partly creates …` with `which
   actions completed is not in this record`.
