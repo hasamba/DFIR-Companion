@@ -162,6 +162,33 @@ describe("POST /cases/:id/import-leapp", () => {
     POLL_TIMEOUT_MS * 3,
   );
 
+  it("reports a failed seam as a failed import instead of leaving Info rows in the forensic timeline", async () => {
+    const { app, stateStore } = await makeApp();
+    // Let the importer merge, then make the seam's first step fail: the reload of the merged state.
+    const realLoad = stateStore.load.bind(stateStore);
+    let loads = 0;
+    // The snapshot (1st) and the importer's own load (2nd) succeed; the seam's reload (3rd) fails.
+    stateStore.load = async (caseId: string) => {
+      loads++;
+      if (loads === 3) throw new Error("state store offline");
+      return realLoad(caseId);
+    };
+    const res = await request(app)
+      .post("/cases/c1/import-leapp")
+      .send({ text: CALL_HISTORY, filename: "Call History.tsv", platform: "ios" });
+    expect(res.status).toBe(202);
+    const failure = await pollFor("the import to be recorded as failed", async () => {
+      const diag = (await request(app).get("/diagnostics")).body as {
+        report?: { importers?: { recentFailures?: Array<{ kind: string }> } };
+      };
+      return diag.report?.importers?.recentFailures?.find((f) => f.kind === "leapp");
+    });
+    expect(failure).toBeTruthy();
+    // No import record was written for it.
+    const meta = (await request(app).get("/cases/c1/import-meta")).body as { lastImportFile?: string };
+    expect(meta.lastImportFile ?? "").not.toBe(res.body.file);
+  });
+
   it("refuses an export with no rows at all", async () => {
     const { app } = await makeApp();
     const res = await request(app)

@@ -121,6 +121,25 @@ describe("parseLeappTsv — the row's clock keeps its meaning", () => {
     ]);
   });
 
+  it("skips a populated clock that does not parse and takes the next one that does", () => {
+    const tsv = ["Timestamp\tLast Modified\tPath", "N/A\t2026-05-03 09:00:00\t/a", "N/A\t\t/b"].join("\n");
+    const r = parseLeappTsv(tsv, "Files.tsv");
+    const a = r.events.find((e) => e.description.includes("/a"))!;
+    const b = r.events.find((e) => e.description.includes("/b"))!;
+    expect(a.timestamp).toMatch(/^2026-05-03T09:00:00/);
+    expect(a.description).toContain("[Last Modified: 2026-05-03 09:00:00]");
+    // Nothing parses: undated, and the raw text stays visible rather than becoming the timestamp.
+    expect(b.timestamp).toBe("");
+    expect(b.description).toContain("[Timestamp: N/A]");
+    expect(r.undated).toBe(1);
+  });
+
+  it("does not fold two rows that differ only by letter case", () => {
+    const tsv = ["Name\tPath", "a\t/sdcard/Download/x", "a\t/sdcard/download/x"].join("\n");
+    const r = parseLeappTsv(tsv, "Files.tsv");
+    expect(r.events).toHaveLength(2);
+  });
+
   it("keeps two rows that differ only in time as two events, and folds byte-identical rows", () => {
     const tsv = [
       "Timestamp\tApp",

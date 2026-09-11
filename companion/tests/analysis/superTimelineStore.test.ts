@@ -238,6 +238,23 @@ describe("SuperTimelineStore", () => {
     expect(r.labelsAvailable).toEqual(["key-evidence"]);
   });
 
+  it("gives migrated legacy rows the retention age the old store implied: oldest-dated goes first", async () => {
+    // The old JSON cap re-sorted the array newest-first, so array position is not append age. A
+    // migrated store must not evict the NEWEST legacy row on the next append past the cap.
+    await writeFile(
+      join(cases.stateDir("c1"), "super-timeline.json"),
+      JSON.stringify([
+        ev({ id: "newest", timestamp: "2026-06-03T00:00:00Z" }),
+        ev({ id: "undated", timestamp: "" }),
+        ev({ id: "oldest", timestamp: "2026-06-01T00:00:00Z" }),
+      ]),
+    );
+    const small = new SuperTimelineStore(cases, 3);
+    await small.append("c1", [ev({ id: "fresh", timestamp: "2026-06-02T00:00:00Z" })]);
+    const r = await small.query("c1", {});
+    expect(new Set(r.events.map((e) => e.id))).toEqual(new Set(["newest", "undated", "fresh"]));
+  });
+
   it("caps one query page while cursor batches cover the complete store", async () => {
     const events = Array.from({ length: 650 }, (_, i) =>
       ev({ id: `e${i}`, timestamp: new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString() }),

@@ -116,11 +116,16 @@ export function registerLeappImportRoute(
 
       void run()
         .then(async () => {
-          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
           if (settleDeps && stateBefore) {
+            // The seam is REQUIRED processing, not bookkeeping: a failure here leaves Info rows in
+            // the forensic timeline and none in the super-timeline — the defect this route existed
+            // with. So it is not caught; it reaches the failure handler below, which records the
+            // import as failed and reports the error status. Only the record, the activity line
+            // and the checkpoint after it are best-effort.
+            const settled = await settleForensicImport(settleDeps, caseId, stateBefore);
+            const { timelineDiff: tDiff, iocsDiff: iDiff } = settled;
+            options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
             try {
-              const settled = await settleForensicImport(settleDeps, caseId, stateBefore);
-              const { timelineDiff: tDiff, iocsDiff: iDiff } = settled;
               if (options.importMetaStore) {
                 await options.importMetaStore.record(caseId, {
                   kind: "leapp",
@@ -144,8 +149,10 @@ export function registerLeappImportRoute(
                 await pushImportCheckpoint(caseId, stateBefore, `leapp (${storedName})`);
               }
             } catch {
-              /* non-fatal — the import itself is on disk and merged */
+              /* non-fatal — the import is merged and settled; only its bookkeeping failed */
             }
+          } else {
+            options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
           }
           resynthesizeInBackground(caseId);
         })

@@ -21,6 +21,8 @@ import type { HuntUpload } from "../integrations/velociraptor/velociraptorApi.js
 import { parseVelociraptorJson } from "../analysis/velociraptorImport.js";
 import { applySeverityFloor } from "../analysis/severityFloor.js";
 import { settleForensicImport } from "../routes/importSettle.js";
+import { diffTimeline, type TimelineDiff } from "../analysis/timelineDiff.js";
+import { diffIocs, type IocsDiff } from "../analysis/iocsDiff.js";
 import type { InvestigationState, Severity, ForensicEvent } from "../analysis/stateTypes.js";
 import { logLine } from "../logging/serverLogger.js";
 
@@ -61,6 +63,19 @@ export interface VeloExternalIngest {
     uploads: HuntUpload[],
     opts: { minSeverity?: Severity; label: string },
   ): Promise<{ addedEvents: number; addedIocs: number; imported: string[]; skipped: string[] }>;
+}
+
+// The diff of the merged state as imported, with no demote — the superOnly-without-store fallback.
+async function diffWithoutDemote(
+  stateStore: { load(caseId: string): Promise<InvestigationState> },
+  caseId: string,
+  stateBefore: InvestigationState,
+): Promise<{ timelineDiff: TimelineDiff; iocsDiff: IocsDiff }> {
+  const imported = await stateStore.load(caseId);
+  return {
+    timelineDiff: diffTimeline(stateBefore.forensicTimeline, imported.forensicTimeline),
+    iocsDiff: diffIocs(stateBefore.iocs, imported.iocs),
+  };
 }
 
 export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExternalIngest {
@@ -173,13 +188,17 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
         addedIocs = 0;
       if (options.stateStore && stateBefore) {
         try {
-          // The super-only path returned above, so this is always the forensic path: the one seam
-          // (routes/importSettle.ts) dual-writes, tags and demotes, and diffs post-demote.
-          const { timelineDiff: tDiff, iocsDiff: iDiff } = await settleForensicImport(
-            { ...settleDeps, stateStore: options.stateStore },
-            caseId,
-            stateBefore,
-          );
+          // The super-only path returns above only when a super-timeline store exists; a superOnly
+          // request with NO store falls through to the forensic importer and must not demote — there
+          // is nowhere for a demoted row to go. Every other case is the forensic path through the one
+          // seam (routes/importSettle.ts): dual-write, tag, demote, diff post-demote.
+          const { timelineDiff: tDiff, iocsDiff: iDiff } = opts.superOnly
+            ? await diffWithoutDemote(options.stateStore, caseId, stateBefore)
+            : await settleForensicImport(
+                { ...settleDeps, stateStore: options.stateStore },
+                caseId,
+                stateBefore,
+              );
           addedEvents = tDiff.added.length;
           addedIocs = iDiff.added.length;
           if (

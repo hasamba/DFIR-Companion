@@ -146,18 +146,29 @@ interface RowClock {
   index: number;
   name: string;
   raw: string;
+  /** Normalised UTC ISO, or "" when the raw text does not parse — the row is then undated. */
+  timestamp: string;
 }
 
+// The first candidate whose cell is populated AND parses. A populated cell that does not parse
+// ("N/A", "-", an epoch the normaliser does not read) must not mask a later valid clock; when no
+// candidate parses, the first populated one is still returned so its raw text stays visible in
+// the description, and the row is undated rather than carrying junk in its timestamp.
 function rowClock(
   headers: readonly string[],
   cells: readonly string[],
   candidates: readonly number[],
 ): RowClock | null {
+  let unparsed: RowClock | null = null;
   for (const index of candidates) {
     const raw = (cells[index] ?? "").trim();
-    if (raw) return { index, name: (headers[index] ?? "").trim().slice(0, CLOCK_NAME_MAX), raw };
+    if (!raw) continue;
+    const name = (headers[index] ?? "").trim().slice(0, CLOCK_NAME_MAX);
+    const timestamp = normalizeTime(raw.replace(" ", "T"));
+    if (Number.isFinite(Date.parse(timestamp))) return { index, name, raw, timestamp };
+    unparsed ??= { index, name, raw, timestamp: "" };
   }
-  return null;
+  return unparsed;
 }
 
 export function parseLeappTsv(
@@ -200,7 +211,7 @@ export function parseLeappTsv(
 
   for (const cells of rows) {
     const clock = rowClock(headers, cells, candidates);
-    if (!clock) undated++;
+    if (!clock?.timestamp) undated++;
 
     const detail = headers
       .map((h, i) => {
@@ -226,7 +237,7 @@ export function parseLeappTsv(
     description = description.slice(0, DESCRIPTION_MAX);
 
     mapped.push({
-      timestamp: clock ? normalizeTime(clock.raw.replace(" ", "T")) : "",
+      timestamp: clock?.timestamp ?? "",
       description,
       severity: "Info", // extraction rows are evidence, not verdicts
       mitre: [],
@@ -234,10 +245,12 @@ export function parseLeappTsv(
       // on the artifact alone collapsed every row of a file into one event; keying without the
       // time folded rows that differ only in when they happened and kept the first one's clock;
       // keying without the clock name folded "Created" into "Last Modified". Aggregation is meant
-      // to fold IDENTICAL rows, and only those. Bounded fields first, the prose last, so the
-      // attacker-shaped detail can never push a discriminator past the key's bound.
+      // to fold IDENTICAL rows, and only those — so the row text is NOT case-folded (`/Data` and
+      // `/data` are two paths on the filesystems these exports come from); only the artifact name,
+      // which is a filename, is. Bounded fields first, the prose last, so the attacker-shaped detail
+      // can never push a discriminator past the key's bound.
       aggKey: boundedAggKey(
-        `leapp|${artifact}|${clock?.name ?? ""}|${clock?.raw ?? ""}|${boundedDetail}`.toLowerCase(),
+        `leapp|${artifact.toLowerCase()}|${clock?.name ?? ""}|${clock?.raw ?? ""}|${boundedDetail}`,
       ),
       sources: [label],
     });
