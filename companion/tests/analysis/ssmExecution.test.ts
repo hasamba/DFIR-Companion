@@ -319,6 +319,46 @@ describe("renderSsmDescription — the identity slot yields to the evidence", ()
   });
 });
 
+describe("renderSsmDescription — a maximal SendCommand keeps the full caveat", () => {
+  for (const errorCode of ["", "AccessDenied"]) {
+    it(`fifty targets, a long payload and a long identity never displace the note (${errorCode || "success"})`, () => {
+      const d = decodeSsmCall(
+        SSM,
+        "SendCommand",
+        {
+          documentName: "AWS-RunShellScript",
+          instanceIds: Array.from(
+            { length: 50 },
+            (_, i) => `i-0abc${String(i).padStart(3, "0")}${"x".repeat(10)}`,
+          ),
+          parameters: { commands: [`curl ${"u".repeat(300)} | sh`] },
+        },
+        { command: { commandId: "c".repeat(36), documentVersion: "3", status: "Pending" } },
+        errorCode,
+        "evt",
+      )!;
+      const parts = {
+        name: "SendCommand",
+        source: "ssm",
+        who: "w".repeat(60),
+        from: "2001:db8:0000:0000:0000:0000:0000:0001",
+        region: "us-east-1",
+        client: "c".repeat(40),
+        root: false,
+        errorCode,
+      };
+      for (const s of [
+        renderSsmDescription(d, parts),
+        renderSsmDescription(d, { ...parts, identity: `AssumedRole ${"z".repeat(200)}` }),
+      ]) {
+        expect(s.length).toBeLessThanOrEqual(600);
+        expect(s.endsWith(` — ${d.note}`)).toBe(true);
+        expect(s).toContain("[AWS-RunShellScript@3] cccccccccccccccccccccccccccccccccccc");
+      }
+    });
+  }
+});
+
 describe("renderSsmDescription — a ResumeSession keeps its caveat under a long identity", () => {
   for (const errorCode of ["", "AccessDenied"]) {
     it(`the session-commands caveat survives with and without the identity (${errorCode || "success"})`, () => {

@@ -221,17 +221,21 @@ export function renderSsmDescription(
 ): string {
   const head = `AWS ${parts.name} (${parts.source})${parts.who ? ` by ${parts.who.slice(0, 60)}` : ""}${parts.from ? ` from ${parts.from}` : ""}${parts.region ? ` in ${parts.region}` : ""}`;
   const tail = `${parts.client ? ` [ua: ${parts.client.slice(0, 40)}]` : ""}${parts.root ? " [root]" : ""}${parts.errorCode ? ` [${parts.errorCode.slice(0, 40)}]` : ""}`;
-  const summary = ` ${ssm.summary.slice(0, 260)}`;
-  const payload = ssm.payloadExcerpt ? ` cmd: "${ssm.payloadExcerpt.slice(0, 150)}"` : "";
+  // The NOTE — every sentence of it an evidence limitation ("the result is not in CloudTrail",
+  // "the session's commands are not in CloudTrail") — is reserved FIRST. What the head, the tail
+  // and the note leave is shared by the attacker-shaped slots in order: the summary (its tail is
+  // the target list; the document, id and status at its front always keep at least 80), the
+  // payload excerpt, and last the caller's identity, which falls to nothing before anything else.
   const note = ` — ${ssm.note}`;
-  // The caller's identity words (#931 item 5) take only what the SSM evidence AND a bounded note
-  // leave — up to 150 characters, down to nothing — so the document, id, status, target, payload,
-  // error detail and the execution caveat ("the result is not in CloudTrail") are never displaced.
-  // The whole note is reserved: every sentence of it is an evidence limitation ("the session's
-  // commands are not in CloudTrail"), and the identity is what yields, never the caveat.
-  const evidence = `${head}${summary}${payload}${tail}`;
+  const room = 600 - head.length - tail.length - note.length;
+  const summaryBudget = Math.max(80, Math.min(260, room - 1));
+  const summaryText = ssm.summary.slice(0, summaryBudget);
+  const summary = ` ${summaryText}`;
+  const payloadBudget = Math.max(0, Math.min(150, room - summary.length - 8));
+  const payload =
+    ssm.payloadExcerpt && payloadBudget >= 20 ? ` cmd: "${ssm.payloadExcerpt.slice(0, payloadBudget)}"` : "";
   const identityRaw = (parts.identity ?? "").trim();
-  const budget = Math.min(150, 600 - evidence.length - note.length - 1);
+  const budget = Math.min(150, room - summary.length - payload.length - 1);
   const identity =
     identityRaw && budget >= 12
       ? ` ${identityRaw.length > budget ? `${identityRaw.slice(0, budget - 1)}…` : identityRaw}`
