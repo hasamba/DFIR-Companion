@@ -356,6 +356,69 @@ the record holds none of them. A replace (`Put*`, `UpdateAssumeRolePolicy`) also
 document not in this record`. Those qualifiers, the outcome and the object have reserved room in the
 description; a long principal name or a long document is clipped before they are.
 
+### Entra applications: credentials, grants, roles, sign-ins
+
+An application that gains a credential, then a powerful permission, then acts, is the classic
+tenant takeover. Each of those is an Entra directory-audit record, and each used to import as
+`Entra audit: Consent to application by admin@…` — High whatever the consent said, and the
+permission itself never shown. Both export shapes (the Graph `directoryAudits` object and the
+Unified Audit Log's AzureActiveDirectory record) now read the same way, one row per change:
+
+- **Credentials** — `adds Password credential 9c1d2e3f… "deploy" (2 now) for Sync`: the
+  credential ADDED is the record's new list minus its old list, by key id. Two credentials in one
+  record are two rows. No secret value exists in the record and none is stored; a removal reads
+  `removes …` and is Low.
+- **Application permissions** — `grants application permission RoleManagement.ReadWrite.Directory
+  on Microsoft Graph for Sync — read and write all directory RBAC settings (any directory role,
+  Global Administrator included, to any principal)`. The words are Microsoft's own description of
+  the permission — the nominal grant; a data permission also says `nominal reach — application
+  access policies are not in this record`, because an Exchange access policy can narrow it and the
+  record does not say. The class (grant management, credential management, directory RBAC,
+  identity takeover, data read, data write/send) sets the grade — High for every named class,
+  Medium for anything else on Graph.
+- **The API is identified only by its immutable application id.** A display name can be set to
+  "Microsoft Graph" by anyone who owns a custom API, and a custom API can expose a scope spelled
+  `Mail.ReadWrite` that reads no mailbox. When a record names its API only by a tenant-specific
+  object id (every consent record does), the row says `API not identified in this record` and
+  stays Medium whatever the spelling — unless another record of the same export states that
+  object id's application id (an app-role assignment does, a service-principal sign-in does), in
+  which case the class applies.
+- **Consent** — `grants delegated permission Mail.Read on Microsoft Graph for Sync (admin consent,
+  for all users) — read the signed-in user's mail`, one row per scope. A delegated scope is
+  described as what the app can do AS THE SIGNED-IN USER, and the row says `delegated — as the
+  signed-in user, within that user's access`: a delegated `Mail.Read` reads the mail of whoever is
+  signed in, never every mailbox. A one-user consent to `openid profile User.Read` is Low; other
+  scopes Medium; a data-write or identity scope High; admin consent for all users of a data or
+  identity scope High. `IsAppOnly` consent grants application permissions and reads as such. A
+  consent listing more than 32 scopes shows 32 and one more row saying how many were cut.
+- **Directory roles** — `assigns directory role Global Administrator to service principal Sync —
+  can manage everything in the tenant`: each built-in role carries its documented capability
+  (`Application Administrator — can add credentials to any application and consent on its behalf —
+  then sign in as it`); High for a tier-0 role (Global Administrator, Privileged Role
+  Administrator, Privileged Authentication Administrator, Application Administrator, Cloud
+  Application Administrator, Partner Tier2 Support, Hybrid Identity Administrator), Medium for the
+  other built-in administrator roles, and only the name for a custom role — nothing is claimed
+  about a role the table does not know. `eligible` and `(PIM activation)` are kept in the words —
+  an eligible assignment is not an active one.
+- **Self-grant** — when the initiating application IS the subject (by id, never by name), the row
+  starts `self-grant:` and is High.
+- **Attempts** — `attempted to grant application permission … — failed … [requested, not granted]`,
+  Medium, no High: the change did not happen.
+- **Application sign-ins** are rows now (they used to be dropped): `Entra sign-in: application
+  Sync (app-id) token issued → Microsoft Graph from 198.51.100.7 credential: clientSecret k-1`.
+  The credential type comes from `clientCredentialType`, never from a key id; a secret is Low, a
+  certificate Info. `credential rejected (invalid client secret, AADSTS7000215)` is Medium; any
+  other failure is Low with its code. Two sign-ins from two addresses, or with two credentials,
+  are two rows. A Unified Audit Log sign-in record (`UserLoggedIn`, `UserLoginFailed`) is never
+  read as a directory change — its `ResultStatus` says the request completed, not that the login
+  succeeded.
+
+Every grant and role row ends `assigned, not yet observed in use`: the row says what was given,
+never that it was used. A sign-in after a credential was added is a separate row, not a link — the
+chain finding (credential → grant → use, joined on ids with matched credential keys) is #973.
+A familiar application name or a verified publisher is neither proof of safety nor of compromise;
+read the initiator, the capability and the consent reach.
+
 ## Evidence Drop Folder (Auto-Import Inbox)
 
 Every case gets a `cases/<id>/drop/` folder on creation. Copy any file into it — at any depth, subfolders included — and a background poller picks it up once the file size/mtime is stable (safe for Dropbox/OneDrive sync), then imports it through the same detection + import chain as the **Import** button. Screenshots are ingested as capture evidence; everything else is imported as an artifact.

@@ -19,7 +19,13 @@
 
 import type { Severity } from "./stateTypes.js";
 import { parseCsv } from "./csvImport.js";
-import { boundedAggKey } from "./aggKey.js";
+import { isEntraUalRecord } from "./entraAuditRecord.js";
+import {
+  isServicePrincipalSignIn,
+  learnApiResolver,
+  mapEntraAuditRows,
+  mapSpSignIn,
+} from "./entraAuditImport.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -164,10 +170,11 @@ function normalizeRecord(rec: Row): Row {
 
 // ───────────────────────────── classification ─────────────────────────────
 
-type Kind = "ual" | "signin" | "audit" | "other";
+type Kind = "ual" | "signin" | "spsignin" | "audit" | "other";
 
 function classify(rec: Row): Kind {
   if (getCI(rec, "Operation") || getCI(rec, "Operations")) return "ual";
+  if (isServicePrincipalSignIn(rec)) return "spsignin";
   if (
     getCI(rec, "userPrincipalName") &&
     (getCI(rec, "appDisplayName") || getCI(rec, "ipAddress")) &&
@@ -336,70 +343,6 @@ function mapSignIn(rec: Row, sink: Map<string, SiemIoc>): MappedEvent {
 // Graph's directoryAudit.result is one of success | failure | timeout | unknownFutureValue, and a
 // non-Graph export may spell success as succeeded/OK. Each Graph value is its own outcome — a
 // timeout is not a failure — and only an absent or unrecognised value is "unknown".
-function auditOutcome(result: string): "success" | "failure" | "timeout" | "unknownFutureValue" | "unknown" {
-  const r = result.trim().toLowerCase();
-  if (/^(success|succeeded|successful|ok)$/.test(r)) return "success";
-  if (r === "failure" || r === "failed") return "failure";
-  if (r === "timeout") return "timeout";
-  if (r === "unknownfuturevalue") return "unknownFutureValue";
-  return "unknown";
-}
-
-function mapAudit(rec: Row, sink: Map<string, SiemIoc>): MappedEvent {
-  const activity = pickStr(rec, ["activityDisplayName"]) || "directory change";
-  const initiator = pickStr(rec, ["initiatedBy.user.userPrincipalName", "initiatedBy.app.displayName"]);
-  // Identity for the KEY, never the display name: two apps can share "Sync" and differ by id.
-  const initiatorId =
-    pickStr(rec, ["initiatedBy.user.id", "initiatedBy.app.appId", "initiatedBy.app.servicePrincipalId"]) ||
-    initiator;
-  const initiatorIp = extractIp(pickStr(rec, ["initiatedBy.user.ipAddress"]));
-  const result = pickStr(rec, ["result"]);
-  // EVERY target, as a typed stable identity, deduplicated and sorted so order does not matter. The
-  // old key took targetResources[0]'s display name: a change naming two users was "the first
-  // user", and two applications sharing a display name were one.
-  const targets = getCI(rec, "targetResources");
-  const targetIds = [
-    ...new Set(
-      (Array.isArray(targets) ? targets : [])
-        .filter(isObject)
-        .map(
-          (t) =>
-            `${str(getCI(t, "type")) || "resource"}:${str(getCI(t, "id")) || str(getCI(t, "userPrincipalName")) || str(getCI(t, "displayName"))}`,
-        )
-        .filter((x) => !x.endsWith(":")),
-    ),
-  ].sort();
-  const targetLabels = (Array.isArray(targets) ? targets : [])
-    .filter(isObject)
-    .map((t) => str(getCI(t, "userPrincipalName") || getCI(t, "displayName")))
-    .filter(Boolean);
-  const target = targetLabels.length
-    ? `${targetLabels[0]}${targetLabels.length > 1 ? ` +${targetLabels.length - 1} more` : ""}`
-    : "";
-
-  const def = opSeverity(activity);
-  if (initiatorIp) addIoc(sink, "ip", initiatorIp);
-
-  let description = `Entra audit: ${activity}`;
-  if (initiator) description += ` by ${initiator}`;
-  if (initiatorIp) description += ` from ${initiatorIp}`;
-  if (target) description += ` → ${oneLine(target).slice(0, 120)}`;
-  if (result && !/success/i.test(result)) description += ` [${result}]`;
-  description = description.slice(0, 600);
-
-  return {
-    timestamp: normalizeTime(pickStr(rec, ["activityDateTime"])),
-    description,
-    severity: def.severity,
-    mitre: [...(def.mitre ?? [])],
-    // Bounded identities first, the target list last, bounded with a digest (#931 prerequisite).
-    aggKey: boundedAggKey(
-      `entra-audit|${activity}|${auditOutcome(result)}|${initiatorId}|${targetIds.join(",")}`.toLowerCase(),
-    ),
-    sources: ["Entra ID"],
-  };
-}
-
 // ───────────────────────────── record extraction ─────────────────────────────
 
 function extractM365(text: string): Row[] {
@@ -432,24 +375,34 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
 
   const iocSink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
-  let sawUal = false,
-    sawSignin = false,
-    sawAudit = false;
+  let sawUal = false;
+  let sawSignin = false;
+  let sawAudit = false;
 
-  for (const raw of records) {
-    const rec = normalizeRecord(raw);
+  // Object-id → app-id facts other records of this export state (entraAuditImport.ts): the only
+  // way a consent record, which names its API by object id alone, can identify Microsoft Graph.
+  const normalized = records.map(normalizeRecord);
+  const resolve = learnApiResolver(normalized);
+  normalized.forEach((rec, index) => {
     const kind = classify(rec);
-    if (kind === "ual") {
+    if (kind === "ual" && isEntraUalRecord(rec)) {
+      // An Entra directory change exported through the UAL: the same decoder as the Graph shape.
+      mapped.push(...mapEntraAuditRows(rec, iocSink, index, resolve, opSeverity));
+      sawUal = true;
+    } else if (kind === "ual") {
       mapped.push(mapUal(rec, iocSink));
       sawUal = true;
     } else if (kind === "signin") {
       mapped.push(mapSignIn(rec, iocSink));
       sawSignin = true;
+    } else if (kind === "spsignin") {
+      mapped.push(mapSpSignIn(rec, iocSink, index));
+      sawSignin = true;
     } else if (kind === "audit") {
-      mapped.push(mapAudit(rec, iocSink));
+      mapped.push(...mapEntraAuditRows(rec, iocSink, index, resolve, opSeverity));
       sawAudit = true;
     }
-  }
+  });
 
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
@@ -458,9 +411,10 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
   });
 
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
-  const kinds = [sawUal && "m365-ual", sawSignin && "entra-signin", sawAudit && "entra-audit"].filter(
-    Boolean,
-  ) as string[];
+  const kinds: string[] = [];
+  if (sawUal) kinds.push("m365-ual");
+  if (sawSignin) kinds.push("entra-signin");
+  if (sawAudit) kinds.push("entra-audit");
   const format = kinds.length > 1 ? "mixed" : (kinds[0] ?? "empty");
 
   return {

@@ -158,7 +158,8 @@ function actionFromDescription(d: string): string {
 /**
  * The caller address a non-AWS importer named, read back from its description.
  *
- * GCP, Azure and M365 put the address in prose and set neither the canonical field nor `srcIp`, so
+ * GCP, Azure and the M365 UAL put the address in prose and set neither the canonical field nor
+ * `srcIp` (Entra audit and application sign-in rows stamp `network.source.address` since #931), so
  * every source collapsed to "" and fifty different callers were grouped as one. That is the
  * opposite of what the source dimension is for: it made a distributed read look like a single
  * session, and it merged sessions that should never have been compared.
