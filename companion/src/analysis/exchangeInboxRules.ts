@@ -19,6 +19,8 @@ import {
 export interface RuleReading {
   actions: string[];
   conditions: string[];
+  /** Condition or exception parameters the reader does not decode — supplied, not read. */
+  undecoded: string[];
   forwardsOutside: boolean;
   forwardsInside: boolean;
   forwardsUnclassed: boolean;
@@ -58,10 +60,38 @@ const CONDITION_FLAGS = [
   "withsensitivity",
 ];
 
+// Every parameter that is neither an action nor rule metadata narrows the rule: a condition the
+// reader does not decode is still a condition, and an ExceptIf* parameter is an exception.
+const META_PARAMS = new Set([
+  "name",
+  "identity",
+  "mailbox",
+  "enabled",
+  "priority",
+  "confirm",
+  "whatif",
+  "force",
+  "alwaysdeleteoutlookrulesblob",
+  "stopprocessingrules",
+  "applycategory",
+  "copytofolder",
+  "sendtextmessagenotificationto",
+  "movetofolder",
+  "deletemessage",
+  "markasread",
+  "softdeletemessage",
+  "markimportance",
+  "pinmessage",
+  "forwardto",
+  "forwardasattachmentto",
+  "redirectto",
+]);
+
 export function readRuleParams(p: Map<string, string>, ownerDomain: string, isSet: boolean): RuleReading {
   const r: RuleReading = {
     actions: [],
     conditions: [],
+    undecoded: [],
     forwardsOutside: false,
     forwardsInside: false,
     forwardsUnclassed: false,
@@ -88,7 +118,8 @@ export function readRuleParams(p: Map<string, string>, ownerDomain: string, isSe
     const raw = p.get(param);
     if (raw !== undefined && truthy(raw)) {
       r.any = true;
-      r.hides = true;
+      // Stopping later rules conceals nothing by itself; only delete / move / mark-read do.
+      if (param !== "stopprocessingrules") r.hides = true;
       r.actions.push(`${prefix}${words}`);
     }
   }
@@ -115,6 +146,11 @@ export function readRuleParams(p: Map<string, string>, ownerDomain: string, isSe
     const raw = p.get(flag);
     if (raw !== undefined && truthy(raw))
       r.conditions.push(`when ${flag.replace(/^my/, "my ").replace(/box$/, " box")}`);
+  }
+  const known = new Set([...CONDITION_WORDS.map(([k]) => k), ...CONDITION_FLAGS]);
+  for (const [name, raw] of p) {
+    if (META_PARAMS.has(name) || known.has(name) || !raw.trim()) continue;
+    r.undecoded.push(name.startsWith("exceptif") ? `except ${name.slice(8)}` : name);
   }
   if (isSet) {
     const name = p.get("name");

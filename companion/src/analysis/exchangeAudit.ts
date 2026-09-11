@@ -11,6 +11,7 @@ import {
   FOLDER_MAX,
   getCI,
   isObject,
+  list,
   NAME_MAX,
   pairs,
   plural,
@@ -27,6 +28,9 @@ import {
   withClass,
 } from "./exchangeAuditValues.js";
 import { ACTION_ADDRESS, readRuleParams, ruleGrade, type RuleReading } from "./exchangeInboxRules.js";
+import type { Pairs } from "./exchangeAuditValues.js";
+
+const TRUNCATED_NOTE = "parameters truncated — the complete values are in the raw record";
 
 // Exchange Online audit records, read one at a time (#931 item 2).
 //
@@ -52,7 +56,7 @@ export interface ExchangeChange {
   operation: string;
   posture: string;
   attempted: boolean;
-  outcome: "success" | "failure" | "unknown";
+  outcome: "success" | "partial" | "failure" | "unknown";
   /** `on <mailbox> as <logon type> via <client> session <id>` — "" for a cmdlet row. */
   object: string;
   /** The scope words: actions and conditions, counts, the subject. */
@@ -79,9 +83,11 @@ export interface ExchangeChange {
 function outcomeOf(rec: Row): ExchangeChange["outcome"] {
   const r = str(getCI(rec, "ResultStatus")).trim().toLowerCase();
   if (/^(succeeded|success|true)$/.test(r)) return "success";
-  if (/^(failed|failure|false|partiallysucceeded)$/.test(r)) return "failure";
+  if (r === "partiallysucceeded") return "partial";
+  if (/^(failed|failure|false)$/.test(r)) return "failure";
   return "unknown";
 }
+const PARTIAL_NOTE = "partially succeeded — which actions completed is not in this record";
 
 function clientOf(info: string): string {
   const client = /client=([^;]+)/i.exec(info)?.[1]?.trim() ?? "";
@@ -117,16 +123,19 @@ interface Common {
 function common(rec: Row, index: number): Common {
   const userType = Number(str(getCI(rec, "UserType")));
   const actor = str(getCI(rec, "UserId")).trim();
-  // ObjectId on a cmdlet record is `mailbox\Rule name` for a rule and the mailbox alone otherwise.
+  // ObjectId on a cmdlet record is `mailbox\Rule name` for a rule and the mailbox alone otherwise;
+  // the mailbox may be an alias, a name or a DN, not only a UPN — it is the identity either way,
+  // and only a UPN yields a domain to class addresses against.
   const objectId = str(getCI(rec, "ObjectId")).trim().split("\\")[0];
-  const mailbox = str(getCI(rec, "MailboxOwnerUPN")).trim() || (objectId.includes("@") ? objectId : "");
+  const mailbox = str(getCI(rec, "MailboxOwnerUPN")).trim() || objectId;
   return {
     rec,
     index,
     recordType: Number(str(getCI(rec, "RecordType"))) || 0,
     operation: str(getCI(rec, "Operation")).trim(),
     outcome: outcomeOf(rec),
-    attempted: outcomeOf(rec) !== "success",
+    // A partial success changed something — it is not an attempt, and the row says it is partial.
+    attempted: outcomeOf(rec) === "failure" || outcomeOf(rec) === "unknown",
     tenant: str(getCI(rec, "OrganizationId")).trim(),
     recordId: str(getCI(rec, "Id")).trim(),
     actor,
@@ -136,7 +145,7 @@ function common(rec: Row, index: number): Common {
     session: str(getCI(rec, "SessionId")).trim(),
     mailbox,
     mailboxId: str(getCI(rec, "MailboxGuid")).trim(),
-    ownerDomain: domainOf(mailbox),
+    ownerDomain: mailbox.includes("@") ? domainOf(mailbox) : "",
     logon: logonWord(str(getCI(rec, "LogonType")).trim()),
     client: clientOf(str(getCI(rec, "ClientInfoString"))),
   };
@@ -175,8 +184,13 @@ function finish(
     incompleteScope?: boolean;
   },
 ): ExchangeChange {
-  const posture = c.attempted ? `attempted to ${o.infinitive}` : o.verb;
-  const scopeId = o.incompleteScope ? `${o.scope}|${c.recordId || `record:${c.index}`}` : o.scope;
+  const posture = c.attempted
+    ? `attempted to ${o.infinitive}`
+    : c.outcome === "partial"
+      ? `partly ${o.verb}`
+      : o.verb;
+  const incomplete = o.incompleteScope || !c.mailbox || !c.actor;
+  const scopeId = incomplete ? `${o.scope}|${c.recordId || `record:${c.index}`}` : o.scope;
   const key = [
     "exchange",
     c.tenant,
@@ -191,6 +205,7 @@ function finish(
     str(getCI(c.rec, "HostAppId")),
     str(getCI(c.rec, "LogonType")),
     c.session,
+    str(getCI(c.rec, "ClientInfoString")),
     digest(scopeId),
   ]
     .join("|")
@@ -204,7 +219,7 @@ function finish(
     outcome: c.outcome,
     object: o.object ?? objectOf(c),
     words: o.words ?? "",
-    qualifiers: o.qualifiers ?? [],
+    qualifiers: [...(c.outcome === "partial" ? [PARTIAL_NOTE] : []), ...(o.qualifiers ?? [])],
     severity: c.attempted ? (o.severity === "Info" ? "Info" : "Medium") : o.severity,
     mitre: c.attempted ? [] : (o.mitre ?? []),
     key,
@@ -224,7 +239,8 @@ function finish(
 
 // ───────────────────────────── rules ─────────────────────────────
 
-function ruleCmdlet(c: Common, p: Map<string, string>): ExchangeChange | null {
+function ruleCmdlet(c: Common, pp: Pairs): ExchangeChange | null {
+  const p = pp.map;
   const op = c.operation.toLowerCase();
   const m = /^(new|set|enable|disable|remove)-inboxrule$/.exec(op);
   // A record with no parameters at all cannot be read: the plain row (the table's grade) stands.
@@ -234,10 +250,7 @@ function ruleCmdlet(c: Common, p: Map<string, string>): ExchangeChange | null {
   const identity = p.get("identity") ?? "";
   const shown = verb === "new" ? name : identity.split("\\").pop() || identity || name;
   const label = quote(shown, NAME_MAX);
-  const scope = `rule:${verb}:${shown}:${[...p.entries()]
-    .map(([k, v]) => `${k}=${v}`)
-    .sort()
-    .join(";")}`;
+  const scope = `rule:${verb}:${shown}:${pp.digest}`;
   if (verb === "enable" || verb === "disable" || verb === "remove") {
     return finish(c, {
       kind: "rule",
@@ -245,16 +258,18 @@ function ruleCmdlet(c: Common, p: Map<string, string>): ExchangeChange | null {
       infinitive: `${verb} inbox rule ${label}`,
       severity: "Low",
       scope,
+      incompleteScope: pp.truncated,
     });
   }
   const isSet = verb === "set";
   const r = readRuleParams(p, c.ownerDomain, isSet);
   const clauses = [...r.deltas, ...r.actions];
+  // "on every message" only for a successful New-InboxRule that supplied NO condition or exception
+  // parameter at all — decoded or not; an undecoded one is named as supplied, not read.
+  const undecoded = r.undecoded.length ? `conditions supplied, not decoded: ${list(r.undecoded)}` : "";
   const conds = r.conditions.length
-    ? r.conditions.join("; ")
-    : !isSet && !c.attempted
-      ? "on every message"
-      : "";
+    ? [r.conditions.join("; "), undecoded].filter(Boolean).join("; ")
+    : undecoded || (!isSet && !c.attempted && !pp.truncated ? "on every message" : "");
   const words = [clauses.join(", "), conds].filter(Boolean).join(" ");
   const grade = isSet && !r.any ? { severity: "Medium" as Severity, mitre: [] as string[] } : ruleGrade(r);
   const target = [...ACTION_ADDRESS].flatMap(([k]) => values(p.get(k) ?? ""))[0] ?? "";
@@ -263,17 +278,19 @@ function ruleCmdlet(c: Common, p: Map<string, string>): ExchangeChange | null {
     verb: `${isSet ? "changes" : "creates"} inbox rule ${label}`,
     infinitive: `${isSet ? "change" : "create"} inbox rule ${label}`,
     words,
-    qualifiers: isSet ? [SET_RULE_NOTE] : [],
+    qualifiers: [...(isSet ? [SET_RULE_NOTE] : []), ...(pp.truncated ? [TRUNCATED_NOTE] : [])],
     ...grade,
     scope,
     target,
+    incompleteScope: pp.truncated,
   });
 }
 
 // The Outlook/EWS form: RecordType 2 `UpdateInboxRules` with the rule in OperationProperties;
 // RuleActions is a serialised JSON array of `{ActionType, Recipients, …}`.
 function ruleMailboxAudit(c: Common): ExchangeChange | null {
-  const p = pairs(getCI(c.rec, "OperationProperties"));
+  const pp = pairs(getCI(c.rec, "OperationProperties"));
+  const p = pp.map;
   const op = (p.get("ruleoperation") ?? "").toLowerCase();
   const name = p.get("rulename") ?? "";
   const label = quote(name, NAME_MAX);
@@ -284,6 +301,7 @@ function ruleMailboxAudit(c: Common): ExchangeChange | null {
   const r: RuleReading = {
     actions: [],
     conditions: [],
+    undecoded: [],
     forwardsOutside: false,
     forwardsInside: false,
     forwardsUnclassed: false,
@@ -350,15 +368,17 @@ function ruleMailboxAudit(c: Common): ExchangeChange | null {
     verb: `${verb} inbox rule ${label}`,
     infinitive: `${infinitive} inbox rule ${label}`,
     words,
-    qualifiers: verb === "changes" ? [SET_RULE_NOTE] : [],
+    qualifiers: [...(verb === "changes" ? [SET_RULE_NOTE] : []), ...(pp.truncated ? [TRUNCATED_NOTE] : [])],
     ...grade,
-    scope: `rule:${op}:${name}:${rawActions}:${condition}`,
+    scope: `rule:${op}:${name}:${pp.digest}`,
+    incompleteScope: pp.truncated,
   });
 }
 
 // ───────────────────────────── forwarding and permissions ─────────────────────────────
 
-function forwardingCmdlet(c: Common, p: Map<string, string>): ExchangeChange | null {
+function forwardingCmdlet(c: Common, pp: Pairs): ExchangeChange | null {
+  const p = pp.map;
   const smtp = p.get("forwardingsmtpaddress");
   const addr = p.get("forwardingaddress");
   const deliver = p.get("delivertomailboxandforward");
@@ -416,12 +436,14 @@ function forwardingCmdlet(c: Common, p: Map<string, string>): ExchangeChange | n
     qualifiers: complete ? [] : [SET_FORWARD_NOTE],
     severity,
     mitre,
-    scope: `forwarding:${smtp ?? "-"}:${addr ?? "-"}:${deliver ?? "-"}`,
+    scope: `forwarding:${pp.digest}`,
     target,
+    incompleteScope: pp.truncated,
   });
 }
 
-function permissionCmdlet(c: Common, p: Map<string, string>): ExchangeChange | null {
+function permissionCmdlet(c: Common, pp: Pairs): ExchangeChange | null {
+  const p = pp.map;
   const m = /^(add|remove)-(mailboxpermission|mailboxfolderpermission|recipientpermission)$/.exec(
     c.operation.toLowerCase(),
   );
@@ -438,45 +460,56 @@ function permissionCmdlet(c: Common, p: Map<string, string>): ExchangeChange | n
     infinitive: `${removal ? "revoke" : "grant"} ${on}${to}`,
     severity: removal ? "Low" : "Medium",
     mitre: removal ? [] : ["T1098.002"],
-    scope: `permission:${mailbox}:${trustee}:${rights}`,
+    scope: `permission:${pp.digest}`,
     target: trustee,
+    incompleteScope: pp.truncated,
   });
 }
 
 // ───────────────────────────── access and items ─────────────────────────────
 
+// The item identity as the record holds it: every id it carries, so two records that differ in
+// any of them are two rows.
+const itemIds = (i: Row): string =>
+  ["Id", "ImmutableId", "InternetMessageId"].map((k) => str(getCI(i, k))).join("/");
+const listOf = (v: unknown): Row[] => (Array.isArray(v) ? v : []).filter(isObject);
+
+// Access is graded by privilege, not suspicion — and an application actor is never the owner's
+// own Outlook: at least Low, so a Low floor on import cannot drop it.
+function accessSeverity(c: Common): Severity {
+  if (c.actorIsApp) return c.logon === "admin" ? "Medium" : "Low";
+  return c.logon === "owner" ? "Info" : c.logon === "admin" ? "Medium" : "Low";
+}
+
 function accessRecord(c: Common): ExchangeChange {
-  const props = pairs(getCI(c.rec, "OperationProperties"));
+  const props = pairs(getCI(c.rec, "OperationProperties")).map;
   const accessType = (props.get("mailaccesstype") ?? str(getCI(c.rec, "MailAccessType")))
     .trim()
     .toLowerCase();
   const throttled = truthy(props.get("isthrottled") ?? str(getCI(c.rec, "IsThrottled")) ?? "");
-  const folders = (
-    Array.isArray(getCI(c.rec, "Folders")) ? (getCI(c.rec, "Folders") as unknown[]) : []
-  ).filter(isObject);
-  const items = folders.flatMap((f) =>
-    (Array.isArray(getCI(f, "FolderItems")) ? (getCI(f, "FolderItems") as unknown[]) : []).filter(isObject),
-  );
+  // Two documented layouts: Folders[].FolderItems[] and Messages[].MessageItems[].
+  const containers = [...listOf(getCI(c.rec, "Folders")), ...listOf(getCI(c.rec, "Messages"))];
+  const items = containers.flatMap((f) => [
+    ...listOf(getCI(f, "FolderItems")),
+    ...listOf(getCI(f, "MessageItems")),
+  ]);
   const ops = Number(str(getCI(c.rec, "OperationCount")));
   const opsWords = Number.isFinite(ops) && ops > 0 ? ` (${plural(ops, "operation")})` : "";
-  const ids = items
-    .map((i) => str(getCI(i, "Id")) || str(getCI(i, "ImmutableId")) || str(getCI(i, "InternetMessageId")))
-    .filter(Boolean);
-  const folderIds = folders.map((f) => `${str(getCI(f, "Id"))}:${str(getCI(f, "Path"))}`);
-  const incomplete = items.length > 0 && ids.length < items.length;
+  const ids = items.map(itemIds);
+  const containerIds = containers.map((f) => `${str(getCI(f, "Id"))}:${str(getCI(f, "Path"))}`);
+  const incomplete = items.some((i) => itemIds(i) === "//");
   const sync = accessType === "sync";
+  const bind = accessType === "bind";
   const verb = sync
-    ? `syncs folder ${quote(str(getCI(folders[0] ?? {}, "Path")) || "(unnamed)", FOLDER_MAX)}${folders.length > 1 ? ` (+${folders.length - 1} more)` : ""}`
-    : `binds ${plural(items.length, "item")} in ${plural(folders.length, "folder")}${opsWords}`;
-  const owner = c.logon === "owner";
-  const severity: Severity = owner ? "Info" : c.logon === "admin" ? "Medium" : "Low";
+    ? `syncs folder ${quote(str(getCI(containers[0] ?? {}, "Path")) || "(unnamed)", FOLDER_MAX)}${containers.length > 1 ? ` (+${containers.length - 1} more)` : ""}`
+    : `${bind ? "binds" : "accesses"} ${plural(items.length, "item")} in ${plural(containers.length, "folder")}${opsWords}${!bind && accessType ? ` [${accessType.slice(0, 20)}]` : ""}`;
   return finish(c, {
     kind: "access",
     verb,
-    infinitive: sync ? "sync a folder" : "bind items",
+    infinitive: sync ? "sync a folder" : bind ? "bind items" : "access items",
     qualifiers: [ACCESS_NOTE, ...(sync ? [SYNC_NOTE] : []), ...(throttled ? [THROTTLED_NOTE] : [])],
-    severity,
-    scope: `access:${accessType}:${folderIds.join(",")}:${ids.join(",")}`,
+    severity: accessSeverity(c),
+    scope: `access:${accessType}:${Number.isFinite(ops) ? ops : ""}:${throttled}:${containerIds.join(",")}:${ids.join(",")}`,
     incompleteScope: incomplete || (items.length === 0 && !sync),
   });
 }
@@ -485,13 +518,12 @@ function aggregateRecord(c: Common): ExchangeChange {
   const ops = Number(str(getCI(c.rec, "OperationCount")));
   const dur = str(getCI(c.rec, "AggregateDurationInSeconds")).trim();
   const n = Number.isFinite(ops) ? ops : 0;
-  const owner = c.logon === "owner";
   return finish(c, {
     kind: "aggregate",
     verb: `${plural(n, "operation")}${dur ? ` over ${dur} s` : ""}, items not listed`,
     infinitive: "access items",
     qualifiers: [ACCESS_NOTE],
-    severity: owner ? "Info" : c.logon === "admin" ? "Medium" : "Low",
+    severity: accessSeverity(c),
     scope: `aggregate:${n}:${dur}`,
     incompleteScope: true,
   });
@@ -531,24 +563,36 @@ function itemRecord(c: Common): ExchangeChange | null {
     );
   const sending = /^send/.test(op);
   const subject = sending && item ? str(getCI(item, "Subject")) : "";
-  const ids = items
-    .map((i) => str(getCI(i, "Id")) || str(getCI(i, "ImmutableId")) || str(getCI(i, "InternetMessageId")))
-    .filter(Boolean);
-  const owner = c.logon === "owner";
+  const ids = items.map(itemIds);
+  // SendAs / SendOnBehalf name the impersonated identity in their own fields; the mailbox owner
+  // is the fallback, never the first choice.
+  const sentAs =
+    op === "sendas"
+      ? str(getCI(c.rec, "SendAsUserSmtp")).trim() || c.mailbox
+      : op === "sendonbehalf"
+        ? str(getCI(c.rec, "SendOnBehalfOfUserSmtp")).trim() || c.mailbox
+        : "";
+  const sentAsId =
+    op === "sendas"
+      ? str(getCI(c.rec, "SendAsUserMailboxGuid")).trim()
+      : op === "sendonbehalf"
+        ? str(getCI(c.rec, "SendOnBehalfOfUserMailboxGuid")).trim()
+        : "";
   const verb = sending
-    ? `${verbs[0]}${op === "send" ? "" : ` ${c.mailbox}`}`
+    ? `${verbs[0]}${op === "send" ? "" : ` ${sentAs}`}`
     : `${verbs[0]} ${plural(items.length, "item")}${folder ? ` from ${quote(folder, FOLDER_MAX)}` : ""}`;
   const infinitive = sending
-    ? `${verbs[1]}${op === "send" ? "" : ` ${c.mailbox}`}`
+    ? `${verbs[1]}${op === "send" ? "" : ` ${sentAs}`}`
     : `${verbs[1]} ${plural(items.length, "item")}`;
   return finish(c, {
     kind: "item",
     verb,
     infinitive,
     words: subject ? `subject ${quote(subject, SUBJECT_MAX)}` : "",
-    severity: owner ? "Info" : c.logon === "admin" ? "Medium" : "Low",
-    scope: `item:${op}:${folder}:${ids.join(",")}`,
-    incompleteScope: ids.length < items.length || items.length === 0,
+    severity: accessSeverity(c),
+    scope: `item:${op}:${sentAs}:${sentAsId}:${folder}:${ids.join(",")}`,
+    target: sentAs,
+    incompleteScope: items.some((i) => itemIds(i) === "//") || items.length === 0,
   });
 }
 

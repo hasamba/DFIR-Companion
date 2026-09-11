@@ -40,14 +40,30 @@ export const truthy = (v: string): boolean => /^(true|\$true|1|yes)$/i.test(v.tr
 export const falsy = (v: string): boolean => /^(false|\$false|0|no)$/i.test(v.trim());
 
 /** `{Name, Value}` pairs (Parameters, OperationProperties) → a case-insensitive map. */
-export function pairs(v: unknown): Map<string, string> {
-  const out = new Map<string, string>();
-  for (const p of Array.isArray(v) ? v : []) {
+export interface Pairs {
+  /** name (lowercased) → value, bounded to VALUE_MAX for parsing and display. */
+  map: Map<string, string>;
+  /** Digest of every COMPLETE name and value, in order — the identity of what the record holds. */
+  digest: string;
+  /** True when a value was cut for parsing or entries were dropped: the scope is incomplete. */
+  truncated: boolean;
+}
+export const PAIRS_MAX = 200;
+export function pairs(v: unknown): Pairs {
+  const map = new Map<string, string>();
+  const all = Array.isArray(v) ? v : [];
+  let truncated = all.length > PAIRS_MAX;
+  const whole: string[] = [];
+  for (const p of all.slice(0, PAIRS_MAX)) {
     if (!isObject(p)) continue;
     const name = str(getCI(p, "Name")).trim();
-    if (name) out.set(name.toLowerCase(), str(getCI(p, "Value")).slice(0, VALUE_MAX));
+    if (!name) continue;
+    const value = str(getCI(p, "Value"));
+    whole.push(`${name}=${value}`);
+    if (value.length > VALUE_MAX) truncated = true;
+    map.set(name.toLowerCase(), value.slice(0, VALUE_MAX));
   }
-  return out;
+  return { map, digest: digest(whole.join("\u0000")), truncated };
 }
 // A multi-valued cmdlet parameter is `a;b` (sometimes `{a, b}`); an SMTP proxy address is `smtp:x`.
 export const values = (v: string): string[] =>

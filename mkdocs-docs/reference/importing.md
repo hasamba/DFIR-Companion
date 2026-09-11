@@ -459,14 +459,21 @@ delegate binding to ten mailboxes folded into one row. Each record now reads for
   access Info. `AppId`/`ClientAppId` is shown as `client app …` — the client, not the actor,
   unless the record's `UserType` says the actor is an application. A throttled record says the
   item list is incomplete.
-- **Send and delete** — `sends as alice@…` (a non-owner: Low, the subject bounded), `hard-deletes
-  3 items from "\Inbox"` (the items the record lists; one `Item` on a single-item record).
+- **Send and delete** — `sends as ceo@…` (the identity the record's own `SendAsUserSmtp` names;
+  a non-owner: Low, the subject bounded), `hard-deletes 3 items from "\Inbox"` (the items the
+  record lists; one `Item` on a single-item record).
 - **A failed or unknown result is an attempt** — `attempted to create inbox rule "r" — failed`,
-  Medium, no technique.
+  Medium, no technique. A `PartiallySucceeded` result reads `partly creates …` with `which
+  actions completed is not in this record`.
+- **A condition the reader does not decode is still a condition** — `conditions supplied, not
+  decoded: senderdomainis, except from`; `on every message` is said only for a successful
+  `New-InboxRule` that supplied no condition or exception parameter at all.
 
-Every Exchange row keys on the tenant, operation, outcome, mailbox, actor, address, client
-application, logon and access type, session and the full scope (folder and item ids, the rule's
-parameters), so ten mailboxes bound by one delegate are ten rows and two addresses are two rows.
+Every Exchange row keys on the tenant, record type, operation, outcome, mailbox, actor, address,
+client application, client string, logon and access type, session, and a digest of the complete
+scope (every folder and item id, the operation count and throttling state, the cmdlet's complete
+parameter values), so ten mailboxes bound by one delegate are ten rows and two addresses are two
+rows; when a record's scope identity is incomplete, the record id joins so it never folds.
 
 **Coverage — read before treating an absent row as absence of access.** Whether a
 `MailItemsAccessed` record could exist for a period depends on licence, audit configuration and

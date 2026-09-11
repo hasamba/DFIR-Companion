@@ -377,6 +377,122 @@ describe("MailItemsAccessed (RecordType 50)", () => {
   });
 });
 
+describe("code review regressions", () => {
+  it("PartiallySucceeded is neither a success nor an attempt: 'partly', the qualifier, techniques kept", () => {
+    const c = one(
+      admin(
+        "New-InboxRule",
+        { Name: "r", ForwardTo: "x@attacker.invalid" },
+        { ResultStatus: "PartiallySucceeded" },
+      ),
+    );
+    expect(c.outcome).toBe("partial");
+    expect(c.attempted).toBe(false);
+    expect(c.posture).toBe('partly creates inbox rule "r"');
+    expect(c.qualifiers).toContain("partially succeeded — which actions completed is not in this record");
+    expect(c.mitre).toContain("T1114.003");
+  });
+  it("an undecoded condition or an ExceptIf parameter is named as supplied — never 'on every message'", () => {
+    const c = one(
+      admin("New-InboxRule", {
+        Name: "r",
+        ForwardTo: "x@attacker.invalid",
+        SenderDomainIs: "bank.invalid",
+        ExceptIfFrom: "boss@example.invalid",
+      }),
+    );
+    expect(c.words).not.toContain("on every message");
+    expect(c.words).toContain("conditions supplied, not decoded: senderdomainis, except from");
+  });
+  it("StopProcessingRules alone conceals nothing: Low, no T1564.008", () => {
+    const c = one(admin("New-InboxRule", { Name: "r", StopProcessingRules: "True" }));
+    expect(c.severity).toBe("Low");
+    expect(c.mitre).toEqual([]);
+    expect(c.words).toContain("stops processing more rules");
+  });
+  it("a non-UPN ObjectId is still the mailbox identity; addresses then get no domain class", () => {
+    const c = one(
+      admin("New-InboxRule", { Name: "r", ForwardTo: "x@attacker.invalid" }, { ObjectId: "AliceAlias\\r" }),
+    );
+    expect(c.mailbox).toBe("AliceAlias");
+    expect(c.words).toContain("forwards to x@attacker.invalid");
+    expect(c.words).not.toContain("domain");
+    const other = one(
+      admin("New-InboxRule", { Name: "r", ForwardTo: "x@attacker.invalid" }, { ObjectId: "BobAlias\\r" }),
+    );
+    expect(c.key).not.toBe(other.key);
+  });
+  it("a parameter value over the parsing bound keeps its complete identity and marks the row truncated", () => {
+    const big = (tail: string) =>
+      admin("New-InboxRule", {
+        Name: "r",
+        ForwardTo: `${"a".repeat(4100)}@attacker.invalid;${tail}@attacker.invalid`,
+      });
+    const a = one(big("zzz1"));
+    const b = one(big("zzz2"));
+    expect(a.key).not.toBe(b.key);
+    expect(a.qualifiers).toContain("parameters truncated — the complete values are in the raw record");
+    expect(a.words).not.toContain("on every message");
+  });
+  it("SendAs and SendOnBehalf name their own target fields, in the words and the key", () => {
+    const rec = (smtp: string) =>
+      base({
+        RecordType: 2,
+        Operation: "SendAs",
+        LogonType: 2,
+        MailboxOwnerUPN: OWNER,
+        SendAsUserSmtp: smtp,
+        SendAsUserMailboxGuid: `g-${smtp}`,
+        Item: { Id: "i1" },
+      });
+    const a = one(rec("ceo@example.invalid"));
+    expect(a.posture).toBe("sends as ceo@example.invalid");
+    expect(a.target).toBe("ceo@example.invalid");
+    expect(a.key).not.toBe(one(rec("cfo@example.invalid")).key);
+    const b = one(
+      base({
+        RecordType: 2,
+        Operation: "SendOnBehalf",
+        LogonType: 2,
+        MailboxOwnerUPN: OWNER,
+        SendOnBehalfOfUserSmtp: "ceo@example.invalid",
+        Item: { Id: "i1" },
+      }),
+    );
+    expect(b.posture).toBe("sends on behalf of ceo@example.invalid");
+  });
+  it("the Messages/MessageItems layout is read; an access type other than Bind/Sync is neutral wording", () => {
+    const c = one(
+      access({
+        Folders: undefined,
+        Messages: [{ Id: "m", Path: "\\Inbox", MessageItems: [{ InternetMessageId: "<a@x>" }] }],
+        OperationProperties: [{ Name: "MailAccessType", Value: "Other" }],
+      }),
+    );
+    expect(c.posture).toBe("accesses 1 item in 1 folder (7 operations) [other]");
+    expect(one(access({ OperationProperties: [] })).posture).toContain("accesses 5 items");
+  });
+  it("keys: operation count, throttling and the client string are discriminators; every item id counts", () => {
+    const k = (over: Record<string, unknown>) => one(access(over)).key;
+    expect(k({})).not.toBe(k({ OperationCount: 8 }));
+    expect(k({})).not.toBe(
+      k({
+        OperationProperties: [
+          { Name: "MailAccessType", Value: "Bind" },
+          { Name: "IsThrottled", Value: "True" },
+        ],
+      }),
+    );
+    expect(k({})).not.toBe(k({ ClientInfoString: "Client=OWA;" }));
+    const withIds = (im: string) =>
+      k({ Folders: [{ Id: "f1", Path: "\\Inbox", FolderItems: [{ Id: "same", ImmutableId: im }] }] });
+    expect(withIds("A")).not.toBe(withIds("B"));
+  });
+  it("an application actor with LogonType 0 is Low, never Info", () => {
+    expect(one(access({ UserType: 6, UserId: "app-9", LogonType: 0 })).severity).toBe("Low");
+  });
+});
+
 describe("item operations (RecordType 2 and 3)", () => {
   it("SendAs by a non-owner is Low with a bounded subject and no technique", () => {
     const c = one(
