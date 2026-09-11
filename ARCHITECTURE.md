@@ -145,6 +145,18 @@ previewed and capped, like every other path below. `tests/analysis/taggerPromoti
 pins both halves — that the import-time promotion works and survives demote, and that a post-demote
 run moves nothing.
 
+### The seam is one function, and not every import route ran it
+
+The dual-write → tag → demote sequence is `routes/importSettle.ts: settleForensicImport`. It used
+to be six inline copies (the generic import route twice, the streamed ingest, the hunt collector,
+both Velociraptor external-ingest paths) and **zero** copies on the dedicated `import-*` routes,
+which called their importer and resynthesized. The consequence was the exact thing the rule forbids: an Info row imported through
+a dedicated route stayed in the forensic timeline where the model reads it, and never reached the
+super-timeline at all — with no import lock and no import record either. `/import-leapp` is on the
+seam now (#932 item 12, `tests/server/importLeappRoute.test.ts` pins both entry points landing the
+same split); [#956](https://github.com/hasamba/DFIR-Companion/issues/956) tracks the remaining
+dedicated routes. A new import route calls `settleForensicImport` or it is not on the boundary.
+
 ### Three analyst-initiated paths touch the raw record
 
 None of them run on their own — each is a button the analyst presses. Two now satisfy the rule
@@ -219,7 +231,7 @@ established, and it works the same way.
 The graph is built the same way `check-imports.mjs` builds it: a regex over relative `.js`
 specifiers, because the companion imports its own modules exclusively that way. No resolver needed.
 
-For context: **2,059 of the 2,098 cross-domain file dependencies already comply.** The map is mostly
+For context: **2,062 of the 2,101 cross-domain file dependencies already comply.** The map is mostly
 a description of how this codebase is already written, which is the only kind of rule people follow.
 Both figures come from `npm run check:boundaries -- --json`, which counts them in the same pass that
 finds the violations, and a test asserts this sentence against it. The pair read 1,275 of 1,323 long

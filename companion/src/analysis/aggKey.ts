@@ -26,3 +26,10 @@ export function boundedAggKey(key: string): string {
   const digest = createHash("sha256").update(key).digest("hex").slice(0, AGG_KEY_DIGEST);
   return `${key.slice(0, AGG_KEY_MAX - AGG_KEY_DIGEST - 1)}#${digest}`;
 }
+
+// The same bound for PROSE that is also an identity. An importer whose description is what every
+// later step keys on (correlation's exact-duplicate pass, the import diff, the super-timeline
+// content key) must keep two long rows distinct in the description itself, not only in the key —
+// a description clipped with a raw slice collapses them downstream no matter what the key said.
+// One implementation, one rule; the name says what it is for.
+export const boundedText = boundedAggKey;

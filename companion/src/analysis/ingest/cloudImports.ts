@@ -322,6 +322,9 @@ export async function importLeapp(
     timelineNote:
       `LEAPP import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s)` +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
+      // A row with no usable time cell is kept undated (#932 item 12); the note says how many, so
+      // "why is this one (undated)?" has an answer in the import record.
+      (parsed.undated > 0 ? `, ${parsed.undated} undated` : "") +
       `, ${parsed.iocs.length} IOC(s)`,
     summary: "",
   };

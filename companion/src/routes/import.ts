@@ -13,7 +13,7 @@ import { parseNetworkLogs, type NetworkImportOptions } from "../analysis/network
 import { parseKapeCsv, type KapeImportOptions } from "../analysis/kapeImport.js";
 import { parseCybertriage, type CybertriageImportOptions } from "../analysis/cybertriageImport.js";
 import { parseM365Audit, type M365ImportOptions } from "../analysis/m365Import.js";
-import { parseLeappTsv, type LeappImportOptions, type LeappPlatform } from "../analysis/mobileLeappImport.js";
+import { registerLeappImportRoute } from "./importLeapp.js";
 import { parseCloudTrail, type AwsImportOptions } from "../analysis/awsImport.js";
 import { parseCloudActivity, type CloudActivityImportOptions } from "../analysis/cloudActivityImport.js";
 import { parsePlasoCsv, type PlasoImportOptions } from "../analysis/plasoImport.js";
@@ -26,12 +26,11 @@ import { parseJournald, type JournaldImportOptions } from "../analysis/journaldI
 import { parseSysdig, type SysdigImportOptions } from "../analysis/sysdigImport.js";
 import { parseWazuhAlerts, type WazuhImportOptions } from "../analysis/wazuhImport.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
-import { diffTimeline, addedForensicEvents } from "../analysis/timelineDiff.js";
+import { settleForensicImport, type SettleDeps } from "./importSettle.js";
 import { autoTagNewEvents } from "../analysis/taggerAuto.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import { FalsePositiveStore } from "../analysis/falsePositive.js";
 import { matchFpPropagation } from "../analysis/fpPropagation.js";
-import { diffIocs } from "../analysis/iocsDiff.js";
 import { logActivity } from "../analysis/activityLog.js";
 import { formatDropLogLines, appendDropLog, type DropLogEntry } from "../analysis/dropLog.js";
 import {
@@ -100,6 +99,15 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       caseId,
       added,
     );
+  const settleDeps: SettleDeps | null = options.stateStore
+    ? {
+        stateStore: options.stateStore,
+        superTimelineStore: options.superTimelineStore,
+        onSuperTimeline: options.onSuperTimeline,
+        autoTagImported,
+        demoteForensicForCase,
+      }
+    : null;
 
   // Poll interval reported by GET /drop-status. Reconstructed from the same env expression createApp
   // uses (DFIR_DROP_POLL_S, clamped 2..600s) — deterministic, so it matches the watcher's value.
@@ -386,31 +394,16 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
           options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
           // Record what this import added to the forensic timeline + IOCs, BEFORE resynthesis (which
           // preserves both). Best-effort: a meta failure must not break the import.
-          if (options.stateStore && stateBefore) {
+          if (settleDeps && stateBefore) {
             try {
-              const imported = await options.stateStore.load(caseId);
-              // Dual-write the newly-imported events into the super-timeline FIRST (superset of everything
-              // imported, Info telemetry included); resolve the FULL events from the imported (pre-demote)
-              // state since the diff is lossy.
-              let superTimelineAddedCount = 0;
-              if (options.superTimelineStore) {
-                const superDiff = diffTimeline(stateBefore.forensicTimeline, imported.forensicTimeline);
-                const added = addedForensicEvents(imported.forensicTimeline, superDiff);
-                if (added.length) {
-                  try {
-                    superTimelineAddedCount = await options.superTimelineStore.append(caseId, added);
-                    options.onSuperTimeline?.(caseId);
-                  } catch {
-                    /* non-fatal */
-                  }
-                  await autoTagImported(caseId, added);
-                }
-              }
-              // Demote sub-threshold events out of forensic (kept in super), then compute the import-meta
-              // diff + checkpoint decision on the POST-demote state so "+N events" counts only graded signal.
-              const s = await demoteForensicForCase(caseId);
-              const tDiff = diffTimeline(stateBefore.forensicTimeline, s.forensicTimeline);
-              const iDiff = diffIocs(stateBefore.iocs, s.iocs);
+              // The seam every import crosses (routes/importSettle.ts): dual-write → tag → demote,
+              // diffs from the POST-demote state so "+N events" counts only graded signal.
+              const {
+                state: s,
+                superTimelineAddedCount,
+                timelineDiff: tDiff,
+                iocsDiff: iDiff,
+              } = await settleForensicImport(settleDeps, caseId, stateBefore);
               // Proactive FP-pattern propagation (#15b): does this import re-arrive with events matching a
               // known false-positive pattern? Match the NEW forensic events against the FP markers'
               // fingerprints and surface a one-click bulk-mark suggestion on the banner (never auto-mark).
@@ -694,30 +687,16 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       run()
         .then(async () => {
           options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-          if (options.stateStore && stateBefore) {
+          if (settleDeps && stateBefore) {
             try {
-              const imported = await options.stateStore.load(caseId);
-              // Dual-write into the super-timeline FIRST (superset, Info telemetry included); resolve the
-              // FULL events from the imported (pre-demote) state since the diff is lossy.
-              let superTimelineAddedCount = 0;
-              if (options.superTimelineStore) {
-                const superDiff = diffTimeline(stateBefore.forensicTimeline, imported.forensicTimeline);
-                const added = addedForensicEvents(imported.forensicTimeline, superDiff);
-                if (added.length) {
-                  try {
-                    superTimelineAddedCount = await options.superTimelineStore.append(caseId, added);
-                    options.onSuperTimeline?.(caseId);
-                  } catch {
-                    /* non-fatal */
-                  }
-                  await autoTagImported(caseId, added);
-                }
-              }
-              // Demote sub-threshold events out of forensic (kept in super), then compute the import-meta
-              // diff + checkpoint decision on the POST-demote state so "+N events" counts only graded signal.
-              const s = await demoteForensicForCase(caseId);
-              const tDiff = diffTimeline(stateBefore.forensicTimeline, s.forensicTimeline);
-              const iDiff = diffIocs(stateBefore.iocs, s.iocs);
+              // The seam every import crosses (routes/importSettle.ts): dual-write → tag → demote,
+              // diffs from the POST-demote state so "+N events" counts only graded signal.
+              const {
+                state: s,
+                superTimelineAddedCount,
+                timelineDiff: tDiff,
+                iocsDiff: iDiff,
+              } = await settleForensicImport(settleDeps, caseId, stateBefore);
               // Proactive FP-pattern propagation (#15b): does this import re-arrive with events matching a
               // known false-positive pattern? Match the NEW forensic events against the FP markers'
               // fingerprints and surface a one-click bulk-mark suggestion on the banner (never auto-mark).
@@ -1840,91 +1819,9 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // Import Microsoft 365 Unified Audit Log + Entra ID sign-in / directory audit data
   // (cloud/identity IR). Evidence-first; mapping is DETERMINISTIC (no AI extraction): each
   // record is classified and mapped, severity derived from the operation / Entra risk verdict.
-  // Explicit LEAPP endpoint. Auto-detection CANNOT reach these files: LEAPP names each export after
-  // the artifact ("Installed Apps.tsv", "Call History.tsv"), a browser upload carries only that
-  // basename, and a bare TSV has no in-content marker that could be claimed without stealing every
-  // other tab-separated format. So the analyst names the platform here instead of renaming every
-  // file to contain "iLEAPP" — which is what the detection-only path would have demanded.
-  app.post("/cases/:id/import-leapp", async (req: Request, res: Response) => {
-    if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
-    const caseId = req.params.id;
-    const text = typeof req.body?.text === "string" ? req.body.text : "";
-    const originalName = String(req.body?.filename ?? "leapp.tsv");
-    if (!text.trim()) return res.status(400).json({ error: "text is required" });
-
-    const rawPlatform = String(req.body?.platform ?? "")
-      .trim()
-      .toLowerCase();
-    const platform: LeappPlatform =
-      rawPlatform === "ios" ? "ios" : rawPlatform === "android" ? "android" : "unknown";
-    const leappOpts: LeappImportOptions = { platform };
-
-    try {
-      const preview = parseLeappTsv(text, originalName, leappOpts);
-      if (preview.total === 0)
-        return res.status(400).json({ error: "no parseable rows found (expected a LEAPP TSV export)" });
-      if (preview.kept === 0)
-        return res.status(400).json({
-          error: `no row carried a usable timestamp column (${preview.total} row(s) parsed) — LEAPP artifacts without a time column cannot be placed on a timeline`,
-        });
-
-      const seq = await store.nextImportSeq(caseId);
-      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "leapp.tsv";
-      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
-      const importedAt = new Date().toISOString();
-      await store.saveImport(caseId, storedName, text);
-      await store.appendImport(caseId, {
-        caseId,
-        sequenceNumber: seq,
-        importedAt,
-        filename: storedName,
-        originalName,
-        rows: preview.kept,
-        bytes: Buffer.byteLength(text, "utf8"),
-      });
-
-      res.status(202).json({
-        accepted: true,
-        file: storedName,
-        events: preview.kept,
-        records: preview.total,
-        groups: preview.groups,
-        format: preview.format,
-        iocs: preview.iocs.length,
-      });
-
-      options.onAiStatus?.(caseId, {
-        status: "analyzing",
-        phase: "extracting",
-        at: importedAt,
-        detail: `importing ${preview.kept} LEAPP row(s)`,
-      });
-      void options.pipeline
-        .importLeapp(caseId, text, {
-          label: storedName,
-          idPrefix: `lp${seq}`,
-          importedAt,
-          // The ORIGINAL name, not the stored one: the stored name is sequence-prefixed, and the
-          // artifact's identity lives in the basename LEAPP chose.
-          filename: originalName,
-          leapp: leappOpts,
-        })
-        .then(() => {
-          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-          resynthesizeInBackground(caseId);
-        })
-        .catch((err) =>
-          options.onAiStatus?.(caseId, {
-            status: "error",
-            at: new Date().toISOString(),
-            detail: (err as Error).message,
-          }),
-        );
-      return;
-    } catch (err) {
-      return res.status(500).json({ error: (err as Error).message });
-    }
-  });
+  // POST /cases/:id/import-leapp lives in routes/importLeapp.ts (#932 item 12); registered here so
+  // its stack position is unchanged (route-inventory.json is order-sensitive).
+  registerLeappImportRoute(app, ctx, settleDeps);
 
   app.post("/cases/:id/import-m365", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
