@@ -1,3 +1,4 @@
+import type { PromotionIntent } from "../ingest/timelineImports.js";
 import type { AIProvider } from "../../providers/provider.js";
 import { z } from "zod";
 import { sortByEventTime } from "../forensicSort.js";
@@ -55,7 +56,7 @@ export interface ViewReportContext extends AiCallContext {
   promoteSuperTimeline(
     caseId: string,
     events: ForensicEvent[],
-    opts: { importedAt: string; tagById?: Record<string, string[]>; note?: string },
+    opts: { importedAt: string; intent: PromotionIntent; tagById?: Record<string, string[]>; note?: string },
   ): Promise<InvestigationState>;
 }
 
@@ -137,6 +138,7 @@ async function resolveStarredEvents(
     }
     if (promotable.length) {
       state = await ctx.promoteSuperTimeline(caseId, promotable, {
+        intent: "starred-report",
         importedAt: new Date().toISOString(),
         note: `Promoted ${promotable.length} starred raw event(s) for the starred report`,
       });

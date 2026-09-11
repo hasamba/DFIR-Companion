@@ -169,3 +169,22 @@ export function isLabProduced(e: Pick<ForensicEvent, "origin" | "sources" | "des
   if (sources.length === 0 || !sources.every((s) => SANDBOX_SOURCES.has(s))) return false;
   return SANDBOX_DESCRIPTION_PREFIXES.some((p) => e.description.startsWith(p));
 }
+
+// The one provenance marker that says "an analyst deliberately put this row in the forensic
+// timeline". Stamped by promoteSuperTimeline for the manual intent only — explain-on-demand
+// promotes incidentally and second-look promotes automatically, and neither is a human deciding
+// that a lab row is incident evidence. Distinct from "[second-look: hN]" on purpose.
+export const PROMOTED_MARKER = "[promoted]";
+
+export function hasPromotedMarker(e: Pick<ForensicEvent, "provenance">): boolean {
+  return (e.provenance ?? []).includes(PROMOTED_MARKER);
+}
+
+// A lab-produced row in the forensic timeline that no analyst chose to put there. Excluded from
+// second-look matching and promotion (a hidden lab row must never close a collection request), and
+// the population #950's legacy remedy is about.
+export function isPendingLabRow(
+  e: Pick<ForensicEvent, "origin" | "sources" | "description" | "provenance">,
+): boolean {
+  return isLabProduced(e) && !hasPromotedMarker(e);
+}

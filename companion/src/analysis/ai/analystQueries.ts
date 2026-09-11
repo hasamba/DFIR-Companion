@@ -12,6 +12,7 @@ import type { SuperTimelineStore } from "../superTimelineStore.js";
 import { buildSynthesisContext } from "../synthSelect.js";
 import type { VelociraptorClientStore } from "../velociraptorClientStore.js";
 import { getAskPrompt, getExplainEventPrompt, getFpSimilarityPrompt } from "./prompts/index.js";
+import type { PromotionIntent } from "../ingest/timelineImports.js";
 import {
   callAiJson,
   fitTimelineText,
@@ -45,7 +46,7 @@ export interface AnalystQueryContext extends AiCallContext {
   promoteSuperTimeline(
     caseId: string,
     events: ForensicEvent[],
-    opts: { importedAt: string; tagById?: Record<string, string[]>; note?: string },
+    opts: { importedAt: string; intent: PromotionIntent; tagById?: Record<string, string[]>; note?: string },
   ): Promise<InvestigationState>;
 }
 
@@ -125,6 +126,7 @@ async function resolveFocalEvent(
     if (raw) {
       state = await ctx.promoteSuperTimeline(caseId, [raw], {
         importedAt: new Date().toISOString(),
+        intent: "explain",
         note: `Promoted 1 raw event for "explain this event"`,
       });
       event = state.forensicTimeline.find((e) => e.id === eventId);
