@@ -167,4 +167,24 @@ describe("parseSandboxReport — options & edges", () => {
     expect(r.labIntel).toEqual([]);
     expect(r.events.length).toBeGreaterThan(0); // the rows still exist for the super-timeline
   });
+
+  // Silence is not clean. Zero signatures may mean a timeout, a missing dependency or a dead C2 —
+  // the verdict row says that no behavioural SIGNATURES were recorded (dropped files and network
+  // artifacts are extracted regardless) and what the run reported about itself.
+  it("says coverage is unknown on a report with no behavioural signatures, with the run's duration", () => {
+    const silent = capeReport() as { signatures: unknown[]; info: { duration?: number } };
+    silent.signatures = [];
+    silent.info.duration = 37;
+    const r = parseSandboxReport(JSON.stringify(silent));
+    const verdict = r.events.find((e) => e.description.startsWith("CAPE sandbox:"))!;
+    expect(verdict.description).toContain("no behavioural signatures recorded, coverage unknown");
+    expect(verdict.description).toContain("duration 37");
+    expect(verdict.description).not.toMatch(/\bclean\b/i);
+  });
+
+  it("says nothing about coverage when signatures were recorded", () => {
+    const r = parseSandboxReport(JSON.stringify(capeReport()));
+    const verdict = r.events.find((e) => e.description.startsWith("CAPE sandbox:"))!;
+    expect(verdict.description).not.toContain("coverage unknown");
+  });
 });

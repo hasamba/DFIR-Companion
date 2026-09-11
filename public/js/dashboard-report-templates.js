@@ -35,6 +35,7 @@
     ],
     ["notebook", "Analyst Notebook"],
     ["chainOfCustody", "Chain of Custody (per-artifact custody chain)"],
+    ["sandboxReports", "Sandbox reports (detonation results and sighting status)"],
   ];
   const RT_LABELS = Object.fromEntries(RT_SECTIONS);
   let rtTemplates = []; // last fetched list of templates
