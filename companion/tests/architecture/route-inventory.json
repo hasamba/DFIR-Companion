@@ -526,6 +526,7 @@
     "ROUTE GET /js/dashboard-derived-panels.js",
     "ROUTE GET /js/dashboard-deep-pass.js",
     "ROUTE GET /js/dashboard-super-timeline.js",
+    "ROUTE GET /js/dashboard-timeline-search.js",
     "ROUTE GET /js/dashboard-playbook.js",
     "ROUTE GET /js/dashboard-diagnostics.js",
     "ROUTE GET /js/dashboard-report-versions.js",

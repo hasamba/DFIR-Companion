@@ -80,6 +80,59 @@
     });
   }
 
+
+  // ── Forensic-timeline count label + truncated-search bar (#928) ────────────
+  // Lifted out of the inline script rather than added to it: public/dashboard.html#inline-js is
+  // frozen at its length by scripts/check-file-size.mjs, and a count that has to explain a FLOOR
+  // is more logic than an inline block should carry anyway.
+  //
+  // A server-side search that matched more events than one response carries hands back a floor,
+  // not a count. Printing "10000 events" for it would state a total the case does not support and
+  // hide that more matching evidence exists, so the figure is marked and the analyst is told the
+  // one thing that reaches the rest: narrow the term.
+  function timelineTotalIsFloor() {
+    const st = typeof DfirState !== "undefined" ? DfirState.lastState() : null;
+    return !!(st && st.forensicTimelineTotalIsLowerBound);
+  }
+
+  function timelineCountLabel(o) {
+    const floor = timelineTotalIsFloor();
+    const totalText = floor ? `${o.total}+` : `${o.total}`;
+    const base = o.filtering
+      ? `${o.totalFiltered} of ${totalText} events`
+      : `${totalText} event${o.total !== 1 ? "s" : ""}`;
+    const text = o.pageSize > 0 && o.totalFiltered > o.pageSize
+      ? `(${base} — page ${o.page + 1} of ${o.totalPages})`
+      : `(${base})`;
+    const title = floor
+      ? `This search matched more events than one response carries. Only the first ${o.total} are ` +
+        "shown — narrow the search term to reach the rest."
+      : "Total events in scope; updates in real time";
+    return { text, title };
+  }
+
+  // The client pager walks the events this view HOLDS; when the server held matches back, no amount
+  // of paging here can reach them, so the only honest control is one that asks for the next batch.
+  function timelineMoreMatchesBar() {
+    if (typeof hasMoreMatches !== "function" || !hasMoreMatches()) return "";
+    return '<div class="tl-page-bar">'
+      + '<span class="tl-page-info">More events match this search than are shown.</span>'
+      + '<button class="tl-page-btn" data-act="tlLoadMoreMatches">Load more matches</button>'
+      + "</div>";
+  }
+
+  /** Write the label onto the count element. The caller holds no logic, only the numbers. */
+  function renderTimelineCount(el, o) {
+    if (!el) return;
+    const lbl = timelineCountLabel(o);
+    el.textContent = lbl.text;
+    el.title = lbl.title;
+  }
+
+  window.timelineCountLabel = timelineCountLabel;
+  window.renderTimelineCount = renderTimelineCount;
+  window.timelineMoreMatchesBar = timelineMoreMatchesBar;
+
   window.loadTlDisplay = loadTlDisplay;
   window.renderTlChecks = renderTlChecks;
   window.applyTlDisplayFromChecks = applyTlDisplayFromChecks;

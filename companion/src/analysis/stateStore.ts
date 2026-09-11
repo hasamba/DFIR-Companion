@@ -27,14 +27,39 @@ export interface EntityQuery {
   ioc?: string;
   technique?: string;
   entityId?: string;
+  /**
+   * SQL LIKE pattern matched against the raw stored JSON payload — a cheap PREFILTER, not a search
+   * (#928). It carries no opinion about which fields are searchable: that belongs to the analysis
+   * layer, and analysis/forensicSearch.ts applies the real predicate to the rows this returns.
+   * Deliberately not a bare term, so nothing can mistake a payload substring hit for a match.
+   */
+  searchLike?: string;
+  /**
+   * Turn the full-text prefilter on. Set independently of `searchLike` because a non-ASCII term has
+   * no usable LIKE pattern — LIKE folds case for ASCII only — and the prefilter then narrows to
+   * rows holding a non-ASCII character instead. See analysis/forensicSearch.ts.
+   */
+  searchPrefilter?: boolean;
   /** Internal/export optimization: skip the full matching-row count when only cursor batches matter. */
   includeTotal?: boolean;
 }
 
 export interface EntityPage<T> {
   entities: T[];
+  /**
+   * Row ordinals parallel to `entities`. A caller that post-filters a page (analysis/forensicSearch)
+   * has to resume from the row it stopped on, and the ordinal is a column — it is not inside the
+   * event, so it cannot be recovered afterwards.
+   */
+  ordinals?: number[];
   nextCursor: number | null;
   total: number;
+  /**
+   * `total` stopped at a ceiling rather than counting every match, so it is a floor, not a count
+   * (analysis/forensicSearch.ts). Render it as "10,000+"; presenting it as a total would be a
+   * number the case does not support.
+   */
+  totalIsLowerBound?: boolean;
 }
 
 /**
@@ -58,6 +83,8 @@ export interface InvestigationStateStorage {
 
 interface WorkerEntityPage<T> {
   entities: T[];
+  /** Row ordinals parallel to `entities`, so a post-filtered page can resume from the right row. */
+  ordinals?: number[];
   nextCursor: number | null;
   total: number;
 }
@@ -225,6 +252,8 @@ export class StateStore implements InvestigationStateStorage {
         entityId: query.entityId,
         indexName,
         indexValue,
+        searchLike: query.searchLike,
+        searchPrefilter: query.searchPrefilter,
         includeTotal: query.includeTotal,
       },
     });

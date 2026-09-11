@@ -159,9 +159,12 @@ describe("every moved function still resolves at its call sites", () => {
   // IOC panel's three noise lenses out of the inline script so their "never empty a non-empty list"
   // rule could be tested directly (#876); 107 with deriveMitreRows, the client mirror of the
   // server's eventTechniques.ts, lifted out of render() so it could be run against the real server
-  // function (#918). The number is a vacuity guard, not a budget.
-  it("moved 107 functions, so the check below is not vacuous", () => {
-    expect(MOVED.length).toBe(107);
+  // function (#918); 111 with the four full-text search helpers (#928) — _canonValues/_evSearchParts
+  // build the widened haystack, and _evMatchesNarrow/_iocMatchesNarrow are the pre-#928 predicates
+  // kept so the EXCLUDE filter did not silently widen with search. The number is a vacuity guard,
+  // not a budget.
+  it("moved 111 functions, so the check below is not vacuous", () => {
+    expect(MOVED.length).toBe(111);
   });
 
   it("provides every one of them as a global once the tagged scripts have run", async () => {

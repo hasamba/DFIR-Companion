@@ -96,6 +96,7 @@
     derivedViews: noop, // refreshFilteredViews(): Kill Chain, Attack Phases, the graphs
     excludeChips: noop, // renderExcludeChips()
     searchBox: noop, // the search input's own clear button — NOT its value; see dashboard.html
+    serverSearch: noop, // re-asks the case for the term (#928) — see js/dashboard-timeline-search.js
     searchInput: noop, // empties the search box; a RESET only, never a per-keystroke write
     timeInputs: noop, // #filterFrom / #filterTo and the Clear button
     severityBoxes: noop, // the .sev-filter checkboxes
@@ -113,6 +114,9 @@
     "starButton",
     "searchBox",
     "searchInput",
+    // Clearing the box has to re-ask the server too, or the timeline stays narrowed to the last
+    // term's matches while the box that explains why is empty (#928).
+    "serverSearch",
     "timeInputs",
     "excludeChips",
     "all",
@@ -187,7 +191,7 @@
      */
     setSearch(term) {
       search.set(String(term || "").trim().toLowerCase());
-      refresh("searchBox", "all", "superTimeline", "falsePositives");
+      refresh("searchBox", "serverSearch", "all", "superTimeline", "falsePositives");
     },
 
     /** Exclude terms (#216). Persisted by the caller — this owns the value, not the storage. */

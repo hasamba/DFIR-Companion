@@ -1,5 +1,6 @@
 import { Worker } from "node:worker_threads";
 import { loadDatabaseSync } from "./sqliteRuntime.js";
+import { CASE_SQLITE_SCHEMA_SQL } from "./caseSqliteSchema.js";
 
 // node:sqlite is synchronous. Keeping the entire database lifecycle in this worker prevents a
 // checkpoint, migration, large import, or integrity check from pinning Express/WebSocket work on
@@ -22,55 +23,7 @@ function openDatabase(path) {
   mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path, { enableForeignKeyConstraints: true });
   db.exec("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=10000;");
-  db.exec(
-    "CREATE TABLE IF NOT EXISTS storage_meta (" +
-      "key TEXT PRIMARY KEY, value TEXT NOT NULL" +
-    ");" +
-    "CREATE TABLE IF NOT EXISTS entities (" +
-      "row_id INTEGER PRIMARY KEY," +
-      "kind TEXT NOT NULL," +
-      "entity_id TEXT," +
-      "ordinal INTEGER NOT NULL," +
-      "version INTEGER NOT NULL DEFAULT 1," +
-      "timestamp TEXT," +
-      "timestamp_ms INTEGER," +
-      "host TEXT," +
-      "source TEXT," +
-      "severity TEXT," +
-      "content_key TEXT," +
-      "payload TEXT NOT NULL," +
-      "UNIQUE(kind, ordinal)" +
-    ");" +
-    "CREATE INDEX IF NOT EXISTS entities_time_idx ON entities(kind, timestamp_ms, row_id);" +
-    "CREATE INDEX IF NOT EXISTS entities_host_idx ON entities(kind, host);" +
-    "CREATE INDEX IF NOT EXISTS entities_source_idx ON entities(kind, source);" +
-    "CREATE INDEX IF NOT EXISTS entities_severity_idx ON entities(kind, severity);" +
-    "CREATE INDEX IF NOT EXISTS entities_id_idx ON entities(kind, entity_id);" +
-    "CREATE INDEX IF NOT EXISTS entities_content_idx ON entities(kind, content_key);" +
-    "CREATE TABLE IF NOT EXISTS entity_counts (" +
-      "kind TEXT PRIMARY KEY," +
-      "count INTEGER NOT NULL" +
-    ");" +
-    "CREATE TABLE IF NOT EXISTS entity_values (" +
-      "row_id INTEGER NOT NULL REFERENCES entities(row_id) ON DELETE CASCADE," +
-      "name TEXT NOT NULL," +
-      "value TEXT NOT NULL," +
-      "kind TEXT NOT NULL," +
-      "host TEXT," +
-      "ordinal INTEGER NOT NULL," +
-      "PRIMARY KEY(row_id, name, value)" +
-    ");" +
-    "CREATE INDEX IF NOT EXISTS entity_values_lookup_idx " +
-      "ON entity_values(name, value, kind, ordinal, row_id);" +
-    "CREATE INDEX IF NOT EXISTS entity_values_host_lookup_idx " +
-      "ON entity_values(name, value, kind, host, ordinal, row_id);" +
-    "CREATE TABLE IF NOT EXISTS super_labels (" +
-      "event_id TEXT NOT NULL," +
-      "label TEXT NOT NULL," +
-      "PRIMARY KEY(event_id, label)" +
-    ");" +
-    "PRAGMA user_version=" + SCHEMA_VERSION + ";"
-  );
+  db.exec(${JSON.stringify(CASE_SQLITE_SCHEMA_SQL)} + "PRAGMA user_version=" + SCHEMA_VERSION + ";");
   return db;
 }
 
@@ -339,6 +292,18 @@ function queryEntities(dbPath, kind, query) {
       where.push("(entities.timestamp_ms IS NULL OR entities.timestamp_ms<=?)");
       params.push(Date.parse(query.to));
     }
+    // #928 search prefilter. Two clauses, and analysis/forensicSearch.ts documents why both are
+    // needed: LIKE folds case for ASCII only, so the GLOB keeps every row holding a non-ASCII
+    // character as a candidate rather than losing it.
+    if (query && query.searchPrefilter) {
+      const clauses = [];
+      if (typeof query.searchLike === "string" && query.searchLike) {
+        clauses.push("entities.payload LIKE ? ESCAPE '\\'");
+        params.push(query.searchLike);
+      }
+      clauses.push("entities.payload GLOB '*[^ -~]*'");
+      where.push("(" + clauses.join(" OR ") + ")");
+    }
     const totalClause = where.join(" AND ");
     let total = -1;
     if (!(query && query.includeTotal === false)) {
@@ -346,7 +311,7 @@ function queryEntities(dbPath, kind, query) {
         (query && typeof query.source === "string" && query.source) ||
         (query && typeof query.severity === "string" && query.severity) ||
         (query && typeof query.entityId === "string" && query.entityId) ||
-        validFrom || validTo
+        validFrom || validTo || (query && query.searchPrefilter)
       );
       const hasAnyFilter = hasIndex || hasEntityOnlyFilters ||
         !!(query && typeof query.host === "string" && query.host);
@@ -386,6 +351,8 @@ function queryEntities(dbPath, kind, query) {
     const entities = pageRows.map((row) => JSON.parse(row.payload));
     return {
       entities,
+      // Parallel to entities: a post-filtering caller resumes from the row it stopped on (#928).
+      ordinals: pageRows.map((row) => row.ordinal),
       nextCursor: hasMore && pageRows.length ? pageRows[pageRows.length - 1].ordinal : null,
       total,
     };
