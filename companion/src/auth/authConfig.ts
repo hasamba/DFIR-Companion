@@ -18,6 +18,11 @@ const DEFAULT_SESSION_HOURS = 12;
 const MIN_SESSION_HOURS = 0.25;
 const MAX_SESSION_HOURS = 168;
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
+// The bootstrap token is the only credential that exists before the first administrator does, and
+// POST /auth/bootstrap is rate-limited rather than unguessable (#920). 32 characters is the floor
+// at which the lockout schedule makes an online guess hopeless; the value was accepted as long as
+// it was nonempty, so `DFIR_AUTH_BOOTSTRAP_TOKEN=admin` was valid configuration.
+const MIN_BOOTSTRAP_TOKEN_LENGTH = 32;
 
 function enabled(value: string | undefined): boolean {
   return ["1", "on", "true", "yes"].includes((value ?? "").trim().toLowerCase());
@@ -70,11 +75,18 @@ export function resolveTeamAuthConfig(env: NodeJS.ProcessEnv = process.env): Tea
   }
   const team = mode === "team";
   const oidc = team ? oidcConfig(env) : undefined;
+  const bootstrapToken = env.DFIR_AUTH_BOOTSTRAP_TOKEN?.trim();
+  // Only where it is read: single-user mode never consults the token, and a stale short value in
+  // that mode must not stop the server. Flipping to team mode is when it becomes a credential.
+  if (team && bootstrapToken && bootstrapToken.length < MIN_BOOTSTRAP_TOKEN_LENGTH) {
+    throw new Error(
+      `DFIR_AUTH_BOOTSTRAP_TOKEN must be at least ${MIN_BOOTSTRAP_TOKEN_LENGTH} characters ` +
+        `(got ${bootstrapToken.length}); generate one with: openssl rand -base64 32`,
+    );
+  }
   return {
     enabled: team,
-    ...(env.DFIR_AUTH_BOOTSTRAP_TOKEN?.trim()
-      ? { bootstrapToken: env.DFIR_AUTH_BOOTSTRAP_TOKEN.trim() }
-      : {}),
+    ...(bootstrapToken ? { bootstrapToken } : {}),
     cookieSecure: env.DFIR_AUTH_COOKIE_SECURE === undefined ? team : enabled(env.DFIR_AUTH_COOKIE_SECURE),
     sessionTtlMs: sessionTtlMs(env.DFIR_AUTH_SESSION_HOURS),
     ...(oidc ? { oidc } : {}),
