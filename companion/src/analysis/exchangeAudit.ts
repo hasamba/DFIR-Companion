@@ -73,8 +73,10 @@ export interface ExchangeChange {
   appId: string;
   ip: string;
   session: string;
-  /** A forwarding address or a trustee, for the envelope's target. */
+  /** A forwarding address, a trustee, a destination mailbox or the recipients — the envelope's target. */
   target: string;
+  /** The identity a SendAs / SendOnBehalf acted as — the envelope's subject; "" otherwise. */
+  sentAs: string;
   tenant: string;
   recordId: string;
   time: string;
@@ -180,6 +182,7 @@ function finish(
     mitre?: string[];
     scope: string;
     target?: string;
+    sentAs?: string;
     object?: string;
     incompleteScope?: boolean;
   },
@@ -231,6 +234,7 @@ function finish(
     ip: c.ip,
     session: c.session,
     target: o.target ?? "",
+    sentAs: o.sentAs ?? "",
     tenant: c.tenant,
     recordId: c.recordId,
     time: str(getCI(c.rec, "CreationTime")),
@@ -669,7 +673,16 @@ function itemRecord(c: Common): ExchangeChange | null {
     words: subject ? `subject ${quote(subject, SUBJECT_MAX)}` : "",
     severity: accessSeverity(c),
     scope: `item:${op}:${sentAs}:${sentAsId}:${folder}:${destMailbox}:${destFolder}:${allRecipients.join(",")}:${recipientCount}:${ids.join(",")}`,
-    target: sentAs || destMailbox,
+    // The TARGET of a send is where it went — the recipients (or their count); the identity it was
+    // sent as is the subject. A move or copy targets its destination mailbox.
+    target: sending
+      ? allRecipients.length
+        ? allRecipients.join(", ")
+        : Number.isFinite(recipientCount) && recipientCount > 0
+          ? `${plural(recipientCount, "recipient")} (not listed)`
+          : ""
+      : destMailbox,
+    sentAs,
     incompleteScope: items.some((i) => itemIds(i) === "//") || items.length === 0,
   });
 }

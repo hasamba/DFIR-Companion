@@ -816,6 +816,29 @@ describe("parseM365Audit — Exchange mailbox records (#931 item 2)", () => {
       name: OWNER,
     });
   });
+  it("a send's envelope targets the recipients and names the sent-as identity as the subject", () => {
+    const r = parseM365Audit(
+      JSON.stringify([
+        exchange(
+          {
+            RecordType: 2,
+            Operation: "SendAs",
+            ResultStatus: "Succeeded",
+            LogonType: 2,
+            MailboxOwnerUPN: OWNER,
+            SendAsUserSmtp: OWNER,
+            Item: { Id: "i1", Subject: "wire" },
+            recipientList: [{ Address: "cfo@victim.com" }],
+          },
+          2,
+        ),
+      ]),
+    );
+    const e = r.events[0];
+    expect(e.canonical?.target).toMatchObject({ kind: "other", name: "cfo@victim.com" });
+    expect(e.canonical?.subject).toMatchObject({ kind: "mailbox", name: OWNER });
+    expect(e.canonical?.actor).toMatchObject({ kind: "account", name: "helpdesk@victim.com" });
+  });
   it("the description of a maximal row keeps the head, the posture, the mailbox and the qualifiers inside 600", () => {
     const r = parseM365Audit(
       JSON.stringify([

@@ -447,7 +447,7 @@ describe("code review regressions", () => {
       });
     const a = one(rec("ceo@example.invalid"));
     expect(a.posture).toBe("sends as ceo@example.invalid");
-    expect(a.target).toBe("ceo@example.invalid");
+    expect(a.sentAs).toBe("ceo@example.invalid");
     expect(a.key).not.toBe(one(rec("cfo@example.invalid")).key);
     const b = one(
       base({
@@ -565,6 +565,7 @@ describe("code review round 2", () => {
     );
     expect(cp.posture).toBe('copies 2 items from "\\Inbox" to mailbox drop@attacker.invalid to "\\Archive"');
     expect(cp.target).toBe("drop@attacker.invalid");
+    expect(cp.sentAs).toBe("");
     const cp2 = one(
       base({
         RecordType: 3,
@@ -594,6 +595,8 @@ describe("code review round 2", () => {
     expect(send.posture).toBe(
       "sends as alice@example.invalid to cfo@example.invalid (inside the mailbox's domain), x@attacker.invalid (outside the mailbox's domain)",
     );
+    expect(send.target).toBe("cfo@example.invalid, x@attacker.invalid");
+    expect(send.sentAs).toBe(OWNER);
     const countOnly = one(
       base({
         RecordType: 2,
@@ -606,6 +609,7 @@ describe("code review round 2", () => {
       }),
     );
     expect(countOnly.posture).toBe("sends to 3 recipients");
+    expect(countOnly.target).toBe("3 recipients (not listed)");
   });
   it("a Set-InboxRule that switches an action or a condition off is a delta, not a generic change", () => {
     const c = one(admin("Set-InboxRule", { Identity: "r", DeleteMessage: "False", MyNameInToBox: "False" }));

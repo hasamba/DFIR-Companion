@@ -74,6 +74,7 @@ export function mapExchangeRow(rec: Row, sink: Map<string, SiemIoc>, index: numb
             },
           }
         : {}),
+      ...(c.sentAs ? { subject: { kind: "mailbox", name: c.sentAs } } : {}),
       ...(c.target ? { target: { kind: "other", name: c.target.slice(0, 200) } } : {}),
       ...(ip ? { network: { source: { address: ip } } } : {}),
       cloud: {
