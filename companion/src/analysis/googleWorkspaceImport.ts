@@ -1,4 +1,5 @@
 import type { Severity } from "./stateTypes.js";
+import { boundedAggKey } from "./aggKey.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -154,6 +155,49 @@ const TARGET_PARAMS = [
   "NEW_VALUE",
 ];
 
+// Parameters that IDENTIFY the thing an event acted on — stable ids, never a title and never a
+// value. `doc_title` is not identity (two documents share a title); OLD_VALUE/NEW_VALUE are the
+// change itself, and keying on them turns every configuration edit into its own group until the
+// event cap starts dropping groups. Order is preference: the first present wins for the key.
+const IDENTITY_PARAMS = [
+  "doc_id",
+  "target_user", // Drive emits one access-change event PER SHAREE, same doc_id, different target_user
+  "USER_EMAIL",
+  "user_email",
+  "GROUP_EMAIL",
+  "group_email",
+  "client_id",
+  "SETTING_NAME",
+  "DEVICE_ID",
+  "target_domain",
+  "DOMAIN_NAME",
+] as const;
+
+function paramsByName(event: Row): Map<string, string> {
+  const params = getCI(event, "parameters");
+  const byName = new Map<string, string>();
+  if (!Array.isArray(params)) return byName;
+  for (const p of params) {
+    if (!isObject(p)) continue;
+    const name = text(getCI(p, "name"));
+    const raw = getCI(p, "value") ?? getCI(p, "multiValue") ?? getCI(p, "boolValue");
+    if (!name || raw == null) continue;
+    byName.set(name, Array.isArray(raw) ? raw.map(text).join(", ") : text(raw));
+  }
+  return byName;
+}
+
+// The stable identity of the event's target for the aggregation key: EVERY identity parameter the
+// event carries, in a fixed order — not the first one. A Drive access change names both the
+// document and the sharee, and one document shared with three people is three events. "" when the
+// event names none (a login) — then the key is exactly what it was before.
+function targetIdentity(event: Row): string {
+  const byName = paramsByName(event);
+  return IDENTITY_PARAMS.filter((k) => byName.get(k))
+    .map((k) => `${k}=${byName.get(k)}`)
+    .join(";");
+}
+
 function targetLabel(event: Row): string {
   const params = getCI(event, "parameters");
   if (!Array.isArray(params)) return "";
@@ -196,7 +240,9 @@ function mapEvent(rec: Row, event: Row, sink: Map<string, SiemIoc>): MappedEvent
     description,
     severity,
     mitre,
-    aggKey: `gws|${app}|${name}|${actor}|${ip}`.toLowerCase().slice(0, 400),
+    // The target IDENTITY last, bounded with a digest (#931 prerequisite). A document shared with
+    // three people is three rows; two documents with one title are two.
+    aggKey: boundedAggKey(`gws|${app}|${name}|${actor}|${ip}|${targetIdentity(event)}`.toLowerCase()),
     sources: ["Google Workspace"],
   };
 }

@@ -19,6 +19,7 @@
 
 import type { Severity } from "./stateTypes.js";
 import { parseCsv } from "./csvImport.js";
+import { boundedAggKey } from "./aggKey.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -332,16 +333,49 @@ function mapSignIn(rec: Row, sink: Map<string, SiemIoc>): MappedEvent {
   };
 }
 
+// Graph's directoryAudit.result is one of success | failure | timeout | unknownFutureValue, and a
+// non-Graph export may spell success as succeeded/OK. Each Graph value is its own outcome — a
+// timeout is not a failure — and only an absent or unrecognised value is "unknown".
+function auditOutcome(result: string): "success" | "failure" | "timeout" | "unknownFutureValue" | "unknown" {
+  const r = result.trim().toLowerCase();
+  if (/^(success|succeeded|successful|ok)$/.test(r)) return "success";
+  if (r === "failure" || r === "failed") return "failure";
+  if (r === "timeout") return "timeout";
+  if (r === "unknownfuturevalue") return "unknownFutureValue";
+  return "unknown";
+}
+
 function mapAudit(rec: Row, sink: Map<string, SiemIoc>): MappedEvent {
   const activity = pickStr(rec, ["activityDisplayName"]) || "directory change";
   const initiator = pickStr(rec, ["initiatedBy.user.userPrincipalName", "initiatedBy.app.displayName"]);
+  // Identity for the KEY, never the display name: two apps can share "Sync" and differ by id.
+  const initiatorId =
+    pickStr(rec, ["initiatedBy.user.id", "initiatedBy.app.appId", "initiatedBy.app.servicePrincipalId"]) ||
+    initiator;
   const initiatorIp = extractIp(pickStr(rec, ["initiatedBy.user.ipAddress"]));
   const result = pickStr(rec, ["result"]);
+  // EVERY target, as a typed stable identity, deduplicated and sorted so order does not matter. The
+  // old key took targetResources[0]'s display name: a change naming two users was "the first
+  // user", and two applications sharing a display name were one.
   const targets = getCI(rec, "targetResources");
-  const target =
-    Array.isArray(targets) && isObject(targets[0])
-      ? str(getCI(targets[0], "userPrincipalName") || getCI(targets[0], "displayName"))
-      : "";
+  const targetIds = [
+    ...new Set(
+      (Array.isArray(targets) ? targets : [])
+        .filter(isObject)
+        .map(
+          (t) =>
+            `${str(getCI(t, "type")) || "resource"}:${str(getCI(t, "id")) || str(getCI(t, "userPrincipalName")) || str(getCI(t, "displayName"))}`,
+        )
+        .filter((x) => !x.endsWith(":")),
+    ),
+  ].sort();
+  const targetLabels = (Array.isArray(targets) ? targets : [])
+    .filter(isObject)
+    .map((t) => str(getCI(t, "userPrincipalName") || getCI(t, "displayName")))
+    .filter(Boolean);
+  const target = targetLabels.length
+    ? `${targetLabels[0]}${targetLabels.length > 1 ? ` +${targetLabels.length - 1} more` : ""}`
+    : "";
 
   const def = opSeverity(activity);
   if (initiatorIp) addIoc(sink, "ip", initiatorIp);
@@ -358,7 +392,10 @@ function mapAudit(rec: Row, sink: Map<string, SiemIoc>): MappedEvent {
     description,
     severity: def.severity,
     mitre: [...(def.mitre ?? [])],
-    aggKey: `entra-audit|${activity}|${initiator}|${target}`.toLowerCase().slice(0, 400),
+    // Bounded identities first, the target list last, bounded with a digest (#931 prerequisite).
+    aggKey: boundedAggKey(
+      `entra-audit|${activity}|${auditOutcome(result)}|${initiatorId}|${targetIds.join(",")}`.toLowerCase(),
+    ),
     sources: ["Entra ID"],
   };
 }
