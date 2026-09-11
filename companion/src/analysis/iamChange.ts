@@ -1,0 +1,381 @@
+import { createHash } from "node:crypto";
+import type { Severity } from "./stateTypes.js";
+import {
+  actionMatches,
+  CONDITIONAL_NOTE,
+  POLICY_CAVEAT,
+  readPolicyDocument,
+  type PolicyReading,
+  type PolicyStatement,
+} from "./iamPolicyDocument.js";
+import { FIELD_LABELS, POSTURES, RESPONSE_FIELDS, type Posture } from "./iamPostures.js";
+export { renderAwsDescription, type AwsDescriptionParts } from "./awsDescription.js";
+
+// AWS permission changes, read from the one record CloudTrail gives us (#931 item 6).
+//
+// A record establishes four things and this decoder claims exactly those: the POSTURE of the call
+// (attaches, replaces, removes — a verb, never a direction: attaching a Deny narrows, detaching one
+// widens, and a Put replaces a document the record does not hold); the OBJECT it names (every
+// identity-bearing field, from the request AND the response — a new access key's id exists only in
+// the response — digested whole into the key, because two changes sharing a key overwrite each
+// other's evidence); the WORDS of any document it carries (iamPolicyDocument.ts); and the role a
+// service call BINDS to a workload (`iam:PassRole` is a permission, not an event — the role passed
+// sits in the RunInstances / CreateFunction / RegisterTaskDefinition / CreateStack request).
+//
+// A failed call did not change state: its posture is `attempted to …`, its readings are
+// `requested …`, and no success-only floor applies. Nothing here lowers a grade — the importer's
+// table stands; the decoder only supplies floors that raise.
+
+type Obj = Record<string, unknown>;
+
+export interface IamBinding {
+  label: string;
+  role: string;
+  destination: string;
+}
+
+export interface IamChange {
+  postureId: string;
+  /** Rendered verb phrase — `attaches managed policy`, or `attempted to attach managed policy`. */
+  posture: string;
+  attempted: boolean;
+  /** `denied (<code>)` for an authorisation failure, `failed (<code>)` for any other, "" on success. */
+  outcome: string;
+  /** The labeled object tuple, display-bounded; the key digests the complete tuple. */
+  object: string;
+  /** The primary resource, UNTRUNCATED — the role/user/group/policy changed, or a binding's destination. */
+  resource: string;
+  /** What the record lacks for this posture — `— its document and version are not in this record`. */
+  note: string;
+  /** The document's words (prefixed `requested document:` when attempted); "" when none. */
+  reading: string;
+  trust: string;
+  bindings: IamBinding[];
+  bindingsText: string;
+  severityFloor: Severity | null;
+  mitre: string[];
+  /** Mandatory qualifiers — what the record does NOT establish. */
+  qualifiers: string[];
+  /** Posture, object, outcome, note, readings — everything but the importer's head and tail. */
+  summary: string;
+  keySegment: string;
+}
+
+const IAM_SOURCE = "iam.amazonaws.com";
+const DIGEST_HEX = 16;
+const VALUE_MAX = 80;
+const OBJECT_MAX = 150;
+const READING_PREFIX_ATTEMPT = "requested ";
+const ASSUME_ACTIONS = ["sts:AssumeRole", "sts:AssumeRoleWithSAML", "sts:AssumeRoleWithWebIdentity"];
+const PASSROLE_DENIED = /iam:PassRole on resource:\s*(arn:[^\s"']+)/i;
+const ACCOUNT_ARN = /^arn:[^:]*:(?:iam|sts)::(\d{12}):/i;
+const VERSION_MAX = 20;
+// The error codes that mean the caller was NOT AUTHORISED; every other code is a failure of some
+// other kind (EntityAlreadyExists, LimitExceeded, a validation error) and is worded as one.
+const DENIAL_CODES =
+  /^(?:accessdenied(?:exception)?|unauthorizedoperation|client\.unauthorizedoperation|unauthorizedaccess|forbidden|notauthorized)$/i;
+
+const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
+const raw = (v: unknown): string =>
+  typeof v === "string" ? v.trim() : typeof v === "number" || typeof v === "boolean" ? String(v) : "";
+const getCI = (o: unknown, key: string): unknown =>
+  isObj(o) ? o[Object.keys(o).find((k) => k.toLowerCase() === key.toLowerCase()) ?? ""] : undefined;
+const path = (o: unknown, keys: string[]): unknown => keys.reduce<unknown>((cur, k) => getCI(cur, k), o);
+const digest = (s: string): string => createHash("sha256").update(s).digest("hex").slice(0, DIGEST_HEX);
+const arnName = (arn: string): string => arn.split("/").pop() || arn;
+
+// The verb of the three postures whose wording depends on the request or the outcome.
+function postureVerb(p: Posture, nameLower: string, req: Obj, attempted: boolean): string {
+  const version = raw(getCI(req, "versionId")).slice(0, VERSION_MAX) || "?";
+  if (attempted) {
+    const v = nameLower === "deletepolicyversion" ? ` ${version}` : "";
+    return `attempted to ${p.infinitive}${v}`;
+  }
+  // The record establishes the status REQUESTED, not the status before it: "sets … Active", never
+  // "re-enables" — an idempotent update would otherwise read as a transition that did not happen.
+  if (nameLower === "updateaccesskey") {
+    const status = raw(getCI(req, "status"));
+    return status ? `sets access key status ${status.slice(0, VERSION_MAX)}` : p.verb;
+  }
+  if (nameLower === "createpolicyversion" && /^true$/i.test(raw(getCI(req, "setAsDefault"))))
+    return `${p.verb} and activates it`;
+  if (nameLower === "setdefaultpolicyversion" || nameLower === "deletepolicyversion")
+    return `${p.verb} ${version}`;
+  return p.verb;
+}
+
+function objectTuple(
+  p: Posture,
+  nameLower: string,
+  req: Obj,
+  res: unknown,
+): { display: string; key: string; primary: string } {
+  const pairs: Array<[string, string]> = [];
+  for (const f of p.fields) {
+    const v = raw(getCI(req, f));
+    if (v) pairs.push([FIELD_LABELS[f] ?? f, v]);
+  }
+  for (const [label, keys] of RESPONSE_FIELDS[nameLower] ?? []) {
+    const v = raw(path(res, keys));
+    if (v) pairs.push([label, v]);
+  }
+  const display = pairs
+    .map(([l, v]) => `${l}=${(l === "policy" || l === "boundary" ? arnName(v) : v).slice(0, VALUE_MAX)}`)
+    .join(" ")
+    .slice(0, OBJECT_MAX);
+  return {
+    display,
+    key: digest(pairs.map(([l, v]) => `${l}=${v.toLowerCase()}`).join("|")),
+    primary: pairs[0]?.[1] ?? "",
+  };
+}
+
+// ───────────────────────────── trust ─────────────────────────────
+
+function accountOf(principal: string): string | null {
+  if (/^\d{12}$/.test(principal)) return principal;
+  const m = ACCOUNT_ARN.exec(principal);
+  return m ? m[1] : null;
+}
+
+function principalClasses(
+  st: PolicyStatement,
+  recipient: string,
+): { words: string[]; external: boolean; any: boolean } {
+  const p = st.principal;
+  const words: string[] = [];
+  let external = false;
+  if (!p) return { words, external, any: false };
+  if (p.any) words.push("any principal");
+  for (const a of p.aws) {
+    const id = accountOf(a);
+    if (!id) words.push(`principal of unknown form: ${a.slice(0, 60)}`);
+    else if (!recipient) words.push(`account ${id} — not compared: recipient account not in this record`);
+    else if (id === recipient) words.push("same-account");
+    else {
+      words.push(`external account ${id}`);
+      external = true;
+    }
+  }
+  for (const s of p.service) words.push(`service ${s}`);
+  for (const f of p.federated) words.push(`federated ${f}`);
+  for (const o of p.other) words.push(`principal of unknown form: ${o.slice(0, 60)}`);
+  return { words: [...new Set(words)], external, any: p.any };
+}
+
+function trustReading(reading: PolicyReading, recipient: string): { text: string; floor: Severity | null } {
+  const parts: string[] = [];
+  let floor: Severity | null = null;
+  for (const st of reading.statements) {
+    if (st.effect !== "Allow" || st.actions.op !== "Action") continue;
+    const assumed = ASSUME_ACTIONS.filter((a) => st.actions.values.some((v) => actionMatches(v, a)));
+    if (!assumed.length) continue;
+    const { words, external, any } = principalClasses(st, recipient);
+    if (!words.length) continue;
+    // `Allow` + `NotPrincipal` means EVERY principal except the listed — near-public; the listed
+    // ones are the exclusions and are worded as such, never as the trusted party.
+    if (st.principalExcluded) {
+      parts.push(
+        `allows ${assumed.join("/")} to every principal except ${words.join(", ")}${st.hasCondition ? " (conditional)" : ""}`,
+      );
+      floor = worstOf(floor, "High");
+      continue;
+    }
+    // A Condition is shown, not evaluated — it may restrict the principal or be vacuous, and an
+    // unevaluated condition never lowers the grade. Only the WORD "unrestricted" needs its absence.
+    const unrestricted = any && !st.hasCondition;
+    parts.push(
+      `allows ${assumed.join("/")} to ${words.join(", ")}${unrestricted ? " — unrestricted public assumption" : ""}${st.hasCondition ? " (conditional)" : ""}`,
+    );
+    if (any || external) floor = worstOf(floor, "High");
+  }
+  return { text: parts.join("; "), floor };
+}
+
+// ───────────────────────────── bindings ─────────────────────────────
+
+function bindingsFor(source: string, nameLower: string, req: Obj, res: unknown): IamBinding[] {
+  const svc = source.toLowerCase().replace(/\.amazonaws\.com$/, "");
+  if (svc === "ec2" && nameLower === "runinstances") {
+    const profile =
+      raw(path(req, ["iamInstanceProfile", "arn"])) || raw(path(req, ["iamInstanceProfile", "name"]));
+    if (!profile) return [];
+    const items = path(res, ["instancesSet", "items"]);
+    const ids = Array.isArray(items)
+      ? items
+          .map((i) => raw(getCI(i, "instanceId")))
+          .filter(Boolean)
+          .sort()
+      : [];
+    return [
+      {
+        label: "instance profile",
+        role: profile,
+        destination: ids.join(",") || raw(getCI(req, "clientToken")),
+      },
+    ];
+  }
+  if (svc === "lambda" && /^(createfunction|updatefunctionconfiguration)/.test(nameLower)) {
+    const role = raw(getCI(req, "role"));
+    return role ? [{ label: "role", role, destination: raw(getCI(req, "functionName")) }] : [];
+  }
+  if (svc === "ecs" && nameLower === "registertaskdefinition") {
+    const family = raw(getCI(req, "family"));
+    const revision = raw(path(res, ["taskDefinition", "revision"]));
+    const dest = revision ? `${family}:${revision}` : family;
+    const out: IamBinding[] = [];
+    const task = raw(getCI(req, "taskRoleArn"));
+    const exec = raw(getCI(req, "executionRoleArn"));
+    if (task) out.push({ label: "task role", role: task, destination: dest });
+    if (exec) out.push({ label: "execution role", role: exec, destination: dest });
+    return out;
+  }
+  // Glue: a dev endpoint runs code under the role it is created with — the documented PassRole
+  // escalation path this module lists as a primitive, so the call that binds the role is decoded.
+  if (svc === "glue" && (nameLower === "createdevendpoint" || nameLower === "updatedevendpoint")) {
+    const role = raw(getCI(req, "roleArn"));
+    return role ? [{ label: "role", role, destination: raw(getCI(req, "endpointName")) }] : [];
+  }
+  if (svc === "cloudformation" && (nameLower === "createstack" || nameLower === "updatestack")) {
+    const role = raw(getCI(req, "roleARN"));
+    return role
+      ? [{ label: "role", role, destination: raw(getCI(res, "stackId")) || raw(getCI(req, "stackName")) }]
+      : [];
+  }
+  return [];
+}
+
+const SEVERITY_RANK: Record<Severity, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Critical: 4 };
+const worstOf = (a: Severity | null, b: Severity | null): Severity | null =>
+  !a ? b : !b ? a : SEVERITY_RANK[b] > SEVERITY_RANK[a] ? b : a;
+
+/**
+ * Decode one CloudTrail record as an IAM change or a role binding, or null when it is neither.
+ * `recipientAccountId` is the account the changed resource lives in; without it a trust policy's
+ * accounts are named but not compared. `eventId` keys a document that has no digest of its own.
+ */
+export function decodeIamChange(
+  source: string,
+  name: string,
+  request: unknown,
+  response: unknown,
+  errorCode: string,
+  errorMessage: string,
+  recipientAccountId: string,
+  eventId = "",
+): IamChange | null {
+  const req: Obj = isObj(request) ? request : {};
+  const nameLower = name.toLowerCase();
+  const attempted = !!errorCode.trim();
+  const posture = source.toLowerCase() === IAM_SOURCE ? POSTURES[nameLower] : undefined;
+  const bindings = bindingsFor(source, nameLower, req, response);
+  const deniedRole = PASSROLE_DENIED.exec(errorMessage)?.[1] ?? "";
+  if (!posture && !bindings.length && !deniedRole) return null;
+
+  const mitre: string[] = [];
+  let floor: Severity | null = attempted ? "Medium" : null;
+  const qualifiers: string[] = [];
+  const add = (t: string | undefined) => t && !mitre.includes(t) && mitre.push(t);
+
+  let verb = "";
+  let object = { display: "", key: "", primary: "" };
+  let reading = "";
+  let trust = "";
+  let docDigest = "";
+  if (posture) {
+    verb = postureVerb(posture, nameLower, req, attempted);
+    object = objectTuple(posture, nameLower, req, response);
+    if (posture.qualifier) qualifiers.push(posture.qualifier);
+    if (!attempted && posture.floor) floor = worstOf(floor, posture.floor);
+    if (posture.floor) for (const t of posture.mitre ?? []) add(t);
+    // A key set Active is a credential brought (back) into use — Medium on the requested state.
+    if (nameLower === "updateaccesskey" && !attempted && /\bActive$/i.test(verb)) {
+      floor = worstOf(floor, "Medium");
+      add("T1098.001");
+    }
+    if (posture.docField) {
+      const read = readPolicyDocument(getCI(req, posture.docField));
+      // The canonical digest folds a reordered copy; an unreadable document keeps its raw digest,
+      // so two different malformed documents never share a key; a document with no digest at all
+      // (an object that could not be serialised) keys on the record, so two of them never fold.
+      docDigest = read.readable ? read.digest : read.rawDigest || `record:${eventId || "?"}`;
+      const prefix = attempted ? READING_PREFIX_ATTEMPT : "";
+      if (!read.readable) reading = `${prefix}document: unreadable (${read.reason})`;
+      else {
+        const isTrust = nameLower === "createrole" || nameLower === "updateassumerolepolicy";
+        if (isTrust) {
+          const t = trustReading(read, recipientAccountId.trim());
+          trust = t.text ? `${prefix}trust: ${t.text}` : "";
+          if (!attempted) floor = worstOf(floor, t.floor);
+          if (t.floor) add("T1098");
+        } else {
+          reading = `${prefix}document: ${read.effect} — ${read.reading}`;
+          if (read.broad && !attempted) floor = worstOf(floor, "High");
+          if (read.broad) add("T1098.003");
+        }
+        if (read.conditional) qualifiers.push(CONDITIONAL_NOTE);
+        qualifiers.push(POLICY_CAVEAT);
+      }
+    }
+  }
+
+  // A PassRole denial IS the binding's evidence: the denial line replaces "requested passing" for
+  // that role, so a denied pass is never worded as a pass.
+  const bindingWords = bindings
+    .filter((b) => !deniedRole || b.role.toLowerCase() !== deniedRole.toLowerCase())
+    .map(
+      (b) =>
+        `${attempted ? "requested " : ""}passing ${b.label} ${b.role.slice(0, VALUE_MAX)}${b.destination ? ` → ${b.destination.slice(0, VALUE_MAX)}` : ""}`,
+    );
+  if (bindings.length && !attempted) {
+    floor = worstOf(floor, "Medium");
+    add("T1078.004");
+  }
+  if (deniedRole) {
+    bindingWords.push(`role passing denied: ${deniedRole.slice(0, VALUE_MAX)}`);
+    floor = worstOf(floor, "Medium");
+    add("T1078.004");
+  }
+  const bindingsText = bindingWords.join("; ");
+  // The denied role is a discriminator too: two PassRole denials for two roles on a call this
+  // decoder does not otherwise bind (a Glue endpoint, a Data Pipeline) must stay two rows.
+  const bindingsDigest =
+    bindings.length || deniedRole
+      ? digest(
+          [
+            ...bindings.map((b) => `${b.label}=${b.role.toLowerCase()}→${b.destination.toLowerCase()}`),
+            deniedRole ? `denied=${deniedRole.toLowerCase()}` : "",
+          ].join("|"),
+        )
+      : "";
+
+  const code = errorCode.trim().slice(0, 30);
+  const outcome = attempted ? `${DENIAL_CODES.test(code) ? "denied" : "failed"} (${code})` : "";
+  const note = posture && !attempted ? (posture.note ?? "") : "";
+  // A binding-only row has no IAM posture; a failed one still needs a verb before its outcome.
+  if (!posture && attempted) verb = deniedRole ? "attempted to pass a role" : "attempted a role binding";
+  const summary = [verb, object.display, outcome ? `— ${outcome}` : "", note, reading, trust, bindingsText]
+    .filter(Boolean)
+    .join(" ");
+  const postureId = posture?.id ?? (deniedRole && !bindings.length ? "passrole-denied" : "binding");
+  return {
+    postureId,
+    posture: verb,
+    attempted,
+    outcome,
+    object: object.display,
+    // The resource is what the call ACTED ON — a binding's destination, never the role or profile
+    // passed (a failed launch with no instance has no resource).
+    resource: object.primary || bindings[0]?.destination || "",
+    note,
+    reading,
+    trust,
+    bindings,
+    bindingsText,
+    severityFloor: floor,
+    mitre,
+    qualifiers,
+    summary,
+    keySegment: `|iam:${postureId}|${attempted ? "failed" : "ok"}|${object.key || "-"}|${docDigest || "-"}|${bindingsDigest || "-"}`,
+  };
+}

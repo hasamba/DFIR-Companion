@@ -312,6 +312,50 @@ Azure `runCommand/action` and the managed `runCommands/write` (on a VM or a scal
 grade the same way: High, the target machine named, and the note that the script body is not in
 the Activity Log. Two machines by one caller are two rows.
 
+### IAM changes: what the record says
+
+An IAM change used to import as `AWS PutRolePolicy (iam) by bob` — High for every policy write,
+Low and wordless for every detach or delete, the policy document unread. A single CloudTrail record
+holds no before-and-after, so the row now says exactly what the record establishes and nothing
+more:
+
+- **What the call did** — a verb, never a direction: `attaches managed policy`, `replaces inline
+  policy`, `removes permissions boundary`, `sets access key status Active`, `adds user to group`.
+  A detach or a delete stays Low but says so, so an eradication step reads as one. Attaching a Deny
+  policy tightens and detaching one loosens — which is why no row claims "widened" or "narrowed";
+  and a status update says the status requested, not "re-enabled", because the record does not
+  hold the status before it.
+- **What changed** — every identity the record names: the user, role or group, the policy (by
+  name), the version, the access-key id, the MFA serial. Identities the response creates — a new
+  access key's id, a new policy version's number — are read too. Two policies attached to one role
+  in one minute are two rows.
+- **The document's own words** — `grants — all actions on all resources`, `all actions except
+  iam:* on all resources`, the escalation permissions it names (`iam:PassRole`, `sts:AssumeRole`,
+  `iam:CreatePolicyVersion`, …), `denies 1 statement`. A broad grant is High; a Deny-only document
+  keeps the call's grade. A managed policy's document is **not in the record** — the row says so and
+  claims nothing about it, `AdministratorAccess` included.
+- **Who a role trusts** — `allows sts:AssumeRole to external account 999988887777` (High), `to any
+  principal — unrestricted public assumption` (High), `to same-account`, `to service
+  lambda.amazonaws.com`. A statement with a Condition is marked `(conditional)` and the row carries
+  `conditional — not evaluated here`; the word "unrestricted" is dropped, but the grade is not — a
+  condition the row did not evaluate may restrict the principal or may be vacuous, and an
+  unevaluated condition never lowers a grade.
+- **Role passing** — `iam:PassRole` is a permission, not an event. The row for the call that uses
+  it names the binding: `passing instance profile … → i-0abc` on `RunInstances` (a profile, not a
+  role — the two can differ), `passing role … → my-function` on Lambda, both roles on an ECS task
+  definition, the role on a CloudFormation stack, the role on a Glue dev endpoint. Medium on
+  success. A `PassRole` denial reads
+  `role passing denied: <role>` — an attempt, Medium, never "passed".
+- **A failed call is an attempt** — `attempted to replace inline policy — denied (AccessDenied)`,
+  the requested document shown, no High floor: the change did not happen. Only an authorisation
+  code reads "denied"; any other error (`EntityAlreadyExists`, `LimitExceeded`) reads "failed".
+
+Every row with a document ends with `effective access depends on controls not in this record`:
+permission boundaries, organisation policies and resource policies decide what the grant does, and
+the record holds none of them. A replace (`Put*`, `UpdateAssumeRolePolicy`) also says `previous
+document not in this record`. Those qualifiers, the outcome and the object have reserved room in the
+description; a long principal name or a long document is clipped before they are.
+
 ## Evidence Drop Folder (Auto-Import Inbox)
 
 Every case gets a `cases/<id>/drop/` folder on creation. Copy any file into it — at any depth, subfolders included — and a background poller picks it up once the file size/mtime is stable (safe for Dropbox/OneDrive sync), then imports it through the same detection + import chain as the **Import** button. Screenshots are ingested as capture evidence; everything else is imported as an artifact.

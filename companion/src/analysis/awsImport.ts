@@ -15,6 +15,7 @@ import type { Severity } from "./stateTypes.js";
 import { createCanonicalEvent, stampSourceArtifactHash } from "./canonicalEvent.js";
 import { boundedAggKey } from "./aggKey.js";
 import { decodeSsmCall, renderSsmDescription } from "./ssmExecution.js";
+import { decodeIamChange, renderAwsDescription } from "./iamChange.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -59,7 +60,7 @@ interface ActionDef {
 }
 
 // Curated high-risk CloudTrail actions → derived severity + MITRE (keys = lowercased eventName).
-const AWS_ACTIONS: Record<string, ActionDef> = {
+export const AWS_ACTIONS: Record<string, ActionDef> = {
   consolelogin: { severity: "Info", mitre: ["T1078.004"] },
   // IAM persistence / privilege escalation
   createuser: { severity: "Medium", mitre: ["T1136.003"] },
@@ -191,6 +192,24 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
     severity = ssm.severity;
     for (const t of ssm.mitre) if (!mitre.includes(t)) mitre.push(t);
   }
+  // IAM changes and role bindings (#931 item 6): the posture, the object, the document's own words,
+  // the role a service call passes. The table grade stands; the decoder only supplies floors.
+  const iam = decodeIamChange(
+    source,
+    name,
+    getCI(rec, "requestParameters"),
+    getCI(rec, "responseElements"),
+    str(getCI(rec, "errorCode")),
+    str(getCI(rec, "errorMessage")),
+    str(getCI(rec, "recipientAccountId")).trim(),
+    // A document that has no digest of its own keys on the record; an exported record without an
+    // eventID still has its position in the file.
+    str(getCI(rec, "eventID")).trim() || `record:${recordIndex}`,
+  );
+  if (iam) {
+    if (iam.severityFloor) severity = worst(severity, iam.severityFloor);
+    for (const t of iam.mitre) if (!mitre.includes(t)) mitre.push(t);
+  }
 
   const identity = principal(getCI(rec, "userIdentity"));
   const { name: who, isRoot } = identity;
@@ -246,6 +265,20 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
       errorCode,
     });
   }
+  // An IAM row likewise: reserved budgets, the outcome next to the posture, the qualifiers last but
+  // never clipped away (awsDescription.ts).
+  if (iam) {
+    const from = ip || (rawIp && rawIp !== "AWS Internal" ? rawIp : "");
+    description = renderAwsDescription({
+      head: `AWS ${name} (${shortSource(source)})${who ? ` by ${oneLine(who).slice(0, 50)}` : ""}${from ? ` from ${from}` : ""}${region ? ` in ${region}` : ""}`,
+      posture: iam.posture,
+      outcome: iam.outcome,
+      object: iam.object,
+      optional: [iam.reading || iam.note, iam.trust, iam.bindingsText],
+      tail: `${client ? `[ua: ${oneLine(client).slice(0, 30)}]` : ""}${isRoot ? " [root]" : ""}${errorCode ? ` [${errorCode.slice(0, 30)}]` : ""}`,
+      qualifiers: iam.qualifiers,
+    });
+  }
   description = description.slice(0, 600);
   const observedTimestamp = str(getCI(rec, "eventTime"));
   const normalizedTimestamp = normalizeTime(observedTimestamp);
@@ -271,8 +304,11 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
             "roleArn",
             "bucketName",
             "key",
-          ])
-        : "";
+          ]) ||
+          // The IAM decoder's UNTRUNCATED primary resource: the group or policy a call names that
+          // the list above does not, or a binding's destination (the function, the instances).
+          (iam?.resource ?? "")
+        : (iam?.resource ?? "");
   const canonical = createCanonicalEvent({
     event: {
       category: "cloud",
@@ -349,7 +385,7 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Mappe
     // responseElements with no errorCode at all), the region (RunInstances in a new region is the
     // rogue-compute signal). Bounded fields first, the object key last, bounded with a digest.
     aggKey: boundedAggKey(
-      `aws|${source}|${name}|${identity.accountId ?? ""}|${identity.id || identity.arn || who}|${failed ? "failed" : "ok"}|${errorCode}|${region}|${ip || rawIp}${ssm?.keySegment ?? ""}|${client}${objectKey ? `|${resource}` : ""}`.toLowerCase(),
+      `aws|${source}|${name}|${identity.accountId ?? ""}|${identity.id || identity.arn || who}|${failed ? "failed" : "ok"}|${errorCode}|${region}|${ip || rawIp}${ssm?.keySegment ?? ""}${iam?.keySegment ?? ""}|${client}${objectKey ? `|${resource}` : ""}`.toLowerCase(),
     ),
     sources: ["AWS CloudTrail"],
   };

@@ -324,3 +324,252 @@ describe("parseCloudTrail — SSM remote execution", () => {
     expect(by("ListDocuments").mitreTechniques).toEqual(["T1526"]);
   });
 });
+
+describe("parseCloudTrail — IAM changes (#931 item 6)", () => {
+  const ACCT = "111122223333";
+  const doc = (statements: unknown): string =>
+    JSON.stringify({ Version: "2012-10-17", Statement: statements });
+  const iam = (
+    eventName: string,
+    requestParameters: object,
+    responseElements: object | null = null,
+    over: object = {},
+  ) =>
+    record({
+      eventSource: "iam.amazonaws.com",
+      eventName,
+      readOnly: false,
+      recipientAccountId: ACCT,
+      eventID: `evt-${eventName}-${JSON.stringify(requestParameters).length}`,
+      requestParameters,
+      responseElements,
+      ...over,
+    });
+
+  it("a Put with an Allow *:* document is High, reads the document's words, names the object, and carries the caveats", () => {
+    const r = parseCloudTrail(
+      envelope(
+        iam("PutRolePolicy", {
+          roleName: "deploy",
+          policyName: "inline-admin",
+          policyDocument: doc([{ Effect: "Allow", Action: "*", Resource: "*" }]),
+        }),
+      ),
+    );
+    const e = r.events[0];
+    expect(e.severity).toBe("High");
+    expect(e.description).toContain("replaces inline policy role=deploy policyName=inline-admin");
+    expect(e.description).toContain("all actions on all resources");
+    expect(e.description).toContain("previous document not in this record");
+    expect(e.description).toContain("effective access depends on controls not in this record");
+    expect(e.description).not.toMatch(/\b(widen|narrow|tighten)/i);
+    expect(e.canonical?.cloud?.resource).toBe("deploy");
+  });
+  it("a Detach stays Low and SAYS what it did — an eradication step reads as one", () => {
+    const r = parseCloudTrail(
+      envelope(
+        iam("DetachRolePolicy", {
+          roleName: "deploy",
+          policyArn: "arn:aws:iam::aws:policy/AdministratorAccess",
+        }),
+      ),
+    );
+    const e = r.events[0];
+    expect(e.severity).toBe("Low");
+    expect(e.description).toContain("detaches managed policy role=deploy policy=AdministratorAccess");
+    expect(e.description).toContain("its document and version are not in this record");
+    expect(e.description).not.toMatch(/grants all/);
+  });
+  it("CreateRole trusting an external account is High and names the account; same-account is the table's Medium", () => {
+    const trust = (acct: string) =>
+      doc([{ Effect: "Allow", Principal: { AWS: `arn:aws:iam::${acct}:root` }, Action: "sts:AssumeRole" }]);
+    const r = parseCloudTrail(
+      envelope(
+        iam("CreateRole", { roleName: "ext", assumeRolePolicyDocument: trust("999988887777") }),
+        iam("CreateRole", { roleName: "own", assumeRolePolicyDocument: trust(ACCT) }),
+      ),
+    );
+    const by = (role: string) => r.events.find((e) => e.description.includes(`role=${role}`))!;
+    expect(by("ext").severity).toBe("High");
+    expect(by("ext").description).toContain("external account 999988887777");
+    expect(by("own").severity).toBe("Medium");
+    expect(by("own").description).toContain("same-account");
+  });
+  it("RunInstances with an instance profile is Medium + T1078.004 and says 'instance profile', never 'role'", () => {
+    const r = parseCloudTrail(
+      envelope(
+        record({
+          eventSource: "ec2.amazonaws.com",
+          eventName: "RunInstances",
+          readOnly: false,
+          recipientAccountId: ACCT,
+          requestParameters: { iamInstanceProfile: { arn: `arn:aws:iam::${ACCT}:instance-profile/web` } },
+          responseElements: { instancesSet: { items: [{ instanceId: "i-0aaa" }] } },
+        }),
+      ),
+    );
+    const e = r.events[0];
+    expect(e.severity).toBe("Medium");
+    expect(e.mitreTechniques).toContain("T1078.004");
+    expect(e.description).toContain(
+      `passing instance profile arn:aws:iam::${ACCT}:instance-profile/web → i-0aaa`,
+    );
+    expect(e.description).not.toMatch(/passing role/);
+  });
+  it("two Glue dev endpoints created with two roles by one actor are two Medium rows", () => {
+    const ep = (name: string, role: string) =>
+      record({
+        eventSource: "glue.amazonaws.com",
+        eventName: "CreateDevEndpoint",
+        readOnly: false,
+        recipientAccountId: ACCT,
+        requestParameters: { endpointName: name, roleArn: `arn:aws:iam::${ACCT}:role/${role}` },
+      });
+    const r = parseCloudTrail(envelope(ep("a", "glue-a"), ep("b", "glue-admin")));
+    expect(r.events).toHaveLength(2);
+    expect(new Set(r.events.map((e) => e.aggKey)).size).toBe(2);
+    for (const e of r.events) {
+      expect(e.severity).toBe("Medium");
+      expect(e.description).toMatch(/passing role arn:aws:iam::111122223333:role\/glue-\w+ → [ab]/);
+    }
+  });
+  it("a PassRole denial is Medium and says denied — the role was not passed", () => {
+    const r = parseCloudTrail(
+      envelope(
+        record({
+          eventSource: "lambda.amazonaws.com",
+          eventName: "CreateFunction20150331",
+          readOnly: false,
+          recipientAccountId: ACCT,
+          errorCode: "AccessDenied",
+          errorMessage: `User: arn:aws:iam::${ACCT}:user/bob is not authorized to perform: iam:PassRole on resource: arn:aws:iam::${ACCT}:role/admin`,
+          requestParameters: { functionName: "f", role: `arn:aws:iam::${ACCT}:role/admin` },
+        }),
+      ),
+    );
+    const e = r.events[0];
+    expect(e.severity).toBe("Medium");
+    expect(e.description).toContain(`role passing denied: arn:aws:iam::${ACCT}:role/admin`);
+    expect(e.description).not.toMatch(/\bpassing role\b/);
+  });
+  it("a denied boundary removal says 'attempted' next to the head and stays Medium; a successful one is High", () => {
+    const r = parseCloudTrail(
+      envelope(
+        iam("DeleteRolePermissionsBoundary", { roleName: "a" }, null, { errorCode: "AccessDenied" }),
+        iam("DeleteRolePermissionsBoundary", { roleName: "b" }),
+      ),
+    );
+    const by = (role: string) => r.events.find((e) => e.description.includes(`role=${role}`))!;
+    expect(by("a").severity).toBe("Medium");
+    expect(by("a").description).toMatch(
+      /^AWS DeleteRolePermissionsBoundary \(iam\) by bob from 203\.0\.113\.10 in us-east-1 attempted to remove permissions boundary — denied \(AccessDenied\)/,
+    );
+    expect(by("b").severity).toBe("High");
+    expect(by("b").description).toContain("removes permissions boundary role=b — may increase permissions");
+  });
+  it("two policies attached to one role in one batch are two rows; the same record twice is one", () => {
+    const att = (arn: string) => iam("AttachRolePolicy", { roleName: "r", policyArn: arn });
+    const r = parseCloudTrail(
+      envelope(
+        att("arn:aws:iam::aws:policy/A"),
+        att("arn:aws:iam::aws:policy/B"),
+        att("arn:aws:iam::aws:policy/A"),
+      ),
+    );
+    const keys = new Set(r.events.map((e) => e.aggKey));
+    expect(keys.size).toBe(2);
+  });
+  it("the description of a maximal row keeps the head, the outcome, the object and the caveats inside 600", () => {
+    const r = parseCloudTrail(
+      envelope(
+        iam(
+          "PutRolePolicy",
+          {
+            roleName: "r".repeat(300),
+            policyName: "n".repeat(300),
+            policyDocument: doc([
+              {
+                Effect: "Allow",
+                Action: Array.from({ length: 200 }, (_, i) => `svc${i}:Action${i}`),
+                Resource: "*",
+                Condition: { Bool: { "aws:MultiFactorAuthPresent": "true" } },
+              },
+            ]),
+          },
+          null,
+          {
+            errorCode: "AccessDenied",
+            userAgent: "u".repeat(500),
+            userIdentity: {
+              type: "IAMUser",
+              userName: "p".repeat(500),
+              arn: `arn:aws:iam::${ACCT}:user/x`,
+              accountId: ACCT,
+            },
+          },
+        ),
+      ),
+    );
+    const d = r.events[0].description;
+    expect(d.length).toBeLessThanOrEqual(600);
+    expect(d).toMatch(/^AWS PutRolePolicy \(iam\) by p+/);
+    expect(d).toContain("attempted to replace inline policy — denied (AccessDenied)");
+    expect(d).toContain("role=rrrr");
+    expect(d).toContain("previous document not in this record");
+    expect(d).toContain("conditional — not evaluated here");
+    expect(d).toContain("effective access depends on controls not in this record");
+    expect(d).toContain("[AccessDenied]");
+  });
+  it("two documents the reader cannot digest, in records without an eventID, stay two rows", () => {
+    const deep = (leaf: string) => {
+      let d: unknown = { Effect: "Allow", Action: "*", Resource: leaf };
+      for (let i = 0; i < 40; i++) d = { x: d }; // past the reader's depth bound, within JSON's
+      return { Statement: [d] };
+    };
+    const put = (leaf: string) =>
+      record({
+        eventSource: "iam.amazonaws.com",
+        eventName: "PutRolePolicy",
+        readOnly: false,
+        requestParameters: { roleName: "r", policyName: "p", policyDocument: deep(leaf) },
+      });
+    const r = parseCloudTrail(envelope(put("a"), put("b")));
+    expect(r.events).toHaveLength(2);
+    expect(new Set(r.events.map((e) => e.aggKey)).size).toBe(2);
+    expect(r.events[0].description).toContain("unreadable");
+  });
+  it("cloud.resource is the untruncated object the call names, or a binding's destination", () => {
+    const longGroup = "g".repeat(120);
+    const r = parseCloudTrail(
+      envelope(
+        iam("AttachGroupPolicy", { groupName: longGroup, policyArn: "arn:aws:iam::aws:policy/X" }),
+        record({
+          eventSource: "ec2.amazonaws.com",
+          eventName: "RunInstances",
+          readOnly: false,
+          recipientAccountId: ACCT,
+          requestParameters: { iamInstanceProfile: { name: "web" } },
+          responseElements: { instancesSet: { items: [{ instanceId: "i-0bbb" }] } },
+        }),
+        record({
+          eventSource: "lambda.amazonaws.com",
+          eventName: "CreateFunction20150331",
+          readOnly: false,
+          recipientAccountId: ACCT,
+          requestParameters: { functionName: "fn-x", role: `arn:aws:iam::${ACCT}:role/lr` },
+        }),
+      ),
+    );
+    const by = (name: string) => r.events.find((e) => e.description.startsWith(`AWS ${name}`))!;
+    expect(by("AttachGroupPolicy").canonical?.cloud?.resource).toBe(longGroup);
+    expect(by("RunInstances").canonical?.cloud?.resource).toBe("i-0bbb");
+    expect(by("CreateFunction20150331").canonical?.cloud?.resource).toBe("fn-x");
+  });
+  it("the existing table grades are unchanged for IAM calls the decoder does not raise", () => {
+    const r = parseCloudTrail(
+      envelope(iam("CreateUser", { userName: "new" }, { user: { userId: "AIDAEXAMPLE" } })),
+    );
+    expect(r.events[0].severity).toBe("Medium");
+    expect(r.events[0].description).toContain("creates user user=new userId=AIDAEXAMPLE");
+  });
+});
