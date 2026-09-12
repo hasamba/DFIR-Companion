@@ -608,6 +608,79 @@ download provenance is not execution, user intent or proof of a drive-by; a miss
 mark is inconclusive — propagation depends on the software that wrote the file (a `.iso` mounted
 strips the mark from what is inside; many tools never write one); a stream's name is not its
 content.
+### Google Workspace OAuth: which app, which scopes, what it called
+
+A Workspace account takeover through OAuth leaves records of the `token` application in the
+Reports API export. Each used to import as `Google Workspace token: authorize by alice@… →
+Mail Backup Pro` — High whatever the app was granted, the display name and nothing else. Two
+apps can share a display name; the application's identity is its `client_id`, and the row now
+names both. Each of the application's five events reads for what its record establishes:
+
+- **`authorize`** — `authorises Mail Backup Pro (client 1234…apps.googleusercontent.com, WEB)
+  for 2 scopes: gmail.readonly, openid — authorization recorded; this record does not evidence
+  API use`. The grade follows the scopes granted, by a literal table of full scope URIs taken
+  from Google's OAuth scope catalogue (as of September 2026 — no family shorthand, no prefix
+  match); the highest wins. **High**: full mail (`https://mail.google.com/`), `gmail.readonly`
+  and every Gmail modify/send/settings scope, `drive`, `drive.readonly`, `drive.meet.readonly`
+  and `drive.scripts`, Docs/Sheets/Slides/Forms (read-only included), `calendar`,
+  `calendar.events`, `calendar.calendars`, `calendar.acls` and the legacy
+  `https://www.google.com/calendar/feeds`, `contacts`, `contacts.other.readonly` and the legacy
+  `https://www.google.com/m8/feeds`, the Admin SDK directory (users, groups, members, org units,
+  devices, domains, roles, user security and schemas), data transfer, reports and group
+  settings/migration, Cloud Identity groups, policies and inbound SSO, Vault eDiscovery,
+  `cloud-platform`, Cloud Search, Classroom rosters, coursework and submissions, Photos, Meet
+  conference records (transcripts), Apps Script, Chat messages/import and the organisation-wide Chat read (`chat.app.all.messages.readonly`). **Medium**: metadata-only and activity scopes
+  (`gmail.metadata`, `gmail.labels`, the Gmail add-on current-message scopes, `drive.metadata*`,
+  `drive.activity*`), read-only Calendar, Contacts, Keep, Tasks, Chat spaces and memberships,
+  `directory.readonly`, the read-only Admin SDK and Cloud Identity device, alias, schema and
+  settings scopes, licensing and alerts, Classroom courses and announcements, Cloud Search
+  settings and indexing, the People `user.*.read` scopes — and **every scope the table does not
+  name** (conservative: a scope Google adds after this table is written reads Medium until the
+  table is updated). **Low**: per-file and app-data Drive (`drive.file`, `drive.appdata`,
+  `drive.install`, `drive.apps.readonly`), free/busy and public calendar reads, Classroom topics
+  and add-ons, Meet space creation and settings, and the identity-only scopes (`openid`, `email`, `profile`,
+  `userinfo.*`). Four classes
+  are shown and the rest counted. A record with no `scope` reads `scopes not in this record` and
+  stays High — the table cannot say less when the record does not.
+- **`activity`** — `API call drive.drive.files.get by Mail Backup Pro (client …) 4096 bytes
+  returned product DRIVE — bytes returned are not proof that file contents were downloaded`. The
+  application is the actor here (it called the API on the user's behalf). Info. A response size
+  is shown only when the record carries `num_response_bytes`, and it is kept as the record's
+  exact digits (the field is a 64-bit integer; an export that wrote it as a bare number beyond
+  2^53 was rounded by the JSON parser and is not claimed); two calls to one method that returned
+  different sizes are two rows, so a large transfer never folds under a small one.
+- **`request`** — `requests access: … for 1 scope: gmail.readonly requester bob@… — access
+  requested, not granted by this record`, Low. A delegated request reads `delegated request —
+  Google does not display the requested scopes` and claims no scope count.
+- **`deny`** — `denied access: … rejection ADMIN_BLOCKED`, Low; the rejection type is the record's own
+  word (an admin block and a restricted-service policy are different controls).
+- **`revoke`** — `revokes Mail Backup Pro (client …) scopes: drive, gmail.readonly`, Low. The
+  row never says what happened after it. Two reading rules: a password reset does not revoke
+  every token, so a revocation is the only record of the grant ending; and activity after a
+  revocation may be delayed delivery of earlier calls or a legitimate re-authorization — read
+  the `authorize` rows around it before calling it a bypass.
+
+Every token row keys on the tenant, the client id (when a record carries none, the record's
+own id joins the key so two applications never fold behind one display name), the sorted set of
+scopes (a reordered duplicate folds; a real difference is a second row), the API method with its
+response size and product, and the request, requester and rejection fields; every Workspace row
+of any application now keys on the tenant (`id.customerId`), so two customers' identical rows
+stay two. The record's actor is read for what it is: a user (`email`/`profileId`), a service
+account or two-legged-OAuth caller (`callerType: KEY` and its `key`), or an application
+(`applicationInfo.oauthClientId`) — when an application record also names the user it acts
+for, the row reads `by <app> as <user>`, both identities are in the key (two applications
+impersonating one user are two rows) and the user is the envelope's subject; an application
+or key record with no stable id never folds with another (a name is a label); a record that
+names no actor claims none. Token rows carry the canonical envelope: the actor and the application typed as
+actor and object (or actor and subject on an `activity`; a requester named on a `request` is
+the subject), the cloud principal following the actor (the client on an `activity`, the user's
+profile id, the key or the application's client id otherwise, typed as `user`, `key` or
+`application`), the tenant, the API method as the resource, and a locator to the record and
+event they came from.
+
+The lifecycle across records — an authorization, the activity under it, the revocation, "every
+user who authorized this client" — is a join by `client_id` across users and time, not a
+per-record fact; it is a spec issue of its own.
 
 ## Evidence Drop Folder (Auto-Import Inbox)
 
