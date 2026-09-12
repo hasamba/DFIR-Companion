@@ -289,7 +289,9 @@ of one URL are two rows. The appended tokens are
 not part of a row's base identity — an attacker can write them, and a request time would be one
 group per request — but a digest of them is a bounded **variant** of it: a row that shows a
 trailer never folds into a row that does not, and beyond 64 distinct values on one path the rest
-fold into one row that says so. A very long request target can never push the status or these
+fold into one row that says so. A row that also carries an attack shape is identified by its
+payload instead, so trailer churn cannot crowd out a genuinely different payload; its trailer text
+still shows on the row that survives. A very long request target can never push the status or these
 facts out of the row: past the 600-character clip the row is laid out status-first, and the tags
 are kept whole in evidence order — the proxy's legs, what the status establishes, what the size
 does not, the target's form, and the uninterpreted trailer last.

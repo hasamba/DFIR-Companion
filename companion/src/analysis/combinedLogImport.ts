@@ -431,7 +431,13 @@ export function mapCombinedLogLine(
     // it. So: every bounded field first (method, status, client, host, spill), the path LAST, and
     // boundedAggKey rather than a raw slice — it keeps a digest of the FULL key in the tail, so two
     // long paths sharing a 400-character prefix stay two rows. This is the rule aggKey.ts states.
-    aggKey: boundedAggKey(`${baseKey}${attackSegment}${trailer.variantKey}${pathKey}`.toLowerCase()),
+    // One variant dimension per row. A row WITH an attack is identified by its payload: the
+    // trailer digest stays out, or trailer churn on one payload would consume the 64-payload
+    // budget and fold a genuinely different payload into an overflow row, losing its excerpt. The
+    // trailer's words still show on the row that survives — the trade the UA and the Referer take.
+    aggKey: boundedAggKey(
+      `${baseKey}${attackSegment}${attack ? "" : trailer.variantKey}${pathKey}`.toLowerCase(),
+    ),
     sources: [COMBINED_LOG_SOURCE],
     ...(client ? { srcIp: client } : {}),
   };
@@ -443,7 +449,7 @@ export function mapCombinedLogLine(
       prefix: baseKey.toLowerCase(),
       path: pathKey.toLowerCase(),
       families: attack?.families ?? [],
-      digest: `${attack?.digest ?? ""}${trailer.variantKey}`,
+      digest: attack ? attack.digest : trailer.variantKey,
       hasAttack: Boolean(attack),
       // Whole tags here too (packTags): the overflow row is the one the analyst reads when the
       // bound fires, so it must not end in a half-open `[redirect`.

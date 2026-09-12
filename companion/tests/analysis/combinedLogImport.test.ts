@@ -801,6 +801,25 @@ describe("parseCombinedLog — what one line establishes", () => {
     expect(r.dropped).toBe(0);
   });
 
+  it("trailer churn on one payload never uses up the payload budget", () => {
+    const same = Array.from(
+      { length: 64 },
+      (_, i) =>
+        `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /same?q=x;id HTTP/1.1" 200 0 "-" "curl/8" nonce-${i}`,
+    );
+    const other =
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /same?q=x;whoami HTTP/1.1" 200 0 "-" "curl/8"';
+    const r = parseCombinedLog([...same, other].join("\n"));
+    const whoami = r.events.find((e) => e.description.includes("whoami"))!;
+    expect(whoami.description).toContain('[match: ";whoami"]');
+    expect(whoami.description).not.toContain("overflow");
+    expect(r.events.some((e) => e.description.includes("overflow"))).toBe(false);
+    // the 64 trailer variants of ONE payload are one row
+    const id = r.events.find((e) => e.description.includes('[match: ";id"]'))!;
+    expect(id.count).toBe(64);
+    expect(r.dropped).toBe(0);
+  });
+
   it("a refused CONNECT says no tunnel was established", () => {
     const refused =
       '10.30.10.14 - - [15/May/2024:06:42:01 +0000] "CONNECT vault.example.invalid:443 HTTP/1.1" 407 512 "-" "curl/8"';
