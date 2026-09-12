@@ -176,6 +176,9 @@ function clientAddress(raw: string | undefined): string {
 export interface AttackMeta {
   /** The aggregation key with every variant segment removed — one per method|status|client|host|path. */
   base: string;
+  /** …kept in its two halves, because the path is attacker-controlled and may contain a `|`. */
+  prefix: string;
+  path: string;
   families: string[];
   /** The row's variant identity: its attack payload digest and its unlabelled-trailer digest. */
   digest: string;
@@ -337,7 +340,6 @@ export function mapCombinedLogLine(
     ...(target.words ? [target.words] : []),
     ...(trailer.trailerWords ? [trailer.trailerWords] : []),
   ];
-  const tagText = tags.length ? ` [${tags.join("] [")}]` : "";
   // Both layouts pack WHOLE tags (packTags): a substring of a serialised `[a] [b]` sequence would
   // leave a half-open tag and hide the fact it names.
 
@@ -431,6 +433,8 @@ export function mapCombinedLogLine(
   if ((attack || trailer.variantKey) && attackMeta) {
     attackMeta.set(event, {
       base: `${baseKey}${pathKey}`.toLowerCase(),
+      prefix: baseKey.toLowerCase(),
+      path: pathKey.toLowerCase(),
       families: attack?.families ?? [],
       digest: `${attack?.digest ?? ""}${trailer.variantKey}`,
       hasAttack: Boolean(attack),
@@ -477,9 +481,11 @@ function boundRecordVariants(mapped: MappedEvent[], meta: Map<MappedEvent, Attac
   for (const { event, base } of overflowRows) {
     const families = [...(overflowFamilies.get(base) ?? [])].sort().join(",");
     const m = meta.get(event)!;
-    const [prefix, path] = [base.slice(0, base.lastIndexOf("|")), base.slice(base.lastIndexOf("|"))];
+    // The prefix and the path come from the row, NOT from splitting `base` at its last `|`: the
+    // path is attacker-controlled and a `|` in it would put the marker inside the path, colliding
+    // with an ordinary row whose path merely contains the marker's text.
     const marker = families ? ATTACK_OVERFLOW : TRAILER_OVERFLOW;
-    const overflowKey = boundedAggKey(`${prefix}|${marker}${path}`);
+    const overflowKey = boundedAggKey(`${m.prefix}|${marker}${m.path}`);
     rewritten.set(event.aggKey, overflowKey);
     event.aggKey = overflowKey;
     const what = families ? `distinct payloads` : `distinct appended trailer values`;
