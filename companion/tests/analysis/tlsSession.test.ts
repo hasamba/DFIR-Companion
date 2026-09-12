@@ -286,6 +286,7 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
     const variants: Array<Partial<TlsObservation>> = [
       { version: "TLSv12" },
       { cipher: "TLS_AES_128_GCM_SHA256" },
+      { curve: "secp256r1" },
       { established: false },
       { resumed: true },
       { validation: "self signed certificate" },
@@ -818,6 +819,15 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
     }
     // …while two chain-only records with different FUIDs are one row
     expect(rows([withChain, readZeekSsl({ ...base2, cert_chain_fuids: ["F2"] }, "")])).toHaveLength(1);
+  });
+
+  it("the negotiated curve is read, keyed, shown and enveloped", () => {
+    const a = readZeekSsl({ ...ZEEK_SSL, curve: "x25519" }, "");
+    const b = readZeekSsl({ ...ZEEK_SSL, curve: "secp256r1" }, "");
+    const r = rows([a, b]);
+    expect(r).toHaveLength(2);
+    expect(r[0].description).toContain("curve x25519]");
+    expect(r[0].canonical?.tls?.curve).toBe("x25519");
   });
 
   it("selects the most-seen rows first under a budget", () => {

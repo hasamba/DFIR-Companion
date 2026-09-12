@@ -63,6 +63,8 @@ export interface TlsObservation {
   sniMatchesCert?: boolean;
   version?: string;
   cipher?: string;
+  /** Zeek ssl.log `curve`: the server-selected (EC)DH group. */
+  curve?: string;
   established?: boolean;
   resumed?: boolean;
   validation?: string;
@@ -213,6 +215,7 @@ export function readZeekSsl(row: Row, fallbackTs: string): TlsObservation {
     sniMatchesCert: bool(getCI(row, "sni_matches_cert")),
     version: text(getCI(row, "version")),
     cipher: text(getCI(row, "cipher")),
+    curve: text(getCI(row, "curve")),
     established: bool(getCI(row, "established")),
     resumed: bool(getCI(row, "resumed")),
     validation: text(getCI(row, "validation_status")),
@@ -450,6 +453,7 @@ export function tlsKey(o: TlsObservation): string {
     seg(o.sni),
     seg(o.version),
     seg(o.cipher),
+    seg(o.curve),
     short(o.established),
     short(o.resumed),
     seg(o.validation),
@@ -542,6 +546,7 @@ function sessionTags(o: TlsObservation): string[] {
   const proto = [
     o.version !== undefined ? show(o.version) : "",
     o.cipher !== undefined ? `cipher ${show(o.cipher)}` : "",
+    o.curve !== undefined ? `curve ${show(o.curve)}` : "",
   ]
     .filter(Boolean)
     .join(", ");
@@ -620,6 +625,7 @@ function envelopeOf(o: TlsObservation, count: number): CanonicalEventEnvelope {
       ...(o.sni !== undefined ? { sni: o.sni } : {}),
       ...(o.version !== undefined ? { version: o.version } : {}),
       ...(o.cipher !== undefined ? { cipher: o.cipher } : {}),
+      ...(o.curve !== undefined ? { curve: o.curve } : {}),
       ...(o.established !== undefined ? { established: o.established } : {}),
       ...(o.resumed !== undefined ? { resumed: o.resumed } : {}),
       ...(o.validation !== undefined ? { validation: o.validation } : {}),

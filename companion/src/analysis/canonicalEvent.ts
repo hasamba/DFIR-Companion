@@ -136,6 +136,7 @@ export const canonicalEventEnvelopeSchema = z.object({
       sni: z.string().optional(),
       version: z.string().optional(),
       cipher: z.string().optional(),
+      curve: z.string().optional(),
       established: z.boolean().optional(),
       resumed: z.boolean().optional(),
       validation: z.string().optional(),
