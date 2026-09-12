@@ -35,6 +35,7 @@
 // the caller.
 
 import type { Severity } from "./stateTypes.js";
+import { appendDerivedNote } from "./derivedNote.js";
 
 /** One artifact's record of a file's timestamp, and where it came from. */
 export interface TimeObservation {
@@ -283,11 +284,10 @@ export function corroborateTimestompsOnTimeline<T extends TimelineEventShape>(ev
 
     const severity =
       RANK[verdict.severity] > RANK[e.severity ?? "Info"] ? verdict.severity : (e.severity ?? "Info");
-    const base = (e.description ?? "").slice(0, 700);
     return {
       ...e,
       severity,
-      description: `${base} ${TIMESTOMP_CORROBORATION_MARKER} ${verdict.note.trim()}]`.trim(),
+      description: appendDerivedNote(e.description, TIMESTOMP_CORROBORATION_MARKER, verdict.note),
     };
   });
 }

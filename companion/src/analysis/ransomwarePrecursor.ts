@@ -39,6 +39,7 @@
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 import { normalizeCommand } from "./commandNormalize.js";
 import { shortHost } from "./correlate.js";
+import { appendDerivedNote } from "./derivedNote.js";
 
 /** The behaviour classes that make up the pattern, keyed by the technique that identifies them. */
 export const PRECURSOR_CLASSES: { id: string; label: string; techniques: string[] }[] = [
@@ -233,11 +234,10 @@ export function markRansomwarePrecursors(
     // ATT&CK Navigator export as a High-confidence encryption claim with no encryption evidence
     // behind it. The events keep the techniques their own evidence supports.
     const severity: Severity = RANK["High"] > RANK[e.severity] ? "High" : e.severity;
-    const base = (e.description ?? "").slice(0, 700);
     return {
       ...e,
       severity,
-      description: `${base} ${PRECURSOR_MARKER} ${note}]`.trim(),
+      description: appendDerivedNote(e.description, PRECURSOR_MARKER, note),
     };
   });
 }
