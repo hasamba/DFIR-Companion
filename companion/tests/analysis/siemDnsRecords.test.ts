@@ -253,6 +253,26 @@ describe("DNS Client operational log", () => {
     expect(r.iocs.map((i) => i.value)).toContain("_ldap._tcp.dc._msdcs.example");
   });
 
+  it("two TXT values that share 512 characters stay two rows after import; a case-only CNAME churn is one", () => {
+    const txt = (t: string) =>
+      dnsClient(3008, {
+        QueryName: "txt.example",
+        QueryType: "16",
+        QueryStatus: "0",
+        QueryResults: `type: 16 ${"k".repeat(512)}${t};`,
+      });
+    const r = parseSiemExport(elastic(txt("X"), txt("Y")));
+    expect(r.events).toHaveLength(2);
+    expect(afterImport(r.events)).toHaveLength(2);
+    const cased = ["EDGE.Example", "edge.EXAMPLE", "Edge.example", "edge.example"].map((c, i) =>
+      sysmon22(
+        { QueryName: "a.example", QueryStatus: "0", QueryResults: `type: 5 ${c};` },
+        { ts: `2026-03-01T10:0${i}:00Z` },
+      ),
+    );
+    expect(parseSiemExport(elastic(...cased)).events).toHaveLength(1);
+  });
+
   it("two CNAME targets that differ past the shown width stay two rows after import", () => {
     const rec = (t: string) =>
       sysmon22({

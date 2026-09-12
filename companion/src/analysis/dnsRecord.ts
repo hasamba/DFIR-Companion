@@ -129,10 +129,16 @@ function classify(type: number | undefined, value: string): ReturnedValue {
   const address = mapped ? mapped[1] : value;
   if (isIP(address) && (type === undefined || ADDRESS_TYPES.has(type)))
     return { type, value: address, kind: "address" };
+  // A name compares case-insensitively (RFC 4343): canonical lowercase, or an authority could mint
+  // one row per capitalisation of one answer. The value is kept WHOLE here — the identity is built
+  // from it — and bounded only in the envelope (boundForEnvelope).
   if (type !== undefined && NAME_TYPES.has(type) && isValidQueryName(value))
-    return { type, value: value.replace(/\.$/, ""), kind: "name" };
-  return { type, value: value.slice(0, VALUE_KEPT_MAX), kind: "other" };
+    return { type, value: value.replace(/\.$/, "").toLowerCase(), kind: "name" };
+  return { type, value, kind: "other" };
 }
+
+const boundForEnvelope = (v: ReturnedValue): ReturnedValue =>
+  v.value.length > VALUE_KEPT_MAX ? { ...v, value: v.value.slice(0, VALUE_KEPT_MAX) } : v;
 
 function showValue(v: ReturnedValue): string {
   const text = breakHashRuns(showToken(v.value));
@@ -152,9 +158,10 @@ export function readQueryResults(raw: string | undefined): ResultsReading {
     const typed = /^type:\s*(\d{1,5})\s+(.*)$/s.exec(e);
     return typed ? classify(Number(typed[1]), typed[2].trim()) : classify(undefined, e);
   });
-  const values = all.slice(0, RESULTS_KEPT_MAX);
-  // The identity covers every parsed value, not only the kept ones: two records that agree on the
-  // first 64 and differ on the 65th are two rows, even though the envelope keeps 64.
+  const values = all.slice(0, RESULTS_KEPT_MAX).map(boundForEnvelope);
+  // The identity covers every parsed value WHOLE, not only the kept ones or their bounded form: two
+  // records that agree on the first 64 values, or on a value's first 512 characters, and differ
+  // after are two rows, even though the envelope keeps 64 values of 512.
   const identity = all
     .map((v) => `${v.type ?? "-"}:${v.value.length}:${v.value}`)
     .sort()

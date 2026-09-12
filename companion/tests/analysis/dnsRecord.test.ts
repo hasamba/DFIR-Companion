@@ -74,6 +74,7 @@ describe("readQueryResults — the resolver's returned values, typed, validated,
     expect(r.shown).not.toContain("]");
     expect(r.shown).not.toContain("\u0000");
     expect(r.values[2].value.length).toBe(300);
+    expect(readQueryResults(`type: 16 ${"k".repeat(600)};`).values[0].value.length).toBe(512);
     expect(r.shown.length).toBeLessThan(200);
   });
   it("shows at most RESULTS_SHOWN_MAX values and keeps at most RESULTS_KEPT_MAX", () => {
@@ -285,6 +286,30 @@ describe("dnsOverlay — what one record establishes", () => {
       });
     expect(bulk("192.0.2.65").identity).not.toBe(bulk("192.0.2.66").identity);
     expect(bulk("192.0.2.65").dns.returned).toHaveLength(RESULTS_KEPT_MAX);
+  });
+  it("a value that differs past the envelope bound still separates; a name's case never does", () => {
+    const txt = (t: string) =>
+      overlay({
+        QueryName: "txt.example",
+        QueryStatus: "0",
+        QueryResults: `type: 16 ${"k".repeat(512)}${t};`,
+      });
+    expect(txt("X").identity).not.toBe(txt("Y").identity);
+    expect(txt("X").description).not.toBe(txt("Y").description);
+    expect(txt("X").dns.returned[0].value.length).toBe(512);
+    const upper = overlay({
+      QueryName: "a.example",
+      QueryStatus: "0",
+      QueryResults: "type: 5 EDGE.Example;",
+    });
+    const lower = overlay({
+      QueryName: "a.example",
+      QueryStatus: "0",
+      QueryResults: "type: 5 edge.example;",
+    });
+    expect(upper.identity).toBe(lower.identity);
+    expect(upper.description).toBe(lower.description);
+    expect(upper.dns.returned[0].value).toBe("edge.example");
   });
   it("a complete rendering carries no mark; the description stays inside 600 characters", () => {
     const plain = overlay({ QueryName: "a.example", QueryStatus: "0", QueryResults: "::ffff:192.0.2.1;" });
