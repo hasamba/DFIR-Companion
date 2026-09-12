@@ -49,6 +49,35 @@ export function verifySlackSignature(input: SlackSignatureInput): SignatureVerif
   return { ok: true };
 }
 
+// The Teams and Telegram secrets are compared, not signed over, so the guess count is the only
+// defence — and POST /integrations/{teams,telegram}/command is rate-limited rather than
+// unguessable (#944). 32 characters is the floor at which that lockout schedule makes an online
+// guess hopeless: the same floor #920 put under the bootstrap token, for the same reason. Any
+// nonempty value was accepted before, so `DFIR_TEAMS_TOKEN=x` was valid configuration.
+export const MIN_SHARED_SECRET_LENGTH = 32;
+
+// Telegram's setWebhook accepts a secret_token of A-Z a-z 0-9 _ - only, and base64 output carries
+// + / =, so the generator the error names must produce something Telegram will take: hex does.
+const SHARED_SECRET_VARS: ReadonlyArray<{ name: string; generate: string }> = [
+  { name: "DFIR_TEAMS_TOKEN", generate: "openssl rand -base64 32" },
+  { name: "DFIR_TELEGRAM_SECRET_TOKEN", generate: "openssl rand -hex 32" },
+];
+
+/** Refuse startup on a shared secret shorter than the floor, naming the variable. Unset is fine —
+ *  both integrations are optional, and an unconfigured secret already refuses every request. The
+ *  Slack signing secret is deliberately not here: Slack issues it, and it signs the body. */
+export function assertSlashCommandSecretLengths(env: NodeJS.ProcessEnv = process.env): void {
+  for (const { name, generate } of SHARED_SECRET_VARS) {
+    const value = (env[name] ?? "").trim();
+    if (value && value.length < MIN_SHARED_SECRET_LENGTH) {
+      throw new Error(
+        `${name} must be at least ${MIN_SHARED_SECRET_LENGTH} characters ` +
+          `(got ${value.length}); generate one with: ${generate}`,
+      );
+    }
+  }
+}
+
 // Teams webhook-based slash commands carry a bearer token the operator configures in the Teams
 // channel's webhook connector. Accepts both "Bearer <token>" and a bare "<token>" presentation.
 export function verifyTeamsToken(
