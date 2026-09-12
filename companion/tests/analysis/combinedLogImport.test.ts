@@ -656,7 +656,7 @@ describe("parseCombinedLog — what one line establishes", () => {
     // the shown trailer is the same 40-character prefix on both, so the row's description carries
     // an identity mark of its full key — the description is the row's identity downstream
     expect(r.events[0].description).not.toBe(r.events[1].description);
-    expect(r.events.every((e) => / #[0-9a-f]{8}$/.test(e.description))).toBe(true);
+    expect(r.events.every((e) => / #[0-9a-f]{32}$/.test(e.description))).toBe(true);
     expect(afterImport(r.events)).toHaveLength(2);
   });
 
@@ -671,7 +671,7 @@ describe("parseCombinedLog — what one line establishes", () => {
     const b = parseCombinedLog([bracket("/a[1]"), bracket("/a(1)")].join("\n"));
     expect(b.events).toHaveLength(2);
     expect(b.events.find((e) => e.aggKey?.includes("/a[1]"))!.description).toMatch(
-      /^GET \/a\(1\) -> 200 \(83b\) \(ua curl\/8\) #[0-9a-f]{8}$/,
+      /^GET \/a\(1\) -> 200 \(83b\) \(ua curl\/8\) #[0-9a-f]{32}$/,
     );
     expect(b.events.find((e) => e.aggKey?.includes("/a(1)"))!.description).toBe(
       "GET /a(1) -> 200 (83b) (ua curl/8)",
@@ -686,15 +686,24 @@ describe("parseCombinedLog — what one line establishes", () => {
     expect(at.events[0].description.replace(/ #\w+$/, "")).toBe(
       at.events[1].description.replace(/ #\w+$/, ""),
     );
-    expect(at.events.every((e) => / #[0-9a-f]{8}$/.test(e.description) && e.description.length <= 600)).toBe(
+    expect(at.events.every((e) => / #[0-9a-f]{32}$/.test(e.description) && e.description.length <= 600)).toBe(
       true,
     );
     expect(afterImport(at.events)).toHaveLength(2);
+    // two bracket-spelled paths that neutralise alike and were found to share a 32-bit mark stay two
+    const spelled = (p: string) =>
+      `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET ${p} HTTP/1.1" 200 83 "-" "curl/8"`;
+    const sp = parseCombinedLog(
+      [spelled("/((((([[[([[[(([[[((["), spelled("/(((([[[(([[[[[(([([[")].join("\n"),
+    );
+    expect(sp.events).toHaveLength(2);
+    expect(sp.events[0].description).not.toBe(sp.events[1].description);
+    expect(afterImport(sp.events)).toHaveLength(2);
     // a rebuilt long line carries it, inside the cap
     const long = `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /${"a".repeat(650)} HTTP/1.1" 302 0 "-" "curl/8"`;
     const l = parseCombinedLog(long).events[0];
     expect(l.description.length).toBeLessThanOrEqual(600);
-    expect(l.description).toMatch(/ #[0-9a-f]{8}$/);
+    expect(l.description).toMatch(/ #[0-9a-f]{32}$/);
   });
 
   it("a trailer token cannot forge a tag, and unbounded trailer values fold rather than multiplying rows", () => {

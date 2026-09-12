@@ -192,9 +192,11 @@ export const TRAILER_OVERFLOW = "trailer:overflow";
 // The description is the row's identity downstream: correlateEvents unions two rows with one
 // timestamp, one description and one host as a re-import. A row whose SHOWN text is not the whole
 // record — a clipped trailer, a clipped payload excerpt, a neutralised bracket, a rebuilt long line
-// — therefore carries a short mark of its full key, so two records that READ alike stay two rows
-// after import and not only inside this parser (#933 item 1).
-const IDENTITY_MARK_HEX = 8;
+// — therefore carries a mark of its full key, so two records that READ alike stay two rows after
+// import and not only inside this parser (#933 item 1). 128 bits: the key is attacker-controlled,
+// and a 32-bit mark let two bracket-spelled paths that neutralise alike be found by birthday work
+// and folded into one row downstream.
+const IDENTITY_MARK_HEX = 32;
 export function identityMark(key: string): string {
   return ` #${createHash("sha256").update(key).digest("hex").slice(0, IDENTITY_MARK_HEX)}`;
 }
@@ -228,12 +230,13 @@ function plainDescription(
   // record, so it always carries the mark.
   const max = 600 - mark.length;
   const head = `[status: ${status}]`;
-  const room = max - head.length - 1 - method.length - 1 - Math.min(uri.length, 200) - bytesTag.length - 180;
+  // The tail is measured, not reserved: room the user, Referer and UA excerpts do not use goes to
+  // the record's own tags.
+  const tail = `${userTag.slice(0, 50)}${refTag.slice(0, 62)}${uaTag.slice(0, 62)}`;
+  const room =
+    max - head.length - 1 - method.length - 1 - Math.min(uri.length, 200) - bytesTag.length - tail.length;
   const keptText = packTags(tags, room);
-  return `${oneLine(
-    `${head}${keptText} ${method} ${uri.slice(0, 200)}${bytesTag}` +
-      `${userTag.slice(0, 50)}${refTag.slice(0, 62)}${uaTag.slice(0, 62)}`,
-  ).slice(0, max)}${mark}`;
+  return `${oneLine(`${head}${keptText} ${method} ${uri.slice(0, 200)}${bytesTag}${tail}`).slice(0, max)}${mark}`;
 }
 
 // An attack row's slots are BOUNDED before composition, not sliced after it: the families and the
