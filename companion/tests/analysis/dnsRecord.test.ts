@@ -121,7 +121,11 @@ describe("isValidQueryName", () => {
     expect(isValidQueryName("cdn.example.net.")).toBe(true);
     expect(isValidQueryName("xn--80ak6aa92e.example")).toBe(true);
     expect(isValidQueryName("_ldap._tcp.dc._msdcs.example")).toBe(true); // an SRV owner, not a hostname
-    expect(isValidQueryName("__x.example")).toBe(false);
+    expect(isValidQueryName("__x.example")).toBe(true); // underscores are legal anywhere in a label
+    expect(isValidQueryName("beacon_01.attacker.example")).toBe(true);
+    expect(isValidQueryName("bücher.example")).toBe(true); // a U-label
+    expect(isValidQueryName("a b.example")).toBe(false);
+    expect(isValidQueryName("a.example-")).toBe(false);
     expect(isValidQueryName("localhost")).toBe(true); // a valid single-label query…
     expect(isValidQueryName("wpad")).toBe(true);
     expect(isIndicatorName("wpad")).toBe(false); // …that is not an indicator (the mapper's dot rule)

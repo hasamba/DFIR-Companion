@@ -112,9 +112,11 @@ export interface ResultsReading {
   total: number;
 }
 
-// A DNS OWNER name, not a hostname: RFC 2782 service labels lead with an underscore
-// (`_ldap._tcp.dc._msdcs.example`), and Windows issues exactly those for DC discovery.
-const LABEL = /^_?[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$/;
+// A DNS OWNER name, not a hostname: underscores are legal anywhere in a label (RFC 2782 service
+// labels, `beacon_01.attacker.example`), and a U-label may carry letters outside ASCII. What is
+// rejected is what no resolver answers and no report should carry bare: a hyphen at an edge, a
+// bracket, a slash, whitespace, punctuation other than `-` and `_`.
+const LABEL = /^[\p{L}\p{N}_](?:[\p{L}\p{N}_-]*[\p{L}\p{N}_])?$/u;
 
 /**
  * A name a resolver would answer: 1–253 characters of valid labels. One label (`wpad`, a NetBIOS-
