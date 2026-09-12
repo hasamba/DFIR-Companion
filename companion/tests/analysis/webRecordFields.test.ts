@@ -73,6 +73,19 @@ describe("readTarget — the RFC 9112 form, never the deployment's role", () => 
       form: "invalid",
       host: "",
     });
+    // …at the edges too, where trim() would have removed it first
+    expect(readTarget("GET", "http://good.example.invalid/x\u000b")).toMatchObject({
+      form: "invalid",
+      host: "",
+    });
+    expect(readTarget("CONNECT", "good.example.invalid:443\u000b")).toMatchObject({
+      form: "invalid",
+      host: "",
+    });
+    expect(readTarget("GET", "\u000bhttp://good.example.invalid/x")).toMatchObject({
+      form: "invalid",
+      host: "",
+    });
     expect(readTarget("GET", "https://files.example.invalid")).toMatchObject({
       form: "absolute",
       host: "files.example.invalid",

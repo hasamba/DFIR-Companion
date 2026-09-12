@@ -783,6 +783,10 @@ describe("parseCombinedLog — what one line establishes", () => {
       '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET / HTTP/1.1" 200 0 "http://good.example\u007f.invalid/x?q=1" "curl/8"',
     );
     expect(control.iocs.some((i) => i.type === "domain")).toBe(false);
+    const edge = parseCombinedLog(
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET / HTTP/1.1" 200 0 "http://good.example.invalid/x?q=1\u000b" "curl/8"',
+    );
+    expect(edge.iocs.some((i) => i.type === "domain")).toBe(false);
     // a valid one still does
     const ok = parseCombinedLog(
       '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET / HTTP/1.1" 200 0 "https://portal.example.invalid/x?q=1" "curl/8"',
