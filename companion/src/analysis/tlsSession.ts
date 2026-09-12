@@ -247,9 +247,11 @@ export function readZeekX509(row: Row, fallbackTs: string): TlsObservation {
     locatorId: text(getCI(row, "id")),
     observer: observerOf(row),
     // Zeek says which side sent the certificate; a client's certificate is not "the server's".
+    // `client_cert: false` alone establishes nothing (a chain member, a certificate met outside
+    // TLS); "server" needs the positive pair host_cert:true + client_cert:false.
     ...(bool(getCI(row, "client_cert")) === true
       ? { role: "client" as const }
-      : bool(getCI(row, "host_cert")) === true || bool(getCI(row, "client_cert")) === false
+      : bool(getCI(row, "host_cert")) === true && bool(getCI(row, "client_cert")) === false
         ? { role: "server" as const }
         : {}),
     subject: text(cert("subject")),
