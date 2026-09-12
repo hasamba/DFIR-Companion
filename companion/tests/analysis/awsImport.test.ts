@@ -758,7 +758,7 @@ describe("parseCloudTrail — identities and credentials (#931 item 5)", () => {
     const e = r.events[0];
     expect(e.count ?? 1).toBe(1);
     expect(e.description).toContain("AssumedRole key ASIAEXAMPLEKEY000001");
-    expect(e.description).toContain(`[also recorded in account ${OTHER}]`);
+    expect(e.description).toContain(`[also in account ${OTHER}]`);
     expect(e.canonical?.evidence.rawRecords.map((p) => p.recordId)).toEqual(["e-caller", "e-owner"]);
     // Both accounts are typed: the caller's in cloud.accountId, the resource owner's in
     // cloud.recipientAccountId — a Hunt on either finds the action.
@@ -951,12 +951,53 @@ describe("parseCloudTrail — identities and credentials (#931 item 5)", () => {
     expect(r.events).toHaveLength(1);
     const d = r.events[0].description;
     expect(d.length).toBeLessThanOrEqual(600);
-    // The notice sits in front of the row's qualifier tail, which survives whole.
-    expect(d).toContain(`[also recorded in account ${OTHER}] — `);
+    // The notice is a reserved slot right after the head; the qualifier tail survives whole.
+    expect(d).toMatch(new RegExp(`^AWS PutRolePolicy \\(iam\\) by [^\\[]+ \\[also in account ${OTHER}\\] `));
     expect(d).toMatch(/effective access depends on controls not in this record$/);
     // Both records are represented, none dropped.
     expect(r.dropped).toBe(0);
     expect(r.kept).toBe(1);
+  });
+  it("the cross-account notice and the full SSM caveat both survive a maximal SendCommand replica pair", () => {
+    const shared = "shared-ssm";
+    const ssmRecord = (over: object) =>
+      record({
+        eventName: "SendCommand",
+        eventSource: "ssm.amazonaws.com",
+        readOnly: false,
+        sharedEventID: shared,
+        userAgent: "u".repeat(80),
+        requestParameters: {
+          documentName: "AWS-RunShellScript",
+          instanceIds: Array.from(
+            { length: 50 },
+            (_, i) => `i-0abc${String(i).padStart(3, "0")}${"x".repeat(10)}`,
+          ),
+          parameters: { commands: [`curl ${"u".repeat(300)} | sh`] },
+        },
+        responseElements: { command: { commandId: "c".repeat(36), documentVersion: "3", status: "Pending" } },
+        ...over,
+      });
+    const r = parseCloudTrail(
+      envelope(
+        ssmRecord({
+          userIdentity: { type: "AWSAccount", principalId: "AIDAEXAMPLE", accountId: ACCT },
+          recipientAccountId: OTHER,
+          eventID: "owner",
+        }),
+        ssmRecord({ userIdentity: assumedRole(), recipientAccountId: ACCT, eventID: "caller" }),
+      ),
+    );
+    expect(r.events).toHaveLength(1);
+    const d = r.events[0].description;
+    expect(d.length).toBeLessThanOrEqual(600);
+    expect(d).toContain(`[also in account ${OTHER}]`);
+    // The whole caveat — the middle clause included — ends the row.
+    expect(d).toMatch(
+      /— The result is not in CloudTrail \(Pending at the call\); runs as the SSM agent's configured user — guest evidence decides\.$/,
+    );
+    expect(d).toContain("[AWS-RunShellScript@3] cccccccccccccccccccccccccccccccccccc Pending: requested");
+    expect(r.dropped).toBe(0);
   });
   it("a reused session name under two access keys is two rows", () => {
     const r = parseCloudTrail(

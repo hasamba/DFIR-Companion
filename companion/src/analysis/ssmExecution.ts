@@ -84,6 +84,8 @@ const ID_DISPLAY_MAX = 100; // an SSM session id may be 96 characters; the key k
 const EXCERPT_HEAD = 200;
 const EXCERPT_TAIL = 60;
 const COMMAND_LINE_MAX = 65_536;
+// The replica notice's slot (#931 item 5) — `[also in account <12 digits>]` is 30.
+const NOTICE_MAX = 33;
 const DIGEST_HEX = 16;
 
 // Fleet-management documents that are Low with ROUTINE parameters. Fail-closed: a key outside the
@@ -217,6 +219,8 @@ export function renderSsmDescription(
     errorCode: string;
     /** The caller's identity words (#931 item 5); bounded to its own slot, after the head. */
     identity?: string;
+    /** The replica notice (#931 item 5): reserved right after the head, never spliced in later. */
+    notice?: string;
   },
 ): string {
   const head = `AWS ${parts.name} (${parts.source})${parts.who ? ` by ${parts.who.slice(0, 60)}` : ""}${parts.from ? ` from ${parts.from}` : ""}${parts.region ? ` in ${parts.region}` : ""}`;
@@ -227,7 +231,9 @@ export function renderSsmDescription(
   // the target list; the document, id and status at its front always keep at least 80), the
   // payload excerpt, and last the caller's identity, which falls to nothing before anything else.
   const note = ` — ${ssm.note}`;
-  const room = 600 - head.length - tail.length - note.length;
+  const noticeRaw = (parts.notice ?? "").trim();
+  const notice = noticeRaw ? ` ${noticeRaw.slice(0, NOTICE_MAX)}` : "";
+  const room = 600 - head.length - notice.length - tail.length - note.length;
   const summaryBudget = Math.max(80, Math.min(260, room - 1));
   const summaryText = ssm.summary.slice(0, summaryBudget);
   const summary = ` ${summaryText}`;
@@ -240,7 +246,7 @@ export function renderSsmDescription(
     identityRaw && budget >= 12
       ? ` ${identityRaw.length > budget ? `${identityRaw.slice(0, budget - 1)}…` : identityRaw}`
       : "";
-  const fixed = `${head}${identity}${summary}${payload}${tail}`;
+  const fixed = `${head}${notice}${identity}${summary}${payload}${tail}`;
   return `${fixed}${note.slice(0, Math.max(0, 600 - fixed.length))}`.slice(0, 600);
 }
 

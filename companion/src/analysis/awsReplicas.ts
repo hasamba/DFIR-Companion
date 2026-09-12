@@ -12,6 +12,8 @@ import type { CanonicalFieldProvenance } from "./canonicalEvent.js";
 
 export interface ReplicaCandidate {
   event: MappedEvent;
+  /** Re-renders the row's description with a reserved notice slot (the renderer budgets it). */
+  render: (notice: string) => string;
   /** CloudTrail's sharedEventID; "" when the record is not a replica. */
   replicaId: string;
   /** A named principal (IAMUser, AssumedRole, …) beats an account or service view. */
@@ -44,18 +46,11 @@ export function mergeReplicas(candidates: readonly ReplicaCandidate[]): MappedEv
     const alsoIn = [
       ...new Set(others.map((c) => c.recipientAccountId).filter((a) => a && a !== kept.recipientAccountId)),
     ];
-    const note = alsoIn.length ? ` [also recorded in account ${alsoIn.join(", ")}]` : "";
-    // The notice is reserved: the kept description is clipped (with an ellipsis) to make room, so
-    // a full-length IAM or SSM row never drops or truncates the account-boundary context.
-    // The rendered description parks its caveats and qualifiers at the tail (" — …"); the notice
-    // goes in FRONT of that tail and the middle is what clips, so a full-length SSM or IAM row
-    // keeps its caveats and its notice both.
-    const base = kept.event.description;
-    const tailAt = base.lastIndexOf(" — ");
-    const tail = tailAt >= 0 ? base.slice(tailAt) : "";
-    const front = tailAt >= 0 ? base.slice(0, tailAt) : base;
-    const room = 600 - note.length - tail.length;
-    const description = `${front.length > room ? `${front.slice(0, Math.max(0, room - 1))}…` : front}${note}${tail}`;
+    const note = alsoIn.length ? `[also in account ${alsoIn.join(", ")}]` : "";
+    // The notice is a reserved slot of the row's own renderer: the kept row is re-rendered with
+    // it, so the caveats, the qualifiers and the evidence keep their budgets and the notice is
+    // never spliced into a finished string.
+    const description = note ? kept.render(note).slice(0, 600) : kept.event.description;
     // The two accounts of a cross-account action are the caller's (`cloud.accountId`) and the
     // resource owner's: the merged row's `cloud.recipientAccountId` is the one that is NOT the
     // caller's, so a Hunt on either account id finds the action.

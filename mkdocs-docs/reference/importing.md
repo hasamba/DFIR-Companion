@@ -384,7 +384,7 @@ literally:
   an account other than the caller's. An account boundary is not an organisation boundary; the
   row says nothing about organisations. The two records CloudTrail writes for one cross-account
   action (one in each account, sharing a `sharedEventID`) are **one row** with both records as
-  provenance and `[also recorded in account <B>]` — when they arrive in one file; two files are two
+  provenance and `[also in account <B>]` — when they arrive in one file; two files are two
   rows. On that row the caller's account is `cloud.accountId` and the resource owner's is
   `cloud.recipientAccountId`, so a Hunt on either account finds the action. The notice sits in
   front of the row's caveats, which are never the part that clips.

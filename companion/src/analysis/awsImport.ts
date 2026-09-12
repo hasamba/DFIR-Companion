@@ -263,46 +263,54 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
   // Every AWS row is composed with reserved slots (awsDescription.ts): the head, the caller's
   // identity words, the posture (an STS issuance here), the tail — and the identity yields to the
   // evidence slots, never the other way round.
-  let description = renderAwsDescription({
-    head: `AWS ${name} (${shortSource(source)})${who ? ` by ${oneLine(who).slice(0, 50)}` : ""}${from ? ` from ${from}` : ""}${region ? ` in ${region}` : ""}`,
-    identity: who2.words,
-    posture: issuance?.posture ?? "",
-    outcome: issuance?.outcome ?? "",
-    object: issuance?.detail ?? "",
-    optional: [],
-    tail: `${client ? `[ua: ${oneLine(client).slice(0, 80)}]` : ""}${isRoot ? " [root]" : ""}${errorCode ? ` [${errorCode}]` : ""}`,
-    qualifiers: [],
-  });
-  // An SSM row is composed with fixed, individually bounded slots so the document, id, status and
-  // target always survive the clip — a long principal, user agent or tag selector cannot push them out.
-  if (ssm) {
-    description = renderSsmDescription(ssm, {
-      name,
-      source: shortSource(source),
-      who: oneLine(who),
-      from: ip || (rawIp && rawIp !== "AWS Internal" ? rawIp : ""),
-      region,
-      client: oneLine(client),
-      root: isRoot,
-      errorCode,
+  // The description is a FUNCTION of an optional replica notice (awsReplicas.ts): when the two
+  // records of one cross-account action merge, the kept row is re-rendered with the notice as a
+  // reserved slot of its own renderer — never spliced into a finished string.
+  const head = `AWS ${name} (${shortSource(source)})${who ? ` by ${oneLine(who).slice(0, 50)}` : ""}${from ? ` from ${from}` : ""}${region ? ` in ${region}` : ""}`;
+  const render = (notice = ""): string => {
+    // An SSM row is composed with fixed, individually bounded slots so the document, id, status
+    // and target always survive the clip — a long principal, user agent or tag selector cannot
+    // push them out.
+    if (ssm)
+      return renderSsmDescription(ssm, {
+        name,
+        source: shortSource(source),
+        who: oneLine(who),
+        from: ip || (rawIp && rawIp !== "AWS Internal" ? rawIp : ""),
+        region,
+        client: oneLine(client),
+        root: isRoot,
+        errorCode,
+        identity: who2.words,
+        notice,
+      });
+    // An IAM row likewise: reserved budgets, the outcome next to the posture, the qualifiers last
+    // but never clipped away (awsDescription.ts).
+    if (iam)
+      return renderAwsDescription({
+        head,
+        identity: who2.words,
+        posture: iam.posture,
+        outcome: iam.outcome,
+        object: iam.object,
+        optional: [iam.reading || iam.note, iam.trust, iam.bindingsText],
+        tail: `${client ? `[ua: ${oneLine(client).slice(0, 30)}]` : ""}${isRoot ? " [root]" : ""}${errorCode ? ` [${errorCode.slice(0, 30)}]` : ""}`,
+        qualifiers: iam.qualifiers,
+        notice,
+      });
+    return renderAwsDescription({
+      head,
       identity: who2.words,
+      posture: issuance?.posture ?? "",
+      outcome: issuance?.outcome ?? "",
+      object: issuance?.detail ?? "",
+      optional: [],
+      tail: `${client ? `[ua: ${oneLine(client).slice(0, 80)}]` : ""}${isRoot ? " [root]" : ""}${errorCode ? ` [${errorCode}]` : ""}`,
+      qualifiers: [],
+      notice,
     });
-  }
-  // An IAM row likewise: reserved budgets, the outcome next to the posture, the qualifiers last but
-  // never clipped away (awsDescription.ts).
-  if (iam) {
-    description = renderAwsDescription({
-      head: `AWS ${name} (${shortSource(source)})${who ? ` by ${oneLine(who).slice(0, 50)}` : ""}${from ? ` from ${from}` : ""}${region ? ` in ${region}` : ""}`,
-      identity: who2.words,
-      posture: iam.posture,
-      outcome: iam.outcome,
-      object: iam.object,
-      optional: [iam.reading || iam.note, iam.trust, iam.bindingsText],
-      tail: `${client ? `[ua: ${oneLine(client).slice(0, 30)}]` : ""}${isRoot ? " [root]" : ""}${errorCode ? ` [${errorCode.slice(0, 30)}]` : ""}`,
-      qualifiers: iam.qualifiers,
-    });
-  }
-  description = description.slice(0, 600);
+  };
+  const description = render().slice(0, 600);
   const observedTimestamp = str(getCI(rec, "eventTime"));
   const normalizedTimestamp = normalizeTime(observedTimestamp);
   const request = getCI(rec, "requestParameters");
@@ -479,6 +487,7 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
   };
   return {
     event,
+    render,
     replicaId: who2.replicaId,
     informative: !["AWSAccount", "AWSService", "Unknown"].includes(who2.kind),
     recipientAccountId: who2.accounts.recipient,

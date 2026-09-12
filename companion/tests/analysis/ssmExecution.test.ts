@@ -359,6 +359,63 @@ describe("renderSsmDescription — a maximal SendCommand keeps the full caveat",
   }
 });
 
+describe("renderSsmDescription — the replica notice is a reserved slot", () => {
+  it("a maximal SendCommand keeps the notice after the head and the whole note at the end", () => {
+    const d = decodeSsmCall(
+      SSM,
+      "SendCommand",
+      {
+        documentName: "AWS-RunShellScript",
+        instanceIds: Array.from(
+          { length: 50 },
+          (_, i) => `i-0abc${String(i).padStart(3, "0")}${"x".repeat(10)}`,
+        ),
+        parameters: { commands: [`curl ${"u".repeat(300)} | sh`] },
+      },
+      { command: { commandId: "c".repeat(36), documentVersion: "3", status: "Pending" } },
+      "AccessDenied",
+      "evt",
+    )!;
+    const s = renderSsmDescription(d, {
+      name: "SendCommand",
+      source: "ssm",
+      who: "w".repeat(60),
+      from: "2001:db8:0000:0000:0000:0000:0000:0001",
+      region: "us-east-1",
+      client: "c".repeat(40),
+      root: true,
+      errorCode: "AccessDenied",
+      identity: `AssumedRole ${"z".repeat(200)}`,
+      notice: "[also in account 210987654321]",
+    });
+    expect(s.length).toBeLessThanOrEqual(600);
+    expect(
+      s.startsWith(
+        `AWS SendCommand (ssm) by ${"w".repeat(60)} from 2001:db8:0000:0000:0000:0000:0000:0001 in us-east-1 [also in account 210987654321] `,
+      ),
+    ).toBe(true);
+    expect(s.endsWith(` — ${d.note}`)).toBe(true);
+    expect(s).toContain("[AWS-RunShellScript@3] cccccccccccccccccccccccccccccccccccc");
+  });
+  it("the notice is bounded to its slot and absent when empty", () => {
+    const d = decodeSsmCall(SSM, "StartSession", { target: "i-1" }, { sessionId: "s-1" }, "", "evt")!;
+    const parts = {
+      name: "StartSession",
+      source: "ssm",
+      who: "u",
+      from: "",
+      region: "",
+      client: "",
+      root: false,
+      errorCode: "",
+    };
+    expect(renderSsmDescription(d, { ...parts, notice: "" })).toBe(renderSsmDescription(d, parts));
+    const long = renderSsmDescription(d, { ...parts, notice: `[also in account ${"1".repeat(80)}]` });
+    expect(long).toContain(" [also in account 111111");
+    expect(long).not.toContain("1".repeat(40));
+  });
+});
+
 describe("renderSsmDescription — a ResumeSession keeps its caveat under a long identity", () => {
   for (const errorCode of ["", "AccessDenied"]) {
     it(`the session-commands caveat survives with and without the identity (${errorCode || "success"})`, () => {
