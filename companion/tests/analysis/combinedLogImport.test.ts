@@ -493,3 +493,121 @@ describe("parseCombinedLog — attack-variant bound per path", () => {
     expect(r.events).toHaveLength(1000);
   });
 });
+
+// #933 item 1 (prerequisite phase) — the line keeps the fields it dropped, and says what each
+// field establishes. The chain across records is a separate spec issue.
+describe("parseCombinedLog — what one line establishes", () => {
+  const squidLine = (
+    result: string,
+    uri = "https://files.example.invalid/tool.exe",
+    status = 200,
+    bytes = "18376",
+  ) =>
+    `10.30.10.14 - - [15/May/2024:06:42:01 +0000] "GET ${uri} HTTP/1.1" ${status} ${bytes} "-" "Wget/1.21.3" ${result}`;
+  // A LogFormat is per file: the profile needs a file, not a line.
+  const squidFile = (lines: string[]) =>
+    [
+      ...Array.from({ length: 20 }, (_, i) =>
+        squidLine("TCP_MISS:HIER_DIRECT", `https://files.example.invalid/pad${i}`),
+      ),
+      ...lines,
+    ].join("\n");
+
+  it("reads the proxy's two legs when the file evidences a Squid trailer, and keys a hit apart from a miss", () => {
+    const r = parseCombinedLog(squidFile([squidLine("TCP_HIT:NONE"), squidLine("TCP_MISS:HIER_DIRECT")]));
+    const hit = r.events.find((e) => e.description.includes("served from its cache"))!;
+    const miss = r.events.find((e) => e.description.includes("fetched from the origin (direct)"))!;
+    expect(hit.description).toContain(
+      "[proxy: served from its cache; upstream: not contacted (squid_combined, inferred from the file)]",
+    );
+    expect(hit.description).toContain("[absolute-form request target]");
+    expect(miss.description).toContain("cache miss; fetched upstream");
+    expect(hit.aggKey).toContain("|squid:tcp_hit:none");
+    expect(miss.aggKey).toContain("|squid:tcp_miss:hier_direct");
+    expect(hit.aggKey).not.toBe(miss.aggKey);
+    expect(hit.severity).toBe("Info");
+  });
+
+  it("a Squid-shaped token in a file that is not a Squid log is never read as one", () => {
+    const apache =
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /status HTTP/1.1" 200 83 "-" "Prometheus/2.47.0" TCP_MISS:HIER_DIRECT';
+    const r = parseCombinedLog([HEALTH, apache, HEALTH].join("\n"));
+    const e = r.events.find((x) => x.description.includes("trailer:"))!;
+    expect(e.description).toContain("[trailer: TCP_MISS:HIER_DIRECT]");
+    expect(e.description).not.toContain("origin");
+    expect(e.description).not.toContain("proxy:");
+    expect(e.aggKey).not.toContain("squid");
+  });
+
+  it("an unknown result code is kept verbatim in the words and the key", () => {
+    const r = parseCombinedLog(squidFile([squidLine("TCP_FOO:BAR_BAZ")]));
+    const e = r.events.find((x) => x.description.includes("TCP_FOO"))!;
+    expect(e.description).toContain("[proxy: result TCP_FOO; upstream: next hop BAR_BAZ");
+    expect(e.aggKey).toContain("|squid:tcp_foo:bar_baz");
+  });
+
+  it("a CONNECT line is a tunnel attempt: no URL is claimed, and the size is the tunnel's", () => {
+    const r = parseCombinedLog(CONNECT_EXFIL);
+    const e = r.events[0];
+    expect(e.description).toContain(
+      "[tunnel attempt to vault.cloudpear.io:443 — the requests inside are not in this record]",
+    );
+    expect(e.description).toContain("[the logged size is the tunnel's, not a response body]");
+    expect(e.aggKey).toContain("|form:authority");
+    expect(r.iocs.map((i) => i.value)).toContain("vault.cloudpear.io");
+  });
+
+  it("a redirect says the Location is not in the format; a 304 is not a redirect", () => {
+    const line = (status: number, bytes = "0") =>
+      `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /login HTTP/1.1" ${status} ${bytes} "-" "Mozilla/5.0"`;
+    const r = parseCombinedLog([line(302, "512"), line(304, "-")].join("\n"));
+    const redirect = r.events.find((e) => e.description.includes("-> 302"))!;
+    const notModified = r.events.find((e) => e.description.includes("-> 304"))!;
+    expect(redirect.description).toContain("[redirect — the Location is not in this format]");
+    expect(notModified.description).toContain("[not modified — no body]");
+    expect(notModified.description).not.toContain("redirect");
+  });
+
+  it("a HEAD and a 204 say why there is no body", () => {
+    const head = '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "HEAD /status HTTP/1.1" 200 0 "-" "curl/8.0"';
+    const noContent =
+      '10.30.20.11 - - [14/May/2024:19:00:01 +0000] "POST /api/ack HTTP/1.1" 204 0 "-" "curl/8.0"';
+    const r = parseCombinedLog([head, noContent].join("\n"));
+    expect(r.events.find((e) => e.description.includes("HEAD"))!.description).toContain(
+      "[no body by definition (HEAD)]",
+    );
+    expect(r.events.find((e) => e.description.includes("204"))!.description).toContain(
+      "[no body for this status]",
+    );
+  });
+
+  it("an appended IP list is kept verbatim, is not the client, and is not an indicator", () => {
+    const xff =
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /app HTTP/1.1" 200 83 "-" "Mozilla/5.0" "203.0.113.9, 10.0.0.1"';
+    const r = parseCombinedLog(xff);
+    const e = r.events[0];
+    expect(e.description).toContain("[trailer: 203.0.113.9, 10.0.0.1]");
+    expect(e.description).not.toContain("forwarded");
+    expect(e.srcIp).toBe("10.30.20.11");
+    expect(r.iocs.map((i) => i.value)).not.toContain("203.0.113.9");
+    expect(e.aggKey).not.toContain("203.0.113.9");
+  });
+
+  it("an ordinary origin-form line reads exactly as it did before", () => {
+    const r = parseCombinedLog(HEALTH);
+    expect(r.events[0].description).toBe("GET /status -> 200 (83b) (ua Prometheus/2.47.0)");
+    expect(r.events[0].aggKey).toContain("|form:origin");
+  });
+
+  it("an attack row keeps its match slots and its status when the trailer and the UA are maximal", () => {
+    const line = `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /cgi?x=;id HTTP/1.1" 200 83 "-" "${"u".repeat(300)}" TCP_MISS:HIER_DIRECT`;
+    const r = parseCombinedLog(
+      [...Array.from({ length: 20 }, () => squidLine("TCP_MISS:HIER_DIRECT")), line].join("\n"),
+    );
+    const e = r.events.find((x) => x.description.includes("web-attack"))!;
+    expect(e.description.startsWith('[web-attack: cmd] [status: 200] [match: ";id"]')).toBe(true);
+    expect(e.description).toContain("cache miss; fetched upstream");
+    expect(e.description.length).toBeLessThanOrEqual(600);
+    expect(e.mitreTechniques).toContain("T1190");
+  });
+});

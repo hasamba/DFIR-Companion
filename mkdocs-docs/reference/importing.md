@@ -232,6 +232,51 @@ A scanner run is bounded: after 64 distinct payloads on one path, the rest fold 
 `[overflow: …]` row per path that names every family seen. A field longer than 64 KiB is not
 inspected at all — the row says `oversized@target (N chars, not inspected)` instead of silently
 scanning a prefix — and a decoded control character is shown as `\x00`, never written as the byte.
+### Web access logs: what one line establishes
+
+A combined-format line (Apache, nginx, Squid) carries more than the request and the status, and the
+importer used to drop it: everything a deployment appends after the User-Agent — Squid's result and
+hierarchy codes, a request time, a vhost, an `X-Forwarded-For` header — was parsed past. A cache
+**hit** therefore read exactly like a **miss**, a `CONNECT` tunnel read like a request for a URL,
+and a 302 read like a 200 with a small body. Each line now says what its own fields establish:
+
+- **The request target's form**, as HTTP defines it, never the deployment's role: an
+  `[absolute-form request target]` (a full URL — usually a proxy, but an origin server must accept
+  one too), `[tunnel attempt to vault.example.invalid:443 — the requests inside are not in this
+  record]` for a `CONNECT`, `[asterisk-form request (server-wide)]`, `[invalid request target]`. An
+  ordinary path adds nothing, so those rows read as before.
+- **The proxy's two legs**, when the FILE is a Squid log: the result code says what the proxy did
+  for its client, the hierarchy code says what the next hop was — `[proxy: served from its cache;
+  upstream: not contacted]`, `[proxy: cache miss; fetched upstream; upstream: fetched from the
+  origin (direct)]`, `[proxy: revalidated upstream and served its cached copy]`, `[proxy:
+  revalidation failed; served the stale cached copy]`, `[proxy: denied the request]`. "The origin"
+  is said only where the hierarchy code names a direct fetch — a fetch through a parent or a
+  sibling proxy says so instead. **A cache hit is not a new transfer from the server.**
+- **Whose format it is, decided by the file.** A token that looks like a Squid code proves nothing
+  on its own: an Apache `LogFormat` can append an attacker-controlled header. The Squid slot is
+  read only when the file has at least twenty parsed lines and almost all of them carry a known
+  result code in the same position; the row then says `(squid_combined, inferred from the file)`.
+  Otherwise every appended token is shown as `[trailer: …]` — verbatim, unlabelled, never an
+  indicator, and never the client's identity. **A forwarded-for header is not the client**: `srcIp`
+  stays the address the server or proxy actually saw.
+- **What the status and the byte count do not say.** `[redirect — the Location is not in this
+  format]` for 301/302/303/307/308; `[not modified — no body]` for 304 (never a redirect);
+  `[no body by definition (HEAD)]`; `[no body for this status]` for 204 and 1xx; and on a `CONNECT`,
+  `[the logged size is the tunnel's, not a response body]`. A byte count is the size the server
+  logged — Apache's excludes headers, Squid's includes them, neither is network bytes, and no
+  status proves the client received them.
+
+Keys: the target's form and the proxy's disposition join the aggregation key, so a hit and a miss
+of one URL are two rows and an unknown result code keys on its own text. The appended tokens are
+not in the key as text — an attacker can write them — but a digest of them is, so a row that shows
+a trailer never folds into a row that does not.
+
+**What the format cannot hold.** There is no request or session identifier, no HTTP/2 stream id, no
+`Location` header, no content type, and no response body — so which request led to which redirect,
+which response carried which payload, and which file on an endpoint matches a transfer cannot be
+read from one line. That chain (and the proxy-to-workstation link) is a join across records and
+formats, with its own issue.
+
 ### Mobile evidence with no clock (iLEAPP / ALEAPP)
 
 Most of what a phone examination is for has no timestamp: the installed-apps list, permissions,

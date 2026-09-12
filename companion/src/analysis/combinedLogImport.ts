@@ -63,12 +63,23 @@ import {
 import { secretSpillSignal } from "./secretSpillRules.js";
 import { boundedAggKey } from "./aggKey.js";
 import { inspectRequestFields, MAX_ATTACK_VARIANTS } from "./webRequestDecode.js";
+import {
+  inferTrailerProfile,
+  readSize,
+  readTarget,
+  readTrailer,
+  statusWords,
+  trailerTokens,
+  type TrailerProfile,
+} from "./webRecordFields.js";
 
 export interface CombinedLogImportOptions {
   aggregate?: boolean;
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
+  /** The file's trailer layout when the caller knows it; else it is inferred from the file. */
+  trailerProfile?: TrailerProfile | null;
 }
 
 export type CombinedLogParseResult = SiemParseResult;
@@ -85,8 +96,10 @@ const FILENAME_RE = /(?:^|[._-])access[_.-]?log(?:\.\w+)?$/i;
 // quote silently dropped the tail — where a payload sits (#930 item 3). Not end-anchored on
 // purpose: real formats append fields after the UA (request time, X-Forwarded-For, vhost).
 const QUOTED = String.raw`"((?:[^"\\]|\\.)*)"`;
+// The trailing group captures what a deployment appends after the User-Agent — Squid's %Ss:%Sh,
+// a request time, a vhost, an X-Forwarded-For header (#933 item 1). It was parsed past and lost.
 const LINE_RE = new RegExp(
-  String.raw`^(\S+)\s+(\S+)\s+(\S+)\s+\[([^\]]+)\]\s+"([A-Z]+)\s+(\S+)(?:\s+[^"]*)?"\s+(\d{3})\s+(\S+)\s+${QUOTED}\s+${QUOTED}`,
+  String.raw`^(\S+)\s+(\S+)\s+(\S+)\s+\[([^\]]+)\]\s+"([A-Z]+)\s+(\S+)(?:\s+[^"]*)?"\s+(\d{3})\s+(\S+)\s+${QUOTED}\s+${QUOTED}(.*)$`,
 );
 const unquote = (s: string | undefined): string => (s ?? "").replace(/\\(["\\])/g, "$1");
 
@@ -176,10 +189,24 @@ export function mapCombinedLogLine(
   line: string,
   sink: Map<string, SiemIoc>,
   attackMeta?: Map<MappedEvent, AttackMeta>,
+  profile: TrailerProfile | null = null,
 ): MappedEvent | null {
   const m = LINE_RE.exec(line);
   if (!m) return null;
-  const [, clientRaw, , userRaw, dateRaw, method, uriRaw, statusRaw, bytesRaw, refererQuoted, uaQuoted] = m;
+  const [
+    ,
+    clientRaw,
+    ,
+    userRaw,
+    dateRaw,
+    method,
+    uriRaw,
+    statusRaw,
+    bytesRaw,
+    refererQuoted,
+    uaQuoted,
+    restRaw,
+  ] = m;
   const status = Number(statusRaw);
   // The bound is applied ONCE, here, before host, IOC, description or key construction touches a
   // field: every later step runs on the CLIPPED text, so a 10 MB referer is neither a 10 MB url IOC
@@ -208,6 +235,21 @@ export function mapCombinedLogLine(
   const client = clientAddress(clientRaw);
   const host = requestHost(uri);
   if (host) addIoc(sink, "domain", host);
+  // What this line establishes about its own fields (#933 item 1): the request target's RFC 9112
+  // form (a fact about the line, never the deployment's role), the proxy's two legs when the FILE
+  // declares or evidences a Squid trailer, whether the status or the method allows a body at all,
+  // and every trailer token the profile does not name — kept verbatim, never an indicator.
+  const target = readTarget(method, uri);
+  const trailer = readTrailer(trailerTokens(restRaw ?? ""), profile);
+  const sizeWords = readSize(method, status, bytesRaw ?? "");
+  const statusTail = statusWords(status);
+  const tags = [
+    ...(target.words ? [target.words] : []),
+    ...trailer.words,
+    ...(sizeWords ? [sizeWords] : []),
+    ...(statusTail ? [statusTail] : []),
+  ];
+  const tagText = tags.length ? ` [${tags.join("] [")}]` : "";
 
   // Referer capture (see module comment): host → domain IOC; a referer with a query string is the
   // secret-leak vector, so emit it as an unaggregated url IOC that survives even if this request
@@ -237,11 +279,11 @@ export function mapCombinedLogLine(
   const description = attack
     ? oneLine(
         `[web-attack: ${attack.labels.join(",")}] [status: ${status}]` +
-          `${attack.slots.length ? ` [match: ${attack.slots.join(" | ")}]` : ""} ` +
+          `${attack.slots.length ? ` [match: ${attack.slots.join(" | ")}]` : ""}${tagText.slice(0, 240)} ` +
           `${method} ${uri.slice(0, 200)}${bytesTag}${userTag.slice(0, 50)}` +
           `${referer ? ` (ref ${referer.slice(0, 60)})` : ""}${ua ? ` (ua ${ua.slice(0, 60)})` : ""}`,
       ).slice(0, 600)
-    : oneLine(`${method} ${uri} -> ${status}${bytesTag}${userTag}${refTag}${uaTag}`).slice(0, 600);
+    : oneLine(`${method} ${uri} -> ${status}${bytesTag}${tagText}${userTag}${refTag}${uaTag}`).slice(0, 600);
 
   // A secret carried in the request URI or the Referer is a spill the moment this line is written.
   // Graded Medium (see secretSpillRules.ts) so it reaches the forensic timeline synthesis reads —
@@ -255,7 +297,12 @@ export function mapCombinedLogLine(
   // payloads of one family on one path are two rows while the same payload with different padding
   // is one. Placed with the bounded fields, BEFORE the path (see the field-order note below).
   const attackSegment = attack ? `|attack:${attack.families.join(",")}:${attack.digest}` : "";
-  const baseKey = `weblog|${method}|${status}|${client}|${host}${spill ? `|spill:${spill.families.join(",")}` : ""}`;
+  // The target's form and the proxy's disposition are bounded discriminators and belong with the
+  // other bounded fields: a cache hit and a miss of one URL are two rows, and an unknown result
+  // code keys verbatim rather than folding into a class. The trailer's unlabelled tokens are NOT
+  // in the key — an attacker-writable header is a label, not an identity.
+  const recordKey = `|form:${target.form}${trailer.keySegment}`;
+  const baseKey = `weblog|${method}|${status}|${client}|${host}${recordKey}${spill ? `|spill:${spill.families.join(",")}` : ""}`;
   const pathKey = `|${uri.split("?")[0]}`;
 
   const event: MappedEvent = {
@@ -293,7 +340,7 @@ export function mapCombinedLogLine(
       base: `${baseKey}${pathKey}`.toLowerCase(),
       families: attack.families,
       digest: attack.digest,
-      overflowTail: `${method} ${uri.split("?")[0].slice(0, 200)} -> ${status}`,
+      overflowTail: `${method} ${uri.split("?")[0].slice(0, 200)} -> ${status}${tagText.slice(0, 120)}`,
     });
   }
   return event;
@@ -352,11 +399,23 @@ export function parseCombinedLog(text: string, opts: CombinedLogImportOptions = 
   const attackMeta = new Map<MappedEvent, AttackMeta>();
   let total = 0;
 
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trim();
+  const lines = text.split(/\r?\n/).map((l) => l.trim());
+  // A LogFormat is a property of the FILE, so the trailer profile is established once, over every
+  // line, before any line is read (#933 item 1): one line's Squid-shaped token — which an Apache
+  // format appending an attacker-controlled header could carry — never mints proxy semantics.
+  const profile =
+    opts.trailerProfile ??
+    inferTrailerProfile(
+      lines.map((l) => {
+        const m = LINE_RE.exec(l);
+        return m ? trailerTokens(m[11] ?? "") : [];
+      }),
+    );
+
+  for (const line of lines) {
     if (!line) continue;
     const rowSink = new Map<string, SiemIoc>();
-    const m = mapCombinedLogLine(line, rowSink, attackMeta);
+    const m = mapCombinedLogLine(line, rowSink, attackMeta, profile);
     if (m) {
       total++;
       mergeRowIocs(sink, rowSink, m.aggKey);
