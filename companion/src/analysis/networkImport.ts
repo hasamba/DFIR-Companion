@@ -15,6 +15,14 @@
 // Events are tagged "Suricata" / "Zeek" for cross-source correlation.
 
 import type { Severity } from "./stateTypes.js";
+import {
+  mapTlsRows,
+  readSuricataTls,
+  readZeekSsl,
+  readZeekX509,
+  tallyTls,
+  type TlsTally,
+} from "./tlsSession.js";
 import { createCanonicalEvent, stampSourceArtifactHash } from "./canonicalEvent.js";
 import {
   extractRecords,
@@ -316,16 +324,13 @@ function zeekIocs(row: Row, path: string, sink: Map<string, SiemIoc>): void {
       addUrl(sink, getCI(row, "uri"));
       break;
     case "ssl":
+      // The SNI is the client's stated destination — intent, like a DNS query.
       addDomain(sink, getCI(row, "server_name"));
       break;
-    case "x509": {
-      // x509 records name the cert host in `san.dns` (string or array), not `server_name`.
-      addDomain(sink, getCI(row, "server_name"));
-      const san = getCI(row, "san.dns");
-      if (Array.isArray(san)) for (const d of san) addDomain(sink, d);
-      else addDomain(sink, san);
+    case "x509":
+      // A certificate covering a name is not a contact: SAN names are facts about the certificate
+      // (kept on its row, tlsSession.ts), never domain indicators (#933 item 6).
       break;
-    }
     case "files":
       addHash(sink, getCI(row, "sha256"));
       addHash(sink, getCI(row, "sha1"));
@@ -570,6 +575,7 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
   const hostTally = new Map<string, number>();
   const mapped: MappedEvent[] = [];
   const flowSink = new Map<string, FlowAgg>();
+  const tlsSink = new Map<string, TlsTally>();
   let flowHost = "";
   let alerts = 0;
   let sawSuricata = false,
@@ -594,6 +600,7 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
         mapped.push(m);
         alerts++;
       } else {
+        if (etype === "tls") tallyTls(readSuricataTls(row, ""), tlsSink);
         mergeRowIocs(iocSink, rowSink);
       }
     } else {
@@ -613,6 +620,9 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
           tallyFlow(row, flowSink);
           if (!flowHost && host) flowHost = host;
         }
+        // ssl / x509 fold per record shape into TLS session and certificate rows (tlsSession.ts).
+        if (zstream === "ssl") tallyTls(readZeekSsl(row, ""), tlsSink);
+        if (zstream === "x509") tallyTls(readZeekX509(row, ""), tlsSink);
         mergeRowIocs(iocSink, rowSink);
       }
     }
@@ -629,6 +639,7 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
     .sort((a, b) => b.origBytes + b.respBytes - (a.origBytes + a.respBytes))
     .slice(0, flowBudget);
   for (const f of flows) mapped.push(mapFlow(f, flowHost));
+  mapped.push(...mapTlsRows(tlsSink, flowBudget));
 
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,

@@ -314,6 +314,47 @@ which response carried which payload, and which file on an endpoint matches a tr
 read from one line. That chain (and the proxy-to-workstation link) is a join across records and
 formats, with its own issue.
 
+### TLS records: what one record establishes
+
+Zeek `ssl.log` and `x509.log` and Suricata `tls` records are folded into rows the way `conn`
+folds into flows — one row per observed relationship, one per certificate — and each row says only
+what its records say:
+
+- **A session row** reads `TLS <client> → <server>:<port> [sni: …] [TLSv13, cipher …] [cert:
+  subject …; issuer …; fp …] [chain check: ok] [ja3 …] [ja3s …] — N TLS records`. Every fact shown
+  is part of the row's identity: a TLS 1.3 session that established and a TLS 1.2 attempt that did
+  not, a different certificate, a different chain-check result, a different sensor — each is its
+  own row. A record with no SNI says `[no SNI]`; one the sensor saw fail says `[not established]`;
+  a resumed session says `[session resumed]` and, when the sensor saw no certificate, `[no
+  certificate observed in this record]`.
+- **What the words mean.** The SNI is the name the *client* asked for — a claim, like a DNS query,
+  and the row's only indicator. The certificate is what the *server* presented. `chain check` is
+  the sensor's own verdict on the chain (`ok`, `self signed certificate`, …) — it is not
+  "benign". JA3 and JA3S are TLS library signatures, not identities. Nothing on a row says
+  malicious, C2, "the same operator", or "an inspection proxy": an issuer is shown as written, and
+  what it means is the analyst's call.
+- **A certificate row** — one per certificate identity — reads `[certificate: <fingerprint or cert
+  identity>; subject …; issuer …; valid …–…; covers N names: a, b, c (+n more)] — N certificate
+  records`. A certificate's identity is a source-given fingerprint (Suricata `tls.fingerprint`, Zeek
+  builds that write one, a leaf's DER bytes hashed here), or else its issuer and serial — the pair
+  that names one certificate under one CA — spelled `certid-v1:…` and never called a fingerprint.
+  A certificate with no serial and no fingerprint (a standard Zeek `ssl` row) has **no** identity:
+  its subject and issuer are attributes of the session, and a renewed certificate with the same
+  names is the same session shape. The attributes a certificate row shows are its first
+  observation's; the row is marked (`#…`) to say so.
+- **Names on a certificate are not contacts.** A certificate covering `www.example.net` does not
+  establish that anyone asked for it, so SAN names and the subject CN are never domain indicators
+  (they used to be — a CDN certificate minted a hundred). They stay on the certificate's row for
+  the analyst and for the graph. A fingerprint is never an indicator either — no indicator type
+  means "certificate", and `hash` means a file — and it is shown as its ends (`fp abcdef01…ef01`)
+  so the merge never reads it as one.
+- **Every row is Info** and carries no technique: a handshake proves nothing on its own. Rows are
+  kept most-seen-first under the import's event budget, so a scanner's one-off names cannot crowd
+  out the persistent relationships.
+- **What this does not do.** It does not join a session to its certificate record by Zeek's
+  `cert_chain_fuids`, find clusters, or link fingerprints across sensors and time; that graph is a
+  separate design over un-aggregated records, and every fact it needs is kept in the row's data.
+
 ### DNS records: what one record establishes
 
 Sysmon Event 22 and the Windows DNS Client operational log (`Microsoft-Windows-DNS-Client/

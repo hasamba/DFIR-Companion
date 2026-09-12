@@ -45,12 +45,14 @@ const MD5_RE = /\b[a-f0-9]{32}\b/i;
 // shared a vendor URL in their text. (#102)
 const PATH_RE = /(?:[A-Za-z]:\\|\\\\)[^\s"'|<>]+|(?<![\w/:])\/(?:[\w.\-]+\/)+[\w.\-]+/;
 // A span an importer shows VERBATIM from a client- or resolver-written field — a web-log line's
-// appended trailer (#933 item 1), a DNS record's queried name and returned values (#933 item 2) —
+// appended trailer (#933 item 1), a DNS record's queried name and returned values (#933 item 2), a
+// TLS record's SNI and certificate names (#933 item 6) —
 // is a label, never an artifact: nothing inside it may become a fallback hash or path, or an
 // attacker who appends `/tmp/payload.exe` to a request, or answers a TXT query with 32 hex, would
 // union that row with the endpoint event that really carries the file or the hash. Each span is
 // well-formed by construction (the importer turns `]` into `)` inside it), so it cannot close early.
-const UNTRUSTED_SPAN_RE = /\[(?:trailer|query|returned|the record also carries returned values): [^\]]*\]/g;
+const UNTRUSTED_SPAN_RE =
+  /\[(?:trailer|query|returned|the record also carries returned values|sni|cert|certificate): [^\]]*\]/g;
 function scannedText(description: string): string {
   return description.replace(UNTRUSTED_SPAN_RE, " ");
 }

@@ -218,11 +218,16 @@ describe("parseNetworkLogs — Zeek per-stream JSON (no _path)", () => {
     expect(r.iocs.some((i) => i.type === "file" && i.value === "x.exe")).toBe(true);
   });
 
-  it("extracts cert SAN DNS names from x509 (san.dns array)", () => {
-    const r = parseNetworkLogs(JSON.stringify(x509), { filename: "x509.json" });
-    const domains = r.iocs.filter((i) => i.type === "domain").map((i) => i.value);
-    expect(domains).toContain("cert.bad.test");
-    expect(domains).toContain("alt.bad.test");
+  it("keeps x509 SAN names on the certificate's row, never as domain indicators (#933 item 6)", () => {
+    const r = parseNetworkLogs(
+      JSON.stringify({ ...x509, "certificate.serial": "01", "certificate.issuer": "CN=Bad CA" }),
+      { filename: "x509.json" },
+    );
+    // a certificate covering a name is not a contact
+    expect(r.iocs.filter((i) => i.type === "domain")).toHaveLength(0);
+    const row = r.events.find((e) => e.description.startsWith("[certificate:"))!;
+    expect(row.description).toContain("covers 2 names: cert.bad.test, alt.bad.test");
+    expect(row.canonical?.tls?.certificate?.names).toEqual(["cert.bad.test", "alt.bad.test"]);
   });
 
   // conn used to produce NOTHING — no events, no IOCs, no super-timeline rows. On the

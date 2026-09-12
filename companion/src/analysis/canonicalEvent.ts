@@ -129,6 +129,43 @@ export const canonicalEventEnvelopeSchema = z.object({
     })
     .optional(),
   process: canonicalProcessSchema.optional(),
+  // A TLS record's own reading (tlsSession.ts, #933 item 6): the client's SNI, the protocol facts
+  // the sensor saw, the certificate the server presented, the sensor's chain check, the observer.
+  tls: z
+    .object({
+      sni: z.string().optional(),
+      version: z.string().optional(),
+      cipher: z.string().optional(),
+      established: z.boolean().optional(),
+      resumed: z.boolean().optional(),
+      validation: z.string().optional(),
+      ja3: z.string().optional(),
+      ja3s: z.string().optional(),
+      certificate: z
+        .object({
+          fingerprint: z.string().optional(),
+          fingerprintAlg: z.enum(["sha1", "sha256"]).optional(),
+          identity: z.string().optional(),
+          subject: z.string().optional(),
+          issuer: z.string().optional(),
+          serial: z.string().optional(),
+          names: z.array(z.string()).optional(),
+          notBefore: z.string().optional(),
+          notAfter: z.string().optional(),
+          ca: z.boolean().optional(),
+        })
+        .optional(),
+      observer: z.object({ name: z.string(), sourceField: z.string() }).optional(),
+      locator: z
+        .object({
+          uid: z.string().optional(),
+          id: z.string().optional(),
+          certChainFuids: z.array(z.string()).optional(),
+        })
+        .optional(),
+      records: z.number().int().positive(),
+    })
+    .optional(),
   // A DNS record's own reading (dnsRecord.ts, #933 item 2): what the resolver client reported and
   // the values it RETURNED — owner-less, so never "answers"; the vantage is the endpoint's own.
   dns: z

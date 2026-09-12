@@ -517,6 +517,7 @@
     "ransomwareDetect.ts": "analysis/detect",
     "timestompCorroborate.ts": "analysis/timeline",
     "timestompDetect.ts": "analysis/detect",
+    "tlsSession.ts": "analysis/ingest",
     "toolDetect.ts": "analysis/detect",
     "defenderEvents.ts": "analysis/detect",
     "tradecraftRules.ts": "analysis/detect",
