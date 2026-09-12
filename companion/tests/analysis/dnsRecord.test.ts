@@ -134,6 +134,10 @@ describe("isValidQueryName", () => {
     expect(isValidQueryName("beacon_01.attacker.example")).toBe(true);
     expect(isValidQueryName("bücher.example")).toBe(true); // a U-label
     expect(isValidQueryName("ū̃.attacker.example")).toBe(true); // a U-label needing a combining mark
+    // the IDNA label separators are dots
+    expect(asciiName("bücher\u3002attacker.example")).toBe("xn--bcher-kva.attacker.example");
+    expect(asciiName("bücher\uff0eattacker\uff61example")).toBe("xn--bcher-kva.attacker.example");
+    expect(isIndicatorName("bücher\u3002attacker.example")).toBe(true);
     // a URL-host terminator inside a Unicode name never truncates it into a valid name
     for (const bad of [
       "safe.example/bücher.attacker",

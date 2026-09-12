@@ -123,7 +123,8 @@ const LABEL = /^[A-Za-z0-9_](?:[A-Za-z0-9_-]*[A-Za-z0-9_])?$/;
 
 /** The wire form of a query name: A-labels for a U-label name, "" when it cannot be converted. */
 export function asciiName(raw: string): string {
-  const name = raw.replace(/\.$/, "");
+  // The IDNA label separators (U+3002, U+FF0E, U+FF61) are dots on the wire.
+  const name = raw.replace(/[\u3002\uff0e\uff61]/g, ".").replace(/\.$/, "");
   if (/^[\x00-\x7f]*$/.test(name)) return name;
   // Converted LABEL BY LABEL, never as one string: WHATWG domainToASCII parses a whole value as a
   // URL host and stops at `/`, `?`, `#` or `\`, so `safe.example/bücher.attacker` would come back
