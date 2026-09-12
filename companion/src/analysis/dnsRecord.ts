@@ -145,6 +145,13 @@ function classify(type: number | undefined, value: string): ReturnedValue {
   return { type, value, kind: "other" };
 }
 
+/** How many values at the head are CNAME steps — the one run Windows writes in order. */
+function leadingCnames(values: readonly ReturnedValue[]): number {
+  let n = 0;
+  while (n < values.length && values[n].type === 5 && values[n].kind === "name") n++;
+  return n;
+}
+
 const boundForEnvelope = (v: ReturnedValue): ReturnedValue =>
   v.value.length > VALUE_KEPT_MAX ? { ...v, value: v.value.slice(0, VALUE_KEPT_MAX) } : v;
 
@@ -173,10 +180,11 @@ export function readQueryResults(raw: string | undefined): ResultsReading {
   // The identity covers every parsed value WHOLE, not only the kept ones or their bounded form: two
   // records that agree on the first 64 values, or on a value's first 512 characters, and differ
   // after are two rows, even though the envelope keeps 64 values of 512.
-  const identity = all
-    .map((v) => `${v.type ?? "-"}:${v.value.length}:${v.value}`)
-    .sort()
-    .join("|");
+  // The leading CNAME run is ORDERED evidence (the chain the display shows), so its order is in the
+  // identity; every value after it is an unordered set, sorted.
+  const frame = (v: ReturnedValue): string => `${v.type ?? "-"}:${v.value.length}:${v.value}`;
+  const lead = leadingCnames(all);
+  const identity = [...all.slice(0, lead).map(frame), ...all.slice(lead).map(frame).sort()].join("|");
   const clipped = all.some(
     (v) => v.value.length > VALUE_SHOWN_MAX || breakHashRuns(showToken(v.value)) !== v.value,
   );
@@ -184,8 +192,7 @@ export function readQueryResults(raw: string | undefined): ResultsReading {
   // Only a run of LEADING CNAME steps is arrow-linked — that is the one chain Windows writes in
   // order. Every other value (an NS, an MX, an address) stays in record order, comma-separated: the
   // owner-less field establishes no relationship between them.
-  let steps = 0;
-  while (steps < head.length && head[steps].type === 5 && head[steps].kind === "name") steps++;
+  const steps = leadingCnames(head);
   const chain = head.slice(0, steps).map(showValue);
   const rest = head.slice(steps).map(showValue).join(", ");
   const parts = [...chain, rest].filter(Boolean).join(" → ");

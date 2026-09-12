@@ -379,6 +379,19 @@ describe("dnsOverlay — what one record establishes", () => {
     expect(net.dns.networkQuery).toBe(true);
     expect(overlay({ QueryName: "a.example", QueryStatus: "0" }).dns.networkQuery).toBeUndefined();
   });
+  it("a reversed CNAME chain is another row; a reordered address set after it is the same row", () => {
+    const rec = (results: string) =>
+      overlay({ QueryName: "a.example", QueryStatus: "0", QueryResults: results });
+    const ab = rec("type: 5 a.example;type: 5 b.example;::ffff:192.0.2.1;::ffff:192.0.2.2;");
+    const ba = rec("type: 5 b.example;type: 5 a.example;::ffff:192.0.2.1;::ffff:192.0.2.2;");
+    const abSwapped = rec("type: 5 a.example;type: 5 b.example;::ffff:192.0.2.2;::ffff:192.0.2.1;");
+    expect(ab.identity).not.toBe(ba.identity);
+    expect(ab.identity).toBe(abSwapped.identity);
+    // an NS after the chain is unordered data, so its position is not identity
+    const nsA = rec("type: 5 a.example;type: 2 ns.example;::ffff:192.0.2.1;");
+    const nsB = rec("type: 5 a.example;::ffff:192.0.2.1;type: 2 ns.example;");
+    expect(nsA.identity).toBe(nsB.identity);
+  });
   it("a complete rendering carries no mark; the description stays inside 600 characters", () => {
     const plain = overlay({ QueryName: "a.example", QueryStatus: "0", QueryResults: "::ffff:192.0.2.1;" });
     expect(plain.description).not.toMatch(/ #[\w-]+$/);
