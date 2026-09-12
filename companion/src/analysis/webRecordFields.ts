@@ -77,10 +77,13 @@ function decodeLabel(l: string): string {
 }
 
 export function readTarget(method: string, target: string): TargetReading {
-  // Control characters go; brackets STAY, because a bracketed IPv6 literal is a valid host. What
-  // keeps a forged tag out of the words is the strict host validation below: `evil][status=…` is
-  // not a host, so it is an invalid target and nothing of it is interpolated.
-  const t = target.trim().replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
+  // A control character in a target is not something to clean away — deleting it would turn
+  // `http://good.example\u007f.invalid/x` into a valid-looking host and mint a fabricated
+  // indicator. The target is REJECTED instead. Brackets stay (a bracketed IPv6 literal is a valid
+  // host); what keeps a forged tag out of the words is the strict host validation below.
+  const t = target.trim();
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(t))
+    return { form: "invalid", host: "", port: "", words: "invalid request target" };
   const verb = method.trim().toUpperCase();
   const tunnel = (host: string, port: string): TargetReading => ({
     form: "authority",

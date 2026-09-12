@@ -64,6 +64,15 @@ describe("readTarget — the RFC 9112 form, never the deployment's role", () => 
     expect(readTarget("GET", "http://bad%ZZ.example/x")).toMatchObject({ form: "invalid", host: "" });
     expect(readTarget("GET", "http://a_b.example/x")).toMatchObject({ form: "invalid", host: "" });
     expect(readTarget("CONNECT", "[:::]:443")).toMatchObject({ form: "invalid", host: "" });
+    // a control character is rejected, never cleaned away into a valid-looking host
+    expect(readTarget("GET", "http://good.example\u007f.invalid/x")).toMatchObject({
+      form: "invalid",
+      host: "",
+    });
+    expect(readTarget("CONNECT", "good.example\u0000.invalid:443")).toMatchObject({
+      form: "invalid",
+      host: "",
+    });
     expect(readTarget("GET", "https://files.example.invalid")).toMatchObject({
       form: "absolute",
       host: "files.example.invalid",

@@ -778,6 +778,11 @@ describe("parseCombinedLog — what one line establishes", () => {
     const r = parseCombinedLog(line);
     expect(r.iocs.map((i) => i.value)).not.toContain("ev]il");
     expect(r.iocs.some((i) => i.type === "domain")).toBe(false);
+    // …nor does one whose authority carries a control character (cleaning it would fabricate a host)
+    const control = parseCombinedLog(
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET / HTTP/1.1" 200 0 "http://good.example\u007f.invalid/x?q=1" "curl/8"',
+    );
+    expect(control.iocs.some((i) => i.type === "domain")).toBe(false);
     // a valid one still does
     const ok = parseCombinedLog(
       '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET / HTTP/1.1" 200 0 "https://portal.example.invalid/x?q=1" "curl/8"',
