@@ -158,6 +158,15 @@ describe("trailerTokens / inferTrailerProfile — the file decides, never one li
       "203.0.113.5, 10.0.0.1",
     ]);
     expect(trailerTokens("")).toEqual([]);
+    // past the cap the remainder is ONE token, so a late field still reaches the row's identity
+    expect(trailerTokens(" one two three four five six FIRST")).toEqual([
+      "one",
+      "two",
+      "three",
+      "four",
+      "five",
+      "six FIRST",
+    ]);
     expect(trailerTokens('"-"')).toEqual(["-"]);
   });
   it("infers a profile only from a long enough file, from more than one client, where almost every line agrees", () => {
