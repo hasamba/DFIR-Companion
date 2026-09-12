@@ -597,7 +597,11 @@ Target fields. A record with no usable GUIDs (absent, all zeros, malformed) keys
 id (or its position in the import) so it never folds with another, and says `process GUIDs not in
 this record`. Events 8, 10 and 25 are canonical process events (`access`, `remote_thread`,
 `tamper`). Trust is root-anchored: `C:\Staging\Windows\System32\svchost.exe` is not a system
-path, and a call trace is read to its end — an unbacked frame past the thirty-second still grades.
+path, a core Windows name (`svchost.exe`, `csrss.exe`, …) is trusted only from the Windows
+directory — `C:\Program Files\Acme\svchost.exe` is not it — and a call trace is read to its
+end: an unbacked frame past the thirty-second still grades. The key also carries the evidence the
+record holds (rights or their absence, the unbacked count, the first module outside the system
+directories), so two records with the same processes and different evidence stay two rows.
 
 **What a handle does not prove.** A read-capable handle on `lsass.exe` is the credential-dump
 shape; it is not a read. A write-capable handle is the injection precondition; it is not a write.
