@@ -85,7 +85,12 @@ const getCI = (row: Row, key: string): unknown => {
   for (const k of Object.keys(row)) if (k.toLowerCase() === lower) return row[k];
   return undefined;
 };
-const clip = (s: string, max: number): string => (s.length <= max ? s : `${s.slice(0, max - 1)}…`);
+// Every record-controlled string reaches the words on ONE line and bounded: a newline in an app
+// name must not break the row.
+const clip = (s: string, max: number): string => {
+  const flat = s.replace(/\s+/g, " ").trim();
+  return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
+};
 const digest = (s: string): string => createHash("sha256").update(s).digest("hex").slice(0, DIGEST_HEX);
 
 // ── the typed reader ────────────────────────────────────────────────────────────────────────────

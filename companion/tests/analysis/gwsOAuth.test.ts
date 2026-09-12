@@ -579,6 +579,20 @@ describe("decodeGwsToken — request, deny, revoke: what one record establishes"
     expect(decodeGwsToken("login_success", params(client()))).toBeNull();
     expect(decodeGwsToken("", [])).toBeNull();
   });
+  it("a newline or tab in a record-controlled string never reaches the words", () => {
+    const d = decodeGwsToken(
+      "deny",
+      params([
+        value("client_id", CLIENT),
+        value("app_name", "Evil\nApp\tName"),
+        value("client_type", "WEB"),
+        value("rejection_type", "ADMIN\r\nBLOCKED"),
+      ]),
+    )!;
+    expect(d.object).toBe(`Evil App Name (client ${CLIENT}, WEB)`);
+    expect(d.optional).toEqual(["rejection ADMIN BLOCKED"]);
+    expect(d.client.name).toBe("Evil\nApp\tName"); // the identity fields stay verbatim
+  });
   it("bounds attacker-shaped words", () => {
     const d = decodeGwsToken(
       "deny",
