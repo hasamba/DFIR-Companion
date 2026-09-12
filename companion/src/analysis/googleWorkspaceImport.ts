@@ -240,6 +240,8 @@ interface GwsActor {
   kind: "user" | "key" | "application" | "";
   /** True when `actor.callerType` itself named the kind. */
   typed: boolean;
+  /** False when an application or key actor carries no stable id — the key must not fold on it. */
+  stable: boolean;
   email: string;
   profileId: string;
   key: string;
@@ -272,7 +274,8 @@ function readActor(rec: Row): GwsActor {
   const own = kind === "application" ? appName || appId : kind === "key" ? key : user;
   const label = own ? `${own}${kind !== "user" && user ? ` as ${user}` : ""}` : "";
   const typed = ["APPLICATION", "KEY", "USER"].includes(callerType);
-  return { identity, label, kind, typed, email, profileId, key, appId, appName };
+  const stable = kind === "application" ? appId !== "" : kind === "key" ? key !== "" : true;
+  return { identity, label, kind, typed, stable, email, profileId, key, appId, appName };
 }
 
 // The head slot is 120 (awsDescription.ts): `Google Workspace token: authorize by <who> from <ip>`
@@ -436,11 +439,13 @@ function mapEvent(rec: Row, event: Row, sink: Map<string, SiemIoc>, locator: str
   const ip = cleanIp(text(getCI(rec, "ipAddress")));
   const tenant = text(getPath(rec, "id.customerId"));
   if (ip) addIoc(sink, "ip", ip);
-  // The actor's IDENTITY (a key or a client id when the record names no user), the tenant and
-  // the target identity, bounded with a digest (#931 prerequisite). A document shared with three
-  // people is three rows; two documents with one title are two; two customers' identical rows are
-  // two; two robots are two.
-  const baseKey = `gws|${app}|${name}|${who.identity}|${ip}|${tenant}|${targetIdentity(event)}`;
+  // The actor's IDENTITY (a key or a client id when the record names no user; an application or
+  // key with no stable id takes the event's locator, since a name is a label and two named
+  // applications must never fold), the tenant and the target identity, bounded with a digest
+  // (#931 prerequisite). A document shared with three people is three rows; two documents with
+  // one title are two; two customers' identical rows are two; two robots are two.
+  const actorKey = who.stable ? who.identity : `${who.identity}|${locator}`;
+  const baseKey = `gws|${app}|${name}|${actorKey}|${ip}|${tenant}|${targetIdentity(event)}`;
   const timestamp = normalizeTime(text(getPath(rec, "id.time")));
 
   const token = app.toLowerCase() === TOKEN_APP ? decodeGwsToken(name, readGwsParams(event)) : null;

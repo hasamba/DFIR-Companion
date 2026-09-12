@@ -307,6 +307,7 @@ describe("GWS_SCOPE_TIERS — a literal table", () => {
     G + "photoslibrary.readonly",
     G + "meetings.space.readonly",
     G + "chat.app.all.messages.readonly",
+    G + "chat.app.messages.readonly",
   ];
   const medium = [
     G + "gmail.metadata",
@@ -463,6 +464,7 @@ describe("GWS_SCOPE_TIERS — a literal table", () => {
     expect(scopeTier(G + "meetings.space.readonly")).toBe("High");
     // The organisation-wide Chat read (every message, member or not): High + T1528 on a grant.
     expect(scopeTier(G + "chat.app.all.messages.readonly")).toBe("High");
+    expect(scopeTier(G + "chat.app.messages.readonly")).toBe("High");
     const chat = decodeGwsToken(
       "authorize",
       params(client([multi("scope", [G + "chat.app.all.messages.readonly"])])),

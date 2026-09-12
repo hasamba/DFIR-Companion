@@ -559,6 +559,32 @@ describe("parseGoogleWorkspaceReport — OAuth token rows", () => {
     expect(canonicalConformanceIssues(a.canonical)).toEqual([]);
   });
 
+  it("an application or key actor with no stable id never folds: the event locator keys it", () => {
+    const named = (applicationName: string, app = "drive") =>
+      act({
+        actor: { callerType: "APPLICATION", applicationInfo: { applicationName } },
+        id: { applicationName: app },
+        events:
+          app === "token"
+            ? [{ type: "auth", name: "revoke", parameters: clientParams }]
+            : [{ type: "access", name: "download", parameters: [{ name: "doc_id", value: "doc-1" }] }],
+      });
+    expect(
+      parseGoogleWorkspaceReport(JSON.stringify([named("Collector A"), named("Collector B")])).events,
+    ).toHaveLength(2);
+    expect(
+      parseGoogleWorkspaceReport(
+        JSON.stringify([named("Collector A", "token"), named("Collector B", "token")]),
+      ).events,
+    ).toHaveLength(2);
+    // …and even two records that look identical stay two: without an id nothing says they are one.
+    expect(
+      parseGoogleWorkspaceReport(JSON.stringify([named("Collector A"), named("Collector A")])).events,
+    ).toHaveLength(2);
+    const keyless = act({ actor: { callerType: "KEY" } });
+    expect(parseGoogleWorkspaceReport(JSON.stringify([keyless, keyless])).events).toHaveLength(2);
+  });
+
   it("a record with no actor claims none: no actor entity, no principal type, and the caller type keys it", () => {
     const r = parseGoogleWorkspaceReport(
       JSON.stringify([

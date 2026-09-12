@@ -558,7 +558,8 @@ stay two. The record's actor is read for what it is: a user (`email`/`profileId`
 account or two-legged-OAuth caller (`callerType: KEY` and its `key`), or an application
 (`applicationInfo.oauthClientId`) — when an application record also names the user it acts
 for, the row reads `by <app> as <user>`, both identities are in the key (two applications
-impersonating one user are two rows) and the user is the envelope's subject; a record that
+impersonating one user are two rows) and the user is the envelope's subject; an application
+or key record with no stable id never folds with another (a name is a label); a record that
 names no actor claims none. Token rows carry the canonical envelope: the actor and the application typed as
 actor and object (or actor and subject on an `activity`; a requester named on a `request` is
 the subject), the cloud principal following the actor (the client on an `activity`, the user's

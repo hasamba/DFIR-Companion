@@ -257,6 +257,7 @@ export const GWS_SCOPE_TIERS: Readonly<Record<string, ScopeTier>> = Object.fromE
     "photoslibrary.readonly",
     "meetings.space.readonly",
     "chat.app.all.messages.readonly",
+    "chat.app.messages.readonly",
   ]),
   ...tiered("Medium", [
     "gmail.metadata",
