@@ -17,6 +17,7 @@
 import type { Severity } from "./stateTypes.js";
 import {
   mapTlsRows,
+  readSuricataCertificates,
   readSuricataTls,
   readZeekSsl,
   readZeekX509,
@@ -600,7 +601,10 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
         mapped.push(m);
         alerts++;
       } else {
-        if (etype === "tls") tallyTls(readSuricataTls(row, ""), tlsSink);
+        if (etype === "tls") {
+          tallyTls(readSuricataTls(row, ""), tlsSink);
+          for (const c of readSuricataCertificates(row, "")) tallyTls(c, tlsSink);
+        }
         mergeRowIocs(iocSink, rowSink);
       }
     } else {

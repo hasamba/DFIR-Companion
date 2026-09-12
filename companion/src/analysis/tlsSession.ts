@@ -52,6 +52,8 @@ export interface TlsObservation {
   dst?: string;
   port?: number;
   sni?: string;
+  /** Zeek's own check that the SNI matches the certificate (`sni_matches_cert`). */
+  sniMatchesCert?: boolean;
   version?: string;
   cipher?: string;
   established?: boolean;
@@ -70,6 +72,7 @@ const NAMES_SHOWN_MAX = 3;
 const TEXT_SHOWN_MAX = 80;
 const DESCRIPTION_MAX = 600;
 const CERT_ID_VERSION = "certid-v1";
+const CHAIN_MAX = 16;
 
 // ───────────────────────────── shared readers ─────────────────────────────
 
@@ -121,7 +124,7 @@ export function certIdentity(issuer: string, serial: string): string {
 /** ECS sensors name themselves in `observer.*`; `host.name` names the shipper and is a fallback. */
 function observerOf(row: Row): TlsObservation["observer"] {
   for (const path of ["observer.name", "observer.hostname", "host.name", "agent.hostname"]) {
-    const v = text(getPath(row, path))?.trim();
+    const v = text(getCI(row, path) ?? getPath(row, path))?.trim();
     if (v) return { name: v, sourceField: path };
   }
   return undefined;
@@ -143,6 +146,7 @@ export function readZeekSsl(row: Row, fallbackTs: string): TlsObservation {
     dst: cleanIp(str(getCI(row, "id.resp_h"))) || undefined,
     ...(Number.isInteger(port) && port > 0 ? { port } : {}),
     sni: text(getCI(row, "server_name")),
+    sniMatchesCert: bool(getCI(row, "sni_matches_cert")),
     version: text(getCI(row, "version")),
     cipher: text(getCI(row, "cipher")),
     established: bool(getCI(row, "established")),
@@ -238,6 +242,43 @@ export function readSuricataTls(row: Row, fallbackTs: string): TlsObservation {
   };
 }
 
+/** The certificates a Suricata record carries as DER (`tls.certificate`, `tls.chain`) — one observation each. */
+export function readSuricataCertificates(row: Row, fallbackTs: string): TlsObservation[] {
+  const tls = getCI(row, "tls");
+  const t: Row = isObject(tls) ? tls : {};
+  const ders = [...(list(getCI(t, "certificate")) ?? []), ...(list(getCI(t, "chain")) ?? [])];
+  const seen = new Set<string>();
+  const out: TlsObservation[] = [];
+  for (const der of ders.slice(0, CHAIN_MAX)) {
+    const fp = createHash("sha256").update(Buffer.from(der, "base64")).digest("hex");
+    if (seen.has(fp)) continue;
+    seen.add(fp);
+    // The leaf's subject/issuer/serial are the record's own fields; a chain entry's are not
+    // decoded here (no ASN.1 parser), so it carries its sha256 and nothing else.
+    const leaf = out.length === 0 && getCI(t, "certificate") !== undefined;
+    const issuer = leaf ? (text(getCI(t, "issuerdn")) ?? text(getCI(t, "issuer"))) : undefined;
+    out.push({
+      source: "suricata-tls",
+      kind: "certificate",
+      timestamp: time(getCI(row, "timestamp")) || fallbackTs,
+      uid: text(getCI(row, "flow_id")),
+      observer: observerOf(row),
+      cert: { kind: "fingerprint", value: fp, alg: "sha256" },
+      certificate: leaf
+        ? {
+            ...(text(getCI(t, "subject")) !== undefined ? { subject: text(getCI(t, "subject")) } : {}),
+            ...(issuer !== undefined ? { issuer } : {}),
+            ...(text(getCI(t, "serial")) !== undefined ? { serial: hexOf(text(getCI(t, "serial"))!) } : {}),
+            ...(list(getCI(t, "subjectaltname"))
+              ? { names: list(getCI(t, "subjectaltname"))!.slice(0, NAMES_KEPT_MAX) }
+              : {}),
+          }
+        : {},
+    });
+  }
+  return out;
+}
+
 // ───────────────────────────── folding ─────────────────────────────
 
 export interface TlsTally {
@@ -275,6 +316,7 @@ export function tlsKey(o: TlsObservation): string {
     seg(o.ja3s),
     seg(o.subject),
     seg(o.issuer),
+    short(o.sniMatchesCert),
     cert,
   ].join("|");
 }
@@ -356,6 +398,8 @@ function sessionTags(o: TlsObservation): string[] {
     (o.certChainFuids?.length ?? 0) > 0;
   tags.push(hasCert ? `cert: ${certWords(o)}` : "no certificate observed in this record");
   if (o.validation !== undefined) tags.push(`chain check: ${show(o.validation)}`);
+  if (o.sniMatchesCert !== undefined)
+    tags.push(o.sniMatchesCert ? "SNI matches the certificate" : "SNI does not match the certificate");
   if (o.established === false) tags.push("not established");
   if (o.resumed === true) tags.push("session resumed");
   if (o.ja3 !== undefined) tags.push(`ja3 ${ends(hexOf(o.ja3) || show(o.ja3))}`);
@@ -413,6 +457,7 @@ function envelopeOf(o: TlsObservation, count: number): CanonicalEventEnvelope {
       ...(o.established !== undefined ? { established: o.established } : {}),
       ...(o.resumed !== undefined ? { resumed: o.resumed } : {}),
       ...(o.validation !== undefined ? { validation: o.validation } : {}),
+      ...(o.sniMatchesCert !== undefined ? { sniMatchesCert: o.sniMatchesCert } : {}),
       ...(o.ja3 !== undefined ? { ja3: o.ja3 } : {}),
       ...(o.ja3s !== undefined ? { ja3s: o.ja3s } : {}),
       ...(o.subject !== undefined || o.issuer !== undefined || o.cert || o.certificate

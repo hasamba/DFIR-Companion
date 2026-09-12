@@ -139,6 +139,7 @@ export const canonicalEventEnvelopeSchema = z.object({
       established: z.boolean().optional(),
       resumed: z.boolean().optional(),
       validation: z.string().optional(),
+      sniMatchesCert: z.boolean().optional(),
       ja3: z.string().optional(),
       ja3s: z.string().optional(),
       certificate: z

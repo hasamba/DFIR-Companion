@@ -4,6 +4,7 @@ import {
   readZeekSsl,
   readZeekX509,
   readSuricataTls,
+  readSuricataCertificates,
   certIdentity,
   tallyTls,
   mapTlsRows,
@@ -287,6 +288,7 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
       { subject: "CN=other.example" },
       { cert: { kind: "fingerprint", value: "ab", alg: "sha1" } },
       { observer: { name: "sensor-b", sourceField: "observer.name" } },
+      { sniMatchesCert: false },
       { dst: "203.0.113.10" },
       { port: 8443 },
     ];
@@ -384,6 +386,35 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
       "50 TLS records in shapes beyond 8192 distinct ones folded; none shown",
     );
     expect(over.canonical?.tls?.records).toBe(50);
+  });
+
+  it("Zeek's SNI-matches-certificate check is a keyed fact, said either way", () => {
+    const yes = rows([readZeekSsl({ ...ZEEK_SSL, sni_matches_cert: true }, "")])[0];
+    const no = rows([readZeekSsl({ ...ZEEK_SSL, sni_matches_cert: false }, "")])[0];
+    expect(yes.description).toContain("[SNI matches the certificate]");
+    expect(no.description).toContain("[SNI does not match the certificate]");
+    expect(yes.aggKey).not.toBe(no.aggKey);
+    expect(rows([base()])[0].description).not.toContain("matches the certificate");
+  });
+
+  it("a flattened observer spelling is read too, and keeps two sensors apart", () => {
+    const a = readZeekSsl({ ...ZEEK_SSL, "observer.name": "sensor-a" }, "");
+    const b = readZeekSsl({ ...ZEEK_SSL, "observer.name": "sensor-b" }, "");
+    expect(a.observer).toEqual({ name: "sensor-a", sourceField: "observer.name" });
+    expect(rows([a, b])).toHaveLength(2);
+  });
+
+  it("a Suricata leaf and chain become one certificate row each, deduplicated, beside the session", () => {
+    const leaf = Buffer.from("leaf-bytes").toString("base64");
+    const ca = Buffer.from("ca-bytes").toString("base64");
+    const rec = { ...SURICATA_TLS, tls: { ...SURICATA_TLS.tls, certificate: leaf, chain: [leaf, ca] } };
+    const certs = readSuricataCertificates(rec, "");
+    expect(certs).toHaveLength(2);
+    expect(certs[0].certificate?.subject).toBe("CN=cdn.example.net");
+    expect(certs[1].certificate).toEqual({});
+    const r = rows([readSuricataTls(rec, ""), ...certs]);
+    expect(r.filter((e) => e.description.startsWith("[certificate:"))).toHaveLength(2);
+    expect(r.filter((e) => e.description.startsWith("TLS "))).toHaveLength(1);
   });
 
   it("selects the most-seen rows first under a budget", () => {
