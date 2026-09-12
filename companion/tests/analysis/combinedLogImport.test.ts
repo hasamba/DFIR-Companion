@@ -820,6 +820,21 @@ describe("parseCombinedLog — what one line establishes", () => {
     expect(r.dropped).toBe(0);
   });
 
+  it("an address destination is an ip indicator, never a bracketed domain", () => {
+    const v6 =
+      '10.30.10.14 - - [15/May/2024:06:42:01 +0000] "CONNECT [2001:db8::1]:443 HTTP/1.1" 200 163 "-" "curl/8"';
+    const r = parseCombinedLog(v6);
+    expect(r.iocs.map((i) => `${i.type}:${i.value}`)).toContain("ip:2001:db8::1");
+    expect(r.iocs.some((i) => i.type === "domain")).toBe(false);
+    const v4 =
+      '10.30.10.14 - - [15/May/2024:06:42:01 +0000] "GET http://203.0.113.9/x HTTP/1.1" 200 163 "https://[2001:db8::2]/r?q=1" "curl/8"';
+    const r4 = parseCombinedLog(v4);
+    const vals = r4.iocs.map((i) => `${i.type}:${i.value}`);
+    expect(vals).toContain("ip:203.0.113.9");
+    expect(vals).toContain("ip:2001:db8::2");
+    expect(r4.iocs.some((i) => i.type === "domain")).toBe(false);
+  });
+
   it("a refused CONNECT says no tunnel was established", () => {
     const refused =
       '10.30.10.14 - - [15/May/2024:06:42:01 +0000] "CONNECT vault.example.invalid:443 HTTP/1.1" 407 512 "-" "curl/8"';

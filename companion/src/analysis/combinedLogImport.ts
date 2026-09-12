@@ -325,7 +325,11 @@ export function mapCombinedLogLine(
   // The destination host is the one the WHOLE-target parse validated: a malformed target
   // (`http://ev]il:abc/x`) is invalid, and nothing of it becomes an indicator or a key field.
   const host = target.host;
-  if (host) addIoc(sink, "domain", host);
+  // A host that is an ADDRESS is an ip indicator, not a domain: `[2001:db8::1]` as a domain value
+  // breaks validation, enrichment and correlation downstream.
+  const hostIp = host.startsWith("[") ? host.slice(1, -1) : isIP(host) ? host : "";
+  if (hostIp) addIoc(sink, "ip", hostIp);
+  else if (host) addIoc(sink, "domain", host);
   const trailer = readTrailer(trailerTokens(restRaw ?? ""), profile);
   const sizeWords = readSize(method, status, bytesRaw ?? "");
   const statusTail = statusWords(status);
@@ -349,7 +353,9 @@ export function mapCombinedLogLine(
   // The Referer is attacker-controlled too, so its host goes through the SAME whole-authority
   // validation as the request target: `http://ev]il:abc/x` mints no domain indicator.
   const refHost = referer ? readTarget("GET", referer).host : "";
-  if (refHost) addIoc(sink, "domain", refHost);
+  const refIp = refHost.startsWith("[") ? refHost.slice(1, -1) : isIP(refHost) ? refHost : "";
+  if (refIp) addIoc(sink, "ip", refIp);
+  else if (refHost) addIoc(sink, "domain", refHost);
   if (referer && /^https?:\/\//i.test(referer) && referer.includes("?")) addIoc(sink, "url", referer);
 
   // User-Agent capture (see module comment): a UA that doesn't open like a real `Product/Version`
