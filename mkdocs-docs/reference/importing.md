@@ -517,8 +517,8 @@ names both. Each of the application's five events reads for what its record esta
   `https://www.google.com/m8/feeds`, the Admin SDK directory (users, groups, members, org units,
   devices, domains, roles, user security and schemas), data transfer, reports and group
   settings/migration, Cloud Identity groups, policies and inbound SSO, Vault eDiscovery,
-  `cloud-platform`, Cloud Search, Classroom rosters, coursework and submissions, Photos, Apps
-  Script and Chat messages/import. **Medium**: metadata-only and activity scopes
+  `cloud-platform`, Cloud Search, Classroom rosters, coursework and submissions, Photos, Meet
+  conference records (transcripts), Apps Script and Chat messages/import. **Medium**: metadata-only and activity scopes
   (`gmail.metadata`, `gmail.labels`, the Gmail add-on current-message scopes, `drive.metadata*`,
   `drive.activity*`), read-only Calendar, Contacts, Keep, Tasks, Chat spaces and memberships,
   `directory.readonly`, the read-only Admin SDK and Cloud Identity device, alias, schema and
@@ -527,7 +527,7 @@ names both. Each of the application's five events reads for what its record esta
   name** (conservative: a scope Google adds after this table is written reads Medium until the
   table is updated). **Low**: per-file and app-data Drive (`drive.file`, `drive.appdata`,
   `drive.install`, `drive.apps.readonly`), free/busy and public calendar reads, Classroom topics
-  and add-ons, Meet space creation, and the identity-only scopes (`openid`, `email`, `profile`,
+  and add-ons, Meet space creation and settings, and the identity-only scopes (`openid`, `email`, `profile`,
   `userinfo.*`). Four classes
   are shown and the rest counted. A record with no `scope` reads `scopes not in this record` and
   stays High — the table cannot say less when the record does not.
@@ -556,8 +556,10 @@ response size and product, and the request, requester and rejection fields; ever
 of any application now keys on the tenant (`id.customerId`), so two customers' identical rows
 stay two. The record's actor is read for what it is: a user (`email`/`profileId`), a service
 account or two-legged-OAuth caller (`callerType: KEY` and its `key`), or an application
-(`applicationInfo.oauthClientId`); two keys are two rows, and a record that names no actor
-claims none. Token rows carry the canonical envelope: the actor and the application typed as
+(`applicationInfo.oauthClientId`) — when an application record also names the user it acts
+for, the row reads `by <app> as <user>`, both identities are in the key (two applications
+impersonating one user are two rows) and the user is the envelope's subject; a record that
+names no actor claims none. Token rows carry the canonical envelope: the actor and the application typed as
 actor and object (or actor and subject on an `activity`; a requester named on a `request` is
 the subject), the cloud principal following the actor (the client on an `activity`, the user's
 profile id, the key or the application's client id otherwise, typed as `user`, `key` or

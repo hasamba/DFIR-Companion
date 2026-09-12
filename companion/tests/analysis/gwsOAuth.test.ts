@@ -305,6 +305,7 @@ describe("GWS_SCOPE_TIERS — a literal table", () => {
     G + "cloud_search.query",
     G + "photoslibrary",
     G + "photoslibrary.readonly",
+    G + "meetings.space.readonly",
   ];
   const medium = [
     G + "gmail.metadata",
@@ -387,7 +388,6 @@ describe("GWS_SCOPE_TIERS — a literal table", () => {
     G + "cloud_search.settings.query",
     G + "cloud_search.debug",
     G + "photoslibrary.sharing",
-    G + "meetings.space.readonly",
   ];
   const low = [
     G + "drive.file",
@@ -442,6 +442,8 @@ describe("GWS_SCOPE_TIERS — a literal table", () => {
     expect(scopeTier(G + "admin.directory.userschema.readonly")).toBe("Medium");
     expect(scopeTier(G + "classroom.student-submissions.students.readonly")).toBe("High");
     expect(scopeTier(G + "cloud_search.query")).toBe("High");
+    // The Meet space read scope lists conference transcripts: content-wide read, High.
+    expect(scopeTier(G + "meetings.space.readonly")).toBe("High");
     expect(scopeTier(G + "gmail.readonly ")).toBe("High"); // whitespace tolerated
     expect(scopeTier("")).toBe("Medium");
   });

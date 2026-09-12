@@ -224,6 +224,11 @@ describe("parseGoogleWorkspaceReport — OAuth token rows", () => {
     expect(e.canonical?.fieldProvenance["cloud.principalId"]).toMatchObject({
       rawFields: ["actor.profileId"],
     });
+    // No callerType in the record: the type is derived from the fields present, and says so.
+    expect(e.canonical?.fieldProvenance["cloud.principalType"]).toMatchObject({
+      origin: "derived",
+      derivation: expect.stringContaining("email/profileId → user"),
+    });
     expect(e.canonical?.network?.source?.address).toBe("203.0.113.10");
     expect(e.canonical?.evidence.rawRecords).toEqual([
       { source: "google-workspace", locator: "record:0/event:0", recordId: "-1" },
@@ -264,6 +269,10 @@ describe("parseGoogleWorkspaceReport — OAuth token rows", () => {
       principalId: CLIENT,
       principalType: "application",
       resource: "drive.drive.files.get",
+    });
+    expect(e.canonical?.fieldProvenance["cloud.principalType"]).toMatchObject({
+      origin: "derived",
+      derivation: expect.stringContaining("token's client"),
     });
     expect(e.canonical?.fieldProvenance["cloud.resource"]).toMatchObject({
       rawFields: ["api_name", "method_name"],
@@ -441,6 +450,11 @@ describe("parseGoogleWorkspaceReport — OAuth token rows", () => {
     expect(e.canonical?.actor).toEqual({ kind: "cloud_principal", id: "robot-a" });
     expect(e.canonical?.cloud).toMatchObject({ principalId: "robot-a", principalType: "key" });
     expect(e.canonical?.fieldProvenance["actor.id"]).toMatchObject({ rawFields: ["actor.key"] });
+    // callerType named the kind: the type is raw from it.
+    expect(e.canonical?.fieldProvenance["cloud.principalType"]).toMatchObject({
+      origin: "raw",
+      rawFields: ["actor.callerType"],
+    });
     expect(canonicalConformanceIssues(e.canonical)).toEqual([]);
 
     const app = parseGoogleWorkspaceReport(
@@ -469,6 +483,80 @@ describe("parseGoogleWorkspaceReport — OAuth token rows", () => {
       principalType: "application",
     });
     expect(canonicalConformanceIssues(app.canonical)).toEqual([]);
+  });
+
+  it("an APPLICATION actor that impersonates a user keeps both identities: the app is the actor, the user the subject, both in the key", () => {
+    const rec = (appId: string, name: string, over: Record<string, unknown> = {}) =>
+      act({
+        actor: {
+          callerType: "APPLICATION",
+          email: "victim@example.invalid",
+          profileId: "u1",
+          applicationInfo: { oauthClientId: appId, applicationName: `App ${appId}`, impersonation: true },
+        },
+        id: { applicationName: "token" },
+        events: [
+          { type: "auth", name, parameters: [...clientParams, { name: "scope", multiValue: [G + "drive"] }] },
+        ],
+        ...over,
+      });
+    // Two applications impersonating one user are two rows, on token and non-token rows alike.
+    expect(
+      parseGoogleWorkspaceReport(JSON.stringify([rec("app-a", "authorize"), rec("app-b", "authorize")]))
+        .events,
+    ).toHaveLength(2);
+    const drive = (appId: string) =>
+      act({
+        actor: {
+          callerType: "APPLICATION",
+          email: "victim@example.invalid",
+          applicationInfo: { oauthClientId: appId },
+        },
+        id: { applicationName: "drive" },
+        events: [{ type: "access", name: "download", parameters: [{ name: "doc_id", value: "doc-1" }] }],
+      });
+    expect(parseGoogleWorkspaceReport(JSON.stringify([drive("app-a"), drive("app-b")])).events).toHaveLength(
+      2,
+    );
+    // The same application twice folds.
+    expect(
+      parseGoogleWorkspaceReport(JSON.stringify([rec("app-a", "authorize"), rec("app-a", "authorize")]))
+        .events,
+    ).toHaveLength(1);
+    const e = parseGoogleWorkspaceReport(JSON.stringify([rec("app-a", "authorize")])).events[0];
+    expect(e.description).toContain("by App app-a as victim@example.invalid");
+    expect(e.canonical?.actor).toEqual({ kind: "cloud_principal", id: "app-a", name: "App app-a" });
+    expect(e.canonical?.subject).toEqual({ kind: "account", name: "victim@example.invalid", id: "u1" });
+    expect(e.canonical?.object?.id).toBe(CLIENT);
+    expect(e.canonical?.cloud).toMatchObject({ principalId: "app-a", principalType: "application" });
+    expect(e.canonical?.fieldProvenance["cloud.principalType"]).toMatchObject({
+      rawFields: ["actor.callerType"],
+    });
+    expect(e.canonical?.fieldProvenance["subject.name"]).toMatchObject({ rawFields: ["actor.email"] });
+    expect(canonicalConformanceIssues(e.canonical)).toEqual([]);
+    // On an activity the impersonated user is the subject and the token's client the actor.
+    const a = parseGoogleWorkspaceReport(
+      JSON.stringify([
+        act({
+          actor: {
+            callerType: "APPLICATION",
+            email: "victim@example.invalid",
+            applicationInfo: { oauthClientId: "app-a" },
+          },
+          id: { applicationName: "token" },
+          events: [
+            {
+              type: "auth",
+              name: "activity",
+              parameters: [...clientParams, { name: "api_name", value: "drive" }],
+            },
+          ],
+        }),
+      ]),
+    ).events[0];
+    expect(a.canonical?.actor).toEqual({ kind: "cloud_principal", id: CLIENT, name: "Mail Backup Pro" });
+    expect(a.canonical?.subject).toEqual({ kind: "account", name: "victim@example.invalid" });
+    expect(canonicalConformanceIssues(a.canonical)).toEqual([]);
   });
 
   it("a record with no actor claims none: no actor entity, no principal type, and the caller type keys it", () => {

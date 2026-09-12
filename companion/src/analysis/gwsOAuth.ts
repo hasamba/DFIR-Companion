@@ -255,6 +255,7 @@ export const GWS_SCOPE_TIERS: Readonly<Record<string, ScopeTier>> = Object.fromE
     "cloud_search.query",
     "photoslibrary",
     "photoslibrary.readonly",
+    "meetings.space.readonly",
   ]),
   ...tiered("Medium", [
     "gmail.metadata",
@@ -337,7 +338,6 @@ export const GWS_SCOPE_TIERS: Readonly<Record<string, ScopeTier>> = Object.fromE
     "cloud_search.settings.query",
     "cloud_search.debug",
     "photoslibrary.sharing",
-    "meetings.space.readonly",
   ]),
   ...tiered("Low", [
     "drive.file",
