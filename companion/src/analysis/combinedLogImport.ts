@@ -62,19 +62,18 @@ import {
 } from "./siemImport.js";
 import { secretSpillSignal } from "./secretSpillRules.js";
 import { boundedAggKey } from "./aggKey.js";
+import { identityMark, showToken } from "./recordIdentity.js";
 import { inspectRequestFields, MAX_ATTACK_VARIANTS } from "./webRequestDecode.js";
 import {
   packTags,
   readSize,
   readTarget,
   readTrailer,
-  showToken,
   statusWords,
   trailerTokens,
   type TrailerProfile,
 } from "./webRecordFields.js";
 import { isIP } from "node:net";
-import { createHash } from "node:crypto";
 
 export interface CombinedLogImportOptions {
   aggregate?: boolean;
@@ -188,21 +187,6 @@ export interface AttackMeta {
 export const ATTACK_OVERFLOW = "attack:overflow";
 /** …and the marker for rows whose only variant was an unlabelled trailer value. */
 export const TRAILER_OVERFLOW = "trailer:overflow";
-
-// The description is the row's identity downstream: correlateEvents unions two rows with one
-// timestamp, one description and one host as a re-import. A row whose SHOWN text is not the whole
-// record — a clipped trailer, a clipped payload excerpt, a neutralised bracket, a rebuilt long line
-// — therefore carries a mark of its full key, so two records that READ alike stay two rows after
-// import and not only inside this parser (#933 item 1). 128 bits: the key is attacker-controlled,
-// and a 32-bit mark let two bracket-spelled paths that neutralise alike be found by birthday work
-// and folded into one row downstream. Base64url, NOT hex: correlateEvents reads any bare 32-hex run
-// in a description as an MD5 and unions the rows that share it with no time bound, so a hex mark
-// made two lossy rows of one key — different days, different UAs — one observation.
-const IDENTITY_MARK_BYTES = 16;
-export function identityMark(key: string): string {
-  // UTF-16 code units, as readTrailer's digest: UTF-8 folds an unpaired surrogate into U+FFFD.
-  return ` #${createHash("sha256").update(Buffer.from(key, "utf16le")).digest().subarray(0, IDENTITY_MARK_BYTES).toString("base64url")}`;
-}
 
 // A row with no attack signal keeps today's layout when it fits. When the attacker-controlled
 // target would push the status and the record's own facts past the 600-character clip, the row

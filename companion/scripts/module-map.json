@@ -399,6 +399,7 @@
     "persistenceSniperImport.ts": "analysis/ingest",
     "prefetchExecution.ts": "analysis/ingest",
     "processAccess.ts": "analysis/ingest",
+    "recordIdentity.ts": "analysis/ingest",
     "pinnedFindings.ts": "analysis/findings",
     "pipeline.ts": "analysis/ai",
     "plasoImport.ts": "analysis/ingest",

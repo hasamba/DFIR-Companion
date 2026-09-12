@@ -26,12 +26,12 @@
 // `http.log`/`files.log` rows as events, request/session ids and HTTP/2 stream ids. This module
 // only stops the line from dropping what that join will need, and from misreading what it shows.
 
-import { createHash } from "node:crypto";
 import { isIP } from "node:net";
+import { breakHashRuns, keyDigest, showToken } from "./recordIdentity.js";
+
+export { breakHashRuns, showToken };
 
 const TRAILER_TOKEN_MAX = 40;
-/** 128 bits: the trailer is attacker-controlled, and a 64-bit digest allows chosen pairs in ~2^32 work. */
-const DIGEST_HEX = 32;
 const TRAILER_TOKENS_MAX = 6;
 const TRAILER_WORDS_MAX = 80;
 const HOST_MAX = 120;
@@ -196,25 +196,6 @@ const SQUID_HIERARCHY: Record<string, string> = {
 const SQUID_TOKEN = /^([A-Z][A-Z0-9_]*)(?::([A-Z][A-Z0-9_]*))?$/;
 
 /**
- * Client-written text — a trailer token, the request target, the Referer, the User-Agent, the
- * auth user — is rendered on the same line as the row's `[tag]`s, so a value carrying
- * `) [proxy: served from its cache]` would forge a tag the reader trusts. Brackets become
- * parentheses and every control character goes before the text is shown.
- */
-/** A run of 32+ hex characters shown as its ends only — see readTrailer. */
-const HASH_RUN = /[a-f0-9]{32,}/gi;
-export const breakHashRuns = (t: string): string =>
-  t.replace(HASH_RUN, (m) => `${m.slice(0, 8)}…${m.slice(-4)}`);
-
-export const showToken = (t: string): string =>
-  t
-    .replace(/\[/g, "(")
-    .replace(/\]/g, ")")
-    .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-/**
  * Is this token a Squid `%Ss:%Sh` pair the tables FULLY name? Both halves must be present and
  * recognised: a
  * known result with an unknown hierarchy (`TCP_MISS:NONCE_7`) is attacker-shaped text in the slot,
@@ -341,14 +322,8 @@ export function readTrailer(tokens: readonly string[], profile: TrailerProfile |
     ? `trailer: ${unlabelled.join(" ").slice(0, TRAILER_WORDS_MAX)}`
     : "";
   // Length-framed so token boundaries are part of the identity: `ab c` and `a bc` are two trailers.
-  // Hashed as UTF-16 code units, not UTF-8: a UTF-16 export can carry an unpaired surrogate, and
-  // UTF-8 encoding folds every one of them into U+FFFD — two distinct trailers, one digest.
-  const digest = raw.some((t) => t.trim())
-    ? createHash("sha256")
-        .update(Buffer.from(raw.map((t) => `${t.length}:${t}`).join("|"), "utf16le"))
-        .digest("hex")
-        .slice(0, DIGEST_HEX)
-    : "";
+  // keyDigest hashes UTF-16 code units, so an unpaired surrogate is not folded into U+FFFD.
+  const digest = raw.some((t) => t.trim()) ? keyDigest(raw.map((t) => `${t.length}:${t}`).join("|")) : "";
   return {
     squid,
     unlabelled,
