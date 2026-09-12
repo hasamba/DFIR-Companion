@@ -241,6 +241,13 @@ describe("readTrailer — with no profile nothing is labelled", () => {
     const control = readTrailer(["a\u0000b\tc"], null);
     expect(control.trailerWords).toBe("trailer: a b c");
   });
+  it("identity is the bounded RAW token, so two tokens that differ past the display width stay two", () => {
+    const p = "A".repeat(40);
+    const a = readTrailer([`${p}FIRST`], null);
+    const b = readTrailer([`${p}SECOND`], null);
+    expect(a.trailerWords).toBe(b.trailerWords); // the display is the same 40 characters
+    expect(a.variantKey).not.toBe(b.variantKey); // the identity is not
+  });
   it("bounds the tokens it shows", () => {
     const r = readTrailer([`${"x".repeat(200)}`, "y".repeat(200)], null);
     expect(r.trailerWords.length).toBeLessThanOrEqual(89);

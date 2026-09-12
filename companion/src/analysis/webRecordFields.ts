@@ -333,18 +333,19 @@ export function readTrailer(tokens: readonly string[], profile: TrailerProfile |
   // dropped, which would hide the one line that differs from every other).
   const recognised = slotToken !== undefined && isKnownSquidToken(slotToken);
   const squid = recognised ? readSquidTrailer(slotToken) : null;
-  const unlabelled = tokens
-    .filter((_, i) => !(recognised && profile && i === profile.squidSlot))
-    .map((t) => showToken(t).slice(0, TRAILER_TOKEN_MAX))
-    .filter(Boolean);
+  // The tokens that carry no label: their IDENTITY is the bounded raw text (so two long vhosts or
+  // forwarded-for chains that differ only past the display width stay two rows), and their DISPLAY
+  // is that text neutralised and clipped.
+  const raw = tokens.filter((_, i) => !(recognised && profile && i === profile.squidSlot));
+  const unlabelled = raw.map((t) => showToken(t).slice(0, TRAILER_TOKEN_MAX)).filter(Boolean);
   const squidWords = squid?.words
     ? `${squid.words} (squid_combined, ${profile?.source === "declared" ? "declared" : "inferred from the file"})`
     : "";
   const trailerWords = unlabelled.length
     ? `trailer: ${unlabelled.join(" ").slice(0, TRAILER_WORDS_MAX)}`
     : "";
-  const digest = unlabelled.length
-    ? createHash("sha256").update(unlabelled.join(" ")).digest("hex").slice(0, DIGEST_HEX)
+  const digest = raw.some((t) => t.trim())
+    ? createHash("sha256").update(raw.join(" ")).digest("hex").slice(0, DIGEST_HEX)
     : "";
   return {
     squid,

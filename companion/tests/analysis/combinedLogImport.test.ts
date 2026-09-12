@@ -841,6 +841,16 @@ describe("parseCombinedLog — what one line establishes", () => {
     expect(encoded.iocs.some((i) => i.type === "domain")).toBe(false);
   });
 
+  it("two long trailer values that differ past the display width stay two rows", () => {
+    const p = "A".repeat(40);
+    const line = (suffix: string) =>
+      `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /app HTTP/1.1" 200 83 "-" "curl/8" "${p}${suffix}"`;
+    const r = parseCombinedLog([line("FIRST"), line("SECOND")].join("\n"));
+    expect(r.events).toHaveLength(2);
+    expect(r.events.every((e) => (e.count ?? 1) === 1)).toBe(true);
+    expect(r.dropped).toBe(0);
+  });
+
   it("a refused CONNECT says no tunnel was established", () => {
     const refused =
       '10.30.10.14 - - [15/May/2024:06:42:01 +0000] "CONNECT vault.example.invalid:443 HTTP/1.1" 407 512 "-" "curl/8"';
