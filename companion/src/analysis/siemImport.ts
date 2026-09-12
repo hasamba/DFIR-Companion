@@ -1023,9 +1023,11 @@ export function mapWindows(
         })
       : null;
   if (pa) ({ description, severity, mitre } = pa);
-  // Sysmon 22 / DNS-Client 3006/3008/3020: the query, its type, the status the resolver client
-  // reported and the values RETURNED — never "resolves to" (dnsRecord.ts, #933 item 2).
-  const dq = def.kind === "dns" ? dnsOverlay((k) => getCI(ed, k), def.statusField ?? "", description) : null;
+  // Sysmon 22 / DNS-Client 3006/3008/3020: the query, its type, the resolver client's status and
+  // the values RETURNED — never "resolves to" (dnsRecord.ts, #933 item 2). Fields are read nested
+  // first, then at the record root: a flattened export carries QueryName beside EventID.
+  const dnsField = (k: string) => getCI(ed, k) ?? getCI(rec, k);
+  const dq = def.kind === "dns" ? dnsOverlay(dnsField, def.statusField ?? "", description) : null;
   if (dq) ({ description } = dq);
   // Kerberoasting / AS-REP roasting: an RC4-encrypted Kerberos ticket request for a user service
   // account grades the otherwise-Low 4769/4768 with the correct technique (see kerberosRoastSignal).

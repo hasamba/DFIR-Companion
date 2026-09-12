@@ -213,6 +213,32 @@ describe("Sysmon 22 — field shapes", () => {
   });
 });
 
+describe("flattened Windows DNS records", () => {
+  it("a record with its fields at the root reads like a nested one", () => {
+    const flat = (over: Record<string, unknown>) => ({
+      Channel: "Microsoft-Windows-DNS-Client/Operational",
+      EventID: 3008,
+      Hostname: "WS-01",
+      EventTime: "2026-03-01T10:00:00Z",
+      ...over,
+    });
+    const r = parseSiemExport(
+      elastic(
+        flat({ QueryName: "bad.example", QueryType: 1, QueryStatus: 9003, QueryResults: "" }),
+        flat({ QueryName: "good.example", QueryType: 1, QueryStatus: 0, QueryResults: "type: 1 192.0.2.1;" }),
+      ),
+    );
+    expect(r.events).toHaveLength(2);
+    const bad = r.events.find((e) => e.description.includes("[query: bad.example]"))!;
+    expect(bad.description).toContain("[A query] [NXDOMAIN");
+    expect(bad.description).not.toContain("not a valid name");
+    expect(r.events.find((e) => e.description.includes("[query: good.example]"))!.description).toContain(
+      "[returned: A 192.0.2.1]",
+    );
+    expect(r.iocs.map((i) => i.value)).toEqual(expect.arrayContaining(["bad.example", "good.example"]));
+  });
+});
+
 describe("Sysmon 22 — bounded variants", () => {
   it("returned-value churn on one query folds past the budget and never crowds out other evidence", () => {
     const churn = Array.from({ length: 300 }, (_, i) =>
