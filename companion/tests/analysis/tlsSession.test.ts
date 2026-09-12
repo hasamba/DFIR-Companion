@@ -7,6 +7,7 @@ import {
   certIdentity,
   tallyTls,
   mapTlsRows,
+  TLS_SHAPES_MAX,
   type TlsObservation,
 } from "../../src/analysis/tlsSession.js";
 import { parseNetworkLogs } from "../../src/analysis/networkImport.js";
@@ -311,7 +312,14 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
     const failed = rows([{ ...base(), established: false }])[0];
     expect(failed.description).toContain("[not established]");
     const resumedNoCert = rows([
-      { ...base(), resumed: true, subject: undefined, issuer: undefined, cert: undefined },
+      {
+        ...base(),
+        resumed: true,
+        subject: undefined,
+        issuer: undefined,
+        cert: undefined,
+        certChainFuids: undefined,
+      },
     ])[0];
     expect(resumedNoCert.description).toContain("[session resumed]");
     expect(resumedNoCert.description).toContain("[no certificate observed in this record]");
@@ -353,6 +361,29 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
     const b = rows([{ ...base(), subject: `CN=${"q".repeat(300)}2` }])[0];
     expect(a.aggKey).not.toBe(b.aggKey);
     expect(a.description).not.toBe(b.description);
+  });
+
+  it("a chain FUID is an observed certificate; a cert identity is never a bare hex run", () => {
+    const fuidOnly = rows([
+      { ...base(), subject: undefined, issuer: undefined, cert: undefined, certChainFuids: ["Fleaf"] },
+    ])[0];
+    expect(fuidOnly.description).not.toContain("no certificate observed");
+    expect(fuidOnly.description).toContain("[cert: identity unavailable]");
+    const x = rows([readZeekX509(ZEEK_X509, "")])[0];
+    expect(x.description).toMatch(/cert identity certid-v1:[0-9a-f]{8}…[0-9a-f]{4}/);
+    expect(x.description).not.toMatch(/[0-9a-f]{32}/i);
+  });
+
+  it("distinct shapes are bounded during ingestion; the rest fold into one overflow row", () => {
+    const tally = new Map();
+    for (let i = 0; i < TLS_SHAPES_MAX + 50; i++) tallyTls({ ...base(), subject: `CN=cert-${i}` }, tally);
+    expect(tally.size).toBe(TLS_SHAPES_MAX + 1);
+    const r = mapTlsRows(tally, 5);
+    const over = r.find((e) => e.description.startsWith("[overflow:"))!;
+    expect(over.description).toContain(
+      "50 TLS records in shapes beyond 8192 distinct ones folded; none shown",
+    );
+    expect(over.canonical?.tls?.records).toBe(50);
   });
 
   it("selects the most-seen rows first under a budget", () => {

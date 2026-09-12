@@ -244,6 +244,8 @@ export interface TlsTally {
   first: TlsObservation;
   count: number;
   firstTs: string;
+  /** The overflow row: shapes beyond TLS_SHAPES_MAX folded here; `first` carries no facts. */
+  overflow?: boolean;
 }
 
 // Every keyed fact, absent as `-`, an empty string as `e:` (its own value), free text as a digest of
@@ -277,6 +279,10 @@ export function tlsKey(o: TlsObservation): string {
   ].join("|");
 }
 
+/** Distinct row shapes one import keeps; every later NEW shape folds into one overflow row per kind. */
+export const TLS_SHAPES_MAX = 8192;
+const OVERFLOW_KEY = (kind: TlsObservation["kind"]) => `${kind === "session" ? "tls" : "cert"}|overflow`;
+
 export function tallyTls(o: TlsObservation, sink: Map<string, TlsTally>): void {
   // A certificate record with no identity yields no certificate row: its facts are on the session.
   if (o.kind === "certificate" && !o.cert) return;
@@ -285,6 +291,24 @@ export function tallyTls(o: TlsObservation, sink: Map<string, TlsTally>): void {
   if (existing) {
     existing.count += 1;
     if (o.timestamp && (!existing.firstTs || o.timestamp < existing.firstTs)) existing.firstTs = o.timestamp;
+    return;
+  }
+  // The shapes are attacker-controlled (a server can present a new subject per session), so the
+  // map is bounded DURING ingestion, not after: past the cap a new shape joins one overflow row
+  // that shows no shape as representative.
+  if (sink.size >= TLS_SHAPES_MAX) {
+    const ok = OVERFLOW_KEY(o.kind);
+    const over = sink.get(ok);
+    if (over) {
+      over.count += 1;
+      if (o.timestamp && o.timestamp < over.firstTs) over.firstTs = o.timestamp;
+    } else
+      sink.set(ok, {
+        first: { source: o.source, kind: o.kind, timestamp: o.timestamp },
+        count: 1,
+        firstTs: o.timestamp,
+        overflow: true,
+      });
     return;
   }
   sink.set(key, { first: o, count: 1, firstTs: o.timestamp });
@@ -303,7 +327,7 @@ function certWords(o: TlsObservation): string {
   const ref = !o.cert
     ? "identity unavailable"
     : o.cert.kind === "identity"
-      ? `cert identity ${o.cert.value}`
+      ? `cert identity ${breakHashRuns(o.cert.value)}`
       : `${o.cert.alg === "sha256" ? "sha256" : "fp"} ${ends(o.cert.value)}`;
   return [
     o.subject !== undefined ? `subject ${show(o.subject)}` : "",
@@ -324,7 +348,12 @@ function sessionTags(o: TlsObservation): string[] {
     .filter(Boolean)
     .join(", ");
   if (proto) tags.push(proto);
-  const hasCert = o.subject !== undefined || o.issuer !== undefined || o.cert !== undefined;
+  // A chain FUID is Zeek saying it saw a certificate, even when the export kept no other field.
+  const hasCert =
+    o.subject !== undefined ||
+    o.issuer !== undefined ||
+    o.cert !== undefined ||
+    (o.certChainFuids?.length ?? 0) > 0;
   tags.push(hasCert ? `cert: ${certWords(o)}` : "no certificate observed in this record");
   if (o.validation !== undefined) tags.push(`chain check: ${show(o.validation)}`);
   if (o.established === false) tags.push("not established");
@@ -417,11 +446,15 @@ function envelopeOf(o: TlsObservation, count: number): CanonicalEventEnvelope {
 
 function mapTlsRow(t: TlsTally): MappedEvent {
   const o = t.first;
-  const key = tlsKey(o);
+  const key = t.overflow ? OVERFLOW_KEY(o.kind) : tlsKey(o);
   const mark = identityMark(key);
   let description: string;
   let lossy: boolean;
-  if (o.kind === "certificate") {
+  if (t.overflow) {
+    const what = o.kind === "session" ? "TLS" : "certificate";
+    description = `[overflow: ${t.count} ${what} record${t.count === 1 ? "" : "s"} in shapes beyond ${TLS_SHAPES_MAX} distinct ones folded; none shown]`;
+    lossy = true;
+  } else if (o.kind === "certificate") {
     // Attributes are the FIRST observation's; the row is lossy by definition.
     const tag = certificateTag(o);
     const tail = ` — ${t.count} certificate record${t.count === 1 ? "" : "s"}`;
