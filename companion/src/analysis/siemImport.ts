@@ -911,7 +911,7 @@ export function mapWindows(
   // behind the 600-char description.
   const rawMessage = firstStr(rec, ["message", "Message"]).trim();
   const def: WinEventDef = defender?.def ??
-    (/dns-client/i.test(channel) ? DNS_CLIENT_EVENTS[eid] : table[eid]) ?? {
+    (/dns[ -]?client/i.test(channel) ? DNS_CLIENT_EVENTS[eid] : table[eid]) ?? {
       label: oneLine(rawMessage.split(/[\r\n]/)[0] || `Event ${eid}`).slice(0, 120),
       severity: "Info",
     };
@@ -927,7 +927,7 @@ export function mapWindows(
   // unrelated Application event quoting the word IEX is promoted and tagged T1059.001.
   const psText = isPwsh ? firstStr(ed, ["ScriptBlockText", "Payload"]) : str(getCI(ed, "ScriptBlockText"));
   const accts = winAccounts(ed);
-  const subject = renderFields(ed, SUBJECT_KEYS);
+  const subject = renderFields(ed, def.kind === "dns" ? SUBJECT_KEYS : [...SUBJECT_KEYS, "QueryName"]); // the overlay owns it
   let description = defender
     ? defenderDescription(def.label, eid, accts, subject, host)
     : `${tool} ${def.label} (EID ${eid})`;

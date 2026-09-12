@@ -530,6 +530,43 @@ describe("DNS Client operational log", () => {
     expect(flat.events[0].canonical?.dns?.state).toBe("success");
   });
 
+  it("the friendly channel spelling is the DNS Client log too", () => {
+    const friendly = (ed: Record<string, string>) => ({
+      "@timestamp": "2026-03-01T10:00:00Z",
+      log_name: "Microsoft-Windows-DNS Client Events/Operational",
+      computer_name: "WS-01",
+      event_id: 3008,
+      event_data: ed,
+    });
+    const r = parseSiemExport(
+      elastic(
+        friendly({
+          QueryName: "one.example",
+          QueryType: "1",
+          QueryStatus: "0",
+          QueryResults: "type: 1 192.0.2.1;",
+        }),
+        friendly({ QueryName: "two.example", QueryType: "1", QueryStatus: "9003", QueryResults: "" }),
+      ),
+    );
+    expect(r.events).toHaveLength(2);
+    expect(r.events.every((e) => e.description.includes("[query: "))).toBe(true);
+    expect(r.iocs.map((i) => i.value)).toEqual(expect.arrayContaining(["one.example", "two.example"]));
+  });
+
+  it("a record the overlay does not own still keys on its QueryName", () => {
+    const other = (name: string) => ({
+      "@timestamp": "2026-03-01T10:00:00Z",
+      log_name: "Some-Vendor/Operational",
+      computer_name: "WS-01",
+      event_id: 3008,
+      event_data: { QueryName: name },
+    });
+    const r = parseSiemExport(elastic(other("one.example"), other("two.example")));
+    expect(r.events).toHaveLength(2);
+    expect(r.events[0].description).toContain("QueryName=");
+  });
+
   it("an Application-channel 3008 is not a DNS row", () => {
     const r = parseSiemExport(
       elastic({
