@@ -135,6 +135,7 @@ export const canonicalEventEnvelopeSchema = z.object({
     .object({
       query: z.string(),
       queryValid: z.boolean(),
+      indicator: z.boolean(),
       queryType: z.number().int().nonnegative().optional(),
       status: z.number().int().nonnegative().optional(),
       state: z.string().min(1),

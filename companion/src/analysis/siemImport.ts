@@ -1265,7 +1265,7 @@ export function mapWindows(
   textIocs(psText, iocSink);
   // The queried name is the lead even when it never resolved (a DGA name IS the indicator) — but
   // only a real name; the returned addresses never are (nothing observed a connection).
-  if (dq?.dns.queryValid) addIoc(iocSink, "domain", dq.dns.query);
+  if (dq?.dns.indicator) addIoc(iocSink, "domain", dq.dns.query);
 
   const recordIdentity = evtxRecordIdentity(channel, getCI(rec, "EventRecordID"));
 

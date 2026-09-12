@@ -327,8 +327,8 @@ record establishes, and no more:
   resolver]`, `[no records of the queried type]`, `[timed out — no answer]`, `[refused]`, `[server
   failure]`, or `[status 1234 (not in the table)]` for a code the table does not name — never read
   as success or failure. A record that carries no status (3006) says `[outcome not in this
-  record]`; a 3006 also says whether the call went to a server at all (`[not a network query —
-  answered locally, from cache or a local name]`), because a call is not a transmission. A resolved query and a NXDOMAIN of the same name are two rows; a re-query answered
+  record]`; a 3006 also says whether the call went to a server at all (`[not a network query]`),
+  because a call is not a transmission — and it does not say the call was answered. A resolved query and a NXDOMAIN of the same name are two rows; a re-query answered
   with the same set of values is one row with a count and a first/last time — **the count is how
   many times that answer was seen, not how many values it had, and the row does not keep each
   observation's time**.
@@ -337,7 +337,8 @@ record establishes, and no more:
   ADDITIONAL-section record, an unrelated AAAA on an A query) reads exactly like an answer. The row
   therefore never says "resolves to", and a returned address is **never an indicator** — nothing in
   the record observed a connection to it. A queried name is a domain indicator even when it never
-  resolved (a name that fails is still the lead), but only when it is a real name: a query name
+  resolved (a name that fails is still the lead), but only when it is a real name with at least one dot (`wpad` is a valid query and not an
+  indicator): a query name
   that is not one (`good.example] [returned: …`, a path) is shown neutralised, marked `[query name
   is not a valid name]`, and mints nothing.
 - **Whose view it is.** These records are the endpoint's own stub resolver's view: the answer is

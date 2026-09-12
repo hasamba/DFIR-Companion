@@ -48,9 +48,9 @@ const TYPE_NAMES: Record<number, string> = {
   65: "HTTPS",
   255: "ANY",
 };
-// RR types whose data Windows writes as one owner name: NS, CNAME, PTR, MX (the exchange), SRV (the
-// target), DNAME. TXT (16) stays case-sensitive data.
-const NAME_TYPES = new Set([2, 5, 12, 15, 33, 39]);
+// RR types whose data Windows writes as one owner name: NS, CNAME, SOA (the primary), PTR, MX (the
+// exchange), SRV (the target), DNAME. TXT (16) stays case-sensitive data.
+const NAME_TYPES = new Set([2, 5, 6, 12, 15, 33, 39]);
 const ADDRESS_TYPES = new Set([1, 28]);
 
 export const RESULTS_SHOWN_MAX = 8;
@@ -116,13 +116,19 @@ export interface ResultsReading {
 // (`_ldap._tcp.dc._msdcs.example`), and Windows issues exactly those for DC discovery.
 const LABEL = /^_?[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$/;
 
-/** A name a resolver would answer: 1–253 characters of valid labels, at least two of them. */
+/**
+ * A name a resolver would answer: 1–253 characters of valid labels. One label (`wpad`, a NetBIOS-
+ * style name) is a valid QUERY — whether it is an indicator is a separate rule (isIndicatorName).
+ */
 export function isValidQueryName(raw: string): boolean {
   const name = raw.replace(/\.$/, "");
   if (!name || name.length > 253) return false;
-  const labels = name.split(".");
-  return labels.length >= 2 && labels.every((l) => l.length >= 1 && l.length <= 63 && LABEL.test(l));
+  return name.split(".").every((l) => l.length >= 1 && l.length <= 63 && LABEL.test(l));
 }
+
+/** The indicator rule the mapper always had: a valid name with at least one dot. */
+export const isIndicatorName = (raw: string): boolean =>
+  isValidQueryName(raw) && raw.replace(/\.$/, "").includes(".");
 
 const V4_MAPPED = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i;
 
@@ -208,6 +214,8 @@ interface DnsOverlayInput {
 export interface DnsEnvelope {
   query: string;
   queryValid: boolean;
+  /** queryValid AND at least one dot — the mapper's indicator rule. */
+  indicator: boolean;
   queryType?: number;
   status?: number;
   state: DnsState;
@@ -238,12 +246,9 @@ function networkQuery(input: DnsOverlayInput): { value?: boolean; words: string;
   if (!input.has("IsNetworkQuery")) return { words: "", key: "-" };
   const raw = input.field("IsNetworkQuery").trim();
   if (raw === "1") return { value: true, words: "network query", key: "1" };
-  if (raw === "0")
-    return {
-      value: false,
-      words: "not a network query — answered locally, from cache or a local name",
-      key: "0",
-    };
+  // Said literally: the flag does not establish that the call was answered, only that no query
+  // went to a server; 3006 carries no status and no results.
+  if (raw === "0") return { value: false, words: "not a network query", key: "0" };
   return { words: "IsNetworkQuery not readable", key: "?" };
 }
 
@@ -333,6 +338,7 @@ function overlayOf(input: DnsOverlayInput): DnsOverlay {
     return {
       query: canonical,
       queryValid,
+      indicator: isIndicatorName(rawName),
       ...(type.type !== undefined ? { queryType: type.type } : {}),
       ...(status.reading.code !== undefined ? { status: status.reading.code } : {}),
       state: status.reading.state,

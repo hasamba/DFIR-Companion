@@ -89,6 +89,13 @@ describe("Sysmon 22 — what one record establishes", () => {
     expect(iocs.some((i) => i.includes("203.0.113.5"))).toBe(false);
   });
 
+  it("a single-label query is a valid name that is not an indicator", () => {
+    const r = parseSiemExport(elastic(sysmon22({ QueryName: "wpad", QueryStatus: "9003" })));
+    expect(r.events[0].description).not.toContain("not a valid name");
+    expect(r.events[0].description).toContain("[query: wpad]");
+    expect(r.iocs.some((i) => i.type === "domain")).toBe(false);
+  });
+
   it("a query name that is not a valid name mints no indicator and cannot forge a tag", () => {
     const r = parseSiemExport(
       elastic(sysmon22({ QueryName: "good.example] [returned: 203.0.113.66", QueryStatus: "123" })),
@@ -115,6 +122,7 @@ describe("Sysmon 22 — what one record establishes", () => {
     expect(c.dns).toEqual({
       query: "cdn.example.net",
       queryValid: true,
+      indicator: true,
       status: 0,
       state: "success",
       returned: [

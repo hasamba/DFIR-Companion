@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   dnsOverlay,
+  isIndicatorName,
   isValidQueryName,
   readQueryResults,
   readQueryStatus,
@@ -112,7 +113,10 @@ describe("isValidQueryName", () => {
     expect(isValidQueryName("xn--80ak6aa92e.example")).toBe(true);
     expect(isValidQueryName("_ldap._tcp.dc._msdcs.example")).toBe(true); // an SRV owner, not a hostname
     expect(isValidQueryName("__x.example")).toBe(false);
-    expect(isValidQueryName("localhost")).toBe(false); // no dot: not an indicator
+    expect(isValidQueryName("localhost")).toBe(true); // a valid single-label query…
+    expect(isValidQueryName("wpad")).toBe(true);
+    expect(isIndicatorName("wpad")).toBe(false); // …that is not an indicator (the mapper's dot rule)
+    expect(isIndicatorName("wpad.example")).toBe(true);
     expect(isValidQueryName("good.example] [returned: 203.0.113.66")).toBe(false);
     expect(isValidQueryName("/tmp/payload.exe")).toBe(false);
     expect(isValidQueryName("-bad.example")).toBe(false);
@@ -138,6 +142,7 @@ describe("dnsOverlay — what one record establishes", () => {
     expect(o.dns).toMatchObject({
       query: "cdn.example.net",
       queryValid: true,
+      indicator: true,
       status: 0,
       state: "success",
       ownership: "not in this record",
@@ -318,6 +323,9 @@ describe("dnsOverlay — what one record establishes", () => {
     });
     expect(srvUp.identity).toBe(srvLo.identity);
     expect(srvUp.dns.returned[0]).toEqual({ type: 33, value: "dc01.example", kind: "name" });
+    const soa = (c: string) =>
+      overlay({ QueryName: "example", QueryStatus: "0", QueryResults: `type: 6 ${c};` });
+    expect(soa("NS1.Example").identity).toBe(soa("ns1.example").identity);
     const mx = (c: string) =>
       overlay({ QueryName: "example", QueryStatus: "0", QueryResults: `type: 15 ${c};` });
     expect(mx("MAIL.Example").identity).toBe(mx("mail.example").identity);
@@ -354,9 +362,8 @@ describe("dnsOverlay — what one record establishes", () => {
       { statusField: "" },
     );
     const net = overlay({ QueryName: "a.example", QueryType: "1", IsNetworkQuery: "1" }, { statusField: "" });
-    expect(local.description).toContain(
-      "[not a network query — answered locally, from cache or a local name]",
-    );
+    expect(local.description).toContain("[not a network query]");
+    expect(local.description).not.toContain("answered");
     expect(net.description).toContain("[network query]");
     expect(local.identity).not.toBe(net.identity);
     expect(local.dns.networkQuery).toBe(false);
