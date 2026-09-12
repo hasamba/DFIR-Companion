@@ -216,8 +216,10 @@ export function readQueryResults(raw: string | undefined): ResultsReading {
   // The two sections are framed with the run's length, so a CNAME that sorts to the front of the
   // unordered section can never read as a longer chain.
   const identity = `chain${lead}:${all.slice(0, lead).map(frame).join("|")}|set:${all.slice(lead).map(frame).sort().join("|")}`;
+  // An empty value is shown as words that a literal value could spell — so it counts as lossy and
+  // the row carries the mark, keeping `type: 16;` apart from `type: 16 (value not in this record);`.
   const clipped = all.some(
-    (v) => v.value.length > VALUE_SHOWN_MAX || breakHashRuns(showToken(v.value)) !== v.value,
+    (v) => !v.value || v.value.length > VALUE_SHOWN_MAX || breakHashRuns(showToken(v.value)) !== v.value,
   );
   const head = values.slice(0, RESULTS_SHOWN_MAX);
   // Only a run of LEADING CNAME steps is arrow-linked — that is the one chain Windows writes in
