@@ -517,23 +517,27 @@ names both. Each of the application's five events reads for what its record esta
   `https://www.google.com/m8/feeds`, the Admin SDK directory (users, groups, members, org units,
   devices, domains, roles, user security and schemas), data transfer, reports and group
   settings/migration, Cloud Identity groups, policies and inbound SSO, Vault eDiscovery,
-  `cloud-platform`, Apps Script and Chat messages/import. **Medium**: metadata-only and activity
-  scopes (`gmail.metadata`, `gmail.labels`, the Gmail add-on current-message scopes,
-  `drive.metadata*`, `drive.activity*`), read-only Calendar, Contacts, Keep, Tasks, Chat spaces
-  and memberships, `directory.readonly`, the read-only Admin SDK and Cloud Identity device and
-  settings scopes, licensing and alerts, the People `user.*.read` scopes — and **every scope the
-  table does not name** (conservative: a scope Google adds after this table is written reads
-  Medium until the table is updated). **Low**: per-file and app-data Drive (`drive.file`,
-  `drive.appdata`, `drive.install`, `drive.apps.readonly`), free/busy and public calendar
-  reads, and the identity-only scopes (`openid`, `email`, `profile`, `userinfo.*`). Four classes
+  `cloud-platform`, Cloud Search, Classroom rosters, coursework and submissions, Photos, Apps
+  Script and Chat messages/import. **Medium**: metadata-only and activity scopes
+  (`gmail.metadata`, `gmail.labels`, the Gmail add-on current-message scopes, `drive.metadata*`,
+  `drive.activity*`), read-only Calendar, Contacts, Keep, Tasks, Chat spaces and memberships,
+  `directory.readonly`, the read-only Admin SDK and Cloud Identity device, alias, schema and
+  settings scopes, licensing and alerts, Classroom courses and announcements, Cloud Search
+  settings and indexing, the People `user.*.read` scopes — and **every scope the table does not
+  name** (conservative: a scope Google adds after this table is written reads Medium until the
+  table is updated). **Low**: per-file and app-data Drive (`drive.file`, `drive.appdata`,
+  `drive.install`, `drive.apps.readonly`), free/busy and public calendar reads, Classroom topics
+  and add-ons, Meet space creation, and the identity-only scopes (`openid`, `email`, `profile`,
+  `userinfo.*`). Four classes
   are shown and the rest counted. A record with no `scope` reads `scopes not in this record` and
   stays High — the table cannot say less when the record does not.
 - **`activity`** — `API call drive.drive.files.get by Mail Backup Pro (client …) 4096 bytes
   returned product DRIVE — bytes returned are not proof that file contents were downloaded`. The
   application is the actor here (it called the API on the user's behalf). Info. A response size
   is shown only when the record carries `num_response_bytes`, and it is kept as the record's
-  exact digits (the field is a 64-bit integer); two calls to one method that returned different
-  sizes are two rows, so a large transfer never folds under a small one.
+  exact digits (the field is a 64-bit integer; an export that wrote it as a bare number beyond
+  2^53 was rounded by the JSON parser and is not claimed); two calls to one method that returned
+  different sizes are two rows, so a large transfer never folds under a small one.
 - **`request`** — `requests access: … for 1 scope: gmail.readonly requester bob@… — access
   requested, not granted by this record`, Low. A delegated request reads `delegated request —
   Google does not display the requested scopes` and claims no scope count.
@@ -550,11 +554,15 @@ own id joins the key so two applications never fold behind one display name), th
 scopes (a reordered duplicate folds; a real difference is a second row), the API method with its
 response size and product, and the request, requester and rejection fields; every Workspace row
 of any application now keys on the tenant (`id.customerId`), so two customers' identical rows
-stay two. Token rows carry the canonical envelope: the user and the application typed as actor
-and object (or actor and subject on an `activity`; a requester named on a `request` is the
-subject), the cloud principal following the actor (the client on an `activity`, the user's
-profile id otherwise), the tenant, the API method as the resource, and a locator to the record
-and event they came from.
+stay two. The record's actor is read for what it is: a user (`email`/`profileId`), a service
+account or two-legged-OAuth caller (`callerType: KEY` and its `key`), or an application
+(`applicationInfo.oauthClientId`); two keys are two rows, and a record that names no actor
+claims none. Token rows carry the canonical envelope: the actor and the application typed as
+actor and object (or actor and subject on an `activity`; a requester named on a `request` is
+the subject), the cloud principal following the actor (the client on an `activity`, the user's
+profile id, the key or the application's client id otherwise, typed as `user`, `key` or
+`application`), the tenant, the API method as the resource, and a locator to the record and
+event they came from.
 
 The lifecycle across records — an authorization, the activity under it, the revocation, "every
 user who authorized this client" — is a join by `client_id` across users and time, not a

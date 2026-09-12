@@ -49,6 +49,9 @@ describe("readGwsParams — every Reports API value kind, by its kind", () => {
       p("d", { intValue: "-9223372036854775808" }),
       p("e", { intValue: "+0042" }),
       p("f", { intValue: 1.5 }),
+      // an unquoted number beyond 2^53 was rounded by JSON.parse before the reader saw it
+      p("g", { intValue: 9007199254740992 }),
+      p("h", { intValue: 9007199254740991 }),
     ]);
     expect(out).toEqual([
       { name: "a", intText: "9007199254740993" },
@@ -57,6 +60,8 @@ describe("readGwsParams — every Reports API value kind, by its kind", () => {
       { name: "d", intText: "-9223372036854775808" },
       { name: "e", intText: "42", intValue: 42 },
       { name: "f" },
+      { name: "g" },
+      { name: "h", intText: "9007199254740991", intValue: 9007199254740991 },
     ]);
   });
   it("reads a singular messageValue and a multiMessageValue into one list of messages each", () => {
@@ -289,6 +294,17 @@ describe("GWS_SCOPE_TIERS — a literal table", () => {
     G + "chat.messages.readonly",
     G + "chat.spaces",
     G + "chat.import",
+    G + "classroom.rosters",
+    G + "classroom.rosters.readonly",
+    G + "classroom.coursework.students",
+    G + "classroom.coursework.students.readonly",
+    G + "classroom.student-submissions.students.readonly",
+    G + "classroom.guardianlinks.students",
+    G + "classroom.guardianlinks.students.readonly",
+    G + "cloud_search",
+    G + "cloud_search.query",
+    G + "photoslibrary",
+    G + "photoslibrary.readonly",
   ];
   const medium = [
     G + "gmail.metadata",
@@ -351,6 +367,27 @@ describe("GWS_SCOPE_TIERS — a literal table", () => {
     G + "script.processes",
     G + "script.metrics",
     G + "script.webapp.deploy",
+    G + "admin.directory.user.alias.readonly",
+    G + "admin.directory.userschema.readonly",
+    G + "admin.directory.notifications",
+    G + "classroom.courses",
+    G + "classroom.courses.readonly",
+    G + "classroom.profile.emails",
+    G + "classroom.coursework.me",
+    G + "classroom.coursework.me.readonly",
+    G + "classroom.student-submissions.me.readonly",
+    G + "classroom.announcements",
+    G + "classroom.announcements.readonly",
+    G + "classroom.guardianlinks.me.readonly",
+    G + "classroom.courseworkmaterials",
+    G + "classroom.courseworkmaterials.readonly",
+    G + "cloud_search.indexing",
+    G + "cloud_search.settings",
+    G + "cloud_search.settings.indexing",
+    G + "cloud_search.settings.query",
+    G + "cloud_search.debug",
+    G + "photoslibrary.sharing",
+    G + "meetings.space.readonly",
   ];
   const low = [
     G + "drive.file",
@@ -370,6 +407,19 @@ describe("GWS_SCOPE_TIERS — a literal table", () => {
     G + "userinfo.profile",
     G + "profile.agerange.read",
     G + "profile.language.read",
+    G + "classroom.profile.photos",
+    G + "classroom.topics",
+    G + "classroom.topics.readonly",
+    G + "classroom.push-notifications",
+    G + "classroom.addons.student",
+    G + "classroom.addons.teacher",
+    G + "cloud_search.stats",
+    G + "cloud_search.stats.indexing",
+    G + "photoslibrary.appendonly",
+    G + "photoslibrary.readonly.appcreateddata",
+    G + "photoslibrary.edit.appcreateddata",
+    G + "meetings.space.created",
+    G + "meetings.space.settings",
   ];
   it("every listed URI has its tier and the table holds exactly these", () => {
     for (const s of high) expect(scopeTier(s), s).toBe("High");
@@ -386,6 +436,12 @@ describe("GWS_SCOPE_TIERS — a literal table", () => {
     expect(scopeTier("https://www.google.com/calendar/feeds")).toBe("High");
     expect(scopeTier("https://www.google.com/m8/feeds")).toBe("High");
     expect(scopeTier(G + "drive.meet.readonly")).toBe("High");
+    // Read-only siblings of High directory scopes read Medium, never unknown; Classroom and Cloud
+    // Search content scopes are classified.
+    expect(scopeTier(G + "admin.directory.user.alias.readonly")).toBe("Medium");
+    expect(scopeTier(G + "admin.directory.userschema.readonly")).toBe("Medium");
+    expect(scopeTier(G + "classroom.student-submissions.students.readonly")).toBe("High");
+    expect(scopeTier(G + "cloud_search.query")).toBe("High");
     expect(scopeTier(G + "gmail.readonly ")).toBe("High"); // whitespace tolerated
     expect(scopeTier("")).toBe("Medium");
   });

@@ -390,6 +390,144 @@ describe("parseGoogleWorkspaceReport — OAuth token rows", () => {
     ).toHaveLength(1);
   });
 
+  it("two sibling events of one record with no client id never fold — the event locator keys them", () => {
+    const r = parseGoogleWorkspaceReport(
+      JSON.stringify([
+        act({
+          id: { applicationName: "token", uniqueQualifier: "q-shared" },
+          events: [
+            {
+              type: "auth",
+              name: "authorize",
+              parameters: [
+                { name: "app_name", value: "App A" },
+                { name: "scope", multiValue: [G + "drive"] },
+              ],
+            },
+            {
+              type: "auth",
+              name: "authorize",
+              parameters: [
+                { name: "app_name", value: "App B" },
+                { name: "scope", multiValue: [G + "drive"] },
+              ],
+            },
+          ],
+        }),
+      ]),
+    );
+    expect(r.events).toHaveLength(2);
+    expect(r.events.map((e) => e.count ?? 1)).toEqual([1, 1]);
+  });
+
+  it("a KEY actor (service account / 2LO) and an APPLICATION actor are read for what they are", () => {
+    const robot = (key: string) =>
+      act({
+        actor: { callerType: "KEY", key },
+        id: { applicationName: "token" },
+        events: [
+          {
+            type: "auth",
+            name: "authorize",
+            parameters: [...clientParams, { name: "scope", multiValue: [G + "drive"] }],
+          },
+        ],
+      });
+    const r = parseGoogleWorkspaceReport(JSON.stringify([robot("robot-a"), robot("robot-b")]));
+    // Two keys are two rows, never one empty actor.
+    expect(r.events).toHaveLength(2);
+    const e = r.events[0];
+    expect(e.description).toContain("by robot-a");
+    expect(e.canonical?.actor).toEqual({ kind: "cloud_principal", id: "robot-a" });
+    expect(e.canonical?.cloud).toMatchObject({ principalId: "robot-a", principalType: "key" });
+    expect(e.canonical?.fieldProvenance["actor.id"]).toMatchObject({ rawFields: ["actor.key"] });
+    expect(canonicalConformanceIssues(e.canonical)).toEqual([]);
+
+    const app = parseGoogleWorkspaceReport(
+      JSON.stringify([
+        act({
+          actor: {
+            callerType: "APPLICATION",
+            applicationInfo: {
+              oauthClientId: "777-app.apps.googleusercontent.com",
+              applicationName: "Sync Bot",
+            },
+          },
+          id: { applicationName: "token" },
+          events: [{ type: "auth", name: "revoke", parameters: clientParams }],
+        }),
+      ]),
+    ).events[0];
+    expect(app.description).toContain("by Sync Bot");
+    expect(app.canonical?.actor).toEqual({
+      kind: "cloud_principal",
+      id: "777-app.apps.googleusercontent.com",
+      name: "Sync Bot",
+    });
+    expect(app.canonical?.cloud).toMatchObject({
+      principalId: "777-app.apps.googleusercontent.com",
+      principalType: "application",
+    });
+    expect(canonicalConformanceIssues(app.canonical)).toEqual([]);
+  });
+
+  it("a record with no actor claims none: no actor entity, no principal type, and the caller type keys it", () => {
+    const r = parseGoogleWorkspaceReport(
+      JSON.stringify([
+        act({
+          actor: { callerType: "SYSTEM" },
+          id: { applicationName: "token" },
+          events: [{ type: "auth", name: "revoke", parameters: clientParams }],
+        }),
+      ]),
+    );
+    const e = r.events[0];
+    expect(e.description).toBe(
+      `Google Workspace token: revoke from 203.0.113.10 revokes Mail Backup Pro (client ${CLIENT})`,
+    );
+    expect(e.canonical?.actor).toBeUndefined();
+    expect(e.canonical?.cloud?.principalId).toBeUndefined();
+    expect(e.canonical?.cloud?.principalType).toBeUndefined();
+    expect(canonicalConformanceIssues(e.canonical)).toEqual([]);
+    // Other applications' rows key on the same actor identity: two robots are two login rows.
+    const logins = parseGoogleWorkspaceReport(
+      JSON.stringify([
+        act({ actor: { callerType: "KEY", key: "k-1" } }),
+        act({ actor: { callerType: "KEY", key: "k-2" } }),
+      ]),
+    );
+    expect(logins.events).toHaveLength(2);
+  });
+
+  it("an unquoted byte count beyond 2^53 in the raw JSON is not claimed — JSON.parse already rounded it", () => {
+    const raw = `[${JSON.stringify(
+      token("activity", [
+        ...clientParams,
+        { name: "api_name", value: "drive" },
+        { name: "method_name", value: "drive.files.get" },
+      ]),
+    ).replace(
+      '"method_name","value":"drive.files.get"}',
+      '"method_name","value":"drive.files.get"},{"name":"num_response_bytes","intValue":9007199254740993}',
+    )}]`;
+    expect(raw).toContain('"intValue":9007199254740993');
+    const e = parseGoogleWorkspaceReport(raw).events[0];
+    expect(e.description).not.toContain("bytes returned");
+    expect(e.description).toContain("API call drive.drive.files.get");
+    // The quoted form — what Google emits — keeps every digit.
+    const quoted = parseGoogleWorkspaceReport(
+      JSON.stringify([
+        token("activity", [
+          ...clientParams,
+          { name: "api_name", value: "drive" },
+          { name: "method_name", value: "drive.files.get" },
+          { name: "num_response_bytes", intValue: "9007199254740993" },
+        ]),
+      ]),
+    ).events[0];
+    expect(quoted.description).toContain("9007199254740993 bytes returned");
+  });
+
   it("a second event in one record gets its own locator", () => {
     const r = parseGoogleWorkspaceReport(
       JSON.stringify([

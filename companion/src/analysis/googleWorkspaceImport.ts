@@ -226,6 +226,48 @@ function targetLabel(event: Row): string {
 }
 
 const TOKEN_APP = "token";
+
+// The record's actor, read for what it is. The Reports API names a USER by `email`/`profileId`,
+// a service-account or 2LO caller by `callerType: "KEY"` + `key`, and an application by
+// `applicationInfo.oauthClientId`; a record may carry none. The identity is the discriminator the
+// key and the envelope use — two robots with two keys are two rows, never one empty actor.
+interface GwsActor {
+  /** For the key: the email, else the profile id, else `key:<key>`, else `app:<client id>`, else the caller type. */
+  identity: string;
+  /** The words: the email, the profile id, the key or the application's name. */
+  label: string;
+  kind: "user" | "key" | "application" | "";
+  email: string;
+  profileId: string;
+  key: string;
+  appId: string;
+  appName: string;
+}
+
+function readActor(rec: Row): GwsActor {
+  const email = text(getPath(rec, "actor.email"));
+  const profileId = text(getPath(rec, "actor.profileId"));
+  const callerType = text(getPath(rec, "actor.callerType")).trim().toUpperCase();
+  const key = text(getPath(rec, "actor.key"));
+  const appId = text(getPath(rec, "actor.applicationInfo.oauthClientId"));
+  const appName = text(getPath(rec, "actor.applicationInfo.applicationName"));
+  const kind: GwsActor["kind"] =
+    email || profileId
+      ? "user"
+      : key || callerType === "KEY"
+        ? "key"
+        : appId || callerType === "APPLICATION"
+          ? "application"
+          : "";
+  const identity =
+    email ||
+    profileId ||
+    (key ? `key:${key}` : "") ||
+    (appId ? `app:${appId}` : "") ||
+    callerType.toLowerCase();
+  const label = email || profileId || key || appName || appId;
+  return { identity, label, kind, email, profileId, key, appId, appName };
+}
 // The head slot is 120 (awsDescription.ts): `Google Workspace token: authorize by <who> from <ip>`
 // with the longest event name (9) and a full IPv6 (39) leaves 36 for the actor, so the source
 // address is never the part a long actor name pushes out.
@@ -244,19 +286,35 @@ function tokenEnvelope(
   ip: string,
   locator: string,
 ): MappedEvent["canonical"] {
-  const email = text(getPath(rec, "actor.email"));
-  const profileId = text(getPath(rec, "actor.profileId"));
+  const who = readActor(rec);
   const tenant = text(getPath(rec, "id.customerId"));
   const observed = text(getPath(rec, "id.time"));
   const recordId = text(getPath(rec, "id.uniqueQualifier"));
+  // The record's actor as an entity: an account for a user; a cloud principal for a key or an
+  // application (its id the key or the client id); nothing when the record names no actor.
   const user =
-    email || profileId
+    who.kind === "user"
       ? {
           kind: "account" as const,
-          ...(email ? { name: email } : {}),
-          ...(profileId ? { id: profileId } : {}),
+          ...(who.email ? { name: who.email } : {}),
+          ...(who.profileId ? { id: who.profileId } : {}),
         }
-      : undefined;
+      : who.kind === "key"
+        ? { kind: "cloud_principal" as const, ...(who.key ? { id: who.key } : {}) }
+        : who.kind === "application"
+          ? {
+              kind: "cloud_principal" as const,
+              ...(who.appId ? { id: who.appId } : {}),
+              ...(who.appName ? { name: who.appName } : {}),
+            }
+          : undefined;
+  const userId = who.kind === "user" ? who.profileId : who.kind === "key" ? who.key : who.appId;
+  const userField =
+    who.kind === "key"
+      ? "actor.key"
+      : who.kind === "application"
+        ? "actor.applicationInfo.oauthClientId"
+        : "actor.profileId";
   const app =
     t.client.id || t.client.name
       ? {
@@ -269,7 +327,8 @@ function tokenEnvelope(
   const activity = t.kind === "activity";
   const requester =
     t.kind === "request" && t.requester ? { kind: "account" as const, name: t.requester } : undefined;
-  const principalId = activity ? t.client.id : profileId;
+  const principalId = activity ? t.client.id : userId;
+  const principalType = activity ? "application" : who.kind;
   return createCanonicalEvent({
     event: { category: "cloud", type: "oauth", action: name, outcome: "success" },
     ...(activity
@@ -284,7 +343,7 @@ function tokenEnvelope(
       provider: "google-workspace",
       ...(tenant ? { tenant } : {}),
       ...(principalId ? { principalId } : {}),
-      principalType: activity ? "application" : "user",
+      ...(principalType ? { principalType } : {}),
       ...(activity && method ? { resource: method } : {}),
     },
     time: { observed, normalized: normalizeTime(observed) },
@@ -302,19 +361,24 @@ function tokenEnvelope(
         ? {
             "actor.id": ["client_id"],
             "actor.name": ["app_name"],
-            "subject.name": ["actor.email"],
-            "subject.id": ["actor.profileId"],
+            "subject.name": [
+              who.kind === "application" ? "actor.applicationInfo.applicationName" : "actor.email",
+            ],
+            "subject.id": [userField],
             "cloud.resource": ["api_name", "method_name"],
           }
         : {
-            "actor.name": ["actor.email"],
-            "actor.id": ["actor.profileId"],
+            "actor.name": [
+              who.kind === "application" ? "actor.applicationInfo.applicationName" : "actor.email",
+            ],
+            "actor.id": [userField],
             "object.id": ["client_id"],
             "object.name": ["app_name"],
             ...(requester ? { "subject.name": ["requester_email"] } : {}),
           }),
       "cloud.tenant": ["id.customerId"],
-      "cloud.principalId": [activity ? "client_id" : "actor.profileId"],
+      "cloud.principalId": [activity ? "client_id" : userField],
+      "cloud.principalType": [activity ? "client_id" : "actor.callerType"],
       ...(ip ? { "network.source.address": ["ipAddress"] } : {}),
     },
   });
@@ -323,14 +387,16 @@ function tokenEnvelope(
 function mapEvent(rec: Row, event: Row, sink: Map<string, SiemIoc>, locator: string): MappedEvent {
   const app = text(getPath(rec, "id.applicationName"));
   const name = text(getCI(event, "name"));
-  const actor = text(getPath(rec, "actor.email") || getPath(rec, "actor.profileId"));
+  const who = readActor(rec);
+  const actor = who.label;
   const ip = cleanIp(text(getCI(rec, "ipAddress")));
   const tenant = text(getPath(rec, "id.customerId"));
   if (ip) addIoc(sink, "ip", ip);
-  // The tenant and the target IDENTITY, bounded with a digest (#931 prerequisite). A document
-  // shared with three people is three rows; two documents with one title are two; two customers'
-  // identical rows are two.
-  const baseKey = `gws|${app}|${name}|${actor}|${ip}|${tenant}|${targetIdentity(event)}`;
+  // The actor's IDENTITY (a key or a client id when the record names no user), the tenant and
+  // the target identity, bounded with a digest (#931 prerequisite). A document shared with three
+  // people is three rows; two documents with one title are two; two customers' identical rows are
+  // two; two robots are two.
+  const baseKey = `gws|${app}|${name}|${who.identity}|${ip}|${tenant}|${targetIdentity(event)}`;
   const timestamp = normalizeTime(text(getPath(rec, "id.time")));
 
   const token = app.toLowerCase() === TOKEN_APP ? decodeGwsToken(name, readGwsParams(event)) : null;
@@ -350,10 +416,11 @@ function mapEvent(rec: Row, event: Row, sink: Map<string, SiemIoc>, locator: str
       }),
       severity: token.severity,
       mitre: [...token.mitre],
-      // The client id is the row's identity; when the record has none, the record's own id joins
-      // so two applications never fold into one row behind a shared display name.
+      // The client id is the row's identity; when the record has none, the EVENT's locator joins
+      // (two events of one record share the record's uniqueQualifier) so two applications never
+      // fold into one row behind a shared display name.
       aggKey: boundedAggKey(
-        `${baseKey}${token.keySegment}${token.client.id ? "" : `|record:${text(getPath(rec, "id.uniqueQualifier")) || locator}`}`.toLowerCase(),
+        `${baseKey}${token.keySegment}${token.client.id ? "" : `|${locator}`}`.toLowerCase(),
       ),
       sources: ["Google Workspace"],
       canonical: tokenEnvelope(rec, token, name, ip, locator),

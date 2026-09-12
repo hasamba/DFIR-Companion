@@ -95,10 +95,11 @@ const INT64_MAX = 2n ** 63n - 1n;
 
 // The wire type is an int64 carried as a string of digits (a number in some exports). The exact
 // digits are kept for the words and the key — 2^53 and 2^53+1 must stay two values — and a
-// number is offered only when it is safe.
+// number is offered only when it is safe. A NUMBER beyond the safe range has already been rounded
+// by the JSON parser, so it is unreadable: no digits are claimed from it.
 function readInt(v: unknown): { intText: string; intValue?: number } | undefined {
   const raw =
-    typeof v === "number" && Number.isInteger(v) ? String(v) : typeof v === "string" ? v.trim() : "";
+    typeof v === "number" && Number.isSafeInteger(v) ? String(v) : typeof v === "string" ? v.trim() : "";
   if (!/^[+-]?\d{1,20}$/.test(raw)) return undefined;
   const big = BigInt(raw);
   if (big < INT64_MIN || big > INT64_MAX) return undefined;
@@ -243,6 +244,17 @@ export const GWS_SCOPE_TIERS: Readonly<Record<string, ScopeTier>> = Object.fromE
     "chat.messages.readonly",
     "chat.spaces",
     "chat.import",
+    "classroom.rosters",
+    "classroom.rosters.readonly",
+    "classroom.coursework.students",
+    "classroom.coursework.students.readonly",
+    "classroom.student-submissions.students.readonly",
+    "classroom.guardianlinks.students",
+    "classroom.guardianlinks.students.readonly",
+    "cloud_search",
+    "cloud_search.query",
+    "photoslibrary",
+    "photoslibrary.readonly",
   ]),
   ...tiered("Medium", [
     "gmail.metadata",
@@ -305,6 +317,27 @@ export const GWS_SCOPE_TIERS: Readonly<Record<string, ScopeTier>> = Object.fromE
     "script.processes",
     "script.metrics",
     "script.webapp.deploy",
+    "admin.directory.user.alias.readonly",
+    "admin.directory.userschema.readonly",
+    "admin.directory.notifications",
+    "classroom.courses",
+    "classroom.courses.readonly",
+    "classroom.profile.emails",
+    "classroom.coursework.me",
+    "classroom.coursework.me.readonly",
+    "classroom.student-submissions.me.readonly",
+    "classroom.announcements",
+    "classroom.announcements.readonly",
+    "classroom.guardianlinks.me.readonly",
+    "classroom.courseworkmaterials",
+    "classroom.courseworkmaterials.readonly",
+    "cloud_search.indexing",
+    "cloud_search.settings",
+    "cloud_search.settings.indexing",
+    "cloud_search.settings.query",
+    "cloud_search.debug",
+    "photoslibrary.sharing",
+    "meetings.space.readonly",
   ]),
   ...tiered("Low", [
     "drive.file",
@@ -324,6 +357,19 @@ export const GWS_SCOPE_TIERS: Readonly<Record<string, ScopeTier>> = Object.fromE
     "userinfo.profile",
     "profile.agerange.read",
     "profile.language.read",
+    "classroom.profile.photos",
+    "classroom.topics",
+    "classroom.topics.readonly",
+    "classroom.push-notifications",
+    "classroom.addons.student",
+    "classroom.addons.teacher",
+    "cloud_search.stats",
+    "cloud_search.stats.indexing",
+    "photoslibrary.appendonly",
+    "photoslibrary.readonly.appcreateddata",
+    "photoslibrary.edit.appcreateddata",
+    "meetings.space.created",
+    "meetings.space.settings",
   ]),
 ]);
 
