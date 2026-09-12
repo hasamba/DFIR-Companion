@@ -704,7 +704,7 @@ describe("parseCombinedLog — what one line establishes", () => {
     expect(r.iocs.some((i) => i.type === "domain")).toBe(false);
     // the host slot of the key is empty — the malformed target is only the row's own path identity,
     // which every row keeps verbatim and last
-    expect(e.aggKey).toContain("|10.30.20.11||form:invalid|");
+    expect(e.aggKey).toContain("|10.30.20.11||form:invalid|p");
   });
 
   it("a peer that is not an address is neither an srcIp nor a second client", () => {
@@ -741,6 +741,25 @@ describe("parseCombinedLog — what one line establishes", () => {
       (overflow.description.match(/\]/g) ?? []).length,
     );
     expect(overflow.description).not.toMatch(/\[[^\]]*$/);
+    expect(r.dropped).toBe(0);
+  });
+
+  it("a path that spells out a key segment cannot collide with the overflow row's key", () => {
+    const ordinary =
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET squid:tcp_hit:none|trailer:overflow|foo HTTP/1.1" 200 0 "-" "curl/8"';
+    const variants = Array.from(
+      { length: 66 },
+      (_, i) =>
+        `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET foo HTTP/1.1" 200 0 "-" "curl/8" TCP_HIT:NONE nonce${i}`,
+    );
+    const r = parseCombinedLog([ordinary, ...variants].join("\n"), {
+      trailerProfile: { squidSlot: 0, source: "declared" },
+    });
+    const overflow = r.events.find((e) => e.description.includes("overflow"))!;
+    expect(overflow).toBeDefined();
+    const plain = r.events.find((e) => e.description.includes("squid:tcp_hit:none|trailer:overflow|foo"))!;
+    expect(plain.count ?? 1).toBe(1);
+    expect(plain.aggKey).not.toBe(overflow.aggKey);
     expect(r.dropped).toBe(0);
   });
 

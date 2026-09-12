@@ -396,7 +396,13 @@ export function mapCombinedLogLine(
   // boundRecordVariants), so a shown trailer cannot fold away silently and cannot explode either.
   const recordKey = `|form:${target.form}${trailer.dispositionKey}`;
   const baseKey = `weblog|${method}|${status}|${client}|${host}${recordKey}${spill ? `|spill:${spill.families.join(",")}` : ""}`;
-  const pathKey = `|${uri.split("?")[0]}`;
+  // The path is the one attacker-controlled part of the key, so it is FRAMED with its own length:
+  // `|p<len>:<path>`. Unframed, a path could spell out another segment — `squid:tcp_hit:none|
+  // trailer:overflow|foo` — and collide with the overflow row's key, hiding it inside an ordinary
+  // row's count. A framed segment cannot: the frame begins with `p` and a length the path cannot
+  // choose (#933 item 1).
+  const path = uri.split("?")[0];
+  const pathKey = `|p${path.length}:${path}`;
 
   const event: MappedEvent = {
     timestamp,
