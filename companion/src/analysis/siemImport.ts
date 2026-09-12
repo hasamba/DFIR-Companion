@@ -1023,10 +1023,10 @@ export function mapWindows(
         })
       : null;
   if (pa) ({ description, severity, mitre } = pa);
-  // Sysmon 22 / DNS-Client 3006/3008/3020: the query, its type, the resolver client's status and
-  // the values RETURNED — never "resolves to" (dnsRecord.ts, #933 item 2). Fields are read nested
-  // first, then at the record root: a flattened export carries QueryName beside EventID.
-  const dnsField = (k: string) => getCI(ed, k) ?? getCI(rec, k);
+  // Sysmon 22 / DNS-Client 3006/3008/3020 (dnsRecord.ts, #933 item 2): query, type, status and the
+  // values RETURNED — never "resolves to". ONE namespace per record: nested when there is one, else
+  // the root (a flattened export) — never both, or root SIEM `status: 0` would read as a resolver's.
+  const dnsField = (k: string) => getCI(isObject(edRaw) ? ed : rec, k);
   const dq = def.kind === "dns" ? dnsOverlay(dnsField, def.statusField ?? "", description) : null;
   if (dq) ({ description } = dq);
   // Kerberoasting / AS-REP roasting: an RC4-encrypted Kerberos ticket request for a user service

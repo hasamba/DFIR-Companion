@@ -237,6 +237,22 @@ describe("flattened Windows DNS records", () => {
     );
     expect(r.iocs.map((i) => i.value)).toEqual(expect.arrayContaining(["bad.example", "good.example"]));
   });
+
+  it("a nested record never borrows a root field: SIEM metadata is not a resolver status", () => {
+    const r = parseSiemExport(
+      elastic({
+        "@timestamp": "2026-03-01T10:00:00Z",
+        log_name: "Microsoft-Windows-DNS-Client/Operational",
+        computer_name: "WS-01",
+        event_id: 3020,
+        status: 0,
+        event_data: { QueryName: "missing.example", QueryType: "1", QueryResults: "" },
+      }),
+    );
+    expect(r.events[0].description).toContain("[outcome not in this record]");
+    expect(r.events[0].description).not.toContain("resolved");
+    expect(r.events[0].canonical?.dns?.state).toBe("absent");
+  });
 });
 
 describe("Sysmon 22 — bounded variants", () => {
