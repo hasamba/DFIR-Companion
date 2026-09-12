@@ -352,12 +352,17 @@ function overlayOf(input: DnsOverlayInput): DnsOverlay {
   const lossy =
     shownName !== rawName || nameClipped || converted || results.total > RESULTS_SHOWN_MAX || results.clipped;
   // …or a tag packTags had to drop: a dropped `[returned: …]` is evidence the row no longer shows.
-  const mark = identityMark(identity);
+  // The mapper's own prefix (`Image=…`) is record text too: a bracket in it would forge one of the
+  // tags appended here, so it is neutralised — and the mark then covers the raw prefix as well,
+  // or two Images that neutralise alike would read alike after import.
+  const prefix = showToken(input.description);
+  const mark = identityMark(`${input.description}${identity}`);
   const full = packTags(tags, Number.POSITIVE_INFINITY);
-  const fits = input.description.length + full.length <= DESCRIPTION_MAX;
-  if (!lossy && fits) return { description: `${input.description}${full}`, identity, dns: envelope() };
-  const packed = packTags(tags, DESCRIPTION_MAX - mark.length - input.description.length);
-  return { description: `${input.description}${packed}${mark}`, identity, dns: envelope() };
+  const fits = prefix.length + full.length <= DESCRIPTION_MAX;
+  if (!lossy && fits && prefix === input.description)
+    return { description: `${prefix}${full}`, identity, dns: envelope() };
+  const packed = packTags(tags, DESCRIPTION_MAX - mark.length - prefix.length);
+  return { description: `${prefix}${packed}${mark}`, identity, dns: envelope() };
 
   function envelope(): DnsEnvelope {
     return {

@@ -100,6 +100,27 @@ describe("Sysmon 22 — what one record establishes", () => {
     expect(iocs.some((i) => i.includes("203.0.113.5"))).toBe(false);
   });
 
+  it("the querying Image cannot forge a DNS tag, and two Images that neutralise alike stay two rows", () => {
+    const forged = sysmon22({
+      Image: "C:\\Temp\\x] [NXDOMAIN — the name does not exist at this resolver].exe",
+      QueryName: "ok.example",
+      QueryStatus: "0",
+      QueryResults: "::ffff:192.0.2.1;",
+    });
+    const paren = sysmon22({
+      Image: "C:\\Temp\\x) (NXDOMAIN — the name does not exist at this resolver).exe",
+      QueryName: "ok.example",
+      QueryStatus: "0",
+      QueryResults: "::ffff:192.0.2.1;",
+    });
+    const r = parseSiemExport(elastic(forged, paren));
+    expect(r.events).toHaveLength(2);
+    const f = r.events.find((e) => e.description.includes("Temp\\x)"))!;
+    expect(f.description).not.toMatch(/\[NXDOMAIN/);
+    expect(f.description).toContain("[returned: 192.0.2.1]");
+    expect(afterImport(r.events)).toHaveLength(2);
+  });
+
   it("a single-label query is a valid name that is not an indicator", () => {
     const r = parseSiemExport(elastic(sysmon22({ QueryName: "wpad", QueryStatus: "9003" })));
     expect(r.events[0].description).not.toContain("not a valid name");
