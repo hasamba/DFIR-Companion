@@ -306,6 +306,25 @@ describe("dnsOverlay — what one record establishes", () => {
     expect(txt("X").identity).not.toBe(txt("Y").identity);
     expect(txt("X").description).not.toBe(txt("Y").description);
     expect(txt("X").dns.returned[0].value.length).toBe(512);
+    const srvUp = overlay({
+      QueryName: "_ldap._tcp.example",
+      QueryStatus: "0",
+      QueryResults: "type: 33 DC01.EXAMPLE;",
+    });
+    const srvLo = overlay({
+      QueryName: "_ldap._tcp.example",
+      QueryStatus: "0",
+      QueryResults: "type: 33 dc01.example;",
+    });
+    expect(srvUp.identity).toBe(srvLo.identity);
+    expect(srvUp.dns.returned[0]).toEqual({ type: 33, value: "dc01.example", kind: "name" });
+    const mx = (c: string) =>
+      overlay({ QueryName: "example", QueryStatus: "0", QueryResults: `type: 15 ${c};` });
+    expect(mx("MAIL.Example").identity).toBe(mx("mail.example").identity);
+    // TXT is data, not a name: its case is evidence
+    const txtCase = (c: string) =>
+      overlay({ QueryName: "a.example", QueryStatus: "0", QueryResults: `type: 16 ${c};` });
+    expect(txtCase("Abc").identity).not.toBe(txtCase("abc").identity);
     const upper = overlay({
       QueryName: "a.example",
       QueryStatus: "0",

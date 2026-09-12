@@ -48,7 +48,9 @@ const TYPE_NAMES: Record<number, string> = {
   65: "HTTPS",
   255: "ANY",
 };
-const NAME_TYPES = new Set([2, 5, 12]);
+// RR types whose data Windows writes as one owner name: NS, CNAME, PTR, MX (the exchange), SRV (the
+// target), DNAME. TXT (16) stays case-sensitive data.
+const NAME_TYPES = new Set([2, 5, 12, 15, 33, 39]);
 const ADDRESS_TYPES = new Set([1, 28]);
 
 export const RESULTS_SHOWN_MAX = 8;
