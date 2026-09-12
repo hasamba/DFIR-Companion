@@ -459,6 +459,14 @@ describe("DNS Client operational log", () => {
     expect(afterImport(r.events)).toHaveLength(2);
   });
 
+  it("one TXT value that spells the renderer's separators and two values stay two rows after import", () => {
+    const rec = (results: string) =>
+      dnsClient(3008, { QueryName: "txt.example", QueryType: "16", QueryStatus: "0", QueryResults: results });
+    const r = parseSiemExport(elastic(rec("type: 16 a, type 16 b;"), rec("type: 16 a;type: 16 b;")));
+    expect(r.events).toHaveLength(2);
+    expect(afterImport(r.events)).toHaveLength(2);
+  });
+
   it("a typed A and a typed AAAA carrying one address stay two rows after import", () => {
     const r = parseSiemExport(
       elastic(

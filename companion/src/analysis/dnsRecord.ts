@@ -222,8 +222,11 @@ export function readQueryResults(raw: string | undefined): ResultsReading {
   const identity = `chain${lead}:${all.slice(0, lead).map(frame).join("|")}|set:${all.slice(lead).map(frame).sort().join("|")}`;
   // An empty value is shown as words that a literal value could spell — so it counts as lossy and
   // the row carries the mark, keeping `type: 16;` apart from `type: 16 (value not in this record);`.
+  // …and so does ANY `other` value: free data can spell the renderer's own separators (`a, type
+  // 16 b`), so only addresses and names — whose characters cannot — render injectively.
   const clipped = all.some(
-    (v) => !v.value || v.value.length > VALUE_SHOWN_MAX || breakHashRuns(showToken(v.value)) !== v.value,
+    (v) =>
+      v.kind === "other" || v.value.length > VALUE_SHOWN_MAX || breakHashRuns(showToken(v.value)) !== v.value,
   );
   const head = values.slice(0, RESULTS_SHOWN_MAX);
   // Only a run of LEADING CNAME steps is arrow-linked — that is the one chain Windows writes in
