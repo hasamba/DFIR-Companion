@@ -103,6 +103,20 @@ function time(v: unknown): string {
 
 const hexOf = (v: string): string => v.replace(/[^0-9a-f]/gi, "").toLowerCase();
 
+// Canonical base64 only: Node's decoder is permissive, so `!!!!` would decode to zero bytes and
+// every malformed value would share the empty input's sha256 — one forged identity for them all.
+const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+
+/** The sha256 of DER bytes the record carries as base64 — a real fingerprint, or nothing. */
+function derFingerprint(b64: string | undefined): CertRef | undefined {
+  const v = b64?.replace(/\s+/g, "");
+  if (!v || !BASE64.test(v)) return undefined;
+  const bytes = Buffer.from(v, "base64");
+  return bytes.length
+    ? { kind: "fingerprint", value: createHash("sha256").update(bytes).digest("hex"), alg: "sha256" }
+    : undefined;
+}
+
 /** A source-given fingerprint: colons stripped, lowercase; the algorithm by its length. */
 function fingerprint(v: unknown): CertRef | undefined {
   const raw = text(v)?.trim();
@@ -200,15 +214,8 @@ export function readSuricataTls(row: Row, fallbackTs: string): TlsObservation {
   const hashOf = (v: unknown): string | undefined => (isObject(v) ? text(getCI(v, "hash")) : text(v));
   const issuer = text(getCI(t, "issuerdn")) ?? text(getCI(t, "issuer"));
   const serial = text(getCI(t, "serial"));
-  const der = text(getCI(t, "certificate"));
   // The leaf's DER bytes, when the output carries them, give a REAL sha256 — computed here.
-  const derFp = der
-    ? {
-        kind: "fingerprint" as const,
-        value: createHash("sha256").update(Buffer.from(der, "base64")).digest("hex"),
-        alg: "sha256" as const,
-      }
-    : undefined;
+  const derFp = derFingerprint(text(getCI(t, "certificate")));
   const port = Number(getCI(row, "dest_port"));
   const names = list(getCI(t, "subjectaltname"));
   // A certificate object only when the record carries a certificate field: a resumed session with
@@ -253,8 +260,8 @@ export function readSuricataCertificates(row: Row, fallbackTs: string): TlsObser
   const seen = new Set<string>();
   const out: TlsObservation[] = [];
   for (const der of ders.slice(0, CHAIN_MAX)) {
-    const fp = createHash("sha256").update(Buffer.from(der, "base64")).digest("hex");
-    if (seen.has(fp)) continue;
+    const fp = derFingerprint(der)?.value;
+    if (!fp || seen.has(fp)) continue;
     seen.add(fp);
     // The leaf's subject/issuer/serial are the record's own fields; a chain entry's are not
     // decoded here (no ASN.1 parser), so it carries its sha256 and nothing else. The leaf is the
@@ -303,9 +310,12 @@ const short = (v: string | number | boolean | undefined): string =>
 export function tlsKey(o: TlsObservation): string {
   const sensor = o.observer ? `t:${keyDigest(o.observer.name)}` : "-";
   const cert = o.cert ? `${o.cert.kind}:${o.cert.value}` : "-";
-  if (o.kind === "certificate") return `cert|${sensor}|${cert}`;
+  // The source kind is a keyed fact: a Zeek row and a Suricata row of one shape are two
+  // observations by two tools, each with its own provenance.
+  if (o.kind === "certificate") return `cert|${o.source}|${sensor}|${cert}`;
   return [
     "tls",
+    o.source,
     sensor,
     short(o.src),
     short(o.dst),

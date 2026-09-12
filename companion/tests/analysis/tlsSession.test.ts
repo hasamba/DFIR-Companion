@@ -452,6 +452,38 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
     expect(certs[1].certificate).toEqual({});
   });
 
+  it("a Zeek row and a Suricata row of one shape are two rows, in either order", () => {
+    const z = readZeekSsl(
+      {
+        ts: 1700000000.5,
+        "id.orig_h": "10.0.0.5",
+        "id.resp_h": "203.0.113.9",
+        "id.resp_p": 443,
+        server_name: "a.example",
+      },
+      "",
+    );
+    const su = readSuricataTls({ ...SURICATA_TLS, tls: { sni: "a.example" } }, "");
+    expect(rows([z, su])).toHaveLength(2);
+    expect(rows([su, z])).toHaveLength(2);
+  });
+
+  it("malformed or empty base64 never becomes a certificate fingerprint", () => {
+    for (const bad of ["!!!!", "????", "", "abc"]) {
+      const o = readSuricataTls({ ...SURICATA_TLS, tls: { sni: "a.example", certificate: bad } }, "");
+      expect(o.cert, bad).toBeUndefined();
+      expect(
+        readSuricataCertificates({ ...SURICATA_TLS, tls: { certificate: bad, chain: [bad] } }, ""),
+        bad,
+      ).toEqual([]);
+    }
+    const ok = readSuricataTls(
+      { ...SURICATA_TLS, tls: { sni: "a.example", certificate: Buffer.from("x").toString("base64") } },
+      "",
+    );
+    expect(ok.cert?.alg).toBe("sha256");
+  });
+
   it("selects the most-seen rows first under a budget", () => {
     const many = [
       ...Array.from({ length: 3 }, () => base()),
