@@ -729,6 +729,21 @@ describe("parseCombinedLog — what one line establishes", () => {
     expect(e.description.length).toBeLessThanOrEqual(600);
   });
 
+  it("an overflow row's tags are whole: 66 trailer variants on one path keep balanced brackets", () => {
+    const lines = Array.from(
+      { length: 66 },
+      (_, i) =>
+        `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /login HTTP/1.1" 302 0 "-" "curl/8" TCP_MISS:HIER_DIRECT nonce${i}`,
+    );
+    const r = parseCombinedLog(lines.join("\n"), { trailerProfile: { squidSlot: 0, source: "declared" } });
+    const overflow = r.events.find((e) => e.description.includes("overflow"))!;
+    expect((overflow.description.match(/\[/g) ?? []).length).toBe(
+      (overflow.description.match(/\]/g) ?? []).length,
+    );
+    expect(overflow.description).not.toMatch(/\[[^\]]*$/);
+    expect(r.dropped).toBe(0);
+  });
+
   it("a decoded payload cannot forge a tag beside the real ones", () => {
     const line =
       '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /x?q=union%20select%20x%5D%20%5Bstatus:%20success%5D%20%5Bignored: HTTP/1.1" 302 0 "-" "curl/8"';

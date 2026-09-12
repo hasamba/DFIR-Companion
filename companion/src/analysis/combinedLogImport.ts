@@ -434,7 +434,9 @@ export function mapCombinedLogLine(
       families: attack?.families ?? [],
       digest: `${attack?.digest ?? ""}${trailer.variantKey}`,
       hasAttack: Boolean(attack),
-      overflowTail: `${method} ${uri.split("?")[0].slice(0, 200)} -> ${status}${tagText.slice(0, 120)}`,
+      // Whole tags here too (packTags): the overflow row is the one the analyst reads when the
+      // bound fires, so it must not end in a half-open `[redirect`.
+      overflowTail: `${method} ${uri.split("?")[0].slice(0, 200)} -> ${status}${packTags(tags, 120)}`,
     });
   }
   return event;
