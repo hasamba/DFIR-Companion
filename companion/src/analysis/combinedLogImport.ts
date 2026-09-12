@@ -145,16 +145,6 @@ const GIT_SMART_HTTP =
 // review flag is harmless; a browser/tool UA never trips it).
 const UA_PRODUCT = /^[A-Za-z][\w.-]*\/[\w.]/;
 
-// The destination host from an absolute-URL request ("https://host/path") or a CONNECT tunnel
-// target ("host:port"). "" for an ordinary relative-path request (the log's own server IS the
-// destination — this importer doesn't know its own hostname, see module comment).
-export function requestHost(uri: string): string {
-  const abs = uri.match(/^https?:\/\/([^/:]+)/i);
-  if (abs) return abs[1].toLowerCase();
-  const connect = uri.match(/^([^:/]+):\d+$/);
-  return connect ? connect[1].toLowerCase() : "";
-}
-
 function classify(uri: string, status: number): { severity: Severity; mitre: string[] } {
   const mitre = GIT_SMART_HTTP.test(uri) ? ["T1213"] : [];
   const severity: Severity = status === 401 || status === 403 || status === 407 ? "Low" : "Info";
@@ -347,7 +337,9 @@ export function mapCombinedLogLine(
   // secret-leak vector, so emit it as an unaggregated url IOC that survives even if this request
   // line aggregates into a busier sibling. "-" is Apache/nginx's "no referer".
   const referer = refererRaw && refererRaw !== "-" ? refererRaw : "";
-  const refHost = referer ? requestHost(referer) : "";
+  // The Referer is attacker-controlled too, so its host goes through the SAME whole-authority
+  // validation as the request target: `http://ev]il:abc/x` mints no domain indicator.
+  const refHost = referer ? readTarget("GET", referer).host : "";
   if (refHost) addIoc(sink, "domain", refHost);
   if (referer && /^https?:\/\//i.test(referer) && referer.includes("?")) addIoc(sink, "url", referer);
 

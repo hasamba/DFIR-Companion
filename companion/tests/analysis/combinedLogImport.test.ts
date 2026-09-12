@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   looksLikeCombinedLog,
   parseApacheDate,
-  requestHost,
   mapCombinedLogLine,
   parseCombinedLog,
 } from "../../src/analysis/combinedLogImport.js";
@@ -47,16 +46,6 @@ describe("parseApacheDate", () => {
   });
   it('returns "" for garbage', () => {
     expect(parseApacheDate("not a date")).toBe("");
-  });
-});
-
-describe("requestHost", () => {
-  it("extracts the host from an absolute-URL request and a CONNECT target", () => {
-    expect(requestHost("https://vault.cloudpear.io/u/arjun/bk-0514.tgz")).toBe("vault.cloudpear.io");
-    expect(requestHost("vault.cloudpear.io:443")).toBe("vault.cloudpear.io");
-  });
-  it('returns "" for an ordinary relative path', () => {
-    expect(requestHost("/api/v4/projects?per_page=100")).toBe("");
   });
 });
 
@@ -781,6 +770,19 @@ describe("parseCombinedLog — what one line establishes", () => {
     expect(plain.aggKey).not.toBe(overflow!.aggKey);
     expect(plain.count ?? 1).toBe(1);
     expect(r.dropped).toBe(0);
+  });
+
+  it("a malformed Referer mints no domain indicator", () => {
+    const line =
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET / HTTP/1.1" 200 0 "http://ev]il:abc/x?q=1" "curl/8"';
+    const r = parseCombinedLog(line);
+    expect(r.iocs.map((i) => i.value)).not.toContain("ev]il");
+    expect(r.iocs.some((i) => i.type === "domain")).toBe(false);
+    // a valid one still does
+    const ok = parseCombinedLog(
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET / HTTP/1.1" 200 0 "https://portal.example.invalid/x?q=1" "curl/8"',
+    );
+    expect(ok.iocs.some((i) => i.type === "domain" && i.value === "portal.example.invalid")).toBe(true);
   });
 
   it("a decoded payload cannot forge a tag beside the real ones", () => {
