@@ -48,6 +48,8 @@ export interface TlsObservation {
   locatorId?: string;
   certChainFuids?: string[];
   observer?: { name: string; sourceField: string };
+  /** Zeek `ssl_history` `^`: the TLS client was the connection responder; src/dst already swapped. */
+  directionFlipped?: boolean;
   src?: string;
   dst?: string;
   port?: number;
@@ -176,7 +178,12 @@ function observerOf(row: Row): TlsObservation["observer"] {
 export function readZeekSsl(row: Row, fallbackTs: string): TlsObservation {
   const fps = list(getCI(row, "cert_chain_fps"));
   const clientCert = clientCertOf(row);
-  const port = Number(getCI(row, "id.resp_p"));
+  // Zeek marks a session whose TLS client is the connection RESPONDER with `^` in ssl_history:
+  // the TLS client and server are then the reverse of originator and responder.
+  const flipped = /\^/.test(text(getCI(row, "ssl_history")) ?? "");
+  const clientKey = flipped ? "id.resp_h" : "id.orig_h";
+  const serverKey = flipped ? "id.orig_h" : "id.resp_h";
+  const port = Number(getCI(row, flipped ? "id.orig_p" : "id.resp_p"));
   return {
     source: "zeek-ssl",
     kind: "session",
@@ -184,9 +191,10 @@ export function readZeekSsl(row: Row, fallbackTs: string): TlsObservation {
     uid: text(getCI(row, "uid")),
     certChainFuids: list(getCI(row, "cert_chain_fuids")),
     observer: observerOf(row),
-    src: cleanIp(str(getCI(row, "id.orig_h"))) || undefined,
-    dst: cleanIp(str(getCI(row, "id.resp_h"))) || undefined,
+    src: cleanIp(str(getCI(row, clientKey))) || undefined,
+    dst: cleanIp(str(getCI(row, serverKey))) || undefined,
     ...(Number.isInteger(port) && port > 0 ? { port } : {}),
+    ...(flipped ? { directionFlipped: true } : {}),
     sni: text(getCI(row, "server_name")),
     sniMatchesCert: bool(getCI(row, "sni_matches_cert")),
     version: text(getCI(row, "version")),
@@ -383,6 +391,7 @@ export function tlsKey(o: TlsObservation): string {
     seg(o.subject),
     seg(o.issuer),
     short(o.sniMatchesCert),
+    short(o.directionFlipped),
     cert,
     o.clientCert ? `c:${keyDigest(JSON.stringify(o.clientCert))}` : "-",
   ].join("|");
@@ -476,6 +485,7 @@ function sessionTags(o: TlsObservation): string[] {
       `client cert: ${[cc.subject !== undefined ? `subject ${show(cc.subject)}` : "", cc.issuer !== undefined ? `issuer ${show(cc.issuer)}` : "", ref].filter(Boolean).join("; ")}`,
     );
   }
+  if (o.directionFlipped) tags.push("TLS client was the connection responder");
   if (o.validation !== undefined) tags.push(`chain check: ${show(o.validation)}`);
   if (o.sniMatchesCert !== undefined)
     tags.push(o.sniMatchesCert ? "SNI matches the certificate" : "SNI does not match the certificate");
@@ -537,6 +547,7 @@ function envelopeOf(o: TlsObservation, count: number): CanonicalEventEnvelope {
       ...(o.resumed !== undefined ? { resumed: o.resumed } : {}),
       ...(o.validation !== undefined ? { validation: o.validation } : {}),
       ...(o.sniMatchesCert !== undefined ? { sniMatchesCert: o.sniMatchesCert } : {}),
+      ...(o.directionFlipped ? { directionFlipped: true } : {}),
       ...(o.ja3 !== undefined ? { ja3: o.ja3 } : {}),
       ...(o.ja3s !== undefined ? { ja3s: o.ja3s } : {}),
       ...(o.subject !== undefined || o.issuer !== undefined || o.cert || o.certificate

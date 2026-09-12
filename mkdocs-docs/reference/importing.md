@@ -326,7 +326,9 @@ what its records say:
   not, a different certificate, a different chain-check result, a different sensor — each is its
   own row. A record with no SNI says `[no SNI]`; one the sensor saw fail says `[not established]`;
   a resumed session says `[session resumed]` and, when the sensor saw no certificate, `[no
-  certificate observed in this record]`.
+  server certificate observed in this record]`; a client certificate, when Zeek saw one, is shown
+  apart as `[client cert: …]`; a session whose TLS client was the connection's responder (Zeek's
+  `^` in `ssl_history`) is attributed the right way round and says so.
 - **What the words mean.** The SNI is the name the *client* asked for — a claim, like a DNS query,
   and the row's only indicator. The certificate is what the *server* presented. `chain check` is
   the sensor's own verdict on the chain (`ok`, `self signed certificate`, …) — it is not

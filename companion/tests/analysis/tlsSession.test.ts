@@ -611,6 +611,30 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
     expect(fp.clientCert?.fingerprint).toEqual({ kind: "fingerprint", value: "ab".repeat(20), alg: "sha1" });
   });
 
+  it("a direction-flipped Zeek session (ssl_history ^) attributes client and server the right way round", () => {
+    const flipped = readZeekSsl(
+      {
+        ts: 1700000000.5,
+        "id.orig_h": "203.0.113.9",
+        "id.orig_p": 443,
+        "id.resp_h": "10.0.0.5",
+        "id.resp_p": 53000,
+        ssl_history: "^HCS",
+        server_name: "a.example",
+        client_subject: "CN=user",
+      },
+      "",
+    );
+    expect(flipped).toMatchObject({ src: "10.0.0.5", dst: "203.0.113.9", port: 443, directionFlipped: true });
+    const e = rows([flipped])[0];
+    expect(e.description).toContain("TLS 10.0.0.5 → 203.0.113.9:443");
+    expect(e.description).toContain("[TLS client was the connection responder]");
+    expect(e.canonical?.network?.source?.address).toBe("10.0.0.5");
+    expect(e.canonical?.network?.destination?.address).toBe("203.0.113.9");
+    expect(e.canonical?.tls?.clientCertificate?.subject).toBe("CN=user");
+    expect(readZeekSsl({ ...ZEEK_SSL, ssl_history: "HCSI" }, "").directionFlipped).toBeUndefined();
+  });
+
   it("selects the most-seen rows first under a budget", () => {
     const many = [
       ...Array.from({ length: 3 }, () => base()),
