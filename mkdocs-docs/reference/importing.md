@@ -276,7 +276,9 @@ and a 302 read like a 200 with a small body. Each line now says what its own fie
   rebuilt past 600 characters — the description ends in an identity mark (`#` and 22 characters of a digest
   of the row's full key). Two records that read alike then stay two rows through import; the
   Companion's re-import check treats one time, one text and one host as one observation. A line
-  shown in full carries no mark. **A forwarded-for header is not the client**: `srcIp` stays the address the server or
+  shown in full carries no mark. What a `[trailer: …]` tag shows is never read as an
+  artifact by the merge either: a hash or a file path a client appended to its request cannot
+  join that request to an unrelated event that really carries the hash or the file. **A forwarded-for header is not the client**: `srcIp` stays the address the server or
   proxy actually saw.
 - **What the status and the byte count do not say.** `[redirect — the Location is not in this
   format]` for 301/302/303/307/308; `[not modified — no body]` for 304 (never a redirect);

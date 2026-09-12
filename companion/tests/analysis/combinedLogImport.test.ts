@@ -718,6 +718,24 @@ describe("parseCombinedLog — what one line establishes", () => {
     expect(two.events.every((e) => !/[0-9a-f]{32}/i.test(e.description))).toBe(true);
     expect(two.events[0].description).toContain("[trailer: aaaaaaaa…aaaa]");
     expect(afterImport(two.events)).toHaveLength(2);
+    // …nor can a trailer become a correlation PATH: an appended `/tmp/payload.exe` must not union
+    // the request with the endpoint event that really created that file
+    const pathy =
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /status HTTP/1.1" 200 83 "-" "curl/8" "/tmp/payload.exe"';
+    const web = afterImport(parseCombinedLog(pathy).events)[0];
+    const endpoint: ForensicEvent = {
+      id: "ep1",
+      timestamp: "2024-05-14T19:00:01Z",
+      description: "File created",
+      severity: "Low",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      asset: "proxy-01",
+      path: "/tmp/payload.exe",
+    };
+    expect(web.description).toContain("[trailer: /tmp/payload.exe]");
+    expect(correlateEvents([web, endpoint])).toHaveLength(2);
     // a rebuilt long line carries it, inside the cap
     const long = `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /${"a".repeat(650)} HTTP/1.1" 302 0 "-" "curl/8"`;
     const l = parseCombinedLog(long).events[0];
