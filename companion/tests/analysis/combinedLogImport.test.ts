@@ -736,6 +736,13 @@ describe("parseCombinedLog — what one line establishes", () => {
     };
     expect(web.description).toContain("[trailer: /tmp/payload.exe]");
     expect(correlateEvents([web, endpoint])).toHaveLength(2);
+    // an unpaired surrogate (a UTF-16 export can carry one) is not folded into U+FFFD on the way
+    // into the identity: two lines with \uD800 and \uD801 are two rows, in the parser and after
+    const sur = (u: string) =>
+      `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /same HTTP/1.1" 200 83 "-" "curl/8" ${u}`;
+    const su = parseCombinedLog([sur("\uD800"), sur("\uD801")].join("\n"));
+    expect(su.events).toHaveLength(2);
+    expect(afterImport(su.events)).toHaveLength(2);
     // a rebuilt long line carries it, inside the cap
     const long = `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /${"a".repeat(650)} HTTP/1.1" 302 0 "-" "curl/8"`;
     const l = parseCombinedLog(long).events[0];

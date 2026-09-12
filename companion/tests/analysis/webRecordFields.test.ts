@@ -189,7 +189,7 @@ describe("readTrailer — only a declared profile labels a slot", () => {
     expect(withProfile.squidWords).toContain("(squid_combined, declared format)");
     expect(withProfile.trailerWords).toBe("trailer: 137 203.0.113.5, 10.0.0.1");
     expect(withProfile.dispositionKey).toBe("|squid:tcp_miss:hier_direct");
-    expect(withProfile.variantKey).toMatch(/^\|trailer:[0-9a-f]{16}$/);
+    expect(withProfile.variantKey).toMatch(/^\|trailer:[0-9a-f]{32}$/);
   });
   it("a line whose slot holds something the tables do not name keeps it as an unlabelled token", () => {
     const profile = { squidSlot: 0 };
@@ -198,12 +198,15 @@ describe("readTrailer — only a declared profile labels a slot", () => {
     expect(outlier.dispositionKey).toBe("");
     expect(outlier.squidWords).toBe("");
     expect(outlier.trailerWords).toBe("trailer: attacker-evidence");
-    expect(outlier.variantKey).toMatch(/^\|trailer:[0-9a-f]{16}$/);
+    expect(outlier.variantKey).toMatch(/^\|trailer:[0-9a-f]{32}$/);
     // …and a known result with an unbounded hierarchy is one of those, not a disposition
     const nonce = readTrailer(["TCP_MISS:NONCE_7"], profile);
     expect(nonce.dispositionKey).toBe("");
     expect(nonce.trailerWords).toBe("trailer: TCP_MISS:NONCE_7");
     expect(nonce.variantKey).not.toBe(readTrailer(["TCP_MISS:NONCE_8"], profile).variantKey);
+  });
+  it("two unpaired surrogates are two identities", () => {
+    expect(readTrailer(["\uD800"], null).variantKey).not.toBe(readTrailer(["\uD801"], null).variantKey);
   });
   it("shows a hash-shaped run as its ends only, and keeps the whole run in the identity", () => {
     const h = "0123456789abcdef".repeat(4);
@@ -220,7 +223,7 @@ describe("readTrailer — only a declared profile labels a slot", () => {
     // the token is not labelled and is no part of the row's base identity — but its DIGEST is a
     // bounded variant, so a row that shows it never folds into a row that does not.
     expect(r.dispositionKey).toBe("");
-    expect(r.variantKey).toMatch(/^\|trailer:[0-9a-f]{16}$/);
+    expect(r.variantKey).toMatch(/^\|trailer:[0-9a-f]{32}$/);
     expect(r.variantKey).not.toContain("TCP_MISS");
     expect(readTrailer(["TCP_HIT:NONE"], null).variantKey).not.toBe(r.variantKey);
     expect(r.trailerWords).toBe("trailer: TCP_MISS:HIER_DIRECT");

@@ -30,7 +30,8 @@ import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 
 const TRAILER_TOKEN_MAX = 40;
-const DIGEST_HEX = 16;
+/** 128 bits: the trailer is attacker-controlled, and a 64-bit digest allows chosen pairs in ~2^32 work. */
+const DIGEST_HEX = 32;
 const TRAILER_TOKENS_MAX = 6;
 const TRAILER_WORDS_MAX = 80;
 const HOST_MAX = 120;
@@ -340,9 +341,11 @@ export function readTrailer(tokens: readonly string[], profile: TrailerProfile |
     ? `trailer: ${unlabelled.join(" ").slice(0, TRAILER_WORDS_MAX)}`
     : "";
   // Length-framed so token boundaries are part of the identity: `ab c` and `a bc` are two trailers.
+  // Hashed as UTF-16 code units, not UTF-8: a UTF-16 export can carry an unpaired surrogate, and
+  // UTF-8 encoding folds every one of them into U+FFFD — two distinct trailers, one digest.
   const digest = raw.some((t) => t.trim())
     ? createHash("sha256")
-        .update(raw.map((t) => `${t.length}:${t}`).join("|"))
+        .update(Buffer.from(raw.map((t) => `${t.length}:${t}`).join("|"), "utf16le"))
         .digest("hex")
         .slice(0, DIGEST_HEX)
     : "";

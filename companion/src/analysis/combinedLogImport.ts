@@ -200,7 +200,8 @@ export const TRAILER_OVERFLOW = "trailer:overflow";
 // made two lossy rows of one key — different days, different UAs — one observation.
 const IDENTITY_MARK_BYTES = 16;
 export function identityMark(key: string): string {
-  return ` #${createHash("sha256").update(key).digest().subarray(0, IDENTITY_MARK_BYTES).toString("base64url")}`;
+  // UTF-16 code units, as readTrailer's digest: UTF-8 folds an unpaired surrogate into U+FFFD.
+  return ` #${createHash("sha256").update(Buffer.from(key, "utf16le")).digest().subarray(0, IDENTITY_MARK_BYTES).toString("base64url")}`;
 }
 
 // A row with no attack signal keeps today's layout when it fits. When the attacker-controlled
