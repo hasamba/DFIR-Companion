@@ -238,6 +238,33 @@ describe("DNS Client operational log", () => {
     );
   });
 
+  it("an SRV query for DC discovery is a valid name and a domain indicator", () => {
+    const r = parseSiemExport(
+      elastic(
+        dnsClient(3008, {
+          QueryName: "_ldap._tcp.dc._msdcs.example",
+          QueryType: "33",
+          QueryStatus: "0",
+          QueryResults: "type: 33 dc01.example;",
+        }),
+      ),
+    );
+    expect(r.events[0].description).not.toContain("not a valid name");
+    expect(r.iocs.map((i) => i.value)).toContain("_ldap._tcp.dc._msdcs.example");
+  });
+
+  it("two CNAME targets that differ past the shown width stay two rows after import", () => {
+    const rec = (t: string) =>
+      sysmon22({
+        QueryName: "a.example",
+        QueryStatus: "0",
+        QueryResults: `type: 5 ${"x".repeat(59)}${t}.example;`,
+      });
+    const r = parseSiemExport(elastic(rec("1"), rec("2")));
+    expect(r.events).toHaveLength(2);
+    expect(afterImport(r.events)).toHaveLength(2);
+  });
+
   it("a 3020 whose Status and a stray QueryStatus disagree is a conflict, never a pick", () => {
     const r = parseSiemExport(
       elastic(dnsClient(3020, { QueryName: "b.example", QueryType: "1", Status: "9003", QueryStatus: "0" })),

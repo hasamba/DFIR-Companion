@@ -90,8 +90,8 @@ describe("readQueryResults — the resolver's returned values, typed, validated,
     expect(r.values[0].value).toBe("a".repeat(32));
   });
   it("empty and absent are no values", () => {
-    expect(readQueryResults("")).toEqual({ values: [], shown: "", total: 0 });
-    expect(readQueryResults(undefined)).toEqual({ values: [], shown: "", total: 0 });
+    expect(readQueryResults("")).toEqual({ values: [], identity: "", clipped: false, shown: "", total: 0 });
+    expect(readQueryResults(undefined)).toMatchObject({ values: [], shown: "", total: 0 });
   });
 });
 
@@ -100,6 +100,8 @@ describe("isValidQueryName", () => {
     expect(isValidQueryName("cdn.example.net")).toBe(true);
     expect(isValidQueryName("cdn.example.net.")).toBe(true);
     expect(isValidQueryName("xn--80ak6aa92e.example")).toBe(true);
+    expect(isValidQueryName("_ldap._tcp.dc._msdcs.example")).toBe(true); // an SRV owner, not a hostname
+    expect(isValidQueryName("__x.example")).toBe(false);
     expect(isValidQueryName("localhost")).toBe(false); // no dot: not an indicator
     expect(isValidQueryName("good.example] [returned: 203.0.113.66")).toBe(false);
     expect(isValidQueryName("/tmp/payload.exe")).toBe(false);
@@ -263,6 +265,26 @@ describe("dnsOverlay — what one record establishes", () => {
     const txt = (t: string) =>
       overlay({ QueryName: "a.example", QueryStatus: "0", QueryResults: `type: 16 ${"z".repeat(70)}${t};` });
     expect(txt("1").description).not.toBe(txt("2").description);
+  });
+  it("a clipped CNAME target and a 65th value each keep the two records apart", () => {
+    const cname = (t: string) =>
+      overlay({
+        QueryName: "a.example",
+        QueryStatus: "0",
+        QueryResults: `type: 5 ${"x".repeat(59)}${t}.example;`,
+      });
+    expect(cname("1").identity).not.toBe(cname("2").identity);
+    expect(cname("1").description).not.toBe(cname("2").description);
+    expect(cname("1").description).toMatch(/ #[\w-]{22}$/);
+    const bulk = (last: string) =>
+      overlay({
+        QueryName: "bulk.example",
+        QueryStatus: "0",
+        QueryResults:
+          Array.from({ length: 64 }, (_, i) => `::ffff:192.0.2.${i}`).join(";") + `;::ffff:${last};`,
+      });
+    expect(bulk("192.0.2.65").identity).not.toBe(bulk("192.0.2.66").identity);
+    expect(bulk("192.0.2.65").dns.returned).toHaveLength(RESULTS_KEPT_MAX);
   });
   it("a complete rendering carries no mark; the description stays inside 600 characters", () => {
     const plain = overlay({ QueryName: "a.example", QueryStatus: "0", QueryResults: "::ffff:192.0.2.1;" });

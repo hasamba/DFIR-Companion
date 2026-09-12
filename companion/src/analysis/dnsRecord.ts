@@ -101,12 +101,18 @@ export interface ReturnedValue {
 export interface ResultsReading {
   /** Every value, in record order, at most RESULTS_KEPT_MAX. */
   values: ReturnedValue[];
+  /** The identity of EVERY parsed value — sorted, typed, length-framed — including those past the kept bound. */
+  identity: string;
+  /** Any value's display is not its own text: clipped or neutralised. */
+  clipped: boolean;
   /** The bounded display: at most RESULTS_SHOWN_MAX values, neutralised, then `+n more`. */
   shown: string;
   total: number;
 }
 
-const LABEL = /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$/;
+// A DNS OWNER name, not a hostname: RFC 2782 service labels lead with an underscore
+// (`_ldap._tcp.dc._msdcs.example`), and Windows issues exactly those for DC discovery.
+const LABEL = /^_?[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$/;
 
 /** A name a resolver would answer: 1–253 characters of valid labels, at least two of them. */
 export function isValidQueryName(raw: string): boolean {
@@ -147,13 +153,22 @@ export function readQueryResults(raw: string | undefined): ResultsReading {
     return typed ? classify(Number(typed[1]), typed[2].trim()) : classify(undefined, e);
   });
   const values = all.slice(0, RESULTS_KEPT_MAX);
+  // The identity covers every parsed value, not only the kept ones: two records that agree on the
+  // first 64 and differ on the 65th are two rows, even though the envelope keeps 64.
+  const identity = all
+    .map((v) => `${v.type ?? "-"}:${v.value.length}:${v.value}`)
+    .sort()
+    .join("|");
+  const clipped = all.some(
+    (v) => v.value.length > VALUE_SHOWN_MAX || breakHashRuns(showToken(v.value)) !== v.value,
+  );
   const head = values.slice(0, RESULTS_SHOWN_MAX);
   // CNAME steps lead with an arrow between them; everything else follows, comma-separated.
   const names = head.filter((v) => v.kind === "name").map(showValue);
   const rest = head.filter((v) => v.kind !== "name").map(showValue);
   const parts = [...names, rest.join(", ")].filter(Boolean).join(" → ");
   const more = all.length > RESULTS_SHOWN_MAX ? ` +${all.length - RESULTS_SHOWN_MAX} more` : "";
-  return { values, shown: all.length ? `${parts}${more}` : "", total: all.length };
+  return { values, identity, clipped, shown: all.length ? `${parts}${more}` : "", total: all.length };
 }
 
 /** The status field THIS event defines: `QueryStatus` (Sysmon 22, 3008), `Status` (3020), "" (3006). */
@@ -264,23 +279,13 @@ function overlayOf(input: DnsOverlayInput): DnsOverlay {
 
   // Identity: the FULL canonical name, the type, the code, and a sorted typed multiset of every kept
   // value — record order is display only, so a rotated A set is one row, not one row per order.
-  const multiset = results.values
-    .map((v) => `${v.type ?? "-"}:${v.value.length}:${v.value}`)
-    .sort()
-    .join("|");
   const identity = `|dns:q${canonical.length}:${keyDigest(canonical)}:t${type.key}:s${status.key}:r${
-    results.values.length ? keyDigest(multiset) : "-"
+    results.total ? keyDigest(results.identity) : "-"
   }`;
 
   // Lossy when anything shown is not the record's own text: a neutralised or clipped name, a value
   // omitted past the shown bound, clipped past the value bound, or neutralised.
-  const lossy =
-    shownName !== rawName ||
-    nameClipped ||
-    results.total > RESULTS_SHOWN_MAX ||
-    results.values.some(
-      (v) => v.kind === "other" && (showToken(v.value) !== v.value || v.value.length > VALUE_SHOWN_MAX - 1),
-    );
+  const lossy = shownName !== rawName || nameClipped || results.total > RESULTS_SHOWN_MAX || results.clipped;
   const mark = lossy ? identityMark(identity) : "";
   const room = DESCRIPTION_MAX - mark.length - input.description.length;
   const description = `${input.description}${packTags(tags, room)}${mark}`;
