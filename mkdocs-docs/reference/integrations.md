@@ -63,7 +63,8 @@ The resolved window is recorded on the hunt job and shown on its card. Read it a
 **Push:** Export findings, timeline, and IOCs from a Companion case into an IRIS case. The push dialog
 shows the case name it will target — defaulting to `<case id> — <friendly name>` — and lets you type a
 different one; your choice is remembered so later pushes keep hitting the same IRIS case instead of
-reverting to the default.
+reverting to the default. The push sends the same timeline the reports show: out-of-scope events and
+events you marked false positive stay out, because IRIS never removes a pushed event.
 
 **Pull/Import:** Import an existing IRIS case (assets, IOCs, timeline) into a Companion case. Toolbar → Import case → From DFIR-IRIS.
 
