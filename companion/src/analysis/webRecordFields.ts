@@ -27,9 +27,9 @@
 // only stops the line from dropping what that join will need, and from misreading what it shows.
 
 import { isIP } from "node:net";
-import { breakHashRuns, keyDigest, showToken } from "./recordIdentity.js";
+import { breakHashRuns, keyDigest, packTags, showToken } from "./recordIdentity.js";
 
-export { breakHashRuns, showToken };
+export { breakHashRuns, packTags, showToken };
 
 const TRAILER_TOKEN_MAX = 40;
 const TRAILER_TOKENS_MAX = 6;
@@ -258,23 +258,6 @@ export function trailerTokens(rest: string): string[] {
     out.push(token);
   }
   return out;
-}
-
-/**
- * Pack whole tags into `room` characters, in evidence order, dropping any that does not fit — a
- * substring of a serialised `[a] [b]` sequence would leave a half-open tag and hide the fact it
- * names. Returns the rendered text (with its leading space) — "" when nothing fits.
- */
-export function packTags(tags: readonly string[], room: number): string {
-  const kept: string[] = [];
-  let left = room;
-  for (const tag of tags) {
-    const cost = tag.length + 3;
-    if (cost > left) continue;
-    kept.push(tag);
-    left -= cost;
-  }
-  return kept.length ? ` [${kept.join("] [")}]` : "";
 }
 
 export interface TrailerReading {

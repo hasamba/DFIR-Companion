@@ -36,6 +36,7 @@ import { decodeDefenderEvent, defenderDescription } from "./defenderEvents.js";
 import { commandCandidates } from "./commandNormalize.js";
 import { secretSpillSignal } from "./secretSpillRules.js";
 import { streamOverlay } from "./ntfsStreams.js";
+import { dnsOverlay, DNS_CLIENT_EVENTS } from "./dnsRecord.js";
 import { processOverlay } from "./processAccess.js";
 import { aggregateEvents, maxEventsDefault } from "./eventAggregate.js";
 import { evtxRecordIdentity } from "./evtxRecordId.js";
@@ -349,6 +350,7 @@ export interface WinEventDef {
   severity: Severity;
   mitre?: string[];
   kind?: "process" | "network" | "dns" | "procaccess" | "file" | "service" | "stream" | "thread" | "tamper";
+  statusField?: "QueryStatus" | "Status"; // the DNS status field THIS event defines (dnsRecord.ts)
 }
 
 // Groups whose membership IS privilege. An add to one of these is the difference between routine
@@ -483,7 +485,7 @@ const SYSMON_EVENTS: Record<number, WinEventDef> = {
   19: { label: "WMI event filter registered", severity: "Medium", mitre: ["T1546.003"] },
   20: { label: "WMI event consumer registered", severity: "Medium", mitre: ["T1546.003"] },
   21: { label: "WMI consumer-to-filter binding", severity: "Medium", mitre: ["T1546.003"] },
-  22: { label: "DNS query", severity: "Low", kind: "dns" },
+  22: { label: "DNS query", severity: "Low", kind: "dns", statusField: "QueryStatus" },
   23: { label: "File deleted (archived)", severity: "Low", mitre: ["T1070.004"] },
   24: { label: "Clipboard changed", severity: "Low" },
   25: { label: "Process image tampering", severity: "High", kind: "tamper", mitre: ["T1055.012"] },
@@ -682,7 +684,6 @@ const SUBJECT_KEYS = [
   "DestinationPort",
   "DestinationHostname",
   "Protocol",
-  "QueryName",
   "ShareName",
   "RelativeTargetName",
   "TaskName",
@@ -898,6 +899,8 @@ export function mapWindows(
   const defender = decodeDefenderEvent(channel, eid, isObject(edRaw) ? edRaw : {}); // #930 item 1
   const ed: Row = isObject(edRaw) ? edRaw : {};
   const [isSysmon, isPwsh] = [/sysmon/i.test(channel), /powershell/i.test(channel)];
+  // Channel-keyed tables: Sysmon, PowerShell, the DNS Client (DNS_CLIENT_EVENTS, dnsRecord.ts).
+  const table = isSysmon ? SYSMON_EVENTS : isPwsh ? POWERSHELL_EVENTS : WIN_EVENTS;
   // The rendered event message, verbatim. It was read for the unknown-event LABEL and then dropped,
   // so a Windows event reached the case with `message` UNSET while every other importer populated
   // it — and the content tagger's default ruleset matches `message`. Twelve of its rules, the ones
@@ -908,7 +911,7 @@ export function mapWindows(
   // behind the 600-char description.
   const rawMessage = firstStr(rec, ["message", "Message"]).trim();
   const def: WinEventDef = defender?.def ??
-    (isSysmon ? SYSMON_EVENTS[eid] : isPwsh ? POWERSHELL_EVENTS[eid] : WIN_EVENTS[eid]) ?? {
+    (/dns-client/i.test(channel) ? DNS_CLIENT_EVENTS[eid] : table[eid]) ?? {
       label: oneLine(rawMessage.split(/[\r\n]/)[0] || `Event ${eid}`).slice(0, 120),
       severity: "Info",
     };
@@ -1020,6 +1023,10 @@ export function mapWindows(
         })
       : null;
   if (pa) ({ description, severity, mitre } = pa);
+  // Sysmon 22 / DNS-Client 3006/3008/3020: the query, its type, the status the resolver client
+  // reported and the values RETURNED — never "resolves to" (dnsRecord.ts, #933 item 2).
+  const dq = def.kind === "dns" ? dnsOverlay((k) => getCI(ed, k), def.statusField ?? "", description) : null;
+  if (dq) ({ description } = dq);
   // Kerberoasting / AS-REP roasting: an RC4-encrypted Kerberos ticket request for a user service
   // account grades the otherwise-Low 4769/4768 with the correct technique (see kerberosRoastSignal).
   if (!isSysmon) {
@@ -1142,6 +1149,7 @@ export function mapWindows(
         }
       : {}),
     ...(pa ? { process: pa.process } : {}),
+    ...(dq ? { dns: dq.dns } : {}),
     ...(def.kind === "process"
       ? {
           process: {
@@ -1255,9 +1263,9 @@ export function mapWindows(
   // mapWindows. Hayabusa does NOT: it renders events through its own output profile and has its own
   // mapper, which scrapes the script block itself.
   textIocs(psText, iocSink);
-  const dns = str(getCI(ed, "QueryName")).trim();
-  if (def.kind === "dns" && dns && dns !== "-" && /\./.test(dns))
-    addIoc(iocSink, "domain", dns.replace(/\.$/, ""));
+  // The queried name is the lead even when it never resolved (a DGA name IS the indicator) — but
+  // only a real name; the returned addresses never are (nothing observed a connection).
+  if (dq?.dns.queryValid) addIoc(iocSink, "domain", dq.dns.query);
 
   const recordIdentity = evtxRecordIdentity(channel, getCI(rec, "EventRecordID"));
 
@@ -1276,7 +1284,7 @@ export function mapWindows(
     // srv-a stay one host); a host-less export keys on "". pid keeps process creations distinct; a
     // Sysmon 15 stream carries its exact path's digest and the host file's hash (ntfsStreams.ts).
     aggKey:
-      `win|${host}|${channel}|${eid}|${accts.join(",")}|${pa ? "" : subject}${pid !== undefined ? `|pid=${pid}` : ""}${defender ? `|${defender.identity}` : ""}${ads?.identity ?? ""}${pa?.identity ?? ""}`.toLowerCase(),
+      `win|${host}|${channel}|${eid}|${accts.join(",")}|${pa ? "" : subject}${pid !== undefined ? `|pid=${pid}` : ""}${defender ? `|${defender.identity}` : ""}${ads?.identity ?? ""}${pa?.identity ?? ""}${dq?.identity ?? ""}`.toLowerCase(),
     ...(sha256 ? { sha256 } : {}),
     ...(md5 ? { md5 } : {}),
     ...(imagePath ? { path: imagePath } : {}),

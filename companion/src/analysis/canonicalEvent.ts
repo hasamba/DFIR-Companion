@@ -129,6 +129,26 @@ export const canonicalEventEnvelopeSchema = z.object({
     })
     .optional(),
   process: canonicalProcessSchema.optional(),
+  // A DNS record's own reading (dnsRecord.ts, #933 item 2): what the resolver client reported and
+  // the values it RETURNED — owner-less, so never "answers"; the vantage is the endpoint's own.
+  dns: z
+    .object({
+      query: z.string(),
+      queryValid: z.boolean(),
+      queryType: z.number().int().nonnegative().optional(),
+      status: z.number().int().nonnegative().optional(),
+      state: z.string().min(1),
+      returned: z.array(
+        z.object({
+          type: z.number().int().nonnegative().optional(),
+          value: z.string(),
+          kind: z.enum(["address", "name", "other"]),
+        }),
+      ),
+      ownership: z.literal("not in this record"),
+      vantage: z.enum(["endpoint"]),
+    })
+    .optional(),
   file: z
     .object({
       path: z.string().optional(),

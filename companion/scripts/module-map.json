@@ -233,6 +233,7 @@
     "detectionStackPaths.ts": "analysis/detect",
     "diagnostics.ts": "analysis/case",
     "diskWarn.ts": "analysis/case",
+    "dnsRecord.ts": "analysis/ingest",
     "dropLog.ts": "analysis/case",
     "dropScan.ts": "analysis/case",
     "dropStatus.ts": "analysis/case",

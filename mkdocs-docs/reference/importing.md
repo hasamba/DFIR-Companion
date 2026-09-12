@@ -314,6 +314,45 @@ which response carried which payload, and which file on an endpoint matches a tr
 read from one line. That chain (and the proxy-to-workstation link) is a join across records and
 formats, with its own issue.
 
+### DNS records: what one record establishes
+
+Sysmon Event 22 and the Windows DNS Client operational log (`Microsoft-Windows-DNS-Client/
+Operational` — 3006 query sent, 3008 query completed, 3020 query result) are read for what one
+record establishes, and no more:
+
+- **A query is not a resolution, and a resolution is not a connection.** The row says which
+  process asked for which name, what type of record it asked for when the record says so (`[A
+  query]`; Sysmon does not log the type, so `[type not in this record]`), and what the resolver
+  client reported: `[returned: …]` on success, `[NXDOMAIN — the name does not exist at this
+  resolver]`, `[no records of the queried type]`, `[timed out — no answer]`, `[refused]`, `[server
+  failure]`, or `[status 1234 (not in the table)]` for a code the table does not name — never read
+  as success or failure. A record that carries no status (3006) says `[outcome not in this
+  record]`. A resolved query and a NXDOMAIN of the same name are two rows; a re-query answered
+  with the same set of values is one row with a count and a first/last time — **the count is how
+  many times that answer was seen, not how many values it had, and the row does not keep each
+  observation's time**.
+- **Returned, not answered.** The values are what the resolver *returned* for the query. The record
+  keeps no owner name and no section for them, so an address returned beside the answers (an
+  ADDITIONAL-section record, an unrelated AAAA on an A query) reads exactly like an answer. The row
+  therefore never says "resolves to", and a returned address is **never an indicator** — nothing in
+  the record observed a connection to it. A queried name is a domain indicator even when it never
+  resolved (a name that fails is still the lead), but only when it is a real name: a query name
+  that is not one (`good.example] [returned: …`, a path) is shown neutralised, marked `[query name
+  is not a valid name]`, and mints nothing.
+- **Whose view it is.** These records are the endpoint's own stub resolver's view: the answer is
+  whatever the host's configured resolver returned — from its cache or not, the record does not
+  say — and the record does not name the resolver or say whether it forwarded. A network sensor's
+  `dns.log` is a different view (its client may be a forwarding resolver, not the endpoint), and a
+  resolver's own log is a third; neither is read as events today. TTLs are not in these records.
+- **What the merge does not read.** The queried name and the returned values are shown inside
+  `[query: …]` and `[returned: …]` tags that the merge never scans for a file hash or a path, so a
+  TXT answer of 32 hex characters or a path-shaped name cannot join the query to an unrelated file
+  event. A row whose shown text is not its whole record — more than eight returned values, a long
+  value, a neutralised character — ends in an identity mark (`#…`) so two records that read alike
+  stay two rows through import.
+- **What this does not do.** It does not join a query to a later connection, bound by a TTL or a
+  window; that is a separate, cross-record design over un-aggregated records.
+
 ### Mobile evidence with no clock (iLEAPP / ALEAPP)
 
 Most of what a phone examination is for has no timestamp: the installed-apps list, permissions,
