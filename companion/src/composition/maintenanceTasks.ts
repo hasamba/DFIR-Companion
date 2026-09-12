@@ -20,6 +20,7 @@ import { EvidenceIntegrityMonitor, resolveIntegrityConfig } from "../analysis/cu
 import type { CustodyStore } from "../analysis/custody.js";
 import { milestoneEvent } from "../analysis/notifications.js";
 import type { Notifier } from "../integrations/notify/notifyDispatch.js";
+import type { AuditExporter } from "../integrations/audit/auditExporter.js";
 import { logLine, warnLine } from "../logging/serverLogger.js";
 import { seedDemoCase } from "../analysis/seedDemoCase.js";
 import { resolveUpdateMode, UPDATE_CHECK_THROTTLE_MS } from "../analysis/updateCheck.js";
@@ -200,12 +201,14 @@ export interface PostListenDeps {
   velociraptorClientStore: VelociraptorClientStore;
   updateCheckStore: UpdateCheckStore;
   updateRepo: string;
+  /** SIEM audit export (#929). Absent → the feature is off and nothing is resumed. */
+  auditExporter?: AuditExporter;
 }
 
 /**
  * The startup work that must wait until the server is listening — because it reaches OUT (to
- * Velociraptor, to GitHub) or writes a case, and neither should sit in the path that gets the port
- * bound. All three are best-effort and every timer is .unref()'d.
+ * Velociraptor, to GitHub, to a SIEM collector) or writes a case, and neither should sit in the
+ * path that gets the port bound. All of them are best-effort and every timer is .unref()'d.
  */
 export function startPostListenTasks({
   store,
@@ -214,6 +217,7 @@ export function startPostListenTasks({
   velociraptorClientStore,
   updateCheckStore,
   updateRepo,
+  auditExporter,
 }: PostListenDeps): void {
   // Demo mode: seed the demo case immediately on startup so it's always present, then reset it
   // on a fixed interval so visitor edits don't accumulate. Best-effort — a seed failure is logged
@@ -289,4 +293,24 @@ export function startPostListenTasks({
     }, UPDATE_CHECK_THROTTLE_MS);
     timer.unref?.();
   })();
+  // SIEM audit export (#929): deliver whatever was still pending when this process last stopped.
+  //
+  // The delivery position only advances after a collector accepts a batch, so a crash or an outage
+  // leaves it behind on purpose — the records are re-sent rather than skipped. But the only other
+  // thing that drains a case is its own next activity-log append, and a case that has gone quiet
+  // (or been closed) never gets one. Without this, "it re-sends after a restart" was true of the
+  // mechanism and false of the product.
+  if (auditExporter) {
+    void auditExporter
+      .resume()
+      .then((results) => {
+        const failed = results.filter((r) => !r.ok);
+        if (failed.length) {
+          warnLine(
+            `[audit-export] resume: ${failed.length} destination/case pair(s) still undelivered — ${failed[0].error ?? "send failed"}`,
+          );
+        }
+      })
+      .catch((e) => warnLine(`[audit-export] resume failed: ${(e as Error).message}`));
+  }
 }

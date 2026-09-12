@@ -707,6 +707,10 @@ false-positive, AI runs (synthesis / 2nd opinion / Ask-the-case / …), enrichme
 toggles, settings changes, playbook edits, comments/tags, hunt runs, and exports, each with a
 timestamp and the analyst who did it (where applicable).
 
+This log can be forwarded to a SIEM — see [Audit Export](settings.md#audit-export). It is the only
+surface that carries it off the box on its own; a whole-case ZIP or encrypted `.dfircase` archive
+includes the raw file too, but that is an evidence package rather than a log feed.
+
 ---
 
 ## Analysis Run Ledger

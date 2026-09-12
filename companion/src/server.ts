@@ -558,6 +558,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     velociraptorClientStore,
     updateCheckStore,
     updateRepo,
+    auditExporter: rt.auditExporter,
   });
 
   // Friendly message instead of an unhandled-error stack trace when the port is taken.
