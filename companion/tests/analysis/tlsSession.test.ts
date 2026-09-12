@@ -578,7 +578,7 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
   it("undocumented serial spellings and a 32-hex fingerprint yield nothing", () => {
     expect(certIdentity("CN=X", "01-02")).toBeUndefined();
     expect(certIdentity("CN=X", "0x0102")).toBeUndefined();
-    expect(certIdentity("CN=X", "01:02 03")).toBe(certIdentity("CN=X", "010203")); // colon or space, byte-wise
+    expect(certIdentity("CN=X", "01:02 03")).toBeUndefined(); // one separator kind throughout
     expect(certIdentity("CN=X", "01:02")).toBe(certIdentity("CN=X", "0102"));
     expect(certIdentity("CN=X", "0102")).toBe(certIdentity("CN=X", "0102"));
     const md5 = readSuricataTls(
@@ -867,6 +867,33 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
     const e = rows([seen])[0];
     expect(e.description).toContain("[client cert: identity unavailable]");
     expect(e.canonical?.tls?.clientCertificate?.identity).toBe("unavailable");
+  });
+
+  it("a fingerprint field that will not parse is still a certificate seen, apart from none", () => {
+    const base2 = { ts: 1700000000.5, "id.orig_h": "10.0.0.1", "id.resp_h": "203.0.113.1", "id.resp_p": 443 };
+    const rejected = readZeekSsl({ ...base2, cert_chain_fps: ["ab"] }, "");
+    const absent = readZeekSsl(base2, "");
+    expect(rejected.cert).toBeUndefined();
+    expect(rejected.certificateSeen).toBe(true);
+    expect(rows([rejected, absent])).toHaveLength(2);
+    expect(readZeekSsl({ ...base2, client_cert_chain_fps: ["ab"] }, "").clientCert).toEqual({ seen: true });
+    const su = readSuricataTls({ ...SURICATA_TLS, tls: { sni: "a.example", fingerprint: "ab" } }, "");
+    expect(su.cert).toBeUndefined();
+    expect(su.certificateSeen).toBe(true);
+    expect(
+      readSuricataTls({ ...SURICATA_TLS, tls: { sni: "a.example", client: { fingerprint: "ab" } } }, "")
+        .clientCert,
+    ).toEqual({ seen: true });
+  });
+
+  it("a long first group before byte pairs is not a hex identifier", () => {
+    const bad = "abcd:" + Array(18).fill("ef").join(":");
+    expect(
+      readSuricataTls({ ...SURICATA_TLS, tls: { sni: "a.example", fingerprint: bad } }, "").cert,
+    ).toBeUndefined();
+    expect(certIdentity("CN=X", "abc:de")).toBeUndefined();
+    expect(certIdentity("CN=X", "ab:cd ef")).toBeUndefined();
+    expect(certIdentity("CN=X", "abcde")).toBe(certIdentity("CN=X", "abcde"));
   });
 
   it("selects the most-seen rows first under a budget", () => {

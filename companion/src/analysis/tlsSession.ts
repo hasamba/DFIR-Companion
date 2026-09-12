@@ -131,7 +131,9 @@ function validity(v: unknown): string | undefined {
 
 // A hex identifier in its documented grammar (hex, optionally colon- or space-separated) — or
 // nothing. Deleting stray characters would let `aa:zz:bb` and `aa:bb` mint one identity.
-const HEX_GRAMMAR = /^[0-9a-f]+(?:[:\s][0-9a-f]{2})*$/i;
+// Plain hex with no separator, or byte pairs with one separator kind throughout — never a long
+// first group followed by pairs, which is neither form.
+const HEX_GRAMMAR = /^(?:[0-9a-f]+|[0-9a-f]{2}(?::[0-9a-f]{2})+|[0-9a-f]{2}(?:\s[0-9a-f]{2})+)$/i;
 const hexOf = (v: string): string | undefined => {
   const t = v.trim();
   return HEX_GRAMMAR.test(t) ? t.replace(/[:\s]/g, "").toLowerCase() : undefined;
@@ -230,6 +232,8 @@ export function readZeekSsl(row: Row, fallbackTs: string): TlsObservation {
     // Zeek 6 writes the chain's fingerprints; a standard ssl row carries no serial, so without them
     // the certificate has NO identity here — subject and issuer are session attributes.
     cert: fps?.length ? fingerprint(fps[0]) : undefined,
+    // A fingerprint field that will not parse still says a certificate was observed.
+    ...(fps?.length && !fingerprint(fps[0]) ? { certificateSeen: true } : {}),
     ...(clientCert ? { clientCert } : {}),
   };
 }
@@ -243,6 +247,7 @@ function clientCertOf(row: Row): TlsObservation["clientCert"] {
       : {}),
     ...(text(getCI(row, "client_issuer")) !== undefined ? { issuer: text(getCI(row, "client_issuer")) } : {}),
     ...(fps?.length && fingerprint(fps[0]) ? { ref: fingerprint(fps[0]) } : {}),
+    ...(fps?.length && !fingerprint(fps[0]) ? { seen: true } : {}),
     ...(list(getCI(row, "client_cert_chain_fuids"))?.length
       ? { chainFuids: list(getCI(row, "client_cert_chain_fuids")) }
       : {}),
@@ -333,7 +338,11 @@ export function readSuricataTls(row: Row, fallbackTs: string): TlsObservation {
     ja3: hashOf(getCI(t, "ja3")),
     ja3s: hashOf(getCI(t, "ja3s")),
     ...(suricataClientCert(t) ? { clientCert: suricataClientCert(t) } : {}),
-    ...(derSeen && !derFp ? { certificateSeen: true } : {}),
+    ...((derSeen || text(getCI(t, "fingerprint"))?.trim()) &&
+    !derFp &&
+    !fingerprint(getCI(t, "fingerprint"), SURICATA_FINGERPRINT)
+      ? { certificateSeen: true }
+      : {}),
     cert: fingerprint(getCI(t, "fingerprint"), SURICATA_FINGERPRINT) ?? derFp ?? identityRef(issuer, serial),
     ...(Object.keys(facts).length ? { certificate: facts } : {}),
   };
@@ -397,7 +406,9 @@ function suricataClientCert(t: Row): TlsObservation["clientCert"] {
   const facts = suricataFacts(c);
   // Certificate data that will not decode is still a client certificate SEEN — never "no client
   // certificate" — so the session keys on its presence and says the identity is unavailable.
-  const seen = (list(getCI(c, "certificate"))?.length ?? 0) + (list(getCI(c, "chain"))?.length ?? 0) > 0;
+  const seen =
+    (list(getCI(c, "certificate"))?.length ?? 0) + (list(getCI(c, "chain"))?.length ?? 0) > 0 ||
+    Boolean(text(getCI(c, "fingerprint"))?.trim());
   const out = {
     ...(facts.subject !== undefined ? { subject: facts.subject } : {}),
     ...(facts.issuer !== undefined ? { issuer: facts.issuer } : {}),
