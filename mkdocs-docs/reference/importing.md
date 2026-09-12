@@ -268,13 +268,15 @@ and a 302 read like a 200 with a small body. Each line now says what its own fie
   rather than reading as a disposition: uninterpretable text must not become a claim, and it must
   not become an unbounded key either;
   its brackets and control characters are neutralised, so a token cannot forge a tag the reader
-  trusts. **A forwarded-for header is not the client**: `srcIp` stays the address the server or
+  trusts — and so are the request target, the Referer, the User-Agent and the auth user, which the
+  client writes too. **An address named only in a Referer is no indicator**: the client claimed it,
+  nothing observed it; a named Referer host stays a domain indicator as before. **A forwarded-for header is not the client**: `srcIp` stays the address the server or
   proxy actually saw.
 - **What the status and the byte count do not say.** `[redirect — the Location is not in this
   format]` for 301/302/303/307/308; `[not modified — no body]` for 304 (never a redirect);
   `[no body by definition (HEAD)]`; `[no body for this status]` for 204 and 1xx; and on a `CONNECT`,
-  `[the logged size is the tunnel's, not a response body]` — or, when the proxy refused it,
-  `[no tunnel was established; the logged size is the error response's]`. A byte count is the size
+  `[the logged size is the tunnel's, not a response body]` — or, when the proxy did not answer 2xx,
+  `[no tunnel was established; the logged size is the HTTP response's]`. A byte count is the size
   the server
   logged — Apache's excludes headers, Squid's includes them, neither is network bytes, and no
   status proves the client received them. An invalid target mints no destination indicator either:

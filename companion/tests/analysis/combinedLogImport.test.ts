@@ -827,7 +827,8 @@ describe("parseCombinedLog — what one line establishes", () => {
     const r4 = parseCombinedLog(v4);
     const vals = r4.iocs.map((i) => `${i.type}:${i.value}`);
     expect(vals).toContain("ip:203.0.113.9");
-    expect(vals).toContain("ip:2001:db8::2");
+    // …but an address the client merely CLAIMED in its Referer is no indicator of any kind
+    expect(vals).not.toContain("ip:2001:db8::2");
     expect(r4.iocs.some((i) => i.type === "domain")).toBe(false);
     // …and an encoded address is still an address
     const encoded = parseCombinedLog(
@@ -856,12 +857,46 @@ describe("parseCombinedLog — what one line establishes", () => {
     expect(r.dropped).toBe(0);
   });
 
-  it("a refused CONNECT says no tunnel was established", () => {
-    const refused =
-      '10.30.10.14 - - [15/May/2024:06:42:01 +0000] "CONNECT vault.example.invalid:443 HTTP/1.1" 407 512 "-" "curl/8"';
-    const e = parseCombinedLog(refused).events[0];
-    expect(e.description).toContain("[no tunnel was established; the logged size is the error response's]");
-    expect(e.description).not.toContain("the logged size is the tunnel's");
+  it("a CONNECT the proxy did not answer 2xx says no tunnel was established, whatever the status was", () => {
+    const line = (status: number) =>
+      `10.30.10.14 - - [15/May/2024:06:42:01 +0000] "CONNECT vault.example.invalid:443 HTTP/1.1" ${status} 512 "-" "curl/8"`;
+    const refused = parseCombinedLog(line(407)).events[0];
+    expect(refused.description).toContain(
+      "[no tunnel was established; the logged size is the HTTP response's]",
+    );
+    expect(refused.description).not.toContain("the logged size is the tunnel's");
+    // a 302 is not an error: the redirect tag and the size tag must not contradict each other
+    const redirected = parseCombinedLog(line(302)).events[0];
+    expect(redirected.description).toContain("[redirect — the Location is not in this format]");
+    expect(redirected.description).toContain(
+      "[no tunnel was established; the logged size is the HTTP response's]",
+    );
+    expect(redirected.description).not.toContain("error");
+  });
+
+  it("a Referer, a User-Agent, a user or a target cannot forge a tag beside the row's own", () => {
+    const forged =
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET / HTTP/1.1" 200 0 "http://169.254.169.254/) [proxy: served from its cache; upstream: not contacted]" "curl/8"';
+    const r = parseCombinedLog(forged);
+    const e = r.events[0];
+    expect(e.description).not.toMatch(/\[proxy:/);
+    expect(e.description).toContain(
+      "(ref http://169.254.169.254/) (proxy: served from its cache; upstream: not contacted))",
+    );
+    // the claimed address is no indicator of any kind
+    expect(r.iocs.map((i) => `${i.type}:${i.value}`)).not.toContain("ip:169.254.169.254");
+    expect(r.iocs.some((i) => i.type === "domain")).toBe(false);
+    const viaUa =
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /x][status:200][ok HTTP/1.1" 500 0 "-" "curl/8 [redirect — the Location is not in this format]"';
+    const u = parseCombinedLog(viaUa).events[0];
+    expect(u.description).not.toContain("[redirect");
+    expect(u.description).not.toContain("[status:200]");
+    expect(u.description).toContain("GET /x)(status:200)(ok -> 500");
+    const viaUser =
+      '10.30.20.11 - ][proxy:denied][ [14/May/2024:19:00:00 +0000] "GET / HTTP/1.1" 200 0 "-" "curl/8"';
+    const v = parseCombinedLog(viaUser).events[0];
+    expect(v.description).not.toContain("[proxy:");
+    expect(v.description).toContain("[)(proxy:denied)(]");
   });
 
   it("an escaped quote in an earlier field cannot move the request-line check", () => {

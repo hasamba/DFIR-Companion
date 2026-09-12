@@ -194,10 +194,13 @@ const SQUID_HIERARCHY: Record<string, string> = {
 
 const SQUID_TOKEN = /^([A-Z][A-Z0-9_]*)(?::([A-Z][A-Z0-9_]*))?$/;
 
-// Trailer text is attacker-writable and is rendered INSIDE the row's `[tag]` brackets, so a token
-// carrying `] [proxy: served from its cache` would forge a tag the reader trusts. Brackets become
-// parentheses and every control character goes before the token is shown.
-const showToken = (t: string): string =>
+/**
+ * Client-written text — a trailer token, the request target, the Referer, the User-Agent, the
+ * auth user — is rendered on the same line as the row's `[tag]`s, so a value carrying
+ * `) [proxy: served from its cache]` would forge a tag the reader trusts. Brackets become
+ * parentheses and every control character goes before the text is shown.
+ */
+export const showToken = (t: string): string =>
   t
     .replace(/\[/g, "(")
     .replace(/\]/g, ")")
@@ -354,13 +357,13 @@ export function readTrailer(tokens: readonly string[], profile: TrailerProfile |
 export function readSize(method: string, status: number, bytes: string): string {
   const verb = method.trim().toUpperCase();
   const logged = /^\d{1,19}$/.test(bytes.trim());
-  // A CONNECT's size is the tunnel's only when the proxy ANSWERED 2xx: on a 407 or a 403 no tunnel
-  // exists and the bytes are that error response's own.
+  // A CONNECT's size is the tunnel's only when the proxy ANSWERED 2xx: on a 407, a 403 or a 302 no
+  // tunnel exists and the bytes are that HTTP response's own — the status says what kind it was.
   if (verb === "CONNECT")
     return logged
       ? status >= 200 && status < 300
         ? "the logged size is the tunnel's, not a response body"
-        : "no tunnel was established; the logged size is the error response's"
+        : "no tunnel was established; the logged size is the HTTP response's"
       : "";
   if (verb === "HEAD") return "no body by definition (HEAD)";
   if (status === 204 || (status >= 100 && status < 200)) return "no body for this status";

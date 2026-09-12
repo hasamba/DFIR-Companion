@@ -248,12 +248,12 @@ describe("readSize / statusWords — a count is not a body; a status is not a re
     expect(readSize("GET", 206, "500")).toBe("");
     expect(readSize("GET", 404, "1275")).toBe("");
     expect(readSize("CONNECT", 200, "123")).toBe("the logged size is the tunnel's, not a response body");
-    // a CONNECT the proxy refused established no tunnel: those bytes are the error response's
+    // a CONNECT not answered 2xx established no tunnel: those bytes are the HTTP response's
     expect(readSize("CONNECT", 407, "512")).toBe(
-      "no tunnel was established; the logged size is the error response's",
+      "no tunnel was established; the logged size is the HTTP response's",
     );
     expect(readSize("CONNECT", 403, "512")).toBe(
-      "no tunnel was established; the logged size is the error response's",
+      "no tunnel was established; the logged size is the HTTP response's",
     );
     expect(readSize("CONNECT", 200, "-")).toBe("");
     expect(readSize("HEAD", 200, "0")).toBe("no body by definition (HEAD)");

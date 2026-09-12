@@ -68,6 +68,7 @@ import {
   readSize,
   readTarget,
   readTrailer,
+  showToken,
   statusWords,
   trailerTokens,
   type TrailerProfile,
@@ -356,9 +357,12 @@ export function mapCombinedLogLine(
   // The Referer is attacker-controlled too, so its host goes through the SAME whole-authority
   // validation as the request target: `http://ev]il:abc/x` mints no domain indicator.
   const refHost = referer ? readTarget("GET", referer).host : "";
-  const refIp = refHost.startsWith("[") ? refHost.slice(1, -1) : isIP(refHost) ? refHost : "";
-  if (refIp) addIoc(sink, "ip", refIp);
-  else if (refHost) addIoc(sink, "domain", refHost);
+  // A Referer is a claim the client makes, not an observed connection: an ADDRESS found only there
+  // is no ip indicator (ip indicators feed enrichment and export as "seen"), and a numeric host is
+  // no domain either. A named host stays the domain indicator it has always been — a spillage
+  // surface (module comment) — and a secret-bearing referer still becomes the url indicator below.
+  const refIsAddress = refHost.startsWith("[") || isIP(refHost) !== 0;
+  if (refHost && !refIsAddress) addIoc(sink, "domain", refHost);
   if (referer && /^https?:\/\//i.test(referer) && referer.includes("?")) addIoc(sink, "url", referer);
 
   // User-Agent capture (see module comment): a UA that doesn't open like a real `Product/Version`
@@ -368,10 +372,17 @@ export function mapCombinedLogLine(
   if (ua && !UA_PRODUCT.test(ua)) addIoc(sink, "other", ua.slice(0, 400));
 
   const { severity, mitre } = classify(uri, status);
-  const userTag = user ? ` [${user}]` : "";
+  // Every client-written field is neutralised before it is shown beside the row's tags (showToken):
+  // a Referer of `http://x/) [proxy: served from its cache]` must read as text, never as the leg
+  // words the trailer reader earned. The RAW values still feed the key, the indicators and the
+  // spill check above and below.
+  const shownUri = showToken(uri);
+  const shownRef = showToken(referer);
+  const shownUa = showToken(ua);
+  const userTag = user ? ` [${showToken(user)}]` : "";
   const bytesTag = bytesRaw && bytesRaw !== "-" ? ` (${bytesRaw}b)` : "";
-  const refTag = referer ? ` (ref ${referer})` : "";
-  const uaTag = ua ? ` (ua ${ua})` : "";
+  const refTag = shownRef ? ` (ref ${shownRef})` : "";
+  const uaTag = shownUa ? ` (ua ${shownUa})` : "";
   // A row with no attack signal keeps today's layout byte-for-byte. A row with one takes a
   // FIXED-SLOT layout: prefix, then the status in its own slot, then one match slot per firing
   // field, then the method and the BOUNDED original, then the tail tags each with its own cap — so
@@ -379,8 +390,8 @@ export function mapCombinedLogLine(
   // analyst always sees the text that fired and what the server answered. "web-attack", never
   // "compromise": a 200 does not prove execution and a 500 does not prove prevention.
   const description = attack
-    ? attackDescription(attack, method, uri, status, bytesTag, tags, userTag, referer, ua)
-    : plainDescription(method, uri, status, bytesTag, tags, userTag, refTag, uaTag);
+    ? attackDescription(attack, method, shownUri, status, bytesTag, tags, userTag, shownRef, shownUa)
+    : plainDescription(method, shownUri, status, bytesTag, tags, userTag, refTag, uaTag);
 
   // A secret carried in the request URI or the Referer is a spill the moment this line is written.
   // Graded Medium (see secretSpillRules.ts) so it reaches the forensic timeline synthesis reads —
