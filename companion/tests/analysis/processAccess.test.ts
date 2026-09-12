@@ -105,6 +105,12 @@ describe("readCallTrace / readStart — tri-state fields", () => {
       Array.from({ length: 40 }, (_, i) => `C:\\Windows\\System32\\m${i}.dll+1`).join("|"),
     );
     expect(many.frames).toHaveLength(32);
+    // an UNKNOWN frame past the retained cap still counts — evidence is read over the whole trace
+    const late = readCallTrace(
+      `${Array.from({ length: 32 }, (_, i) => `C:\\Windows\\System32\\m${i}.dll+1`).join("|")}|UNKNOWN(0000000012345678)`,
+    );
+    expect(late.unbacked).toBe(1);
+    expect(late.frames).toHaveLength(32);
   });
   it("a start: absent from the record, '-' / empty / UNKNOWN (outside any module), or a module", () => {
     expect(readStart({}).state).toBe("absent");
@@ -161,6 +167,15 @@ describe("processOverlay — ProcessAccess (Sysmon 10): the record's own evidenc
       expect(access(src, CHROME, "0x1FFFFF").severity, `${src} chrome all`).toBe("Medium");
       expect(access(src, CHROME, "0x40").severity, `${src} chrome dup`).toBe("Medium");
     }
+  });
+  it("an unbacked frame past the retained cap still grades a trusted lsass read High", () => {
+    const trace = `${Array.from({ length: 32 }, (_, i) => `C:\\Windows\\System32\\m${i}.dll+1`).join("|")}|UNKNOWN(0000000012345678)`;
+    expect(access(CSRSS, LSASS, "0x1010", { CallTrace: trace }).severity).toBe("High");
+  });
+  it("a nested lookalike of a system path never borrows trust", () => {
+    const nested = "C:\\Staging\\Windows\\System32\\svchost.exe";
+    expect(access(nested, LSASS, "0x1010").severity).toBe("High");
+    expect(thread(nested, CHROME, { StartModule: "C:\\Windows\\System32\\ntdll.dll" }).severity).toBe("High");
   });
   it("an unbacked frame in the call trace is High whatever the rights or the source", () => {
     const o = access(CSRSS, CHROME, "0x1000", {
@@ -238,6 +253,9 @@ describe("processOverlay — ProcessAccess (Sysmon 10): the record's own evidenc
     expect(o.rawFields).toMatchObject({
       "subject.id": ["SourceProcessGuid"],
       "object.pid": ["TargetProcessId"],
+      "process.pid": ["TargetProcessId"],
+      "process.name": ["TargetImage"],
+      "process.executable": ["TargetImage"],
     });
     const other = overlay("procaccess", {
       SourceProcessGuid: "{33333333-3333-3333-3333-333333333333}",
@@ -249,6 +267,25 @@ describe("processOverlay — ProcessAccess (Sysmon 10): the record's own evidenc
       GrantedAccess: "0x1010",
     });
     expect(other.identity).not.toBe(o.identity);
+  });
+  it("a placeholder GUID — all zeros, a dash, malformed — is no GUID: the record fallback keys the row", () => {
+    const zero = {
+      SourceProcessId: "1001",
+      SourceImage: MIMI,
+      TargetProcessId: "612",
+      TargetImage: LSASS,
+      GrantedAccess: "0x10",
+      SourceProcessGuid: "{00000000-0000-0000-0000-000000000000}",
+      TargetProcessGuid: "{00000000-0000-0000-0000-000000000000}",
+    };
+    const a = overlay("procaccess", zero, { recordId: "100", row: 1 });
+    const b = overlay("procaccess", { ...zero, SourceProcessId: "1002" }, { recordId: "101", row: 2 });
+    expect(a.identity).not.toBe(b.identity);
+    expect(a.identity).toContain("|src:pid:1001|dst:pid:612|rec:100");
+    expect(a.description).toContain(GUIDS_NOTE);
+    expect(
+      overlay("procaccess", { ...zero, SourceProcessGuid: "-", TargetProcessGuid: "not-a-guid" }).identity,
+    ).toContain("|src:pid:1001|");
   });
   it("GUID-less records key on their own record — reused pids never fold — and say so", () => {
     const ed = {

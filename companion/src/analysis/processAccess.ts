@@ -76,6 +76,10 @@ const ALL_ACCESS = new Set([0x1fffff, 0x1f0fff]);
 const ROUTINE_READ_BITS = B.VM_READ | B.QUERY_INFORMATION | B.QUERY_LIMITED_INFORMATION | B.SYNCHRONIZE;
 const QUERY_ONLY_BITS = B.QUERY_INFORMATION | B.QUERY_LIMITED_INFORMATION | B.SYNCHRONIZE;
 const FRAMES_MAX = 32;
+const TRACE_CHARS_MAX = 8192;
+// A usable process GUID: well-formed and not the all-zero placeholder some feeds write.
+const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const ZERO_GUID = /^0{8}-0{4}-0{4}-0{4}-0{12}$/;
 const WORD_MAX = 80;
 const LSASS = /(?:^|[\\/])lsass\.exe$/i;
 const SYSTEM_MODULE = /^(?:[a-z]:)?\\?windows\\(?:system32|syswow64|winsxs)\\/i;
@@ -126,18 +130,22 @@ export interface CallTrace {
   firstForeign: string;
 }
 
-/** Sysmon's `module+offset|module+offset|…`; an `UNKNOWN(…)` frame is one no module backs. */
+/**
+ * Sysmon's `module+offset|module+offset|…`; an `UNKNOWN(…)` frame is one no module backs. The
+ * EVIDENCE (unbacked frames, the first foreign module) is counted over the whole bounded text;
+ * only the retained frames are capped, so a frame past the cap still grades.
+ */
 export function readCallTrace(text: string | undefined): CallTrace {
   if (text === undefined) return { state: "absent", frames: [], unbacked: 0, firstForeign: "" };
-  const frames = text
+  const all = text
+    .slice(0, TRACE_CHARS_MAX)
     .split("|")
     .map((f) => f.trim())
-    .filter(Boolean)
-    .slice(0, FRAMES_MAX);
-  const unbacked = frames.filter((f) => /^UNKNOWN\b/i.test(f)).length;
-  const modules = frames.map((f) => f.replace(/\+(?:0x)?[0-9a-f]+(?:\(.*)?$/i, "").trim());
+    .filter(Boolean);
+  const unbacked = all.filter((f) => /^UNKNOWN\b/i.test(f)).length;
+  const modules = all.map((f) => f.replace(/\+(?:0x)?[0-9a-f]+(?:\(.*)?$/i, "").trim());
   const firstForeign = modules.find((m) => m && !/^UNKNOWN\b/i.test(m) && !SYSTEM_MODULE.test(m)) ?? "";
-  return { state: "value", frames, unbacked, firstForeign };
+  return { state: "value", frames: all.slice(0, FRAMES_MAX), unbacked, firstForeign };
 }
 
 export interface ThreadStart {
@@ -188,7 +196,10 @@ const clip = (s: string, max: number): string => {
 };
 const pidOf = (v: string): number | undefined =>
   /^\d{1,10}$/.test(v.trim()) && Number(v.trim()) > 0 ? Number(v.trim()) : undefined;
-const guidOf = (v: string): string => v.trim().replace(/^\{|\}$/g, "");
+const guidOf = (v: string): string => {
+  const g = v.trim().replace(/^\{|\}$/g, "");
+  return GUID.test(g) && !ZERO_GUID.test(g) ? g : "";
+};
 
 interface ProcessIdentity {
   guid: string;
@@ -223,6 +234,12 @@ const rawFieldsFor = (
   ...(p.id ? { [`${role}.id`]: [p.guid ? `${prefix}ProcessGuid` : `${prefix}ProcessId`] } : {}),
   ...(p.image ? { [`${role}.name`]: [`${prefix}Image`] } : {}),
   ...(p.pid !== undefined ? { [`${role}.pid`]: [`${prefix}ProcessId`] } : {}),
+});
+// The singular canonical process is the TARGET (the tampered process on 25): its provenance names
+// the Target fields, never the source's.
+const processFieldsFor = (prefix: string, p: ProcessIdentity): Record<string, string[]> => ({
+  ...(p.pid !== undefined ? { "process.pid": [`${prefix}ProcessId`] } : {}),
+  ...(p.image ? { "process.name": [`${prefix}Image`], "process.executable": [`${prefix}Image`] } : {}),
 });
 
 /** The GUID-less fallback: the record's own id, else its import-local row — a row never folds. */
@@ -424,7 +441,7 @@ export function processOverlay(input: OverlayInput): ProcessOverlay {
       "tamper",
       `|tamper:${type.toLowerCase()}|proc:${target.id}${fallback}`,
       { ...(entityOf(target) ? { object: entityOf(target) } : {}) },
-      rawFieldsFor("object", "", target),
+      { ...rawFieldsFor("object", "", target), ...processFieldsFor("", target) },
     );
   }
   const entities = {
@@ -434,6 +451,7 @@ export function processOverlay(input: OverlayInput): ProcessOverlay {
   const rawFields = {
     ...rawFieldsFor("subject", "Source", source),
     ...rawFieldsFor("object", "Target", target),
+    ...processFieldsFor("Target", target),
   };
   if (kind === "thread") {
     const start = readStart({

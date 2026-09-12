@@ -590,11 +590,14 @@ first — source trust lowers only one documented routine shape:
 - **Tampering (Event 25)** keeps the sensor's verdict (High + T1055.012) and names the `Type`.
 
 **Identity is kept for the join.** Both process GUIDs and pids are in the row's key (two instances
-of one image are two rows; PID reuse stays two rows) and in the canonical envelope — the source as
-the `subject`, the target as the `object`, each `{ process, GUID, name, pid }`, the target as the
-event's process. A record with no GUIDs keys on its own record id (or its position in the import)
-so it never folds with another, and says `process GUIDs not in this record`. Events 8, 10 and 25
-are canonical process events (`access`, `remote_thread`, `tamper`).
+of one image are two rows; PID reuse stays two rows; how a feed spelled the image path is not in
+the key) and in the canonical envelope — the source as the `subject`, the target as the `object`,
+each `{ process, GUID, name, pid }`, the target as the event's process with its provenance on the
+Target fields. A record with no usable GUIDs (absent, all zeros, malformed) keys on its own record
+id (or its position in the import) so it never folds with another, and says `process GUIDs not in
+this record`. Events 8, 10 and 25 are canonical process events (`access`, `remote_thread`,
+`tamper`). Trust is root-anchored: `C:\Staging\Windows\System32\svchost.exe` is not a system
+path, and a call trace is read to its end — an unbacked frame past the thirty-second still grades.
 
 **What a handle does not prove.** A read-capable handle on `lsass.exe` is the credential-dump
 shape; it is not a read. A write-capable handle is the injection precondition; it is not a write.

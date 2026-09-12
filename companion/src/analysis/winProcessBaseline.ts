@@ -165,8 +165,11 @@ export const EDR_AGENTS: { name: string; dir: RegExp }[] = [
 // of an installed product) inherited the full benign downgrade. Checking that the path is a system
 // path turns that denylist into an allowlist — the name must match AND the binary must live where
 // that name belongs.
+// ROOT-ANCHORED (#932 item 9): a drive letter, a `\\?\C:` prefix, a `\Device\HarddiskVolumeN` or
+// `\SystemRoot` prefix, then the protected directory at the top of the volume. A substring match
+// let `C:\Staging\Windows\System32\svchost.exe` borrow the system path's trust.
 const SYSTEM_IMAGE_PATH =
-  /\\windows\\(?:system32|syswow64|winsxs)\\|\\program files(?: \(x86\))?\\|\\programdata\\microsoft\\windows defender\\/i;
+  /^(?:(?:[a-z]:|\\\\\?\\[a-z]:|\\device\\harddiskvolume\d+)?\\(?:windows\\(?:system32|syswow64|winsxs)|program files(?: \(x86\))?|programdata\\microsoft\\windows defender)\\|\\systemroot\\(?:system32|syswow64)\\)/i;
 
 // True when `image` may be trusted on the strength of its name. A path that is present must be a
 // system path; a path that is ABSENT keeps the old name-based trust, because plenty of SIEM

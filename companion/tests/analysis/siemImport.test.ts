@@ -1797,6 +1797,16 @@ describe("parseSiemExport — process access, remote threads and tampering (Sysm
     expect(e.canonical?.process).toMatchObject({ pid: 612, name: "chrome.exe" });
     expect(e.canonical?.fieldProvenance["subject.pid"]).toMatchObject({ rawFields: ["SourceProcessId"] });
     expect(e.canonical?.fieldProvenance["object.id"]).toMatchObject({ rawFields: ["TargetProcessGuid"] });
+    // The event's process is the TARGET, and its provenance says so — never the source's fields.
+    expect(e.canonical?.fieldProvenance["process.name"]).toMatchObject({
+      origin: "raw",
+      rawFields: ["TargetImage"],
+    });
+    expect(e.canonical?.fieldProvenance["process.pid"]).toMatchObject({
+      origin: "raw",
+      rawFields: ["TargetProcessId"],
+    });
+    expect(e.canonical?.fieldProvenance["process.executable"]).toMatchObject({ rawFields: ["TargetImage"] });
     expect(canonicalConformanceIssues(e.canonical)).toEqual([]);
     expect(e.aggKey).toContain(
       "|access:query_limited_information|src:11111111-1111-1111-1111-111111111111|dst:22222222-2222-2222-2222-222222222222|0",
@@ -1812,7 +1822,11 @@ describe("parseSiemExport — process access, remote threads and tampering (Sysm
         }),
         sysmon(
           10,
-          { ...pair("C:\\Users\\bob\\tool.exe", "C:\\Windows\\System32\\lsass.exe"), GrantedAccess: "0x3A" },
+          {
+            ...pair("C:\\Users\\bob\\tool.exe", "C:\\Windows\\System32\\lsass.exe"),
+            TargetProcessGuid: "{44444444-4444-4444-4444-444444444444}", // another process, another GUID
+            GrantedAccess: "0x3A",
+          },
           "5002",
         ),
       ),
@@ -1879,6 +1893,22 @@ describe("parseSiemExport — process access, remote threads and tampering (Sysm
     expect(e.canonical?.process).toMatchObject({ pid: 4400, name: "svchost.exe" });
     expect(canonicalConformanceIssues(e.canonical)).toEqual([]);
     expect(e.aggKey).toContain("|tamper:image is replaced|proc:11111111-1111-1111-1111-111111111111");
+  });
+
+  it("one process relation keys on its GUIDs, not on how a feed spelled the image", () => {
+    const full = sysmon(
+      10,
+      { ...pair("C:\\Windows\\System32\\svchost.exe", "C:\\Windows\\explorer.exe"), GrantedAccess: "0x1010" },
+      "1",
+    );
+    const bare = sysmon(
+      10,
+      { ...pair("svchost.exe", "C:\\Windows\\explorer.exe"), GrantedAccess: "0x1010" },
+      "2",
+    );
+    const r = parseSiemExport(elastic(full, bare));
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].count).toBe(2);
   });
 
   it("two instances of one image (different GUIDs) are two rows; GUID-less records with reused pids are two rows and say so", () => {

@@ -1221,7 +1221,7 @@ export function mapWindows(
       ...(logonType !== undefined ? { "authentication.logonType": ["EventData.LogonType"] } : {}),
       ...(sourceIp ? { "network.source.address": ["EventData.IpAddress", "EventData.SourceIp"] } : {}),
       ...(destinationIp ? { "network.destination.address": ["EventData.DestinationIp"] } : {}),
-      ...(processName
+      ...(processName && !pa
         ? { "process.name": ["EventData.Image", "EventData.NewProcessName", "EventData.SourceImage"] }
         : {}),
       ...(pid !== undefined ? { "process.pid": ["EventData.ProcessId", "EventData.NewProcessId"] } : {}),
@@ -1276,7 +1276,7 @@ export function mapWindows(
     // srv-a stay one host); a host-less export keys on "". pid keeps process creations distinct; a
     // Sysmon 15 stream carries its exact path's digest and the host file's hash (ntfsStreams.ts).
     aggKey:
-      `win|${host}|${channel}|${eid}|${accts.join(",")}|${subject}${pid !== undefined ? `|pid=${pid}` : ""}${defender ? `|${defender.identity}` : ""}${ads?.identity ?? ""}${pa?.identity ?? ""}`.toLowerCase(),
+      `win|${host}|${channel}|${eid}|${accts.join(",")}|${pa ? "" : subject}${pid !== undefined ? `|pid=${pid}` : ""}${defender ? `|${defender.identity}` : ""}${ads?.identity ?? ""}${pa?.identity ?? ""}`.toLowerCase(),
     ...(sha256 ? { sha256 } : {}),
     ...(md5 ? { md5 } : {}),
     ...(imagePath ? { path: imagePath } : {}),
