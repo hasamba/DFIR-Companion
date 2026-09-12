@@ -140,7 +140,7 @@ describe("processOverlay — ProcessAccess (Sysmon 10): the record's own evidenc
     );
     expect(o.type).toBe("access");
     expect(o.identity).toBe(
-      "|access:vm_read,query_limited_information|src:11111111-1111-1111-1111-111111111111|dst:22222222-2222-2222-2222-222222222222|0",
+      "|access:vm_read,query_limited_information|src:11111111-1111-1111-1111-111111111111|dst:22222222-2222-2222-2222-222222222222|0:",
     );
   });
   it("the ONE trust exception: a benign accessor's routine read of lsass with a backed or absent trace → Low, no technique", () => {
@@ -172,10 +172,38 @@ describe("processOverlay — ProcessAccess (Sysmon 10): the record's own evidenc
     const trace = `${Array.from({ length: 32 }, (_, i) => `C:\\Windows\\System32\\m${i}.dll+1`).join("|")}|UNKNOWN(0000000012345678)`;
     expect(access(CSRSS, LSASS, "0x1010", { CallTrace: trace }).severity).toBe("High");
   });
-  it("a nested lookalike of a system path never borrows trust", () => {
+  it("a nested lookalike of a system path, or a core name under Program Files, never borrows trust", () => {
     const nested = "C:\\Staging\\Windows\\System32\\svchost.exe";
     expect(access(nested, LSASS, "0x1010").severity).toBe("High");
     expect(thread(nested, CHROME, { StartModule: "C:\\Windows\\System32\\ntdll.dll" }).severity).toBe("High");
+    const programFiles = "C:\\Program Files\\Acme\\svchost.exe";
+    expect(access(programFiles, LSASS, "0x1010").severity).toBe("High");
+    expect(access(programFiles, LSASS, "0x1010").mitre).toEqual(["T1003.001"]);
+    expect(thread(programFiles, CHROME, { StartModule: "C:\\Windows\\System32\\ntdll.dll" }).severity).toBe(
+      "Medium",
+    );
+    // …while Defender's own names keep their Program Files / ProgramData homes
+    expect(access("C:\\Program Files\\Windows Defender\\MsMpEng.exe", LSASS, "0x1010").severity).toBe("Low");
+  });
+  it("the key carries the record's evidence: rights tri-state and the first foreign module, so distinct evidence never folds", () => {
+    const base = {
+      SourceProcessGuid: G1,
+      SourceProcessId: "1001",
+      SourceImage: MIMI,
+      TargetProcessGuid: G2,
+      TargetProcessId: "612",
+      TargetImage: LSASS,
+    };
+    const absent = overlay("procaccess", base);
+    const garbage = overlay("procaccess", { ...base, GrantedAccess: "garbage" });
+    expect(absent.identity).toContain("|access:absent|");
+    expect(garbage.identity).toContain("|access:unreadable|");
+    const sys = access(MIMI, CHROME, "0x1010", { CallTrace: "C:\\Windows\\SYSTEM32\\ntdll.dll+9d5a4" });
+    const evil = access(MIMI, CHROME, "0x1010", {
+      CallTrace: "C:\\Windows\\SYSTEM32\\ntdll.dll+9d5a4|C:\\Users\\Public\\evil.dll+1",
+    });
+    expect(sys.identity).not.toBe(evil.identity);
+    expect(evil.description).toContain("via evil.dll");
   });
   it("an unbacked frame in the call trace is High whatever the rights or the source", () => {
     const o = access(CSRSS, CHROME, "0x1000", {
@@ -184,7 +212,7 @@ describe("processOverlay — ProcessAccess (Sysmon 10): the record's own evidenc
     expect(o.severity).toBe("High");
     expect(o.mitre).toEqual([]);
     expect(o.description).toContain("call trace has 1 unbacked frame");
-    expect(o.identity).toMatch(/\|1$/);
+    expect(o.identity).toMatch(/\|1:$/);
   });
   it("a masqueraded benign name from a user path is not trusted — and on another target it raises", () => {
     expect(access(MASQ, LSASS, "0x1010").severity).toBe("High");
@@ -286,6 +314,14 @@ describe("processOverlay — ProcessAccess (Sysmon 10): the record's own evidenc
     expect(
       overlay("procaccess", { ...zero, SourceProcessGuid: "-", TargetProcessGuid: "not-a-guid" }).identity,
     ).toContain("|src:pid:1001|");
+    // a half-braced GUID is malformed, not a GUID
+    const half = overlay("procaccess", {
+      ...zero,
+      SourceProcessGuid: "{11111111-1111-1111-1111-111111111111",
+      TargetProcessGuid: G2,
+    });
+    expect(half.identity).toContain("|src:pid:1001|");
+    expect(half.identity).toContain("|rec:");
   });
   it("GUID-less records key on their own record — reused pids never fold — and say so", () => {
     const ed = {

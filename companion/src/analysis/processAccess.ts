@@ -19,6 +19,7 @@
 // join needs — process GUIDs, pids — are kept in the key and the envelope now; a GUID-less row
 // keys on its own record so PID reuse never folds two rows into one.
 
+import { createHash } from "node:crypto";
 import type { Severity } from "./stateTypes.js";
 import type { CanonicalEntity } from "./canonicalEvent.js";
 import {
@@ -196,8 +197,10 @@ const clip = (s: string, max: number): string => {
 };
 const pidOf = (v: string): number | undefined =>
   /^\d{1,10}$/.test(v.trim()) && Number(v.trim()) > 0 ? Number(v.trim()) : undefined;
+// A bare GUID or a fully braced `{GUID}` — a half brace is malformed, not a GUID.
 const guidOf = (v: string): string => {
-  const g = v.trim().replace(/^\{|\}$/g, "");
+  const t = v.trim();
+  const g = /^\{.*\}$/.test(t) ? t.slice(1, -1) : /^[{}]|[{}]$/.test(t) ? "" : t;
   return GUID.test(g) && !ZERO_GUID.test(g) ? g : "";
 };
 
@@ -486,9 +489,12 @@ export function processOverlay(input: OverlayInput): ProcessOverlay {
   const g = accessGrade(target.image, source.image, mask, trace);
   const traceWords =
     trace.unbacked > 0 ? "" : trace.firstForeign ? `via ${clip(baseName(trace.firstForeign), WORD_MAX)}` : "";
+  // The key carries the record's evidence exactly: the rights (or their tri-state), the unbacked
+  // count and the first foreign module — a system-only trace and one through evil.dll are two rows.
   const rightsKey = mask.readable
     ? [...mask.rights, ...(mask.unknown ? [mask.unknown] : [])].join(",").toLowerCase()
-    : "unreadable";
+    : mask.state;
+  const traceKey = `${trace.unbacked}:${trace.firstForeign ? createHash("sha256").update(trace.firstForeign.toLowerCase()).digest("hex").slice(0, 16) : ""}`;
   return common(
     [
       `opens ${dstName} with ${mask.readable ? rightsWords(mask) : "rights not readable"} from ${srcName}`,
@@ -498,7 +504,7 @@ export function processOverlay(input: OverlayInput): ProcessOverlay {
     ],
     g,
     "access",
-    `|access:${rightsKey}${ids}|${trace.unbacked}`,
+    `|access:${rightsKey}${ids}|${traceKey}`,
     entities,
     rawFields,
   );
