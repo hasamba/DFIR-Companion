@@ -86,6 +86,11 @@ describe("readTarget — the RFC 9112 form, never the deployment's role", () => 
       form: "invalid",
       host: "",
     });
+    // an encoded host is returned as the characters it denotes, so an address reads as one
+    expect(readTarget("GET", "http://%32%30%33.0.113.9/x")).toMatchObject({
+      form: "absolute",
+      host: "203.0.113.9",
+    });
     expect(readTarget("GET", "https://files.example.invalid")).toMatchObject({
       form: "absolute",
       host: "files.example.invalid",

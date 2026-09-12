@@ -67,13 +67,18 @@ function isHost(h: string): boolean {
   const labels = h.replace(/\.$/, "").split(".");
   return labels.length > 0 && labels.every((l) => HOST_LABEL.test(decodeLabel(l)));
 }
-// A percent-escaped label is judged on the characters it denotes.
+// A percent-escaped label is judged — and returned — as the characters it denotes: an encoded
+// `%32%30%33.0.113.9` is the address `203.0.113.9`, and must be recorded as one.
 function decodeLabel(l: string): string {
   try {
     return decodeURIComponent(l);
   } catch {
     return l;
   }
+}
+/** The host as the characters it denotes: percent escapes decoded, case folded. */
+function canonicalHost(h: string): string {
+  return h.startsWith("[") ? h.toLowerCase() : decodeLabel(h).toLowerCase();
 }
 
 export function readTarget(method: string, target: string): TargetReading {
@@ -89,9 +94,9 @@ export function readTarget(method: string, target: string): TargetReading {
   const verb = method.trim().toUpperCase();
   const tunnel = (host: string, port: string): TargetReading => ({
     form: "authority",
-    host: host.toLowerCase().slice(0, HOST_MAX),
+    host: canonicalHost(host).slice(0, HOST_MAX),
     port,
-    words: `tunnel attempt to ${host.toLowerCase().slice(0, HOST_MAX)}${port ? `:${port}` : ""}${
+    words: `tunnel attempt to ${canonicalHost(host).slice(0, HOST_MAX)}${port ? `:${port}` : ""}${
       port ? "" : " — no port in this record"
     } — the requests inside are not in this record`,
   });
@@ -119,7 +124,7 @@ export function readTarget(method: string, target: string): TargetReading {
     if (isHost(host) && (port === "" || /^\d{1,5}$/.test(port)))
       return {
         form: "absolute",
-        host: host.toLowerCase().slice(0, HOST_MAX),
+        host: canonicalHost(host).slice(0, HOST_MAX),
         port,
         words: "absolute-form request target",
       };

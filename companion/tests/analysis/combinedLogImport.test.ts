@@ -833,6 +833,12 @@ describe("parseCombinedLog — what one line establishes", () => {
     expect(vals).toContain("ip:203.0.113.9");
     expect(vals).toContain("ip:2001:db8::2");
     expect(r4.iocs.some((i) => i.type === "domain")).toBe(false);
+    // …and an encoded address is still an address
+    const encoded = parseCombinedLog(
+      '10.30.10.14 - - [15/May/2024:06:42:01 +0000] "GET http://%32%30%33.0.113.9/x HTTP/1.1" 200 163 "-" "curl/8"',
+    );
+    expect(encoded.iocs.map((i) => `${i.type}:${i.value}`)).toContain("ip:203.0.113.9");
+    expect(encoded.iocs.some((i) => i.type === "domain")).toBe(false);
   });
 
   it("a refused CONNECT says no tunnel was established", () => {
