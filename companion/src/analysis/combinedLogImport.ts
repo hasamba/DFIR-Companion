@@ -471,31 +471,37 @@ function boundRecordVariants(mapped: MappedEvent[], meta: Map<MappedEvent, Attac
   for (const event of mapped) {
     const m = meta.get(event);
     if (!m) continue;
-    const digests = seen.get(m.base) ?? new Set<string>();
-    seen.set(m.base, digests);
+    // Attack-bearing and trailer-only rows are bounded SEPARATELY: sharing one budget let 65
+    // benign trailer values consume it and fold the first real attack payload into a row the
+    // family union then labelled a web-attack — one benign request claimed as an attack, one
+    // attack's evidence lost.
+    const budget = `${m.base}|${m.hasAttack ? "attack" : "trailer"}`;
+    const digests = seen.get(budget) ?? new Set<string>();
+    seen.set(budget, digests);
     if (digests.has(m.digest)) continue;
     if (digests.size < MAX_ATTACK_VARIANTS) {
       digests.add(m.digest);
       continue;
     }
-    const fam = overflowFamilies.get(m.base) ?? new Set<string>();
+    const fam = overflowFamilies.get(budget) ?? new Set<string>();
     for (const f of m.families) fam.add(f);
-    overflowFamilies.set(m.base, fam);
-    overflowCounts.set(m.base, (overflowCounts.get(m.base) ?? 0) + 1);
-    overflowRows.push({ event, base: m.base });
+    overflowFamilies.set(budget, fam);
+    overflowCounts.set(budget, (overflowCounts.get(budget) ?? 0) + 1);
+    overflowRows.push({ event, base: budget });
   }
   const rewritten = new Map<string, string>();
   for (const { event, base } of overflowRows) {
-    const families = [...(overflowFamilies.get(base) ?? [])].sort().join(",");
     const m = meta.get(event)!;
+    // The row's OWN kind decides its marker and words — never the base-wide family union.
+    const families = m.hasAttack ? [...(overflowFamilies.get(base) ?? [])].sort().join(",") : "";
     // The prefix and the path come from the row, NOT from splitting `base` at its last `|`: the
     // path is attacker-controlled and a `|` in it would put the marker inside the path, colliding
     // with an ordinary row whose path merely contains the marker's text.
-    const marker = families ? ATTACK_OVERFLOW : TRAILER_OVERFLOW;
+    const marker = m.hasAttack ? ATTACK_OVERFLOW : TRAILER_OVERFLOW;
     const overflowKey = boundedAggKey(`${m.prefix}|${marker}${m.path}`);
     rewritten.set(event.aggKey, overflowKey);
     event.aggKey = overflowKey;
-    const what = families ? `distinct payloads` : `distinct appended trailer values`;
+    const what = m.hasAttack ? "distinct payloads" : "distinct appended trailer values";
     event.description =
       `${families ? `[web-attack: ${families}] ` : ""}` +
       `[overflow: ${what} beyond ${MAX_ATTACK_VARIANTS} on this path folded] ${m.overflowTail}`;

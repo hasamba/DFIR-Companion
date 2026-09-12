@@ -361,7 +361,14 @@ export function readTrailer(tokens: readonly string[], profile: TrailerProfile |
 export function readSize(method: string, status: number, bytes: string): string {
   const verb = method.trim().toUpperCase();
   const logged = /^\d{1,19}$/.test(bytes.trim());
-  if (verb === "CONNECT") return logged ? "the logged size is the tunnel's, not a response body" : "";
+  // A CONNECT's size is the tunnel's only when the proxy ANSWERED 2xx: on a 407 or a 403 no tunnel
+  // exists and the bytes are that error response's own.
+  if (verb === "CONNECT")
+    return logged
+      ? status >= 200 && status < 300
+        ? "the logged size is the tunnel's, not a response body"
+        : "no tunnel was established; the logged size is the error response's"
+      : "";
   if (verb === "HEAD") return "no body by definition (HEAD)";
   if (status === 204 || (status >= 100 && status < 200)) return "no body for this status";
   return "";

@@ -271,7 +271,9 @@ and a 302 read like a 200 with a small body. Each line now says what its own fie
 - **What the status and the byte count do not say.** `[redirect — the Location is not in this
   format]` for 301/302/303/307/308; `[not modified — no body]` for 304 (never a redirect);
   `[no body by definition (HEAD)]`; `[no body for this status]` for 204 and 1xx; and on a `CONNECT`,
-  `[the logged size is the tunnel's, not a response body]`. A byte count is the size the server
+  `[the logged size is the tunnel's, not a response body]` — or, when the proxy refused it,
+  `[no tunnel was established; the logged size is the error response's]`. A byte count is the size
+  the server
   logged — Apache's excludes headers, Squid's includes them, neither is network bytes, and no
   status proves the client received them. An invalid target mints no destination indicator either:
   a malformed host never becomes a domain IOC or the key's host field, only the row's own path

@@ -782,6 +782,33 @@ describe("parseCombinedLog — what one line establishes", () => {
     expect(r.events.every((e) => e.description.includes("[invalid request target]"))).toBe(true);
   });
 
+  it("benign trailer variants never consume an attack's budget, and never wear its label", () => {
+    const benign = Array.from(
+      { length: 65 },
+      (_, i) =>
+        `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /same HTTP/1.1" 200 0 "-" "curl/8" trailer-${i}`,
+    );
+    const attack =
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /same?q=x;id HTTP/1.1" 200 0 "-" "curl/8"';
+    const r = parseCombinedLog([...benign, attack].join("\n"));
+    const attackRow = r.events.find((e) => e.description.includes("web-attack"))!;
+    expect(attackRow.description).toContain('[match: ";id"]');
+    expect(attackRow.description).not.toContain("overflow");
+    expect(attackRow.count ?? 1).toBe(1);
+    const overflow = r.events.find((e) => e.description.includes("overflow"))!;
+    expect(overflow.description).toContain("distinct appended trailer values");
+    expect(overflow.description).not.toContain("web-attack");
+    expect(r.dropped).toBe(0);
+  });
+
+  it("a refused CONNECT says no tunnel was established", () => {
+    const refused =
+      '10.30.10.14 - - [15/May/2024:06:42:01 +0000] "CONNECT vault.example.invalid:443 HTTP/1.1" 407 512 "-" "curl/8"';
+    const e = parseCombinedLog(refused).events[0];
+    expect(e.description).toContain("[no tunnel was established; the logged size is the error response's]");
+    expect(e.description).not.toContain("the logged size is the tunnel's");
+  });
+
   it("an escaped quote in an earlier field cannot move the request-line check", () => {
     const lines = [
       '10.30.20.11 - user\\"name [14/May/2024:19:00:00 +0000] "GET http://good.example.invalid/x\u000b HTTP/1.1" 200 0 "-" "curl/8"',
