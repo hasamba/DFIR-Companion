@@ -8,15 +8,20 @@ import {
   readQueryStatus,
   RESULTS_SHOWN_MAX,
   RESULTS_KEPT_MAX,
+  SYSMON_22_DNS,
+  DNS_CLIENT_EVENTS,
+  type DnsEventSchema,
 } from "../../src/analysis/dnsRecord.js";
 
+// The unit tests read every field unless a schema is given: the gating is tested apart.
+const ALL: DnsEventSchema = { status: "QueryStatus", type: true, results: true, networkQuery: true };
 const overlay = (
   fields: Record<string, string>,
-  opts: { statusField?: "QueryStatus" | "Status" | ""; description?: string } = {},
+  opts: { statusField?: "QueryStatus" | "Status" | ""; description?: string; schema?: DnsEventSchema } = {},
 ) =>
   dnsOverlay(
     (k) => fields[k],
-    opts.statusField ?? "QueryStatus",
+    opts.schema ?? { ...ALL, status: opts.statusField ?? "QueryStatus" },
     opts.description ?? "Sysmon DNS query (EID 22) - Image=C:\\Windows\\System32\\svchost.exe @ WS-01",
   );
 
@@ -470,6 +475,29 @@ describe("dnsOverlay — what one record establishes", () => {
       QueryResults: "type: 5 safe.example/bücher.attacker;",
     });
     expect(c.dns.returned[0].kind).toBe("other");
+  });
+  it("a field the event does not define is decoration, never evidence", () => {
+    // a 3006 carries no results: a QueryResults beside it forges nothing
+    const s3006 = overlay(
+      { QueryName: "a.example", QueryType: "1", IsNetworkQuery: "1", QueryResults: "type: 1 203.0.113.9;" },
+      { schema: DNS_CLIENT_EVENTS[3006].dns },
+    );
+    expect(s3006.description).not.toContain("203.0.113.9");
+    expect(s3006.dns.returned).toEqual([]);
+    expect(s3006.identity).toContain(":r-");
+    // a 3008 carries no IsNetworkQuery; a Sysmon 22 carries no QueryType
+    const s3008 = overlay(
+      { QueryName: "a.example", QueryType: "1", QueryStatus: "0", IsNetworkQuery: "1" },
+      { schema: DNS_CLIENT_EVENTS[3008].dns },
+    );
+    expect(s3008.description).not.toContain("network query");
+    expect(s3008.dns.networkQuery).toBeUndefined();
+    const s22 = overlay(
+      { QueryName: "a.example", QueryType: "1", QueryStatus: "0" },
+      { schema: SYSMON_22_DNS },
+    );
+    expect(s22.description).toContain("[type not in this record]");
+    expect(s22.dns.queryType).toBeUndefined();
   });
   it("a complete rendering carries no mark; the description stays inside 600 characters", () => {
     const plain = overlay({ QueryName: "a.example", QueryStatus: "0", QueryResults: "::ffff:192.0.2.1;" });

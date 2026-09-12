@@ -492,6 +492,22 @@ describe("DNS Client operational log", () => {
     expect(afterImport(r.events)).toHaveLength(2);
   });
 
+  it("a 3006 with a SIEM-added QueryResults carries no returned values", () => {
+    const r = parseSiemExport(
+      elastic(
+        dnsClient(3006, {
+          QueryName: "c.example",
+          QueryType: "1",
+          IsNetworkQuery: "1",
+          QueryResults: "type: 1 203.0.113.9;",
+        }),
+      ),
+    );
+    expect(r.events[0].description).not.toContain("203.0.113.9");
+    expect(r.events[0].canonical?.dns?.returned).toEqual([]);
+    expect(r.iocs.some((i) => i.value.includes("203.0.113.9"))).toBe(false);
+  });
+
   it("a 3020 reads Status only; a 3008 reads QueryStatus only — the other spelling is metadata", () => {
     const r = parseSiemExport(
       elastic(dnsClient(3020, { QueryName: "b.example", QueryType: "1", Status: "9003", QueryStatus: "0" })),

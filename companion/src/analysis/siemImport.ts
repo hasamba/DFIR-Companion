@@ -36,7 +36,7 @@ import { decodeDefenderEvent, defenderDescription } from "./defenderEvents.js";
 import { commandCandidates } from "./commandNormalize.js";
 import { secretSpillSignal } from "./secretSpillRules.js";
 import { streamOverlay } from "./ntfsStreams.js";
-import { boundDnsVariants, dnsOverlay, DNS_CLIENT_EVENTS } from "./dnsRecord.js";
+import { boundDnsVariants, dnsOverlay, DNS_CLIENT_EVENTS, SYSMON_22_DNS } from "./dnsRecord.js";
 import { processOverlay } from "./processAccess.js";
 import { aggregateEvents, maxEventsDefault } from "./eventAggregate.js";
 import { evtxRecordIdentity } from "./evtxRecordId.js";
@@ -350,7 +350,7 @@ export interface WinEventDef {
   severity: Severity;
   mitre?: string[];
   kind?: "process" | "network" | "dns" | "procaccess" | "file" | "service" | "stream" | "thread" | "tamper";
-  statusField?: "QueryStatus" | "Status"; // the DNS status field THIS event defines (dnsRecord.ts)
+  dns?: typeof SYSMON_22_DNS; // the DNS fields THIS event defines (dnsRecord.ts)
 }
 
 // Groups whose membership IS privilege. An add to one of these is the difference between routine
@@ -485,7 +485,7 @@ const SYSMON_EVENTS: Record<number, WinEventDef> = {
   19: { label: "WMI event filter registered", severity: "Medium", mitre: ["T1546.003"] },
   20: { label: "WMI event consumer registered", severity: "Medium", mitre: ["T1546.003"] },
   21: { label: "WMI consumer-to-filter binding", severity: "Medium", mitre: ["T1546.003"] },
-  22: { label: "DNS query", severity: "Low", kind: "dns", statusField: "QueryStatus" },
+  22: { label: "DNS query", severity: "Low", kind: "dns", dns: SYSMON_22_DNS },
   23: { label: "File deleted (archived)", severity: "Low", mitre: ["T1070.004"] },
   24: { label: "Clipboard changed", severity: "Low" },
   25: { label: "Process image tampering", severity: "High", kind: "tamper", mitre: ["T1055.012"] },
@@ -1027,7 +1027,7 @@ export function mapWindows(
   // values RETURNED — never "resolves to". ONE namespace per record: nested when there is one, else
   // the root (a flattened export) — never both, or root SIEM `status: 0` would read as a resolver's.
   const dnsField = (k: string) => getCI(isObject(edRaw) ? ed : rec, k);
-  const dq = def.kind === "dns" ? dnsOverlay(dnsField, def.statusField ?? "", description) : null;
+  const dq = def.kind === "dns" && def.dns ? dnsOverlay(dnsField, def.dns, description) : null;
   if (dq) ({ description } = dq);
   // Kerberoasting / AS-REP roasting: an RC4-encrypted Kerberos ticket request for a user service
   // account grades the otherwise-Low 4769/4768 with the correct technique (see kerberosRoastSignal).

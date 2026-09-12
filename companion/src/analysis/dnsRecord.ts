@@ -237,25 +237,48 @@ export function readQueryResults(raw: string | undefined): ResultsReading {
   return { values, identity, clipped, shown: all.length ? `${parts}${more}` : "", total: all.length };
 }
 
-/** The status field THIS event defines: `QueryStatus` (Sysmon 22, 3008), `Status` (3020), "" (3006). */
-export type DnsStatusField = "QueryStatus" | "Status" | "";
+/**
+ * What THIS event defines, per the provider manifest — the only fields the overlay reads. A field
+ * the event does not define is SIEM decoration, never evidence: a `QueryResults` beside a 3006, an
+ * `IsNetworkQuery` beside a 3008, a `QueryType` beside a Sysmon 22 would otherwise forge returned
+ * values, a transmission, a type — and enter the identity.
+ */
+export interface DnsEventSchema {
+  status: "QueryStatus" | "Status" | "";
+  type: boolean;
+  results: boolean;
+  networkQuery: boolean;
+}
+export const SYSMON_22_DNS: DnsEventSchema = {
+  status: "QueryStatus",
+  type: false,
+  results: true,
+  networkQuery: false,
+};
+const DNS_CLIENT_3006: DnsEventSchema = { status: "", type: true, results: false, networkQuery: true };
+const DNS_CLIENT_3008: DnsEventSchema = {
+  status: "QueryStatus",
+  type: true,
+  results: true,
+  networkQuery: false,
+};
+const DNS_CLIENT_3020: DnsEventSchema = { status: "Status", type: true, results: true, networkQuery: false };
 
 // Microsoft-Windows-DNS-Client/Operational — channel-keyed by the Windows mapper like its PowerShell
-// table. Each event's own status field per the provider manifest (3020 writes `Status`, 3008
-// `QueryStatus`, 3006 none). The shape is the mapper's WinEventDef, spelled here to avoid a cycle.
+// table. The shape is the mapper's WinEventDef, spelled here to avoid a cycle.
 export const DNS_CLIENT_EVENTS: Record<
   number,
-  { label: string; severity: "Info" | "Low"; kind: "dns"; statusField?: "QueryStatus" | "Status" }
+  { label: string; severity: "Info" | "Low"; kind: "dns"; dns: DnsEventSchema }
 > = {
-  3006: { label: "DNS query called", severity: "Info", kind: "dns" },
-  3008: { label: "DNS query completed", severity: "Low", kind: "dns", statusField: "QueryStatus" },
-  3020: { label: "DNS query result", severity: "Info", kind: "dns", statusField: "Status" },
+  3006: { label: "DNS query called", severity: "Info", kind: "dns", dns: DNS_CLIENT_3006 },
+  3008: { label: "DNS query completed", severity: "Low", kind: "dns", dns: DNS_CLIENT_3008 },
+  3020: { label: "DNS query result", severity: "Info", kind: "dns", dns: DNS_CLIENT_3020 },
 };
 
 interface DnsOverlayInput {
   field: (key: string) => string;
   has: (key: string) => boolean;
-  statusField: DnsStatusField;
+  schema: DnsEventSchema;
   description: string;
 }
 
@@ -291,7 +314,7 @@ function typeWords(raw: string, present: boolean): { words: string; key: string;
 
 /** 3006's `IsNetworkQuery`: 1 = a query went to a server; 0 = answered locally; absent on the other events. */
 function networkQuery(input: DnsOverlayInput): { value?: boolean; words: string; key: string } {
-  if (!input.has("IsNetworkQuery")) return { words: "", key: "-" };
+  if (!input.schema.networkQuery || !input.has("IsNetworkQuery")) return { words: "", key: "-" };
   const raw = input.field("IsNetworkQuery").trim();
   if (raw === "1") return { value: true, words: "network query", key: "1" };
   // Said literally: the flag does not establish that the call was answered, only that no query
@@ -306,7 +329,7 @@ function networkQuery(input: DnsOverlayInput): { value?: boolean; words: string;
  * SIEM metadata (`status: 9003`), and reading it forged a "fields disagree" outcome.
  */
 function statusOf(input: DnsOverlayInput): { reading: StatusReading; key: string } {
-  const reading = readQueryStatus(input.statusField ? input.field(input.statusField) : undefined);
+  const reading = readQueryStatus(input.schema.status ? input.field(input.schema.status) : undefined);
   const key = reading.code !== undefined ? String(reading.code) : reading.state === "absent" ? "-" : "?";
   return { reading, key };
 }
@@ -314,7 +337,7 @@ function statusOf(input: DnsOverlayInput): { reading: StatusReading; key: string
 /** The overlay for a DNS record over the Windows mapper's description; severity is never graded here. */
 export function dnsOverlay(
   read: (key: string) => unknown,
-  statusField: DnsStatusField,
+  schema: DnsEventSchema,
   description: string,
 ): DnsOverlay {
   // A SIEM export may carry a multi-valued field as an ARRAY: its elements are the record's entries
@@ -334,7 +357,7 @@ export function dnsOverlay(
   return overlayOf({
     field: (k) => text(read(k)),
     has: (k) => read(k) !== undefined,
-    statusField,
+    schema,
     description,
   });
 }
@@ -349,9 +372,9 @@ function overlayOf(input: DnsOverlayInput): DnsOverlay {
   const shownName = breakHashRuns(showToken(rawName));
   const nameClipped = shownName.length > NAME_SHOWN_MAX;
   const name = nameClipped ? `${shownName.slice(0, NAME_SHOWN_MAX - 1)}…` : shownName;
-  const type = typeWords(input.field("QueryType"), input.has("QueryType"));
+  const type = typeWords(input.field("QueryType"), input.schema.type && input.has("QueryType"));
   const status = statusOf(input);
-  const results = readQueryResults(input.field("QueryResults"));
+  const results = readQueryResults(input.schema.results ? input.field("QueryResults") : undefined);
 
   const tags = [`query: ${name}`];
   if (!queryValid) tags.push("query name is not a valid name");
