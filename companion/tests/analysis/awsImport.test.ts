@@ -868,6 +868,39 @@ describe("parseCloudTrail — identities and credentials (#931 item 5)", () => {
       "userIdentity.onBehalfOf.userId",
     ]);
   });
+  it("two informative replicas merge to one identical row whichever the file lists first", () => {
+    const shared = "shared-both";
+    const s3 = (over: object) =>
+      record({
+        eventName: "GetObject",
+        eventSource: "s3.amazonaws.com",
+        readOnly: true,
+        userIdentity: assumedRole(),
+        sharedEventID: shared,
+        requestParameters: { bucketName: "b", key: "k" },
+        ...over,
+      });
+    const caller = s3({ recipientAccountId: ACCT, eventID: "caller" });
+    const owner = s3({ recipientAccountId: OTHER, eventID: "owner" });
+    const a = parseCloudTrail(envelope(caller, owner)).events[0];
+    const b = parseCloudTrail(envelope(owner, caller)).events[0];
+    // The caller's own record is the kept one in both orders: the same words, the same notice,
+    // the same typed accounts — the owner never becomes the "also in" account by accident.
+    expect(b.description).toBe(a.description);
+    expect(a.description).toContain(`[also in account ${OTHER}]`);
+    expect(a.canonical?.cloud).toMatchObject({ accountId: ACCT, recipientAccountId: OTHER });
+    expect(b.canonical?.cloud).toEqual(a.canonical?.cloud);
+    expect(b.canonical?.evidence.rawRecords.map((p) => p.recordId).sort()).toEqual(["caller", "owner"]);
+    // The owner account's provenance points at the owner's record in each file — a different
+    // position, the same record.
+    for (const e of [a, b]) {
+      const ownerLocator = e.canonical?.evidence.rawRecords.find((p) => p.recordId === "owner")!.locator;
+      expect(e.canonical?.fieldProvenance["cloud.recipientAccountId"]).toMatchObject({
+        rawFields: ["recipientAccountId"],
+        recordLocators: [ownerLocator],
+      });
+    }
+  });
   it("replica attribution does not depend on input order, even when the caller replica omits its account", () => {
     const shared = "shared-order";
     const owner = record({

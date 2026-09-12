@@ -40,7 +40,17 @@ export function mergeReplicas(candidates: readonly ReplicaCandidate[]): MappedEv
     if (typeof entry !== "string") return entry.event;
     const group = groups.get(entry)!;
     if (group.length === 1) return group[0].event;
-    const kept = group.find((c) => c.informative) ?? group[0];
+    // The caller's account comes from ANY replica that carries it (an Identity Center record may
+    // omit it). The kept replica is the caller's own record when it is informative — so the row
+    // and its notice read the same whichever record the file lists first — else the first
+    // informative one, else the first.
+    const callerCandidate = group.find((c) => c.event.canonical?.cloud?.accountId);
+    const caller = callerCandidate?.event.canonical?.cloud?.accountId ?? "";
+    const callerLocator = callerCandidate?.event.canonical?.evidence.rawRecords[0]?.locator ?? "";
+    const kept =
+      group.find((c) => c.informative && caller !== "" && c.recipientAccountId === caller) ??
+      group.find((c) => c.informative) ??
+      group[0];
     const others = group.filter((c) => c !== kept);
     const pointers = others.flatMap((c) => c.event.canonical?.evidence.rawRecords ?? []);
     const alsoIn = [
@@ -53,13 +63,9 @@ export function mergeReplicas(candidates: readonly ReplicaCandidate[]): MappedEv
     const description = note ? kept.render(note).slice(0, 600) : kept.event.description;
     // The two accounts of a cross-account action are the caller's (`cloud.accountId`) and the
     // resource owner's: the merged row's `cloud.recipientAccountId` is the one that is NOT the
-    // caller's, so a Hunt on either account id finds the action.
-    // The caller's account comes from ANY replica that carries it (an Identity Center record may
-    // omit it), and the owner is the unique recipient that is not the caller. With the caller
-    // unknown no owner is chosen — input order must never decide attribution.
-    const callerCandidate = group.find((c) => c.event.canonical?.cloud?.accountId);
-    const caller = callerCandidate?.event.canonical?.cloud?.accountId ?? "";
-    const callerLocator = callerCandidate?.event.canonical?.evidence.rawRecords[0]?.locator ?? "";
+    // caller's — it REPLACES the kept record's own recipient — so a Hunt on either account id
+    // finds the action. The owner is the unique recipient that is not the caller. With the
+    // caller unknown no owner is chosen — input order must never decide attribution.
     const recipients = [...new Set(group.map((c) => c.recipientAccountId).filter(Boolean))];
     const ownerCandidate = caller
       ? group.find((c) => c.recipientAccountId && c.recipientAccountId !== caller)
