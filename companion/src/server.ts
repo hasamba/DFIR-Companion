@@ -517,6 +517,14 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
   const server = app.listen(port, host, () => {
     const shownHost = host === "0.0.0.0" ? "127.0.0.1" : host;
     logLine(`DFIR companion on http://${shownHost}:${port} (dashboard at /dashboard)`);
+    // Name the live bootstrap guard so an operator can see it without reading the code (#945).
+    if (teamAuth) {
+      const bootstrap =
+        teamAuth.store.countIdentities() === 0
+          ? "token required (no identity exists yet)"
+          : "closed (first administrator already exists)";
+      logLine(`[auth] team mode — bootstrap: ${bootstrap}`);
+    }
     // Pre-flight (#179): fire now that the server is listening so probes can reach the AI provider
     // and local enrichment servers. Best-effort — a failure is logged, never fatal.
     if (scheduledPreflight) {
