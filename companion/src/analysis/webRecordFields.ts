@@ -33,8 +33,10 @@ const DIGEST_HEX = 16;
 const TRAILER_TOKENS_MAX = 6;
 const TRAILER_WORDS_MAX = 80;
 const HOST_MAX = 120;
-/** Below this many parsed lines a file cannot establish a trailer profile by inference. */
+/** Below this many PARSED lines a file cannot establish a trailer profile by inference. */
 export const MIN_PROFILE_LINES = 20;
+/** …nor from one caller's own requests: a LogFormat is the server's, not a client's. */
+export const MIN_PROFILE_CLIENTS = 2;
 const PROFILE_SHARE = 0.95;
 
 export type TargetForm = "origin" | "absolute" | "authority" | "asterisk" | "invalid";
@@ -55,6 +57,15 @@ export function readTarget(method: string, target: string): TargetReading {
   const t = target.trim();
   const verb = method.trim().toUpperCase();
   if (verb === "CONNECT") {
+    // authority-form is `uri-host ":" port`, and a uri-host may be a bracketed IPv6 literal.
+    const v6 = /^(\[[0-9a-f:.]+\]):(\d{1,5})$/i.exec(t);
+    if (v6)
+      return {
+        form: "authority",
+        host: v6[1].toLowerCase(),
+        port: v6[2],
+        words: `tunnel attempt to ${v6[1].toLowerCase()}:${v6[2]} — the requests inside are not in this record`,
+      };
     const m = /^([^:/?#\s]+):(\d{1,5})$/.exec(t);
     if (m)
       return {
@@ -152,6 +163,17 @@ const SQUID_HIERARCHY: Record<string, string> = {
 
 const SQUID_TOKEN = /^([A-Z][A-Z0-9_]*)(?::([A-Z][A-Z0-9_]*))?$/;
 
+// Trailer text is attacker-writable and is rendered INSIDE the row's `[tag]` brackets, so a token
+// carrying `] [proxy: served from its cache` would forge a tag the reader trusts. Brackets become
+// parentheses and every control character goes before the token is shown.
+const showToken = (t: string): string =>
+  t
+    .replace(/\[/g, "(")
+    .replace(/\]/g, ")")
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
 /** Is this token a Squid `%Ss` (optionally `:%Sh`) pair whose RESULT the table names? */
 export function isKnownSquidToken(token: string): boolean {
   const m = SQUID_TOKEN.exec(token.trim().toUpperCase());
@@ -171,6 +193,12 @@ export function readSquidTrailer(token: string): SquidReading {
     : "";
   const parts = [proxy ? `proxy: ${proxy}` : "", upstream ? `upstream: ${upstream}` : ""].filter(Boolean);
   return { result, hierarchy, words: parts.join("; ").slice(0, TRAILER_WORDS_MAX), known };
+}
+
+/** One successfully parsed line's trailer, with the client address the server recorded for it. */
+export interface ParsedTrailer {
+  tokens: string[];
+  client: string;
 }
 
 export interface TrailerProfile {
@@ -198,13 +226,17 @@ export function trailerTokens(rest: string): string[] {
  * hold a KNOWN result code in that same slot. One line's shape can never establish it — an Apache
  * LogFormat that appends an attacker-controlled header would otherwise mint proxy semantics.
  */
-export function inferTrailerProfile(trailers: readonly string[][]): TrailerProfile | null {
-  const lines = trailers.length;
+export function inferTrailerProfile(parsed: readonly ParsedTrailer[]): TrailerProfile | null {
+  const lines = parsed.length;
   if (lines < MIN_PROFILE_LINES) return null;
-  const width = Math.min(TRAILER_TOKENS_MAX, Math.max(0, ...trailers.map((t) => t.length)));
+  const width = Math.min(TRAILER_TOKENS_MAX, Math.max(0, ...parsed.map((p) => p.tokens.length)));
   for (let slot = 0; slot < width; slot++) {
-    const hits = trailers.filter((t) => t[slot] !== undefined && isKnownSquidToken(t[slot])).length;
-    if (hits >= lines * PROFILE_SHARE) return { squidSlot: slot, source: "inferred" };
+    const hits = parsed.filter((p) => p.tokens[slot] !== undefined && isKnownSquidToken(p.tokens[slot]));
+    if (hits.length < lines * PROFILE_SHARE) continue;
+    // A LogFormat belongs to the server. Twenty requests from ONE caller carrying a Squid-shaped
+    // header would otherwise mint proxy semantics for every other line in the file.
+    if (new Set(hits.map((p) => p.client)).size < MIN_PROFILE_CLIENTS) continue;
+    return { squidSlot: slot, source: "inferred" };
   }
   return null;
 }
@@ -216,12 +248,17 @@ export interface TrailerReading {
   /** `[squid words (squid_combined, inferred from the file)]` and `[trailer: …]`, in order. */
   words: string[];
   /**
-   * `|squid:<result>:<hierarchy>|trailer:<digest>` — the disposition verbatim (a hit and a miss of
-   * one URL are two rows) and a DIGEST of the unlabelled tokens. The tokens themselves stay out of
-   * the key (an attacker-writable header is a label, not an identity) but their digest must be in
-   * it: aggregation keeps one row's description, so a trailer shown and not keyed would vanish.
+   * `|squid:<result>:<hierarchy>` — the disposition, a bounded discriminator from a literal table:
+   * a cache hit and a miss of one URL are two rows.
    */
-  keySegment: string;
+  dispositionKey: string;
+  /**
+   * `|trailer:<digest>` of the unlabelled tokens ("" when there are none). A VARIANT, not part of
+   * the row's base identity: the tokens are unbounded (a request time, a forwarded-for chain), so
+   * the caller bounds how many variants one base keeps — but a trailer that is SHOWN must be in
+   * the key, or aggregation's first-description-wins rule would hide it.
+   */
+  variantKey: string;
 }
 
 /** Read one line's trailer under the file's profile. With no profile nothing is labelled. */
@@ -230,7 +267,8 @@ export function readTrailer(tokens: readonly string[], profile: TrailerProfile |
   const squid = squidToken ? readSquidTrailer(squidToken) : null;
   const unlabelled = tokens
     .filter((_, i) => !(profile && i === profile.squidSlot))
-    .map((t) => t.slice(0, TRAILER_TOKEN_MAX));
+    .map((t) => showToken(t).slice(0, TRAILER_TOKEN_MAX))
+    .filter(Boolean);
   const words: string[] = [];
   if (squid?.words)
     words.push(
@@ -244,7 +282,8 @@ export function readTrailer(tokens: readonly string[], profile: TrailerProfile |
     squid,
     unlabelled,
     words,
-    keySegment: `${squid ? `|squid:${squid.result.toLowerCase()}:${squid.hierarchy.toLowerCase()}` : ""}${digest ? `|trailer:${digest}` : ""}`,
+    dispositionKey: squid ? `|squid:${squid.result.toLowerCase()}:${squid.hierarchy.toLowerCase()}` : "",
+    variantKey: digest ? `|trailer:${digest}` : "",
   };
 }
 

@@ -172,16 +172,43 @@ function clientAddress(raw: string | undefined): string {
 
 // What the per-path attack-variant bound needs to know about a row (see parseCombinedLog).
 export interface AttackMeta {
-  /** The aggregation key with the attack segment removed — one per method|status|client|host|path. */
+  /** The aggregation key with every variant segment removed — one per method|status|client|host|path. */
   base: string;
   families: string[];
+  /** The row's variant identity: its attack payload digest and its unlabelled-trailer digest. */
   digest: string;
-  /** The description an overflow row takes, minus the families it will be given. */
+  /** True when an attack shape fired — an overflow row then names the families. */
+  hasAttack: boolean;
+  /** The description an overflow row takes, minus what it will be given. */
   overflowTail: string;
 }
 
 /** The overflow row's key segment and marker — family-independent, so the bound is one group per path. */
 export const ATTACK_OVERFLOW = "attack:overflow";
+/** …and the marker for rows whose only variant was an unlabelled trailer value. */
+export const TRAILER_OVERFLOW = "trailer:overflow";
+
+// A row with no attack signal keeps today's layout when it fits. When the attacker-controlled
+// target would push the status and the record's own facts past the 600-character clip, the row
+// takes a FIXED-SLOT layout instead — the status and the tags first, the bounded target after —
+// so a 700-character URI can never hide the response code or the cache disposition (#933 item 1).
+function plainDescription(
+  method: string,
+  uri: string,
+  status: number,
+  bytesTag: string,
+  tagText: string,
+  userTag: string,
+  refTag: string,
+  uaTag: string,
+): string {
+  const whole = oneLine(`${method} ${uri} -> ${status}${bytesTag}${tagText}${userTag}${refTag}${uaTag}`);
+  if (whole.length <= 600) return whole;
+  return oneLine(
+    `[status: ${status}]${tagText.slice(0, 240)} ${method} ${uri.slice(0, 200)}${bytesTag}` +
+      `${userTag.slice(0, 50)}${refTag.slice(0, 62)}${uaTag.slice(0, 62)}`,
+  ).slice(0, 600);
+}
 
 // Map one combined-log line to a forensic event (collecting IOCs), or null if it doesn't match.
 // `attackMeta`, when given, receives the row's attack identity so the caller can bound variants.
@@ -283,7 +310,7 @@ export function mapCombinedLogLine(
           `${method} ${uri.slice(0, 200)}${bytesTag}${userTag.slice(0, 50)}` +
           `${referer ? ` (ref ${referer.slice(0, 60)})` : ""}${ua ? ` (ua ${ua.slice(0, 60)})` : ""}`,
       ).slice(0, 600)
-    : oneLine(`${method} ${uri} -> ${status}${bytesTag}${tagText}${userTag}${refTag}${uaTag}`).slice(0, 600);
+    : plainDescription(method, uri, status, bytesTag, tagText, userTag, refTag, uaTag);
 
   // A secret carried in the request URI or the Referer is a spill the moment this line is written.
   // Graded Medium (see secretSpillRules.ts) so it reaches the forensic timeline synthesis reads —
@@ -301,7 +328,13 @@ export function mapCombinedLogLine(
   // other bounded fields: a cache hit and a miss of one URL are two rows, and an unknown result
   // code keys verbatim rather than folding into a class. The trailer's unlabelled tokens are NOT
   // in the key — an attacker-writable header is a label, not an identity.
-  const recordKey = `|form:${target.form}${trailer.keySegment}`;
+  // The target's form and the proxy's DISPOSITION are bounded discriminators (a literal table) and
+  // belong with the other bounded fields. The unlabelled trailer's digest is NOT: a request time or
+  // a forwarded-for chain is unbounded, so keying the base on it would be one group per request —
+  // the aggregator's cap would then drop rare evidence and the attack-variant bound would be
+  // handed back. It is a VARIANT of the base instead, bounded by the same pass (see
+  // boundRecordVariants), so a shown trailer cannot fold away silently and cannot explode either.
+  const recordKey = `|form:${target.form}${trailer.dispositionKey}`;
   const baseKey = `weblog|${method}|${status}|${client}|${host}${recordKey}${spill ? `|spill:${spill.families.join(",")}` : ""}`;
   const pathKey = `|${uri.split("?")[0]}`;
 
@@ -331,15 +364,18 @@ export function mapCombinedLogLine(
     // it. So: every bounded field first (method, status, client, host, spill), the path LAST, and
     // boundedAggKey rather than a raw slice — it keeps a digest of the FULL key in the tail, so two
     // long paths sharing a 400-character prefix stay two rows. This is the rule aggKey.ts states.
-    aggKey: boundedAggKey(`${baseKey}${attackSegment}${pathKey}`.toLowerCase()),
+    aggKey: boundedAggKey(`${baseKey}${attackSegment}${trailer.variantKey}${pathKey}`.toLowerCase()),
     sources: [COMBINED_LOG_SOURCE],
     ...(client ? { srcIp: client } : {}),
   };
-  if (attack && attackMeta) {
+  // Every row whose identity carries a variant — an attack payload, an unlabelled trailer, or
+  // both — is bounded per base key, so neither can multiply groups without limit.
+  if ((attack || trailer.variantKey) && attackMeta) {
     attackMeta.set(event, {
       base: `${baseKey}${pathKey}`.toLowerCase(),
-      families: attack.families,
-      digest: attack.digest,
+      families: attack?.families ?? [],
+      digest: `${attack?.digest ?? ""}${trailer.variantKey}`,
+      hasAttack: Boolean(attack),
       overflowTail: `${method} ${uri.split("?")[0].slice(0, 200)} -> ${status}${tagText.slice(0, 120)}`,
     });
   }
@@ -356,9 +392,10 @@ export function mapCombinedLogLine(
 // so the aggregator's first-description-wins rule cannot hide part of it. The bound is per path:
 // different paths are different evidence. Returns old key → overflow key for every rewritten row,
 // so IOC provenance recorded under the old key (mergeRowIocs ran before this) can follow the row.
-function boundAttackVariants(mapped: MappedEvent[], meta: Map<MappedEvent, AttackMeta>): Map<string, string> {
+function boundRecordVariants(mapped: MappedEvent[], meta: Map<MappedEvent, AttackMeta>): Map<string, string> {
   const seen = new Map<string, Set<string>>();
   const overflowFamilies = new Map<string, Set<string>>();
+  const overflowCounts = new Map<string, number>();
   const overflowRows: Array<{ event: MappedEvent; base: string }> = [];
   for (const event of mapped) {
     const m = meta.get(event);
@@ -373,6 +410,7 @@ function boundAttackVariants(mapped: MappedEvent[], meta: Map<MappedEvent, Attac
     const fam = overflowFamilies.get(m.base) ?? new Set<string>();
     for (const f of m.families) fam.add(f);
     overflowFamilies.set(m.base, fam);
+    overflowCounts.set(m.base, (overflowCounts.get(m.base) ?? 0) + 1);
     overflowRows.push({ event, base: m.base });
   }
   const rewritten = new Map<string, string>();
@@ -380,12 +418,14 @@ function boundAttackVariants(mapped: MappedEvent[], meta: Map<MappedEvent, Attac
     const families = [...(overflowFamilies.get(base) ?? [])].sort().join(",");
     const m = meta.get(event)!;
     const [prefix, path] = [base.slice(0, base.lastIndexOf("|")), base.slice(base.lastIndexOf("|"))];
-    const overflowKey = boundedAggKey(`${prefix}|${ATTACK_OVERFLOW}${path}`);
+    const marker = families ? ATTACK_OVERFLOW : TRAILER_OVERFLOW;
+    const overflowKey = boundedAggKey(`${prefix}|${marker}${path}`);
     rewritten.set(event.aggKey, overflowKey);
     event.aggKey = overflowKey;
+    const what = families ? `distinct payloads` : `distinct appended trailer values`;
     event.description =
-      `[web-attack: ${families}] [overflow: distinct payloads beyond ${MAX_ATTACK_VARIANTS} on this path folded] ` +
-      m.overflowTail;
+      `${families ? `[web-attack: ${families}] ` : ""}` +
+      `[overflow: ${what} beyond ${MAX_ATTACK_VARIANTS} on this path folded] ${m.overflowTail}`;
   }
   return rewritten;
 }
@@ -403,12 +443,14 @@ export function parseCombinedLog(text: string, opts: CombinedLogImportOptions = 
   // A LogFormat is a property of the FILE, so the trailer profile is established once, over every
   // line, before any line is read (#933 item 1): one line's Squid-shaped token — which an Apache
   // format appending an attacker-controlled header could carry — never mints proxy semantics.
+  // Inferred over SUCCESSFULLY PARSED lines only (a blank or malformed line is not a record), with
+  // the client the server recorded for each — see inferTrailerProfile.
   const profile =
     opts.trailerProfile ??
     inferTrailerProfile(
-      lines.map((l) => {
+      lines.flatMap((l) => {
         const m = LINE_RE.exec(l);
-        return m ? trailerTokens(m[11] ?? "") : [];
+        return m ? [{ tokens: trailerTokens(m[11] ?? ""), client: m[1] ?? "" }] : [];
       }),
     );
 
@@ -425,7 +467,7 @@ export function parseCombinedLog(text: string, opts: CombinedLogImportOptions = 
   // With aggregation off nothing is folded, so nothing may be rewritten either: every row keeps its
   // own payload — the no-aggregation mode exists to preserve exactly that.
   const rewritten =
-    opts.aggregate === false ? new Map<string, string>() : boundAttackVariants(mapped, attackMeta);
+    opts.aggregate === false ? new Map<string, string>() : boundRecordVariants(mapped, attackMeta);
   if (rewritten.size) {
     // An IOC extracted from an overflow row was attributed to the row's ORIGINAL key; follow it to
     // the overflow key or resolveExtractedFrom drops the provenance silently.

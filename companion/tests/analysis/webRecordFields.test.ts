@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   inferTrailerProfile,
   isKnownSquidToken,
+  MIN_PROFILE_CLIENTS,
   MIN_PROFILE_LINES,
   readSize,
   readSquidTrailer,
@@ -13,6 +14,11 @@ import {
 } from "../../src/analysis/webRecordFields.js";
 
 describe("readTarget — the RFC 9112 form, never the deployment's role", () => {
+  it("reads a bracketed IPv6 tunnel target as authority-form", () => {
+    const r = readTarget("CONNECT", "[2001:db8::1]:443");
+    expect(r).toMatchObject({ form: "authority", host: "[2001:db8::1]", port: "443" });
+    expect(r.words).toContain("tunnel attempt to [2001:db8::1]:443");
+  });
   it("reads origin, absolute, authority, asterisk and invalid forms", () => {
     expect(readTarget("GET", "/api/v4/projects")).toEqual({ form: "origin", host: "", port: "", words: "" });
     expect(readTarget("GET", "https://files.example.invalid/x?a=1")).toMatchObject({
@@ -103,21 +109,35 @@ describe("trailerTokens / inferTrailerProfile — the file decides, never one li
     expect(trailerTokens("")).toEqual([]);
     expect(trailerTokens('"-"')).toEqual(["-"]);
   });
-  it("infers a profile only from a long enough file where almost every line agrees", () => {
-    const squid = (n: number) => Array.from({ length: n }, () => ["TCP_MISS:HIER_DIRECT"]);
+  it("infers a profile only from a long enough file, from more than one client, where almost every line agrees", () => {
+    const squid = (n: number, tokens = ["TCP_MISS:HIER_DIRECT"]) =>
+      Array.from({ length: n }, (_, i) => ({ tokens, client: `10.0.0.${i % 4}` }));
     expect(inferTrailerProfile(squid(MIN_PROFILE_LINES))).toEqual({ squidSlot: 0, source: "inferred" });
     // below the floor no inference is possible, however unanimous
     expect(inferTrailerProfile(squid(1))).toBeNull();
     expect(inferTrailerProfile(squid(10))).toBeNull();
+    // …nor from ONE caller's own requests: a LogFormat is the server's, not a client's
+    const oneClient = Array.from({ length: 40 }, () => ({
+      tokens: ["TCP_MISS:HIER_DIRECT"],
+      client: "10.9.9.9",
+    }));
+    expect(inferTrailerProfile(oneClient)).toBeNull();
+    expect(MIN_PROFILE_CLIENTS).toBe(2);
     // 19 of 20 agree → still the profile; 18 of 20 → not
-    const mostly = [...squid(19), ["203.0.113.9"]];
+    const mostly = [...squid(19), { tokens: ["203.0.113.9"], client: "10.0.0.7" }];
     expect(inferTrailerProfile(mostly)).toEqual({ squidSlot: 0, source: "inferred" });
-    const split = [...squid(18), ["203.0.113.9"], ["203.0.113.8"]];
+    const split = [
+      ...squid(18),
+      { tokens: ["203.0.113.9"], client: "10.0.0.7" },
+      { tokens: ["203.0.113.8"], client: "10.0.0.8" },
+    ];
     expect(inferTrailerProfile(split)).toBeNull();
     // the slot is wherever the file puts it
-    const behindTime = Array.from({ length: 20 }, () => ["137", "TCP_HIT:NONE"]);
-    expect(inferTrailerProfile(behindTime)).toEqual({ squidSlot: 1, source: "inferred" });
-    expect(inferTrailerProfile(Array.from({ length: 30 }, () => []))).toBeNull();
+    expect(inferTrailerProfile(squid(20, ["137", "TCP_HIT:NONE"]))).toEqual({
+      squidSlot: 1,
+      source: "inferred",
+    });
+    expect(inferTrailerProfile(squid(30, []))).toBeNull();
     expect(inferTrailerProfile([])).toBeNull();
   });
 });
@@ -129,22 +149,32 @@ describe("readTrailer — with no profile nothing is labelled", () => {
     expect(withProfile.squid?.result).toBe("TCP_MISS");
     expect(withProfile.words[0]).toContain("(squid_combined, inferred from the file)");
     expect(withProfile.words[1]).toBe("trailer: 137 203.0.113.5, 10.0.0.1");
-    expect(withProfile.keySegment).toMatch(/^\|squid:tcp_miss:hier_direct\|trailer:[0-9a-f]{16}$/);
+    expect(withProfile.dispositionKey).toBe("|squid:tcp_miss:hier_direct");
+    expect(withProfile.variantKey).toMatch(/^\|trailer:[0-9a-f]{16}$/);
     const declared = readTrailer(tokens, { squidSlot: 0, source: "declared" });
     expect(declared.words[0]).toContain("(squid_combined, declared)");
   });
   it("with no profile the Squid-shaped token is just a token: no words, no key, no claim", () => {
     const r = readTrailer(["TCP_MISS:HIER_DIRECT"], null);
     expect(r.squid).toBeNull();
-    // the token is not labelled and not in the key as text — but its DIGEST is, so a row that
-    // shows it never folds into a row that does not.
-    expect(r.keySegment).toMatch(/^\|trailer:[0-9a-f]{16}$/);
-    expect(r.keySegment).not.toContain("TCP_MISS");
-    expect(readTrailer(["TCP_HIT:NONE"], null).keySegment).not.toBe(r.keySegment);
+    // the token is not labelled and is no part of the row's base identity — but its DIGEST is a
+    // bounded variant, so a row that shows it never folds into a row that does not.
+    expect(r.dispositionKey).toBe("");
+    expect(r.variantKey).toMatch(/^\|trailer:[0-9a-f]{16}$/);
+    expect(r.variantKey).not.toContain("TCP_MISS");
+    expect(readTrailer(["TCP_HIT:NONE"], null).variantKey).not.toBe(r.variantKey);
     expect(r.words).toEqual(["trailer: TCP_MISS:HIER_DIRECT"]);
     expect(r.words.join(" ")).not.toContain("origin");
     expect(readTrailer([], null).words).toEqual([]);
-    expect(readTrailer([], null).keySegment).toBe("");
+    expect(readTrailer([], null).variantKey).toBe("");
+  });
+  it("never lets a trailer token forge a tag: brackets and control characters are neutralised", () => {
+    const forge = readTrailer(["] [proxy: served from its cache"], null);
+    expect(forge.words[0]).toBe("trailer: ) (proxy: served from its cache");
+    expect(forge.words[0]).not.toContain("[");
+    expect(forge.words[0]).not.toContain("]");
+    const control = readTrailer(["a\u0000b\tc"], null);
+    expect(control.words[0]).toBe("trailer: a b c");
   });
   it("bounds the tokens it shows", () => {
     const r = readTrailer([`${"x".repeat(200)}`, "y".repeat(200)], null);

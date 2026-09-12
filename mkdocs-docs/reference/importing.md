@@ -254,11 +254,14 @@ and a 302 read like a 200 with a small body. Each line now says what its own fie
   sibling proxy says so instead. **A cache hit is not a new transfer from the server.**
 - **Whose format it is, decided by the file.** A token that looks like a Squid code proves nothing
   on its own: an Apache `LogFormat` can append an attacker-controlled header. The Squid slot is
-  read only when the file has at least twenty parsed lines and almost all of them carry a known
-  result code in the same position; the row then says `(squid_combined, inferred from the file)`.
-  Otherwise every appended token is shown as `[trailer: …]` — verbatim, unlabelled, never an
-  indicator, and never the client's identity. **A forwarded-for header is not the client**: `srcIp`
-  stays the address the server or proxy actually saw.
+  read only when the file has at least twenty **parsed** lines (blank and malformed lines do not
+  count), almost all of them carry a known result code in the same position, and the code appears
+  for **more than one client** — twenty requests from one caller never establish the format. The
+  row then says `(squid_combined, inferred from the file)`. Otherwise every appended token is shown
+  as `[trailer: …]` — verbatim, unlabelled, never an indicator, and never the client's identity;
+  its brackets and control characters are neutralised, so a token cannot forge a tag the reader
+  trusts. **A forwarded-for header is not the client**: `srcIp` stays the address the server or
+  proxy actually saw.
 - **What the status and the byte count do not say.** `[redirect — the Location is not in this
   format]` for 301/302/303/307/308; `[not modified — no body]` for 304 (never a redirect);
   `[no body by definition (HEAD)]`; `[no body for this status]` for 204 and 1xx; and on a `CONNECT`,
@@ -268,8 +271,11 @@ and a 302 read like a 200 with a small body. Each line now says what its own fie
 
 Keys: the target's form and the proxy's disposition join the aggregation key, so a hit and a miss
 of one URL are two rows and an unknown result code keys on its own text. The appended tokens are
-not in the key as text — an attacker can write them — but a digest of them is, so a row that shows
-a trailer never folds into a row that does not.
+not part of a row's base identity — an attacker can write them, and a request time would be one
+group per request — but a digest of them is a bounded **variant** of it: a row that shows a
+trailer never folds into a row that does not, and beyond 64 distinct values on one path the rest
+fold into one row that says so. A very long request target can never push the status or these
+facts out of the row: past the 600-character clip the row is laid out status-first.
 
 **What the format cannot hold.** There is no request or session identifier, no HTTP/2 stream id, no
 `Location` header, no content type, and no response body — so which request led to which redirect,

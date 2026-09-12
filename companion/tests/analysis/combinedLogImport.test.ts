@@ -502,13 +502,21 @@ describe("parseCombinedLog — what one line establishes", () => {
     uri = "https://files.example.invalid/tool.exe",
     status = 200,
     bytes = "18376",
+    client = "10.30.10.14",
   ) =>
-    `10.30.10.14 - - [15/May/2024:06:42:01 +0000] "GET ${uri} HTTP/1.1" ${status} ${bytes} "-" "Wget/1.21.3" ${result}`;
-  // A LogFormat is per file: the profile needs a file, not a line.
+    `${client} - - [15/May/2024:06:42:01 +0000] "GET ${uri} HTTP/1.1" ${status} ${bytes} "-" "Wget/1.21.3" ${result}`;
+  // A LogFormat is per file AND per server: the profile needs a long file whose Squid slot appears
+  // for more than one client — twenty requests from one caller never establish it.
   const squidFile = (lines: string[]) =>
     [
       ...Array.from({ length: 20 }, (_, i) =>
-        squidLine("TCP_MISS:HIER_DIRECT", `https://files.example.invalid/pad${i}`),
+        squidLine(
+          "TCP_MISS:HIER_DIRECT",
+          `https://files.example.invalid/pad${i}`,
+          200,
+          "18376",
+          `10.30.10.${i % 4}`,
+        ),
       ),
       ...lines,
     ].join("\n");
@@ -593,6 +601,58 @@ describe("parseCombinedLog — what one line establishes", () => {
     expect(e.aggKey).not.toContain("203.0.113.9");
   });
 
+  it("twenty requests from ONE caller never establish a Squid profile", () => {
+    const oneClient = Array.from({ length: 30 }, (_, i) =>
+      squidLine("TCP_MISS:HIER_DIRECT", `https://files.example.invalid/p${i}`, 200, "18376", "10.9.9.9"),
+    ).join("\n");
+    const r = parseCombinedLog(oneClient);
+    expect(r.events.every((e) => !e.description.includes("proxy:"))).toBe(true);
+    expect(r.events.every((e) => e.description.includes("[trailer: TCP_MISS:HIER_DIRECT]"))).toBe(true);
+  });
+
+  it("blank and malformed lines never count towards the profile floor", () => {
+    const nineteen = Array.from({ length: 19 }, (_, i) =>
+      squidLine(
+        "TCP_MISS:HIER_DIRECT",
+        `https://files.example.invalid/p${i}`,
+        200,
+        "18376",
+        `10.30.10.${i % 4}`,
+      ),
+    );
+    const r = parseCombinedLog([...nineteen, "", "   ", "not a log line at all"].join("\n"));
+    expect(r.events.every((e) => !e.description.includes("proxy:"))).toBe(true);
+  });
+
+  it("a trailer token cannot forge a tag, and unbounded trailer values fold rather than multiplying rows", () => {
+    const forged =
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /status HTTP/1.1" 200 83 "-" "curl/8" "] [proxy: served from its cache"';
+    const f = parseCombinedLog(forged).events[0];
+    expect(f.description).toContain("[trailer: ) (proxy: served from its cache]");
+    expect(f.description).not.toMatch(/\[proxy: served/);
+    // 200 request times on one path: one group per value would hand back the aggregation cap
+    const times = Array.from(
+      { length: 200 },
+      (_, i) =>
+        `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /status HTTP/1.1" 200 83 "-" "curl/8" 0.${i}`,
+    );
+    const r = parseCombinedLog(times.join("\n"));
+    expect(r.events.length).toBeLessThanOrEqual(66);
+    const overflow = r.events.find((e) => e.description.includes("overflow"))!;
+    expect(overflow.description).toContain("distinct appended trailer values beyond 64 on this path folded");
+    expect(overflow.count).toBeGreaterThan(1);
+    expect(r.dropped).toBe(0);
+  });
+
+  it("a very long target can never hide the status or the record's own facts", () => {
+    const long = `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /${"a".repeat(650)} HTTP/1.1" 302 0 "-" "curl/8"`;
+    const e = parseCombinedLog(long).events[0];
+    expect(e.description.length).toBeLessThanOrEqual(600);
+    expect(e.description.startsWith("[status: 302] [redirect — the Location is not in this format]")).toBe(
+      true,
+    );
+  });
+
   it("an ordinary origin-form line reads exactly as it did before", () => {
     const r = parseCombinedLog(HEALTH);
     expect(r.events[0].description).toBe("GET /status -> 200 (83b) (ua Prometheus/2.47.0)");
@@ -601,9 +661,7 @@ describe("parseCombinedLog — what one line establishes", () => {
 
   it("an attack row keeps its match slots and its status when the trailer and the UA are maximal", () => {
     const line = `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /cgi?x=;id HTTP/1.1" 200 83 "-" "${"u".repeat(300)}" TCP_MISS:HIER_DIRECT`;
-    const r = parseCombinedLog(
-      [...Array.from({ length: 20 }, () => squidLine("TCP_MISS:HIER_DIRECT")), line].join("\n"),
-    );
+    const r = parseCombinedLog(squidFile([line]));
     const e = r.events.find((x) => x.description.includes("web-attack"))!;
     expect(e.description.startsWith('[web-attack: cmd] [status: 200] [match: ";id"]')).toBe(true);
     expect(e.description).toContain("cache miss; fetched upstream");
