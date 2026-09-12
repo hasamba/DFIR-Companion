@@ -104,6 +104,7 @@ const LINE_RE = new RegExp(
   String.raw`^(\S+)\s+(\S+)\s+(\S+)\s+\[([^\]]+)\]\s+"([A-Z]+)\s+(\S+)(?:\s+[^"]*)?"\s+(\d{3})\s+(\S+)\s+${QUOTED}\s+${QUOTED}(.*)$`,
 );
 const unquote = (s: string | undefined): string => (s ?? "").replace(/\\(["\\])/g, "$1");
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
 
 // Is this text an Apache/Nginx/Squid combined access log? True when a meaningful share of the
 // first non-blank lines match the line shape, or the filename says so outright.
@@ -312,7 +313,14 @@ export function mapCombinedLogLine(
   // form (a fact about the line, never the deployment's role), the proxy's two legs when the FILE
   // declares or evidences a Squid trailer, whether the status or the method allows a body at all,
   // and every trailer token the profile does not name — kept verbatim, never an indicator.
-  const target = readTarget(method, uri);
+  // A control character between the method, the target and the protocol is consumed by the line
+  // grammar's `\s+` separators, so the target reaches the reader looking clean. The REQUEST LINE
+  // as the server wrote it is checked instead: a control anywhere in it makes the target invalid,
+  // and no host of it becomes an indicator (#933 item 1).
+  const requestLine = line.slice(line.indexOf('"') + 1, line.indexOf('"', line.indexOf('"') + 1));
+  const target = CONTROL_CHARS.test(requestLine)
+    ? ({ form: "invalid", host: "", port: "", words: "invalid request target" } as const)
+    : readTarget(method, uri);
   // The destination host is the one the WHOLE-target parse validated: a malformed target
   // (`http://ev]il:abc/x`) is invalid, and nothing of it becomes an indicator or a key field.
   const host = target.host;
