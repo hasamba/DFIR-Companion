@@ -86,6 +86,15 @@ describe("readQueryResults — the resolver's returned values, typed, validated,
     expect(r.shown).toContain(`+${80 - RESULTS_SHOWN_MAX} more`);
     expect((r.shown.match(/10\.0\./g) ?? []).length).toBe(RESULTS_SHOWN_MAX);
   });
+  it("only leading CNAME steps are chained; other names keep the record's order and imply nothing", () => {
+    const r = readQueryResults("34.238.81.39;type: 2 ns1.example;type: 2 ns2.example;205.251.192.139;");
+    expect(r.shown).toBe("34.238.81.39, ns ns1.example, ns ns2.example, 205.251.192.139");
+    expect(r.shown).not.toContain("→");
+    const mid = readQueryResults("::ffff:192.0.2.1;type: 5 x.example;::ffff:192.0.2.2;");
+    expect(mid.shown).toBe("192.0.2.1, cname x.example, 192.0.2.2");
+    const two = readQueryResults("type: 5 a.example;type: 5 b.example;::ffff:192.0.2.1;type: 2 ns.example;");
+    expect(two.shown).toBe("cname a.example → cname b.example → 192.0.2.1, ns ns.example");
+  });
   it("a type marker with no data is said as such, never as a returned literal", () => {
     const r = readQueryResults("type: 16 ;type: 16");
     expect(r.values).toEqual([

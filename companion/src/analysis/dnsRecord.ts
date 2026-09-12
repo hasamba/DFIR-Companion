@@ -181,10 +181,14 @@ export function readQueryResults(raw: string | undefined): ResultsReading {
     (v) => v.value.length > VALUE_SHOWN_MAX || breakHashRuns(showToken(v.value)) !== v.value,
   );
   const head = values.slice(0, RESULTS_SHOWN_MAX);
-  // CNAME steps lead with an arrow between them; everything else follows, comma-separated.
-  const names = head.filter((v) => v.kind === "name").map(showValue);
-  const rest = head.filter((v) => v.kind !== "name").map(showValue);
-  const parts = [...names, rest.join(", ")].filter(Boolean).join(" → ");
+  // Only a run of LEADING CNAME steps is arrow-linked — that is the one chain Windows writes in
+  // order. Every other value (an NS, an MX, an address) stays in record order, comma-separated: the
+  // owner-less field establishes no relationship between them.
+  let steps = 0;
+  while (steps < head.length && head[steps].type === 5 && head[steps].kind === "name") steps++;
+  const chain = head.slice(0, steps).map(showValue);
+  const rest = head.slice(steps).map(showValue).join(", ");
+  const parts = [...chain, rest].filter(Boolean).join(" → ");
   const more = all.length > RESULTS_SHOWN_MAX ? ` +${all.length - RESULTS_SHOWN_MAX} more` : "";
   return { values, identity, clipped, shown: all.length ? `${parts}${more}` : "", total: all.length };
 }
