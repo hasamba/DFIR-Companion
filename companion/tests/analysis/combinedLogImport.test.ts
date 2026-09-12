@@ -685,6 +685,50 @@ describe("parseCombinedLog — what one line establishes", () => {
     expect((big.description.match(/\[/g) ?? []).length).toBe((big.description.match(/\]/g) ?? []).length);
   });
 
+  it("a bare result code with no hierarchy never establishes a profile", () => {
+    const bare = Array.from({ length: 24 }, (_, i) =>
+      squidLine("TCP_MISS", `https://files.example.invalid/p${i}`, 200, "18376", `10.30.10.${i % 4}`),
+    ).join("\n");
+    const r = parseCombinedLog(bare);
+    expect(r.events.every((e) => !e.description.includes("proxy:"))).toBe(true);
+    expect(r.events.every((e) => e.description.includes("[trailer: TCP_MISS]"))).toBe(true);
+  });
+
+  it("an invalid target mints no indicator and no host in the key", () => {
+    const bad =
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET http://ev]il:abc/x HTTP/1.1" 200 83 "-" "curl/8"';
+    const r = parseCombinedLog(bad);
+    const e = r.events[0];
+    expect(e.description).toContain("[invalid request target]");
+    expect(r.iocs.map((i) => i.value)).not.toContain("ev]il");
+    expect(r.iocs.some((i) => i.type === "domain")).toBe(false);
+    // the host slot of the key is empty — the malformed target is only the row's own path identity,
+    // which every row keeps verbatim and last
+    expect(e.aggKey).toContain("|10.30.20.11||form:invalid|");
+  });
+
+  it("a peer that is not an address is neither an srcIp nor a second client", () => {
+    const lines = Array.from({ length: 19 }, (_, i) =>
+      squidLine("TCP_HIT:NONE", `https://files.example.invalid/p${i}`, 200, "18376", "10.0.0.1"),
+    );
+    lines.push(
+      squidLine("TCP_HIT:NONE", "https://files.example.invalid/p19", 200, "18376", "999.999.999.999"),
+    );
+    const r = parseCombinedLog(lines.join("\n"));
+    expect(r.events.every((e) => !e.description.includes("proxy:"))).toBe(true);
+    expect(r.events.every((e) => e.srcIp !== "999.999.999.999")).toBe(true);
+  });
+
+  it("an attack row's tags stay whole too, with a disposition, a redirect and maximal trailers", () => {
+    const line = `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET https://files.example.invalid/cgi?x=;id HTTP/1.1" 302 0 "-" "curl/8" TCP_MISS:HIER_DIRECT ${"t".repeat(160)} ${"u".repeat(160)} ${"v".repeat(160)}`;
+    const r = parseCombinedLog(squidFile([line]));
+    const e = r.events.find((x) => x.description.includes("web-attack"))!;
+    expect(e.description.startsWith('[web-attack: cmd] [status: 302] [match: ";id"]')).toBe(true);
+    expect((e.description.match(/\[/g) ?? []).length).toBe((e.description.match(/\]/g) ?? []).length);
+    expect(e.description).toContain("[redirect — the Location is not in this format]");
+    expect(e.description.length).toBeLessThanOrEqual(600);
+  });
+
   it("an ordinary origin-form line reads exactly as it did before", () => {
     const r = parseCombinedLog(HEALTH);
     expect(r.events[0].description).toBe("GET /status -> 200 (83b) (ua Prometheus/2.47.0)");

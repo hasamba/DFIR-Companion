@@ -104,7 +104,8 @@ describe("readSquidTrailer — the proxy's leg and the next hop, never a transfe
   });
   it("knows which tokens the tables FULLY name — a known result with an unknown hierarchy is not one", () => {
     expect(isKnownSquidToken("tcp_hit:none")).toBe(true);
-    expect(isKnownSquidToken("TCP_MISS")).toBe(true);
+    // squid_combined always writes `%Ss:%Sh`, so a bare result is not the field this reader claims
+    expect(isKnownSquidToken("TCP_MISS")).toBe(false);
     expect(isKnownSquidToken("TCP_FOO:BAR")).toBe(false);
     // the hierarchy is where unbounded attacker text would otherwise enter the key
     expect(isKnownSquidToken("TCP_MISS:NONCE_7")).toBe(false);

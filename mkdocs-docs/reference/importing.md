@@ -256,8 +256,9 @@ and a 302 read like a 200 with a small body. Each line now says what its own fie
   on its own: an Apache `LogFormat` can append an attacker-controlled header. The Squid slot is
   read only when the file has at least twenty **parsed** lines (blank and malformed lines do not
   count), almost all of them carry a result code **and hierarchy code the tables name** in the same
-  position, and the pair appears for **more than one real client address** (a `-` placeholder is
-  not a client) — twenty requests from one caller never establish the format. The
+  position (`squid_combined` always writes both, so a bare `TCP_MISS` is not the field), and the
+  pair appears for **more than one real client address** — a `-` placeholder and a value that is
+  not an address are not clients, so twenty requests from one caller never establish the format. The
   row then says `(squid_combined, inferred from the file)`. Otherwise every appended token is shown
   as `[trailer: …]` — verbatim, unlabelled, never an indicator, and never the client's identity.
   A line whose slot holds something the tables do not name (`TCP_FOO:BAR`, or a known result with
@@ -272,7 +273,9 @@ and a 302 read like a 200 with a small body. Each line now says what its own fie
   `[no body by definition (HEAD)]`; `[no body for this status]` for 204 and 1xx; and on a `CONNECT`,
   `[the logged size is the tunnel's, not a response body]`. A byte count is the size the server
   logged — Apache's excludes headers, Squid's includes them, neither is network bytes, and no
-  status proves the client received them.
+  status proves the client received them. An invalid target mints no destination indicator either:
+  a malformed host never becomes a domain IOC or the key's host field, only the row's own path
+  identity.
 
 Keys: the target's form and the proxy's disposition join the aggregation key, so a hit and a miss
 of one URL are two rows. The appended tokens are

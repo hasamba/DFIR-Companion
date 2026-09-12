@@ -65,6 +65,7 @@ import { boundedAggKey } from "./aggKey.js";
 import { inspectRequestFields, MAX_ATTACK_VARIANTS } from "./webRequestDecode.js";
 import {
   inferTrailerProfile,
+  packTags,
   readSize,
   readTarget,
   readTrailer,
@@ -72,6 +73,7 @@ import {
   trailerTokens,
   type TrailerProfile,
 } from "./webRecordFields.js";
+import { isIP } from "node:net";
 
 export interface CombinedLogImportOptions {
   aggregate?: boolean;
@@ -165,9 +167,9 @@ function classify(uri: string, status: number): { severity: Severity; mitre: str
 function clientAddress(raw: string | undefined): string {
   const v = (raw ?? "").trim();
   if (!v || v === "-") return "";
-  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(v)) return v;
-  if (/^[0-9a-f]*:[0-9a-f:]*$/i.test(v) && v.includes(":")) return v; // IPv6, incl. "::1"
-  return "";
+  // A real parser, not a shape test: `999.999.999.999` is not an address, so it must not become a
+  // `srcIp`, and it must not count as a second client when a trailer profile is inferred.
+  return isIP(v) ? v : "";
 }
 
 // What the per-path attack-variant bound needs to know about a row (see parseCombinedLog).
@@ -203,22 +205,15 @@ function plainDescription(
   uaTag: string,
 ): string {
   const tagText = tags.length ? ` [${tags.join("] [")}]` : "";
-  // The attack layout reserves a slice for the tags; the plain layout takes the whole tags (see
-  // plainDescription), so a long target never leaves a half-open tag or drops the status's fact.
+  // Both layouts pack WHOLE tags (packTags): a substring of a serialised `[a] [b]` sequence would
+  // leave a half-open tag and hide the fact it names.
   const whole = oneLine(`${method} ${uri} -> ${status}${bytesTag}${tagText}${userTag}${refTag}${uaTag}`);
   if (whole.length <= 600) return whole;
   // Rebuilt from WHOLE tags in evidence order — never a substring of a serialised sequence, which
   // would leave a half-open `[redir` and drop the fact it names.
   const head = `[status: ${status}]`;
-  const kept: string[] = [];
-  let room = 600 - head.length - 1 - method.length - 1 - Math.min(uri.length, 200) - bytesTag.length - 180;
-  for (const tag of tags) {
-    const cost = tag.length + 3;
-    if (cost > room) continue;
-    kept.push(tag);
-    room -= cost;
-  }
-  const keptText = kept.length ? ` [${kept.join("] [")}]` : "";
+  const room = 600 - head.length - 1 - method.length - 1 - Math.min(uri.length, 200) - bytesTag.length - 180;
+  const keptText = packTags(tags, room);
   return oneLine(
     `${head}${keptText} ${method} ${uri.slice(0, 200)}${bytesTag}` +
       `${userTag.slice(0, 50)}${refTag.slice(0, 62)}${uaTag.slice(0, 62)}`,
@@ -275,13 +270,15 @@ export function mapCombinedLogLine(
   // along. Every "which host attacked this server" question dead-ends without it (#930 item 3).
   // "-" is the placeholder when the address is unavailable.
   const client = clientAddress(clientRaw);
-  const host = requestHost(uri);
-  if (host) addIoc(sink, "domain", host);
   // What this line establishes about its own fields (#933 item 1): the request target's RFC 9112
   // form (a fact about the line, never the deployment's role), the proxy's two legs when the FILE
   // declares or evidences a Squid trailer, whether the status or the method allows a body at all,
   // and every trailer token the profile does not name — kept verbatim, never an indicator.
   const target = readTarget(method, uri);
+  // The destination host is the one the WHOLE-target parse validated: a malformed target
+  // (`http://ev]il:abc/x`) is invalid, and nothing of it becomes an indicator or a key field.
+  const host = target.host;
+  if (host) addIoc(sink, "domain", host);
   const trailer = readTrailer(trailerTokens(restRaw ?? ""), profile);
   const sizeWords = readSize(method, status, bytesRaw ?? "");
   const statusTail = statusWords(status);
@@ -296,8 +293,8 @@ export function mapCombinedLogLine(
     ...(trailer.trailerWords ? [trailer.trailerWords] : []),
   ];
   const tagText = tags.length ? ` [${tags.join("] [")}]` : "";
-  // The attack layout reserves a slice for the tags; the plain layout takes the whole tags (see
-  // plainDescription), so a long target never leaves a half-open tag or drops the status's fact.
+  // Both layouts pack WHOLE tags (packTags): a substring of a serialised `[a] [b]` sequence would
+  // leave a half-open tag and hide the fact it names.
 
   // Referer capture (see module comment): host → domain IOC; a referer with a query string is the
   // secret-leak vector, so emit it as an unaggregated url IOC that survives even if this request
@@ -327,7 +324,7 @@ export function mapCombinedLogLine(
   const description = attack
     ? oneLine(
         `[web-attack: ${attack.labels.join(",")}] [status: ${status}]` +
-          `${attack.slots.length ? ` [match: ${attack.slots.join(" | ")}]` : ""}${tagText.slice(0, 240)} ` +
+          `${attack.slots.length ? ` [match: ${attack.slots.join(" | ")}]` : ""}${packTags(tags, 240)} ` +
           `${method} ${uri.slice(0, 200)}${bytesTag}${userTag.slice(0, 50)}` +
           `${referer ? ` (ref ${referer.slice(0, 60)})` : ""}${ua ? ` (ua ${ua.slice(0, 60)})` : ""}`,
       ).slice(0, 600)

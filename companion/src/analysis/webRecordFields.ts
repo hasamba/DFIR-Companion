@@ -182,14 +182,17 @@ const showToken = (t: string): string =>
     .trim();
 
 /**
- * Is this token a Squid `%Ss[:%Sh]` pair the tables FULLY name? Both halves must be recognised: a
+ * Is this token a Squid `%Ss:%Sh` pair the tables FULLY name? Both halves must be present and
+ * recognised: a
  * known result with an unknown hierarchy (`TCP_MISS:NONCE_7`) is attacker-shaped text in the slot,
  * and treating it as a bounded disposition would put one unbounded value per row into the key.
  */
 export function isKnownSquidToken(token: string): boolean {
   const m = SQUID_TOKEN.exec(token.trim().toUpperCase());
   if (!m || !(m[1] in SQUID_RESULT)) return false;
-  return !m[2] || m[2] in SQUID_HIERARCHY;
+  // BOTH halves, both present: `squid_combined` always writes `%Ss:%Sh`, so a bare result is not
+  // the field this reader claims to understand.
+  return m[2] !== undefined && m[2] in SQUID_HIERARCHY;
 }
 
 /** Read a Squid `RESULT:HIERARCHY` token as its two legs. An unknown code is kept verbatim. */
@@ -251,6 +254,23 @@ export function inferTrailerProfile(parsed: readonly ParsedTrailer[]): TrailerPr
     return { squidSlot: slot, source: "inferred" };
   }
   return null;
+}
+
+/**
+ * Pack whole tags into `room` characters, in evidence order, dropping any that does not fit — a
+ * substring of a serialised `[a] [b]` sequence would leave a half-open tag and hide the fact it
+ * names. Returns the rendered text (with its leading space) — "" when nothing fits.
+ */
+export function packTags(tags: readonly string[], room: number): string {
+  const kept: string[] = [];
+  let left = room;
+  for (const tag of tags) {
+    const cost = tag.length + 3;
+    if (cost > left) continue;
+    kept.push(tag);
+    left -= cost;
+  }
+  return kept.length ? ` [${kept.join("] [")}]` : "";
 }
 
 export interface TrailerReading {
