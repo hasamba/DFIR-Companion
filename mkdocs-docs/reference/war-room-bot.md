@@ -136,6 +136,12 @@ and set the shared secret it sends in the `Authorization` header:
 DFIR_TEAMS_TOKEN=<shared secret>
 ```
 
+The secret must be at least 32 characters; a shorter value stops the server at startup. Generate
+one with `openssl rand -base64 32`. Five wrong guesses lock the endpoint for 30 seconds, doubling
+after each further failure, and every rejected guess is logged with the source address. The
+lockout applies to the secret, not the client, so a bot that suddenly answers `429` to Teams
+means someone else is trying your webhook.
+
 ---
 
 ## Telegram (polling)
@@ -176,7 +182,11 @@ Under the hood the Companion asks Telegram for new commands and Telegram holds t
 Use this only if you need it — a shared server that's already reachable, say. Polling is less setup and less exposure.
 
 1. Message [@BotFather](https://t.me/BotFather) → `/newbot` → copy the token (`123456789:AAF…`).
-2. Invent a long random string for the webhook secret.
+2. Generate the webhook secret: `openssl rand -hex 32`. It must be at least 32 characters, or the
+   server refuses to start, and Telegram accepts only `A-Z a-z 0-9 _ -` in it — so not base64,
+   whose `+ / =` `setWebhook` rejects. Wrong guesses are rate-limited the same way as the Teams token
+   above: five failures lock the endpoint for 30 seconds, doubling after each further failure, and
+   every rejected guess is logged with the source address.
 3. Add both to `.env`:
 
 ```
@@ -310,6 +320,7 @@ That one call walks you down the chain, because each layer fails before the next
 | `Cannot POST /integrations/telegram/command` | The route doesn't exist — this build predates the bot, or you're on the wrong branch |
 | `no Telegram webhook secret configured` | `DFIR_TELEGRAM_SECRET_TOKEN` is unset in the running process |
 | `missing X-Telegram-Bot-Api-Secret-Token header` | The route is live and authenticating — this is the healthy answer to an empty request |
+| `too many attempts, try again later` (`429`) | The secret has been guessed wrong five times or more. Wait for the `Retry-After` — and ask who else is calling your webhook |
 
 Fix them in that order. Clearing one only reveals the next, so a change that "does nothing" often did work.
 

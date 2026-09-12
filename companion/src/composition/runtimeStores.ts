@@ -24,6 +24,7 @@ import { startOperationalCapacityMonitor } from "../analysis/operationalCapacity
 import { LoggerImpl, normalizeLogLevel } from "../logging/logger.js";
 import { logLine, setServerLogger } from "../logging/serverLogger.js";
 import { createTeamAuthRuntime } from "../auth/authFactory.js";
+import { assertSlashCommandSecretLengths } from "../analysis/slashCommandAuth.js";
 import { TemplateStore } from "../analysis/templateStore.js";
 import { IncidentTypeStore } from "../analysis/incidentTypeStore.js";
 import { CollectionPlanStore } from "../analysis/collectionPlanStore.js";
@@ -119,6 +120,10 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
   const demoMode = process.env.DFIR_DEMO_MODE === "true" || process.env.DFIR_DEMO_MODE === "1";
   const store = new CaseStore(casesRoot);
   const { teamAuth, writerGuard } = createTeamAuthRuntime(casesRoot, host, port);
+  // The war-room bot's shared secrets are read per request from process.env and are neither
+  // writable nor reloadable from the dashboard, so startup is the one place a short value can be
+  // refused before it guards a public route (#944).
+  assertSlashCommandSecretLengths(process.env);
   if (writerGuard) process.once("exit", () => writerGuard.release());
   // File-backed global and per-case session logs retain the investigation audit trail.
   // Timestamp punctuation is stripped for Windows-compatible filenames.
