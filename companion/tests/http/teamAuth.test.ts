@@ -126,28 +126,21 @@ describe("optional team authentication", () => {
     expect(authStore.countIdentities()).toBe(1);
   });
 
-  it("falls back to loopback-only bootstrap when no token is configured", async () => {
-    // authFactory refuses to build this configuration on a non-loopback bind, so the fallback only
-    // ever gates local requests — but the route-level branch still has to hold on its own.
+  it("refuses a token-less bootstrap even from a loopback socket (#945)", async () => {
+    // The old fallback let a loopback peer in without a token. Behind a same-host reverse proxy
+    // every client IS a loopback peer, so the fallback handed the first administrator to whoever
+    // reached the proxy first. authFactory now refuses to start team mode without a token while
+    // the store is empty; the route holds the same line on its own.
     const open = new TeamAuth({ store: authStore, cookieSecure: false, sessionTtlMs: 60 * 60_000 });
     const openApp = createApp(cases, { teamAuth: open });
-    const res = await request(openApp).post("/auth/bootstrap").send({
+    const res = await request(openApp).post("/auth/bootstrap").set("X-Forwarded-For", "203.0.113.9").send({
       username: "admin",
       password: "correct horse battery staple",
       displayName: "Local Admin",
     });
-    expect(res.status).toBe(201); // supertest connects over loopback
-    expect(authStore.countIdentities()).toBe(1);
-  });
-
-  it("treats only loopback socket addresses as loopback requests", () => {
-    const fakeReq = (remoteAddress?: string) =>
-      ({ socket: { remoteAddress } }) as unknown as Parameters<TeamAuth["isLoopbackRequest"]>[0];
-    expect(auth.isLoopbackRequest(fakeReq("127.0.0.1"))).toBe(true);
-    expect(auth.isLoopbackRequest(fakeReq("::1"))).toBe(true);
-    expect(auth.isLoopbackRequest(fakeReq("::ffff:127.0.0.1"))).toBe(true);
-    expect(auth.isLoopbackRequest(fakeReq("10.0.0.5"))).toBe(false);
-    expect(auth.isLoopbackRequest(fakeReq(undefined))).toBe(false);
+    expect(res.status).toBe(403); // supertest connects over loopback — and that must not matter
+    expect(res.headers["set-cookie"]).toBeUndefined();
+    expect(authStore.countIdentities()).toBe(0);
   });
 
   it("leaves the existing single-user app unchanged when team auth is not configured", async () => {

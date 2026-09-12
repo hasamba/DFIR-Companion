@@ -61,8 +61,14 @@ export function createTeamAuthRuntime(
   let store: AuthStore | undefined;
   try {
     store = new AuthStore(join(dataDir, "auth.sqlite"));
-    if (store.countIdentities() === 0 && !isLoopbackBinding(host) && !config.bootstrapToken) {
-      throw new Error("first team-mode startup on a non-loopback binding requires DFIR_AUTH_BOOTSTRAP_TOKEN");
+    // The bind address used to exempt loopback here, and the bootstrap route then let any loopback
+    // peer in without a token. Behind a same-host reverse proxy EVERY client is a loopback peer,
+    // so that exemption handed the first administrator to whoever reached the proxy first (#945).
+    // The token is the only guard that says anything about the caller; require it whenever there
+    // is still a first administrator to claim. Once one exists the route answers 409 and the token
+    // can be removed, as the docs already say.
+    if (store.countIdentities() === 0 && !config.bootstrapToken) {
+      throw new Error("first team-mode startup requires DFIR_AUTH_BOOTSTRAP_TOKEN while no identity exists");
     }
     const oidcClient = config.oidc
       ? new OidcClient({

@@ -54,9 +54,12 @@ Put the Companion behind HTTPS. Team-mode cookies are `Secure` by default and th
 sent over plain HTTP. `DFIR_AUTH_COOKIE_SECURE=false` exists for an HTTP-only loopback lab, not a
 network-facing deployment.
 
-Restart the server, open `/login`, and create the first local administrator. When setup is being
-performed from a different machine, the bootstrap token must match. Remove
-`DFIR_AUTH_BOOTSTRAP_TOKEN` from the environment after setup.
+Restart the server, open `/login`, and create the first local administrator. The bootstrap token
+must match, whatever address the server is bound to and wherever the browser runs: the server
+refuses to start team mode without one while no identity exists. A loopback bind is not a
+substitute — behind a same-host reverse proxy every client arrives as a loopback peer. Remove
+`DFIR_AUTH_BOOTSTRAP_TOKEN` from the environment after setup; the server starts without it once
+the first administrator exists.
 
 The first local administrator is the emergency-access account. Local sign-in while OIDC is
 configured is recorded as emergency access, and the final active global administrator cannot be

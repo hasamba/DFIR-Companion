@@ -97,7 +97,7 @@ from the dashboard. Set them in `.env` or the deployment's secret store and rest
   restart to switch modes. Team identities and roles remain stored while single-user mode is active.
 - `DFIR_AUTH_COOKIE_SECURE` — secure cookies; defaults on in team mode
 - `DFIR_AUTH_SESSION_HOURS` — browser-session lifetime, default 12 hours
-- `DFIR_AUTH_BOOTSTRAP_TOKEN` — protects first-administrator setup from a remote client; at least 32 characters, or the server refuses to start in team mode. Wrong guesses are rate-limited and audited.
+- `DFIR_AUTH_BOOTSTRAP_TOKEN` — protects first-administrator setup; required in team mode while no identity exists, on any bind address. At least 32 characters, or the server refuses to start. Wrong guesses are rate-limited and audited.
 - `DFIR_AUTH_DATA_DIR` — optional identity/session database location
 - `DFIR_AUTH_OIDC_ISSUER`, `_CLIENT_ID`, `_CLIENT_SECRET`, `_REDIRECT_URI`, `_SCOPES` — optional
   organization sign-in
