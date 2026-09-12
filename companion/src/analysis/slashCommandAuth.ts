@@ -49,6 +49,30 @@ export function verifySlackSignature(input: SlackSignatureInput): SignatureVerif
   return { ok: true };
 }
 
+// The Teams and Telegram secrets are compared, not signed over, so the guess count is the only
+// defence — and POST /integrations/{teams,telegram}/command is rate-limited rather than
+// unguessable (#944). 32 characters is the floor at which that lockout schedule makes an online
+// guess hopeless: the same floor #920 put under the bootstrap token, for the same reason. Any
+// nonempty value was accepted before, so `DFIR_TEAMS_TOKEN=x` was valid configuration.
+export const MIN_SHARED_SECRET_LENGTH = 32;
+
+const SHARED_SECRET_VARS = ["DFIR_TEAMS_TOKEN", "DFIR_TELEGRAM_SECRET_TOKEN"] as const;
+
+/** Refuse startup on a shared secret shorter than the floor, naming the variable. Unset is fine —
+ *  both integrations are optional, and an unconfigured secret already refuses every request. The
+ *  Slack signing secret is deliberately not here: Slack issues it, and it signs the body. */
+export function assertSlashCommandSecretLengths(env: NodeJS.ProcessEnv): void {
+  for (const name of SHARED_SECRET_VARS) {
+    const value = (env[name] ?? "").trim();
+    if (value && value.length < MIN_SHARED_SECRET_LENGTH) {
+      throw new Error(
+        `${name} must be at least ${MIN_SHARED_SECRET_LENGTH} characters ` +
+          `(got ${value.length}); generate one with: openssl rand -base64 32`,
+      );
+    }
+  }
+}
+
 // Teams webhook-based slash commands carry a bearer token the operator configures in the Teams
 // channel's webhook connector. Accepts both "Bearer <token>" and a bare "<token>" presentation.
 export function verifyTeamsToken(
