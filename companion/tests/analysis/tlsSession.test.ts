@@ -780,6 +780,24 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
     expect(rows([x])[0].description).toContain("covers 65 names:");
   });
 
+  it("a client chain FUID is a locator, not a shape: F1 and F2 fold; a different client fingerprint does not", () => {
+    const base2 = {
+      ts: 1700000000.5,
+      "id.orig_h": "10.0.0.1",
+      "id.resp_h": "203.0.113.1",
+      "id.resp_p": 443,
+      client_subject: "CN=user",
+    };
+    const f1 = readZeekSsl({ ...base2, client_cert_chain_fuids: ["F1"] }, "");
+    const f2 = readZeekSsl({ ...base2, client_cert_chain_fuids: ["F2"] }, "");
+    const r = rows([f1, f2]);
+    expect(r).toHaveLength(1);
+    expect(r[0].canonical?.tls?.records).toBe(2);
+    expect(r[0].canonical?.tls?.clientCertificate?.chainFuids).toEqual(["F1"]);
+    const other = readZeekSsl({ ...base2, client_cert_chain_fps: ["ab".repeat(20)] }, "");
+    expect(rows([f1, other])).toHaveLength(2);
+  });
+
   it("selects the most-seen rows first under a budget", () => {
     const many = [
       ...Array.from({ length: 3 }, () => base()),

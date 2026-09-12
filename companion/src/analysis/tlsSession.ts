@@ -460,7 +460,9 @@ export function tlsKey(o: TlsObservation): string {
     short(o.sniMatchesCert),
     short(o.directionFlipped),
     cert,
-    o.clientCert ? `c:${keyDigest(JSON.stringify(o.clientCert))}` : "-",
+    // The client certificate's identity and facts — not its chain FUIDs, which are locators of one
+    // observation and would make every mTLS session its own shape.
+    o.clientCert ? `c:${keyDigest(JSON.stringify({ ...o.clientCert, chainFuids: undefined }))}` : "-",
     // Certificate FACTS with no identity (a SAN list, a serial, validity) are evidence too: a
     // record carrying them and one without are two rows.
     o.certificate && Object.keys(o.certificate).length
