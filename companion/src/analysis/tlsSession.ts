@@ -110,17 +110,13 @@ function validity(v: unknown): string | undefined {
 
 // A hex identifier in its documented grammar (hex, optionally colon- or space-separated) — or
 // nothing. Deleting stray characters would let `aa:zz:bb` and `aa:bb` mint one identity.
-const HEX_GRAMMAR = /^(?:0x)?[0-9a-f]{1,2}(?:[:\s-]?[0-9a-f]{1,2})*$/i;
+const HEX_GRAMMAR = /^[0-9a-f]+(?:[:\s][0-9a-f]{2})*$/i;
 const hexOf = (v: string): string | undefined => {
   const t = v.trim();
-  return HEX_GRAMMAR.test(t)
-    ? t
-        .replace(/^0x/i, "")
-        .replace(/[:\s-]/g, "")
-        .toLowerCase()
-    : undefined;
+  return HEX_GRAMMAR.test(t) ? t.replace(/[:\s]/g, "").toLowerCase() : undefined;
 };
-const FINGERPRINT_LENGTHS = new Set([32, 40, 64]);
+// Only the digests a source writes as a certificate fingerprint: SHA-1 (Suricata, Zeek) and SHA-256.
+const FINGERPRINT_LENGTHS = new Set([40, 64]);
 
 // Canonical base64 only: Node's decoder is permissive, so `!!!!` would decode to zero bytes and
 // every malformed value would share the empty input's sha256 — one forged identity for them all.
@@ -243,8 +239,10 @@ export function readSuricataTls(row: Row, fallbackTs: string): TlsObservation {
   const hashOf = (v: unknown): string | undefined => (isObject(v) ? text(getCI(v, "hash")) : text(v));
   const issuer = text(getCI(t, "issuerdn")) ?? text(getCI(t, "issuer"));
   const serial = text(getCI(t, "serial"));
-  // The leaf's DER bytes, when the output carries them, give a REAL sha256 — computed here.
-  const derFp = derFingerprint(text(getCI(t, "certificate")));
+  // The leaf's DER bytes, when the output carries them, give a REAL sha256 — computed here. The
+  // leaf is the explicit `certificate`, else the first chain entry (the same rule the certificate
+  // rows follow), so a chain-only session still keys and shows the certificate it presented.
+  const derFp = derFingerprint(text(getCI(t, "certificate")) ?? list(getCI(t, "chain"))?.[0]);
   const port = Number(getCI(row, "dest_port"));
   const names = list(getCI(t, "subjectaltname"));
   // A certificate object only when the record carries a certificate field: a resumed session with

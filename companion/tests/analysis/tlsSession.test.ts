@@ -559,6 +559,34 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
     ).toBeUndefined();
   });
 
+  it("a chain-only session presents its first chain entry as the certificate, keyed and shown", () => {
+    const rec = (leaf: string) => ({
+      ...SURICATA_TLS,
+      tls: { sni: "a.example", chain: [Buffer.from(leaf).toString("base64")] },
+    });
+    const a = readSuricataTls(rec("leaf-a"), "");
+    const b = readSuricataTls(rec("leaf-b"), "");
+    expect(a.cert?.alg).toBe("sha256");
+    expect(a.cert).not.toEqual(b.cert);
+    const r = rows([a, b]);
+    expect(r).toHaveLength(2);
+    expect(r[0].description).not.toContain("no certificate observed");
+    expect(r[0].description).toContain("[cert: sha256 ");
+  });
+
+  it("undocumented serial spellings and a 32-hex fingerprint yield nothing", () => {
+    expect(certIdentity("CN=X", "01-02")).toBeUndefined();
+    expect(certIdentity("CN=X", "0x0102")).toBeUndefined();
+    expect(certIdentity("CN=X", "01:02 03")).toBe(certIdentity("CN=X", "010203")); // colon or space, byte-wise
+    expect(certIdentity("CN=X", "01:02")).toBe(certIdentity("CN=X", "0102"));
+    expect(certIdentity("CN=X", "0102")).toBe(certIdentity("CN=X", "0102"));
+    const md5 = readSuricataTls(
+      { ...SURICATA_TLS, tls: { sni: "a.example", fingerprint: "00112233445566778899aabbccddeeff" } },
+      "",
+    );
+    expect(md5.cert).toBeUndefined();
+  });
+
   it("selects the most-seen rows first under a budget", () => {
     const many = [
       ...Array.from({ length: 3 }, () => base()),
