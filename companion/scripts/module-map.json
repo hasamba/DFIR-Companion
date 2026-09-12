@@ -230,6 +230,7 @@
     "deepPassExecution.ts": "analysis/ai",
     "deobfuscate.ts": "analysis/privacy",
     "deobfuscateLayers.ts": "analysis/privacy",
+    "derivedNote.ts": "analysis/timeline",
     "detectionStackPaths.ts": "analysis/detect",
     "diagnostics.ts": "analysis/case",
     "diskWarn.ts": "analysis/case",
