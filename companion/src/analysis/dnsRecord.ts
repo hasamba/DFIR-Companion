@@ -235,7 +235,9 @@ export function readQueryResults(raw: string | undefined): ResultsReading {
   const steps = leadingCnames(head);
   const chain = head.slice(0, steps).map(showValue);
   const rest = head.slice(steps).map(showValue).join(", ");
-  const parts = [...chain, rest].filter(Boolean).join(" → ");
+  // The chain's steps are arrow-linked to each other only; the rest follows after a semicolon — an
+  // arrow into it would say the last CNAME targets the next value, which the record never says.
+  const parts = [chain.join(" → "), rest].filter(Boolean).join("; ");
   const more = all.length > RESULTS_SHOWN_MAX ? ` +${all.length - RESULTS_SHOWN_MAX} more` : "";
   return { values, identity, clipped, shown: all.length ? `${parts}${more}` : "", total: all.length };
 }

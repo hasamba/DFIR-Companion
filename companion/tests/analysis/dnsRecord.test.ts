@@ -66,7 +66,7 @@ describe("readQueryResults — the resolver's returned values, typed, validated,
       { type: undefined, value: "2001:db8::1", kind: "address" },
     ]);
     expect(r.total).toBe(3);
-    expect(r.shown).toBe("cname cdn.example.net → 203.0.113.5, 2001:db8::1");
+    expect(r.shown).toBe("cname cdn.example.net; 203.0.113.5, 2001:db8::1");
   });
   it("reads typed values the DNS Client writes, and keeps unknown types as typed text", () => {
     const r = readQueryResults("type: 16 v=spf1 -all;type: 28 2001:db8::9;type: 99 whatever;");
@@ -103,7 +103,11 @@ describe("readQueryResults — the resolver's returned values, typed, validated,
     const mid = readQueryResults("::ffff:192.0.2.1;type: 5 x.example;::ffff:192.0.2.2;");
     expect(mid.shown).toBe("192.0.2.1, cname x.example, 192.0.2.2");
     const two = readQueryResults("type: 5 a.example;type: 5 b.example;::ffff:192.0.2.1;type: 2 ns.example;");
-    expect(two.shown).toBe("cname a.example → cname b.example → 192.0.2.1, ns ns.example");
+    expect(two.shown).toBe("cname a.example → cname b.example; 192.0.2.1, ns ns.example");
+    // a CNAME followed by authority data (an NXDOMAIN's SOA) is never arrow-linked to it
+    expect(readQueryResults("type: 5 alias.example;type: 6 ns1.example;").shown).toBe(
+      "cname alias.example; soa ns1.example",
+    );
   });
   it("a whole value of - is the placeholder for none; a typed - is data", () => {
     expect(readQueryResults("-")).toMatchObject({ values: [], total: 0 });
@@ -189,7 +193,7 @@ describe("dnsOverlay — what one record establishes", () => {
       QueryResults: "type:  5 edge.example.net;::ffff:203.0.113.5;",
     });
     expect(o.description).toBe(
-      "Sysmon DNS query (EID 22) - Image=C:\\Windows\\System32\\svchost.exe @ WS-01 [query: cdn.example.net] [type not in this record] [returned: cname edge.example.net → 203.0.113.5]",
+      "Sysmon DNS query (EID 22) - Image=C:\\Windows\\System32\\svchost.exe @ WS-01 [query: cdn.example.net] [type not in this record] [returned: cname edge.example.net; 203.0.113.5]",
     );
     expect(o.description).not.toContain("resolved to");
     expect(o.dns).toMatchObject({
