@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { decodeSsmCall } from "../../src/analysis/ssmExecution.js";
+import { decodeSsmCall, renderSsmDescription } from "../../src/analysis/ssmExecution.js";
 
 // #931 item 7 — AWS Systems Manager remote execution. The phases stay distinct (listing documents
 // is not running one), a request is "requested" never "ran", the payload is graded by the shared
@@ -270,6 +270,176 @@ describe("decodeSsmCall — code review regressions", () => {
     expect(t.summary).toContain("attempted, denied");
     expect(t.summary).not.toMatch(/\bterminated\b/);
   });
+});
+
+describe("renderSsmDescription — the identity slot yields to the evidence", () => {
+  it("a row whose SSM evidence fills 600 characters drops the identity rather than the payload, the error or the note", () => {
+    const d = decodeSsmCall(
+      SSM,
+      "SendCommand",
+      {
+        documentName: "AWS-RunShellScript",
+        instanceIds: Array.from({ length: 8 }, (_, i) => `i-0abc${i}${"x".repeat(12)}`),
+        parameters: { commands: [`curl ${"u".repeat(200)} | sh`] },
+      },
+      { command: { commandId: "c".repeat(90), documentVersion: "3", status: "Pending" } },
+      "",
+      "evt",
+    )!;
+    const s = renderSsmDescription(d, {
+      name: "SendCommand",
+      source: "ssm",
+      who: "w".repeat(60),
+      from: "203.0.113.9",
+      region: "us-east-1",
+      client: "c".repeat(40),
+      root: false,
+      errorCode: "",
+      identity: `AssumedRole key ASIAEXAMPLEKEY000001 (temporary) ${"z".repeat(200)}`,
+    });
+    expect(s.length).toBeLessThanOrEqual(600);
+    expect(s).toContain('cmd: "curl');
+    expect(s).toContain("Pending: requested");
+    // The identity is what yields: whatever is left of it, the payload, the status and the
+    // execution caveat stand.
+    expect(s.indexOf('cmd: "curl')).toBeGreaterThan(0);
+    // With the evidence filling the row, the identity takes nothing: the rendering is exactly the
+    // identity-less one, caveat included.
+    const withoutIdentity = renderSsmDescription(d, {
+      name: "SendCommand",
+      source: "ssm",
+      who: "w".repeat(60),
+      from: "203.0.113.9",
+      region: "us-east-1",
+      client: "c".repeat(40),
+      root: false,
+      errorCode: "",
+    });
+    expect(s).toBe(withoutIdentity);
+  });
+});
+
+describe("renderSsmDescription — a maximal SendCommand keeps the full caveat", () => {
+  for (const errorCode of ["", "AccessDenied"]) {
+    it(`fifty targets, a long payload and a long identity never displace the note (${errorCode || "success"})`, () => {
+      const d = decodeSsmCall(
+        SSM,
+        "SendCommand",
+        {
+          documentName: "AWS-RunShellScript",
+          instanceIds: Array.from(
+            { length: 50 },
+            (_, i) => `i-0abc${String(i).padStart(3, "0")}${"x".repeat(10)}`,
+          ),
+          parameters: { commands: [`curl ${"u".repeat(300)} | sh`] },
+        },
+        { command: { commandId: "c".repeat(36), documentVersion: "3", status: "Pending" } },
+        errorCode,
+        "evt",
+      )!;
+      const parts = {
+        name: "SendCommand",
+        source: "ssm",
+        who: "w".repeat(60),
+        from: "2001:db8:0000:0000:0000:0000:0000:0001",
+        region: "us-east-1",
+        client: "c".repeat(40),
+        root: false,
+        errorCode,
+      };
+      for (const s of [
+        renderSsmDescription(d, parts),
+        renderSsmDescription(d, { ...parts, identity: `AssumedRole ${"z".repeat(200)}` }),
+      ]) {
+        expect(s.length).toBeLessThanOrEqual(600);
+        expect(s.endsWith(` — ${d.note}`)).toBe(true);
+        expect(s).toContain("[AWS-RunShellScript@3] cccccccccccccccccccccccccccccccccccc");
+      }
+    });
+  }
+});
+
+describe("renderSsmDescription — the replica notice is a reserved slot", () => {
+  it("a maximal SendCommand keeps the notice after the head and the whole note at the end", () => {
+    const d = decodeSsmCall(
+      SSM,
+      "SendCommand",
+      {
+        documentName: "AWS-RunShellScript",
+        instanceIds: Array.from(
+          { length: 50 },
+          (_, i) => `i-0abc${String(i).padStart(3, "0")}${"x".repeat(10)}`,
+        ),
+        parameters: { commands: [`curl ${"u".repeat(300)} | sh`] },
+      },
+      { command: { commandId: "c".repeat(36), documentVersion: "3", status: "Pending" } },
+      "AccessDenied",
+      "evt",
+    )!;
+    const s = renderSsmDescription(d, {
+      name: "SendCommand",
+      source: "ssm",
+      who: "w".repeat(60),
+      from: "2001:db8:0000:0000:0000:0000:0000:0001",
+      region: "us-east-1",
+      client: "c".repeat(40),
+      root: true,
+      errorCode: "AccessDenied",
+      identity: `AssumedRole ${"z".repeat(200)}`,
+      notice: "[also in account 210987654321]",
+    });
+    expect(s.length).toBeLessThanOrEqual(600);
+    expect(
+      s.startsWith(
+        `AWS SendCommand (ssm) by ${"w".repeat(60)} from 2001:db8:0000:0000:0000:0000:0000:0001 in us-east-1 [also in account 210987654321] `,
+      ),
+    ).toBe(true);
+    expect(s.endsWith(` — ${d.note}`)).toBe(true);
+    expect(s).toContain("[AWS-RunShellScript@3] cccccccccccccccccccccccccccccccccccc");
+  });
+  it("the notice is bounded to its slot and absent when empty", () => {
+    const d = decodeSsmCall(SSM, "StartSession", { target: "i-1" }, { sessionId: "s-1" }, "", "evt")!;
+    const parts = {
+      name: "StartSession",
+      source: "ssm",
+      who: "u",
+      from: "",
+      region: "",
+      client: "",
+      root: false,
+      errorCode: "",
+    };
+    expect(renderSsmDescription(d, { ...parts, notice: "" })).toBe(renderSsmDescription(d, parts));
+    const long = renderSsmDescription(d, { ...parts, notice: `[also in account ${"1".repeat(80)}]` });
+    expect(long).toContain(" [also in account 111111");
+    expect(long).not.toContain("1".repeat(40));
+  });
+});
+
+describe("renderSsmDescription — a ResumeSession keeps its caveat under a long identity", () => {
+  for (const errorCode of ["", "AccessDenied"]) {
+    it(`the session-commands caveat survives with and without the identity (${errorCode || "success"})`, () => {
+      const d = decodeSsmCall(SSM, "ResumeSession", { sessionId: "s".repeat(96) }, {}, errorCode, "evt")!;
+      const parts = {
+        name: "ResumeSession",
+        source: "ssm",
+        who: "w".repeat(60),
+        from: "2001:db8:0000:0000:0000:0000:0000:0001",
+        region: "us-east-1",
+        client: "c".repeat(40),
+        root: false,
+        errorCode,
+      };
+      const withIdentity = renderSsmDescription(d, {
+        ...parts,
+        identity: `AssumedRole key ASIAEXAMPLEKEY000001 (temporary) ${"z".repeat(200)}`,
+      });
+      const without = renderSsmDescription(d, parts);
+      expect(without).toContain("commands are not in CloudTrail");
+      expect(withIdentity).toContain("commands are not in CloudTrail");
+      expect(withIdentity.length).toBeLessThanOrEqual(600);
+    });
+  }
 });
 
 describe("decodeSsmCall — identity and errors", () => {

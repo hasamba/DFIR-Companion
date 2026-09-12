@@ -84,6 +84,8 @@ const ID_DISPLAY_MAX = 100; // an SSM session id may be 96 characters; the key k
 const EXCERPT_HEAD = 200;
 const EXCERPT_TAIL = 60;
 const COMMAND_LINE_MAX = 65_536;
+// The replica notice's slot (#931 item 5) — `[also in account <12 digits>]` is 30.
+const NOTICE_MAX = 33;
 const DIGEST_HEX = 16;
 
 // Fleet-management documents that are Low with ROUTINE parameters. Fail-closed: a key outside the
@@ -215,14 +217,36 @@ export function renderSsmDescription(
     client: string;
     root: boolean;
     errorCode: string;
+    /** The caller's identity words (#931 item 5); bounded to its own slot, after the head. */
+    identity?: string;
+    /** The replica notice (#931 item 5): reserved right after the head, never spliced in later. */
+    notice?: string;
   },
 ): string {
   const head = `AWS ${parts.name} (${parts.source})${parts.who ? ` by ${parts.who.slice(0, 60)}` : ""}${parts.from ? ` from ${parts.from}` : ""}${parts.region ? ` in ${parts.region}` : ""}`;
   const tail = `${parts.client ? ` [ua: ${parts.client.slice(0, 40)}]` : ""}${parts.root ? " [root]" : ""}${parts.errorCode ? ` [${parts.errorCode.slice(0, 40)}]` : ""}`;
-  const summary = ` ${ssm.summary.slice(0, 260)}`;
-  const payload = ssm.payloadExcerpt ? ` cmd: "${ssm.payloadExcerpt.slice(0, 150)}"` : "";
+  // The NOTE — every sentence of it an evidence limitation ("the result is not in CloudTrail",
+  // "the session's commands are not in CloudTrail") — is reserved FIRST. What the head, the tail
+  // and the note leave is shared by the attacker-shaped slots in order: the summary (its tail is
+  // the target list; the document, id and status at its front always keep at least 80), the
+  // payload excerpt, and last the caller's identity, which falls to nothing before anything else.
   const note = ` — ${ssm.note}`;
-  const fixed = `${head}${summary}${payload}${tail}`;
+  const noticeRaw = (parts.notice ?? "").trim();
+  const notice = noticeRaw ? ` ${noticeRaw.slice(0, NOTICE_MAX)}` : "";
+  const room = 600 - head.length - notice.length - tail.length - note.length;
+  const summaryBudget = Math.max(80, Math.min(260, room - 1));
+  const summaryText = ssm.summary.slice(0, summaryBudget);
+  const summary = ` ${summaryText}`;
+  const payloadBudget = Math.max(0, Math.min(150, room - summary.length - 8));
+  const payload =
+    ssm.payloadExcerpt && payloadBudget >= 20 ? ` cmd: "${ssm.payloadExcerpt.slice(0, payloadBudget)}"` : "";
+  const identityRaw = (parts.identity ?? "").trim();
+  const budget = Math.min(150, room - summary.length - payload.length - 1);
+  const identity =
+    identityRaw && budget >= 12
+      ? ` ${identityRaw.length > budget ? `${identityRaw.slice(0, budget - 1)}…` : identityRaw}`
+      : "";
+  const fixed = `${head}${notice}${identity}${summary}${payload}${tail}`;
   return `${fixed}${note.slice(0, Math.max(0, 600 - fixed.length))}`.slice(0, 600);
 }
 
