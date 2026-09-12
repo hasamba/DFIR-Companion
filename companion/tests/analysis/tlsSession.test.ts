@@ -909,6 +909,20 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
     expect(rows([readZeekSsl(base2, "")])[0].canonical?.tls?.certificate).toBeUndefined();
   });
 
+  it("a JA3 value is a 32-hex hash or nothing: a path there never reaches the row or a file event", () => {
+    const o = readSuricataTls(
+      { ...SURICATA_TLS, tls: { sni: "a.example", ja3: "/tmp/a.exe", ja3s: { hash: "not-a-hash" } } },
+      "",
+    );
+    expect(o.ja3).toBeUndefined();
+    expect(o.ja3s).toBeUndefined();
+    const e = rows([o])[0];
+    expect(e.description).not.toContain("/tmp/a.exe");
+    expect(e.canonical?.tls?.ja3).toBeUndefined();
+    expect(readZeekSsl({ ...ZEEK_SSL, ja3: "771,4865-4866,..." }, "").ja3).toBeUndefined();
+    expect(readSuricataTls(SURICATA_TLS, "").ja3).toBe("e7d705a3286e19ea42f587b344ee6865");
+  });
+
   it("selects the most-seen rows first under a budget", () => {
     const many = [
       ...Array.from({ length: 3 }, () => base()),

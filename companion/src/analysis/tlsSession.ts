@@ -155,6 +155,12 @@ function derFingerprint(b64: string | undefined): CertRef | undefined {
     : undefined;
 }
 
+/** A JA3/JA3S value is exactly a 32-hex MD5 — anything else (a JA3 string, free text) is not one. */
+function ja3Hash(v: unknown): string | undefined {
+  const raw = text(v)?.trim().toLowerCase();
+  return raw && /^[0-9a-f]{32}$/.test(raw) ? raw : undefined;
+}
+
 /** A source-given fingerprint: colons stripped, lowercase; the algorithm by its length. */
 function fingerprint(v: unknown, allowed: ReadonlySet<number> = FINGERPRINT_LENGTHS): CertRef | undefined {
   const raw = text(v)?.trim();
@@ -227,8 +233,8 @@ export function readZeekSsl(row: Row, fallbackTs: string): TlsObservation {
     validation: text(getCI(row, "validation_status")),
     subject: text(getCI(row, "subject")),
     issuer: text(getCI(row, "issuer")),
-    ja3: text(getCI(row, "ja3")),
-    ja3s: text(getCI(row, "ja3s")),
+    ja3: ja3Hash(getCI(row, "ja3")),
+    ja3s: ja3Hash(getCI(row, "ja3s")),
     // Zeek 6 writes the chain's fingerprints; a standard ssl row carries no serial, so without them
     // the certificate has NO identity here — subject and issuer are session attributes.
     cert: fps?.length ? fingerprint(fps[0]) : undefined,
@@ -298,7 +304,7 @@ export function readZeekX509(row: Row, fallbackTs: string): TlsObservation {
 export function readSuricataTls(row: Row, fallbackTs: string): TlsObservation {
   const tls = getCI(row, "tls");
   const t: Row = isObject(tls) ? tls : {};
-  const hashOf = (v: unknown): string | undefined => (isObject(v) ? text(getCI(v, "hash")) : text(v));
+  const hashOf = (v: unknown): string | undefined => ja3Hash(isObject(v) ? getCI(v, "hash") : v);
   const issuer = text(getCI(t, "issuerdn")) ?? text(getCI(t, "issuer"));
   const serial = text(getCI(t, "serial"));
   // The leaf's DER bytes, when the output carries them, give a REAL sha256 — computed here. The
@@ -597,8 +603,8 @@ function sessionTags(o: TlsObservation): string[] {
     tags.push(o.sniMatchesCert ? "SNI matches the certificate" : "SNI does not match the certificate");
   if (o.established === false) tags.push("not established");
   if (o.resumed === true) tags.push("session resumed");
-  if (o.ja3 !== undefined) tags.push(`ja3 ${ends(hexOf(o.ja3) ?? show(o.ja3))}`);
-  if (o.ja3s !== undefined) tags.push(`ja3s ${ends(hexOf(o.ja3s) ?? show(o.ja3s))}`);
+  if (o.ja3 !== undefined) tags.push(`ja3 ${ends(o.ja3)}`);
+  if (o.ja3s !== undefined) tags.push(`ja3s ${ends(o.ja3s)}`);
   return tags;
 }
 
