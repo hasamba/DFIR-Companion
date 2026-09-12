@@ -22,11 +22,13 @@ import { sendAuditBatch, type AuditSendResult, type AuditTransport } from "./aud
 
 /** The slice of ActivityLogStore this runner needs. Narrow on purpose, so tests need no files. */
 export interface ActivityReader {
-  readFrom(
+  readBatches(
     caseId: string,
     afterLines: number,
     limit?: number,
-  ): Promise<{ entries: ActivityLogEntry[]; lines: number }>;
+  ): AsyncIterable<{ entries: ActivityLogEntry[]; lines: number }>;
+  /** Raw line count, for seeding a newly enabled destination at the current end. */
+  countLines(caseId: string): Promise<number>;
 }
 
 export interface AuditRunResult {
@@ -67,6 +69,21 @@ export interface AuditExporterDeps {
 export interface AuditExporter {
   /** Forward everything new in one case to every enabled destination. */
   exportCase(caseId: string): Promise<AuditRunResult[]>;
+  /**
+   * Move one destination's position to the current end of every case, forwarding nothing.
+   *
+   * This is what makes "switching a destination on forwards only what happens next" true. An
+   * unseeded position is zero, so without this the first action after enabling drags the case's
+   * entire history to the collector — the opposite of what the Settings pane promises, and the
+   * reason Send history is a separate, confirmed button.
+   */
+  seed(destinationId: string): Promise<void>;
+  /**
+   * Drain every case for every enabled destination. Called once at startup: a position left behind
+   * by a collector outage or a crash is otherwise only noticed the next time that case sees
+   * activity, and a closed case never sees any again.
+   */
+  resume(): Promise<AuditRunResult[]>;
   /** Re-send one destination's whole history, every case, from the beginning. */
   backfill(destinationId: string): Promise<AuditRunResult[]>;
   /** Send one clearly-marked test record to one destination, or to all of them. */
@@ -108,6 +125,9 @@ export function createAuditExporter(deps: AuditExporterDeps): AuditExporter {
    * Stopping matters: batch N+1 holds later actions than batch N, and shipping it after N failed
    * would put the destination's records out of order AND leave the position ambiguous. The
    * successful prefix is durably recorded; the rest is retried on the next run.
+   *
+   * The caller holds this (destination, case) pair's lock, so the position is read ONCE and the
+   * walk is a single pass over the log rather than a re-read per batch.
    */
   async function drain(destination: AuditDestination, caseId: string): Promise<AuditRunResult> {
     const base = { destinationId: destination.id, name: destination.name, caseId };
@@ -115,13 +135,11 @@ export function createAuditExporter(deps: AuditExporterDeps): AuditExporter {
     status.lastAttemptAt = now();
     let sent = 0;
 
-    for (;;) {
-      const from = await deps.cursors.get(destination.id, caseId);
-      const { entries, lines } = await deps.activity.readFrom(caseId, from, batchSize);
-      if (lines <= from) break; // nothing new
+    const from = await deps.cursors.get(destination.id, caseId);
+    for await (const { entries, lines } of deps.activity.readBatches(caseId, from, batchSize)) {
       if (entries.length === 0) {
         // Every line in this window failed to parse. The position must still move, or the reader
-        // loops on the same corrupt window forever.
+        // returns the same corrupt window forever.
         await deps.cursors.set(destination.id, caseId, lines);
         continue;
       }
@@ -148,8 +166,10 @@ export function createAuditExporter(deps: AuditExporterDeps): AuditExporter {
     return { ...base, ok: true, sent };
   }
 
+  const lockKey = (destinationId: string, caseId: string) => `${destinationId}\u0000${caseId}`;
+
   async function runForCase(destination: AuditDestination, caseId: string): Promise<AuditRunResult> {
-    return lock.runExclusive(`${destination.id}\u0000${caseId}`, () => drain(destination, caseId));
+    return lock.runExclusive(lockKey(destination.id, caseId), () => drain(destination, caseId));
   }
 
   async function enabledDestinations(): Promise<AuditDestination[]> {
@@ -168,18 +188,59 @@ export function createAuditExporter(deps: AuditExporterDeps): AuditExporter {
     return Promise.all(destinations.map((d) => runForCase(d, caseId)));
   }
 
+  async function seed(destinationId: string): Promise<void> {
+    const destination = await deps.store.get(destinationId);
+    if (!destination) throw new Error(`audit destination ${destinationId} not found`);
+    const caseIds = await deps.listCaseIds();
+    for (const caseId of caseIds) {
+      // Under the pair's lock, so a concurrent drain cannot read the old position and start
+      // sending history between the count and the write.
+      await lock.runExclusive(lockKey(destinationId, caseId), async () => {
+        await deps.cursors.set(destinationId, caseId, await deps.activity.countLines(caseId));
+      });
+    }
+    deps.log?.(
+      `[audit-export] ${destination.name}: positioned at the current end of ${caseIds.length} case(s) — only later activity is forwarded`,
+    );
+  }
+
+  async function resume(): Promise<AuditRunResult[]> {
+    const destinations = await enabledDestinations();
+    if (!destinations.length) return [];
+    const caseIds = await deps.listCaseIds();
+    const results: AuditRunResult[] = [];
+    // Sequential: startup recovery is bulk work competing with a server that has just come up.
+    for (const destination of destinations) {
+      for (const caseId of caseIds) {
+        results.push(await runForCase(destination, caseId));
+      }
+    }
+    const sent = results.reduce((n, r) => n + r.sent, 0);
+    if (sent > 0) {
+      deps.log?.(`[audit-export] resumed: ${sent} record(s) that had not been delivered`);
+    }
+    return results;
+  }
+
   async function backfill(destinationId: string): Promise<AuditRunResult[]> {
     const destination = await deps.store.get(destinationId);
     if (!destination) throw new Error(`audit destination ${destinationId} not found`);
     // Deliberately explicit, never automatic on enable: a destination switched on mid-investigation
     // would otherwise flood the SIEM with a year of history nobody asked for. #929 left this
     // question unanswered, and "send everything on enable" is the wrong default to pick silently.
-    await deps.cursors.clearDestination(destinationId);
     const caseIds = await deps.listCaseIds();
     const results: AuditRunResult[] = [];
     // Sequential across cases: a backfill is bulk work and must not starve live forwarding.
     for (const caseId of caseIds) {
-      results.push(await runForCase(destination, caseId));
+      // RESET AND DRAIN UNDER ONE LOCK. Resetting outside it let a live export finish in between,
+      // advance the position to the end, and leave the backfill with nothing to send — so the one
+      // operation that exists to re-send everything quietly sent nothing.
+      results.push(
+        await lock.runExclusive(lockKey(destinationId, caseId), async () => {
+          await deps.cursors.reset(destinationId, caseId);
+          return drain(destination, caseId);
+        }),
+      );
     }
     deps.log?.(
       `[audit-export] backfill ${destination.name}: ${results.reduce((n, r) => n + r.sent, 0)} record(s) across ${caseIds.length} case(s)`,
@@ -220,5 +281,5 @@ export function createAuditExporter(deps: AuditExporterDeps): AuditExporter {
     }));
   }
 
-  return { exportCase, backfill, test, status };
+  return { exportCase, seed, resume, backfill, test, status };
 }

@@ -122,6 +122,30 @@ describe("sendAuditBatch — elastic", () => {
     expect(r.error).toContain("mapper_parsing_exception");
   });
 
+  it("fails when a 2xx bulk response cannot be read as a bulk response", async () => {
+    // A reverse proxy answering 200 with an HTML error page is the real shape of this. The old
+    // code read "no item errors" out of an unparseable body and the caller advanced its durable
+    // position, permanently skipping those records. Elasticsearch reports per-document acceptance
+    // in the body, so an unreadable body is absence of proof, not proof.
+    const html = vi.fn(async () => new Response("<html>gateway</html>", { status: 200 }));
+    const r = await sendAuditBatch(elastic, [ev()], transport(html));
+    expect(r.ok).toBe(false);
+    expect(r.sent).toBe(0);
+  });
+
+  it("fails when a 2xx bulk response carries no items array", async () => {
+    const empty = vi.fn(async () => res(200, {}));
+    const r = await sendAuditBatch(elastic, [ev()], transport(empty));
+    expect(r.ok).toBe(false);
+  });
+
+  it("fails when the response acknowledges fewer records than were sent", async () => {
+    const short = vi.fn(async () => res(200, { errors: false, items: [{ create: { status: 201 } }] }));
+    const r = await sendAuditBatch(elastic, [ev(), ev({ id: "e2" })], transport(short));
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/2/);
+  });
+
   it("fails on a non-2xx bulk response", async () => {
     const fetchFn = vi.fn(async () => res(503, { error: "unavailable" }));
     const r = await sendAuditBatch(elastic, [ev()], transport(fetchFn));

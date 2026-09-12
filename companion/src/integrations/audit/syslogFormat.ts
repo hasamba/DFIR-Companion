@@ -18,12 +18,28 @@ const DEFAULT_APP_NAME = "dfir-companion";
 const NIL = "-";
 
 /**
- * RFC 5424 §6.1 requires a receiver to accept at least 2048 octets and permits it to discard the
- * rest. A record longer than that would be cut wherever the limit fell — mid-field, mid-escape — so
- * the line is trimmed here, at a field boundary, with an ellipsis that says it happened. Silent
- * truncation of an audit record is worse than a visibly shortened one.
+ * RFC 5424 §6.1 requires a receiver to accept at least 2048 OCTETS and permits it to discard the
+ * rest. A record longer than that would be cut wherever the receiver's limit fell — mid-field,
+ * mid-escape — so the line is trimmed here, at a field boundary, with an ellipsis that says it
+ * happened. Silent truncation of an audit record is worse than a visibly shortened one.
+ *
+ * Octets, not characters. `line.length` counts UTF-16 code units, so a detail of emoji or Hebrew
+ * passed a 2048-character check at up to four times the octet limit and the receiver truncated it
+ * anyway — the guard measured the wrong thing.
  */
-const MAX_LINE = 2048;
+const MAX_LINE_OCTETS = 2048;
+
+/**
+ * Per-value cap for the structured data, in octets.
+ *
+ * The structured fields used to be exempt from trimming, on the grounds that a SIEM rule matches on
+ * them. That is true and was beside the point: a 9 KB `targetId` made the PREFIX alone exceed the
+ * line limit, and the old guard then appended an ellipsis to an already-oversized line, so the
+ * record was discarded by the receiver with nothing to match on at all. Bounding each value keeps
+ * the prefix bounded by construction, and the identity fields a rule keys on — entryId, caseId,
+ * category, action, actor, outcome — are all far shorter than this.
+ */
+const MAX_SD_VALUE_OCTETS = 96;
 
 /**
  * A CR or LF is a syslog record separator. Left in the message, one activity entry whose detail
@@ -45,7 +61,31 @@ function stripControls(value: string): string {
  * the structured-data element early and everything after it is read as new fields.
  */
 function escapeSdValue(value: string): string {
-  return stripControls(value).replace(/([\\\]"])/g, "\\$1");
+  // Truncate BEFORE escaping: cutting escaped text can leave a trailing lone backslash, which
+  // escapes the closing quote and runs one field into the next.
+  return truncateOctets(stripControls(value), MAX_SD_VALUE_OCTETS).replace(/([\\\]"])/g, "\\$1");
+}
+
+/**
+ * Trim to at most `maxOctets` of UTF-8, never splitting a character, appending an ellipsis when
+ * anything was removed. Iterating code points rather than slicing bytes is what keeps a multi-byte
+ * character whole — a byte slice leaves a lone surrogate, which is not valid UTF-8 and which a
+ * receiver may reject or mangle.
+ */
+function truncateOctets(value: string, maxOctets: number): string {
+  if (Buffer.byteLength(value, "utf8") <= maxOctets) return value;
+  const ellipsis = "\u2026";
+  const budget = maxOctets - Buffer.byteLength(ellipsis, "utf8");
+  if (budget <= 0) return "";
+  let used = 0;
+  let out = "";
+  for (const char of value) {
+    const size = Buffer.byteLength(char, "utf8");
+    if (used + size > budget) break;
+    out += char;
+    used += size;
+  }
+  return `${out}${ellipsis}`;
 }
 
 function structuredData(event: AuditEvent): string {
@@ -84,9 +124,16 @@ export function formatSyslog(events: readonly AuditEvent[], cfg: SyslogConfig, h
     const header = `<${pri}>1 ${event.timestamp} ${host} ${appName} ${NIL} ${event.category}`;
     const prefix = `${header} ${structuredData(event)} `;
     const detail = stripControls(event.detail);
-    if (prefix.length + detail.length <= MAX_LINE) return `${prefix}${detail}`;
-    // Trim the free-text message only — never the structured fields a SIEM rule matches on.
-    const room = MAX_LINE - prefix.length;
-    return `${prefix}${room > 1 ? `${detail.slice(0, room - 1)}…` : "…"}`;
+    const prefixOctets = Buffer.byteLength(prefix, "utf8");
+    if (prefixOctets + Buffer.byteLength(detail, "utf8") <= MAX_LINE_OCTETS) {
+      return `${prefix}${detail}`;
+    }
+    // Trim the free-text message first — the structured fields are what a SIEM rule matches on,
+    // and they are already individually bounded.
+    const line = `${prefix}${truncateOctets(detail, Math.max(0, MAX_LINE_OCTETS - prefixOctets))}`;
+    // Backstop. With every SD value bounded the prefix cannot reach the limit on its own, but the
+    // invariant this function promises is "never over the cap", and a promise with an unchecked
+    // path is the one that breaks.
+    return truncateOctets(line, MAX_LINE_OCTETS);
   });
 }

@@ -156,7 +156,40 @@ describe("formatSyslog", () => {
 
   it("caps a single record so one huge detail cannot be silently truncated mid-field", () => {
     const line = formatSyslog([ev({ detail: "x".repeat(9000) })], cfg, "h")[0];
-    expect(line.length).toBeLessThanOrEqual(2048);
+    expect(Buffer.byteLength(line, "utf8")).toBeLessThanOrEqual(2048);
     expect(line).toContain("…");
+  });
+
+  it("measures the cap in octets, not characters", () => {
+    // RFC 5424 §6.1 counts OCTETS. A character count lets a multi-byte detail through at up to
+    // four times the intended size, and the receiver truncates it wherever its own byte limit
+    // falls — mid-escape, mid-field.
+    const line = formatSyslog([ev({ detail: "\u{1f600}".repeat(2000) })], cfg, "h")[0];
+    expect(Buffer.byteLength(line, "utf8")).toBeLessThanOrEqual(2048);
+  });
+
+  it("never splits a multi-byte character when it trims", () => {
+    const line = formatSyslog([ev({ detail: "\u{1f600}".repeat(2000) })], cfg, "h")[0];
+    // A LONE surrogate is what a naive byte slice leaves behind: a high half with no low half
+    // after it, or a low half with no high half before it. The whole range is not the test — the
+    // low half of a well-formed pair lives in it too.
+    expect(line).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+    expect(Buffer.from(line, "utf8").toString("utf8")).toBe(line);
+  });
+
+  it("bounds the structured data too, so a huge target id cannot push the line over the cap", () => {
+    // The structured fields were exempt from trimming on the grounds that a SIEM rule matches on
+    // them. True, and irrelevant if the line is discarded: a 9 KB targetId made the prefix alone
+    // exceed the cap, and the old guard then appended an ellipsis to an already-oversized line.
+    const line = formatSyslog(
+      [ev({ targetId: "z".repeat(9000), targetType: "y".repeat(9000), detail: "d" })],
+      cfg,
+      "h",
+    )[0];
+    expect(Buffer.byteLength(line, "utf8")).toBeLessThanOrEqual(2048);
+    // The identity fields a rule keys on survive in full.
+    expect(line).toContain('entryId="e1"');
+    expect(line).toContain('caseId="case-7"');
+    expect(line).toContain('outcome="success"');
   });
 });

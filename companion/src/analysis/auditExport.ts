@@ -184,14 +184,31 @@ function isHttpUrl(value: string): boolean {
 }
 
 /**
+ * Two URLs name the same collector. Only a trailing slash is normalised away — a differing host
+ * case or port is treated as a DIFFERENT endpoint, which fails safe: the edit is asked for a fresh
+ * credential rather than silently reusing one.
+ */
+function sameEndpointUrl(a: string | undefined, b: string | undefined): boolean {
+  const strip = (u: string | undefined) => (u ?? "").trim().replace(/\/+$/, "");
+  const left = strip(a);
+  return left.length > 0 && left === strip(b);
+}
+
+/**
  * Validate a destination submitted by the Settings form.
  *
- * A blank secret on an edit keeps the saved one — but ONLY when the type is unchanged. Slack and
- * Discord shared one `webhookUrl` field and an edit that switched provider and left the redacted
- * box blank posted one service's payload to the other service's endpoint (#683). The same trap is
- * here with a wider blast radius: a Splunk HEC token silently reused as an Elasticsearch password
- * would send a credential for one system to a different system. A type change must carry its own
- * credential.
+ * A blank secret on an edit keeps the saved one — but ONLY when the credential still points at the
+ * same place. Slack and Discord shared one `webhookUrl` field, and an edit that switched provider
+ * and left the redacted box blank posted one service's payload to the other service's endpoint
+ * (#683). Two versions of that trap live here, and the type check alone catches only the first:
+ *
+ *   - a TYPE change (Splunk -> Elasticsearch) would reuse an HEC token as a cluster password;
+ *   - a URL change at the SAME type would send the old collector's token to a new host, which is
+ *     the more likely mistake and the one a redacted field invites — the box looks filled in.
+ *
+ * So inheritance of a CREDENTIAL requires the same type and the same endpoint. Non-secret config
+ * (index, sourcetype, username, app name) still travels across a URL change: it describes what to
+ * write, not who may write it.
  */
 export function parseDestinationInput(raw: unknown, existing?: AuditDestination): ParsedDestinationInput {
   const parsed = destinationInputSchema.safeParse(raw);
@@ -213,13 +230,17 @@ export function parseDestinationInput(raw: unknown, existing?: AuditDestination)
     const prev = sameType ? existing?.splunk : undefined;
     const url = (v.splunk?.url ?? "").trim() || (prev?.url ?? "");
     if (!isHttpUrl(url)) return { ok: false, error: "splunk requires an http(s) collector URL" };
-    const token = (v.splunk?.token ?? "").trim() || (prev?.token ?? "");
+    // The token may be inherited only when it would go back to the collector it was issued for.
+    const sameCollector = sameEndpointUrl(prev?.url, url);
+    const token = (v.splunk?.token ?? "").trim() || (sameCollector ? (prev?.token ?? "") : "");
     if (!token) {
       return {
         ok: false,
-        error: sameType
-          ? "splunk requires an HEC token"
-          : `changing this destination to splunk requires a new HEC token`,
+        error: !sameType
+          ? "changing this destination to splunk requires a new HEC token"
+          : prev?.url && !sameCollector
+            ? "changing the collector URL requires a new HEC token — the saved one belongs to the old collector"
+            : "splunk requires an HEC token",
       };
     }
     draft.splunk = {
@@ -238,9 +259,13 @@ export function parseDestinationInput(raw: unknown, existing?: AuditDestination)
     if (!isHttpUrl(url)) return { ok: false, error: "elastic requires an http(s) cluster URL" };
     const index = (v.elastic?.index ?? "").trim() || (prev?.index ?? "");
     if (!index) return { ok: false, error: "elastic requires an index name" };
-    // No credential is legitimate — a security-only cluster on a closed network may not need one.
-    const password = (v.elastic?.password ?? "").trim() || (prev?.password ?? "");
-    const apiKey = (v.elastic?.apiKey ?? "").trim() || (prev?.apiKey ?? "");
+    // No credential is legitimate — a security-only cluster on a closed network may not need one,
+    // which is why a cluster URL change cannot be REFUSED here the way Splunk's is. It still must
+    // not carry the old cluster's secret across.
+    const sameCluster = sameEndpointUrl(prev?.url, url);
+    const password = (v.elastic?.password ?? "").trim() || (sameCluster ? (prev?.password ?? "") : "");
+    const apiKey = (v.elastic?.apiKey ?? "").trim() || (sameCluster ? (prev?.apiKey ?? "") : "");
+    // Not a secret, and visible in the redacted view, so it travels with the rest of the config.
     const username = (v.elastic?.username ?? "").trim() || (prev?.username ?? "");
     draft.elastic = {
       url: url.replace(/\/+$/, ""),

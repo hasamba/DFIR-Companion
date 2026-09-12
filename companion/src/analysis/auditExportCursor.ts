@@ -67,6 +67,21 @@ export class AuditCursorStore {
     });
   }
 
+  /**
+   * Force one pair back to the beginning. `set` refuses to move backwards on purpose, so a
+   * backfill — the one operation that legitimately rewinds — needs its own door.
+   */
+  reset(destinationId: string, caseId: string): Promise<void> {
+    return this.lock.runExclusive(this.file, async () => {
+      const all = await this.loadAll();
+      const k = key(destinationId, caseId);
+      if (!(k in all)) return;
+      const next = { ...all };
+      delete next[k];
+      await this.persist(next);
+    });
+  }
+
   /** Drop every position for a removed destination, so a re-added one starts clean. */
   clearDestination(destinationId: string): Promise<void> {
     return this.lock.runExclusive(this.file, async () => {

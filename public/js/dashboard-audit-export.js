@@ -239,10 +239,25 @@
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     })
-      .then((r) => {
-        if (r.ok) loadAuditExport();
+      .then((r) => (r.ok ? { ok: true } : r.json().then((j) => ({ ok: false, j }))))
+      .then((out) => {
+        // ALWAYS re-read, pass or fail. The checkbox is optimistic — the browser flipped it before
+        // the request went — so on a failure it is showing a state the server does not hold. The
+        // dangerous direction is OFF: an operator who thinks they stopped forwarding case activity,
+        // and has an unticked box agreeing with them, while the destination is still enabled and
+        // still sending. Re-reading the list puts the control back to the truth.
+        if (!out.ok) {
+          axMsg(
+            out.j && out.j.error ? out.j.error : "could not change this destination — it is unchanged",
+            false,
+          );
+        }
+        loadAuditExport();
       })
-      .catch(() => {});
+      .catch(() => {
+        axMsg("could not reach the server — this destination is unchanged", false);
+        loadAuditExport();
+      });
   }
 
   // Binds EVERYTHING this feature needs, including its own pane delegation and its own visibility
@@ -278,9 +293,13 @@
             return;
           fetch(`/audit-export/${encodeURIComponent(del.dataset.id)}`, { method: "DELETE" })
             .then((r) => {
-              if (r.ok) loadAuditExport();
+              if (!r.ok) axMsg("could not remove this destination — it is still configured", false);
+              loadAuditExport();
             })
-            .catch(() => {});
+            .catch(() => {
+              axMsg("could not reach the server — this destination is still configured", false);
+              loadAuditExport();
+            });
         }
       });
       pane.addEventListener("change", (e) => {

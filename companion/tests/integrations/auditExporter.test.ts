@@ -26,13 +26,19 @@ const entry = (id: string): ActivityLogEntry => ({
   outcome: "success",
 });
 
-// A fake activity log: a per-case array of entries, read forward exactly like the real store.
-function fakeActivity(byCase: Record<string, ActivityLogEntry[]>) {
+// A fake activity log: a per-case array of entries, walked forward exactly like the real store.
+// `hold` lets a test suspend a walk mid-drain, which is how the backfill race below is made
+// deterministic rather than timing-dependent.
+function fakeActivity(byCase: Record<string, ActivityLogEntry[]>, hold?: () => Promise<void>) {
   return {
-    readFrom: async (caseId: string, afterLines: number, limit = 500) => {
+    countLines: async (caseId: string) => (byCase[caseId] ?? []).length,
+    async *readBatches(caseId: string, afterLines: number, limit = 500) {
+      if (hold) await hold();
       const all = byCase[caseId] ?? [];
-      const slice = all.slice(afterLines, afterLines + limit);
-      return { entries: slice, lines: afterLines + slice.length };
+      for (let at = afterLines; at < all.length; at += limit) {
+        const slice = all.slice(at, at + limit);
+        yield { entries: slice, lines: at + slice.length };
+      }
     },
   };
 }
@@ -249,6 +255,139 @@ describe("createAuditExporter — enablement and concurrency", () => {
     await Promise.all([exporter.exportCase("case-1"), exporter.exportCase("case-1")]);
     // The second run waits for the first, then finds nothing new.
     expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("createAuditExporter — enabling forwards only what happens next", () => {
+  it("seed moves every case's position to the end of its log, sending nothing", async () => {
+    // The promise the Settings pane makes, and the one the code did not keep: a position that
+    // starts at zero means the first action after enabling drags the whole history along with it.
+    const { store, cursors, destination, fetchFn, exporter } = await setup({
+      entries: { "case-1": [entry("e1"), entry("e2"), entry("e3")] },
+    });
+    await exporter.seed(destination.id);
+    expect(await cursors.get(destination.id, "case-1")).toBe(3);
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect((await store.load())[0].id).toBe(destination.id);
+  });
+
+  it("after seeding, only the next action is forwarded", async () => {
+    const entries: Record<string, ActivityLogEntry[]> = {
+      "case-1": [entry("e1"), entry("e2")],
+    };
+    const store = new AuditExportStore(join(root, "audit-export", "config.json"));
+    const cursors = new AuditCursorStore(join(root, "audit-export", "cursors.json"));
+    const destination = await store.add(
+      parseDestinationInput({ type: "splunk", splunk: { url: "https://splunk:8088", token: "t" } }).draft!,
+    );
+    const bodies: string[] = [];
+    const fetchFn = vi.fn((async (_url: string, init: { body: string }) => {
+      bodies.push(init.body);
+      return okResponse();
+    }) as never);
+    const exporter = createAuditExporter({
+      store,
+      cursors,
+      activity: fakeActivity(entries),
+      listCaseIds: async () => Object.keys(entries),
+      transport: { fetchFn: fetchFn as never, syslogSend: async () => {}, hostname: "h" },
+    });
+    await exporter.seed(destination.id);
+    entries["case-1"].push(entry("e3"));
+    const results = await exporter.exportCase("case-1");
+    expect(results[0]).toMatchObject({ ok: true, sent: 1 });
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toContain('"id":"e3"');
+    expect(bodies[0]).not.toContain('"id":"e1"');
+  });
+
+  it("seed reports an unknown destination", async () => {
+    const { exporter } = await setup();
+    await expect(exporter.seed("no-such-id")).rejects.toThrow(/not found/i);
+  });
+});
+
+describe("createAuditExporter — resume after a restart", () => {
+  it("drains a case whose position is behind, without waiting for new activity", async () => {
+    // The restart path the docs promised and the code did not have: onActivity was the only
+    // production caller, so a case that went quiet after a collector outage kept its gap forever.
+    const { destination, cursors, fetchFn, exporter } = await setup({
+      entries: { "case-1": [entry("e1"), entry("e2")], "case-2": [entry("e3")] },
+    });
+    expect(await cursors.get(destination.id, "case-1")).toBe(0);
+    const results = await exporter.resume();
+    expect(results.filter((r) => r.ok)).toHaveLength(2);
+    expect(await cursors.get(destination.id, "case-1")).toBe(2);
+    expect(await cursors.get(destination.id, "case-2")).toBe(1);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  it("resume sends nothing when every case is already up to date", async () => {
+    const { fetchFn, exporter } = await setup({ entries: { "case-1": [entry("e1")] } });
+    await exporter.resume();
+    fetchFn.mockClear();
+    const results = await exporter.resume();
+    expect(results.every((r) => r.sent === 0)).toBe(true);
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("resume does nothing at all with no enabled destination", async () => {
+    const { fetchFn, exporter } = await setup({
+      entries: { "case-1": [entry("e1")] },
+      enabled: false,
+    });
+    expect(await exporter.resume()).toEqual([]);
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+});
+
+describe("createAuditExporter — backfill and live forwarding do not race", () => {
+  it("a live export that lands mid-backfill cannot make it skip the history", async () => {
+    // Deterministic, not timing-dependent: the live drain is suspended inside its lock, the
+    // backfill is started, and only then is the live drain released. With the position reset
+    // OUTSIDE the lock, the released live drain advanced the cursor to the end after the reset and
+    // the backfill then found nothing to send.
+    const entries: Record<string, ActivityLogEntry[]> = {
+      "case-1": [entry("e1"), entry("e2"), entry("e3")],
+    };
+    const store = new AuditExportStore(join(root, "audit-export", "config.json"));
+    const cursors = new AuditCursorStore(join(root, "audit-export", "cursors.json"));
+    const destination = await store.add(
+      parseDestinationInput({ type: "splunk", splunk: { url: "https://splunk:8088", token: "t" } }).draft!,
+    );
+    let release: (() => void) | undefined;
+    let held = false;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const exporter = createAuditExporter({
+      store,
+      cursors,
+      activity: fakeActivity(entries, async () => {
+        // Only the first walk waits, which is the live export's.
+        if (held) return;
+        held = true;
+        await gate;
+      }),
+      listCaseIds: async () => Object.keys(entries),
+      transport: {
+        fetchFn: vi.fn(async () => okResponse()),
+        syslogSend: async () => {},
+        hostname: "h",
+      },
+    });
+
+    const live = exporter.exportCase("case-1");
+    // Let the live drain reach its suspended walk before the backfill asks for the same case.
+    await new Promise((r) => setTimeout(r, 10));
+    const backfill = exporter.backfill(destination.id);
+    release!();
+    const [liveResults, backfillResults] = await Promise.all([live, backfill]);
+
+    expect(liveResults[0]).toMatchObject({ ok: true, sent: 3 });
+    // The backfill's whole point: it re-sends everything, whatever the live export just did.
+    expect(backfillResults.find((r) => r.caseId === "case-1")).toMatchObject({ ok: true, sent: 3 });
+    expect(await cursors.get(destination.id, "case-1")).toBe(3);
   });
 });
 

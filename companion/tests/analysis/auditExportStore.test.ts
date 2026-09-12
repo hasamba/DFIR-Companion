@@ -180,6 +180,72 @@ describe("ActivityLogStore.readFrom", () => {
     expect((await store.readFrom("c1", 3)).entries).toEqual([]);
   });
 
+  it("counts the lines a case holds without loading them", async () => {
+    const store = new ActivityLogStore(fakeCases());
+    expect(await store.countLines("nope")).toBe(0);
+    await write("c1", [entryLine("e1"), "not json", entryLine("e2")]);
+    // Raw lines, malformed included — the same unit the delivery position counts in.
+    expect(await store.countLines("c1")).toBe(3);
+  });
+
+  it("walks a whole case in batches from ONE pass over the file", async () => {
+    // readFrom() re-reads and re-splits the entire file on every call, so draining a long history
+    // in 500-line steps was quadratic: every batch re-read every earlier line, and each live
+    // action afterwards re-read years of history to find the tail.
+    const store = new ActivityLogStore(fakeCases());
+    await write(
+      "c1",
+      Array.from({ length: 25 }, (_, i) => entryLine(`e${i}`)),
+    );
+    const batches: string[][] = [];
+    let last = 0;
+    for await (const batch of store.readBatches("c1", 0, 10)) {
+      batches.push(batch.entries.map((e) => e.id));
+      last = batch.lines;
+    }
+    expect(batches.map((b) => b.length)).toEqual([10, 10, 5]);
+    expect(batches[0][0]).toBe("e0");
+    expect(batches[2][4]).toBe("e24");
+    expect(last).toBe(25);
+  });
+
+  it("resumes a batch walk from a position", async () => {
+    const store = new ActivityLogStore(fakeCases());
+    await write(
+      "c1",
+      Array.from({ length: 12 }, (_, i) => entryLine(`e${i}`)),
+    );
+    const seen: string[] = [];
+    for await (const batch of store.readBatches("c1", 10, 10)) {
+      seen.push(...batch.entries.map((e) => e.id));
+    }
+    expect(seen).toEqual(["e10", "e11"]);
+  });
+
+  it("yields nothing for a case with no log, and for a position at the end", async () => {
+    const store = new ActivityLogStore(fakeCases());
+    const none: unknown[] = [];
+    for await (const b of store.readBatches("nope", 0, 10)) none.push(b);
+    expect(none).toEqual([]);
+    await write("c1", [entryLine("e1")]);
+    const done: unknown[] = [];
+    for await (const b of store.readBatches("c1", 1, 10)) done.push(b);
+    expect(done).toEqual([]);
+  });
+
+  it("counts a malformed line in a batch walk, so the position cannot drift", async () => {
+    const store = new ActivityLogStore(fakeCases());
+    await write("c1", [entryLine("e1"), "not json", entryLine("e2")]);
+    const batches: Array<{ ids: string[]; lines: number }> = [];
+    for await (const b of store.readBatches("c1", 0, 2)) {
+      batches.push({ ids: b.entries.map((e) => e.id), lines: b.lines });
+    }
+    expect(batches).toEqual([
+      { ids: ["e1"], lines: 2 },
+      { ids: ["e2"], lines: 3 },
+    ]);
+  });
+
   it("caps one read so a long-lived case cannot load its whole history into memory at once", async () => {
     const store = new ActivityLogStore(fakeCases());
     await write(

@@ -136,6 +136,69 @@ describe("parseDestinationInput", () => {
     expect(next.splunk?.token).toBe("hec-secret");
   });
 
+  it("refuses to inherit the credential when the collector URL changes", () => {
+    // The same defect as the type change below, one step subtler: keeping the type but repointing
+    // the URL and leaving the redacted token blank would send the old collector's HEC token to a
+    // new host. Gating secret inheritance on the type alone is not enough — the endpoint is what
+    // the credential is FOR.
+    const moved = parseDestinationInput(
+      { type: "splunk", splunk: { url: "https://other-splunk.example.com:8088", token: "" } },
+      dest(),
+    );
+    expect(moved.ok).toBe(false);
+    expect(moved.error).toMatch(/token/i);
+
+    // The same URL with a blank token still keeps the saved one.
+    const same = parseDestinationInput(
+      { type: "splunk", splunk: { url: "https://splunk.example.com:8088", token: "" } },
+      dest(),
+    );
+    expect(same.ok).toBe(true);
+    expect(applyDestinationPatch(dest(), same.draft!, "x").splunk?.token).toBe("hec-secret");
+
+    // A trailing slash is the same collector, not a new one.
+    const slash = parseDestinationInput(
+      { type: "splunk", splunk: { url: "https://splunk.example.com:8088/", token: "" } },
+      dest(),
+    );
+    expect(slash.ok).toBe(true);
+  });
+
+  it("refuses to inherit an elastic credential when the cluster URL changes", () => {
+    const existing = dest({
+      type: "elastic",
+      splunk: undefined,
+      elastic: { url: "https://es.example.com:9200", index: "a", password: "p", apiKey: "k" },
+    });
+    const moved = parseDestinationInput(
+      { type: "elastic", elastic: { url: "https://other-es.example.com:9200", index: "a" } },
+      existing,
+    );
+    // An elastic cluster may legitimately have no credential, so a URL change cannot be refused
+    // outright — but it must not carry the old cluster's password or key across.
+    expect(moved.ok).toBe(true);
+    const next = applyDestinationPatch(existing, moved.draft!, "x");
+    expect(next.elastic?.password).toBeUndefined();
+    expect(next.elastic?.apiKey).toBeUndefined();
+  });
+
+  it("keeps the index and sourcetype across a URL change — they are not credentials", () => {
+    const existing = dest({
+      splunk: {
+        url: "https://splunk.example.com:8088",
+        token: "t",
+        index: "audit",
+        sourcetype: "dfir:activity",
+      },
+    });
+    const moved = parseDestinationInput(
+      { type: "splunk", splunk: { url: "https://new.example.com:8088", token: "fresh" } },
+      existing,
+    );
+    expect(moved.ok).toBe(true);
+    expect(moved.draft?.splunk).toMatchObject({ index: "audit", sourcetype: "dfir:activity" });
+  });
+
   it("refuses to inherit the old type's secret when the type changes (#683's lesson)", () => {
     // A saved Splunk destination retyped to Elastic with a blank credential must not silently
     // reuse the HEC token as an Elastic password. Posting one system's credential to another is

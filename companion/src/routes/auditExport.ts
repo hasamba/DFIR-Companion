@@ -46,11 +46,22 @@ export function registerAuditExportRoutes(app: Express, ctx: RouteContext): void
       return res.status(400).json({ error: parsed.error ?? "invalid destination" });
     }
     try {
-      const destination = await options.auditExportStore.add(parsed.draft);
+      // ADDED DISABLED, SEEDED, THEN ENABLED — in that order, and not as a flourish. A destination
+      // that is enabled the moment it exists has no delivery position yet, and an unset position
+      // means "start at line 1", so the very next analyst action would drag the case's whole
+      // history to the collector. Staying disabled until the position is at the current end closes
+      // that window completely: nothing can read it as enabled in between.
+      const wantEnabled = parsed.draft.enabled;
+      const destination = await options.auditExportStore.add({ ...parsed.draft, enabled: false });
+      let created = destination;
+      if (wantEnabled) {
+        await options.auditExporter?.seed(destination.id);
+        created = (await options.auditExportStore.update(destination.id, parsed.draft)) ?? destination;
+      }
       serverLogger.info(
-        `[audit-export] destination added: ${destination.type} "${destination.name}" (${destination.id})`,
+        `[audit-export] destination added: ${created.type} "${created.name}" (${created.id})${created.enabled ? " — enabled, forwarding from now on" : " — disabled"}`,
       );
-      return res.status(201).json(redactDestination(destination));
+      return res.status(201).json(redactDestination(created));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -66,6 +77,14 @@ export function registerAuditExportRoutes(app: Express, ctx: RouteContext): void
       const parsed = parseDestinationInput(req.body, existing);
       if (!parsed.ok || !parsed.draft) {
         return res.status(400).json({ error: parsed.error ?? "invalid destination" });
+      }
+      // Seeded BEFORE the write, and only on an off -> on transition. Before, because the
+      // destination is still disabled in the store at that moment, so no drain can read it and
+      // start from line 1. Only on the transition, because re-seeding an already-enabled
+      // destination on an unrelated edit — a rename — would silently skip whatever was appended
+      // since its last send.
+      if (parsed.draft.enabled && !existing.enabled) {
+        await options.auditExporter?.seed(req.params.id);
       }
       const updated = await options.auditExportStore.update(req.params.id, parsed.draft);
       if (!updated) return res.status(404).json({ error: "audit destination not found" });

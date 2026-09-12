@@ -106,6 +106,112 @@ describe("GET/POST /audit-export", () => {
   });
 });
 
+describe("enabling a destination does not ship the history", () => {
+  it("a destination created enabled starts at the end of each case's log", async () => {
+    // What the Settings pane promises, and what the first version broke: an unseeded position is
+    // zero, so the next analyst action dragged the whole case history to the collector.
+    const { app, fetchFn, activityLogStore, auditExportCursors, exporter } = await makeApp();
+    await activityLogStore.add("c1", { category: "triage", action: "a", detail: "old one" });
+    await activityLogStore.add("c1", { category: "triage", action: "b", detail: "old two" });
+
+    const created = await request(app)
+      .post("/audit-export")
+      .send({ ...splunk, enabled: true });
+    expect(created.status).toBe(201);
+    expect(created.body.enabled).toBe(true);
+    expect(await auditExportCursors.get(created.body.id, "c1")).toBe(2);
+
+    // Nothing was sent while adding it.
+    expect(fetchFn).not.toHaveBeenCalled();
+
+    // And the next action — only that one — goes.
+    await activityLogStore.add("c1", { category: "triage", action: "c", detail: "new one" });
+    await exporter.exportCase("c1");
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    const body = String(fetchFn.mock.calls[0]?.[1]?.body);
+    expect(body).toContain("new one");
+    expect(body).not.toContain("old one");
+  });
+
+  it("a destination added disabled then switched on starts at the end too", async () => {
+    const { app, fetchFn, activityLogStore, auditExportCursors, exporter } = await makeApp();
+    const created = await request(app)
+      .post("/audit-export")
+      .send({ ...splunk, enabled: false });
+    expect(created.body.enabled).toBe(false);
+    // History accumulates while it is off. Turning it on must not be a retroactive decision.
+    await activityLogStore.add("c1", { category: "triage", action: "a", detail: "while off" });
+    await activityLogStore.add("c1", { category: "triage", action: "b", detail: "also off" });
+
+    const on = await request(app)
+      .put(`/audit-export/${created.body.id}`)
+      .send({
+        type: "splunk",
+        name: "SOC",
+        enabled: true,
+        splunk: { url: "https://splunk:8088", token: "" },
+      });
+    expect(on.status).toBe(200);
+    expect(on.body.enabled).toBe(true);
+    expect(await auditExportCursors.get(created.body.id, "c1")).toBe(2);
+
+    await activityLogStore.add("c1", { category: "triage", action: "c", detail: "after on" });
+    await exporter.exportCase("c1");
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(String(fetchFn.mock.calls[0]?.[1]?.body)).toContain("after on");
+  });
+
+  it("switching a destination off and on again does not re-send what it missed", async () => {
+    const { app, activityLogStore, auditExportCursors, exporter } = await makeApp();
+    const created = await request(app)
+      .post("/audit-export")
+      .send({ ...splunk, enabled: true });
+    await activityLogStore.add("c1", { category: "triage", action: "a", detail: "one" });
+    await exporter.exportCase("c1");
+    const body = { type: "splunk", name: "SOC", splunk: { url: "https://splunk:8088", token: "" } };
+    await request(app)
+      .put(`/audit-export/${created.body.id}`)
+      .send({ ...body, enabled: false });
+    await activityLogStore.add("c1", { category: "triage", action: "b", detail: "gap" });
+    await request(app)
+      .put(`/audit-export/${created.body.id}`)
+      .send({ ...body, enabled: true });
+    // Re-seeded to the end: the gap is not forwarded, which is what "only what happens next" means.
+    expect(await auditExportCursors.get(created.body.id, "c1")).toBe(2);
+  });
+
+  it("an edit that changes nothing about enablement leaves the position alone", async () => {
+    const { app, activityLogStore, auditExportCursors, exporter } = await makeApp();
+    const created = await request(app)
+      .post("/audit-export")
+      .send({ ...splunk, enabled: true });
+    await activityLogStore.add("c1", { category: "triage", action: "a", detail: "one" });
+    await exporter.exportCase("c1");
+    expect(await auditExportCursors.get(created.body.id, "c1")).toBe(1);
+    await activityLogStore.add("c1", { category: "triage", action: "b", detail: "two" });
+    // A rename while already enabled must NOT re-seed — that would skip the pending entry.
+    await request(app)
+      .put(`/audit-export/${created.body.id}`)
+      .send({
+        type: "splunk",
+        name: "Renamed",
+        enabled: true,
+        splunk: { url: "https://splunk:8088", token: "" },
+      });
+    expect(await auditExportCursors.get(created.body.id, "c1")).toBe(1);
+  });
+
+  it("refuses an edit that repoints the collector with a blank token", async () => {
+    const { app } = await makeApp();
+    const created = await request(app).post("/audit-export").send(splunk);
+    const moved = await request(app)
+      .put(`/audit-export/${created.body.id}`)
+      .send({ type: "splunk", splunk: { url: "https://elsewhere:8088", token: "" } });
+    expect(moved.status).toBe(400);
+    expect(moved.body.error).toMatch(/collector URL/i);
+  });
+});
+
 describe("POST /audit-export/test", () => {
   it("sends one marked record and reports the result", async () => {
     const { app, fetchFn } = await makeApp();

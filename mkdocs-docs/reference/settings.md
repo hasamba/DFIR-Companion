@@ -375,18 +375,35 @@ and a **Send history** button.
     Case identifiers, analyst names, and what each analyst did go to a third-party system. Off by
     default — each destination is opt-in, and the list starts empty.
 
+### Changing the collector asks for the credential again
+
+Editing a destination and leaving its token, password, or API key blank keeps the saved one — but
+only while it still points at the same collector. Change the URL and the credential is not carried
+across: a Splunk destination repointed at a new host asks for a new HEC token, and an Elasticsearch
+one drops the saved password rather than presenting it to a different cluster. The index, sourcetype,
+and username travel with the rest of the config, because they say what to write rather than who may
+write it.
+
 ### Switching a destination on forwards only what happens next
 
-A destination begins at the current end of every case's log. Turning one on does not ship the
-history that is already recorded; that is what **Send history** is for, and it asks before it runs.
-The reason is the obvious failure: a destination enabled mid-investigation would otherwise push a
-year of activity into a production SIEM the moment someone ticked a box.
+A destination begins at the current end of every case's log — the position is set the moment it is
+switched on, not the first time it sends. Turning one on does not ship the history that is already
+recorded; that is what **Send history** is for, and it asks before it runs. The reason is the obvious
+failure: a destination enabled mid-investigation would otherwise push a year of activity into a
+production SIEM the moment someone ticked a box.
+
+Switching one off and on again works the same way. The gap while it was off is not filled in on the
+way back up, because "only what happens next" has to mean the same thing every time it is switched
+on.
 
 ### After an outage
 
 The export remembers how far it got in each case, per destination, and writes that position only
-after a send is accepted. A collector that is down holds the position where it was, so the next
-action — or the next restart — re-sends from there rather than skipping. Splunk and Elasticsearch
+after a send is accepted — and for Elasticsearch, only when the cluster's reply actually accounts for
+every record sent. A collector that is down holds the position where it was, so the next action
+re-sends from there rather than skipping, and the companion also drains everything still pending once
+at startup. That second part matters for a case that has gone quiet or been closed: it will never see
+another action to trigger a send of its own. Splunk and Elasticsearch
 receive the entry id, so a re-send is collapsed rather than duplicated; a plain syslog receiver has
 no such mechanism and will show the line twice.
 

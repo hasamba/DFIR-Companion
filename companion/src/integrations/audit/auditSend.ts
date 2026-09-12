@@ -57,25 +57,37 @@ async function postJson(
 }
 
 /**
- * Read an Elasticsearch bulk response.
+ * Read an Elasticsearch bulk response and decide whether it PROVES delivery.
  *
- * A 409 on a `create` means the cluster already holds that record. That is the SUCCESS case for a
- * retry, not a failure: the exporter re-sends a batch whose response was lost, and treating the
- * conflict as an error would stall the feed on the same batch forever. Any other item error is
- * real and must stop the position from advancing.
+ * The bar is proof, not the absence of a complaint. Elasticsearch reports per-document acceptance
+ * in the body, so a 2xx whose body cannot be read as a bulk response says nothing about what was
+ * stored — and a reverse proxy answering `200` with an HTML error page is the ordinary shape of
+ * that. Reading such a body as "no item errors" let the caller advance its durable position and
+ * skip those records for good, which is the one failure an audit feed must not have. An
+ * unreadable, item-less, or short response is therefore a failed send: the batch is re-sent, and
+ * `create` with the entry id means a re-send cannot duplicate what did land.
+ *
+ * A 409 on a `create` is the exception that stays a success. It means the cluster already holds
+ * that record — exactly what a retry of a batch whose response was lost looks like — and treating
+ * the conflict as an error would stall the feed on the same batch forever.
  */
-function elasticItemError(body: string): string | undefined {
+function elasticDeliveryError(body: string, expected: number): string | undefined {
   let parsed: unknown;
   try {
     parsed = JSON.parse(body);
   } catch {
-    return undefined; // a 2xx with an unreadable body is not evidence of an item failure
+    return "bulk response was not readable JSON — delivery unconfirmed";
   }
   const doc = parsed as {
     errors?: boolean;
     items?: Array<Record<string, { status?: number; error?: { type?: string; reason?: string } }>>;
   };
-  if (!doc?.errors || !Array.isArray(doc.items)) return undefined;
+  if (!Array.isArray(doc?.items)) {
+    return "bulk response carried no items array — delivery unconfirmed";
+  }
+  if (doc.items.length !== expected) {
+    return `bulk response acknowledged ${doc.items.length} of ${expected} record(s) — delivery unconfirmed`;
+  }
   for (const item of doc.items) {
     for (const outcome of Object.values(item)) {
       const status = outcome?.status ?? 0;
@@ -83,6 +95,10 @@ function elasticItemError(body: string): string | undefined {
       if (outcome?.error) {
         const { type, reason } = outcome.error;
         return `${type ?? "item error"}${reason ? `: ${reason}` : ""}`;
+      }
+      // A create that neither errored nor returned a 2xx/409 status is not an acknowledgement.
+      if (status < 200 || status >= 300) {
+        return `bulk item returned status ${status} — delivery unconfirmed`;
       }
     }
   }
@@ -108,8 +124,8 @@ export async function sendAuditBatch(
       if (!destination.elastic) return { ok: false, sent: 0, error: "elastic destination not configured" };
       const { ok, status, body } = await postJson(formatElasticBulk(events, destination.elastic), transport);
       if (!ok) return { ok: false, sent: 0, error: httpError(status, body) };
-      const itemError = elasticItemError(body);
-      if (itemError) return { ok: false, sent: 0, error: itemError };
+      const deliveryError = elasticDeliveryError(body, events.length);
+      if (deliveryError) return { ok: false, sent: 0, error: deliveryError };
       return { ok: true, sent: events.length };
     }
 
