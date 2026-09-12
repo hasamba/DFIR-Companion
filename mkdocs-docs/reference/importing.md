@@ -270,7 +270,13 @@ and a 302 read like a 200 with a small body. Each line now says what its own fie
   its brackets and control characters are neutralised, so a token cannot forge a tag the reader
   trusts — and so are the request target, the Referer, the User-Agent and the auth user, which the
   client writes too. **An address named only in a Referer is no indicator**: the client claimed it,
-  nothing observed it; a named Referer host stays a domain indicator as before. **A forwarded-for header is not the client**: `srcIp` stays the address the server or
+  nothing observed it; a named Referer host stays a domain indicator as before.
+- **A row that does not show its whole record says so.** When anything shown was clipped or
+  neutralised — a long trailer, an attack excerpt, a bracket turned into a parenthesis, a line
+  rebuilt past 600 characters — the description ends in a short identity mark (`#a1b2c3d4`, from
+  the row's full key). Two records that read alike then stay two rows through import; the
+  Companion's re-import check treats one time, one text and one host as one observation. A line
+  shown in full carries no mark. **A forwarded-for header is not the client**: `srcIp` stays the address the server or
   proxy actually saw.
 - **What the status and the byte count do not say.** `[redirect — the Location is not in this
   format]` for 301/302/303/307/308; `[not modified — no body]` for 304 (never a redirect);

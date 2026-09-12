@@ -5,7 +5,9 @@ import {
   mapCombinedLogLine,
   parseCombinedLog,
 } from "../../src/analysis/combinedLogImport.js";
-import type { SiemIoc } from "../../src/analysis/siemImport.js";
+import type { SiemIoc, SiemEvent } from "../../src/analysis/siemImport.js";
+import { correlateEvents } from "../../src/analysis/correlate.js";
+import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 const HEALTH =
   '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /status HTTP/1.1" 200 83 "-" "Prometheus/2.47.0"';
@@ -630,7 +632,20 @@ describe("parseCombinedLog — what one line establishes", () => {
     );
   });
 
-  it("two lines whose trailers differ only past the display width stay two rows", () => {
+  // What the import pipeline does after this parser: strip the key, then union two rows with one
+  // timestamp, one description and one host (correlateEvents' re-import rule).
+  const afterImport = (events: SiemEvent[]): ForensicEvent[] =>
+    correlateEvents(
+      events.map(({ aggKey: _k, ...e }, i) => ({
+        ...e,
+        id: `w${i}`,
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset: "proxy-01",
+      })),
+    );
+
+  it("two lines whose trailers differ only past the display width stay two rows — after import too", () => {
     const line = (t: string) =>
       `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /status HTTP/1.1" 200 83 "-" "curl/8" "${"A".repeat(160)}${t}"`;
     const r = parseCombinedLog([line("FIRST"), line("SECOND")].join("\n"));
@@ -638,6 +653,48 @@ describe("parseCombinedLog — what one line establishes", () => {
     expect(r.events).toHaveLength(2);
     expect(r.events[0].aggKey).not.toBe(r.events[1].aggKey);
     expect(r.events.every((e) => e.description.length <= 600)).toBe(true);
+    // the shown trailer is the same 40-character prefix on both, so the row's description carries
+    // an identity mark of its full key — the description is the row's identity downstream
+    expect(r.events[0].description).not.toBe(r.events[1].description);
+    expect(r.events.every((e) => / #[0-9a-f]{8}$/.test(e.description))).toBe(true);
+    expect(afterImport(r.events)).toHaveLength(2);
+  });
+
+  it("the identity mark rides every lossy row and no complete one", () => {
+    // complete: byte-for-byte, no mark
+    expect(parseCombinedLog(HEALTH).events[0].description).toBe(
+      "GET /status -> 200 (83b) (ua Prometheus/2.47.0)",
+    );
+    // a neutralised bracket: two paths that READ alike are two rows after import
+    const bracket = (p: string) =>
+      `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET ${p} HTTP/1.1" 200 83 "-" "curl/8"`;
+    const b = parseCombinedLog([bracket("/a[1]"), bracket("/a(1)")].join("\n"));
+    expect(b.events).toHaveLength(2);
+    expect(b.events.find((e) => e.aggKey?.includes("/a[1]"))!.description).toMatch(
+      /^GET \/a\(1\) -> 200 \(83b\) \(ua curl\/8\) #[0-9a-f]{8}$/,
+    );
+    expect(b.events.find((e) => e.aggKey?.includes("/a(1)"))!.description).toBe(
+      "GET /a(1) -> 200 (83b) (ua curl/8)",
+    );
+    expect(afterImport(b.events)).toHaveLength(2);
+    // two attack payloads whose excerpts and shown targets are clipped alike are two rows after import
+    const cols = Array.from({ length: 50 }, (_, i) => `c${i}`).join(",");
+    const attack = (tail: string) =>
+      `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /p?id=1%27%20union%20select%20${cols}${tail}%20--%20 HTTP/1.1" 200 83 "-" "curl/8"`;
+    const at = parseCombinedLog([attack("1"), attack("2")].join("\n"));
+    expect(at.events).toHaveLength(2);
+    expect(at.events[0].description.replace(/ #\w+$/, "")).toBe(
+      at.events[1].description.replace(/ #\w+$/, ""),
+    );
+    expect(at.events.every((e) => / #[0-9a-f]{8}$/.test(e.description) && e.description.length <= 600)).toBe(
+      true,
+    );
+    expect(afterImport(at.events)).toHaveLength(2);
+    // a rebuilt long line carries it, inside the cap
+    const long = `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /${"a".repeat(650)} HTTP/1.1" 302 0 "-" "curl/8"`;
+    const l = parseCombinedLog(long).events[0];
+    expect(l.description.length).toBeLessThanOrEqual(600);
+    expect(l.description).toMatch(/ #[0-9a-f]{8}$/);
   });
 
   it("a trailer token cannot forge a tag, and unbounded trailer values fold rather than multiplying rows", () => {

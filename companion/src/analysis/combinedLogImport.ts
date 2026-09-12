@@ -74,6 +74,7 @@ import {
   type TrailerProfile,
 } from "./webRecordFields.js";
 import { isIP } from "node:net";
+import { createHash } from "node:crypto";
 
 export interface CombinedLogImportOptions {
   aggregate?: boolean;
@@ -188,6 +189,16 @@ export const ATTACK_OVERFLOW = "attack:overflow";
 /** …and the marker for rows whose only variant was an unlabelled trailer value. */
 export const TRAILER_OVERFLOW = "trailer:overflow";
 
+// The description is the row's identity downstream: correlateEvents unions two rows with one
+// timestamp, one description and one host as a re-import. A row whose SHOWN text is not the whole
+// record — a clipped trailer, a clipped payload excerpt, a neutralised bracket, a rebuilt long line
+// — therefore carries a short mark of its full key, so two records that READ alike stay two rows
+// after import and not only inside this parser (#933 item 1).
+const IDENTITY_MARK_HEX = 8;
+export function identityMark(key: string): string {
+  return ` #${createHash("sha256").update(key).digest("hex").slice(0, IDENTITY_MARK_HEX)}`;
+}
+
 // A row with no attack signal keeps today's layout when it fits. When the attacker-controlled
 // target would push the status and the record's own facts past the 600-character clip, the row
 // takes a FIXED-SLOT layout instead — the status and the tags first, the bounded target after —
@@ -201,21 +212,28 @@ function plainDescription(
   userTag: string,
   refTag: string,
   uaTag: string,
+  mark: string,
+  lossy: boolean,
 ): string {
   const tagText = tags.length ? ` [${tags.join("] [")}]` : "";
   // Both layouts pack WHOLE tags (packTags): a substring of a serialised `[a] [b]` sequence would
   // leave a half-open tag and hide the fact it names.
   const whole = oneLine(`${method} ${uri} -> ${status}${bytesTag}${tagText}${userTag}${refTag}${uaTag}`);
-  if (whole.length <= 600) return whole;
+  // Byte-for-byte when the whole record fits and nothing shown was clipped or neutralised; the
+  // identity mark rides along whenever it was (identityMark).
+  if (!lossy && whole.length <= 600) return whole;
+  if (whole.length + mark.length <= 600) return `${whole}${mark}`;
   // Rebuilt from WHOLE tags in evidence order — never a substring of a serialised sequence, which
-  // would leave a half-open `[redir` and drop the fact it names.
+  // would leave a half-open `[redir` and drop the fact it names. A rebuilt line is never the whole
+  // record, so it always carries the mark.
+  const max = 600 - mark.length;
   const head = `[status: ${status}]`;
-  const room = 600 - head.length - 1 - method.length - 1 - Math.min(uri.length, 200) - bytesTag.length - 180;
+  const room = max - head.length - 1 - method.length - 1 - Math.min(uri.length, 200) - bytesTag.length - 180;
   const keptText = packTags(tags, room);
-  return oneLine(
+  return `${oneLine(
     `${head}${keptText} ${method} ${uri.slice(0, 200)}${bytesTag}` +
       `${userTag.slice(0, 50)}${refTag.slice(0, 62)}${uaTag.slice(0, 62)}`,
-  ).slice(0, 600);
+  ).slice(0, max)}${mark}`;
 }
 
 // An attack row's slots are BOUNDED before composition, not sliced after it: the families and the
@@ -238,7 +256,10 @@ function attackDescription(
   userTag: string,
   referer: string,
   ua: string,
+  mark: string,
 ): string {
+  // An attack row's excerpts are always clipped, so it always carries the identity mark.
+  const max = 600 - mark.length;
   // The matched excerpts are DECODED attacker text rendered inside a `[tag]`, so a payload
   // carrying `] [status: success] [` would forge a tag beside the real one. Brackets become
   // parentheses first — the same rule the trailer tokens follow (#933 item 1).
@@ -257,10 +278,10 @@ function attackDescription(
     ` ${method} ${uri.slice(0, reserve ? 120 : 200)}${bytesTag}${userTag.slice(0, 50)}` +
     `${referer ? ` (ref ${referer.slice(0, reserve ? 40 : 60)})` : ""}` +
     `${ua ? ` (ua ${ua.slice(0, reserve ? 40 : 60)})` : ""}`;
-  const matchMax = Math.max(40, Math.min(ATTACK_MATCH_MAX, 600 - head.length - tail.length - reserve));
+  const matchMax = Math.max(40, Math.min(ATTACK_MATCH_MAX, max - head.length - tail.length - reserve));
   const match = attack.slots.length ? ` [match: ${clip(attack.slots.join(" | "), matchMax)}]` : "";
-  const room = 600 - head.length - match.length - tail.length;
-  return oneLine(`${head}${match}${packTags(tags, room)}${tail}`).slice(0, 600);
+  const room = max - head.length - match.length - tail.length;
+  return `${oneLine(`${head}${match}${packTags(tags, room)}${tail}`).slice(0, max)}${mark}`;
 }
 
 // Map one combined-log line to a forensic event (collecting IOCs), or null if it doesn't match.
@@ -383,16 +404,6 @@ export function mapCombinedLogLine(
   const bytesTag = bytesRaw && bytesRaw !== "-" ? ` (${bytesRaw}b)` : "";
   const refTag = shownRef ? ` (ref ${shownRef})` : "";
   const uaTag = shownUa ? ` (ua ${shownUa})` : "";
-  // A row with no attack signal keeps today's layout byte-for-byte. A row with one takes a
-  // FIXED-SLOT layout: prefix, then the status in its own slot, then one match slot per firing
-  // field, then the method and the BOUNDED original, then the tail tags each with its own cap — so
-  // no attacker-controlled field can push the evidence or the status past the clip, and the
-  // analyst always sees the text that fired and what the server answered. "web-attack", never
-  // "compromise": a 200 does not prove execution and a 500 does not prove prevention.
-  const description = attack
-    ? attackDescription(attack, method, shownUri, status, bytesTag, tags, userTag, shownRef, shownUa)
-    : plainDescription(method, shownUri, status, bytesTag, tags, userTag, refTag, uaTag);
-
   // A secret carried in the request URI or the Referer is a spill the moment this line is written.
   // Graded Medium (see secretSpillRules.ts) so it reaches the forensic timeline synthesis reads —
   // web logs are otherwise Info-by-default and land in the analyst-only super-timeline. The
@@ -425,6 +436,27 @@ export function mapCombinedLogLine(
   const path = uri.split("?")[0];
   const pathKey = `|p${path.length}:${path}`;
 
+  // A row with no attack signal keeps today's layout byte-for-byte. A row with one takes a
+  // FIXED-SLOT layout: prefix, then the status in its own slot, then one match slot per firing
+  // field, then the method and the BOUNDED original, then the tail tags each with its own cap — so
+  // no attacker-controlled field can push the evidence or the status past the clip, and the
+  // analyst always sees the text that fired and what the server answered. "web-attack", never
+  // "compromise": a 200 does not prove execution and a 500 does not prove prevention.
+  // One variant dimension per row. A row WITH an attack is identified by its payload: the
+  // trailer digest stays out, or trailer churn on one payload would consume the 64-payload
+  // budget and fold a genuinely different payload into an overflow row, losing its excerpt. The
+  // trailer's words still show on the row that survives — the trade the UA and the Referer take.
+  const fullKey = `${baseKey}${attackSegment}${attack ? "" : trailer.variantKey}${pathKey}`.toLowerCase();
+  const mark = identityMark(fullKey);
+  // Shown text that is not the record's own: a trailer (clipped per token and packed as a tag), a
+  // neutralised bracket or control character in any client field.
+  const lossy =
+    Boolean(trailer.variantKey) ||
+    `${shownUri}${shownRef}${shownUa}${showToken(user)}` !== `${uri}${referer}${ua}${user}`;
+  const description = attack
+    ? attackDescription(attack, method, shownUri, status, bytesTag, tags, userTag, shownRef, shownUa, mark)
+    : plainDescription(method, shownUri, status, bytesTag, tags, userTag, refTag, uaTag, mark, lossy);
+
   const event: MappedEvent = {
     timestamp,
     description,
@@ -451,13 +483,7 @@ export function mapCombinedLogLine(
     // it. So: every bounded field first (method, status, client, host, spill), the path LAST, and
     // boundedAggKey rather than a raw slice — it keeps a digest of the FULL key in the tail, so two
     // long paths sharing a 400-character prefix stay two rows. This is the rule aggKey.ts states.
-    // One variant dimension per row. A row WITH an attack is identified by its payload: the
-    // trailer digest stays out, or trailer churn on one payload would consume the 64-payload
-    // budget and fold a genuinely different payload into an overflow row, losing its excerpt. The
-    // trailer's words still show on the row that survives — the trade the UA and the Referer take.
-    aggKey: boundedAggKey(
-      `${baseKey}${attackSegment}${attack ? "" : trailer.variantKey}${pathKey}`.toLowerCase(),
-    ),
+    aggKey: boundedAggKey(fullKey),
     sources: [COMBINED_LOG_SOURCE],
     ...(client ? { srcIp: client } : {}),
   };
