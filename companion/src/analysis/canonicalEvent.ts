@@ -26,6 +26,8 @@ export const canonicalEntitySchema = z.object({
   domain: z.string().optional(),
   address: z.string().optional(),
   port: z.number().int().positive().max(65535).optional(),
+  /** A process entity's pid — a source or target process in a two-process relation (#932 item 3). */
+  pid: z.number().int().positive().optional(),
 });
 
 const canonicalProcessSchema = z.object({

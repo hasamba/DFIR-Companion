@@ -548,6 +548,60 @@ row therefore says the gap depends on the service behaviour at the time of the e
 The chain across records — a suspicious sign-in, then access, then a rule, then sending or
 deletion — is a join by session and time, not a per-record fact; it is #975.
 
+### Process access and remote threads: what the record establishes
+
+Sysmon writes three records when one process reaches into another: **Event 10** (ProcessAccess —
+a handle was opened, with these rights), **Event 8** (CreateRemoteThread — a thread was started in
+another process) and **Event 25** (ProcessTampering — the sensor saw an image replaced or locked).
+Event 10 used to be graded by its id: Medium + T1003 on every handle, so `explorer.exe` opening
+`chrome.exe` read as credential dumping, with one special case for `lsass.exe`. Event 8 was High +
+T1055 on every row unless the source was a known benign process. The fields that say what the
+record establishes were never read.
+
+A row now says the rights, the trace and the start, and grades by the record's own evidence
+first — source trust lowers only one documented routine shape:
+
+- **Rights, decoded by bit** (`GrantedAccess`): `opens lsass.exe with VM_READ|QUERY_LIMITED_INFORMATION
+  (0x1010) from mimikatz.exe — handle rights, not a read observed`. `ALL_ACCESS` is a display alias;
+  every rule runs on the bits. A bit outside the table is shown as hex and never lowers a grade.
+- **The call trace** (`CallTrace`): a frame no module backs (`UNKNOWN(…)`) means code outside any
+  module opened the handle — High whatever the rights or the source, `call trace has 1 unbacked
+  frame`. A module outside System32 is named (`via tool.dll`).
+- **Grades for a handle (Event 10)**, in order: an unbacked frame → High; a write-, duplication-,
+  thread-creation- or VM_OPERATION-capable handle on `lsass.exe` → High + T1003.001, no trust
+  exception; a read-capable handle on `lsass.exe` → High + T1003.001, unless the source is a benign
+  accessor at its own system or vendor path AND the mask is exactly the routine read shape
+  (VM_READ plus query/synchronize bits, nothing else, no unknown bit) AND the trace is absent or
+  fully backed → Low with no technique; rights absent from the record (a feed that drops the
+  field) → the source context decides, and the row says `rights not in this record`; rights present
+  but unreadable → Medium, no technique; query-only on `lsass.exe` → Low. On any other target a
+  write-capable handle, a duplication right (`can yield full access`) or a thread-creation right is
+  Medium with no technique and `handle rights, not a write observed` — a system-path source is said
+  in the words, never used to lower; a system process name or an EDR agent's name from a non-system
+  path raises to High (`a system process name from a non-system path`); a read of another process
+  is Low from a non-system path and Info from a system one; query-only is Info.
+- **A remote thread (Event 8)** reads where the thread starts: outside any module (`StartModule` is
+  `-`, empty or `UNKNOWN`) → High + T1055, `thread start outside any module`; a `LoadLibrary*`
+  start → High + T1055.001, `the DLL-injection shape`; a masqueraded system or EDR name, or a
+  source at a suspicious path (Temp, AppData, Public) → High + T1055; a module-backed start from an
+  untrusted source → Medium + T1055; from a benign thread source at its system path → Low, no
+  technique. A start ABSENT from the record is not an unbacked claim: `start module not in this
+  record`, Medium + T1055 (Low from a benign source).
+- **Tampering (Event 25)** keeps the sensor's verdict (High + T1055.012) and names the `Type`.
+
+**Identity is kept for the join.** Both process GUIDs and pids are in the row's key (two instances
+of one image are two rows; PID reuse stays two rows) and in the canonical envelope — the source as
+the `subject`, the target as the `object`, each `{ process, GUID, name, pid }`, the target as the
+event's process. A record with no GUIDs keys on its own record id (or its position in the import)
+so it never folds with another, and says `process GUIDs not in this record`. Events 8, 10 and 25
+are canonical process events (`access`, `remote_thread`, `tamper`).
+
+**What a handle does not prove.** A read-capable handle on `lsass.exe` is the credential-dump
+shape; it is not a read. A write-capable handle is the injection precondition; it is not a write.
+A remote thread is an execution transfer; whether its code was hostile is not in the record. The
+sequence — access → write → execution transfer; suspended child → image replaced → resumed — is a
+join across records by process GUID and time, and a spec issue of its own.
+
 ### NTFS alternate data streams: a download mark is not a hidden payload
 
 NTFS lets a file carry named streams beside its contents. Windows and browsers write one —

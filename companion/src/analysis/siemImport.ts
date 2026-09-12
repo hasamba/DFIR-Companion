@@ -36,15 +36,10 @@ import { decodeDefenderEvent, defenderDescription } from "./defenderEvents.js";
 import { commandCandidates } from "./commandNormalize.js";
 import { secretSpillSignal } from "./secretSpillRules.js";
 import { streamOverlay } from "./ntfsStreams.js";
+import { processOverlay } from "./processAccess.js";
 import { aggregateEvents, maxEventsDefault } from "./eventAggregate.js";
 import { evtxRecordIdentity } from "./evtxRecordId.js";
-import {
-  LOLBINS,
-  NOISY_LOLBINS,
-  SUSP_PATH,
-  isBenignLsassAccessor,
-  isBenignThreadSource,
-} from "./winProcessBaseline.js";
+import { LOLBINS, NOISY_LOLBINS, SUSP_PATH } from "./winProcessBaseline.js";
 import { extractDomains, TEXT_DOMAIN_SKIP_RE, TEXT_FILE_EXT_RE, hasPlausibleTld } from "./textDomains.js";
 import { trimSentencePunctuation } from "../ingest/textUriTrim.js";
 
@@ -353,7 +348,7 @@ export interface WinEventDef {
   label: string;
   severity: Severity;
   mitre?: string[];
-  kind?: "process" | "network" | "dns" | "procaccess" | "file" | "service" | "stream";
+  kind?: "process" | "network" | "dns" | "procaccess" | "file" | "service" | "stream" | "thread" | "tamper";
 }
 
 // Groups whose membership IS privilege. An add to one of these is the difference between routine
@@ -475,9 +470,9 @@ const SYSMON_EVENTS: Record<number, WinEventDef> = {
   5: { label: "Process terminated", severity: "Info" },
   6: { label: "Driver loaded", severity: "Medium", mitre: ["T1543.003"] },
   7: { label: "Image (DLL) loaded", severity: "Low", mitre: ["T1574.002"] },
-  8: { label: "CreateRemoteThread (possible injection)", severity: "High", mitre: ["T1055"] },
+  8: { label: "CreateRemoteThread", severity: "Low", kind: "thread" },
   9: { label: "RawAccessRead", severity: "Medium", mitre: ["T1006"] },
-  10: { label: "Process accessed", severity: "Medium", kind: "procaccess", mitre: ["T1003"] },
+  10: { label: "Process accessed", severity: "Info", kind: "procaccess" },
   11: { label: "File created", severity: "Low" },
   12: { label: "Registry object created/deleted", severity: "Low", mitre: ["T1112"] },
   13: { label: "Registry value set", severity: "Low", mitre: ["T1112"] },
@@ -491,7 +486,7 @@ const SYSMON_EVENTS: Record<number, WinEventDef> = {
   22: { label: "DNS query", severity: "Low", kind: "dns" },
   23: { label: "File deleted (archived)", severity: "Low", mitre: ["T1070.004"] },
   24: { label: "Clipboard changed", severity: "Low" },
-  25: { label: "Process image tampering", severity: "High", mitre: ["T1055.012"] },
+  25: { label: "Process image tampering", severity: "High", kind: "tamper", mitre: ["T1055.012"] },
   26: { label: "File delete logged", severity: "Low", mitre: ["T1070.004"] },
 };
 
@@ -944,7 +939,7 @@ export function mapWindows(
 
   // Severity — start from the table, then bump on suspicious process/command.
   let severity = def.severity;
-  const mitre = [...(def.mitre ?? [])];
+  let mitre = [...(def.mitre ?? [])];
   if (def.kind === "process") {
     const image = str(getCI(ed, "Image")) || str(getCI(ed, "NewProcessName"));
     const cmd = str(getCI(ed, "CommandLine"));
@@ -1009,30 +1004,22 @@ export function mapWindows(
     )
       severity = worst(severity, "High");
   }
-  if (def.kind === "procaccess" && /lsass\.exe$/i.test(str(getCI(ed, "TargetImage")))) {
-    if (isBenignLsassAccessor(str(getCI(ed, "SourceImage")))) {
-      // Routine OS / Defender LSASS access — keep as Low evidence, NOT a credential-dump finding (#198).
-      // T1003 goes with it — Low is AT the forensic floor, so downgrading alone still handed the AI
-      // an event tagged credential dumping. Same splice the EID 8 branch below does for T1055.
-      severity = "Low";
-      const i = mitre.indexOf("T1003");
-      if (i >= 0) mitre.splice(i, 1);
-    } else {
-      severity = "High";
-      if (!mitre.includes("T1003.001")) mitre.push("T1003.001");
-    }
-  }
-  // CreateRemoteThread (Sysmon 8) from a core OS process or Defender is routine session setup /
-  // behavioral monitoring, not injection — downgrade from the table's default High and drop the
-  // T1055 tag so it doesn't drown real signal. A benign name run from a SUSPICIOUS path (a
-  // masqueraded svchost.exe in \Temp\) is NOT benign and keeps High + T1055.
-  if (isSysmon && eid === 8) {
-    if (isBenignThreadSource(str(getCI(ed, "SourceImage")))) {
-      severity = "Low";
-      const i = mitre.indexOf("T1055");
-      if (i >= 0) mitre.splice(i, 1);
-    }
-  }
+  // Sysmon 10/8/25: what the record establishes — rights, call trace, thread start, both process
+  // identities — decides (processAccess.ts, #932 item 9); the table's technique was the overclaim.
+  const pa =
+    def.kind === "procaccess" || def.kind === "thread" || def.kind === "tamper"
+      ? processOverlay({
+          kind: def.kind,
+          field: (k) => str(getCI(ed, k)),
+          has: (k) => getCI(ed, k) !== undefined,
+          description,
+          severity,
+          mitre,
+          recordId: str(getCI(rec, "EventRecordID")),
+          row: canonicalContext.recordIndex,
+        })
+      : null;
+  if (pa) ({ description, severity, mitre } = pa);
   // Kerberoasting / AS-REP roasting: an RC4-encrypted Kerberos ticket request for a user service
   // account grades the otherwise-Low 4769/4768 with the correct technique (see kerberosRoastSignal).
   if (!isSysmon) {
@@ -1083,7 +1070,7 @@ export function mapWindows(
   const accountName = accts[0];
   const category = isLogon
     ? "authentication"
-    : def.kind === "process" || def.kind === "procaccess"
+    : def.kind === "process" || pa
       ? "process"
       : def.kind === "network" || def.kind === "dns"
         ? "network"
@@ -1103,8 +1090,8 @@ export function mapWindows(
         ? "logon"
         : def.kind === "process"
           ? "start"
-          : def.kind === "procaccess"
-            ? "access"
+          : pa
+            ? pa.type
             : def.kind === "network"
               ? "connection"
               : def.kind === "dns"
@@ -1114,7 +1101,7 @@ export function mapWindows(
     },
     ...(accountName ? { actor: { kind: "account" as const, name: accountName } } : {}),
     ...(host ? { target: { kind: "host" as const, name: host } } : {}),
-    ...(defender ? { object: defender.object } : {}),
+    ...(defender ? { object: defender.object } : (pa?.entities ?? {})),
     ...(accountName
       ? {
           account: {
@@ -1154,7 +1141,8 @@ export function mapWindows(
           },
         }
       : {}),
-    ...(def.kind === "process" || def.kind === "procaccess"
+    ...(pa ? { process: pa.process } : {}),
+    ...(def.kind === "process"
       ? {
           process: {
             ...(pid !== undefined ? { pid } : {}),
@@ -1227,6 +1215,7 @@ export function mapWindows(
     },
     rawFieldMap: {
       "time.observed": ["EventData.UtcTime", ...TIME_KEYS],
+      ...(pa?.rawFields ?? {}),
       ...(accountName ? { "actor.name": ["EventData.TargetDomainName", "EventData.TargetUserName"] } : {}),
       ...(host ? { "target.name": ["Computer", "host.name"] } : {}),
       ...(logonType !== undefined ? { "authentication.logonType": ["EventData.LogonType"] } : {}),
@@ -1287,7 +1276,7 @@ export function mapWindows(
     // srv-a stay one host); a host-less export keys on "". pid keeps process creations distinct; a
     // Sysmon 15 stream carries its exact path's digest and the host file's hash (ntfsStreams.ts).
     aggKey:
-      `win|${host}|${channel}|${eid}|${accts.join(",")}|${subject}${pid !== undefined ? `|pid=${pid}` : ""}${defender ? `|${defender.identity}` : ""}${ads?.identity ?? ""}`.toLowerCase(),
+      `win|${host}|${channel}|${eid}|${accts.join(",")}|${subject}${pid !== undefined ? `|pid=${pid}` : ""}${defender ? `|${defender.identity}` : ""}${ads?.identity ?? ""}${pa?.identity ?? ""}`.toLowerCase(),
     ...(sha256 ? { sha256 } : {}),
     ...(md5 ? { md5 } : {}),
     ...(imagePath ? { path: imagePath } : {}),

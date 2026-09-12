@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { isTrustedSystemImage } from "../../src/analysis/winProcessBaseline.js";
+import { canonicalConformanceIssues } from "../../src/analysis/canonicalEvent.js";
 import {
   parseSiemExport,
   extractRecords,
@@ -1739,5 +1740,178 @@ describe("parseSiemExport — Sysmon 15 alternate data streams", () => {
     );
     expect(r.events).toHaveLength(4);
     expect(new Set(r.events.map((e) => e.aggKey)).size).toBe(4);
+  });
+});
+
+// #932 item 9 — Sysmon 10 / 8 / 25 through the Windows mapper: what the record establishes, the
+// identities kept for the join, and the canonical process events they become.
+describe("parseSiemExport — process access, remote threads and tampering (Sysmon 10/8/25)", () => {
+  const sysmon = (eventId: number, ed: Record<string, string>, recordId = "5001") => ({
+    "@timestamp": "2024-03-12T17:00:21.000Z",
+    log_name: "Microsoft-Windows-Sysmon/Operational",
+    computer_name: "WS-01",
+    event_id: eventId,
+    EventRecordID: recordId,
+    level: "Information",
+    event_data: { UtcTime: "2024-03-12 17:00:21.000", ...ed },
+  });
+  const G1 = "{11111111-1111-1111-1111-111111111111}";
+  const G2 = "{22222222-2222-2222-2222-222222222222}";
+  const pair = (source: string, target: string) => ({
+    SourceProcessGuid: G1,
+    SourceProcessId: "1001",
+    SourceImage: source,
+    TargetProcessGuid: G2,
+    TargetProcessId: "612",
+    TargetImage: target,
+  });
+
+  it("a ProcessAccess on a non-lsass target carries no T1003; the words say the rights; the envelope is a process event with both processes", () => {
+    const r = parseSiemExport(
+      elastic(
+        sysmon(10, {
+          ...pair("C:\\Windows\\explorer.exe", "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"),
+          GrantedAccess: "0x1000",
+        }),
+      ),
+    );
+    const e = r.events[0];
+    expect(e.severity).toBe("Info");
+    expect(e.mitreTechniques).toEqual([]);
+    expect(e.description).toContain(
+      "opens chrome.exe with QUERY_LIMITED_INFORMATION (0x1000) from explorer.exe",
+    );
+    expect(e.canonical?.event).toMatchObject({ category: "process", type: "access" });
+    expect(e.canonical?.subject).toEqual({
+      kind: "process",
+      id: "11111111-1111-1111-1111-111111111111",
+      name: "explorer.exe",
+      pid: 1001,
+    });
+    expect(e.canonical?.object).toEqual({
+      kind: "process",
+      id: "22222222-2222-2222-2222-222222222222",
+      name: "chrome.exe",
+      pid: 612,
+    });
+    expect(e.canonical?.process).toMatchObject({ pid: 612, name: "chrome.exe" });
+    expect(e.canonical?.fieldProvenance["subject.pid"]).toMatchObject({ rawFields: ["SourceProcessId"] });
+    expect(e.canonical?.fieldProvenance["object.id"]).toMatchObject({ rawFields: ["TargetProcessGuid"] });
+    expect(canonicalConformanceIssues(e.canonical)).toEqual([]);
+    expect(e.aggKey).toContain(
+      "|access:query_limited_information|src:11111111-1111-1111-1111-111111111111|dst:22222222-2222-2222-2222-222222222222|0",
+    );
+  });
+
+  it("a write-capable handle from a user path is Medium with no technique; the same rights on lsass are High + T1003.001", () => {
+    const r = parseSiemExport(
+      elastic(
+        sysmon(10, {
+          ...pair("C:\\Users\\bob\\tool.exe", "C:\\Windows\\explorer.exe"),
+          GrantedAccess: "0x3A",
+        }),
+        sysmon(
+          10,
+          { ...pair("C:\\Users\\bob\\tool.exe", "C:\\Windows\\System32\\lsass.exe"), GrantedAccess: "0x3A" },
+          "5002",
+        ),
+      ),
+    );
+    const w = r.events.find((e) => e.description.includes("opens explorer.exe"))!;
+    expect(w.severity).toBe("Medium");
+    expect(w.mitreTechniques).toEqual([]);
+    expect(w.description).toContain("write-capable handle");
+    const l = r.events.find((e) => e.description.includes("opens lsass.exe"))!;
+    expect(l.severity).toBe("High");
+    expect(l.mitreTechniques).toEqual(["T1003.001"]);
+  });
+
+  it("a remote thread reads its start: an unbacked start is High + T1055; the envelope is a process event of type remote_thread", () => {
+    const r = parseSiemExport(
+      elastic(
+        sysmon(8, {
+          ...pair("C:\\Users\\bob\\tool.exe", "C:\\Windows\\explorer.exe"),
+          StartAddress: "0x1A2B3C",
+          StartModule: "-",
+          StartFunction: "-",
+        }),
+      ),
+    );
+    const e = r.events[0];
+    expect(e.severity).toBe("High");
+    expect(e.mitreTechniques).toEqual(["T1055"]);
+    expect(e.description).toContain(
+      "creates a thread in explorer.exe from tool.exe starting at 0x1A2B3C — outside any module",
+    );
+    expect(e.canonical?.event).toMatchObject({ category: "process", type: "remote_thread" });
+    expect(e.canonical?.object).toMatchObject({ kind: "process", name: "explorer.exe", pid: 612 });
+    expect(e.canonical?.process).toMatchObject({
+      pid: 612,
+      name: "explorer.exe",
+      executable: "C:\\Windows\\explorer.exe",
+    });
+    expect(canonicalConformanceIssues(e.canonical)).toEqual([]);
+    expect(e.aggKey).toContain("|thread:0x1a2b3c|src:");
+  });
+
+  it("a tampering record keeps the sensor's verdict and becomes a process event of type tamper keyed on the process", () => {
+    const r = parseSiemExport(
+      elastic(
+        sysmon(25, {
+          ProcessGuid: G1,
+          ProcessId: "4400",
+          Image: "C:\\Users\\bob\\AppData\\Local\\Temp\\svchost.exe",
+          Type: "Image is replaced",
+        }),
+      ),
+    );
+    const e = r.events[0];
+    expect(e.severity).toBe("High");
+    expect(e.mitreTechniques).toEqual(["T1055.012"]);
+    expect(e.description).toContain("svchost.exe: Image is replaced");
+    expect(e.canonical?.event).toMatchObject({ category: "process", type: "tamper" });
+    expect(e.canonical?.object).toEqual({
+      kind: "process",
+      id: "11111111-1111-1111-1111-111111111111",
+      name: "svchost.exe",
+      pid: 4400,
+    });
+    expect(e.canonical?.process).toMatchObject({ pid: 4400, name: "svchost.exe" });
+    expect(canonicalConformanceIssues(e.canonical)).toEqual([]);
+    expect(e.aggKey).toContain("|tamper:image is replaced|proc:11111111-1111-1111-1111-111111111111");
+  });
+
+  it("two instances of one image (different GUIDs) are two rows; GUID-less records with reused pids are two rows and say so", () => {
+    const a = sysmon(
+      10,
+      { ...pair("C:\\Users\\bob\\tool.exe", "C:\\Windows\\explorer.exe"), GrantedAccess: "0x1010" },
+      "1",
+    );
+    const b = sysmon(
+      10,
+      {
+        ...pair("C:\\Users\\bob\\tool.exe", "C:\\Windows\\explorer.exe"),
+        SourceProcessGuid: "{33333333-3333-3333-3333-333333333333}",
+        GrantedAccess: "0x1010",
+      },
+      "2",
+    );
+    expect(parseSiemExport(elastic(a, b)).events).toHaveLength(2);
+    const noGuid = (recordId: string) =>
+      sysmon(
+        10,
+        {
+          SourceProcessId: "1001",
+          SourceImage: "C:\\Users\\bob\\tool.exe",
+          TargetProcessId: "612",
+          TargetImage: "C:\\Windows\\explorer.exe",
+          GrantedAccess: "0x1010",
+        },
+        recordId,
+      );
+    const r = parseSiemExport(elastic(noGuid("7"), noGuid("8")));
+    expect(r.events).toHaveLength(2);
+    expect(r.events[0].description).toContain("process GUIDs not in this record");
+    expect(r.events[0].canonical?.subject).toMatchObject({ kind: "process", id: "pid:1001", pid: 1001 });
   });
 });
