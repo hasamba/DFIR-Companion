@@ -218,6 +218,22 @@ describe("parseNetworkLogs — Zeek per-stream JSON (no _path)", () => {
     expect(r.iocs.some((i) => i.type === "file" && i.value === "x.exe")).toBe(true);
   });
 
+  it("a field-filtered ssl record with no _path is a TLS row, never a zero-byte flow", () => {
+    const filtered = {
+      ts: 1512115204,
+      uid: "C9",
+      "id.orig_h": "10.0.0.5",
+      "id.resp_h": "10.0.0.9",
+      "id.resp_p": 443,
+      version: "TLSv12",
+      established: true,
+      cert_chain_fuids: ["F1"],
+    };
+    const r = parseNetworkLogs(JSON.stringify(filtered));
+    expect(r.events.some((e) => e.description.startsWith("Flow:"))).toBe(false);
+    expect(r.events.some((e) => e.description.startsWith("TLS "))).toBe(true);
+  });
+
   it("a nested x509 record with no _path is a certificate, never a zero-byte flow", () => {
     const nested = {
       ts: 1512115204,

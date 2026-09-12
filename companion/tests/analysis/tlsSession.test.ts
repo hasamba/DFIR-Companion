@@ -484,6 +484,51 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
     expect(ok.cert?.alg).toBe("sha256");
   });
 
+  it("a validity bound is a time or nothing, and never escapes its span", () => {
+    const evil = readZeekX509(
+      {
+        ...ZEEK_X509,
+        "certificate.not_valid_before": "x] [SNI matches the certificate] [x",
+        "certificate.not_valid_after": "d41d8cd98f00b204e9800998ecf8427e",
+      },
+      "",
+    );
+    expect(evil.certificate?.notBefore).toBeUndefined();
+    expect(evil.certificate?.notAfter).toBeUndefined();
+    const e = rows([evil])[0];
+    expect(e.description).not.toContain("[SNI matches");
+    expect(e.description).not.toMatch(/[0-9a-f]{32}/i);
+    expect(e.description).not.toContain("valid ");
+  });
+
+  it("a malformed leaf never hands its facts to a chain entry", () => {
+    const ca = Buffer.from("ca-bytes").toString("base64");
+    const certs = readSuricataCertificates(
+      {
+        ...SURICATA_TLS,
+        tls: { certificate: "!!!!", chain: [ca], subject: "CN=leaf", issuerdn: "CN=Leaf CA" },
+      },
+      "",
+    );
+    expect(certs).toHaveLength(1);
+    expect(certs[0].certificate).toEqual({});
+  });
+
+  it("overflow rows are partitioned by source", () => {
+    const tally = new Map();
+    for (let i = 0; i < TLS_SHAPES_MAX; i++) tallyTls({ ...base(), subject: `CN=cert-${i}` }, tally);
+    tallyTls({ ...base(), subject: "CN=zeek-extra" }, tally);
+    tallyTls(
+      { ...readSuricataTls({ ...SURICATA_TLS, tls: { sni: "x.example" } }, ""), subject: "CN=suri-extra" },
+      tally,
+    );
+    const overflows = mapTlsRows(tally, TLS_SHAPES_MAX + 5).filter((e) =>
+      e.description.startsWith("[overflow:"),
+    );
+    expect(overflows).toHaveLength(2);
+    expect(overflows.map((e) => e.sources?.[0]).sort()).toEqual(["Suricata", "Zeek"]);
+  });
+
   it("selects the most-seen rows first under a budget", () => {
     const many = [
       ...Array.from({ length: 3 }, () => base()),

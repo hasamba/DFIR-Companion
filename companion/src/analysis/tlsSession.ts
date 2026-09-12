@@ -101,6 +101,13 @@ function time(v: unknown): string {
   return normalizeTime(str(v));
 }
 
+/** A validity bound only when it PARSES as a time — normalizeTime hands unparseable text back verbatim. */
+function validity(v: unknown): string | undefined {
+  if (v == null) return undefined;
+  const t = time(v);
+  return t && !Number.isNaN(Date.parse(t)) ? t : undefined;
+}
+
 const hexOf = (v: string): string => v.replace(/[^0-9a-f]/gi, "").toLowerCase();
 
 // Canonical base64 only: Node's decoder is permissive, so `!!!!` would decode to zero bytes and
@@ -199,8 +206,8 @@ export function readZeekX509(row: Row, fallbackTs: string): TlsObservation {
       ...(issuer !== undefined ? { issuer } : {}),
       ...(serial !== undefined ? { serial: hexOf(serial) } : {}),
       names: [...san("dns"), ...san("uri"), ...san("email"), ...san("ip")].slice(0, NAMES_KEPT_MAX),
-      ...(cert("not_valid_before") != null ? { notBefore: time(cert("not_valid_before")) } : {}),
-      ...(cert("not_valid_after") != null ? { notAfter: time(cert("not_valid_after")) } : {}),
+      ...(validity(cert("not_valid_before")) ? { notBefore: validity(cert("not_valid_before")) } : {}),
+      ...(validity(cert("not_valid_after")) ? { notAfter: validity(cert("not_valid_after")) } : {}),
       ...(ca !== undefined ? { ca } : {}),
     },
   };
@@ -225,8 +232,8 @@ export function readSuricataTls(row: Row, fallbackTs: string): TlsObservation {
     ...(issuer !== undefined ? { issuer } : {}),
     ...(serial !== undefined ? { serial: hexOf(serial) } : {}),
     ...(names ? { names: names.slice(0, NAMES_KEPT_MAX) } : {}),
-    ...(getCI(t, "notbefore") != null ? { notBefore: time(getCI(t, "notbefore")) } : {}),
-    ...(getCI(t, "notafter") != null ? { notAfter: time(getCI(t, "notafter")) } : {}),
+    ...(validity(getCI(t, "notbefore")) ? { notBefore: validity(getCI(t, "notbefore")) } : {}),
+    ...(validity(getCI(t, "notafter")) ? { notAfter: validity(getCI(t, "notafter")) } : {}),
   };
   return {
     source: "suricata-tls",
@@ -256,17 +263,23 @@ export function readSuricataTls(row: Row, fallbackTs: string): TlsObservation {
 export function readSuricataCertificates(row: Row, fallbackTs: string): TlsObservation[] {
   const tls = getCI(row, "tls");
   const t: Row = isObject(tls) ? tls : {};
-  const ders = [...(list(getCI(t, "certificate")) ?? []), ...(list(getCI(t, "chain")) ?? [])];
+  const explicit = list(getCI(t, "certificate")) ?? [];
+  const chain = list(getCI(t, "chain")) ?? [];
+  // The leaf is the explicit `certificate`, else chain index 0 — by ORIGIN, not by which entry
+  // happened to decode: a malformed leaf must not hand its subject to the next valid entry.
+  const ders = [
+    ...explicit.map((d) => ({ der: d, leaf: true })),
+    ...chain.map((d, i) => ({ der: d, leaf: !explicit.length && i === 0 })),
+  ];
   const seen = new Set<string>();
   const out: TlsObservation[] = [];
-  for (const der of ders.slice(0, CHAIN_MAX)) {
+  for (const { der, leaf } of ders.slice(0, CHAIN_MAX)) {
     const fp = derFingerprint(der)?.value;
     if (!fp || seen.has(fp)) continue;
     seen.add(fp);
     // The leaf's subject/issuer/serial are the record's own fields; a chain entry's are not
     // decoded here (no ASN.1 parser), so it carries its sha256 and nothing else. The leaf is the
     // explicit `certificate`, else the FIRST chain entry (Suricata writes the chain leaf-first).
-    const leaf = out.length === 0;
     const issuer = leaf ? (text(getCI(t, "issuerdn")) ?? text(getCI(t, "issuer"))) : undefined;
     out.push({
       source: "suricata-tls",
@@ -337,7 +350,9 @@ export function tlsKey(o: TlsObservation): string {
 
 /** Distinct row shapes one import keeps; every later NEW shape folds into one overflow row per kind. */
 export const TLS_SHAPES_MAX = 8192;
-const OVERFLOW_KEY = (kind: TlsObservation["kind"]) => `${kind === "session" ? "tls" : "cert"}|overflow`;
+// Partitioned by kind AND source: the overflow row's provenance names the tool that produced it.
+const OVERFLOW_KEY = (o: Pick<TlsObservation, "kind" | "source">) =>
+  `${o.kind === "session" ? "tls" : "cert"}|${o.source}|overflow`;
 
 export function tallyTls(o: TlsObservation, sink: Map<string, TlsTally>): void {
   // A certificate record with no identity yields no certificate row: its facts are on the session.
@@ -353,7 +368,7 @@ export function tallyTls(o: TlsObservation, sink: Map<string, TlsTally>): void {
   // map is bounded DURING ingestion, not after: past the cap a new shape joins one overflow row
   // that shows no shape as representative.
   if (sink.size >= TLS_SHAPES_MAX) {
-    const ok = OVERFLOW_KEY(o.kind);
+    const ok = OVERFLOW_KEY(o);
     const over = sink.get(ok);
     if (over) {
       over.count += 1;
@@ -429,7 +444,7 @@ function certificateTag(o: TlsObservation): string {
     `certificate: ${certWords({ ...o, subject: undefined, issuer: undefined })}`,
     c.subject !== undefined ? `subject ${show(c.subject)}` : "",
     c.issuer !== undefined ? `issuer ${show(c.issuer)}` : "",
-    c.notBefore || c.notAfter ? `valid ${c.notBefore ?? "?"}–${c.notAfter ?? "?"}` : "",
+    c.notBefore || c.notAfter ? `valid ${show(c.notBefore ?? "?")}–${show(c.notAfter ?? "?")}` : "",
     names.length ? `covers ${names.length} name${names.length === 1 ? "" : "s"}: ${shownNames}${more}` : "",
   ]
     .filter(Boolean)
@@ -504,7 +519,7 @@ function envelopeOf(o: TlsObservation, count: number): CanonicalEventEnvelope {
 
 function mapTlsRow(t: TlsTally): MappedEvent {
   const o = t.first;
-  const key = t.overflow ? OVERFLOW_KEY(o.kind) : tlsKey(o);
+  const key = t.overflow ? OVERFLOW_KEY(o) : tlsKey(o);
   const mark = identityMark(key);
   let description: string;
   let lossy: boolean;

@@ -97,12 +97,28 @@ export function zeekStreamFromName(name: string): string {
   return m ? m[1] : "";
 }
 
+// Every ssl.log field an export might keep, so a filtered record is still an ssl record.
+const SSL_FIELDS = [
+  "server_name",
+  "cipher",
+  "ssl_history",
+  "version",
+  "resumed",
+  "established",
+  "validation_status",
+  "cert_chain_fuids",
+  "cert_chain_fps",
+  "client_cert_chain_fuids",
+  "ja3",
+  "ja3s",
+  "sni_matches_cert",
+];
+
 // Infer the Zeek stream from a record's own fields when there's no filename hint and no `_path`.
 export function inferZeekStream(row: Row): string {
   if (getCI(row, "query") != null || getCI(row, "qtype_name") != null) return "dns";
   if (getCI(row, "uri") != null || getCI(row, "method") != null) return "http";
-  if (getCI(row, "server_name") != null || getCI(row, "cipher") != null || getCI(row, "ssl_history") != null)
-    return "ssl";
+  if (SSL_FIELDS.some((k) => getCI(row, k) != null)) return "ssl";
   if (
     getCI(row, "san.dns") != null ||
     getCI(row, "fingerprint") != null ||
