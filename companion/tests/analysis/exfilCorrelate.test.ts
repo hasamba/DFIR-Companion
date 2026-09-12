@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { linkArchiveToExfil } from "../../src/analysis/exfilCorrelate.js";
+import { markProcessLifetimeSignals } from "../../src/analysis/processLifetime.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 const stage = (id: string, ts: string, asset = "FS-01"): ForensicEvent => ({
@@ -111,6 +112,33 @@ describe("linkArchiveToExfil", () => {
     const u = twice.find((e) => e.id === "u1")!;
     expect(u.severity).toBe("Critical");
     expect((u.description.match(/confirmed exfiltration/g) ?? []).length).toBe(1); // marker not duplicated
+  });
+
+  it("bounds a long description WITHOUT pushing the marker off the end (#939)", () => {
+    const base = upload("u1", "2024-03-12T17:00:21Z");
+    const long = { ...base, description: `${base.description} ${"x".repeat(5000)}` };
+    const out = linkArchiveToExfil([stage("s1", "2024-03-12T16:15:02Z"), long]);
+    const u = out.find((e) => e.id === "u1")!;
+    expect(u.severity).toBe("High");
+    // A raised event must state its reason: the base text is clipped, the marker never is.
+    expect(u.description.length).toBeLessThan(1000);
+    expect(u.description).toContain("[confirmed exfiltration:");
+    expect(u.description.endsWith("]")).toBe(true);
+  });
+
+  it("keeps the marker when a LATER pass clips the same long event (#939 review)", () => {
+    const base = upload("u1", "2024-03-12T17:00:21Z");
+    const long = {
+      ...base,
+      description: `${base.description} ${"x".repeat(5000)}`,
+      processName: "lsass.exe",
+      parentName: "winword.exe",
+    };
+    const out = markProcessLifetimeSignals(linkArchiveToExfil([stage("s1", "2024-03-12T16:15:02Z"), long]));
+    const u = out.find((e) => e.id === "u1")!;
+    expect(u.description).toContain("[confirmed exfiltration:");
+    expect(u.description).toContain("[unexpected parent:");
+    expect(u.description.length).toBeLessThan(1200);
   });
 
   it("leaves events with no staging or no upload tag untouched", () => {

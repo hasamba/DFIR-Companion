@@ -2,6 +2,34 @@ import { describe, it, expect } from "vitest";
 import { parseM365Audit } from "../../src/analysis/m365Import.js";
 import { parseGoogleWorkspaceReport } from "../../src/analysis/googleWorkspaceImport.js";
 import { parseCloudTrail } from "../../src/analysis/awsImport.js";
+import { parseCloudActivity } from "../../src/analysis/cloudActivityImport.js";
+import { correlateEvents } from "../../src/analysis/correlate.js";
+import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
+
+type MappedRow = {
+  timestamp: string;
+  description: string;
+  severity: ForensicEvent["severity"];
+  mitre?: string[];
+  asset?: string;
+};
+
+// The import route drops aggKey before the timeline, and correlation's exact-duplicate pass keys on
+// timestamp + description + host. A key that keeps two rows apart is worth nothing if their clipped
+// descriptions are then identical — the description must carry the discriminator too.
+const onTimeline = (events: MappedRow[]): ForensicEvent[] =>
+  correlateEvents(
+    events.map((e, i) => ({
+      id: `e${i}`,
+      timestamp: e.timestamp,
+      description: e.description,
+      severity: e.severity,
+      mitreTechniques: e.mitre ?? [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      ...(e.asset ? { asset: e.asset } : {}),
+    })),
+  );
 
 // #931 prerequisite: the three cloud aggregation keys discarded the discriminators every later
 // correlation needs, and used a raw slice that deletes one row's evidence when two keys share a
@@ -232,5 +260,69 @@ describe("AWS CloudTrail key", () => {
     const out = rows(rec({}), rec({}));
     expect(out).toHaveLength(1);
     expect(out[0].count).toBe(2);
+  });
+});
+
+// #940: the keys #934 added beside these still ended in a raw slice. Two rows whose keys share a
+// 400-character prefix — a deep SharePoint path, a long GCS object name, a long app name — folded
+// into one, and the fold deleted one row's identity.
+describe("M365 UAL file-read key", () => {
+  const ual = (objectId: string) => ({
+    CreationTime: "2024-01-01T10:00:00",
+    Workload: "SharePoint",
+    Operation: "FileDownloaded",
+    UserId: "alice@victim.com",
+    ClientIP: "198.51.100.9",
+    ResultStatus: "Succeeded",
+    ObjectId: objectId,
+  });
+  it("keeps two downloads whose keys share a 400-character prefix as two rows", () => {
+    const deep = `https://victim.sharepoint.com/sites/finance/Shared%20Documents/${"deep/".repeat(80)}`;
+    const out = parseM365Audit(JSON.stringify([ual(`${deep}A.xlsx`), ual(`${deep}B.xlsx`)])).events;
+    expect(out).toHaveLength(2);
+    expect(onTimeline(out)).toHaveLength(2);
+  });
+});
+
+describe("Entra sign-in key", () => {
+  const signIn = (app: string) => ({
+    id: "s-1",
+    createdDateTime: "2024-01-01T10:00:00Z",
+    userPrincipalName: "alice@victim.com",
+    ipAddress: "198.51.100.9",
+    appDisplayName: app,
+    status: { errorCode: 0 },
+    riskLevelDuringSignIn: "none",
+  });
+  it("keeps two sign-ins whose keys share a 400-character prefix as two rows", () => {
+    const out = parseM365Audit(
+      JSON.stringify([signIn(`${"y".repeat(620)}1`), signIn(`${"y".repeat(620)}2`)]),
+    ).events;
+    expect(out).toHaveLength(2);
+    expect(onTimeline(out)).toHaveLength(2);
+  });
+});
+
+describe("GCP audit key", () => {
+  const objectRead = (objectName: string) => ({
+    logName: "projects/acme/logs/cloudaudit.googleapis.com%2Fdata_access",
+    timestamp: "2023-07-01T10:00:00Z",
+    resource: { type: "gcs_bucket" },
+    protoPayload: {
+      "@type": "type.googleapis.com/google.cloud.audit.AuditLog",
+      serviceName: "storage.googleapis.com",
+      methodName: "storage.objects.get",
+      authenticationInfo: { principalEmail: "attacker@acme.com" },
+      requestMetadata: { callerIp: "203.0.113.11" },
+      resourceName: `projects/_/buckets/backups/objects/${objectName}`,
+      status: {},
+    },
+  });
+  it("keeps two object reads whose keys share a 400-character prefix as two rows", () => {
+    const out = parseCloudActivity(
+      JSON.stringify([objectRead(`${"x".repeat(620)}-1`), objectRead(`${"x".repeat(620)}-2`)]),
+    ).events;
+    expect(out).toHaveLength(2);
+    expect(onTimeline(out)).toHaveLength(2);
   });
 });

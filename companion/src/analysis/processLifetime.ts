@@ -35,6 +35,7 @@
 // "this is <framework>" from an image name; it reports the observed shape.
 
 import type { Severity } from "./stateTypes.js";
+import { appendDerivedNote } from "./derivedNote.js";
 
 /** What the collection actually recorded about one process. */
 export interface ProcessRecord {
@@ -372,17 +373,17 @@ export function markProcessLifetimeSignals<T extends TimelineProcessEvent>(event
 
     const severity =
       rank[signal.severity] > rank[e.severity ?? "Info"] ? signal.severity : (e.severity ?? "Info");
-    // The marker is appended AFTER truncating the base text, never before: truncating the joined
+    // The marker is appended AFTER clipping the base text, never before: clipping the joined
     // string let a long description push the marker off the end while the severity bump still
-    // applied — a raised event with no stated reason.
-    const base = (e.description ?? "").slice(0, 700);
+    // applied — a raised event with no stated reason. The clip keeps earlier passes' notes
+    // (see derivedNote.ts).
     return {
       ...e,
       severity,
       ...(signal.mitre.length
         ? { mitreTechniques: [...new Set([...(e.mitreTechniques ?? []), ...signal.mitre])] }
         : {}),
-      description: `${base} ${marker} ${signal.note}]`.trim(),
+      description: appendDerivedNote(e.description, marker, signal.note),
     };
   });
 }
