@@ -240,6 +240,9 @@ describe("parseNetworkLogs — Zeek per-stream JSON (no _path)", () => {
       { ja3: "e7d705a3286e19ea42f587b344ee6865" },
       { resumed: true },
       { validation_status: "ok" },
+      { client_subject: "CN=user" },
+      { client_issuer: "CN=CA" },
+      { client_cert_chain_fps: ["ab"] },
     ]) {
       const one = parseNetworkLogs(
         JSON.stringify({

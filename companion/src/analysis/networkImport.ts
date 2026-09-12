@@ -117,6 +117,9 @@ const SSL_FIELDS = [
   "curve",
   "next_protocol",
   "last_alert",
+  "client_subject",
+  "client_issuer",
+  "client_cert_chain_fps",
 ];
 
 // Infer the Zeek stream from a record's own fields when there's no filename hint and no `_path`.

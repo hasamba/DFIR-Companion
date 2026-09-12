@@ -108,7 +108,19 @@ function validity(v: unknown): string | undefined {
   return t && !Number.isNaN(Date.parse(t)) ? t : undefined;
 }
 
-const hexOf = (v: string): string => v.replace(/[^0-9a-f]/gi, "").toLowerCase();
+// A hex identifier in its documented grammar (hex, optionally colon- or space-separated) — or
+// nothing. Deleting stray characters would let `aa:zz:bb` and `aa:bb` mint one identity.
+const HEX_GRAMMAR = /^(?:0x)?[0-9a-f]{1,2}(?:[:\s-]?[0-9a-f]{1,2})*$/i;
+const hexOf = (v: string): string | undefined => {
+  const t = v.trim();
+  return HEX_GRAMMAR.test(t)
+    ? t
+        .replace(/^0x/i, "")
+        .replace(/[:\s-]/g, "")
+        .toLowerCase()
+    : undefined;
+};
+const FINGERPRINT_LENGTHS = new Set([32, 40, 64]);
 
 // Canonical base64 only: Node's decoder is permissive, so `!!!!` would decode to zero bytes and
 // every malformed value would share the empty input's sha256 — one forged identity for them all.
@@ -129,7 +141,9 @@ function fingerprint(v: unknown): CertRef | undefined {
   const raw = text(v)?.trim();
   if (!raw) return undefined;
   const hex = hexOf(raw);
-  return hex ? { kind: "fingerprint", value: hex, alg: hex.length === 64 ? "sha256" : "sha1" } : undefined;
+  // A fingerprint is exactly an MD5, SHA-1 or SHA-256 digest; anything else is not one.
+  if (!hex || !FINGERPRINT_LENGTHS.has(hex.length)) return undefined;
+  return { kind: "fingerprint", value: hex, alg: hex.length === 64 ? "sha256" : "sha1" };
 }
 
 /**
@@ -137,9 +151,17 @@ function fingerprint(v: unknown): CertRef | undefined {
  * the pair that names one certificate under one CA — so a record that omits an optional attribute
  * still keys the same certificate. Versioned, because it is a key.
  */
-export function certIdentity(issuer: string, serial: string): string {
-  const canonicalSerial = hexOf(serial).replace(/^0+/, "") || "0";
+export function certIdentity(issuer: string, serial: string): string | undefined {
+  const hex = hexOf(serial);
+  if (!hex) return undefined;
+  const canonicalSerial = hex.replace(/^0+/, "") || "0";
   return `${CERT_ID_VERSION}:${keyDigest(`${issuer.trim()}|${canonicalSerial}`)}`;
+}
+
+/** issuer + serial → a cert identity reference, or nothing when the serial is not hex. */
+function identityRef(issuer: string | undefined, serial: string | undefined): CertRef | undefined {
+  const value = issuer && serial ? certIdentity(issuer, serial) : undefined;
+  return value ? { kind: "identity", value } : undefined;
 }
 
 /** ECS sensors name themselves in `observer.*`; `host.name` names the shipper and is a fallback. */
@@ -200,11 +222,11 @@ export function readZeekX509(row: Row, fallbackTs: string): TlsObservation {
     observer: observerOf(row),
     subject: text(cert("subject")),
     issuer,
-    cert: fp ?? (issuer && serial ? { kind: "identity", value: certIdentity(issuer, serial) } : undefined),
+    cert: fp ?? identityRef(issuer, serial),
     certificate: {
       ...(text(cert("subject")) !== undefined ? { subject: text(cert("subject")) } : {}),
       ...(issuer !== undefined ? { issuer } : {}),
-      ...(serial !== undefined ? { serial: hexOf(serial) } : {}),
+      ...(serial !== undefined && hexOf(serial) ? { serial: hexOf(serial) } : {}),
       names: [...san("dns"), ...san("uri"), ...san("email"), ...san("ip")].slice(0, NAMES_KEPT_MAX),
       ...(validity(cert("not_valid_before")) ? { notBefore: validity(cert("not_valid_before")) } : {}),
       ...(validity(cert("not_valid_after")) ? { notAfter: validity(cert("not_valid_after")) } : {}),
@@ -230,7 +252,7 @@ export function readSuricataTls(row: Row, fallbackTs: string): TlsObservation {
   const facts: CertificateFacts = {
     ...(text(getCI(t, "subject")) !== undefined ? { subject: text(getCI(t, "subject")) } : {}),
     ...(issuer !== undefined ? { issuer } : {}),
-    ...(serial !== undefined ? { serial: hexOf(serial) } : {}),
+    ...(serial !== undefined && hexOf(serial) ? { serial: hexOf(serial) } : {}),
     ...(names ? { names: names.slice(0, NAMES_KEPT_MAX) } : {}),
     ...(validity(getCI(t, "notbefore")) ? { notBefore: validity(getCI(t, "notbefore")) } : {}),
     ...(validity(getCI(t, "notafter")) ? { notAfter: validity(getCI(t, "notafter")) } : {}),
@@ -251,10 +273,7 @@ export function readSuricataTls(row: Row, fallbackTs: string): TlsObservation {
     issuer,
     ja3: hashOf(getCI(t, "ja3")),
     ja3s: hashOf(getCI(t, "ja3s")),
-    cert:
-      fingerprint(getCI(t, "fingerprint")) ??
-      derFp ??
-      (issuer && serial ? { kind: "identity", value: certIdentity(issuer, serial) } : undefined),
+    cert: fingerprint(getCI(t, "fingerprint")) ?? derFp ?? identityRef(issuer, serial),
     ...(Object.keys(facts).length ? { certificate: facts } : {}),
   };
 }
@@ -292,7 +311,9 @@ export function readSuricataCertificates(row: Row, fallbackTs: string): TlsObser
         ? {
             ...(text(getCI(t, "subject")) !== undefined ? { subject: text(getCI(t, "subject")) } : {}),
             ...(issuer !== undefined ? { issuer } : {}),
-            ...(text(getCI(t, "serial")) !== undefined ? { serial: hexOf(text(getCI(t, "serial"))!) } : {}),
+            ...(hexOf(text(getCI(t, "serial")) ?? "")
+              ? { serial: hexOf(text(getCI(t, "serial")) ?? "") }
+              : {}),
             ...(list(getCI(t, "subjectaltname"))
               ? { names: list(getCI(t, "subjectaltname"))!.slice(0, NAMES_KEPT_MAX) }
               : {}),
@@ -430,8 +451,8 @@ function sessionTags(o: TlsObservation): string[] {
     tags.push(o.sniMatchesCert ? "SNI matches the certificate" : "SNI does not match the certificate");
   if (o.established === false) tags.push("not established");
   if (o.resumed === true) tags.push("session resumed");
-  if (o.ja3 !== undefined) tags.push(`ja3 ${ends(hexOf(o.ja3) || show(o.ja3))}`);
-  if (o.ja3s !== undefined) tags.push(`ja3s ${ends(hexOf(o.ja3s) || show(o.ja3s))}`);
+  if (o.ja3 !== undefined) tags.push(`ja3 ${ends(hexOf(o.ja3) ?? show(o.ja3))}`);
+  if (o.ja3s !== undefined) tags.push(`ja3s ${ends(hexOf(o.ja3s) ?? show(o.ja3s))}`);
   return tags;
 }
 

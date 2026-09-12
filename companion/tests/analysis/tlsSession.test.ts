@@ -133,8 +133,15 @@ describe("readZeekSsl — every field the record carries, absent apart from empt
     expect(readZeekSsl(ZEEK_SSL, "").observer).toBeUndefined();
   });
   it("Zeek 6 cert_chain_fps is a fingerprint", () => {
-    const o = readZeekSsl({ ...ZEEK_SSL, cert_chain_fps: ["AB:CD:EF:01"] }, "");
-    expect(o.cert).toEqual({ kind: "fingerprint", value: "abcdef01", alg: "sha1" });
+    const o = readZeekSsl(
+      { ...ZEEK_SSL, cert_chain_fps: ["AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01"] },
+      "",
+    );
+    expect(o.cert).toEqual({
+      kind: "fingerprint",
+      value: "abcdef0123456789abcdef0123456789abcdef01",
+      alg: "sha1",
+    });
   });
 });
 
@@ -286,7 +293,7 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
       { ja3s: undefined },
       { sni: undefined },
       { subject: "CN=other.example" },
-      { cert: { kind: "fingerprint", value: "ab", alg: "sha1" } },
+      { cert: { kind: "fingerprint", value: "ab".repeat(20), alg: "sha1" } },
       { observer: { name: "sensor-b", sourceField: "observer.name" } },
       { sniMatchesCert: false },
       { dst: "203.0.113.10" },
@@ -527,6 +534,29 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
     );
     expect(overflows).toHaveLength(2);
     expect(overflows.map((e) => e.sources?.[0]).sort()).toEqual(["Suricata", "Zeek"]);
+  });
+
+  it("a malformed fingerprint or serial is rejected, never cleaned into a valid one", () => {
+    const valid = "ab:cd:ef:01:23:45:67:89:ab:cd:ef:01:23:45:67:89:ab:cd:ef:01";
+    const bad = readSuricataTls(
+      { ...SURICATA_TLS, tls: { sni: "a.example", fingerprint: "aa:zz:" + valid.slice(3) } },
+      "",
+    );
+    expect(bad.cert).toBeUndefined();
+    const shortHex = readSuricataTls(
+      { ...SURICATA_TLS, tls: { sni: "a.example", fingerprint: "ab:cd" } },
+      "",
+    );
+    expect(shortHex.cert).toBeUndefined();
+    expect(certIdentity("CN=X", "zz:01")).toBeUndefined();
+    expect(
+      readSuricataTls({ ...SURICATA_TLS, tls: { sni: "a.example", issuerdn: "CN=X", serial: "zz:01" } }, "")
+        .cert,
+    ).toBeUndefined();
+    expect(readZeekX509({ ...ZEEK_X509, "certificate.serial": "not hex" }, "").cert).toBeUndefined();
+    expect(
+      readZeekX509({ ...ZEEK_X509, "certificate.serial": "not hex" }, "").certificate?.serial,
+    ).toBeUndefined();
   });
 
   it("selects the most-seen rows first under a budget", () => {
