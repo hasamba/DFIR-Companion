@@ -1720,9 +1720,12 @@ describe("parseVelociraptorJson — MFT alternate data streams", () => {
       row("C:\\Users\\bob\\notes.txt:payload2.dll"),
       row(`${deep}:a.dll`),
       row(`${deep}:b.dll`),
+      // …and two HOST files that differ by a digit, carrying one stream name, are two rows too
+      row("C:\\x\\note1.txt:payload.dll"),
+      row("C:\\x\\note2.txt:payload.dll"),
     ]);
-    expect(r.events).toHaveLength(4);
-    expect(new Set(r.events.map((e) => e.aggKey)).size).toBe(4);
+    expect(r.events).toHaveLength(6);
+    expect(new Set(r.events.map((e) => e.aggKey)).size).toBe(6);
   });
 });
 

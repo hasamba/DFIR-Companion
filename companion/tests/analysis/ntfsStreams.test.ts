@@ -58,6 +58,15 @@ describe("parseZoneMark — the [ZoneTransfer] text", () => {
     expect(parseZoneMark("ZoneId=3")).toBeNull();
     expect(parseZoneMark("[ZoneTransfer]\r\nZoneId=three")).toBeNull();
     expect(parseZoneMark("[ZoneTransfer]\r\nZoneId=3\r\nHostUrl=javascript:alert(1)")?.url).toBe("");
+    // a line that is not one of the mark's keys — a script after a valid header — is not a mark
+    expect(parseZoneMark("[ZoneTransfer]\nZoneId=3\nPowerShell -EncodedCommand AAAA")).toBeNull();
+    expect(parseZoneMark("[ZoneTransfer]  ZoneId=3  PowerShell -EncodedCommand AAAA")).toBeNull();
+    expect(parseZoneMark("[ZoneTransfer]\nZoneId=3\n[Other]\nx=1")).toBeNull();
+    expect(parseZoneMark("[ZoneTransfer]\nZoneId=3\nHostIpAddress=203.0.113.9\nAppZoneId=4")).toEqual({
+      zone: "3",
+      url: "",
+      referrer: "",
+    });
   });
 });
 
@@ -134,6 +143,14 @@ describe("readStream — evidence before the name", () => {
     })!;
     expect(longContents.kind).toBe("named");
     expect(parseZoneMark(`[ZoneTransfer]\nZoneId=3\n${"A".repeat(5000)}`)).toBeNull();
+    // a small script behind a valid mark header, under the size ceiling: not a mark
+    const c = "[ZoneTransfer]\nZoneId=3\nPowerShell -EncodedCommand AAAA";
+    const hidden = readStream({
+      path: "C:\\x\\report.pdf:Zone.Identifier",
+      size: String(c.length),
+      contents: c,
+    })!;
+    expect(hidden.kind).toBe("named");
   });
   it("each application stream literal is Info by name, on an MFTECmd row and a Velociraptor path alike", () => {
     for (const name of APPLICATION_STREAMS) {

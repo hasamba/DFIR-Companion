@@ -113,9 +113,20 @@ const CODE_MIME =
 // The stream's leading bytes: a PE header, an ELF header (DEL E L F), a shebang, a script tag.
 const CODE_CONTENTS = /^(?:MZ|\x7fELF|#!|<script|PowerShell)/i;
 const HEX = /^[0-9a-f]+$/;
+// The keys Windows writes into a mark. A mark is ONLY these lines under its one section: a line
+// that is neither is not a mark with a remark, it is something else wearing the header.
+const MARK_KEYS = [
+  "ZoneId",
+  "HostUrl",
+  "ReferrerUrl",
+  "HostIpAddress",
+  "LastWriterPackageFamilyName",
+  "AppZoneId",
+  "AppDefinedZoneId",
+];
 // A mark flattened onto one line (some exports drop the CRLFs) still splits at its field names.
-const MARK_FIELDS =
-  /\s+(?=(?:ZoneId|HostUrl|ReferrerUrl|HostIpAddress|LastWriterPackageFamilyName|AppZoneId)\s*=)/i;
+const MARK_FIELDS = new RegExp(`\\s+(?=(?:${MARK_KEYS.join("|")})\\s*=)`, "i");
+const MARK_LINE = new RegExp(`^(?:${MARK_KEYS.join("|")})\\s*=`, "i");
 
 const clip = (s: string, max: number): string => (s.length <= max ? s : `${s.slice(0, max - 1)}…`);
 const flat = (s: string): string => zoneText(s).replace(/\s+/g, " ");
@@ -161,14 +172,16 @@ export function parseZoneMark(contents: string | undefined): ZoneMark | null {
   // that starts like one, and the size decides it (readStream). Nothing is sliced into validity.
   if (contents !== undefined && contents.length > CONTENTS_MAX) return null;
   const raw = (contents ?? "").split(/\r\n|\r|\n/);
-  const lines = (raw.length > 1 ? raw : raw[0].split(MARK_FIELDS)).map((l) => zoneText(l));
+  const lines = (raw.length > 1 ? raw : raw[0].split(MARK_FIELDS)).map((l) => zoneText(l)).filter(Boolean);
   if (!lines.some((l) => /^\[zonetransfer\]$/i.test(l))) return null;
+  // Every line is the section header or a known key: a script after the header is not a mark.
+  if (lines.some((l) => !/^\[zonetransfer\]$/i.test(l) && !MARK_LINE.test(l))) return null;
   const field = (name: string): string => {
     const line = lines.find((l) => new RegExp(`^${name}\\s*=`, "i").test(l));
     return line ? line.slice(line.indexOf("=") + 1).trim() : "";
   };
   const zone = field("ZoneId");
-  if (!/^\d+$/.test(zone)) return null;
+  if (!/^\d{1,3}$/.test(zone)) return null;
   const url = (u: string): string => (/^https?:\/\//i.test(u) ? u.slice(0, URL_MAX) : "");
   return { zone, url: url(field("HostUrl")), referrer: url(field("ReferrerUrl")) };
 }
