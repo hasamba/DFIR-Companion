@@ -270,6 +270,7 @@
     "gapHypothesis.ts": "analysis/ai",
     "geoMap.ts": "analysis/intel",
     "googleWorkspaceImport.ts": "analysis/ingest",
+    "gwsOAuth.ts": "analysis/detect",
     "graphContext.ts": "analysis/detect",
     "hayabusaImport.ts": "analysis/ingest",
     "highSeverityFindings.ts": "analysis/findings",

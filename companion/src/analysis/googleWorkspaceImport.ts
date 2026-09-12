@@ -1,5 +1,8 @@
 import type { Severity } from "./stateTypes.js";
 import { boundedAggKey } from "./aggKey.js";
+import { createCanonicalEvent, stampSourceArtifactHash } from "./canonicalEvent.js";
+import { renderAwsDescription } from "./awsDescription.js";
+import { decodeGwsToken, readGwsParams, type GwsTokenReading } from "./gwsOAuth.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -30,6 +33,11 @@ import {
 // The tradecraft encoded is Workspace account takeover and mail theft: 2SV turned off, admin roles
 // granted, recovery addresses re-pointed, OAuth grants authorized, and — the one most often missed —
 // CREATE_EMAIL_MONITOR, which silently copies a user's mail to an attacker's mailbox.
+//
+// The `token` application's rows (#931 item 10) are decoded by gwsOAuth.ts: the client id is the
+// identity, the scopes grade the grant, the API method and bytes are named on an activity, and
+// each row says what its record does NOT establish. Those rows carry a canonical envelope; every
+// Workspace key carries the tenant (`id.customerId`) so two customers' identical rows stay two.
 
 type Row = Record<string, unknown>;
 
@@ -217,18 +225,129 @@ function targetLabel(event: Row): string {
   return "";
 }
 
-function mapEvent(rec: Row, event: Row, sink: Map<string, SiemIoc>): MappedEvent {
+const TOKEN_APP = "token";
+// The head slot is 120 (awsDescription.ts): `Google Workspace token: authorize by <who> from <ip>`
+// with the longest event name (9) and a full IPv6 (39) leaves 36 for the actor, so the source
+// address is never the part a long actor name pushes out.
+const WHO_MAX = 36;
+
+// The canonical envelope of a token row — agency per event: on an `activity` the APPLICATION is
+// the actor (it called the API) and the user the subject; on the other four the USER is the actor
+// and the application the object. No placeholder resource: `cloud.resource` is the API method or
+// nothing.
+function tokenEnvelope(
+  rec: Row,
+  t: GwsTokenReading,
+  name: string,
+  ip: string,
+  locator: string,
+): MappedEvent["canonical"] {
+  const email = text(getPath(rec, "actor.email"));
+  const profileId = text(getPath(rec, "actor.profileId"));
+  const tenant = text(getPath(rec, "id.customerId"));
+  const observed = text(getPath(rec, "id.time"));
+  const recordId = text(getPath(rec, "id.uniqueQualifier"));
+  const user =
+    email || profileId
+      ? {
+          kind: "account" as const,
+          ...(email ? { name: email } : {}),
+          ...(profileId ? { id: profileId } : {}),
+        }
+      : undefined;
+  const app =
+    t.client.id || t.client.name
+      ? {
+          kind: "cloud_principal" as const,
+          ...(t.client.id ? { id: t.client.id } : {}),
+          ...(t.client.name ? { name: t.client.name } : {}),
+        }
+      : undefined;
+  const method = [t.api.name, t.api.method].filter(Boolean).join(".");
+  const activity = t.kind === "activity";
+  return createCanonicalEvent({
+    event: { category: "cloud", type: "oauth", action: name, outcome: "success" },
+    ...(activity
+      ? { ...(app ? { actor: app } : {}), ...(user ? { subject: user } : {}) }
+      : { ...(user ? { actor: user } : {}), ...(app ? { object: app } : {}) }),
+    ...(ip ? { network: { source: { address: ip } } } : {}),
+    cloud: {
+      provider: "google-workspace",
+      ...(tenant ? { tenant } : {}),
+      ...(t.client.id ? { principalId: t.client.id } : {}),
+      principalType: activity ? "application" : "user",
+      ...(activity && method ? { resource: method } : {}),
+    },
+    time: { observed, normalized: normalizeTime(observed) },
+    evidence: { rawRecords: [{ source: "google-workspace", locator, ...(recordId ? { recordId } : {}) }] },
+    producer: {
+      importer: "google-workspace",
+      parserVersion: "1",
+      mappingVersion: "gws-token-v1",
+      ruleVersions: ["gws-oauth-v1"],
+    },
+    rawFieldMap: {
+      "event.action": ["events[].name"],
+      "time.observed": ["id.time"],
+      ...(activity
+        ? {
+            "actor.id": ["client_id"],
+            "actor.name": ["app_name"],
+            "subject.name": ["actor.email"],
+            "subject.id": ["actor.profileId"],
+            "cloud.resource": ["api_name", "method_name"],
+          }
+        : {
+            "actor.name": ["actor.email"],
+            "actor.id": ["actor.profileId"],
+            "object.id": ["client_id"],
+            "object.name": ["app_name"],
+          }),
+      "cloud.tenant": ["id.customerId"],
+      "cloud.principalId": ["client_id"],
+      ...(ip ? { "network.source.address": ["ipAddress"] } : {}),
+    },
+  });
+}
+
+function mapEvent(rec: Row, event: Row, sink: Map<string, SiemIoc>, locator: string): MappedEvent {
   const app = text(getPath(rec, "id.applicationName"));
   const name = text(getCI(event, "name"));
   const actor = text(getPath(rec, "actor.email") || getPath(rec, "actor.profileId"));
   const ip = cleanIp(text(getCI(rec, "ipAddress")));
-  const target = targetLabel(event);
-
-  const def = defFor(name);
-  const severity = def.severity;
-  const mitre = [...(def.mitre ?? [])];
+  const tenant = text(getPath(rec, "id.customerId"));
   if (ip) addIoc(sink, "ip", ip);
+  // The tenant and the target IDENTITY, bounded with a digest (#931 prerequisite). A document
+  // shared with three people is three rows; two documents with one title are two; two customers'
+  // identical rows are two.
+  const baseKey = `gws|${app}|${name}|${actor}|${ip}|${tenant}|${targetIdentity(event)}`;
+  const timestamp = normalizeTime(text(getPath(rec, "id.time")));
 
+  const token = app.toLowerCase() === TOKEN_APP ? decodeGwsToken(name, readGwsParams(event)) : null;
+  if (token) {
+    const who = oneLine(actor).slice(0, WHO_MAX);
+    const head = `Google Workspace ${app}: ${name}${who ? ` by ${who}` : ""}${ip ? ` from ${ip}` : ""}`;
+    return {
+      timestamp,
+      description: renderAwsDescription({
+        head,
+        posture: token.posture,
+        outcome: "",
+        object: token.object,
+        optional: token.optional,
+        tail: "",
+        qualifiers: token.qualifiers,
+      }),
+      severity: token.severity,
+      mitre: [...token.mitre],
+      aggKey: boundedAggKey(`${baseKey}${token.keySegment}`.toLowerCase()),
+      sources: ["Google Workspace"],
+      canonical: tokenEnvelope(rec, token, name, ip, locator),
+    };
+  }
+
+  const target = targetLabel(event);
+  const def = defFor(name);
   let description = `Google Workspace ${app}: ${name}`;
   if (actor) description += ` by ${actor}`;
   if (target) description += ` → ${oneLine(target).slice(0, 120)}`;
@@ -236,13 +355,11 @@ function mapEvent(rec: Row, event: Row, sink: Map<string, SiemIoc>): MappedEvent
   description = description.slice(0, 600);
 
   return {
-    timestamp: normalizeTime(text(getPath(rec, "id.time"))),
+    timestamp,
     description,
-    severity,
-    mitre,
-    // The target IDENTITY last, bounded with a digest (#931 prerequisite). A document shared with
-    // three people is three rows; two documents with one title are two.
-    aggKey: boundedAggKey(`gws|${app}|${name}|${actor}|${ip}|${targetIdentity(event)}`.toLowerCase()),
+    severity: def.severity,
+    mitre: [...(def.mitre ?? [])],
+    aggKey: boundedAggKey(baseKey.toLowerCase()),
     sources: ["Google Workspace"],
   };
 }
@@ -272,24 +389,26 @@ export function parseGoogleWorkspaceReport(
 
   const iocSink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
-  for (const raw of records) {
-    if (!isObject(raw)) continue;
+  records.forEach((raw, recordIndex) => {
+    if (!isObject(raw)) return;
     const rec = raw;
-    if (!isWorkspaceActivity(rec)) continue;
+    if (!isWorkspaceActivity(rec)) return;
     const events = getCI(rec, "events");
-    // One record, N events — each is its own thing that happened.
+    // One record, N events — each is its own thing that happened, with its own locator.
     const list = Array.isArray(events) ? events : [];
-    for (const e of list) {
-      if (!isObject(e)) continue;
-      mapped.push(mapEvent(rec, e, iocSink));
-    }
-  }
+    list.forEach((e, eventIndex) => {
+      if (!isObject(e)) return;
+      mapped.push(mapEvent(rec, e, iocSink, `record:${recordIndex}/event:${eventIndex}`));
+    });
+  });
 
-  const { events, groups } = aggregateEvents(mapped, {
+  const aggregated = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
+  const events = stampSourceArtifactHash(aggregated.events, input);
+  const groups = aggregated.groups;
 
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
   return {

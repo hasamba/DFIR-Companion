@@ -497,6 +497,57 @@ row therefore says the gap depends on the service behaviour at the time of the e
 The chain across records — a suspicious sign-in, then access, then a rule, then sending or
 deletion — is a join by session and time, not a per-record fact; it is #975.
 
+### Google Workspace OAuth: which app, which scopes, what it called
+
+A Workspace account takeover through OAuth leaves records of the `token` application in the
+Reports API export. Each used to import as `Google Workspace token: authorize by alice@… →
+Mail Backup Pro` — High whatever the app was granted, the display name and nothing else. Two
+apps can share a display name; the application's identity is its `client_id`, and the row now
+names both. Each of the application's five events reads for what its record establishes:
+
+- **`authorize`** — `authorises Mail Backup Pro (client 1234…apps.googleusercontent.com, WEB)
+  for 2 scopes: gmail.readonly, openid — authorization recorded; this record does not evidence
+  API use`. The grade follows the scopes granted, by a literal table of scope URIs; the highest
+  wins. **High**: full mail (`https://mail.google.com/`), `gmail.readonly` and every Gmail
+  modify/send/settings scope, `drive` and `drive.readonly`, Docs/Sheets/Slides (read-only
+  included), `calendar`, `calendar.events`, `calendar.acls`, `contacts`,
+  `contacts.other.readonly`, the Admin SDK directory, reports and group-settings scopes,
+  eDiscovery, `cloud-platform`, Apps Script and Chat messages. **Medium**: metadata-only and
+  activity scopes (`gmail.metadata`, `gmail.labels`, `drive.metadata*`, `drive.activity*`),
+  read-only Calendar, Contacts, Keep, Tasks, Chat spaces, `directory.readonly`, the People
+  `user.*.read` scopes — and every scope not in the table (conservative). **Low**: per-file and
+  app-data Drive (`drive.file`, `drive.appdata`, `drive.install`) and the identity-only scopes
+  (`openid`, `email`, `profile`, `userinfo.*`). Four classes are shown and the rest counted. A
+  record with no `scope` reads `scopes not in this record` and stays High — the table cannot say
+  less when the record does not.
+- **`activity`** — `API call drive.drive.files.get by Mail Backup Pro (client …) 4096 bytes
+  returned product DRIVE — bytes returned are not proof that file contents were downloaded`. The
+  application is the actor here (it called the API on the user's behalf). Info. A response size
+  is shown only when the record carries `num_response_bytes`; two calls to one method that
+  returned different sizes are two rows, so a large transfer never folds under a small one.
+- **`request`** — `requests access: … for 1 scope: gmail.readonly requester bob@… — access
+  requested, not granted by this record`, Low. A delegated request reads `delegated request —
+  Google does not display the requested scopes` and claims no scope count.
+- **`deny`** — `denied access: … rejection ADMIN_BLOCKED`, Low; the rejection type is the record's own
+  word (an admin block and a restricted-service policy are different controls).
+- **`revoke`** — `revokes Mail Backup Pro (client …) scopes: drive, gmail.readonly`, Low. The
+  row never says what happened after it. Two reading rules: a password reset does not revoke
+  every token, so a revocation is the only record of the grant ending; and activity after a
+  revocation may be delayed delivery of earlier calls or a legitimate re-authorization — read
+  the `authorize` rows around it before calling it a bypass.
+
+Every token row keys on the tenant, the client id, the sorted set of scopes (a reordered
+duplicate folds; a real difference is a second row), the API method with its response size and
+product, and the request, requester and rejection fields; every Workspace row of any application
+now keys on the tenant (`id.customerId`), so two customers' identical rows stay two. Token rows
+carry the canonical envelope: the user and the application typed as actor and object (or actor
+and subject on an `activity`), the tenant, the API method as the resource, and a locator to the
+record and event they came from.
+
+The lifecycle across records — an authorization, the activity under it, the revocation, "every
+user who authorized this client" — is a join by `client_id` across users and time, not a
+per-record fact; it is a spec issue of its own.
+
 ## Evidence Drop Folder (Auto-Import Inbox)
 
 Every case gets a `cases/<id>/drop/` folder on creation. Copy any file into it — at any depth, subfolders included — and a background poller picks it up once the file size/mtime is stable (safe for Dropbox/OneDrive sync), then imports it through the same detection + import chain as the **Import** button. Screenshots are ingested as capture evidence; everything else is imported as an artifact.
