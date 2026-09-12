@@ -197,7 +197,9 @@ export function readQueryResults(raw: string | undefined): ResultsReading {
   // identity; every value after it is an unordered set, sorted.
   const frame = (v: ReturnedValue): string => `${v.type ?? "-"}:${v.value.length}:${v.value}`;
   const lead = leadingCnames(all);
-  const identity = [...all.slice(0, lead).map(frame), ...all.slice(lead).map(frame).sort()].join("|");
+  // The two sections are framed with the run's length, so a CNAME that sorts to the front of the
+  // unordered section can never read as a longer chain.
+  const identity = `chain${lead}:${all.slice(0, lead).map(frame).join("|")}|set:${all.slice(lead).map(frame).sort().join("|")}`;
   const clipped = all.some(
     (v) => v.value.length > VALUE_SHOWN_MAX || breakHashRuns(showToken(v.value)) !== v.value,
   );

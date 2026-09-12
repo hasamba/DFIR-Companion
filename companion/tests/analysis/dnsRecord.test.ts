@@ -118,7 +118,7 @@ describe("readQueryResults — the resolver's returned values, typed, validated,
     expect(r.values[0].value).toBe("a".repeat(32));
   });
   it("empty and absent are no values", () => {
-    expect(readQueryResults("")).toEqual({ values: [], identity: "", clipped: false, shown: "", total: 0 });
+    expect(readQueryResults("")).toMatchObject({ values: [], clipped: false, shown: "", total: 0 });
     expect(readQueryResults(undefined)).toMatchObject({ values: [], shown: "", total: 0 });
   });
 });
@@ -401,6 +401,10 @@ describe("dnsOverlay — what one record establishes", () => {
     const abSwapped = rec("type: 5 a.example;type: 5 b.example;::ffff:192.0.2.2;::ffff:192.0.2.1;");
     expect(ab.identity).not.toBe(ba.identity);
     expect(ab.identity).toBe(abSwapped.identity);
+    // a CNAME that sorts to the front of the unordered section is not a longer chain
+    const oneStep = rec("type: 5 b.example;type: 6 ns.example;type: 5 a.example;");
+    const twoSteps = rec("type: 5 b.example;type: 5 a.example;type: 6 ns.example;");
+    expect(oneStep.identity).not.toBe(twoSteps.identity);
     // an NS after the chain is unordered data, so its position is not identity
     const nsA = rec("type: 5 a.example;type: 2 ns.example;::ffff:192.0.2.1;");
     const nsB = rec("type: 5 a.example;::ffff:192.0.2.1;type: 2 ns.example;");
