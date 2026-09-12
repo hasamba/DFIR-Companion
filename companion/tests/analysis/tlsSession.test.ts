@@ -733,6 +733,27 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
     expect(e.canonical?.tls?.clientCertificate).toMatchObject({ serial: "01", names: ["alice.example"] });
   });
 
+  it("a Suricata fingerprint field is SHA-1 only: a 64-hex value there never keys with a DER-derived sha256", () => {
+    const sha256OfX = createHash("sha256").update(Buffer.from("x")).digest("hex");
+    const claimed = readSuricataTls(
+      { ...SURICATA_TLS, tls: { sni: "a.example", fingerprint: sha256OfX } },
+      "",
+    );
+    const derived = readSuricataTls(
+      { ...SURICATA_TLS, tls: { sni: "a.example", certificate: Buffer.from("x").toString("base64") } },
+      "",
+    );
+    expect(claimed.cert).toBeUndefined();
+    expect(derived.cert?.alg).toBe("sha256");
+    expect(rows([claimed, derived])).toHaveLength(2);
+    expect(
+      readSuricataTls({ ...SURICATA_TLS, tls: { sni: "a.example", client: { fingerprint: sha256OfX } } }, "")
+        .clientCert?.ref,
+    ).toBeUndefined();
+    // Zeek may write either digest
+    expect(readZeekX509({ ...ZEEK_X509, fingerprint: sha256OfX }, "").cert?.alg).toBe("sha256");
+  });
+
   it("selects the most-seen rows first under a budget", () => {
     const many = [
       ...Array.from({ length: 3 }, () => base()),

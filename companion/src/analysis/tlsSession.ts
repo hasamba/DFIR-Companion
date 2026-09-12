@@ -145,14 +145,17 @@ function derFingerprint(b64: string | undefined): CertRef | undefined {
 }
 
 /** A source-given fingerprint: colons stripped, lowercase; the algorithm by its length. */
-function fingerprint(v: unknown): CertRef | undefined {
+function fingerprint(v: unknown, allowed: ReadonlySet<number> = FINGERPRINT_LENGTHS): CertRef | undefined {
   const raw = text(v)?.trim();
   if (!raw) return undefined;
   const hex = hexOf(raw);
-  // A fingerprint is exactly an MD5, SHA-1 or SHA-256 digest; anything else is not one.
-  if (!hex || !FINGERPRINT_LENGTHS.has(hex.length)) return undefined;
+  // A fingerprint is exactly the digest its SOURCE writes: Suricata's `fingerprint` field is SHA-1
+  // and only SHA-1 — a 64-hex value there is not a SHA-256 and must never key with one derived
+  // from DER bytes; Zeek's fields may carry either.
+  if (!hex || !allowed.has(hex.length)) return undefined;
   return { kind: "fingerprint", value: hex, alg: hex.length === 64 ? "sha256" : "sha1" };
 }
+const SURICATA_FINGERPRINT = new Set([40]);
 
 /**
  * The identity of a certificate that carries no fingerprint: the canonical issuer and serial only —
@@ -316,7 +319,7 @@ export function readSuricataTls(row: Row, fallbackTs: string): TlsObservation {
     ja3: hashOf(getCI(t, "ja3")),
     ja3s: hashOf(getCI(t, "ja3s")),
     ...(suricataClientCert(t) ? { clientCert: suricataClientCert(t) } : {}),
-    cert: fingerprint(getCI(t, "fingerprint")) ?? derFp ?? identityRef(issuer, serial),
+    cert: fingerprint(getCI(t, "fingerprint"), SURICATA_FINGERPRINT) ?? derFp ?? identityRef(issuer, serial),
     ...(Object.keys(facts).length ? { certificate: facts } : {}),
   };
 }
@@ -371,7 +374,7 @@ function suricataClientCert(t: Row): TlsObservation["clientCert"] {
   const c = getCI(t, "client");
   if (!isObject(c)) return undefined;
   const fp =
-    fingerprint(getCI(c, "fingerprint")) ??
+    fingerprint(getCI(c, "fingerprint"), SURICATA_FINGERPRINT) ??
     derFingerprint(text(getCI(c, "certificate")) ?? list(getCI(c, "chain"))?.[0]) ??
     identityRef(text(getCI(c, "issuerdn")) ?? text(getCI(c, "issuer")), text(getCI(c, "serial")));
   // Every client fact the record carries (serial, SANs, validity) is evidence, with or without an
