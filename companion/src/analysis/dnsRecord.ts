@@ -317,7 +317,15 @@ export function dnsOverlay(
   statusField: DnsStatusField,
   description: string,
 ): DnsOverlay {
-  const text = (v: unknown): string => (typeof v === "string" ? v : v == null ? "" : String(v));
+  // A SIEM export may carry a multi-valued field as an ARRAY: its elements are the record's entries
+  // (joined with the grammar's own `;`), never String()-joined into one comma value. An object is
+  // not readable text.
+  const text = (v: unknown): string => {
+    if (typeof v === "string") return v;
+    if (v == null) return "";
+    if (Array.isArray(v)) return v.map(text).filter(Boolean).join(";");
+    return typeof v === "object" ? "" : String(v);
+  };
   return overlayOf({
     field: (k) => text(read(k)),
     has: (k) => read(k) !== undefined,

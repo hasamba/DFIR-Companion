@@ -181,6 +181,29 @@ describe("Sysmon 22 — what one record establishes", () => {
   });
 });
 
+describe("Sysmon 22 — field shapes", () => {
+  it("an array-valued QueryResults is the same record as its semicolon form", () => {
+    const asArray = {
+      ...(sysmon22({ QueryName: "a.example", QueryStatus: "0" }) as { event_data: Record<string, unknown> }),
+    };
+    asArray.event_data = { ...asArray.event_data, QueryResults: ["::ffff:192.0.2.1", "::ffff:192.0.2.2"] };
+    const asString = sysmon22({
+      QueryName: "a.example",
+      QueryStatus: "0",
+      QueryResults: "::ffff:192.0.2.1;::ffff:192.0.2.2;",
+    });
+    const r = parseSiemExport(elastic(asArray, asString));
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].count).toBe(2);
+    expect(r.events[0].canonical?.dns?.returned).toHaveLength(2);
+    // an object where text belongs is not readable
+    const asObject = { ...asArray, event_data: { ...asArray.event_data, QueryResults: { a: 1 } } };
+    expect(parseSiemExport(elastic(asObject)).events[0].description).toContain(
+      "[resolved; the returned values are not in this record]",
+    );
+  });
+});
+
 describe("Sysmon 22 — bounded variants", () => {
   it("returned-value churn on one query folds past the budget and never crowds out other evidence", () => {
     const churn = Array.from({ length: 300 }, (_, i) =>
