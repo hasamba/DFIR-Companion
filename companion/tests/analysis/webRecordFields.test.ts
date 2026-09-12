@@ -166,11 +166,11 @@ describe("trailerTokens", () => {
     ]);
     expect(trailerTokens('"-"')).toEqual(["-"]);
     // tokens are whole: the clip is display-only, the identity is the complete text
-    expect(trailerTokens(`"${"A".repeat(500)}TAIL"`)).toEqual([`${"A".repeat(500)}TAIL`]);
+    expect(trailerTokens(`"${"Z".repeat(500)}TAIL"`)).toEqual([`${"Z".repeat(500)}TAIL`]);
   });
   it("two trailers that share a long prefix are two identities, and token boundaries count", () => {
-    const first = readTrailer(trailerTokens(`"${"A".repeat(160)}FIRST"`), null);
-    const second = readTrailer(trailerTokens(`"${"A".repeat(160)}SECOND"`), null);
+    const first = readTrailer(trailerTokens(`"${"Z".repeat(160)}FIRST"`), null);
+    const second = readTrailer(trailerTokens(`"${"Z".repeat(160)}SECOND"`), null);
     expect(first.variantKey).not.toBe(second.variantKey);
     expect(first.trailerWords.length).toBeLessThanOrEqual("trailer: ".length + 80);
     // past the token cap the remainder is whole too
@@ -205,6 +205,15 @@ describe("readTrailer — only a declared profile labels a slot", () => {
     expect(nonce.trailerWords).toBe("trailer: TCP_MISS:NONCE_7");
     expect(nonce.variantKey).not.toBe(readTrailer(["TCP_MISS:NONCE_8"], profile).variantKey);
   });
+  it("shows a hash-shaped run as its ends only, and keeps the whole run in the identity", () => {
+    const h = "0123456789abcdef".repeat(4);
+    const r = readTrailer([`id=${h}`], null);
+    expect(r.trailerWords).toBe("trailer: id=01234567…cdef");
+    expect(r.variantKey).not.toBe(readTrailer([`id=${h.slice(0, 63)}0`], null).variantKey);
+    expect(readTrailer(["0123456789abcdef0123456789abcde"], null).trailerWords).toContain(
+      "0123456789abcdef0123456789abcde",
+    );
+  });
   it("with no profile the Squid-shaped token is just a token: no words, no key, no claim", () => {
     const r = readTrailer(["TCP_MISS:HIER_DIRECT"], null);
     expect(r.squid).toBeNull();
@@ -228,7 +237,7 @@ describe("readTrailer — only a declared profile labels a slot", () => {
     expect(control.trailerWords).toBe("trailer: a b c");
   });
   it("identity is the bounded RAW token, so two tokens that differ past the display width stay two", () => {
-    const p = "A".repeat(40);
+    const p = "Z".repeat(40);
     const a = readTrailer([`${p}FIRST`], null);
     const b = readTrailer([`${p}SECOND`], null);
     expect(a.trailerWords).toBe(b.trailerWords); // the display is the same 40 characters

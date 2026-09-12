@@ -647,7 +647,7 @@ describe("parseCombinedLog — what one line establishes", () => {
 
   it("two lines whose trailers differ only past the display width stay two rows — after import too", () => {
     const line = (t: string) =>
-      `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /status HTTP/1.1" 200 83 "-" "curl/8" "${"A".repeat(160)}${t}"`;
+      `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /status HTTP/1.1" 200 83 "-" "curl/8" "${"Z".repeat(160)}${t}"`;
     const r = parseCombinedLog([line("FIRST"), line("SECOND")].join("\n"));
     expect(r.total).toBe(2);
     expect(r.events).toHaveLength(2);
@@ -709,6 +709,15 @@ describe("parseCombinedLog — what one line establishes", () => {
     expect(days).toHaveLength(2);
     expect(days.every((e) => !/[0-9a-f]{32}/i.test(e.description))).toBe(true);
     expect(afterImport(days)).toHaveLength(2);
+    // a hash-shaped trailer cannot become a correlation key: correlateEvents would read a bare
+    // 32-hex word as an MD5 and union two unrelated records across days
+    const hashy = (day: number, path: string, status: number) =>
+      `10.30.20.11 - - [${day}/May/2024:19:00:00 +0000] "GET ${path} HTTP/1.1" ${status} 83 "-" "curl/8" "${"a".repeat(32)}"`;
+    const two = parseCombinedLog([hashy(14, "/alpha", 200), hashy(15, "/bravo", 403)].join("\n"));
+    expect(two.events).toHaveLength(2);
+    expect(two.events.every((e) => !/[0-9a-f]{32}/i.test(e.description))).toBe(true);
+    expect(two.events[0].description).toContain("[trailer: aaaaaaaa…aaaa]");
+    expect(afterImport(two.events)).toHaveLength(2);
     // a rebuilt long line carries it, inside the cap
     const long = `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /${"a".repeat(650)} HTTP/1.1" 302 0 "-" "curl/8"`;
     const l = parseCombinedLog(long).events[0];

@@ -200,6 +200,11 @@ const SQUID_TOKEN = /^([A-Z][A-Z0-9_]*)(?::([A-Z][A-Z0-9_]*))?$/;
  * `) [proxy: served from its cache]` would forge a tag the reader trusts. Brackets become
  * parentheses and every control character goes before the text is shown.
  */
+/** A run of 32+ hex characters shown as its ends only — see readTrailer. */
+const HASH_RUN = /[a-f0-9]{32,}/gi;
+export const breakHashRuns = (t: string): string =>
+  t.replace(HASH_RUN, (m) => `${m.slice(0, 8)}…${m.slice(-4)}`);
+
 export const showToken = (t: string): string =>
   t
     .replace(/\[/g, "(")
@@ -325,7 +330,11 @@ export function readTrailer(tokens: readonly string[], profile: TrailerProfile |
   // forwarded-for chains that differ only past the display width stay two rows), and their DISPLAY
   // is that text neutralised and clipped.
   const raw = tokens.filter((_, i) => !(recognised && profile && i === profile.squidSlot));
-  const unlabelled = raw.map((t) => showToken(t).slice(0, TRAILER_TOKEN_MAX)).filter(Boolean);
+  // A hash-shaped run is NOT shown whole: correlateEvents reads any bare 32/40/64-hex word in a
+  // description as a file hash and unions the rows that carry it with no time bound, so a trailer
+  // of `aaaa…` (32 hex) would fold `GET /alpha -> 200` on one day into `GET /bravo -> 403` on the
+  // next. The display keeps the ends; the identity is the digest of the whole token regardless.
+  const unlabelled = raw.map((t) => breakHashRuns(showToken(t)).slice(0, TRAILER_TOKEN_MAX)).filter(Boolean);
   const squidWords = squid?.words ? `${squid.words} (squid_combined, declared format)` : "";
   const trailerWords = unlabelled.length
     ? `trailer: ${unlabelled.join(" ").slice(0, TRAILER_WORDS_MAX)}`
