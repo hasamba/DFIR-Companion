@@ -331,7 +331,7 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
       },
     ])[0];
     expect(resumedNoCert.description).toContain("[session resumed]");
-    expect(resumedNoCert.description).toContain("[no certificate observed in this record]");
+    expect(resumedNoCert.description).toContain("[no server certificate observed in this record]");
     const resumedWithCert = rows([{ ...base(), resumed: true }])[0];
     expect(resumedWithCert.description).toContain("[session resumed]");
     expect(resumedWithCert.description).toContain("[cert: subject");
@@ -445,7 +445,7 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
     const o = readSuricataTls({ ...SURICATA_TLS, tls: { sni: "a.example", session_resumed: true } }, "");
     expect(o.certificate).toBeUndefined();
     const e = rows([o])[0];
-    expect(e.description).toContain("[no certificate observed in this record]");
+    expect(e.description).toContain("[no server certificate observed in this record]");
     expect(e.canonical?.tls?.certificate).toBeUndefined();
   });
 
@@ -585,6 +585,30 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
       "",
     );
     expect(md5.cert).toBeUndefined();
+  });
+
+  it("a client certificate is read, keyed and shown apart from the server's", () => {
+    const base2 = { ts: 1700000000.5, "id.orig_h": "10.0.0.1", "id.resp_h": "203.0.113.1", "id.resp_p": 443 };
+    const a = readZeekSsl(
+      { ...base2, client_cert_chain_fuids: ["Fclient-a"], client_subject: "CN=user-a] [chain check: ok" },
+      "",
+    );
+    const b = readZeekSsl({ ...base2, client_cert_chain_fuids: ["Fclient-b"] }, "");
+    expect(a.clientCert).toEqual({ subject: "CN=user-a] [chain check: ok", chainFuids: ["Fclient-a"] });
+    const r = rows([a, b]);
+    expect(r).toHaveLength(2);
+    const ra = r.find((e) => e.description.includes("user-a"))!;
+    expect(ra.description).toContain("[no server certificate observed in this record]");
+    expect(ra.description).toContain(
+      "[client cert: subject CN=user-a) (chain check: ok; identity unavailable]",
+    );
+    expect(ra.description).not.toMatch(/\] \[chain check: ok\]/);
+    expect(ra.canonical?.tls?.clientCertificate).toEqual({
+      subject: "CN=user-a] [chain check: ok",
+      chainFuids: ["Fclient-a"],
+    });
+    const fp = readZeekSsl({ ...base2, client_cert_chain_fps: ["ab".repeat(20)] }, "");
+    expect(fp.clientCert?.fingerprint).toEqual({ kind: "fingerprint", value: "ab".repeat(20), alg: "sha1" });
   });
 
   it("selects the most-seen rows first under a budget", () => {

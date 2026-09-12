@@ -156,6 +156,15 @@ export const canonicalEventEnvelopeSchema = z.object({
           ca: z.boolean().optional(),
         })
         .optional(),
+      clientCertificate: z
+        .object({
+          subject: z.string().optional(),
+          issuer: z.string().optional(),
+          fingerprint: z.string().optional(),
+          fingerprintAlg: z.enum(["sha1", "sha256"]).optional(),
+          chainFuids: z.array(z.string()).optional(),
+        })
+        .optional(),
       observer: z.object({ name: z.string(), sourceField: z.string() }).optional(),
       locator: z
         .object({

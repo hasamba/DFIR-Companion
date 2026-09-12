@@ -65,6 +65,8 @@ export interface TlsObservation {
   ja3s?: string;
   cert?: CertRef;
   certificate?: CertificateFacts;
+  /** The CLIENT's certificate, when the record carries one (Zeek `client_*`): keyed and shown apart. */
+  clientCert?: { subject?: string; issuer?: string; fingerprint?: CertRef; chainFuids?: string[] };
 }
 
 const NAMES_KEPT_MAX = 64;
@@ -173,6 +175,7 @@ function observerOf(row: Row): TlsObservation["observer"] {
 
 export function readZeekSsl(row: Row, fallbackTs: string): TlsObservation {
   const fps = list(getCI(row, "cert_chain_fps"));
+  const clientCert = clientCertOf(row);
   const port = Number(getCI(row, "id.resp_p"));
   return {
     source: "zeek-ssl",
@@ -198,7 +201,24 @@ export function readZeekSsl(row: Row, fallbackTs: string): TlsObservation {
     // Zeek 6 writes the chain's fingerprints; a standard ssl row carries no serial, so without them
     // the certificate has NO identity here — subject and issuer are session attributes.
     cert: fps?.length ? fingerprint(fps[0]) : undefined,
+    ...(clientCert ? { clientCert } : {}),
   };
+}
+
+/** The client's certificate fields, when the record carries any. */
+function clientCertOf(row: Row): TlsObservation["clientCert"] {
+  const fps = list(getCI(row, "client_cert_chain_fps"));
+  const out = {
+    ...(text(getCI(row, "client_subject")) !== undefined
+      ? { subject: text(getCI(row, "client_subject")) }
+      : {}),
+    ...(text(getCI(row, "client_issuer")) !== undefined ? { issuer: text(getCI(row, "client_issuer")) } : {}),
+    ...(fps?.length && fingerprint(fps[0]) ? { fingerprint: fingerprint(fps[0]) } : {}),
+    ...(list(getCI(row, "client_cert_chain_fuids"))?.length
+      ? { chainFuids: list(getCI(row, "client_cert_chain_fuids")) }
+      : {}),
+  };
+  return Object.keys(out).length ? out : undefined;
 }
 
 // ───────────────────────────── Zeek x509.log ─────────────────────────────
@@ -364,6 +384,7 @@ export function tlsKey(o: TlsObservation): string {
     seg(o.issuer),
     short(o.sniMatchesCert),
     cert,
+    o.clientCert ? `c:${keyDigest(JSON.stringify(o.clientCert))}` : "-",
   ].join("|");
 }
 
@@ -443,7 +464,18 @@ function sessionTags(o: TlsObservation): string[] {
     o.issuer !== undefined ||
     o.cert !== undefined ||
     (o.certChainFuids?.length ?? 0) > 0;
-  tags.push(hasCert ? `cert: ${certWords(o)}` : "no certificate observed in this record");
+  tags.push(hasCert ? `cert: ${certWords(o)}` : "no server certificate observed in this record");
+  if (o.clientCert) {
+    const cc = o.clientCert;
+    const ref = cc.fingerprint
+      ? `${cc.fingerprint.alg === "sha256" ? "sha256" : "fp"} ${ends(cc.fingerprint.value)}`
+      : cc.chainFuids?.length
+        ? "identity unavailable"
+        : "";
+    tags.push(
+      `client cert: ${[cc.subject !== undefined ? `subject ${show(cc.subject)}` : "", cc.issuer !== undefined ? `issuer ${show(cc.issuer)}` : "", ref].filter(Boolean).join("; ")}`,
+    );
+  }
   if (o.validation !== undefined) tags.push(`chain check: ${show(o.validation)}`);
   if (o.sniMatchesCert !== undefined)
     tags.push(o.sniMatchesCert ? "SNI matches the certificate" : "SNI does not match the certificate");
@@ -517,6 +549,21 @@ function envelopeOf(o: TlsObservation, count: number): CanonicalEventEnvelope {
               ...(o.subject !== undefined ? { subject: o.subject } : {}),
               ...(o.issuer !== undefined ? { issuer: o.issuer } : {}),
               ...o.certificate,
+            },
+          }
+        : {}),
+      ...(o.clientCert
+        ? {
+            clientCertificate: {
+              ...(o.clientCert.subject !== undefined ? { subject: o.clientCert.subject } : {}),
+              ...(o.clientCert.issuer !== undefined ? { issuer: o.clientCert.issuer } : {}),
+              ...(o.clientCert.fingerprint
+                ? {
+                    fingerprint: o.clientCert.fingerprint.value,
+                    fingerprintAlg: o.clientCert.fingerprint.alg,
+                  }
+                : {}),
+              ...(o.clientCert.chainFuids ? { chainFuids: o.clientCert.chainFuids } : {}),
             },
           }
         : {}),
