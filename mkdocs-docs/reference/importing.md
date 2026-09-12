@@ -352,6 +352,11 @@ record establishes, and no more:
   event. A row whose shown text is not its whole record — more than eight returned values, a long
   value, a neutralised character — ends in an identity mark (`#…`) so two records that read alike
   stay two rows through import.
+- **Churn is bounded.** An authority can answer one query with a new value every time. The first
+  64 distinct returned-value sets for one query (on one host, from one process, with one status)
+  stay separate rows; every later distinct set folds into one row that says `[overflow: distinct
+  returned-value sets beyond 64 for this query folded; none shown]` — so a churning answer can
+  never crowd unrelated evidence out of the import's event budget.
 - **What this does not do.** It does not join a query to a later connection, bound by a TTL or a
   window; that is a separate, cross-record design over un-aggregated records.
 

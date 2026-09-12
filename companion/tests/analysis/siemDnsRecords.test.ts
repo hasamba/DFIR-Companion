@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseSiemExport } from "../../src/analysis/siemImport.js";
+import { DNS_VARIANTS_MAX } from "../../src/analysis/dnsRecord.js";
 import { canonicalConformanceIssues } from "../../src/analysis/canonicalEvent.js";
 import { correlateEvents } from "../../src/analysis/correlate.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
@@ -177,6 +178,32 @@ describe("Sysmon 22 — what one record establishes", () => {
     expect(e.description).toContain("+32 more");
     expect(e.description).toMatch(/ #[A-Za-z0-9_-]{22}$/);
     expect(e.canonical?.dns?.returned).toHaveLength(40);
+  });
+});
+
+describe("Sysmon 22 — bounded variants", () => {
+  it("returned-value churn on one query folds past the budget and never crowds out other evidence", () => {
+    const churn = Array.from({ length: 300 }, (_, i) =>
+      sysmon22(
+        { QueryName: "txt.attacker.example", QueryStatus: "0", QueryResults: `type: 16 nonce-${i};` },
+        { ts: `2026-03-01T10:${String(i % 60).padStart(2, "0")}:00Z` },
+      ),
+    );
+    const other = sysmon22({ QueryName: "unrelated.example", QueryStatus: "9003" });
+    const r = parseSiemExport(elastic(...churn, other), { maxEvents: 100 });
+    const dns = r.events.filter((e) => e.description.includes("[query: txt.attacker.example]"));
+    expect(dns.length).toBe(DNS_VARIANTS_MAX + 1);
+    const overflow = dns.find((e) => e.description.includes("[overflow:"))!;
+    expect(overflow.count).toBe(300 - DNS_VARIANTS_MAX);
+    expect(overflow.description).toContain(
+      "distinct returned-value sets beyond 64 for this query folded; none shown",
+    );
+    expect(overflow.description).not.toContain("[returned:");
+    expect(r.events.some((e) => e.description.includes("[query: unrelated.example]"))).toBe(true);
+    expect(r.iocs.find((i) => i.value === "txt.attacker.example")?.sourceAggKeys).toContain(overflow.aggKey);
+    // with aggregation off nothing is rewritten
+    const raw = parseSiemExport(elastic(...churn.slice(0, 70)), { aggregate: false });
+    expect(raw.events.every((e) => !e.description.includes("[overflow:"))).toBe(true);
   });
 });
 

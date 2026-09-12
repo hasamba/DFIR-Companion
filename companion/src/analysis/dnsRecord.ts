@@ -379,3 +379,50 @@ function overlayOf(input: DnsOverlayInput): DnsOverlay {
     };
   }
 }
+
+/** Distinct returned-value sets one query keeps as separate rows before the rest fold into one. */
+export const DNS_VARIANTS_MAX = 64;
+const DNS_RESULT_SEGMENT = /:r[0-9a-f]{32}$/;
+const DNS_OVERFLOW = ":r-overflow";
+const RETURNED_TAG =
+  / \[returned: [^\]]*\]| \[the record also carries returned values: [^\]]*\]| #[A-Za-z0-9_-]{22}$/g;
+
+/**
+ * Bound the returned-value VARIANTS one query may keep (#933 item 2): an authority that answers a
+ * TXT query with a new value every time would otherwise be one group per response, and the
+ * aggregator's global cap would then drop unrelated evidence. The first DNS_VARIANTS_MAX distinct
+ * sets per base identity (host, channel, event, process, query, type, status) stay verbatim; every
+ * later distinct set is rewritten onto ONE overflow key per base, with words that say sets were
+ * folded and show none of them as representative. Rewrites in place; IOC provenance recorded under
+ * a rewritten key follows the row.
+ */
+export function boundDnsVariants(
+  mapped: Array<{ aggKey: string; description: string }>,
+  sink: Map<string, { sourceAggKeys?: string[] }>,
+): void {
+  const seen = new Map<string, Set<string>>();
+  const rewritten = new Map<string, string>();
+  for (const row of mapped) {
+    const m = DNS_RESULT_SEGMENT.exec(row.aggKey);
+    if (!m) continue;
+    const base = row.aggKey.slice(0, m.index);
+    const digests = seen.get(base) ?? new Set<string>();
+    seen.set(base, digests);
+    if (digests.has(m[0]) || digests.size < DNS_VARIANTS_MAX) {
+      digests.add(m[0]);
+      continue;
+    }
+    const overflowKey = `${base}${DNS_OVERFLOW}`;
+    rewritten.set(row.aggKey, overflowKey);
+    row.aggKey = overflowKey;
+    row.description = `${row.description.replace(RETURNED_TAG, "")} [overflow: distinct returned-value sets beyond ${DNS_VARIANTS_MAX} for this query folded; none shown]`;
+  }
+  if (!rewritten.size) return;
+  for (const [key, ioc] of sink) {
+    if (!ioc.sourceAggKeys?.some((k) => rewritten.has(k))) continue;
+    sink.set(key, {
+      ...ioc,
+      sourceAggKeys: [...new Set(ioc.sourceAggKeys.map((k) => rewritten.get(k) ?? k))],
+    });
+  }
+}

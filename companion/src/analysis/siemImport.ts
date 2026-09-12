@@ -36,7 +36,7 @@ import { decodeDefenderEvent, defenderDescription } from "./defenderEvents.js";
 import { commandCandidates } from "./commandNormalize.js";
 import { secretSpillSignal } from "./secretSpillRules.js";
 import { streamOverlay } from "./ntfsStreams.js";
-import { dnsOverlay, DNS_CLIENT_EVENTS } from "./dnsRecord.js";
+import { boundDnsVariants, dnsOverlay, DNS_CLIENT_EVENTS } from "./dnsRecord.js";
 import { processOverlay } from "./processAccess.js";
 import { aggregateEvents, maxEventsDefault } from "./eventAggregate.js";
 import { evtxRecordIdentity } from "./evtxRecordId.js";
@@ -1651,6 +1651,7 @@ export function buildSiemResult(
     mapped.push(m);
   }
 
+  if (opts.aggregate !== false) boundDnsVariants(mapped, iocSink); // dnsRecord.ts, #933 item 2
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
