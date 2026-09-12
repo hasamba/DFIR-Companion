@@ -101,7 +101,7 @@ const QUOTED = String.raw`"((?:[^"\\]|\\.)*)"`;
 // The trailing group captures what a deployment appends after the User-Agent — Squid's %Ss:%Sh,
 // a request time, a vhost, an X-Forwarded-For header (#933 item 1). It was parsed past and lost.
 const LINE_RE = new RegExp(
-  String.raw`^(\S+)\s+(\S+)\s+(\S+)\s+\[([^\]]+)\]\s+"([A-Z]+)\s+(\S+)(?:\s+[^"]*)?"\s+(\d{3})\s+(\S+)\s+${QUOTED}\s+${QUOTED}(.*)$`,
+  String.raw`^(\S+)\s+(\S+)\s+(\S+)\s+\[([^\]]+)\]\s+"(([A-Z]+)\s+(\S+)(?:\s+[^"]*)?)"\s+(\d{3})\s+(\S+)\s+${QUOTED}\s+${QUOTED}(.*)$`,
 );
 const unquote = (s: string | undefined): string => (s ?? "").replace(/\\(["\\])/g, "$1");
 const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/;
@@ -275,6 +275,7 @@ export function mapCombinedLogLine(
     ,
     userRaw,
     dateRaw,
+    requestLine,
     method,
     uriRaw,
     statusRaw,
@@ -315,10 +316,10 @@ export function mapCombinedLogLine(
   // and every trailer token the profile does not name — kept verbatim, never an indicator.
   // A control character between the method, the target and the protocol is consumed by the line
   // grammar's `\s+` separators, so the target reaches the reader looking clean. The REQUEST LINE
-  // as the server wrote it is checked instead: a control anywhere in it makes the target invalid,
-  // and no host of it becomes an indicator (#933 item 1).
-  const requestLine = line.slice(line.indexOf('"') + 1, line.indexOf('"', line.indexOf('"') + 1));
-  const target = CONTROL_CHARS.test(requestLine)
+  // the grammar itself captured is checked instead — not a span found by scanning for a quote,
+  // which an escaped quote in an earlier field could move: a control anywhere in it makes the
+  // target invalid, and no host of it becomes an indicator (#933 item 1).
+  const target = CONTROL_CHARS.test(requestLine ?? "")
     ? ({ form: "invalid", host: "", port: "", words: "invalid request target" } as const)
     : readTarget(method, uri);
   // The destination host is the one the WHOLE-target parse validated: a malformed target
@@ -524,7 +525,7 @@ export function parseCombinedLog(text: string, opts: CombinedLogImportOptions = 
         const m = LINE_RE.exec(l);
         // `-` and anything that is not an address are NOT clients: nineteen placeholder peers and
         // one real one must not satisfy the two-client floor.
-        return m ? [{ tokens: trailerTokens(m[11] ?? ""), client: clientAddress(m[1]) }] : [];
+        return m ? [{ tokens: trailerTokens(m[12] ?? ""), client: clientAddress(m[1]) }] : [];
       }),
     );
 

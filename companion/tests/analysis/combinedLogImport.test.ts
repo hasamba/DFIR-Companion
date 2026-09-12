@@ -782,6 +782,16 @@ describe("parseCombinedLog — what one line establishes", () => {
     expect(r.events.every((e) => e.description.includes("[invalid request target]"))).toBe(true);
   });
 
+  it("an escaped quote in an earlier field cannot move the request-line check", () => {
+    const lines = [
+      '10.30.20.11 - user\\"name [14/May/2024:19:00:00 +0000] "GET http://good.example.invalid/x\u000b HTTP/1.1" 200 0 "-" "curl/8"',
+      '10.30.20.11 - user\\"name [14/May/2024:19:00:00 +0000] "CONNECT \u000bgood.example.invalid:443 HTTP/1.1" 200 0 "-" "curl/8"',
+    ].join("\n");
+    const r = parseCombinedLog(lines);
+    expect(r.iocs.some((i) => i.type === "domain")).toBe(false);
+    expect(r.events.every((e) => e.description.includes("[invalid request target]"))).toBe(true);
+  });
+
   it("a malformed Referer mints no domain indicator", () => {
     const line =
       '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET / HTTP/1.1" 200 0 "http://ev]il:abc/x?q=1" "curl/8"';
