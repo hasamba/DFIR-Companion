@@ -256,6 +256,7 @@ export const GWS_SCOPE_TIERS: Readonly<Record<string, ScopeTier>> = Object.fromE
     "photoslibrary",
     "photoslibrary.readonly",
     "meetings.space.readonly",
+    "chat.app.all.messages.readonly",
   ]),
   ...tiered("Medium", [
     "gmail.metadata",
@@ -338,6 +339,14 @@ export const GWS_SCOPE_TIERS: Readonly<Record<string, ScopeTier>> = Object.fromE
     "cloud_search.settings.query",
     "cloud_search.debug",
     "photoslibrary.sharing",
+    "chat.app.memberships",
+    "chat.app.spaces",
+    "chat.app.spaces.create",
+    "chat.admin.memberships",
+    "chat.admin.memberships.readonly",
+    "chat.admin.spaces",
+    "chat.admin.spaces.readonly",
+    "chat.admin.delete",
   ]),
   ...tiered("Low", [
     "drive.file",
@@ -370,6 +379,14 @@ export const GWS_SCOPE_TIERS: Readonly<Record<string, ScopeTier>> = Object.fromE
     "photoslibrary.edit.appcreateddata",
     "meetings.space.created",
     "meetings.space.settings",
+    "chat.messages.reactions",
+    "chat.messages.reactions.create",
+    "chat.messages.reactions.readonly",
+    "chat.users.readstate",
+    "chat.users.readstate.readonly",
+    "chat.users.spacesettings",
+    "chat.customemojis",
+    "chat.customemojis.readonly",
   ]),
 ]);
 

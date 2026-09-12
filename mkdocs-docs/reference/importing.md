@@ -518,7 +518,7 @@ names both. Each of the application's five events reads for what its record esta
   devices, domains, roles, user security and schemas), data transfer, reports and group
   settings/migration, Cloud Identity groups, policies and inbound SSO, Vault eDiscovery,
   `cloud-platform`, Cloud Search, Classroom rosters, coursework and submissions, Photos, Meet
-  conference records (transcripts), Apps Script and Chat messages/import. **Medium**: metadata-only and activity scopes
+  conference records (transcripts), Apps Script, Chat messages/import and the organisation-wide Chat read (`chat.app.all.messages.readonly`). **Medium**: metadata-only and activity scopes
   (`gmail.metadata`, `gmail.labels`, the Gmail add-on current-message scopes, `drive.metadata*`,
   `drive.activity*`), read-only Calendar, Contacts, Keep, Tasks, Chat spaces and memberships,
   `directory.readonly`, the read-only Admin SDK and Cloud Identity device, alias, schema and

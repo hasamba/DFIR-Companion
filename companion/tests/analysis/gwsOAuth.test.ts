@@ -306,6 +306,7 @@ describe("GWS_SCOPE_TIERS — a literal table", () => {
     G + "photoslibrary",
     G + "photoslibrary.readonly",
     G + "meetings.space.readonly",
+    G + "chat.app.all.messages.readonly",
   ];
   const medium = [
     G + "gmail.metadata",
@@ -388,6 +389,14 @@ describe("GWS_SCOPE_TIERS — a literal table", () => {
     G + "cloud_search.settings.query",
     G + "cloud_search.debug",
     G + "photoslibrary.sharing",
+    G + "chat.app.memberships",
+    G + "chat.app.spaces",
+    G + "chat.app.spaces.create",
+    G + "chat.admin.memberships",
+    G + "chat.admin.memberships.readonly",
+    G + "chat.admin.spaces",
+    G + "chat.admin.spaces.readonly",
+    G + "chat.admin.delete",
   ];
   const low = [
     G + "drive.file",
@@ -420,6 +429,14 @@ describe("GWS_SCOPE_TIERS — a literal table", () => {
     G + "photoslibrary.edit.appcreateddata",
     G + "meetings.space.created",
     G + "meetings.space.settings",
+    G + "chat.messages.reactions",
+    G + "chat.messages.reactions.create",
+    G + "chat.messages.reactions.readonly",
+    G + "chat.users.readstate",
+    G + "chat.users.readstate.readonly",
+    G + "chat.users.spacesettings",
+    G + "chat.customemojis",
+    G + "chat.customemojis.readonly",
   ];
   it("every listed URI has its tier and the table holds exactly these", () => {
     for (const s of high) expect(scopeTier(s), s).toBe("High");
@@ -444,6 +461,14 @@ describe("GWS_SCOPE_TIERS — a literal table", () => {
     expect(scopeTier(G + "cloud_search.query")).toBe("High");
     // The Meet space read scope lists conference transcripts: content-wide read, High.
     expect(scopeTier(G + "meetings.space.readonly")).toBe("High");
+    // The organisation-wide Chat read (every message, member or not): High + T1528 on a grant.
+    expect(scopeTier(G + "chat.app.all.messages.readonly")).toBe("High");
+    const chat = decodeGwsToken(
+      "authorize",
+      params(client([multi("scope", [G + "chat.app.all.messages.readonly"])])),
+    )!;
+    expect(chat.severity).toBe("High");
+    expect(chat.mitre).toEqual(["T1528"]);
     expect(scopeTier(G + "gmail.readonly ")).toBe("High"); // whitespace tolerated
     expect(scopeTier("")).toBe("Medium");
   });
