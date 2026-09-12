@@ -138,12 +138,12 @@ describe("dnsOverlay — what one record establishes", () => {
       { type: 5, value: "edge.example.net", kind: "name" },
       { type: undefined, value: "203.0.113.5", kind: "address" },
     ]);
-    expect(o.identity).toMatch(/^\|dns:q15:[0-9a-f]{32}:t-:s0:r[0-9a-f]{32}$/);
+    expect(o.identity).toMatch(/^\|dns:q15:[0-9a-f]{32}:t-:s0:n-:r[0-9a-f]{32}$/);
   });
   it("NXDOMAIN, no records, timeout and an unknown code each say so; the code is the identity", () => {
     const nx = overlay({ QueryName: "gone.example", QueryStatus: "9003" });
     expect(nx.description).toContain("[NXDOMAIN — the name does not exist at this resolver]");
-    expect(nx.identity).toContain(":s9003:r-");
+    expect(nx.identity).toContain(":s9003:n-:r-");
     const none = overlay({ QueryName: "gone.example", QueryStatus: "9501" });
     expect(none.description).toContain("[no records of the queried type]");
     const to = overlay({ QueryName: "gone.example", QueryStatus: "1460" });
@@ -310,6 +310,30 @@ describe("dnsOverlay — what one record establishes", () => {
     expect(upper.identity).toBe(lower.identity);
     expect(upper.description).toBe(lower.description);
     expect(upper.dns.returned[0].value).toBe("edge.example");
+  });
+  it("the exact recorded name is validated; whitespace is not trimmed away into a valid name", () => {
+    const padded = overlay({ QueryName: "good.example ", QueryStatus: "123" });
+    expect(padded.dns.queryValid).toBe(false);
+    expect(padded.description).toContain("[query name is not a valid name]");
+    expect(padded.identity).not.toBe(overlay({ QueryName: "good.example", QueryStatus: "123" }).identity);
+    expect(overlay({ QueryName: " a.example", QueryStatus: "0" }).identity).not.toBe(
+      overlay({ QueryName: "a.example ", QueryStatus: "0" }).identity,
+    );
+  });
+  it("a 3006 says whether the call went to the network; the two are two rows", () => {
+    const local = overlay(
+      { QueryName: "a.example", QueryType: "1", IsNetworkQuery: "0" },
+      { statusField: "" },
+    );
+    const net = overlay({ QueryName: "a.example", QueryType: "1", IsNetworkQuery: "1" }, { statusField: "" });
+    expect(local.description).toContain(
+      "[not a network query — answered locally, from cache or a local name]",
+    );
+    expect(net.description).toContain("[network query]");
+    expect(local.identity).not.toBe(net.identity);
+    expect(local.dns.networkQuery).toBe(false);
+    expect(net.dns.networkQuery).toBe(true);
+    expect(overlay({ QueryName: "a.example", QueryStatus: "0" }).dns.networkQuery).toBeUndefined();
   });
   it("a complete rendering carries no mark; the description stays inside 600 characters", () => {
     const plain = overlay({ QueryName: "a.example", QueryStatus: "0", QueryResults: "::ffff:192.0.2.1;" });

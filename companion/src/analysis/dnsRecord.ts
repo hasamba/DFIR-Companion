@@ -188,7 +188,7 @@ export const DNS_CLIENT_EVENTS: Record<
   number,
   { label: string; severity: "Info" | "Low"; kind: "dns"; statusField?: "QueryStatus" | "Status" }
 > = {
-  3006: { label: "DNS query sent", severity: "Info", kind: "dns" },
+  3006: { label: "DNS query called", severity: "Info", kind: "dns" },
   3008: { label: "DNS query completed", severity: "Low", kind: "dns", statusField: "QueryStatus" },
   3020: { label: "DNS query result", severity: "Info", kind: "dns", statusField: "Status" },
 };
@@ -206,6 +206,8 @@ export interface DnsEnvelope {
   queryType?: number;
   status?: number;
   state: DnsState;
+  /** 3006 only: whether the call went to a server (`IsNetworkQuery`). */
+  networkQuery?: boolean;
   returned: ReturnedValue[];
   ownership: "not in this record";
   vantage: "endpoint";
@@ -224,6 +226,20 @@ function typeWords(raw: string, present: boolean): { words: string; key: string;
   if (!/^\d{1,5}$/.test(text)) return { words: "type not readable", key: "?" };
   const type = Number(text);
   return { words: `${TYPE_NAMES[type] ?? `type ${type}`} query`, key: String(type), type };
+}
+
+/** 3006's `IsNetworkQuery`: 1 = a query went to a server; 0 = answered locally; absent on the other events. */
+function networkQuery(input: DnsOverlayInput): { value?: boolean; words: string; key: string } {
+  if (!input.has("IsNetworkQuery")) return { words: "", key: "-" };
+  const raw = input.field("IsNetworkQuery").trim();
+  if (raw === "1") return { value: true, words: "network query", key: "1" };
+  if (raw === "0")
+    return {
+      value: false,
+      words: "not a network query — answered locally, from cache or a local name",
+      key: "0",
+    };
+  return { words: "IsNetworkQuery not readable", key: "?" };
 }
 
 /** The status the event defines, and the other field when the record carries both and they disagree. */
@@ -261,9 +277,12 @@ export function dnsOverlay(
 }
 
 function overlayOf(input: DnsOverlayInput): DnsOverlay {
-  const rawName = input.field("QueryName").trim();
-  const canonical = rawName.replace(/\.$/, "").toLowerCase();
+  // The EXACT recorded string is validated — not a trimmed one: `good.example ` is not the name
+  // `good.example`, and only a valid name is canonicalised (case, the root dot). An invalid string
+  // keeps its exact text as its identity, so two malformed queries never fold.
+  const rawName = input.field("QueryName");
   const queryValid = isValidQueryName(rawName);
+  const canonical = queryValid ? rawName.replace(/\.$/, "").toLowerCase() : rawName;
   const shownName = breakHashRuns(showToken(rawName));
   const nameClipped = shownName.length > NAME_SHOWN_MAX;
   const name = nameClipped ? `${shownName.slice(0, NAME_SHOWN_MAX - 1)}…` : shownName;
@@ -274,6 +293,10 @@ function overlayOf(input: DnsOverlayInput): DnsOverlay {
   const tags = [`query: ${name}`];
   if (!queryValid) tags.push("query name is not a valid name");
   tags.push(type.words);
+  // 3006 writes IsNetworkQuery: 0 means the call was answered without a network query (cache, hosts
+  // file, a local name) — the record then establishes a call, not a transmission.
+  const net = networkQuery(input);
+  if (net.words) tags.push(net.words);
   if (status.reading.state === "success") {
     tags.push(
       results.total ? `returned: ${results.shown}` : "resolved; the returned values are not in this record",
@@ -286,7 +309,7 @@ function overlayOf(input: DnsOverlayInput): DnsOverlay {
 
   // Identity: the FULL canonical name, the type, the code, and a sorted typed multiset of every kept
   // value — record order is display only, so a rotated A set is one row, not one row per order.
-  const identity = `|dns:q${canonical.length}:${keyDigest(canonical)}:t${type.key}:s${status.key}:r${
+  const identity = `|dns:q${canonical.length}:${keyDigest(canonical)}:t${type.key}:s${status.key}:n${net.key}:r${
     results.total ? keyDigest(results.identity) : "-"
   }`;
 
@@ -308,6 +331,7 @@ function overlayOf(input: DnsOverlayInput): DnsOverlay {
       ...(type.type !== undefined ? { queryType: type.type } : {}),
       ...(status.reading.code !== undefined ? { status: status.reading.code } : {}),
       state: status.reading.state,
+      ...(net.value !== undefined ? { networkQuery: net.value } : {}),
       returned: results.values,
       ownership: "not in this record",
       vantage: "endpoint",

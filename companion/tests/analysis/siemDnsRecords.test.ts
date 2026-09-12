@@ -54,7 +54,7 @@ describe("Sysmon 22 — what one record establishes", () => {
     expect(ok.description).not.toContain("QueryName=");
     expect(nx.description).toContain("[NXDOMAIN — the name does not exist at this resolver]");
     expect(ok.aggKey).toContain("|dns:q15:");
-    expect(nx.aggKey).toContain(":s9003:r-");
+    expect(nx.aggKey).toContain(":s9003:n-:r-");
     expect(ok.severity).toBe("Low");
     expect(nx.severity).toBe("Low");
   });
@@ -218,7 +218,7 @@ describe("DNS Client operational log", () => {
         dnsClient(3008, { QueryName: "a.example", QueryType: "1", QueryStatus: "9501", QueryResults: "" }),
         dnsClient(3008, { QueryName: "a.example", QueryType: "15", QueryStatus: "9501", QueryResults: "" }),
         dnsClient(3020, { QueryName: "b.example", QueryType: "1", Status: "9003", QueryResults: "" }),
-        dnsClient(3006, { QueryName: "c.example", QueryType: "1", QueryOptions: "0" }),
+        dnsClient(3006, { QueryName: "c.example", QueryType: "1", QueryOptions: "0", IsNetworkQuery: "0" }),
       ),
     );
     expect(r.events).toHaveLength(4);
@@ -231,6 +231,8 @@ describe("DNS Client operational log", () => {
     ).toContain("[A query] [no records of the queried type]");
     expect(byName("b.example")[0].description).toContain("DNS query result (EID 3020)");
     expect(byName("b.example")[0].description).toContain("[NXDOMAIN");
+    expect(byName("c.example")[0].description).toContain("DNS query called (EID 3006)");
+    expect(byName("c.example")[0].description).toContain("[not a network query");
     expect(byName("c.example")[0].description).toContain("[outcome not in this record]");
     expect(byName("c.example")[0].severity).toBe("Info");
     expect(r.iocs.map((i) => i.value)).toEqual(

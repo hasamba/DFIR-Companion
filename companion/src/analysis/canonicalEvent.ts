@@ -138,6 +138,7 @@ export const canonicalEventEnvelopeSchema = z.object({
       queryType: z.number().int().nonnegative().optional(),
       status: z.number().int().nonnegative().optional(),
       state: z.string().min(1),
+      networkQuery: z.boolean().optional(),
       returned: z.array(
         z.object({
           type: z.number().int().nonnegative().optional(),

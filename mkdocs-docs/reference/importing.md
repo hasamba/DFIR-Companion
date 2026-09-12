@@ -317,7 +317,7 @@ formats, with its own issue.
 ### DNS records: what one record establishes
 
 Sysmon Event 22 and the Windows DNS Client operational log (`Microsoft-Windows-DNS-Client/
-Operational` — 3006 query sent, 3008 query completed, 3020 query result) are read for what one
+Operational` — 3006 query called, 3008 query completed, 3020 query result) are read for what one
 record establishes, and no more:
 
 - **A query is not a resolution, and a resolution is not a connection.** The row says which
@@ -327,7 +327,8 @@ record establishes, and no more:
   resolver]`, `[no records of the queried type]`, `[timed out — no answer]`, `[refused]`, `[server
   failure]`, or `[status 1234 (not in the table)]` for a code the table does not name — never read
   as success or failure. A record that carries no status (3006) says `[outcome not in this
-  record]`. A resolved query and a NXDOMAIN of the same name are two rows; a re-query answered
+  record]`; a 3006 also says whether the call went to a server at all (`[not a network query —
+  answered locally, from cache or a local name]`), because a call is not a transmission. A resolved query and a NXDOMAIN of the same name are two rows; a re-query answered
   with the same set of values is one row with a count and a first/last time — **the count is how
   many times that answer was seen, not how many values it had, and the row does not keep each
   observation's time**.
