@@ -262,6 +262,11 @@ describe("processOverlay — ProcessAccess (Sysmon 10): the record's own evidenc
     expect(access(CSRSS, CHROME, "0x1010").severity).toBe("Info");
     expect(access(MIMI, CHROME, "0x1000").severity).toBe("Info");
     expect(access(MIMI, CHROME, "0x1000").mitre).toEqual([]);
+    // rights the table does not name were still granted: a lead, and a masquerade raises on them
+    const unknownOnly = access(MIMI, CHROME, "0x40000000");
+    expect(unknownOnly.severity).toBe("Low");
+    expect(unknownOnly.description).toContain("rights outside the table (0x40000000)");
+    expect(access(MASQ, CHROME, "0x40000000").severity).toBe("High");
   });
   it("carries both process identities as entities and in the key; two instances of one image are two", () => {
     const o = access(MIMI, LSASS, "0x1010");

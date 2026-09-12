@@ -324,7 +324,10 @@ function accessGrade(
   if (mask.readable) {
     const masq = isMasquerade(source);
     const trusted = source.trim() && isTrustedSystemImage(source) ? " from a system-path source" : "";
-    if (masq && (has(B.VM_WRITE) || has(B.DUP_HANDLE) || has(B.CREATE_THREAD) || has(B.VM_READ)))
+    if (
+      masq &&
+      (has(B.VM_WRITE) || has(B.DUP_HANDLE) || has(B.CREATE_THREAD) || has(B.VM_READ) || mask.unknown)
+    )
       return {
         severity: "High",
         mitre: [],
@@ -365,7 +368,10 @@ function accessGrade(
           }
         : { severity: "Low", mitre: [], note: "read-capable handle", qualifier: HANDLE_READ_NOTE };
   }
-  // h. Everything else is telemetry.
+  // h. Rights the table does not name were still granted: a lead, not telemetry. Everything else
+  //    is telemetry.
+  if (mask.readable && mask.unknown)
+    return { severity: "Low", mitre: [], note: `rights outside the table (${mask.unknown})`, qualifier: "" };
   return {
     severity: "Info",
     mitre: [],
