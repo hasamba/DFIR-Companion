@@ -54,6 +54,8 @@ const TYPE_NAMES: Record<number, string> = {
 const NAME_TYPES = new Set([2, 5, 6, 12, 15, 33, 39]);
 const ADDRESS_TYPES = new Set([1, 28]);
 
+/** What a present-but-not-text field reads as: never a number, never a name, never empty. */
+const UNREADABLE = "(unreadable)";
 export const RESULTS_SHOWN_MAX = 8;
 export const RESULTS_KEPT_MAX = 64;
 const VALUE_SHOWN_MAX = 60;
@@ -319,12 +321,17 @@ export function dnsOverlay(
 ): DnsOverlay {
   // A SIEM export may carry a multi-valued field as an ARRAY: its elements are the record's entries
   // (joined with the grammar's own `;`), never String()-joined into one comma value. An object is
-  // not readable text.
+  // the mapper's `{"#text": …}` shape or it is UNREADABLE — present but not text — which must never
+  // read as absent: a status the record carries but this reader cannot read is `s?`, not `s-`.
   const text = (v: unknown): string => {
     if (typeof v === "string") return v;
     if (v == null) return "";
     if (Array.isArray(v)) return v.map(text).filter(Boolean).join(";");
-    return typeof v === "object" ? "" : String(v);
+    if (typeof v === "object") {
+      const inner = (v as Record<string, unknown>)["#text"];
+      return typeof inner === "string" ? inner : UNREADABLE;
+    }
+    return String(v);
   };
   return overlayOf({
     field: (k) => text(read(k)),

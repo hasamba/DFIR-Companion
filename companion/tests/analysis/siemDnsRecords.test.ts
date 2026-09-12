@@ -196,11 +196,20 @@ describe("Sysmon 22 — field shapes", () => {
     expect(r.events).toHaveLength(1);
     expect(r.events[0].count).toBe(2);
     expect(r.events[0].canonical?.dns?.returned).toHaveLength(2);
-    // an object where text belongs is not readable
+    // an object where text belongs is present but unreadable — never absent
     const asObject = { ...asArray, event_data: { ...asArray.event_data, QueryResults: { a: 1 } } };
-    expect(parseSiemExport(elastic(asObject)).events[0].description).toContain(
-      "[resolved; the returned values are not in this record]",
-    );
+    expect(parseSiemExport(elastic(asObject)).events[0].description).toContain("[returned: (unreadable)]");
+    const objStatus = { ...asArray, event_data: { ...asArray.event_data, QueryStatus: { "#text": "9003" } } };
+    expect(parseSiemExport(elastic(objStatus)).events[0].description).toContain("[NXDOMAIN");
+    const badStatus = { ...asArray, event_data: { ...asArray.event_data, QueryStatus: { code: 9003 } } };
+    const none = {
+      ...asArray,
+      event_data: { Image: "C:\\Windows\\System32\\svchost.exe", QueryName: "a.example" },
+    };
+    const two = parseSiemExport(elastic(badStatus, none));
+    expect(two.events).toHaveLength(2);
+    expect(two.events.some((e) => e.description.includes("[status not readable]"))).toBe(true);
+    expect(two.events.some((e) => e.description.includes("[outcome not in this record]"))).toBe(true);
   });
 });
 
