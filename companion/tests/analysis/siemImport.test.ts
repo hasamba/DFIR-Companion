@@ -1717,12 +1717,14 @@ describe("parseSiemExport — Sysmon 15 alternate data streams", () => {
     expect(mz.description).toContain("executable content (starts with MZ)");
   });
 
-  it("the Hash is the host file's: it never becomes the stream's identity, and the row's path is the writing process", () => {
+  it("the Hash is the host file's: the row's path and hash are the host file's, never the stream's, never the writer's", () => {
     const r = parseSiemExport(elastic(ev15("C:\\Users\\bob\\Documents\\notes.txt:payload.dll")));
     const e = r.events[0];
-    // The stream's own hash is not in the record: none is claimed for it.
-    expect(e.sha256).toBeUndefined();
-    expect(r.iocs.some((i) => i.type === "hash")).toBe(false);
+    expect(e.path).toBe("C:\\Users\\bob\\Documents\\notes.txt");
+    expect(e.sha256).toBe("a".repeat(64));
+    expect(r.iocs.some((i) => i.type === "hash" && i.value === "a".repeat(64))).toBe(true);
+    // The stream-qualified path is still named as the file the record is about.
+    expect(r.iocs.some((i) => i.type === "file" && i.value.endsWith(":payload.dll"))).toBe(true);
   });
 
   it("two streams on a long host path, and one stream re-created on a replaced host file, are distinct rows", () => {

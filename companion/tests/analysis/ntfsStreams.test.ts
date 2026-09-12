@@ -120,6 +120,20 @@ describe("readStream — evidence before the name", () => {
     // contents that are not a mark, on a mark-sized stream: named, not a mark
     const text = readStream({ path: `${HOST}:Zone.Identifier`, contents: "hello", size: "5" })!;
     expect(text.kind).toBe("named");
+    // a valid mark PREFIX on an oversized stream is not a mark — by size, and by contents length
+    const prefixed = readStream({
+      path: `${HOST}:Zone.Identifier`,
+      size: "1048576",
+      contents: `[ZoneTransfer]\nZoneId=3\n${"A".repeat(5000)}`,
+    })!;
+    expect(prefixed.kind).toBe("named");
+    expect(prefixed.severity).toBe("Low");
+    const longContents = readStream({
+      path: `${HOST}:Zone.Identifier`,
+      contents: `[ZoneTransfer]\nZoneId=3\n${"A".repeat(5000)}`,
+    })!;
+    expect(longContents.kind).toBe("named");
+    expect(parseZoneMark(`[ZoneTransfer]\nZoneId=3\n${"A".repeat(5000)}`)).toBeNull();
   });
   it("each application stream literal is Info by name, on an MFTECmd row and a Velociraptor path alike", () => {
     for (const name of APPLICATION_STREAMS) {
@@ -131,6 +145,10 @@ describe("readStream — evidence before the name", () => {
         expect(r.stream, name).toBe(name);
       }
       expect(readStream({ path: `${HOST}:${name.toUpperCase()}` })!.kind, name).toBe("application");
+      // …and the name never overrides size: a large stream wearing an application name is Low
+      const large = readStream({ path: `${HOST}:${name}`, size: "1048576" })!;
+      expect(large.kind, name).toBe("named");
+      expect(large.severity, name).toBe("Low");
     }
   });
   it("a named stream needs a positive signal: a code-like name is Medium, a large one Low, else Info; no $ exemption", () => {

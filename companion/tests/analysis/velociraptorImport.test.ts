@@ -1686,7 +1686,7 @@ describe("parseVelociraptorJson — MFT alternate data streams", () => {
       "Velociraptor [Windows.NTFS.MFT]: $SI:...b — C:\\Users\\bob\\Downloads\\tool.exe - @ WS-01",
     );
     expect(plain.severity).toBe("Info");
-    expect(plain.aggKey).toBe("vr|mft|ws-#|$si:...b|c:\\users\\bob\\downloads\\tool.exe");
+    expect(plain.aggKey).toBe("vr|mft|ws-01|$si:...b|c:\\users\\bob\\downloads\\tool.exe");
   });
 
   it("a stream whose name looks like a ransomware extension is not ransomware — the host path decides", () => {
@@ -1700,6 +1700,17 @@ describe("parseVelociraptorJson — MFT alternate data streams", () => {
     const enc = mft([row("C:\\Users\\bob\\Documents\\report.docx.akira:Zone.Identifier")]).events[0];
     expect(enc.severity).toBe("High");
     expect(enc.mitreTechniques).toContain("T1486");
+  });
+
+  it("the same file on two hosts whose names differ by a digit is two rows — stream or not", () => {
+    const r = mft([
+      row("C:\\Users\\bob\\notes.txt:payload.dll", { Computer: "WS-01" }),
+      row("C:\\Users\\bob\\notes.txt:payload.dll", { Computer: "WS-02" }),
+      row("C:\\Users\\bob\\notes.txt", { Computer: "WS-01" }),
+      row("C:\\Users\\bob\\notes.txt", { Computer: "WS-02" }),
+    ]);
+    expect(r.events).toHaveLength(4);
+    expect(r.events.map((e) => e.asset).sort()).toEqual(["WS-01", "WS-01", "WS-02", "WS-02"]);
   });
 
   it("two streams that differ only by a digit, or beyond a long common prefix, are two rows", () => {

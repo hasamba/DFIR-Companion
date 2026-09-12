@@ -624,7 +624,7 @@ export function parseHashes(rec: Row, ed: Row | undefined): { sha256?: string; m
     if (algo === "SHA256" && v.length === 64) out.sha256 ??= v;
     if (algo === "MD5" && v.length === 32) out.md5 ??= v;
   };
-  const hashStr = ed ? str(getCI(ed, "Hashes")).trim() : "";
+  const hashStr = ed ? firstStr(ed, ["Hashes", "Hash"]).trim() : "";
   for (const pair of hashStr.split(",")) {
     const [k, val] = pair.split("=");
     if (k && val) take(k.trim().toUpperCase(), val);
@@ -1059,7 +1059,8 @@ export function mapWindows(
 
   // Structured correlation/IOC fields.
   const { sha256, md5 } = parseHashes(rec, ed);
-  const imagePath = firstStr(ed, [...IMAGE_PATH_KEYS, "TargetImage"]) || (defender?.image ?? ""); // the flagged file, when the record names no image of its own
+  const imagePath = // a stream's host file (ntfsStreams.ts); else the flagged file, when the record names no image
+    ads?.hostPath || firstStr(ed, [...IMAGE_PATH_KEYS, "TargetImage"]) || defender?.image || "";
   const processName =
     def.kind === "process" || def.kind === "procaccess"
       ? baseName(
@@ -1067,8 +1068,7 @@ export function mapWindows(
         ) || undefined
       : undefined;
   const parentName = baseName(str(getCI(ed, "ParentImage"))) || undefined;
-  // Subject (created-process) pid on process-CREATION events only — Security 4688 renders it as
-  // NewProcessId (hex), Sysmon EID 1 as ProcessId (decimal). Used for cross-tool correlation.
+  // Subject pid on process-CREATION events only: 4688 NewProcessId (hex), Sysmon 1 ProcessId (decimal).
   const pidKey = !isSysmon && eid === 4688 ? "NewProcessId" : isSysmon && eid === 1 ? "ProcessId" : "";
   const pid = parsePid(str(getCI(ed, pidKey)));
   const commandLine = def.kind === "process" ? str(getCI(ed, "CommandLine")) : "";

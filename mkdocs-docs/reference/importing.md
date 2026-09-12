@@ -571,25 +571,29 @@ because the name is attacker-chosen:
    runnable or a disk image from the Internet or Restricted zone, Info for a document — with
    `download provenance, not execution`. A `Zone.Identifier` that fails the structure, or is
    larger than any mark, is a named stream wearing the name.
-3. **An application stream** — a literal list (September 2026): `SmartScreen`, `OECustomProperty`,
+3. **A code-like name or a size** — a stream named like code (`payload.dll`, `run.ps1`) is
+   Medium + T1564.004 with `stream content not in this record`; a stream of 64 KB or more,
+   whatever it is called (a `SmartScreen` of 1 MB included), is Low (`large named stream`). A
+   name never excuses the size the record carries.
+4. **An application stream** — a literal list (September 2026): `SmartScreen`, `OECustomProperty`,
    `encryptable`, `favicon`, `Afp_AfpInfo`, `Afp_Resource`, `com.dropbox.attrs`,
    `com.dropbox.attributes`, `com.apple.quarantine`, `com.apple.FinderInfo`,
    `com.apple.ResourceFork`, `WofCompressedData`, `$TXF_DATA`,
    `{4c8cc155-6c1e-11d1-8e41-00c04fb9386d}`, `Win32App_1`, `evernote.metadata`, `Evernote.Base`,
-   `ms-properties`. Info by name; content still wins.
-4. **A named stream** — needs a positive signal: a code-like name (`payload.dll`, `run.ps1`) is
-   Medium + T1564.004 with `stream content not in this record`; a stream of 64 KB or more is Low
-   (`large named stream`); an empty one and everything else is Info. The name is the lead, never
-   the proof.
+   `ms-properties`. Info by name, at an ordinary size.
+5. **A named stream** with no signal — an empty one and everything else — is Info. The name is
+   the lead, never the proof.
 
 A host file's own MFT row reads its flag and its mark: `MFT: C:\…\tool.exe (40960 bytes) — has
 alternate data streams; downloaded from the Internet zone (https://…) — download provenance, not
 execution`. The URL and the referrer become url indicators. On Sysmon Event 15 the `Hash` field is
-the hash of the file the stream was added to, never the stream's — it joins the row's identity so
+the hash of the file the stream was added to, never the stream's: the row's path and hash are
+that host file's (not the process that wrote the stream), the hash joins the row's identity so
 the same stream re-created on a replaced file is a second row, and no hash is claimed for the
-stream. A stream row is its own row: `payload1.dll` and `payload2.dll` on one file are two, and
-ransomware detection reads the host file's name, never a stream's (`report.docx:cache.akira` is
-not an encrypted file).
+stream. A stream row is its own row: `payload1.dll` and `payload2.dll` on one file are two, the
+same stream on `WS-01` and `WS-02` is two (an MFT key no longer folds the digits of a host name),
+and ransomware detection reads the host file's name, never a stream's (`report.docx:cache.akira`
+is not an encrypted file).
 
 **Download marks carry no technique.** The `Zone.Identifier` stream establishes where a file came
 from — the zone and, when the browser wrote it, the URL. It does not establish that the file ran

@@ -157,7 +157,10 @@ export interface ZoneMark {
 
 /** The `[ZoneTransfer]` text — `ZoneId=`, `HostUrl=`, `ReferrerUrl=` lines; null when not a mark. */
 export function parseZoneMark(contents: string | undefined): ZoneMark | null {
-  const raw = (contents ?? "").slice(0, CONTENTS_MAX).split(/\r\n|\r|\n/);
+  // A mark is small. Contents past the ceiling are not a mark with a long tail — they are a stream
+  // that starts like one, and the size decides it (readStream). Nothing is sliced into validity.
+  if (contents !== undefined && contents.length > CONTENTS_MAX) return null;
+  const raw = (contents ?? "").split(/\r\n|\r|\n/);
   const lines = (raw.length > 1 ? raw : raw[0].split(MARK_FIELDS)).map((l) => zoneText(l));
   if (!lines.some((l) => /^\[zonetransfer\]$/i.test(l))) return null;
   const field = (name: string): string => {
@@ -242,22 +245,20 @@ export function readStream(input: StreamInput): StreamReading | null {
   if (code) return done("code", `executable content (${code})`, "Medium", [TECHNIQUE_HIDE], [], null);
   const size = sizeNumber(input.size);
   const lower = stream.toLowerCase();
-  // b. A download mark: the name AND the structure (or no contents and a mark-sized stream).
-  if (lower === ZONE_STREAM) {
+  // b. A download mark: the name AND the structure AND a mark's size (or no contents and a
+  //    mark-sized stream). A mark-shaped prefix on an oversized stream is not a mark.
+  const markSized = size === undefined || size <= ZONE_MARK_MAX_BYTES;
+  if (lower === ZONE_STREAM && markSized) {
     const mark = parseZoneMark(input.contents);
     if (mark) {
       const g = gradeMotwDownload(mark.zone, baseName(hostPath));
       return done("download-mark", markWords(mark), g.severity, [], [PROVENANCE_NOTE], mark);
     }
-    const plausible = input.contents === undefined && (size === undefined || size <= ZONE_MARK_MAX_BYTES);
-    if (plausible)
+    if (input.contents === undefined)
       return done("download-mark", "download mark (Zone.Identifier)", "Info", [], [PROVENANCE_NOTE], null);
     // A Zone.Identifier that is not a mark is a named stream wearing the name.
   }
-  // c. An enumerated application or system stream.
-  if (APPLICATION_SET.has(lower)) return done("application", "application stream", "Info", [], [], null);
-  // d. A named stream — a positive signal grades it; the name is the lead, never the proof.
-  if (size === 0) return done("named", "empty named stream", "Info", [], [], null);
+  // c. A code-like NAME is the lead before any allowlist can excuse it.
   if (RUNNABLE_NAME.test(stream))
     return done(
       "named",
@@ -267,8 +268,13 @@ export function readStream(input: StreamInput): StreamReading | null {
       [CONTENT_NOTE],
       null,
     );
+  // d. Size is evidence the record carries; a name — application or not — never overrides it.
   if (size !== undefined && size >= LARGE_STREAM_BYTES)
     return done("named", "large named stream", "Low", [], [CONTENT_NOTE], null);
+  // e. An enumerated application or system stream, at an ordinary size.
+  if (APPLICATION_SET.has(lower)) return done("application", "application stream", "Info", [], [], null);
+  // f. A named stream with no signal — the name is the lead, never the proof.
+  if (size === 0) return done("named", "empty named stream", "Info", [], [], null);
   return done("named", "named stream", "Info", [], [CONTENT_NOTE], null);
 }
 
@@ -296,15 +302,15 @@ export function readHost(input: StreamInput): HostReading {
 /**
  * Sysmon Event 15 (FileCreateStreamHash) through the same reading, laid over the event's own
  * description and table severity. `field` reads one event-data key. The event's `Hash` is the hash
- * of the FILE the stream was added to (its unnamed stream), never the named stream's: it joins the
- * row's identity only, so the same stream re-created on a replaced host file is a second row, and
- * no hash is claimed for the stream itself.
+ * of the FILE the stream was added to (its unnamed stream), never the named stream's: the row's
+ * path and hash are the host file's, it joins the row's identity so the same stream re-created on
+ * a replaced host file is a second row, and no hash is claimed for the stream itself.
  */
 export function streamOverlay(
   field: (key: string) => string,
   description: string,
   severity: Severity,
-): { description: string; severity: Severity; mitre: string[]; identity: string } | null {
+): { description: string; severity: Severity; mitre: string[]; identity: string; hostPath: string } | null {
   const path = field("TargetFilename");
   const contents = field("Contents");
   const r = readStream({ path, ...(contents ? { contents } : {}) });
@@ -315,5 +321,7 @@ export function streamOverlay(
     severity: worstSeverity(severity, r.severity),
     mitre: r.mitre,
     identity: `|ads:${digest}|${field("Hash").trim().toLowerCase()}`,
+    // The row's path is the HOST file — the file the hash belongs to — not the process that wrote.
+    hostPath: r.hostPath,
   };
 }
