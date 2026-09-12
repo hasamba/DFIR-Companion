@@ -70,7 +70,7 @@ export interface TlsObservation {
   cert?: CertRef;
   certificate?: CertificateFacts;
   /** The CLIENT's certificate, when the record carries one (Zeek `client_*`): keyed and shown apart. */
-  clientCert?: { subject?: string; issuer?: string; fingerprint?: CertRef; chainFuids?: string[] };
+  clientCert?: { subject?: string; issuer?: string; ref?: CertRef; chainFuids?: string[] };
 }
 
 const NAMES_KEPT_MAX = 64;
@@ -223,7 +223,7 @@ function clientCertOf(row: Row): TlsObservation["clientCert"] {
       ? { subject: text(getCI(row, "client_subject")) }
       : {}),
     ...(text(getCI(row, "client_issuer")) !== undefined ? { issuer: text(getCI(row, "client_issuer")) } : {}),
-    ...(fps?.length && fingerprint(fps[0]) ? { fingerprint: fingerprint(fps[0]) } : {}),
+    ...(fps?.length && fingerprint(fps[0]) ? { ref: fingerprint(fps[0]) } : {}),
     ...(list(getCI(row, "client_cert_chain_fuids"))?.length
       ? { chainFuids: list(getCI(row, "client_cert_chain_fuids")) }
       : {}),
@@ -373,7 +373,7 @@ function suricataClientCert(t: Row): TlsObservation["clientCert"] {
     ...((text(getCI(c, "issuerdn")) ?? text(getCI(c, "issuer"))) !== undefined
       ? { issuer: text(getCI(c, "issuerdn")) ?? text(getCI(c, "issuer")) }
       : {}),
-    ...(fp ? { fingerprint: fp } : {}),
+    ...(fp ? { ref: fp } : {}),
   };
   return Object.keys(out).length ? out : undefined;
 }
@@ -437,6 +437,11 @@ export function tlsKey(o: TlsObservation): string {
     short(o.directionFlipped),
     cert,
     o.clientCert ? `c:${keyDigest(JSON.stringify(o.clientCert))}` : "-",
+    // Certificate FACTS with no identity (a SAN list, a serial, validity) are evidence too: a
+    // record carrying them and one without are two rows.
+    o.certificate && Object.keys(o.certificate).length
+      ? `f:${keyDigest(JSON.stringify(o.certificate))}`
+      : "-",
   ].join("|");
 }
 
@@ -485,12 +490,14 @@ const show = (v: string): string => {
 };
 const ends = (hex: string): string => (hex.length > 12 ? `${hex.slice(0, 8)}…${hex.slice(-4)}` : hex);
 
+/** A certificate reference as words: a fingerprint by its ends, a cert identity by its ends. */
+const refWords = (r: CertRef): string =>
+  r.kind === "identity"
+    ? `cert identity ${breakHashRuns(r.value)}`
+    : `${r.alg === "sha256" ? "sha256" : "fp"} ${ends(r.value)}`;
+
 function certWords(o: TlsObservation): string {
-  const ref = !o.cert
-    ? "identity unavailable"
-    : o.cert.kind === "identity"
-      ? `cert identity ${breakHashRuns(o.cert.value)}`
-      : `${o.cert.alg === "sha256" ? "sha256" : "fp"} ${ends(o.cert.value)}`;
+  const ref = !o.cert ? "identity unavailable" : refWords(o.cert);
   return [
     o.subject !== undefined ? `subject ${show(o.subject)}` : "",
     o.issuer !== undefined ? `issuer ${show(o.issuer)}` : "",
@@ -515,15 +522,12 @@ function sessionTags(o: TlsObservation): string[] {
     o.subject !== undefined ||
     o.issuer !== undefined ||
     o.cert !== undefined ||
-    (o.certChainFuids?.length ?? 0) > 0;
+    (o.certChainFuids?.length ?? 0) > 0 ||
+    Object.keys(o.certificate ?? {}).length > 0;
   tags.push(hasCert ? `cert: ${certWords(o)}` : "no server certificate observed in this record");
   if (o.clientCert) {
     const cc = o.clientCert;
-    const ref = cc.fingerprint
-      ? `${cc.fingerprint.alg === "sha256" ? "sha256" : "fp"} ${ends(cc.fingerprint.value)}`
-      : cc.chainFuids?.length
-        ? "identity unavailable"
-        : "";
+    const ref = cc.ref ? refWords(cc.ref) : cc.chainFuids?.length ? "identity unavailable" : "";
     tags.push(
       `client cert: ${[cc.subject !== undefined ? `subject ${show(cc.subject)}` : "", cc.issuer !== undefined ? `issuer ${show(cc.issuer)}` : "", ref].filter(Boolean).join("; ")}`,
     );
@@ -612,12 +616,10 @@ function envelopeOf(o: TlsObservation, count: number): CanonicalEventEnvelope {
             clientCertificate: {
               ...(o.clientCert.subject !== undefined ? { subject: o.clientCert.subject } : {}),
               ...(o.clientCert.issuer !== undefined ? { issuer: o.clientCert.issuer } : {}),
-              ...(o.clientCert.fingerprint
-                ? {
-                    fingerprint: o.clientCert.fingerprint.value,
-                    fingerprintAlg: o.clientCert.fingerprint.alg,
-                  }
+              ...(o.clientCert.ref?.kind === "fingerprint"
+                ? { fingerprint: o.clientCert.ref.value, fingerprintAlg: o.clientCert.ref.alg }
                 : {}),
+              ...(o.clientCert.ref?.kind === "identity" ? { identity: o.clientCert.ref.value } : {}),
               ...(o.clientCert.chainFuids ? { chainFuids: o.clientCert.chainFuids } : {}),
             },
           }

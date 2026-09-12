@@ -608,7 +608,7 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
       chainFuids: ["Fclient-a"],
     });
     const fp = readZeekSsl({ ...base2, client_cert_chain_fps: ["ab".repeat(20)] }, "");
-    expect(fp.clientCert?.fingerprint).toEqual({ kind: "fingerprint", value: "ab".repeat(20), alg: "sha1" });
+    expect(fp.clientCert?.ref).toEqual({ kind: "fingerprint", value: "ab".repeat(20), alg: "sha1" });
   });
 
   it("a direction-flipped Zeek session (ssl_history ^) attributes client and server the right way round", () => {
@@ -676,7 +676,7 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
     const alice = readSuricataTls(rec("alice"), "");
     const bob = readSuricataTls(rec("bob"), "");
     expect(alice.clientCert).toMatchObject({ subject: "CN=alice", issuer: "CN=Corp CA" });
-    expect(alice.clientCert?.fingerprint?.value).toBe("ab".repeat(20));
+    expect(alice.clientCert?.ref?.value).toBe("ab".repeat(20));
     const r = rows([alice, bob]);
     expect(r).toHaveLength(2);
     expect(r[0].description).toContain("[client cert: subject CN=");
@@ -685,6 +685,30 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
     expect(certs[0].role).toBe("client");
     expect(certs[0].certificate?.subject).toBe("CN=alice");
     expect(rows(certs)[0].description).toContain("client-presented");
+  });
+
+  it("an issuer+serial client certificate is a cert identity, never a fingerprint", () => {
+    const o = readSuricataTls(
+      { ...SURICATA_TLS, tls: { sni: "a.example", client: { issuerdn: "CN=Corp CA", serial: "01" } } },
+      "",
+    );
+    expect(o.clientCert?.ref?.kind).toBe("identity");
+    const e = rows([o])[0];
+    expect(e.description).toContain("[client cert: issuer CN=Corp CA; cert identity certid-v1:");
+    expect(e.description).not.toContain("fp certid");
+    expect(e.canonical?.tls?.clientCertificate?.identity).toMatch(/^certid-v1:/);
+    expect(e.canonical?.tls?.clientCertificate?.fingerprint).toBeUndefined();
+  });
+
+  it("certificate facts with no identity are still certificate evidence, keyed", () => {
+    const withSan = readSuricataTls(
+      { ...SURICATA_TLS, tls: { sni: "a.example", subjectaltname: ["only.example"] } },
+      "",
+    );
+    const without = readSuricataTls({ ...SURICATA_TLS, tls: { sni: "a.example" } }, "");
+    expect(rows([withSan])[0].description).not.toContain("no server certificate observed");
+    expect(rows([withSan, without])).toHaveLength(2);
+    expect(rows([without, withSan])).toHaveLength(2);
   });
 
   it("selects the most-seen rows first under a budget", () => {

@@ -163,6 +163,7 @@ export const canonicalEventEnvelopeSchema = z.object({
         .object({
           subject: z.string().optional(),
           issuer: z.string().optional(),
+          identity: z.string().optional(),
           fingerprint: z.string().optional(),
           fingerprintAlg: z.enum(["sha1", "sha256"]).optional(),
           chainFuids: z.array(z.string()).optional(),
