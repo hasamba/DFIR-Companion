@@ -273,6 +273,20 @@ describe("DNS Client operational log", () => {
     expect(parseSiemExport(elastic(...cased)).events).toHaveLength(1);
   });
 
+  it("a returned-value tag the row could not fit is lossy: the two records stay two rows after import", () => {
+    const eight = (c: string) =>
+      dnsClient(3008, {
+        QueryName: "txt.example",
+        QueryType: "16",
+        QueryStatus: "0",
+        QueryResults: Array.from({ length: 8 }, (_, i) => `type: 16 ${c.repeat(59)}${i}`).join(";") + ";",
+      });
+    const r = parseSiemExport(elastic(eight("q"), eight("z")));
+    expect(r.events).toHaveLength(2);
+    expect(r.events.every((e) => e.description.length <= 600)).toBe(true);
+    expect(afterImport(r.events)).toHaveLength(2);
+  });
+
   it("two CNAME targets that differ past the shown width stay two rows after import", () => {
     const rec = (t: string) =>
       sysmon22({

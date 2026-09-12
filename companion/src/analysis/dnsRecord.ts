@@ -293,14 +293,16 @@ function overlayOf(input: DnsOverlayInput): DnsOverlay {
   // Lossy when anything shown is not the record's own text: a neutralised or clipped name, a value
   // omitted past the shown bound, clipped past the value bound, or neutralised.
   const lossy = shownName !== rawName || nameClipped || results.total > RESULTS_SHOWN_MAX || results.clipped;
-  const mark = lossy ? identityMark(identity) : "";
-  const room = DESCRIPTION_MAX - mark.length - input.description.length;
-  const description = `${input.description}${packTags(tags, room)}${mark}`;
+  // …or a tag packTags had to drop: a dropped `[returned: …]` is evidence the row no longer shows.
+  const mark = identityMark(identity);
+  const full = packTags(tags, Number.POSITIVE_INFINITY);
+  const fits = input.description.length + full.length <= DESCRIPTION_MAX;
+  if (!lossy && fits) return { description: `${input.description}${full}`, identity, dns: envelope() };
+  const packed = packTags(tags, DESCRIPTION_MAX - mark.length - input.description.length);
+  return { description: `${input.description}${packed}${mark}`, identity, dns: envelope() };
 
-  return {
-    description,
-    identity,
-    dns: {
+  function envelope(): DnsEnvelope {
+    return {
       query: canonical,
       queryValid,
       ...(type.type !== undefined ? { queryType: type.type } : {}),
@@ -309,6 +311,6 @@ function overlayOf(input: DnsOverlayInput): DnsOverlay {
       returned: results.values,
       ownership: "not in this record",
       vantage: "endpoint",
-    },
-  };
+    };
+  }
 }
