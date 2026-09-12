@@ -275,7 +275,12 @@ and a 302 read like a 200 with a small body. Each line now says what its own fie
   logged — Apache's excludes headers, Squid's includes them, neither is network bytes, and no
   status proves the client received them. An invalid target mints no destination indicator either:
   a malformed host never becomes a domain IOC or the key's host field, only the row's own path
-  identity.
+  identity: a bracketed literal must be an address, and a registered name must be real labels with
+  well-formed escapes.
+
+On a row that also carries an attack shape (the decoding above), the attacker-shaped parts give way
+to the record's own facts: the matched excerpts and the shown target shrink so the status's tag and
+the proxy's legs always fit, and every tag closes its own bracket.
 
 Keys: the target's form and the proxy's disposition join the aggregation key, so a hit and a miss
 of one URL are two rows. The appended tokens are

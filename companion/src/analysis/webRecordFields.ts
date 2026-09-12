@@ -27,6 +27,7 @@
 // only stops the line from dropping what that join will need, and from misreading what it shows.
 
 import { createHash } from "node:crypto";
+import { isIP } from "node:net";
 
 const TRAILER_TOKEN_MAX = 40;
 const DIGEST_HEX = 16;
@@ -53,9 +54,27 @@ export interface TargetReading {
 // RFC 9112 request-target forms. A form is a FACT about the line; it is not the deployment's role:
 // an origin server must accept an absolute-form target, and a reverse or intercepting proxy logs
 // origin-form. Only a declared/inferred Squid trailer evidences proxy handling.
-const HOST_NAME = /^[A-Za-z0-9._~%-]+$/;
-const IPV6_LITERAL = /^\[[0-9A-Fa-f:.]+\]$/;
-const isHost = (h: string): boolean => IPV6_LITERAL.test(h) || HOST_NAME.test(h);
+// A host is a real host or nothing: a bracketed literal must be an ADDRESS node:net recognises as
+// IPv6 (`[:::]` is not), and a registered name must be dot-separated labels of letters, digits and
+// hyphens, with any percent escape well formed (`bad%ZZ.example` is not a host). Shape alone is not
+// enough — a malformed authority that passes becomes a domain indicator and a key field.
+const HOST_LABEL = /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$/;
+const PERCENT_OK = /^(?:[^%]|%[0-9A-Fa-f]{2})*$/;
+function isHost(h: string): boolean {
+  if (!h || h.length > HOST_MAX) return false;
+  if (h.startsWith("[")) return h.endsWith("]") && isIP(h.slice(1, -1)) === 6;
+  if (!PERCENT_OK.test(h)) return false;
+  const labels = h.replace(/\.$/, "").split(".");
+  return labels.length > 0 && labels.every((l) => HOST_LABEL.test(decodeLabel(l)));
+}
+// A percent-escaped label is judged on the characters it denotes.
+function decodeLabel(l: string): string {
+  try {
+    return decodeURIComponent(l);
+  } catch {
+    return l;
+  }
+}
 
 export function readTarget(method: string, target: string): TargetReading {
   // Control characters go; brackets STAY, because a bracketed IPv6 literal is a valid host. What

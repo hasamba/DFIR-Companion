@@ -220,6 +220,46 @@ function plainDescription(
   ).slice(0, 600);
 }
 
+// An attack row's slots are BOUNDED before composition, not sliced after it: the families and the
+// matched excerpts are attacker-shaped and unbounded, so a four-family hit on all three fields
+// would otherwise consume the whole 600 characters and leave the record's own facts — the status's
+// tag, the proxy's legs — cut off mid-tag (#933 item 1). Each slot closes its own bracket, so the
+// row's brackets always balance.
+const ATTACK_LABELS_MAX = 120;
+const ATTACK_MATCH_MAX = 160;
+/** Reserved for the record's own facts — the status's tag, the proxy's legs — before the payload. */
+const ATTACK_TAGS_RESERVE = 200;
+
+function attackDescription(
+  attack: { labels: string[]; slots: string[] },
+  method: string,
+  uri: string,
+  status: number,
+  bytesTag: string,
+  tags: readonly string[],
+  userTag: string,
+  referer: string,
+  ua: string,
+): string {
+  const clip = (text: string, max: number): string =>
+    text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+  const head = `[web-attack: ${clip(attack.labels.join(","), ATTACK_LABELS_MAX)}] [status: ${status}]`;
+  // With record tags to place, the attacker-shaped slots give way: the request target and the
+  // referer/UA excerpts shrink, and the matched text is clipped to what is left after the tags'
+  // reserve. A four-family hit on all three fields then still shows the status's own tag and the
+  // proxy's legs — the facts the payload would otherwise crowd out.
+  const wanted = tags.reduce((n, t) => n + t.length + 3, 0);
+  const reserve = Math.min(wanted, ATTACK_TAGS_RESERVE);
+  const tail =
+    ` ${method} ${uri.slice(0, reserve ? 120 : 200)}${bytesTag}${userTag.slice(0, 50)}` +
+    `${referer ? ` (ref ${referer.slice(0, reserve ? 40 : 60)})` : ""}` +
+    `${ua ? ` (ua ${ua.slice(0, reserve ? 40 : 60)})` : ""}`;
+  const matchMax = Math.max(40, Math.min(ATTACK_MATCH_MAX, 600 - head.length - tail.length - reserve));
+  const match = attack.slots.length ? ` [match: ${clip(attack.slots.join(" | "), matchMax)}]` : "";
+  const room = 600 - head.length - match.length - tail.length;
+  return oneLine(`${head}${match}${packTags(tags, room)}${tail}`).slice(0, 600);
+}
+
 // Map one combined-log line to a forensic event (collecting IOCs), or null if it doesn't match.
 // `attackMeta`, when given, receives the row's attack identity so the caller can bound variants.
 export function mapCombinedLogLine(
@@ -322,12 +362,7 @@ export function mapCombinedLogLine(
   // analyst always sees the text that fired and what the server answered. "web-attack", never
   // "compromise": a 200 does not prove execution and a 500 does not prove prevention.
   const description = attack
-    ? oneLine(
-        `[web-attack: ${attack.labels.join(",")}] [status: ${status}]` +
-          `${attack.slots.length ? ` [match: ${attack.slots.join(" | ")}]` : ""}${packTags(tags, 240)} ` +
-          `${method} ${uri.slice(0, 200)}${bytesTag}${userTag.slice(0, 50)}` +
-          `${referer ? ` (ref ${referer.slice(0, 60)})` : ""}${ua ? ` (ua ${ua.slice(0, 60)})` : ""}`,
-      ).slice(0, 600)
+    ? attackDescription(attack, method, uri, status, bytesTag, tags, userTag, referer, ua)
     : plainDescription(method, uri, status, bytesTag, tags, userTag, refTag, uaTag);
 
   // A secret carried in the request URI or the Referer is a spill the moment this line is written.

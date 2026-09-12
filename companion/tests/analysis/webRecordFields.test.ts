@@ -55,6 +55,15 @@ describe("readTarget — the RFC 9112 form, never the deployment's role", () => 
     // an absolute target is parsed whole, so a bad port is not "absolute with that host"
     expect(readTarget("GET", "http://example.invalid:abc/x")).toMatchObject({ form: "invalid", host: "" });
     expect(readTarget("GET", "http://ev]il/x")).toMatchObject({ form: "invalid", host: "" });
+    // a bracketed literal must be an ADDRESS, and a registered name a real name
+    expect(readTarget("GET", "http://[:::]/x")).toMatchObject({ form: "invalid", host: "" });
+    expect(readTarget("GET", "http://[2001:db8::1]/x")).toMatchObject({
+      form: "absolute",
+      host: "[2001:db8::1]",
+    });
+    expect(readTarget("GET", "http://bad%ZZ.example/x")).toMatchObject({ form: "invalid", host: "" });
+    expect(readTarget("GET", "http://a_b.example/x")).toMatchObject({ form: "invalid", host: "" });
+    expect(readTarget("CONNECT", "[:::]:443")).toMatchObject({ form: "invalid", host: "" });
     expect(readTarget("GET", "https://files.example.invalid")).toMatchObject({
       form: "absolute",
       host: "files.example.invalid",

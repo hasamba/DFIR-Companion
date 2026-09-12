@@ -729,6 +729,30 @@ describe("parseCombinedLog — what one line establishes", () => {
     expect(e.description.length).toBeLessThanOrEqual(600);
   });
 
+  it("a malformed IPv6 literal or percent escape is no host: no indicator, no host key", () => {
+    const lines = [
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET http://[:::]/x HTTP/1.1" 200 83 "-" "curl/8"',
+      '10.30.20.11 - - [14/May/2024:19:00:01 +0000] "GET http://bad%ZZ.example/x HTTP/1.1" 200 83 "-" "curl/8"',
+    ].join("\n");
+    const r = parseCombinedLog(lines);
+    expect(r.iocs.some((i) => i.type === "domain")).toBe(false);
+    expect(r.events.every((e) => e.description.includes("[invalid request target]"))).toBe(true);
+  });
+
+  it("a four-family attack on all three fields still keeps the status, the disposition and balanced tags", () => {
+    const payload = (n: number) =>
+      `;id ${"a".repeat(n)} ../../etc/passwd union select ${"b".repeat(n)} \${jndi:ldap://x}`;
+    const line =
+      `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /cgi?x=${encodeURIComponent(payload(60))} HTTP/1.1" 302 0 ` +
+      `"https://portal.example.invalid/?y=${encodeURIComponent(payload(60))}" "${payload(60)}" TCP_MISS:HIER_DIRECT`;
+    const r = parseCombinedLog(squidFile([line]));
+    const e = r.events.find((x) => x.description.includes("web-attack"))!;
+    expect(e.description.length).toBeLessThanOrEqual(600);
+    expect((e.description.match(/\[/g) ?? []).length).toBe((e.description.match(/\]/g) ?? []).length);
+    expect(e.description).toContain("[status: 302]");
+    expect(e.description).toContain("[proxy: cache miss; fetched upstream");
+  });
+
   it("an ordinary origin-form line reads exactly as it did before", () => {
     const r = parseCombinedLog(HEALTH);
     expect(r.events[0].description).toBe("GET /status -> 200 (83b) (ua Prometheus/2.47.0)");
