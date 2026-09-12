@@ -204,9 +204,16 @@ describe("shared-secret length floor at startup", () => {
     );
   });
 
-  it("refuses a short Telegram secret, naming the variable", () => {
+  it("refuses a short Telegram secret, naming the variable and a generator Telegram accepts", () => {
+    // setWebhook takes A-Z a-z 0-9 _ - only; base64 carries + / = and would be refused.
     expect(() => assertSlashCommandSecretLengths({ DFIR_TELEGRAM_SECRET_TOKEN: "s3cret" })).toThrow(
-      /DFIR_TELEGRAM_SECRET_TOKEN.*32/,
+      /DFIR_TELEGRAM_SECRET_TOKEN.*32.*openssl rand -hex 32/,
+    );
+  });
+
+  it("names base64 for the Teams token, which has no alphabet restriction", () => {
+    expect(() => assertSlashCommandSecretLengths({ DFIR_TEAMS_TOKEN: "x" })).toThrow(
+      /openssl rand -base64 32/,
     );
   });
 

@@ -24,7 +24,7 @@ import {
   isAllowedResponseUrl,
   parseHostList,
 } from "../analysis/slashCommandAuth.js";
-import { getAiLimiter, getSlashCommandSecretLimiter, type AttemptLimiter } from "../http/rateLimiter.js";
+import { getAiLimiter, getSlashCommandSecretLimiter } from "../http/rateLimiter.js";
 import { TelegramPoller, sendTelegramMessage, type TelegramUpdate } from "../analysis/telegramPoller.js";
 import { SlackSocketMode, type SlackCommandPayload } from "../analysis/slackSocketMode.js";
 import { isValidCaseId } from "../storage/caseStore.js";
@@ -104,7 +104,6 @@ export function registerSlashCommandRoutes(app: Express, ctx: RouteContext): voi
   // operator's bot. The AI limiter below is a different job (per-channel spend after a GOOD
   // token) and keeps its place.
   const guardedCompare = async (
-    guard: AttemptLimiter,
     platform: "teams" | "telegram",
     req: Request,
     presented: string | undefined,
@@ -112,7 +111,7 @@ export function registerSlashCommandRoutes(app: Express, ctx: RouteContext): voi
   ): Promise<{ ok: true } | { ok: false; status: 401 | 429; error: string; retryAfterMs?: number }> => {
     let reason = "unauthorized";
     if (!presented) return { ok: false, status: 401, error: verify().error ?? reason };
-    const outcome = await guard.attempt(platform, async () => {
+    const outcome = await secretLimiter.attempt(platform, async () => {
       const result = verify();
       if (!result.ok) reason = result.error ?? reason;
       return result.ok;
@@ -180,9 +179,7 @@ export function registerSlashCommandRoutes(app: Express, ctx: RouteContext): voi
     const expected = (process.env.DFIR_TEAMS_TOKEN ?? "").trim();
     if (!expected) return void res.status(401).json({ error: "no Teams token configured" });
     const presented = String(req.headers["authorization"] ?? "") || undefined;
-    const guess = await guardedCompare(secretLimiter, "teams", req, presented, () =>
-      verifyTeamsToken(presented, expected),
-    );
+    const guess = await guardedCompare("teams", req, presented, () => verifyTeamsToken(presented, expected));
     if (!guess.ok) return void refuse(res, guess);
     if (!limiter.tryAcquire(`teams:${channelId}`)) {
       return void res.status(429).json({ error: "rate limit exceeded — try again in a minute" });
@@ -213,7 +210,7 @@ export function registerSlashCommandRoutes(app: Express, ctx: RouteContext): voi
     const expected = (process.env.DFIR_TELEGRAM_SECRET_TOKEN ?? "").trim();
     if (!expected) return void res.status(401).json({ error: "no Telegram webhook secret configured" });
     const presented = String(req.headers["x-telegram-bot-api-secret-token"] ?? "") || undefined;
-    const guess = await guardedCompare(secretLimiter, "telegram", req, presented, () =>
+    const guess = await guardedCompare("telegram", req, presented, () =>
       verifyTelegramSecret(presented, expected),
     );
     if (!guess.ok) return void refuse(res, guess);

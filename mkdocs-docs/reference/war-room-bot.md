@@ -182,8 +182,9 @@ Under the hood the Companion asks Telegram for new commands and Telegram holds t
 Use this only if you need it — a shared server that's already reachable, say. Polling is less setup and less exposure.
 
 1. Message [@BotFather](https://t.me/BotFather) → `/newbot` → copy the token (`123456789:AAF…`).
-2. Generate the webhook secret: `openssl rand -base64 32`. It must be at least 32 characters, or
-   the server refuses to start. Wrong guesses are rate-limited the same way as the Teams token
+2. Generate the webhook secret: `openssl rand -hex 32`. It must be at least 32 characters, or the
+   server refuses to start, and Telegram accepts only `A-Z a-z 0-9 _ -` in it — so not base64,
+   whose `+ / =` `setWebhook` rejects. Wrong guesses are rate-limited the same way as the Teams token
    above: five failures lock the endpoint for 30 seconds, doubling after each further failure, and
    every rejected guess is logged with the source address.
 3. Add both to `.env`:
