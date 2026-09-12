@@ -653,6 +653,38 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
     expect(r.find((e) => e.description.includes("server-presented"))?.canonical?.tls?.certificateRole).toBe(
       "server",
     );
+    // false/false establishes no side: no claim, and no folding with a positively identified server leaf
+    const neither = readZeekX509({ ...ZEEK_X509, fingerprint: fp, client_cert: false, host_cert: false }, "");
+    expect(neither.role).toBeUndefined();
+    expect(rows([neither, asServer])).toHaveLength(2);
+    expect(rows([neither])[0].description).not.toContain("presented");
+  });
+
+  it("Suricata 8 tls.client is the client's certificate: keyed apart, shown apart, certificate rows by role", () => {
+    const rec = (who: string) => ({
+      ...SURICATA_TLS,
+      tls: {
+        sni: "a.example",
+        client: {
+          subject: `CN=${who}`,
+          issuerdn: "CN=Corp CA",
+          fingerprint: `${who === "alice" ? "ab" : "cd"}`.repeat(20),
+          certificate: Buffer.from(who).toString("base64"),
+        },
+      },
+    });
+    const alice = readSuricataTls(rec("alice"), "");
+    const bob = readSuricataTls(rec("bob"), "");
+    expect(alice.clientCert).toMatchObject({ subject: "CN=alice", issuer: "CN=Corp CA" });
+    expect(alice.clientCert?.fingerprint?.value).toBe("ab".repeat(20));
+    const r = rows([alice, bob]);
+    expect(r).toHaveLength(2);
+    expect(r[0].description).toContain("[client cert: subject CN=");
+    const certs = readSuricataCertificates(rec("alice"), "");
+    expect(certs).toHaveLength(1);
+    expect(certs[0].role).toBe("client");
+    expect(certs[0].certificate?.subject).toBe("CN=alice");
+    expect(rows(certs)[0].description).toContain("client-presented");
   });
 
   it("selects the most-seen rows first under a budget", () => {

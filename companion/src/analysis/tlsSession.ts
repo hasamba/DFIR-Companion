@@ -309,6 +309,7 @@ export function readSuricataTls(row: Row, fallbackTs: string): TlsObservation {
     issuer,
     ja3: hashOf(getCI(t, "ja3")),
     ja3s: hashOf(getCI(t, "ja3s")),
+    ...(suricataClientCert(t) ? { clientCert: suricataClientCert(t) } : {}),
     cert: fingerprint(getCI(t, "fingerprint")) ?? derFp ?? identityRef(issuer, serial),
     ...(Object.keys(facts).length ? { certificate: facts } : {}),
   };
@@ -318,6 +319,16 @@ export function readSuricataTls(row: Row, fallbackTs: string): TlsObservation {
 export function readSuricataCertificates(row: Row, fallbackTs: string): TlsObservation[] {
   const tls = getCI(row, "tls");
   const t: Row = isObject(tls) ? tls : {};
+  // The server's certificates live under `tls`; Suricata 8 records the CLIENT's under `tls.client`
+  // — its own certificate, chain and names, kept apart by role.
+  const client = getCI(t, "client");
+  return [
+    ...derCertificates(row, t, "server", fallbackTs),
+    ...(isObject(client) ? derCertificates(row, client, "client", fallbackTs) : []),
+  ];
+}
+
+function derCertificates(row: Row, t: Row, role: "server" | "client", fallbackTs: string): TlsObservation[] {
   const explicit = list(getCI(t, "certificate")) ?? [];
   const chain = list(getCI(t, "chain")) ?? [];
   // The leaf is the explicit `certificate`, else chain index 0 — by ORIGIN, not by which entry
@@ -335,29 +346,51 @@ export function readSuricataCertificates(row: Row, fallbackTs: string): TlsObser
     // The leaf's subject/issuer/serial are the record's own fields; a chain entry's are not
     // decoded here (no ASN.1 parser), so it carries its sha256 and nothing else. The leaf is the
     // explicit `certificate`, else the FIRST chain entry (Suricata writes the chain leaf-first).
-    const issuer = leaf ? (text(getCI(t, "issuerdn")) ?? text(getCI(t, "issuer"))) : undefined;
     out.push({
       source: "suricata-tls",
       kind: "certificate",
+      role,
       timestamp: time(getCI(row, "timestamp")) || fallbackTs,
       uid: text(getCI(row, "flow_id")),
       observer: observerOf(row),
       cert: { kind: "fingerprint", value: fp, alg: "sha256" },
-      certificate: leaf
-        ? {
-            ...(text(getCI(t, "subject")) !== undefined ? { subject: text(getCI(t, "subject")) } : {}),
-            ...(issuer !== undefined ? { issuer } : {}),
-            ...(hexOf(text(getCI(t, "serial")) ?? "")
-              ? { serial: hexOf(text(getCI(t, "serial")) ?? "") }
-              : {}),
-            ...(list(getCI(t, "subjectaltname"))
-              ? { names: list(getCI(t, "subjectaltname"))!.slice(0, NAMES_KEPT_MAX) }
-              : {}),
-          }
-        : {},
+      certificate: leaf ? suricataFacts(t) : {},
     });
   }
   return out;
+}
+
+/** Suricata 8's `tls.client`: the client's certificate, when the record carries one. */
+function suricataClientCert(t: Row): TlsObservation["clientCert"] {
+  const c = getCI(t, "client");
+  if (!isObject(c)) return undefined;
+  const fp =
+    fingerprint(getCI(c, "fingerprint")) ??
+    derFingerprint(text(getCI(c, "certificate")) ?? list(getCI(c, "chain"))?.[0]) ??
+    identityRef(text(getCI(c, "issuerdn")) ?? text(getCI(c, "issuer")), text(getCI(c, "serial")));
+  const out = {
+    ...(text(getCI(c, "subject")) !== undefined ? { subject: text(getCI(c, "subject")) } : {}),
+    ...((text(getCI(c, "issuerdn")) ?? text(getCI(c, "issuer"))) !== undefined
+      ? { issuer: text(getCI(c, "issuerdn")) ?? text(getCI(c, "issuer")) }
+      : {}),
+    ...(fp ? { fingerprint: fp } : {}),
+  };
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** The certificate facts a Suricata `tls` (or `tls.client`) object carries. */
+function suricataFacts(t: Row): CertificateFacts {
+  const issuer = text(getCI(t, "issuerdn")) ?? text(getCI(t, "issuer"));
+  const serial = text(getCI(t, "serial"));
+  const names = list(getCI(t, "subjectaltname"));
+  return {
+    ...(text(getCI(t, "subject")) !== undefined ? { subject: text(getCI(t, "subject")) } : {}),
+    ...(issuer !== undefined ? { issuer } : {}),
+    ...(serial !== undefined && hexOf(serial) ? { serial: hexOf(serial) } : {}),
+    ...(names ? { names: names.slice(0, NAMES_KEPT_MAX) } : {}),
+    ...(validity(getCI(t, "notbefore")) ? { notBefore: validity(getCI(t, "notbefore")) } : {}),
+    ...(validity(getCI(t, "notafter")) ? { notAfter: validity(getCI(t, "notafter")) } : {}),
+  };
 }
 
 // ───────────────────────────── folding ─────────────────────────────
