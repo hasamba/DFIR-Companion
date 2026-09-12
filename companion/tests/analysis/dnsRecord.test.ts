@@ -124,6 +124,8 @@ describe("isValidQueryName", () => {
     expect(isValidQueryName("__x.example")).toBe(true); // underscores are legal anywhere in a label
     expect(isValidQueryName("beacon_01.attacker.example")).toBe(true);
     expect(isValidQueryName("bücher.example")).toBe(true); // a U-label
+    expect(isValidQueryName("ū̃.attacker.example")).toBe(true); // a U-label needing a combining mark
+    expect(isValidQueryName(`${"ü".repeat(60)}.example`)).toBe(false); // its A-label exceeds 63 octets
     expect(isValidQueryName("a b.example")).toBe(false);
     expect(isValidQueryName("a.example-")).toBe(false);
     expect(isValidQueryName("localhost")).toBe(true); // a valid single-label query…
@@ -395,6 +397,24 @@ describe("dnsOverlay — what one record establishes", () => {
     const nsA = rec("type: 5 a.example;type: 2 ns.example;::ffff:192.0.2.1;");
     const nsB = rec("type: 5 a.example;::ffff:192.0.2.1;type: 2 ns.example;");
     expect(nsA.identity).toBe(nsB.identity);
+  });
+  it("a U-label name is keyed and reported in its A-label form", () => {
+    const u = overlay({
+      QueryName: "ū̃.attacker.example",
+      QueryStatus: "0",
+      QueryResults: "::ffff:192.0.2.1;",
+    });
+    expect(u.dns.query).toBe("xn--zga03f.attacker.example");
+    expect(u.dns.indicator).toBe(true);
+    expect(u.identity).toBe(
+      overlay({
+        QueryName: "xn--zga03f.attacker.example",
+        QueryStatus: "0",
+        QueryResults: "::ffff:192.0.2.1;",
+      }).identity,
+    );
+    expect(u.description).toContain("[query: ū̃.attacker.example]");
+    expect(u.description).toMatch(/ #[\w-]{22}$/); // the shown name is not the keyed name
   });
   it("a complete rendering carries no mark; the description stays inside 600 characters", () => {
     const plain = overlay({ QueryName: "a.example", QueryStatus: "0", QueryResults: "::ffff:192.0.2.1;" });

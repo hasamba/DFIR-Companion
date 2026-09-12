@@ -17,6 +17,7 @@
 // envelope. The join to a connection is a spec, over un-aggregated records.
 
 import { isIP } from "node:net";
+import { domainToASCII } from "node:url";
 import { breakHashRuns, identityMark, keyDigest, packTags, showToken } from "./recordIdentity.js";
 
 /** Win32 DNS status codes, from WinError.h — nothing outside this table is read as success or failure. */
@@ -113,24 +114,32 @@ export interface ResultsReading {
 }
 
 // A DNS OWNER name, not a hostname: underscores are legal anywhere in a label (RFC 2782 service
-// labels, `beacon_01.attacker.example`), and a U-label may carry letters outside ASCII. What is
-// rejected is what no resolver answers and no report should carry bare: a hyphen at an edge, a
-// bracket, a slash, whitespace, punctuation other than `-` and `_`.
-const LABEL = /^[\p{L}\p{N}_](?:[\p{L}\p{N}_-]*[\p{L}\p{N}_])?$/u;
+// labels, `beacon_01.attacker.example`). A name outside ASCII is a U-label: it is converted to its
+// A-label (IDNA ToASCII, `xn--…`) and validated and keyed in THAT form, so a combining mark or a
+// case variant of one name is one name, and the 63-octet label limit is measured on the wire form.
+// What is rejected is what no resolver answers and no report should carry bare: a hyphen at an
+// edge, a bracket, a slash, whitespace, punctuation other than `-` and `_`.
+const LABEL = /^[A-Za-z0-9_](?:[A-Za-z0-9_-]*[A-Za-z0-9_])?$/;
+
+/** The wire form of a query name: A-labels for a U-label name, "" when it cannot be converted. */
+export function asciiName(raw: string): string {
+  const name = raw.replace(/\.$/, "");
+  return /^[\x00-\x7f]*$/.test(name) ? name : domainToASCII(name);
+}
 
 /**
  * A name a resolver would answer: 1–253 characters of valid labels. One label (`wpad`, a NetBIOS-
  * style name) is a valid QUERY — whether it is an indicator is a separate rule (isIndicatorName).
  */
 export function isValidQueryName(raw: string): boolean {
-  const name = raw.replace(/\.$/, "");
+  const name = asciiName(raw);
   if (!name || name.length > 253) return false;
   return name.split(".").every((l) => l.length >= 1 && l.length <= 63 && LABEL.test(l));
 }
 
 /** The indicator rule the mapper always had: a valid name with at least one dot. */
 export const isIndicatorName = (raw: string): boolean =>
-  isValidQueryName(raw) && raw.replace(/\.$/, "").includes(".");
+  isValidQueryName(raw) && asciiName(raw).includes(".");
 
 const V4_MAPPED = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i;
 
@@ -143,7 +152,7 @@ function classify(type: number | undefined, value: string): ReturnedValue {
   // one row per capitalisation of one answer. The value is kept WHOLE here — the identity is built
   // from it — and bounded only in the envelope (boundForEnvelope).
   if (type !== undefined && NAME_TYPES.has(type) && isValidQueryName(value))
-    return { type, value: value.replace(/\.$/, "").toLowerCase(), kind: "name" };
+    return { type, value: asciiName(value).toLowerCase(), kind: "name" };
   return { type, value, kind: "other" };
 }
 
@@ -305,7 +314,7 @@ function overlayOf(input: DnsOverlayInput): DnsOverlay {
   // keeps its exact text as its identity, so two malformed queries never fold.
   const rawName = input.field("QueryName");
   const queryValid = isValidQueryName(rawName);
-  const canonical = queryValid ? rawName.replace(/\.$/, "").toLowerCase() : rawName;
+  const canonical = queryValid ? asciiName(rawName).toLowerCase() : rawName;
   const shownName = breakHashRuns(showToken(rawName));
   const nameClipped = shownName.length > NAME_SHOWN_MAX;
   const name = nameClipped ? `${shownName.slice(0, NAME_SHOWN_MAX - 1)}…` : shownName;
@@ -338,7 +347,10 @@ function overlayOf(input: DnsOverlayInput): DnsOverlay {
 
   // Lossy when anything shown is not the record's own text: a neutralised or clipped name, a value
   // omitted past the shown bound, clipped past the value bound, or neutralised.
-  const lossy = shownName !== rawName || nameClipped || results.total > RESULTS_SHOWN_MAX || results.clipped;
+  // A U-label is shown as written and keyed as its A-label, so the shown text is not the identity.
+  const converted = queryValid && asciiName(rawName) !== rawName.replace(/\.$/, "");
+  const lossy =
+    shownName !== rawName || nameClipped || converted || results.total > RESULTS_SHOWN_MAX || results.clipped;
   // …or a tag packTags had to drop: a dropped `[returned: …]` is evidence the row no longer shows.
   const mark = identityMark(identity);
   const full = packTags(tags, Number.POSITIVE_INFINITY);
