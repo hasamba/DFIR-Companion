@@ -64,7 +64,6 @@ import { secretSpillSignal } from "./secretSpillRules.js";
 import { boundedAggKey } from "./aggKey.js";
 import { inspectRequestFields, MAX_ATTACK_VARIANTS } from "./webRequestDecode.js";
 import {
-  inferTrailerProfile,
   packTags,
   readSize,
   readTarget,
@@ -80,7 +79,11 @@ export interface CombinedLogImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
-  /** The file's trailer layout when the caller knows it; else it is inferred from the file. */
+  /**
+   * The file's trailer layout, declared by the caller. Without it every appended token stays
+   * unlabelled: the layout is the deployment's, and a token's shape — the client's to choose
+   * wherever an Apache format appends a request header — never establishes it.
+   */
   trailerProfile?: TrailerProfile | null;
 }
 
@@ -531,21 +534,11 @@ export function parseCombinedLog(text: string, opts: CombinedLogImportOptions = 
   let total = 0;
 
   const lines = text.split(/\r?\n/).map((l) => l.trim());
-  // A LogFormat is a property of the FILE, so the trailer profile is established once, over every
-  // line, before any line is read (#933 item 1): one line's Squid-shaped token — which an Apache
-  // format appending an attacker-controlled header could carry — never mints proxy semantics.
-  // Inferred over SUCCESSFULLY PARSED lines only (a blank or malformed line is not a record), with
-  // the client the server recorded for each — see inferTrailerProfile.
-  const profile =
-    opts.trailerProfile ??
-    inferTrailerProfile(
-      lines.flatMap((l) => {
-        const m = LINE_RE.exec(l);
-        // `-` and anything that is not an address are NOT clients: nineteen placeholder peers and
-        // one real one must not satisfy the two-client floor.
-        return m ? [{ tokens: trailerTokens(m[12] ?? ""), client: clientAddress(m[1]) }] : [];
-      }),
-    );
+  // A LogFormat is a property of the deployment, so the trailer profile is DECLARED, never read off
+  // the lines (#933 item 1): a Squid-shaped token is the client's to write wherever an Apache format
+  // appends a request header, and no count of lines or of clients turns that into the server's
+  // format. Without a declaration every appended token is shown unlabelled.
+  const profile = opts.trailerProfile ?? null;
 
   for (const line of lines) {
     if (!line) continue;

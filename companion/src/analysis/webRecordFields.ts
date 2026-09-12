@@ -36,11 +36,6 @@ const TRAILER_TOKENS_MAX = 6;
 const TRAILER_REMAINDER_MAX = 400;
 const TRAILER_WORDS_MAX = 80;
 const HOST_MAX = 120;
-/** Below this many PARSED lines a file cannot establish a trailer profile by inference. */
-export const MIN_PROFILE_LINES = 20;
-/** …nor from one caller's own requests: a LogFormat is the server's, not a client's. */
-export const MIN_PROFILE_CLIENTS = 2;
-const PROFILE_SHARE = 0.95;
 
 export type TargetForm = "origin" | "absolute" | "authority" | "asterisk" | "invalid";
 
@@ -241,17 +236,15 @@ export function readSquidTrailer(token: string): SquidReading {
   return { result, hierarchy, words: parts.join("; ").slice(0, TRAILER_WORDS_MAX), known };
 }
 
-/** One successfully parsed line's trailer, with the client address the server recorded for it. */
-export interface ParsedTrailer {
-  tokens: string[];
-  client: string;
-}
-
+/**
+ * The file's trailer layout, DECLARED by whoever knows the deployment's LogFormat. It is never
+ * inferred from the tokens themselves: a token's shape is the client's to choose wherever the
+ * format appends a request header, so twenty Squid-shaped values from two egress addresses would
+ * otherwise mint proxy semantics — and disposition keys — that no line establishes.
+ */
 export interface TrailerProfile {
   /** Index into the trailer tokens that holds the Squid `%Ss:%Sh` pair. */
   squidSlot: number;
-  /** How the profile was established — said in the row's words. */
-  source: "declared" | "inferred";
 }
 
 /** Split the text after the User-Agent into tokens: a quoted run is one token, bare runs split. */
@@ -272,27 +265,6 @@ export function trailerTokens(rest: string): string[] {
     out.push(token.slice(0, TRAILER_TOKEN_MAX * 4));
   }
   return out;
-}
-
-/**
- * The file's trailer profile, inferred from every line's trailer: a slot is the Squid slot only
- * when the file carries at least MIN_PROFILE_LINES trailers and at least PROFILE_SHARE of them
- * hold a KNOWN result code in that same slot. One line's shape can never establish it — an Apache
- * LogFormat that appends an attacker-controlled header would otherwise mint proxy semantics.
- */
-export function inferTrailerProfile(parsed: readonly ParsedTrailer[]): TrailerProfile | null {
-  const lines = parsed.length;
-  if (lines < MIN_PROFILE_LINES) return null;
-  const width = Math.min(TRAILER_TOKENS_MAX, Math.max(0, ...parsed.map((p) => p.tokens.length)));
-  for (let slot = 0; slot < width; slot++) {
-    const hits = parsed.filter((p) => p.tokens[slot] !== undefined && isKnownSquidToken(p.tokens[slot]));
-    if (hits.length < lines * PROFILE_SHARE) continue;
-    // A LogFormat belongs to the server. Twenty requests from ONE caller carrying a Squid-shaped
-    // header would otherwise mint proxy semantics for every other line in the file.
-    if (new Set(hits.map((p) => p.client).filter(Boolean)).size < MIN_PROFILE_CLIENTS) continue;
-    return { squidSlot: slot, source: "inferred" };
-  }
-  return null;
 }
 
 /**
@@ -334,7 +306,7 @@ export interface TrailerReading {
   variantKey: string;
 }
 
-/** Read one line's trailer under the file's profile. With no profile nothing is labelled. */
+/** Read one line's trailer under the file's DECLARED profile. With no profile nothing is labelled. */
 export function readTrailer(tokens: readonly string[], profile: TrailerProfile | null): TrailerReading {
   const slotToken = profile ? tokens[profile.squidSlot] : undefined;
   // The slot is the Squid slot for the FILE; this LINE's value still has to be one of the pairs the
@@ -348,9 +320,7 @@ export function readTrailer(tokens: readonly string[], profile: TrailerProfile |
   // is that text neutralised and clipped.
   const raw = tokens.filter((_, i) => !(recognised && profile && i === profile.squidSlot));
   const unlabelled = raw.map((t) => showToken(t).slice(0, TRAILER_TOKEN_MAX)).filter(Boolean);
-  const squidWords = squid?.words
-    ? `${squid.words} (squid_combined, ${profile?.source === "declared" ? "declared" : "inferred from the file"})`
-    : "";
+  const squidWords = squid?.words ? `${squid.words} (squid_combined, declared format)` : "";
   const trailerWords = unlabelled.length
     ? `trailer: ${unlabelled.join(" ").slice(0, TRAILER_WORDS_MAX)}`
     : "";

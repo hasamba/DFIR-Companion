@@ -494,28 +494,19 @@ describe("parseCombinedLog — what one line establishes", () => {
     client = "10.30.10.14",
   ) =>
     `${client} - - [15/May/2024:06:42:01 +0000] "GET ${uri} HTTP/1.1" ${status} ${bytes} "-" "Wget/1.21.3" ${result}`;
-  // A LogFormat is per file AND per server: the profile needs a long file whose Squid slot appears
-  // for more than one client — twenty requests from one caller never establish it.
-  const squidFile = (lines: string[]) =>
-    [
-      ...Array.from({ length: 20 }, (_, i) =>
-        squidLine(
-          "TCP_MISS:HIER_DIRECT",
-          `https://files.example.invalid/pad${i}`,
-          200,
-          "18376",
-          `10.30.10.${i % 4}`,
-        ),
-      ),
-      ...lines,
-    ].join("\n");
+  // A LogFormat is the deployment's: the Squid slot is DECLARED on import, never read off the lines.
+  const squidFile = (lines: string[]) => lines.join("\n");
+  const DECLARED = { trailerProfile: { squidSlot: 0 } };
 
-  it("reads the proxy's two legs when the file evidences a Squid trailer, and keys a hit apart from a miss", () => {
-    const r = parseCombinedLog(squidFile([squidLine("TCP_HIT:NONE"), squidLine("TCP_MISS:HIER_DIRECT")]));
+  it("reads the proxy's two legs under a declared Squid trailer, and keys a hit apart from a miss", () => {
+    const r = parseCombinedLog(
+      squidFile([squidLine("TCP_HIT:NONE"), squidLine("TCP_MISS:HIER_DIRECT")]),
+      DECLARED,
+    );
     const hit = r.events.find((e) => e.description.includes("served from its cache"))!;
     const miss = r.events.find((e) => e.description.includes("fetched from the origin (direct)"))!;
     expect(hit.description).toContain(
-      "[proxy: served from its cache; upstream: not contacted (squid_combined, inferred from the file)]",
+      "[proxy: served from its cache; upstream: not contacted (squid_combined, declared format)]",
     );
     expect(hit.description).toContain("[absolute-form request target]");
     // evidence order: the proxy's legs come before the target's form
@@ -539,7 +530,10 @@ describe("parseCombinedLog — what one line establishes", () => {
   });
 
   it("a value the tables do not name stays an unlabelled token — never a disposition, never lost", () => {
-    const r = parseCombinedLog(squidFile([squidLine("TCP_FOO:BAR_BAZ"), squidLine("TCP_MISS:NONCE_7")]));
+    const r = parseCombinedLog(
+      squidFile([squidLine("TCP_FOO:BAR_BAZ"), squidLine("TCP_MISS:NONCE_7")]),
+      DECLARED,
+    );
     const unknown = r.events.find((x) => x.description.includes("TCP_FOO"))!;
     expect(unknown.description).toContain("[trailer: TCP_FOO:BAR_BAZ]");
     expect(unknown.description).not.toContain("proxy:");
@@ -551,7 +545,7 @@ describe("parseCombinedLog — what one line establishes", () => {
     const varying = Array.from({ length: 200 }, (_, i) =>
       squidLine(`TCP_MISS:NONCE_${i}`, "https://files.example.invalid/one", 200, "18376", "10.30.10.1"),
     );
-    const many = parseCombinedLog(squidFile(varying));
+    const many = parseCombinedLog(squidFile(varying), DECLARED);
     expect(
       many.events.filter((e) => e.description.includes("files.example.invalid/one")).length,
     ).toBeLessThanOrEqual(66);
@@ -605,36 +599,35 @@ describe("parseCombinedLog — what one line establishes", () => {
     expect(e.aggKey).not.toContain("203.0.113.9");
   });
 
-  it("twenty requests from ONE caller never establish a Squid profile", () => {
-    const oneClient = Array.from({ length: 30 }, (_, i) =>
-      squidLine("TCP_MISS:HIER_DIRECT", `https://files.example.invalid/p${i}`, 200, "18376", "10.9.9.9"),
-    ).join("\n");
-    const r = parseCombinedLog(oneClient);
-    expect(r.events.every((e) => !e.description.includes("proxy:"))).toBe(true);
-    expect(r.events.every((e) => e.description.includes("[trailer: TCP_MISS:HIER_DIRECT]"))).toBe(true);
-  });
-
-  it('placeholder peers are not clients: nineteen "-" and one address never establish the profile', () => {
-    const lines = Array.from({ length: 19 }, (_, i) =>
-      squidLine("TCP_HIT:NONE", `https://files.example.invalid/p${i}`, 200, "18376", "-"),
-    );
-    lines.push(squidLine("TCP_HIT:NONE", "https://files.example.invalid/p19", 200, "18376", "10.0.0.1"));
-    const r = parseCombinedLog(lines.join("\n"));
-    expect(r.events.every((e) => !e.description.includes("proxy:"))).toBe(true);
-  });
-
-  it("blank and malformed lines never count towards the profile floor", () => {
-    const nineteen = Array.from({ length: 19 }, (_, i) =>
-      squidLine(
-        "TCP_MISS:HIER_DIRECT",
-        `https://files.example.invalid/p${i}`,
-        200,
-        "18376",
-        `10.30.10.${i % 4}`,
+  it("no count of lines or of clients establishes a Squid profile: the format is declared or it is not", () => {
+    // An Apache LogFormat ending in a request header the client writes: ten copies from each of two
+    // egress addresses, every one carrying a Squid-shaped pair. The file is unanimous, long enough
+    // for any statistical floor, and from more than one client — and it establishes nothing.
+    const forged = [
+      ...Array.from({ length: 10 }, (_, i) =>
+        squidLine("TCP_MISS:HIER_DIRECT", `https://files.example.invalid/p${i}`, 200, "18376", "203.0.113.7"),
       ),
-    );
-    const r = parseCombinedLog([...nineteen, "", "   ", "not a log line at all"].join("\n"));
+      ...Array.from({ length: 10 }, (_, i) =>
+        squidLine(
+          "TCP_MISS:HIER_DIRECT",
+          `https://files.example.invalid/p${i}`,
+          200,
+          "18376",
+          "198.51.100.9",
+        ),
+      ),
+    ].join("\n");
+    const r = parseCombinedLog(forged);
+    expect(r.events.length).toBeGreaterThan(0);
     expect(r.events.every((e) => !e.description.includes("proxy:"))).toBe(true);
+    expect(r.events.every((e) => !e.description.includes("origin"))).toBe(true);
+    expect(r.events.every((e) => e.description.includes("[trailer: TCP_MISS:HIER_DIRECT]"))).toBe(true);
+    expect(r.events.every((e) => !e.aggKey?.includes("squid"))).toBe(true);
+    // the same file under a declared format reads the pair — and says the reading is declared
+    const declared = parseCombinedLog(forged, DECLARED);
+    expect(declared.events.every((e) => e.description.includes("(squid_combined, declared format)"))).toBe(
+      true,
+    );
   });
 
   it("a trailer token cannot forge a tag, and unbounded trailer values fold rather than multiplying rows", () => {
@@ -668,17 +661,19 @@ describe("parseCombinedLog — what one line establishes", () => {
     const loaded = squidFile([
       `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET https://files.example.invalid/${"a".repeat(620)} HTTP/1.1" 302 0 "-" "curl/8" TCP_MISS:HIER_DIRECT ${"t".repeat(60)} ${"u".repeat(60)}`,
     ]);
-    const big = parseCombinedLog(loaded).events.find((x) => x.description.includes("[status: 302]"))!;
+    const big = parseCombinedLog(loaded, DECLARED).events.find((x) =>
+      x.description.includes("[status: 302]"),
+    )!;
     expect(big.description.length).toBeLessThanOrEqual(600);
     expect(big.description).toContain("[redirect — the Location is not in this format]");
     expect((big.description.match(/\[/g) ?? []).length).toBe((big.description.match(/\]/g) ?? []).length);
   });
 
-  it("a bare result code with no hierarchy never establishes a profile", () => {
-    const bare = Array.from({ length: 24 }, (_, i) =>
+  it("a bare result code with no hierarchy is not the field, even under a declared profile", () => {
+    const bare = Array.from({ length: 4 }, (_, i) =>
       squidLine("TCP_MISS", `https://files.example.invalid/p${i}`, 200, "18376", `10.30.10.${i % 4}`),
     ).join("\n");
-    const r = parseCombinedLog(bare);
+    const r = parseCombinedLog(bare, DECLARED);
     expect(r.events.every((e) => !e.description.includes("proxy:"))).toBe(true);
     expect(r.events.every((e) => e.description.includes("[trailer: TCP_MISS]"))).toBe(true);
   });
@@ -696,21 +691,16 @@ describe("parseCombinedLog — what one line establishes", () => {
     expect(e.aggKey).toContain("|10.30.20.11||form:invalid|p");
   });
 
-  it("a peer that is not an address is neither an srcIp nor a second client", () => {
-    const lines = Array.from({ length: 19 }, (_, i) =>
-      squidLine("TCP_HIT:NONE", `https://files.example.invalid/p${i}`, 200, "18376", "10.0.0.1"),
-    );
-    lines.push(
+  it("a peer that is not an address is not an srcIp", () => {
+    const r = parseCombinedLog(
       squidLine("TCP_HIT:NONE", "https://files.example.invalid/p19", 200, "18376", "999.999.999.999"),
     );
-    const r = parseCombinedLog(lines.join("\n"));
-    expect(r.events.every((e) => !e.description.includes("proxy:"))).toBe(true);
     expect(r.events.every((e) => e.srcIp !== "999.999.999.999")).toBe(true);
   });
 
   it("an attack row's tags stay whole too, with a disposition, a redirect and maximal trailers", () => {
     const line = `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET https://files.example.invalid/cgi?x=;id HTTP/1.1" 302 0 "-" "curl/8" TCP_MISS:HIER_DIRECT ${"t".repeat(160)} ${"u".repeat(160)} ${"v".repeat(160)}`;
-    const r = parseCombinedLog(squidFile([line]));
+    const r = parseCombinedLog(squidFile([line]), DECLARED);
     const e = r.events.find((x) => x.description.includes("web-attack"))!;
     expect(e.description.startsWith('[web-attack: cmd] [status: 302] [match: ";id"]')).toBe(true);
     expect((e.description.match(/\[/g) ?? []).length).toBe((e.description.match(/\]/g) ?? []).length);
@@ -724,7 +714,7 @@ describe("parseCombinedLog — what one line establishes", () => {
       (_, i) =>
         `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /login HTTP/1.1" 302 0 "-" "curl/8" TCP_MISS:HIER_DIRECT nonce${i}`,
     );
-    const r = parseCombinedLog(lines.join("\n"), { trailerProfile: { squidSlot: 0, source: "declared" } });
+    const r = parseCombinedLog(lines.join("\n"), DECLARED);
     const overflow = r.events.find((e) => e.description.includes("overflow"))!;
     expect((overflow.description.match(/\[/g) ?? []).length).toBe(
       (overflow.description.match(/\]/g) ?? []).length,
@@ -741,9 +731,7 @@ describe("parseCombinedLog — what one line establishes", () => {
       (_, i) =>
         `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET foo HTTP/1.1" 200 0 "-" "curl/8" TCP_HIT:NONE nonce${i}`,
     );
-    const r = parseCombinedLog([ordinary, ...variants].join("\n"), {
-      trailerProfile: { squidSlot: 0, source: "declared" },
-    });
+    const r = parseCombinedLog([ordinary, ...variants].join("\n"), DECLARED);
     const overflow = r.events.find((e) => e.description.includes("overflow"))!;
     expect(overflow).toBeDefined();
     const plain = r.events.find((e) => e.description.includes("squid:tcp_hit:none|trailer:overflow|foo"))!;
@@ -760,9 +748,7 @@ describe("parseCombinedLog — what one line establishes", () => {
       (_, i) =>
         `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /x|z HTTP/1.1" 302 0 "-" "curl/8" TCP_MISS:HIER_DIRECT nonce${i}`,
     );
-    const r = parseCombinedLog([ordinary, ...variants].join("\n"), {
-      trailerProfile: { squidSlot: 0, source: "declared" },
-    });
+    const r = parseCombinedLog([ordinary, ...variants].join("\n"), DECLARED);
     const overflow = r.events.find((e) => e.description.includes("overflow"));
     expect(overflow).toBeDefined();
     expect(overflow!.description).toContain("distinct appended trailer values beyond 64");
@@ -926,7 +912,7 @@ describe("parseCombinedLog — what one line establishes", () => {
     const line =
       `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /cgi?x=${encodeURIComponent(payload(60))} HTTP/1.1" 302 0 ` +
       `"https://portal.example.invalid/?y=${encodeURIComponent(payload(60))}" "${payload(60)}" TCP_MISS:HIER_DIRECT`;
-    const r = parseCombinedLog(squidFile([line]));
+    const r = parseCombinedLog(squidFile([line]), DECLARED);
     const e = r.events.find((x) => x.description.includes("web-attack"))!;
     expect(e.description.length).toBeLessThanOrEqual(600);
     expect((e.description.match(/\[/g) ?? []).length).toBe((e.description.match(/\]/g) ?? []).length);
@@ -942,7 +928,7 @@ describe("parseCombinedLog — what one line establishes", () => {
 
   it("an attack row keeps its match slots and its status when the trailer and the UA are maximal", () => {
     const line = `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /cgi?x=;id HTTP/1.1" 200 83 "-" "${"u".repeat(300)}" TCP_MISS:HIER_DIRECT`;
-    const r = parseCombinedLog(squidFile([line]));
+    const r = parseCombinedLog(squidFile([line]), DECLARED);
     const e = r.events.find((x) => x.description.includes("web-attack"))!;
     expect(e.description.startsWith('[web-attack: cmd] [status: 200] [match: ";id"]')).toBe(true);
     expect(e.description).toContain("cache miss; fetched upstream");

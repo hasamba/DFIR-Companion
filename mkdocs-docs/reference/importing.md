@@ -252,15 +252,17 @@ and a 302 read like a 200 with a small body. Each line now says what its own fie
   revalidation failed; served the stale cached copy]`, `[proxy: denied the request]`. "The origin"
   is said only where the hierarchy code names a direct fetch — a fetch through a parent or a
   sibling proxy says so instead. **A cache hit is not a new transfer from the server.**
-- **Whose format it is, decided by the file.** A token that looks like a Squid code proves nothing
-  on its own: an Apache `LogFormat` can append an attacker-controlled header. The Squid slot is
-  read only when the file has at least twenty **parsed** lines (blank and malformed lines do not
-  count), almost all of them carry a result code **and hierarchy code the tables name** in the same
-  position (`squid_combined` always writes both, so a bare `TCP_MISS` is not the field), and the
-  pair appears for **more than one real client address** — a `-` placeholder and a value that is
-  not an address are not clients, so twenty requests from one caller never establish the format. The
-  row then says `(squid_combined, inferred from the file)`. Otherwise every appended token is shown
-  as `[trailer: …]` — verbatim, unlabelled, never an indicator, and never the client's identity.
+- **Whose format it is, declared — never read off the lines.** A token that looks like a Squid
+  code proves nothing on its own: an Apache `LogFormat` can append a request header, and the
+  client writes that header. No count of lines or of clients turns the client's text into the
+  server's format — twenty unanimous Squid-shaped lines from two addresses are still twenty
+  requests. The Squid slot is read only under a **declared** trailer layout (the import option
+  `trailerProfile`; the import screen does not expose it yet), and the row then says
+  `(squid_combined, declared format)`. Even then a line's value must be a result code **and** a
+  hierarchy code the tables name (`squid_combined` always writes both, so a bare `TCP_MISS` is not
+  the field). Without a declaration every appended token is shown as `[trailer: …]` — verbatim,
+  unlabelled, never an indicator, and never the client's identity — and a hit and a miss still
+  stay two rows, because the trailer's text is part of the row's identity.
   A line whose slot holds something the tables do not name (`TCP_FOO:BAR`, or a known result with
   an unrecognised hierarchy such as `TCP_MISS:NONCE_7`) keeps that value as one of those tokens
   rather than reading as a disposition: uninterpretable text must not become a claim, and it must

@@ -1,10 +1,7 @@
 // #933 item 1 (prerequisite phase) — what one web-log line establishes.
 import { describe, expect, it } from "vitest";
 import {
-  inferTrailerProfile,
   isKnownSquidToken,
-  MIN_PROFILE_CLIENTS,
-  MIN_PROFILE_LINES,
   readSize,
   readSquidTrailer,
   readTarget,
@@ -150,7 +147,7 @@ describe("readSquidTrailer — the proxy's leg and the next hop, never a transfe
   });
 });
 
-describe("trailerTokens / inferTrailerProfile — the file decides, never one line", () => {
+describe("trailerTokens", () => {
   it("splits bare runs and keeps a quoted list as one token", () => {
     expect(trailerTokens(' TCP_MISS:HIER_DIRECT 137 "203.0.113.5, 10.0.0.1"')).toEqual([
       "TCP_MISS:HIER_DIRECT",
@@ -169,53 +166,20 @@ describe("trailerTokens / inferTrailerProfile — the file decides, never one li
     ]);
     expect(trailerTokens('"-"')).toEqual(["-"]);
   });
-  it("infers a profile only from a long enough file, from more than one client, where almost every line agrees", () => {
-    const squid = (n: number, tokens = ["TCP_MISS:HIER_DIRECT"]) =>
-      Array.from({ length: n }, (_, i) => ({ tokens, client: `10.0.0.${i % 4}` }));
-    expect(inferTrailerProfile(squid(MIN_PROFILE_LINES))).toEqual({ squidSlot: 0, source: "inferred" });
-    // below the floor no inference is possible, however unanimous
-    expect(inferTrailerProfile(squid(1))).toBeNull();
-    expect(inferTrailerProfile(squid(10))).toBeNull();
-    // …nor from ONE caller's own requests: a LogFormat is the server's, not a client's
-    const oneClient = Array.from({ length: 40 }, () => ({
-      tokens: ["TCP_MISS:HIER_DIRECT"],
-      client: "10.9.9.9",
-    }));
-    expect(inferTrailerProfile(oneClient)).toBeNull();
-    expect(MIN_PROFILE_CLIENTS).toBe(2);
-    // 19 of 20 agree → still the profile; 18 of 20 → not
-    const mostly = [...squid(19), { tokens: ["203.0.113.9"], client: "10.0.0.7" }];
-    expect(inferTrailerProfile(mostly)).toEqual({ squidSlot: 0, source: "inferred" });
-    const split = [
-      ...squid(18),
-      { tokens: ["203.0.113.9"], client: "10.0.0.7" },
-      { tokens: ["203.0.113.8"], client: "10.0.0.8" },
-    ];
-    expect(inferTrailerProfile(split)).toBeNull();
-    // the slot is wherever the file puts it
-    expect(inferTrailerProfile(squid(20, ["137", "TCP_HIT:NONE"]))).toEqual({
-      squidSlot: 1,
-      source: "inferred",
-    });
-    expect(inferTrailerProfile(squid(30, []))).toBeNull();
-    expect(inferTrailerProfile([])).toBeNull();
-  });
 });
 
-describe("readTrailer — with no profile nothing is labelled", () => {
+describe("readTrailer — only a declared profile labels a slot", () => {
   it("labels the profile's slot and keeps every other token verbatim", () => {
     const tokens = ["TCP_MISS:HIER_DIRECT", "137", "203.0.113.5, 10.0.0.1"];
-    const withProfile = readTrailer(tokens, { squidSlot: 0, source: "inferred" });
+    const withProfile = readTrailer(tokens, { squidSlot: 0 });
     expect(withProfile.squid?.result).toBe("TCP_MISS");
-    expect(withProfile.squidWords).toContain("(squid_combined, inferred from the file)");
+    expect(withProfile.squidWords).toContain("(squid_combined, declared format)");
     expect(withProfile.trailerWords).toBe("trailer: 137 203.0.113.5, 10.0.0.1");
     expect(withProfile.dispositionKey).toBe("|squid:tcp_miss:hier_direct");
     expect(withProfile.variantKey).toMatch(/^\|trailer:[0-9a-f]{16}$/);
-    const declared = readTrailer(tokens, { squidSlot: 0, source: "declared" });
-    expect(declared.squidWords).toContain("(squid_combined, declared)");
   });
   it("a line whose slot holds something the tables do not name keeps it as an unlabelled token", () => {
-    const profile = { squidSlot: 0, source: "inferred" as const };
+    const profile = { squidSlot: 0 };
     const outlier = readTrailer(["attacker-evidence"], profile);
     expect(outlier.squid).toBeNull();
     expect(outlier.dispositionKey).toBe("");
