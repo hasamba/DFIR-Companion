@@ -53,47 +53,54 @@ export interface TargetReading {
 // RFC 9112 request-target forms. A form is a FACT about the line; it is not the deployment's role:
 // an origin server must accept an absolute-form target, and a reverse or intercepting proxy logs
 // origin-form. Only a declared/inferred Squid trailer evidences proxy handling.
+const HOST_NAME = /^[A-Za-z0-9._~%-]+$/;
+const IPV6_LITERAL = /^\[[0-9A-Fa-f:.]+\]$/;
+const isHost = (h: string): boolean => IPV6_LITERAL.test(h) || HOST_NAME.test(h);
+
 export function readTarget(method: string, target: string): TargetReading {
-  const t = target.trim();
+  // Control characters go; brackets STAY, because a bracketed IPv6 literal is a valid host. What
+  // keeps a forged tag out of the words is the strict host validation below: `evil][status=…` is
+  // not a host, so it is an invalid target and nothing of it is interpolated.
+  const t = target.trim().replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
   const verb = method.trim().toUpperCase();
+  const tunnel = (host: string, port: string): TargetReading => ({
+    form: "authority",
+    host: host.toLowerCase().slice(0, HOST_MAX),
+    port,
+    words: `tunnel attempt to ${host.toLowerCase().slice(0, HOST_MAX)}${port ? `:${port}` : ""}${
+      port ? "" : " — no port in this record"
+    } — the requests inside are not in this record`,
+  });
   if (verb === "CONNECT") {
-    // authority-form is `uri-host ":" port`, and a uri-host may be a bracketed IPv6 literal.
-    const v6 = /^(\[[0-9a-f:.]+\]):(\d{1,5})$/i.exec(t);
-    if (v6)
-      return {
-        form: "authority",
-        host: v6[1].toLowerCase(),
-        port: v6[2],
-        words: `tunnel attempt to ${v6[1].toLowerCase()}:${v6[2]} — the requests inside are not in this record`,
-      };
-    const m = /^([^:/?#\s]+):(\d{1,5})$/.exec(t);
-    if (m)
-      return {
-        form: "authority",
-        host: m[1].toLowerCase().slice(0, HOST_MAX),
-        port: m[2],
-        words: `tunnel attempt to ${m[1].toLowerCase().slice(0, HOST_MAX)}:${m[2]} — the requests inside are not in this record`,
-      };
-    const bare = /^([^:/?#\s]+)$/.exec(t);
-    if (bare)
-      return {
-        form: "authority",
-        host: bare[1].toLowerCase().slice(0, HOST_MAX),
-        port: "",
-        words: `tunnel attempt to ${bare[1].toLowerCase().slice(0, HOST_MAX)} — no port in this record; the requests inside are not in this record`,
-      };
+    // authority-form is `uri-host [":" port]` and NOTHING else: the whole target must be a valid
+    // host (a name or a bracketed IP literal) and an optional port. A partial match would let
+    // `evil][status=success:443` reach the row's words and forge a tag.
+    const at = t.lastIndexOf(":");
+    const host = at > 0 && !t.endsWith("]") ? t.slice(0, at) : t;
+    const port = at > 0 && !t.endsWith("]") ? t.slice(at + 1) : "";
+    if (isHost(host) && (port === "" || /^\d{1,5}$/.test(port))) return tunnel(host, port);
     return { form: "invalid", host: "", port: "", words: "invalid tunnel target" };
   }
   if (t === "*")
     return { form: "asterisk", host: "", port: "", words: "asterisk-form request (server-wide)" };
-  const abs = /^https?:\/\/([^/:?#\s]+)(?::(\d{1,5}))?/i.exec(t);
-  if (abs)
-    return {
-      form: "absolute",
-      host: abs[1].toLowerCase().slice(0, HOST_MAX),
-      port: abs[2] ?? "",
-      words: "absolute-form request target",
-    };
+  // absolute-form: scheme, a valid authority, then a path/query or nothing. A prefix match would
+  // call `http://example.com:abc/x` absolute-form and take `example.com` as its host.
+  const abs = /^https?:\/\/([^/?#]*)(?:[/?#].*)?$/i.exec(t);
+  if (abs) {
+    const authority = abs[1];
+    const at = authority.lastIndexOf(":");
+    const hasPort = at > 0 && !authority.endsWith("]");
+    const host = hasPort ? authority.slice(0, at) : authority;
+    const port = hasPort ? authority.slice(at + 1) : "";
+    if (isHost(host) && (port === "" || /^\d{1,5}$/.test(port)))
+      return {
+        form: "absolute",
+        host: host.toLowerCase().slice(0, HOST_MAX),
+        port,
+        words: "absolute-form request target",
+      };
+    return { form: "invalid", host: "", port: "", words: "invalid request target" };
+  }
   if (t.startsWith("/")) return { form: "origin", host: "", port: "", words: "" };
   return { form: "invalid", host: "", port: "", words: "invalid request target" };
 }
@@ -174,10 +181,15 @@ const showToken = (t: string): string =>
     .replace(/\s+/g, " ")
     .trim();
 
-/** Is this token a Squid `%Ss` (optionally `:%Sh`) pair whose RESULT the table names? */
+/**
+ * Is this token a Squid `%Ss[:%Sh]` pair the tables FULLY name? Both halves must be recognised: a
+ * known result with an unknown hierarchy (`TCP_MISS:NONCE_7`) is attacker-shaped text in the slot,
+ * and treating it as a bounded disposition would put one unbounded value per row into the key.
+ */
 export function isKnownSquidToken(token: string): boolean {
   const m = SQUID_TOKEN.exec(token.trim().toUpperCase());
-  return m !== null && m[1] in SQUID_RESULT;
+  if (!m || !(m[1] in SQUID_RESULT)) return false;
+  return !m[2] || m[2] in SQUID_HIERARCHY;
 }
 
 /** Read a Squid `RESULT:HIERARCHY` token as its two legs. An unknown code is kept verbatim. */
@@ -235,7 +247,7 @@ export function inferTrailerProfile(parsed: readonly ParsedTrailer[]): TrailerPr
     if (hits.length < lines * PROFILE_SHARE) continue;
     // A LogFormat belongs to the server. Twenty requests from ONE caller carrying a Squid-shaped
     // header would otherwise mint proxy semantics for every other line in the file.
-    if (new Set(hits.map((p) => p.client)).size < MIN_PROFILE_CLIENTS) continue;
+    if (new Set(hits.map((p) => p.client).filter(Boolean)).size < MIN_PROFILE_CLIENTS) continue;
     return { squidSlot: slot, source: "inferred" };
   }
   return null;
@@ -245,8 +257,10 @@ export interface TrailerReading {
   squid: SquidReading | null;
   /** Every token the profile does not name — kept verbatim, bounded, never an indicator. */
   unlabelled: string[];
-  /** `[squid words (squid_combined, inferred from the file)]` and `[trailer: …]`, in order. */
-  words: string[];
+  /** The proxy's legs, with how the profile was established — "" when no Squid value was read. */
+  squidWords: string;
+  /** `trailer: <tokens>` — "" when every token was named. Shown LAST: it is uninterpreted text. */
+  trailerWords: string;
   /**
    * `|squid:<result>:<hierarchy>` — the disposition, a bounded discriminator from a literal table:
    * a cache hit and a miss of one URL are two rows.
@@ -263,25 +277,31 @@ export interface TrailerReading {
 
 /** Read one line's trailer under the file's profile. With no profile nothing is labelled. */
 export function readTrailer(tokens: readonly string[], profile: TrailerProfile | null): TrailerReading {
-  const squidToken = profile ? tokens[profile.squidSlot] : undefined;
-  const squid = squidToken ? readSquidTrailer(squidToken) : null;
+  const slotToken = profile ? tokens[profile.squidSlot] : undefined;
+  // The slot is the Squid slot for the FILE; this LINE's value still has to be one of the pairs the
+  // tables name. A line whose slot holds anything else keeps that value as an unlabelled token —
+  // bounded, neutralised, and a variant of the key — rather than being read as a disposition (or
+  // dropped, which would hide the one line that differs from every other).
+  const recognised = slotToken !== undefined && isKnownSquidToken(slotToken);
+  const squid = recognised ? readSquidTrailer(slotToken) : null;
   const unlabelled = tokens
-    .filter((_, i) => !(profile && i === profile.squidSlot))
+    .filter((_, i) => !(recognised && profile && i === profile.squidSlot))
     .map((t) => showToken(t).slice(0, TRAILER_TOKEN_MAX))
     .filter(Boolean);
-  const words: string[] = [];
-  if (squid?.words)
-    words.push(
-      `${squid.words} (squid_combined, ${profile?.source === "declared" ? "declared" : "inferred from the file"})`,
-    );
-  if (unlabelled.length) words.push(`trailer: ${unlabelled.join(" ").slice(0, TRAILER_WORDS_MAX)}`);
+  const squidWords = squid?.words
+    ? `${squid.words} (squid_combined, ${profile?.source === "declared" ? "declared" : "inferred from the file"})`
+    : "";
+  const trailerWords = unlabelled.length
+    ? `trailer: ${unlabelled.join(" ").slice(0, TRAILER_WORDS_MAX)}`
+    : "";
   const digest = unlabelled.length
     ? createHash("sha256").update(unlabelled.join(" ")).digest("hex").slice(0, DIGEST_HEX)
     : "";
   return {
     squid,
     unlabelled,
-    words,
+    squidWords,
+    trailerWords,
     dispositionKey: squid ? `|squid:${squid.result.toLowerCase()}:${squid.hierarchy.toLowerCase()}` : "",
     variantKey: digest ? `|trailer:${digest}` : "",
   };

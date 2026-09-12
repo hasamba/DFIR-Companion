@@ -197,15 +197,30 @@ function plainDescription(
   uri: string,
   status: number,
   bytesTag: string,
-  tagText: string,
+  tags: readonly string[],
   userTag: string,
   refTag: string,
   uaTag: string,
 ): string {
+  const tagText = tags.length ? ` [${tags.join("] [")}]` : "";
+  // The attack layout reserves a slice for the tags; the plain layout takes the whole tags (see
+  // plainDescription), so a long target never leaves a half-open tag or drops the status's fact.
   const whole = oneLine(`${method} ${uri} -> ${status}${bytesTag}${tagText}${userTag}${refTag}${uaTag}`);
   if (whole.length <= 600) return whole;
+  // Rebuilt from WHOLE tags in evidence order — never a substring of a serialised sequence, which
+  // would leave a half-open `[redir` and drop the fact it names.
+  const head = `[status: ${status}]`;
+  const kept: string[] = [];
+  let room = 600 - head.length - 1 - method.length - 1 - Math.min(uri.length, 200) - bytesTag.length - 180;
+  for (const tag of tags) {
+    const cost = tag.length + 3;
+    if (cost > room) continue;
+    kept.push(tag);
+    room -= cost;
+  }
+  const keptText = kept.length ? ` [${kept.join("] [")}]` : "";
   return oneLine(
-    `[status: ${status}]${tagText.slice(0, 240)} ${method} ${uri.slice(0, 200)}${bytesTag}` +
+    `${head}${keptText} ${method} ${uri.slice(0, 200)}${bytesTag}` +
       `${userTag.slice(0, 50)}${refTag.slice(0, 62)}${uaTag.slice(0, 62)}`,
   ).slice(0, 600);
 }
@@ -270,13 +285,19 @@ export function mapCombinedLogLine(
   const trailer = readTrailer(trailerTokens(restRaw ?? ""), profile);
   const sizeWords = readSize(method, status, bytesRaw ?? "");
   const statusTail = statusWords(status);
+  // Evidence order — what the row must keep first when a long target forces the fixed layout: the
+  // proxy's legs, what the status itself establishes, what the size does not, the target's form,
+  // and last the uninterpreted trailer text.
   const tags = [
-    ...(target.words ? [target.words] : []),
-    ...trailer.words,
-    ...(sizeWords ? [sizeWords] : []),
+    ...(trailer.squidWords ? [trailer.squidWords] : []),
     ...(statusTail ? [statusTail] : []),
+    ...(sizeWords ? [sizeWords] : []),
+    ...(target.words ? [target.words] : []),
+    ...(trailer.trailerWords ? [trailer.trailerWords] : []),
   ];
   const tagText = tags.length ? ` [${tags.join("] [")}]` : "";
+  // The attack layout reserves a slice for the tags; the plain layout takes the whole tags (see
+  // plainDescription), so a long target never leaves a half-open tag or drops the status's fact.
 
   // Referer capture (see module comment): host → domain IOC; a referer with a query string is the
   // secret-leak vector, so emit it as an unaggregated url IOC that survives even if this request
@@ -310,7 +331,7 @@ export function mapCombinedLogLine(
           `${method} ${uri.slice(0, 200)}${bytesTag}${userTag.slice(0, 50)}` +
           `${referer ? ` (ref ${referer.slice(0, 60)})` : ""}${ua ? ` (ua ${ua.slice(0, 60)})` : ""}`,
       ).slice(0, 600)
-    : plainDescription(method, uri, status, bytesTag, tagText, userTag, refTag, uaTag);
+    : plainDescription(method, uri, status, bytesTag, tags, userTag, refTag, uaTag);
 
   // A secret carried in the request URI or the Referer is a spill the moment this line is written.
   // Graded Medium (see secretSpillRules.ts) so it reaches the forensic timeline synthesis reads —
@@ -450,7 +471,9 @@ export function parseCombinedLog(text: string, opts: CombinedLogImportOptions = 
     inferTrailerProfile(
       lines.flatMap((l) => {
         const m = LINE_RE.exec(l);
-        return m ? [{ tokens: trailerTokens(m[11] ?? ""), client: m[1] ?? "" }] : [];
+        // `-` and anything that is not an address are NOT clients: nineteen placeholder peers and
+        // one real one must not satisfy the two-client floor.
+        return m ? [{ tokens: trailerTokens(m[11] ?? ""), client: clientAddress(m[1]) }] : [];
       }),
     );
 

@@ -44,10 +44,21 @@ describe("readTarget — the RFC 9112 form, never the deployment's role", () => 
     expect(r.port).toBe("");
     expect(r.words).toContain("no port in this record");
   });
-  it("a malformed target is invalid, never a host", () => {
+  it("a malformed target is invalid, never a host — and never reaches the row's words", () => {
     expect(readTarget("GET", "api/v4/projects")).toMatchObject({ form: "invalid", host: "" });
     expect(readTarget("CONNECT", "http://x/y")).toMatchObject({ form: "invalid", host: "" });
     expect(readTarget("GET", "")).toMatchObject({ form: "invalid" });
+    // a bracket in a tunnel authority would forge a tag: the whole target must be host[:port]
+    const forged = readTarget("CONNECT", "evil][status=success:443");
+    expect(forged).toMatchObject({ form: "invalid", host: "", words: "invalid tunnel target" });
+    expect(forged.words).not.toContain("]");
+    // an absolute target is parsed whole, so a bad port is not "absolute with that host"
+    expect(readTarget("GET", "http://example.invalid:abc/x")).toMatchObject({ form: "invalid", host: "" });
+    expect(readTarget("GET", "http://ev]il/x")).toMatchObject({ form: "invalid", host: "" });
+    expect(readTarget("GET", "https://files.example.invalid")).toMatchObject({
+      form: "absolute",
+      host: "files.example.invalid",
+    });
   });
 });
 
@@ -91,9 +102,12 @@ describe("readSquidTrailer — the proxy's leg and the next hop, never a transfe
     expect(readSquidTrailer("NONE:NONE").words).toBe("upstream: not contacted");
     expect(readSquidTrailer("not a token")).toMatchObject({ result: "", known: false, words: "" });
   });
-  it("knows which tokens the table names", () => {
+  it("knows which tokens the tables FULLY name — a known result with an unknown hierarchy is not one", () => {
     expect(isKnownSquidToken("tcp_hit:none")).toBe(true);
+    expect(isKnownSquidToken("TCP_MISS")).toBe(true);
     expect(isKnownSquidToken("TCP_FOO:BAR")).toBe(false);
+    // the hierarchy is where unbounded attacker text would otherwise enter the key
+    expect(isKnownSquidToken("TCP_MISS:NONCE_7")).toBe(false);
     expect(isKnownSquidToken("203.0.113.5")).toBe(false);
     expect(isKnownSquidToken("1234")).toBe(false);
   });
@@ -147,12 +161,26 @@ describe("readTrailer — with no profile nothing is labelled", () => {
     const tokens = ["TCP_MISS:HIER_DIRECT", "137", "203.0.113.5, 10.0.0.1"];
     const withProfile = readTrailer(tokens, { squidSlot: 0, source: "inferred" });
     expect(withProfile.squid?.result).toBe("TCP_MISS");
-    expect(withProfile.words[0]).toContain("(squid_combined, inferred from the file)");
-    expect(withProfile.words[1]).toBe("trailer: 137 203.0.113.5, 10.0.0.1");
+    expect(withProfile.squidWords).toContain("(squid_combined, inferred from the file)");
+    expect(withProfile.trailerWords).toBe("trailer: 137 203.0.113.5, 10.0.0.1");
     expect(withProfile.dispositionKey).toBe("|squid:tcp_miss:hier_direct");
     expect(withProfile.variantKey).toMatch(/^\|trailer:[0-9a-f]{16}$/);
     const declared = readTrailer(tokens, { squidSlot: 0, source: "declared" });
-    expect(declared.words[0]).toContain("(squid_combined, declared)");
+    expect(declared.squidWords).toContain("(squid_combined, declared)");
+  });
+  it("a line whose slot holds something the tables do not name keeps it as an unlabelled token", () => {
+    const profile = { squidSlot: 0, source: "inferred" as const };
+    const outlier = readTrailer(["attacker-evidence"], profile);
+    expect(outlier.squid).toBeNull();
+    expect(outlier.dispositionKey).toBe("");
+    expect(outlier.squidWords).toBe("");
+    expect(outlier.trailerWords).toBe("trailer: attacker-evidence");
+    expect(outlier.variantKey).toMatch(/^\|trailer:[0-9a-f]{16}$/);
+    // …and a known result with an unbounded hierarchy is one of those, not a disposition
+    const nonce = readTrailer(["TCP_MISS:NONCE_7"], profile);
+    expect(nonce.dispositionKey).toBe("");
+    expect(nonce.trailerWords).toBe("trailer: TCP_MISS:NONCE_7");
+    expect(nonce.variantKey).not.toBe(readTrailer(["TCP_MISS:NONCE_8"], profile).variantKey);
   });
   it("with no profile the Squid-shaped token is just a token: no words, no key, no claim", () => {
     const r = readTrailer(["TCP_MISS:HIER_DIRECT"], null);
@@ -163,22 +191,22 @@ describe("readTrailer — with no profile nothing is labelled", () => {
     expect(r.variantKey).toMatch(/^\|trailer:[0-9a-f]{16}$/);
     expect(r.variantKey).not.toContain("TCP_MISS");
     expect(readTrailer(["TCP_HIT:NONE"], null).variantKey).not.toBe(r.variantKey);
-    expect(r.words).toEqual(["trailer: TCP_MISS:HIER_DIRECT"]);
-    expect(r.words.join(" ")).not.toContain("origin");
-    expect(readTrailer([], null).words).toEqual([]);
+    expect(r.trailerWords).toBe("trailer: TCP_MISS:HIER_DIRECT");
+    expect(r.squidWords).toBe("");
+    expect(readTrailer([], null).trailerWords).toBe("");
     expect(readTrailer([], null).variantKey).toBe("");
   });
   it("never lets a trailer token forge a tag: brackets and control characters are neutralised", () => {
     const forge = readTrailer(["] [proxy: served from its cache"], null);
-    expect(forge.words[0]).toBe("trailer: ) (proxy: served from its cache");
-    expect(forge.words[0]).not.toContain("[");
-    expect(forge.words[0]).not.toContain("]");
+    expect(forge.trailerWords).toBe("trailer: ) (proxy: served from its cache");
+    expect(forge.trailerWords).not.toContain("[");
+    expect(forge.trailerWords).not.toContain("]");
     const control = readTrailer(["a\u0000b\tc"], null);
-    expect(control.words[0]).toBe("trailer: a b c");
+    expect(control.trailerWords).toBe("trailer: a b c");
   });
   it("bounds the tokens it shows", () => {
     const r = readTrailer([`${"x".repeat(200)}`, "y".repeat(200)], null);
-    expect(r.words[0].length).toBeLessThanOrEqual(89);
+    expect(r.trailerWords.length).toBeLessThanOrEqual(89);
   });
 });
 

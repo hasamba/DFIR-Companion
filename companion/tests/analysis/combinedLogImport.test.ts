@@ -529,6 +529,8 @@ describe("parseCombinedLog — what one line establishes", () => {
       "[proxy: served from its cache; upstream: not contacted (squid_combined, inferred from the file)]",
     );
     expect(hit.description).toContain("[absolute-form request target]");
+    // evidence order: the proxy's legs come before the target's form
+    expect(hit.description.indexOf("[proxy:")).toBeLessThan(hit.description.indexOf("[absolute-form"));
     expect(miss.description).toContain("cache miss; fetched upstream");
     expect(hit.aggKey).toContain("|squid:tcp_hit:none");
     expect(miss.aggKey).toContain("|squid:tcp_miss:hier_direct");
@@ -547,11 +549,24 @@ describe("parseCombinedLog — what one line establishes", () => {
     expect(e.aggKey).not.toContain("squid");
   });
 
-  it("an unknown result code is kept verbatim in the words and the key", () => {
-    const r = parseCombinedLog(squidFile([squidLine("TCP_FOO:BAR_BAZ")]));
-    const e = r.events.find((x) => x.description.includes("TCP_FOO"))!;
-    expect(e.description).toContain("[proxy: result TCP_FOO; upstream: next hop BAR_BAZ");
-    expect(e.aggKey).toContain("|squid:tcp_foo:bar_baz");
+  it("a value the tables do not name stays an unlabelled token — never a disposition, never lost", () => {
+    const r = parseCombinedLog(squidFile([squidLine("TCP_FOO:BAR_BAZ"), squidLine("TCP_MISS:NONCE_7")]));
+    const unknown = r.events.find((x) => x.description.includes("TCP_FOO"))!;
+    expect(unknown.description).toContain("[trailer: TCP_FOO:BAR_BAZ]");
+    expect(unknown.description).not.toContain("proxy:");
+    expect(unknown.aggKey).not.toContain("squid:tcp_foo");
+    const nonce = r.events.find((x) => x.description.includes("NONCE_7"))!;
+    expect(nonce.description).toContain("[trailer: TCP_MISS:NONCE_7]");
+    expect(nonce.aggKey).not.toContain("nonce_7");
+    // 200 varying hierarchies on one path fold instead of minting 200 groups
+    const varying = Array.from({ length: 200 }, (_, i) =>
+      squidLine(`TCP_MISS:NONCE_${i}`, "https://files.example.invalid/one", 200, "18376", "10.30.10.1"),
+    );
+    const many = parseCombinedLog(squidFile(varying));
+    expect(
+      many.events.filter((e) => e.description.includes("files.example.invalid/one")).length,
+    ).toBeLessThanOrEqual(66);
+    expect(many.dropped).toBe(0);
   });
 
   it("a CONNECT line is a tunnel attempt: no URL is claimed, and the size is the tunnel's", () => {
@@ -610,6 +625,15 @@ describe("parseCombinedLog — what one line establishes", () => {
     expect(r.events.every((e) => e.description.includes("[trailer: TCP_MISS:HIER_DIRECT]"))).toBe(true);
   });
 
+  it('placeholder peers are not clients: nineteen "-" and one address never establish the profile', () => {
+    const lines = Array.from({ length: 19 }, (_, i) =>
+      squidLine("TCP_HIT:NONE", `https://files.example.invalid/p${i}`, 200, "18376", "-"),
+    );
+    lines.push(squidLine("TCP_HIT:NONE", "https://files.example.invalid/p19", 200, "18376", "10.0.0.1"));
+    const r = parseCombinedLog(lines.join("\n"));
+    expect(r.events.every((e) => !e.description.includes("proxy:"))).toBe(true);
+  });
+
   it("blank and malformed lines never count towards the profile floor", () => {
     const nineteen = Array.from({ length: 19 }, (_, i) =>
       squidLine(
@@ -651,6 +675,14 @@ describe("parseCombinedLog — what one line establishes", () => {
     expect(e.description.startsWith("[status: 302] [redirect — the Location is not in this format]")).toBe(
       true,
     );
+    // …with a Squid disposition and two maximal trailer tokens as well, every tag stays whole
+    const loaded = squidFile([
+      `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET https://files.example.invalid/${"a".repeat(620)} HTTP/1.1" 302 0 "-" "curl/8" TCP_MISS:HIER_DIRECT ${"t".repeat(60)} ${"u".repeat(60)}`,
+    ]);
+    const big = parseCombinedLog(loaded).events.find((x) => x.description.includes("[status: 302]"))!;
+    expect(big.description.length).toBeLessThanOrEqual(600);
+    expect(big.description).toContain("[redirect — the Location is not in this format]");
+    expect((big.description.match(/\[/g) ?? []).length).toBe((big.description.match(/\]/g) ?? []).length);
   });
 
   it("an ordinary origin-form line reads exactly as it did before", () => {

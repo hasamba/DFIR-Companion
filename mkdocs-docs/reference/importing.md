@@ -255,10 +255,15 @@ and a 302 read like a 200 with a small body. Each line now says what its own fie
 - **Whose format it is, decided by the file.** A token that looks like a Squid code proves nothing
   on its own: an Apache `LogFormat` can append an attacker-controlled header. The Squid slot is
   read only when the file has at least twenty **parsed** lines (blank and malformed lines do not
-  count), almost all of them carry a known result code in the same position, and the code appears
-  for **more than one client** — twenty requests from one caller never establish the format. The
+  count), almost all of them carry a result code **and hierarchy code the tables name** in the same
+  position, and the pair appears for **more than one real client address** (a `-` placeholder is
+  not a client) — twenty requests from one caller never establish the format. The
   row then says `(squid_combined, inferred from the file)`. Otherwise every appended token is shown
-  as `[trailer: …]` — verbatim, unlabelled, never an indicator, and never the client's identity;
+  as `[trailer: …]` — verbatim, unlabelled, never an indicator, and never the client's identity.
+  A line whose slot holds something the tables do not name (`TCP_FOO:BAR`, or a known result with
+  an unrecognised hierarchy such as `TCP_MISS:NONCE_7`) keeps that value as one of those tokens
+  rather than reading as a disposition: uninterpretable text must not become a claim, and it must
+  not become an unbounded key either;
   its brackets and control characters are neutralised, so a token cannot forge a tag the reader
   trusts. **A forwarded-for header is not the client**: `srcIp` stays the address the server or
   proxy actually saw.
@@ -270,12 +275,14 @@ and a 302 read like a 200 with a small body. Each line now says what its own fie
   status proves the client received them.
 
 Keys: the target's form and the proxy's disposition join the aggregation key, so a hit and a miss
-of one URL are two rows and an unknown result code keys on its own text. The appended tokens are
+of one URL are two rows. The appended tokens are
 not part of a row's base identity — an attacker can write them, and a request time would be one
 group per request — but a digest of them is a bounded **variant** of it: a row that shows a
 trailer never folds into a row that does not, and beyond 64 distinct values on one path the rest
 fold into one row that says so. A very long request target can never push the status or these
-facts out of the row: past the 600-character clip the row is laid out status-first.
+facts out of the row: past the 600-character clip the row is laid out status-first, and the tags
+are kept whole in evidence order — the proxy's legs, what the status establishes, what the size
+does not, the target's form, and the uninterpreted trailer last.
 
 **What the format cannot hold.** There is no request or session identifier, no HTTP/2 stream id, no
 `Location` header, no content type, and no response body — so which request led to which redirect,
