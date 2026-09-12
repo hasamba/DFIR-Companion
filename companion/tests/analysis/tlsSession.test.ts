@@ -722,7 +722,7 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
     );
     const serial2 = readSuricataTls(rec({ serial: "02" }), "");
     const none = readSuricataTls(rec(undefined), "");
-    expect(serial1.clientCert?.facts).toEqual({
+    expect(serial1.clientCert?.facts).toMatchObject({
       serial: "01",
       names: ["alice.example"],
       notBefore: "2025-01-01T00:00:00Z",
@@ -752,6 +752,32 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
     ).toBeUndefined();
     // Zeek may write either digest
     expect(readZeekX509({ ...ZEEK_X509, fingerprint: sha256OfX }, "").cert?.alg).toBe("sha256");
+  });
+
+  it("SAN lists that agree on the first 64 names and differ after are two rows, server and client alike", () => {
+    const sans = (tail: string) => [...Array.from({ length: 64 }, (_, i) => `n${i}.example`), tail];
+    const srvA = readSuricataTls(
+      { ...SURICATA_TLS, tls: { sni: "a.example", subjectaltname: sans("tail-a.example") } },
+      "",
+    );
+    const srvB = readSuricataTls(
+      { ...SURICATA_TLS, tls: { sni: "a.example", subjectaltname: sans("tail-b.example") } },
+      "",
+    );
+    expect(srvA.certificate?.names).toHaveLength(64);
+    expect(srvA.certificate?.namesTotal).toBe(65);
+    expect(rows([srvA, srvB])).toHaveLength(2);
+    const cliA = readSuricataTls(
+      { ...SURICATA_TLS, tls: { sni: "a.example", client: { subjectaltname: sans("tail-a.example") } } },
+      "",
+    );
+    const cliB = readSuricataTls(
+      { ...SURICATA_TLS, tls: { sni: "a.example", client: { subjectaltname: sans("tail-b.example") } } },
+      "",
+    );
+    expect(rows([cliA, cliB])).toHaveLength(2);
+    const x = readZeekX509({ ...ZEEK_X509, "san.dns": sans("tail-a.example") }, "");
+    expect(rows([x])[0].description).toContain("covers 65 names:");
   });
 
   it("selects the most-seen rows first under a budget", () => {

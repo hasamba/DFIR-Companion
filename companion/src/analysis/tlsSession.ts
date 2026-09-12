@@ -34,6 +34,9 @@ export interface CertificateFacts {
   issuer?: string;
   serial?: string;
   names?: string[];
+  /** The complete SAN list's count and digest — the envelope keeps NAMES_KEPT_MAX names, the identity all of them. */
+  namesTotal?: number;
+  namesDigest?: string;
   notBefore?: string;
   notAfter?: string;
   ca?: boolean;
@@ -270,7 +273,7 @@ export function readZeekX509(row: Row, fallbackTs: string): TlsObservation {
       ...(text(cert("subject")) !== undefined ? { subject: text(cert("subject")) } : {}),
       ...(issuer !== undefined ? { issuer } : {}),
       ...(serial !== undefined && hexOf(serial) ? { serial: hexOf(serial) } : {}),
-      names: [...san("dns"), ...san("uri"), ...san("email"), ...san("ip")].slice(0, NAMES_KEPT_MAX),
+      ...boundedNames([...san("dns"), ...san("uri"), ...san("email"), ...san("ip")]),
       ...(validity(cert("not_valid_before")) ? { notBefore: validity(cert("not_valid_before")) } : {}),
       ...(validity(cert("not_valid_after")) ? { notAfter: validity(cert("not_valid_after")) } : {}),
       ...(ca !== undefined ? { ca } : {}),
@@ -298,7 +301,7 @@ export function readSuricataTls(row: Row, fallbackTs: string): TlsObservation {
     ...(text(getCI(t, "subject")) !== undefined ? { subject: text(getCI(t, "subject")) } : {}),
     ...(issuer !== undefined ? { issuer } : {}),
     ...(serial !== undefined && hexOf(serial) ? { serial: hexOf(serial) } : {}),
-    ...(names ? { names: names.slice(0, NAMES_KEPT_MAX) } : {}),
+    ...(names ? boundedNames(names) : {}),
     ...(validity(getCI(t, "notbefore")) ? { notBefore: validity(getCI(t, "notbefore")) } : {}),
     ...(validity(getCI(t, "notafter")) ? { notAfter: validity(getCI(t, "notafter")) } : {}),
   };
@@ -398,9 +401,19 @@ function suricataFacts(t: Row): CertificateFacts {
     ...(text(getCI(t, "subject")) !== undefined ? { subject: text(getCI(t, "subject")) } : {}),
     ...(issuer !== undefined ? { issuer } : {}),
     ...(serial !== undefined && hexOf(serial) ? { serial: hexOf(serial) } : {}),
-    ...(names ? { names: names.slice(0, NAMES_KEPT_MAX) } : {}),
+    ...(names ? boundedNames(names) : {}),
     ...(validity(getCI(t, "notbefore")) ? { notBefore: validity(getCI(t, "notbefore")) } : {}),
     ...(validity(getCI(t, "notafter")) ? { notAfter: validity(getCI(t, "notafter")) } : {}),
+  };
+}
+
+/** The names a certificate covers: NAMES_KEPT_MAX kept, every one of them in the count and digest. */
+function boundedNames(all: string[]): Pick<CertificateFacts, "names" | "namesTotal" | "namesDigest"> {
+  if (!all.length) return { names: [] };
+  return {
+    names: all.slice(0, NAMES_KEPT_MAX),
+    namesTotal: all.length,
+    namesDigest: keyDigest(all.map((n) => `${n.length}:${n}`).join("|")),
   };
 }
 
@@ -557,14 +570,15 @@ function sessionTags(o: TlsObservation): string[] {
 function certificateTag(o: TlsObservation): string {
   const c = o.certificate ?? {};
   const names = c.names ?? [];
+  const total = c.namesTotal ?? names.length;
   const shownNames = names.slice(0, NAMES_SHOWN_MAX).map(show).join(", ");
-  const more = names.length > NAMES_SHOWN_MAX ? ` (+${names.length - NAMES_SHOWN_MAX} more)` : "";
+  const more = total > NAMES_SHOWN_MAX ? ` (+${total - NAMES_SHOWN_MAX} more)` : "";
   return [
     `certificate: ${o.role ? `${o.role}-presented; ` : ""}${certWords({ ...o, subject: undefined, issuer: undefined })}`,
     c.subject !== undefined ? `subject ${show(c.subject)}` : "",
     c.issuer !== undefined ? `issuer ${show(c.issuer)}` : "",
     c.notBefore || c.notAfter ? `valid ${show(c.notBefore ?? "?")}–${show(c.notAfter ?? "?")}` : "",
-    names.length ? `covers ${names.length} name${names.length === 1 ? "" : "s"}: ${shownNames}${more}` : "",
+    total ? `covers ${total} name${total === 1 ? "" : "s"}: ${shownNames}${more}` : "",
   ]
     .filter(Boolean)
     .join("; ");
