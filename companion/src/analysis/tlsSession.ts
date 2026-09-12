@@ -659,7 +659,14 @@ function envelopeOf(o: TlsObservation, count: number): CanonicalEventEnvelope {
       ...(o.ja3 !== undefined ? { ja3: o.ja3 } : {}),
       ...(o.ja3s !== undefined ? { ja3s: o.ja3s } : {}),
       ...(o.role ? { certificateRole: o.role } : {}),
-      ...(o.subject !== undefined || o.issuer !== undefined || o.cert || o.certificate
+      // Presence with no identity (an unreadable fingerprint or DER, a chain FUID) is a certificate
+      // observed — the envelope must say so, or it would read as "none observed".
+      ...(o.subject !== undefined ||
+      o.issuer !== undefined ||
+      o.cert ||
+      o.certificate ||
+      o.certificateSeen ||
+      o.certChainFuids?.length
         ? {
             certificate: {
               ...(o.cert?.kind === "fingerprint"

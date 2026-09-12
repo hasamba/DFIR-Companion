@@ -896,6 +896,19 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
     expect(certIdentity("CN=X", "abcde")).toBe(certIdentity("CN=X", "abcde"));
   });
 
+  it("presence with no identity reaches the envelope as identity unavailable", () => {
+    const base2 = { ts: 1700000000.5, "id.orig_h": "10.0.0.1", "id.resp_h": "203.0.113.1", "id.resp_p": 443 };
+    for (const o of [
+      readZeekSsl({ ...base2, cert_chain_fps: ["ab"] }, ""),
+      readZeekSsl({ ...base2, cert_chain_fuids: ["F1"] }, ""),
+      readSuricataTls({ ...SURICATA_TLS, tls: { sni: "a.example", fingerprint: "ab" } }, ""),
+      readSuricataTls({ ...SURICATA_TLS, tls: { sni: "a.example", certificate: "!!!!" } }, ""),
+    ]) {
+      expect(rows([o])[0].canonical?.tls?.certificate).toEqual({ identity: "unavailable" });
+    }
+    expect(rows([readZeekSsl(base2, "")])[0].canonical?.tls?.certificate).toBeUndefined();
+  });
+
   it("selects the most-seen rows first under a budget", () => {
     const many = [
       ...Array.from({ length: 3 }, () => base()),
