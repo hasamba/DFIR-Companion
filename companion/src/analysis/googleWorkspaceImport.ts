@@ -1,5 +1,8 @@
 import type { Severity } from "./stateTypes.js";
 import { boundedAggKey } from "./aggKey.js";
+import { createCanonicalEvent, stampSourceArtifactHash } from "./canonicalEvent.js";
+import { renderAwsDescription } from "./awsDescription.js";
+import { decodeGwsToken, readGwsParams, type GwsTokenReading } from "./gwsOAuth.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -30,6 +33,11 @@ import {
 // The tradecraft encoded is Workspace account takeover and mail theft: 2SV turned off, admin roles
 // granted, recovery addresses re-pointed, OAuth grants authorized, and — the one most often missed —
 // CREATE_EMAIL_MONITOR, which silently copies a user's mail to an attacker's mailbox.
+//
+// The `token` application's rows (#931 item 10) are decoded by gwsOAuth.ts: the client id is the
+// identity, the scopes grade the grant, the API method and bytes are named on an activity, and
+// each row says what its record does NOT establish. Those rows carry a canonical envelope; every
+// Workspace key carries the tenant (`id.customerId`) so two customers' identical rows stay two.
 
 type Row = Record<string, unknown>;
 
@@ -217,18 +225,259 @@ function targetLabel(event: Row): string {
   return "";
 }
 
-function mapEvent(rec: Row, event: Row, sink: Map<string, SiemIoc>): MappedEvent {
+const TOKEN_APP = "token";
+
+// The record's actor, read for what it is. The Reports API names a USER by `email`/`profileId`,
+// a service-account or 2LO caller by `callerType: "KEY"` + `key`, and an APPLICATION by
+// `applicationInfo.oauthClientId` — an application record can ALSO carry the user it impersonates
+// in `email`/`profileId`, so the explicit caller type and application fields win over the mere
+// presence of user fields, and both identities join the discriminator. A record may name none.
+interface GwsActor {
+  /** The key's discriminator: every identity the record names, in a fixed order. */
+  identity: string;
+  /** The words: the email or profile id; a key; an application's name (`as <user>` when impersonating). */
+  label: string;
+  kind: "user" | "key" | "application" | "";
+  /** True when `actor.callerType` itself named the kind. */
+  typed: boolean;
+  /** False when an application or key actor carries no stable id — the key must not fold on it. */
+  stable: boolean;
+  email: string;
+  profileId: string;
+  key: string;
+  appId: string;
+  appName: string;
+}
+
+function readActor(rec: Row): GwsActor {
+  const email = text(getPath(rec, "actor.email"));
+  const profileId = text(getPath(rec, "actor.profileId"));
+  const callerType = text(getPath(rec, "actor.callerType")).trim().toUpperCase();
+  const key = text(getPath(rec, "actor.key"));
+  const appId = text(getPath(rec, "actor.applicationInfo.oauthClientId"));
+  const appName = text(getPath(rec, "actor.applicationInfo.applicationName"));
+  const kind: GwsActor["kind"] =
+    callerType === "APPLICATION" || appId
+      ? "application"
+      : callerType === "KEY" || key
+        ? "key"
+        : email || profileId
+          ? "user"
+          : "";
+  const user = email || profileId;
+  const identity =
+    kind === "application"
+      ? `app:${appId}${user ? `|as:${user}` : ""}`
+      : kind === "key"
+        ? `key:${key}${user ? `|as:${user}` : ""}`
+        : user || callerType.toLowerCase();
+  const own = kind === "application" ? appName || appId : kind === "key" ? key : user;
+  const label = own ? `${own}${kind !== "user" && user ? ` as ${user}` : ""}` : "";
+  const typed = ["APPLICATION", "KEY", "USER"].includes(callerType);
+  const stable = kind === "application" ? appId !== "" : kind === "key" ? key !== "" : true;
+  return { identity, label, kind, typed, stable, email, profileId, key, appId, appName };
+}
+
+// The head slot is 120 (awsDescription.ts): `Google Workspace token: authorize by <who> from <ip>`
+// with the longest event name (9) and a full IPv6 (39) leaves 36 for the actor, so the source
+// address is never the part a long actor name pushes out.
+const WHO_MAX = 36;
+
+type Entity = NonNullable<NonNullable<MappedEvent["canonical"]>["actor"]>;
+
+// The record's actor as an entity: an account for a user; a cloud principal for a key or an
+// application (its id the key or the client id); nothing when the record names no actor. An
+// impersonated user (an application or key record that also carries email/profileId) is a
+// second entity — the account acted for.
+function actorEntities(who: GwsActor): {
+  self?: Entity;
+  impersonated?: Entity;
+  selfFields: Record<string, string[]>;
+} {
+  const account: Entity | undefined =
+    who.email || who.profileId
+      ? {
+          kind: "account",
+          ...(who.email ? { name: who.email } : {}),
+          ...(who.profileId ? { id: who.profileId } : {}),
+        }
+      : undefined;
+  if (who.kind === "user")
+    return { self: account, selfFields: { id: ["actor.profileId"], name: ["actor.email"] } };
+  if (who.kind === "key")
+    return {
+      ...(who.key ? { self: { kind: "cloud_principal", id: who.key } } : {}),
+      impersonated: account,
+      selfFields: { id: ["actor.key"], name: [] },
+    };
+  if (who.kind === "application")
+    return {
+      ...(who.appId || who.appName
+        ? {
+            self: {
+              kind: "cloud_principal",
+              ...(who.appId ? { id: who.appId } : {}),
+              ...(who.appName ? { name: who.appName } : {}),
+            },
+          }
+        : {}),
+      impersonated: account,
+      selfFields: {
+        id: ["actor.applicationInfo.oauthClientId"],
+        name: ["actor.applicationInfo.applicationName"],
+      },
+    };
+  return { selfFields: { id: [], name: [] } };
+}
+
+const fieldsFor = (prefix: string, fields: Record<string, string[]>): Record<string, string[]> =>
+  Object.fromEntries(
+    Object.entries(fields)
+      .filter(([, raw]) => raw.length)
+      .map(([leaf, raw]) => [`${prefix}.${leaf}`, raw]),
+  );
+const ACCOUNT_FIELDS = { id: ["actor.profileId"], name: ["actor.email"] };
+
+// The canonical envelope of a token row — agency per event: on an `activity` the token's CLIENT
+// is the actor (it called the API) and the record's actor — the impersonated user when there is
+// one — the subject; on the other four the record's actor is the actor and the client the object.
+// The cloud principal follows the actor so its type never contradicts its id. A `request` that
+// names a `requester_email` carries that account as the subject — the account the request is
+// for. No placeholder resource: `cloud.resource` is the API method or nothing.
+function tokenEnvelope(
+  rec: Row,
+  t: GwsTokenReading,
+  name: string,
+  ip: string,
+  locator: string,
+): MappedEvent["canonical"] {
+  const who = readActor(rec);
+  const tenant = text(getPath(rec, "id.customerId"));
+  const observed = text(getPath(rec, "id.time"));
+  const recordId = text(getPath(rec, "id.uniqueQualifier"));
+  const { self, impersonated, selfFields } = actorEntities(who);
+  const client: Entity | undefined =
+    t.client.id || t.client.name
+      ? {
+          kind: "cloud_principal",
+          ...(t.client.id ? { id: t.client.id } : {}),
+          ...(t.client.name ? { name: t.client.name } : {}),
+        }
+      : undefined;
+  const method = [t.api.name, t.api.method].filter(Boolean).join(".");
+  const activity = t.kind === "activity";
+  const requester: Entity | undefined =
+    t.kind === "request" && t.requester ? { kind: "account", name: t.requester } : undefined;
+  // The subject: on an activity the account acted for (the impersonated user, else the record's
+  // actor); otherwise the requester, else the impersonated user.
+  const subject = activity ? (impersonated ?? self) : (requester ?? impersonated);
+  const subjectFields = activity
+    ? impersonated
+      ? ACCOUNT_FIELDS
+      : selfFields
+    : requester
+      ? { name: ["requester_email"] }
+      : ACCOUNT_FIELDS;
+  const actor = activity ? client : self;
+  const actorFields = activity ? { id: ["client_id"], name: ["app_name"] } : selfFields;
+  const principalId = activity
+    ? t.client.id
+    : who.kind === "user"
+      ? who.profileId
+      : who.kind === "key"
+        ? who.key
+        : who.appId;
+  const principalType = activity ? "application" : who.kind;
+  return createCanonicalEvent({
+    event: { category: "cloud", type: "oauth", action: name, outcome: "success" },
+    ...(actor ? { actor } : {}),
+    ...(subject ? { subject } : {}),
+    ...(!activity && client ? { object: client } : {}),
+    ...(ip ? { network: { source: { address: ip } } } : {}),
+    cloud: {
+      provider: "google-workspace",
+      ...(tenant ? { tenant } : {}),
+      ...(principalId ? { principalId } : {}),
+      ...(principalType ? { principalType } : {}),
+      ...(activity && method ? { resource: method } : {}),
+    },
+    time: { observed, normalized: normalizeTime(observed) },
+    evidence: { rawRecords: [{ source: "google-workspace", locator, ...(recordId ? { recordId } : {}) }] },
+    producer: {
+      importer: "google-workspace",
+      parserVersion: "1",
+      mappingVersion: "gws-token-v1",
+      ruleVersions: ["gws-oauth-v1"],
+    },
+    rawFieldMap: {
+      "event.action": ["events[].name"],
+      "time.observed": ["id.time"],
+      ...(actor ? fieldsFor("actor", actorFields) : {}),
+      ...(subject ? fieldsFor("subject", subjectFields) : {}),
+      ...(!activity && client ? { "object.id": ["client_id"], "object.name": ["app_name"] } : {}),
+      "cloud.tenant": ["id.customerId"],
+      "cloud.principalId": [activity ? "client_id" : (selfFields.id[0] ?? "actor.profileId")],
+      ...(activity && method ? { "cloud.resource": ["api_name", "method_name"] } : {}),
+      // The type is raw only when the record's callerType named it; otherwise it is derived
+      // from which actor fields the record carries (below).
+      ...(!activity && who.typed ? { "cloud.principalType": ["actor.callerType"] } : {}),
+      ...(ip ? { "network.source.address": ["ipAddress"] } : {}),
+    },
+    derivationMap: {
+      "cloud.principalType": activity
+        ? "gws-token-v1: an activity's API caller is the token's client (client_id) — an application"
+        : "gws-token-v1: from the actor fields the record carries — applicationInfo.oauthClientId → application, actor.key → key, email/profileId → user",
+    },
+  });
+}
+
+function mapEvent(rec: Row, event: Row, sink: Map<string, SiemIoc>, locator: string): MappedEvent {
   const app = text(getPath(rec, "id.applicationName"));
   const name = text(getCI(event, "name"));
-  const actor = text(getPath(rec, "actor.email") || getPath(rec, "actor.profileId"));
+  const who = readActor(rec);
+  const actor = who.label;
   const ip = cleanIp(text(getCI(rec, "ipAddress")));
-  const target = targetLabel(event);
-
-  const def = defFor(name);
-  const severity = def.severity;
-  const mitre = [...(def.mitre ?? [])];
+  const tenant = text(getPath(rec, "id.customerId"));
   if (ip) addIoc(sink, "ip", ip);
+  // The actor's IDENTITY (a key or a client id when the record names no user; an application or
+  // key with no stable id takes the event's locator, since a name is a label and two named
+  // applications must never fold), the tenant and the target identity, bounded with a digest
+  // (#931 prerequisite). A document shared with three people is three rows; two documents with
+  // one title are two; two customers' identical rows are two; two robots are two.
+  const actorKey = who.stable ? who.identity : `${who.identity}|${locator}`;
+  const baseKey = `gws|${app}|${name}|${actorKey}|${ip}|${tenant}|${targetIdentity(event)}`;
+  const timestamp = normalizeTime(text(getPath(rec, "id.time")));
 
+  const token = app.toLowerCase() === TOKEN_APP ? decodeGwsToken(name, readGwsParams(event)) : null;
+  if (token) {
+    const who = oneLine(actor).slice(0, WHO_MAX);
+    const head = `Google Workspace ${app}: ${name}${who ? ` by ${who}` : ""}${ip ? ` from ${ip}` : ""}`;
+    return {
+      timestamp,
+      description: renderAwsDescription({
+        head,
+        posture: token.posture,
+        outcome: "",
+        object: token.object,
+        optional: token.optional,
+        tail: "",
+        qualifiers: token.qualifiers,
+      }),
+      severity: token.severity,
+      mitre: [...token.mitre],
+      // The client id is the row's identity; when the record has none, the EVENT's locator joins
+      // (two events of one record share the record's uniqueQualifier) so two applications never
+      // fold into one row behind a shared display name.
+      aggKey: boundedAggKey(
+        `${baseKey}${token.keySegment}${token.client.id ? "" : `|${locator}`}`.toLowerCase(),
+      ),
+      sources: ["Google Workspace"],
+      canonical: tokenEnvelope(rec, token, name, ip, locator),
+    };
+  }
+
+  const target = targetLabel(event);
+  const def = defFor(name);
   let description = `Google Workspace ${app}: ${name}`;
   if (actor) description += ` by ${actor}`;
   if (target) description += ` → ${oneLine(target).slice(0, 120)}`;
@@ -236,13 +485,11 @@ function mapEvent(rec: Row, event: Row, sink: Map<string, SiemIoc>): MappedEvent
   description = description.slice(0, 600);
 
   return {
-    timestamp: normalizeTime(text(getPath(rec, "id.time"))),
+    timestamp,
     description,
-    severity,
-    mitre,
-    // The target IDENTITY last, bounded with a digest (#931 prerequisite). A document shared with
-    // three people is three rows; two documents with one title are two.
-    aggKey: boundedAggKey(`gws|${app}|${name}|${actor}|${ip}|${targetIdentity(event)}`.toLowerCase()),
+    severity: def.severity,
+    mitre: [...(def.mitre ?? [])],
+    aggKey: boundedAggKey(baseKey.toLowerCase()),
     sources: ["Google Workspace"],
   };
 }
@@ -272,24 +519,26 @@ export function parseGoogleWorkspaceReport(
 
   const iocSink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
-  for (const raw of records) {
-    if (!isObject(raw)) continue;
+  records.forEach((raw, recordIndex) => {
+    if (!isObject(raw)) return;
     const rec = raw;
-    if (!isWorkspaceActivity(rec)) continue;
+    if (!isWorkspaceActivity(rec)) return;
     const events = getCI(rec, "events");
-    // One record, N events — each is its own thing that happened.
+    // One record, N events — each is its own thing that happened, with its own locator.
     const list = Array.isArray(events) ? events : [];
-    for (const e of list) {
-      if (!isObject(e)) continue;
-      mapped.push(mapEvent(rec, e, iocSink));
-    }
-  }
+    list.forEach((e, eventIndex) => {
+      if (!isObject(e)) return;
+      mapped.push(mapEvent(rec, e, iocSink, `record:${recordIndex}/event:${eventIndex}`));
+    });
+  });
 
-  const { events, groups } = aggregateEvents(mapped, {
+  const aggregated = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
+  const events = stampSourceArtifactHash(aggregated.events, input);
+  const groups = aggregated.groups;
 
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
   return {
