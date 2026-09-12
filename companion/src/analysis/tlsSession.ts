@@ -83,6 +83,8 @@ export interface TlsObservation {
     ref?: CertRef;
     chainFuids?: string[];
     facts?: CertificateFacts;
+    /** Certificate data was present but not readable into an identity. */
+    seen?: boolean;
   };
 }
 
@@ -393,11 +395,15 @@ function suricataClientCert(t: Row): TlsObservation["clientCert"] {
   // Every client fact the record carries (serial, SANs, validity) is evidence, with or without an
   // identity: a filtered record with only a serial is not a record with no client certificate.
   const facts = suricataFacts(c);
+  // Certificate data that will not decode is still a client certificate SEEN — never "no client
+  // certificate" — so the session keys on its presence and says the identity is unavailable.
+  const seen = (list(getCI(c, "certificate"))?.length ?? 0) + (list(getCI(c, "chain"))?.length ?? 0) > 0;
   const out = {
     ...(facts.subject !== undefined ? { subject: facts.subject } : {}),
     ...(facts.issuer !== undefined ? { issuer: facts.issuer } : {}),
     ...(fp ? { ref: fp } : {}),
     ...(Object.keys(facts).length ? { facts } : {}),
+    ...(seen && !fp ? { seen: true } : {}),
   };
   return Object.keys(out).length ? out : undefined;
 }
@@ -569,7 +575,7 @@ function sessionTags(o: TlsObservation): string[] {
   tags.push(hasCert ? `cert: ${certWords(o)}` : "no server certificate observed in this record");
   if (o.clientCert) {
     const cc = o.clientCert;
-    const ref = cc.ref ? refWords(cc.ref) : cc.chainFuids?.length ? "identity unavailable" : "";
+    const ref = cc.ref ? refWords(cc.ref) : cc.chainFuids?.length || cc.seen ? "identity unavailable" : "";
     tags.push(
       `client cert: ${[cc.subject !== undefined ? `subject ${show(cc.subject)}` : "", cc.issuer !== undefined ? `issuer ${show(cc.issuer)}` : "", ref].filter(Boolean).join("; ")}`,
     );
@@ -664,6 +670,9 @@ function envelopeOf(o: TlsObservation, count: number): CanonicalEventEnvelope {
                 ? { fingerprint: o.clientCert.ref.value, fingerprintAlg: o.clientCert.ref.alg }
                 : {}),
               ...(o.clientCert.ref?.kind === "identity" ? { identity: o.clientCert.ref.value } : {}),
+              ...(!o.clientCert.ref && (o.clientCert.seen || o.clientCert.chainFuids?.length)
+                ? { identity: "unavailable" }
+                : {}),
               ...(o.clientCert.facts?.serial !== undefined ? { serial: o.clientCert.facts.serial } : {}),
               ...(o.clientCert.facts?.names ? { names: o.clientCert.facts.names } : {}),
               ...(o.clientCert.facts?.notBefore ? { notBefore: o.clientCert.facts.notBefore } : {}),

@@ -607,6 +607,7 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
     expect(ra.canonical?.tls?.clientCertificate).toEqual({
       subject: "CN=user-a] [chain check: ok",
       chainFuids: ["Fclient-a"],
+      identity: "unavailable",
     });
     const fp = readZeekSsl({ ...base2, client_cert_chain_fps: ["ab".repeat(20)] }, "");
     expect(fp.clientCert?.ref).toEqual({ kind: "fingerprint", value: "ab".repeat(20), alg: "sha1" });
@@ -845,6 +846,27 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
     expect(seen.description).toContain("[cert: identity unavailable]");
     // the chain entry is a chain row, never given the leaf's identity
     expect(readSuricataCertificates(rec, "")).toHaveLength(1);
+  });
+
+  it("unreadable client DER is a client certificate seen, apart from no client certificate, in either order", () => {
+    const rec = {
+      ...SURICATA_TLS,
+      tls: {
+        sni: "a.example",
+        client: { certificate: "!!!!", chain: [Buffer.from("cc").toString("base64")] },
+      },
+    };
+    const seen = readSuricataTls(rec, "");
+    const none = readSuricataTls({ ...SURICATA_TLS, tls: { sni: "a.example" } }, "");
+    expect(seen.clientCert).toEqual({ seen: true });
+    for (const order of [
+      [seen, none],
+      [none, seen],
+    ])
+      expect(rows(order)).toHaveLength(2);
+    const e = rows([seen])[0];
+    expect(e.description).toContain("[client cert: identity unavailable]");
+    expect(e.canonical?.tls?.clientCertificate?.identity).toBe("unavailable");
   });
 
   it("selects the most-seen rows first under a budget", () => {
