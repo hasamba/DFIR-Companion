@@ -233,8 +233,10 @@ const WHO_MAX = 36;
 
 // The canonical envelope of a token row — agency per event: on an `activity` the APPLICATION is
 // the actor (it called the API) and the user the subject; on the other four the USER is the actor
-// and the application the object. No placeholder resource: `cloud.resource` is the API method or
-// nothing.
+// and the application the object. The cloud principal follows the actor (the client id on an
+// activity, the user's profile id otherwise) so its type never contradicts its id. A `request`
+// that names a `requester_email` carries that account as the subject — the account the request
+// is for. No placeholder resource: `cloud.resource` is the API method or nothing.
 function tokenEnvelope(
   rec: Row,
   t: GwsTokenReading,
@@ -265,16 +267,23 @@ function tokenEnvelope(
       : undefined;
   const method = [t.api.name, t.api.method].filter(Boolean).join(".");
   const activity = t.kind === "activity";
+  const requester =
+    t.kind === "request" && t.requester ? { kind: "account" as const, name: t.requester } : undefined;
+  const principalId = activity ? t.client.id : profileId;
   return createCanonicalEvent({
     event: { category: "cloud", type: "oauth", action: name, outcome: "success" },
     ...(activity
       ? { ...(app ? { actor: app } : {}), ...(user ? { subject: user } : {}) }
-      : { ...(user ? { actor: user } : {}), ...(app ? { object: app } : {}) }),
+      : {
+          ...(user ? { actor: user } : {}),
+          ...(app ? { object: app } : {}),
+          ...(requester ? { subject: requester } : {}),
+        }),
     ...(ip ? { network: { source: { address: ip } } } : {}),
     cloud: {
       provider: "google-workspace",
       ...(tenant ? { tenant } : {}),
-      ...(t.client.id ? { principalId: t.client.id } : {}),
+      ...(principalId ? { principalId } : {}),
       principalType: activity ? "application" : "user",
       ...(activity && method ? { resource: method } : {}),
     },
@@ -302,9 +311,10 @@ function tokenEnvelope(
             "actor.id": ["actor.profileId"],
             "object.id": ["client_id"],
             "object.name": ["app_name"],
+            ...(requester ? { "subject.name": ["requester_email"] } : {}),
           }),
       "cloud.tenant": ["id.customerId"],
-      "cloud.principalId": ["client_id"],
+      "cloud.principalId": [activity ? "client_id" : "actor.profileId"],
       ...(ip ? { "network.source.address": ["ipAddress"] } : {}),
     },
   });
@@ -340,7 +350,11 @@ function mapEvent(rec: Row, event: Row, sink: Map<string, SiemIoc>, locator: str
       }),
       severity: token.severity,
       mitre: [...token.mitre],
-      aggKey: boundedAggKey(`${baseKey}${token.keySegment}`.toLowerCase()),
+      // The client id is the row's identity; when the record has none, the record's own id joins
+      // so two applications never fold into one row behind a shared display name.
+      aggKey: boundedAggKey(
+        `${baseKey}${token.keySegment}${token.client.id ? "" : `|record:${text(getPath(rec, "id.uniqueQualifier")) || locator}`}`.toLowerCase(),
+      ),
       sources: ["Google Workspace"],
       canonical: tokenEnvelope(rec, token, name, ip, locator),
     };

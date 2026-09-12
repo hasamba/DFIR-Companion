@@ -213,11 +213,16 @@ describe("parseGoogleWorkspaceReport — OAuth token rows", () => {
     expect(e.canonical?.actor).toEqual({ kind: "account", name: "jdoe@example.invalid", id: "1234" });
     expect(e.canonical?.object).toEqual({ kind: "cloud_principal", id: CLIENT, name: "Mail Backup Pro" });
     expect(e.canonical?.subject).toBeUndefined();
+    // The cloud principal follows the actor: the user's profile id, typed as a user; the client is
+    // the object, never a "user" principal.
     expect(e.canonical?.cloud).toEqual({
       provider: "google-workspace",
       tenant: "C01abc",
-      principalId: CLIENT,
+      principalId: "1234",
       principalType: "user",
+    });
+    expect(e.canonical?.fieldProvenance["cloud.principalId"]).toMatchObject({
+      rawFields: ["actor.profileId"],
     });
     expect(e.canonical?.network?.source?.address).toBe("203.0.113.10");
     expect(e.canonical?.evidence.rawRecords).toEqual([
@@ -256,6 +261,7 @@ describe("parseGoogleWorkspaceReport — OAuth token rows", () => {
     expect(e.canonical?.subject).toEqual({ kind: "account", name: "jdoe@example.invalid", id: "1234" });
     expect(e.canonical?.object).toBeUndefined();
     expect(e.canonical?.cloud).toMatchObject({
+      principalId: CLIENT,
       principalType: "application",
       resource: "drive.drive.files.get",
     });
@@ -282,6 +288,7 @@ describe("parseGoogleWorkspaceReport — OAuth token rows", () => {
       expect(e.severity).toBe("Low");
     }
     expect(r.events[0].description).toContain("requests access");
+    expect(r.events[0].canonical?.subject).toBeUndefined();
     expect(r.events[1].description).toContain("denied access");
     expect(r.events[1].description).toContain("ADMIN_BLOCKED");
     expect(r.events[2].description).toContain("revokes Mail Backup Pro");
@@ -337,6 +344,50 @@ describe("parseGoogleWorkspaceReport — OAuth token rows", () => {
     ).events[0];
     expect(file.severity).toBe("Low");
     expect(file.mitreTechniques ?? []).not.toContain("T1528");
+  });
+
+  it("a request that names a requester carries that account as the envelope's subject", () => {
+    const r = parseGoogleWorkspaceReport(
+      JSON.stringify([
+        token("request", [
+          ...clientParams,
+          { name: "scope", multiValue: [G + "gmail.readonly"] },
+          { name: "requester_email", value: "bob@example.invalid" },
+        ]),
+      ]),
+    );
+    const e = r.events[0];
+    expect(e.description).toContain("requester bob@example.invalid");
+    expect(e.canonical?.actor).toEqual({ kind: "account", name: "jdoe@example.invalid", id: "1234" });
+    expect(e.canonical?.subject).toEqual({ kind: "account", name: "bob@example.invalid" });
+    expect(e.canonical?.fieldProvenance["subject.name"]).toMatchObject({ rawFields: ["requester_email"] });
+    expect(canonicalConformanceIssues(e.canonical)).toEqual([]);
+  });
+
+  it("two authorizations with no client id never fold, even under one display name", () => {
+    const noId = (appName: string, uniqueQualifier: string) =>
+      token(
+        "authorize",
+        [
+          { name: "app_name", value: appName },
+          { name: "scope", multiValue: [G + "drive"] },
+        ],
+        { id: { uniqueQualifier } },
+      );
+    const r = parseGoogleWorkspaceReport(JSON.stringify([noId("App A", "q-1"), noId("App B", "q-2")]));
+    expect(r.events).toHaveLength(2);
+    const same = parseGoogleWorkspaceReport(JSON.stringify([noId("App A", "q-1"), noId("App A", "q-2")]));
+    expect(same.events).toHaveLength(2);
+    // With the client id present the display name is a label: one client, two names, one row.
+    const withId = (appName: string) =>
+      token("authorize", [
+        { name: "client_id", value: CLIENT },
+        { name: "app_name", value: appName },
+        { name: "scope", multiValue: [G + "drive"] },
+      ]);
+    expect(
+      parseGoogleWorkspaceReport(JSON.stringify([withId("App A"), withId("App B")])).events,
+    ).toHaveLength(1);
   });
 
   it("a second event in one record gets its own locator", () => {

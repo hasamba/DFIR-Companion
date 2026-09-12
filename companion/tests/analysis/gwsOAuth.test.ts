@@ -35,11 +35,29 @@ describe("readGwsParams — every Reports API value kind, by its kind", () => {
     expect(out).toEqual([
       { name: "app_name", value: "App" },
       { name: "scope", multiValue: [G + "gmail.readonly", G + "drive"] },
-      { name: "num_response_bytes", intValue: 12345 },
-      { name: "other_count", intValue: 7 },
+      { name: "num_response_bytes", intValue: 12345, intText: "12345" },
+      { name: "other_count", intValue: 7, intText: "7" },
       { name: "flag", boolValue: true },
     ]);
     expect(typeof out[2].intValue).toBe("number");
+  });
+  it("keeps an int64 exact: beyond a safe integer the digits stay and the number is withheld; out of range is dropped", () => {
+    const out = params([
+      p("a", { intValue: "9007199254740993" }),
+      p("b", { intValue: "9223372036854775807" }),
+      p("c", { intValue: "9223372036854775808" }),
+      p("d", { intValue: "-9223372036854775808" }),
+      p("e", { intValue: "+0042" }),
+      p("f", { intValue: 1.5 }),
+    ]);
+    expect(out).toEqual([
+      { name: "a", intText: "9007199254740993" },
+      { name: "b", intText: "9223372036854775807" },
+      { name: "c" },
+      { name: "d", intText: "-9223372036854775808" },
+      { name: "e", intText: "42", intValue: 42 },
+      { name: "f" },
+    ]);
   });
   it("reads a singular messageValue and a multiMessageValue into one list of messages each", () => {
     const single = params([
@@ -199,84 +217,159 @@ describe("decodeGwsToken — authorize: the grant, graded by its scopes", () => 
   });
 });
 
-describe("GWS_SCOPE_TIERS — a literal, exhaustive table", () => {
+describe("GWS_SCOPE_TIERS — a literal table", () => {
   const high = [
     "https://mail.google.com/",
-    ...[
-      "gmail.readonly",
-      "gmail.modify",
-      "gmail.insert",
-      "gmail.compose",
-      "gmail.send",
-      "gmail.settings.basic",
-      "gmail.settings.sharing",
-      "drive",
-      "drive.readonly",
-      "documents",
-      "documents.readonly",
-      "spreadsheets",
-      "spreadsheets.readonly",
-      "presentations",
-      "presentations.readonly",
-      "calendar",
-      "calendar.events",
-      "calendar.acls",
-      "contacts",
-      "contacts.other.readonly",
-      "admin.directory.user",
-      "admin.directory.user.readonly",
-      "admin.directory.group",
-      "admin.directory.group.readonly",
-      "admin.directory.orgunit",
-      "admin.directory.device.mobile",
-      "admin.directory.device.chromeos",
-      "admin.directory.customer",
-      "admin.directory.domain",
-      "admin.directory.rolemanagement",
-      "admin.reports.audit.readonly",
-      "admin.reports.usage.readonly",
-      "apps.groups.settings",
-      "ediscovery",
-      "cloud-platform",
-      "script.projects",
-      "script.external_request",
-      "script.scriptapp",
-      "script.deployments",
-      "chat.messages",
-      "chat.messages.readonly",
-      "chat.spaces",
-    ].map((s) => G + s),
+    G + "gmail.readonly",
+    G + "gmail.modify",
+    G + "gmail.insert",
+    G + "gmail.compose",
+    G + "gmail.send",
+    G + "gmail.settings.basic",
+    G + "gmail.settings.sharing",
+    G + "drive",
+    G + "drive.readonly",
+    G + "drive.meet.readonly",
+    G + "drive.scripts",
+    G + "documents",
+    G + "documents.readonly",
+    G + "spreadsheets",
+    G + "spreadsheets.readonly",
+    G + "presentations",
+    G + "presentations.readonly",
+    G + "forms",
+    G + "forms.body",
+    G + "forms.body.readonly",
+    G + "forms.responses.readonly",
+    G + "calendar",
+    G + "calendar.events",
+    G + "calendar.events.owned",
+    G + "calendar.calendars",
+    G + "calendar.acls",
+    "https://www.google.com/calendar/feeds",
+    G + "contacts",
+    G + "contacts.other.readonly",
+    "https://www.google.com/m8/feeds",
+    G + "admin.directory.user",
+    G + "admin.directory.user.readonly",
+    G + "admin.directory.user.alias",
+    G + "admin.directory.user.security",
+    G + "admin.directory.userschema",
+    G + "admin.directory.group",
+    G + "admin.directory.group.readonly",
+    G + "admin.directory.group.member",
+    G + "admin.directory.group.member.readonly",
+    G + "admin.directory.orgunit",
+    G + "admin.directory.device.mobile",
+    G + "admin.directory.device.mobile.action",
+    G + "admin.directory.device.chromeos",
+    G + "admin.directory.customer",
+    G + "admin.directory.domain",
+    G + "admin.directory.rolemanagement",
+    G + "admin.reports.audit.readonly",
+    G + "admin.reports.usage.readonly",
+    G + "admin.datatransfer",
+    G + "apps.groups.settings",
+    G + "apps.groups.migration",
+    G + "cloud-identity",
+    G + "cloud-identity.groups",
+    G + "cloud-identity.inboundsso",
+    G + "cloud-identity.policies",
+    G + "ediscovery",
+    G + "ediscovery.readonly",
+    G + "cloud-platform",
+    G + "cloud-platform.read-only",
+    G + "script.projects",
+    G + "script.projects.readonly",
+    G + "script.external_request",
+    G + "script.scriptapp",
+    G + "script.deployments",
+    G + "script.send_mail",
+    G + "chat.messages",
+    G + "chat.messages.readonly",
+    G + "chat.spaces",
+    G + "chat.import",
   ];
   const medium = [
-    "gmail.metadata",
-    "gmail.labels",
-    "drive.metadata",
-    "drive.metadata.readonly",
-    "drive.photos.readonly",
-    "drive.activity",
-    "drive.activity.readonly",
-    "calendar.readonly",
-    "calendar.events.readonly",
-    "calendar.settings.readonly",
-    "contacts.readonly",
-    "keep",
-    "keep.readonly",
-    "tasks",
-    "tasks.readonly",
-    "chat.spaces.readonly",
-    "directory.readonly",
-    "user.addresses.read",
-    "user.birthday.read",
-    "user.emails.read",
-    "user.phonenumbers.read",
-  ].map((s) => G + s);
+    G + "gmail.metadata",
+    G + "gmail.labels",
+    G + "gmail.addons.current.message.readonly",
+    G + "gmail.addons.current.message.metadata",
+    G + "gmail.addons.current.message.action",
+    G + "gmail.addons.current.action.compose",
+    G + "drive.metadata",
+    G + "drive.metadata.readonly",
+    G + "drive.photos.readonly",
+    G + "drive.activity",
+    G + "drive.activity.readonly",
+    G + "calendar.readonly",
+    G + "calendar.events.readonly",
+    G + "calendar.events.owned.readonly",
+    G + "calendar.calendars.readonly",
+    G + "calendar.acls.readonly",
+    G + "calendar.settings.readonly",
+    G + "contacts.readonly",
+    G + "directory.readonly",
+    G + "user.addresses.read",
+    G + "user.birthday.read",
+    G + "user.emails.read",
+    G + "user.gender.read",
+    G + "user.organization.read",
+    G + "user.phonenumbers.read",
+    G + "profile.emails.read",
+    G + "keep",
+    G + "keep.readonly",
+    G + "tasks",
+    G + "tasks.readonly",
+    G + "chat.spaces.readonly",
+    G + "chat.spaces.create",
+    G + "chat.messages.create",
+    G + "chat.memberships",
+    G + "chat.memberships.readonly",
+    G + "chat.delete",
+    G + "chat.bot",
+    G + "admin.directory.orgunit.readonly",
+    G + "admin.directory.device.mobile.readonly",
+    G + "admin.directory.device.chromeos.readonly",
+    G + "admin.directory.customer.readonly",
+    G + "admin.directory.domain.readonly",
+    G + "admin.directory.rolemanagement.readonly",
+    G + "admin.directory.resource.calendar",
+    G + "admin.directory.resource.calendar.readonly",
+    G + "admin.datatransfer.readonly",
+    G + "apps.licensing",
+    G + "apps.alerts",
+    G + "apps.order",
+    G + "admin.chrome.printers",
+    G + "cloud-identity.groups.readonly",
+    G + "cloud-identity.devices",
+    G + "cloud-identity.devices.readonly",
+    G + "cloud-identity.devices.lookup",
+    G + "cloud-identity.userinvitations",
+    G + "cloud-identity.orgunits",
+    G + "script.deployments.readonly",
+    G + "script.processes",
+    G + "script.metrics",
+    G + "script.webapp.deploy",
+  ];
   const low = [
-    ...["drive.file", "drive.appdata", "drive.install", "userinfo.email", "userinfo.profile"].map(
-      (s) => G + s,
-    ),
+    G + "drive.file",
+    G + "drive.appdata",
+    G + "drive.install",
+    G + "drive.apps.readonly",
+    G + "calendar.events.public.readonly",
+    G + "calendar.freebusy",
+    G + "calendar.app.created",
+    G + "script.container.ui",
+    G + "script.locale",
+    G + "script.storage",
     "openid",
     "email",
     "profile",
+    G + "userinfo.email",
+    G + "userinfo.profile",
+    G + "profile.agerange.read",
+    G + "profile.language.read",
   ];
   it("every listed URI has its tier and the table holds exactly these", () => {
     for (const s of high) expect(scopeTier(s), s).toBe("High");
@@ -289,6 +382,10 @@ describe("GWS_SCOPE_TIERS — a literal, exhaustive table", () => {
       expect(k.startsWith("https://") || ["openid", "email", "profile"].includes(k), k).toBe(true);
     }
     expect(scopeTier("gmail")).toBe("Medium"); // a bare family name is unknown, not a match
+    // The legacy full-access feeds and the Meet recordings scope are content-wide: High.
+    expect(scopeTier("https://www.google.com/calendar/feeds")).toBe("High");
+    expect(scopeTier("https://www.google.com/m8/feeds")).toBe("High");
+    expect(scopeTier(G + "drive.meet.readonly")).toBe("High");
     expect(scopeTier(G + "gmail.readonly ")).toBe("High"); // whitespace tolerated
     expect(scopeTier("")).toBe("Medium");
   });
@@ -316,7 +413,7 @@ describe("decodeGwsToken — activity: the API call, Info, with its bytes", () =
     expect(d.object).toBe(`by Mail Backup Pro (client ${CLIENT})`);
     expect(d.optional).toEqual(["4096 bytes returned", "product DRIVE"]);
     expect(d.qualifiers).toEqual(["bytes returned are not proof that file contents were downloaded"]);
-    expect(d.bytes).toBe(4096);
+    expect(d.bytes).toBe("4096");
     expect(d.api).toEqual({ name: "drive", method: "drive.files.get" });
   });
   it("claims no bytes when the record carries none", () => {
@@ -325,13 +422,17 @@ describe("decodeGwsToken — activity: the API call, Info, with its bytes", () =
     expect(d.optional).toEqual(["product DRIVE"]);
     expect(d.qualifiers).toEqual([]);
   });
-  it("two calls to one method with different sizes are two rows", () => {
+  it("two calls to one method with different sizes are two rows — 2^53 and 2^53+1 included", () => {
     const a = activity([p("num_response_bytes", { intValue: "10" })]);
     const b = activity([p("num_response_bytes", { intValue: "999999" })]);
     const c = activity([p("num_response_bytes", { intValue: "10" })]);
     expect(a.keySegment).not.toBe(b.keySegment);
     expect(a.keySegment).toBe(c.keySegment);
     expect(a.keySegment).toContain("|drive.drive.files.get:10:DRIVE");
+    const big = activity([p("num_response_bytes", { intValue: "9007199254740992" })]);
+    const bigger = activity([p("num_response_bytes", { intValue: "9007199254740993" })]);
+    expect(big.keySegment).not.toBe(bigger.keySegment);
+    expect(bigger.optional[0]).toBe("9007199254740993 bytes returned");
   });
   it("says when the method is not in the record", () => {
     const d = decodeGwsToken("activity", params(client()))!;

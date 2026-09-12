@@ -19,7 +19,10 @@ export interface GwsParam {
   name: string;
   value?: string;
   multiValue?: string[];
+  /** The int64 as a number — only when it is a safe integer. */
   intValue?: number;
+  /** The int64's exact decimal digits — always present when the wire value is a valid int64. */
+  intText?: string;
   boolValue?: boolean;
   /** `messageValue` → one message; `multiMessageValue` → many. Each message is its own list. */
   messages?: GwsParam[][];
@@ -45,7 +48,8 @@ export interface GwsTokenReading {
   scopeDigest: string;
   productBuckets: string[];
   api: { name: string; method: string };
-  bytes?: number;
+  /** `num_response_bytes` as its exact decimal digits (an int64 may exceed a safe integer). */
+  bytes?: string;
   requester: string;
   requestInfo: string;
   rejection: string;
@@ -86,10 +90,21 @@ const digest = (s: string): string => createHash("sha256").update(s).digest("hex
 
 // ── the typed reader ────────────────────────────────────────────────────────────────────────────
 
-function readInt(v: unknown): number | undefined {
-  if (typeof v === "number") return Number.isFinite(v) ? v : undefined;
-  if (typeof v === "string" && /^-?\d{1,18}$/.test(v.trim())) return Number(v.trim());
-  return undefined;
+const INT64_MIN = -(2n ** 63n);
+const INT64_MAX = 2n ** 63n - 1n;
+
+// The wire type is an int64 carried as a string of digits (a number in some exports). The exact
+// digits are kept for the words and the key — 2^53 and 2^53+1 must stay two values — and a
+// number is offered only when it is safe.
+function readInt(v: unknown): { intText: string; intValue?: number } | undefined {
+  const raw =
+    typeof v === "number" && Number.isInteger(v) ? String(v) : typeof v === "string" ? v.trim() : "";
+  if (!/^[+-]?\d{1,20}$/.test(raw)) return undefined;
+  const big = BigInt(raw);
+  if (big < INT64_MIN || big > INT64_MAX) return undefined;
+  const intText = big.toString();
+  const n = Number(intText);
+  return Number.isSafeInteger(n) ? { intText, intValue: n } : { intText };
 }
 
 function readList(v: unknown, depth: number): GwsParam[] {
@@ -106,7 +121,10 @@ function readList(v: unknown, depth: number): GwsParam[] {
     const multi = getCI(entry, "multiValue");
     if (Array.isArray(multi)) param.multiValue = multi.filter((x): x is string => typeof x === "string");
     const int = readInt(getCI(entry, "intValue"));
-    if (int !== undefined) param.intValue = int;
+    if (int) {
+      param.intText = int.intText;
+      if (int.intValue !== undefined) param.intValue = int.intValue;
+    }
     const bool = getCI(entry, "boolValue");
     if (typeof bool === "boolean") param.boolValue = bool;
     if (depth < DEPTH_MAX) {
@@ -141,7 +159,14 @@ const list = (params: readonly GwsParam[], name: string): string[] => {
     .filter(Boolean);
 };
 
-// ── the scope table — literal, exhaustive; the highest tier wins ────────────────────────────────
+// ── the scope table — literal; the highest tier wins ────────────────────────────────────────────
+// Every entry is a full scope URI (or an OpenID Connect scope), taken from Google's OAuth scope
+// catalogue as of 2026-09: no family shorthand, no prefix match. A scope the table does not
+// name is Medium — the conservative reading for a grant whose reach is not classified here —
+// and the manual says so. High is content-wide read or write (mail, Drive, Docs, Forms,
+// Calendar, Contacts, the Directory and Cloud Identity, Vault, Apps Script, Chat messages);
+// Medium is metadata, activity, read-only settings and the People fields; Low is per-file or
+// app-data Drive, free/busy, and identity-only scopes.
 
 const tiered = (tier: ScopeTier, names: readonly string[]): Array<[string, ScopeTier]> =>
   names.map((n) => [n.startsWith("https://") || OIDC_SCOPES.has(n) ? n : GOOGLE_AUTH + n, tier]);
@@ -158,43 +183,74 @@ export const GWS_SCOPE_TIERS: Readonly<Record<string, ScopeTier>> = Object.fromE
     "gmail.settings.sharing",
     "drive",
     "drive.readonly",
+    "drive.meet.readonly",
+    "drive.scripts",
     "documents",
     "documents.readonly",
     "spreadsheets",
     "spreadsheets.readonly",
     "presentations",
     "presentations.readonly",
+    "forms",
+    "forms.body",
+    "forms.body.readonly",
+    "forms.responses.readonly",
     "calendar",
     "calendar.events",
+    "calendar.events.owned",
+    "calendar.calendars",
     "calendar.acls",
+    "https://www.google.com/calendar/feeds",
     "contacts",
     "contacts.other.readonly",
+    "https://www.google.com/m8/feeds",
     "admin.directory.user",
     "admin.directory.user.readonly",
+    "admin.directory.user.alias",
+    "admin.directory.user.security",
+    "admin.directory.userschema",
     "admin.directory.group",
     "admin.directory.group.readonly",
+    "admin.directory.group.member",
+    "admin.directory.group.member.readonly",
     "admin.directory.orgunit",
     "admin.directory.device.mobile",
+    "admin.directory.device.mobile.action",
     "admin.directory.device.chromeos",
     "admin.directory.customer",
     "admin.directory.domain",
     "admin.directory.rolemanagement",
     "admin.reports.audit.readonly",
     "admin.reports.usage.readonly",
+    "admin.datatransfer",
     "apps.groups.settings",
+    "apps.groups.migration",
+    "cloud-identity",
+    "cloud-identity.groups",
+    "cloud-identity.inboundsso",
+    "cloud-identity.policies",
     "ediscovery",
+    "ediscovery.readonly",
     "cloud-platform",
+    "cloud-platform.read-only",
     "script.projects",
+    "script.projects.readonly",
     "script.external_request",
     "script.scriptapp",
     "script.deployments",
+    "script.send_mail",
     "chat.messages",
     "chat.messages.readonly",
     "chat.spaces",
+    "chat.import",
   ]),
   ...tiered("Medium", [
     "gmail.metadata",
     "gmail.labels",
+    "gmail.addons.current.message.readonly",
+    "gmail.addons.current.message.metadata",
+    "gmail.addons.current.message.action",
+    "gmail.addons.current.action.compose",
     "drive.metadata",
     "drive.metadata.readonly",
     "drive.photos.readonly",
@@ -202,28 +258,72 @@ export const GWS_SCOPE_TIERS: Readonly<Record<string, ScopeTier>> = Object.fromE
     "drive.activity.readonly",
     "calendar.readonly",
     "calendar.events.readonly",
+    "calendar.events.owned.readonly",
+    "calendar.calendars.readonly",
+    "calendar.acls.readonly",
     "calendar.settings.readonly",
     "contacts.readonly",
+    "directory.readonly",
+    "user.addresses.read",
+    "user.birthday.read",
+    "user.emails.read",
+    "user.gender.read",
+    "user.organization.read",
+    "user.phonenumbers.read",
+    "profile.emails.read",
     "keep",
     "keep.readonly",
     "tasks",
     "tasks.readonly",
     "chat.spaces.readonly",
-    "directory.readonly",
-    "user.addresses.read",
-    "user.birthday.read",
-    "user.emails.read",
-    "user.phonenumbers.read",
+    "chat.spaces.create",
+    "chat.messages.create",
+    "chat.memberships",
+    "chat.memberships.readonly",
+    "chat.delete",
+    "chat.bot",
+    "admin.directory.orgunit.readonly",
+    "admin.directory.device.mobile.readonly",
+    "admin.directory.device.chromeos.readonly",
+    "admin.directory.customer.readonly",
+    "admin.directory.domain.readonly",
+    "admin.directory.rolemanagement.readonly",
+    "admin.directory.resource.calendar",
+    "admin.directory.resource.calendar.readonly",
+    "admin.datatransfer.readonly",
+    "apps.licensing",
+    "apps.alerts",
+    "apps.order",
+    "admin.chrome.printers",
+    "cloud-identity.groups.readonly",
+    "cloud-identity.devices",
+    "cloud-identity.devices.readonly",
+    "cloud-identity.devices.lookup",
+    "cloud-identity.userinvitations",
+    "cloud-identity.orgunits",
+    "script.deployments.readonly",
+    "script.processes",
+    "script.metrics",
+    "script.webapp.deploy",
   ]),
   ...tiered("Low", [
     "drive.file",
     "drive.appdata",
     "drive.install",
+    "drive.apps.readonly",
+    "calendar.events.public.readonly",
+    "calendar.freebusy",
+    "calendar.app.created",
+    "script.container.ui",
+    "script.locale",
+    "script.storage",
     "openid",
     "email",
     "profile",
     "userinfo.email",
     "userinfo.profile",
+    "profile.agerange.read",
+    "profile.language.read",
   ]),
 ]);
 
@@ -294,7 +394,7 @@ export function decodeGwsToken(eventName: string, params: readonly GwsParam[]): 
   const { scopes, buckets } = readScopes(params);
   const scopeDigest = scopes.length ? digest(scopes.join("\n")) : "";
   const api = { name: text(params, "api_name"), method: text(params, "method_name") };
-  const bytes = find(params, "num_response_bytes")?.intValue;
+  const bytes = find(params, "num_response_bytes")?.intText;
   const requester = text(params, "requester_email");
   const requestInfo = text(params, "app_request_info");
   const rejection = text(params, "rejection_type");
