@@ -201,6 +201,20 @@ describe("Sysmon 22 — bounded variants", () => {
     expect(overflow.description).not.toContain("[returned:");
     expect(r.events.some((e) => e.description.includes("[query: unrelated.example]"))).toBe(true);
     expect(r.iocs.find((i) => i.value === "txt.attacker.example")?.sourceAggKeys).toContain(overflow.aggKey);
+    // the overflow row's envelope shows no set and says it folded
+    expect(overflow.canonical?.dns).toMatchObject({ returned: [], folded: true });
+    expect(overflow.description).toMatch(/ #[A-Za-z0-9_-]{22}$/);
+    // two queries whose shown names clip alike, each past the budget, stay two rows after import
+    const long = (t: string) => `${"z".repeat(63)}.${"y".repeat(63)}.${"x".repeat(20)}${t}.example`;
+    const pair = ["1", "2"].flatMap((t) =>
+      Array.from({ length: DNS_VARIANTS_MAX + 1 }, (_, i) =>
+        sysmon22({ QueryName: long(t), QueryStatus: "0", QueryResults: `type: 16 n-${i};` }),
+      ),
+    );
+    const p = parseSiemExport(elastic(...pair));
+    const overflows = p.events.filter((e) => e.description.includes("[overflow:"));
+    expect(overflows).toHaveLength(2);
+    expect(afterImport(overflows)).toHaveLength(2);
     // with aggregation off nothing is rewritten
     const raw = parseSiemExport(elastic(...churn.slice(0, 70)), { aggregate: false });
     expect(raw.events.every((e) => !e.description.includes("[overflow:"))).toBe(true);

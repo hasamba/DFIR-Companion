@@ -177,7 +177,9 @@ function showValue(v: ReturnedValue): string {
 
 /** The resolver's returned values: `type: N value;` and bare `value;` entries, typed and validated. */
 export function readQueryResults(raw: string | undefined): ResultsReading {
-  const entries = (raw ?? "")
+  // A whole value of `-` is the Windows placeholder for "none", not a returned value; a typed
+  // `type: 16 -` is data.
+  const entries = ((raw ?? "").trim() === "-" ? "" : (raw ?? ""))
     .split(";")
     .map((e) => e.trim())
     .filter(Boolean);
@@ -397,7 +399,7 @@ const RETURNED_TAG =
  * a rewritten key follows the row.
  */
 export function boundDnsVariants(
-  mapped: Array<{ aggKey: string; description: string }>,
+  mapped: Array<{ aggKey: string; description: string; canonical?: { dns?: Record<string, unknown> } }>,
   sink: Map<string, { sourceAggKeys?: string[] }>,
 ): void {
   const seen = new Map<string, Set<string>>();
@@ -415,7 +417,13 @@ export function boundDnsVariants(
     const overflowKey = `${base}${DNS_OVERFLOW}`;
     rewritten.set(row.aggKey, overflowKey);
     row.aggKey = overflowKey;
-    row.description = `${row.description.replace(RETURNED_TAG, "")} [overflow: distinct returned-value sets beyond ${DNS_VARIANTS_MAX} for this query folded; none shown]`;
+    // The row's own mark went with its returned tag; the overflow row carries a mark of ITS key, or
+    // two queries whose shown names clip alike would read alike after import.
+    row.description =
+      `${row.description.replace(RETURNED_TAG, "")} [overflow: distinct returned-value sets beyond ${DNS_VARIANTS_MAX} for this query folded; none shown]` +
+      identityMark(overflowKey);
+    // The envelope must not present one folded set as the row's: it shows none, and says so.
+    if (row.canonical?.dns) row.canonical.dns = { ...row.canonical.dns, returned: [], folded: true };
   }
   if (!rewritten.size) return;
   for (const [key, ioc] of sink) {

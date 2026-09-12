@@ -95,6 +95,14 @@ describe("readQueryResults — the resolver's returned values, typed, validated,
     const two = readQueryResults("type: 5 a.example;type: 5 b.example;::ffff:192.0.2.1;type: 2 ns.example;");
     expect(two.shown).toBe("cname a.example → cname b.example → 192.0.2.1, ns ns.example");
   });
+  it("a whole value of - is the placeholder for none; a typed - is data", () => {
+    expect(readQueryResults("-")).toMatchObject({ values: [], total: 0 });
+    expect(readQueryResults(" - ")).toMatchObject({ values: [], total: 0 });
+    expect(readQueryResults("type: 16 -;").values).toEqual([{ type: 16, value: "-", kind: "other" }]);
+    const nx = overlay({ QueryName: "missing.example", QueryStatus: "9003", QueryResults: "-" });
+    expect(nx.description).not.toContain("also carries");
+    expect(nx.dns.returned).toEqual([]);
+  });
   it("a type marker with no data is said as such, never as a returned literal", () => {
     const r = readQueryResults("type: 16 ;type: 16");
     expect(r.values).toEqual([

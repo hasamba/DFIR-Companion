@@ -149,6 +149,9 @@ export const canonicalEventEnvelopeSchema = z.object({
       ),
       ownership: z.literal("not in this record"),
       vantage: z.enum(["endpoint"]),
+      // An overflow row (dnsRecord.ts boundDnsVariants): distinct returned-value sets beyond the
+      // budget were folded here; `returned` is empty on purpose and no set is representative.
+      folded: z.boolean().optional(),
     })
     .optional(),
   file: z
