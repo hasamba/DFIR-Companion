@@ -77,8 +77,7 @@ export type DnsState =
   | "record-missing"
   | "other"
   | "absent"
-  | "unreadable"
-  | "conflict";
+  | "unreadable";
 
 export interface StatusReading {
   code?: number;
@@ -301,23 +300,15 @@ function networkQuery(input: DnsOverlayInput): { value?: boolean; words: string;
   return { words: "IsNetworkQuery not readable", key: "?" };
 }
 
-/** The status the event defines, and the other field when the record carries both and they disagree. */
-function statusOf(input: DnsOverlayInput): { reading: StatusReading; key: string; conflict: string } {
-  const primary = readQueryStatus(input.statusField ? input.field(input.statusField) : undefined);
-  const otherName =
-    input.statusField === "Status" ? "QueryStatus" : input.statusField === "QueryStatus" ? "Status" : "";
-  const other = otherName && input.has(otherName) ? readQueryStatus(input.field(otherName)) : null;
-  const key = primary.code !== undefined ? String(primary.code) : primary.state === "absent" ? "-" : "?";
-  if (other?.code !== undefined && primary.code !== undefined && other.code !== primary.code)
-    return {
-      reading: {
-        state: "conflict",
-        words: `status fields disagree: ${input.statusField}=${primary.code}, ${otherName}=${other.code}`,
-      },
-      key: `${primary.code}/${other.code}`,
-      conflict: otherName,
-    };
-  return { reading: primary, key, conflict: "" };
+/**
+ * The status field the EVENT defines, and only that one: 3008 and Sysmon 22 write `QueryStatus`,
+ * 3020 writes `Status`, 3006 none. The other spelling is never read — on a flattened export it is
+ * SIEM metadata (`status: 9003`), and reading it forged a "fields disagree" outcome.
+ */
+function statusOf(input: DnsOverlayInput): { reading: StatusReading; key: string } {
+  const reading = readQueryStatus(input.statusField ? input.field(input.statusField) : undefined);
+  const key = reading.code !== undefined ? String(reading.code) : reading.state === "absent" ? "-" : "?";
+  return { reading, key };
 }
 
 /** The overlay for a DNS record over the Windows mapper's description; severity is never graded here. */

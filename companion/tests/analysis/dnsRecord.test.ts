@@ -257,14 +257,17 @@ describe("dnsOverlay — what one record establishes", () => {
       "[type not readable]",
     );
   });
-  it("the status field is the event's own; two that disagree are a conflict, never a pick", () => {
+  it("the status field is the event's own; the other spelling is never read", () => {
     const s3020 = overlay(
       { QueryName: "a.example", Status: "9003", QueryStatus: "0" },
       { statusField: "Status" },
     );
-    expect(s3020.description).toContain("[status fields disagree: Status=9003, QueryStatus=0]");
-    expect(s3020.dns.state).toBe("conflict");
-    expect(s3020.identity).toContain(":s9003/0:");
+    expect(s3020.description).toContain("[NXDOMAIN");
+    expect(s3020.dns.state).toBe("nxdomain");
+    expect(s3020.identity).toContain(":s9003:");
+    const s3008 = overlay({ QueryName: "a.example", QueryStatus: "0", Status: "9003" });
+    expect(s3008.dns.state).toBe("success");
+    expect(s3008.description).not.toContain("disagree");
     const agree = overlay(
       { QueryName: "a.example", Status: "9003", QueryStatus: "9003" },
       { statusField: "Status" },

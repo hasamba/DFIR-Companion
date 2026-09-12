@@ -492,12 +492,26 @@ describe("DNS Client operational log", () => {
     expect(afterImport(r.events)).toHaveLength(2);
   });
 
-  it("a 3020 whose Status and a stray QueryStatus disagree is a conflict, never a pick", () => {
+  it("a 3020 reads Status only; a 3008 reads QueryStatus only — the other spelling is metadata", () => {
     const r = parseSiemExport(
       elastic(dnsClient(3020, { QueryName: "b.example", QueryType: "1", Status: "9003", QueryStatus: "0" })),
     );
-    expect(r.events[0].description).toContain("[status fields disagree: Status=9003, QueryStatus=0]");
-    expect(r.events[0].canonical?.dns?.state).toBe("conflict");
+    expect(r.events[0].canonical?.dns?.state).toBe("nxdomain");
+    const flat = parseSiemExport(
+      elastic({
+        Channel: "Microsoft-Windows-DNS-Client/Operational",
+        EventID: 3008,
+        Hostname: "WS-01",
+        EventTime: "2026-03-01T10:00:00Z",
+        status: 9003,
+        QueryName: "ok.example",
+        QueryType: 1,
+        QueryStatus: 0,
+        QueryResults: "type: 1 192.0.2.1;",
+      }),
+    );
+    expect(flat.events[0].description).not.toContain("disagree");
+    expect(flat.events[0].canonical?.dns?.state).toBe("success");
   });
 
   it("an Application-channel 3008 is not a DNS row", () => {
