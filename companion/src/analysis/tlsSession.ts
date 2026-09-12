@@ -70,7 +70,13 @@ export interface TlsObservation {
   cert?: CertRef;
   certificate?: CertificateFacts;
   /** The CLIENT's certificate, when the record carries one (Zeek `client_*`): keyed and shown apart. */
-  clientCert?: { subject?: string; issuer?: string; ref?: CertRef; chainFuids?: string[] };
+  clientCert?: {
+    subject?: string;
+    issuer?: string;
+    ref?: CertRef;
+    chainFuids?: string[];
+    facts?: CertificateFacts;
+  };
 }
 
 const NAMES_KEPT_MAX = 64;
@@ -368,12 +374,14 @@ function suricataClientCert(t: Row): TlsObservation["clientCert"] {
     fingerprint(getCI(c, "fingerprint")) ??
     derFingerprint(text(getCI(c, "certificate")) ?? list(getCI(c, "chain"))?.[0]) ??
     identityRef(text(getCI(c, "issuerdn")) ?? text(getCI(c, "issuer")), text(getCI(c, "serial")));
+  // Every client fact the record carries (serial, SANs, validity) is evidence, with or without an
+  // identity: a filtered record with only a serial is not a record with no client certificate.
+  const facts = suricataFacts(c);
   const out = {
-    ...(text(getCI(c, "subject")) !== undefined ? { subject: text(getCI(c, "subject")) } : {}),
-    ...((text(getCI(c, "issuerdn")) ?? text(getCI(c, "issuer"))) !== undefined
-      ? { issuer: text(getCI(c, "issuerdn")) ?? text(getCI(c, "issuer")) }
-      : {}),
+    ...(facts.subject !== undefined ? { subject: facts.subject } : {}),
+    ...(facts.issuer !== undefined ? { issuer: facts.issuer } : {}),
     ...(fp ? { ref: fp } : {}),
+    ...(Object.keys(facts).length ? { facts } : {}),
   };
   return Object.keys(out).length ? out : undefined;
 }
@@ -620,6 +628,10 @@ function envelopeOf(o: TlsObservation, count: number): CanonicalEventEnvelope {
                 ? { fingerprint: o.clientCert.ref.value, fingerprintAlg: o.clientCert.ref.alg }
                 : {}),
               ...(o.clientCert.ref?.kind === "identity" ? { identity: o.clientCert.ref.value } : {}),
+              ...(o.clientCert.facts?.serial !== undefined ? { serial: o.clientCert.facts.serial } : {}),
+              ...(o.clientCert.facts?.names ? { names: o.clientCert.facts.names } : {}),
+              ...(o.clientCert.facts?.notBefore ? { notBefore: o.clientCert.facts.notBefore } : {}),
+              ...(o.clientCert.facts?.notAfter ? { notAfter: o.clientCert.facts.notAfter } : {}),
               ...(o.clientCert.chainFuids ? { chainFuids: o.clientCert.chainFuids } : {}),
             },
           }

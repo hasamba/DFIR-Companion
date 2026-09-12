@@ -711,6 +711,28 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
     expect(rows([without, withSan])).toHaveLength(2);
   });
 
+  it("identity-less client facts (a serial, SANs, validity) are client-certificate evidence, keyed", () => {
+    const rec = (client: Record<string, unknown> | undefined) => ({
+      ...SURICATA_TLS,
+      tls: { sni: "a.example", ...(client ? { client } : {}) },
+    });
+    const serial1 = readSuricataTls(
+      rec({ serial: "01", subjectaltname: ["alice.example"], notbefore: "2025-01-01T00:00:00Z" }),
+      "",
+    );
+    const serial2 = readSuricataTls(rec({ serial: "02" }), "");
+    const none = readSuricataTls(rec(undefined), "");
+    expect(serial1.clientCert?.facts).toEqual({
+      serial: "01",
+      names: ["alice.example"],
+      notBefore: "2025-01-01T00:00:00Z",
+    });
+    expect(rows([serial1, serial2, none])).toHaveLength(3);
+    const e = rows([serial1])[0];
+    expect(e.description).toContain("[client cert:");
+    expect(e.canonical?.tls?.clientCertificate).toMatchObject({ serial: "01", names: ["alice.example"] });
+  });
+
   it("selects the most-seen rows first under a budget", () => {
     const many = [
       ...Array.from({ length: 3 }, () => base()),
