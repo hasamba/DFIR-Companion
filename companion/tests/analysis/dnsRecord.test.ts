@@ -85,6 +85,15 @@ describe("readQueryResults — the resolver's returned values, typed, validated,
     expect(r.shown).toContain(`+${80 - RESULTS_SHOWN_MAX} more`);
     expect((r.shown.match(/10\.0\./g) ?? []).length).toBe(RESULTS_SHOWN_MAX);
   });
+  it("a type marker with no data is said as such, never as a returned literal", () => {
+    const r = readQueryResults("type: 16 ;type: 16");
+    expect(r.values).toEqual([
+      { type: 16, value: "", kind: "other" },
+      { type: 16, value: "", kind: "other" },
+    ]);
+    expect(r.shown).toBe("type 16 (value not in this record), type 16 (value not in this record)");
+    expect(r.shown).not.toContain("type: 16");
+  });
   it("a hash-shaped value is shown as its ends", () => {
     const r = readQueryResults(`type: 16 ${"a".repeat(32)};`);
     expect(r.shown).toContain("aaaaaaaa…aaaa");

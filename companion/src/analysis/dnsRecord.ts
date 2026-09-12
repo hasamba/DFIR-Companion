@@ -141,6 +141,7 @@ const boundForEnvelope = (v: ReturnedValue): ReturnedValue =>
   v.value.length > VALUE_KEPT_MAX ? { ...v, value: v.value.slice(0, VALUE_KEPT_MAX) } : v;
 
 function showValue(v: ReturnedValue): string {
+  if (!v.value) return `type ${v.type} (value not in this record)`;
   const text = breakHashRuns(showToken(v.value));
   const clipped = text.length > VALUE_SHOWN_MAX ? `${text.slice(0, VALUE_SHOWN_MAX - 1)}…` : text;
   if (v.kind === "address") return clipped;
@@ -155,8 +156,10 @@ export function readQueryResults(raw: string | undefined): ResultsReading {
     .map((e) => e.trim())
     .filter(Boolean);
   const all = entries.map((e) => {
-    const typed = /^type:\s*(\d{1,5})\s+(.*)$/s.exec(e);
-    return typed ? classify(Number(typed[1]), typed[2].trim()) : classify(undefined, e);
+    // `type: 16 ` with nothing after it is a type marker whose data the record did not keep — not
+    // the literal string "type: 16" returned.
+    const typed = /^type:\s*(\d{1,5})(?:\s+(.*))?$/s.exec(e);
+    return typed ? classify(Number(typed[1]), (typed[2] ?? "").trim()) : classify(undefined, e);
   });
   const values = all.slice(0, RESULTS_KEPT_MAX).map(boundForEnvelope);
   // The identity covers every parsed value WHOLE, not only the kept ones or their bounded form: two
