@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  asciiName,
   dnsOverlay,
   isIndicatorName,
   isValidQueryName,
@@ -133,6 +134,17 @@ describe("isValidQueryName", () => {
     expect(isValidQueryName("beacon_01.attacker.example")).toBe(true);
     expect(isValidQueryName("bücher.example")).toBe(true); // a U-label
     expect(isValidQueryName("ū̃.attacker.example")).toBe(true); // a U-label needing a combining mark
+    // a URL-host terminator inside a Unicode name never truncates it into a valid name
+    for (const bad of [
+      "safe.example/bücher.attacker",
+      "safe.example\\ü.x",
+      "ü?x.example",
+      "ü#x.example",
+      "ü:80.example",
+    ]) {
+      expect(isValidQueryName(bad)).toBe(false);
+      expect(asciiName(bad)).toBe("");
+    }
     expect(isValidQueryName(`${"ü".repeat(60)}.example`)).toBe(false); // its A-label exceeds 63 octets
     expect(isValidQueryName("a b.example")).toBe(false);
     expect(isValidQueryName("a.example-")).toBe(false);
@@ -427,6 +439,21 @@ describe("dnsOverlay — what one record establishes", () => {
     );
     expect(u.description).toContain("[query: ū̃.attacker.example]");
     expect(u.description).toMatch(/ #[\w-]{22}$/); // the shown name is not the keyed name
+  });
+  it("two malformed Unicode names that would truncate alike are two identities and mint nothing", () => {
+    const a = overlay({ QueryName: "safe.example/bücher.attacker", QueryStatus: "123", QueryResults: "-" });
+    const b = overlay({ QueryName: "safe.example/über.attacker", QueryStatus: "123", QueryResults: "-" });
+    expect(a.dns.queryValid).toBe(false);
+    expect(a.dns.indicator).toBe(false);
+    expect(a.identity).not.toBe(b.identity);
+    expect(a.dns.query).toBe("safe.example/bücher.attacker");
+    // a returned CNAME with the same shape is data, not a name
+    const c = overlay({
+      QueryName: "a.example",
+      QueryStatus: "0",
+      QueryResults: "type: 5 safe.example/bücher.attacker;",
+    });
+    expect(c.dns.returned[0].kind).toBe("other");
   });
   it("a complete rendering carries no mark; the description stays inside 600 characters", () => {
     const plain = overlay({ QueryName: "a.example", QueryStatus: "0", QueryResults: "::ffff:192.0.2.1;" });

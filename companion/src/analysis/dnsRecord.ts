@@ -124,7 +124,18 @@ const LABEL = /^[A-Za-z0-9_](?:[A-Za-z0-9_-]*[A-Za-z0-9_])?$/;
 /** The wire form of a query name: A-labels for a U-label name, "" when it cannot be converted. */
 export function asciiName(raw: string): string {
   const name = raw.replace(/\.$/, "");
-  return /^[\x00-\x7f]*$/.test(name) ? name : domainToASCII(name);
+  if (/^[\x00-\x7f]*$/.test(name)) return name;
+  // Converted LABEL BY LABEL, never as one string: WHATWG domainToASCII parses a whole value as a
+  // URL host and stops at `/`, `?`, `#` or `\`, so `safe.example/bücher.attacker` would come back
+  // as `safe.example` — a valid name the record never queried. A label that does not convert whole
+  // (empty, or anything the converter dropped) fails the name.
+  const labels = name.split(".").map((l) => {
+    if (/^[\x00-\x7f]*$/.test(l)) return l;
+    if (/[/?#\\:@\s]/.test(l)) return "";
+    const a = domainToASCII(l);
+    return a && !a.includes(".") ? a : "";
+  });
+  return labels.some((l) => !l) ? "" : labels.join(".");
 }
 
 /**
