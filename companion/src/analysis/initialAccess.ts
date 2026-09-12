@@ -14,6 +14,7 @@ import { escapeRegExp } from "./regexEscape.js";
 
 const DOMAIN_RE = /\b[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9-]+)+\b/gi;
 const MARKER = "[initial access:";
+const DESCRIPTION_BASE_MAX = 700; // the base text is clipped; the marker sentence never is
 
 function isEmail(e: ForensicEvent): boolean {
   return (e.sources ?? []).includes("Email");
@@ -65,8 +66,9 @@ export function linkEmailDelivery(events: ForensicEvent[]): ForensicEvent[] {
           ...e,
           severity: worstSeverity(e.severity, "Medium"),
           mitreTechniques: mitre,
-          description:
-            `${e.description ?? ""} ${MARKER} host contacted email-delivered domain ${domain}]`.slice(0, 600),
+          // Clip the base, then append — a joined-string clip pushes the marker off a long
+          // description while the severity bump still applies (#939, see processLifetime.ts).
+          description: `${(e.description ?? "").slice(0, DESCRIPTION_BASE_MAX)} ${MARKER} host contacted email-delivered domain ${domain}]`,
         };
       }
     }

@@ -16,6 +16,7 @@
 import { worstSeverity, type ForensicEvent } from "./stateTypes.js";
 
 const MARKER = "[confirmed exfiltration:";
+const DESCRIPTION_BASE_MAX = 700; // the base text is clipped; the marker sentence never is
 
 // "Confirmed exfiltration" must name an actual OUTBOUND TRANSFER, not merely carry a T1041 tag.
 // T1041 is applied broadly by the mappers, so on a busy host the staging→window match was decorating
@@ -75,13 +76,16 @@ export function linkArchiveToExfil(
       ...e,
       severity: worstSeverity(e.severity, "High"),
       ...(isSrumTotal ? { mitreTechniques: [...new Set([...(e.mitreTechniques ?? []), "T1041"])] } : {}),
+      // The marker is appended AFTER clipping the base text, never before (see processLifetime.ts):
+      // clipping the joined string let a long description push the marker off the end while the
+      // severity bump still applied — a raised event with no stated reason (#939).
       description:
-        `${e.description ?? ""} ${MARKER} preceded by archive staging on ${e.asset}` +
+        `${(e.description ?? "").slice(0, DESCRIPTION_BASE_MAX)} ${MARKER} preceded by archive staging on ${e.asset}` +
         (isSrumTotal
           ? ". SRUM records the volume and the application, not the destination or the contents, so this" +
             " pairs a staging event with a large send — it does not show what left."
           : "") +
-        `]`.slice(0, 900),
+        `]`,
     };
   });
 }

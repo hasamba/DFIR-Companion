@@ -35,6 +35,18 @@ describe("emailLinkDomains (#201)", () => {
 });
 
 describe("linkEmailDelivery (#201)", () => {
+  it("bounds a long contact description WITHOUT pushing the marker off the end (#939)", () => {
+    const out = linkEmailDelivery([
+      emailEv(),
+      contact("c1", "2024-03-18T14:14:31Z", `browser connection to mosaic-metrics.net ${"x".repeat(700)}`),
+    ]);
+    const c = out.find((e) => e.id === "c1")!;
+    expect(c.severity).toBe("Medium");
+    expect(c.description.length).toBeLessThan(1000);
+    expect(c.description).toContain("[initial access:");
+    expect(c.description.endsWith("]")).toBe(true);
+  });
+
   it("tags a later host contact of the delivered domain as initial access", () => {
     const out = linkEmailDelivery([
       emailEv(),

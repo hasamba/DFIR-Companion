@@ -162,10 +162,9 @@ function mapGcp(rec: Row, sink: Map<string, SiemIoc>): MappedEvent | null {
     // bulk-read detection (#908 item 8) was structurally blind to this provider. Only data-plane
     // reads carry it: a hundred management calls by one principal genuinely are one thing, and
     // adding the resource everywhere would undo the aggregation this importer exists to do.
-    aggKey:
-      `gcp|${method}|${principal}|${ip}|${statusCode}${isObjectRead(method) && shortRes ? `|${shortRes}` : ""}`
-        .toLowerCase()
-        .slice(0, 400),
+    aggKey: boundedAggKey(
+      `gcp|${method}|${principal}|${ip}|${statusCode}${isObjectRead(method) && shortRes ? `|${shortRes}` : ""}`.toLowerCase(),
+    ),
     sources: ["GCP Audit"],
   };
 }

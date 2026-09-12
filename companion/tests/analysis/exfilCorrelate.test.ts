@@ -113,6 +113,18 @@ describe("linkArchiveToExfil", () => {
     expect((u.description.match(/confirmed exfiltration/g) ?? []).length).toBe(1); // marker not duplicated
   });
 
+  it("bounds a long description WITHOUT pushing the marker off the end (#939)", () => {
+    const base = upload("u1", "2024-03-12T17:00:21Z");
+    const long = { ...base, description: `${base.description} ${"x".repeat(5000)}` };
+    const out = linkArchiveToExfil([stage("s1", "2024-03-12T16:15:02Z"), long]);
+    const u = out.find((e) => e.id === "u1")!;
+    expect(u.severity).toBe("High");
+    // A raised event must state its reason: the base text is clipped, the marker never is.
+    expect(u.description.length).toBeLessThan(1000);
+    expect(u.description).toContain("[confirmed exfiltration:");
+    expect(u.description.endsWith("]")).toBe(true);
+  });
+
   it("leaves events with no staging or no upload tag untouched", () => {
     const plain = (id: string): ForensicEvent => ({
       id,

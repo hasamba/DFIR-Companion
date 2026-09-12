@@ -20,6 +20,7 @@
 import type { Severity } from "./stateTypes.js";
 import { parseCsv } from "./csvImport.js";
 import { isEntraUalRecord } from "./entraAuditRecord.js";
+import { boundedAggKey } from "./aggKey.js";
 import { isExchangeRecord, mapExchangeRow } from "./exchangeAuditImport.js";
 import {
   isServicePrincipalSignIn,
@@ -222,9 +223,9 @@ function mapUal(rec: Row, sink: Map<string, SiemIoc>): MappedEvent {
     // bulk-read detection (#908 item 8) was structurally blind to this provider. Only data-plane
     // reads carry it: a hundred management calls by one principal genuinely are one thing, and
     // adding the resource everywhere would undo the aggregation this importer exists to do.
-    aggKey: `m365|${workload}|${op}|${user}|${ip}${isFileRead(op) && target ? `|${target}` : ""}`
-      .toLowerCase()
-      .slice(0, 400),
+    aggKey: boundedAggKey(
+      `m365|${workload}|${op}|${user}|${ip}${isFileRead(op) && target ? `|${target}` : ""}`.toLowerCase(),
+    ),
     sources: ["Microsoft 365"],
   };
 }
@@ -334,9 +335,9 @@ function mapSignIn(rec: Row, sink: Map<string, SiemIoc>): MappedEvent {
     // `outcome` and `isRopc` are both discriminators: keying on the raw code alone folded an
     // unreadable status into the `0` bucket that genuine successes use, and left a ROPC grant to
     // merge with an ordinary sign-in by the same user (aggregation keeps ONE description).
-    aggKey: `entra-signin|${upn}|${ip}|${app}|${outcome}|${code ?? "?"}|${risk}|${isRopc ? "ropc" : ""}`
-      .toLowerCase()
-      .slice(0, 400),
+    aggKey: boundedAggKey(
+      `entra-signin|${upn}|${ip}|${app}|${outcome}|${code ?? "?"}|${risk}|${isRopc ? "ropc" : ""}`.toLowerCase(),
+    ),
     sources: ["Entra ID"],
   };
 }
