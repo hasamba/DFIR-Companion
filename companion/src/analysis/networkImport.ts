@@ -106,12 +106,18 @@ export function inferZeekStream(row: Row): string {
   if (
     getCI(row, "san.dns") != null ||
     getCI(row, "fingerprint") != null ||
+    isObject(getCI(row, "certificate")) ||
+    isObject(getCI(row, "san")) ||
     Object.keys(row).some((k) => k.startsWith("certificate."))
   )
     return "x509";
   if (getCI(row, "fuid") != null || getCI(row, "mime_type") != null) return "files";
   if (getCI(row, "note") != null) return "notice";
-  return "conn"; // id.orig_h + conn_state → pure flow telemetry (no IOC, no timeline event)
+  // conn only when the record carries a connection: a record with none of its fields is unknown,
+  // never a fictitious zero-byte flow.
+  if (getCI(row, "id.orig_h") != null || getCI(row, "conn_state") != null || getCI(row, "proto") != null)
+    return "conn";
+  return "";
 }
 
 export interface NetworkParseResult {

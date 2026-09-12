@@ -211,6 +211,16 @@ export function readSuricataTls(row: Row, fallbackTs: string): TlsObservation {
     : undefined;
   const port = Number(getCI(row, "dest_port"));
   const names = list(getCI(t, "subjectaltname"));
+  // A certificate object only when the record carries a certificate field: a resumed session with
+  // none must not put a certificate — even an "unavailable" one — into the envelope.
+  const facts: CertificateFacts = {
+    ...(text(getCI(t, "subject")) !== undefined ? { subject: text(getCI(t, "subject")) } : {}),
+    ...(issuer !== undefined ? { issuer } : {}),
+    ...(serial !== undefined ? { serial: hexOf(serial) } : {}),
+    ...(names ? { names: names.slice(0, NAMES_KEPT_MAX) } : {}),
+    ...(getCI(t, "notbefore") != null ? { notBefore: time(getCI(t, "notbefore")) } : {}),
+    ...(getCI(t, "notafter") != null ? { notAfter: time(getCI(t, "notafter")) } : {}),
+  };
   return {
     source: "suricata-tls",
     kind: "session",
@@ -231,14 +241,7 @@ export function readSuricataTls(row: Row, fallbackTs: string): TlsObservation {
       fingerprint(getCI(t, "fingerprint")) ??
       derFp ??
       (issuer && serial ? { kind: "identity", value: certIdentity(issuer, serial) } : undefined),
-    certificate: {
-      ...(text(getCI(t, "subject")) !== undefined ? { subject: text(getCI(t, "subject")) } : {}),
-      ...(issuer !== undefined ? { issuer } : {}),
-      ...(serial !== undefined ? { serial: hexOf(serial) } : {}),
-      ...(names ? { names: names.slice(0, NAMES_KEPT_MAX) } : {}),
-      ...(getCI(t, "notbefore") != null ? { notBefore: time(getCI(t, "notbefore")) } : {}),
-      ...(getCI(t, "notafter") != null ? { notAfter: time(getCI(t, "notafter")) } : {}),
-    },
+    ...(Object.keys(facts).length ? { certificate: facts } : {}),
   };
 }
 
@@ -254,8 +257,9 @@ export function readSuricataCertificates(row: Row, fallbackTs: string): TlsObser
     if (seen.has(fp)) continue;
     seen.add(fp);
     // The leaf's subject/issuer/serial are the record's own fields; a chain entry's are not
-    // decoded here (no ASN.1 parser), so it carries its sha256 and nothing else.
-    const leaf = out.length === 0 && getCI(t, "certificate") !== undefined;
+    // decoded here (no ASN.1 parser), so it carries its sha256 and nothing else. The leaf is the
+    // explicit `certificate`, else the FIRST chain entry (Suricata writes the chain leaf-first).
+    const leaf = out.length === 0;
     const issuer = leaf ? (text(getCI(t, "issuerdn")) ?? text(getCI(t, "issuer"))) : undefined;
     out.push({
       source: "suricata-tls",
@@ -362,7 +366,6 @@ const show = (v: string): string => {
   const shown = breakHashRuns(showToken(v));
   return shown.length > TEXT_SHOWN_MAX ? `${shown.slice(0, TEXT_SHOWN_MAX - 1)}…` : shown;
 };
-const isLossy = (v: string | undefined): boolean => v !== undefined && show(v) !== v;
 const ends = (hex: string): string => (hex.length > 12 ? `${hex.slice(0, 8)}…${hex.slice(-4)}` : hex);
 
 function certWords(o: TlsObservation): string {
@@ -509,11 +512,10 @@ function mapTlsRow(t: TlsTally): MappedEvent {
     const head = `TLS ${o.src ?? "?"} → ${o.dst ?? "?"}${o.port ? `:${o.port}` : ""}`;
     const tail = ` — ${t.count} TLS record${t.count === 1 ? "" : "s"}`;
     const tags = sessionTags(o);
-    lossy =
-      [o.sni, o.version, o.cipher, o.validation, o.subject, o.issuer].some(isLossy) ||
-      o.ja3 !== undefined ||
-      o.ja3s !== undefined ||
-      o.cert !== undefined;
+    // Every session row carries the mark: the key holds facts the words never show verbatim (the
+    // observer, `established: true`, `resumed: false`, a hash's middle), and two rows that differ
+    // only there would read alike after import.
+    lossy = true;
     let body = `${head} ${tags.map((x) => `[${x}]`).join(" ")}${tail}`;
     if (body.length > DESCRIPTION_MAX - mark.length) {
       // Pack whole tags into what is left; a half-open tag would hide the fact it names.

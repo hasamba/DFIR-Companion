@@ -417,6 +417,41 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
     expect(r.filter((e) => e.description.startsWith("TLS "))).toHaveLength(1);
   });
 
+  it("keyed facts the words do not show still keep rows apart after import", () => {
+    const at = (o: TlsObservation) => ({ ...o, timestamp: "2023-11-14T22:13:20.500Z" });
+    const pairs: Array<[TlsObservation, TlsObservation]> = [
+      [
+        at({ ...base(), observer: { name: "sensor-a", sourceField: "observer.name" } }),
+        at({ ...base(), observer: { name: "sensor-b", sourceField: "observer.name" } }),
+      ],
+      [at({ ...base(), established: true }), at({ ...base(), established: undefined })],
+      [at({ ...base(), resumed: false }), at({ ...base(), resumed: undefined })],
+    ];
+    for (const [a, b] of pairs) {
+      const r = rows([a, b]);
+      expect(r).toHaveLength(2);
+      expect(r[0].description).not.toBe(r[1].description);
+    }
+  });
+
+  it("a resumed Suricata session with no certificate puts no certificate in the envelope", () => {
+    const o = readSuricataTls({ ...SURICATA_TLS, tls: { sni: "a.example", session_resumed: true } }, "");
+    expect(o.certificate).toBeUndefined();
+    const e = rows([o])[0];
+    expect(e.description).toContain("[no certificate observed in this record]");
+    expect(e.canonical?.tls?.certificate).toBeUndefined();
+  });
+
+  it("a chain-only Suricata record attaches the record's fields to the first chain entry", () => {
+    const leaf = Buffer.from("leaf-bytes").toString("base64");
+    const ca = Buffer.from("ca-bytes").toString("base64");
+    const rec = { ...SURICATA_TLS, tls: { ...SURICATA_TLS.tls, chain: [leaf, ca] } };
+    const certs = readSuricataCertificates(rec, "");
+    expect(certs).toHaveLength(2);
+    expect(certs[0].certificate?.subject).toBe("CN=cdn.example.net");
+    expect(certs[1].certificate).toEqual({});
+  });
+
   it("selects the most-seen rows first under a budget", () => {
     const many = [
       ...Array.from({ length: 3 }, () => base()),

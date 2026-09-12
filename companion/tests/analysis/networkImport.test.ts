@@ -218,6 +218,20 @@ describe("parseNetworkLogs — Zeek per-stream JSON (no _path)", () => {
     expect(r.iocs.some((i) => i.type === "file" && i.value === "x.exe")).toBe(true);
   });
 
+  it("a nested x509 record with no _path is a certificate, never a zero-byte flow", () => {
+    const nested = {
+      ts: 1512115204,
+      id: "F1",
+      certificate: { serial: "01", issuer: "CN=CA", subject: "CN=leaf" },
+      san: { dns: ["leaf.example"] },
+    };
+    const r = parseNetworkLogs(JSON.stringify(nested));
+    expect(r.events.some((e) => e.description.startsWith("Flow:"))).toBe(false);
+    expect(r.events.some((e) => e.description.startsWith("[certificate:"))).toBe(true);
+    // a record with no stream fields at all is unknown, not a flow either
+    expect(parseNetworkLogs(JSON.stringify({ ts: 1512115204, foo: "bar" })).events).toHaveLength(0);
+  });
+
   it("keeps x509 SAN names on the certificate's row, never as domain indicators (#933 item 6)", () => {
     const r = parseNetworkLogs(
       JSON.stringify({ ...x509, "certificate.serial": "01", "certificate.issuer": "CN=Bad CA" }),
