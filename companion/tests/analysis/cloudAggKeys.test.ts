@@ -3,6 +3,33 @@ import { parseM365Audit } from "../../src/analysis/m365Import.js";
 import { parseGoogleWorkspaceReport } from "../../src/analysis/googleWorkspaceImport.js";
 import { parseCloudTrail } from "../../src/analysis/awsImport.js";
 import { parseCloudActivity } from "../../src/analysis/cloudActivityImport.js";
+import { correlateEvents } from "../../src/analysis/correlate.js";
+import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
+
+type MappedRow = {
+  timestamp: string;
+  description: string;
+  severity: ForensicEvent["severity"];
+  mitre?: string[];
+  asset?: string;
+};
+
+// The import route drops aggKey before the timeline, and correlation's exact-duplicate pass keys on
+// timestamp + description + host. A key that keeps two rows apart is worth nothing if their clipped
+// descriptions are then identical — the description must carry the discriminator too.
+const onTimeline = (events: MappedRow[]): ForensicEvent[] =>
+  correlateEvents(
+    events.map((e, i) => ({
+      id: `e${i}`,
+      timestamp: e.timestamp,
+      description: e.description,
+      severity: e.severity,
+      mitreTechniques: e.mitre ?? [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      ...(e.asset ? { asset: e.asset } : {}),
+    })),
+  );
 
 // #931 prerequisite: the three cloud aggregation keys discarded the discriminators every later
 // correlation needs, and used a raw slice that deletes one row's evidence when two keys share a
@@ -253,6 +280,7 @@ describe("M365 UAL file-read key", () => {
     const deep = `https://victim.sharepoint.com/sites/finance/Shared%20Documents/${"deep/".repeat(80)}`;
     const out = parseM365Audit(JSON.stringify([ual(`${deep}A.xlsx`), ual(`${deep}B.xlsx`)])).events;
     expect(out).toHaveLength(2);
+    expect(onTimeline(out)).toHaveLength(2);
   });
 });
 
@@ -268,9 +296,10 @@ describe("Entra sign-in key", () => {
   });
   it("keeps two sign-ins whose keys share a 400-character prefix as two rows", () => {
     const out = parseM365Audit(
-      JSON.stringify([signIn(`${"y".repeat(420)}1`), signIn(`${"y".repeat(420)}2`)]),
+      JSON.stringify([signIn(`${"y".repeat(620)}1`), signIn(`${"y".repeat(620)}2`)]),
     ).events;
     expect(out).toHaveLength(2);
+    expect(onTimeline(out)).toHaveLength(2);
   });
 });
 
@@ -291,8 +320,9 @@ describe("GCP audit key", () => {
   });
   it("keeps two object reads whose keys share a 400-character prefix as two rows", () => {
     const out = parseCloudActivity(
-      JSON.stringify([objectRead(`${"x".repeat(420)}-1`), objectRead(`${"x".repeat(420)}-2`)]),
+      JSON.stringify([objectRead(`${"x".repeat(620)}-1`), objectRead(`${"x".repeat(620)}-2`)]),
     ).events;
     expect(out).toHaveLength(2);
+    expect(onTimeline(out)).toHaveLength(2);
   });
 });

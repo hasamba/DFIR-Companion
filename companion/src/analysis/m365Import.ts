@@ -20,7 +20,7 @@
 import type { Severity } from "./stateTypes.js";
 import { parseCsv } from "./csvImport.js";
 import { isEntraUalRecord } from "./entraAuditRecord.js";
-import { boundedAggKey } from "./aggKey.js";
+import { boundedAggKey, boundedTextTo } from "./aggKey.js";
 import { isExchangeRecord, mapExchangeRow } from "./exchangeAuditImport.js";
 import {
   isServicePrincipalSignIn,
@@ -209,9 +209,11 @@ function mapUal(rec: Row, sink: Map<string, SiemIoc>): MappedEvent {
   let description = `M365 ${workload || "audit"}: ${op}`;
   if (user) description += ` by ${user}`;
   if (ip) description += ` from ${ip}`;
-  if (target && target !== user) description += ` → ${oneLine(target).slice(0, 120)}`;
+  // The target and the description are both identities downstream (correlation keys on the
+  // description once aggKey is gone), so each clip keeps a digest of what it removed (#940).
+  if (target && target !== user) description += ` → ${boundedTextTo(oneLine(target), 120)}`;
   if (failed) description += " [FAILED]";
-  description = description.slice(0, 600);
+  description = boundedTextTo(description, 600);
 
   return {
     timestamp: normalizeTime(pickStr(rec, ["CreationTime", "CreationDate"])),
@@ -325,7 +327,7 @@ function mapSignIn(rec: Row, sink: Map<string, SiemIoc>): MappedEvent {
     description += ` [FAILED${code === null ? "" : ` ${code}`}${failureReason ? `: ${oneLine(failureReason).slice(0, 80)}` : ""}]`;
   if (risk && risk !== "none") description += ` [risk: ${risk}]`;
   if (isRopc) description += " [legacy-auth ROPC — no interactive MFA prompt]";
-  description = description.slice(0, 600);
+  description = boundedTextTo(description, 600); // an identity downstream — see mapUal
 
   return {
     timestamp: normalizeTime(pickStr(rec, ["createdDateTime"])),

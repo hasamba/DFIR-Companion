@@ -26,6 +26,7 @@
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 import { commandCandidates } from "./commandNormalize.js";
 import { shortHost } from "./correlate.js";
+import { appendDerivedNote } from "./derivedNote.js";
 
 /** The marker this pass appends. Stripped by correlate.ts before a duplicate key is taken. */
 export const CERTUTIL_MARKER = "[certutil transfer:";
@@ -265,7 +266,7 @@ export function explainCertutilTransfers(events: readonly ForensicEvent[]): Fore
     if (!note) return e;
     const severity: Severity = raise.has(e.id) && RANK["High"] > RANK[e.severity] ? "High" : e.severity;
     // Replace any earlier explanation rather than appending a second one.
-    const base = (e.description ?? "").replace(/\s*\[certutil transfer:[\s\S]*?\]\s*$/u, "").slice(0, 700);
-    return { ...e, severity, description: `${base} ${CERTUTIL_MARKER} ${note}]`.trim() };
+    const base = (e.description ?? "").replace(/\s*\[certutil transfer:[\s\S]*?\]\s*$/u, "");
+    return { ...e, severity, description: appendDerivedNote(base, CERTUTIL_MARKER, note) };
   });
 }

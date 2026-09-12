@@ -14,7 +14,7 @@
 // caller IP becomes an IOC; the principal email is surfaced for the asset↔IoC graph.
 
 import type { Severity } from "./stateTypes.js";
-import { boundedAggKey } from "./aggKey.js";
+import { boundedAggKey, boundedTextTo } from "./aggKey.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -150,7 +150,9 @@ function mapGcp(rec: Row, sink: Map<string, SiemIoc>): MappedEvent | null {
   if (ip) description += ` from ${ip}`;
   if (shortRes) description += ` on ${shortRes}`;
   if (statusCode !== 0) description += ` [DENIED${statusMsg ? `: ${oneLine(statusMsg).slice(0, 60)}` : ""}]`;
-  description = description.slice(0, 600);
+  // An identity downstream: correlation keys on the description once aggKey is gone, so the clip
+  // keeps a digest of what it removed (#940).
+  description = boundedTextTo(description, 600);
 
   return {
     timestamp: normalizeTime(str(getCI(rec, "timestamp")) || str(getCI(rec, "receiveTimestamp"))),
@@ -213,7 +215,7 @@ function mapAzure(rec: Row, sink: Map<string, SiemIoc>): MappedEvent | null {
   if (exec) description += ` → ${exec.display} — the script body is not in the Activity Log`;
   else if (shortRes) description += ` on ${shortRes}`;
   if (failed) description += ` [${status}]`;
-  description = description.slice(0, 600);
+  description = boundedTextTo(description, 600); // an identity downstream — see mapGcp
 
   return {
     timestamp: normalizeTime(pickStr(rec, ["eventTimestamp", "time", "TimeGenerated", "timeStamp"])),

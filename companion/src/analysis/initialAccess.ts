@@ -11,10 +11,10 @@
 
 import { worstSeverity, type ForensicEvent } from "./stateTypes.js";
 import { escapeRegExp } from "./regexEscape.js";
+import { appendDerivedNote } from "./derivedNote.js";
 
 const DOMAIN_RE = /\b[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9-]+)+\b/gi;
 const MARKER = "[initial access:";
-const DESCRIPTION_BASE_MAX = 700; // the base text is clipped; the marker sentence never is
 
 function isEmail(e: ForensicEvent): boolean {
   return (e.sources ?? []).includes("Email");
@@ -66,9 +66,13 @@ export function linkEmailDelivery(events: ForensicEvent[]): ForensicEvent[] {
           ...e,
           severity: worstSeverity(e.severity, "Medium"),
           mitreTechniques: mitre,
-          // Clip the base, then append — a joined-string clip pushes the marker off a long
-          // description while the severity bump still applies (#939, see processLifetime.ts).
-          description: `${(e.description ?? "").slice(0, DESCRIPTION_BASE_MAX)} ${MARKER} host contacted email-delivered domain ${domain}]`,
+          // Appended after a clipped base, so a long description cannot push the reason off the
+          // end and a later pass's clip cannot remove it (#939, see derivedNote.ts).
+          description: appendDerivedNote(
+            e.description,
+            MARKER,
+            `host contacted email-delivered domain ${domain}`,
+          ),
         };
       }
     }
