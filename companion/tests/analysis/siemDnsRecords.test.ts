@@ -97,6 +97,13 @@ describe("Sysmon 22 — what one record establishes", () => {
     );
     expect(under.iocs.map((i) => i.value)).toContain("beacon_01.attacker.example");
     expect(under.events[0].description).not.toContain("not a valid name");
+    const wild = parseSiemExport(
+      elastic(
+        sysmon22({ QueryName: "*.attacker.example", QueryStatus: "0", QueryResults: "::ffff:192.0.2.9;" }),
+      ),
+    );
+    expect(wild.iocs.map((i) => i.value)).toContain("*.attacker.example");
+    expect(wild.events[0].description).not.toContain("not a valid name");
     expect(iocs).not.toContain("ip:203.0.113.5");
     expect(iocs.some((i) => i.includes("203.0.113.5"))).toBe(false);
   });

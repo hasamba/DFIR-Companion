@@ -155,6 +155,11 @@ describe("isValidQueryName", () => {
     }
     expect(isValidQueryName(`${"ü".repeat(60)}.example`)).toBe(false); // its A-label exceeds 63 octets
     expect(isValidQueryName("a b.example")).toBe(false);
+    expect(isValidQueryName("*.attacker.example")).toBe(true); // a wildcard first label
+    expect(isIndicatorName("*.attacker.example")).toBe(true);
+    expect(isValidQueryName("*")).toBe(false);
+    expect(isValidQueryName("a.*.example")).toBe(false);
+    expect(isValidQueryName("*a.example")).toBe(false);
     expect(isValidQueryName("a.example-")).toBe(false);
     expect(isValidQueryName("localhost")).toBe(true); // a valid single-label query…
     expect(isValidQueryName("wpad")).toBe(true);

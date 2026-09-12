@@ -148,7 +148,12 @@ export function asciiName(raw: string): string {
 export function isValidQueryName(raw: string): boolean {
   const name = asciiName(raw);
   if (!name || name.length > 253) return false;
-  return name.split(".").every((l) => l.length >= 1 && l.length <= 63 && LABEL.test(l));
+  // A wildcard is a valid FIRST label of a multi-label name (DnsNameWildcard) and nowhere else.
+  const labels = name.split(".");
+  return labels.every(
+    (l, i) =>
+      (i === 0 && l === "*" && labels.length > 1) || (l.length >= 1 && l.length <= 63 && LABEL.test(l)),
+  );
 }
 
 /** The indicator rule the mapper always had: a valid name with at least one dot. */
