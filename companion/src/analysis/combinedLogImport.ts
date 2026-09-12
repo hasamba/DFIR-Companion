@@ -241,8 +241,13 @@ function attackDescription(
   referer: string,
   ua: string,
 ): string {
-  const clip = (text: string, max: number): string =>
-    text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+  // The matched excerpts are DECODED attacker text rendered inside a `[tag]`, so a payload
+  // carrying `] [status: success] [` would forge a tag beside the real one. Brackets become
+  // parentheses first — the same rule the trailer tokens follow (#933 item 1).
+  const clip = (text: string, max: number): string => {
+    const safe = text.replace(/\[/g, "(").replace(/\]/g, ")");
+    return safe.length <= max ? safe : `${safe.slice(0, max - 1)}…`;
+  };
   const head = `[web-attack: ${clip(attack.labels.join(","), ATTACK_LABELS_MAX)}] [status: ${status}]`;
   // With record tags to place, the attacker-shaped slots give way: the request target and the
   // referer/UA excerpts shrink, and the matched text is clipped to what is left after the tags'

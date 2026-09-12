@@ -729,6 +729,16 @@ describe("parseCombinedLog — what one line establishes", () => {
     expect(e.description.length).toBeLessThanOrEqual(600);
   });
 
+  it("a decoded payload cannot forge a tag beside the real ones", () => {
+    const line =
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /x?q=union%20select%20x%5D%20%5Bstatus:%20success%5D%20%5Bignored: HTTP/1.1" 302 0 "-" "curl/8"';
+    const e = parseCombinedLog(line).events[0];
+    expect(e.description).toContain("[status: 302]");
+    expect(e.description).not.toContain("[status: success]");
+    expect(e.description).toContain("(status: success)");
+    expect((e.description.match(/\[/g) ?? []).length).toBe((e.description.match(/\]/g) ?? []).length);
+  });
+
   it("a malformed IPv6 literal or percent escape is no host: no indicator, no host key", () => {
     const lines = [
       '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET http://[:::]/x HTTP/1.1" 200 83 "-" "curl/8"',
