@@ -52,6 +52,8 @@ export interface TlsObservation {
   /** Zeek x509 `client_cert` / `host_cert`: which side presented it — a keyed fact of the row. */
   role?: "client" | "server";
   certChainFuids?: string[];
+  /** The record carries certificate DATA the reader could not turn into an identity (unreadable DER). */
+  certificateSeen?: boolean;
   observer?: { name: string; sourceField: string };
   /** Zeek `ssl_history` `^`: the TLS client was the connection responder; src/dst already swapped. */
   directionFlipped?: boolean;
@@ -296,6 +298,10 @@ export function readSuricataTls(row: Row, fallbackTs: string): TlsObservation {
   // leaf is the explicit `certificate`, else the first chain entry (the same rule the certificate
   // rows follow), so a chain-only session still keys and shows the certificate it presented.
   const derFp = derFingerprint(text(getCI(t, "certificate")) ?? list(getCI(t, "chain"))?.[0]);
+  // An explicit leaf that will not decode still means a certificate was SEEN — the record carries
+  // certificate data — and a valid chain entry beside it stays what it is (a chain row, never the
+  // leaf's identity). The session then says "identity unavailable", not "none observed".
+  const derSeen = (list(getCI(t, "certificate"))?.length ?? 0) + (list(getCI(t, "chain"))?.length ?? 0) > 0;
   const port = Number(getCI(row, "dest_port"));
   const names = list(getCI(t, "subjectaltname"));
   // A certificate object only when the record carries a certificate field: a resumed session with
@@ -325,6 +331,7 @@ export function readSuricataTls(row: Row, fallbackTs: string): TlsObservation {
     ja3: hashOf(getCI(t, "ja3")),
     ja3s: hashOf(getCI(t, "ja3s")),
     ...(suricataClientCert(t) ? { clientCert: suricataClientCert(t) } : {}),
+    ...(derSeen && !derFp ? { certificateSeen: true } : {}),
     cert: fingerprint(getCI(t, "fingerprint"), SURICATA_FINGERPRINT) ?? derFp ?? identityRef(issuer, serial),
     ...(Object.keys(facts).length ? { certificate: facts } : {}),
   };
@@ -474,7 +481,7 @@ export function tlsKey(o: TlsObservation): string {
       : "-",
     // A chain FUID's VALUE is a locator (never keyed); its PRESENCE is evidence that a server
     // certificate was observed, and must not fold with a record where none was.
-    o.certChainFuids?.length ? "chain" : "-",
+    o.certChainFuids?.length || o.certificateSeen ? "chain" : "-",
   ].join("|");
 }
 
@@ -557,6 +564,7 @@ function sessionTags(o: TlsObservation): string[] {
     o.issuer !== undefined ||
     o.cert !== undefined ||
     (o.certChainFuids?.length ?? 0) > 0 ||
+    o.certificateSeen === true ||
     Object.keys(o.certificate ?? {}).length > 0;
   tags.push(hasCert ? `cert: ${certWords(o)}` : "no server certificate observed in this record");
   if (o.clientCert) {

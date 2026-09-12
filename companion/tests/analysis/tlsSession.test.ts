@@ -830,6 +830,23 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
     expect(r[0].canonical?.tls?.curve).toBe("x25519");
   });
 
+  it("an unreadable explicit leaf beside a valid chain is a certificate observed with no identity", () => {
+    const rec = {
+      ...SURICATA_TLS,
+      tls: { sni: "a.example", certificate: "!!!!", chain: [Buffer.from("chain-cert").toString("base64")] },
+    };
+    const o = readSuricataTls(rec, "");
+    expect(o.cert).toBeUndefined();
+    expect(o.certificateSeen).toBe(true);
+    const none = readSuricataTls({ ...SURICATA_TLS, tls: { sni: "a.example" } }, "");
+    const r = rows([o, none]);
+    expect(r).toHaveLength(2);
+    const seen = r.find((e) => !e.description.includes("no server certificate observed"))!;
+    expect(seen.description).toContain("[cert: identity unavailable]");
+    // the chain entry is a chain row, never given the leaf's identity
+    expect(readSuricataCertificates(rec, "")).toHaveLength(1);
+  });
+
   it("selects the most-seen rows first under a budget", () => {
     const many = [
       ...Array.from({ length: 3 }, () => base()),
