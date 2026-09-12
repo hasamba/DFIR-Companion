@@ -142,6 +142,9 @@ const WRITABLE_ENV_PREFIXES = [
   // suffix is already in SECRET_SUFFIXES, so GET /settings/env redacts these for free.
   "DFIR_MCP_",
   "DFIR_NOTIFY_",
+  // TLS trust for a self-hosted audit-export collector (#929). The destinations themselves
+  // live behind /audit-export, not in .env — only the CA path and the skip-verify flag are env.
+  "DFIR_AUDIT_",
   "DFIR_SMTP_",
   "DFIR_HASHLOOKUP_",
   "DFIR_RDAP_",

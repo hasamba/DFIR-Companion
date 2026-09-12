@@ -263,6 +263,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-asset-graph.js": "application/javascript; charset=utf-8",
   "/js/dashboard-login-graph.js": "application/javascript; charset=utf-8",
   "/js/dashboard-notifications.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-audit-export.js": "application/javascript; charset=utf-8",
   "/js/dashboard-starred.js": "application/javascript; charset=utf-8",
   "/js/dashboard-heatmap.js": "application/javascript; charset=utf-8",
   "/js/dashboard-false-positive.js": "application/javascript; charset=utf-8",

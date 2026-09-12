@@ -435,6 +435,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Notion export** — managed page block; your notes outside it untouched
 - **ClickUp export** — Response Playbook as tasks; re-push updates in place
 - **Notifications** — Slack/MS Teams/Mattermost/Discord/Telegram/SMTP for findings/playbook/milestones; per-channel threshold + toggles
+- **Audit-log export to a SIEM** — forward each case's activity log (who did what, when, and whether it worked) to Splunk HEC, Elasticsearch or RFC 5424 syslog for SOC 2 / ISO 27001 evidence; opt-in per destination, remembers how far it got per case, and re-sends rather than skips after an outage
 - **War-room slash-command bot** — two-way Slack/Teams/Telegram: `/dfir findings`, `/dfir iocs malicious`, `/dfir ask …` from the incident channel; bind a channel to a case, allowlist who can spend AI budget (#235)
 - **Report templates** — global branded layouts (accent, header/footer, section order); pick per case. A section disabled here skips its AI generation (executive summary, narrative) to save tokens (#168)
 - **Mobile companion** — read-only PWA (`/mobile`) for findings/timeline/IOCs with verdicts; offline app-shell
