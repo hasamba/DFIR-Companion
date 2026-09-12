@@ -548,6 +548,63 @@ row therefore says the gap depends on the service behaviour at the time of the e
 The chain across records — a suspicious sign-in, then access, then a rule, then sending or
 deletion — is a join by session and time, not a per-record fact; it is #975.
 
+### NTFS alternate data streams: a download mark is not a hidden payload
+
+NTFS lets a file carry named streams beside its contents. Windows and browsers write one —
+`Zone.Identifier`, the mark of the web — next to every download, and an attacker can write
+another: a 1 MB executable hidden behind `notes.txt:payload.dll`. Three artifacts show streams,
+and each used to read them the same way: an MFTECmd `$MFT` row (`IsAds`, the stream after the
+colon in the file name, `HasAds` and the copied `ZoneIdContents` on the host file's own row), a
+Velociraptor `Windows.NTFS.MFT` row (the stream in the path) and Sysmon Event 15 (the stream's
+first bytes in `Contents`) — a bare path with a colon in it on the MFT surfaces, Medium +
+T1564.004 for every stream on Sysmon, a browser's mark included.
+
+A stream row now says what the record establishes, in this order — evidence before the name,
+because the name is attacker-chosen:
+
+1. **Executable content** — the record's own bytes, magic or type say code (`MZ`, `PE32`, `ELF`,
+   `#!`, a code MIME type): `alternate data stream "SmartScreen" on notes.txt (40960 bytes) —
+   executable content (starts with MZ)`, Medium + T1564.004, whatever the stream is called.
+2. **A download mark** — `Zone.Identifier` whose contents have the mark's structure (or, with no
+   contents in the record, a mark-sized stream): `downloaded from the Internet zone
+   (https://…, referrer …)`; the grade is the same rule EvidenceOfDownload uses — Medium for a
+   runnable or a disk image from the Internet or Restricted zone, Info for a document — with
+   `download provenance, not execution`. A `Zone.Identifier` that fails the structure, or is
+   larger than any mark, is a named stream wearing the name.
+3. **An application stream** — a literal list (September 2026): `SmartScreen`, `OECustomProperty`,
+   `encryptable`, `favicon`, `Afp_AfpInfo`, `Afp_Resource`, `com.dropbox.attrs`,
+   `com.dropbox.attributes`, `com.apple.quarantine`, `com.apple.FinderInfo`,
+   `com.apple.ResourceFork`, `WofCompressedData`, `$TXF_DATA`,
+   `{4c8cc155-6c1e-11d1-8e41-00c04fb9386d}`, `Win32App_1`, `evernote.metadata`, `Evernote.Base`,
+   `ms-properties`. Info by name; content still wins.
+4. **A named stream** — needs a positive signal: a code-like name (`payload.dll`, `run.ps1`) is
+   Medium + T1564.004 with `stream content not in this record`; a stream of 64 KB or more is Low
+   (`large named stream`); an empty one and everything else is Info. The name is the lead, never
+   the proof.
+
+A host file's own MFT row reads its flag and its mark: `MFT: C:\…\tool.exe (40960 bytes) — has
+alternate data streams; downloaded from the Internet zone (https://…) — download provenance, not
+execution`. The URL and the referrer become url indicators. On Sysmon Event 15 the `Hash` field is
+the hash of the file the stream was added to, never the stream's — it joins the row's identity so
+the same stream re-created on a replaced file is a second row, and no hash is claimed for the
+stream. A stream row is its own row: `payload1.dll` and `payload2.dll` on one file are two, and
+ransomware detection reads the host file's name, never a stream's (`report.docx:cache.akira` is
+not an encrypted file).
+
+**Download marks carry no technique.** The `Zone.Identifier` stream establishes where a file came
+from — the zone and, when the browser wrote it, the URL. It does not establish that the file ran
+(T1204.002) or that a compromised website delivered it (T1189); both used to be attached to every
+runnable download from the Internet zone, on the EvidenceOfDownload rows too, and are withdrawn.
+The grade stays Medium: a runnable pulled from the internet is worth an eye. The techniques return
+through corroboration — a Prefetch, Amcache, ShimCache or process record for the same file — which
+is a join across records and a spec issue of its own.
+
+Reading rules the rows enforce: a normal `Zone.Identifier` stream is not a hidden payload;
+download provenance is not execution, user intent or proof of a drive-by; a missing or stripped
+mark is inconclusive — propagation depends on the software that wrote the file (a `.iso` mounted
+strips the mark from what is inside; many tools never write one); a stream's name is not its
+content.
+
 ## Evidence Drop Folder (Auto-Import Inbox)
 
 Every case gets a `cases/<id>/drop/` folder on creation. Copy any file into it — at any depth, subfolders included — and a background poller picks it up once the file size/mtime is stable (safe for Dropbox/OneDrive sync), then imports it through the same detection + import chain as the **Import** button. Screenshots are ingested as capture evidence; everything else is imported as an artifact.

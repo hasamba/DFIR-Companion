@@ -82,8 +82,10 @@ import {
   detectionAggKey,
   detectionOverlayAggKey,
   downloadAggKey,
+  mftAggKey,
   taskAggKey,
 } from "./veloAggKeys.js";
+import { readStream } from "./ntfsStreams.js";
 import { ransomwareSignal } from "./ransomwareDetect.js";
 import { rdpLateralSignal } from "./rdpLateralDetect.js";
 import { mapHijackLib } from "./hijackLibImport.js";
@@ -1019,9 +1021,11 @@ function macbToken(present: Set<string>): string {
 function mapMft(row: Row, artifact: string, host: string): MappedEvent[] {
   const path =
     firstStr(row, ["OSPath", "FullPath", "_FullPath", "FilePath"]) || str(getCI(row, "FileName")).trim();
+  // A stream in the path reads as one (ntfsStreams.ts, #932 item 3); ransomware checks the HOST path.
+  const stream = readStream({ path, size: firstStr(row, ["FileSize", "Size"]) });
   // Ransomware impact (T1486): an encrypted file (family extension) or a ransom note recorded in the
   // MFT. Graded High so it survives the most-severe-first cap over hundreds of thousands of Info rows.
-  const ransom = ransomwareSignal(path);
+  const ransom = ransomwareSignal(stream?.hostPath ?? path);
   // distinct timestamp value → { si: letters, fn: letters }
   const byTime = new Map<string, { si: Set<string>; fn: Set<string> }>();
   const add = (stream: "si" | "fn", letter: string, key: string): void => {
@@ -1042,22 +1046,18 @@ function mapMft(row: Row, artifact: string, host: string): MappedEvent[] {
     if (si.size) parts.push(`$SI:${macbToken(si)}`);
     if (fn.size) parts.push(`$FN:${macbToken(fn)}`);
     const macb = parts.join(" ");
-    let description = `Velociraptor${artifact ? ` [${artifact}]` : ""}: ${macb} — ${oneLine(path)}`.slice(
-      0,
-      600,
-    );
-    description = withHostSuffix(description, host).slice(0, 600);
+    const tail = stream ? ` — ${[stream.words, ...stream.qualifiers].join(" — ")}` : "";
+    const text = `Velociraptor${artifact ? ` [${artifact}]` : ""}: ${macb} — ${oneLine(path)}${tail}`;
+    const description = withHostSuffix(text.slice(0, 600), host).slice(0, 600);
     // A ransomware sweep touches thousands of MFT records — collapse per host + impact type (see mapUsn).
     const aggKey = ransom
       ? `vr|ransomware|${host.toLowerCase()}|${ransom.note.toLowerCase()}`
-      : `vr|mft|${host.toLowerCase()}|${macb.toLowerCase()}|${path.toLowerCase()}`
-          .replace(/\d+/g, "#")
-          .slice(0, 400);
+      : mftAggKey(host, macb, path, stream);
     events.push({
       timestamp: t,
       description: ransom ? `${description} — ${ransom.note} (T1486)`.slice(0, 600) : description,
-      severity: ransom ? ransom.severity : "Info",
-      mitre: ransom ? [...ransom.mitre] : [],
+      severity: ransom ? ransom.severity : (stream?.severity ?? "Info"),
+      mitre: ransom ? [...ransom.mitre] : [...(stream?.mitre ?? [])],
       aggKey,
       sources: ["Velociraptor"],
       ...(path ? { path } : {}),

@@ -13,7 +13,7 @@
 // ShimCache (AppCompatCacheParser), LNK (LECmd), JumpLists (JLECmd), UsnJrnl $J + $MFT (MFTECmd),
 // SRUM network usage (SrumECmd), Recycle Bin (RBCmd), Shellbags (SBECmd).
 
-import type { Severity } from "./stateTypes.js";
+import { worstSeverity, type Severity } from "./stateTypes.js";
 import { parseCsv } from "./csvImport.js";
 import {
   aggregateEvents,
@@ -30,6 +30,7 @@ import {
   maxEventsDefault,
 } from "./siemImport.js";
 import { detectTimestomp } from "./timestompDetect.js";
+import { readHost, readStream, streamFlag } from "./ntfsStreams.js";
 import { parseReasons, pairRenames, summarizeLifecycle, type UsnRecord } from "./usnLifecycle.js";
 import { prefetchSignal } from "./prefetchExecution.js";
 import { readSrumRow, totalSrum, srumSignal, type SrumRow } from "./srumNetwork.js";
@@ -361,16 +362,39 @@ const PROFILES: Profile[] = [
       // Timestomp check: MFTECmd emits $SI (Created0x10) and $FN (Created0x30) creation on the same
       // row. Pass the RAW strings (not ezTime, which drops the sub-second the truncation signal needs).
       const ts = detectTimestomp(str(getCI(row, "Created0x10")), str(getCI(row, "Created0x30")));
-      let description = `MFT: ${path}${size ? ` (${size} bytes)` : ""}`;
-      if (ts) description = `${description} — ${ts.note}`;
+      // An alternate data stream is its own row (IsAds, the stream after the colon): what the
+      // stream is decides its grade (ntfsStreams.ts). The host file's row reads its HasAds flag and
+      // the Zone.Identifier text MFTECmd copies into ZoneIdContents (#932 item 3).
+      const input = {
+        path,
+        isAds: streamFlag(getCI(row, "IsAds")),
+        hasAds: streamFlag(getCI(row, "HasAds")),
+        size,
+        ...(str(getCI(row, "ZoneIdContents")) ? { contents: str(getCI(row, "ZoneIdContents")) } : {}),
+      };
+      const stream = readStream(input);
+      const host = stream ? null : readHost(input);
+      const words = stream?.words ?? host?.words ?? "";
+      const grade = stream ?? host;
+      const url = grade?.url ?? "";
+      if (url) addIoc(sink, "url", url);
+      if (grade?.referrer) addIoc(sink, "url", grade.referrer);
+      const notes = [ts?.note, words].filter(Boolean).join(" — ");
+      const qualifiers = grade?.qualifiers.join("; ") ?? "";
+      let description = `MFT: ${path}${size && !stream ? ` (${size} bytes)` : ""}`;
+      if (notes) description = `${description} — ${notes}`;
+      if (qualifiers) description = `${description} — ${qualifiers}`;
+      const severity = worstSeverity(ts?.severity ?? "Info", grade?.severity ?? "Info");
       return {
         timestamp: ezTime(getCI(row, "Created0x10")) || ezTime(getCI(row, "LastModified0x10")),
         description: description.slice(0, 600),
-        severity: ts ? ts.severity : "Info",
-        mitre: ts ? ts.mitre : [],
+        severity,
+        mitre: [...(ts?.mitre ?? []), ...(grade?.mitre ?? [])],
         aggKey: `mft|${path.toLowerCase()}`,
         sources: ["MFT"],
         path,
+        ...(stream?.sha256 ? { sha256: stream.sha256 } : {}),
+        ...(stream?.md5 && !stream.sha256 ? { md5: stream.md5 } : {}),
         // The MFT's own record of when the file was modified, kept structured so it can be
         // compared against ShimCache's independent copy (#909 item 8).
         ...(ezTime(getCI(row, "LastModified0x10"))

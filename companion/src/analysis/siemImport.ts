@@ -35,6 +35,7 @@ import { tradecraftSignal, scriptBlockSignal, STRONG_CMD, SUSP_CMD } from "./tra
 import { decodeDefenderEvent, defenderDescription } from "./defenderEvents.js";
 import { commandCandidates } from "./commandNormalize.js";
 import { secretSpillSignal } from "./secretSpillRules.js";
+import { streamOverlay } from "./ntfsStreams.js";
 import { aggregateEvents, maxEventsDefault } from "./eventAggregate.js";
 import { evtxRecordIdentity } from "./evtxRecordId.js";
 import {
@@ -352,7 +353,7 @@ export interface WinEventDef {
   label: string;
   severity: Severity;
   mitre?: string[];
-  kind?: "process" | "network" | "dns" | "procaccess" | "file" | "service";
+  kind?: "process" | "network" | "dns" | "procaccess" | "file" | "service" | "stream";
 }
 
 // Groups whose membership IS privilege. An add to one of these is the difference between routine
@@ -481,7 +482,7 @@ const SYSMON_EVENTS: Record<number, WinEventDef> = {
   12: { label: "Registry object created/deleted", severity: "Low", mitre: ["T1112"] },
   13: { label: "Registry value set", severity: "Low", mitre: ["T1112"] },
   14: { label: "Registry object renamed", severity: "Low", mitre: ["T1112"] },
-  15: { label: "Alternate data stream created", severity: "Medium", mitre: ["T1564.004"] },
+  15: { label: "Alternate data stream created", severity: "Info", kind: "stream" },
   17: { label: "Named pipe created", severity: "Low" },
   18: { label: "Named pipe connected", severity: "Low" },
   19: { label: "WMI event filter registered", severity: "Medium", mitre: ["T1546.003"] },
@@ -973,6 +974,10 @@ export function mapWindows(
     // .ssh/id_rsa, …) so the case identifies the enumeration phase even when each command is Info/Low.
     for (const t of reconTechniques(image, cmd)) if (!mitre.includes(t)) mitre.push(t);
   }
+  // Sysmon 15: what the stream is decides (ntfsStreams.ts, #932 item 3), never the event id.
+  const ads = def.kind === "stream" ? streamOverlay((k) => str(getCI(ed, k)), description, severity) : null;
+  if (ads) ({ description, severity } = ads);
+  for (const t of ads?.mitre ?? []) if (!mitre.includes(t)) mitre.push(t);
   // A logged script block or pipeline payload is executable content — the same thing a command line
   // is — so it is graded by the same tables (scriptBlockSignal). Keyed on the FIELD, not the channel
   // or `kind`: every shape that reaches a parsed 4104/4103 funnels through here, as the IOC scrape
@@ -1273,21 +1278,16 @@ export function mapWindows(
     severity,
     mitre,
     canonical,
-    // The HOST leads the key. Without it, ONE attacker action taken on N machines collapsed into one
-    // counted row naming exactly one of them, and the other N-1 machines left the case entirely:
-    // the timeline showed one host, `assetGraph` (which builds from `event.asset`) never learned the
-    // rest, and every IOC scraped off the merged-away rows pointed at the survivor. `count: N` was
-    // the only trace, and it cannot say whether N is repeats on one host or one repeat on N hosts —
-    // so a service dropped on 12 servers read as one server (#659). `mapGeneric` below, THOR
-    // (thorRowMap.ts), Hayabusa and every ecar mapper already key on the host; this was the outlier.
-    // The cost is accepted, not overlooked: 500 workstations logging the same benign 4624 now yield
-    // 500 rows. networkTokens.ts settled that trade for #640 — a silent merge is a report-integrity
-    // failure the analyst cannot see, an unmerged repeat is noise they can. The key is lowercased as
-    // a whole, so SRV-A and srv-a stay one host; a host-less export keys on "" and merges as before.
-    // pid (on process-creation events) is in the key so distinct creations stay distinct rows rather
-    // than aggregating into one — preserving per-process granularity and enabling pid correlation.
+    // The HOST leads the key. Without it, ONE attacker action on N machines collapsed into one counted
+    // row naming one of them; the other N-1 left the case (timeline, assetGraph, every IOC scraped off
+    // the merged rows) and `count: N` cannot say repeats-on-one from one-on-N — a service dropped on
+    // 12 servers read as one (#659). Every other mapper keys on the host; the cost (500 workstations'
+    // benign 4624 = 500 rows) is the trade networkTokens.ts settled for #640: a silent merge is a
+    // report-integrity failure, an unmerged repeat is visible noise. Lowercased as a whole (SRV-A and
+    // srv-a stay one host); a host-less export keys on "". pid keeps process creations distinct; a
+    // Sysmon 15 stream carries its exact path's digest and the host file's hash (ntfsStreams.ts).
     aggKey:
-      `win|${host}|${channel}|${eid}|${accts.join(",")}|${subject}${pid !== undefined ? `|pid=${pid}` : ""}${defender ? `|${defender.identity}` : ""}`.toLowerCase(),
+      `win|${host}|${channel}|${eid}|${accts.join(",")}|${subject}${pid !== undefined ? `|pid=${pid}` : ""}${defender ? `|${defender.identity}` : ""}${ads?.identity ?? ""}`.toLowerCase(),
     ...(sha256 ? { sha256 } : {}),
     ...(md5 ? { md5 } : {}),
     ...(imagePath ? { path: imagePath } : {}),

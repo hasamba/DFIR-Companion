@@ -1664,3 +1664,78 @@ describe("script-block grading is scoped to PowerShell records", () => {
     expect(e.severity).toBe("High");
   });
 });
+
+// #932 item 3 — Sysmon Event 15 (FileCreateStreamHash): what the stream is decides, on this
+// surface as on the MFT ones. The `Hash` field is the HOST file's hash, never the stream's.
+describe("parseSiemExport — Sysmon 15 alternate data streams", () => {
+  const ev15 = (targetFilename: string, over: Record<string, unknown> = {}) => ({
+    "@timestamp": "2024-03-12T17:00:21.000Z",
+    log_name: "Microsoft-Windows-Sysmon/Operational",
+    computer_name: "FS-01",
+    event_id: 15,
+    level: "Information",
+    event_data: {
+      UtcTime: "2024-03-12 17:00:21.000",
+      Image: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+      TargetFilename: targetFilename,
+      CreationUtcTime: "2024-03-12 17:00:20.000",
+      Hash: "SHA256=" + "a".repeat(64),
+      User: "FS-01\\bob",
+      ...over,
+    },
+  });
+
+  it("a browser's Zone.Identifier is a download mark — Info, no technique, the zone and url in words", () => {
+    const r = parseSiemExport(
+      elastic(
+        ev15("C:\\Users\\bob\\Downloads\\report.pdf:Zone.Identifier", {
+          Contents: "[ZoneTransfer]  ZoneId=3  HostUrl=https://files.example.invalid/report.pdf",
+        }),
+      ),
+    );
+    const e = r.events[0];
+    expect(e.severity).toBe("Info");
+    expect(e.mitreTechniques).toEqual([]);
+    expect(e.description).toContain("Alternate data stream created (EID 15)");
+    expect(e.description).toContain(
+      'alternate data stream "Zone.Identifier" on report.pdf — downloaded from the Internet zone (https://files.example.invalid/report.pdf) — download provenance, not execution',
+    );
+  });
+
+  it("a stream with a code-like name, or executable contents under any name, is Medium + T1564.004", () => {
+    const named = parseSiemExport(elastic(ev15("C:\\Users\\bob\\Documents\\notes.txt:payload.dll")))
+      .events[0];
+    expect(named.severity).toBe("Medium");
+    expect(named.mitreTechniques).toEqual(["T1564.004"]);
+    expect(named.description).toContain(
+      'alternate data stream "payload.dll" on notes.txt — named stream with a code-like name',
+    );
+    const mz = parseSiemExport(
+      elastic(ev15("C:\\Users\\bob\\Documents\\notes.txt:SmartScreen", { Contents: "MZ\u0090\u0000\u0003" })),
+    ).events[0];
+    expect(mz.severity).toBe("Medium");
+    expect(mz.description).toContain("executable content (starts with MZ)");
+  });
+
+  it("the Hash is the host file's: it never becomes the stream's identity, and the row's path is the writing process", () => {
+    const r = parseSiemExport(elastic(ev15("C:\\Users\\bob\\Documents\\notes.txt:payload.dll")));
+    const e = r.events[0];
+    // The stream's own hash is not in the record: none is claimed for it.
+    expect(e.sha256).toBeUndefined();
+    expect(r.iocs.some((i) => i.type === "hash")).toBe(false);
+  });
+
+  it("two streams on a long host path, and one stream re-created on a replaced host file, are distinct rows", () => {
+    const deep = `C:\\${"d".repeat(200)}\\notes.txt`;
+    const r = parseSiemExport(
+      elastic(
+        ev15(`${deep}:a.dll`),
+        ev15(`${deep}:b.dll`),
+        ev15("C:\\Users\\bob\\x.txt:s.dll", { Hash: "SHA256=" + "b".repeat(64) }),
+        ev15("C:\\Users\\bob\\x.txt:s.dll", { Hash: "SHA256=" + "c".repeat(64) }),
+      ),
+    );
+    expect(r.events).toHaveLength(4);
+    expect(new Set(r.events.map((e) => e.aggKey)).size).toBe(4);
+  });
+});
