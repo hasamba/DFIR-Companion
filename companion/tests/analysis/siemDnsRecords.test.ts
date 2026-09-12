@@ -370,6 +370,27 @@ describe("DNS Client operational log", () => {
     expect(afterImport(r.events)).toHaveLength(2);
   });
 
+  it("a typed A and a typed AAAA carrying one address stay two rows after import", () => {
+    const r = parseSiemExport(
+      elastic(
+        dnsClient(3008, {
+          QueryName: "any.example",
+          QueryType: "255",
+          QueryStatus: "0",
+          QueryResults: "type: 1 192.0.2.1;",
+        }),
+        dnsClient(3008, {
+          QueryName: "any.example",
+          QueryType: "255",
+          QueryStatus: "0",
+          QueryResults: "type: 28 ::ffff:192.0.2.1;",
+        }),
+      ),
+    );
+    expect(r.events).toHaveLength(2);
+    expect(afterImport(r.events)).toHaveLength(2);
+  });
+
   it("two CNAME targets that differ past the shown width stay two rows after import", () => {
     const rec = (t: string) =>
       sysmon22({

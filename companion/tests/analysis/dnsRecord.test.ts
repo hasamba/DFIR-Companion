@@ -69,6 +69,10 @@ describe("readQueryResults — the resolver's returned values, typed, validated,
     expect(r.values[1]).toEqual({ type: 28, value: "2001:db8::9", kind: "address" });
     expect(r.values[2]).toEqual({ type: 99, value: "whatever", kind: "other" });
     expect(r.shown).toContain("type 16 v=spf1 -all");
+    expect(r.shown).toContain("AAAA 2001:db8::9");
+    // an A and an AAAA that carry one address are two facts, shown apart
+    expect(readQueryResults("type: 1 192.0.2.1;").shown).toBe("A 192.0.2.1");
+    expect(readQueryResults("type: 28 ::ffff:192.0.2.1;").shown).toBe("AAAA 192.0.2.1");
   });
   it("a value that is neither an address nor a name is other — neutralised and bounded", () => {
     const r = readQueryResults("type: 5 ]evil[;;;\u0000x;" + "a".repeat(300) + ";");

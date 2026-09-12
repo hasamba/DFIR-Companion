@@ -182,7 +182,9 @@ function showValue(v: ReturnedValue): string {
   if (!v.value) return `type ${v.type} (value not in this record)`;
   const text = breakHashRuns(showToken(v.value));
   const clipped = text.length > VALUE_SHOWN_MAX ? `${text.slice(0, VALUE_SHOWN_MAX - 1)}…` : text;
-  if (v.kind === "address") return clipped;
+  // A typed address shows its RR type: an A and an AAAA that carry the same address are two facts.
+  if (v.kind === "address")
+    return v.type === undefined ? clipped : `${TYPE_NAMES[v.type] ?? `type ${v.type}`} ${clipped}`;
   if (v.kind === "name") return `${(TYPE_NAMES[v.type ?? -1] ?? `type ${v.type}`).toLowerCase()} ${clipped}`;
   return v.type === undefined ? clipped : `type ${v.type} ${clipped}`;
 }
