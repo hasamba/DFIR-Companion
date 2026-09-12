@@ -232,6 +232,34 @@ describe("parseNetworkLogs — Zeek per-stream JSON (no _path)", () => {
     const r = parseNetworkLogs(JSON.stringify(filtered));
     expect(r.events.some((e) => e.description.startsWith("Flow:"))).toBe(false);
     expect(r.events.some((e) => e.description.startsWith("TLS "))).toBe(true);
+    // each ssl.log field alone, beside the connection tuple, is still an ssl record
+    for (const only of [
+      { subject: "CN=leaf" },
+      { issuer: "CN=CA" },
+      { curve: "x25519" },
+      { ja3: "e7d705a3286e19ea42f587b344ee6865" },
+      { resumed: true },
+      { validation_status: "ok" },
+    ]) {
+      const one = parseNetworkLogs(
+        JSON.stringify({
+          ts: 1512115204,
+          uid: "C9",
+          "id.orig_h": "10.0.0.5",
+          "id.resp_h": "10.0.0.9",
+          "id.resp_p": 443,
+          ...only,
+        }),
+      );
+      expect(
+        one.events.some((e) => e.description.startsWith("Flow:")),
+        JSON.stringify(only),
+      ).toBe(false);
+      expect(
+        one.events.some((e) => e.description.startsWith("TLS ")),
+        JSON.stringify(only),
+      ).toBe(true);
+    }
   });
 
   it("a nested x509 record with no _path is a certificate, never a zero-byte flow", () => {
