@@ -195,10 +195,12 @@ export const TRAILER_OVERFLOW = "trailer:overflow";
 // — therefore carries a mark of its full key, so two records that READ alike stay two rows after
 // import and not only inside this parser (#933 item 1). 128 bits: the key is attacker-controlled,
 // and a 32-bit mark let two bracket-spelled paths that neutralise alike be found by birthday work
-// and folded into one row downstream.
-const IDENTITY_MARK_HEX = 32;
+// and folded into one row downstream. Base64url, NOT hex: correlateEvents reads any bare 32-hex run
+// in a description as an MD5 and unions the rows that share it with no time bound, so a hex mark
+// made two lossy rows of one key — different days, different UAs — one observation.
+const IDENTITY_MARK_BYTES = 16;
 export function identityMark(key: string): string {
-  return ` #${createHash("sha256").update(key).digest("hex").slice(0, IDENTITY_MARK_HEX)}`;
+  return ` #${createHash("sha256").update(key).digest().subarray(0, IDENTITY_MARK_BYTES).toString("base64url")}`;
 }
 
 // A row with no attack signal keeps today's layout when it fits. When the attacker-controlled
