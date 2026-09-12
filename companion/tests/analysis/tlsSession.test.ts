@@ -635,6 +635,26 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
     expect(readZeekSsl({ ...ZEEK_SSL, ssl_history: "HCSI" }, "").directionFlipped).toBeUndefined();
   });
 
+  it("a Zeek x509 client certificate keeps its role, apart from the same certificate as a server's", () => {
+    const fp = "ab".repeat(20);
+    const asClient = readZeekX509(
+      { ...ZEEK_X509, fingerprint: fp, client_cert: true, host_cert: true, "certificate.subject": "CN=user" },
+      "",
+    );
+    const asServer = readZeekX509({ ...ZEEK_X509, fingerprint: fp, client_cert: false, host_cert: true }, "");
+    const unknown = readZeekX509({ ...ZEEK_X509, fingerprint: fp }, "");
+    expect(asClient.role).toBe("client");
+    expect(asServer.role).toBe("server");
+    expect(unknown.role).toBeUndefined();
+    const r = rows([asClient, asServer, unknown]);
+    expect(r).toHaveLength(3);
+    const c = r.find((e) => e.description.includes("client-presented"))!;
+    expect(c.canonical?.tls?.certificateRole).toBe("client");
+    expect(r.find((e) => e.description.includes("server-presented"))?.canonical?.tls?.certificateRole).toBe(
+      "server",
+    );
+  });
+
   it("selects the most-seen rows first under a budget", () => {
     const many = [
       ...Array.from({ length: 3 }, () => base()),

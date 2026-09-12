@@ -46,6 +46,8 @@ export interface TlsObservation {
   uid?: string;
   /** The x509 observation id (a FUID) — a locator, never an identity. */
   locatorId?: string;
+  /** Zeek x509 `client_cert` / `host_cert`: which side presented it — a keyed fact of the row. */
+  role?: "client" | "server";
   certChainFuids?: string[];
   observer?: { name: string; sourceField: string };
   /** Zeek `ssl_history` `^`: the TLS client was the connection responder; src/dst already swapped. */
@@ -244,6 +246,12 @@ export function readZeekX509(row: Row, fallbackTs: string): TlsObservation {
     timestamp: time(getCI(row, "ts")) || fallbackTs,
     locatorId: text(getCI(row, "id")),
     observer: observerOf(row),
+    // Zeek says which side sent the certificate; a client's certificate is not "the server's".
+    ...(bool(getCI(row, "client_cert")) === true
+      ? { role: "client" as const }
+      : bool(getCI(row, "host_cert")) === true || bool(getCI(row, "client_cert")) === false
+        ? { role: "server" as const }
+        : {}),
     subject: text(cert("subject")),
     issuer,
     cert: fp ?? identityRef(issuer, serial),
@@ -372,7 +380,7 @@ export function tlsKey(o: TlsObservation): string {
   const cert = o.cert ? `${o.cert.kind}:${o.cert.value}` : "-";
   // The source kind is a keyed fact: a Zeek row and a Suricata row of one shape are two
   // observations by two tools, each with its own provenance.
-  if (o.kind === "certificate") return `cert|${o.source}|${sensor}|${cert}`;
+  if (o.kind === "certificate") return `cert|${o.source}|${sensor}|${short(o.role)}|${cert}`;
   return [
     "tls",
     o.source,
@@ -502,7 +510,7 @@ function certificateTag(o: TlsObservation): string {
   const shownNames = names.slice(0, NAMES_SHOWN_MAX).map(show).join(", ");
   const more = names.length > NAMES_SHOWN_MAX ? ` (+${names.length - NAMES_SHOWN_MAX} more)` : "";
   return [
-    `certificate: ${certWords({ ...o, subject: undefined, issuer: undefined })}`,
+    `certificate: ${o.role ? `${o.role}-presented; ` : ""}${certWords({ ...o, subject: undefined, issuer: undefined })}`,
     c.subject !== undefined ? `subject ${show(c.subject)}` : "",
     c.issuer !== undefined ? `issuer ${show(c.issuer)}` : "",
     c.notBefore || c.notAfter ? `valid ${show(c.notBefore ?? "?")}–${show(c.notAfter ?? "?")}` : "",
@@ -550,6 +558,7 @@ function envelopeOf(o: TlsObservation, count: number): CanonicalEventEnvelope {
       ...(o.directionFlipped ? { directionFlipped: true } : {}),
       ...(o.ja3 !== undefined ? { ja3: o.ja3 } : {}),
       ...(o.ja3s !== undefined ? { ja3s: o.ja3s } : {}),
+      ...(o.role ? { certificateRole: o.role } : {}),
       ...(o.subject !== undefined || o.issuer !== undefined || o.cert || o.certificate
         ? {
             certificate: {

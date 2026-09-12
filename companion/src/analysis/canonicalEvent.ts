@@ -157,6 +157,8 @@ export const canonicalEventEnvelopeSchema = z.object({
           ca: z.boolean().optional(),
         })
         .optional(),
+      // On a certificate row: which side presented it (Zeek x509 client_cert / host_cert).
+      certificateRole: z.enum(["client", "server"]).optional(),
       clientCertificate: z
         .object({
           subject: z.string().optional(),
