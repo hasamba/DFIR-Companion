@@ -642,6 +642,9 @@ describe("renderAwsDescription — reserved budgets", () => {
   });
   it("the maximal row keeps the head, the outcome, the object and all three qualifiers inside 600", () => {
     const s = renderAwsDescription(parts());
+    expect(renderAwsDescription({ ...parts(), identity: "i".repeat(300) })).toMatch(
+      /effective access depends on controls not in this record$/,
+    );
     expect(s.length).toBeLessThanOrEqual(600);
     expect(s).toMatch(/^AWS PutRolePolicy \(iam\) by p+/);
     expect(s).toContain("attempted to replace inline policy");
@@ -651,6 +654,40 @@ describe("renderAwsDescription — reserved budgets", () => {
     expect(s).toContain(CONDITIONAL_NOTE);
     expect(s).toContain(POLICY_CAVEAT);
     expect(s).toContain("[root]");
+  });
+  it("the replica notice is a reserved slot after the head: the maximal row keeps it and every qualifier", () => {
+    const notice = "[also in account 210987654321]";
+    for (const identity of ["", "i".repeat(300)]) {
+      const s = renderAwsDescription({ ...parts(), identity, notice });
+      expect(s.length).toBeLessThanOrEqual(600);
+      expect(s).toMatch(/^AWS PutRolePolicy \(iam\) by p+… \[also in account 210987654321\] /);
+      expect(s).toContain("attempted to replace inline policy");
+      expect(s).toContain("denied (AccessDenied)");
+      expect(s).toContain("role=rrrr");
+      expect(s).toContain("[root]");
+      expect(s).toMatch(/effective access depends on controls not in this record$/);
+      expect(s).toContain(CONDITIONAL_NOTE);
+      expect(s).toContain("previous document not in this record");
+    }
+    // With every other slot at its maximum the budget is exactly 600: the notice, the tail and
+    // the (clipped) qualifiers all stand, and the identity takes only what is left.
+    const maximal = renderAwsDescription({
+      ...parts(),
+      identity: "i".repeat(300),
+      notice,
+      tail: `[ua: ${"u".repeat(30)}] [root] [${"E".repeat(30)}]`,
+      qualifiers: ["q".repeat(200)],
+    });
+    expect(maximal.length).toBeLessThanOrEqual(600);
+    expect(maximal).toContain(" [also in account 210987654321] ");
+    expect(maximal).toContain("[root]");
+    expect(maximal.endsWith(` — ${"q".repeat(129)}…`)).toBe(true);
+    // The notice itself is bounded to its slot; an empty one leaves the row unchanged.
+    expect(renderAwsDescription({ ...parts(), notice: "" })).toBe(renderAwsDescription(parts()));
+    const long = renderAwsDescription({ ...parts(), notice: `[also in account ${"1".repeat(80)}]` });
+    expect(long).toContain(" [also in account 111111");
+    expect(long).not.toContain("1".repeat(40));
+    expect(long).toMatch(/effective access depends on controls not in this record$/);
   });
   it("a short row is composed whole, in slot order, with no clipping marks", () => {
     const s = renderAwsDescription({

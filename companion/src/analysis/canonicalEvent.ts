@@ -93,6 +93,11 @@ export const canonicalEventEnvelopeSchema = z.object({
       logonType: z.number().int().nonnegative().optional(),
       protocol: z.string().optional(),
       mechanism: z.string().optional(),
+      // The credential the call was signed with (an AWS access key id, an Identity Center
+      // credentialId) — a credential, not a session; and the identity that issued the session
+      // (an AWS session issuer ARN). Both from #931 item 5.
+      credentialId: z.string().optional(),
+      issuer: z.string().optional(),
     })
     .optional(),
   session: z
@@ -165,6 +170,9 @@ export const canonicalEventEnvelopeSchema = z.object({
       principalType: z.string().optional(),
       tenant: z.string().optional(),
       accountId: z.string().optional(),
+      // The account the record was DELIVERED to (CloudTrail recipientAccountId). `accountId`
+      // stays the caller's account; a cross-account action differs in the two (#931 item 5).
+      recipientAccountId: z.string().optional(),
       region: z.string().optional(),
       resource: z.string().optional(),
     })
