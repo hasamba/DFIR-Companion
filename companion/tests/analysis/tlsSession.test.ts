@@ -798,6 +798,28 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
     expect(rows([f1, other])).toHaveLength(2);
   });
 
+  it("a chain-only record and a certificate-absent record are two rows, in either order", () => {
+    const base2 = {
+      ts: 1700000000.5,
+      "id.orig_h": "10.0.0.1",
+      "id.resp_h": "203.0.113.1",
+      "id.resp_p": 443,
+      server_name: "a.example",
+    };
+    const withChain = readZeekSsl({ ...base2, cert_chain_fuids: ["F1"] }, "");
+    const without = readZeekSsl(base2, "");
+    for (const order of [
+      [withChain, without],
+      [without, withChain],
+    ]) {
+      const r = rows(order);
+      expect(r).toHaveLength(2);
+      expect(r.filter((e) => e.description.includes("no server certificate observed"))).toHaveLength(1);
+    }
+    // …while two chain-only records with different FUIDs are one row
+    expect(rows([withChain, readZeekSsl({ ...base2, cert_chain_fuids: ["F2"] }, "")])).toHaveLength(1);
+  });
+
   it("selects the most-seen rows first under a budget", () => {
     const many = [
       ...Array.from({ length: 3 }, () => base()),

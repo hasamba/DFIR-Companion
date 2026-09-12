@@ -468,6 +468,9 @@ export function tlsKey(o: TlsObservation): string {
     o.certificate && Object.keys(o.certificate).length
       ? `f:${keyDigest(JSON.stringify(o.certificate))}`
       : "-",
+    // A chain FUID's VALUE is a locator (never keyed); its PRESENCE is evidence that a server
+    // certificate was observed, and must not fold with a record where none was.
+    o.certChainFuids?.length ? "chain" : "-",
   ].join("|");
 }
 
