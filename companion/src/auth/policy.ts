@@ -46,6 +46,7 @@ const GLOBAL_ADMIN_PREFIXES = [
   "/kev",
   "/mcp",
   "/notifications",
+  "/audit-export",
   "/velociraptor",
   "/importers",
 ];

@@ -108,6 +108,9 @@ import type { ServiceNowExportStore } from "../integrations/servicenow/serviceno
 import type { NotificationConfigStore } from "../analysis/notificationStore.js";
 import type { SlashCommandChannelStore } from "../analysis/slashCommandStore.js";
 import type { Notifier } from "../integrations/notify/notifyDispatch.js";
+import type { AuditExportStore } from "../analysis/auditExportStore.js";
+import type { AuditCursorStore } from "../analysis/auditExportCursor.js";
+import type { AuditExporter } from "../integrations/audit/auditExporter.js";
 import type { AIProvider as AnalyzeProvider } from "../providers/provider.js";
 import type { UpdateCheckStore } from "../analysis/updateCheckStore.js";
 import type { BackupManager } from "../storage/backupManager.js";
@@ -548,6 +551,14 @@ export interface AppOptions {
   slackSocketMode?: boolean;
   notifier?: Notifier;
   notifyEmailEnabled?: boolean;
+  // SIEM audit export (#929): a GLOBAL destination store (Splunk HEC / Elasticsearch / syslog), the
+  // durable per-destination-per-case delivery position, and the exporter that forwards each case's
+  // new activity-log entries. All three optional together — a bare createApp (tests) gets the
+  // feature OFF and never opens a socket. Opt-in: the store starts empty, so nothing leaves the box
+  // until an analyst adds a destination.
+  auditExportStore?: AuditExportStore;
+  auditExportCursors?: AuditCursorStore;
+  auditExporter?: AuditExporter;
   dashboardBaseUrl?: string;
   // Diagnostics live probe; tests can inject a no-network provider.
   aiTestProvider?: () => AnalyzeProvider | undefined;

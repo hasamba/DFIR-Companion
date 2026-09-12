@@ -27,6 +27,11 @@ export const ACTIVITY_CATEGORIES = [
 ] as const;
 export type ActivityCategory = (typeof ACTIVITY_CATEGORIES)[number];
 
+// How many raw log lines one forward read consumes (readFrom). Sized so a batch stays well inside
+// a Splunk HEC or Elasticsearch bulk request without needing its own chunking, and so a case with
+// years of history is walked in steps rather than loaded whole.
+export const ACTIVITY_READ_BATCH = 500;
+
 export const activityLogEntrySchema = z.object({
   id: z.string(),
   timestamp: z.string(),
@@ -107,6 +112,50 @@ export class ActivityLogStore {
     entries.reverse();
     const filtered = filter.category ? entries.filter((e) => e.category === filter.category) : entries;
     return typeof filter.limit === "number" ? filtered.slice(0, filter.limit) : filtered;
+  }
+
+  /**
+   * Read forward from a position, oldest-first — the shape the SIEM audit export needs (#929).
+   *
+   * `load()` cannot serve that job: it returns newest-first, filters by category, and has no way to
+   * say "what is new since last time". A feed must deliver actions in the order they happened and
+   * must be able to resume, so this returns a slice plus the position after it.
+   *
+   * The position counts RAW LINES, including ones that failed to parse. Counting parsed entries
+   * instead would shift the position by one for every corrupt line the reader skipped, and the
+   * exporter would re-send a good entry after it forever.
+   *
+   * `limit` bounds one read so a long-lived case cannot pull its entire history into memory in one
+   * go; the caller advances and calls again.
+   */
+  async readFrom(
+    caseId: string,
+    afterLines: number,
+    limit = ACTIVITY_READ_BATCH,
+  ): Promise<{ entries: ActivityLogEntry[]; lines: number }> {
+    const from = Number.isFinite(afterLines) && afterLines > 0 ? Math.floor(afterLines) : 0;
+    let text: string;
+    try {
+      text = await readFile(this.path(caseId), "utf8");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return { entries: [], lines: from };
+      throw err;
+    }
+    const raw = text.split("\n");
+    // An append-only file always ends with a newline, which split() turns into a trailing empty
+    // element. It is not a record and must not be counted as one.
+    if (raw.length && raw[raw.length - 1] === "") raw.pop();
+    const slice = raw.slice(from, from + Math.max(1, Math.floor(limit)));
+    const entries: ActivityLogEntry[] = [];
+    for (const line of slice) {
+      if (!line.trim()) continue;
+      try {
+        entries.push(activityLogEntrySchema.parse(JSON.parse(line)));
+      } catch {
+        /* skip a malformed line — it is still counted, see above */
+      }
+    }
+    return { entries, lines: from + slice.length };
   }
 }
 

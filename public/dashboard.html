@@ -377,6 +377,7 @@
   <script src="/js/dashboard-asset-graph.js"></script>
   <script src="/js/dashboard-login-graph.js"></script>
   <script src="/js/dashboard-notifications.js"></script>
+  <script src="/js/dashboard-audit-export.js"></script>
   <script src="/js/dashboard-starred.js"></script>
   <script src="/js/dashboard-heatmap.js"></script>
   <script src="/js/dashboard-false-positive.js"></script>
@@ -1175,6 +1176,7 @@
         <button class="stab" data-stab="reports">Report Templates</button>
         <button class="stab" data-stab="dashboard-views">Dashboard Views</button>
         <button class="stab" data-stab="notifications" data-essential>Notifications</button>
+        <button class="stab" data-stab="auditexport">Audit Export</button>
         <button class="stab" data-stab="updates">Updates</button>
         <button class="stab" data-stab="diagnostics">Diagnostics</button>
       </div>
@@ -2729,6 +2731,93 @@
         </div>
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_TELEGRAM_ACTION_USERS">Action users<span class="sfield-hint">DFIR_TELEGRAM_ACTION_USERS — who may trigger actions from Telegram. <b>Read-only here</b> — a security boundary the dashboard must not be able to move. Edit <code>.env</code> and restart.</span></label><input id="env-DFIR_TELEGRAM_ACTION_USERS" placeholder="(none)" readonly /></div>
+        </div>
+      </div>
+
+      <!-- SIEM audit export (issue #929) — forward the per-case activity log to Splunk HEC,
+           Elasticsearch, or syslog. Global, shared across cases, and opt-in: the destination list
+           starts empty and nothing leaves the box until an analyst adds one. -->
+      <div class="stab-pane" id="stab-auditexport">
+        <div class="sfield-hint" data-safe-style="display:block;margin-bottom:8px">
+          Forward every case's <strong>activity log</strong> — who did what, when, to which case, and whether it worked — to a SIEM, for SOC 2 / ISO 27001 evidence and central log aggregation. Global; shared across all cases.
+        </div>
+        <div data-safe-style="background:var(--warning-bg);border:1px solid var(--warning-border);border-radius:6px;padding:6px 9px;font-size:12px;color:var(--tag-orange-text);margin-bottom:12px">
+          ⚠ This sends case identifiers, analyst names, and what each analyst did to a third-party system. Off by default — each destination is opt-in. Switching one on forwards only what happens <em>next</em>; use <strong>Send history</strong> to ship what is already recorded.
+        </div>
+
+        <div class="sfield">
+          <label>Add a destination</label>
+          <div data-safe-style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px">
+            <select id="axType" data-safe-style="flex:0 0 auto">
+              <option value="splunk">Splunk HEC</option>
+              <option value="elastic">Elasticsearch</option>
+              <option value="syslog">Syslog (RFC 5424)</option>
+            </select>
+            <input id="axName" placeholder="destination name (e.g. SOC Splunk)" data-safe-style="flex:1 1 200px" />
+            <label data-safe-style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text-muted)"><input id="axEnabled" type="checkbox" /> enabled</label>
+          </div>
+          <!-- Splunk HTTP Event Collector -->
+          <div id="axSplunkRows" data-safe-style="margin-bottom:6px">
+            <div data-safe-style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
+              <input id="axSplunkUrl" placeholder="https://splunk.example.com:8088" data-safe-style="flex:1 1 240px" autocomplete="off" />
+              <input id="axSplunkToken" type="password" placeholder="HEC token" autocomplete="new-password" data-safe-style="flex:1 1 200px" />
+            </div>
+            <div data-safe-style="display:flex;gap:6px;flex-wrap:wrap">
+              <input id="axSplunkIndex" placeholder="index (optional)" data-safe-style="flex:1 1 140px" />
+              <input id="axSplunkSourcetype" placeholder="sourcetype (optional, e.g. dfir:activity)" data-safe-style="flex:1 1 220px" />
+            </div>
+            <div class="sfield-hint" data-safe-style="margin-top:4px">Records go to <code>/services/collector/event</code> with each action's own timestamp, so they land in Splunk at the time the analyst acted rather than at the time the batch was sent.</div>
+          </div>
+          <!-- Elasticsearch bulk -->
+          <div id="axElasticRows" data-safe-style="display:none;margin-bottom:6px">
+            <div data-safe-style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
+              <input id="axElasticUrl" placeholder="https://es.example.com:9200" data-safe-style="flex:1 1 240px" autocomplete="off" />
+              <input id="axElasticIndex" placeholder="index (e.g. dfir-audit)" data-safe-style="flex:1 1 160px" />
+            </div>
+            <div data-safe-style="display:flex;gap:6px;flex-wrap:wrap">
+              <input id="axElasticUser" placeholder="username (optional)" autocomplete="off" data-safe-style="flex:1 1 140px" />
+              <input id="axElasticPass" type="password" placeholder="password (optional)" autocomplete="new-password" data-safe-style="flex:1 1 140px" />
+              <input id="axElasticApiKey" type="password" placeholder="or API key" autocomplete="new-password" data-safe-style="flex:1 1 160px" />
+            </div>
+            <div class="sfield-hint" data-safe-style="margin-top:4px">Each record is written with its own activity-log id, so a re-send — after an outage, or from <strong>Send history</strong> — cannot duplicate a row. Leave the credentials blank for a cluster with no authentication.</div>
+          </div>
+          <!-- Syslog -->
+          <div id="axSyslogRows" data-safe-style="display:none;margin-bottom:6px">
+            <div data-safe-style="display:flex;gap:6px;flex-wrap:wrap">
+              <input id="axSyslogHost" placeholder="collector host" data-safe-style="flex:1 1 200px" autocomplete="off" />
+              <input id="axSyslogPort" type="number" placeholder="514" value="514" data-safe-style="flex:0 0 90px" />
+              <select id="axSyslogProtocol" data-safe-style="flex:0 0 auto">
+                <option value="udp">UDP</option>
+                <option value="tcp">TCP</option>
+              </select>
+              <input id="axSyslogAppName" placeholder="app name (default dfir-companion)" data-safe-style="flex:1 1 180px" />
+            </div>
+            <div class="sfield-hint" data-safe-style="margin-top:4px">One RFC 5424 line per action, facility <code>log audit</code>, with a failed action graded above a successful one so a receiver can select failures by priority alone. UDP cannot confirm delivery — use TCP where the evidence has to be complete.</div>
+          </div>
+          <div data-safe-style="display:flex;gap:8px;align-items:center">
+            <button id="axAddBtn" type="button">Add destination</button>
+            <span id="axMsg" class="manual-msg"></span>
+          </div>
+        </div>
+
+        <div class="sfield">
+          <label>Destinations <span id="axCount" class="sfield-hint" data-safe-style="display:inline"></span></label>
+          <div id="axList" data-safe-style="max-height:300px;overflow:auto;border:1px solid var(--border-color);border-radius:6px;padding:4px"></div>
+        </div>
+
+        <div class="settings-group-head">TLS trust for a self-hosted collector</div>
+        <p class="rm-hint" data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 6px">Only needed when the collector presents an internal-CA or self-signed certificate. Scoped to the audit export alone — it changes nothing about how any other integration verifies TLS.</p>
+        <div class="sfield-row">
+          <div class="sfield">
+            <label for="env-DFIR_AUDIT_CA">CA bundle path</label>
+            <input id="env-DFIR_AUDIT_CA" placeholder="/path/to/internal-ca.pem" />
+            <div class="sfield-hint">PEM bundle that signs the collector's certificate.</div>
+          </div>
+          <div class="sfield">
+            <label for="env-DFIR_AUDIT_INSECURE">Skip TLS verify</label>
+            <input id="env-DFIR_AUDIT_INSECURE" placeholder="1 to skip (lab only)" />
+            <div class="sfield-hint">Lab only. Refused for a non-loopback host unless <code>DFIR_TLS_ALLOW_INSECURE_EXTERNAL</code> is also set, so it cannot silently disable verification against a real collector.</div>
+          </div>
         </div>
       </div>
 
@@ -5507,6 +5596,7 @@
     // Notifications controls
     // The notifications feature's own two controls moved with it (#415).
     if (typeof initNotifications === "function") initNotifications();
+    if (typeof initAuditExport === "function") initAuditExport(); else dfirFeatureUnavailable("SIEM audit export"); // #929
     document.getElementById("stab-notifications").addEventListener("click", e => {
       const test = e.target.closest(".ntf-test");
       if (test) { ntfTest(test.dataset.id); return; }

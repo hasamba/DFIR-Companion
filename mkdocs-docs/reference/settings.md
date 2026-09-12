@@ -340,6 +340,64 @@ Each channel has:
 
 ---
 
+## Audit Export
+
+Forward each case's [activity log](dashboard.md) — who did what, when, to which case, and whether
+the action succeeded — to a SIEM. This is the surface auditors ask for: SOC 2 and ISO 27001 both
+expect privileged actions to land in central log aggregation rather than only in the tool that
+recorded them.
+
+Three destination types:
+
+- **Splunk HEC** — collector URL and an HEC token. Optional index and sourcetype.
+- **Elasticsearch** — cluster URL and an index. Username + password, an API key, or no credential
+  at all for a cluster without authentication.
+- **Syslog** — host, port, and UDP or TCP. RFC 5424, facility `log audit`.
+
+Each destination has an **on** switch, a **Test** button that sends one clearly-marked test record,
+and a **Send history** button.
+
+### What each record carries
+
+| Field | What it says |
+|---|---|
+| `id` | The activity entry's own id. A SIEM that honours it collapses a duplicate from a re-send. |
+| `timestamp` | When the analyst acted — not when the batch was sent. |
+| `caseId` | Which case. |
+| `category`, `action`, `detail` | What was done. |
+| `actor` | The name recorded against the action. |
+| `actorId`, `actorKind` | Present only when an authenticated session made the change. |
+| `actorVerified` | Whether the server verified that name, or the client supplied it. |
+| `outcome` | `success` or `error`. A failed privileged action is the interesting one. |
+| `targetType`, `targetId` | What the action was aimed at, when the entry names one. |
+
+!!! warning "This sends case content off the box"
+    Case identifiers, analyst names, and what each analyst did go to a third-party system. Off by
+    default — each destination is opt-in, and the list starts empty.
+
+### Switching a destination on forwards only what happens next
+
+A destination begins at the current end of every case's log. Turning one on does not ship the
+history that is already recorded; that is what **Send history** is for, and it asks before it runs.
+The reason is the obvious failure: a destination enabled mid-investigation would otherwise push a
+year of activity into a production SIEM the moment someone ticked a box.
+
+### After an outage
+
+The export remembers how far it got in each case, per destination, and writes that position only
+after a send is accepted. A collector that is down holds the position where it was, so the next
+action — or the next restart — re-sends from there rather than skipping. Splunk and Elasticsearch
+receive the entry id, so a re-send is collapsed rather than duplicated; a plain syslog receiver has
+no such mechanism and will show the line twice.
+
+!!! info
+    Destinations and their credentials are stored in a global config file next to `cases/` (not
+    `.env`), and every token, password and API key is redacted in all API responses. Only the TLS
+    trust for a self-hosted collector is an `.env` setting: `DFIR_AUDIT_CA` and
+    `DFIR_AUDIT_INSECURE`.
+
+---
+
 ## War-Room Bot
 
 Inbound slash commands from Slack / Teams / Telegram — see [War-Room Slash-Command Bot](war-room-bot.md) for setup. Configured entirely in `.env`; each platform switches on when its secret is set.
