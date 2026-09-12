@@ -165,6 +165,19 @@ describe("trailerTokens", () => {
       "six FIRST",
     ]);
     expect(trailerTokens('"-"')).toEqual(["-"]);
+    // tokens are whole: the clip is display-only, the identity is the complete text
+    expect(trailerTokens(`"${"A".repeat(500)}TAIL"`)).toEqual([`${"A".repeat(500)}TAIL`]);
+  });
+  it("two trailers that share a long prefix are two identities, and token boundaries count", () => {
+    const first = readTrailer(trailerTokens(`"${"A".repeat(160)}FIRST"`), null);
+    const second = readTrailer(trailerTokens(`"${"A".repeat(160)}SECOND"`), null);
+    expect(first.variantKey).not.toBe(second.variantKey);
+    expect(first.trailerWords.length).toBeLessThanOrEqual("trailer: ".length + 80);
+    // past the token cap the remainder is whole too
+    const tail = (t: string) =>
+      readTrailer(trailerTokens(`a b c d e ${"x".repeat(450)}${t}`), null).variantKey;
+    expect(tail("1")).not.toBe(tail("2"));
+    expect(readTrailer(["ab", "c"], null).variantKey).not.toBe(readTrailer(["a", "bc"], null).variantKey);
   });
 });
 

@@ -630,6 +630,16 @@ describe("parseCombinedLog — what one line establishes", () => {
     );
   });
 
+  it("two lines whose trailers differ only past the display width stay two rows", () => {
+    const line = (t: string) =>
+      `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /status HTTP/1.1" 200 83 "-" "curl/8" "${"A".repeat(160)}${t}"`;
+    const r = parseCombinedLog([line("FIRST"), line("SECOND")].join("\n"));
+    expect(r.total).toBe(2);
+    expect(r.events).toHaveLength(2);
+    expect(r.events[0].aggKey).not.toBe(r.events[1].aggKey);
+    expect(r.events.every((e) => e.description.length <= 600)).toBe(true);
+  });
+
   it("a trailer token cannot forge a tag, and unbounded trailer values fold rather than multiplying rows", () => {
     const forged =
       '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /status HTTP/1.1" 200 83 "-" "curl/8" "] [proxy: served from its cache"';

@@ -32,8 +32,6 @@ import { isIP } from "node:net";
 const TRAILER_TOKEN_MAX = 40;
 const DIGEST_HEX = 16;
 const TRAILER_TOKENS_MAX = 6;
-/** The remainder past the token cap, kept as one token so it still reaches the row's identity. */
-const TRAILER_REMAINDER_MAX = 400;
 const TRAILER_WORDS_MAX = 80;
 const HOST_MAX = 120;
 
@@ -247,7 +245,12 @@ export interface TrailerProfile {
   squidSlot: number;
 }
 
-/** Split the text after the User-Agent into tokens: a quoted run is one token, bare runs split. */
+/**
+ * Split the text after the User-Agent into tokens: a quoted run is one token, bare runs split.
+ * Tokens are returned WHOLE — never clipped here. Their display is clipped in readTrailer, but
+ * their identity is a digest of the complete text: a token clipped before hashing let two values
+ * that share a prefix fold into one row, and the second line's evidence was gone.
+ */
 export function trailerTokens(rest: string): string[] {
   const out: string[] = [];
   const re = /"((?:[^"\\]|\\.)*)"|(\S+)/g;
@@ -259,10 +262,10 @@ export function trailerTokens(rest: string): string[] {
     // still reach the row's identity, or two lines differing only in a late field would fold into
     // one and lose a row.
     if (out.length >= TRAILER_TOKENS_MAX - 1) {
-      out.push(rest.slice(m.index).trim().slice(0, TRAILER_REMAINDER_MAX));
+      out.push(rest.slice(m.index).trim());
       break;
     }
-    out.push(token.slice(0, TRAILER_TOKEN_MAX * 4));
+    out.push(token);
   }
   return out;
 }
@@ -324,8 +327,12 @@ export function readTrailer(tokens: readonly string[], profile: TrailerProfile |
   const trailerWords = unlabelled.length
     ? `trailer: ${unlabelled.join(" ").slice(0, TRAILER_WORDS_MAX)}`
     : "";
+  // Length-framed so token boundaries are part of the identity: `ab c` and `a bc` are two trailers.
   const digest = raw.some((t) => t.trim())
-    ? createHash("sha256").update(raw.join(" ")).digest("hex").slice(0, DIGEST_HEX)
+    ? createHash("sha256")
+        .update(raw.map((t) => `${t.length}:${t}`).join("|"))
+        .digest("hex")
+        .slice(0, DIGEST_HEX)
     : "";
   return {
     squid,
