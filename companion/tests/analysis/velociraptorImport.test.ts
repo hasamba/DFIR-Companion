@@ -937,7 +937,7 @@ describe("parseVelociraptorJson — download rows (Zone.Identifier / BrowserDown
   // The mark is often the only surviving record of how an intrusion started, so the zone and the
   // file type have to reach the analyst. Grading every row Info kept fifteen ZoneId=3 rows — the
   // whole attack toolkit — off the forensic timeline on a benchmark collection.
-  it("grades an Internet-zone script download Medium with T1204.002", () => {
+  it("grades an Internet-zone script download Medium — the mark alone carries no execution technique", () => {
     const r = parseVelociraptorJson(
       JSON.stringify([
         downloadRow({
@@ -948,7 +948,7 @@ describe("parseVelociraptorJson — download rows (Zone.Identifier / BrowserDown
       ]),
     );
     expect(r.events[0].severity).toBe("Medium");
-    expect(r.events[0].mitreTechniques).toContain("T1204.002");
+    expect(r.events[0].mitreTechniques).toEqual([]);
     expect(r.events[0].description).toContain("Internet zone");
   });
 
@@ -1648,6 +1648,84 @@ describe("parseVelociraptorJson — hostFallback (single-client flow attribution
     const r = parseVelociraptorJson(text, { artifact: "Windows.NTFS.MFT", hostFallback: "DESKTOP-01" });
     const withHost = r.events.find((e) => e.asset);
     expect(withHost?.asset).toBe("SERVER-9");
+  });
+});
+
+// #932 item 3 — a Windows.NTFS.MFT row that names an alternate data stream in OSPath.
+describe("parseVelociraptorJson — MFT alternate data streams", () => {
+  const mft = (rows: object[]) =>
+    parseVelociraptorJson(JSON.stringify({ "Windows.NTFS.MFT": rows }), { artifact: "Windows.NTFS.MFT" });
+  const row = (osPath: string, over: object = {}) => ({
+    EntryNumber: 4242,
+    OSPath: osPath,
+    Created0x10: "2026-06-01T00:00:00Z",
+    Computer: "WS-01",
+    ...over,
+  });
+
+  it("a stream with a code-like name reads as one, Medium + T1564.004, the host path unchanged", () => {
+    const r = mft([row("C:\\Users\\bob\\Documents\\notes.txt:payload.dll", { FileSize: 1234567 })]);
+    const e = r.events[0];
+    expect(e.severity).toBe("Medium");
+    expect(e.mitreTechniques).toEqual(["T1564.004"]);
+    expect(e.description).toContain(
+      'C:\\Users\\bob\\Documents\\notes.txt:payload.dll — alternate data stream "payload.dll" on notes.txt (1234567 bytes) — named stream with a code-like name — stream content not in this record',
+    );
+    expect(e.path).toBe("C:\\Users\\bob\\Documents\\notes.txt:payload.dll");
+  });
+
+  it("a Zone.Identifier stream is a download mark, Info; an ordinary path reads exactly as before", () => {
+    const zone = mft([row("C:\\Users\\bob\\Downloads\\tool.exe:Zone.Identifier", { FileSize: 26 })])
+      .events[0];
+    expect(zone.severity).toBe("Info");
+    expect(zone.description).toContain(
+      'alternate data stream "Zone.Identifier" on tool.exe (26 bytes) — download mark (Zone.Identifier) — download provenance, not execution',
+    );
+    const plain = mft([row("C:\\Users\\bob\\Downloads\\tool.exe")]).events[0];
+    expect(plain.description).toBe(
+      "Velociraptor [Windows.NTFS.MFT]: $SI:...b — C:\\Users\\bob\\Downloads\\tool.exe - @ WS-01",
+    );
+    expect(plain.severity).toBe("Info");
+    expect(plain.aggKey).toBe("vr|mft|ws-01|$si:...b|c:\\users\\bob\\downloads\\tool.exe");
+  });
+
+  it("a stream whose name looks like a ransomware extension is not ransomware — the host path decides", () => {
+    const r = mft([row("C:\\Users\\bob\\Documents\\report.docx:cache.akira", { FileSize: 512 })]);
+    const e = r.events[0];
+    expect(e.severity).toBe("Info");
+    expect(e.mitreTechniques).toEqual([]);
+    expect(e.description).not.toContain("T1486");
+    expect(e.description).toContain('alternate data stream "cache.akira" on report.docx');
+    // …while an encrypted HOST file still is, stream or not.
+    const enc = mft([row("C:\\Users\\bob\\Documents\\report.docx.akira:Zone.Identifier")]).events[0];
+    expect(enc.severity).toBe("High");
+    expect(enc.mitreTechniques).toContain("T1486");
+  });
+
+  it("the same file on two hosts whose names differ by a digit is two rows — stream or not", () => {
+    const r = mft([
+      row("C:\\Users\\bob\\notes.txt:payload.dll", { Computer: "WS-01" }),
+      row("C:\\Users\\bob\\notes.txt:payload.dll", { Computer: "WS-02" }),
+      row("C:\\Users\\bob\\notes.txt", { Computer: "WS-01" }),
+      row("C:\\Users\\bob\\notes.txt", { Computer: "WS-02" }),
+    ]);
+    expect(r.events).toHaveLength(4);
+    expect(r.events.map((e) => e.asset).sort()).toEqual(["WS-01", "WS-01", "WS-02", "WS-02"]);
+  });
+
+  it("two streams that differ only by a digit, or beyond a long common prefix, are two rows", () => {
+    const deep = `C:\\${"d".repeat(390)}\\notes.txt`;
+    const r = mft([
+      row("C:\\Users\\bob\\notes.txt:payload1.dll"),
+      row("C:\\Users\\bob\\notes.txt:payload2.dll"),
+      row(`${deep}:a.dll`),
+      row(`${deep}:b.dll`),
+      // …and two HOST files that differ by a digit, carrying one stream name, are two rows too
+      row("C:\\x\\note1.txt:payload.dll"),
+      row("C:\\x\\note2.txt:payload.dll"),
+    ]);
+    expect(r.events).toHaveLength(6);
+    expect(new Set(r.events.map((e) => e.aggKey)).size).toBe(6);
   });
 });
 

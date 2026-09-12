@@ -1,22 +1,23 @@
-// MITRE-mapping follow-ups from the Velociraptor eval: T1189 (drive-by download) and
+// Follow-ups from the Velociraptor eval: the download-mark grade (its T1189 was withdrawn, #932 item 3) and
 // T1021.001 (RDP lateral movement). T1567.002 (rclone execution) is covered in prefetchExecution.test.
 import { describe, it, expect } from "vitest";
 import { gradeMotwDownload } from "../../src/analysis/motwDownload.js";
 import { rdpLateralSignal } from "../../src/analysis/rdpLateralDetect.js";
 import { parseVelociraptorJson } from "../../src/analysis/velociraptorImport.js";
 
-describe("gradeMotwDownload — internet download is drive-by initial access (T1189)", () => {
-  it("adds T1189 alongside T1204.002 for an internet-zone runnable", () => {
+// #932 item 3 withdrew the techniques: a mark establishes where a file came from, not that it ran
+// (T1204.002) nor that a website compromise delivered it (T1189). The grade stays.
+describe("gradeMotwDownload — an internet download is a lead, not an execution or drive-by claim", () => {
+  it("grades an internet-zone runnable Medium with no technique", () => {
     const g = gradeMotwDownload("3", "installer.msi");
     expect(g.severity).toBe("Medium");
-    expect(g.mitre).toContain("T1189");
-    expect(g.mitre).toContain("T1204.002");
+    expect(g.mitre).toEqual([]);
   });
 
-  it("keeps only T1204.002 for the Restricted zone (4) — no website-compromise claim", () => {
+  it("grades a Restricted-zone (4) runnable Medium with no technique", () => {
     const g = gradeMotwDownload("4", "tool.exe");
-    expect(g.mitre).toContain("T1204.002");
-    expect(g.mitre).not.toContain("T1189");
+    expect(g.severity).toBe("Medium");
+    expect(g.mitre).toEqual([]);
   });
 
   it("says nothing about a trusted-zone or non-runnable download", () => {

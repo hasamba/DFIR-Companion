@@ -384,6 +384,7 @@
     "notificationStore.ts": "analysis/notify",
     "notifications.ts": "analysis/notify",
     "nsrl.ts": "analysis/intel",
+    "ntfsStreams.ts": "analysis/ingest",
     "nsrlDb.ts": "analysis/intel",
     "nsrlStore.ts": "analysis/intel",
     "ocrRedact.ts": "analysis/privacy",

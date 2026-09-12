@@ -69,10 +69,17 @@ export interface MotwGrade {
 /**
  * Grade a download record from its zone and the file it marked.
  *
- * An untrusted-zone EXECUTABLE or SCRIPT is the finding: the user pulled runnable code off the
- * internet, which is the precondition ATT&CK calls T1204.002, and it is worth an analyst's eye even
- * before anything proves it ran. A document, an image or an archive from the same zone is ordinary
- * browsing and stays at Info — the record is still on the timeline, it just is not a lead.
+ * An untrusted-zone EXECUTABLE or SCRIPT is the lead: the user pulled runnable code off the
+ * internet, and that is worth an analyst's eye even before anything proves it ran. A document, an
+ * image or an archive from the same zone is ordinary browsing and stays at Info — the record is
+ * still on the timeline, it just is not a lead.
+ *
+ * No technique rides on the mark (#932 item 3). The stream establishes where the file came from —
+ * the zone and, when written, the URL. It does not establish that the file ran (T1204.002) or that a
+ * website compromise delivered it (T1189); those used to be attached here and were the only claim of
+ * execution or of a drive-by on rows that hold neither. They return through corroboration — a
+ * Prefetch, Amcache or process record for the same file — which is a join across records, not a
+ * per-record fact.
  */
 export function gradeMotwDownload(zoneId: string, fileName: string): MotwGrade {
   const zone = zoneText(zoneId);
@@ -82,10 +89,5 @@ export function gradeMotwDownload(zoneId: string, fileName: string): MotwGrade {
   const dot = name.lastIndexOf(".");
   const ext = dot >= 0 ? name.slice(dot + 1) : "";
   if (!RUNNABLE_EXT.test(ext) && !CONTAINER_EXT.test(ext)) return { severity: "Info", mitre: [], zoneLabel };
-  // A runnable/container pulled from the ORDINARY internet zone is the drive-by / malvertising entry
-  // vector (T1189) as well as user-execution of a downloaded file (T1204.002) — the initial-access
-  // half is what tied 004 (Bing SEO poisoning) and 008 (malvertising) to their reports. Zone 4
-  // (Restricted) keeps only T1204.002; the zone number does not identify a website compromise there.
-  const mitre = zone === "3" ? ["T1189", "T1204.002"] : ["T1204.002"];
-  return { severity: "Medium", mitre, zoneLabel };
+  return { severity: "Medium", mitre: [], zoneLabel };
 }

@@ -52,6 +52,24 @@ export function downloadAggKey(host: string, name: string, urlDisplay: string): 
   );
 }
 
+// An $MFT entry. The path's digits fold to `#` so a sweep over numbered files collapses; the HOST
+// never folds (WS-01 and WS-02 are two hosts — the key used to fold them into one). A row that IS
+// an alternate data stream (#932 item 3) keeps its host path AND its stream name EXACT and closes
+// with a digest: `note1.txt:payload.dll` and `note2.txt:payload.dll` are two rows, `payload1.dll`
+// and `payload2.dll` are two rows, and a stream past character 400 is its own row.
+export function mftAggKey(
+  host: string,
+  macb: string,
+  path: string,
+  stream?: { hostPath: string; stream: string } | null,
+): string {
+  const folded = (s: string): string => s.toLowerCase().replace(/\d+/g, "#");
+  const lead = `vr|mft|${host.toLowerCase()}|${macb.toLowerCase()}`;
+  if (stream)
+    return boundedAggKey(`${lead}|${stream.hostPath.toLowerCase()}|ads:${stream.stream.toLowerCase()}`);
+  return `${lead}|${folded(path)}`.slice(0, 400);
+}
+
 // A scheduled task. The task name is a nested path and is the unbounded field.
 export function taskAggKey(host: string, taskName: string): string {
   return boundedAggKey(`vr-task|${host.toLowerCase()}|${foldVolatileIds(taskName.toLowerCase())}`);

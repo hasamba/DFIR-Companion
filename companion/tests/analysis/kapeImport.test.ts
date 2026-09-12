@@ -195,6 +195,112 @@ describe("parseKapeCsv — artifact detection & mapping", () => {
     );
   });
 
+  // #932 item 3 — an MFTECmd row that IS an alternate data stream, and the host file's own row.
+  describe("MFT: alternate data streams", () => {
+    const header = [
+      "EntryNumber",
+      "InUse",
+      "ParentPath",
+      "FileName",
+      "Extension",
+      "FileSize",
+      "IsDirectory",
+      "IsAds",
+      "HasAds",
+      "ZoneIdContents",
+      "Created0x10",
+      "Created0x30",
+      "LastModified0x10",
+    ];
+    const mark = "[ZoneTransfer]\r\nZoneId=3\r\nHostUrl=https://files.example.invalid/tool.exe\r\n";
+    const row = (
+      fileName: string,
+      size: string,
+      over: { isAds?: string; hasAds?: string; zone?: string; created?: string; fnCreated?: string } = {},
+    ) => [
+      "100",
+      "True",
+      ".\\Users\\bob\\Documents",
+      fileName,
+      "",
+      size,
+      "False",
+      over.isAds ?? "False",
+      over.hasAds ?? "False",
+      over.zone ?? "",
+      over.created ?? "2026-06-02 09:15:23.4821330",
+      over.fnCreated ?? "2026-06-02 09:15:23.4821330",
+      "2026-06-02 09:15:23.4821330",
+    ];
+
+    it("a stream row with a code-like name is Medium + T1564.004, keyed on its own path", () => {
+      const r = parseKapeCsv(
+        csv(header, [
+          row("notes.txt", "512", { hasAds: "True" }),
+          row("notes.txt:payload.dll", "1234567", { isAds: "True" }),
+        ]),
+      );
+      expect(r.artifact).toBe("MFT");
+      expect(r.events).toHaveLength(2);
+      const stream = r.events.find((e) => e.path?.endsWith(":payload.dll"))!;
+      expect(stream.severity).toBe("Medium");
+      expect(stream.mitreTechniques).toEqual(["T1564.004"]);
+      expect(stream.description).toBe(
+        'MFT: .\\Users\\bob\\Documents\\notes.txt:payload.dll — alternate data stream "payload.dll" on notes.txt (1234567 bytes) — named stream with a code-like name — stream content not in this record',
+      );
+      const host = r.events.find((e) => e.path?.endsWith("\\notes.txt"))!;
+      expect(host.severity).toBe("Info");
+      expect(host.description).toBe(
+        "MFT: .\\Users\\bob\\Documents\\notes.txt (512 bytes) — has alternate data streams",
+      );
+      expect(host.aggKey).not.toBe(stream.aggKey);
+    });
+
+    it("a Zone.Identifier stream row is a download mark: Info, no technique", () => {
+      const r = parseKapeCsv(csv(header, [row("notes.txt:Zone.Identifier", "26", { isAds: "True" })]));
+      const e = r.events[0];
+      expect(e.severity).toBe("Info");
+      expect(e.mitreTechniques).toEqual([]);
+      expect(e.description).toContain(
+        'alternate data stream "Zone.Identifier" on notes.txt (26 bytes) — download mark (Zone.Identifier)',
+      );
+      expect(e.description).toMatch(/download provenance, not execution$/);
+    });
+
+    it("a host row with ZoneIdContents reads the mark: Medium for a runnable from the Internet zone, the url an indicator, no technique", () => {
+      const r = parseKapeCsv(csv(header, [row("tool.exe", "40960", { hasAds: "True", zone: mark })]));
+      const e = r.events[0];
+      expect(e.severity).toBe("Medium");
+      expect(e.mitreTechniques).toEqual([]);
+      expect(e.description).toBe(
+        "MFT: .\\Users\\bob\\Documents\\tool.exe (40960 bytes) — has alternate data streams; downloaded from the Internet zone (https://files.example.invalid/tool.exe) — download provenance, not execution",
+      );
+      expect(
+        r.iocs.some((i) => i.type === "url" && i.value === "https://files.example.invalid/tool.exe"),
+      ).toBe(true);
+      const doc = parseKapeCsv(csv(header, [row("report.docx", "8192", { zone: mark })])).events[0];
+      expect(doc.severity).toBe("Info");
+      expect(doc.description).toContain("downloaded from the Internet zone");
+    });
+
+    it("a timestomped host row that also carries a mark keeps both notes and the higher grade", () => {
+      const r = parseKapeCsv(
+        csv(header, [
+          row("report.docx", "8192", {
+            zone: mark,
+            created: "2009-07-14 01:14:24.0000000",
+            fnCreated: "2026-06-02 09:15:23.4821330",
+          }),
+        ]),
+      );
+      const e = r.events[0];
+      expect(e.severity).toBe("Medium");
+      expect(e.mitreTechniques).toEqual(["T1070.006"]);
+      expect(e.description).toMatch(/timestomping/i);
+      expect(e.description).toContain("downloaded from the Internet zone");
+    });
+  });
+
   it("MFT: flags timestomping when $SI (Created0x10) is backdated before $FN (Created0x30)", () => {
     const text = csv(
       [
