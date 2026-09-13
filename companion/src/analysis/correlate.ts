@@ -45,17 +45,31 @@ const MD5_RE = /\b[a-f0-9]{32}\b/i;
 // URL/host, not a filesystem path — matching it falsely correlated unrelated detections that merely
 // shared a vendor URL in their text. (#102)
 const PATH_RE = /(?:[A-Za-z]:\\|\\\\)[^\s"'|<>]+|(?<![\w/:])\/(?:[\w.\-]+\/)+[\w.\-]+/;
+// A span an importer shows VERBATIM from a client- or resolver-written field — a web-log line's
+// appended trailer (#933 item 1), a DNS record's queried name and returned values (#933 item 2), a
+// TLS record's SNI and certificate names (#933 item 6), a quarantine record's agent, URLs, origin
+// title and sender (#933 item 7) —
+// is a label, never an artifact: nothing inside it may become a fallback hash or path, or an
+// attacker who appends `/tmp/payload.exe` to a request, or answers a TXT query with 32 hex, would
+// union that row with the endpoint event that really carries the file or the hash. Each span is
+// well-formed by construction (the importer turns `]` into `)` inside it), so it cannot close early.
+const UNTRUSTED_SPAN_RE =
+  /\[(?:trailer|query|returned|the record also carries returned values|sni|cert|client cert|certificate|kind|agent|data url|origin|sender|quarantine mark|quarantine mark \(not decodable\)|quarantine url|event identifier not decodable): [^\]]*\]/g;
+function scannedText(description: string): string {
+  return description.replace(UNTRUSTED_SPAN_RE, " ");
+}
 
 function eventHashes(e: ForensicEvent): string[] {
   const out = new Set<string>();
   if (e.sha256) out.add(e.sha256.toLowerCase());
   if (e.md5) out.add(e.md5.toLowerCase());
   // Fallback: pull a hash out of the description (e.g. an AI-extracted Velociraptor row).
-  const s256 = SHA256_RE.exec(e.description);
+  const text = scannedText(e.description);
+  const s256 = SHA256_RE.exec(text);
   if (s256) out.add(s256[0].toLowerCase());
   // Only treat a bare 32-hex as MD5 if no sha256 present in the text (avoid matching part of a sha).
   if (!s256) {
-    const m = MD5_RE.exec(e.description);
+    const m = MD5_RE.exec(text);
     if (m) out.add(m[0].toLowerCase());
   }
   return [...out];
@@ -67,7 +81,7 @@ function eventHashes(e: ForensicEvent): string[] {
 // against a structured path, never another free-text one (see the structured gate in step 2). (#102)
 function eventPath(e: ForensicEvent): { path: string; structured: boolean } | undefined {
   if (e.path && e.path.trim()) return { path: e.path.trim().toLowerCase(), structured: true };
-  const m = PATH_RE.exec(e.description)?.[0];
+  const m = PATH_RE.exec(scannedText(e.description))?.[0];
   return m ? { path: m.trim().toLowerCase(), structured: false } : undefined;
 }
 

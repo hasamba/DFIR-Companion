@@ -2,11 +2,12 @@ import { describe, it, expect } from "vitest";
 import {
   looksLikeCombinedLog,
   parseApacheDate,
-  requestHost,
   mapCombinedLogLine,
   parseCombinedLog,
 } from "../../src/analysis/combinedLogImport.js";
-import type { SiemIoc } from "../../src/analysis/siemImport.js";
+import type { SiemIoc, SiemEvent } from "../../src/analysis/siemImport.js";
+import { correlateEvents } from "../../src/analysis/correlate.js";
+import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 const HEALTH =
   '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /status HTTP/1.1" 200 83 "-" "Prometheus/2.47.0"';
@@ -47,16 +48,6 @@ describe("parseApacheDate", () => {
   });
   it('returns "" for garbage', () => {
     expect(parseApacheDate("not a date")).toBe("");
-  });
-});
-
-describe("requestHost", () => {
-  it("extracts the host from an absolute-URL request and a CONNECT target", () => {
-    expect(requestHost("https://vault.cloudpear.io/u/arjun/bk-0514.tgz")).toBe("vault.cloudpear.io");
-    expect(requestHost("vault.cloudpear.io:443")).toBe("vault.cloudpear.io");
-  });
-  it('returns "" for an ordinary relative path', () => {
-    expect(requestHost("/api/v4/projects?per_page=100")).toBe("");
   });
 });
 
@@ -491,5 +482,612 @@ describe("parseCombinedLog — attack-variant bound per path", () => {
       { maxEvents: 5000 },
     );
     expect(r.events).toHaveLength(1000);
+  });
+});
+
+// #933 item 1 (prerequisite phase) — the line keeps the fields it dropped, and says what each
+// field establishes. The chain across records is a separate spec issue.
+describe("parseCombinedLog — what one line establishes", () => {
+  const squidLine = (
+    result: string,
+    uri = "https://files.example.invalid/tool.exe",
+    status = 200,
+    bytes = "18376",
+    client = "10.30.10.14",
+  ) =>
+    `${client} - - [15/May/2024:06:42:01 +0000] "GET ${uri} HTTP/1.1" ${status} ${bytes} "-" "Wget/1.21.3" ${result}`;
+  // A LogFormat is the deployment's: the Squid slot is DECLARED on import, never read off the lines.
+  const squidFile = (lines: string[]) => lines.join("\n");
+  const DECLARED = { trailerProfile: { squidSlot: 0 } };
+
+  it("reads the proxy's two legs under a declared Squid trailer, and keys a hit apart from a miss", () => {
+    const r = parseCombinedLog(
+      squidFile([squidLine("TCP_HIT:NONE"), squidLine("TCP_MISS:HIER_DIRECT")]),
+      DECLARED,
+    );
+    const hit = r.events.find((e) => e.description.includes("served from its cache"))!;
+    const miss = r.events.find((e) => e.description.includes("fetched from the origin (direct)"))!;
+    expect(hit.description).toContain(
+      "[proxy: served from its cache; upstream: not contacted (squid_combined, declared format)]",
+    );
+    expect(hit.description).toContain("[absolute-form request target]");
+    // evidence order: the proxy's legs come before the target's form
+    expect(hit.description.indexOf("[proxy:")).toBeLessThan(hit.description.indexOf("[absolute-form"));
+    expect(miss.description).toContain("cache miss; fetched upstream");
+    expect(hit.aggKey).toContain("|squid:tcp_hit:none");
+    expect(miss.aggKey).toContain("|squid:tcp_miss:hier_direct");
+    expect(hit.aggKey).not.toBe(miss.aggKey);
+    expect(hit.severity).toBe("Info");
+  });
+
+  it("a Squid-shaped token in a file that is not a Squid log is never read as one", () => {
+    const apache =
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /status HTTP/1.1" 200 83 "-" "Prometheus/2.47.0" TCP_MISS:HIER_DIRECT';
+    const r = parseCombinedLog([HEALTH, apache, HEALTH].join("\n"));
+    const e = r.events.find((x) => x.description.includes("trailer:"))!;
+    expect(e.description).toContain("[trailer: TCP_MISS:HIER_DIRECT]");
+    expect(e.description).not.toContain("origin");
+    expect(e.description).not.toContain("proxy:");
+    expect(e.aggKey).not.toContain("squid");
+  });
+
+  it("a value the tables do not name stays an unlabelled token — never a disposition, never lost", () => {
+    const r = parseCombinedLog(
+      squidFile([squidLine("TCP_FOO:BAR_BAZ"), squidLine("TCP_MISS:NONCE_7")]),
+      DECLARED,
+    );
+    const unknown = r.events.find((x) => x.description.includes("TCP_FOO"))!;
+    expect(unknown.description).toContain("[trailer: TCP_FOO:BAR_BAZ]");
+    expect(unknown.description).not.toContain("proxy:");
+    expect(unknown.aggKey).not.toContain("squid:tcp_foo");
+    const nonce = r.events.find((x) => x.description.includes("NONCE_7"))!;
+    expect(nonce.description).toContain("[trailer: TCP_MISS:NONCE_7]");
+    expect(nonce.aggKey).not.toContain("nonce_7");
+    // 200 varying hierarchies on one path fold instead of minting 200 groups
+    const varying = Array.from({ length: 200 }, (_, i) =>
+      squidLine(`TCP_MISS:NONCE_${i}`, "https://files.example.invalid/one", 200, "18376", "10.30.10.1"),
+    );
+    const many = parseCombinedLog(squidFile(varying), DECLARED);
+    expect(
+      many.events.filter((e) => e.description.includes("files.example.invalid/one")).length,
+    ).toBeLessThanOrEqual(66);
+    expect(many.dropped).toBe(0);
+  });
+
+  it("a CONNECT line is a tunnel attempt: no URL is claimed, and the size is the tunnel's", () => {
+    const r = parseCombinedLog(CONNECT_EXFIL);
+    const e = r.events[0];
+    expect(e.description).toContain(
+      "[tunnel attempt to vault.cloudpear.io:443 — the requests inside are not in this record]",
+    );
+    expect(e.description).toContain("[the logged size is the tunnel's, not a response body]");
+    expect(e.aggKey).toContain("|form:authority");
+    expect(r.iocs.map((i) => i.value)).toContain("vault.cloudpear.io");
+  });
+
+  it("a redirect says the Location is not in the format; a 304 is not a redirect", () => {
+    const line = (status: number, bytes = "0") =>
+      `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /login HTTP/1.1" ${status} ${bytes} "-" "Mozilla/5.0"`;
+    const r = parseCombinedLog([line(302, "512"), line(304, "-")].join("\n"));
+    const redirect = r.events.find((e) => e.description.includes("-> 302"))!;
+    const notModified = r.events.find((e) => e.description.includes("-> 304"))!;
+    expect(redirect.description).toContain("[redirect — the Location is not in this format]");
+    expect(notModified.description).toContain("[not modified — no body]");
+    expect(notModified.description).not.toContain("redirect");
+  });
+
+  it("a HEAD and a 204 say why there is no body", () => {
+    const head = '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "HEAD /status HTTP/1.1" 200 0 "-" "curl/8.0"';
+    const noContent =
+      '10.30.20.11 - - [14/May/2024:19:00:01 +0000] "POST /api/ack HTTP/1.1" 204 0 "-" "curl/8.0"';
+    const r = parseCombinedLog([head, noContent].join("\n"));
+    expect(r.events.find((e) => e.description.includes("HEAD"))!.description).toContain(
+      "[no body by definition (HEAD)]",
+    );
+    expect(r.events.find((e) => e.description.includes("204"))!.description).toContain(
+      "[no body for this status]",
+    );
+  });
+
+  it("an appended IP list is kept verbatim, is not the client, and is not an indicator", () => {
+    const xff =
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /app HTTP/1.1" 200 83 "-" "Mozilla/5.0" "203.0.113.9, 10.0.0.1"';
+    const r = parseCombinedLog(xff);
+    const e = r.events[0];
+    expect(e.description).toContain("[trailer: 203.0.113.9, 10.0.0.1]");
+    expect(e.description).not.toContain("forwarded");
+    expect(e.srcIp).toBe("10.30.20.11");
+    expect(r.iocs.map((i) => i.value)).not.toContain("203.0.113.9");
+    expect(e.aggKey).not.toContain("203.0.113.9");
+  });
+
+  it("no count of lines or of clients establishes a Squid profile: the format is declared or it is not", () => {
+    // An Apache LogFormat ending in a request header the client writes: ten copies from each of two
+    // egress addresses, every one carrying a Squid-shaped pair. The file is unanimous, long enough
+    // for any statistical floor, and from more than one client — and it establishes nothing.
+    const forged = [
+      ...Array.from({ length: 10 }, (_, i) =>
+        squidLine("TCP_MISS:HIER_DIRECT", `https://files.example.invalid/p${i}`, 200, "18376", "203.0.113.7"),
+      ),
+      ...Array.from({ length: 10 }, (_, i) =>
+        squidLine(
+          "TCP_MISS:HIER_DIRECT",
+          `https://files.example.invalid/p${i}`,
+          200,
+          "18376",
+          "198.51.100.9",
+        ),
+      ),
+    ].join("\n");
+    const r = parseCombinedLog(forged);
+    expect(r.events.length).toBeGreaterThan(0);
+    expect(r.events.every((e) => !e.description.includes("proxy:"))).toBe(true);
+    expect(r.events.every((e) => !e.description.includes("origin"))).toBe(true);
+    expect(r.events.every((e) => e.description.includes("[trailer: TCP_MISS:HIER_DIRECT]"))).toBe(true);
+    expect(r.events.every((e) => !e.aggKey?.includes("squid"))).toBe(true);
+    // the same file under a declared format reads the pair — and says the reading is declared
+    const declared = parseCombinedLog(forged, DECLARED);
+    expect(declared.events.every((e) => e.description.includes("(squid_combined, declared format)"))).toBe(
+      true,
+    );
+  });
+
+  // What the import pipeline does after this parser: strip the key, then union two rows with one
+  // timestamp, one description and one host (correlateEvents' re-import rule).
+  const afterImport = (events: SiemEvent[]): ForensicEvent[] =>
+    correlateEvents(
+      events.map(({ aggKey: _k, ...e }, i) => ({
+        ...e,
+        id: `w${i}`,
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset: "proxy-01",
+      })),
+    );
+
+  it("two lines whose trailers differ only past the display width stay two rows — after import too", () => {
+    const line = (t: string) =>
+      `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /status HTTP/1.1" 200 83 "-" "curl/8" "${"Z".repeat(160)}${t}"`;
+    const r = parseCombinedLog([line("FIRST"), line("SECOND")].join("\n"));
+    expect(r.total).toBe(2);
+    expect(r.events).toHaveLength(2);
+    expect(r.events[0].aggKey).not.toBe(r.events[1].aggKey);
+    expect(r.events.every((e) => e.description.length <= 600)).toBe(true);
+    // the shown trailer is the same 40-character prefix on both, so the row's description carries
+    // an identity mark of its full key — the description is the row's identity downstream
+    expect(r.events[0].description).not.toBe(r.events[1].description);
+    expect(r.events.every((e) => / #[A-Za-z0-9_-]{22}$/.test(e.description))).toBe(true);
+    expect(afterImport(r.events)).toHaveLength(2);
+  });
+
+  it("the identity mark rides every lossy row and no complete one", () => {
+    // complete: byte-for-byte, no mark
+    expect(parseCombinedLog(HEALTH).events[0].description).toBe(
+      "GET /status -> 200 (83b) (ua Prometheus/2.47.0)",
+    );
+    // a neutralised bracket: two paths that READ alike are two rows after import
+    const bracket = (p: string) =>
+      `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET ${p} HTTP/1.1" 200 83 "-" "curl/8"`;
+    const b = parseCombinedLog([bracket("/a[1]"), bracket("/a(1)")].join("\n"));
+    expect(b.events).toHaveLength(2);
+    expect(b.events.find((e) => e.aggKey?.includes("/a[1]"))!.description).toMatch(
+      /^GET \/a\(1\) -> 200 \(83b\) \(ua curl\/8\) #[A-Za-z0-9_-]{22}$/,
+    );
+    expect(b.events.find((e) => e.aggKey?.includes("/a(1)"))!.description).toBe(
+      "GET /a(1) -> 200 (83b) (ua curl/8)",
+    );
+    expect(afterImport(b.events)).toHaveLength(2);
+    // two attack payloads whose excerpts and shown targets are clipped alike are two rows after import
+    const cols = Array.from({ length: 50 }, (_, i) => `c${i}`).join(",");
+    const attack = (tail: string) =>
+      `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /p?id=1%27%20union%20select%20${cols}${tail}%20--%20 HTTP/1.1" 200 83 "-" "curl/8"`;
+    const at = parseCombinedLog([attack("1"), attack("2")].join("\n"));
+    expect(at.events).toHaveLength(2);
+    expect(at.events[0].description.replace(/ #[\w-]+$/, "")).toBe(
+      at.events[1].description.replace(/ #[\w-]+$/, ""),
+    );
+    expect(
+      at.events.every((e) => / #[A-Za-z0-9_-]{22}$/.test(e.description) && e.description.length <= 600),
+    ).toBe(true);
+    expect(afterImport(at.events)).toHaveLength(2);
+    // two bracket-spelled paths that neutralise alike and were found to share a 32-bit mark stay two
+    const spelled = (p: string) =>
+      `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET ${p} HTTP/1.1" 200 83 "-" "curl/8"`;
+    const sp = parseCombinedLog(
+      [spelled("/((((([[[([[[(([[[((["), spelled("/(((([[[(([[[[[(([([[")].join("\n"),
+    );
+    expect(sp.events).toHaveLength(2);
+    expect(sp.events[0].description).not.toBe(sp.events[1].description);
+    expect(afterImport(sp.events)).toHaveLength(2);
+    // the mark is never a bare hex run: correlateEvents would read 32 hex as an MD5 and union rows
+    // of one key across days with no time bound
+    const ua = (day: number, agent: string) =>
+      `10.30.20.11 - - [${day}/May/2024:19:00:00 +0000] "GET /status HTTP/1.1" 200 83 "-" "${agent}"`;
+    const days = parseCombinedLog(ua(14, "agent[one]"), { aggregate: false }).events.concat(
+      parseCombinedLog(ua(15, "agent[two]"), { aggregate: false }).events,
+    );
+    expect(days).toHaveLength(2);
+    expect(days.every((e) => !/[0-9a-f]{32}/i.test(e.description))).toBe(true);
+    expect(afterImport(days)).toHaveLength(2);
+    // a hash-shaped trailer cannot become a correlation key: correlateEvents would read a bare
+    // 32-hex word as an MD5 and union two unrelated records across days
+    const hashy = (day: number, path: string, status: number) =>
+      `10.30.20.11 - - [${day}/May/2024:19:00:00 +0000] "GET ${path} HTTP/1.1" ${status} 83 "-" "curl/8" "${"a".repeat(32)}"`;
+    const two = parseCombinedLog([hashy(14, "/alpha", 200), hashy(15, "/bravo", 403)].join("\n"));
+    expect(two.events).toHaveLength(2);
+    expect(two.events.every((e) => !/[0-9a-f]{32}/i.test(e.description))).toBe(true);
+    expect(two.events[0].description).toContain("[trailer: aaaaaaaa…aaaa]");
+    expect(afterImport(two.events)).toHaveLength(2);
+    // …nor can a trailer become a correlation PATH: an appended `/tmp/payload.exe` must not union
+    // the request with the endpoint event that really created that file
+    const pathy =
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /status HTTP/1.1" 200 83 "-" "curl/8" "/tmp/payload.exe"';
+    const web = afterImport(parseCombinedLog(pathy).events)[0];
+    const endpoint: ForensicEvent = {
+      id: "ep1",
+      timestamp: "2024-05-14T19:00:01Z",
+      description: "File created",
+      severity: "Low",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      asset: "proxy-01",
+      path: "/tmp/payload.exe",
+    };
+    expect(web.description).toContain("[trailer: /tmp/payload.exe]");
+    expect(correlateEvents([web, endpoint])).toHaveLength(2);
+    // an unpaired surrogate (a UTF-16 export can carry one) is not folded into U+FFFD on the way
+    // into the identity: two lines with \uD800 and \uD801 are two rows, in the parser and after
+    const sur = (u: string) =>
+      `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /same HTTP/1.1" 200 83 "-" "curl/8" ${u}`;
+    const su = parseCombinedLog([sur("\uD800"), sur("\uD801")].join("\n"));
+    expect(su.events).toHaveLength(2);
+    expect(afterImport(su.events)).toHaveLength(2);
+    // a rebuilt long line carries it, inside the cap
+    const long = `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /${"a".repeat(650)} HTTP/1.1" 302 0 "-" "curl/8"`;
+    const l = parseCombinedLog(long).events[0];
+    expect(l.description.length).toBeLessThanOrEqual(600);
+    expect(l.description).toMatch(/ #[A-Za-z0-9_-]{22}$/);
+  });
+
+  it("a trailer token cannot forge a tag, and unbounded trailer values fold rather than multiplying rows", () => {
+    const forged =
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /status HTTP/1.1" 200 83 "-" "curl/8" "] [proxy: served from its cache"';
+    const f = parseCombinedLog(forged).events[0];
+    expect(f.description).toContain("[trailer: ) (proxy: served from its cache]");
+    expect(f.description).not.toMatch(/\[proxy: served/);
+    // 200 request times on one path: one group per value would hand back the aggregation cap
+    const times = Array.from(
+      { length: 200 },
+      (_, i) =>
+        `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /status HTTP/1.1" 200 83 "-" "curl/8" 0.${i}`,
+    );
+    const r = parseCombinedLog(times.join("\n"));
+    expect(r.events.length).toBeLessThanOrEqual(66);
+    const overflow = r.events.find((e) => e.description.includes("overflow"))!;
+    expect(overflow.description).toContain("distinct appended trailer values beyond 64 on this path folded");
+    expect(overflow.count).toBeGreaterThan(1);
+    expect(r.dropped).toBe(0);
+  });
+
+  it("a very long target can never hide the status or the record's own facts", () => {
+    const long = `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /${"a".repeat(650)} HTTP/1.1" 302 0 "-" "curl/8"`;
+    const e = parseCombinedLog(long).events[0];
+    expect(e.description.length).toBeLessThanOrEqual(600);
+    expect(e.description.startsWith("[status: 302] [redirect — the Location is not in this format]")).toBe(
+      true,
+    );
+    // …with a Squid disposition and two maximal trailer tokens as well, every tag stays whole
+    const loaded = squidFile([
+      `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET https://files.example.invalid/${"a".repeat(620)} HTTP/1.1" 302 0 "-" "curl/8" TCP_MISS:HIER_DIRECT ${"t".repeat(60)} ${"u".repeat(60)}`,
+    ]);
+    const big = parseCombinedLog(loaded, DECLARED).events.find((x) =>
+      x.description.includes("[status: 302]"),
+    )!;
+    expect(big.description.length).toBeLessThanOrEqual(600);
+    expect(big.description).toContain("[redirect — the Location is not in this format]");
+    expect((big.description.match(/\[/g) ?? []).length).toBe((big.description.match(/\]/g) ?? []).length);
+  });
+
+  it("a bare result code with no hierarchy is not the field, even under a declared profile", () => {
+    const bare = Array.from({ length: 4 }, (_, i) =>
+      squidLine("TCP_MISS", `https://files.example.invalid/p${i}`, 200, "18376", `10.30.10.${i % 4}`),
+    ).join("\n");
+    const r = parseCombinedLog(bare, DECLARED);
+    expect(r.events.every((e) => !e.description.includes("proxy:"))).toBe(true);
+    expect(r.events.every((e) => e.description.includes("[trailer: TCP_MISS]"))).toBe(true);
+  });
+
+  it("an invalid target mints no indicator and no host in the key", () => {
+    const bad =
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET http://ev]il:abc/x HTTP/1.1" 200 83 "-" "curl/8"';
+    const r = parseCombinedLog(bad);
+    const e = r.events[0];
+    expect(e.description).toContain("[invalid request target]");
+    expect(r.iocs.map((i) => i.value)).not.toContain("ev]il");
+    expect(r.iocs.some((i) => i.type === "domain")).toBe(false);
+    // the host slot of the key is empty — the malformed target is only the row's own path identity,
+    // which every row keeps verbatim and last
+    expect(e.aggKey).toContain("|10.30.20.11||form:invalid|p");
+  });
+
+  it("a peer that is not an address is not an srcIp", () => {
+    const r = parseCombinedLog(
+      squidLine("TCP_HIT:NONE", "https://files.example.invalid/p19", 200, "18376", "999.999.999.999"),
+    );
+    expect(r.events.every((e) => e.srcIp !== "999.999.999.999")).toBe(true);
+  });
+
+  it("an attack row's tags stay whole too, with a disposition, a redirect and maximal trailers", () => {
+    const line = `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET https://files.example.invalid/cgi?x=;id HTTP/1.1" 302 0 "-" "curl/8" TCP_MISS:HIER_DIRECT ${"t".repeat(160)} ${"u".repeat(160)} ${"v".repeat(160)}`;
+    const r = parseCombinedLog(squidFile([line]), DECLARED);
+    const e = r.events.find((x) => x.description.includes("web-attack"))!;
+    expect(e.description.startsWith('[web-attack: cmd] [status: 302] [match: ";id"]')).toBe(true);
+    expect((e.description.match(/\[/g) ?? []).length).toBe((e.description.match(/\]/g) ?? []).length);
+    expect(e.description).toContain("[redirect — the Location is not in this format]");
+    expect(e.description.length).toBeLessThanOrEqual(600);
+  });
+
+  it("an overflow row's tags are whole: 66 trailer variants on one path keep balanced brackets", () => {
+    const lines = Array.from(
+      { length: 66 },
+      (_, i) =>
+        `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /login HTTP/1.1" 302 0 "-" "curl/8" TCP_MISS:HIER_DIRECT nonce${i}`,
+    );
+    const r = parseCombinedLog(lines.join("\n"), DECLARED);
+    const overflow = r.events.find((e) => e.description.includes("overflow"))!;
+    expect((overflow.description.match(/\[/g) ?? []).length).toBe(
+      (overflow.description.match(/\]/g) ?? []).length,
+    );
+    expect(overflow.description).not.toMatch(/\[[^\]]*$/);
+    expect(r.dropped).toBe(0);
+  });
+
+  it("a path that spells out a key segment cannot collide with the overflow row's key", () => {
+    const ordinary =
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET squid:tcp_hit:none|trailer:overflow|foo HTTP/1.1" 200 0 "-" "curl/8"';
+    const variants = Array.from(
+      { length: 66 },
+      (_, i) =>
+        `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET foo HTTP/1.1" 200 0 "-" "curl/8" TCP_HIT:NONE nonce${i}`,
+    );
+    const r = parseCombinedLog([ordinary, ...variants].join("\n"), DECLARED);
+    const overflow = r.events.find((e) => e.description.includes("overflow"))!;
+    expect(overflow).toBeDefined();
+    const plain = r.events.find((e) => e.description.includes("squid:tcp_hit:none|trailer:overflow|foo"))!;
+    expect(plain.count ?? 1).toBe(1);
+    expect(plain.aggKey).not.toBe(overflow.aggKey);
+    expect(r.dropped).toBe(0);
+  });
+
+  it("a pipe in the request path cannot collide with the overflow row's key", () => {
+    const ordinary =
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /x|trailer:overflow|z HTTP/1.1" 302 0 "-" "curl/8"';
+    const variants = Array.from(
+      { length: 66 },
+      (_, i) =>
+        `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /x|z HTTP/1.1" 302 0 "-" "curl/8" TCP_MISS:HIER_DIRECT nonce${i}`,
+    );
+    const r = parseCombinedLog([ordinary, ...variants].join("\n"), DECLARED);
+    const overflow = r.events.find((e) => e.description.includes("overflow"));
+    expect(overflow).toBeDefined();
+    expect(overflow!.description).toContain("distinct appended trailer values beyond 64");
+    const plain = r.events.find((e) => e.description.includes("/x|trailer:overflow|z"))!;
+    expect(plain.aggKey).not.toBe(overflow!.aggKey);
+    expect(plain.count ?? 1).toBe(1);
+    expect(r.dropped).toBe(0);
+  });
+
+  it("a control character in the request line makes the target invalid — no host indicator", () => {
+    const lines = [
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET http://good.example.invalid/x\u000b HTTP/1.1" 200 0 "-" "curl/8"',
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "CONNECT \u000bgood.example.invalid:443 HTTP/1.1" 200 0 "-" "curl/8"',
+    ].join("\n");
+    const r = parseCombinedLog(lines);
+    expect(r.iocs.some((i) => i.type === "domain")).toBe(false);
+    expect(r.events.every((e) => e.description.includes("[invalid request target]"))).toBe(true);
+  });
+
+  it("benign trailer variants never consume an attack's budget, and never wear its label", () => {
+    const benign = Array.from(
+      { length: 65 },
+      (_, i) =>
+        `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /same HTTP/1.1" 200 0 "-" "curl/8" trailer-${i}`,
+    );
+    const attack =
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /same?q=x;id HTTP/1.1" 200 0 "-" "curl/8"';
+    const r = parseCombinedLog([...benign, attack].join("\n"));
+    const attackRow = r.events.find((e) => e.description.includes("web-attack"))!;
+    expect(attackRow.description).toContain('[match: ";id"]');
+    expect(attackRow.description).not.toContain("overflow");
+    expect(attackRow.count ?? 1).toBe(1);
+    const overflow = r.events.find((e) => e.description.includes("overflow"))!;
+    expect(overflow.description).toContain("distinct appended trailer values");
+    expect(overflow.description).not.toContain("web-attack");
+    expect(r.dropped).toBe(0);
+  });
+
+  it("trailer churn on one payload never uses up the payload budget", () => {
+    const same = Array.from(
+      { length: 64 },
+      (_, i) =>
+        `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /same?q=x;id HTTP/1.1" 200 0 "-" "curl/8" nonce-${i}`,
+    );
+    const other =
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /same?q=x;whoami HTTP/1.1" 200 0 "-" "curl/8"';
+    const r = parseCombinedLog([...same, other].join("\n"));
+    const whoami = r.events.find((e) => e.description.includes("whoami"))!;
+    expect(whoami.description).toContain('[match: ";whoami"]');
+    expect(whoami.description).not.toContain("overflow");
+    expect(r.events.some((e) => e.description.includes("overflow"))).toBe(false);
+    // the 64 trailer variants of ONE payload are one row
+    const id = r.events.find((e) => e.description.includes('[match: ";id"]'))!;
+    expect(id.count).toBe(64);
+    expect(r.dropped).toBe(0);
+  });
+
+  it("an address destination is an ip indicator, never a bracketed domain", () => {
+    const v6 =
+      '10.30.10.14 - - [15/May/2024:06:42:01 +0000] "CONNECT [2001:db8::1]:443 HTTP/1.1" 200 163 "-" "curl/8"';
+    const r = parseCombinedLog(v6);
+    expect(r.iocs.map((i) => `${i.type}:${i.value}`)).toContain("ip:2001:db8::1");
+    expect(r.iocs.some((i) => i.type === "domain")).toBe(false);
+    const v4 =
+      '10.30.10.14 - - [15/May/2024:06:42:01 +0000] "GET http://203.0.113.9/x HTTP/1.1" 200 163 "https://[2001:db8::2]/r?q=1" "curl/8"';
+    const r4 = parseCombinedLog(v4);
+    const vals = r4.iocs.map((i) => `${i.type}:${i.value}`);
+    expect(vals).toContain("ip:203.0.113.9");
+    // …but an address the client merely CLAIMED in its Referer is no indicator of any kind
+    expect(vals).not.toContain("ip:2001:db8::2");
+    expect(r4.iocs.some((i) => i.type === "domain")).toBe(false);
+    // …and an encoded address is still an address
+    const encoded = parseCombinedLog(
+      '10.30.10.14 - - [15/May/2024:06:42:01 +0000] "GET http://%32%30%33.0.113.9/x HTTP/1.1" 200 163 "-" "curl/8"',
+    );
+    expect(encoded.iocs.map((i) => `${i.type}:${i.value}`)).toContain("ip:203.0.113.9");
+    expect(encoded.iocs.some((i) => i.type === "domain")).toBe(false);
+  });
+
+  it("two long trailer values that differ past the display width stay two rows", () => {
+    const p = "A".repeat(40);
+    const line = (suffix: string) =>
+      `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /app HTTP/1.1" 200 83 "-" "curl/8" "${p}${suffix}"`;
+    const r = parseCombinedLog([line("FIRST"), line("SECOND")].join("\n"));
+    expect(r.events).toHaveLength(2);
+    expect(r.events.every((e) => (e.count ?? 1) === 1)).toBe(true);
+    expect(r.dropped).toBe(0);
+  });
+
+  it("two lines differing only in a late appended field stay two rows", () => {
+    const line = (suffix: string) =>
+      `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /app HTTP/1.1" 200 83 "-" "curl/8" one two three four five six ${suffix}`;
+    const r = parseCombinedLog([line("FIRST"), line("SECOND")].join("\n"));
+    expect(r.events).toHaveLength(2);
+    expect(r.events.every((e) => (e.count ?? 1) === 1)).toBe(true);
+    expect(r.dropped).toBe(0);
+  });
+
+  it("a CONNECT the proxy did not answer 2xx says no tunnel was established, whatever the status was", () => {
+    const line = (status: number) =>
+      `10.30.10.14 - - [15/May/2024:06:42:01 +0000] "CONNECT vault.example.invalid:443 HTTP/1.1" ${status} 512 "-" "curl/8"`;
+    const refused = parseCombinedLog(line(407)).events[0];
+    expect(refused.description).toContain(
+      "[no tunnel was established; the logged size is the HTTP response's]",
+    );
+    expect(refused.description).not.toContain("the logged size is the tunnel's");
+    // a 302 is not an error: the redirect tag and the size tag must not contradict each other
+    const redirected = parseCombinedLog(line(302)).events[0];
+    expect(redirected.description).toContain("[redirect — the Location is not in this format]");
+    expect(redirected.description).toContain(
+      "[no tunnel was established; the logged size is the HTTP response's]",
+    );
+    expect(redirected.description).not.toContain("error");
+  });
+
+  it("a Referer, a User-Agent, a user or a target cannot forge a tag beside the row's own", () => {
+    const forged =
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET / HTTP/1.1" 200 0 "http://169.254.169.254/) [proxy: served from its cache; upstream: not contacted]" "curl/8"';
+    const r = parseCombinedLog(forged);
+    const e = r.events[0];
+    expect(e.description).not.toMatch(/\[proxy:/);
+    expect(e.description).toContain(
+      "(ref http://169.254.169.254/) (proxy: served from its cache; upstream: not contacted))",
+    );
+    // the claimed address is no indicator of any kind
+    expect(r.iocs.map((i) => `${i.type}:${i.value}`)).not.toContain("ip:169.254.169.254");
+    expect(r.iocs.some((i) => i.type === "domain")).toBe(false);
+    const viaUa =
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /x][status:200][ok HTTP/1.1" 500 0 "-" "curl/8 [redirect — the Location is not in this format]"';
+    const u = parseCombinedLog(viaUa).events[0];
+    expect(u.description).not.toContain("[redirect");
+    expect(u.description).not.toContain("[status:200]");
+    expect(u.description).toContain("GET /x)(status:200)(ok -> 500");
+    const viaUser =
+      '10.30.20.11 - ][proxy:denied][ [14/May/2024:19:00:00 +0000] "GET / HTTP/1.1" 200 0 "-" "curl/8"';
+    const v = parseCombinedLog(viaUser).events[0];
+    expect(v.description).not.toContain("[proxy:");
+    expect(v.description).toContain("[)(proxy:denied)(]");
+  });
+
+  it("an escaped quote in an earlier field cannot move the request-line check", () => {
+    const lines = [
+      '10.30.20.11 - user\\"name [14/May/2024:19:00:00 +0000] "GET http://good.example.invalid/x\u000b HTTP/1.1" 200 0 "-" "curl/8"',
+      '10.30.20.11 - user\\"name [14/May/2024:19:00:00 +0000] "CONNECT \u000bgood.example.invalid:443 HTTP/1.1" 200 0 "-" "curl/8"',
+    ].join("\n");
+    const r = parseCombinedLog(lines);
+    expect(r.iocs.some((i) => i.type === "domain")).toBe(false);
+    expect(r.events.every((e) => e.description.includes("[invalid request target]"))).toBe(true);
+  });
+
+  it("a malformed Referer mints no domain indicator", () => {
+    const line =
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET / HTTP/1.1" 200 0 "http://ev]il:abc/x?q=1" "curl/8"';
+    const r = parseCombinedLog(line);
+    expect(r.iocs.map((i) => i.value)).not.toContain("ev]il");
+    expect(r.iocs.some((i) => i.type === "domain")).toBe(false);
+    // …nor does one whose authority carries a control character (cleaning it would fabricate a host)
+    const control = parseCombinedLog(
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET / HTTP/1.1" 200 0 "http://good.example\u007f.invalid/x?q=1" "curl/8"',
+    );
+    expect(control.iocs.some((i) => i.type === "domain")).toBe(false);
+    const edge = parseCombinedLog(
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET / HTTP/1.1" 200 0 "http://good.example.invalid/x?q=1\u000b" "curl/8"',
+    );
+    expect(edge.iocs.some((i) => i.type === "domain")).toBe(false);
+    // a valid one still does
+    const ok = parseCombinedLog(
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET / HTTP/1.1" 200 0 "https://portal.example.invalid/x?q=1" "curl/8"',
+    );
+    expect(ok.iocs.some((i) => i.type === "domain" && i.value === "portal.example.invalid")).toBe(true);
+  });
+
+  it("a decoded payload cannot forge a tag beside the real ones", () => {
+    const line =
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /x?q=union%20select%20x%5D%20%5Bstatus:%20success%5D%20%5Bignored: HTTP/1.1" 302 0 "-" "curl/8"';
+    const e = parseCombinedLog(line).events[0];
+    expect(e.description).toContain("[status: 302]");
+    expect(e.description).not.toContain("[status: success]");
+    expect(e.description).toContain("(status: success)");
+    expect((e.description.match(/\[/g) ?? []).length).toBe((e.description.match(/\]/g) ?? []).length);
+  });
+
+  it("a malformed IPv6 literal or percent escape is no host: no indicator, no host key", () => {
+    const lines = [
+      '10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET http://[:::]/x HTTP/1.1" 200 83 "-" "curl/8"',
+      '10.30.20.11 - - [14/May/2024:19:00:01 +0000] "GET http://bad%ZZ.example/x HTTP/1.1" 200 83 "-" "curl/8"',
+    ].join("\n");
+    const r = parseCombinedLog(lines);
+    expect(r.iocs.some((i) => i.type === "domain")).toBe(false);
+    expect(r.events.every((e) => e.description.includes("[invalid request target]"))).toBe(true);
+  });
+
+  it("a four-family attack on all three fields still keeps the status, the disposition and balanced tags", () => {
+    const payload = (n: number) =>
+      `;id ${"a".repeat(n)} ../../etc/passwd union select ${"b".repeat(n)} \${jndi:ldap://x}`;
+    const line =
+      `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /cgi?x=${encodeURIComponent(payload(60))} HTTP/1.1" 302 0 ` +
+      `"https://portal.example.invalid/?y=${encodeURIComponent(payload(60))}" "${payload(60)}" TCP_MISS:HIER_DIRECT`;
+    const r = parseCombinedLog(squidFile([line]), DECLARED);
+    const e = r.events.find((x) => x.description.includes("web-attack"))!;
+    expect(e.description.length).toBeLessThanOrEqual(600);
+    expect((e.description.match(/\[/g) ?? []).length).toBe((e.description.match(/\]/g) ?? []).length);
+    expect(e.description).toContain("[status: 302]");
+    expect(e.description).toContain("[proxy: cache miss; fetched upstream");
+  });
+
+  it("an ordinary origin-form line reads exactly as it did before", () => {
+    const r = parseCombinedLog(HEALTH);
+    expect(r.events[0].description).toBe("GET /status -> 200 (83b) (ua Prometheus/2.47.0)");
+    expect(r.events[0].aggKey).toContain("|form:origin");
+  });
+
+  it("an attack row keeps its match slots and its status when the trailer and the UA are maximal", () => {
+    const line = `10.30.20.11 - - [14/May/2024:19:00:00 +0000] "GET /cgi?x=;id HTTP/1.1" 200 83 "-" "${"u".repeat(300)}" TCP_MISS:HIER_DIRECT`;
+    const r = parseCombinedLog(squidFile([line]), DECLARED);
+    const e = r.events.find((x) => x.description.includes("web-attack"))!;
+    expect(e.description.startsWith('[web-attack: cmd] [status: 200] [match: ";id"]')).toBe(true);
+    expect(e.description).toContain("cache miss; fetched upstream");
+    expect(e.description.length).toBeLessThanOrEqual(600);
+    expect(e.mitreTechniques).toContain("T1190");
   });
 });

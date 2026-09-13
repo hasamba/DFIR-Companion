@@ -131,6 +131,116 @@ export const canonicalEventEnvelopeSchema = z.object({
     })
     .optional(),
   process: canonicalProcessSchema.optional(),
+  // A TLS record's own reading (tlsSession.ts, #933 item 6): the client's SNI, the protocol facts
+  // the sensor saw, the certificate the server presented, the sensor's chain check, the observer.
+  tls: z
+    .object({
+      sni: z.string().optional(),
+      version: z.string().optional(),
+      cipher: z.string().optional(),
+      curve: z.string().optional(),
+      established: z.boolean().optional(),
+      resumed: z.boolean().optional(),
+      validation: z.string().optional(),
+      sniMatchesCert: z.boolean().optional(),
+      directionFlipped: z.boolean().optional(),
+      ja3: z.string().optional(),
+      ja3s: z.string().optional(),
+      certificate: z
+        .object({
+          fingerprint: z.string().optional(),
+          fingerprintAlg: z.enum(["sha1", "sha256"]).optional(),
+          identity: z.string().optional(),
+          subject: z.string().optional(),
+          issuer: z.string().optional(),
+          serial: z.string().optional(),
+          names: z.array(z.string()).optional(),
+          namesTotal: z.number().int().nonnegative().optional(),
+          namesDigest: z.string().optional(),
+          notBefore: z.string().optional(),
+          notAfter: z.string().optional(),
+          ca: z.boolean().optional(),
+        })
+        .optional(),
+      // On a certificate row: which side presented it (Zeek x509 client_cert / host_cert).
+      certificateRole: z.enum(["client", "server"]).optional(),
+      clientCertificate: z
+        .object({
+          subject: z.string().optional(),
+          issuer: z.string().optional(),
+          identity: z.string().optional(),
+          fingerprint: z.string().optional(),
+          fingerprintAlg: z.enum(["sha1", "sha256"]).optional(),
+          serial: z.string().optional(),
+          names: z.array(z.string()).optional(),
+          namesTotal: z.number().int().nonnegative().optional(),
+          namesDigest: z.string().optional(),
+          notBefore: z.string().optional(),
+          notAfter: z.string().optional(),
+          chainFuids: z.array(z.string()).optional(),
+        })
+        .optional(),
+      observer: z.object({ name: z.string(), sourceField: z.string() }).optional(),
+      locator: z
+        .object({
+          uid: z.string().optional(),
+          id: z.string().optional(),
+          certChainFuids: z.array(z.string()).optional(),
+        })
+        .optional(),
+      records: z.number().int().positive(),
+    })
+    .optional(),
+  // A macOS quarantine record's own reading (quarantineRecord.ts, #933 item 7): the kind, the agent,
+  // the resource and origin URLs, the sender, the event identifier, and how its time was decoded.
+  // `localFile` is always "not in this record" — the database keeps no path.
+  quarantine: z
+    .object({
+      kind: z.string(),
+      typeNumber: z.number().int().nonnegative().optional(),
+      typeRaw: z.string().optional(),
+      agent: z.string().optional(),
+      bundleId: z.string().optional(),
+      dataUrl: z.string().optional(),
+      originUrl: z.string().optional(),
+      originTitle: z.string().optional(),
+      originAliasDigest: z.string().optional(),
+      senderName: z.string().optional(),
+      senderAddress: z.string().optional(),
+      eventId: z.string().optional(),
+      eventIdRaw: z.string().optional(),
+      timeEncoding: z.enum(["cocoa-seconds", "iso", "unix-seconds", "unix-ms", "unreadable"]),
+      timeRaw: z.string().optional(),
+      urlIndicator: z.string().optional(),
+      localFile: z.literal("not in this record"),
+      folded: z.boolean().optional(),
+    })
+    .optional(),
+  // A DNS record's own reading (dnsRecord.ts, #933 item 2): what the resolver client reported and
+  // the values it RETURNED — owner-less, so never "answers"; the vantage is the endpoint's own.
+  dns: z
+    .object({
+      query: z.string(),
+      queryValid: z.boolean(),
+      indicator: z.boolean(),
+      queryType: z.number().int().nonnegative().optional(),
+      status: z.number().int().nonnegative().optional(),
+      state: z.string().min(1),
+      networkQuery: z.boolean().optional(),
+      returned: z.array(
+        z.object({
+          type: z.number().int().nonnegative().optional(),
+          value: z.string(),
+          kind: z.enum(["address", "name", "other"]),
+        }),
+      ),
+      ownership: z.literal("not in this record"),
+      vantage: z.enum(["endpoint"]),
+      // An overflow row (dnsRecord.ts boundDnsVariants): distinct returned-value sets beyond the
+      // budget were folded here; `returned` is empty on purpose and no set is representative.
+      folded: z.boolean().optional(),
+    })
+    .optional(),
   file: z
     .object({
       path: z.string().optional(),

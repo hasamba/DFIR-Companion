@@ -1,0 +1,60 @@
+// What a record's SHOWN text may and may not do, shared by every importer that renders a
+// client-written field beside its own `[tag]`s (#933 items 1 and 2).
+//
+// Three rules, each earned by a concrete forgery:
+// - showToken: brackets become parentheses and control characters go, so a value carrying
+//   `) [proxy: served from its cache]` reads as text and never as a tag the reader trusts.
+// - breakHashRuns: a run of 32+ hex characters is shown as its ends, because correlateEvents reads
+//   a bare 32/40/64-hex word in a description as a file hash and unions rows on it with no time
+//   bound (correlate.ts also skips the importer's untrusted spans; this is defence in depth).
+// - identityMark: the description is the row's identity downstream — correlateEvents unions two
+//   rows with one timestamp, one description and one host as a re-import, after the import route
+//   strips the key. A row whose shown text is not the whole record (clipped, neutralised, rebuilt)
+//   therefore ends in a mark of its full key: 128 bits (a 32-bit mark over an attacker-controlled
+//   key was birthday-findable), base64url (a hex run would itself read as a hash), hashed over
+//   UTF-16 code units (UTF-8 folds every unpaired surrogate into U+FFFD — two records, one mark).
+
+import { createHash } from "node:crypto";
+
+const HASH_RUN = /[a-f0-9]{32,}/gi;
+const CONTROL_CHARS = /[\u0000-\u001f\u007f-\u009f]/g;
+const IDENTITY_MARK_BYTES = 16;
+/** Hex characters of a 128-bit digest — the width every key digest over client text uses. */
+export const DIGEST_HEX = 32;
+
+export const breakHashRuns = (t: string): string =>
+  t.replace(HASH_RUN, (m) => `${m.slice(0, 8)}…${m.slice(-4)}`);
+
+export const showToken = (t: string): string =>
+  t.replace(/\[/g, "(").replace(/\]/g, ")").replace(CONTROL_CHARS, " ").replace(/\s+/g, " ").trim();
+
+/** sha256 over the text's UTF-16 code units — injective over what a UTF-16 export can carry. */
+export function digestUtf16(text: string): Buffer {
+  return createHash("sha256").update(Buffer.from(text, "utf16le")).digest();
+}
+
+/** DIGEST_HEX hex characters of digestUtf16 — a key segment for unbounded client text. */
+export function keyDigest(text: string): string {
+  return digestUtf16(text).toString("hex").slice(0, DIGEST_HEX);
+}
+
+export function identityMark(key: string): string {
+  return ` #${digestUtf16(key).subarray(0, IDENTITY_MARK_BYTES).toString("base64url")}`;
+}
+
+/**
+ * Pack whole tags into `room` characters, in evidence order, dropping any that does not fit — a
+ * substring of a serialised `[a] [b]` sequence would leave a half-open tag and hide the fact it
+ * names. Returns the rendered text (with its leading space) — "" when nothing fits.
+ */
+export function packTags(tags: readonly string[], room: number): string {
+  const kept: string[] = [];
+  let left = room;
+  for (const tag of tags) {
+    const cost = tag.length + 3;
+    if (cost > left) continue;
+    kept.push(tag);
+    left -= cost;
+  }
+  return kept.length ? ` [${kept.join("] [")}]` : "";
+}
