@@ -71,6 +71,7 @@ Automated passes that steer the investigation itself, not just grade individual 
 - **Immediate false-positive cascade** — marking a finding/IOC/event false positive synchronously re-evaluates every key question, next-step, and hypothesis that depended on it, badging them "stale — re-synthesis queued" / "needs review" instead of waiting for the next async synthesis run.
 - **Rabbit-hole detection** — findings are scored connected / disconnected / undetermined against the main corroborated evidence-graph component. A disconnected finding (a planted red herring, an unrelated benign event) is demoted and badged "possible rabbit hole" in the Findings panel instead of ranking alongside real leads.
 - **ACH-style hypotheses** — hypotheses (see [Hypothesis-Driven Mode](#hypothesis-driven-mode)) now track contradicting evidence, a discriminating host+artifact, and an "exhausted" flag (set once enough linked hunts come back empty), and are ranked fewest-contradictions-first — the classic Analysis-of-Competing-Hypotheses fix for a red herring winning unopposed.
+- **Diagnostic evidence** — each hypothesis says which of its observations actually *distinguish* it from a named alternative and which fit every explanation; a supported conclusion names its distinguishing evidence, the alternatives considered and what is unresolved; an analyst can exclude an observation from one assessment with an audit trail, and a frozen judgment whose footing changes is flagged for review with the reason (see [Evidence assessment](#evidence-assessment-does-an-observation-distinguish-the-explanations)).
 - **Per-case prevalence baseline + FP-pattern propagation** — the case tracks how often each normalized activity pattern occurs across its timeline, so rare events earn a selection seat over common noise during synthesis. After each import, new events that reproduce an already-dismissed false-positive pattern are flagged for one-click bulk dismissal.
 - **Learn from dismissed findings** — repeated reasoned dismissals of the same activity pattern accumulate into a per-case ledger; new activity resembling a repeatedly-dismissed pattern surfaces with lowered (not zero) confidence unless independently corroborated. Shown in the **False Positives** panel.
 - **Per-source noise/trust scores** — every event source carries a trust weight (CrowdStrike/Defender detections > Sigma-engine hits > raw Velociraptor artifacts > generic logs), used to pick the canonical wording when correlating duplicate detections and to cap confidence on findings supported only by low-trust sources. Analysts can override a source's trust per case in the dashboard.
@@ -171,6 +172,51 @@ Auto-generated hypotheses come from: synthesis conclusions, timeline-gap analysi
 Analyst-added hypotheses: click **+ Add hypothesis** in the panel.
 
 Hypotheses survive synthesis (unlike findings, which are replaced each time) and are included in the encrypted case archive export.
+
+### Evidence assessment — does an observation distinguish the explanations?
+
+Each hypothesis card carries an **evidence assessment**, read across the whole set of hypotheses
+from the supporting and contradicting links alone. Every linked observation has one bearing:
+
+- **separates this from '…'** — it supports this hypothesis and contradicts a named alternative.
+  This is the only bearing that argues for one explanation over another, and it always names the
+  alternative.
+- **consistent with the alternatives that assessed it** — it supports this hypothesis and every
+  alternative that assessed it. It fits them all and chooses none. Ten of these do not outrank one
+  observation that separates.
+- **contradiction — supports '…'** — it contradicts this hypothesis and supports a named alternative.
+- **contradiction — against every explanation that assessed it** — no hypothesis that assessed it
+  accounts for it; the set of explanations may be incomplete. It still counts as a contradiction of
+  each hypothesis that lists it.
+- **not assessed against the alternatives** — only this hypothesis assessed it. Silence about the
+  others is not a judgment about them, so it is never called distinguishing.
+- **assessed both ways** — the same hypothesis lists it as support and as contradiction; it counts
+  for nothing until you settle it.
+
+The alternatives are every live (not refuted, not exhausted) hypothesis, or the ones you name with
+**name the alternatives** on the card when a title is not a real competitor (a different kill-chain
+phase, a duplicate). A supported hypothesis with no distinguishing observation, or with no
+alternative offered, says so next to its status word — in the panel and in the report, which lists
+the distinguishing evidence, the alternatives considered and what is unresolved (a conclusion resting on
+one observation names that observation's own recorded uncertainty: an inferred year, a clock
+adjustment, no named source artifact).
+
+Ranking within a status group is by fewest active contradictions, then by distinguishing support;
+support that fits every alternative ranks nothing. Every number is a count of observations. Nothing
+here is a probability that the explanation is true, and nothing should be read as one.
+
+**Exclude** an observation from one hypothesis's assessment when it does not bear on that question
+(the reason is required — it is the audit trail). The event stays in the timeline, the link stays
+on the hypothesis, every other hypothesis reads the observation as before; **restore** puts it
+back and the exclusion stays as history. Unlinking an excluded observation closes the exclusion;
+relinking it later needs a new one.
+
+A hypothesis you have edited is frozen against synthesis rewrites. When its footing changes — an
+excluded observation now separates it from a new alternative, the observations a supported
+conclusion rested on stop distinguishing, a contradiction now supports an alternative, or the
+latest synthesis withdrew a support or added a contradiction the frozen copy does not carry — it is
+flagged **review required** with the reason. A status change or **✓ reviewed** clears the flag;
+editing the notes or the assignee does not.
 
 ---
 

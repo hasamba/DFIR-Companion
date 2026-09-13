@@ -305,6 +305,8 @@
     "huntRunSnapshotStore.ts": "analysis/hunt",
     "huntSuggest.ts": "analysis/hunt",
     "hypothesis.ts": "analysis/ai",
+    "hypothesisDiagnostics.ts": "analysis/ai",
+    "hypothesisExclusion.ts": "analysis/ai",
     "hypothesisStore.ts": "analysis/ai",
     "iamChange.ts": "analysis/detect",
     "iamPolicyDocument.ts": "analysis/detect",
