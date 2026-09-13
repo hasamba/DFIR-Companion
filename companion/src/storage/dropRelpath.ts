@@ -1,3 +1,6 @@
+import { realpath } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative } from "node:path";
+
 // A path relative to a case's drop/ folder, as the drop-folder machinery passes it around.
 //
 // It has two producers, and they are not equally trustworthy (#919). The recursive walk in
@@ -24,4 +27,26 @@ export function isSafeDropRelpath(relpath: string): boolean {
   if (relpath.startsWith("/") || relpath.startsWith("\\") || /^[A-Za-z]:/.test(relpath)) return false;
   if (relpath.includes("\u0000")) return false;
   return relpath.split(SEPARATOR).every((seg) => seg !== "" && seg !== "." && seg !== "..");
+}
+
+/**
+ * The absolute path a drop relpath names, bound to the drop folder it belongs to. Throws when the
+ * relpath is unsafe (above) OR when the directory that actually holds the file is outside
+ * `dropDir` on disk — a relpath whose every segment looks safe can still walk through a symlinked
+ * subdirectory, and O_NOFOLLOW on the open only refuses a link at the FINAL component. The parent
+ * is resolved with realpath and the file name is joined back on unresolved, so the caller's
+ * openNoFollow still sees, and refuses, a link at the file itself. The window between this
+ * realpath and that open is the same one the non-O_NOFOLLOW fallback in noFollowRead.ts accepts.
+ */
+export async function resolveInsideDropDir(dropDir: string, relpath: string): Promise<string> {
+  if (!isSafeDropRelpath(relpath)) {
+    throw new Error(`refused to read a path outside the drop folder (security): ${relpath}`);
+  }
+  const target = join(dropDir, relpath);
+  const [realDrop, realParent] = await Promise.all([realpath(dropDir), realpath(dirname(target))]);
+  const rel = relative(realDrop, realParent);
+  if (rel.startsWith("..") || isAbsolute(rel)) {
+    throw new Error(`refused to read a path outside the drop folder (security): ${relpath}`);
+  }
+  return join(realParent, basename(target));
 }
