@@ -213,7 +213,7 @@ const CORRO_NOTE = /\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i;
 // The derived notes this codebase appends. Matched (not just stripped) so a merge can carry one
 // forward from whichever member holds it, instead of discarding the reason for a raised severity.
 const DERIVED_NOTE =
-  /\[(?:unexpected parent|sacrificial process|timestomp corroboration|ransomware precursors|certutil transfer|metadata credential access|cloud bulk read|noninteractive account browsing|container escape):[\s\S]{0,1200}?\]/u;
+  /\[(?:unexpected parent|sacrificial process|timestomp corroboration|ransomware precursors|certutil transfer|metadata credential access|cloud bulk read|noninteractive account browsing|container escape|download-marked file executed|ran a download-marked file|stream referenced by a command line|command line references a stream):[\s\S]{0,1200}?\]/u;
 /**
  * The per-user tag the Shellbags mapper adds (#908 item 10).
  *
@@ -236,7 +236,7 @@ export function cleanDescription(d: string): string {
   const withoutDerived = d
     // The process-lifetime markers (#909 item 6).
     .replace(
-      /\s*\[(?:unexpected parent|sacrificial process|timestomp corroboration|ransomware precursors|certutil transfer|metadata credential access|cloud bulk read|noninteractive account browsing|container escape):[\s\S]{0,1200}?\]\s*$/u,
+      /\s*\[(?:unexpected parent|sacrificial process|timestomp corroboration|ransomware precursors|certutil transfer|metadata credential access|cloud bulk read|noninteractive account browsing|container escape|download-marked file executed|ran a download-marked file|stream referenced by a command line|command line references a stream):[\s\S]{0,1200}?\]\s*$/u,
       "",
     )
     // The malfind interpretation (#909 item 4).

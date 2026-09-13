@@ -1322,15 +1322,60 @@ is not an encrypted file).
 from — the zone and, when the browser wrote it, the URL. It does not establish that the file ran
 (T1204.002) or that a compromised website delivered it (T1189); both used to be attached to every
 runnable download from the Internet zone, on the EvidenceOfDownload rows too, and are withdrawn.
-The grade stays Medium: a runnable pulled from the internet is worth an eye. The techniques return
-through corroboration — a Prefetch, Amcache, ShimCache or process record for the same file — which
-is a join across records and a spec issue of its own.
+The grade stays Medium: a runnable pulled from the internet is worth an eye. What corroborates a
+mark is the join across records below; no technique returns with it — an execution record says
+that code ran, not that a user opened it (T1204.002) or that a website delivered it (T1189).
 
 Reading rules the rows enforce: a normal `Zone.Identifier` stream is not a hidden payload;
 download provenance is not execution, user intent or proof of a drive-by; a missing or stripped
 mark is inconclusive — propagation depends on the software that wrote the file (a `.iso` mounted
 strips the mark from what is inside; many tools never write one); a stream's name is not its
 content.
+
+**What the case joins: a mark and the records that say the same file ran.** At every merge, each
+download-mark row is read against the execution records of the same file — Prefetch (whose row now
+carries the executable's own path, read from the `FilesLoaded` list when exactly one entry's leaf
+is the executable's name, and the PECmd `ComputerName` as its host), Sysmon 1, Security 4688 and
+EDR process starts — and against the presence records (Amcache, ShimCache). The file is the same
+file only when the path below the volume root matches (drive letters, `\VOLUME{…}` GUIDs and
+MFTECmd's leading `.\` stripped, case folded — never a basename), the volumes agree where both name
+one (a GUID against a drive letter is `volume not compared`), the hosts agree where both name one
+(an unnamed record attaches only when the case's records for that path name at most one host;
+otherwise `N records not attributed — the case names several hosts with this path`), and the
+hashes agree where both carry the same digest (a mismatch is `path reused … — not the same file`,
+and nothing is raised). A process start that carries the marked file's hash under another path is
+joined `by hash`. Junctions, 8.3 names and `\\?\` device paths are not resolved: a mismatch is a
+miss, never a guess.
+
+The mark row then reads `[download-marked file executed: against the host file's recorded
+creation time; …; Prefetch last run 2026-05-02T10:00:03Z, 3 s after; Sysmon 1 process start …,
+3 s after]` — raised to **High**, with no technique — when an execution record is dated more than
+2 s after the row's own anchor. The anchor is named because it is not the same thing on every
+row: a Sysmon 15 row's time is the stream's creation; an MFT host row's time is `Created0x10`, the
+host file's recorded creation, which does not prove download-before-execution. A run before the
+anchor (`1 d before`), within 2 s of it (`order not established (within 2 s)`) or with no readable
+time is said and raises nothing; presence records are listed as `present (not an execution
+record)` and raise nothing. Eight executions are named, the rest counted. The execution record
+that corroborated a mark is itself raised to Medium — `[ran a download-marked file: …]` — so it
+survives the Info cut. The notes are recomputed from the current evidence on every merge; nothing
+is ever lowered.
+
+**Order matters, because nothing automatic reads the raw record.** The pass reads the forensic
+timeline only (the boundary in the architecture notes), so an ordinary Prefetch row imported
+*before* its mark was demoted to the super-timeline and is out of the pass's reach. Import the MFT
+/ Sysmon collection before the execution artifacts, or re-collect; a Prefetch row already graded
+above Info (a named tool) is reachable in either order.
+
+**A hidden stream and the command line that referenced it.** A stream row graded Medium as a
+payload or a code-named stream is read against every process start's command line for a
+`file:stream` token (`rundll32 C:\Users\x\notes.txt:payload.dll,Entry`; a drive letter is never
+one). An absolute reference that resolves to a stream row on the same host raises that row to
+High: `[stream referenced by a command line: rundll32 … (Sysmon 1, 2026-…, ws-01)]`. A bare or
+relative reference (`wscript notes.txt:run.js`) resolves to nothing — the working directory is not
+in the record — and is a Medium lead on the process row instead: `[command line references a
+stream: notes.txt:run.js — not resolved to a file …]`. Sysmon 15 stream rows carry the host path
+only and are outside this half; command lines are scanned to 4,096 characters, four references
+each, and every excerpt is neutralised.
 ### Google Workspace OAuth: which app, which scopes, what it called
 
 A Workspace account takeover through OAuth leaves records of the `token` application in the

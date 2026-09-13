@@ -135,6 +135,17 @@ function truthy(v: unknown): boolean {
   return /^(yes|true|1)$/i.test(str(v).trim());
 }
 
+/** The one FilesLoaded entry whose leaf is the executable's name, or undefined when none or several. */
+export function prefetchOwnPath(filesLoaded: string, exe: string): string | undefined {
+  const leaf = exe.trim().toLowerCase();
+  if (!leaf) return undefined;
+  const own = filesLoaded
+    .split(/[,;\r\n]+/)
+    .map((x) => x.trim())
+    .filter((x) => x && baseName(x).toLowerCase() === leaf);
+  return new Set(own.map((x) => x.toLowerCase())).size === 1 ? own[0] : undefined;
+}
+
 // ───────────────────────────── artifact profiles ─────────────────────────────
 
 interface Profile {
@@ -198,6 +209,12 @@ const PROFILES: Profile[] = [
       // stays Info, below the forensic floor, where synthesis never reads it. PECmd exports no executable
       // path column, so the location-dependent rules stay silent. See prefetchExecution.ts.
       const signal = prefetchSignal(exe);
+      // The executable's own path, from the FilesLoaded list PECmd writes (`\VOLUME{…}\USERS\X\A.EXE`)
+      // — when exactly one entry's leaf is the executable's name. It is what the download-mark
+      // corroboration joins on (#985): a name is not identity. Two candidates name no path.
+      const own = prefetchOwnPath(firstStr(row, ["FilesLoaded", "Files Loaded"]), exe);
+      const host = firstStr(row, ["ComputerName", "Host"]);
+      const sourceFile = firstStr(row, ["SourceFilename", "SourceFile"]);
       return {
         timestamp: time,
         description: `Prefetch: ${exe} executed${runCount ? ` (run ${runCount}×)` : ""}${
@@ -205,9 +222,13 @@ const PROFILES: Profile[] = [
         }`.slice(0, 600),
         severity: signal?.severity ?? "Info",
         mitre: signal ? signal.mitre : [],
-        aggKey: `pf|${exe.toLowerCase()}`,
+        // Keyed on the host, the executable's own path (the name when none) and the .pf file:
+        // two same-name executables in different directories are two rows, never one count.
+        aggKey: `pf|${host.toLowerCase()}|${(own ?? exe).toLowerCase()}|${baseName(sourceFile).toLowerCase()}`,
         sources: ["Prefetch"],
         ...(proc ? { processName: proc } : {}),
+        ...(own ? { path: own } : {}),
+        ...(host ? { asset: host } : {}),
       };
     },
   },

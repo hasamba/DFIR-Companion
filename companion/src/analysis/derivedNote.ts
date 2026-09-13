@@ -26,6 +26,10 @@ export const DERIVED_NOTE_NAMES: readonly string[] = [
   "cloud bulk read",
   "noninteractive account browsing",
   "container escape",
+  "download-marked file executed",
+  "ran a download-marked file",
+  "stream referenced by a command line",
+  "command line references a stream",
 ];
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
