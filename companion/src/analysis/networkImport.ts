@@ -7,8 +7,10 @@
 // (Zeek's notice framework) — are the graded rows. The surrounding TELEMETRY is high-volume and
 // is folded into bounded Info rows that land in the analyst-only super-timeline: `conn` per flow
 // (below), `ssl`/`x509`/`tls` per relationship (tlsSession.ts), and `http`/`files`/`fileinfo` per
-// request and per transfer with the hops one upload establishes (webChainRows.ts, #993). `dns`
-// and the rest contribute OBSERVED IOCs only (domains, URLs, file hashes, the alert/notice IPs).
+// request and per transfer with the hops one upload establishes (webChainRows.ts, #993), and
+// `dns` per exchange with what the same upload's `conn` / `flow` records establish about the
+// client contacting a returned address (dnsWireRows.ts, #996). The rest contribute OBSERVED IOCs
+// only (domains, URLs, file hashes, the alert/notice IPs).
 //
 // Inputs: NDJSON (the native `eve.json` / Zeek JSON form), a JSON array, or an Elastic-style
 // wrapper. Rows are routed per-record: Suricata (has `event_type`) vs Zeek (has `_path`).
@@ -34,6 +36,17 @@ import {
 } from "./webChainRead.js";
 import { addRequest, addTransfer, emptyWebObservations, joinWebChain } from "./webChainJoin.js";
 import { mapWebRows, tallyWebChains } from "./webChainRows.js";
+import { addConn, addDns, emptyDnsObservations, joinDnsLeads } from "./dnsConnJoin.js";
+import {
+  isSuricataDnsAnswer,
+  readSuricataDns,
+  readSuricataFlow,
+  readZeekConn,
+  readZeekDns,
+  suricataQueryNames,
+} from "./dnsWireRead.js";
+import { mapDnsRows, tallyDnsChains } from "./dnsWireRows.js";
+import { asciiName, isIndicatorName } from "./dnsRecord.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -211,6 +224,9 @@ function addDomain(sink: Map<string, SiemIoc>, v: unknown): void {
   const d = str(v).trim().replace(/\.$/, "").toLowerCase();
   if (d && !IPV4.test(d) && DOMAIN.test(d)) addIoc(sink, "domain", d);
 }
+function addQueryName(sink: Map<string, SiemIoc>, name: string): void {
+  if (isIndicatorName(name)) addIoc(sink, "domain", asciiName(name).toLowerCase());
+}
 function addUrl(sink: Map<string, SiemIoc>, v: unknown): void {
   const u = str(v).trim();
   if (/^https?:\/\//i.test(u)) addIoc(sink, "url", u.slice(0, 300));
@@ -230,8 +246,11 @@ function suricataIocs(row: Row, etype: string, sink: Map<string, SiemIoc>): void
     addIp(sink, getCI(row, "dest_ip"));
   }
 
+  // The queried name, by the one indicator rule every DNS record uses (dnsRecord.ts); v3 keeps it
+  // in `queries[]`. Minted here keyless for every record, and again against its row key when the
+  // record becomes a row, so a record past the retained bound loses no indicator.
   const dns = getCI(row, "dns");
-  if (isObject(dns)) addDomain(sink, getCI(dns, "rrname"));
+  if (isObject(dns)) for (const name of suricataQueryNames(dns)) addQueryName(sink, name);
   // `http` and `fileinfo` events are request and transfer rows (webChainRows.ts) and mint their
   // own indicators; the `http` object an ALERT carries still names the host it fired on.
   const http = getCI(row, "http");
@@ -349,7 +368,7 @@ function mapSuricataAlert(row: Row, host: string, sink: Map<string, SiemIoc>, re
 function zeekIocs(row: Row, path: string, sink: Map<string, SiemIoc>): void {
   switch (path) {
     case "dns":
-      addDomain(sink, getCI(row, "query"));
+      addQueryName(sink, str(getCI(row, "query")));
       break;
     case "http":
     case "files":
@@ -579,6 +598,25 @@ function pickHost(row: Row): string {
   return firstStr(row, ["hostname", "agent.hostname", "agent.name", "observer.name"]) || str(h).trim();
 }
 
+// ───────────────────────────── telemetry budget ─────────────────────────────
+
+// Round-robin across families, each already in its own priority order, until `budget` rows.
+export function interleave<T>(families: readonly (readonly T[])[], budget: number): T[] {
+  const out: T[] = [];
+  const cursors = families.map(() => 0);
+  let progressed = true;
+  while (out.length < budget && progressed) {
+    progressed = false;
+    for (let i = 0; i < families.length && out.length < budget; i++) {
+      if (cursors[i] < families[i].length) {
+        out.push(families[i][cursors[i]++]);
+        progressed = true;
+      }
+    }
+  }
+  return out;
+}
+
 // ───────────────────────────── top-level parse ─────────────────────────────
 
 export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}): NetworkParseResult {
@@ -605,6 +643,7 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
   const flowSink = new Map<string, FlowAgg>();
   const tlsSink = new Map<string, TlsTally>();
   const webObs = emptyWebObservations();
+  const dnsObs = emptyDnsObservations();
   let flowHost = "";
   let alerts = 0;
   let sawSuricata = false,
@@ -637,6 +676,19 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
         }
         if (etype === "http") addRequest(webObs, readSuricataHttp(row, recordIndex));
         if (etype === "fileinfo") addTransfer(webObs, readSuricataFileinfo(row, recordIndex));
+        // A dns answer/response is an exchange row; a query event establishes only its indicator.
+        // flow / netflow records are indexed for the join and are never rows of their own.
+        if (etype === "dns") {
+          const dns = getCI(row, "dns");
+          if (isObject(dns) && isSuricataDnsAnswer(dns)) {
+            const o = readSuricataDns(row, recordIndex);
+            if (o) addDns(dnsObs, o);
+          }
+        }
+        if (etype === "flow" || etype === "netflow") {
+          const c = readSuricataFlow(row, etype, recordIndex);
+          if (c) addConn(dnsObs, c);
+        }
         mergeRowIocs(iocSink, rowSink);
       }
     } else {
@@ -654,6 +706,14 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
         if (zstream === "conn") {
           tallyFlow(row, flowSink);
           if (!flowHost && host) flowHost = host;
+          const c = readZeekConn(row, recordIndex);
+          if (c) addConn(dnsObs, c);
+        }
+        // dns is joined after the loop (a conn record may come later in the file) and folded into
+        // exchange rows (dnsWireRows.ts).
+        if (zstream === "dns") {
+          const o = readZeekDns(row, recordIndex);
+          if (o) addDns(dnsObs, o);
         }
         // ssl / x509 fold per record shape into TLS session and certificate rows (tlsSession.ts).
         if (zstream === "ssl") tallyTls(readZeekSsl(row, ""), tlsSink);
@@ -677,11 +737,26 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
   const flows = [...flowSink.values()]
     .sort((a, b) => b.origBytes + b.respBytes - (a.origBytes + a.respBytes))
     .slice(0, flowBudget);
-  for (const f of flows) mapped.push(mapFlow(f, flowHost));
-  mapped.push(...mapTlsRows(tlsSink, flowBudget));
-  // Request and transfer rows: joined through the identifiers both records carry, each chain's
-  // indicators minted against its row key so the hash IOC's provenance names the transfer row.
-  mapped.push(...mapWebRows(tallyWebChains(webObs, joinWebChain(webObs), iocSink), flowBudget));
+  // Every telemetry family is pre-selected in its own order (flows by bytes, TLS most-seen, web
+  // file-identity first, DNS in-window leads first) and the families share ONE budget round-robin
+  // — the event budget less the detection rows already mapped, which outrank telemetry at the
+  // shared aggregator's cut — so the largest family (a day of dns.log) cannot evict the biggest
+  // flow at that cut, which orders Info rows by time alone.
+  const telemetryBudget = Math.max(0, flowBudget - mapped.length);
+  mapped.push(
+    ...interleave(
+      [
+        flows.map((f) => mapFlow(f, flowHost)),
+        mapTlsRows(tlsSink, flowBudget),
+        // Request and transfer rows: joined through the identifiers both records carry, each chain's
+        // indicators minted against its row key so the hash IOC's provenance names the transfer row.
+        mapWebRows(tallyWebChains(webObs, joinWebChain(webObs), iocSink), flowBudget),
+        // DNS exchange rows with the leads the upload's connection records establish (#996).
+        mapDnsRows(tallyDnsChains(dnsObs, joinDnsLeads(dnsObs), iocSink), flowBudget),
+      ],
+      telemetryBudget,
+    ),
+  );
 
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,

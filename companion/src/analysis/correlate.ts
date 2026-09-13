@@ -59,7 +59,7 @@ const PATH_RE = /(?:[A-Za-z]:\\|\\\\)[^\s"'|<>]+|(?<![\w/:])\/(?:[\w.\-]+\/)+[\w
 // user, the Referer, the User-Agent, the proxy headers and the server's stated redirect target the
 // same way — each in its own span.
 const UNTRUSTED_SPAN_RE =
-  /\[(?:trailer|query|returned|the record also carries returned values|sni|cert|client cert|certificate|kind|agent|data url|origin|sender|quarantine mark|quarantine mark \(not decodable\)|quarantine url|event identifier not decodable|target|mime|filename|user|referrer|ua|proxied|matched|redirect target \(stated by the server\)): [^\]]*\]/g;
+  /\[(?:trailer|query|returned|answers|rcode|the record also carries returned values|sni|cert|client cert|certificate|kind|agent|data url|origin|sender|quarantine mark|quarantine mark \(not decodable\)|quarantine url|event identifier not decodable|target|mime|filename|user|referrer|ua|proxied|matched|redirect target \(stated by the server\)): [^\]]*\]/g;
 function scannedText(description: string): string {
   return description.replace(UNTRUSTED_SPAN_RE, " ");
 }

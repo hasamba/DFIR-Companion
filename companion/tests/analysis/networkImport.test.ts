@@ -96,7 +96,7 @@ describe("parseNetworkLogs — Suricata eve.json", () => {
 
   it("creates no detection for telemetry, but extracts its IOCs; a fileinfo is a transfer row (#993)", () => {
     const r = parseNetworkLogs(JSON.stringify([suricataDns(), suricataFileinfo()]));
-    expect(r.events).toHaveLength(1); // dns is IOC-only; the fileinfo is an Info transfer row
+    expect(r.events).toHaveLength(1); // a dns QUERY event is IOC-only; the fileinfo is an Info transfer row
     expect(r.events[0].description).toMatch(/^Transfer/);
     expect(r.events[0].severity).toBe("Info");
     expect(r.alerts).toBe(0);
@@ -123,7 +123,7 @@ describe("parseNetworkLogs — Zeek JSON", () => {
     const text = [zeekNotice(), zeekDns(), zeekFiles()].map((o) => JSON.stringify(o)).join("\n");
     const r = parseNetworkLogs(text);
     expect(r.format).toBe("zeek");
-    expect(r.events).toHaveLength(2); // the notice and the files transfer row (#993)
+    expect(r.events).toHaveLength(3); // the notice, the files transfer row (#993), the DNS exchange row (#996)
     expect(r.alerts).toBe(1);
     const e = r.events.find((x) => x.description.startsWith("Zeek notice"))!;
     expect(e.description).toContain("Zeek notice: Scan::Port_Scan");
@@ -210,10 +210,14 @@ describe("parseNetworkLogs — Zeek per-stream JSON (no _path)", () => {
     conn_state: "S0",
   };
 
-  it("extracts the DNS query as a domain IOC using the filename hint, no timeline event", () => {
+  it("extracts the DNS query as a domain IOC using the filename hint, and keeps one Info exchange row (#996)", () => {
     const r = parseNetworkLogs(JSON.stringify(dns), { filename: "0004_dns.json" });
     expect(r.format).toBe("zeek");
-    expect(r.events).toHaveLength(0);
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].severity).toBe("Info");
+    expect(r.events[0].description).toContain(
+      "DNS 10.0.0.5 → 10.0.0.1: [query: evil-c2.example.com] A → no response recorded",
+    );
     expect(r.iocs.find((i) => i.type === "domain")?.value).toBe("evil-c2.example.com");
   });
 

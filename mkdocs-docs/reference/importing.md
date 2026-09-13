@@ -608,8 +608,100 @@ record establishes, and no more:
   stay separate rows; every later distinct set folds into one row that says `[overflow: distinct
   returned-value sets beyond 64 for this query folded; none shown]` — so a churning answer can
   never crowd unrelated evidence out of the import's event budget.
-- **What this does not do.** It does not join a query to a later connection, bound by a TTL or a
-  window; that is a separate, cross-record design over un-aggregated records.
+- **What this does not do.** It does not join a Windows record's returned values to a later
+  Sysmon 3 / firewall connection from the same host; that join is spec'd on #996. A network
+  sensor's own records are joined inside one upload — the next section.
+
+### DNS answers and connections: what one upload joins
+
+Zeek `dns.log` records and Suricata `dns` answer/response events are folded into rows the way
+TLS and web records are — one row per exchange shape — and each returned **address** is joined
+to the connection records of the **same upload** (Zeek `conn.log`, Suricata `flow` / `netflow`)
+from the **same client** on the **same sensor**, and to nothing else. A Suricata `dns` query
+event establishes a query and stays indicator-only.
+
+- **The row** reads `DNS 10.0.0.5 → 10.0.0.1: [query: www.example.com] A → answered
+  [93.184.216.34: connection record ≤10 s after the answer arrived, inside the window — answered
+  by the peer] [returned: 93.184.216.34, 2606:2800::1] [2606:2800::1: no connection from
+  10.0.0.5 in this upload] [window: TTL 300 s +1 s] @ sensor01 — 12 records`. The arrow names
+  the server the client asked — a recursive resolver, or an authority when the client is itself
+  a resolver (`[authoritative answer]`); the record does not say which, so the row never says
+  "resolver". A Suricata event whose ports do not say which end asked reads `a ↔ b (direction
+  not in this record)` and asserts no client. The outcome is the response code as the record
+  says it: `answered`, `NXDOMAIN — the name does not exist at this server`, `NOERROR — no records
+  of the queried type`, `SERVFAIL`, `REFUSED`, `rejected by the server`, `no response recorded`
+  (a Zeek line that saw none; a Suricata answer event with no code says `response code not in
+  this record`), or an unknown code inside its own `[rcode: …]` span. The sensor (`observer.name`,
+  or Suricata's own `host`) is shown after the tags.
+- **Returned, or answers.** Zeek keeps the answer section's data with no owner name, so its values
+  are `[returned: …]` — never "resolves to", exactly like the Windows records. Suricata keeps
+  `rrname` per answer, so those read `[answers: www.example.com CNAME cdn.example.net;
+  cdn.example.net A 93.184.216.34]` — the record's own claim, still not a resolution the sensor
+  verified. A Suricata v1 event is one answer RR per event and its `rrname` is that RR's owner,
+  so the row says `[query: (not in this record)]` and mints nothing. Eight values are shown, 32
+  are read, and the identity covers every value. An untyped value that looks like an address
+  (Zeek keeps no RR type per answer) is an address only when the query could return one — a TXT
+  answer that spells an address is data, never a lead.
+- **The window is the answer's own TTL, and it says so.** It opens when the answer *arrived*
+  (Zeek's `ts` is the query; its `rtt` moves the arrival later) and closes TTL + 1 s later — the
+  second is for the client's resolve-to-connect latency, so a TTL-0 answer followed by a
+  connection in the same second is inside it. A record with no TTL gets `[window: fixed 300 s —
+  no TTL in this record]`. A folded row shows the TTL range across its records (`TTL 240–300 s`),
+  because a cached answer counts down on every re-query. The window bounds candidates and
+  confirms nothing: TTL is cache guidance, a client may hold an answer past it, and the same
+  address is returned for many names.
+- **What one address's lead says** — one of, and each is part of the row's identity:
+  `connection record ≤10 s after the answer arrived, inside the window` (the gap is a band —
+  ≤1 s, ≤10 s, ≤60 s, ≤10 min, ≤1 h, ≤24 h, >24 h — never the exact seconds); `first connection
+  record ≤1 h after the answer arrived — after the window`; `a connection record began before
+  this answer arrived` (the client did not wait for it); `a connection open at the time of this
+  answer — started before it`; `earlier connection records only — none after this answer`; `no
+  connection from 10.0.0.5; other clients connected inside the window — the record does not say
+  they used this answer` (said only when the client is itself observed as a queried server, i.e.
+  it forwards); `no connection from 10.0.0.5 in this upload`. An in-window or after-window lead
+  is always said even when an earlier record also began before the answer arrived or was open at
+  that time — that fact is added beside it (`; a connection was also open at the time of this
+  answer`), never instead of it. A lead whose address another record returned to the same client
+  for a different name inside the window adds `also returned for other names to this client
+  inside the window`.
+- **A connection record is not a connection.** Zeek's `conn_state` and Suricata's packet counts
+  say whether the peer ever answered: `answered by the peer` (SF, S1, S2, S3, RSTO, RSTR, RSTRH,
+  SHR, OTH; a flow with packets to the client), `no reply from the peer` (S0, REJ, RSTOS0, SH; a
+  new flow with none), or nothing when the record carries no state (a `netflow` record). The
+  lead never says the client "connected"; a lone SYN to a returned address is a record with no
+  reply.
+- **What is never joined.** The DNS exchange's own connection (the shared `uid` / `flow_id`);
+  a record from another sensor (`observer.name`, or Suricata's `host`); a name (nothing connects
+  to a name); a query that returned no address (`[no address returned — no connection can be
+  matched]`); a client that is loopback, link-local, multicast or absent (`[connection join: the
+  asking address is not one a sensor's connection records can be matched to …]` — a host's own
+  stub resolver, LLMNR and mDNS name nothing the sensor can match); an upload with no connection
+  records at all (`[connection join: no connection records in this upload]`, once per row, not
+  per address) or whose connection records carry no start time (`… carry no start time — not
+  joined`); and any upload whose connection records exceed the index (1,048,576) — then no lead
+  is computed for any row, because a partial index would compute a wrong "first connection", and
+  every row says `connection records exceed the index — not joined`.
+- **Identity and bounds.** A row's identity is the exchange's ends, the query (its wire form —
+  one row per name, not per capitalisation), the type, the response code, the flags, every
+  returned value, the window basis and every lead's state, band and reply; `uid`, `flow_id` and
+  the TTL values are not. 65,536 DNS records are retained per upload (the rest fold into an
+  overflow row that shows nothing and still mint their indicators), 8,192 shapes are kept with
+  rank eviction (an in-window lead displaces a plain shape rather than folding), and under the
+  import's event budget rows with an in-window contact come first, then rows answered with an
+  address, then the most seen. The flow, TLS, web and DNS families share the budget that the
+  upload's detections (alerts, notices) leave, round-robin, each in its own order, so a day of
+  `dns.log` cannot evict the biggest flow. The join is linear in the records: every lookup is a
+  binary search over a list sorted once, so a beacon that resolves and connects every second for
+  a day joins in seconds.
+- **Grading and indicators.** Every row is Info with no technique — a web visit is exactly this
+  shape; the lead is a stronger basis, not a higher grade. The queried name is a domain indicator
+  by the same rule as the Windows records (a real name with a dot, in wire form), minted against
+  the row so its provenance names the row; a returned address is never an indicator, even when
+  connected — the contact is a fact on the row, not a reputation claim about the address.
+- **What this does not do.** It does not join a `dns.log` upload to a `conn.log` upload imported
+  separately (one upload has one clock; two do not), does not read a resolver's own log, does not
+  pair a Suricata query event with its answer event, and does not join the Windows records
+  (Sysmon 22 / DNS-Client) to Sysmon 3 — all still open on #996.
 
 ### Mobile evidence with no clock (iLEAPP / ALEAPP)
 
