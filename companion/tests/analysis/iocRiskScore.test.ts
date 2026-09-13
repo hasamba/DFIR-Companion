@@ -70,7 +70,7 @@ describe("scoreIoc — composite tiers", () => {
       sig({
         verdictClass: "lone-intel",
         intelFactor:
-          "single intel origin (abuse.ch — 2 hits: MISP, ThreatFox), not seen in a Medium+ event in this case (unverified lead)",
+          "single intel origin (abuse.ch — 2 hits: MISP, ThreatFox), not seen in a Medium+ event in this case (unverified lead) (current reputation)",
       }),
     );
     expect(r.factors[0]).toContain("2 hits: MISP, ThreatFox");
@@ -162,15 +162,15 @@ describe("scoreIocs — batch orchestration over real IOCs/events", () => {
     const out = scoreIocs(iocs, [], { hostNames: new Set() });
     expect(out.i1.score).toBe("medium");
     expect(out.i1.factors[0]).toBe(
-      "single intel origin (abuse.ch — 2 hits: ThreatFox, MISP), not seen in a Medium+ event in this case (unverified lead)",
+      "single intel origin (abuse.ch — 2 hits: ThreatFox, MISP), not seen in a Medium+ event in this case (unverified lead) (current reputation)",
     );
     expect(out.i2.score).toBe("medium");
     expect(out.i2.factors[0]).toBe(
-      "intel verdict from 2 named origins (VirusTotal, abuse.ch) — independence not established",
+      "intel verdict from 2 named origins (VirusTotal, abuse.ch) — independence not established (current reputation)",
     );
     expect(out.i3.score).toBe("medium");
     expect(out.i3.factors[0]).toBe(
-      "1 hit with lineage not recorded (OpenCTI) — not counted as an origin; re-check with force to record the creator",
+      "1 hit with lineage not recorded (OpenCTI) — not counted as an origin; re-check with force to record the creator (current reputation)",
     );
   });
 
@@ -294,5 +294,41 @@ describe("iocRole — indicator vs observation (the 5,000-file-path problem)", (
     expect(risks["obs2"].role).toBe("observation");
     expect(risks["ind1"].role).toBe("indicator");
     expect(summarizeIocRoles(risks)).toEqual({ indicators: 1, observations: 2 });
+  });
+});
+
+describe("a verdict factor says it is current reputation and when it was measured (#933 item 19)", () => {
+  it("names the latest scan date; the points are unchanged", async () => {
+    const { scoreIoc, reputationMeasuredAt } = await import("../../src/analysis/iocRiskScore.js");
+    const base = {
+      distinctTools: 1,
+      maxSeverityRank: -1,
+      kevMatch: false,
+      nsrlKnownGood: false,
+      whitelisted: false,
+      suspiciousDomain: false,
+    };
+    const dated = scoreIoc({
+      ...base,
+      verdictClass: "corroborated",
+      reputationMeasuredAt: "2026-04-30T10:00:00.000Z",
+    });
+    const undated = scoreIoc({ ...base, verdictClass: "corroborated" });
+    expect(dated.score).toBe(undated.score);
+    expect(dated.factors.join(" ")).toContain("(current reputation, measured 2026-04-30)");
+    expect(undated.factors.join(" ")).toContain("(current reputation)");
+    expect(
+      reputationMeasuredAt({
+        enrichments: [
+          {
+            source: "VirusTotal",
+            verdict: "malicious",
+            fetchedAt: "2026-05-01T00:00:00.000Z",
+            temporal: { verdictMeasuredAt: "2026-04-30T10:00:00.000Z" },
+          },
+          { source: "GeoIP", verdict: "unknown", fetchedAt: "2026-05-02T00:00:00.000Z" },
+        ],
+      }),
+    ).toBe("2026-04-30T10:00:00.000Z");
   });
 });
