@@ -45,12 +45,15 @@
 
 function esc(s) {
   return String(s == null ? "" : s)
-    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 
 // Escapes BOTH quote flavours (#217). Single quotes matter as much as double: an attribute
 // value is decoded before whatever consumes it runs, so an unescaped apostrophe in a
 // single-quoted context lets attacker-controlled evidence close the string and keep going.
+// Since #1004 `esc` escapes both quotes itself, so the 51 attribute sites that call `esc`
+// directly are covered too; escAttr stays as the attribute-context name and is idempotent
+// over esc's output.
 function escAttr(s) { return esc(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;"); }
 
 // Published for the inline script and the other helper modules. EVERY function this file
