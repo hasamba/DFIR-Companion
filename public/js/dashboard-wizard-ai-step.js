@@ -134,14 +134,14 @@
         result.style.color = "#ff9f9f";
         result.textContent =
           "Could not save: " +
-          esc(j.error || "HTTP " + save.status) +
+          (j.error || "HTTP " + save.status) +
           " — restart the companion server if this 404s.";
         btn.disabled = false;
         return;
       }
     } catch (e) {
       result.style.color = "#ff9f9f";
-      result.textContent = "Could not reach the server: " + esc(e.message);
+      result.textContent = "Could not reach the server: " + (e.message || "");
       btn.disabled = false;
       return;
     }
@@ -154,7 +154,7 @@
         result.style.color = "#ffb05a";
         result.textContent =
           "Saved, but " +
-          esc(body.error || "the provider isn't configured yet") +
+          (body.error || "the provider isn't configured yet") +
           ".";
       } else if (body.ok) {
         result.style.color = "#5ad17a";
@@ -176,7 +176,7 @@
     } catch (e) {
       result.style.color = "#ff9f9f";
       result.textContent =
-        "Saved, but the test request failed: " + esc(e.message);
+        "Saved, but the test request failed: " + (e.message || "");
     } finally {
       btn.disabled = false;
       await wizRefreshStatus();

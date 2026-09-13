@@ -3964,7 +3964,7 @@
     // HTML escaping — page vocabulary (101 call sites), moved out of the "Background jobs" banner.
     function esc(s) {
       return String(s == null ? "" : s)
-        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
     }
     // Escapes BOTH quote flavours (#217). Single quotes matter as much as double: an attribute
     // value is decoded before whatever consumes it runs, so an unescaped apostrophe in a

@@ -87,10 +87,10 @@ describe("renderVqlRows", () => {
     expect(html).toContain("<td>a</td>");
   });
 
-  // esc() escapes `& < >` and NOT quotes — escAttr is the one that adds those, and this is text
-  // content rather than an attribute value, so the JSON keeps its own quotes.
+  // esc() escapes quotes too since #1004, so the JSON's own quotes come out as &quot; — which the
+  // browser decodes back to `"` in text content.
   it("JSON-encodes an object cell rather than rendering [object Object]", () => {
-    expect(f.renderVqlRows({ rows, total: 2 })).toContain('<td>{"nested":true}</td>');
+    expect(f.renderVqlRows({ rows, total: 2 })).toContain("<td>{&quot;nested&quot;:true}</td>");
   });
 
   it("says so plainly when there are no rows", () => {

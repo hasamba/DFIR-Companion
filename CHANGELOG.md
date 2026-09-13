@@ -62,6 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **One Windows record read by two parsers is one timeline row** — a Hayabusa run and a Chainsaw run over the same EVTX now merge on the record's own identity (channel + EventRecordID + host) and carry both tools as sources, instead of doubling the timeline. Two detections from the *same* parser on one record stay distinct. (#688)
 
 ### Fixed
+- **The live feed strips absolute paths from AI-status errors** — an `ai_status` event whose `detail` is a raw `err.message` is redacted once at the wiring seam, the WebSocket twin of the HTTP-side error redactor from #250 (closes #1029)
 - **An Elastic export auto-detects as SIEM, not Velociraptor** — the generic import matched Velociraptor's `_Source` stamp case-insensitively, so Elasticsearch's `_source` hit wrapper claimed every Kibana table export, ES search response and bare hit array for the Velociraptor importer; the stamp is a string naming the artifact and the wrapper is an object, and the detector now tells them apart (closes #1022)
 - **An edit that omits `enabled` keeps the saved state** — renaming an audit-export destination or a notification channel over the API without the flag no longer switches a disabled one back on and resumes forwarding (closes #998)
 - **Every dedicated import route runs the import spine** — the 22 `import-*` endpoints (SIEM, THOR, KAPE, Plaso, memory, email, auditd, … CSV and log) used to call their importer and resynthesize, so an Info row imported through one stayed in the forensic timeline the model reads, never reached the super-timeline, ran unlocked beside other imports and left no import record or undo checkpoint; they now commit through the same lock → snapshot → dual-write → tag → demote → record → checkpoint sequence as `/import`, `/import-file` and `/import-leapp`, and a failed importer is recorded as an import failure instead of vanishing (closes #956)
@@ -158,6 +159,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A YARA hit found on two machines is two findings again** — a deep scanned path used to push the host out of the aggregation key, merging the hosts; two files under one deep directory collapsed the same way. (same key defect as #670)
 - **A renamed binary found on two machines is two findings again** — a deep path used to push the host out of the aggregation key, merging the hosts and discarding one machine's path and hash. (closes #670)
 - **The bundle hunt label picker stays responsive on a large fleet** — deduping the cached inventory's labels no longer slows down as the fleet grows. (closes #665)
+
+### Fixed
+- **The dashboard's `esc()` escapes quotes** — the 51 attribute sites that interpolate `esc` inside a quoted attribute can no longer be closed by evidence text to forge a sibling attribute; safe-dom is no longer the only layer (closes #1004)
 
 ## [0.36.0] - 2026-08-29
 

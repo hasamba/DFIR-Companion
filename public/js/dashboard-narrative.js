@@ -60,7 +60,7 @@
       })
       .then((d) => {
         if (d.error) {
-          msg.textContent = "error: " + esc(d.error);
+          msg.textContent = "error: " + d.error;
           return;
         }
         msg.textContent = "generated and saved ✓";
@@ -71,9 +71,9 @@
       })
       .catch((e) => {
         msg.textContent = e.sectionDisabled
-          ? esc(e.message)
+          ? e.message || ""
           : "generate failed: " +
-            esc(e.message) +
+            (e.message || "") +
             " — restart the companion server if this 404s";
       })
       .finally(() => {
@@ -271,7 +271,7 @@
             msg.textContent = "";
           })
           .catch((e) => {
-            msg.textContent = "save failed: " + esc(e.message);
+            msg.textContent = "save failed: " + (e.message || "");
           });
       });
     document

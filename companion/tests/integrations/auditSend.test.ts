@@ -32,6 +32,11 @@ const dest = (over: Partial<AuditDestination> = {}): AuditDestination => ({
 const res = (status: number, body: unknown = {}): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
+// A collector that reflects the request it received — a debugging proxy, a misconfigured gateway,
+// a typosquatted host. Whatever it answers must not carry the credential we presented (#1000).
+const reflecting = (status: number, init: RequestInit, extra: Record<string, unknown> = {}): Response =>
+  res(status, { error: "bad request", received: init.headers, ...extra });
+
 const transport = (
   fetchFn: unknown,
   syslogSend = vi.fn(async (_lines: readonly string[], _cfg: SyslogConfig) => {}),
@@ -76,6 +81,19 @@ describe("sendAuditBatch — splunk", () => {
       [ev()],
       transport(fetchFn),
     );
+    expect(r.error).not.toContain("super-secret-token");
+  });
+
+  it("scrubs the token from a collector that echoes the request headers back (#1000)", async () => {
+    const fetchFn = vi.fn(async (_url: string, init: RequestInit) => reflecting(400, init));
+    const r = await sendAuditBatch(
+      dest({ splunk: { url: "https://splunk:8088", token: "super-secret-token" } }),
+      [ev()],
+      transport(fetchFn),
+    );
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("HTTP 400");
+    expect(r.error).toContain("[redacted]");
     expect(r.error).not.toContain("super-secret-token");
   });
 });
@@ -151,6 +169,66 @@ describe("sendAuditBatch — elastic", () => {
     const r = await sendAuditBatch(elastic, [ev()], transport(fetchFn));
     expect(r.ok).toBe(false);
     expect(r.error).toContain("503");
+  });
+
+  it("scrubs the API key from a cluster that echoes the request headers back (#1000)", async () => {
+    const fetchFn = vi.fn(async (_url: string, init: RequestInit) => reflecting(400, init));
+    const withKey = dest({
+      type: "elastic",
+      elastic: { url: "https://es:9200", index: "i", apiKey: "es-secret-key" },
+    });
+    const r = await sendAuditBatch(withKey, [ev()], transport(fetchFn));
+    expect(r.ok).toBe(false);
+    expect(r.error).not.toContain("es-secret-key");
+  });
+
+  it("scrubs basic-auth — encoded and decoded — from an item reason on a 2xx (#1000)", async () => {
+    // The per-item `reason` is the second body path into the error string, and it travels on a
+    // 2xx, so a scrub that only guards the non-2xx branch misses it.
+    const fetchFn = vi.fn(async (_url: string, init: RequestInit) => {
+      const auth = (init.headers as Record<string, string>).Authorization;
+      const decoded = Buffer.from(auth.slice("Basic ".length), "base64").toString();
+      return res(200, {
+        errors: true,
+        items: [
+          {
+            create: {
+              status: 401,
+              error: { type: "security_exception", reason: `rejected ${auth} (${decoded})` },
+            },
+          },
+        ],
+      });
+    });
+    const withPassword = dest({
+      type: "elastic",
+      elastic: { url: "https://es:9200", index: "i", username: "svc", password: "es-secret-pw" },
+    });
+    const r = await sendAuditBatch(withPassword, [ev()], transport(fetchFn));
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain("security_exception");
+    expect(r.error).not.toContain("es-secret-pw");
+    expect(r.error).not.toContain(Buffer.from("svc:es-secret-pw").toString("base64"));
+  });
+
+  it("scrubs a password that JSON escaping rewrites — quotes and backslashes (#1000)", async () => {
+    // The reflected body is JSON, so a password holding `"` or `\` comes back as `\"` and `\\`.
+    // A scrub that matches only the raw password walks straight past it.
+    const password = String.raw`pa"ss\wo"rd!`;
+    const fetchFn = vi.fn(async (_url: string, init: RequestInit) => {
+      const auth = (init.headers as Record<string, string>).Authorization;
+      const decoded = Buffer.from(auth.slice("Basic ".length), "base64").toString();
+      return reflecting(401, init, { decoded });
+    });
+    const withPassword = dest({
+      type: "elastic",
+      elastic: { url: "https://es:9200", index: "i", username: "svc", password },
+    });
+    const r = await sendAuditBatch(withPassword, [ev()], transport(fetchFn));
+    expect(r.ok).toBe(false);
+    expect(r.error).not.toContain(JSON.stringify(password).slice(1, -1));
+    expect(r.error).not.toContain("ss\\\\wo");
+    expect(r.error).toContain("[redacted]");
   });
 });
 
