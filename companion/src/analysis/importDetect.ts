@@ -181,7 +181,12 @@ function isChainsaw(s: Row): boolean {
   );
 }
 function isVelociraptor(s: Row, root: unknown): boolean {
-  if (!!getCI(s, "_Source") || !!getCI(s, "Artifact") || !!getCI(s, "_Artifact")) return true;
+  // `_Source` is Velociraptor's stamp: a STRING naming the artifact. Elasticsearch's `_source` is the
+  // hit wrapper: an OBJECT holding the document. The case-insensitive lookup cannot tell the keys
+  // apart, so the value's type does — an object here is an ES hit and belongs to the SIEM importer,
+  // which checks `_source` itself (#1022).
+  if (typeof getCI(s, "_Source") === "string" && !!getCI(s, "_Source")) return true;
+  if (!!getCI(s, "Artifact") || !!getCI(s, "_Artifact")) return true;
   // Velociraptor data indexed into Elasticsearch (pushed from Kibana): the upload artifact names the
   // index `artifact_<name>`, and nested VQL columns are flattened to dotted keys with `.keyword`
   // multi-fields (Artifact.keyword, Detection.StringHit, EventData.ScriptBlockText, …).

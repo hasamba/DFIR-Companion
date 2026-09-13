@@ -196,6 +196,30 @@ describe("detectImportKind — JSON formats", () => {
       ),
     ).toBe("velociraptor");
   });
+  it("NOT velociraptor: an Elasticsearch hit wrapper (`_source` object) is SIEM, not a `_Source` stamp (#1022)", () => {
+    // Velociraptor's marker is `_Source`: a STRING naming the artifact. Elastic's `_source` is the hit
+    // wrapper: an OBJECT holding the document. Same letters, different key, different meaning — the
+    // case-insensitive lookup used to let the wrapper claim the file for Velociraptor.
+    const hit = (event_id: number) => ({
+      _index: "winlogbeat-7.10",
+      _id: "abc",
+      _source: {
+        "@timestamp": "2017-03-20T06:33:40Z",
+        log_name: "Security",
+        computer_name: "DC1",
+        event_id,
+        event_data: { TargetUserName: "martin", LogonType: "3" },
+      },
+    });
+    // Kibana table export, ES search response, bare hit array — every wrapper the SIEM importer reads.
+    expect(detectImportKind("elastic.json", j({ data: [hit(4624), hit(4634)] }))).toBe("siem");
+    expect(detectImportKind("search.json", j({ hits: { hits: [hit(4624)] } }))).toBe("siem");
+    expect(detectImportKind("hits.json", j([hit(4624)]))).toBe("siem");
+    // The real stamp still wins: a string `_Source` naming the artifact.
+    expect(
+      detectImportKind("vr.json", j([{ _Source: "Windows.System.Pslist", Name: "x.exe", Pid: 1, Ppid: 0 }])),
+    ).toBe("velociraptor");
+  });
   it("NOT velociraptor: a non-artifact Elastic index (MemProcFS mp_timeline) stays SIEM", () => {
     expect(
       detectImportKind(
