@@ -73,9 +73,13 @@ export function exportShapeEvents(format: string, empty: readonly string[], tool
 }
 
 /** The import note's statement about the export's shape. Never grades. */
-export function exportShapeNote(text: string, format: string, empty: readonly string[]): string {
+export function exportShapeNote(text: string, format: string, empty: readonly string[], tables = 0): string {
   const parts: string[] = [];
   if (format === "volatility2-text") parts.push("Volatility 2 layout not read");
+  // A Volatility banner with nothing tabular after it: not zero rows — no table at all.
+  if (format === "volatility-text" && tables === 0 && empty.length === 0) {
+    parts.push("a Volatility banner with no table after it — nothing was read; completion not established");
+  }
   for (const label of empty) {
     parts.push(`zero rows under label ${label ? shown(label, 80) : "none"} — completion not established`);
   }

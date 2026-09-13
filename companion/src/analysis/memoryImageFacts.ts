@@ -20,8 +20,8 @@
 import type { Severity } from "./stateTypes.js";
 import type { MappedEvent } from "./siemImport.js";
 import { getCI } from "./siemImport.js";
-import { cellStr } from "./memoryFields.js";
-import { breakHashRuns, keyDigest, showToken } from "./recordIdentity.js";
+import { cellStr, isPlaceholderCell } from "./memoryFields.js";
+import { breakHashRuns, identityMark, keyDigest, packTags, showToken } from "./recordIdentity.js";
 
 type Row = Record<string, unknown>;
 
@@ -46,6 +46,7 @@ const DUMP_TYPES: Readonly<Record<string, string>> = {
 const LAYER_VALUE_RE = /^(\d+)\s+([A-Za-z_][A-Za-z0-9_]*)$/;
 const RANK: Record<Severity, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Critical: 4 };
 const SHOWN_MAX = 200;
+const DESCRIPTION_MAX = 600;
 
 function shown(value: string, max = SHOWN_MAX): string {
   const t = breakHashRuns(showToken(value ?? ""));
@@ -76,12 +77,37 @@ export interface ImageFacts {
   comment?: string;
 }
 
-/** Is this table windows.info (Variable/Value) or windows.crashinfo? */
-export function isImageInfoTable(plugin: string, cols: ReadonlySet<string>): boolean {
+/** windows.info's fixed variables — a Variable/Value table is windows.info only when it carries them. */
+const INFO_VARIABLES = new Set([
+  "Kernel Base",
+  "DTB",
+  "Symbols",
+  "Is64Bit",
+  "IsPAE",
+  "SystemTime",
+  "NtMajorVersion",
+  "NtMinorVersion",
+  "NtSystemRoot",
+  "NtProductType",
+  "KdVersionBlock",
+  "MachineType",
+]);
+const INFO_MIN_VARIABLES = 3;
+const CRASH_COLUMNS = ["dumptype", "signature", "directorytablebase", "systemtime"];
+
+/**
+ * Is this table windows.info or windows.crashinfo? A plugin label is uploader-chosen, and a
+ * two-column shape or a lone DumpType column is not provenance: the table must carry the plugin's
+ * own fields, or a `windows.foo` table holding `Variable=SystemTime` would mint image facts and
+ * stamp them on every High row of the upload.
+ */
+export function isImageInfoTable(plugin: string, cols: ReadonlySet<string>, rows: readonly Row[]): boolean {
   const p = plugin.toLowerCase();
-  if (/(?:^|\.)crashinfo\b/.test(p) || cols.has("dumptype")) return true;
-  if (/(?:^|\.)info\b/.test(p)) return true;
-  return cols.size === 2 && cols.has("variable") && cols.has("value");
+  if (CRASH_COLUMNS.every((c) => cols.has(c))) return true;
+  if (/(?:^|\.)crashinfo\b/.test(p) && cols.has("dumptype")) return true;
+  if (!cols.has("variable") || !cols.has("value")) return false;
+  const names = new Set(rows.map((r) => cellStr(getCI(r, "Variable")).trim()));
+  return [...INFO_VARIABLES].filter((v) => names.has(v)).length >= INFO_MIN_VARIABLES;
 }
 
 /**
@@ -103,7 +129,8 @@ function readInfo(rows: readonly Row[]): ImageFacts {
   for (const r of rows) {
     const name = cellStr(getCI(r, "Variable")).trim();
     const value = cellStr(getCI(r, "Value")).trim();
-    if (!name) continue;
+    // A placeholder (`-`, `N/A`, null) is an ABSENT value: it establishes nothing about the image.
+    if (!name || !value || isPlaceholderCell(value)) continue;
     const layer = LAYER_VALUE_RE.exec(value);
     if (layer) layers.push({ name, depth: Number(layer[1]), cls: layer[2] });
     else vars.set(name, value);
@@ -119,7 +146,9 @@ function readInfo(rows: readonly Row[]): ImageFacts {
     systemTime: readSystemTime(raw),
     systemTimeRaw: raw,
     ...(major && minor ? { os: `NT ${major}.${minor}${lab ? `, build lab ${lab}` : ""}` } : {}),
-    ...(vars.has("Is64Bit") ? { is64: /^true$/i.test(vars.get("Is64Bit") ?? "") } : {}),
+    ...(/^(?:true|false)$/i.test(vars.get("Is64Bit") ?? "")
+      ? { is64: /^true$/i.test(vars.get("Is64Bit") ?? "") }
+      : {}),
     ...(symbols ? { symbols: symbols.split("/").filter(Boolean).slice(-2).join("/") } : {}),
     layers,
     ...(known.length ? { dumpKind: [...new Set(known.map((l) => DUMP_LAYERS[l.cls]))].join(", ") } : {}),
@@ -128,12 +157,17 @@ function readInfo(rows: readonly Row[]): ImageFacts {
   };
 }
 
+function cell(row: Row, key: string): string {
+  const v = cellStr(getCI(row, key)).trim();
+  return isPlaceholderCell(v) ? "" : v;
+}
+
 function readCrash(row: Row): ImageFacts {
-  const raw = cellStr(getCI(row, "SystemTime")).trim();
-  const dumpType = cellStr(getCI(row, "DumpType")).trim();
-  const uptime = cellStr(getCI(row, "SystemUpTime")).trim();
-  const comment = cellStr(getCI(row, "Comment")).trim();
-  const dtb = cellStr(getCI(row, "DirectoryTableBase")).trim();
+  const raw = cell(row, "SystemTime");
+  const dumpType = cell(row, "DumpType");
+  const uptime = cell(row, "SystemUpTime");
+  const comment = cell(row, "Comment");
+  const dtb = cell(row, "DirectoryTableBase");
   return {
     source: "crashinfo",
     systemTime: readSystemTime(raw),
@@ -147,20 +181,34 @@ function readCrash(row: Row): ImageFacts {
   };
 }
 
-/** The first image-facts table in an upload (windows.info preferred), or null. */
+const colsOf = (rows: readonly Row[]): Set<string> =>
+  new Set(Object.keys(rows[0] ?? {}).map((k) => k.toLowerCase()));
+const isCrash = (rows: readonly Row[]): boolean => colsOf(rows).has("dumptype");
+
+/**
+ * The upload's image facts: windows.info and windows.crashinfo MERGED where they complement each
+ * other — the info row is the base; the crash header adds its dump type, uptime and comment, and
+ * its time only when windows.info has none (then the source says so).
+ */
 export function readImageFacts(tables: readonly { plugin: string; rows: Row[] }[]): ImageFacts | null {
   const found = tables
-    .filter(
-      (t) =>
-        t.rows.length &&
-        isImageInfoTable(t.plugin, new Set(Object.keys(t.rows[0]).map((k) => k.toLowerCase()))),
-    )
-    .map((t) =>
-      new Set(Object.keys(t.rows[0]).map((k) => k.toLowerCase())).has("dumptype")
-        ? readCrash(t.rows[0])
-        : readInfo(t.rows),
-    );
-  return found.find((f) => f.source === "info") ?? found[0] ?? null;
+    .filter((t) => t.rows.length && isImageInfoTable(t.plugin, colsOf(t.rows), t.rows))
+    .map((t) => (isCrash(t.rows) ? readCrash(t.rows[0]) : readInfo(t.rows)));
+  const info = found.find((f) => f.source === "info");
+  const crash = found.find((f) => f.source === "crashinfo");
+  if (info && crash) {
+    return {
+      ...info,
+      ...(crash.dumpType ? { dumpType: crash.dumpType } : {}),
+      ...(crash.uptime ? { uptime: crash.uptime } : {}),
+      ...(crash.comment ? { comment: crash.comment } : {}),
+      ...(info.dumpKind ? {} : { dumpKind: crash.dumpKind }),
+      ...(!info.systemTime && crash.systemTime
+        ? { systemTime: crash.systemTime, systemTimeRaw: crash.systemTimeRaw, source: "crashinfo" as const }
+        : {}),
+    };
+  }
+  return info ?? crash ?? null;
 }
 
 function timeTag(label: string, short: string, f: ImageFacts): string {
@@ -201,14 +249,23 @@ export function imageFactsEvents(tool: string, rows: readonly Row[], plugin: str
     if (f.dtb) tags.push(`[dtb ${shown(f.dtb, 40)}]`);
   }
   const head = f.source === "crashinfo" ? "Memory image (crash dump header)" : "Memory image";
-  const description = `${head} ${tags.join(" ")}`.slice(0, 600);
+  // Whole tags only, and a mark of the full identity when any tag did not fit: a description cut
+  // mid-tag would leave a half-open tag, and two images with different later facts one row.
+  const identity = tags.join("|");
+  const mark = identityMark(`${plugin}|${identity}`);
+  const packed = packTags(
+    tags.map((t) => t.slice(1, -1)),
+    DESCRIPTION_MAX - head.length - mark.length,
+  );
+  const kept = packed ? packed.split("] [").length : 0;
+  const description = `${head}${packed}${kept < tags.length ? mark : ""}`;
   return [
     {
       timestamp: f.systemTime,
       description,
       severity: "Low",
       mitre: [],
-      aggKey: `mem|image|${keyDigest(`${plugin}|${tags.join("|")}`)}`,
+      aggKey: `mem|image|${keyDigest(identity)}`,
       sources: [tool],
     },
   ];
@@ -225,12 +282,15 @@ export function carryImage(mapped: readonly MappedEvent[], facts: ImageFacts | n
     ...(facts.symbols ? { symbols: facts.symbols } : {}),
     layers: facts.layers.map((l) => `${l.name}: ${l.depth} ${l.cls}`),
   };
-  const suffix = facts.systemTime ? ` [image: kernel SystemTime ${facts.systemTime}]` : "";
+  // The suffix names the record the time came from: windows.info's kernel SystemTime, or the
+  // crash dump header's — the header's is not the kernel clock windows.info recovers.
+  const timeLabel = facts.source === "crashinfo" ? "dump-header SystemTime" : "kernel SystemTime";
+  const suffix = facts.systemTime ? ` [image: ${timeLabel} ${facts.systemTime}]` : "";
   return mapped.map((e) => {
     const isImageRow = e.aggKey.startsWith("mem|image|");
     // The suffix must survive the 600-character cap: a long malfind row is clipped (marked) to
     // make room, rather than the image fact being the part that is cut.
-    const room = 600 - suffix.length;
+    const room = DESCRIPTION_MAX - suffix.length;
     const withText =
       suffix && !isImageRow && RANK[e.severity] >= RANK.Medium && !e.description.includes(suffix)
         ? `${e.description.length > room ? `${e.description.slice(0, room - 1)}…` : e.description}${suffix}`

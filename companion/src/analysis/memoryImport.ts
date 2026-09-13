@@ -155,7 +155,6 @@ function classify(plugin: string, cols: Set<string>): Category {
   const has = (k: string): boolean => cols.has(k);
   const any = (...ks: string[]): boolean => ks.some(has);
 
-  if (isImageInfoTable(p, cols)) return "imageinfo";
   if (/malfind|hollow|injec|malthfind|threadmap/.test(p)) return "malfind";
   if (has("protection") && any("tag", "disasm", "hexdump", "vad tag", "vadtag")) return "malfind";
 
@@ -1287,7 +1286,7 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
   // What the export's shape says — a zero-row export or an unread layout is one Low row, never a
   // 400 and never a completion claim (#933 item 12).
   const shapeRows = exportShapeEvents(format, empty, tool);
-  const note = exportShapeNote(text, format, empty);
+  const note = exportShapeNote(text, format, empty, tables.length);
   if (total === 0 && shapeRows.length === 0) {
     return {
       events: [],
@@ -1349,7 +1348,10 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
 
   for (const t of tables) {
     const cols = colSet(t.rows);
-    const category = classify(t.plugin, cols);
+    // An image-facts table is decided by its own fields, never by a label (memoryImageFacts.ts).
+    const category: Category = isImageInfoTable(t.plugin, cols, t.rows)
+      ? "imageinfo"
+      : classify(t.plugin, cols);
     if (category === "process") {
       for (const r of t.rows) {
         const nm = procName(r);

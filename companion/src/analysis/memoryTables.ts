@@ -278,6 +278,8 @@ export function extractTables(text: string, filename: string | undefined): Extra
 
   // Volatility 3 TEXT/grid renderer (the default `vol <plugin>`, no -r json). A banner with no
   // header (a run that wrote nothing tabular) is still a Volatility export that holds zero rows.
+  // A header with no rows is a zero-row export (reported by label). A banner with NO header is
+  // not: nothing tabular was written, so it is a recognised export that holds no table.
   if (looksLikeVolatilityText(trimmed)) {
     const table = parseVolatilityText(trimmed, filename);
     if (table && table.rows.length)
@@ -286,7 +288,7 @@ export function extractTables(text: string, filename: string | undefined): Extra
       tables: [],
       format: "volatility-text",
       tool: "Volatility",
-      empty: [pluginFromFilename(filename)],
+      empty: table ? [pluginFromFilename(filename)] : [],
     };
   }
   if (looksLikeVolatility2Text(trimmed))

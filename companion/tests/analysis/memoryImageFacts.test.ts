@@ -205,9 +205,63 @@ describe("image facts carry onto the rows of the same upload", () => {
     });
     expect(info?.canonical?.image?.dumpKind).toBeUndefined(); // FileLayer alone establishes no format
   });
+  it("a crash header alone labels the carried time as the dump header's; with windows.info both merge", () => {
+    const crashOnly = parseMemory(
+      JSON.stringify({ "windows.crashinfo.Crashinfo": CRASH, "windows.malfind.Malfind": malfind() }),
+    );
+    const high = crashOnly.events.find((e) => e.severity === "High");
+    expect(high?.description).toContain("[image: dump-header SystemTime 2012-07-22T02:45:08.000Z]");
+    expect(high?.description).not.toContain("kernel SystemTime");
+    const both = parseMemory(
+      JSON.stringify({
+        "windows.info.Info": infoJson({ SystemTime: "2012-07-22T02:45:00+00:00" }),
+        "windows.crashinfo.Crashinfo": CRASH,
+        "windows.pslist.PsList": pslist(),
+      }),
+      { minSeverity: "Info" },
+    );
+    const row = both.events.find((e) => /System \(PID 4/.test(e.description));
+    expect(row?.canonical?.image).toMatchObject({
+      systemTime: "2012-07-22T02:45:00.000Z", // windows.info's, not the header's
+      dumpType: "Bitmap Dump (0x5)", // the header's, merged in
+    });
+  });
+  it("a table is windows.info by its own fields, never by a label or a two-column shape", () => {
+    const fake = [
+      { __children: [], Variable: "SystemTime", Value: "2012-07-22T02:45:08+00:00" },
+      { __children: [], Variable: "note", Value: "hello" },
+    ];
+    const r = parseMemory(
+      JSON.stringify({ "windows.info.Info": fake, "windows.malfind.Malfind": malfind() }),
+    );
+    expect(r.events.some((e) => e.description.startsWith("Memory image"))).toBe(false);
+    expect(r.events.find((e) => e.severity === "High")?.description).not.toContain("[image:");
+    const lone = parseMemory(
+      JSON.stringify({ "windows.foo.Foo": [{ __children: [], DumpType: "Bitmap Dump (0x5)", X: 1 }] }),
+    );
+    expect(lone.events.some((e) => e.description.startsWith("Memory image"))).toBe(false);
+  });
+  it("a placeholder establishes nothing: no bitness, no symbols, no time from '-' or N/A", () => {
+    const r = parseMemory(
+      JSON.stringify(infoJson({ Is64Bit: "N/A", Symbols: "-", SystemTime: "-", "Kernel Base": "N/A" })),
+      { filename: "windows.info.json" },
+    );
+    const d = r.events[0].description;
+    expect(d).not.toMatch(/\[(?:32|64)-bit\]|\[symbols:|\[kernel base/);
+    expect(d).toContain("[kernel SystemTime: not readable — ]");
+  });
+  it("a long layer stack keeps whole tags and marks the row", () => {
+    const over: Record<string, string> = {};
+    for (let i = 0; i < 40; i++) over[`layer_${i}_${"x".repeat(20)}`] = `${i} FileLayer`;
+    const r = parseMemory(JSON.stringify(infoJson(over)), { filename: "windows.info.json" });
+    const d = r.events[0].description;
+    expect(d.length).toBeLessThanOrEqual(600);
+    expect((d.match(/\[/g) ?? []).length).toBe((d.match(/\]/g) ?? []).length);
+    expect(d).toMatch(/ #[A-Za-z0-9_-]{22}$/);
+  });
   it("readImageFacts finds nothing in an upload without an info table", () => {
     expect(
-      readImageFacts([{ plugin: "windows.pslist", rows: pslist() as Record<string, unknown>[] }]),
+      readImageFacts([{ plugin: "windows.pslist", rows: pslist() }]),
     ).toBeNull();
   });
 });

@@ -115,17 +115,20 @@ describe("diagnostic-looking text is shown as unverified text, never as grounds"
     );
     expect(exportShapeNote("", "volatility2-text", [])).toContain("Volatility 2 layout not read");
   });
-  it("a failed run with no header still lands as a row, saying only what is established", () => {
+  it("a banner with no table after it is not 'zero rows': no row, and the note says nothing was read", () => {
     const text = [
       "Volatility 3 Framework 2.7.0",
       "Unsatisfied requirement plugins.Malfind.kernel.symbol_table_name: ",
       "A symbol table requirement was not fulfilled.",
     ].join("\n");
     const r = parseMemory(text, { filename: "windows.malfind.txt" });
-    expect(r.kept).toBe(1);
-    expect(r.events[0].description).toContain("Memory export holds zero rows");
-    expect(r.events[0].description).not.toContain("Unsatisfied");
-    expect(r.note).toContain("diagnostic-looking line(s)");
+    expect(r.format).toBe("volatility-text"); // recognised, so the route does not answer 400
+    expect(r.kept).toBe(0);
+    expect(r.note).toContain(
+      "a Volatility banner with no table after it — nothing was read; completion not established",
+    );
+    expect(r.note).toContain("2 diagnostic-looking line(s)");
+    expect(r.note).not.toContain("zero rows");
   });
 });
 
