@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { ForensicEvent } from "./stateTypes.js";
 import { transferBlockSchema, webBlockSchema } from "./canonicalWeb.js";
+import { dnsBlockSchema } from "./canonicalDns.js";
 
 export const CANONICAL_EVENT_SCHEMA_VERSION = "1.0.0" as const;
 /** The producer stamped on an envelope DERIVED from legacy flat fields at the read boundary. */
@@ -231,31 +232,9 @@ export const canonicalEventEnvelopeSchema = z.object({
       layers: z.array(z.string()),
     })
     .optional(),
-  // A DNS record's own reading (dnsRecord.ts, #933 item 2): what the resolver client reported and
-  // the values it RETURNED — owner-less, so never "answers"; the vantage is the endpoint's own.
-  dns: z
-    .object({
-      query: z.string(),
-      queryValid: z.boolean(),
-      indicator: z.boolean(),
-      queryType: z.number().int().nonnegative().optional(),
-      status: z.number().int().nonnegative().optional(),
-      state: z.string().min(1),
-      networkQuery: z.boolean().optional(),
-      returned: z.array(
-        z.object({
-          type: z.number().int().nonnegative().optional(),
-          value: z.string(),
-          kind: z.enum(["address", "name", "other"]),
-        }),
-      ),
-      ownership: z.literal("not in this record"),
-      vantage: z.enum(["endpoint"]),
-      // An overflow row (dnsRecord.ts boundDnsVariants): distinct returned-value sets beyond the
-      // budget were folded here; `returned` is empty on purpose and no set is representative.
-      folded: z.boolean().optional(),
-    })
-    .optional(),
+  // A DNS record's reading — the endpoint's own records (dnsRecord.ts) or a sensor's view with
+  // the leads one upload establishes (dnsWireRows.ts, #996); the block lives in canonicalDns.ts.
+  dns: dnsBlockSchema.optional(),
   file: z
     .object({
       path: z.string().optional(),
