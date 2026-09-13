@@ -705,6 +705,31 @@ describe("through parseMacos and correlateEvents", () => {
     expect(afterImport(parseMacos(JSON.stringify(recs), { aggregate: false }).events)).toHaveLength(2);
   });
 
+  it("a row of a native dump whose native columns are empty is not a download record and mints nothing", () => {
+    const sparse =
+      "LSQuarantineEventIdentifier,timestamp,eventMessage,url,agent\n" +
+      ",2026-01-01T00:00:00Z,health check,https://api.vendor.invalid/status,telemetryd\n" +
+      `${UUID},2026-01-01T00:00:01Z,,https://cdn.example.invalid/a.dmg,Safari\n`;
+    const r = parseMacos(sparse);
+    expect(r.events.filter((e) => e.description.startsWith("macOS quarantine"))).toHaveLength(1);
+    expect(r.iocs.some((i) => i.value.includes("api.vendor.invalid"))).toBe(false);
+    expect(r.events.some((e) => e.canonical?.quarantine && e.description.includes("telemetryd"))).toBe(false);
+    // the same shape as JSON
+    const j = parseMacos(
+      JSON.stringify([
+        {
+          LSQuarantineEventIdentifier: "",
+          timestamp: "2026-01-01T00:00:00Z",
+          eventMessage: "health check",
+          url: "https://api.vendor.invalid/status",
+          agent: "telemetryd",
+        },
+      ]),
+    );
+    expect(j.events.filter((e) => e.description.startsWith("macOS quarantine"))).toHaveLength(0);
+    expect(j.iocs).toHaveLength(0);
+  });
+
   it("a path-shaped unreadable type never joins a real path event after import", () => {
     const q = parseMacos(csv([row({ LSQuarantineTypeNumber: "/tmp/evil/payload" })]));
     expect(q.events[0].description).toContain("[kind: kind not readable (/tmp/evil/payload)]");

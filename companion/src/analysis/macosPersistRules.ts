@@ -109,6 +109,15 @@ export interface MacContext extends LinuxContext {
 }
 
 /** Signing and quarantine facts a collection attached to this plist's header. */
+function isDownloadUrl(value: string): boolean {
+  if (!/^(?:https?|ftp):\/\//i.test(value)) return false;
+  try {
+    return new URL(value).hostname !== "";
+  } catch {
+    return false;
+  }
+}
+
 function factsFor(file: CollectedFile): MacFileFacts | undefined {
   const extra = file.extra;
   if (!extra) return undefined;
@@ -116,12 +125,11 @@ function factsFor(file: CollectedFile): MacFileFacts | undefined {
   // `# quarantine:` carries either the raw xattr value (`0083;5f3a1b2c;Safari;<uuid>` — decoded by
   // its documented form, the time as Unix hex seconds) or, from an older collection, a bare URL.
   const mark = extra.quarantine ? readQuarantineXattr(extra.quarantine) : null;
-  // Legacy only when it IS a URL; a value that is neither a decodable mark nor a URL is kept as
-  // text and said to be undecodable — never "downloaded from <garbage>".
+  // Legacy only when it IS a download URL — a fetchable scheme with a host; `https://` alone or
+  // an opaque scheme is neither a decodable mark nor a download, and is kept as text and said to
+  // be undecodable — never "downloaded from <garbage>".
   const quarantineUrl =
-    !mark && extra.quarantine && /^[a-z][a-z0-9+.-]*:\/\//i.test(extra.quarantine)
-      ? extra.quarantine
-      : undefined;
+    !mark && extra.quarantine && isDownloadUrl(extra.quarantine) ? extra.quarantine : undefined;
   const quarantineRaw = !mark && !quarantineUrl ? extra.quarantine : undefined;
   if (!signing && !quarantineUrl && !mark && !quarantineRaw) return undefined;
   return {

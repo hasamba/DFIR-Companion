@@ -63,6 +63,13 @@ describe("the # quarantine: header (#933 item 7)", () => {
     const bad = grade("0083;zz;Safari;550E8400-E29B-41D4-A716-446655440000");
     expect(bad.severity).toBe("Medium");
     expect(bad.reason).toContain("[quarantine mark (not decodable):");
+    // a legacy value is a download only as a fetchable URL with a host
+    for (const v of ["https://", "custom://opaque", "file:///tmp/x"]) {
+      const s = grade(v);
+      expect(s.severity, v).toBe("Medium");
+      expect(s.reason, v).toContain("[quarantine mark (not decodable):");
+      expect(s.reason, v).not.toContain("[quarantine url:");
+    }
   });
   it("the legacy URL form keeps its words", () => {
     const [s] = job(susp, "/Library/LaunchDaemons/x.plist", {

@@ -261,3 +261,12 @@ The joins, Gatekeeper/XProtect logs, browser history, any grade above Info.
 1. A repeated CSV header was kept as a plain array, so a genuine JSON array time (`[716403200.5]`)
    read as a scalar and folded with the scalar record. Fix: the CSV projection wraps repeats in a
    `RepeatedColumn`; a JSON array stays a structured value (its JSON text, no instant).
+
+## Code round 18 (Codex, two findings)
+1. Classification read the header, so a row of a native dump with empty `LSQuarantine*` columns
+   and generic `url`/`agent` values became a download record with indicators. Fix: a record is a
+   quarantine record by its VALUES — a filled native field when the file has native columns, else
+   a filled resource alias plus a filled signal dimension; CSV is classified row by row like JSON.
+2. `# quarantine: https://` or `custom://opaque` counted as a legacy download URL and raised the
+   finding. Fix: a legacy value is a download only as an http(s)/ftp URL with a host; anything else
+   is undecodable text.

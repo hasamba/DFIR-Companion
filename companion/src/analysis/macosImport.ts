@@ -112,23 +112,25 @@ function mapUnifiedLog(rec: Row): MappedEvent | null {
 // kind, the agent, the RESOURCE and the ORIGIN as distinct URLs, the time by the encoding its column declares,
 // the event identifier — and never the local file, which this record does not name.
 function mapQuarantine(rec: Row, sink: Map<string, SiemIoc>): QuarantineRow | null {
-  // Once the file is a quarantine dump every record with ANY quarantine fact is a row — an email
-  // attachment carries no URL and is still a download event.
-  const hasAny = Object.entries(rec).some(([k, v]) => k.trim() !== "" && text(v).trim() !== "");
-  return hasAny ? quarantineOverlay(rec, sink, { deferIocs: true }) : null;
+  return quarantineOverlay(rec, sink, { deferIocs: true });
 }
 
-// A quarantine dump names itself by its native columns, or — a converted export — by a coherent
-// set of the aliases the reader accepts (a data url with an event id, an agent or an origin).
-// Aliases by DIMENSION: the resource (`data_url`/`url`) plus one independent quarantine signal —
-// `origin_url` and `referrer` are one dimension, so two synonyms never count as two signals.
+// A quarantine RECORD names itself by its values, never by its header alone: a native
+// `LSQuarantine*` field that is filled (an email attachment carries no URL and is still a download
+// event), or — a converted export with no native column — a coherent set of filled aliases: the
+// resource (`data_url`/`url`) plus one independent quarantine signal. Aliases by DIMENSION:
+// `origin_url` and `referrer` are one dimension, so two synonyms never count as two signals. A row
+// whose native columns are all empty is not a download record, whatever its generic columns hold.
 const RESOURCE_ALIASES = ["data_url", "url"];
 const SIGNAL_DIMENSIONS = [["event_id"], ["agent"], ["origin_url", "referrer"]];
-function looksLikeQuarantine(headers: readonly string[]): boolean {
-  const h = headers.map((x) => x.trim().toLowerCase());
-  if (h.some((x) => /lsquarantine/i.test(x))) return true;
-  const resource = RESOURCE_ALIASES.some((k) => h.includes(k));
-  const signals = SIGNAL_DIMENSIONS.filter((dim) => dim.some((k) => h.includes(k))).length;
+const NATIVE_RE = /^lsquarantine/i;
+function isQuarantineRecord(rec: Row, headers: readonly string[]): boolean {
+  const filled = (k: string) =>
+    Object.entries(rec).some(([h, v]) => h.trim().toLowerCase() === k && text(v).trim() !== "");
+  if (headers.some((h) => NATIVE_RE.test(h.trim())))
+    return Object.entries(rec).some(([h, v]) => NATIVE_RE.test(h.trim()) && text(v).trim() !== "");
+  const resource = RESOURCE_ALIASES.some(filled);
+  const signals = SIGNAL_DIMENSIONS.filter((dim) => dim.some(filled)).length;
   return resource && signals >= 1;
 }
 
@@ -160,7 +162,7 @@ export function parseMacos(input: string, opts: MacosImportOptions = {}): MacosP
     // unified-log record in the same array is never a download event.
     let quarantine = false;
     for (const rec of records) {
-      const isQuarantine = looksLikeQuarantine(Object.keys(rec));
+      const isQuarantine = isQuarantineRecord(rec, Object.keys(rec));
       quarantine ||= isQuarantine;
       const event = isQuarantine ? mapQuarantine(rec, iocSink) : mapUnifiedLog(rec);
       if (event) mapped.push(event);
@@ -170,7 +172,6 @@ export function parseMacos(input: string, opts: MacosImportOptions = {}): MacosP
   } else {
     const { headers, rows } = parseCsv(trimmed);
     if (!headers.length) return empty;
-    const quarantine = looksLikeQuarantine(headers);
     const objects = rows.map((cols) => {
       const r: Row = {};
       // A header the file repeats keeps every value (a RepeatedColumn) — the quarantine reader
@@ -186,10 +187,15 @@ export function parseMacos(input: string, opts: MacosImportOptions = {}): MacosP
       return r;
     });
     total = objects.length;
+    // Row by row, like JSON: a row of a quarantine dump whose native columns are empty is not a
+    // download record — it is read as telemetry or dropped, and mints nothing.
+    let quarantine = false;
     for (const rec of objects) {
-      const event = quarantine ? mapQuarantine(rec, iocSink) : mapUnifiedLog(rec);
+      const isQuarantine = isQuarantineRecord(rec, headers);
+      quarantine ||= isQuarantine;
+      const event = isQuarantine ? mapQuarantine(rec, iocSink) : mapUnifiedLog(rec);
       if (event) mapped.push(event);
-      if (event && quarantine) quarantineRows.push(event as QuarantineRow);
+      if (event && isQuarantine) quarantineRows.push(event as QuarantineRow);
     }
     format = quarantine ? "macos-quarantine" : "macos-unified-log";
   }
