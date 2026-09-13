@@ -161,7 +161,10 @@ describe("parseMemory — Volatility 3 netscan", () => {
     expect(conn?.dstIp).toBe("203.0.113.50");
     expect(conn?.srcIp).toBe("10.0.0.5");
     expect(conn?.port).toBe(443);
-    expect(conn?.processName).toBe("evil.exe");
+    // the owner is the record's own field; processName (cross-tool correlation) needs one submitted
+    // process row consistent with it (#933 item 14) — none here
+    expect(conn?.processName).toBeUndefined();
+    expect(conn?.description).toContain("[owner: evil.exe, PID 3120 — no process rows submitted to compare]");
     expect(r.iocs.some((i) => i.type === "ip" && i.value === "203.0.113.50")).toBe(true);
     // 0.0.0.0 listener → no IP IOC, Info severity.
     expect(r.iocs.some((i) => i.type === "ip" && i.value === "0.0.0.0")).toBe(false);
