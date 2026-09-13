@@ -106,7 +106,11 @@ describe("checkEvidenceSafety — unescaped evidence", () => {
       confidence: 50,
       mitreTechniques: [],
       relatedEventIds: [],
+      relatedIocs: [],
       sourceScreenshots: [],
+      firstSeen: "2026-05-01T00:00:00Z",
+      lastUpdated: "2026-05-01T00:00:00Z",
+      status: "open",
     });
     state.findings[0].description = 'see <a href="javascript:alert(3)">the link</a>';
     const out =

@@ -123,7 +123,14 @@ describe("when the check reports", () => {
   it("the DOCX carries the banner as its first paragraphs", async () => {
     check.mockReturnValue(PLANTED);
     const { default: JSZip } = await import("jszip");
-    const res = await request(app).get("/cases/c1/report.docx").buffer(true).parse(binaryParser);
+    const res = await request(app)
+      .get("/cases/c1/report.docx")
+      .buffer(true)
+      .parse((r, callback) => {
+        const chunks: Buffer[] = [];
+        r.on("data", (c: Buffer) => chunks.push(c));
+        r.on("end", () => callback(null, Buffer.concat(chunks)));
+      });
     expect(res.status).toBe(200);
     const zip = await JSZip.loadAsync(res.body as Buffer);
     const xml = await zip.file("word/document.xml")!.async("text");
@@ -193,10 +200,4 @@ async function settled(): Promise<void> {
 async function warnings() {
   await settled();
   return (await activityLogStore.load("c1")).filter((e) => e.action === "evidence-safety-warning");
-}
-
-function binaryParser(res: NodeJS.ReadableStream, cb: (err: Error | null, body: Buffer) => void): void {
-  const chunks: Buffer[] = [];
-  res.on("data", (c: Buffer) => chunks.push(c));
-  res.on("end", () => cb(null, Buffer.concat(chunks)));
 }
