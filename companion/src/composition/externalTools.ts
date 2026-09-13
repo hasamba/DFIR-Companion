@@ -22,6 +22,7 @@
  */
 import { basename, join } from "node:path";
 import { openNoFollow } from "../storage/noFollowRead.js";
+import { isSafeDropRelpath } from "../storage/dropRelpath.js";
 import { FileTooLargeError, readHandleBounded } from "../storage/boundedRead.js";
 import { randomUUID } from "node:crypto";
 import type { Buffer } from "node:buffer";
@@ -192,6 +193,15 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
     opts: { name: string; dropRelpath?: string; cache?: ToolRunCache },
   ): Promise<boolean> {
     const { name, dropRelpath, cache } = opts;
+    // FIRST, before either transport touches the file: run-pending feeds this relpath from
+    // state/drop-status.json, which an imported archive restores verbatim (#919). The schema drops
+    // an escaping entry at load and moveDropFile refuses one before the rename — but the READ half
+    // had only the schema, so a future writer of that file that bypassed it would have had an
+    // arbitrary path opened and uploaded to SO-CRATES with nothing else in the way (#980). The
+    // spawn branch's case-dir containment is wider than drop/, so this guard covers both.
+    if (dropRelpath !== undefined && !isSafeDropRelpath(dropRelpath)) {
+      throw new Error(`refused to read a path outside the drop folder (security): ${dropRelpath}`);
+    }
     const cfg = liveToolConfigs().get(toolId);
     if (!cfg) throw new Error(`tool "${toolId}" is not configured`);
     if (cfg.transport === "http") {
