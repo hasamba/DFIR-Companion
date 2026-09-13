@@ -29,10 +29,64 @@ export interface AuditSendResult {
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 
+const REDACTED = "[redacted]";
+
+/**
+ * A bare secret shorter than this is not scrubbed on its own — a one-letter token would blank every
+ * occurrence of that letter in an ordinary error message. The full header value (`Splunk t`) is
+ * still scrubbed whatever its length, because the scheme prefix makes it specific.
+ */
+const MIN_BARE_SECRET_LENGTH = 8;
+
+/** A string as it appears inside a JSON string literal — `"` and `\` escaped, quotes stripped. */
+const jsonEscaped = (s: string): string => JSON.stringify(s).slice(1, -1);
+
+/**
+ * Every form the presented credential could come back in. The header value as sent, the bare
+ * token after the scheme, and — for basic auth — the decoded `user:password` and the password
+ * alone, because a proxy that echoes the request may echo it decoded. Each of those also in its
+ * JSON-escaped spelling: the reflected body is usually JSON, and a password holding `"` or `\`
+ * comes back rewritten, so a scrub that knows only the raw form walks past it.
+ */
+function credentialForms(headers: Record<string, string>): string[] {
+  const forms: string[] = [];
+  for (const [name, value] of Object.entries(headers)) {
+    if (name.toLowerCase() !== "authorization") continue;
+    const [scheme, ...rest] = value.split(" ");
+    const token = rest.join(" ");
+    forms.push(value);
+    const bare = [token];
+    if (scheme.toLowerCase() === "basic" && token) {
+      const decoded = Buffer.from(token, "base64").toString();
+      bare.push(decoded, decoded.slice(decoded.indexOf(":") + 1));
+    }
+    forms.push(...bare.filter((f) => f.length >= MIN_BARE_SECRET_LENGTH));
+  }
+  const withEscaped = forms.flatMap((f) => [f, jsonEscaped(f)]);
+  // Longest first, so the header value goes before the token it contains.
+  return [...new Set(withEscaped)].filter((f) => f.length > 0).sort((a, b) => b.length - a.length);
+}
+
+/**
+ * Remove the credential we just presented from whatever the endpoint answered (#1000).
+ *
+ * The destination URL is operator-chosen but arbitrary: a debugging proxy, a misconfigured gateway
+ * or a typosquatted collector answers with the request headers it received, and that body is about
+ * to become an error string in the server log and a JSON response the dashboard renders. The route
+ * that serves that response strips the token from the destination record; a body that carries it
+ * back would undo that. The send code knows the secret it sent, so it scrubs it here, once, before
+ * either reader of the body sees it.
+ */
+function scrubCredential(body: string, headers: Record<string, string>): string {
+  return credentialForms(headers).reduce((acc, form) => acc.replaceAll(form, REDACTED), body);
+}
+
 /**
  * An error string that can be shown in the dashboard and written to the server log. The credential
  * is never in it: the request we built carries an Authorization header, and a naive
- * "failed to POST <request>" would put an HEC token into a log file and a browser response.
+ * "failed to POST <request>" would put an HEC token into a log file and a browser response — and
+ * the body passed here has already been through `scrubCredential`, so a reflected header cannot
+ * bring it back in.
  */
 function httpError(status: number, body: string): string {
   const detail = body.trim() ? `: ${body.trim().slice(0, 300)}` : "";
@@ -49,11 +103,13 @@ async function postJson(
     body: request.body,
     signal: AbortSignal.timeout(transport.timeoutMs ?? DEFAULT_TIMEOUT_MS),
   });
-  const body = await readBoundedText(res, {
+  const raw = await readBoundedText(res, {
     maxBytes: RESPONSE_SIZE_LIMITS.text,
     context: "audit export",
   }).catch(() => "");
-  return { ok: res.ok, status: res.status, body };
+  // Scrubbed before EITHER consumer sees it: the non-2xx `httpError` and the 2xx per-item reason in
+  // `elasticDeliveryError` both quote this body.
+  return { ok: res.ok, status: res.status, body: scrubCredential(raw, request.headers) };
 }
 
 /**
