@@ -64,6 +64,48 @@ describe("SuperTimelineStore protection (#958)", () => {
     expect(await small.protectedIds("c1")).toEqual([]);
   });
 
+  it("unprotect enforces the cap at once: the store never holds more unprotected rows than the cap", async () => {
+    const small = new SuperTimelineStore(cases, 1);
+    await small.append("c1", [dated("row0", 1)]);
+    await small.protect("c1", "row0");
+    await small.append("c1", [dated("r1", 2)]); // cap 1 unprotected + row0 protected = 2 rows
+    expect((await small.query("c1", {})).total).toBe(2);
+    await small.unprotect("c1", "row0");
+    const r = await small.query("c1", {});
+    expect(r.total).toBe(1);
+    expect(r.events.map((e) => e.id)).toEqual(["r1"]); // row0 is the oldest unprotected row, so it goes
+  });
+
+  it("a tags file changed outside TagsStore (a restore) is reconciled on the next store call", async () => {
+    // tags.json and the case database are snapshotted separately, so a restore can put a star in
+    // one and not the other. The tags file is the authority: protection is re-derived from it
+    // whenever it changed since the last sync — and a dropped star releases the row to the cap.
+    const small = new SuperTimelineStore(cases, 1);
+    await small.append("c1", [dated("row0", 1)]);
+    const tagsPath = join(cases.stateDir("c1"), "tags.json");
+    await writeFile(
+      tagsPath,
+      JSON.stringify([
+        {
+          id: "t1",
+          targetType: "event",
+          targetId: "row0",
+          label: "starred",
+          author: "analyst",
+          createdAt: "2026-06-04T00:00:00Z",
+        },
+      ]),
+    );
+    await small.append("c1", [dated("r1", 2)]);
+    expect(await small.protectedIds("c1")).toEqual(["row0"]);
+    expect((await small.get("c1", "row0"))?.id).toBe("row0");
+
+    await writeFile(tagsPath, "[]");
+    expect(await small.protectedIds("c1")).toEqual([]);
+    expect((await small.query("c1", {})).total).toBe(1); // back within the cap
+    expect(await small.get("c1", "row0")).toBeNull();
+  });
+
   it("setLabels reports false for an id that is not in the store", async () => {
     const store = new SuperTimelineStore(cases, 10);
     expect(await store.setLabels("c1", "ghost", ["key-evidence"])).toBe(false);
@@ -146,7 +188,7 @@ describe("SuperTimelineStore protection (#958)", () => {
     await small.append("c1", [dated("a", 1), dated("b", 2)]);
     // Rewind the database to the pre-#958 shape: indexed, but never synced with the tags file.
     const db = new (loadDatabaseSync())(join(cases.stateDir("c1"), INVESTIGATION_DB_FILENAME));
-    db.exec("DELETE FROM storage_meta WHERE key='super_protected_synced'");
+    db.exec("DELETE FROM storage_meta WHERE key='super_protected_sync'");
     db.close();
     await writeFile(
       join(cases.stateDir("c1"), "tags.json"),

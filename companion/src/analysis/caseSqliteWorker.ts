@@ -10,7 +10,7 @@ import { SUPER_WORKER_SOURCE } from "./caseSqliteWorkerSuper.js";
 const WORKER_SOURCE =
   String.raw`
 const { parentPort } = require("node:worker_threads");
-const { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } = require("node:fs");
+const { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } = require("node:fs");
 const { dirname } = require("node:path");
 const { randomUUID } = require("node:crypto");
 
@@ -511,7 +511,7 @@ async function dispatch(message) {
     case "getSuper": return getSuper(message.dbPath, message.id);
     case "setSuperLabels": return setSuperLabels(message.dbPath, message.eventId, message.labels);
     case "protectSuper": return protectSuper(message.dbPath, message.eventId);
-    case "unprotectSuper": return unprotectSuper(message.dbPath, message.eventId);
+    case "unprotectSuper": return unprotectSuper(message.dbPath, message.eventId, message.max);
     case "listSuperProtected": return listSuperProtected(message.dbPath);
     case "integrity": return integrity(message.dbPath);
     case "backupDatabase": return backupDatabase(message.dbPath, message.targetPath);

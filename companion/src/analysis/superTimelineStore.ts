@@ -43,7 +43,10 @@ import type { OperationalMetricsStore, QueryIndex } from "./operationalMetrics.j
 // fed by TagsStore from analyst-authored event tags — never from the automatic tagger, whose tags
 // can cover most rows. The legacy `super_labels` sidecar takes no part in it. Migration protects
 // tagged legacy rows before the cap runs, and a tagged id that content-dedup drops hands its
-// protection to the retained row with the same content.
+// protection to the retained row with the same content. The tags file stays the authority: it is
+// written and snapshotted apart from the database, so whenever it changed since the last sync
+// (a restore, a crash between the two writes, a case indexed before #958) the worker re-derives
+// the exact set from it. Releasing a row — by unstar or by that sync — enforces the cap at once.
 export const DEFAULT_SUPER_MAX = 100_000;
 export const DEFAULT_SUPER_QUERY_LIMIT = 500;
 const SCAN_BATCH_SIZE = 1_000;
@@ -290,6 +293,7 @@ export class SuperTimelineStore {
       op: "unprotectSuper",
       dbPath: this.databasePath(caseId),
       eventId,
+      max: this.max,
     });
   }
 

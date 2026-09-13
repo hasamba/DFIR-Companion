@@ -35,6 +35,34 @@ function protectSuperRows(db, ids, incomingById) {
   return protectedCount;
 }
 
+// The cap bounds UNPROTECTED rows; every protected row is kept (#958). Runs inside the caller's
+// transaction after anything that adds rows or drops protection, so the store never rests above
+// the cap. NOT EXISTS, not NOT IN: a row with no entity_id must stay evictable, and
+// NULL NOT IN (...) is never true. Stores the exact post-delete total in entity_counts.
+function enforceSuperCap(db, max) {
+  const cap = Number.isFinite(max) ? Math.max(0, Math.floor(max)) : 100000;
+  const count = Number(db.prepare("SELECT count(*) AS n FROM entities WHERE kind='superTimeline'").get().n);
+  const protectedCount = Number(db.prepare(
+    "SELECT count(*) AS n FROM entities e WHERE e.kind='superTimeline' " +
+    "AND EXISTS (SELECT 1 FROM super_protected p WHERE p.event_id=e.entity_id)"
+  ).get().n);
+  const excess = Math.max(0, count - protectedCount - cap);
+  let deleted = 0; // eviction policy: superTimelineStore.ts "Retention"
+  if (excess > 0) {
+    deleted = db.prepare(
+      "DELETE FROM entities WHERE row_id IN (SELECT e.row_id FROM entities e WHERE e.kind='superTimeline' " +
+      "AND NOT EXISTS (SELECT 1 FROM super_protected p WHERE p.event_id=e.entity_id) ORDER BY e.row_id LIMIT ?)"
+    ).run(excess).changes;
+    db.prepare("DELETE FROM super_labels WHERE event_id NOT IN " +
+      "(SELECT entity_id FROM entities WHERE kind='superTimeline' AND entity_id IS NOT NULL)").run();
+  }
+  db.prepare(
+    "INSERT INTO entity_counts(kind, count) VALUES('superTimeline', ?) " +
+    "ON CONFLICT(kind) DO UPDATE SET count=excluded.count"
+  ).run(count - deleted);
+  return deleted;
+}
+
 function writeSuperEvents(db, events, max, protectIds) {
   return withTransaction(db, () => {
     const writer = createEntityWriter(db);
@@ -74,28 +102,7 @@ function writeSuperEvents(db, events, max, protectIds) {
     if (protectIds && protectIds.length) {
       protectSuperRows(db, protectIds, new Map(incoming.filter((event) => scalarText(event && event.id)).map((event) => [event.id, event])));
     }
-    const cap = Number.isFinite(max) ? Math.max(0, Math.floor(max)) : 100000;
-    const count = Number(db.prepare("SELECT count(*) AS n FROM entities WHERE kind='superTimeline'").get().n);
-    // The cap bounds UNPROTECTED rows; every protected row is kept (#958). NOT EXISTS, not NOT IN:
-    // a row with no entity_id must stay evictable, and NULL NOT IN (...) is never true.
-    const protectedCount = Number(db.prepare(
-      "SELECT count(*) AS n FROM entities e WHERE e.kind='superTimeline' " +
-      "AND EXISTS (SELECT 1 FROM super_protected p WHERE p.event_id=e.entity_id)"
-    ).get().n);
-    const excess = Math.max(0, count - protectedCount - cap);
-    let deleted = 0; // eviction policy: superTimelineStore.ts "Retention"
-    if (excess > 0) {
-      deleted = db.prepare(
-        "DELETE FROM entities WHERE row_id IN (SELECT e.row_id FROM entities e WHERE e.kind='superTimeline' " +
-        "AND NOT EXISTS (SELECT 1 FROM super_protected p WHERE p.event_id=e.entity_id) ORDER BY e.row_id LIMIT ?)"
-      ).run(excess).changes;
-      db.prepare("DELETE FROM super_labels WHERE event_id NOT IN " +
-        "(SELECT entity_id FROM entities WHERE kind='superTimeline' AND entity_id IS NOT NULL)").run();
-    }
-    db.prepare(
-      "INSERT INTO entity_counts(kind, count) VALUES('superTimeline', ?) " +
-      "ON CONFLICT(kind) DO UPDATE SET count=excluded.count"
-    ).run(count - deleted);
+    enforceSuperCap(db, max);
     // retained, not inserted: a batch past the cap loses its own head
     return firstRowId === null ? 0 : Number(db.prepare("SELECT count(*) AS n FROM entities WHERE kind='superTimeline' AND row_id>=?").get(firstRowId).n);
   });
@@ -118,17 +125,42 @@ function readProtectedTagIds(tagsPath, excludeAuthorPrefix) {
   return [...ids];
 }
 
+// The tags file as the worker last saw it. Size and mtime, not content: a stat per store call is
+// cheap, a read is not, and TagsStore's own protect/unprotect calls cover a same-size rewrite
+// inside one mtime tick.
+function tagsFingerprint(tagsPath) {
+  try {
+    const stat = statSync(tagsPath);
+    return stat.size + ":" + stat.mtimeMs;
+  } catch {
+    return "absent";
+  }
+}
+
+// The tags file is the authority for protection, and it is written and snapshotted apart from the
+// case database: a restore, an export, or a crash between the two writes can leave a star in one
+// file and not the other. So the relation is re-derived from the file whenever the file changed
+// since the last sync (or was never synced — a case indexed before #958): the exact analyst set
+// is protected, everything else released, and the cap enforced over what was released.
+function reconcileSuperProtection(db, tagsPath, excludeAuthorPrefix, max) {
+  const fingerprint = tagsFingerprint(tagsPath);
+  const synced = db.prepare("SELECT value FROM storage_meta WHERE key='super_protected_sync'").get();
+  if (synced && synced.value === fingerprint) return;
+  withTransaction(db, () => {
+    const ids = readProtectedTagIds(tagsPath, excludeAuthorPrefix);
+    db.prepare("DELETE FROM super_protected WHERE event_id NOT IN (SELECT value FROM json_each(?))").run(JSON.stringify(ids));
+    protectSuperRows(db, ids, null);
+    enforceSuperCap(db, max);
+    db.prepare("INSERT INTO storage_meta(key,value) VALUES('super_protected_sync',?) " +
+      "ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(fingerprint);
+  });
+}
+
 function migrateSuper(dbPath, eventsPath, labelsPath, tagsPath, excludeAuthorPrefix, max) {
   const db = openDatabase(dbPath);
   try {
-    const flagged = (key) => db.prepare("SELECT 1 AS x FROM storage_meta WHERE key=?").get(key);
-    if (flagged("super_migrated")) {
-      // A case indexed before #958 has rows but no protection: backfill it from the tags file once.
-      if (flagged("super_protected_synced")) return;
-      withTransaction(db, () => {
-        protectSuperRows(db, readProtectedTagIds(tagsPath, excludeAuthorPrefix), null);
-        db.prepare("INSERT INTO storage_meta(key,value) VALUES('super_protected_synced','1')").run();
-      });
+    if (db.prepare("SELECT 1 AS x FROM storage_meta WHERE key='super_migrated'").get()) {
+      reconcileSuperProtection(db, tagsPath, excludeAuthorPrefix, max);
       return;
     }
     let events = [];
@@ -152,7 +184,7 @@ function migrateSuper(dbPath, eventsPath, labelsPath, tagsPath, excludeAuthorPre
         }
       }
       db.prepare("INSERT INTO storage_meta(key,value) VALUES('super_migrated','1')").run();
-      db.prepare("INSERT INTO storage_meta(key,value) VALUES('super_protected_synced','1')").run();
+      db.prepare("INSERT INTO storage_meta(key,value) VALUES('super_protected_sync',?)").run(tagsFingerprint(tagsPath));
     });
   } finally {
     db.close();
@@ -232,11 +264,15 @@ function protectSuper(dbPath, eventId) {
   }
 }
 
-function unprotectSuper(dbPath, eventId) {
+// Releasing a row can put the unprotected population over the cap, so the cap runs here too.
+function unprotectSuper(dbPath, eventId, max) {
   if (!existsSync(dbPath)) return;
   const db = openDatabase(dbPath);
   try {
-    db.prepare("DELETE FROM super_protected WHERE event_id=?").run(eventId);
+    withTransaction(db, () => {
+      db.prepare("DELETE FROM super_protected WHERE event_id=?").run(eventId);
+      enforceSuperCap(db, max);
+    });
   } finally {
     db.close();
   }
