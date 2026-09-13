@@ -193,3 +193,9 @@ The joins, Gatekeeper/XProtect logs, browser history, any grade above Info.
    production. Fix: the option is gone; a converted dump declares its epoch in the column name
    (`unix_time`/`epoch` = seconds, `unix_ms`/`epoch_ms` = milliseconds), which needs no route or
    UI and is the exporter's own declaration. Generic `timestamp`/`time` stay unreadable.
+
+## Code round 8 (Codex, one finding)
+1. Three epoch spellings `declaredEpoch` accepted (`epoch_seconds`, `unix_millis`, `epoch_millis`)
+   were not in the column list the reader extracts, so their rows had no time and two rows with
+   different declared times folded. Fix: the column list holds every spelling; a test walks each
+   through the import and keeps two declared times as two rows.

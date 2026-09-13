@@ -512,6 +512,35 @@ describe("through parseMacos and correlateEvents", () => {
     expect(r.events.some((e) => e.description.startsWith("macOS log"))).toBe(true);
   });
 
+  it("every declared epoch spelling is read through the import; two declared times are two rows", () => {
+    const { LSQuarantineTimeStamp: _t, ...rest } = row();
+    const seconds = ["unix_time", "unixtime", "unix_seconds", "epoch", "epoch_seconds"];
+    const millis = ["unix_ms", "unixms", "unix_millis", "epoch_ms", "epoch_millis"];
+    for (const h of seconds) {
+      const r = parseMacos(csv([{ ...rest, [h]: "1789257600" }]));
+      expect(r.events[0].timestamp, h).toBe("2026-09-13T00:00:00.000Z");
+      expect(r.events[0].description, h).toContain(`[time: Unix seconds (column ${h})]`);
+    }
+    for (const h of millis) {
+      const r = parseMacos(csv([{ ...rest, [h]: "1789257600000" }]));
+      expect(r.events[0].timestamp, h).toBe("2026-09-13T00:00:00.000Z");
+      expect(r.events[0].description, h).toContain(`[time: Unix milliseconds (column ${h})]`);
+    }
+    const two = parseMacos(
+      csv([
+        { ...rest, epoch_seconds: "1789257600" },
+        { ...rest, epoch_seconds: "1789344000" },
+      ]),
+    );
+    expect(two.events).toHaveLength(2);
+    expect(afterImport(two.events)).toHaveLength(2);
+    expect(
+      two.events.every((e) =>
+        e.description.includes("[event identifier shared by records with different facts]"),
+      ),
+    ).toBe(true);
+  });
+
   it("a converted dump declares its epoch in the column name, through the import", () => {
     const { LSQuarantineTimeStamp: _t, ...rest } = row();
     const r = parseMacos(csv([{ ...rest, unix_time: "1789257600" }]));

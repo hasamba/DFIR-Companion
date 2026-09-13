@@ -39,15 +39,21 @@ const EPOCH_WORDS = {
   "unix-ms": "Unix milliseconds expected",
   none: "the column names no epoch (a converted dump names it: unix_time or unix_ms)",
 };
+// Every column readQuarantineTime can decode, native first, then each epoch spelling declaredEpoch names.
 const TIME_HEADERS = [
   "LSQuarantineTimeStamp",
   "timestamp",
   "time",
-  "epoch",
   "unix_time",
+  "unixtime",
   "unix_seconds",
+  "epoch",
+  "epoch_seconds",
   "unix_ms",
+  "unixms",
+  "unix_millis",
   "epoch_ms",
+  "epoch_millis",
 ];
 const NUMERIC = /^-?\d+(?:\.\d+)?$/;
 const ISO_8601 = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/;
