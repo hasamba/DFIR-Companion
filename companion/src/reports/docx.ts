@@ -20,6 +20,11 @@ import type { InvestigationState } from "../analysis/stateTypes.js";
 import type { CustomerExposureSummary } from "../analysis/customerExposure.js";
 import { renderMarkdownReport } from "./markdown.js";
 import { caseDomains, defangIndicators } from "./defang.js";
+import {
+  checkEvidenceSafety,
+  withEvidenceSafetyMarkdownBanner,
+  type EvidenceSafetyFinding,
+} from "./evidenceSafety.js";
 import { renderScopeSection } from "./scopeSection.js";
 import type { HostScopeLedger } from "../analysis/hostScope.js";
 import { emptyReportMeta, type ReportMeta } from "./reportMeta.js";
@@ -455,6 +460,23 @@ export async function renderDocxReport(
   template: ReportTemplate = defaultReportTemplate(),
   hostScope?: HostScopeLedger | null,
 ): Promise<Buffer> {
+  return (await renderDocxReportChecked(state, meta, exposure, template, hostScope)).buffer;
+}
+
+/**
+ * The .docx plus what the evidence-safety check found in it (#1006). The check reads the defanged
+ * Markdown the document is rendered from — the text every paragraph comes out of — rather than
+ * the packed XML: a live indicator can only reach the document through that text, and the XML
+ * escaping past it belongs to the docx library, not to this exporter. A warning is prepended as
+ * a blockquote and travels through the same renderer as the report body.
+ */
+export async function renderDocxReportChecked(
+  state: InvestigationState,
+  meta: ReportMeta = emptyReportMeta(),
+  exposure?: CustomerExposureSummary,
+  template: ReportTemplate = defaultReportTemplate(),
+  hostScope?: HostScopeLedger | null,
+): Promise<{ buffer: Buffer; evidenceSafety: EvidenceSafetyFinding[] }> {
   // Positional pass-through: the scoping statement is the 17th argument. The .docx must carry the
   // same canonical report as report.md — a Word deliverable that silently omits the scope section
   // is the one an executive actually reads.
@@ -496,7 +518,8 @@ ${renderScopeSection(hostScope)}`
       },
     },
   });
-  const tokens = marked.lexer(mdWithScope);
+  const evidenceSafety = checkEvidenceSafety(state, mdWithScope, { unescaped: false });
+  const tokens = marked.lexer(withEvidenceSafetyMarkdownBanner(mdWithScope, evidenceSafety));
   const children = tokensToDocxChildren(tokens);
   // Brand the headings with the template's accent colour (a validated #rrggbb). The default
   // template keeps the historical theme colour (no override) so an un-templated .docx is unchanged.
@@ -561,5 +584,5 @@ ${renderScopeSection(hostScope)}`
     },
     sections: [{ children }],
   });
-  return Packer.toBuffer(doc);
+  return { buffer: await Packer.toBuffer(doc), evidenceSafety };
 }

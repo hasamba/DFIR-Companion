@@ -13,7 +13,7 @@ import {
 import { renderReportContents } from "./reportContents.js";
 import type { HostScopeLedger } from "../analysis/hostScope.js";
 import { assembleCustodyManifest } from "../analysis/custodyManifest.js";
-import { renderDocxReport } from "./docx.js";
+import { renderDocxReportChecked } from "./docx.js";
 import { emptyReportMeta, type ReportMetaStore } from "./reportMeta.js";
 import type { CustodyStore } from "../analysis/custody.js";
 import { forensicTimelineCsv, geoMapCsv } from "./csv.js";
@@ -114,6 +114,7 @@ export interface ReportPaths {
   forensicTimelineCsv: string;
   stateJson: string;
   analysisRuns: string;
+  evidenceSafety?: string[]; // warning lines when the report shipped with findings (#1006)
 }
 
 // The optional stores ReportWriter draws on for report sections. Named fields instead of a long
@@ -297,12 +298,10 @@ export class ReportWriter {
   // the canonical report so the .docx matches report.md and report.html exactly. NOT added
   // to writeAll: the .docx is a snapshot deliverable, and writing a binary into the
   // (often-Dropbox-synced) cases/ folder on every report regeneration causes sync churn.
-  async docx(caseId: string): Promise<Buffer> {
-    const state = await this.loadFilteredState(caseId);
-    const meta = this.reportMeta ? await this.reportMeta.load(caseId) : emptyReportMeta();
-    return renderDocxReport(
-      state,
-      meta,
+  async docx(caseId: string): ReturnType<typeof renderDocxReportChecked> {
+    return renderDocxReportChecked(
+      await this.loadFilteredState(caseId),
+      this.reportMeta ? await this.reportMeta.load(caseId) : emptyReportMeta(),
       await this.loadExposure(caseId),
       await this.loadTemplate(caseId),
       (await this.hostScope?.(caseId)) ?? null,
@@ -734,7 +733,7 @@ export class ReportWriter {
         /* best-effort — see comment above */
       }
     }
-    return paths;
+    return { ...paths, evidenceSafety: c.evidenceSafety };
   }
 
   // Render the report artifacts from an ANONYMIZED copy of the case (for the redacted export, #54).

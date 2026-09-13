@@ -499,7 +499,7 @@ export const FEATURES: Feature[] = [
   },
   {
     // Unified export menu. Wiring, plus the Timesketch JSONL download helper that reports the
-    // omitted undated rows (#957).
+    // omitted undated rows (#957) and the evidence-safety note on the report status line (#1006).
     file: "dashboard-unified-export.js",
     initializer: "initUnifiedExport",
     publish: ["initUnifiedExport"],

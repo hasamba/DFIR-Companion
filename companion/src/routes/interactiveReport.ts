@@ -2,6 +2,8 @@ import type { Express, Request, Response } from "express";
 import { renderInteractiveHtmlReport } from "../reports/interactiveHtml.js";
 import { emptyReportMeta } from "../reports/reportMeta.js";
 import { withNonce } from "../http/securityHeaders.js";
+import { checkEvidenceSafety, withEvidenceSafetyHtmlBanner } from "../reports/evidenceSafety.js";
+import { logEvidenceSafety } from "./evidenceSafetyLog.js";
 import type { RouteContext } from "./context.js";
 
 // Interactive self-contained HTML report (#233). Serves the case as a single portable HTML file
@@ -20,7 +22,12 @@ export function registerInteractiveReportRoutes(app: Express, ctx: RouteContext)
       const reportMeta = options.reportMetaStore
         ? await options.reportMetaStore.load(caseId).catch(() => emptyReportMeta())
         : emptyReportMeta();
-      const html = renderInteractiveHtmlReport(state, caseMeta, reportMeta);
+      const rendered = renderInteractiveHtmlReport(state, caseMeta, reportMeta);
+      // The last check at the door (#1006): the file still ships, with the warning stamped in
+      // and a line on the activity log.
+      const evidenceSafety = checkEvidenceSafety(state, rendered);
+      const html = withEvidenceSafetyHtmlBanner(rendered, evidenceSafety);
+      logEvidenceSafety(options, caseId, "interactive-html", evidenceSafety);
       res.type("text/html; charset=utf-8");
       res.setHeader("Cache-Control", "private, no-cache");
       // Stamp this response's CSP nonce into the inline stylesheet and scripts. Without it the

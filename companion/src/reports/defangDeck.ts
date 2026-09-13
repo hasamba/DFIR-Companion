@@ -23,13 +23,14 @@ import { defangIndicators } from "./defang.js";
 // slide's IOC list is also defanged where it appears in another slide's prose.
 //
 // That pool is a near-subset of caseDomains, not an equal: a domain IOC on no slide at all is not
-// in it. Deliberate, and it costs nothing that matters — the deck has no autolinker and renders
-// through safe-dom text nodes, so a bare hostname is inert either way, while URLs, IPv4 addresses
-// and email addresses (the forms a reader can actually click) are defanged unconditionally,
-// whatever this pool holds. Taking the real case domains would mean loading the case state a
-// second time at the route purely to widen an allow-list for text that cannot be clicked.
-function deckDomains(deck: PresentationDeck): string[] {
-  const domains = new Set<string>();
+// in it. The deck has no autolinker and renders through safe-dom text nodes, so a bare hostname
+// is inert either way, while URLs, IPv4 addresses and email addresses (the forms a reader can
+// actually click) are defanged unconditionally, whatever this pool holds. The standalone export
+// now loads the case state anyway for the evidence-safety check (#1006), so it hands the real
+// case domains in as `extraDomains` and the exported deck agrees with the report about which
+// bare tokens are indicators; the in-app viewer path still needs no second state load.
+function deckDomains(deck: PresentationDeck, extraDomains: Iterable<string>): string[] {
+  const domains = new Set<string>(extraDomains);
   for (const slide of deck.slides) {
     for (const ioc of slide.iocs ?? []) {
       if (ioc.type === "domain") domains.add(ioc.value);
@@ -53,8 +54,11 @@ function defangSlide(slide: PresentationSlide, domains: string[]): PresentationS
   };
 }
 
-/** Defang every indicator in `deck`'s prose and IOC values. Call this at the export boundary only. */
-export function defangDeck(deck: PresentationDeck): PresentationDeck {
-  const domains = deckDomains(deck);
+/**
+ * Defang every indicator in `deck`'s prose and IOC values. Call this at the export boundary only.
+ * `extraDomains` widens the bare-hostname pool — the case's own domain IOCs, when the caller has them.
+ */
+export function defangDeck(deck: PresentationDeck, extraDomains: Iterable<string> = []): PresentationDeck {
+  const domains = deckDomains(deck, extraDomains);
   return { ...deck, slides: deck.slides.map((s) => defangSlide(s, domains)) };
 }

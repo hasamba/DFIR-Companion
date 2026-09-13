@@ -180,7 +180,7 @@ describe("ReportWriter", () => {
     ]);
 
     const writer = new ReportWriter(caseStore, stateStore, { falsePositives });
-    const buf = await writer.docx("c1");
+    const { buffer: buf } = await writer.docx("c1");
 
     expect(Buffer.isBuffer(buf)).toBe(true);
     expect(buf.length).toBeGreaterThan(1024);
