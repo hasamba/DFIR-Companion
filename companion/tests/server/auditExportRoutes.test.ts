@@ -133,6 +133,26 @@ describe("enabling a destination does not ship the history", () => {
     expect(body).not.toContain("old one");
   });
 
+  it("a rename that omits `enabled` leaves a disabled destination disabled and sends nothing (#998)", async () => {
+    const { app, fetchFn, activityLogStore, exporter } = await makeApp();
+    const created = await request(app)
+      .post("/audit-export")
+      .send({ ...splunk, enabled: false });
+    expect(created.body.enabled).toBe(false);
+
+    // An API client editing the name only — no `enabled` in the body.
+    const renamed = await request(app)
+      .put(`/audit-export/${created.body.id}`)
+      .send({ type: "splunk", name: "renamed", splunk: { url: "https://splunk:8088", token: "" } });
+    expect(renamed.status).toBe(200);
+    expect(renamed.body.name).toBe("renamed");
+    expect(renamed.body.enabled).toBe(false);
+
+    await activityLogStore.add("c1", { category: "triage", action: "a", detail: "still off" });
+    await exporter.exportCase("c1");
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
   it("a destination added disabled then switched on starts at the end too", async () => {
     const { app, fetchFn, activityLogStore, auditExportCursors, exporter } = await makeApp();
     const created = await request(app)

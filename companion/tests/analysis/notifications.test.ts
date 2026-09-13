@@ -369,6 +369,18 @@ describe("parseChannelInput", () => {
       expect(on.draft?.enabled).toBe(true);
     });
 
+    it("keeps a disabled channel disabled when the edit omits `enabled` (#998)", () => {
+      const existing = channel({ type: "slack", enabled: false, webhookUrl: url });
+      const r = parseChannelInput({ type: "slack", name: "renamed", webhookUrl: url }, existing);
+      expect(r.ok).toBe(true);
+      expect(r.draft?.enabled).toBe(false);
+    });
+
+    it("still defaults a NEW channel to enabled when the flag is omitted", () => {
+      const r = parseChannelInput({ type: "slack", webhookUrl: url });
+      expect(r.draft?.enabled).toBe(true);
+    });
+
     it('reads the string "false" as false, not as truthy', () => {
       const r = parseChannelInput({
         type: "slack",
