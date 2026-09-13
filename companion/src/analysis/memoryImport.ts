@@ -63,6 +63,22 @@ import { pstreeChildren } from "./pstreeDepth.js";
 import { extractTables, SHORT_PLUGIN } from "./memoryTables.js";
 import { carryImage, imageFactsEvents, isImageInfoTable, readImageFacts } from "./memoryImageFacts.js";
 import { exportShapeEvents, exportShapeNote } from "./memoryExportShape.js";
+import { boundedAggKey } from "./aggKey.js";
+import { identityMark, packTags } from "./recordIdentity.js";
+import {
+  indexProcessRows,
+  objectOffset,
+  ownerConsistency,
+  ownerDigest,
+  normalizeAddress,
+  readState,
+  readTime,
+  shown,
+  socketProvenance,
+  SOCKET_CREATED_KEYS,
+  tupleShape,
+  type ProcessIndex,
+} from "./memoryNetObjects.js";
 export { isRekallCommandList, looksLikeVolatilityText } from "./memoryTables.js";
 import { parseCsv } from "./csvImport.js";
 import { tradecraftSignal } from "./tradecraftRules.js";
@@ -357,46 +373,157 @@ function mapProcess(label: string, tool: string, rows: Row[], sink: Map<string, 
   return out;
 }
 
-function mapNetscan(label: string, tool: string, rows: Row[], sink: Map<string, SiemIoc>): MappedEvent[] {
+/**
+ * Rekall's socket rows carry combined `ip:port` cells and are OUTSIDE the object contract below;
+ * they keep the rendering they had (#933 item 14 excludes them by design).
+ */
+function mapNetscanLegacy(
+  label: string,
+  tool: string,
+  rows: Row[],
+  sink: Map<string, SiemIoc>,
+): MappedEvent[] {
   const out: MappedEvent[] = [];
   for (const r of rows) {
-    const proto = pick(r, ["Proto", "proto", "Protocol"]);
+    const proto = pick(r, ["Proto", "proto", "Protocol", "protocol"]);
     const laddr = pick(r, ["LocalAddr", "local_addr", "LocalAddress", "Source"]);
     const lport = pick(r, ["LocalPort", "local_port", "Lport"]);
-    const faddr = pick(r, ["ForeignAddr", "foreign_addr", "ForeignAddress", "RemoteAddr", "Destination"]);
+    const faddr = pick(r, [
+      "ForeignAddr",
+      "foreign_addr",
+      "ForeignAddress",
+      "RemoteAddr",
+      "remote_addr",
+      "Destination",
+    ]);
     const fport = pick(r, ["ForeignPort", "foreign_port", "RemotePort"]);
     const state = pick(r, ["State", "state"]);
     const owner = pick(r, ["Owner", "Process", "owner", "ImageFileName"]);
     const pid = pickPid(r);
-    const created = pickTime(r, ["Created", "create_time", "Time", "time"]);
-
-    const fip = cleanIp(faddr);
-    const lip = cleanIp(laddr);
+    const created = pickTime(r, ["Created", "create_time", "created"]);
+    const fip = cleanIp(faddr.replace(/:\d+$/, ""));
     if (fip) addIoc(sink, "ip", fip);
-    const proc = owner ? baseName(owner) : "";
-    if (proc && /\.\w{2,4}$/.test(proc)) addIoc(sink, "process", proc);
-
-    const external = !!fip && !PRIVATE_IP.test(fip);
-    const severity: Severity = external && /establish|estab/i.test(state) ? "Low" : "Info";
-    const portN = Number(fport);
-
     out.push({
       timestamp: created,
       description:
-        `${tool} ${label}: ${proto || "?"} ${laddr || "?"}:${lport || "?"} → ${faddr || "*"}:${fport || "*"}${state ? ` [${state}]` : ""}${owner ? ` owner ${owner}` : ""}${pid ? ` (PID ${pid})` : ""}`.slice(
+        `${tool} ${label}: ${shown(proto, 12) || "?"} ${shown(laddr, 48) || "?"}${lport ? `:${shown(lport, 8)}` : ""} → ${shown(faddr, 48) || "*"}${fport ? `:${shown(fport, 8)}` : ""}${state ? ` [state: ${shown(state, 40)}]` : ""}${owner ? ` owner ${shown(owner, 80)}` : ""}${/^\d+$/.test(pid) ? ` (PID ${pid})` : ""}`.slice(
           0,
           600,
         ),
+      severity: "Info",
+      mitre: [],
+      aggKey: boundedAggKey(
+        `mem|net|rekall|${proto}|${laddr}|${lport}|${faddr}|${fport}|${state}|${pid}`.toLowerCase(),
+      ),
+      sources: [tool],
+      ...(fip ? { dstIp: fip } : {}),
+    });
+  }
+  return out;
+}
+
+/** The socket row's own fields, read once for the pre-pass and the mapper alike. */
+function socketFields(r: Row) {
+  return {
+    tuple: {
+      proto: pick(r, ["Proto", "proto", "Protocol"]),
+      laddr: pick(r, ["LocalAddr", "local_addr", "LocalAddress", "Source"]),
+      lport: pick(r, ["LocalPort", "local_port", "Lport"]),
+      faddr: pick(r, ["ForeignAddr", "foreign_addr", "ForeignAddress", "RemoteAddr", "Destination"]),
+      fport: pick(r, ["ForeignPort", "foreign_port", "RemotePort"]),
+      state: pick(r, ["State", "state"]),
+    },
+    owner: pick(r, ["Owner", "Process", "owner", "ImageFileName"]),
+    pidRaw: pickPid(r),
+    // Only a canonical numeric PID is compared or shown as a PID; anything else is "not readable".
+    pid: /^\d{1,10}$/.test(pickPid(r)) ? pickPid(r) : "",
+    created: readTime(r, SOCKET_CREATED_KEYS),
+  };
+}
+
+/**
+ * A socket object, read for what its record establishes (#933 item 14, memoryNetObjects.ts): the
+ * stored state and Volatility's reading of it, how the plugin reported the object, the owner's own
+ * two fields, a consistency note against the submitted process rows, and the tuple's shape. The
+ * identity is the object's offset, shown in the row: two rows at one offset are one object
+ * reported twice; a row with no offset never folds.
+ */
+function mapNetscan(
+  plugin: string,
+  label: string,
+  tool: string,
+  rows: Row[],
+  sink: Map<string, SiemIoc>,
+  index: ProcessIndex,
+): MappedEvent[] {
+  if (tool === "Rekall") return mapNetscanLegacy(label, tool, rows, sink);
+  const out: MappedEvent[] = [];
+  const provenance = socketProvenance(plugin);
+  rows.forEach((r, rowIndex) => {
+    const { tuple, owner, pidRaw, pid, created } = socketFields(r);
+    const state = readState(tuple.state, tuple.proto);
+    const shape = tupleShape(tuple);
+    const consistency = ownerConsistency(pid, owner, created, index);
+    const offset = objectOffset(r);
+
+    const peer = shape.ok ? cleanIp(shape.peer) : "";
+    const lip = shape.ok ? cleanIp(normalizeAddress(tuple.laddr)) : "";
+    if (peer && !state.listening) addIoc(sink, "ip", peer);
+    const proc = consistency.consistent && owner ? baseName(owner) : "";
+    if (proc && /\.\w{2,4}$/.test(proc)) addIoc(sink, "process", proc);
+
+    const external = !!peer && !state.listening && !PRIVATE_IP.test(peer);
+    const severity: Severity = external && state.token.toUpperCase() === "ESTABLISHED" ? "Low" : "Info";
+
+    const pidWords = pid
+      ? `PID ${pid}`
+      : pidRaw
+        ? `PID not readable (${shown(pidRaw, 20)})`
+        : "PID not in the record";
+    const ownerWords =
+      !owner && !pidRaw
+        ? "owner: not in the record — not an indicator of concealment"
+        : `owner: ${owner ? `${shown(owner, 80)}, ${pidWords}` : `${pidWords}, name not in the record`} — ${consistency.words}`;
+    // Mandatory qualifications first, so a long owner can never push them past the cap.
+    const tags = [
+      `state: ${state.token ? `${state.token} — ` : ""}${state.reading}`,
+      provenance,
+      shape.ok ? "" : `tuple incomplete: ${shape.problem}`,
+      severity === "Low"
+        ? "externally addressed object in stored state ESTABLISHED: triage priority, not a claim of traffic"
+        : "",
+      ownerWords,
+      created.status === "ok"
+        ? `created: ${created.iso}`
+        : created.status === "unreadable"
+          ? `created: not readable — ${shown(created.raw, 40)}`
+          : "",
+      offset ? `object 0x${offset}` : "object offset not in the record",
+    ].filter(Boolean);
+    const endpoint = `${shown(tuple.proto, 12) || "?"} ${shown(tuple.laddr, 48) || "?"}:${shown(tuple.lport, 8) || "?"} → ${shown(tuple.faddr, 48) || "*"}:${shown(tuple.fport, 8) || "*"}`;
+    const head = `${tool} ${label}: ${endpoint}`;
+    const key = boundedAggKey(
+      `mem|net|${provenance.slice(0, 12)}|${tuple.proto}|${tuple.laddr}|${tuple.lport}|${tuple.faddr}|${tuple.fport}|${tuple.state}|${pidRaw}|${ownerDigest(owner, pidRaw)}|${created.raw}|${offset ? `off:${offset}` : `row:${rowIndex}`}`.toLowerCase(),
+    );
+    const mark = identityMark(key);
+    const packed = packTags(tags, 600 - head.length - mark.length);
+    const kept = packed ? packed.split("] [").length : 0;
+
+    out.push({
+      timestamp: created.iso,
+      // A row without an offset carries its identity mark: two such rows must stay two rows
+      // downstream, where only the description survives.
+      description: `${head}${packed}${kept < tags.length || !offset ? mark : ""}`,
       severity,
       mitre: [],
-      aggKey: `mem|net|${proto}|${faddr}|${fport}|${proc}`.toLowerCase().slice(0, 400),
+      aggKey: key,
       sources: [tool],
       ...(proc ? { processName: proc } : {}),
       ...(lip ? { srcIp: lip } : {}),
-      ...(fip ? { dstIp: fip } : {}),
-      ...(Number.isFinite(portN) && portN > 0 ? { port: portN } : {}),
+      ...(peer ? { dstIp: peer } : {}),
+      ...(Number.isFinite(shape.fport) && shape.fport > 0 && shape.ok ? { port: shape.fport } : {}),
     });
-  }
+  });
   return out;
 }
 
@@ -1316,14 +1443,23 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
   // to be strengthened by process context, network behaviour and independent detections; without
   // this the note could only ever tell the analyst to go and check those themselves. Confined to one
   // image and one PID, per the issue.
+  // The process rows the upload submitted, by PID — what a socket's owner is compared with. Built
+  // before the socket pass, because a socket counts as corroboration only when exactly one
+  // submitted process row is consistent with its owner (#933 item 14).
+  const processIndex = indexProcessRows(
+    tables.filter((t) => classify(t.plugin, colSet(t.rows)) === "process"),
+  );
   const corroborating = { network: new Set<string>(), suspiciousCmd: new Set<string>() };
   for (const t of tables) {
     const cat = classify(t.plugin, colSet(t.rows));
-    if (cat === "netscan") {
+    if (cat === "netscan" && tool !== "Rekall") {
       for (const r of t.rows) {
-        const pid = pickPid(r);
-        const foreign = pick(r, ["ForeignAddr", "foreign_addr", "ForeignAddress", "RemoteAddr"]);
-        if (pid && foreign && !/^(?:0\.0\.0\.0|::|\*)?$/.test(foreign.trim())) corroborating.network.add(pid);
+        const { tuple, owner, pid, created } = socketFields(r);
+        const shape = tupleShape(tuple);
+        const consistent = ownerConsistency(pid, owner, created, processIndex).consistent;
+        if (pid && shape.ok && shape.peer && !readState(tuple.state, tuple.proto).listening && consistent) {
+          corroborating.network.add(pid);
+        }
       }
     } else if (cat === "cmdline") {
       for (const r of t.rows) {
@@ -1376,7 +1512,7 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
         processes += t.rows.length;
         break;
       case "netscan":
-        mapped.push(...mapNetscan(label, tool, t.rows, sink));
+        mapped.push(...mapNetscan(t.plugin, label, tool, t.rows, sink, processIndex));
         connections += t.rows.length;
         break;
       case "malfind":

@@ -73,7 +73,7 @@ describe("malfindContext — what the region actually shows", () => {
     expect(malfindContext(row).confidence).toBe("uncorroborated");
     const withNet = malfindContext(row, { networkPid: true, suspiciousCommandLine: true });
     expect(withNet.confidence).toBe("corroborated");
-    expect(withNet.note).toContain("network connection in this image");
+    expect(withNet.note).toContain("network object with the same PID is reported in this image");
   });
 });
 

@@ -227,6 +227,26 @@ A Volatility export establishes three things, and the Companion reads each on it
   SystemTime in their text. **Do not clear user-space behaviour from a bitmap dump**: an empty
   user-space plugin over it says nothing about pages the dump never held.
 
+- **A socket object.** `netscan` / `netstat` rows say what the record holds and how the plugin
+  reported it: the stored **state** verbatim with Volatility's own reading (a listening endpoint,
+  stored state ESTABLISHED, a connection setup state, a TCP teardown state, a closed-state object,
+  a UDP endpoint with no state), whether the object was **reported by pool scan** (an allocated or
+  a freed object) or **by traversal of the network tracking structures**, and the owner's own two
+  fields (PID and name, either of which can be absent — an absent owner is "not in the record",
+  never an indicator of concealment). Nothing says the connection was live or that traffic passed.
+  When the same upload holds process rows, the row adds an **internal consistency note** against
+  them — "consistent with one submitted process row: X, created T", "not consistent: the
+  submitted process row at PID N is named Y", "…was created after this socket's Created value",
+  "…reports exit before this socket's Created value", "ambiguous: 2 distinct submitted process
+  rows have PID N", or "no process rows submitted to compare". It is a comparison of submitted
+  rows, not validation, and it never rewrites the socket's own owner fields; cross-tool
+  correlation on the process name happens only when exactly one submitted row is consistent. A
+  tuple outside its protocol's shape (a non-listening TCP object with no peer, a port above 65535,
+  an address that is not one) is kept as a row marked *tuple incomplete* and mints no indicator.
+  Two rows at one object offset are one object reported twice; a row without an offset never
+  folds. An externally addressed object in stored state ESTABLISHED is Low as a triage priority,
+  not as a claim of traffic.
+
 Text that looks like a Volatility diagnostic (`Unsatisfied requirement …`, a traceback, `unable to
 read a requested page`) is shown in the import note as **unverified text**, never used to grade or
 to claim a failure — an artifact value can spell it. A **Volatility 2** export is recognised only
