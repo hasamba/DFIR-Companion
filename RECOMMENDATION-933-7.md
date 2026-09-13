@@ -50,12 +50,12 @@ Severity Info throughout — unchanged.
 - The xattr's 2nd field → Unix epoch hex seconds (its documented form; NOT Cocoa).
 - Unreadable → no timestamp claim: the row's timestamp is empty, the raw text is kept in the
   envelope (`timeRaw`), and the words say `[time: not readable — <encoding expected>]`. The
-  encoding used is always named: `[time: Cocoa seconds]`, `[time: ISO]`, `[time: Unix seconds
+  encoding and the column are always named: `[time: Cocoa seconds (column LSQuarantineTimeStamp)]`, `[time: ISO (column …)]`, `[time: Unix seconds
   (column unix_time)]`.
 
 ### Row (one per DB record)
 `macOS quarantine [kind: web download] [agent: Safari (com.apple.Safari)] [data url: https://…]
-[origin: https://… ("title")] [sender: name <address>] [time: Cocoa seconds] [event: <UUID>]
+[origin: https://… ("title")] [sender: name <address>] [time: Cocoa seconds (column LSQuarantineTimeStamp)] [event: <UUID>]
 [local file: not in this record — joined by the event identifier]`.
 - Kind from `LSQuarantineTypeNumber` per Apple's `LSQuarantineType`: 0 web download, 1 other
   download, 2 email attachment, 3 message attachment, 4 calendar attachment, 5 other attachment;
@@ -293,3 +293,9 @@ The joins, Gatekeeper/XProtect logs, browser history, any grade above Info.
 ## Code round 22 (Codex, one finding)
 1. One value under `unix_time` and under `epoch` shared a facts digest though the rows named
    different columns. Fix: the time column name is part of the framed time identity.
+
+## Code round 23 (Codex, one finding)
+1. A readable Cocoa or ISO time did not name its column, so two rows whose time columns differed
+   (or differed by case) read alike and folded after correlation. Fix: every readable time names
+   its encoding and its column verbatim (`[time: ISO (column epoch)]`); a column name the words
+   cannot repeat marks the row.

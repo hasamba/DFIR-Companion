@@ -148,7 +148,7 @@ describe("quarantineOverlay — what one record establishes", () => {
   it("says the kind, the agent, the resource, the origin, the time encoding and the event; never the file", () => {
     const o = overlay(row());
     expect(o.description).toBe(
-      'macOS quarantine [kind: web download] [agent: Safari (com.apple.Safari)] [data url: https://cdn.example.invalid/installer.dmg] [origin: https://lure.example.invalid/promo ("Promo")] [time: Cocoa seconds] [event: 550e8400-e29b-41d4-a716-446655440000] [local file: not in this record — joined by the event identifier]',
+      'macOS quarantine [kind: web download] [agent: Safari (com.apple.Safari)] [data url: https://cdn.example.invalid/installer.dmg] [origin: https://lure.example.invalid/promo ("Promo")] [time: Cocoa seconds (column LSQuarantineTimeStamp)] [event: 550e8400-e29b-41d4-a716-446655440000] [local file: not in this record — joined by the event identifier]',
     );
     expect(o.timestamp).toBe("2023-09-14T16:53:20.500Z");
     expect(o.severity).toBe("Info");
@@ -556,6 +556,27 @@ describe("through parseMacos and correlateEvents", () => {
         e.description.includes("[event identifier shared by records with different facts]"),
       ),
     ).toBe(true);
+  });
+
+  it("an ISO value under two different columns, or case-distinct native headers, is two rows after correlation", () => {
+    const { LSQuarantineTimeStamp: _t, ...rest } = row();
+    const iso = "2026-05-02T09:30:00.000Z";
+    for (const recs of [
+      [
+        { ...rest, unix_time: iso },
+        { ...rest, epoch: iso },
+      ],
+      [
+        { ...rest, LSQuarantineTimeStamp: iso },
+        { ...rest, lsquarantinetimestamp: iso },
+      ],
+    ]) {
+      const r = parseMacos(JSON.stringify(recs));
+      expect(r.events).toHaveLength(2);
+      expect(r.events[0].description).toContain("[time: ISO (column ");
+      expect(afterImport(r.events)).toHaveLength(2);
+      expect(afterImport(parseMacos(JSON.stringify(recs), { aggregate: false }).events)).toHaveLength(2);
+    }
   });
 
   it("one value under two different declared columns is two rows", () => {

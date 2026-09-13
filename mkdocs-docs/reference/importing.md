@@ -324,7 +324,7 @@ An `LSQuarantineEventsV2` row (CSV or JSON dump) is a **download event**, and th
 what the record establishes:
 
 `macOS quarantine [kind: web download] [agent: Safari (com.apple.Safari)] [data url: https://…]
-[origin: https://… ("page title")] [sender: name <address>] [time: Cocoa seconds] [event: <uuid>]
+[origin: https://… ("page title")] [sender: name <address>] [time: Cocoa seconds (column LSQuarantineTimeStamp)] [event: <uuid>]
 [local file: not in this record — joined by the event identifier]`
 
 - **The kind** is Apple's `LSQuarantineTypeNumber` (web download, other download, email

@@ -52,6 +52,13 @@ const UNIX_MS_HEADERS = [
   "epochmillis",
 ];
 const GENERIC_TIME_HEADERS = ["timestamp", "time"];
+// A readable time names its encoding AND its column, verbatim: the column is the record's claim.
+const ENCODING_WORDS = {
+  "cocoa-seconds": "Cocoa seconds",
+  iso: "ISO",
+  "unix-seconds": "Unix seconds",
+  "unix-ms": "Unix milliseconds",
+};
 const EPOCH_WORDS = {
   cocoa: "Cocoa seconds expected",
   "unix-seconds": "Unix seconds expected",
@@ -387,11 +394,7 @@ export function quarantineOverlay(
   tags.push(
     when.encoding === "unreadable"
       ? `time: not readable — ${times.length > 1 ? `${times.length} time columns in this record (${times.map((t) => show(t.header, 40)).join(", ")})` : EPOCH_WORDS[declaredEpoch(time.header) ?? "none"]}`
-      : when.encoding === "cocoa-seconds"
-        ? "time: Cocoa seconds"
-        : when.encoding === "iso"
-          ? "time: ISO"
-          : `time: ${when.encoding === "unix-ms" ? "Unix milliseconds" : "Unix seconds"} (column ${time.header})`,
+      : `time: ${ENCODING_WORDS[when.encoding]} (column ${show(time.header, 40)})`,
   );
   tags.push(
     eventId
@@ -451,7 +454,7 @@ export function quarantineOverlay(
     (when.encoding === "unreadable" && time.value !== "") ||
     // …and a time whose text the ISO reading does not carry back (sub-millisecond digits,
     // a non-canonical spelling): the words then show a reading, not the record's value.
-    (when.iso !== "" && !timeRoundTrips(time.value, when)) ||
+    (when.iso !== "" && (!timeRoundTrips(time.value, when) || show(time.header, 40) !== time.header)) ||
     originAlias !== "";
   const mark = identityMark(aggKey);
   const head = "macOS quarantine";
