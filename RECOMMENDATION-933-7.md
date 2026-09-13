@@ -318,3 +318,11 @@ The joins, Gatekeeper/XProtect logs, browser history, any grade above Info.
 1. `data_url` and `DATA_URL` rows shared identity though their provenance differed. Fix: every
    field's source column is part of the facts digest; a row whose columns are not the native
    names (an alias export) is marked, since the words name no column but the time's.
+
+## Code round 28 (Codex, one finding) — loop stopped here
+1. Any `LSQuarantine*`-prefixed column (`LSQuarantineError`) counted as a native field and made a
+   row. Fix: the classifier uses the exact native column list the reader knows.
+
+Rounds 5–28 each returned one edge case (ever smaller: padded keys, `.5` vs `.5000`, a JSON array
+where a number should be). The loop was stopped after round 28 at the user's request; the branch
+goes to PR with items 1, 2, 6 and 7.

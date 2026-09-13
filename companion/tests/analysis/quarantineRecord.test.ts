@@ -620,6 +620,21 @@ describe("through parseMacos and correlateEvents", () => {
     expect(parseMacos(csv([row()])).events[0].description).not.toMatch(/ #[A-Za-z0-9_-]{22}$/);
   });
 
+  it("an unknown LSQuarantine-prefixed column is not a native field", () => {
+    const r = parseMacos(
+      JSON.stringify([
+        {
+          LSQuarantineError: "alpha",
+          timestamp: "2026-01-01T00:00:00.000Z",
+          eventMessage: "first",
+          url: "https://status.example.invalid/a",
+        },
+      ]),
+    );
+    expect(r.events.filter((e) => e.description.startsWith("macOS quarantine"))).toHaveLength(0);
+    expect(r.iocs).toHaveLength(0);
+  });
+
   it("a padded JSON key is its own column name", () => {
     const { LSQuarantineTimeStamp: _t, ...rest } = row();
     const recs = [

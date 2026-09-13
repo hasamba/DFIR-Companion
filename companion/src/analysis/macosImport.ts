@@ -1,6 +1,7 @@
 import type { Severity } from "./stateTypes.js";
 import { parseCsv } from "./csvImport.js";
 import {
+  NATIVE_COLUMN_RE,
   RepeatedColumn,
   boundQuarantineVariants,
   quarantineOverlay,
@@ -123,7 +124,8 @@ function mapQuarantine(rec: Row, sink: Map<string, SiemIoc>): QuarantineRow | nu
 // whose native columns are all empty is not a download record, whatever its generic columns hold.
 const RESOURCE_ALIASES = ["data_url", "url"];
 const SIGNAL_DIMENSIONS = [["event_id"], ["agent"], ["origin_url", "referrer"]];
-const NATIVE_RE = /^lsquarantine/i;
+// Only the native columns the reader knows — `LSQuarantineError` is not one, whatever its prefix.
+const NATIVE_RE = NATIVE_COLUMN_RE;
 function isQuarantineRecord(rec: Row, headers: readonly string[]): boolean {
   // A repeated header is filled when any of its values is.
   const hasValue = (v: unknown) =>

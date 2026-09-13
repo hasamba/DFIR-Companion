@@ -74,8 +74,8 @@ const TIME_HEADERS = [
   ...GENERIC_TIME_HEADERS,
 ];
 const NUMERIC = /^-?\d+(?:\.\d+)?$/;
-/** A native LSQuarantineEventsV2 column name, exactly. */
-const NATIVE_COLUMN_RE =
+/** A native LSQuarantineEventsV2 column name, exactly (shared with the importer's classifier). */
+export const NATIVE_COLUMN_RE =
   /^LSQuarantine(?:EventIdentifier|TimeStamp|AgentName|AgentBundleIdentifier|DataURLString|SenderName|SenderAddress|TypeNumber|OriginTitle|OriginURLString|OriginAlias)$/;
 const ISO_8601 = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/;
 const DESCRIPTION_MAX = 600;
