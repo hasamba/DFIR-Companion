@@ -153,6 +153,8 @@
             document.getElementById("status").textContent =
               `Timesketch sketch #${res.sketchId} ${verb}: ${res.events} event(s) → "${res.timelineName}"` +
               (res.replacedTimeline ? " (replaced)" : "") +
+              // Undated rows cannot be Timesketch events; say how many stayed behind (#957).
+              (res.omitted > 0 ? `, ${res.omitted} undated row(s) omitted` : "") +
               (res.warnings && res.warnings.length ? `, ${res.warnings.length} warning(s)` : "");
             if (res.sketchUrl) document.getElementById("reportLinks").innerHTML = `<a href="${escAttr(res.sketchUrl)}" target="_blank" rel="noopener">Open in Timesketch</a>`;
           } else {

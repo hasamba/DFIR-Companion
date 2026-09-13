@@ -850,7 +850,10 @@ A **"Super-Timeline Triage"** Velociraptor bundle collects raw Windows host arti
 **Export to Timesketch** — push or download the full super-timeline (forensic timeline + raw
 host-triage artifacts), alongside the existing Forensic Timeline export. Both push into the same
 Timesketch sketch under separate timelines, so neither clobbers the other — see
-[Integrations → Timesketch](integrations.md#timesketch).
+[Integrations → Timesketch](integrations.md#timesketch). Timesketch requires a time per event, so
+an **undated** row (an installed-app entry, a YARA hit with no clock) is left out of the file and
+the push. The status line says how many — `2 undated row(s) left out` before a download starts,
+`2 undated row(s) omitted` after a push. The rows stay in the Companion.
 
 !!! info "Why events don't all reach the forensic timeline"
     Info-severity telemetry routes to the super-timeline only by default (the forensic timeline keeps Low+ graded signal) so synthesis isn't swamped by raw noise. Configure the floor via **Settings → General** (`DFIR_FORENSIC_MIN_SEVERITY`) globally, with a per-case override. Promoting an event always bypasses the gate, and IOCs are still extracted from every event regardless.

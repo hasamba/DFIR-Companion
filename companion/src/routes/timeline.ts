@@ -1,7 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { once } from "node:events";
 import { logActivity } from "../analysis/activityLog.js";
-import { mapForensicEvent } from "../integrations/timesketch/timesketchMap.js";
+import { mapForensicEvent, timesketchDate } from "../integrations/timesketch/timesketchMap.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
@@ -222,6 +222,34 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
         res.destroy(err as Error);
         return;
       }
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // What a Timesketch export would leave out (#957). Timesketch requires a time per event, so
+  // both JSONL downloads and both pushes omit rows with no parseable one. The downloads stay
+  // plain navigations — the browser streams them to disk, which a fetch-and-blob cannot match on a
+  // large super-timeline — so the count comes from this request, made just before the download,
+  // and the status line reports it. It is a preview of one scan: an import that lands between the
+  // two requests can move it by the rows it added or evicted.
+  app.get("/cases/:id/timesketch-omitted", async (req: Request, res: Response) => {
+    const scope = req.query.scope === "super" ? "super" : "forensic";
+    try {
+      let events = 0;
+      let omitted = 0;
+      const count = (rows: Iterable<ForensicEvent>) => {
+        for (const event of rows) timesketchDate(event.timestamp) ? events++ : omitted++;
+      };
+      if (scope === "super") {
+        if (!options.superTimelineStore)
+          return res.status(501).json({ error: "super-timeline not configured" });
+        for await (const batch of options.superTimelineStore.eventBatches(req.params.id)) count(batch);
+      } else {
+        if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
+        count((await options.reportWriter.filteredState(req.params.id)).forensicTimeline);
+      }
+      return res.status(200).json({ scope, events, omitted });
+    } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
   });

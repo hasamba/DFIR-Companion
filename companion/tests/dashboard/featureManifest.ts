@@ -498,7 +498,8 @@ export const FEATURES: Feature[] = [
     private: ["timelineGapsData", "timelineGapsTimer"],
   },
   {
-    // Unified export menu. Wiring only — one statement seventy-four lines long.
+    // Unified export menu. Wiring, plus the Timesketch JSONL download helper that reports the
+    // omitted undated rows (#957).
     file: "dashboard-unified-export.js",
     initializer: "initUnifiedExport",
     publish: ["initUnifiedExport"],
