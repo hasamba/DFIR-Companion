@@ -289,3 +289,7 @@ The joins, Gatekeeper/XProtect logs, browser history, any grade above Info.
 1. A time cell's surrounding whitespace was trimmed before identity, so two cells that differ only
    in padding folded. Fix: the untrimmed cell text is the identity and the verbatim comparison;
    trimming decides only blankness and the decode.
+
+## Code round 22 (Codex, one finding)
+1. One value under `unix_time` and under `epoch` shared a facts digest though the rows named
+   different columns. Fix: the time column name is part of the framed time identity.

@@ -558,6 +558,18 @@ describe("through parseMacos and correlateEvents", () => {
     ).toBe(true);
   });
 
+  it("one value under two different declared columns is two rows", () => {
+    const { LSQuarantineTimeStamp: _t, ...rest } = row();
+    const recs = [
+      { ...rest, unix_time: "1789257600" },
+      { ...rest, epoch: "1789257600" },
+    ];
+    const r = parseMacos(JSON.stringify(recs));
+    expect(r.events).toHaveLength(2);
+    expect(afterImport(r.events)).toHaveLength(2);
+    expect(afterImport(parseMacos(JSON.stringify(recs), { aggregate: false }).events)).toHaveLength(2);
+  });
+
   it("a declared epoch beside a generic alias is read; two time columns are no time", () => {
     const { LSQuarantineTimeStamp: _t, ...rest } = row();
     // a generic alias never shadows a declaration

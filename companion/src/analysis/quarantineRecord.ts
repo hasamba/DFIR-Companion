@@ -416,7 +416,7 @@ export function quarantineOverlay(
     // The instant AND its representation AND the raw text: a Cocoa row and an ISO row of one instant
     // are two records with different evidence, and so are two REAL values that round to one
     // millisecond (716403200.5001 vs .5002) — the raw text is the evidence, the ISO is a reading.
-    `${when.encoding}:${when.iso}:${time.value}`,
+    `${when.encoding}:${when.iso}:${time.header}:${time.value}`,
     eventId ? "" : idRaw,
   ]
     .map((f) => `${f.length}:${f}`)
