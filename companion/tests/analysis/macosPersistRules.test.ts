@@ -46,6 +46,24 @@ describe("the # quarantine: header (#933 item 7)", () => {
     expect(s.reason).not.toContain("downloaded from");
     expect(s.severity).toBe("High");
   });
+  it("only a mark whose flags say download raises; sandbox-only, other flags and undecodable marks are shown and raise nothing", () => {
+    const medium = { ...susp, Disabled: "<true/>" };
+    const grade = (quarantine: string) =>
+      job(medium, "/Library/LaunchDaemons/x.plist", { extra: { quarantine } })[0];
+    expect(grade("").severity).toBe("Medium");
+    expect(grade("0001;5f3a1b2c;Safari;550E8400-E29B-41D4-A716-446655440000").severity).toBe("High");
+    expect(grade("0083;5f3a1b2c;Safari;550E8400-E29B-41D4-A716-446655440000").severity).toBe("High");
+    expect(grade("https://evil.test/update.zip").severity).toBe("High");
+    for (const flags of ["0000", "0002", "0004", "0040", "0046"]) {
+      const s = grade(`${flags};5f3a1b2c;Safari;550E8400-E29B-41D4-A716-446655440000`);
+      expect(s.severity, flags).toBe("Medium");
+      expect(s.reason, flags).toContain("[quarantine mark:");
+      expect(s.reason, flags).toContain("do not say the file was downloaded");
+    }
+    const bad = grade("0083;zz;Safari;550E8400-E29B-41D4-A716-446655440000");
+    expect(bad.severity).toBe("Medium");
+    expect(bad.reason).toContain("[quarantine mark (not decodable):");
+  });
   it("the legacy URL form keeps its words", () => {
     const [s] = job(susp, "/Library/LaunchDaemons/x.plist", {
       extra: { quarantine: "https://evil.test/update.zip" },

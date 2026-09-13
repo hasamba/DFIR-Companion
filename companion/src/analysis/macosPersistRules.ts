@@ -359,13 +359,19 @@ export function gradeLaunchd(file: CollectedFile, ctx: MacContext = {}): LinuxSi
     // been downloaded. It raises, because "installed by a package" and "downloaded and then set to
     // run at every login" are different stories. The mark says what the xattr says — flags, the
     // agent, when it was marked (Unix hex seconds), the event id — never the URL, which the xattr
-    // does not carry (that is the database record's, joined by the event id).
+    // does not carry (that is the database record's, joined by the event id). Only a mark whose
+    // flags say "download" (0x1), or the legacy URL form, establishes a download; a sandbox-only
+    // mark, or one that cannot be decoded, is shown and raises nothing.
     reason += facts.quarantineMark
       ? ` The program carries a quarantine record [${facts.quarantineMark.words}].`
       : facts.quarantineRaw
         ? ` The program carries a quarantine record [quarantine mark (not decodable): ${clip(breakHashRuns(showToken(facts.quarantineRaw)))}].`
         : ` The program carries a quarantine record [quarantine url: ${clip(breakHashRuns(showToken(facts.quarantineUrl ?? "")))}] (a legacy collection: the URL the xattr does not carry, read from the database at collection time).`;
-    if (RANK[severity] < RANK.High) severity = "High";
+    const downloaded =
+      Boolean(facts.quarantineUrl) || facts.quarantineMark?.flags.named.includes("download") === true;
+    if (downloaded && RANK[severity] < RANK.High) severity = "High";
+    else if (!downloaded)
+      reason += " Its flags do not say the file was downloaded, so the mark raises nothing on its own.";
   }
   if (facts?.signing === "unsigned" || facts?.signing === "adhoc") {
     reason += ` The program is ${facts.signing === "adhoc" ? "ad-hoc signed" : "unsigned"} — on its own that is ordinary on a Mac, but combined with the above it means nothing vouches for what this file is.`;

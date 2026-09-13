@@ -595,6 +595,21 @@ describe("through parseMacos and correlateEvents", () => {
     expect(afterImport(two.events)).toHaveLength(2);
   });
 
+  it("two dumps that differ only in the origin alias are two rows; the alias is never shown", () => {
+    const r = parseMacos(
+      csv([
+        row({ LSQuarantineOriginAlias: "AAAAbookmark1" }),
+        row({ LSQuarantineOriginAlias: "AAAAbookmark2" }),
+      ]),
+    );
+    expect(r.events).toHaveLength(2);
+    expect(afterImport(r.events)).toHaveLength(2);
+    expect(r.events[0].description).toContain("[origin alias: present (13 characters, not shown)]");
+    expect(r.events[0].description).not.toContain("bookmark1");
+    expect(r.events[0].description).toMatch(/ #[A-Za-z0-9_-]{22}$/);
+    expect(r.events[0].canonical?.quarantine?.originAliasDigest).toMatch(/^[0-9a-f]{32}$/);
+  });
+
   it("a path-shaped unreadable type never joins a real path event after import", () => {
     const q = parseMacos(csv([row({ LSQuarantineTypeNumber: "/tmp/evil/payload" })]));
     expect(q.events[0].description).toContain("[kind: kind not readable (/tmp/evil/payload)]");

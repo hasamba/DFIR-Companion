@@ -207,6 +207,8 @@ export interface QuarantineEnvelope {
   dataUrl?: string;
   originUrl?: string;
   originTitle?: string;
+  /** Digest of the origin alias (bookmark data) the record carries — identity, never shown. */
+  originAliasDigest?: string;
   senderName?: string;
   senderAddress?: string;
   eventId?: string;
@@ -313,6 +315,9 @@ export function quarantineOverlay(
   const originTitle = first(rec, ["LSQuarantineOriginTitle", "origin_title"]).value;
   const senderName = first(rec, ["LSQuarantineSenderName", "sender"]).value;
   const senderAddress = first(rec, ["LSQuarantineSenderAddress", "sender_address"]).value;
+  // The origin alias is bookmark data — identity, never words: two dumps that differ only in it
+  // are two records, and the row says the alias is present without showing it.
+  const originAlias = first(rec, ["LSQuarantineOriginAlias", "origin_alias"]).value;
   // Only the native column and the declared alias: a generic `id` is export metadata, not an event.
   const idRaw = first(rec, ["LSQuarantineEventIdentifier", "event_id"]).value;
   const eventId = canonicalUuid(idRaw);
@@ -332,6 +337,7 @@ export function quarantineOverlay(
     tags.push(
       `origin: ${[show(originUrl, URL_SHOWN_MAX), originTitle ? `("${show(originTitle)}")` : ""].filter(Boolean).join(" ")}`,
     );
+  if (originAlias) tags.push(`origin alias: present (${originAlias.length} characters, not shown)`);
   if (senderName || senderAddress)
     tags.push(
       `sender: ${[show(senderName), senderAddress ? `<${show(senderAddress)}>` : ""].filter(Boolean).join(" ")}`,
@@ -364,6 +370,7 @@ export function quarantineOverlay(
     originTitle,
     senderName,
     senderAddress,
+    originAlias ? `alias:${keyDigest(originAlias)}` : "",
     // The instant AND its representation: a Cocoa row and an ISO row of one instant are two
     // records with different evidence, not one.
     `${when.encoding}:${when.iso || `t?:${time.value}`}`,
@@ -398,7 +405,8 @@ export function quarantineOverlay(
     [agent, bundleId, originTitle, senderName, senderAddress, idRaw, typeRaw].some(
       (v) => v.length > TEXT_SHOWN_MAX,
     ) ||
-    (when.encoding === "unreadable" && time.value !== "");
+    (when.encoding === "unreadable" && time.value !== "") ||
+    originAlias !== "";
   const mark = identityMark(aggKey);
   const head = "macOS quarantine";
   const full = `${head}${packTags(tags, Number.POSITIVE_INFINITY)}`;
@@ -415,6 +423,7 @@ export function quarantineOverlay(
     ...(dataUrl ? { dataUrl } : {}),
     ...(originUrl ? { originUrl } : {}),
     ...(originTitle ? { originTitle } : {}),
+    ...(originAlias ? { originAliasDigest: keyDigest(originAlias) } : {}),
     ...(senderName ? { senderName } : {}),
     ...(senderAddress ? { senderAddress } : {}),
     ...(eventId ? { eventId } : {}),

@@ -202,6 +202,7 @@ export const canonicalEventEnvelopeSchema = z.object({
       dataUrl: z.string().optional(),
       originUrl: z.string().optional(),
       originTitle: z.string().optional(),
+      originAliasDigest: z.string().optional(),
       senderName: z.string().optional(),
       senderAddress: z.string().optional(),
       eventId: z.string().optional(),

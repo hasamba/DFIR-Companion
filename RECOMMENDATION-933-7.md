@@ -216,3 +216,12 @@ The joins, Gatekeeper/XProtect logs, browser history, any grade above Info.
    no time.
 2. `header=value; …` framing let two different column sets serialise alike. Fix: length-framed
    pairs (`9:unix_time=10:…|…`) in `timeRaw` and identity.
+
+## Code round 11 (Codex, two findings)
+1. `LSQuarantineOriginAlias` was not read, so two dumps that differ only in it folded. Fix: the
+   alias (bookmark data) is identity by digest, shown only as "present (n characters, not shown)",
+   in the envelope as `originAliasDigest`; the row is marked.
+2. Any xattr — sandbox-only or undecodable — raised a launchd finding to High as "downloaded". Fix:
+   only a mark whose flags include `download` (0x1), or the legacy URL form, raises; other marks are
+   shown with "its flags do not say the file was downloaded". Tests cover 0000/0002/0004/0040/0046
+   and a malformed value.

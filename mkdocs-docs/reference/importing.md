@@ -352,7 +352,11 @@ what the record establishes:
 - **The xattr.** When a persistence collection pastes the raw `com.apple.quarantine` value under a
   plist header, the finding says `[quarantine mark: download, sandbox (+0x0080); agent Safari;
   marked 2020-08-17T05:52:44.000Z (Unix hex); event …]` — the flags per Apple's SPI, the time in
-  the attribute's own Unix-hex form, the agent, the event id. The attribute carries no URL.
+  the attribute's own Unix-hex form, the agent, the event id. The attribute carries no URL. The
+  finding is raised only when the flags say `download` (or a legacy collection pasted the URL);
+  a sandbox-only mark, or one that cannot be decoded, is shown and raises nothing.
+- **The origin alias.** `LSQuarantineOriginAlias` is bookmark data: it is part of the row's
+  identity (two dumps that differ only in it are two rows) and is never shown.
 
 ### TLS records: what one record establishes
 
