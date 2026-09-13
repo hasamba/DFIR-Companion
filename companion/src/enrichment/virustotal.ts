@@ -101,6 +101,9 @@ export class VirusTotalProvider implements EnrichmentProvider {
     const id = json.data?.id ?? (kind === "url" ? urlId(value) : value);
     return {
       source: this.name,
+      // Lineage (#933 item 18): VT sums AV engines — one aggregate origin; the engines are not origins.
+      originKind: "aggregate",
+      origins: [this.name],
       verdict,
       score: total ? `${detections}/${total} detections` : undefined,
       detections,

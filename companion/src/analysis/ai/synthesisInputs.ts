@@ -186,7 +186,18 @@ export function computeSynthHash(i: SynthHashInput): string {
           e.description,
           labIntelTag(e.labIntel),
         ]),
-        io: i.iocs.map((x) => [x.id, x.value, (x.enrichments ?? []).map((e) => e.verdict).join(",")]),
+        // Lineage rides in the prompt tag and the grounding gates (#933 item 18), so a forced re-check
+        // that records a creator on an otherwise-unchanged verdict must change the hash too.
+        io: i.iocs.map((x) => [
+          x.id,
+          x.value,
+          (x.enrichments ?? [])
+            .map(
+              (e) =>
+                `${e.verdict}:${e.originKind ?? ""}:${(e.origins ?? []).join("|")}:${e.moreOrigins ?? ""}`,
+            )
+            .join(","),
+        ]),
         sc: i.scope,
         lg: i.markers.map((m) => m.id),
         nb: b.notebookBlock,

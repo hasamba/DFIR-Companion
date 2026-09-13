@@ -13,6 +13,7 @@ import type { InvestigationState, ForensicEvent } from "./stateTypes.js";
 import { buildAssetGraph } from "./assetGraph.js";
 import { deriveIocSources } from "./iocCorroboration.js";
 import type { HostAliasIndex } from "./hostAlias.js";
+import { intelOrigins, type LineageInput } from "./intelLineage.js";
 
 export interface IocAnchor {
   value: string;
@@ -59,16 +60,20 @@ export function isInternalAddress(value: string): boolean {
 // classification is the gate:
 //   conflicted  — the value is one of the case's OWN host assets or an internal address: a verdict here
 //                 is likely stale/wrong; never treat as confirmed external infrastructure.
-//   corroborated— 2+ DISTINCT providers agree malicious/suspicious (scan ALL enrichments, not the first),
-//                 OR one provider PLUS a linked behavioral event (a real execution/transfer/connection).
-//   lone-intel  — a single provider with no behavioral corroboration: a lead worth mentioning, not a
-//                 confirmed compromise.
+//   corroborated— one or more malicious/suspicious hits (any lineage) PLUS a Medium+ event in this case
+//                 carrying the value. The only class that says "corroborated", and it names the event.
+//   multi-origin— 2+ distinct ORIGIN families with a recorded name (#933 item 18) and no such event.
+//                 Origins, not providers: MISP relaying an abuse.ch feed beside ThreatFox is ONE origin;
+//                 a hit whose record names no creator is "not recorded" and counts as none. Two names
+//                 are two names — independence is not established, and the words say so.
+//   lone-intel  — one origin (or several hits from one), or hits with no recorded origin, and no
+//                 behavioral corroboration: a lead worth mentioning, not a confirmed compromise.
 //   none        — no malicious/suspicious verdict at all.
-export type VerdictClass = "corroborated" | "lone-intel" | "conflicted" | "none";
+export type VerdictClass = "corroborated" | "multi-origin" | "lone-intel" | "conflicted" | "none";
 
 export interface VerdictInput {
   value: string;
-  enrichments?: Array<{ verdict?: string; source?: string; provider?: string }>;
+  enrichments?: LineageInput[];
 }
 
 export function classifyVerdict(
@@ -78,11 +83,8 @@ export function classifyVerdict(
   const hits = (ioc.enrichments ?? []).filter((e) => e.verdict === "malicious" || e.verdict === "suspicious");
   if (!hits.length) return "none";
   if (isKnownHostAsset(ioc.value, opts.hostNames) || isInternalAddress(ioc.value)) return "conflicted";
-  const providers = new Set(
-    hits.map((e) => (e.provider || e.source || "").trim().toLowerCase()).filter(Boolean),
-  );
-  if (providers.size >= 2) return "corroborated";
-  if (providers.size >= 1 && opts.hasBehavioralEvent) return "corroborated";
+  if (opts.hasBehavioralEvent) return "corroborated";
+  if (intelOrigins(hits).origins.length >= 2) return "multi-origin";
   return "lone-intel";
 }
 

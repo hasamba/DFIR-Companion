@@ -26,6 +26,7 @@ import {
   type VerdictClass,
 } from "./iocAnchors.js";
 import { deriveIocSources } from "./iocCorroboration.js";
+import { intelOrigins, originsFactor } from "./intelLineage.js";
 import { deriveIocSeverityRank } from "./iocProvenance.js";
 import { extractCveIds, type KevCatalog } from "./kev.js";
 import { normalizeHash } from "./nsrl.js";
@@ -49,7 +50,10 @@ export type IocRole = "indicator" | "observation";
 
 /** The pre-derived signals scoreIoc grades. Kept explicit so the core rubric is unit-testable. */
 export interface IocRiskSignals {
-  verdictClass: VerdictClass; // classifyVerdict: corroborated | lone-intel | conflicted | none
+  verdictClass: VerdictClass; // classifyVerdict: corroborated | multi-origin | lone-intel | conflicted | none
+  // The words for the intel factor (#933 item 18) — intelLineage.originsFactor: which origins, which hits
+  // folded, which have no recorded lineage. scoreIocs fills it; a bare scoreIoc call gets a generic line.
+  intelFactor?: string;
   distinctTools: number; // deriveIocSources[id].length — how many tools observed the value
   maxSeverityRank: number; // max SEVERITY_RANK of an event referencing it (-1 = none)
   kevMatch: boolean; // references a CISA-KEV (actively-exploited) CVE
@@ -74,13 +78,20 @@ export function scoreIoc(s: IocRiskSignals): IocRisk {
   const factors: string[] = [];
   let points = 0;
 
-  // 2. Threat-intel verdict (the dominant signal), via classifyVerdict.
+  // 2. Threat-intel verdict (the dominant signal), via classifyVerdict. Only a Medium+ event in this
+  // case earns "corroborated"; two named origins are worth more than one but are not independence.
   if (s.verdictClass === "corroborated") {
     points += 4;
-    factors.push("malicious/suspicious verdict corroborated by ≥2 sources");
+    factors.push(s.intelFactor ?? "malicious/suspicious verdict carried by a Medium+ event in this case");
+  } else if (s.verdictClass === "multi-origin") {
+    points += 3;
+    factors.push(
+      s.intelFactor ??
+        "malicious/suspicious verdict from 2+ named intel origins — independence not established",
+    );
   } else if (s.verdictClass === "lone-intel") {
     points += 2;
-    factors.push("single-source threat-intel verdict (unverified lead)");
+    factors.push(s.intelFactor ?? "single-origin threat-intel verdict (unverified lead)");
   } else if (s.verdictClass === "conflicted") {
     factors.push("threat-intel verdict on the case's OWN/internal infrastructure — most likely stale");
   }
@@ -159,8 +170,13 @@ export function scoreIocs(
     const kevMatch = extractCveIds(ioc.value).some(
       (cve) => ctx.kevCveIds?.has(cve) || (ctx.kevCatalog ? ctx.kevCatalog.has(cve) : false),
     );
+    const intelFactor =
+      verdictClass === "corroborated" || verdictClass === "multi-origin" || verdictClass === "lone-intel"
+        ? originsFactor(intelOrigins(ioc.enrichments), verdictClass)
+        : undefined;
     const risk = scoreIoc({
       verdictClass,
+      ...(intelFactor ? { intelFactor } : {}),
       distinctTools: sources[ioc.id]?.length ?? 0,
       maxSeverityRank: sevRank[ioc.id] ?? -1,
       kevMatch,

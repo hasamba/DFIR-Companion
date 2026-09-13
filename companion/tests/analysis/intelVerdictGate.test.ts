@@ -79,7 +79,34 @@ describe("classifyVerdict", () => {
       }),
     ).toBe("conflicted");
   });
-  it("is corroborated with two distinct providers", () => {
+  // #933 item 18: origins, not providers. Two named origins are "multi-origin" (independence not
+  // established); two adapters with no recorded lineage are "lone-intel"; MISP relaying an abuse.ch
+  // feed beside ThreatFox is ONE origin. Only a Medium+ event in this case earns "corroborated".
+  it("is multi-origin — never corroborated — with two named origins and no local event", () => {
+    expect(
+      classifyVerdict(
+        ioc({
+          enrichments: [
+            enr({
+              source: "VirusTotal",
+              verdict: "malicious",
+              originKind: "aggregate",
+              origins: ["VirusTotal"],
+            }),
+            enr({
+              source: "ThreatFox",
+              provider: "Hunting.ch",
+              verdict: "suspicious",
+              originKind: "first-party",
+              origins: ["abuse.ch"],
+            }),
+          ],
+        }),
+        { hasBehavioralEvent: false, hostNames },
+      ),
+    ).toBe("multi-origin");
+  });
+  it("is lone-intel with two adapters that record no lineage (A + B)", () => {
     expect(
       classifyVerdict(
         ioc({
@@ -90,6 +117,41 @@ describe("classifyVerdict", () => {
         }),
         { hasBehavioralEvent: false, hostNames },
       ),
+    ).toBe("lone-intel");
+  });
+  it("is lone-intel when two feeds relay one report (MISP by abuse.ch + ThreatFox)", () => {
+    expect(
+      classifyVerdict(
+        ioc({
+          enrichments: [
+            enr({ source: "MISP", verdict: "malicious", originKind: "relay", origins: ["abuse.ch"] }),
+            enr({
+              source: "ThreatFox",
+              provider: "Hunting.ch",
+              verdict: "malicious",
+              originKind: "first-party",
+              origins: ["abuse.ch"],
+            }),
+          ],
+        }),
+        { hasBehavioralEvent: false, hostNames },
+      ),
+    ).toBe("lone-intel");
+  });
+  it("is lone-intel with a legacy MISP record (lineage not recorded) beside VirusTotal", () => {
+    expect(
+      classifyVerdict(ioc({ enrichments: [vt, enr({ source: "MISP", verdict: "malicious" })] }), {
+        hasBehavioralEvent: false,
+        hostNames,
+      }),
+    ).toBe("lone-intel");
+  });
+  it("is corroborated by a local event even when the hit's lineage is not recorded", () => {
+    expect(
+      classifyVerdict(ioc({ enrichments: [enr({ source: "MISP", verdict: "malicious" })] }), {
+        hasBehavioralEvent: true,
+        hostNames,
+      }),
     ).toBe("corroborated");
   });
   it("is corroborated with one provider PLUS a behavioral event", () => {
@@ -215,5 +277,44 @@ describe("capIntelOnlyFindings — northpeak class", () => {
     expect(out[0].severity).toBe("Medium");
     expect(out[0].confidence).toBe(60);
     expect(out[0].confidenceReason).toMatch(/single-provider threat-intel/i);
+  });
+
+  it("floors a multi-origin-only High finding too — two names are not activity (#933 item 18)", () => {
+    const finding = f({
+      id: "f1",
+      severity: "High",
+      confidence: 85,
+      relatedIocs: ["i1"],
+      corroboration: { distinctTools: 1, distinctHosts: 1, intelSources: 1, graphLinked: false },
+    });
+    const out = capIntelOnlyFindings({
+      findings: [finding],
+      iocs: [
+        ioc({
+          id: "i1",
+          value: "two-names.example",
+          enrichments: [
+            enr({
+              source: "VirusTotal",
+              verdict: "malicious",
+              originKind: "aggregate",
+              origins: ["VirusTotal"],
+            }),
+            enr({
+              source: "URLhaus",
+              provider: "Hunting.ch",
+              verdict: "malicious",
+              originKind: "first-party",
+              origins: ["abuse.ch"],
+            }),
+          ],
+        }),
+      ],
+      scopedEvents: [],
+      hostNames,
+    });
+    expect(out[0].severity).toBe("Medium");
+    expect(out[0].confidence).toBe(60);
+    expect(out[0].confidenceReason).toMatch(/2\+ named origins, independence not established/);
   });
 });

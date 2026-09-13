@@ -694,3 +694,183 @@ describe("YetiProvider", () => {
     expect(searchCalls).toBe(2); // retried after refreshing the token
   });
 });
+
+// #933 item 18 — every verdict-producing adapter states how it holds the claim and whom the record
+// names as creator; a relay that finds no creator says so with an empty list, never its own name.
+describe("intel lineage on provider results (#933 item 18)", () => {
+  it("VirusTotal and AbuseIPDB are one aggregate origin each", async () => {
+    const vt = new VirusTotalProvider({
+      apiKey: "k",
+      fetchFn: fetchMock(async () =>
+        jsonResponse({
+          data: { id: "x", attributes: { last_analysis_stats: { malicious: 3, harmless: 1 } } },
+        }),
+      ),
+    });
+    expect(await vt.lookup("hash", "deadbeef")).toMatchObject({
+      originKind: "aggregate",
+      origins: ["VirusTotal"],
+    });
+    const ab = new AbuseIpdbProvider({
+      apiKey: "k",
+      fetchFn: fetchMock(async () => jsonResponse({ data: { abuseConfidenceScore: 80 } })),
+    });
+    expect(await ab.lookup("ip", "1.2.3.4")).toMatchObject({
+      originKind: "aggregate",
+      origins: ["AbuseIPDB"],
+    });
+  });
+
+  it("Hunting.ch's four sources are one first-party origin: abuse.ch", async () => {
+    const fetchFn = fetchMock(async (url: string) => {
+      const host = new URL(url).host;
+      if (host === "mb-api.abuse.ch")
+        return jsonResponse({ query_status: "ok", data: [{ sha256_hash: "ABCD", signature: "Neshta" }] });
+      if (host === "threatfox-api.abuse.ch")
+        return jsonResponse({ query_status: "ok", data: [{ id: "9", confidence_level: 75 }] });
+      if (host === "urlhaus-api.abuse.ch") return jsonResponse({ query_status: "ok", url_count: 1 });
+      return jsonResponse({
+        query_status: "ok",
+        data: { metadata: { sha256_hash: "ABCD" }, tasks: [{ static_results: [{ rule_name: "R" }] }] },
+      });
+    });
+    const h = new HuntingChProvider({ apiKey: "k", fetchFn });
+    const r = (await h.lookup(
+      "hash",
+      "00c3e0990cada07e01a3b842cf3d36f36c6ec7dd7d3c1aba430c08d885d66567",
+    )) as EnrichmentResult[];
+    expect(r).toHaveLength(4);
+    for (const one of r) expect(one).toMatchObject({ originKind: "first-party", origins: ["abuse.ch"] });
+    // Each result carries its own array — a shared constant would let one caller's edit leak.
+    expect(r[0].origins).not.toBe(r[1].origins);
+  });
+
+  it("MISP asks for context and records each event's creator organisation", async () => {
+    const fetchFn = fetchMock(async () =>
+      jsonResponse({
+        response: {
+          Attribute: [
+            {
+              value: "x",
+              to_ids: true,
+              Event: { id: "1", info: "ThreatFox IOCs", Orgc: { id: "2", name: "abuse.ch" } },
+            },
+            {
+              value: "x",
+              to_ids: true,
+              Event: { id: "1", info: "ThreatFox IOCs", Orgc: { id: "2", name: "abuse.ch" } },
+            },
+            {
+              value: "x",
+              to_ids: false,
+              Event: { id: "5", info: "own hunt", Orgc: { id: "1", name: "ACME CSIRT" } },
+            },
+          ],
+        },
+      }),
+    );
+    const misp = new MispProvider({ baseUrl: "https://misp.example.org", apiKey: "k", fetchFn });
+    const r = await misp.lookup("hash", "x");
+    expect(r).toMatchObject({ originKind: "relay", origins: ["abuse.ch", "ACME CSIRT"] });
+    expect(JSON.parse(String((fetchFn.mock.calls[0][1] as RequestInit).body))).toMatchObject({
+      includeContext: true,
+    });
+  });
+
+  it("MISP falls back to the org id when the name is not resolved, and records nothing when neither is", async () => {
+    const withId = new MispProvider({
+      baseUrl: "https://m",
+      apiKey: "k",
+      fetchFn: fetchMock(async () =>
+        jsonResponse({ response: { Attribute: [{ value: "x", Event: { id: "1", orgc_id: "7" } }] } }),
+      ),
+    });
+    expect(await withId.lookup("hash", "x")).toMatchObject({ originKind: "relay", origins: ["org #7"] });
+    const bare = new MispProvider({
+      baseUrl: "https://m",
+      apiKey: "k",
+      fetchFn: fetchMock(async () =>
+        jsonResponse({ response: { Attribute: [{ value: "x", event_id: "1" }] } }),
+      ),
+    });
+    expect(await bare.lookup("hash", "x")).toMatchObject({ originKind: "relay", origins: [] });
+  });
+
+  it("MISP keeps a creator whose Event object carries no id (keyed by the attribute's event_id)", async () => {
+    const misp = new MispProvider({
+      baseUrl: "https://m",
+      apiKey: "k",
+      fetchFn: fetchMock(async () =>
+        jsonResponse({
+          response: {
+            Attribute: [
+              { value: "x", event_id: "3", Event: { Orgc: { name: "ACME CSIRT" } } },
+              { value: "x", Event: { Orgc: { name: "abuse.ch" } } },
+            ],
+          },
+        }),
+      ),
+    });
+    expect(await misp.lookup("hash", "x")).toMatchObject({ origins: ["ACME CSIRT", "abuse.ch"] });
+  });
+
+  it("MISP never reads a creator from the event's free text, and cleans a hostile org name", async () => {
+    const misp = new MispProvider({
+      baseUrl: "https://m",
+      apiKey: "k",
+      fetchFn: fetchMock(async () =>
+        jsonResponse({
+          response: {
+            Attribute: [
+              {
+                value: "x",
+                Event: {
+                  id: "1",
+                  info: "ThreatFox IOCs for today",
+                  Orgc: { name: "  Evil\u0000\nCorp " + "z".repeat(200) },
+                },
+                Tag: [{ name: 'osint:source-type="threatfox"' }],
+              },
+            ],
+          },
+        }),
+      ),
+    });
+    const r = await misp.lookup("hash", "x");
+    expect(r!.origins).toHaveLength(1);
+    expect(r!.origins![0]).toMatch(/^Evil Corp z+$/);
+    expect(r!.origins![0]).toHaveLength(80);
+  });
+
+  it("MISP caps a record at five creators and says how many were cut", async () => {
+    const attrs = Array.from({ length: 7 }, (_, i) => ({
+      value: "x",
+      Event: { id: String(i), Orgc: { name: `org-${i}` } },
+    }));
+    const misp = new MispProvider({
+      baseUrl: "https://m",
+      apiKey: "k",
+      fetchFn: fetchMock(async () => jsonResponse({ response: { Attribute: attrs } })),
+    });
+    const r = await misp.lookup("hash", "x");
+    expect(r!.origins).toEqual(["org-0", "org-1", "org-2", "org-3", "org-4"]);
+    expect(r!.moreOrigins).toBe(2);
+  });
+
+  it("YETI records no creator: its context sources are producers, not claimants", async () => {
+    const fetchFn = fetchMock(async (url: string) => {
+      if (url.endsWith("/auth/api-token")) return jsonResponse({ access_token: "t" });
+      return jsonResponse({
+        observables: [
+          { id: "o1", value: "x", tags: [{ name: "malware" }], context: [{ source: "ThreatFox" }] },
+        ],
+        total: 1,
+      });
+    });
+    const yeti = new YetiProvider({ baseUrl: "https://y", apiKey: "k", fetchFn });
+    const r = await yeti.lookup("hash", "x");
+    expect(r!.originKind).toBeUndefined(); // legacy table reads YETI as relay / not recorded
+    expect(r!.origins).toBeUndefined();
+    expect(r!.score).toContain("ThreatFox"); // still shown as text
+  });
+});

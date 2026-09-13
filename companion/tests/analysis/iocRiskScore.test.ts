@@ -54,7 +54,26 @@ describe("scoreIoc — composite tiers", () => {
   it("single-source (lone-intel) verdict → medium", () => {
     const r = scoreIoc(sig({ verdictClass: "lone-intel" }));
     expect(r.score).toBe("medium");
-    expect(r.factors.join(" ")).toMatch(/single-source|unverified/i);
+    expect(r.factors.join(" ")).toMatch(/single-origin|unverified/i);
+  });
+  // #933 item 18: two named origins sit between a lone hit and local corroboration — and are never
+  // called corroborated or independent. The words come from the lineage summary when given.
+  it("multi-origin verdict alone → medium (+3), worded as names, not independence", () => {
+    const r = scoreIoc(sig({ verdictClass: "multi-origin" }));
+    expect(r.score).toBe("medium");
+    expect(r.factors[0]).toMatch(/independence not established/);
+    expect(r.factors[0]).not.toMatch(/corroborated/);
+    expect(scoreIoc(sig({ verdictClass: "multi-origin", maxSeverityRank: 2 })).score).toBe("high"); // +1 Medium event
+  });
+  it("uses the lineage words when supplied", () => {
+    const r = scoreIoc(
+      sig({
+        verdictClass: "lone-intel",
+        intelFactor:
+          "single intel origin (abuse.ch — 2 hits: MISP, ThreatFox), not seen in a Medium+ event in this case (unverified lead)",
+      }),
+    );
+    expect(r.factors[0]).toContain("2 hits: MISP, ThreatFox");
   });
   it("no intel but seen by 2+ tools in a High event → medium", () => {
     expect(scoreIoc(sig({ distinctTools: 2, maxSeverityRank: 3 })).score).toBe("medium");
@@ -89,6 +108,70 @@ describe("scoreIocs — batch orchestration over real IOCs/events", () => {
   const ioc = (p: Partial<IOC> & { id: string; value: string; type: IOC["type"] }): IOC => ({
     firstSeen: "",
     ...p,
+  });
+
+  it("names the origins behind a two-feed verdict and folds a relayed copy (#933 item 18)", () => {
+    const iocs: IOC[] = [
+      ioc({
+        id: "i1",
+        type: "domain",
+        value: "one-report.example",
+        enrichments: [
+          {
+            source: "ThreatFox",
+            provider: "Hunting.ch",
+            verdict: "malicious",
+            fetchedAt: "",
+            originKind: "first-party",
+            origins: ["abuse.ch"],
+          },
+          { source: "MISP", verdict: "malicious", fetchedAt: "", originKind: "relay", origins: ["abuse.ch"] },
+        ],
+      }),
+      ioc({
+        id: "i2",
+        type: "domain",
+        value: "two-names.example",
+        enrichments: [
+          {
+            source: "VirusTotal",
+            verdict: "malicious",
+            fetchedAt: "",
+            originKind: "aggregate",
+            origins: ["VirusTotal"],
+          },
+          {
+            source: "URLhaus",
+            provider: "Hunting.ch",
+            verdict: "malicious",
+            fetchedAt: "",
+            originKind: "first-party",
+            origins: ["abuse.ch"],
+          },
+        ],
+      }),
+      ioc({
+        id: "i3",
+        type: "domain",
+        value: "nobody.example",
+        enrichments: [
+          { source: "OpenCTI", verdict: "malicious", fetchedAt: "", originKind: "relay", origins: [] },
+        ],
+      }),
+    ];
+    const out = scoreIocs(iocs, [], { hostNames: new Set() });
+    expect(out.i1.score).toBe("medium");
+    expect(out.i1.factors[0]).toBe(
+      "single intel origin (abuse.ch — 2 hits: ThreatFox, MISP), not seen in a Medium+ event in this case (unverified lead)",
+    );
+    expect(out.i2.score).toBe("medium");
+    expect(out.i2.factors[0]).toBe(
+      "intel verdict from 2 named origins (VirusTotal, abuse.ch) — independence not established",
+    );
+    expect(out.i3.score).toBe("medium");
+    expect(out.i3.factors[0]).toBe(
+      "1 hit with lineage not recorded (OpenCTI) — not counted as an origin; re-check with force to record the creator",
+    );
   });
 
   it("scores a corroborated-malicious IP seen in a High event as high/critical", () => {

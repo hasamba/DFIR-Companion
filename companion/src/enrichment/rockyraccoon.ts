@@ -113,6 +113,8 @@ export class RockyRaccoonProvider implements EnrichmentProvider {
 
     return {
       source: this.name,
+      originKind: "first-party", // its own prevalence corpus (#933 item 18)
+      origins: [this.name],
       verdict,
       score: bits.join(", ") || undefined,
       detections: p.executions?.total,

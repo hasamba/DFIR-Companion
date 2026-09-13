@@ -57,6 +57,14 @@ class AbuseCtx {
 // ── Per-platform back-ends. Each returns ONE EnrichmentResult on a hit, or null when the
 //    indicator is unknown to that platform. They throw only on hard errors (auth / HTTP). ──
 
+// Lineage (#933 item 18): the four back-ends are one publisher's own databases — one origin, first-party.
+// A MISP/OpenCTI record relaying an abuse.ch feed folds onto this name, so "ThreatFox + MISP" reads as
+// one report, not two.
+const ABUSE_CH_ORIGIN = (): Pick<EnrichmentResult, "originKind" | "origins"> => ({
+  originKind: "first-party",
+  origins: ["abuse.ch"],
+});
+
 // MalwareBazaar — known malware sample (hash only).
 async function mbLookup(ctx: AbuseCtx, hash: string): Promise<EnrichmentResult | null> {
   const json = await ctx.post(
@@ -76,6 +84,7 @@ async function mbLookup(ctx: AbuseCtx, hash: string): Promise<EnrichmentResult |
   for (const t of ((d.tags as string[] | undefined) ?? []).slice(0, 6)) if (t) tags.add(str(t));
   return {
     source: "MalwareBazaar",
+    ...ABUSE_CH_ORIGIN(),
     verdict: "malicious",
     score: signature ? `known: ${signature}` : `known sample${fileType ? ` (${fileType})` : ""}`,
     tags: [...tags],
@@ -108,6 +117,7 @@ async function tfLookup(ctx: AbuseCtx, kind: IocKind, value: string): Promise<En
   const id = str(d.id);
   return {
     source: "ThreatFox",
+    ...ABUSE_CH_ORIGIN(),
     verdict: confidence >= 50 ? "malicious" : "suspicious",
     score: `${desc}${confidence ? ` (${confidence}% confidence)` : ""}`,
     tags: [...tags],
@@ -144,7 +154,14 @@ async function urlhausLookup(ctx: AbuseCtx, kind: IocKind, value: string): Promi
         : `${urlCount} malware URL(s) hosted`;
   const link =
     str(json.urlhaus_reference) || `https://urlhaus.abuse.ch/browse.php?search=${encodeURIComponent(value)}`;
-  return { source: "URLhaus", verdict: "malicious", score: desc, tags: [...tags], link };
+  return {
+    source: "URLhaus",
+    ...ABUSE_CH_ORIGIN(),
+    verdict: "malicious",
+    score: desc,
+    tags: [...tags],
+    link,
+  };
 }
 
 // YARAify — which YARA rules / ClamAV signatures matched a sample (hash only).
@@ -176,6 +193,7 @@ async function yaraifyLookup(ctx: AbuseCtx, hash: string): Promise<EnrichmentRes
   if (clamav.size) parts.push(`${clamav.size} ClamAV sig(s)`);
   return {
     source: "YARAify",
+    ...ABUSE_CH_ORIGIN(),
     verdict: rules.size > 0 ? "malicious" : "suspicious",
     score: parts.join(", "),
     tags,
