@@ -53,6 +53,7 @@ import { hasExposureFinding, type CustomerExposureSummary } from "../analysis/cu
 import { extractCveIds, matchKevEntries, type KevCatalog } from "../analysis/kev.js";
 import type { NotebookEntry } from "../analysis/notebookStore.js";
 import type { Hypothesis } from "../analysis/hypothesis.js";
+import { hypothesesSection } from "./hypothesisReport.js";
 import { playbookStats, type PlaybookStatus, type PlaybookTask } from "../analysis/playbook.js";
 import {
   DEFAULT_COVER_TITLE,
@@ -1387,69 +1388,6 @@ function playbookSection(tasks: PlaybookTask[], lines: string[]): void {
   lines.push("");
 }
 
-function hypothesesSection(hypotheses: Hypothesis[], lines: string[]): void {
-  lines.push("## Hypotheses", "");
-  lines.push(
-    "_What we investigated and concluded. Each hypothesis is a testable claim about the incident, " +
-      "tracked from open to supported / refuted / unknown — a lead to test, not a verdict._",
-    "",
-  );
-  const STATUS_LABEL: Record<Hypothesis["status"], string> = {
-    supported: "Supported",
-    refuted: "Refuted",
-    open: "Open",
-    unknown: "Unknown",
-  };
-  // Negative knowledge (issue #95): a refuted hypothesis, or one whose linked hunts came back empty
-  // (`exhausted`), is a settled, ruled-out theory — call it out up front so a reader doesn't mistake it
-  // for an open lead buried further down the section.
-  const negative = hypotheses.filter((h) => h.status === "refuted" || h.exhausted);
-  if (negative.length) {
-    lines.push(
-      "> **Negative knowledge — ruled out.** These theories were refuted by the evidence or exhausted " +
-        "(hunted for and not found); treat them as settled, not as open leads.",
-      "",
-    );
-    for (const h of negative) {
-      const tag = h.status === "refuted" ? "Refuted" : "Exhausted";
-      const reason = h.status === "refuted" ? h.notes : h.exhaustedReason;
-      lines.push(`- **[${tag}]** ${oneLineMd(h.title)}${reason ? ` — ${oneLineMd(reason)}` : ""}`);
-    }
-    lines.push("");
-  }
-  // Concluded hypotheses first (supported, then refuted), then the outstanding ones (open, unknown).
-  const order: Hypothesis["status"][] = ["supported", "refuted", "open", "unknown"];
-  const sorted = [...hypotheses].sort((a, b) => order.indexOf(a.status) - order.indexOf(b.status));
-  for (const h of sorted) {
-    const exhaustedTag = h.exhausted ? " ⊘ Exhausted" : "";
-    lines.push(`### ${oneLineMd(h.title)} — ${STATUS_LABEL[h.status] ?? h.status}${exhaustedTag}`, "");
-    if (h.description) lines.push(blockMd(h.description), "");
-    if (h.expectedOutcome)
-      lines.push(
-        `**Expected outcome (what would prove or disprove this):** ${oneLineMd(h.expectedOutcome)}`,
-        "",
-      );
-    if (h.exhausted && h.exhaustedReason) lines.push(`**Exhausted:** ${oneLineMd(h.exhaustedReason)}`, "");
-    const bits: string[] = [];
-    if (h.relatedTechniques.length) bits.push(`ATT&CK: ${h.relatedTechniques.join(", ")}`);
-    if (h.relatedEventIds.length)
-      bits.push(`${h.relatedEventIds.length} supporting event${h.relatedEventIds.length === 1 ? "" : "s"}`);
-    if (h.relatedIocIds.length)
-      bits.push(`${h.relatedIocIds.length} related IOC${h.relatedIocIds.length === 1 ? "" : "s"}`);
-    if (bits.length) lines.push(`_${bits.join(" · ")}._`, "");
-    if (h.notes) lines.push(`**Analyst notes:** ${oneLineMd(h.notes)}`, "");
-    // Status-change audit trail (issue #95): a dated open → … chain, skipped when there's only the
-    // initial entry (nothing has changed since the hypothesis was created).
-    const history = h.statusHistory ?? [];
-    if (history.length > 1) {
-      const chain = history
-        .map((s) => `${STATUS_LABEL[s.status] ?? s.status} (${(s.changedAt || "").slice(0, 10)})`)
-        .join(" → ");
-      lines.push(`**Status history:** ${chain}`, "");
-    }
-  }
-}
-
 function analystNotebook(entries: NotebookEntry[], lines: string[]): void {
   lines.push("## Analyst Notebook", "");
   lines.push(
@@ -1530,7 +1468,7 @@ export function renderMarkdownReport(
       investigation(state, lines, exposure, assetGraph, kevCatalog, secondLookLeads, lateralPaths),
     conclusions: () => conclusions(state, meta, lines),
     hypotheses: () => {
-      if (hypotheses && hypotheses.length > 0) hypothesesSection(hypotheses, lines);
+      if (hypotheses && hypotheses.length > 0) hypothesesSection(hypotheses, state.forensicTimeline, lines);
     },
     playbook: () => {
       if (playbookTasks && playbookTasks.length > 0) playbookSection(playbookTasks, lines);

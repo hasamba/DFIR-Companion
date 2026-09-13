@@ -173,6 +173,24 @@
 .hyp.exhausted { opacity: 0.7; }
 .hyp-discriminator { font-size: 12px; color: var(--text-primary); margin: 3px 0; }
 .hyp-ach-note { color: var(--text-faint); font-size: 10px; font-weight: 400; }
+/* Evidence assessment (#933 item 22): what a conclusion rests on, and the analyst's exclusions. */
+.hyp-qualifier { color: var(--sev-medium); font-size: 11px; font-weight: 600; margin-left: 6px; }
+.hyp-ack { padding: 0 7px; font-size: 11px; font-weight: 400; text-transform: none; letter-spacing: 0; cursor: pointer; margin-left: 4px; }
+.hyp-assessment { margin: 4px 0; font-size: 12px; }
+.hyp-assessment > summary { cursor: pointer; color: var(--accent); }
+.hyp-alternatives { color: var(--text-muted); margin: 4px 0; }
+.hyp-alts > summary { cursor: pointer; color: var(--text-muted); font-size: 11px; }
+.hyp-alt { display: block; font-size: 12px; margin: 2px 0 2px 8px; }
+.hyp-ev-list { margin: 4px 0 0; padding-left: 18px; }
+.hyp-ev { margin: 3px 0; color: var(--text-primary); }
+.hyp-ev-bearing { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted); }
+.hyp-ev-distinguishing .hyp-ev-bearing { color: var(--tag-green-text); }
+.hyp-ev-contra .hyp-ev-bearing { color: var(--badge-danger-text); }
+.hyp-ev-excluded { color: var(--text-faint); text-decoration: line-through; }
+.hyp-ev-excluded .hyp-ev-bearing, .hyp-ev-excluded .hyp-ev-act, .hyp-ev-excluded .hyp-ev-note { text-decoration: none; }
+.hyp-ev-note { color: var(--text-faint); font-size: 11px; font-weight: 400; }
+.hyp-ev-act { padding: 0 6px; font-size: 10px; font-weight: 400; text-transform: none; letter-spacing: 0; cursor: pointer; margin-left: 4px; }
+.hyp-ev-reason { font-size: 11px; width: min(320px, 60%); }
 /* Falsification review (#71) — ephemeral for/against panel above the hypothesis list. */
 .hyp-rev-box { border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 12px; margin: 0 0 12px; background: var(--bg-secondary); }
 .hyp-rev-hdr { font-size: 13px; font-weight: 600; color: var(--text-bright); margin-bottom: 8px; }

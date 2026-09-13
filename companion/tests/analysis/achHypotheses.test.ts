@@ -1,11 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
   sanitizeHypotheses,
-  rankHypothesesAch,
   markExhaustedHypotheses,
   type Hypothesis,
   type HypothesisHuntSignal,
 } from "../../src/analysis/hypothesis.js";
+import { rankHypothesesAch } from "../../src/analysis/hypothesisDiagnostics.js";
 import { renderRefutedHypothesesBlock } from "../../src/analysis/priorWork.js";
 
 function h(partial: Partial<Hypothesis> & { id: string; title: string }): Hypothesis {
@@ -25,6 +25,9 @@ function h(partial: Partial<Hypothesis> & { id: string; title: string }): Hypoth
     source: "synthesis",
     analystTouched: false,
     needsReview: false,
+    reviewReason: "",
+    alternativeIds: [],
+    excludedEvidence: [],
     createdAt: "2026-01-01T00:00:00Z",
     updatedAt: "2026-01-01T00:00:00Z",
     statusHistory: [],

@@ -71,6 +71,14 @@
     hypPatchNotes: (el) => hypPatch(el.dataset.id, { notes: el.value }),
     hypDelete: (el) => hypDelete(el.dataset.id),
     hypApplyReview: (el) => hypApplyReview(el.dataset.id, el.dataset.st),
+    // Evidence assessment (#933 item 22)
+    hypExcludeStart: (el) => hypExcludeStart(el.dataset.id, el.dataset.ev),
+    hypExcludeCancel: (el) => hypExcludeCancel(el.dataset.id, el.dataset.ev),
+    hypExcludeConfirm: (el) => hypExcludeConfirm(el.dataset.id, el.dataset.ev),
+    hypRestoreEvidence: (el) => hypRestoreEvidence(el.dataset.id, el.dataset.ev),
+    hypAcknowledgeReview: (el) => hypAcknowledgeReview(el.dataset.id),
+    hypToggleAlternative: (el) =>
+      hypToggleAlternative(el.dataset.id, el.dataset.alt, el.checked),
     linkNextHunt: (el) =>
       linkNextHuntToHypothesis(el.dataset.id, el.getAttribute("data-t")),
     clearPendingHunt: (el, e) => {
