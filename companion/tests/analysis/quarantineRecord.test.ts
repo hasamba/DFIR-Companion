@@ -663,6 +663,14 @@ describe("through parseMacos and correlateEvents", () => {
     // a JSON STRING keeps its text
     const str = parseMacos(json(['"716403200.5"', '"716403200.5000"']));
     expect(str.events).toHaveLength(2);
+    // a JSON ARRAY is a structured value, never a scalar time: no instant, its own identity
+    const arr = parseMacos(json(["716403200.5", "[716403200.5]"]));
+    expect(arr.events).toHaveLength(2);
+    const arrRow = arr.events.find((e) => e.timestamp === "");
+    expect(arrRow?.canonical?.quarantine?.timeRaw).toBe("[716403200.5]");
+    expect(
+      afterImport(parseMacos(json(["716403200.5", "[716403200.5]"]), { aggregate: false }).events),
+    ).toHaveLength(2);
   });
 
   it("two ISO spellings of one instant are two rows after correlation", () => {

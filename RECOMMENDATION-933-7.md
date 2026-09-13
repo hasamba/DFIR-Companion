@@ -256,3 +256,8 @@ The joins, Gatekeeper/XProtect logs, browser history, any grade above Info.
 1. A structured JSON value (a BLOB exported as `{type:"Buffer",data:[…]}`) became `[object
    Object]`, so two different aliases were one identity. Fix: an object or array value keeps its
    shape as JSON text in every field the reader takes.
+
+## Code round 17 (Codex, one finding)
+1. A repeated CSV header was kept as a plain array, so a genuine JSON array time (`[716403200.5]`)
+   read as a scalar and folded with the scalar record. Fix: the CSV projection wraps repeats in a
+   `RepeatedColumn`; a JSON array stays a structured value (its JSON text, no instant).

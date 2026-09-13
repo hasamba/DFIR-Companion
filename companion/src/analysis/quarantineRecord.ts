@@ -234,7 +234,15 @@ export interface QuarantineRow extends MappedEvent {
 // A structured JSON value (an exporter's BLOB as `{type:"Buffer",data:[…]}`) keeps its shape as
 // JSON text — never `[object Object]`, which would make every such value one value.
 const text = (v: unknown): string =>
-  typeof v === "string" ? v : v == null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v);
+  typeof v === "string"
+    ? v
+    : v == null
+      ? ""
+      : isRepeatedColumn(v)
+        ? frameOccurrences(v.values.map((value) => ({ header: "", value })))
+        : typeof v === "object"
+          ? JSON.stringify(v)
+          : String(v);
 const first = (rec: Row, keys: readonly string[]): { value: string; header: string } => {
   for (const k of keys) {
     const v = getCI(rec, k);
@@ -242,6 +250,14 @@ const first = (rec: Row, keys: readonly string[]): { value: string; header: stri
   }
   return { value: "", header: "" };
 };
+/**
+ * A header the CSV repeated: the projection wraps its values so a genuine JSON array (`[716403200.5]`)
+ * is never mistaken for one — a JSON array stays a structured value with its own text.
+ */
+export class RepeatedColumn {
+  constructor(readonly values: readonly string[]) {}
+}
+const isRepeatedColumn = (v: unknown): v is RepeatedColumn => v instanceof RepeatedColumn;
 const TIME_HEADER_RANK = new Map(TIME_HEADERS.map((h, i) => [h.toLowerCase(), i]));
 /**
  * Every time column the record actually carries — each key whose name is a time header by any case,
@@ -253,7 +269,7 @@ function timeOccurrences(rec: Row): { header: string; value: string }[] {
   for (const [k, v] of Object.entries(rec)) {
     const rank = TIME_HEADER_RANK.get(k.trim().toLowerCase());
     if (rank === undefined) continue;
-    for (const one of Array.isArray(v) ? v : [v]) {
+    for (const one of isRepeatedColumn(v) ? v.values : [v]) {
       const value = text(one).trim();
       if (value) out.push({ header: k.trim(), value, rank });
     }
