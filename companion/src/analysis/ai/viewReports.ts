@@ -11,6 +11,7 @@ import { maxPromptEvents } from "../synthGroup.js";
 import { selectSynthesisEvents } from "../synthSelect.js";
 import { getSessionSummaryPrompt, getStarredReportPrompt, getViewSummaryPrompt } from "./prompts/index.js";
 import { callAiJson, type AiCallContext } from "./aiContext.js";
+import { promptDescription } from "./promptDescription.js";
 
 /**
  * The three view-scoped AI summaries (#418).
@@ -72,7 +73,7 @@ function fitViewEvents(
   const render = (e: ForensicEvent): string =>
     `[${e.timestamp || "(undated)"}] [${e.severity}]` +
     (e.asset ? ` [${e.asset}]` : "") +
-    ` ${e.description.slice(0, 240)}` +
+    ` ${promptDescription(e.description)}` +
     (e.processName ? ` | process: ${e.processName}` : "") +
     (e.srcIp || e.dstIp ? ` | net: ${[e.srcIp, e.dstIp].filter(Boolean).join(" → ")}` : "");
   const max = maxPromptEvents();

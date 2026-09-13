@@ -21,6 +21,7 @@ import {
   promptOverhead,
   type AiCallContext,
 } from "./aiContext.js";
+import { promptDescription, PROMPT_DESCRIPTION_WIDE_MAX } from "./promptDescription.js";
 
 /**
  * The three "answer this specific question" AI calls (#418).
@@ -58,7 +59,7 @@ export async function ask(ctx: AnalystQueryContext, caseId: string, question: st
   const { scoped } = await loadScopedEvents(ctx, caseId, loaded);
 
   const renderEvent = (e: ForensicEvent): string =>
-    `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}`;
+    `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${promptDescription(e.description)}`;
   const findingsText =
     loaded.findings
       .slice(0, 150)
@@ -176,7 +177,7 @@ export async function explainEvent(
 
   const renderEv = (e: ForensicEvent, focal = false): string =>
     `[${e.id}]${focal ? " *** FOCAL EVENT ***" : ""} ${e.timestamp || "(undated)"} [${e.severity}]` +
-    ` ${e.description.slice(0, 300)}` +
+    ` ${promptDescription(e.description, PROMPT_DESCRIPTION_WIDE_MAX)}` +
     (e.asset ? ` | asset: ${e.asset}` : "") +
     (e.processName ? ` | process: ${e.processName}` : "") +
     (e.parentName ? ` | parent: ${e.parentName}` : "") +
