@@ -52,6 +52,7 @@ import { spawnToolRunner } from "../integrations/tools/toolRunner.js";
 import { parseAllowedOrigins, parseAllowedHosts, parseAllowedHostSuffixes } from "../http/originGuard.js";
 import { resolveHuntPlatforms } from "../analysis/huntPlatforms.js";
 import { numEnv } from "./env.js";
+import { redactAiStatusEvent } from "./aiStatusRedact.js";
 
 export interface AppWiringDeps {
   teamAuth?: TeamAuth;
@@ -282,7 +283,10 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     jobManager,
     autoSynthesize,
     autoSynthesizeDebounceMs,
-    onAiStatus: (caseId, event) => hub.broadcastTo(caseId, { type: "ai_status", ...event }),
+    // `detail` may be a raw err.message with an absolute path in it — redacted once here for every
+    // caller, the WebSocket twin of the HTTP-side errorPathRedactor (#1029).
+    onAiStatus: (caseId, event) =>
+      hub.broadcastTo(caseId, { type: "ai_status", ...redactAiStatusEvent(event, [store.casesRoot]) }),
     // Broadcast to ALL dashboards so one viewing a different case can warn that captures are
     // arriving here (the capture extension is pointed at a case the analyst isn't looking at).
     onCapture: (caseId) => hub.broadcastAll({ type: "capture_ingest", caseId }),
