@@ -72,6 +72,12 @@ const HEADER_RES: RegExp[] = [
   /^#\s*FILE:\s*(\/\S.*?)\s*$/i,
 ];
 
+// The CLOSED set of `# key: value` annotations read directly under a header (see splitCollection).
+const COMMON_META_RE =
+  /^#\s*(mtime|modified|owner|uid|user|codesign|signature|quarantine|sha256)\s*:\s*(.+)$/i;
+const LAUNCHD_META_RE =
+  /^#\s*(mtime|modified|owner|uid|user|codesign|signature|quarantine|sha256|target|launchctl)\s*:\s*(.+)$/i;
+
 function headerPath(line: string): string | null {
   for (const re of HEADER_RES) {
     const m = re.exec(line.trim());
@@ -185,10 +191,12 @@ export function splitCollection(
     // with a `# word:` comment — `# Edited by: alice` at the top of a crontab is normal — and a
     // dropped line is a change to the evidence view, however harmless the line was.
     if (current.body.length === 0) {
-      const meta =
-        /^#\s*(mtime|modified|owner|uid|user|codesign|signature|quarantine|sha256)\s*:\s*(.+)$/i.exec(
-          line.trim(),
-        );
+      // `# target:` and `# launchctl:` are launchd facts (#933 item 8) and are read only under a
+      // launchd header: on any other member a first-line `# target: …` is the file's own comment,
+      // and a dropped line is a change to the evidence view.
+      const meta = (classify(current.path) === "launchd" ? LAUNCHD_META_RE : COMMON_META_RE).exec(
+        line.trim(),
+      );
       if (meta) {
         const key = meta[1].toLowerCase();
         const value = meta[2].trim();

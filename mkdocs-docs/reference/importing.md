@@ -132,6 +132,46 @@ status and a quarantine record raise and explain a job that is already suspiciou
 own: a program in a directory anything can write, a label that claims to be Apple's on something
 Apple did not ship, or a command that downloads and executes in one line.
 
+**A plist is a configuration, not a run.** Every launchd finding says what the file *asks for* —
+"configured to run as root at boot", "asks launchd to start it when loaded" — and never that the
+job loaded or ran, because nothing in a plist shows that. Two more header lines let the collector
+say what the plist cannot:
+
+```
+==> /Library/LaunchDaemons/com.example.plist <==
+# target: path=/usr/local/bin/helper owner=alice mode=0755 group=staff mtime=2026-01-02T09:00:00Z
+# launchctl: system 412 0 com.example
+```
+
+- `# target:` is what `stat` found at **one path**, and it is applied only when that path is the
+  program the plist names (an absolute path, or a relative one joined to `WorkingDirectory` — a
+  bare name or a `~` names no file, and the row says so). `path=` is required; `missing` instead
+  of the other pairs records that nothing was there. On a job configured for root, a program owned
+  by another account or writable by every account raises the finding: that is a write path to
+  what root runs. Group-write is shown and not raised — who is in the group was not recorded — and
+  the row says ACLs, flags and parent directories were not read.
+  `stat -f 'path=%N owner=%Su group=%Sg mode=%Lp mtime=%Sm' -t '%Y-%m-%dT%H:%M:%SZ' <program>`
+  produces the line (set `TZ=UTC` first).
+- `# launchctl:` is the `launchctl list` line for the label, **prefixed with the domain you
+  queried** — `system` (run as root) for a daemon; `gui/<uid>` for an agent — or `<domain> not
+  loaded`. Labels are unique only within a domain, so a line without one is not applied, and a
+  domain that does not load the plist's directory (a `gui/` view of a LaunchDaemon) is not
+  applied either. A PID means the job was loaded and running at collection time; a non-zero last
+  status means it has run at least once; status `0` with no PID is also the value of a job that
+  has never run, so it says nothing. `sudo launchctl list | grep <label>` for a daemon;
+  `launchctl list | grep <label>` as the user for an agent.
+
+Where the plist sits decides who it is configured for. `UserName` is honoured only on a
+LaunchDaemon; on an agent launchd ignores it and the row says so. A `LimitLoadToSessionType` of
+`LoginWindow` configures an agent for root, before anyone logs in. A plist outside the launchd
+directories is loaded by nothing on its own, and the row says the file alone does not establish
+that it was ever loaded.
+
+**Login items are not read.** Background Task Management (`BackgroundItems-v4.btm`, macOS 13+)
+and the older LSSharedFileList login items keep their targets as bookmark/alias blobs inside a
+binary keyed archive; decoding those is a separate importer. `sfltool dumpbtm` (13+) lists them
+for you to read by hand.
+
 ### rclone and MEGAsync evidence
 
 Three artifacts, all plain text, all detected by content — the filename is never needed:

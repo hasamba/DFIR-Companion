@@ -369,6 +369,8 @@
     "lookalikeDomains.ts": "analysis/detect",
     "m365Import.ts": "analysis/ingest",
     "macosImport.ts": "analysis/ingest",
+    "macosLaunchFacts.ts": "analysis/ingest",
+    "macosLaunchTarget.ts": "analysis/ingest",
     "macosPersistImport.ts": "analysis/ingest",
     "macosPersistRules.ts": "analysis/ingest",
     "macosPersistence.ts": "analysis/ingest",

@@ -12,6 +12,8 @@
 //   # mtime: 2026-01-02T09:00:00Z
 //   # codesign: unsigned
 //   # quarantine: https://evil.test/update.zip
+//   # target: path=/usr/local/bin/helper owner=alice mode=0755     (#933 item 8)
+//   # launchctl: system 412 0 com.apple.softwareupdated
 //
 // Neither can produce a finding by itself. An unsigned binary is ordinary on a Mac and a quarantine
 // record only proves a download happened. They raise and explain a job that is already suspicious
