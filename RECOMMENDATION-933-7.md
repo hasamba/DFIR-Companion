@@ -225,3 +225,8 @@ The joins, Gatekeeper/XProtect logs, browser history, any grade above Info.
    only a mark whose flags include `download` (0x1), or the legacy URL form, raises; other marks are
    shown with "its flags do not say the file was downloaded". Tests cover 0000/0002/0004/0040/0046
    and a malformed value.
+
+## Code round 12 (Codex, one finding)
+1. Two REAL timestamps that round to one millisecond (`716403200.5001` / `.5002`) shared a facts
+   digest and folded. Fix: the raw time text is part of identity beside the encoding and the ISO
+   reading; a value with more fraction digits than a millisecond carries marks the row.

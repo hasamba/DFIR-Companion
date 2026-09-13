@@ -257,6 +257,13 @@ function timeOccurrences(rec: Row): { header: string; value: string }[] {
   }
   return out.sort((a, b) => a.rank - b.rank).map(({ header, value }) => ({ header, value }));
 }
+/** Whether the ISO reading carries the raw text back exactly — else the words lost a digit. */
+function timeRoundTrips(raw: string, when: QuarantineTime): boolean {
+  if (when.encoding === "iso") return normalizeTime(raw) === when.iso;
+  // Date keeps milliseconds: more fraction digits than the encoding's millisecond has are lost.
+  const fraction = (raw.split(".")[1] ?? "").replace(/0+$/, "").length;
+  return fraction <= (when.encoding === "unix-ms" ? 0 : 3);
+}
 /** Length-framed `header=value` pairs: two different column sets never serialise alike. */
 const frameOccurrences = (times: { header: string; value: string }[]): string =>
   times.map((t) => `${t.header.length}:${t.header}=${t.value.length}:${t.value}`).join("|");
@@ -371,9 +378,10 @@ export function quarantineOverlay(
     senderName,
     senderAddress,
     originAlias ? `alias:${keyDigest(originAlias)}` : "",
-    // The instant AND its representation: a Cocoa row and an ISO row of one instant are two
-    // records with different evidence, not one.
-    `${when.encoding}:${when.iso || `t?:${time.value}`}`,
+    // The instant AND its representation AND the raw text: a Cocoa row and an ISO row of one instant
+    // are two records with different evidence, and so are two REAL values that round to one
+    // millisecond (716403200.5001 vs .5002) — the raw text is the evidence, the ISO is a reading.
+    `${when.encoding}:${when.iso}:${time.value}`,
     eventId ? "" : idRaw,
   ]
     .map((f) => `${f.length}:${f}`)
@@ -406,6 +414,9 @@ export function quarantineOverlay(
       (v) => v.length > TEXT_SHOWN_MAX,
     ) ||
     (when.encoding === "unreadable" && time.value !== "") ||
+    // …and a time whose text the ISO reading does not carry back (sub-millisecond digits,
+    // a non-canonical spelling): the words then show a reading, not the record's value.
+    (when.iso !== "" && !timeRoundTrips(time.value, when)) ||
     originAlias !== "";
   const mark = identityMark(aggKey);
   const head = "macOS quarantine";

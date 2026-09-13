@@ -610,6 +610,27 @@ describe("through parseMacos and correlateEvents", () => {
     expect(r.events[0].canonical?.quarantine?.originAliasDigest).toMatch(/^[0-9a-f]{32}$/);
   });
 
+  it("two sub-millisecond Cocoa values are two rows, aggregated or not, and after correlation", () => {
+    const rows = [
+      row({ LSQuarantineTimeStamp: "716403200.5001" }),
+      row({ LSQuarantineTimeStamp: "716403200.5002" }),
+    ];
+    const agg = parseMacos(csv(rows));
+    expect(agg.events).toHaveLength(2);
+    expect(agg.events.every((e) => e.timestamp === "2023-09-14T16:53:20.500Z")).toBe(true);
+    expect(agg.events.every((e) => / #[A-Za-z0-9_-]{22}$/.test(e.description))).toBe(true);
+    expect(
+      agg.events.every((e) =>
+        e.description.includes("[event identifier shared by records with different facts]"),
+      ),
+    ).toBe(true);
+    const flat = parseMacos(csv(rows), { aggregate: false });
+    expect(afterImport(flat.events)).toHaveLength(2);
+    // a value the ISO carries back exactly is not marked for its time
+    const exact = parseMacos(csv([row({ LSQuarantineTimeStamp: "716403200.5" })]));
+    expect(exact.events[0].description).not.toMatch(/ #[A-Za-z0-9_-]{22}$/);
+  });
+
   it("a path-shaped unreadable type never joins a real path event after import", () => {
     const q = parseMacos(csv([row({ LSQuarantineTypeNumber: "/tmp/evil/payload" })]));
     expect(q.events[0].description).toContain("[kind: kind not readable (/tmp/evil/payload)]");
