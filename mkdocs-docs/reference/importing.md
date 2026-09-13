@@ -473,9 +473,11 @@ what its records say:
   what it means is the analyst's call.
 - **A certificate row** — one per certificate identity — reads `[certificate: <fingerprint or cert
   identity>; subject …; issuer …; valid …–…; covers N names: a, b, c (+n more)] — N certificate
-  records`. A certificate's identity is a source-given fingerprint (Suricata `tls.fingerprint`, Zeek
-  builds that write one, a leaf's DER bytes hashed here), or else its issuer and serial — the pair
-  that names one certificate under one CA — spelled `certid-v1:…` and never called a fingerprint.
+  records`. A certificate's identity is the leaf's DER bytes hashed here when the record carries
+  them, else a source-given fingerprint (Suricata `tls.fingerprint`, Zeek builds that write one) —
+  the same order on the session and on the certificate row, so one certificate keys one way — or
+  else its issuer and serial — the pair that names one certificate under one CA — spelled
+  `certid-v1:…` and never called a fingerprint.
   A certificate with no serial and no fingerprint (a standard Zeek `ssl` row) has **no** identity:
   its subject and issuer are attributes of the session, and a renewed certificate with the same
   names is the same session shape. The attributes a certificate row shows are its first
@@ -489,9 +491,117 @@ what its records say:
 - **Every row is Info** and carries no technique: a handshake proves nothing on its own. Rows are
   kept most-seen-first under the import's event budget, so a scanner's one-off names cannot crowd
   out the persistent relationships.
-- **What this does not do.** It does not join a session to its certificate record by Zeek's
-  `cert_chain_fuids`, find clusters, or link fingerprints across sensors and time; that graph is a
-  separate design over un-aggregated records, and every fact it needs is kept in the row's data.
+- **A session joined to its certificate record.** A Zeek `ssl.log` row that carries only
+  `cert_chain_fuids` (Zeek 4–5, or a Zeek 6 export without `cert_chain_fps`) takes its identity
+  from the `x509.log` row in the same upload whose `id` is that FUID, on the same sensor, and says
+  `[cert: subject …; issuer …; cert identity certid-v1:… — identity from the x509 record]`. The
+  join fills only the identity, never the record's own facts; a row with its own fingerprint keeps
+  it, and when the x509 record's fingerprint of the same kind disagrees the row says `x509 record
+  for this chain disagrees, not joined`. Two x509 records for one id that disagree join nothing
+  (`x509 records for this chain disagree`); a session whose own subject or issuer differ from the
+  x509 record's keeps the identity and says `subject/issuer differ from the x509 record`; past the
+  certificate bound (below) a chain whose x509 record was not retained says `x509 record not among
+  those read`, never a silent "unavailable". Records that name no sensor are one partition per
+  upload and never join records that name one. Every join fact is part of the row's identity. A
+  Suricata `tls` record carries its certificate inline and needs no join.
+- **What this does not do.** It does not link relationships across uploads or across sensors, or
+  decode chain members (a chain entry is a sha256 and nothing else). The relationships one upload
+  establishes are the rows below.
+
+### TLS relationships: what one upload establishes
+
+Beside the session and certificate rows, the network importer builds **relationship rows** over
+the un-aggregated TLS sessions of one upload, per sensor — one row per *node*: a server
+certificate identity, a name (SNI), a client certificate identity (mTLS), or a JA3 hash. Each row
+lists the distinct values the sessions showed beside the node, the observation range, and the
+leads a cluster suggests, and every claim is bounded to what the retained records show. Rows start
+`TLS-graph ` so they are found in the super-timeline apart from the session rows.
+
+- **A certificate row** reads `TLS-graph certificate sha256 3f2a1b0c…9c0d [presented under: 3
+  names — a.example.net, b.example.net, c.example.net] [at server addresses: 2 — 203.0.113.9:443,
+  203.0.113.10:443] [client addresses: 14] [chain check: ok] [subject: …] [issuer: …] [valid:
+  2023-11-03 – 2024-01-23] [lists 200 DNS names] [observed 2023-11-14 22:13 → 2023-11-15 09:00]
+  @ sensor01 — 212 session records, 1 certificate record`. The names are the SNIs the clients
+  asked for — claims, like a DNS query — and never indicators here either; the certificate's own
+  facts come from the upload's certificate records (Zeek `x509`, Suricata DER) for that identity.
+  Sessions with no SNI are counted (`[no SNI in 2 sessions]`), as are the sessions Zeek marked
+  `SNI does not match the certificate`. **Every count is a count of addresses** — `client
+  addresses: 14` — never of clients, devices or a fleet: NAT puts many clients behind one address
+  and DHCP gives one client several. `[issuer string shared by 3 certificate identities in this
+  upload]` is a string equality; nothing verifies a signature, so the row never says "signs".
+- **A name row** — emitted when a name was served with two or more certificate identities or at
+  two or more server addresses (a name with one certificate at one address is already said by the
+  certificate row and the session rows) — reads `TLS-graph name [name: cdn.example.net] [served
+  with: 2 certificates in sequence — a renewal or a replacement; the records do not say which; the
+  later certificate lists the same DNS names — cert identity certid-v1:… (2023-11-14 22:13 →
+  2023-12-01 08:00), cert identity certid-v1:… (2023-12-01 08:00 → 2024-01-05 08:00)] [at server
+  addresses: 1 — 203.0.113.9:443] [client addresses: 14] …`. "In sequence" is said only when
+  every identity has a readable range and every pair was compared (64 identities at most);
+  otherwise the row says `their order is not established by the readable times`. Sessions whose
+  certificate identity was unavailable are counted on the name. "The same DNS names" is said only
+  when both certificate records were retained, agree with themselves and list their names
+  completely. A Suricata record's inline certificate fields (subject, issuer, validity, SANs)
+  feed the node under the same identity, with no certificate record counted.
+- **A client certificate row** (mTLS) reads `TLS-graph client certificate sha256 … [presented by:
+  1 client address — 10.0.0.5] [presented to: 2 servers — 10.0.0.9:8443, 10.0.0.10:8443] [under:
+  2 names — a.corp, b.corp] …`.
+- **A JA3 row** — emitted when a hash has two or more sessions — reads `TLS-graph ja3 e7d705a3…6865
+  [client addresses: 3] [to server addresses: 2 — …] [under: 2 names — …] [a TLS library signature
+  — every client with the same stack shares it; never an identity] …`. A hash seen from 150
+  addresses says `[client addresses: 150]` and nothing more.
+- **Leads, with the alternative in the same span.** A lead ranks first under the budget and is
+  kept before a plain node at the bound; it is a stronger *basis*, not a grade — every row stays
+  Info with no technique, and every lead ends `a cluster proves nothing on its own — strengthen it
+  with a process that made the connection or a payload`. The four: `lead: one certificate
+  presented under 57 names — shared hosting, a CDN or an inspection proxy present one certificate
+  for many names; the records do not say which` (8 names or more); `lead: presented under 1 name
+  not among the 200 DNS names listed by the retained certificate record: evil.example` (compared
+  only against the record's typed DNS names — exact, or a `*.` entry covering exactly one more
+  label — with both sides in wire form; never made when the record lists no DNS names, when its
+  list was truncated at 64, when the certificate records for the identity disagree, when the
+  certificate records exceed the retained bound, or for an SNI that is not a valid hostname; the
+  row then says `[covered-name comparison not made: …]`); `lead: served with 2 certificates in
+  alternation — observation ranges overlap; the records do not say both were served at one instant`
+  (an observation of each identity falls inside the other's range; ranges that merely follow each
+  other are the sequence fact above); `lead: 40 sessions from 3 client addresses to only 2 server
+  addresses — concentrated` (20 sessions or more to at most 3 server addresses).
+- **What is never said.** "Same operator", "malicious", "benign" (`chain check: ok` is the
+  sensor's verdict on the chain and nothing more), "CDN", "proxy" or "interception" as a decision
+  (only as the named alternatives), "connected" (a session record is a handshake the sensor saw —
+  the rows count *session records*), a covered name as a contact, a JA3 as an identity, a
+  fingerprint as a file hash. Nothing fetches, resolves or connects to any observed infrastructure.
+  A row carries no source or destination address of its own — it names many — so it never joins an
+  endpoint event by address on its own; the session rows do that.
+- **Certificate records that disagree.** Two certificate records for one identity that differ in
+  subject, issuer, validity or DNS names make the row say `[certificate records for this identity
+  disagree: subject, names]`, and every derived claim that needs the disputed field (the
+  covered-name comparison, the issuer-string count, "the same DNS names") is withheld. An absent
+  fact is not a disagreement: a chain member carries no facts beside the leaf.
+- **Range, sensor, coverage.** The range is the first and last readable session time; sessions
+  with none are counted (`[1 session with no readable time excluded from the range]`). Rows are
+  partitioned by sensor (`observer.name`, or Suricata's `host`): one sensor's clock, one node.
+  Records that name no sensor — a plain Zeek log directory — are one partition per upload, and
+  every such row says `[sensor not named in the records]`, so a mixed upload's ranges are visibly
+  resting on that. 65,536 session observations and 65,536 certificate observations are retained
+  per upload for the join and the graph; a session past the bound still folds into its session
+  row but is absent from the graph, and every relationship row then says `[graph over 65,536 of
+  90,000 session records]` and `[certificate records: 65,536 of 90,000 read]`. Distinct values are
+  tracked to 256 per edge (the 256 lexicographically smallest, so the listing is the same in any
+  upload order) and said as `256+` past it; three are shown, eight kept in the row's data. 8,192
+  nodes are kept per kind, chosen by lead first, then most sessions, then earliest, then identity
+  — the same set in any upload order; the rest fold into one overflow row per kind, sensor and
+  source set. Session shapes and certificate shapes have separate 8,192-shape bounds, so an
+  upload of many distinct certificates can never fold the session rows into overflow.
+- **Identity.** Every fact the words and the row's data show is the row's identity: a re-import
+  of the same upload folds, another upload's different edges are another row. Session and
+  certificate record counts, each certificate's session count on a name row and the coverage
+  statement are aggregates, like every row's count;
+  `uid`, x509 `id` and record indexes are never keyed. The graph, TLS session, flow, web and DNS
+  families share the event budget the upload's detections leave, round-robin.
+- **What this does not do.** It does not relate records across uploads or sensors, decode chain
+  members, build JA3S (server-signature) nodes, draw a graph in the dashboard, or strengthen a
+  lead with endpoint evidence on its own — the correlate layer unions the *session* rows by
+  address as it does today.
 
 ### Web requests and transfers: what one record establishes, and what one upload joins
 

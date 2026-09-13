@@ -57,9 +57,10 @@ const PATH_RE = /(?:[A-Za-z]:\\|\\\\)[^\s"'|<>]+|(?<![\w/:])\/(?:[\w.\-]+\/)+[\w
 // well-formed by construction (the importer turns `]` into `)` inside it), so it cannot close early.
 // A web request or transfer row (#993) shows the request target, the MIME type, the filename, the
 // user, the Referer, the User-Agent, the proxy headers and the server's stated redirect target the
-// same way — each in its own span.
+// same way — each in its own span. A TLS relationship row (#997) shows names, subjects, issuers,
+// chain-check strings and its leads (which name SNIs) in the spans listed last.
 const UNTRUSTED_SPAN_RE =
-  /\[(?:trailer|query|returned|answers|rcode|the record also carries returned values|sni|cert|client cert|certificate|kind|agent|data url|origin|sender|quarantine mark|quarantine mark \(not decodable\)|quarantine url|event identifier not decodable|target|mime|filename|user|referrer|ua|proxied|matched|redirect target \(stated by the server\)): [^\]]*\]/g;
+  /\[(?:trailer|query|returned|answers|rcode|the record also carries returned values|sni|cert|client cert|certificate|kind|agent|data url|origin|sender|quarantine mark|quarantine mark \(not decodable\)|quarantine url|event identifier not decodable|target|mime|filename|user|referrer|ua|proxied|matched|redirect target \(stated by the server\)|name|subject|issuer|presented under|presented by|presented to|under|served with|chain check|lead|certificate records for this identity disagree): [^\]]*\]/g;
 function scannedText(description: string): string {
   return description.replace(UNTRUSTED_SPAN_RE, " ");
 }

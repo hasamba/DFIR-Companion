@@ -678,7 +678,17 @@ describe("TLS rows — one per shape, every shown fact keyed", () => {
     const alice = readSuricataTls(rec("alice"), "");
     const bob = readSuricataTls(rec("bob"), "");
     expect(alice.clientCert).toMatchObject({ subject: "CN=alice", issuer: "CN=Corp CA" });
-    expect(alice.clientCert?.ref?.value).toBe("ab".repeat(20));
+    // The DER bytes' sha256 is the identity on the session AND on the certificate row (#997), so
+    // one certificate keys one way; the SHA-1 the record writes is the identity only without DER.
+    expect(alice.clientCert?.ref).toEqual({
+      kind: "fingerprint",
+      value: createHash("sha256").update("alice").digest("hex"),
+      alg: "sha256",
+    });
+    expect(
+      readSuricataTls({ ...SURICATA_TLS, tls: { client: { fingerprint: "ab".repeat(20) } } }, "").clientCert
+        ?.ref?.value,
+    ).toBe("ab".repeat(20));
     const r = rows([alice, bob]);
     expect(r).toHaveLength(2);
     expect(r[0].description).toContain("[client cert: subject CN=");
