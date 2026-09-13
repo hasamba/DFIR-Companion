@@ -31,13 +31,15 @@ const utcDayIndex = (iso: string): number => Math.floor(parse(iso) / DAY_MS);
 
 /** The case's own time for this indicator: the dated extraction events, with their basis. */
 export function caseTime(ioc: Pick<IOC, "firstSeen">, chain: IocProvenanceChain | undefined): CaseTime {
+  // The chain's bounds cover every matching event, before its display cap; fall back to the
+  // capped list only for a chain built before the bounds existed.
   const dated = (chain?.extraction ?? []).filter((e) => Number.isFinite(parse(e.timestamp)));
-  if (!dated.length) return { basis: "none", importedAt: ioc.firstSeen };
-  const from = dated.map((e) => e.timestamp).sort()[0];
+  const from = chain?.extractionEarliest ?? dated.map((e) => e.timestamp).sort()[0];
+  if (!from) return { basis: "none", importedAt: ioc.firstSeen };
   const ends = dated.map((e) =>
     e.endTimestamp && Number.isFinite(parse(e.endTimestamp)) ? e.endTimestamp : e.timestamp,
   );
-  const to = ends.sort().at(-1);
+  const to = chain?.extractionLatest ?? ends.sort().at(-1);
   return {
     basis: chain?.extractionAuthoritative ? "authoritative" : "approximate",
     from,
@@ -52,28 +54,44 @@ function caseLabel(c: CaseTime & { basis: "authoritative" | "approximate" }): st
     : `the case time (${span})`;
 }
 
-/** "N days after the case time (S)" — calendar days; under a day, or the same day, said as such. */
+/**
+ * "N days after the case time (S)" — calendar days from the NEAREST bound of the case time: a fact
+ * inside an interval case time is "within" it. Under a day is said as such; a date-only fact next
+ * to an instant under a day apart is not comparable (its precision cannot say which came first).
+ */
 function relation(factIso: string, c: CaseTime & { basis: "authoritative" | "approximate" }): string {
   const label = caseLabel(c);
   const f = parse(factIso);
-  const s = parse(c.from);
-  if (!Number.isFinite(f) || !Number.isFinite(s)) return `not comparable with ${label}`;
-  const days = utcDayIndex(factIso) - utcDayIndex(c.from);
+  const from = parse(c.from);
+  const to = c.to ? parse(c.to) : from;
+  if (!Number.isFinite(f) || !Number.isFinite(from) || !Number.isFinite(to))
+    return `not comparable with ${label}`;
+  const factDay = utcDayIndex(factIso);
+  if (c.to && f >= from && f <= to) return `within ${label}`;
+  const bound = f < from ? c.from : (c.to ?? c.from);
+  const boundMs = f < from ? from : to;
+  const days = factDay - utcDayIndex(bound);
   if (days === 0) return `on the same day as ${label}`;
-  if (!dateOnly(factIso) && Math.abs(f - s) < DAY_MS) return `less than one day from ${label}`;
+  if (Math.abs(f - boundMs) < DAY_MS) {
+    return dateOnly(factIso)
+      ? `not comparable with ${label} (a date without a time, less than a day apart)`
+      : `less than one day from ${label}`;
+  }
   const n = Math.abs(days).toLocaleString("en-US");
   return `${n} days ${days > 0 ? "after" : "before"} ${label}`;
 }
 
+/** Two intervals: the case time is before, after, inside, or overlapping the window. */
 function windowRelation(
   from: string,
   to: string,
   c: CaseTime & { basis: "authoritative" | "approximate" },
 ): string {
-  const s = parse(c.from);
+  const s0 = parse(c.from);
+  const s1 = c.to ? parse(c.to) : s0;
   const a = parse(from);
   const b = parse(to);
-  const where = s < a ? "before" : s > b ? "after" : "inside";
+  const where = s1 < a ? "before" : s0 > b ? "after" : s0 >= a && s1 <= b ? "inside" : "overlapping";
   return `${caseLabel(c)} is ${where} that window`;
 }
 
@@ -97,12 +115,16 @@ export function intelTemporal(hit: IocEnrichment, c: CaseTime, now: string): Tem
   const parts: string[] = [];
 
   if (t.queryWindow) {
-    const count = t.reportCount ?? 0;
-    let w = `${count.toLocaleString("en-US")} reports counted over the window ${day(t.queryWindow.from)} → ${day(t.queryWindow.to)}`;
+    // An absent count is not zero: the provider did not report one.
+    const count = typeof t.reportCount === "number" ? t.reportCount : undefined;
+    const counted =
+      count === undefined
+        ? "reports not counted by the provider"
+        : `${count.toLocaleString("en-US")} reports counted`;
+    let w = `${counted} over the window ${day(t.queryWindow.from)} → ${day(t.queryWindow.to)}`;
     if (c.basis !== "none") w += `; ${windowRelation(t.queryWindow.from, t.queryWindow.to, c)}`;
     if (t.lastReportAt) w += `; latest report ${day(t.lastReportAt)}${cmp(t.lastReportAt)}`;
-    if (hit.verdict === "harmless" || count === 0)
-      w += "; no reports in that window says nothing about earlier dates";
+    if (count === 0) w += "; no reports in that window says nothing about earlier dates";
     parts.push(w);
   }
   if (t.verdictMeasuredAt)

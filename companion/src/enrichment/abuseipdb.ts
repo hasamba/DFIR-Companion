@@ -33,6 +33,8 @@ export class AbuseIpdbProvider implements EnrichmentProvider {
   async lookup(kind: IocKind, value: string): Promise<EnrichmentResult | null> {
     if (kind !== "ip") return null;
     const days = this.opts.maxAgeDays ?? 90;
+    // The window is anchored at the instant the query is ISSUED, not when the answer arrives.
+    const queryStartedAt = this.opts.now?.() ?? new Date().toISOString();
     const url = `https://api.abuseipdb.com/api/v2/check?ipAddress=${encodeURIComponent(value)}&maxAgeInDays=${days}`;
     const res = await this.fetchFn(url, {
       headers: { Key: this.opts.apiKey, Accept: "application/json" },
@@ -65,10 +67,12 @@ export class AbuseIpdbProvider implements EnrichmentProvider {
     // The report count and the verdict are bounded by the query window (#933 item 19): a clean
     // answer over the last 90 days says nothing about earlier dates, and the latest report is one
     // point. The window is [now − maxAgeInDays, now] as of this lookup.
-    const now = this.opts.now?.() ?? new Date().toISOString();
     const last = typeof d.lastReportedAt === "string" ? Date.parse(d.lastReportedAt) : NaN;
     const temporal = {
-      queryWindow: { from: new Date(Date.parse(now) - days * 86_400_000).toISOString(), to: now },
+      queryWindow: {
+        from: new Date(Date.parse(queryStartedAt) - days * 86_400_000).toISOString(),
+        to: queryStartedAt,
+      },
       ...(typeof d.totalReports === "number" ? { reportCount: d.totalReports } : {}),
       ...(Number.isFinite(last) ? { lastReportAt: new Date(last).toISOString() } : {}),
     };

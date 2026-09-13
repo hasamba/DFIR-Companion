@@ -166,6 +166,8 @@ export interface IocApi {
   /** `undefined` for an IOC that was never enriched — not "unknown". */
   worstIocVerdict(ioc: IocLike): string | undefined;
   scoreCoversTag(score: string, tag: string | null): boolean;
+  /** The provider's dated facts as a visible chip and a title — raw facts, no relation computed. */
+  intelWhenChip(e: Record<string, unknown>): { chip: string; title: string };
   enrichBadges(ioc: IocLike): string;
   iocFlagged(i: IocLike): boolean;
   dedupeIocsById(iocs: IocLike[]): IocLike[];

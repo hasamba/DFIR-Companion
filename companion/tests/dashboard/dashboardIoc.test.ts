@@ -321,3 +321,53 @@ describe("iocNoiseNoticeHtml", () => {
     expect(ioc.iocNoiseNoticeHtml(true, 1)).toContain("Showing 1 IOC —");
   });
 });
+
+describe("intelWhenChip — when the verdict applies (#933 item 19)", () => {
+  it("a scan date is a visible chip; the title lists every fact; an undated hit says so", () => {
+    const dated = ioc.intelWhenChip({
+      source: "VirusTotal",
+      verdict: "malicious",
+      fetchedAt: "2026-05-01T12:00:00.000Z",
+      temporal: {
+        verdictMeasuredAt: "2026-04-30T10:00:00.000Z",
+        firstSubmittedAt: "2019-03-01T00:00:00.000Z",
+      },
+    });
+    expect(dated.chip).toBe(" · scan 2026-04-30");
+    expect(dated.title).toContain("verdict measured by the latest scan: 2026-04-30");
+    expect(dated.title).toContain(
+      "first submitted to the provider: 2019-03-01 (a submission date, not when it came to exist)",
+    );
+    expect(dated.title).toContain("lookup ran 2026-05-01");
+    const window = ioc.intelWhenChip({
+      source: "AbuseIPDB",
+      verdict: "harmless",
+      fetchedAt: "2026-05-01T12:00:00.000Z",
+      temporal: {
+        queryWindow: { from: "2026-01-31T12:00:00.000Z", to: "2026-05-01T12:00:00.000Z" },
+        reportCount: 0,
+      },
+    });
+    expect(window.chip).toBe(" · window 2026-01-31→2026-05-01");
+    const undated = ioc.intelWhenChip({
+      source: "X",
+      verdict: "malicious",
+      fetchedAt: "2026-05-01T12:00:00.000Z",
+    });
+    expect(undated.chip).toBe(" · looked up 2026-05-01");
+    expect(undated.title).toContain("the provider reports no dates: current reputation");
+    const badge = ioc.enrichBadges({
+      enrichments: [
+        {
+          source: "VirusTotal",
+          verdict: "malicious",
+          fetchedAt: "2026-05-01T12:00:00.000Z",
+          temporal: { verdictMeasuredAt: '2026-04-30" onmouseover="x' },
+        },
+      ],
+    });
+    // a date is the first ten characters of an ISO string; the payload after them never reaches the attribute
+    expect(badge).toContain('title="verdict measured by the latest scan: 2026-04-30');
+    expect(badge).not.toContain("onmouseover");
+  });
+});

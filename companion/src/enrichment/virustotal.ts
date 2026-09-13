@@ -13,6 +13,7 @@ export interface VirusTotalOptions {
   apiKey: string;
   fetchFn?: FetchFn;
   timeoutMs?: number;
+  now?: () => string; // injectable clock, so the epoch plausibility bound is testable
 }
 
 // VirusTotal v3. One object type per IOC kind (process isn't lookup-able on VT).
@@ -52,11 +53,15 @@ function verdictFromStats(s: VtStats): { verdict: Verdict; detections: number; t
   return { verdict, detections: malicious, total };
 }
 
-/** An epoch-seconds field as ISO, under `key` — or nothing when it is not a plausible epoch. */
-function epochField(v: unknown, key: string): Record<string, string> {
-  const n = typeof v === "number" ? v : typeof v === "string" && /^\d+$/.test(v) ? Number(v) : NaN;
-  if (!Number.isFinite(n) || n < 946_684_800 || n > 4_102_444_800) return {}; // 2000-01-01 … 2100-01-01
-  return { [key]: new Date(n * 1000).toISOString() };
+/**
+ * An epoch-seconds field as ISO, under `key` — only a finite integer NUMBER (VirusTotal documents
+ * integer JSON fields), between 2000-01-01 and one day past the lookup instant. Anything else is
+ * dropped: a digit string, a millisecond value, a fraction or a future date is not a scan.
+ */
+function epochField(v: unknown, key: string, nowMs: number): Record<string, string> {
+  if (typeof v !== "number" || !Number.isInteger(v)) return {};
+  if (v < 946_684_800 || v * 1000 > nowMs + 86_400_000) return {};
+  return { [key]: new Date(v * 1000).toISOString() };
 }
 
 export class VirusTotalProvider implements EnrichmentProvider {
@@ -110,13 +115,14 @@ export class VirusTotalProvider implements EnrichmentProvider {
     // first-submission date; every object carries the latest scan the verdict comes from; ip and
     // domain objects carry a record-modification date that is not an observation. Epoch seconds,
     // as VirusTotal documents them; anything else is dropped.
+    const nowMs = Date.parse(this.opts.now?.() ?? new Date().toISOString());
     const temporal = {
       ...(kind === "hash" || kind === "url"
-        ? epochField(attrs.first_submission_date, "firstSubmittedAt")
+        ? epochField(attrs.first_submission_date, "firstSubmittedAt", nowMs)
         : {}),
-      ...epochField(attrs.last_analysis_date, "verdictMeasuredAt"),
+      ...epochField(attrs.last_analysis_date, "verdictMeasuredAt", nowMs),
       ...(kind === "ip" || kind === "domain"
-        ? epochField(attrs.last_modification_date, "recordUpdatedAt")
+        ? epochField(attrs.last_modification_date, "recordUpdatedAt", nowMs)
         : {}),
     };
     return {

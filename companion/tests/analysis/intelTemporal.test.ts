@@ -220,3 +220,70 @@ describe("the synthesis tag covers every bad-verdict provider and is bounded", (
     expect(many).not.toContain("] [x");
   });
 });
+
+describe("Codex round 1 pins", () => {
+  const NOW2 = "2026-05-01T12:00:00.000Z";
+  it("an absent AbuseIPDB count is not zero", () => {
+    const S = { basis: "authoritative" as const, from: "2021-04-29T21:41:00.000Z" };
+    const w = intelTemporal(
+      hit({
+        source: "AbuseIPDB",
+        temporal: { queryWindow: { from: "2026-01-31T12:00:00.000Z", to: "2026-05-01T12:00:00.000Z" } },
+      }),
+      S,
+      NOW2,
+    ).words;
+    expect(w).toContain("reports not counted by the provider over the window");
+    expect(w).not.toContain("0 reports");
+    expect(w).not.toContain("says nothing about earlier dates");
+  });
+  it("an interval case time: a fact within it, a gap from the nearest bound, an overlapping window", () => {
+    const iv = {
+      basis: "authoritative" as const,
+      from: "2021-01-01T00:00:00.000Z",
+      to: "2021-01-10T00:00:00.000Z",
+    };
+    expect(
+      intelTemporal(hit({ temporal: { verdictMeasuredAt: "2021-01-05T00:00:00.000Z" } }), iv, NOW2).words,
+    ).toContain("within the case time (2021-01-01 → 2021-01-10)");
+    expect(
+      intelTemporal(hit({ temporal: { verdictMeasuredAt: "2021-01-12T00:00:00.000Z" } }), iv, NOW2).words,
+    ).toContain("2 days after the case time (2021-01-01 → 2021-01-10)");
+    const w = intelTemporal(
+      hit({
+        source: "AbuseIPDB",
+        temporal: {
+          queryWindow: { from: "2021-01-05T00:00:00.000Z", to: "2021-04-05T00:00:00.000Z" },
+          reportCount: 1,
+        },
+      }),
+      iv,
+      NOW2,
+    ).words;
+    expect(w).toContain("is overlapping that window");
+  });
+  it("a date-only fact on the adjacent day, under a day apart, is not comparable; two days apart is counted", () => {
+    const S = { basis: "authoritative" as const, from: "2021-04-29T21:41:00.000Z" };
+    expect(intelTemporal(hit({ temporal: { verdictMeasuredAt: "2021-04-30" } }), S, NOW2).words).toContain(
+      "not comparable with the case time (2021-04-29) (a date without a time, less than a day apart)",
+    );
+    expect(intelTemporal(hit({ temporal: { verdictMeasuredAt: "2021-05-02" } }), S, NOW2).words).toContain(
+      "3 days after",
+    );
+  });
+  it("the case time's latest bound survives the chain's display cap", () => {
+    const c = caseTime(
+      ioc(),
+      chain({
+        extraction: [ev("2021-04-29T21:41:00.000Z")],
+        extractionEarliest: "2021-04-29T21:41:00.000Z",
+        extractionLatest: "2021-09-01T00:00:00.000Z",
+      }),
+    );
+    expect(c).toEqual({
+      basis: "authoritative",
+      from: "2021-04-29T21:41:00.000Z",
+      to: "2021-09-01T00:00:00.000Z",
+    });
+  });
+});

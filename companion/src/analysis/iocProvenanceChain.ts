@@ -59,6 +59,10 @@ export interface IocProvenanceChain {
   type: IOC["type"];
   extraction: ProvenanceExtractionEvent[];
   extractionTruncated: number; // count of matching events dropped past MAX_EXTRACTION_EVENTS, 0 if none
+  // The earliest and latest DATED extraction times across EVERY matching event, computed before
+  // the display cap — so a value seen 300 times still reports its last sighting (#933 item 19).
+  extractionEarliest?: string;
+  extractionLatest?: string;
   extractionAuthoritative: boolean; // true when extraction came from IOC.extractedFrom (a real link),
   // false when it's the value-match guess below
   enrichment: ProvenanceEnrichmentLookup[];
@@ -164,6 +168,12 @@ export function buildIocProvenanceChains(
     }
     dedup.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
     const extractionTruncated = Math.max(0, dedup.length - MAX_EXTRACTION_EVENTS);
+    const datedTimes = dedup
+      .flatMap((e) => [e.timestamp, e.endTimestamp ?? ""])
+      .filter((t) => t && Number.isFinite(Date.parse(t)))
+      .sort();
+    const extractionEarliest = datedTimes[0];
+    const extractionLatest = datedTimes.at(-1);
     const needle = ioc.value.trim().toLowerCase();
     const extraction: ProvenanceExtractionEvent[] = dedup.slice(0, MAX_EXTRACTION_EVENTS).map((e) => ({
       eventId: e.id,
@@ -206,6 +216,8 @@ export function buildIocProvenanceChains(
       type: ioc.type,
       extraction,
       extractionTruncated,
+      ...(extractionEarliest ? { extractionEarliest } : {}),
+      ...(extractionLatest ? { extractionLatest } : {}),
       extractionAuthoritative,
       enrichment,
       findings: citing,

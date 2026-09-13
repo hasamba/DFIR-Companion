@@ -775,3 +775,41 @@ describe("the provider's own dated facts (#933 item 19)", () => {
     });
   });
 });
+
+describe("dated facts — Codex round 1 pins", () => {
+  it("VirusTotal drops a digit string, a millisecond value and a future epoch", async () => {
+    const stats = { last_analysis_stats: { malicious: 5, suspicious: 0, harmless: 1, undetected: 1 } };
+    const vt = new VirusTotalProvider({
+      apiKey: "k",
+      now: () => "2026-05-01T12:00:00.000Z",
+      fetchFn: fetchMock(async () =>
+        jsonResponse({
+          data: {
+            id: "x",
+            attributes: {
+              ...stats,
+              first_submission_date: "1551398400",
+              last_analysis_date: 1777464000000,
+              last_modification_date: 1900000000,
+            },
+          },
+        }),
+      ),
+    });
+    expect(((await vt.lookup("hash", "deadbeef")) as EnrichmentResult).temporal).toBeUndefined();
+  });
+  it("AbuseIPDB anchors the window at the instant the query was issued", async () => {
+    let calls = 0;
+    const ab = new AbuseIpdbProvider({
+      apiKey: "k",
+      maxAgeDays: 1,
+      now: () => (calls++ === 0 ? "2026-05-01T12:00:00.000Z" : "2026-05-01T12:05:00.000Z"),
+      fetchFn: fetchMock(async () => jsonResponse({ data: { abuseConfidenceScore: 100, totalReports: 3 } })),
+    });
+    const r = (await ab.lookup("ip", "203.0.113.50")) as EnrichmentResult;
+    expect(r.temporal?.queryWindow).toEqual({
+      from: "2026-04-30T12:00:00.000Z",
+      to: "2026-05-01T12:00:00.000Z",
+    });
+  });
+});
