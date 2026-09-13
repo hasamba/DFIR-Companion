@@ -201,6 +201,38 @@ of volume.
 records it; where it does not, the note says the format could not be confirmed against the tool that
 wrote it.
 
+### What a memory export establishes
+
+A Volatility export establishes three things, and the Companion reads each on its own:
+
+- **The rows** — the process list, the connections, the injected regions, as before.
+- **The export's shape.** An export that holds **zero rows** — a text export with only a header, a
+  `[]`, an empty array under a plugin key — used to be refused ("no parseable memory output"). It
+  now imports as one Low row: *Memory export holds zero rows [label: windows.malfind (claimed by the
+  export name)] — completion of the search and the pages it covered are not established by this
+  export.* That is all the export establishes. Volatility writes the header before the plugin
+  runs, `[]` is an empty tree, and the filename is a name you chose — none of them shows that the
+  plugin completed, or that it found nothing. "Malfind was clean" needs the run's exit status and
+  its stderr, which the export does not carry; treat the row as "this search was attempted" and
+  keep the result outside the case notes until you have both.
+- **The image**, when the upload holds `windows.info` or `windows.crashinfo`. Those used to be
+  twenty generic rows. They are now one Low row that says only what the table says: the **kernel
+  SystemTime recovered from the image** (the clock value the plugin reads out of the kernel —
+  never "captured at", because a snapshot may be smeared), the OS version, bitness, the symbol
+  table used, the **layer stack** with the dump kind for the layer classes Volatility names
+  (crash dump, LiME, AVML, VMware, ELF core, QEMU suspend; a bare file layer establishes no
+  format), and for a crash dump its **type as Volatility renders it** — a `Bitmap Dump (0x5)`
+  holds only the pages its bitmap lists, and which pages were excluded is not in the record. Every
+  row from the same upload carries those facts, and rows of Medium or above say the kernel
+  SystemTime in their text. **Do not clear user-space behaviour from a bitmap dump**: an empty
+  user-space plugin over it says nothing about pages the dump never held.
+
+Text that looks like a Volatility diagnostic (`Unsatisfied requirement …`, a traceback, `unable to
+read a requested page`) is shown in the import note as **unverified text**, never used to grade or
+to claim a failure — an artifact value can spell it. A **Volatility 2** export is recognised only
+to say that its profile-based layout is not read; re-run under Volatility 3 or export JSON.
+Volatility's `-` and `N/A` cells are absent values and never become a name, a path or an IOC.
+
 ### Intact (trimmed VolWeb output)
 
 Intact runs VolWeb over a RAM image, then combines and trims the result into two files. Drop either

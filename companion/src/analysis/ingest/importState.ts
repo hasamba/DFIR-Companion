@@ -81,6 +81,9 @@ export async function noteEmptyImport(
   opts: { label: string; importedAt: string; onProgress?: (done: number, total: number) => void },
   kind: string,
   total: number,
+  // What the importer could still say about the upload's shape (a memory export that holds zero
+  // rows, a layout not read) — the analyst sees it even when a severity floor left no event.
+  detail?: string,
 ): Promise<InvestigationState> {
   const delta = deltaSchema.parse({
     findings: [],
@@ -89,7 +92,9 @@ export async function noteEmptyImport(
     forensicEvents: [],
     threadsOpened: [],
     threadsClosed: [],
-    timelineNote: `${kind} import: no events from ${total} record(s) — nothing added to the case`,
+    timelineNote:
+      `${kind} import: no events from ${total} record(s) — nothing added to the case` +
+      (detail ? ` (${detail})` : ""),
     summary: "",
   });
   return commitDelta(ctx, caseId, delta, opts);
