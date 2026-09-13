@@ -276,8 +276,8 @@ function timeOccurrences(rec: Row): { header: string; value: string }[] {
     const rank = TIME_HEADER_RANK.get(k.trim().toLowerCase());
     if (rank === undefined) continue;
     // A header the source repeated is that many columns, blank or not; a single blank key is none.
-    if (isRepeatedColumn(v)) for (const one of v.values) out.push({ header: k.trim(), value: one, rank });
-    else if (text(v).trim()) out.push({ header: k.trim(), value: text(v), rank });
+    if (isRepeatedColumn(v)) for (const one of v.values) out.push({ header: k, value: one, rank });
+    else if (text(v).trim()) out.push({ header: k, value: text(v), rank });
   }
   return out.sort((a, b) => a.rank - b.rank).map(({ header, value }) => ({ header, value }));
 }

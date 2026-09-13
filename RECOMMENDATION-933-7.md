@@ -299,3 +299,8 @@ The joins, Gatekeeper/XProtect logs, browser history, any grade above Info.
    (or differed by case) read alike and folded after correlation. Fix: every readable time names
    its encoding and its column verbatim (`[time: ISO (column epoch)]`); a column name the words
    cannot repeat marks the row.
+
+## Code round 24 (Codex, one finding)
+1. A padded JSON key (` unix_time `) was trimmed into `unix_time` before words and identity. Fix:
+   the verbatim key is the column name in words and identity; trimming is only for recognition.
+   CSV headers are trimmed at projection by the shared convention (standing decision).

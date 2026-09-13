@@ -579,6 +579,22 @@ describe("through parseMacos and correlateEvents", () => {
     }
   });
 
+  it("a padded JSON key is its own column name", () => {
+    const { LSQuarantineTimeStamp: _t, ...rest } = row();
+    const recs = [
+      { ...rest, unix_time: "1789257600" },
+      { ...rest, " unix_time ": "1789257600" },
+    ];
+    const r = parseMacos(JSON.stringify(recs));
+    expect(r.events).toHaveLength(2);
+    expect(r.events.map((e) => e.timestamp)).toEqual([
+      "2026-09-13T00:00:00.000Z",
+      "2026-09-13T00:00:00.000Z",
+    ]);
+    expect(afterImport(r.events)).toHaveLength(2);
+    expect(afterImport(parseMacos(JSON.stringify(recs), { aggregate: false }).events)).toHaveLength(2);
+  });
+
   it("one value under two different declared columns is two rows", () => {
     const { LSQuarantineTimeStamp: _t, ...rest } = row();
     const recs = [
