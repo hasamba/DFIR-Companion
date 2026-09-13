@@ -493,6 +493,78 @@ what its records say:
   `cert_chain_fuids`, find clusters, or link fingerprints across sensors and time; that graph is a
   separate design over un-aggregated records, and every fact it needs is kept in the row's data.
 
+### Web requests and transfers: what one record establishes, and what one upload joins
+
+Zeek `http.log` and `files.log` and Suricata `http` and `fileinfo` records are folded into rows
+the way TLS records are — one row per request/response pair, one per transfer the sensor
+reassembled — and the rows are joined **only through an identifier both records carry**: a Zeek
+`fuid` named by the request's `resp_fuids` / `orig_fuids`, or Suricata's `flow_id` + `tx_id`.
+Nothing is joined by timing, by shape or by adjacency.
+
+- **A request row** reads `HTTP GET [target: www.example.com/dl/setup.exe] → 200 [body: sha256
+  3a7b0000…c9e1; 1.2 MB whole; mime: application/x-dosexec] [203.0.113.9 → 198.51.100.7:80]
+  [HTTP/1.1] — N records`. The pair is one record: Zeek logs the request and its status on one
+  line, Suricata's `http` event carries `status`. A row with no status says `→ no response
+  recorded`. The target is read by the same rule as a combined-log line (a `CONNECT` is a tunnel
+  attempt with no URL; a 304 is `not modified — no body`); the Host header is validated as a host
+  and is the row's domain (or ip) indicator. The Referer's named host is a domain indicator, an
+  address in it is not. A request body the client sent (`orig_fuids`) reads `[body sent by the
+  client: …]`. A `username` (proxy auth), the User-Agent and Zeek's `proxied` headers are shown
+  neutralised in their own spans and are never indicators or identities.
+- **A transfer row** reads `Transfer over HTTP: sha256 3a7b0000…c9e1; 1.2 MB whole [mime: …]
+  [filename: setup.exe] [from 198.51.100.7 to 203.0.113.9] [request: GET [target: …] → 200] — N
+  records`. Direction is said only when the record says it (`is_orig`, or the old schema's
+  `tx_hosts`/`rx_hosts`); a Suricata `fileinfo` names the flow's two endpoints and says `sender not
+  recorded`. A transfer over SMTP, FTP or SMB names no request.
+- **Coverage is the sensor's own counters, and it decides what the digest is.** Zeek's
+  `seen_bytes` / `total_bytes` / `missing_bytes` / `timedout` and Suricata's `state` / `gaps` /
+  `start` read as: `whole` (seen equals total, nothing missing), `seen; object size not recorded`
+  (no size from the peer, delivered to EOF), `N of M seen` (truncated), `seen, K missing`
+  (gapped — Zeek computes no digest across a gap), `a range, not the whole object` (a 206
+  response or a non-zero offset), `timed out`, or `size not recorded`. **Only `whole` and
+  `unsized` make the digest a file identity:** then it is the row's `sha256`, a hash indicator,
+  and the identity an endpoint file is joined by. Otherwise the row says `partial digest sha256 …
+  over the bytes seen` — kept on the row, never a hash indicator, never a file identity.
+- **The redirect hop says what the record says.** Zeek's `http.log` carries no Location, so a 3xx
+  reads `[redirect target: not in this record]`; Suricata's `http.redirect` reads `[redirect
+  target (stated by the server): …]` — the server's claim, never an observed follow. The next
+  transaction on the same connection (`uid`, `trans_depth` + 1) is named as `[next: GET … (transaction
+  2) — order on the connection, not the redirect target]`; its absence is `next transaction (2) not
+  in this upload`, a gap is `later on this connection: transaction 4 — not adjacent`, and an
+  HTTP/2 row (a `stream_id`) is `not read: HTTP/2 stream` — interleaved streams are never
+  ordered by depth.
+- **A shared identifier is necessary, not sufficient.** A `files` record over SMTP against an
+  http carrier, a connection id present on both sides that differs, or two different sensors
+  read `[body: identifier conflict — not joined]`; two `files` records with one `fuid` and
+  different facts read `[body: conflicting files records]` and neither is chosen. A 206 on any
+  request that carries a body makes that body a range.
+- **Every missing hop is named.** A `fuid` with no `files` record: `[body: no files record in
+  this upload]` (the identifier stays on the row's data, never in its words). A transfer whose
+  request record is absent: `[request: not in this upload]`. When an upload had more records
+  than the importer reads (65,536 per kind), every absence says `not among the records read`
+  instead. A Suricata `fileinfo` carries its request inline and says `[request (inline): …]`.
+- **Transfer → endpoint file.** The two rows never merge: a transfer is a *wire* observation, and
+  the file event on the endpoint is a *host* observation; they are joined by the hash and by
+  nothing else. Two transfers of one file at two times stay two rows too — a wire row folds only
+  with the same record re-imported. The hash indicator's provenance chain lists both — the transfer row as the
+  indicator's own extraction and every event that carries the same hash as a field. The row
+  never says the file ran, reached disk or came from this transfer.
+- **Identity and bounds.** A row's identity is every fact it shows — every body's digest and
+  coverage, every joined request, the redirect hop, the client's fields — so two different chains
+  are two rows and a repeated chain folds with a count; `uid`, `fuid`, `trans_depth`, `flow_id`
+  and `tx_id` are locators and never part of it. Identifier lists are read to 32 per record
+  (proxy headers to 8), 8 bodies and 4 requests are named per row (the rest counted), a repeated
+  identifier is followed to 16 records, shapes past 8,192 per kind fold into one overflow row
+  that shows nothing — a late row that names a file or is graded displaces a plain shape rather
+  than folding — and under the import's event budget rows that name a file identity come first,
+  then graded rows, then the most seen. A method that is not an HTTP token and a version that is
+  not a version reach no words.
+- **Grading.** An attack pattern or a secret in a Zeek-seen target grades exactly as it would in
+  an Apache line (Medium, T1190). Every other row is Info with no technique.
+- **What this does not do.** It does not join a proxy log's client to a workstation (that needs
+  the trailer-profile declaration and a host identity across logs), does not order HTTP/2
+  streams, and does not join an `http` upload to a `files` upload imported separately.
+
 ### DNS records: what one record establishes
 
 Sysmon Event 22 and the Windows DNS Client operational log (`Microsoft-Windows-DNS-Client/

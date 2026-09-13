@@ -105,23 +105,28 @@ export function buildIocProvenanceChains(
   if (iocs.length === 0) return out;
 
   const eventIndex = new Map<string, ForensicEvent[]>();
-  const addEvent = (raw: string | undefined, e: ForensicEvent): void => {
+  // The STRUCTURED-field matches on their own: a hash or a path an importer set as a field, not a
+  // token that happens to appear in a description. An authoritative extraction link is unioned
+  // with these (never with description tokens), so a transfer row that names the hash IOC as its
+  // own (#993) cannot hide the endpoint event that carries the same hash as a field.
+  const structuredIndex = new Map<string, ForensicEvent[]>();
+  const addTo = (index: Map<string, ForensicEvent[]>, raw: string | undefined, e: ForensicEvent): void => {
     if (!raw) return;
     const key = raw.trim().toLowerCase();
     if (key.length < 3) return;
-    let list = eventIndex.get(key);
+    let list = index.get(key);
     if (!list) {
       list = [];
-      eventIndex.set(key, list);
+      index.set(key, list);
     }
     list.push(e);
   };
+  const addEvent = (raw: string | undefined, e: ForensicEvent): void => addTo(eventIndex, raw, e);
   for (const e of events) {
-    addEvent(e.sha256, e);
-    addEvent(e.md5, e);
-    addEvent(e.srcIp, e);
-    addEvent(e.dstIp, e);
-    addEvent(e.path, e);
+    for (const structured of [e.sha256, e.md5, e.srcIp, e.dstIp, e.path]) {
+      addEvent(structured, e);
+      addTo(structuredIndex, structured, e);
+    }
     const tokens = (e.description || "").match(TOKEN_RE);
     if (tokens) for (const t of tokens) addEvent(t, e);
   }
@@ -152,6 +157,13 @@ export function buildIocProvenanceChains(
         if (!seen.has(id)) {
           seen.add(id);
           dedup.push(eventById.get(id)!);
+        }
+      }
+      const key = ioc.value.trim().toLowerCase();
+      for (const e of key.length >= 3 ? (structuredIndex.get(key) ?? []) : []) {
+        if (!seen.has(e.id)) {
+          seen.add(e.id);
+          dedup.push(e);
         }
       }
     } else {

@@ -2,13 +2,13 @@
 // JSON logs, the network side of Security Onion / Corelight. The sixth deterministic ingest
 // path; no AI call.
 //
-// Per the Companion's post-detection principle, the TIMELINE is built only from the tools'
-// DETECTIONS — Suricata `event_type:"alert"` (an IDS signature hit: signature/category/
-// severity + ATT&CK metadata) and Zeek `_path:"notice"` (Zeek's notice framework). The
-// surrounding TELEMETRY (dns / http / tls / files / conn …) is high-volume and is NOT added
-// to the timeline; instead it contributes OBSERVED IOCs (domains, URLs, file hashes, and the
-// alert/notice IPs) so the case still captures network indicators without drowning the
-// timeline in raw flow records.
+// Per the Companion's post-detection principle, the DETECTIONS — Suricata `event_type:"alert"`
+// (an IDS signature hit: signature/category/severity + ATT&CK metadata) and Zeek `_path:"notice"`
+// (Zeek's notice framework) — are the graded rows. The surrounding TELEMETRY is high-volume and
+// is folded into bounded Info rows that land in the analyst-only super-timeline: `conn` per flow
+// (below), `ssl`/`x509`/`tls` per relationship (tlsSession.ts), and `http`/`files`/`fileinfo` per
+// request and per transfer with the hops one upload establishes (webChainRows.ts, #993). `dns`
+// and the rest contribute OBSERVED IOCs only (domains, URLs, file hashes, the alert/notice IPs).
 //
 // Inputs: NDJSON (the native `eve.json` / Zeek JSON form), a JSON array, or an Elastic-style
 // wrapper. Rows are routed per-record: Suricata (has `event_type`) vs Zeek (has `_path`).
@@ -25,6 +25,15 @@ import {
   type TlsTally,
 } from "./tlsSession.js";
 import { createCanonicalEvent, stampSourceArtifactHash } from "./canonicalEvent.js";
+import {
+  readSuricataFileinfo,
+  readSuricataHttp,
+  readZeekFiles,
+  readZeekHttp,
+  sensorOf,
+} from "./webChainRead.js";
+import { addRequest, addTransfer, emptyWebObservations, joinWebChain } from "./webChainJoin.js";
+import { mapWebRows, tallyWebChains } from "./webChainRows.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -210,10 +219,6 @@ function addHash(sink: Map<string, SiemIoc>, v: unknown): void {
   const h = str(v).trim().toLowerCase();
   if (HEX_HASH.test(h)) addIoc(sink, "hash", h);
 }
-function addFile(sink: Map<string, SiemIoc>, v: unknown): void {
-  const f = str(v).trim();
-  if (f && f !== "-" && f.length > 1) addIoc(sink, "file", f.slice(0, 300));
-}
 
 // ───────────────────────────── Suricata ─────────────────────────────
 
@@ -227,19 +232,15 @@ function suricataIocs(row: Row, etype: string, sink: Map<string, SiemIoc>): void
 
   const dns = getCI(row, "dns");
   if (isObject(dns)) addDomain(sink, getCI(dns, "rrname"));
+  // `http` and `fileinfo` events are request and transfer rows (webChainRows.ts) and mint their
+  // own indicators; the `http` object an ALERT carries still names the host it fired on.
   const http = getCI(row, "http");
-  if (isObject(http)) {
+  if (isObject(http) && etype !== "http" && etype !== "fileinfo") {
     addDomain(sink, getCI(http, "hostname"));
     addUrl(sink, getCI(http, "url"));
   }
   const tls = getCI(row, "tls");
   if (isObject(tls)) addDomain(sink, getCI(tls, "sni"));
-  const fi = getCI(row, "fileinfo");
-  if (isObject(fi)) {
-    addHash(sink, getCI(fi, "sha256"));
-    addHash(sink, getCI(fi, "md5"));
-    addFile(sink, getCI(fi, "filename"));
-  }
 }
 
 function mapSuricataAlert(row: Row, host: string, sink: Map<string, SiemIoc>, recordIndex = 0): MappedEvent {
@@ -351,8 +352,10 @@ function zeekIocs(row: Row, path: string, sink: Map<string, SiemIoc>): void {
       addDomain(sink, getCI(row, "query"));
       break;
     case "http":
-      addDomain(sink, getCI(row, "host"));
-      addUrl(sink, getCI(row, "uri"));
+    case "files":
+      // Request and transfer rows mint their own indicators against their row key
+      // (webChainRows.ts): the host by the whole-authority rule, a hash only when the sensor's
+      // counters say the digest covers the whole object.
       break;
     case "ssl":
       // The SNI is the client's stated destination — intent, like a DNS query.
@@ -361,12 +364,6 @@ function zeekIocs(row: Row, path: string, sink: Map<string, SiemIoc>): void {
     case "x509":
       // A certificate covering a name is not a contact: SAN names are facts about the certificate
       // (kept on its row, tlsSession.ts), never domain indicators (#933 item 6).
-      break;
-    case "files":
-      addHash(sink, getCI(row, "sha256"));
-      addHash(sink, getCI(row, "sha1"));
-      addHash(sink, getCI(row, "md5"));
-      addFile(sink, getCI(row, "filename"));
       break;
     case "notice":
       addIp(sink, getCI(row, "src"));
@@ -607,6 +604,7 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
   const mapped: MappedEvent[] = [];
   const flowSink = new Map<string, FlowAgg>();
   const tlsSink = new Map<string, TlsTally>();
+  const webObs = emptyWebObservations();
   let flowHost = "";
   let alerts = 0;
   let sawSuricata = false,
@@ -615,11 +613,13 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
   const fileStream = opts.filename ? zeekStreamFromName(opts.filename) : "";
 
   for (const [recordIndex, row] of records.entries()) {
-    const host = pickHost(row);
-    if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
-
     const etype = str(getCI(row, "event_type")).toLowerCase();
     const zpath = str(getCI(row, "_path")).toLowerCase();
+    // A Zeek http row's scalar `host` is the HTTP Host header — the server the CLIENT named, never
+    // the sensor. Only a shipper's observer/agent fields name the sensor on such a row (#993).
+    const zstream = etype ? "" : zpath || fileStream || inferZeekStream(row);
+    const host = zstream === "http" ? (sensorOf(row)?.name ?? "") : pickHost(row);
+    if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
     const rowSink = new Map<string, SiemIoc>();
 
     if (etype) {
@@ -635,11 +635,12 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
           tallyTls(readSuricataTls(row, ""), tlsSink);
           for (const c of readSuricataCertificates(row, "")) tallyTls(c, tlsSink);
         }
+        if (etype === "http") addRequest(webObs, readSuricataHttp(row, recordIndex));
+        if (etype === "fileinfo") addTransfer(webObs, readSuricataFileinfo(row, recordIndex));
         mergeRowIocs(iocSink, rowSink);
       }
     } else {
       // Zeek: either `_path`-tagged (combined JSON) or per-stream (filename / field-inferred).
-      const zstream = zpath || fileStream || inferZeekStream(row);
       sawZeek = true;
       zeekIocs(row, zstream, rowSink);
       if (zstream === "notice") {
@@ -657,6 +658,10 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
         // ssl / x509 fold per record shape into TLS session and certificate rows (tlsSession.ts).
         if (zstream === "ssl") tallyTls(readZeekSsl(row, ""), tlsSink);
         if (zstream === "x509") tallyTls(readZeekX509(row, ""), tlsSink);
+        // http / files are joined after the loop (a body's files record may come later in the
+        // file) and folded into request and transfer rows (webChainRows.ts).
+        if (zstream === "http") addRequest(webObs, readZeekHttp(row, recordIndex));
+        if (zstream === "files") addTransfer(webObs, readZeekFiles(row, recordIndex));
         mergeRowIocs(iocSink, rowSink);
       }
     }
@@ -674,6 +679,9 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
     .slice(0, flowBudget);
   for (const f of flows) mapped.push(mapFlow(f, flowHost));
   mapped.push(...mapTlsRows(tlsSink, flowBudget));
+  // Request and transfer rows: joined through the identifiers both records carry, each chain's
+  // indicators minted against its row key so the hash IOC's provenance names the transfer row.
+  mapped.push(...mapWebRows(tallyWebChains(webObs, joinWebChain(webObs), iocSink), flowBudget));
 
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
