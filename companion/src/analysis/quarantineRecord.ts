@@ -362,7 +362,8 @@ export function quarantineOverlay(
   const type = readQuarantineType(first(rec, ["LSQuarantineTypeNumber", "type"]).value);
   const agent = first(rec, ["LSQuarantineAgentName", "agent"]).value;
   const bundleId = first(rec, ["LSQuarantineAgentBundleIdentifier", "bundle_id"]).value;
-  const dataUrl = first(rec, ["LSQuarantineDataURLString", "data_url", "url"]).value;
+  const dataUrlField = first(rec, ["LSQuarantineDataURLString", "data_url", "url"]);
+  const dataUrl = dataUrlField.value;
   const originUrl = first(rec, ["LSQuarantineOriginURLString", "origin_url", "referrer"]).value;
   const originTitle = first(rec, ["LSQuarantineOriginTitle", "origin_title"]).value;
   const senderName = first(rec, ["LSQuarantineSenderName", "sender"]).value;
@@ -500,7 +501,7 @@ export function quarantineOverlay(
       producer: { importer: "macos", parserVersion: "1", mappingVersion: "quarantine-v1" },
       rawFieldMap: {
         ...(when.iso ? { "time.observed": [time.header] } : {}),
-        ...(dataUrl ? { "quarantine.dataUrl": ["LSQuarantineDataURLString"] } : {}),
+        ...(dataUrl ? { "quarantine.dataUrl": [dataUrlField.header] } : {}),
       },
     }),
     envelope,

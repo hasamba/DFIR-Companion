@@ -579,6 +579,21 @@ describe("through parseMacos and correlateEvents", () => {
     }
   });
 
+  it("the canonical provenance names the column the URL came from", () => {
+    const native = parseMacos(csv([row()]));
+    expect(native.events[0].canonical?.fieldProvenance["quarantine.dataUrl"]?.rawFields).toEqual([
+      "LSQuarantineDataURLString",
+    ]);
+    const alias = parseMacos(
+      JSON.stringify([{ event_id: UUID, agent: "Safari", data_url: "https://cdn.example.invalid/a" }]),
+    );
+    expect(alias.events[0].canonical?.fieldProvenance["quarantine.dataUrl"]?.rawFields).toEqual(["data_url"]);
+    const url = parseMacos(
+      JSON.stringify([{ event_id: UUID, agent: "Safari", url: "https://cdn.example.invalid/a" }]),
+    );
+    expect(url.events[0].canonical?.fieldProvenance["quarantine.dataUrl"]?.rawFields).toEqual(["url"]);
+  });
+
   it("a padded JSON key is its own column name", () => {
     const { LSQuarantineTimeStamp: _t, ...rest } = row();
     const recs = [

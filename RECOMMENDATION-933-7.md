@@ -304,3 +304,7 @@ The joins, Gatekeeper/XProtect logs, browser history, any grade above Info.
 1. A padded JSON key (` unix_time `) was trimmed into `unix_time` before words and identity. Fix:
    the verbatim key is the column name in words and identity; trimming is only for recognition.
    CSV headers are trimmed at projection by the shared convention (standing decision).
+
+## Code round 25 (Codex, one finding)
+1. The canonical provenance of the data URL always named `LSQuarantineDataURLString`, even for an
+   alias export. Fix: it names the column the value came from (`data_url`, `url`).
