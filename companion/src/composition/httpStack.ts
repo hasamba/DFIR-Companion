@@ -43,6 +43,7 @@ import {
 } from "../analysis/casePassword.js";
 import { isTeamAuthRoutePath, registerTeamAuthRoutes } from "../auth/authRoutes.js";
 import { resolveRequestPolicy } from "../auth/policy.js";
+import { setRequestAuthentication } from "../auth/types.js";
 import { redactPaths } from "../analysis/redactPaths.js";
 import { registerStaticAssets } from "../http/staticAssets.js";
 import { CaseNotFoundError } from "../ingest/captureIngest.js";
@@ -188,8 +189,11 @@ export function mountRequestPipeline(app: Express, { store, options, instanceSec
         preAuthJson(req, res, (err) => (err ? next(err) : preAuthText(req, res, next)));
         return;
       }
-      // Header- and cookie-only: nothing here touches the body, which is the entire point.
-      if (teamAuth.authenticateRequest(req)) {
+      // Header- and cookie-only: nothing here touches the body, which is the entire point. The
+      // answer is handed forward so middleware() does not resolve the same session again (#1003).
+      const auth = teamAuth.authenticateRequest(req);
+      if (auth) {
+        setRequestAuthentication(req, auth);
         next();
         return;
       }

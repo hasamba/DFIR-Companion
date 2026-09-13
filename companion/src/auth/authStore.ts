@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { SqliteDatabase } from "../analysis/sqliteRuntime.js";
-import { loadDatabaseSync } from "../analysis/sqliteRuntime.js";
+import { loadDatabaseSync, type SqliteStatement } from "../analysis/sqliteRuntime.js";
 import { hashLocalPassword, verifyLocalPassword } from "./password.js";
 import {
   type AuthIdentity,
@@ -160,6 +160,13 @@ function serviceTokenFromRow(value: unknown): ServiceTokenRecord {
 
 export class AuthStore {
   private readonly db: SqliteDatabase;
+  /**
+   * Statements the per-request path reuses (#1003). node:sqlite has no statement cache: each
+   * `prepare(sql)` parses and plans the query again, and that parse was ~80% of what a session
+   * lookup cost. Holding the statement keeps the parse, not the answer — every call still reads
+   * the row, so a logout, a role change or a disable is visible on the very next request.
+   */
+  private readonly hotStatements = new Map<string, SqliteStatement>();
 
   constructor(path: string) {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
@@ -208,6 +215,14 @@ export class AuthStore {
   countIdentities(): number {
     const source = row(this.db.prepare("SELECT COUNT(*) AS count FROM auth_identities").get());
     return typeof source.count === "number" ? source.count : Number(source.count);
+  }
+
+  private hotStatement(sql: string): SqliteStatement {
+    const held = this.hotStatements.get(sql);
+    if (held) return held;
+    const statement = this.db.prepare(sql);
+    this.hotStatements.set(sql, statement);
+    return statement;
   }
 
   private insertLocalIdentity(input: CreateLocalIdentityInput, passwordHash: string): AuthIdentity {
@@ -415,13 +430,11 @@ export class AuthStore {
   }
 
   authenticateSession(token: string): RequestAuthentication | null {
-    const value = this.db
-      .prepare(
-        "SELECT s.id AS session_id, s.identity_id, s.csrf_token, " +
-          "s.created_at AS session_created_at, s.expires_at, s.last_seen_at, s.ip, s.user_agent, i.* " +
-          "FROM auth_sessions s JOIN auth_identities i ON i.id=s.identity_id WHERE s.token_hash=?",
-      )
-      .get(tokenHash(token));
+    const value = this.hotStatement(
+      "SELECT s.id AS session_id, s.identity_id, s.csrf_token, " +
+        "s.created_at AS session_created_at, s.expires_at, s.last_seen_at, s.ip, s.user_agent, i.* " +
+        "FROM auth_sessions s JOIN auth_identities i ON i.id=s.identity_id WHERE s.token_hash=?",
+    ).get(tokenHash(token));
     if (!value) return null;
     const source = row(value);
     if (source.disabled === 1 || Date.parse(text(source.expires_at, "expires_at")) <= Date.now()) {
@@ -480,9 +493,10 @@ export class AuthStore {
   }
 
   getCaseRole(identityId: string, caseId: string): CaseRole | null {
-    const value = this.db
-      .prepare("SELECT role FROM auth_case_roles WHERE identity_id=? AND case_id=?")
-      .get(identityId, caseId);
+    const value = this.hotStatement("SELECT role FROM auth_case_roles WHERE identity_id=? AND case_id=?").get(
+      identityId,
+      caseId,
+    );
     if (!value) return null;
     const role = row(value).role;
     return isCaseRole(role) ? role : null;
@@ -649,13 +663,11 @@ export class AuthStore {
   }
 
   authenticateServiceToken(token: string): RequestAuthentication | null {
-    const value = this.db
-      .prepare(
-        "SELECT t.id AS token_id, t.identity_id, t.name AS token_name, t.case_id, " +
-          "t.permissions_json, t.created_at AS token_created_at, t.expires_at, t.revoked_at, i.* " +
-          "FROM auth_service_tokens t JOIN auth_identities i ON i.id=t.identity_id WHERE t.token_hash=?",
-      )
-      .get(tokenHash(token));
+    const value = this.hotStatement(
+      "SELECT t.id AS token_id, t.identity_id, t.name AS token_name, t.case_id, " +
+        "t.permissions_json, t.created_at AS token_created_at, t.expires_at, t.revoked_at, i.* " +
+        "FROM auth_service_tokens t JOIN auth_identities i ON i.id=t.identity_id WHERE t.token_hash=?",
+    ).get(tokenHash(token));
     if (!value) return null;
     const source = row(value);
     if (
