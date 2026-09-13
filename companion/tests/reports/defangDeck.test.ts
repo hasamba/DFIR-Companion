@@ -110,6 +110,18 @@ describe("defangDeck (#892)", () => {
     expect(out.slides[0].body).toBe("Beaconing to evil[.]test all week");
   });
 
+  it("takes the case's own domain IOCs as extra vouching, so a bare hostname on no slide's IOC list is still inert (#1006)", () => {
+    const raw = deck({
+      slides: [
+        { kind: "finding", title: "C2 at evil.test", body: "callback to evil.test, wrote History.db" },
+      ],
+    });
+    expect(defangDeck(raw).slides[0].title).toBe("C2 at evil.test"); // nothing vouched for it
+    const out = defangDeck(raw, ["evil.test"]);
+    expect(out.slides[0].title).toBe("C2 at evil[.]test");
+    expect(out.slides[0].body).toBe("callback to evil[.]test, wrote History.db");
+  });
+
   it("defangs clickable forms even when the deck names no domain IOC at all", () => {
     // The pool only ever governs BARE hostnames. URLs, IPv4 addresses and email addresses — the
     // forms a reader can actually act on — are rendered inert whatever the pool holds.

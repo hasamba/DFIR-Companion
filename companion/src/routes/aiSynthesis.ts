@@ -20,8 +20,8 @@ import { PresidioApprovalRequired } from "../analysis/presidio.js";
 import { isAnalystDecisionGate, sendPipelineError } from "./presidioApproval.js";
 import { sendSynthesisRouteFailure } from "./analystGate.js";
 import type { RouteContext } from "./context.js";
-import { renderStandalonePresentation } from "../reports/presentationExport.js";
-import { defangDeck } from "../reports/defangDeck.js";
+import { renderStandalonePresentationChecked } from "../reports/presentationExport.js";
+import { logEvidenceSafety } from "./evidenceSafetyLog.js";
 
 /**
  * AI synthesis / Q&A / summary domain: the large cluster of LLM-backed (and LLM-adjacent) endpoints
@@ -834,10 +834,14 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       // The exported deck stays self-contained: embed the sink guard that the live page loads from
       // /js. Nonces let the attachment survive this response's CSP and are harmless when the saved
       // file is later opened without a CSP header.
-      // Indicators are defanged HERE and not in the deck builder (#892): this file is handed to a
-      // stakeholder and opened from file:// with no CSP, while the live viewer above renders the
-      // same deck and must keep values an analyst can copy into a tool. See defangDeck.ts.
-      const html = await renderStandalonePresentation(defangDeck(deck), String(res.locals.cspNonce ?? ""));
+      // Defanged and checked at the export boundary (#892, #1006) — see presentationExport.ts.
+      // Shipped with its findings: the warning is in the file and on the activity log.
+      const { html, evidenceSafety } = await renderStandalonePresentationChecked(
+        await options.reportWriter.filteredState(req.params.id),
+        deck,
+        String(res.locals.cspNonce ?? ""),
+      );
+      logEvidenceSafety(options, req.params.id, "presentation", evidenceSafety);
       const filename = `presentation-${req.params.id.replace(/[^a-zA-Z0-9._-]/g, "_")}.html`;
       res.type("html").set("Content-Disposition", `attachment; filename="${filename}"`).send(html);
     } catch (err) {

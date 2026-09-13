@@ -75,6 +75,8 @@ export function resolveRedactedExportOptions(query: Record<string, unknown>): Re
 export interface RedactedReportContents {
   markdown: string;
   html: string;
+  /** Evidence-safety warning lines for the Markdown and HTML (#1006); empty when clean. */
+  evidenceSafety?: string[];
   findingsCsv: string;
   iocsCsv: string;
   timelineCsv: string;

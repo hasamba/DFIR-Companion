@@ -27,6 +27,14 @@
       });
   }
 
+  // The evidence-safety warning the server returns with a generated report (#1006): the export
+  // shipped, the same warning is stamped into the document and on the activity log, and this puts
+  // it on the status line where the analyst is looking.
+  function evidenceSafetyNote(paths) {
+    const lines = paths && Array.isArray(paths.evidenceSafety) ? paths.evidenceSafety : [];
+    return lines.length ? " — \u26A0 evidence-safety warning: " + lines.join("; ") : "";
+  }
+
   // The statements the inline block ran at module scope, in their original order.
   function initUnifiedExport() {
     // ── Unified export menu ───────────────────────────────────────────────────
@@ -45,8 +53,8 @@
             if (!r.ok) throw new Error("HTTP " + r.status);
             return r.json();
           })
-          .then(() => {
-            document.getElementById("status").textContent = "report written";
+          .then((paths) => {
+            document.getElementById("status").textContent = "report written" + evidenceSafetyNote(paths);
             document.getElementById("reportLinks").innerHTML =
               `<a href="/cases/${c}/report/report.html" target="_blank" rel="noopener">Open HTML</a>` +
               ` · <a href="/cases/${c}/report/report.html?download=1">Download HTML</a>` +
@@ -71,9 +79,9 @@
             if (!r.ok) throw new Error("HTTP " + r.status);
             return r.json();
           })
-          .then(() => {
+          .then((paths) => {
             document.getElementById("status").textContent =
-              "report written — opening print dialog";
+              "report written — opening print dialog" + evidenceSafetyNote(paths);
             if (win && !win.closed) win.location.href = printUrl;
             else window.open(printUrl, "_blank", "noopener");
             document.getElementById("reportLinks").innerHTML =
