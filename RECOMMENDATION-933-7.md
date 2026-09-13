@@ -175,3 +175,12 @@ The joins, Gatekeeper/XProtect logs, browser history, any grade above Info.
    from the mapped list before aggregation.
 2. A numeric time outside Date's range came back as a readable encoding with an empty ISO. Fix: an
    empty conversion is `unreadable` in every numeric branch (raw kept, row marked).
+
+## Code round 6 (Codex, three findings)
+1. Two unreadable type values (`x`, `y`) folded into one "kind not readable" row. Fix: the raw
+   value is kept (`typeRaw`), shown neutralised, and part of the facts digest.
+2. A URL past 500 characters minted a prefix as the `url` indicator — a URL the record never
+   held. Fix: the whole URL or no `url` indicator (the host still is one); the envelope says why.
+3. The overflow row's canonical time was built from the first folded record, then its timestamp
+   moved to the earliest. Fix: words, envelope and canonical form are built once, after the time is
+   final.

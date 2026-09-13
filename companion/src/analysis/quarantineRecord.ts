@@ -37,6 +37,8 @@ const ISO_8601 = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+
 const DESCRIPTION_MAX = 600;
 const URL_SHOWN_MAX = 200;
 const TEXT_SHOWN_MAX = 80;
+/** A URL indicator is the record's whole URL or nothing — a prefix would be a URL the record never held. */
+const URL_IOC_MAX = 500;
 
 function isoOf(ms: number): string {
   const d = new Date(ms);
@@ -94,10 +96,11 @@ const QUARANTINE_TYPES: Record<number, string> = {
   5: "other attachment",
 };
 
-export function readQuarantineType(raw: string): { typeNumber?: number; kind: string } {
+export function readQuarantineType(raw: string): { typeNumber?: number; kind: string; typeRaw?: string } {
   const text = raw.trim();
   if (!text) return { kind: "kind not in this record" };
-  if (!/^\d{1,4}$/.test(text)) return { kind: "kind not readable" };
+  // A value that is not a type number is evidence of its own: kept raw, never folded into a phrase.
+  if (!/^\d{1,4}$/.test(text)) return { kind: "kind not readable", typeRaw: text };
   const typeNumber = Number(text);
   return { typeNumber, kind: QUARANTINE_TYPES[typeNumber] ?? `type ${typeNumber} (not in the table)` };
 }
@@ -157,6 +160,8 @@ export function readQuarantineXattr(raw: string): QuarantineXattr | null {
 export interface QuarantineEnvelope {
   kind: string;
   typeNumber?: number;
+  /** A type value that is not a type number, as recorded. */
+  typeRaw?: string;
   agent?: string;
   bundleId?: string;
   dataUrl?: string;
@@ -168,6 +173,8 @@ export interface QuarantineEnvelope {
   eventIdRaw?: string;
   timeEncoding: QuarantineTime["encoding"];
   timeRaw?: string;
+  /** Why a URL minted no `url` indicator (its host still does). */
+  urlIndicator?: string;
   localFile: "not in this record";
   /** An overflow row: records with this identifier beyond the variant budget folded; nothing shown. */
   folded?: boolean;
@@ -195,20 +202,26 @@ const show = (v: string, max = TEXT_SHOWN_MAX): string => {
   return shown.length > max ? `${shown.slice(0, max - 1)}…` : shown;
 };
 
-/** The URL's host as an indicator: an address is `ip`, a name is `domain`; http(s)/ftp only. */
-function mintUrl(sink: Map<string, SiemIoc>, url: string, schemes: RegExp): void {
-  if (!schemes.test(url)) return;
+/**
+ * The URL and its host as indicators: an address is `ip`, a name is `domain`; http(s)/ftp only. A
+ * URL past URL_IOC_MAX mints no `url` indicator (the host still does) and says so.
+ */
+function mintUrl(sink: Map<string, SiemIoc>, url: string, schemes: RegExp): "minted" | "omitted" | undefined {
+  if (!schemes.test(url)) return undefined;
   let host = "";
   try {
     host = new URL(url).hostname;
   } catch {
-    return;
+    return undefined;
   }
-  addIoc(sink, "url", url.slice(0, 500));
+  const urlIoc = url.length <= URL_IOC_MAX;
+  if (urlIoc) addIoc(sink, "url", url);
   const bare = host.startsWith("[") ? host.slice(1, -1) : host;
-  if (!bare) return;
-  if (isIP(bare)) addIoc(sink, "ip", bare);
-  else addIoc(sink, "domain", bare.toLowerCase());
+  if (bare) {
+    if (isIP(bare)) addIoc(sink, "ip", bare);
+    else addIoc(sink, "domain", bare.toLowerCase());
+  }
+  return urlIoc ? "minted" : "omitted";
 }
 
 /** One LSQuarantineEventsV2 record → a row that says what the record establishes. */
@@ -235,10 +248,13 @@ export function quarantineOverlay(
   const eventId = canonicalUuid(idRaw);
 
   // Indicators: the resource the agent fetched, and a lure page — only under a fetchable scheme.
-  mintUrl(sink, dataUrl, /^(?:https?|ftp):\/\//i);
-  mintUrl(sink, originUrl, /^https?:\/\//i);
+  const urlIndicators = [
+    mintUrl(sink, dataUrl, /^(?:https?|ftp):\/\//i),
+    mintUrl(sink, originUrl, /^https?:\/\//i),
+  ];
+  const urlOmitted = urlIndicators.includes("omitted");
 
-  const tags: string[] = [`kind: ${type.kind}`];
+  const tags: string[] = [`kind: ${type.kind}${type.typeRaw ? ` (${show(type.typeRaw)})` : ""}`];
   if (agent || bundleId)
     tags.push(`agent: ${[show(agent), bundleId ? `(${show(bundleId)})` : ""].filter(Boolean).join(" ")}`);
   if (dataUrl) tags.push(`data url: ${show(dataUrl, URL_SHOWN_MAX)}`);
@@ -270,7 +286,7 @@ export function quarantineOverlay(
 
   // Every shown fact, framed; the time as its ISO form or a digest of the raw text.
   const facts = [
-    type.kind,
+    type.typeRaw ? `type?:${type.typeRaw}` : type.kind,
     agent,
     bundleId,
     dataUrl,
@@ -291,14 +307,27 @@ export function quarantineOverlay(
     : `macos-quarantine|facts:${factsDigest}`;
 
   // Lossy when anything shown is not the record's own text.
-  const shownAll = [agent, bundleId, dataUrl, originUrl, originTitle, senderName, senderAddress, idRaw];
+  const typeRaw = type.typeRaw ?? "";
+  const shownAll = [
+    agent,
+    bundleId,
+    dataUrl,
+    originUrl,
+    originTitle,
+    senderName,
+    senderAddress,
+    idRaw,
+    typeRaw,
+  ];
   // …including an identifier clipped past the shown width and a time the row cannot show at all
   // (an unreadable `timeRaw` is identity the words do not carry).
   const lossy =
     shownAll.some((v) => v && breakHashRuns(showToken(v)) !== v) ||
     dataUrl.length > URL_SHOWN_MAX ||
     originUrl.length > URL_SHOWN_MAX ||
-    [agent, bundleId, originTitle, senderName, senderAddress, idRaw].some((v) => v.length > TEXT_SHOWN_MAX) ||
+    [agent, bundleId, originTitle, senderName, senderAddress, idRaw, typeRaw].some(
+      (v) => v.length > TEXT_SHOWN_MAX,
+    ) ||
     (when.encoding === "unreadable" && time.value !== "");
   const mark = identityMark(aggKey);
   const head = "macOS quarantine";
@@ -310,6 +339,7 @@ export function quarantineOverlay(
   const envelope: QuarantineEnvelope = {
     kind: type.kind,
     ...(type.typeNumber !== undefined ? { typeNumber: type.typeNumber } : {}),
+    ...(type.typeRaw ? { typeRaw: type.typeRaw } : {}),
     ...(agent ? { agent } : {}),
     ...(bundleId ? { bundleId } : {}),
     ...(dataUrl ? { dataUrl } : {}),
@@ -321,6 +351,9 @@ export function quarantineOverlay(
     ...(!eventId && idRaw ? { eventIdRaw: idRaw } : {}),
     timeEncoding: when.encoding,
     ...(when.encoding === "unreadable" && time.value ? { timeRaw: time.value } : {}),
+    ...(urlOmitted
+      ? { urlIndicator: `omitted: a URL longer than ${URL_IOC_MAX} characters; the host is the indicator` }
+      : {}),
     localFile: "not in this record",
   };
   return {
@@ -372,21 +405,6 @@ export function boundQuarantineVariants(rows: QuarantineRow[]): QuarantineRow[] 
     const seen = byId.get(r.eventId) ?? [];
     if (!seen.includes(r.factsDigest)) {
       r.aggKey = `macos-quarantine|event:${r.eventId}|overflow`;
-      // The envelope shows no folded record as the row's: only the identifier and the fold.
-      r.envelope = {
-        kind: "folded",
-        eventId: r.eventId,
-        timeEncoding: "unreadable",
-        localFile: "not in this record",
-        folded: true,
-      };
-      r.canonical = createCanonicalEvent({
-        event: { category: "file", type: "download-record" },
-        quarantine: r.envelope,
-        time: { observed: r.timestamp, normalized: r.timestamp },
-        evidence: { rawRecords: [{ source: "macos-quarantine", locator: `overflow:${r.eventId}` }] },
-        producer: { importer: "macos", parserVersion: "1", mappingVersion: "quarantine-v1" },
-      });
       r.iocs = [];
       continue;
     }
@@ -415,10 +433,29 @@ export function boundQuarantineVariants(rows: QuarantineRow[]): QuarantineRow[] 
     if (r.timestamp && (!seen.row.timestamp || r.timestamp < seen.row.timestamp))
       seen.row.timestamp = r.timestamp;
   }
-  for (const { row, folded } of overflow.values()) {
-    row.description = `macOS quarantine [event: ${row.eventId}] [overflow: ${folded} records with this event identifier and further differing facts beyond ${QUARANTINE_VARIANTS_MAX} sets folded; none shown]${identityMark(row.aggKey)}`;
-  }
+  for (const { row, folded } of overflow.values()) foldRow(row, folded);
   return out;
+}
+
+// The overflow row's words, envelope and canonical form — built once, from the row's final
+// (earliest folded) time, so the record never carries two times.
+function foldRow(row: QuarantineRow, folded: number): void {
+  row.description = `macOS quarantine [event: ${row.eventId}] [overflow: ${folded} records with this event identifier and further differing facts beyond ${QUARANTINE_VARIANTS_MAX} sets folded; none shown]${identityMark(row.aggKey)}`;
+  // The envelope shows no folded record as the row's: only the identifier and the fold.
+  row.envelope = {
+    kind: "folded",
+    eventId: row.eventId,
+    timeEncoding: "unreadable",
+    localFile: "not in this record",
+    folded: true,
+  };
+  row.canonical = createCanonicalEvent({
+    event: { category: "file", type: "download-record" },
+    quarantine: row.envelope,
+    time: { observed: row.timestamp, normalized: row.timestamp },
+    evidence: { rawRecords: [{ source: "macos-quarantine", locator: `overflow:${row.eventId}` }] },
+    producer: { importer: "macos", parserVersion: "1", mappingVersion: "quarantine-v1" },
+  });
 }
 
 /** The marking-only name the tests use; boundQuarantineVariants marks and bounds. */

@@ -196,6 +196,7 @@ export const canonicalEventEnvelopeSchema = z.object({
     .object({
       kind: z.string(),
       typeNumber: z.number().int().nonnegative().optional(),
+      typeRaw: z.string().optional(),
       agent: z.string().optional(),
       bundleId: z.string().optional(),
       dataUrl: z.string().optional(),
@@ -207,6 +208,7 @@ export const canonicalEventEnvelopeSchema = z.object({
       eventIdRaw: z.string().optional(),
       timeEncoding: z.enum(["cocoa-seconds", "iso", "unix-seconds", "unix-ms", "unreadable"]),
       timeRaw: z.string().optional(),
+      urlIndicator: z.string().optional(),
       localFile: z.literal("not in this record"),
       folded: z.boolean().optional(),
     })

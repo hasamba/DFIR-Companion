@@ -98,7 +98,7 @@ describe("readQuarantineType — Apple's LSQuarantineType", () => {
     expect(readQuarantineType("5").kind).toBe("other attachment");
     expect(readQuarantineType("9")).toEqual({ typeNumber: 9, kind: "type 9 (not in the table)" });
     expect(readQuarantineType("")).toEqual({ kind: "kind not in this record" });
-    expect(readQuarantineType("x")).toEqual({ kind: "kind not readable" });
+    expect(readQuarantineType("x")).toEqual({ kind: "kind not readable", typeRaw: "x" });
   });
 });
 
@@ -475,6 +475,34 @@ describe("through parseMacos and correlateEvents", () => {
     expect(r2.events).toHaveLength(2);
     expect(afterImport(r2.events)).toHaveLength(2);
     expect(r2.events[0].canonical?.quarantine?.timeRaw).toBeDefined();
+  });
+
+  it("two unreadable type values are two rows; a long URL mints no prefix indicator", () => {
+    const r = parseMacos(csv([row({ LSQuarantineTypeNumber: "x" }), row({ LSQuarantineTypeNumber: "y" })]));
+    expect(r.events).toHaveLength(2);
+    expect(afterImport(r.events)).toHaveLength(2);
+    expect(r.events[0].description).toContain("[kind: kind not readable (x)]");
+    expect(r.events[0].canonical?.quarantine?.typeRaw).toBe("x");
+    const long = `https://cdn.example.test/${"p".repeat(600)}`;
+    const r2 = parseMacos(csv([row({ LSQuarantineDataURLString: long })]));
+    expect(r2.iocs.filter((i) => i.type === "url" && i.value.includes("cdn.example.test"))).toHaveLength(0);
+    expect(r2.iocs.some((i) => i.type === "domain" && i.value === "cdn.example.test")).toBe(true);
+    expect(r2.events[0].canonical?.quarantine?.urlIndicator).toMatch(/omitted/);
+  });
+
+  it("an overflow row's canonical time is its (earliest folded) time", () => {
+    const stamp = (i: number) => String(1_800_000_000 - 978_307_200 - i * 86_400);
+    const flood = Array.from({ length: QUARANTINE_VARIANTS_MAX + 3 }, (_, i) =>
+      row({ LSQuarantineOriginTitle: `t${i}`, LSQuarantineTimeStamp: stamp(i) }),
+    );
+    const r = parseMacos(csv(flood));
+    const fold = r.events.find((e) => e.description.includes("[overflow:"));
+    expect(fold).toBeDefined();
+    expect(fold!.timestamp).toBe(
+      new Date((1_800_000_000 - (QUARANTINE_VARIANTS_MAX + 2) * 86_400) * 1000).toISOString(),
+    );
+    expect(fold!.canonical?.time.normalized).toBe(fold!.timestamp);
+    expect(fold!.canonical?.time.observed).toBe(fold!.timestamp);
   });
 
   it("a unified-log record in a quarantine json array is never a download event", () => {
