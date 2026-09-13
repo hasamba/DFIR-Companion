@@ -82,6 +82,11 @@ export interface ReadRecord {
   time: number;
   /** The identity that made the call. */
   principal: string;
+  /** The credential that signed the call (`authentication.credentialId`, #931 item 5); "" when the row carries none. */
+  credentialId: string;
+  /** The provider and the owning account / tenant (`cloud.provider`, `cloud.accountId` / `cloud.tenant`); "" when absent. */
+  provider: string;
+  account: string;
   sourceIp: string;
   userAgent: string;
   action: string;
@@ -118,6 +123,9 @@ export function readCloudRecord(e: ForensicEvent): ReadRecord | null {
     id: e.id,
     time,
     principal: principal.trim(),
+    credentialId: (c?.authentication?.credentialId ?? "").trim(),
+    provider: (c?.cloud?.provider ?? "").trim(),
+    account: (c?.cloud?.accountId ?? c?.cloud?.tenant ?? "").trim(),
     sourceIp: (c?.network?.source?.address ?? e.srcIp ?? sourceFromDescription(e.description ?? "")).trim(),
     userAgent: clientFromDescription(e.description ?? ""),
     action: action.trim(),
@@ -210,6 +218,10 @@ export function clientFromDescription(d: string): string {
 
 export interface BulkGroup {
   principal: string;
+  /** The one credential the group's rows carry; "" when they carry none. */
+  credentialId: string;
+  provider: string;
+  account: string;
   sourceIp: string;
   userAgent: string;
   objectCount: number;
@@ -225,8 +237,11 @@ export interface BulkGroup {
   truncated: boolean;
 }
 
+// A group is ONE credential in ONE account of ONE provider: two keys under one role name, address
+// and client are two readers (two sessions issued to two people); a role named "Backup" in two
+// accounts, or on two providers, is two readers — a match to an assumption must never span them.
 function groupKey(r: ReadRecord): string {
-  return `${lower(r.principal)}|${r.sourceIp}|${lower(r.userAgent)}`;
+  return `${lower(r.provider)}|${lower(r.account)}|${lower(r.principal)}|${lower(r.credentialId)}|${r.sourceIp}|${lower(r.userAgent)}`;
 }
 
 /**
@@ -337,6 +352,9 @@ export function groupBulkReads(
     const head = list[0];
     out.push({
       principal: head.principal,
+      credentialId: head.credentialId,
+      provider: head.provider,
+      account: head.account,
       sourceIp: head.sourceIp,
       userAgent: head.userAgent,
       objectCount: bestCounts.objects,
@@ -375,6 +393,10 @@ export interface RoleAssumption {
   /** Who assumed it. */
   by: string;
   time: number;
+  /** The key the issuance minted (`target.id` on an issuance row, #931 item 5); "" when the row carries none. */
+  issuedKey: string;
+  /** The account the issuance row names; "" when it names none. */
+  account: string;
 }
 
 const ASSUME_RE = /^(?:sts\.)?assumerole(?:withsaml|withwebidentity)?$/i;
@@ -400,7 +422,9 @@ export function roleAssumptions(events: readonly ForensicEvent[]): RoleAssumptio
     const by = e.canonical?.actor?.name ?? principalFromDescription(e.description ?? "");
     const role = roleSegment(raw);
     if (!role || !by) continue;
-    out.push({ role, by: by.trim(), time });
+    const issuedKey =
+      e.canonical?.target?.name === "temporary credential" ? (e.canonical.target.id ?? "").trim() : "";
+    out.push({ role, by: by.trim(), time, issuedKey, account: (e.canonical?.cloud?.accountId ?? "").trim() });
   }
   return out;
 }
@@ -411,13 +435,41 @@ export function assumedRoleOf(principal: string): string {
 }
 
 /** The assumption that produced this reader's session, when the timeline holds one. */
+export interface AssumptionMatch {
+  assumption: RoleAssumption;
+  /** `key`: the issuance minted the very credential the group's rows carry; `role-time`: the old match, said. */
+  by: "key" | "role-time";
+}
+
+/**
+ * The assumption that produced this reader's session, when the timeline holds one. The group's
+ * credential id decides it when the rows carry one (#979): the issuance that minted THAT key,
+ * whatever the time. Only rows that carry no key fall back to the role-name-and-time match, and
+ * the caller says so.
+ */
 export function assumptionFor(
   group: BulkGroup,
   assumptions: readonly RoleAssumption[],
   windowMs = DEFAULT_WINDOW_MS,
-): RoleAssumption | null {
+): AssumptionMatch | null {
   const start = Date.parse(group.first);
   if (!Number.isFinite(start)) return null;
+  if (group.credentialId) {
+    // The tuple (account, key) when both sides name the account; the key alone when either does
+    // not. An issuance AFTER the reads began minted nothing they used: not a match.
+    const key = lower(group.credentialId);
+    const minted = assumptions.filter(
+      (a) =>
+        a.issuedKey &&
+        lower(a.issuedKey) === key &&
+        a.time <= start &&
+        (!a.account || !group.account || lower(a.account) === lower(group.account)),
+    );
+    if (minted.length) return { assumption: minted.reduce((m, a) => (a.time > m.time ? a : m)), by: "key" };
+    // The rows name a key and no issuance minted it: a role-name match would attribute another
+    // person's session to this key.
+    return null;
+  }
   // The reader's identity is `arn:aws:sts::…:assumed-role/<role>/<session>`. The ROLE SEGMENT is
   // compared, not a substring of the whole string.
   //
@@ -433,7 +485,7 @@ export function assumptionFor(
     if (lower(a.role) !== readerRole) continue;
     if (!best || a.time > best.time) best = a;
   }
-  return best;
+  return best ? { assumption: best, by: "role-time" } : null;
 }
 
 // ─────────────────────────── grading ───────────────────────────
@@ -467,10 +519,14 @@ export function gradeGroup(group: BulkGroup, ctx: BulkContext = {}): BulkVerdict
     : `${group.containerCount} container(s)`;
 
   const corroboration: string[] = [];
-  const assumption = assumptionFor(group, ctx.assumptions ?? []);
-  if (assumption) {
+  const match = assumptionFor(group, ctx.assumptions ?? []);
+  if (match) {
+    const { assumption } = match;
+    const minutes = Math.max(1, Math.round((Date.parse(group.first) - assumption.time) / 60000));
     corroboration.push(
-      `the session was opened by ${assumption.by} assuming this role ${Math.max(1, Math.round((Date.parse(group.first) - assumption.time) / 60000))} minute(s) beforehand`,
+      match.by === "key"
+        ? `the session's credential was issued to ${assumption.by} assuming this role ${minutes} minute(s) beforehand (matched by the key id)`
+        : `the session was opened by ${assumption.by} assuming this role ${minutes} minute(s) beforehand (matched by role name and time; the key id is not on these rows)`,
     );
   }
   const reach = addressReach(group.sourceIp);

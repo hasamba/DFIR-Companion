@@ -1066,8 +1066,56 @@ Two calls by one session name under two access keys are two rows. The credential
 kind and the recipient account are typed on every row (`authentication.credentialId`,
 `authentication.issuer`, `authentication.mechanism`, `cloud.recipientAccountId`) and searchable in
 Hunt. A merged cross-account action keys on its `sharedEventID`, so two distinct actions that share
-every other dimension stay two rows. The lineage across records — which later calls used the credential an issuance minted, a
-workload role used from a new source — is a join by access key id, filed as #931 item 5's chain.
+every other dimension stay two rows.
+
+**What one upload joins: the credential lineage.** Beside the rows, the importer emits one summary
+row per credential whose upload records form a lineage — `AWS credential lineage: ASIA…7Q (account
+111122223333) [issued 2024-05-01T09:00:00Z by AssumeRole of arn:aws:iam::…:role/Deploy as session
+ci-42 by IAMUser arn:aws:iam::…:user/alice (MFA not recorded on the issuance) — record:0; uses: 14
+records 09:00:12Z (record:1) → 11:40:03Z (record:40); first use from each source: 203.0.113.5
+aws-cli/2.15 at 09:00:12Z (record:1, 12 records); 198.51.100.7 python-requests/2.31 at 10:02:40Z
+(record:33, 2 records); second source 62 min after the issuance; the workload's own addresses are
+not in this evidence; privileged change: iam CreateAccessKey at 10:03:10Z (record:34) — after the
+second source; record retention and the trails' selectors are not in this evidence; issuance and
+14 uses in this upload]`. It is built over every record of ONE upload, before aggregation and the
+event cap, because the data-plane rows a credential is used for are Info and leave the forensic
+timeline at import; a lineage across uploads is not built.
+
+- **Joined through the access key id only** (or the Identity Center credential id). A session name
+  or a role's display name never joins: two sessions named `ci-42` under two keys are two rows.
+  The owning account is the target role's for `AssumeRole*`, the target principal's for
+  `AssumeRoot` (as an account id or a root ARN), the caller's for a session or federation token —
+  so a cross-account assumption's issuance and its uses meet on the role's account. A cross-account
+  replica counts once, and the informative replica is the one read whichever the file lists first.
+- **"Issued at" only on the exact key.** A use whose key no issuance record exposes says `no
+  issuance record in this upload exposes this credential id (N records, first → last)`; an
+  `AssumeRole` request for the same role and session whose response is not in the record is listed
+  beside it and never joined. A workload key (`ec2RoleDelivery`, or `inScopeOf` naming a Lambda
+  function or an ECS task) says `delivered by the service; no STS record is expected` — never
+  "missing".
+- **Every source, never "new".** Each address and client is named with its first use and its
+  record count; `the workload's own addresses are not in this evidence` is said whenever there is
+  a second source or a workload key — nothing in this case supplies an instance's addresses.
+- **Shapes are exact, successful calls.** Enumeration is ≥ 3 services inside 10 minutes from a
+  fixed list (`sts GetCallerIdentity`, `iam ListUsers`, `s3 ListBuckets`, `ec2 DescribeInstances`,
+  …); a privileged change and remote execution are fixed lists too (`iam CreateAccessKey`, `kms
+  PutKeyPolicy`, `cloudtrail StopLogging`, `ssm SendCommand`, `lambda Invoke`, …). A denied call is
+  an attempt and raises nothing; an `s3 GetObject` across three services is not enumeration.
+- **Grade only raises.** A privileged change or remote execution after the first use from a
+  second source → High; a shape or a second source → Medium; an issuance with single-source uses
+  → Low (a lineage to pivot on, not a finding). An issuance alone, or single-source uses with no
+  issuance and no shape, is no row. Techniques are the shapes' own.
+- **Every record is scanned; only the narration is bounded.** 256 rows per upload (the rest
+  counted), the 64 earliest sources tracked per key (8 named, further distinct sources counted,
+  further records "from untracked sources"), 256 records cited with the issuance, the first and
+  last use and the decisive shape always among them (the rest counted as `N further records not
+  individually cited`). The decisive shape — the record the grade rests on — is never clipped from
+  the words. The row's identity is (account, key), so a re-import folds; the summaries never evict
+  a source row (`maxEvents` bounds source rows; the result's `summaries` counts these).
+- **Bulk reads match by key.** A cloud bulk-read group is now one credential in one account of
+  one provider; the assumption that produced the reader's session is the issuance that minted THAT
+  key in that account, before the reads began (`matched by the key id`); rows without a key fall
+  back to the role-name-and-time match and say so.
 
 ### Entra applications: credentials, grants, roles, sign-ins
 

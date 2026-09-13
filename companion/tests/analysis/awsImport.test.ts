@@ -981,8 +981,10 @@ describe("parseCloudTrail — identities and credentials (#931 item 5)", () => {
         iamRecord({ userIdentity: assumedRole(), recipientAccountId: ACCT, eventID: "caller" }),
       ),
     );
-    expect(r.events).toHaveLength(1);
-    const d = r.events[0].description;
+    // The lineage summary (#979) rides beside the source rows; the source row is one.
+    const source = r.events.filter((e) => !e.description.startsWith("AWS credential lineage:"));
+    expect(source).toHaveLength(1);
+    const d = source[0].description;
     expect(d.length).toBeLessThanOrEqual(600);
     // The notice is a reserved slot right after the head; the qualifier tail survives whole.
     expect(d).toMatch(new RegExp(`^AWS PutRolePolicy \\(iam\\) by [^\\[]+ \\[also in account ${OTHER}\\] `));
@@ -1021,8 +1023,9 @@ describe("parseCloudTrail — identities and credentials (#931 item 5)", () => {
         ssmRecord({ userIdentity: assumedRole(), recipientAccountId: ACCT, eventID: "caller" }),
       ),
     );
-    expect(r.events).toHaveLength(1);
-    const d = r.events[0].description;
+    const source = r.events.filter((e) => !e.description.startsWith("AWS credential lineage:"));
+    expect(source).toHaveLength(1);
+    const d = source[0].description;
     expect(d.length).toBeLessThanOrEqual(600);
     expect(d).toContain(`[also in account ${OTHER}]`);
     // The whole caveat — the middle clause included — ends the row.

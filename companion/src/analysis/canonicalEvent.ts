@@ -6,6 +6,7 @@ import { dnsBlockSchema } from "./canonicalDns.js";
 import { tlsGraphBlockSchema } from "./canonicalTls.js";
 import { quarantineAttributeBlockSchema, quarantineBlockSchema } from "./canonicalQuarantine.js";
 import { entraPathBlockSchema } from "./canonicalEntra.js";
+import { awsLineageBlockSchema } from "./canonicalAwsLineage.js";
 import { mailboxChainBlockSchema } from "./canonicalMailbox.js";
 import { gwsLifecycleBlockSchema } from "./canonicalGwsLifecycle.js";
 
@@ -152,6 +153,8 @@ export const canonicalEventEnvelopeSchema = z.object({
   tlsGraph: tlsGraphBlockSchema.optional(),
   // An Entra privilege-path summary row (entraPrivilegePath.ts, #973); the block lives in canonicalEntra.ts.
   entra: entraPathBlockSchema.optional(),
+  // An AWS credential-lineage summary row (awsLineage.ts, #979); the block lives in canonicalAwsLineage.ts.
+  awsLineage: awsLineageBlockSchema.optional(),
   // A mailbox-chain summary row (mailboxChain.ts, #975); the block lives in canonicalMailbox.ts.
   mailboxChain: mailboxChainBlockSchema.optional(),
   // A Google Workspace OAuth-lifecycle summary row (gwsOAuthLifecycle.ts, #983); the block lives in canonicalGwsLifecycle.ts.

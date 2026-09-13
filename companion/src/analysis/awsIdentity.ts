@@ -65,6 +65,16 @@ export interface AwsIdentity {
   invokedBy: string;
   /** `userIdentity.invokedByDelegate.accountId` — an external provider acting with delegated permissions. */
   delegateAccountId: string;
+  /**
+   * `userIdentity.inScopeOf` — the workload the credentials were issued to (a Lambda function, an
+   * ECS task): issuerType, credentialsIssuedTo, sourceArn, sourceAccount. Null when absent.
+   */
+  inScopeOf: {
+    issuerType: string;
+    credentialsIssuedTo: string;
+    sourceArn: string;
+    sourceAccount: string;
+  } | null;
   identityProvider: string;
   accounts: { caller: string; recipient: string; crossAccount: boolean };
   /** "IMDSv1" | "IMDSv2" | "SAML" | "WebIdentity" | "console" | "" — the protocol the record names. */
@@ -162,6 +172,15 @@ export function readAwsIdentity(rec: Row): AwsIdentity {
   const invokedBy = str(get(ui, "invokedBy"));
   const delegateAccountId = str(path(ui, ["invokedByDelegate", "accountId"]));
   const identityProvider = str(get(ui, "identityProvider"));
+  const scopeRaw = get(ui, "inScopeOf");
+  const inScopeOf = isObject(scopeRaw)
+    ? {
+        issuerType: str(get(scopeRaw, "issuerType")),
+        credentialsIssuedTo: str(get(scopeRaw, "credentialsIssuedTo")),
+        sourceArn: str(get(scopeRaw, "sourceArn")),
+        sourceAccount: str(get(scopeRaw, "sourceAccount")),
+      }
+    : null;
   const credentialIdentity =
     accessKeyId ||
     credentialId ||
@@ -212,6 +231,9 @@ export function readAwsIdentity(rec: Row): AwsIdentity {
     federatedProvider ? `federated via ${bounded(federatedProvider)}` : "",
     identityProvider ? `provider ${bounded(identityProvider)}` : "",
     invokedBy ? `request made by AWS service ${bounded(invokedBy, 60)}` : "",
+    inScopeOf?.issuerType
+      ? `credentials issued to ${bounded(inScopeOf.issuerType, 40)}${inScopeOf.credentialsIssuedTo ? ` ${bounded(inScopeOf.credentialsIssuedTo, 60)}` : ""}`
+      : "",
     issuer && issuer.arn ? `issuer ${issuer.type || "unknown"} ${bounded(issuer.arn)}` : "",
   ];
   return {
@@ -226,6 +248,7 @@ export function readAwsIdentity(rec: Row): AwsIdentity {
     assumedRoot,
     invokedBy,
     delegateAccountId,
+    inScopeOf,
     identityProvider,
     accounts: { caller, recipient, crossAccount: !!caller && !!recipient && caller !== recipient },
     protocol,
