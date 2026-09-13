@@ -33,6 +33,7 @@ export interface QuarantineTime {
 const COCOA_EPOCH_OFFSET = 978307200;
 const NATIVE_TIME_HEADER = /^lsquarantinetimestamp$/i;
 const NUMERIC = /^-?\d+(?:\.\d+)?$/;
+const ISO_8601 = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/;
 const DESCRIPTION_MAX = 600;
 const URL_SHOWN_MAX = 200;
 const TEXT_SHOWN_MAX = 80;
@@ -55,8 +56,11 @@ export function readQuarantineTime(
   const text = raw.trim();
   if (!text) return { iso: "", encoding: "unreadable" };
   if (!NUMERIC.test(text)) {
+    // ISO-8601 with an explicit offset or Z, and nothing else: "May 7, 2026 @ 16:31" carries no
+    // zone and no declared representation, so it establishes no instant.
+    if (!ISO_8601.test(text)) return { iso: "", encoding: "unreadable" };
     const iso = normalizeTime(text);
-    return iso && !Number.isNaN(Date.parse(iso)) && /\d{4}-\d{2}-\d{2}/.test(iso)
+    return iso && !Number.isNaN(Date.parse(iso))
       ? { iso, encoding: "iso" }
       : { iso: "", encoding: "unreadable" };
   }
@@ -253,7 +257,9 @@ export function quarantineOverlay(
     originTitle,
     senderName,
     senderAddress,
-    when.iso || `t?:${time.value}`,
+    // The instant AND its representation: a Cocoa row and an ISO row of one instant are two
+    // records with different evidence, not one.
+    `${when.encoding}:${when.iso || `t?:${time.value}`}`,
     eventId ? "" : idRaw,
   ]
     .map((f) => `${f.length}:${f}`)

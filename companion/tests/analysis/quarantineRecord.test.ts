@@ -66,6 +66,15 @@ describe("readQuarantineTime — decoded by declared representation, never by ma
       "2026-09-13T00:00:00.000Z",
     );
   });
+  it("a non-ISO date string is unreadable, never asserted as UTC", () => {
+    expect(readQuarantineTime("May 7, 2026 @ 16:31:04.000", "LSQuarantineTimeStamp").encoding).toBe(
+      "unreadable",
+    );
+    expect(readQuarantineTime("2026-05-07T16:31:04", "LSQuarantineTimeStamp").encoding).toBe("unreadable"); // no zone
+    expect(readQuarantineTime("2026-05-07T16:31:04+02:00", "LSQuarantineTimeStamp").iso).toBe(
+      "2026-05-07T14:31:04.000Z",
+    );
+  });
   it("garbage and empty are unreadable", () => {
     expect(readQuarantineTime("yesterday", "LSQuarantineTimeStamp").encoding).toBe("unreadable");
     expect(readQuarantineTime("", "LSQuarantineTimeStamp").encoding).toBe("unreadable");
@@ -204,6 +213,28 @@ describe("quarantineOverlay — what one record establishes", () => {
     // case folds
     expect(overlay(row({ LSQuarantineEventIdentifier: UUID.toLowerCase() })).aggKey).toBe(a.aggKey);
   });
+  it("one instant under two representations is two records", () => {
+    const cocoa = overlay(row());
+    const iso = overlay(row({ LSQuarantineTimeStamp: "2023-09-14T16:53:20.500Z" }));
+    expect(cocoa.timestamp).toBe(iso.timestamp);
+    expect(cocoa.aggKey).not.toBe(iso.aggKey);
+  });
+  it("a record with no URL is still a row: an email attachment", () => {
+    const o = overlay(
+      row({
+        LSQuarantineDataURLString: "",
+        LSQuarantineOriginURLString: "",
+        LSQuarantineOriginTitle: "",
+        LSQuarantineTypeNumber: "2",
+        LSQuarantineAgentName: "Mail",
+        LSQuarantineSenderName: "Mallory",
+      }),
+    );
+    expect(o.description).toContain(
+      "[kind: email attachment] [agent: Mail (com.apple.Safari)] [sender: Mallory]",
+    );
+    expect(o.iocs).toEqual([]);
+  });
   it("an unreadable time yields no timestamp claim and keeps the raw text", () => {
     const o = overlay(row({ LSQuarantineTimeStamp: "yesterday" }));
     expect(o.timestamp).toBe("");
@@ -269,6 +300,34 @@ describe("through parseMacos and correlateEvents", () => {
         sources: e.sources ?? ["macOS Quarantine"],
       })),
     );
+
+  it("an alias-only converted dump is routed as quarantine, and a URL-less native row is kept", () => {
+    const alias = {
+      event_id: UUID,
+      timestamp: "2023-09-14T16:53:20.500Z",
+      agent: "Safari",
+      data_url: "https://cdn.example.invalid/a",
+      origin_url: "https://lure.example.invalid/",
+      type: "0",
+    };
+    for (const input of [JSON.stringify([alias]), csv([alias])]) {
+      const r = parseMacos(input);
+      expect(r.format).toBe("macos-quarantine");
+      expect(r.events[0].description).toContain("[kind: web download]");
+      expect(r.iocs.map((i) => i.value)).toContain("cdn.example.invalid");
+    }
+    const mail = parseMacos(
+      csv([
+        row({
+          LSQuarantineDataURLString: "",
+          LSQuarantineOriginURLString: "",
+          LSQuarantineTypeNumber: "2",
+          LSQuarantineAgentName: "Mail",
+        }),
+      ]),
+    );
+    expect(mail.events).toHaveLength(1);
+  });
 
   it("a raw Cocoa dump parses to the right date; a json dump is routed too", () => {
     const r = parseMacos(csv([row()]));

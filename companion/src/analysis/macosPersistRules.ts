@@ -26,6 +26,7 @@
 import type { Severity } from "./stateTypes.js";
 import type { CollectedFile } from "./linuxPersistence.js";
 import { readQuarantineXattr, type QuarantineXattr } from "./quarantineRecord.js";
+import { breakHashRuns, showToken } from "./recordIdentity.js";
 import { judgePayload, homeAccount, type LinuxContext, type LinuxSignal } from "./linuxPersistRules.js";
 import {
   isBinaryPlist,
@@ -96,6 +97,8 @@ export interface MacFileFacts {
   quarantineUrl?: string;
   /** The raw `com.apple.quarantine` value, decoded per its documented form (quarantineRecord.ts). */
   quarantineMark?: QuarantineXattr;
+  /** A `# quarantine:` value that is neither a decodable mark nor a URL — shown as text. */
+  quarantineRaw?: string;
 }
 
 export interface MacContext extends LinuxContext {
@@ -113,12 +116,19 @@ function factsFor(file: CollectedFile): MacFileFacts | undefined {
   // `# quarantine:` carries either the raw xattr value (`0083;5f3a1b2c;Safari;<uuid>` — decoded by
   // its documented form, the time as Unix hex seconds) or, from an older collection, a bare URL.
   const mark = extra.quarantine ? readQuarantineXattr(extra.quarantine) : null;
-  const quarantineUrl = mark ? undefined : extra.quarantine;
-  if (!signing && !quarantineUrl && !mark) return undefined;
+  // Legacy only when it IS a URL; a value that is neither a decodable mark nor a URL is kept as
+  // text and said to be undecodable — never "downloaded from <garbage>".
+  const quarantineUrl =
+    !mark && extra.quarantine && /^[a-z][a-z0-9+.-]*:\/\//i.test(extra.quarantine)
+      ? extra.quarantine
+      : undefined;
+  const quarantineRaw = !mark && !quarantineUrl ? extra.quarantine : undefined;
+  if (!signing && !quarantineUrl && !mark && !quarantineRaw) return undefined;
   return {
     ...(signing ? { signing } : {}),
     ...(quarantineUrl ? { quarantineUrl } : {}),
     ...(mark ? { quarantineMark: mark } : {}),
+    ...(quarantineRaw ? { quarantineRaw } : {}),
   };
 }
 
@@ -344,7 +354,7 @@ export function gradeLaunchd(file: CollectedFile, ctx: MacContext = {}): LinuxSi
   // file's own `extra` is read first. ctx.facts stays as the route for a collection that recorded
   // signing or quarantine somewhere else, such as a separate xattr listing, keyed by the program.
   const facts: MacFileFacts | undefined = factsFor(file) ?? ctx.facts?.[job.program];
-  if (facts?.quarantineUrl || facts?.quarantineMark) {
+  if (facts?.quarantineUrl || facts?.quarantineMark || facts?.quarantineRaw) {
     // The strongest corroboration available: this exact binary carries macOS's own record of having
     // been downloaded. It raises, because "installed by a package" and "downloaded and then set to
     // run at every login" are different stories. The mark says what the xattr says — flags, the
@@ -352,7 +362,9 @@ export function gradeLaunchd(file: CollectedFile, ctx: MacContext = {}): LinuxSi
     // does not carry (that is the database record's, joined by the event id).
     reason += facts.quarantineMark
       ? ` The program carries a quarantine record [${facts.quarantineMark.words}].`
-      : ` The program carries a quarantine record: it was downloaded from ${clip(facts.quarantineUrl ?? "")}.`;
+      : facts.quarantineRaw
+        ? ` The program carries a quarantine record [quarantine mark (not decodable): ${clip(breakHashRuns(showToken(facts.quarantineRaw)))}].`
+        : ` The program carries a quarantine record: it was downloaded from ${clip(facts.quarantineUrl ?? "")}.`;
     if (RANK[severity] < RANK.High) severity = "High";
   }
   if (facts?.signing === "unsigned" || facts?.signing === "adhoc") {

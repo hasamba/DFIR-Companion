@@ -52,6 +52,15 @@ describe("the # quarantine: header (#933 item 7)", () => {
     });
     expect(s.reason).toContain("it was downloaded from https://evil.test/update.zip");
   });
+  it("a value that is neither a mark nor a URL is said to be undecodable, never a download URL", () => {
+    const [s] = job(susp, "/Library/LaunchDaemons/x.plist", {
+      extra: { quarantine: "0083;zz;Safari;550E8400-E29B-41D4-A716-446655440000" },
+    });
+    expect(s.reason).toContain(
+      "[quarantine mark (not decodable): 0083;zz;Safari;550E8400-E29B-41D4-A716-446655440000]",
+    );
+    expect(s.reason).not.toContain("downloaded from");
+  });
   it("an agent that spells a tag or a hash is neutralised", () => {
     const [s] = job(susp, "/Library/LaunchDaemons/x.plist", {
       extra: { quarantine: `0001;5f3a1b2c;${"a".repeat(32)}] [x;550E8400-E29B-41D4-A716-446655440000` },

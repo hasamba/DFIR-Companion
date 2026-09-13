@@ -113,14 +113,9 @@ function mapUnifiedLog(rec: Row): MappedEvent | null {
 // kind, the agent, the RESOURCE and the ORIGIN as distinct URLs, the time by its declared encoding,
 // the event identifier — and never the local file, which this record does not name.
 function mapQuarantine(rec: Row, sink: Map<string, SiemIoc>, opts: MacosImportOptions): QuarantineRow | null {
-  const hasAny = [
-    "LSQuarantineDataURLString",
-    "data_url",
-    "url",
-    "LSQuarantineOriginURLString",
-    "origin_url",
-    "referrer",
-  ].some((k) => text(getCI(rec, k)).trim() !== "");
+  // Once the file is a quarantine dump every record with ANY quarantine fact is a row — an email
+  // attachment carries no URL and is still a download event.
+  const hasAny = Object.entries(rec).some(([k, v]) => k.trim() !== "" && text(v).trim() !== "");
   return hasAny
     ? quarantineOverlay(rec, sink, {
         ...(opts.quarantineTime ? { quarantineTime: opts.quarantineTime } : {}),
@@ -128,8 +123,14 @@ function mapQuarantine(rec: Row, sink: Map<string, SiemIoc>, opts: MacosImportOp
     : null;
 }
 
+// A quarantine dump names itself by its native columns, or — a converted export — by a coherent
+// set of the aliases the reader accepts (a data url with an event id, an agent or an origin).
+const QUARANTINE_ALIASES = ["data_url", "origin_url", "event_id", "referrer", "agent"];
 function looksLikeQuarantine(headers: readonly string[]): boolean {
-  return headers.some((h) => /lsquarantine/i.test(h));
+  const h = headers.map((x) => x.trim().toLowerCase());
+  if (h.some((x) => /lsquarantine/i.test(x))) return true;
+  const hits = QUARANTINE_ALIASES.filter((k) => h.includes(k));
+  return hits.length >= 2 && (h.includes("data_url") || h.includes("origin_url"));
 }
 
 export function parseMacos(input: string, opts: MacosImportOptions = {}): MacosParseResult {
