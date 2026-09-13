@@ -116,11 +116,15 @@ under the plist's header:
 ==> /Library/LaunchDaemons/com.example.plist <==
 # mtime: 2026-01-02T09:00:00Z
 # codesign: unsigned
-# quarantine: https://example.test/update.zip
+# quarantine: 0083;5f3a1b2c;Safari;550E8400-E29B-41D4-A716-446655440000
 ```
 
 `codesign -dv --verbose=2 <program>` gives the first; `xattr -p com.apple.quarantine <program>` gives
-the second.
+the second — paste its value verbatim. The Companion decodes it by its documented form: the flags
+(`download`, `sandbox`, `hard`, `user-approved` — any other bit shown as hex), the time it was
+marked (a Unix epoch in hex — not the database's Cocoa epoch), the agent, and the event identifier
+that joins the file to its row in the quarantine database. An older collection that put a bare URL
+here is still read as before.
 
 **Neither one is a finding on its own, by design.** Homebrew formulas, internal builds and much
 commercial software are unsigned, and almost every Mac application installs a LaunchAgent. Signing
@@ -232,6 +236,217 @@ A scanner run is bounded: after 64 distinct payloads on one path, the rest fold 
 `[overflow: …]` row per path that names every family seen. A field longer than 64 KiB is not
 inspected at all — the row says `oversized@target (N chars, not inspected)` instead of silently
 scanning a prefix — and a decoded control character is shown as `\x00`, never written as the byte.
+### Web access logs: what one line establishes
+
+A combined-format line (Apache, nginx, Squid) carries more than the request and the status, and the
+importer used to drop it: everything a deployment appends after the User-Agent — Squid's result and
+hierarchy codes, a request time, a vhost, an `X-Forwarded-For` header — was parsed past. A cache
+**hit** therefore read exactly like a **miss**, a `CONNECT` tunnel read like a request for a URL,
+and a 302 read like a 200 with a small body. Each line now says what its own fields establish:
+
+- **The request target's form**, as HTTP defines it, never the deployment's role: an
+  `[absolute-form request target]` (a full URL — usually a proxy, but an origin server must accept
+  one too), `[tunnel attempt to vault.example.invalid:443 — the requests inside are not in this
+  record]` for a `CONNECT`, `[asterisk-form request (server-wide)]`, `[invalid request target]`. An
+  ordinary path adds nothing, so those rows read as before.
+- **The proxy's two legs**, when the FILE is a Squid log: the result code says what the proxy did
+  for its client, the hierarchy code says what the next hop was — `[proxy: served from its cache;
+  upstream: not contacted]`, `[proxy: cache miss; fetched upstream; upstream: fetched from the
+  origin (direct)]`, `[proxy: revalidated upstream and served its cached copy]`, `[proxy:
+  revalidation failed; served the stale cached copy]`, `[proxy: denied the request]`. "The origin"
+  is said only where the hierarchy code names a direct fetch — a fetch through a parent or a
+  sibling proxy says so instead. **A cache hit is not a new transfer from the server.**
+- **Whose format it is, declared — never read off the lines.** A token that looks like a Squid
+  code proves nothing on its own: an Apache `LogFormat` can append a request header, and the
+  client writes that header. No count of lines or of clients turns the client's text into the
+  server's format — twenty unanimous Squid-shaped lines from two addresses are still twenty
+  requests. The Squid slot is read only under a **declared** trailer layout (the import option
+  `trailerProfile`; the import screen does not expose it yet), and the row then says
+  `(squid_combined, declared format)`. Even then a line's value must be a result code **and** a
+  hierarchy code the tables name (`squid_combined` always writes both, so a bare `TCP_MISS` is not
+  the field). Without a declaration every appended token is shown as `[trailer: …]` — verbatim,
+  unlabelled, never an indicator, and never the client's identity — and a hit and a miss still
+  stay two rows, because the trailer's text is part of the row's identity.
+  A line whose slot holds something the tables do not name (`TCP_FOO:BAR`, or a known result with
+  an unrecognised hierarchy such as `TCP_MISS:NONCE_7`) keeps that value as one of those tokens
+  rather than reading as a disposition: uninterpretable text must not become a claim, and it must
+  not become an unbounded key either;
+  its brackets and control characters are neutralised, so a token cannot forge a tag the reader
+  trusts — and so are the request target, the Referer, the User-Agent and the auth user, which the
+  client writes too. **An address named only in a Referer is no indicator**: the client claimed it,
+  nothing observed it; a named Referer host stays a domain indicator as before.
+- **A row that does not show its whole record says so.** When anything shown was clipped or
+  neutralised — a long trailer, an attack excerpt, a bracket turned into a parenthesis, a line
+  rebuilt past 600 characters — the description ends in an identity mark (`#` and 22 characters of a digest
+  of the row's full key). Two records that read alike then stay two rows through import; the
+  Companion's re-import check treats one time, one text and one host as one observation. A line
+  shown in full carries no mark. What a `[trailer: …]` tag shows is never read as an
+  artifact by the merge either: a hash or a file path a client appended to its request cannot
+  join that request to an unrelated event that really carries the hash or the file. **A forwarded-for header is not the client**: `srcIp` stays the address the server or
+  proxy actually saw.
+- **What the status and the byte count do not say.** `[redirect — the Location is not in this
+  format]` for 301/302/303/307/308; `[not modified — no body]` for 304 (never a redirect);
+  `[no body by definition (HEAD)]`; `[no body for this status]` for 204 and 1xx; and on a `CONNECT`,
+  `[the logged size is the tunnel's, not a response body]` — or, when the proxy did not answer 2xx,
+  `[no tunnel was established; the logged size is the HTTP response's]`. A byte count is the size
+  the server
+  logged — Apache's excludes headers, Squid's includes them, neither is network bytes, and no
+  status proves the client received them. An invalid target mints no destination indicator either:
+  a malformed host never becomes a domain IOC or the key's host field, only the row's own path
+  identity: a bracketed literal must be an address, and a registered name must be real labels with
+  well-formed escapes.
+
+On a row that also carries an attack shape (the decoding above), the attacker-shaped parts give way
+to the record's own facts: the matched excerpts and the shown target shrink so the status's tag and
+the proxy's legs always fit, and every tag closes its own bracket.
+
+Keys: the target's form and the proxy's disposition join the aggregation key, so a hit and a miss
+of one URL are two rows. The appended tokens are
+not part of a row's base identity — an attacker can write them, and a request time would be one
+group per request — but a digest of them is a bounded **variant** of it: a row that shows a
+trailer never folds into a row that does not, and beyond 64 distinct values on one path the rest
+fold into one row that says so. A row that also carries an attack shape is identified by its
+payload instead, so trailer churn cannot crowd out a genuinely different payload; its trailer text
+still shows on the row that survives. A very long request target can never push the status or these
+facts out of the row: past the 600-character clip the row is laid out status-first, and the tags
+are kept whole in evidence order — the proxy's legs, what the status establishes, what the size
+does not, the target's form, and the uninterpreted trailer last.
+
+**What the format cannot hold.** There is no request or session identifier, no HTTP/2 stream id, no
+`Location` header, no content type, and no response body — so which request led to which redirect,
+which response carried which payload, and which file on an endpoint matches a transfer cannot be
+read from one line. That chain (and the proxy-to-workstation link) is a join across records and
+formats, with its own issue.
+
+### macOS quarantine records: what one record establishes
+
+An `LSQuarantineEventsV2` row (CSV or JSON dump) is a **download event**, and the row says only
+what the record establishes:
+
+`macOS quarantine [kind: web download] [agent: Safari (com.apple.Safari)] [data url: https://…]
+[origin: https://… ("page title")] [sender: name <address>] [time: Cocoa seconds (column LSQuarantineTimeStamp)] [event: <uuid>]
+[local file: not in this record — joined by the event identifier]`
+
+- **The kind** is Apple's `LSQuarantineTypeNumber` (web download, other download, email
+  attachment, message attachment, calendar attachment, other attachment); a number the table does
+  not name is shown as such.
+- **Two URLs, two facts.** The data URL is the *resource* the agent fetched; the origin is the
+  *referring page* (the lure, on a phishing question). The URL's last path segment is never called
+  the file: the database keeps no local path. The file is joined through the event identifier —
+  the same UUID sits in the file's `com.apple.quarantine` attribute — and that join is a separate
+  design. A row therefore never says the file ran or was malicious; every row is Info.
+- **Time by its declared form, never by its size.** The native `LSQuarantineTimeStamp` column is
+  Cocoa seconds (since 2001) and is decoded as such; an ISO string is ISO. A converted dump names
+  its epoch in the column: `unix_time` (or `epoch`) is Unix seconds, `unix_ms` (or `epoch_ms`) is
+  Unix milliseconds. A number under a generic header (`timestamp`, `time`) could be either an
+  aliased native column or a converted one, so it establishes no time; the row then says
+  `[time: not readable — the column names no epoch …]` and keeps the raw value. The encoding used
+  is always named on the row.
+- **Indicators.** The data URL and its host (an address is an `ip`, a name a `domain`) when the
+  scheme is http(s) or ftp; the origin URL and its host only when http(s) — a `mailto:` origin or
+  a `file:` data URL mints nothing. A sender name or address is never an indicator.
+- **Identity.** Each event identifier is its own row; a re-dump of the same record folds; two
+  records that share an identifier but disagree on a fact stay two rows and both say `[event
+  identifier shared by records with different facts]`. An identifier that is not a UUID is shown
+  as text and is never used to join.
+- **The xattr.** When a persistence collection pastes the raw `com.apple.quarantine` value under a
+  plist header, the finding says `[quarantine mark: download, sandbox (+0x0080); agent Safari;
+  marked 2020-08-17T05:52:44.000Z (Unix hex); event …]` — the flags per Apple's SPI, the time in
+  the attribute's own Unix-hex form, the agent, the event id. The attribute carries no URL. The
+  finding is raised only when the flags say `download` (or a legacy collection pasted the URL);
+  a sandbox-only mark, or one that cannot be decoded, is shown and raises nothing.
+- **The origin alias.** `LSQuarantineOriginAlias` is bookmark data: it is part of the row's
+  identity (two dumps that differ only in it are two rows) and is never shown.
+
+### TLS records: what one record establishes
+
+Zeek `ssl.log` and `x509.log` and Suricata `tls` records are folded into rows the way `conn`
+folds into flows — one row per observed relationship, one per certificate — and each row says only
+what its records say:
+
+- **A session row** reads `TLS <client> → <server>:<port> [sni: …] [TLSv13, cipher …] [cert:
+  subject …; issuer …; fp …] [chain check: ok] [ja3 …] [ja3s …] — N TLS records`. Every fact shown
+  is part of the row's identity: a TLS 1.3 session that established and a TLS 1.2 attempt that did
+  not, a different certificate, a different chain-check result, a different sensor — each is its
+  own row. A record with no SNI says `[no SNI]`; one the sensor saw fail says `[not established]`;
+  a resumed session says `[session resumed]` and, when the sensor saw no certificate, `[no
+  server certificate observed in this record]`; a client certificate, when Zeek saw one, is shown
+  apart as `[client cert: …]`; a session whose TLS client was the connection's responder (Zeek's
+  `^` in `ssl_history`) is attributed the right way round and says so.
+- **What the words mean.** The SNI is the name the *client* asked for — a claim, like a DNS query,
+  and the row's only indicator. The certificate is what the *server* presented. `chain check` is
+  the sensor's own verdict on the chain (`ok`, `self signed certificate`, …) — it is not
+  "benign". JA3 and JA3S are TLS library signatures, not identities. Nothing on a row says
+  malicious, C2, "the same operator", or "an inspection proxy": an issuer is shown as written, and
+  what it means is the analyst's call.
+- **A certificate row** — one per certificate identity — reads `[certificate: <fingerprint or cert
+  identity>; subject …; issuer …; valid …–…; covers N names: a, b, c (+n more)] — N certificate
+  records`. A certificate's identity is a source-given fingerprint (Suricata `tls.fingerprint`, Zeek
+  builds that write one, a leaf's DER bytes hashed here), or else its issuer and serial — the pair
+  that names one certificate under one CA — spelled `certid-v1:…` and never called a fingerprint.
+  A certificate with no serial and no fingerprint (a standard Zeek `ssl` row) has **no** identity:
+  its subject and issuer are attributes of the session, and a renewed certificate with the same
+  names is the same session shape. The attributes a certificate row shows are its first
+  observation's; the row is marked (`#…`) to say so.
+- **Names on a certificate are not contacts.** A certificate covering `www.example.net` does not
+  establish that anyone asked for it, so SAN names and the subject CN are never domain indicators
+  (they used to be — a CDN certificate minted a hundred). They stay on the certificate's row for
+  the analyst and for the graph. A fingerprint is never an indicator either — no indicator type
+  means "certificate", and `hash` means a file — and it is shown as its ends (`fp abcdef01…ef01`)
+  so the merge never reads it as one.
+- **Every row is Info** and carries no technique: a handshake proves nothing on its own. Rows are
+  kept most-seen-first under the import's event budget, so a scanner's one-off names cannot crowd
+  out the persistent relationships.
+- **What this does not do.** It does not join a session to its certificate record by Zeek's
+  `cert_chain_fuids`, find clusters, or link fingerprints across sensors and time; that graph is a
+  separate design over un-aggregated records, and every fact it needs is kept in the row's data.
+
+### DNS records: what one record establishes
+
+Sysmon Event 22 and the Windows DNS Client operational log (`Microsoft-Windows-DNS-Client/
+Operational` — 3006 query called, 3008 query completed, 3020 query result) are read for what one
+record establishes, and no more:
+
+- **A query is not a resolution, and a resolution is not a connection.** The row says which
+  process asked for which name, what type of record it asked for when the record says so (`[A
+  query]`; Sysmon does not log the type, so `[type not in this record]`), and what the resolver
+  client reported: `[returned: …]` on success, `[NXDOMAIN — the name does not exist at this
+  resolver]`, `[no records of the queried type]`, `[timed out — no answer]`, `[refused]`, `[server
+  failure]`, or `[status 1234 (not in the table)]` for a code the table does not name — never read
+  as success or failure. A record that carries no status (3006) says `[outcome not in this
+  record]`; a 3006 also says whether the call went to a server at all (`[not a network query]`),
+  because a call is not a transmission — and it does not say the call was answered. A resolved query and a NXDOMAIN of the same name are two rows; a re-query answered
+  with the same set of values is one row with a count and a first/last time — **the count is how
+  many times that answer was seen, not how many values it had, and the row does not keep each
+  observation's time**.
+- **Returned, not answered.** The values are what the resolver *returned* for the query. The record
+  keeps no owner name and no section for them, so an address returned beside the answers (an
+  ADDITIONAL-section record, an unrelated AAAA on an A query) reads exactly like an answer. The row
+  therefore never says "resolves to", and a returned address is **never an indicator** — nothing in
+  the record observed a connection to it. A queried name is a domain indicator even when it never
+  resolved (a name that fails is still the lead), but only when it is a real name with at least one dot (`wpad` is a valid query and not an
+  indicator): a query name
+  that is not one (`good.example] [returned: …`, a path) is shown neutralised, marked `[query name
+  is not a valid name]`, and mints nothing.
+- **Whose view it is.** These records are the endpoint's own stub resolver's view: the answer is
+  whatever the host's configured resolver returned — from its cache or not, the record does not
+  say — and the record does not name the resolver or say whether it forwarded. A network sensor's
+  `dns.log` is a different view (its client may be a forwarding resolver, not the endpoint), and a
+  resolver's own log is a third; neither is read as events today. TTLs are not in these records.
+- **What the merge does not read.** The queried name and the returned values are shown inside
+  `[query: …]` and `[returned: …]` tags that the merge never scans for a file hash or a path, so a
+  TXT answer of 32 hex characters or a path-shaped name cannot join the query to an unrelated file
+  event. A row whose shown text is not its whole record — more than eight returned values, a long
+  value, a neutralised character — ends in an identity mark (`#…`) so two records that read alike
+  stay two rows through import.
+- **Churn is bounded.** An authority can answer one query with a new value every time. The first
+  64 distinct returned-value sets for one query (on one host, from one process, with one status)
+  stay separate rows; every later distinct set folds into one row that says `[overflow: distinct
+  returned-value sets beyond 64 for this query folded; none shown]` — so a churning answer can
+  never crowd unrelated evidence out of the import's event budget.
+- **What this does not do.** It does not join a query to a later connection, bound by a TTL or a
+  window; that is a separate, cross-record design over un-aggregated records.
+
 ### Mobile evidence with no clock (iLEAPP / ALEAPP)
 
 Most of what a phone examination is for has no timestamp: the installed-apps list, permissions,

@@ -1,9 +1,16 @@
 import type { Severity } from "./stateTypes.js";
 import { parseCsv } from "./csvImport.js";
 import {
+  NATIVE_COLUMN_RE,
+  RepeatedColumn,
+  boundQuarantineVariants,
+  quarantineOverlay,
+  type QuarantineRow,
+} from "./quarantineRecord.js";
+import {
   extractRecords,
   aggregateEvents,
-  addIoc,
+  mergeRowIocs,
   oneLine,
   isObject,
   getCI,
@@ -72,14 +79,6 @@ function baseName(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
-function hostOf(url: string): string {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return "";
-  }
-}
-
 function mapUnifiedLog(rec: Row): MappedEvent | null {
   const timestamp = pick(rec, ["timestamp", "time"]);
   if (!timestamp) return null;
@@ -110,45 +109,34 @@ function mapUnifiedLog(rec: Row): MappedEvent | null {
   };
 }
 
-function mapQuarantine(rec: Row, sink: Map<string, SiemIoc>): MappedEvent | null {
-  const timestamp = pick(rec, ["LSQuarantineTimeStamp", "timestamp", "time"]);
-  const dataUrl = pick(rec, ["LSQuarantineDataURLString", "data_url", "url"]);
-  const originUrl = pick(rec, ["LSQuarantineOriginURLString", "origin_url", "referrer"]);
-  if (!timestamp || (!dataUrl && !originUrl)) return null;
-
-  const agent = pick(rec, ["LSQuarantineAgentName", "agent"]);
-  const sender = pick(rec, ["LSQuarantineSenderName", "sender"]);
-
-  // Both URLs matter and they are different facts: the data URL is where the file came from, the
-  // origin URL is the page that led there — the lure, on a phishing question.
-  for (const url of [dataUrl, originUrl]) {
-    if (!url) continue;
-    addIoc(sink, "url", url.slice(0, 500));
-    const host = hostOf(url);
-    if (host) addIoc(sink, "domain", host);
-  }
-
-  const file = dataUrl ? baseName(dataUrl.split("?")[0] ?? dataUrl) : "";
-  let description = "macOS quarantine";
-  if (agent) description += ` via ${agent}`;
-  if (file) description += `: ${oneLine(file).slice(0, 160)}`;
-  if (dataUrl) description += ` from ${oneLine(dataUrl).slice(0, 200)}`;
-  if (originUrl && originUrl !== dataUrl) description += ` (referred by ${oneLine(originUrl).slice(0, 160)})`;
-  if (sender) description += ` [sender: ${oneLine(sender).slice(0, 80)}]`;
-  description = description.slice(0, 600);
-
-  return {
-    timestamp: normalizeTime(timestamp),
-    description,
-    severity: "Info", // provenance, not a verdict
-    mitre: [],
-    aggKey: `macos-quarantine|${agent}|${hostOf(dataUrl)}`.toLowerCase().slice(0, 400),
-    sources: ["macOS Quarantine"],
-  };
+// One LSQuarantineEventsV2 record → what it establishes (quarantineRecord.ts, #933 item 7): the
+// kind, the agent, the RESOURCE and the ORIGIN as distinct URLs, the time by the encoding its column declares,
+// the event identifier — and never the local file, which this record does not name.
+function mapQuarantine(rec: Row, sink: Map<string, SiemIoc>): QuarantineRow | null {
+  return quarantineOverlay(rec, sink, { deferIocs: true });
 }
 
-function looksLikeQuarantine(headers: readonly string[]): boolean {
-  return headers.some((h) => /lsquarantine/i.test(h));
+// A quarantine RECORD names itself by its values, never by its header alone: a native
+// `LSQuarantine*` field that is filled (an email attachment carries no URL and is still a download
+// event), or — a converted export with no native column — a coherent set of filled aliases: the
+// resource (`data_url`/`url`) plus one independent quarantine signal. Aliases by DIMENSION:
+// `origin_url` and `referrer` are one dimension, so two synonyms never count as two signals. A row
+// whose native columns are all empty is not a download record, whatever its generic columns hold.
+const RESOURCE_ALIASES = ["data_url", "url"];
+const SIGNAL_DIMENSIONS = [["event_id"], ["agent"], ["origin_url", "referrer"]];
+// Only the native columns the reader knows — `LSQuarantineError` is not one, whatever its prefix.
+const NATIVE_RE = NATIVE_COLUMN_RE;
+function isQuarantineRecord(rec: Row, headers: readonly string[]): boolean {
+  // A repeated header is filled when any of its values is.
+  const hasValue = (v: unknown) =>
+    v instanceof RepeatedColumn ? v.values.some((x) => x.trim() !== "") : text(v).trim() !== "";
+  const filled = (k: string) =>
+    Object.entries(rec).some(([h, v]) => h.trim().toLowerCase() === k && hasValue(v));
+  if (headers.some((h) => NATIVE_RE.test(h.trim())))
+    return Object.entries(rec).some(([h, v]) => NATIVE_RE.test(h.trim()) && hasValue(v));
+  const resource = RESOURCE_ALIASES.some(filled);
+  const signals = SIGNAL_DIMENSIONS.filter((dim) => dim.some(filled)).length;
+  return resource && signals >= 1;
 }
 
 export function parseMacos(input: string, opts: MacosImportOptions = {}): MacosParseResult {
@@ -171,36 +159,66 @@ export function parseMacos(input: string, opts: MacosImportOptions = {}): MacosP
   let total = 0;
   let format = "empty";
 
+  const quarantineRows: QuarantineRow[] = [];
   if (trimmed[0] === "[" || trimmed[0] === "{") {
     const records = extractRecords(trimmed).records.filter(isObject) as Row[];
     total = records.length;
+    // A JSON dump of the quarantine database is a quarantine file too — record by record: a
+    // unified-log record in the same array is never a download event.
+    let quarantine = false;
     for (const rec of records) {
-      const event = mapUnifiedLog(rec);
+      const isQuarantine = isQuarantineRecord(rec, Object.keys(rec));
+      quarantine ||= isQuarantine;
+      const event = isQuarantine ? mapQuarantine(rec, iocSink) : mapUnifiedLog(rec);
       if (event) mapped.push(event);
+      if (event && isQuarantine) quarantineRows.push(event as QuarantineRow);
     }
-    format = "macos-unified-log";
+    format = quarantine ? "macos-quarantine" : "macos-unified-log";
   } else {
     const { headers, rows } = parseCsv(trimmed);
     if (!headers.length) return empty;
-    const quarantine = looksLikeQuarantine(headers);
     const objects = rows.map((cols) => {
       const r: Row = {};
+      // A header the file repeats keeps every value (a RepeatedColumn) — the quarantine reader
+      // treats a repeated time column as two time columns, never as the last one.
       headers.forEach((h, i) => {
-        r[h.trim()] = cols[i] ?? "";
+        const k = h.trim();
+        const v = cols[i] ?? "";
+        const prev = r[k];
+        r[k] = !(k in r)
+          ? v
+          : new RepeatedColumn([...(prev instanceof RepeatedColumn ? prev.values : [String(prev)]), v]);
       });
       return r;
     });
     total = objects.length;
+    // Row by row, like JSON: a row of a quarantine dump whose native columns are empty is not a
+    // download record — it is read as telemetry or dropped, and mints nothing.
+    let quarantine = false;
     for (const rec of objects) {
-      const event = quarantine ? mapQuarantine(rec, iocSink) : mapUnifiedLog(rec);
+      const isQuarantine = isQuarantineRecord(rec, headers);
+      quarantine ||= isQuarantine;
+      const event = isQuarantine ? mapQuarantine(rec, iocSink) : mapUnifiedLog(rec);
       if (event) mapped.push(event);
+      if (event && isQuarantine) quarantineRows.push(event as QuarantineRow);
     }
     format = quarantine ? "macos-quarantine" : "macos-unified-log";
   }
 
   if (total === 0) return empty;
+  // A UUID that names two different fact sets is said on both rows; past a budget of fact sets
+  // per UUID the rest fold into one overflow row (quarantineRecord.ts).
+  const bounded = boundQuarantineVariants(quarantineRows);
+  // The excess variants leave `mapped` too, so the bound holds with aggregation off; indicators come
+  // only from the rows that survived, linked to their rows.
+  const dropped = new Set(quarantineRows.filter((r) => !bounded.includes(r)));
+  const kept = mapped.filter((m) => !dropped.has(m as QuarantineRow));
+  for (const r of bounded) {
+    const rowSink = new Map<string, SiemIoc>(r.iocs.map((i) => [`${i.type}:${i.value.toLowerCase()}`, i]));
+    mergeRowIocs(iocSink, rowSink, r.aggKey);
+  }
 
-  const { events, groups } = aggregateEvents(mapped, {
+  const { events, groups } = aggregateEvents(kept, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? maxEventsDefault(),

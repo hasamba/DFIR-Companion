@@ -218,11 +218,77 @@ describe("parseNetworkLogs — Zeek per-stream JSON (no _path)", () => {
     expect(r.iocs.some((i) => i.type === "file" && i.value === "x.exe")).toBe(true);
   });
 
-  it("extracts cert SAN DNS names from x509 (san.dns array)", () => {
-    const r = parseNetworkLogs(JSON.stringify(x509), { filename: "x509.json" });
-    const domains = r.iocs.filter((i) => i.type === "domain").map((i) => i.value);
-    expect(domains).toContain("cert.bad.test");
-    expect(domains).toContain("alt.bad.test");
+  it("a field-filtered ssl record with no _path is a TLS row, never a zero-byte flow", () => {
+    const filtered = {
+      ts: 1512115204,
+      uid: "C9",
+      "id.orig_h": "10.0.0.5",
+      "id.resp_h": "10.0.0.9",
+      "id.resp_p": 443,
+      version: "TLSv12",
+      established: true,
+      cert_chain_fuids: ["F1"],
+    };
+    const r = parseNetworkLogs(JSON.stringify(filtered));
+    expect(r.events.some((e) => e.description.startsWith("Flow:"))).toBe(false);
+    expect(r.events.some((e) => e.description.startsWith("TLS "))).toBe(true);
+    // each ssl.log field alone, beside the connection tuple, is still an ssl record
+    for (const only of [
+      { subject: "CN=leaf" },
+      { issuer: "CN=CA" },
+      { curve: "x25519" },
+      { ja3: "e7d705a3286e19ea42f587b344ee6865" },
+      { resumed: true },
+      { validation_status: "ok" },
+      { client_subject: "CN=user" },
+      { client_issuer: "CN=CA" },
+      { client_cert_chain_fps: ["ab"] },
+    ]) {
+      const one = parseNetworkLogs(
+        JSON.stringify({
+          ts: 1512115204,
+          uid: "C9",
+          "id.orig_h": "10.0.0.5",
+          "id.resp_h": "10.0.0.9",
+          "id.resp_p": 443,
+          ...only,
+        }),
+      );
+      expect(
+        one.events.some((e) => e.description.startsWith("Flow:")),
+        JSON.stringify(only),
+      ).toBe(false);
+      expect(
+        one.events.some((e) => e.description.startsWith("TLS ")),
+        JSON.stringify(only),
+      ).toBe(true);
+    }
+  });
+
+  it("a nested x509 record with no _path is a certificate, never a zero-byte flow", () => {
+    const nested = {
+      ts: 1512115204,
+      id: "F1",
+      certificate: { serial: "01", issuer: "CN=CA", subject: "CN=leaf" },
+      san: { dns: ["leaf.example"] },
+    };
+    const r = parseNetworkLogs(JSON.stringify(nested));
+    expect(r.events.some((e) => e.description.startsWith("Flow:"))).toBe(false);
+    expect(r.events.some((e) => e.description.startsWith("[certificate:"))).toBe(true);
+    // a record with no stream fields at all is unknown, not a flow either
+    expect(parseNetworkLogs(JSON.stringify({ ts: 1512115204, foo: "bar" })).events).toHaveLength(0);
+  });
+
+  it("keeps x509 SAN names on the certificate's row, never as domain indicators (#933 item 6)", () => {
+    const r = parseNetworkLogs(
+      JSON.stringify({ ...x509, "certificate.serial": "01", "certificate.issuer": "CN=Bad CA" }),
+      { filename: "x509.json" },
+    );
+    // a certificate covering a name is not a contact
+    expect(r.iocs.filter((i) => i.type === "domain")).toHaveLength(0);
+    const row = r.events.find((e) => e.description.startsWith("[certificate:"))!;
+    expect(row.description).toContain("covers 2 names: cert.bad.test, alt.bad.test");
+    expect(row.canonical?.tls?.certificate?.names).toEqual(["cert.bad.test", "alt.bad.test"]);
   });
 
   // conn used to produce NOTHING — no events, no IOCs, no super-timeline rows. On the
