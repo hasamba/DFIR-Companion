@@ -510,15 +510,13 @@ function shapesOf(k: Key): AwsLineageShape[] {
   push(enumerationShape(k));
   for (const kind of ["privileged-change", "remote-execution"] as const)
     for (const h of k.shapes[kind].named) push(h);
-  return out
-    .slice(0, SHAPES_NAMED_MAX)
-    .map((h) => ({
-      kind: h.kind,
-      time: iso(h.time),
-      locator: h.locator,
-      call: h.call,
-      afterSecondSource: after(h.time),
-    }));
+  return out.slice(0, SHAPES_NAMED_MAX).map((h) => ({
+    kind: h.kind,
+    time: iso(h.time),
+    locator: h.locator,
+    call: h.call,
+    afterSecondSource: after(h.time),
+  }));
 }
 
 /** High: a privileged change or remote execution after the first use from a second source; Medium: a shape or a second source; Low: a lineage. Never below the top use row. */
