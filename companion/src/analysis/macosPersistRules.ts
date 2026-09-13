@@ -44,7 +44,7 @@ import {
   type LaunchJob,
   type LaunchScope,
 } from "./macosPersistence.js";
-import { configuredContext, resolveTarget, type ResolvedTarget } from "./macosLaunchTarget.js";
+import { configuredContext, resolveTarget, shown, type ResolvedTarget } from "./macosLaunchTarget.js";
 import { launchctlWords, targetFactWords } from "./macosLaunchFacts.js";
 
 // Directories on macOS that any process can write, and nothing installed should run from.
@@ -233,13 +233,12 @@ export function judgeJob(
     reverseShell: j.reverseShell,
     encoded: j.encoded,
     misleading: misleadingLabel(job, scope),
-    // A LaunchDaemon runs as root at boot. If what it runs lives in a user's home directory, that
-    // user can change what root runs — the same rule the Linux side has had all along, and macOS
-    // had none of it because homeAccount() did not know /Users.
-    rootRunsUserFile:
-      !job.userName && (scope === "system-daemon" || scope === "system-agent")
-        ? (homeAccount(target) ?? "")
-        : "",
+    // A job configured for root (a daemon, or a LoginWindow agent) that names a program in a
+    // user's home directory: that user can change what root runs — the same rule the Linux side
+    // has had all along. "Configured for root" is the context's word (UserName counts only on a
+    // daemon; an agent is that user's), not the scope's name: a system agent was counted as
+    // root-run here while the same finding said "each user at login".
+    rootRunsUserFile: configuredContext(job, scope).root ? (homeAccount(target) ?? "") : "",
   };
 }
 
@@ -267,7 +266,7 @@ function primaryRule(m: MacJudgement): string {
 
 function primaryReason(m: MacJudgement, job: LaunchJob, who: string): string {
   if (m.misleading) {
-    return `This launchd job is labelled "${clip(showToken(job.label))}", which claims to be Apple's, but it is not in /System/Library and the program it is configured to run is not one of Apple's. Apple does not install jobs anywhere else. It is configured to run as ${who}. The label is a string the author chose; it says nothing about what the program is.`;
+    return `This launchd job is labelled "${shown(job.label)}", which claims to be Apple's, but it is not in /System/Library and the program it is configured to run is not one of Apple's. Apple does not install jobs anywhere else. It is configured to run as ${who}. The label is a string the author chose; it says nothing about what the program is.`;
   }
   if (m.reverseShell)
     return `A launchd job configured to run as ${who} names a command that opens an interactive connection back to a remote host.`;
@@ -282,14 +281,14 @@ function primaryReason(m: MacJudgement, job: LaunchJob, who: string): string {
     return `A launchd job configured to run as ${who} names a program in a directory any process can write. Installed software does not live there.`;
   if (m.hiddenPath)
     return `A launchd job configured to run as ${who} names a program, or loads something, in a hidden directory.`;
-  return `A launchd job configured to run as ${who} references a directory any process can write. Check whether that path is what would run or only where output goes — the program itself is ${clip(showToken(job.program))}.`;
+  return `A launchd job configured to run as ${who} references a directory any process can write. Check whether that path is what would run or only where output goes — the program itself is ${shown(job.program)}.`;
 }
 
 /** The triggers, as what the file asks launchd for — none of it applies unless the job is loaded. */
 function triggerWords(job: LaunchJob): string {
   let out = "";
   const conditions = job.keepAliveConditions.length
-    ? ` under these conditions: ${job.keepAliveConditions.map((k) => clip(showToken(k))).join(", ")}`
+    ? ` under these conditions: ${job.keepAliveConditions.map(shown).join(", ")}`
     : "";
   if (job.runAtLoad && job.keepAlive) {
     out += ` It asks launchd to start it when loaded and to restart it when it exits${conditions}, so stopping the process does not remove it.`;
@@ -298,8 +297,7 @@ function triggerWords(job: LaunchJob): string {
   if (job.startInterval !== null && job.startInterval > 0 && job.startInterval <= 300) {
     out += ` It asks launchd to run it every ${job.startInterval} second(s).`;
   }
-  if (job.watchPaths.length)
-    out += ` It asks launchd to run it when ${clip(showToken(job.watchPaths[0]))} changes.`;
+  if (job.watchPaths.length) out += ` It asks launchd to run it when ${shown(job.watchPaths[0])} changes.`;
   return `${out} All of this is what the file asks for; nothing in the file shows the job was loaded or ran.`;
 }
 
@@ -418,7 +416,7 @@ export function gradeLaunchd(file: CollectedFile, ctx: MacContext = {}): LinuxSi
   if (facts?.signing === "unsigned" || facts?.signing === "adhoc") {
     reason += ` The program is ${facts.signing === "adhoc" ? "ad-hoc signed" : "unsigned"} — on its own that is ordinary on a Mac, but combined with the above it means nothing vouches for what this file is.`;
   } else if (facts?.signing) {
-    reason += ` It is signed by ${clip(facts.signing)}, which does not make it safe but does say who to ask about it.`;
+    reason += ` It is signed by ${shown(facts.signing)}, which does not make it safe but does say who to ask about it.`;
   } else {
     reason += " The collection did not record the program's signing status.";
   }

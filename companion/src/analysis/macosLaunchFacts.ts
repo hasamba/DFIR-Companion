@@ -57,7 +57,9 @@ export function targetFactWords(
   if (!facts) {
     return { words: ` A target fact (${shown(value)}) names no path; not applied.`, raise: false };
   }
-  if (!resolved.target) {
+  // Only a path the plist itself names, absolutely, can carry a fact. A relative target's joined
+  // path is what the path rules judge, but it is synthesised here — the plist did not write it.
+  if (resolved.form !== "absolute") {
     return {
       words: ` A target fact was recorded for ${shown(facts.path)}, but this job names no absolute path to bind it to; not applied.`,
       raise: false,

@@ -117,6 +117,37 @@ describe("target resolution: what the plist itself names", () => {
     expect(rel.target).toBe("/private/tmp/run.sh");
     expect(resolveTarget(readLaunchJob({ ProgramArguments: ["bin/x"] })).target).toBe("/bin/x");
   });
+  it("a relative target's joined path is graded but binds no fact", () => {
+    const [s] = grade(
+      {
+        Label: str("x"),
+        ProgramArguments: prog("./run.sh"),
+        WorkingDirectory: str("/Users/Shared"),
+        Disabled: "<true/>",
+      },
+      undefined,
+      { target: "path=/Users/Shared/run.sh owner=alice mode=0777" },
+    );
+    expect(s.reason).toContain("any process can write");
+    expect(s.reason).toContain("names no absolute path to bind it to; not applied");
+    expect(s.severity).toBe("Medium");
+  });
+  it("a root-runs-user-file finding follows the configured context, not the directory's name", () => {
+    const home = { Label: str("x"), ProgramArguments: prog("/Users/alice/bin/tool") };
+    expect(grade(home)[0].reason).toContain("so that account can change what root runs");
+    expect(grade(home, "/Library/LaunchAgents/x.plist")).toEqual([]);
+    expect(grade({ ...home, UserName: str("www") })).toEqual([]);
+    const lw = grade(
+      { ...home, LimitLoadToSessionType: str("LoginWindow") },
+      "/Library/LaunchAgents/x.plist",
+    );
+    expect(lw[0]?.reason).toContain("root at the login window");
+    const rel = grade(
+      { Label: str("x"), ProgramArguments: prog("./tool"), WorkingDirectory: str("/Users/alice") },
+      "/Library/LaunchAgents/x.plist",
+    );
+    expect(rel).toEqual([]);
+  });
   it("shows argv[0] when Program and ProgramArguments[0] differ", () => {
     const [s] = grade({
       Label: str("x"),
@@ -164,6 +195,13 @@ describe("the words claim configuration, never execution", () => {
     expect(s.reason).toContain("asks launchd to run it every 60 second(s)");
     expect(s.reason).toContain("asks launchd to run it when /etc/hosts changes");
   });
+  it("a hash-shaped label or signing value is never shown as a bare hash run", () => {
+    const md5 = "d41d8cd98f00b204e9800998ecf8427e";
+    const [s] = grade({ Label: str(`com.apple.${md5}`), ProgramArguments: prog("/usr/local/bin/su") });
+    expect(s.reason).not.toMatch(/[0-9a-f]{32}/);
+    const [t] = grade(SUSP, undefined, { codesign: md5 });
+    expect(t.reason).not.toMatch(/[0-9a-f]{32}/);
+  });
   it("a misleading label says the label is a string the author chose", () => {
     const [s] = grade({
       Label: str("com.apple.softwareupdated"),
@@ -190,6 +228,16 @@ describe("# target: what the collector found at one path", () => {
       unreadable: [],
     });
     expect(readTargetFacts("owner=alice mode=0755")).toBeNull();
+    // a zone offset that crosses UTC midnight is still a valid time; an impossible date is not
+    expect(readTargetFacts("path=/a mtime=2026-01-01T00:30:00+02:00")?.mtime).toBe(
+      "2025-12-31T22:30:00.000Z",
+    );
+    expect(readTargetFacts("path=/a mtime=2025-12-31T23:30:00-02:00")?.mtime).toBe(
+      "2026-01-01T01:30:00.000Z",
+    );
+    expect(readTargetFacts("path=/a mtime=2026-02-30T00:00:00Z")?.unreadable).toEqual([
+      "mtime=2026-02-30T00:00:00Z",
+    ]);
     const bad = readTargetFacts("path=/a/b owner=alice mode=rwx mtime=yesterday bogus=1");
     expect(bad?.mode).toBeUndefined();
     expect(bad?.mtime).toBeUndefined();

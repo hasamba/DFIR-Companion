@@ -186,15 +186,21 @@ export function readTargetFacts(value: string): TargetFacts | null {
   return out.path ? out : null;
 }
 
-/** An ISO-8601 date-time with a zone, and a real calendar date (Date.parse rolls 02-30 over). */
+/**
+ * An ISO-8601 date-time with a zone, and a real calendar date (Date.parse rolls 02-30 over).
+ *
+ * The calendar check is on the WRITTEN fields, independent of the zone: `2026-01-01T00:30:00+02:00`
+ * is 2025-12-31 in UTC and is a valid time all the same.
+ */
 function isoTime(v: string): boolean {
-  const m = /^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/.exec(v);
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/.exec(v);
   if (!m) return false;
-  const t = Date.parse(v);
-  if (!Number.isFinite(t)) return false;
-  const d = new Date(t);
-  const [y, mo, da] = [Number(m[1]), Number(m[2]), Number(m[3])];
-  return d.getUTCFullYear() === y && d.getUTCMonth() + 1 === mo && d.getUTCDate() === da;
+  const [y, mo, da, h, mi, se] = m.slice(1).map((x) => Number(x ?? 0));
+  const probe = new Date(Date.UTC(y, mo - 1, da));
+  if (probe.getUTCFullYear() !== y || probe.getUTCMonth() + 1 !== mo || probe.getUTCDate() !== da)
+    return false;
+  if (h > 23 || mi > 59 || se > 60) return false;
+  return Number.isFinite(Date.parse(v));
 }
 
 // ─────────────────────────── # launchctl: ───────────────────────────
