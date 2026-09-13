@@ -21,6 +21,7 @@ import { collapseForPrompt, groupEnvOptions, maxPromptEvents, promptCandidates }
 import { inputTokenBudget } from "../promptBudget.js";
 import { getObservePrompt, getSynthesisPrompt } from "./prompts/index.js";
 import { synthesize, type SynthesisContext } from "./synthesis.js";
+import { promptDescription } from "./promptDescription.js";
 
 /**
  * Deep Pass (#418): read the whole graded timeline in batches, then synthesize over the digest.
@@ -56,7 +57,7 @@ function renderBatchRows(rows: readonly ForensicEvent[]): string {
     .map(
       (e) =>
         // No alias index here: the deep pass renders raw evidence excerpts, not the synthesis prompt.
-        `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}${renderStructuredTags(e)}`,
+        `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${promptDescription(e.description)}${renderStructuredTags(e)}`,
     )
     .join("\n");
 }

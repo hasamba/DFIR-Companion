@@ -33,6 +33,7 @@ import {
 } from "../taggerRuleSuggest.js";
 import { getGapHypothesisPrompt, getMemoryNextStepPrompt, getTaggerRulePrompt } from "./prompts/index.js";
 import { loadScopedEvents, retryPolicy, type AiCallContext } from "./aiContext.js";
+import { promptDescription, PROMPT_DESCRIPTION_WIDE_MAX } from "./promptDescription.js";
 
 /**
  * The three AI calls that propose the analyst's NEXT move (#418).
@@ -62,7 +63,7 @@ export async function suggestMemoryNextSteps(ctx: AiCallContext, caseId: string)
 
   // Trim the memory evidence so the whole prompt fits the model context (the rest is fixed overhead).
   const renderEvent = (e: ForensicEvent) =>
-    `[${e.severity}] ${(e.description ?? "").replace(/\s+/g, " ").trim().slice(0, 300)}`;
+    `[${e.severity}] ${promptDescription((e.description ?? "").replace(/\s+/g, " ").trim(), PROMPT_DESCRIPTION_WIDE_MAX)}`;
   const overhead = estimateTokens(getMemoryNextStepPrompt()) + estimateTokens(pluginsText) + 300;
   const fit = fitItemsToBudget(memEvents, renderEvent, Math.max(0, inputTokenBudget() - overhead));
   const evidenceText = renderMemoryEvidence(memEvents, Math.max(1, fit));

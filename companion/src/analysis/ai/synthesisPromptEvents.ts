@@ -12,6 +12,7 @@ import {
   type CollapsedPrompt,
 } from "../synthGroup.js";
 import { selectSynthesisEventsAnnotated, type SelectionClass } from "../synthSelect.js";
+import { promptDescription } from "./promptDescription.js";
 
 /**
  * Which events reach the synthesis prompt, and how each one renders (#453, split from
@@ -160,6 +161,6 @@ function renderPromptEvent(e: ForensicEvent, ctx: RenderContext): string {
   // "~" prefix (investigation-guidance #4): this row is supporting CONTEXT (pulled in to explain an
   // anchor), not itself a primary verdict-bearing event — so the model weights it as background.
   const prefix = ctx.isContext(e.id) ? "~" : "";
-  const description = e.description.slice(0, 240);
+  const description = promptDescription(e.description);
   return `${prefix}[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${description}${renderStructuredTags(e, ctx.aliasIndex)}${groupTag}${prevTag ? ` ⟨${prevTag}⟩` : ""}`;
 }

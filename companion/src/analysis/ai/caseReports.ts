@@ -31,6 +31,7 @@ import {
   promptOverhead,
   type AiCallContext,
 } from "./aiContext.js";
+import { promptDescription } from "./promptDescription.js";
 
 /**
  * The four "write me a document about this case" AI calls (#418).
@@ -60,11 +61,11 @@ export interface CaseReportContext extends AiCallContext {
 
 /** `[timestamp] [severity] description` — the row shape for the two audience-facing reports. */
 const renderPlainEvent = (e: ForensicEvent): string =>
-  `[${e.timestamp || "(undated)"}] [${e.severity}] ${e.description.slice(0, 240)}`;
+  `[${e.timestamp || "(undated)"}] [${e.severity}] ${promptDescription(e.description)}`;
 
 /** The same row with its id, for the calls whose answer must cite specific events back. */
 const renderIdentifiedEvent = (e: ForensicEvent): string =>
-  `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${e.description.slice(0, 240)}`;
+  `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${promptDescription(e.description)}`;
 
 const findingsWithIds = (state: InvestigationState): string =>
   state.findings

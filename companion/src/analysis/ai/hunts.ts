@@ -49,6 +49,7 @@ import type { VelociraptorClientStore } from "../velociraptorClientStore.js";
 import { getHuntSuggestPrompt, getPlaybookHuntPrompt, getQueryTranslatePrompt } from "./prompts/index.js";
 import { callAiJson, loadCtxAliasIndex, loadScopedEvents, retryPolicy } from "./aiContext.js";
 import { knownUnknownsBlock, type PromptBlockContext } from "./promptBlocks.js";
+import { promptDescription } from "./promptDescription.js";
 
 /**
  * The four AI calls that produce something the analyst RUNS (#418).
@@ -217,7 +218,7 @@ async function buildFleetHuntPrompt(
   const timelineText = renderHuntTimeline(
     scoped,
     maxPromptEvents(),
-    (e) => `[${e.timestamp || "(undated)"}] [${e.severity}] ${e.description.slice(0, 240)}`,
+    (e) => `[${e.timestamp || "(undated)"}] [${e.severity}] ${promptDescription(e.description)}`,
     getHuntSuggestPrompt(),
     leading + findingsText + iocText + techText + (loaded.attackerPath || ""),
   );
@@ -260,7 +261,7 @@ async function buildPlaybookHuntPrompt(
     scoped,
     Number(process.env.DFIR_PBHUNT_MAX_EVENTS) || 120,
     (e) =>
-      `[${e.timestamp || "(undated)"}] [${e.severity}]${e.asset ? ` <${e.asset}>` : ""} ${e.description.slice(0, 240)}`,
+      `[${e.timestamp || "(undated)"}] [${e.severity}]${e.asset ? ` <${e.asset}>` : ""} ${promptDescription(e.description)}`,
     getPlaybookHuntPrompt(),
     leading +
       text.tasksText +
