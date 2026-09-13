@@ -243,7 +243,10 @@ export class TeamAuth {
         next();
         return;
       }
-      const auth = this.authenticateRequest(req);
+      // The pre-auth body gate (composition/httpStack.ts) already resolved this credential before
+      // the parsers ran and handed it forward; asking the store again would be the same row twice
+      // per request (#1003). The decision below is still made in full, on the parsed body.
+      const auth = requestAuthentication(req) ?? this.authenticateRequest(req);
       if (!auth) {
         this.rejectUnauthenticated(req, res);
         return;
