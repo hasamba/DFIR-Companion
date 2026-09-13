@@ -28,7 +28,7 @@ import {
   isOkta,
   isGoogleWorkspace,
   isHindsight,
-  isMacosUnifiedLog,
+  isMacosFamily,
   macosQuarantineCsvSig,
   hindsightCsvSig,
   isAuditd,
@@ -416,7 +416,7 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (isOkta(sample)) return "okta";
   if (isGoogleWorkspace(sample, root)) return "gws";
   if (isHindsight(sample)) return "hindsight";
-  if (isMacosUnifiedLog(sample)) return "macos";
+  if (isMacosFamily(root)) return "macos";
   if (isM365(sample)) return "m365";
   if (isK8sAudit(sample)) return "k8s";
   if (isOsquery(sample)) return "osquery";

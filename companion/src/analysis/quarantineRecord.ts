@@ -18,7 +18,8 @@
 import { isIP } from "node:net";
 import { breakHashRuns, identityMark, keyDigest, packTags, showToken } from "./recordIdentity.js";
 import { addIoc, normalizeTime, type MappedEvent, type SiemIoc } from "./siemImport.js";
-import { createCanonicalEvent } from "./canonicalEvent.js";
+import { createCanonicalEvent, type CreateCanonicalEventInput } from "./canonicalEvent.js";
+import type { QuarantineBlock } from "./canonicalQuarantine.js";
 
 type Row = Record<string, unknown>;
 
@@ -206,30 +207,8 @@ export function readQuarantineXattr(raw: string): QuarantineXattr | null {
 
 // ───────────────────────────── the database row ─────────────────────────────
 
-export interface QuarantineEnvelope {
-  kind: string;
-  typeNumber?: number;
-  /** A type value that is not a type number, as recorded. */
-  typeRaw?: string;
-  agent?: string;
-  bundleId?: string;
-  dataUrl?: string;
-  originUrl?: string;
-  originTitle?: string;
-  /** Digest of the origin alias (bookmark data) the record carries — identity, never shown. */
-  originAliasDigest?: string;
-  senderName?: string;
-  senderAddress?: string;
-  eventId?: string;
-  eventIdRaw?: string;
-  timeEncoding: QuarantineTime["encoding"];
-  timeRaw?: string;
-  /** Why a URL minted no `url` indicator (its host still does). */
-  urlIndicator?: string;
-  localFile: "not in this record";
-  /** An overflow row: records with this identifier beyond the variant budget folded; nothing shown. */
-  folded?: boolean;
-}
+/** The database row's envelope block — the schema's own type (canonicalQuarantine.ts). */
+export type QuarantineEnvelope = QuarantineBlock;
 
 export interface QuarantineRow extends MappedEvent {
   envelope: QuarantineEnvelope;
@@ -238,7 +217,12 @@ export interface QuarantineRow extends MappedEvent {
   factsDigest: string;
   /** This row's own indicators — merged into the file sink only for rows that survive the bound. */
   iocs: SiemIoc[];
+  /** The canonical input the row was built from, so the join can rebuild the envelope with its own records. */
+  canonicalInput?: CreateCanonicalEventInput;
 }
+
+/** The host column a collector may add to a dump; the join never crosses it (#1037). */
+export const HOST_COLUMNS = ["hostname", "host", "computer", "fqdn", "clientid", "machinename"];
 
 // A structured JSON value (an exporter's BLOB as `{type:"Buffer",data:[…]}`) keeps its shape as
 // JSON text — never `[object Object]`, which would make every such value one value.
@@ -348,7 +332,7 @@ const PAGE_SCHEMES = ["http:", "https:"];
 export function quarantineOverlay(
   rec: Row,
   fileSink: Map<string, SiemIoc>,
-  opts: { deferIocs?: boolean } = {},
+  opts: { deferIocs?: boolean; index?: number } = {},
 ): QuarantineRow {
   // Indicators go to the row first; the importer merges them after the per-UUID bound, so a flood
   // of variants under one identifier cannot fill the file's indicator budget either.
@@ -381,6 +365,10 @@ export function quarantineOverlay(
   const originTitle = read(["LSQuarantineOriginTitle", "origin_title"]);
   const senderName = read(["LSQuarantineSenderName", "sender"]);
   const senderAddress = read(["LSQuarantineSenderAddress", "sender_address"]);
+  // Every host occurrence: two different values name no host, and the join (#1037) refuses it.
+  const hosts = [...new Set(HOST_COLUMNS.map((k) => read([k])).filter(Boolean))];
+  const host = hosts.length === 1 ? hosts[0] : "";
+  const hostAmbiguous = hosts.length > 1;
   // The origin alias is bookmark data — identity, never words: two dumps that differ only in it
   // are two records, and the row says the alias is present without showing it.
   const originAlias = read(["LSQuarantineOriginAlias", "origin_alias"]);
@@ -421,6 +409,8 @@ export function quarantineOverlay(
         : "event identifier not in this record",
   );
   tags.push("local file: not in this record — joined by the event identifier");
+  if (host) tags.push(`host: ${show(host)}`);
+  if (hostAmbiguous) tags.push("host: 2 values in this record");
 
   // Every shown fact, framed; the time as its ISO form or a digest of the raw text.
   const facts = [
@@ -432,6 +422,7 @@ export function quarantineOverlay(
     originTitle,
     senderName,
     senderAddress,
+    hostAmbiguous ? `hosts:${hosts.join("|")}` : host,
     originAlias ? `alias:${keyDigest(originAlias)}` : "",
     `cols:${columns.map((c) => `${c.length}:${c}`).join("|")}`,
     // The instant AND its representation AND the raw text: a Cocoa row and an ISO row of one instant
@@ -459,6 +450,7 @@ export function quarantineOverlay(
     senderAddress,
     idRaw,
     typeRaw,
+    host,
   ];
   // …including an identifier clipped past the shown width and a time the row cannot show at all
   // (an unreadable `timeRaw` is identity the words do not carry).
@@ -466,7 +458,7 @@ export function quarantineOverlay(
     shownAll.some((v) => v && breakHashRuns(showToken(v)) !== v) ||
     dataUrl.length > URL_SHOWN_MAX ||
     originUrl.length > URL_SHOWN_MAX ||
-    [agent, bundleId, originTitle, senderName, senderAddress, idRaw, typeRaw].some(
+    [agent, bundleId, originTitle, senderName, senderAddress, idRaw, typeRaw, host].some(
       (v) => v.length > TEXT_SHOWN_MAX,
     ) ||
     (when.encoding === "unreadable" && time.value !== "") ||
@@ -502,6 +494,32 @@ export function quarantineOverlay(
       ? { urlIndicator: `omitted: a URL longer than ${URL_IOC_MAX} characters; the host is the indicator` }
       : {}),
     localFile: "not in this record",
+    host: host
+      ? { name: host }
+      : hostAmbiguous
+        ? { state: "2 values in this record" }
+        : { state: "not named" },
+  };
+  const canonicalInput: CreateCanonicalEventInput = {
+    event: { category: "file", type: "download-record" },
+    ...(agent ? { actor: { kind: "process", name: agent } } : {}),
+    quarantine: envelope,
+    time: { observed: when.iso || time.value, normalized: when.iso },
+    // A positional locator: two variants of one identifier are two records, addressed apart.
+    evidence: {
+      rawRecords: [
+        {
+          source: "macos-quarantine",
+          locator: opts.index !== undefined ? `record:${opts.index}` : (eventId ?? `facts:${factsDigest}`),
+          ...(eventId ? { recordId: eventId } : {}),
+        },
+      ],
+    },
+    producer: { importer: "macos", parserVersion: "1", mappingVersion: "quarantine-v1" },
+    rawFieldMap: {
+      ...(when.iso ? { "time.observed": [time.header] } : {}),
+      ...(dataUrl ? { "quarantine.dataUrl": [dataUrlField.header] } : {}),
+    },
   };
   return {
     timestamp: when.iso,
@@ -510,18 +528,8 @@ export function quarantineOverlay(
     mitre: [],
     aggKey,
     sources: ["macOS Quarantine"],
-    canonical: createCanonicalEvent({
-      event: { category: "file", type: "download-record" },
-      ...(agent ? { actor: { kind: "process", name: agent } } : {}),
-      quarantine: envelope,
-      time: { observed: when.iso || time.value, normalized: when.iso },
-      evidence: { rawRecords: [{ source: "macos-quarantine", locator: eventId ?? `facts:${factsDigest}` }] },
-      producer: { importer: "macos", parserVersion: "1", mappingVersion: "quarantine-v1" },
-      rawFieldMap: {
-        ...(when.iso ? { "time.observed": [time.header] } : {}),
-        ...(dataUrl ? { "quarantine.dataUrl": [dataUrlField.header] } : {}),
-      },
-    }),
+    canonical: createCanonicalEvent(canonicalInput),
+    canonicalInput,
     envelope,
     ...(eventId ? { eventId } : {}),
     factsDigest,

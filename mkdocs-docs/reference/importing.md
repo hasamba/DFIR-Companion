@@ -450,6 +450,82 @@ what the record establishes:
 - **The origin alias.** `LSQuarantineOriginAlias` is bookmark data: it is part of the row's
   identity (two dumps that differ only in it are two rows) and is never shown.
 
+### macOS quarantine: what one upload joins
+
+A **file-attribute record** — a path and its raw `com.apple.quarantine` value, as `xattr -p
+com.apple.quarantine` over a directory, `ls -l@` or a collector glob with `xattr()` emit them,
+one file per CSV row or JSON object — is read by the macOS importer beside the database dump, and
+the two are joined only through the event identifier both carry, inside one upload.
+
+- **The attribute row** reads `macOS quarantine attribute [file: /Users/x/Downloads/installer.dmg]
+  [quarantine mark: download, sandbox (+0x0080); agent Safari; marked 2020-08-17T05:52:44.000Z
+  (Unix hex); event 8f1c…] [download event: data url https://…; origin https://…; agent Safari
+  (com.apple.Safari) — the database record with this event identifier] [agent agrees] [marked and
+  recorded in the same second (attribute: Unix hex; database: Cocoa seconds)] [download flag set]
+  [host: mac-01]`. The record is recognised by the one header no other export carries,
+  `com.apple.quarantine`; `quarantine`, `xattr` and a path column are not a signature. The path
+  columns read are `path`, `file`, `fullpath`, `name`, `filename`, `OSPath`; every occurrence is
+  read, and a record with two different paths or two different attribute values says so
+  (`[path: 2 values in this record]`) and joins nothing — as does a record with two different host
+  values (`[host: 2 values in this record]`) or a clipped path. An optional `sha256`/`md5` column
+  is carried when it is valid hex and rides on the row, so the file correlates with any other
+  record carrying the same hash; a `size` column when it is a number. Two readings of one file that
+  differ in hash or size are two rows, never silently one. Nothing is minted as an indicator — a
+  path is not one, and the database row already carries the URLs.
+- **An empty cell is not absence.** `[attribute value empty or not reported — absence of the
+  attribute not established]`: a blank cell can be a collection failure, a null the exporter
+  wrote, or a field the collector did not read. The row never says "no quarantine attribute"
+  and never "local origin" — Gatekeeper-exempt agents write no attribute and a stripped one
+  leaves no trace. A value that is not the four-field form (a bare URL, garbage) is
+  `[quarantine mark (not decodable): …]` and carries no identifier; a path past 4,096 characters
+  or a value past 1,024 is clipped, marked and never joined.
+- **The join.** For an identifier both a database record and an attribute record carry, the
+  database row's `[local file: not in this record — …]` becomes `[local file:
+  /Users/x/Downloads/installer.dmg — the file's quarantine attribute carries this event
+  identifier]`, and the attribute row gains the `[download event: …]` span above. Agreement is
+  said per fact and never assumed: `[agent agrees]` (the attribute keeps the agent's name, the
+  database its name and bundle id — compared against both) or `[agent differs: attribute curl;
+  database Safari (com.apple.Safari)]`; `[marked and recorded in the same second …]` or `[marked
+  ≤10 s after the record …]` / `[marked ≤24 h before the record …]` (a band, never the exact
+  seconds, with both encodings named — the attribute is written when the file is created, the
+  record when the agent logs the event, so they can differ) or `[time not compared: the database
+  time is not readable]`; `[download flag set]` or `[download flag not set]` — `— sandbox mark
+  only` is added only when the flag word is exactly the sandbox bit. Several files with one identifier read `[local files: 2 — a.zip, a/app.bin — the same
+  identifier on several files: a copy, or an archive's extracted members; the records do not say
+  which]` (a `.zip` propagates the mark to what is extracted; the row never decides). Identical
+  attribute records are one file; a file with two different attribute values is an ambiguity —
+  `[local file: an attribute record carries this identifier, but the file carries two attribute
+  values — not joined]` — never two files.
+- **What is never joined.** A basename, a URL's last segment, a time; an identifier whose
+  database records disagree (#1009's `[event identifier shared by records with different facts]`
+  — both sides say `database records with this identifier disagree — not joined`); a record on
+  another host (a `hostname`/`host`/`computer`/`fqdn`/`clientid`/`machinename` column partitions
+  the join, hostnames compared case-insensitively; records naming no host are one partition per
+  upload and every joined row says `[host not named in the records]`; a named host never joins an
+  unnamed record; a record with two host values joins nothing); an attribute with no
+  database record (`[download event: not among this upload's database records]`) or a database
+  record with no attribute (`[local file: not in this record — no attribute record carries this
+  identifier in this upload]`, said only when the upload carried attribute records at all — a
+  plain database dump reads as before). The joined database row carries no structured path: the
+  correlate layer case-folds paths and an APFS volume may not, so the exact path lives in the
+  row's words and data only.
+- **Identity, bounds, grading.** The host, the path, the raw value, the join state and every
+  joined fact are the attribute row's identity; the join state and its facts join the database
+  row's, so a joined row is another row than the unjoined one and a re-dump folds. 65,536
+  attribute records are retained per upload (the rest fold into one overflow row that shows
+  nothing); 256 files are tracked per identifier while the lists are built (`256+` past it), three
+  shown, eight named in the database row's provenance. Every row is Info
+  with no technique: quarantine presence is provenance, not execution and not maliciousness —
+  the join says which link it established and which it did not. Each joined field's provenance
+  names the record it came from: each listed path rests on its own attribute record, the URLs and
+  agent on the database record (addressed by position, `record:N`), the agreement facts on both,
+  and a refused join on every database record it consulted.
+- **What this does not do.** It does not join the file to the evidence it ran (no macOS
+  process-execution record is parsed — link 2 of #1037), the origin URL to a browser-history
+  visit (link 3), a persistence target's own attribute to a database record (a different upload
+  format), or anything across uploads; a bare URL in the attribute column (a legacy collector
+  form) is not decoded here.
+
 ### TLS records: what one record establishes
 
 Zeek `ssl.log` and `x509.log` and Suricata `tls` records are folded into rows the way `conn`
