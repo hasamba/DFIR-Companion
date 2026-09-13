@@ -23,6 +23,7 @@ import { isEntraUalRecord } from "./entraAuditRecord.js";
 import { boundedAggKey, boundedTextTo } from "./aggKey.js";
 import { isExchangeRecord, mapExchangeRow } from "./exchangeAuditImport.js";
 import { entraPrivilegePaths, PRIVILEGE_PATHS_MAX } from "./entraPrivilegePath.js";
+import { mailboxChains, MAILBOX_CHAINS_MAX } from "./mailboxChain.js";
 import {
   isServicePrincipalSignIn,
   learnApiResolver,
@@ -417,21 +418,24 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
-  // The privilege path per application (#973): built over every record of this export, before
-  // aggregation and the cap, and appended AFTER the cap under its own bound — a summary row never
-  // evicts the source row it summarises.
+  // The summaries built over every record of this export — the privilege path per application
+  // (#973) and the mailbox chain per mailbox and session (#975) — are appended AFTER the cap,
+  // each under its own bound: `maxEvents` bounds SOURCE rows, a summary never evicts one, and
+  // `kept` / `dropped` / `groups` count source rows alone.
+  const derived = (rows: MappedEvent[], bound: number): SiemEvent[] =>
+    aggregateEvents(rows, { aggregate: opts.aggregate, minSeverity: opts.minSeverity, maxEvents: bound })
+      .events;
   const summaries =
     sawAudit || sawUal
-      ? aggregateEvents(entraPrivilegePaths(normalized, resolve), {
-          aggregate: opts.aggregate,
-          minSeverity: opts.minSeverity,
-          maxEvents: PRIVILEGE_PATHS_MAX + 1,
-        }).events
+      ? [
+          ...derived(entraPrivilegePaths(normalized, resolve), PRIVILEGE_PATHS_MAX + 1),
+          ...(sawUal ? derived(mailboxChains(normalized), MAILBOX_CHAINS_MAX + 1) : []),
+        ]
       : [];
   const events = [...capped.events, ...summaries];
   const groups = capped.groups;
 
-  const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
+  const represented = capped.events.reduce((n, e) => n + (e.count ?? 1), 0);
   const kinds: string[] = [];
   if (sawUal) kinds.push("m365-ual");
   if (sawSignin) kinds.push("entra-signin");
@@ -442,7 +446,7 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
     events,
     iocs: [...iocSink.values()].slice(0, maxIocs),
     total,
-    kept: events.length,
+    kept: capped.events.length,
     dropped: Math.max(0, total - represented),
     groups,
     format,

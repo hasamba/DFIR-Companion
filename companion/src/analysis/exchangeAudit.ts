@@ -80,6 +80,16 @@ export interface ExchangeChange {
   tenant: string;
   recordId: string;
   time: string;
+  /** What the record DID: added a rule/forwarding/permission/item or an access; removed or cleared one; simulated; none. */
+  polarity: "adds" | "removes" | "simulates" | "none";
+  /** The items the record LISTS (null when it lists none — an aggregate); the operation count it states. */
+  itemsListed: number | null;
+  operations: number | null;
+  logon: string;
+  client: string;
+  /** A rule or forwarding whose destination is outside the mailbox's domain; a rule that hides mail. */
+  forwardsOutside: boolean;
+  hides: boolean;
 }
 
 function outcomeOf(rec: Row): ExchangeChange["outcome"] {
@@ -185,6 +195,11 @@ function finish(
     sentAs?: string;
     object?: string;
     incompleteScope?: boolean;
+    polarity?: ExchangeChange["polarity"];
+    itemsListed?: number | null;
+    operations?: number | null;
+    forwardsOutside?: boolean;
+    hides?: boolean;
   },
 ): ExchangeChange {
   const posture = c.attempted
@@ -238,6 +253,13 @@ function finish(
     tenant: c.tenant,
     recordId: c.recordId,
     time: str(getCI(c.rec, "CreationTime")),
+    polarity: o.polarity ?? "adds",
+    itemsListed: o.itemsListed ?? null,
+    operations: o.operations ?? null,
+    logon: c.logon,
+    client: c.client,
+    forwardsOutside: o.forwardsOutside ?? false,
+    hides: o.hides ?? false,
   };
 }
 
@@ -265,6 +287,7 @@ function ruleCmdlet(c: Common, pp: Pairs): ExchangeChange | null {
       severity: "Low",
       scope: `rule:dryrun:${pp.digest}`,
       incompleteScope: pp.truncated,
+      polarity: "simulates",
     });
   }
   const verb = m[1];
@@ -281,6 +304,7 @@ function ruleCmdlet(c: Common, pp: Pairs): ExchangeChange | null {
       severity: "Low",
       scope,
       incompleteScope: pp.truncated,
+      polarity: verb === "enable" ? "adds" : "removes",
     });
   }
   const isSet = verb === "set";
@@ -306,6 +330,8 @@ function ruleCmdlet(c: Common, pp: Pairs): ExchangeChange | null {
     scope,
     target,
     incompleteScope: pp.truncated,
+    forwardsOutside: r.forwardsOutside,
+    hides: r.hides,
   });
 }
 
@@ -398,6 +424,9 @@ function ruleMailboxAudit(c: Common): ExchangeChange | null {
     scope: `rule:${op}:${name}:${pp.digest}`,
     target: forwardTargets.join(", "),
     incompleteScope: pp.truncated,
+    polarity: verb === "removes" ? "removes" : "adds",
+    forwardsOutside: r.forwardsOutside,
+    hides: r.hides,
   });
 }
 
@@ -414,6 +443,7 @@ function forwardingCmdlet(c: Common, pp: Pairs): ExchangeChange | null {
       severity: "Low",
       scope: `forwarding:dryrun:${pp.digest}`,
       incompleteScope: pp.truncated,
+      polarity: "simulates",
     });
   const smtp = p.get("forwardingsmtpaddress");
   const addr = p.get("forwardingaddress");
@@ -476,6 +506,9 @@ function forwardingCmdlet(c: Common, pp: Pairs): ExchangeChange | null {
     scope: `forwarding:${pp.digest}`,
     target,
     incompleteScope: pp.truncated,
+    // Setting a destination adds forwarding; clearing every named parameter removes it.
+    polarity: target ? "adds" : "removes",
+    forwardsOutside: severity === "High",
   });
 }
 
@@ -495,6 +528,7 @@ function permissionCmdlet(c: Common, pp: Pairs): ExchangeChange | null {
       severity: "Low",
       scope: `permission:dryrun:${pp.digest}`,
       incompleteScope: pp.truncated,
+      polarity: "simulates",
     });
   const trustee = (p.get("trustee") ?? p.get("user") ?? "").trim();
   const rights = (p.get("accessrights") ?? "").trim() || "permission";
@@ -521,6 +555,7 @@ function permissionCmdlet(c: Common, pp: Pairs): ExchangeChange | null {
     scope: `permission:${pp.digest}`,
     target: trustee,
     incompleteScope: pp.truncated,
+    polarity: widens ? "adds" : "removes",
   });
 }
 
@@ -569,6 +604,8 @@ function accessRecord(c: Common): ExchangeChange {
     severity: accessSeverity(c),
     scope: `access:${accessType}:${Number.isFinite(ops) ? ops : ""}:${throttled}:${containerIds.join(",")}:${ids.join(",")}`,
     incompleteScope: incomplete || (items.length === 0 && !sync),
+    itemsListed: items.length,
+    operations: Number.isFinite(ops) && ops > 0 ? ops : null,
   });
 }
 
@@ -584,6 +621,8 @@ function aggregateRecord(c: Common): ExchangeChange {
     severity: accessSeverity(c),
     scope: `aggregate:${n}:${dur}`,
     incompleteScope: true,
+    itemsListed: null,
+    operations: n || null,
   });
 }
 
@@ -689,6 +728,7 @@ function itemRecord(c: Common): ExchangeChange | null {
       : destMailbox,
     sentAs,
     incompleteScope: items.some((i) => itemIds(i) === "//") || items.length === 0,
+    itemsListed: items.length,
   });
 }
 
