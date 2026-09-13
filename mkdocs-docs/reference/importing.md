@@ -533,21 +533,32 @@ Nothing is joined by timing, by shape or by adjacency.
   in this upload`, a gap is `later on this connection: transaction 4 — not adjacent`, and an
   HTTP/2 row (a `stream_id`) is `not read: HTTP/2 stream` — interleaved streams are never
   ordered by depth.
-- **Every missing hop is named.** A `fuid` with no `files` record: `[body: F… — no files record in
-  this upload]`. A transfer whose request record is absent: `[request: not in this upload]`. A
-  Suricata `fileinfo` carries its request inline and says `[request (inline): …]`.
+- **A shared identifier is necessary, not sufficient.** A `files` record over SMTP against an
+  http carrier, a connection id present on both sides that differs, or two different sensors
+  read `[body: identifier conflict — not joined]`; two `files` records with one `fuid` and
+  different facts read `[body: conflicting files records]` and neither is chosen. A 206 on any
+  request that carries a body makes that body a range.
+- **Every missing hop is named.** A `fuid` with no `files` record: `[body: no files record in
+  this upload]` (the identifier stays on the row's data, never in its words). A transfer whose
+  request record is absent: `[request: not in this upload]`. When an upload had more records
+  than the importer reads (65,536 per kind), every absence says `not among the records read`
+  instead. A Suricata `fileinfo` carries its request inline and says `[request (inline): …]`.
 - **Transfer → endpoint file.** The two rows never merge: a transfer is a *wire* observation, and
   the file event on the endpoint is a *host* observation; they are joined by the hash and by
-  nothing else. The hash indicator's provenance chain lists both — the transfer row as the
+  nothing else. Two transfers of one file at two times stay two rows too — a wire row folds only
+  with the same record re-imported. The hash indicator's provenance chain lists both — the transfer row as the
   indicator's own extraction and every event that carries the same hash as a field. The row
   never says the file ran, reached disk or came from this transfer.
 - **Identity and bounds.** A row's identity is every fact it shows — every body's digest and
   coverage, every joined request, the redirect hop, the client's fields — so two different chains
   are two rows and a repeated chain folds with a count; `uid`, `fuid`, `trans_depth`, `flow_id`
-  and `tx_id` are locators and never part of it. Identifier lists are read to 32 per record,
-  8 bodies and 4 requests are named per row (the rest counted), shapes past 8,192 per kind fold
-  into one overflow row that shows nothing, and under the import's event budget rows that name a
-  file identity come first, then graded rows, then the most seen.
+  and `tx_id` are locators and never part of it. Identifier lists are read to 32 per record
+  (proxy headers to 8), 8 bodies and 4 requests are named per row (the rest counted), a repeated
+  identifier is followed to 16 records, shapes past 8,192 per kind fold into one overflow row
+  that shows nothing — a late row that names a file or is graded displaces a plain shape rather
+  than folding — and under the import's event budget rows that name a file identity come first,
+  then graded rows, then the most seen. A method that is not an HTTP token and a version that is
+  not a version reach no words.
 - **Grading.** An attack pattern or a secret in a Zeek-seen target grades exactly as it would in
   an Apache line (Medium, T1190). Every other row is Info with no technique.
 - **What this does not do.** It does not join a proxy log's client to a workstation (that needs

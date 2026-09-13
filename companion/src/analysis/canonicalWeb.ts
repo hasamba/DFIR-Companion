@@ -77,7 +77,13 @@ export const webBodyHopSchema = z.object({
   direction: z.enum(["response", "request", "not recorded"]),
   /** The shared identifier both records carry: a Zeek fuid, or Suricata's `flow_id|tx_id`. */
   id: z.string(),
-  state: z.enum(["observed", "no files record in this upload"]),
+  state: z.enum([
+    "observed",
+    "no files record in this upload",
+    "not among the records read",
+    "identifier conflict — not joined",
+    "conflicting files records",
+  ]),
   transfer: transferFactsSchema.optional(),
 });
 
@@ -101,6 +107,7 @@ export const webBlockSchema = requestFactsSchema.extend({
       nextState: z.enum([
         "observed",
         "not in this upload",
+        "not among the records read",
         "later transaction only",
         "not read (HTTP/2 stream)",
         "no transaction identity",
@@ -119,7 +126,14 @@ export const webBlockSchema = requestFactsSchema.extend({
 export const transferBlockSchema = transferFactsSchema.extend({
   requests: z.array(requestFactsSchema),
   requestsTotal: z.number().int().nonnegative(),
-  requestState: z.enum(["observed", "inline on this record", "not in this upload", "no request identity"]),
+  requestState: z.enum([
+    "observed",
+    "inline on this record",
+    "not in this upload",
+    "not among the records read",
+    "identifier conflict — not joined",
+    "no request identity",
+  ]),
   // A Suricata fileinfo carries its request on the same record; kept apart from `requests`,
   // which are OTHER records joined by identifier.
   inlineRequest: z

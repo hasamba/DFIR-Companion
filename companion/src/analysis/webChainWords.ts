@@ -130,7 +130,8 @@ function redirectTags(c: RequestChain): string[] {
       );
       break;
     case "not in this upload":
-      tags.push(`next transaction (${(c.req.depth ?? 0) + 1}) not in this upload`);
+    case "not among the records read":
+      tags.push(`next transaction (${(c.req.depth ?? 0) + 1}) ${rd.nextState}`);
       break;
     case "later transaction only":
       tags.push(`later on this connection: transaction ${rd.laterDepth} — not adjacent`);
@@ -144,6 +145,8 @@ function redirectTags(c: RequestChain): string[] {
   return tags;
 }
 
+// The identifier is a locator — kept on the envelope, never in the words: a row that folds two
+// records must not show one record's fuid as both.
 function bodyTag(hop: BodyHop, coverage: CoverageKind | undefined): string {
   const side =
     hop.direction === "response"
@@ -151,8 +154,7 @@ function bodyTag(hop: BodyHop, coverage: CoverageKind | undefined): string {
       : hop.direction === "request"
         ? "body sent by the client"
         : "body (direction not recorded)";
-  if (!hop.transfer || !coverage)
-    return `${side}: ${show(hop.id, SHORT_MAX)} — no files record in this upload`;
+  if (!hop.transfer || !coverage) return `${side}: ${hop.state}`;
   const x = hop.transfer;
   const mime = x.mime ? `; mime: ${show(x.mime, SHORT_MAX)}` : "";
   return `${side}: ${transferWords(x, coverage)}${mime}`;
@@ -188,7 +190,7 @@ export function requestTags(
   if (r.userAgent) after.push(`ua: ${show(r.userAgent, SHORT_MAX)}`);
   if (r.proxied?.length) after.push(`proxied: ${r.proxied.map((p) => show(p, SHORT_MAX)).join("; ")}`);
   if (r.src || r.dst) after.push(`${r.src ?? "?"} → ${r.dst ?? "?"}${r.port ? `:${r.port}` : ""}`);
-  if (r.version) after.push(`HTTP/${r.version.replace(/^HTTP\//i, "")}`);
+  if (r.version) after.push(`HTTP/${r.version}`);
   return { before, bodies, bodiesTotal: c.bodiesTotal, after };
 }
 
@@ -223,7 +225,9 @@ export function transferTags(c: TransferChain): string[] {
       break;
     }
     case "not in this upload":
-      tags.push("request: not in this upload");
+    case "not among the records read":
+    case "identifier conflict — not joined":
+      tags.push(`request: ${c.requestState}`);
       break;
     default:
       break; // a transfer over SMTP/FTP/SMB names no request
@@ -286,7 +290,7 @@ export function bodyFacts(hop: BodyHop, coverage: CoverageKind | undefined): Web
   return {
     direction: hop.direction,
     id: hop.id,
-    state: hop.transfer && coverage ? "observed" : "no files record in this upload",
+    state: hop.state,
     ...(hop.transfer && coverage ? { transfer: transferFacts(hop.transfer, coverage) } : {}),
   };
 }

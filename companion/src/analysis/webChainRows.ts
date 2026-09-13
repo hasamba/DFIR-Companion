@@ -76,13 +76,17 @@ const stableJson = (v: unknown): string =>
       : val,
   );
 
-// The block with its locators and count stripped: what is left is every fact the row shows.
+// The block with its locators and count stripped: what is left is every fact the row shows. A
+// body hop's `id` is its identifier (a fuid, a flow|tx) — a locator like `locator.uid`, never a
+// fact of the row; the hop's direction, state and transfer facts stay.
 function stripLocators(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(stripLocators);
   if (v && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    const hop = "direction" in o && "state" in o;
     const out: Record<string, unknown> = {};
-    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
-      if (k === "locator" || k === "records" || k === "id") continue;
+    for (const [k, val] of Object.entries(o)) {
+      if (k === "locator" || k === "records" || (hop && k === "id")) continue;
       out[k] = stripLocators(val);
     }
     return out;
@@ -93,8 +97,10 @@ function stripLocators(v: unknown): unknown {
 const sensorSeg = (o: { observer?: { name: string } }): string =>
   o.observer ? `t:${keyDigest(o.observer.name)}` : "-";
 
+// A response body is read against this row's status (a 206 makes it a range); a request body
+// (an upload) never is.
 const hopCoverage = (c: RequestChain) => (hop: BodyHop) =>
-  hop.transfer ? coverageOf(hop.transfer, c.req.status) : undefined;
+  hop.transfer ? coverageOf(hop.transfer, hop.direction === "request" ? undefined : c.req.status) : undefined;
 
 interface Inspection {
   attack: RequestInspection | null;
@@ -181,6 +187,16 @@ const readHostOf = (url: string): string => readTarget("GET", url).host;
 
 function transferIocs(c: TransferChain, sink: Map<string, SiemIoc>): void {
   const x = c.xfer;
+  // A Suricata fileinfo carries its request inline: the host it names is an indicator by the
+  // same whole-authority rule as a request row's, and an absolute URL is a url indicator.
+  if (x.inlineRequest) {
+    const view = targetView({ ...x.inlineRequest, referrer: "", userAgent: "" } as RequestChain["req"]);
+    const bare = view.host.startsWith("[") ? view.host.slice(1, -1) : view.host;
+    if (bare && isIP(bare)) addIoc(sink, "ip", bare);
+    else if (view.host) addIoc(sink, "domain", view.host);
+    if (view.reading.form === "absolute" && /^https?:\/\//i.test(x.inlineRequest.target))
+      addIoc(sink, "url", x.inlineRequest.target.slice(0, 300));
+  }
   // A digest is a hash indicator only when it names the whole object (webChainJoin.ts coverage):
   // a partial digest matches no file anywhere and would be a false identity.
   if (isFileIdentity(c.coverage)) {
@@ -205,34 +221,63 @@ interface Shape {
   inspection?: Inspection;
 }
 
-function fold(sink: Map<string, WebTally>, shape: Shape): void {
+const priority = (t: { namesFile: boolean; graded: boolean }): number => (t.namesFile ? 2 : t.graded ? 1 : 0);
+
+/** The row shapes of one kind, with the retained keys bucketed by rank for O(1) eviction. */
+export interface WebSink {
+  rows: Map<string, WebTally>;
+  byPriority: [Set<string>, Set<string>, Set<string>];
+}
+
+export const newWebSink = (): WebSink => ({ rows: new Map(), byPriority: [new Set(), new Set(), new Set()] });
+
+function foldOverflow(sink: WebSink, kind: Kind, source: Source, ts: string, n: number): void {
+  const ok = OVERFLOW_KEY(kind, source);
+  const over = sink.rows.get(ok);
+  if (over) {
+    over.count += n;
+    if (ts && (!over.firstTs || ts < over.firstTs)) over.firstTs = ts;
+  } else
+    sink.rows.set(ok, {
+      kind,
+      source,
+      count: n,
+      firstTs: ts,
+      key: ok,
+      namesFile: false,
+      graded: false,
+      overflow: true,
+    });
+}
+
+// One sink per kind, each bounded at WEB_SHAPES_MAX distinct shapes. A new shape past the bound
+// folds into the kind's overflow row — unless it outranks a retained lower shape (a body with a
+// file identity, a graded request), in which case the lowest-ranked retained shape is the one that
+// folds: upload order cannot hide the chain evidence behind a wall of plain requests. Overflow
+// rows do not count against the bound.
+function fold(sink: WebSink, shape: Shape): void {
   const { key, kind, source, ts, first, namesFile, graded, inspection } = shape;
-  const existing = sink.get(key);
+  const existing = sink.rows.get(key);
   if (existing) {
     existing.count += 1;
     if (ts && (!existing.firstTs || ts < existing.firstTs)) existing.firstTs = ts;
     return;
   }
-  if (sink.size >= WEB_SHAPES_MAX) {
-    const ok = OVERFLOW_KEY(kind, source);
-    const over = sink.get(ok);
-    if (over) {
-      over.count += 1;
-      if (ts && (!over.firstTs || ts < over.firstTs)) over.firstTs = ts;
-    } else
-      sink.set(ok, {
-        kind,
-        source,
-        count: 1,
-        firstTs: ts,
-        key: ok,
-        namesFile: false,
-        graded: false,
-        overflow: true,
-      });
-    return;
+  const rank = priority(shape);
+  const retained = sink.byPriority[0].size + sink.byPriority[1].size + sink.byPriority[2].size;
+  if (retained >= WEB_SHAPES_MAX) {
+    const lower = sink.byPriority.findIndex((set, i) => i < rank && set.size > 0);
+    if (lower < 0) {
+      foldOverflow(sink, kind, source, ts, 1);
+      return;
+    }
+    const victimKey = sink.byPriority[lower].values().next().value as string;
+    const victim = sink.rows.get(victimKey)!;
+    sink.byPriority[lower].delete(victimKey);
+    sink.rows.delete(victimKey);
+    foldOverflow(sink, victim.kind, victim.source, victim.firstTs, victim.count);
   }
-  sink.set(key, {
+  sink.rows.set(key, {
     kind,
     source,
     first,
@@ -243,19 +288,21 @@ function fold(sink: Map<string, WebTally>, shape: Shape): void {
     namesFile,
     graded,
   });
+  sink.byPriority[rank].add(key);
 }
 
 /**
  * Fold every joined chain into row shapes, minting each chain's indicators against its row key so
  * the hash IOC's provenance names the transfer row (extractedFrom). Records past the retained
- * bound (WebObservations overflow) join the kind's overflow row: counted, never read.
+ * bound (WebObservations overflow) join their source's overflow row: counted, never read.
  */
 export function tallyWebChains(
   obs: WebObservations,
   joined: { requests: RequestChain[]; transfers: TransferChain[] },
   iocSink: Map<string, SiemIoc>,
-): Map<string, WebTally> {
-  const sink = new Map<string, WebTally>();
+): { requests: WebSink; transfers: WebSink } {
+  const requests = newWebSink();
+  const transfers = newWebSink();
   const hasDigest = (x: { sha256?: string; md5?: string; sha1?: string }): boolean =>
     !!(x.sha256 || x.md5 || x.sha1);
   for (const c of joined.requests) {
@@ -264,11 +311,13 @@ export function tallyWebChains(
     const rowIocs = new Map<string, SiemIoc>();
     requestIocs(c, rowIocs);
     mergeRowIocs(iocSink, rowIocs, key);
-    const namesFile = c.bodies.some(
-      (h) => h.transfer && isFileIdentity(coverageOf(h.transfer, c.req.status)) && hasDigest(h.transfer),
-    );
+    const cov = hopCoverage(c);
+    const namesFile = c.bodies.some((h) => {
+      const coverage = cov(h);
+      return !!h.transfer && !!coverage && isFileIdentity(coverage) && hasDigest(h.transfer);
+    });
     const graded = Boolean(inspection.attack) || inspection.spillFamilies.length > 0;
-    fold(sink, {
+    fold(requests, {
       key,
       kind: "web",
       source: c.req.source,
@@ -285,7 +334,7 @@ export function tallyWebChains(
     transferIocs(c, rowIocs);
     mergeRowIocs(iocSink, rowIocs, key);
     const namesFile = isFileIdentity(c.coverage) && hasDigest(c.xfer);
-    fold(sink, {
+    fold(transfers, {
       key,
       kind: "transfer",
       source: c.xfer.source,
@@ -295,26 +344,9 @@ export function tallyWebChains(
       graded: false,
     });
   }
-  const overflow = (kind: Kind, source: Source, n: number): void => {
-    if (!n) return;
-    const ok = OVERFLOW_KEY(kind, source);
-    const over = sink.get(ok);
-    if (over) over.count += n;
-    else
-      sink.set(ok, {
-        kind,
-        source,
-        count: n,
-        firstTs: "",
-        key: ok,
-        namesFile: false,
-        graded: false,
-        overflow: true,
-      });
-  };
-  overflow("web", joined.requests[0]?.req.source ?? "zeek-http", obs.requestsOverflow);
-  overflow("transfer", joined.transfers[0]?.xfer.source ?? "zeek-files", obs.transfersOverflow);
-  return sink;
+  for (const [source, n] of obs.requestsOverflow) foldOverflow(requests, "web", source, "", n);
+  for (const [source, n] of obs.transfersOverflow) foldOverflow(transfers, "transfer", source, "", n);
+  return { requests, transfers };
 }
 
 // ───────────────────────────── rows ─────────────────────────────
@@ -561,8 +593,8 @@ function mapRow(t: WebTally): MappedEvent {
 }
 
 /** Rows naming a file first, then graded rows, then the most seen, then the earliest — up to `budget`. */
-export function mapWebRows(sink: Map<string, WebTally>, budget: number): MappedEvent[] {
-  return [...sink.values()]
+export function mapWebRows(sinks: { requests: WebSink; transfers: WebSink }, budget: number): MappedEvent[] {
+  return [...sinks.requests.rows.values(), ...sinks.transfers.rows.values()]
     .sort(
       (a, b) =>
         Number(b.namesFile) - Number(a.namesFile) ||

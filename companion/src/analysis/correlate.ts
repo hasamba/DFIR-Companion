@@ -391,7 +391,9 @@ function groupEvents(
   // A WIRE row (a sensor's request or transfer record, #993) is never unioned with a host
   // observation either: the transfer that carried a file and the endpoint event that wrote it are
   // two facts joined by a hash, and folding them would give the wire row the endpoint's path and
-  // the endpoint row the sensor's time. Wire-with-wire unions stay allowed (a re-import dedups).
+  // the endpoint row the sensor's time. Wire with wire unions only through step 0 (the same record
+  // re-imported): two transfers of one file at two times are two transfers, so the hash and path
+  // steps below skip wire rows altogether.
   const klass = evs.map((e) => (isLabProduced(e) ? "lab" : e.origin === "wire" ? "wire" : "host"));
   const union = (a: number, b: number): void => {
     if (klass[a] !== klass[b]) return;
@@ -479,7 +481,7 @@ function groupEvents(
     // `Compress-Archive` collection and `Invoke-RestMethod` exfil) into one row, destroying the kill
     // chain. Skipping pid-bearing events keeps distinct creations distinct; re-import dedup is still
     // covered by step 0 (exact time+description) and genuine cross-tool pairs by step 3.
-    if (e.pid !== undefined) return;
+    if (e.pid !== undefined || klass[i] === "wire") return;
     for (const h of eventHashes(e)) {
       const key = `${h}:${e.action ?? ""}`;
       (byHash.get(key) ?? byHash.set(key, []).get(key)!).push(i);
@@ -500,6 +502,7 @@ function groupEvents(
   //    a structured path matching a text path still corroborates (AI-extracted event ↔ import).
   const byPath = new Map<string, { i: number; structured: boolean }[]>();
   evs.forEach((e, i) => {
+    if (klass[i] === "wire") return;
     const p = eventPath(e);
     if (p) (byPath.get(p.path) ?? byPath.set(p.path, []).get(p.path)!).push({ i, structured: p.structured });
   });

@@ -19,7 +19,12 @@ type Row = Record<string, unknown>;
 
 /** Identifiers read from one record; the rest are dropped and counted. */
 export const WEB_IDS_PER_RECORD = 32;
-const PROXIED_MAX = 8;
+/** Proxy headers (Zeek `proxied`) read from one record; the rest are dropped and counted. */
+export const PROXIED_MAX = 8;
+const PROXIED_VALUE_MAX = 120;
+// RFC 9110 token: a method that is not one is not a method, and never reaches the words.
+const METHOD = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,16}$/;
+const VERSION = /^(?:HTTP\/)?\d(?:\.\d)?$/i;
 
 export type RequestSource = "zeek-http" | "suricata-http";
 export type TransferSource = "zeek-files" | "suricata-fileinfo";
@@ -149,6 +154,17 @@ function suricataTime(row: Row): string {
   return normalizeTime(str(getCI(row, "timestamp"))) || "";
 }
 
+/** A method is shown only when it is a token; anything else is "-" (an invalid method). */
+export const methodOf = (v: unknown): string => {
+  const m = text(v)?.trim() ?? "";
+  return METHOD.test(m) ? m.toUpperCase() : "-";
+};
+/** An HTTP version is `1.1` / `HTTP/1.1` / `2`; anything else is not a version and is dropped. */
+export const versionOf = (v: unknown): string | undefined => {
+  const t = text(v)?.trim() ?? "";
+  return VERSION.test(t) ? t.replace(/^HTTP\//i, "") : undefined;
+};
+
 const address = (v: unknown): string | undefined => {
   const a = cleanIp(str(v));
   return a && isIP(a) ? a : undefined;
@@ -166,7 +182,14 @@ const clientField = (v: unknown): string => clipField(text(v) ?? "").text;
 export function readZeekHttp(row: Row, recordIndex: number): RequestObservation {
   const orig = idList(getCI(row, "orig_fuids"));
   const resp = idList(getCI(row, "resp_fuids"));
-  const proxied = idList(getCI(row, "proxied"));
+  // Proxy headers are client-written text: bounded to PROXIED_MAX, the rest counted with the
+  // dropped identifiers so the row discloses what it did not read and keys on the count.
+  const proxiedRaw = getCI(row, "proxied");
+  const proxiedAll = (Array.isArray(proxiedRaw) ? proxiedRaw : proxiedRaw ? [proxiedRaw] : [])
+    .map((p) => str(p).trim())
+    .filter(Boolean);
+  const proxied = proxiedAll.slice(0, PROXIED_MAX).map((p) => p.slice(0, PROXIED_VALUE_MAX));
+  const proxiedDropped = Math.max(0, proxiedAll.length - PROXIED_MAX);
   const depth = num(getCI(row, "trans_depth"));
   const streamId = text(getCI(row, "stream_id"))?.trim();
   return {
@@ -177,20 +200,20 @@ export function readZeekHttp(row: Row, recordIndex: number): RequestObservation 
     src: address(getCI(row, "id.orig_h")),
     dst: address(getCI(row, "id.resp_h")),
     port: portOf(getCI(row, "id.resp_p")),
-    method: (text(getCI(row, "method"))?.trim() || "-").slice(0, 16).toUpperCase(),
+    method: methodOf(getCI(row, "method")),
     target: clientField(getCI(row, "uri")),
     host: clientField(getCI(row, "host")),
-    version: text(getCI(row, "version"))?.trim() || undefined,
+    version: versionOf(getCI(row, "version")),
     status: num(getCI(row, "status_code")),
     referrer: clientField(getCI(row, "referrer")),
     userAgent: clientField(getCI(row, "user_agent")),
     user: text(getCI(row, "username"))?.trim() || undefined,
     requestBodyLen: num(getCI(row, "request_body_len")),
     responseBodyLen: num(getCI(row, "response_body_len")),
-    ...(proxied.ids.length ? { proxied: proxied.ids.slice(0, PROXIED_MAX).map((p) => p.slice(0, 120)) } : {}),
+    ...(proxied.length ? { proxied } : {}),
     origFuids: orig.ids,
     respFuids: resp.ids,
-    identifiersDropped: orig.dropped + resp.dropped,
+    identifiersDropped: orig.dropped + resp.dropped + proxiedDropped,
     uid: text(getCI(row, "uid"))?.trim() || undefined,
     ...(depth !== undefined ? { depth } : {}),
     ...(streamId ? { streamId } : {}),
@@ -255,7 +278,7 @@ function suricataRequest(
   const h = getCI(row, "http");
   if (!isObject(h)) return undefined;
   return {
-    method: (text(getCI(h, "http_method"))?.trim() || "-").slice(0, 16).toUpperCase(),
+    method: methodOf(getCI(h, "http_method")),
     host: clientField(getCI(h, "hostname")),
     target: clientField(getCI(h, "url")),
     status: num(getCI(h, "status")),
@@ -277,7 +300,7 @@ export function readSuricataHttp(row: Row, recordIndex: number): RequestObservat
     dst: address(getCI(row, "dest_ip")),
     port: portOf(getCI(row, "dest_port")),
     ...req,
-    version: text(getCI(h, "protocol"))?.trim() || undefined,
+    version: versionOf(getCI(h, "protocol")),
     referrer: clientField(getCI(h, "http_refer")),
     userAgent: clientField(getCI(h, "http_user_agent")),
     responseBodyLen: num(getCI(h, "length")),

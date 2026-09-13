@@ -7,8 +7,22 @@ import { correlateEvents } from "../../src/analysis/correlate.js";
 import { buildIocProvenanceChains } from "../../src/analysis/iocProvenanceChain.js";
 import { canonicalConformanceIssues, createCanonicalEvent } from "../../src/analysis/canonicalEvent.js";
 import { resolveExtractedFrom, type SiemEvent } from "../../src/analysis/siemImport.js";
-import { readZeekFiles, WEB_IDS_PER_RECORD } from "../../src/analysis/webChainRead.js";
-import { coverageOf, WEB_BODIES_MAX, WEB_OBSERVATIONS_MAX } from "../../src/analysis/webChainJoin.js";
+import {
+  PROXIED_MAX,
+  readZeekFiles,
+  readZeekHttp,
+  WEB_IDS_PER_RECORD,
+} from "../../src/analysis/webChainRead.js";
+import {
+  addRequest,
+  BUCKET_MAX,
+  coverageOf,
+  emptyWebObservations,
+  joinWebChain,
+  WEB_BODIES_MAX,
+  WEB_OBSERVATIONS_MAX,
+  WEB_REQUESTS_MAX,
+} from "../../src/analysis/webChainJoin.js";
 import { WEB_SHAPES_MAX } from "../../src/analysis/webChainRows.js";
 import type { ForensicEvent, IOC } from "../../src/analysis/stateTypes.js";
 
@@ -270,7 +284,8 @@ describe("coverage — the sensor's counters, never a claim of a complete transf
 describe("missing partners are named, never silent", () => {
   it("a fuid with no files record, and a files record with no request", () => {
     const req = requests(parse([http()]))[0];
-    expect(req.description).toContain("[body: FaB1 — no files record in this upload]");
+    expect(req.description).toContain("[body: no files record in this upload]");
+    expect(req.description).not.toContain("FaB1"); // the identifier is a locator, kept on the envelope only
     expect(req.canonical?.web?.bodies[0]).toMatchObject({
       state: "no files record in this upload",
       direction: "response",
@@ -359,9 +374,9 @@ describe("identity — one row per chain", () => {
   it("two records of one shape fold; a different body, target or hop is another row", () => {
     const same = parse([
       http(),
-      http({ ts: 1512115300, uid: "CAb5" }),
+      http({ ts: 1512115300, trans_depth: 2 }),
       files(),
-      files({ ts: 1512115301, fuid: "FaB1" }),
+      files({ ts: 1512115301 }),
     ]);
     expect(requests(same)).toHaveLength(1);
     expect(requests(same)[0].description).toContain("— 2 records");
@@ -369,7 +384,7 @@ describe("identity — one row per chain", () => {
       http(),
       files(),
       http({ uid: "CAb5", resp_fuids: ["FaB2"] }),
-      files({ fuid: "FaB2", sha256: SHA_B }),
+      files({ fuid: "FaB2", uid: "CAb5", sha256: SHA_B }),
     ]);
     expect(requests(otherBody)).toHaveLength(2);
     const longA = "/" + "a".repeat(200) + "x";
@@ -409,6 +424,66 @@ describe("identity — one row per chain", () => {
   });
 });
 
+describe("a shared identifier is necessary, not sufficient", () => {
+  it("an SMTP files record, a different connection id or a different sensor is not joined", () => {
+    const smtp = requests(parse([http(), files({ source: "SMTP" })]))[0];
+    expect(smtp.description).toContain("[body: identifier conflict — not joined]");
+    const otherConn = parse([http(), files({ uid: "CAb9" })]);
+    expect(requests(otherConn)[0].canonical?.web?.bodies[0].state).toBe("identifier conflict — not joined");
+    expect(transfers(otherConn)[0].canonical?.transfer?.requestState).toBe(
+      "identifier conflict — not joined",
+    );
+    const sensors = requests(parse([http({ "observer.name": "s1" }), files({ "observer.name": "s2" })]))[0];
+    expect(sensors.canonical?.web?.bodies[0].state).toBe("identifier conflict — not joined");
+  });
+
+  it("two files records with one fuid and different facts are a conflict, never a first-wins pick", () => {
+    const req = requests(parse([http(), files(), files({ sha256: SHA_B })]))[0];
+    expect(req.description).toContain("[body: conflicting files records]");
+    expect(req.sha256).toBeUndefined();
+    // The same record exported twice is one record.
+    expect(requests(parse([http(), files(), files()]))[0].canonical?.web?.bodies[0].state).toBe("observed");
+  });
+
+  it("a 206 on ANY response carrier makes the body a range; a request body ignores the response status", () => {
+    const r = parse([
+      http({ status_code: 206 }),
+      http({ uid: "CAb2", status_code: 206 }),
+      files({ conn_uids: ["CAb1", "CAb2"], uid: undefined }),
+    ]);
+    expect(transfers(r)[0].canonical?.transfer?.coverage).toBe("range");
+    expect(transfers(r)[0].sha256).toBeUndefined();
+    expect(r.iocs.some((i) => i.type === "hash")).toBe(false);
+    const upload = parse([
+      http({ method: "POST", status_code: 206, orig_fuids: ["FaB1"], resp_fuids: undefined }),
+      files({ is_orig: true }),
+    ]);
+    expect(transfers(upload)[0].canonical?.transfer?.coverage).toBe("whole");
+    expect(requests(upload)[0].canonical?.web?.bodies[0].transfer?.coverage).toBe("whole");
+  });
+
+  it("records past the retained bound make every absence 'not among the records read'", () => {
+    const obs = emptyWebObservations();
+    addRequest(obs, readZeekHttp(http({ status_code: 302, resp_fuids: ["FaB1"] }), 0));
+    obs.requestsOverflow.set("zeek-http", 1);
+    obs.transfersOverflow.set("zeek-files", 1);
+    const { requests: rq } = joinWebChain(obs);
+    expect(rq[0].bodies[0].state).toBe("not among the records read");
+    expect(rq[0].redirect?.nextState).toBe("not among the records read");
+  });
+
+  it("a repeated identifier is bounded per bucket and the omitted carriers are counted", () => {
+    const carriers = Array.from({ length: BUCKET_MAX + 3 }, (_, i) =>
+      http({ uid: `C${i}`, ts: 1512115202 + i }),
+    );
+    const r = parse([...carriers, files({ uid: undefined, conn_uids: carriers.map((_, i) => `C${i}`) })]);
+    const x = transfers(r)[0];
+    expect(x.canonical?.transfer?.requests).toHaveLength(WEB_REQUESTS_MAX);
+    expect(x.canonical?.transfer?.requestsTotal).toBe(BUCKET_MAX + 3);
+    expect(x.description).toContain(`[+${BUCKET_MAX + 3 - WEB_REQUESTS_MAX} more requests]`);
+  });
+});
+
 describe("bounds", () => {
   it("shapes past the bound fold into one overflow row that shows no shape", () => {
     const rows = Array.from({ length: WEB_SHAPES_MAX + 3 }, (_, i) =>
@@ -423,6 +498,39 @@ describe("bounds", () => {
 
   it("records past the retained bound are counted, never joined", () => {
     expect(WEB_OBSERVATIONS_MAX).toBeGreaterThan(WEB_SHAPES_MAX);
+  });
+
+  it("a late row naming a file evicts a plain shape instead of folding into overflow", () => {
+    const plain = Array.from({ length: WEB_SHAPES_MAX }, (_, i) =>
+      http({ uri: `/p/${i}`, resp_fuids: undefined, uid: `C${i}` }),
+    );
+    const r = parseNetworkLogs(ndjson([...plain, http({ ts: 1512119999 }), files({ ts: 1512119999 })]), {
+      maxEvents: WEB_SHAPES_MAX + 10,
+    });
+    expect(r.events.some((e) => e.description.includes("[body: sha256 3a7b0000…c9e1"))).toBe(true);
+    const over = r.events.find((e) => e.description.startsWith("[overflow:"))!;
+    expect(over.description).toContain("1 request record beyond the retained bound folded");
+    // The transfer kind has its own bound: the wall of requests does not fold the first transfer.
+    expect(r.events.some((e) => e.description.startsWith("Transfer over HTTP: sha256"))).toBe(true);
+  });
+
+  it("proxied headers are bounded and the dropped ones are counted", () => {
+    const proxied = Array.from({ length: PROXIED_MAX + 2 }, (_, i) => `X-FORWARDED-FOR -> 203.0.113.${i}`);
+    const req = requests(parse([http({ proxied, resp_fuids: undefined })]))[0];
+    expect(req.canonical?.web?.proxied).toHaveLength(PROXIED_MAX);
+    expect(req.canonical?.web?.identifiersDropped).toBe(2);
+    const eight = requests(
+      parse([http({ proxied: proxied.slice(0, PROXIED_MAX), resp_fuids: undefined })]),
+    )[0];
+    const nine = requests(
+      parse([
+        http({
+          proxied: [...proxied.slice(0, PROXIED_MAX), "X-FORWARDED-FOR -> 203.0.113.99"],
+          resp_fuids: undefined,
+        }),
+      ]),
+    )[0];
+    expect(nine.aggKey).not.toBe(eight.aggKey);
   });
 
   it("under the budget a row naming a file outranks a thousand plain requests", () => {
@@ -446,6 +554,40 @@ describe("grading and neutralisation", () => {
     expect(req.mitreTechniques).toContain("T1190");
     expect(req.description).toMatch(/\[web-attack: /);
     expect(req.description).toContain("[matched:");
+  });
+
+  it("a method that is not a token and a version that is not a version reach no words", () => {
+    const req = requests(
+      parse([http({ method: "GET] [EXECUTED", version: "1.1] [workstation: WS01", resp_fuids: undefined })]),
+    )[0];
+    expect(req.description).not.toContain("EXECUTED");
+    expect(req.description).not.toContain("workstation");
+    expect(req.description).toContain("HTTP - [target:");
+    expect(req.canonical?.web?.version).toBeUndefined();
+  });
+
+  it("a standalone Suricata fileinfo still mints the host it names", () => {
+    const fi = {
+      timestamp: "2017-12-01T08:00:02+0000",
+      event_type: "fileinfo",
+      flow_id: 11,
+      src_ip: CLIENT,
+      dest_ip: SERVER,
+      app_proto: "http",
+      http: {
+        hostname: "download.example.net",
+        url: "http://download.example.net/a.exe?k=1",
+        http_method: "GET",
+        status: 200,
+      },
+      fileinfo: { filename: "/a.exe", sha256: SHA, size: 10, state: "CLOSED", gaps: false, tx_id: 0 },
+    };
+    const r = parse([fi]);
+    expect(r.iocs.some((i) => i.type === "domain" && i.value === "download.example.net")).toBe(true);
+    expect(
+      r.iocs.some((i) => i.type === "url" && i.value.startsWith("http://download.example.net/a.exe")),
+    ).toBe(true);
+    expect(r.iocs.find((i) => i.type === "domain")?.sourceAggKeys).toEqual([transfers(r)[0].aggKey]);
   });
 
   it("sensor-read text cannot spell a tag or feed a free-text hash/path scrape", () => {
@@ -500,8 +642,14 @@ describe("transfer → endpoint file: joined by the hash and by nothing else", (
     expect(correlateEvents([{ ...wire, asset: "ws01" }, endpoint], {})).toHaveLength(2);
     expect(correlateEvents([wire, { ...endpoint, asset: "" }], {})).toHaveLength(2);
     expect(correlateEvents([wire, endpoint], { crossHostArtifacts: true })).toHaveLength(2);
-    // Wire with wire still dedups a re-import.
+    // Wire with wire dedups a re-import (the same record) — and nothing else: two transfers of
+    // one file at two times are two transfers.
     expect(correlateEvents([wire, { ...wire, id: "w2" }], {})).toHaveLength(1);
+    const later = asForensic(
+      transfers(parse([http({ ts: 1512119999 }), files({ ts: 1512119999, filename: "again.exe" })]))[0],
+      "w3",
+    );
+    expect(correlateEvents([wire, later], {})).toHaveLength(2);
   });
 
   it("the hash IOC's provenance chain lists the linked transfer AND the unlinked endpoint event", () => {
