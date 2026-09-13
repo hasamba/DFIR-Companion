@@ -17,7 +17,7 @@
 
 import { isIP } from "node:net";
 import { breakHashRuns, identityMark, keyDigest, packTags, showToken } from "./recordIdentity.js";
-import { addIoc, getCI, normalizeTime, type MappedEvent, type SiemIoc } from "./siemImport.js";
+import { addIoc, normalizeTime, type MappedEvent, type SiemIoc } from "./siemImport.js";
 import { createCanonicalEvent } from "./canonicalEvent.js";
 
 type Row = Record<string, unknown>;
@@ -249,10 +249,12 @@ const text = (v: unknown): string =>
         : typeof v === "object"
           ? JSON.stringify(v)
           : String(v);
+// The same recognition as the classifier (trimmed, case-insensitive); the matched key verbatim.
 const first = (rec: Row, keys: readonly string[]): { value: string; header: string } => {
+  const entries = Object.entries(rec);
   for (const k of keys) {
-    const v = getCI(rec, k);
-    if (v != null && text(v).trim() !== "") return { value: text(v).trim(), header: k };
+    const hit = entries.find(([h, v]) => h.trim().toLowerCase() === k.toLowerCase() && text(v).trim() !== "");
+    if (hit) return { value: text(hit[1]).trim(), header: hit[0] };
   }
   return { value: "", header: "" };
 };

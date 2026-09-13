@@ -308,3 +308,8 @@ The joins, Gatekeeper/XProtect logs, browser history, any grade above Info.
 ## Code round 25 (Codex, one finding)
 1. The canonical provenance of the data URL always named `LSQuarantineDataURLString`, even for an
    alias export. Fix: it names the column the value came from (`data_url`, `url`).
+
+## Code round 26 (Codex, one finding)
+1. The classifier recognised a padded key (` data_url `) but the reader did not, so a routed row
+   lost its URL and indicators. Fix: the reader resolves aliases by the same trimmed,
+   case-insensitive recognition and names the matched key verbatim in provenance.

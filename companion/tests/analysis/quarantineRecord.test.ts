@@ -592,6 +592,18 @@ describe("through parseMacos and correlateEvents", () => {
       JSON.stringify([{ event_id: UUID, agent: "Safari", url: "https://cdn.example.invalid/a" }]),
     );
     expect(url.events[0].canonical?.fieldProvenance["quarantine.dataUrl"]?.rawFields).toEqual(["url"]);
+    // a padded or case-varied key is read, and named verbatim
+    for (const key of [" data_url ", "DATA_URL"]) {
+      const k = parseMacos(
+        JSON.stringify([{ event_id: UUID, agent: "Safari", [key]: "https://cdn.example.invalid/a" }]),
+      );
+      expect(k.events[0].description, key).toContain("[data url: https://cdn.example.invalid/a]");
+      expect(
+        k.iocs.some((i) => i.type === "domain" && i.value === "cdn.example.invalid"),
+        key,
+      ).toBe(true);
+      expect(k.events[0].canonical?.fieldProvenance["quarantine.dataUrl"]?.rawFields, key).toEqual([key]);
+    }
   });
 
   it("a padded JSON key is its own column name", () => {
