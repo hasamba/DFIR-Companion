@@ -26,7 +26,15 @@ export interface EnrichmentResult {
   // onto the stored IocEnrichment by enrichService's spread. Set only from a documented field in
   // its documented form; never guessed.
   temporal?: IocEnrichmentTemporal;
+  // Lineage (#933 item 18) — every verdict-producing provider states how it holds the claim and whom
+  // the record names as creator; see IocEnrichment for the vocabulary. A relay that finds no creator
+  // sends `origins: []` (not recorded). Context-only providers send nothing.
+  originKind?: OriginKind;
+  origins?: string[];
+  moreOrigins?: number;
 }
+
+export type OriginKind = "first-party" | "aggregate" | "relay";
 
 // "local" = the analyst's OWN self-hosted instance (MISP / YETI) — querying it does NOT
 // leak indicators off-box, so it's OPSEC-safe and enabled by default. "external" = a

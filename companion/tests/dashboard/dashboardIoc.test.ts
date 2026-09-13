@@ -188,6 +188,42 @@ describe("enrichBadges", () => {
     expect(withEnrichment({ source: "whois", verdict: "unknown" })).toContain("whois: unknown");
   });
 
+  // #933 item 18: a relay platform (MISP / OpenCTI / YETI) holds records other parties created, so its
+  // badge says who — or that the record names nobody. Aggregate / first-party providers ARE the
+  // origin and their badge is unchanged. Names are remote text and are escaped.
+  it("says who created a relayed record, or that nobody is named", () => {
+    expect(
+      withEnrichment({ source: "MISP", verdict: "malicious", originKind: "relay", origins: ["abuse.ch"] }),
+    ).toContain("MISP: malicious — created by abuse.ch");
+    expect(
+      withEnrichment({
+        source: "MISP",
+        verdict: "malicious",
+        originKind: "relay",
+        origins: ["a", "b"],
+        moreOrigins: 3,
+      }),
+    ).toContain("created by a, b +3 more");
+    expect(
+      withEnrichment({ source: "OpenCTI", verdict: "malicious", originKind: "relay", origins: [] }),
+    ).toContain("OpenCTI: malicious — origin not recorded");
+    expect(withEnrichment({ source: "MISP", verdict: "malicious" })).toContain(
+      "MISP: malicious — origin not recorded",
+    ); // legacy relay
+    expect(
+      withEnrichment({ source: "MISP", verdict: "malicious", originKind: "relay", origins: ["<b>x</b>"] }),
+    ).not.toContain("<b>");
+    const vt = withEnrichment({
+      source: "VirusTotal",
+      verdict: "malicious",
+      originKind: "aggregate",
+      origins: ["VirusTotal"],
+    });
+    expect(vt).not.toContain("created by");
+    expect(vt).not.toContain("origin not recorded");
+    expect(withEnrichment({ source: "GeoIP", verdict: "unknown", score: "DE" })).not.toContain("origin");
+  });
+
   it("wraps the badge in a link when the provider gave one, escaping the URL", () => {
     const html = withEnrichment({ source: "vt", verdict: "malicious", link: 'https://x/"onmouseover=y' });
     expect(html).toContain('href="https://x/&quot;onmouseover=y"');

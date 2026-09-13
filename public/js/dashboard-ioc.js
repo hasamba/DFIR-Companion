@@ -11,33 +11,21 @@
 
 // Threat-intel enrichment badges for an IOC (VirusTotal / MalwareBazaar / AbuseIPDB).
 function verdictColor(v) {
-  return v === "malicious"
-    ? "#ff6b6b"
-    : v === "suspicious"
-      ? "#ffd93b"
-      : v === "harmless"
-        ? "#6bcB77"
-        : "#9aa4b2";
+  return v === "malicious" ? "#ff6b6b" : v === "suspicious" ? "#ffd93b" : v === "harmless" ? "#6bcB77" : "#9aa4b2";
 }
 
 // Link a MITRE technique id (T1059 / T1059.001) to its attack.mitre.org page.
 function attackUrl(id) {
   const m = /^T(\d{4})(?:\.(\d{3}))?$/.exec(String(id).trim().toUpperCase());
   if (!m) return null;
-  return m[2]
-    ? `https://attack.mitre.org/techniques/T${m[1]}/${m[2]}/`
-    : `https://attack.mitre.org/techniques/T${m[1]}/`;
+  return m[2] ? `https://attack.mitre.org/techniques/T${m[1]}/${m[2]}/` : `https://attack.mitre.org/techniques/T${m[1]}/`;
 }
 
 function mitreLinks(ids) {
-  return (ids || [])
-    .map((id) => {
-      const u = attackUrl(id);
-      return u
-        ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" data-safe-style="color:var(--accent)">${esc(id)}</a>`
-        : esc(id);
-    })
-    .join(", ");
+  return (ids || []).map(id => {
+    const u = attackUrl(id);
+    return u ? `<a href="${escAttr(u)}" target="_blank" rel="noopener" data-safe-style="color:var(--accent)">${esc(id)}</a>` : esc(id);
+  }).join(", ");
 }
 
 // Worst threat-intel verdict across an IOC's enrichments (mirrors the server-side helper in
@@ -45,9 +33,8 @@ function mitreLinks(ids) {
 function worstIocVerdict(ioc) {
   const order = ["malicious", "suspicious", "harmless", "unknown"];
   let best;
-  for (const e of ioc.enrichments || []) {
-    if (best === undefined || order.indexOf(e.verdict) < order.indexOf(best))
-      best = e.verdict;
+  for (const e of (ioc.enrichments || [])) {
+    if (best === undefined || order.indexOf(e.verdict) < order.indexOf(best)) best = e.verdict;
   }
   return best;
 }
@@ -62,42 +49,34 @@ function scoreCoversTag(score, tag) {
   return new RegExp(`(^|[^a-z0-9])${re}([^a-z0-9]|$)`, "i").test(score);
 }
 
-// The provider's dated facts as the badge shows them: the visible chip names the one fact that
-// dates the verdict (VirusTotal's latest scan; AbuseIPDB's report window); the title lists all.
+// #933 item 18: MISP / OpenCTI / YETI RELAY records other parties created. Their badge says who the
+// record names as creator — or that it names nobody (a pre-change record, or an event with no
+// org). Aggregate / first-party providers are the origin themselves and get no suffix.
+const RELAY_PROVIDERS = new Set(["misp", "opencti", "yeti"]);
+function originSuffix(e) {
+  const isRelay = e.originKind === "relay" || (!e.originKind && RELAY_PROVIDERS.has(String(e.provider || e.source || "").toLowerCase()));
+  if (!isRelay) return "";
+  const names = (e.origins || []).filter(n => typeof n === "string" && n.trim());
+  if (!names.length) return " — origin not recorded";
+  const more = e.moreOrigins > 0 ? ` +${e.moreOrigins} more` : "";
+  return ` — created by ${esc(names.join(", "))}${more}`;
+}
+
+// The provider's dated facts as the badge shows them (#933 item 19): the visible chip names the
+// one fact that dates the verdict (VirusTotal's latest scan; AbuseIPDB's report window); the title
+// lists every fact and the lookup time. Raw facts only — no relation to the case time is computed
+// here; a date is the first ten characters of an ISO string, so nothing else reaches the attribute.
 function intelWhenChip(e) {
   const t = e.temporal || {};
-  const day = (iso) =>
-    typeof iso === "string" && /^\d{4}-\d{2}-\d{2}/.test(iso)
-      ? iso.slice(0, 10)
-      : "";
+  const day = (iso) => (typeof iso === "string" && /^\d{4}-\d{2}-\d{2}/.test(iso) ? iso.slice(0, 10) : "");
   const facts = [];
-  if (day(t.verdictMeasuredAt))
-    facts.push(
-      `verdict measured by the latest scan: ${day(t.verdictMeasuredAt)}`,
-    );
-  if (day(t.firstSubmittedAt))
-    facts.push(
-      `first submitted to the provider: ${day(t.firstSubmittedAt)} (a submission date, not when it came to exist)`,
-    );
-  if (day(t.recordUpdatedAt))
-    facts.push(
-      `record last updated: ${day(t.recordUpdatedAt)} (not an observation)`,
-    );
-  if (t.queryWindow && day(t.queryWindow.from) && day(t.queryWindow.to))
-    facts.push(
-      `reports counted over the window ${day(t.queryWindow.from)} → ${day(t.queryWindow.to)}${typeof t.reportCount === "number" ? ` (${t.reportCount} reports)` : ""}`,
-    );
+  if (day(t.verdictMeasuredAt)) facts.push(`verdict measured by the latest scan: ${day(t.verdictMeasuredAt)}`);
+  if (day(t.firstSubmittedAt)) facts.push(`first submitted to the provider: ${day(t.firstSubmittedAt)} (a submission date, not when it came to exist)`);
+  if (day(t.recordUpdatedAt)) facts.push(`record last updated: ${day(t.recordUpdatedAt)} (not an observation)`);
+  if (t.queryWindow && day(t.queryWindow.from) && day(t.queryWindow.to)) facts.push(`reports counted over the window ${day(t.queryWindow.from)} → ${day(t.queryWindow.to)}${typeof t.reportCount === "number" ? ` (${t.reportCount} reports)` : ""}`);
   if (day(t.lastReportAt)) facts.push(`latest report: ${day(t.lastReportAt)}`);
   const fetched = day(e.fetchedAt) ? `lookup ran ${day(e.fetchedAt)}` : "";
-  const title = [
-    ...facts,
-    fetched,
-    facts.length
-      ? ""
-      : "the provider reports no dates: current reputation, not evidence about the time of the case",
-  ]
-    .filter(Boolean)
-    .join("; ");
+  const title = [...facts, fetched, facts.length ? "" : "the provider reports no dates: current reputation, not evidence about the time of the case"].filter(Boolean).join("; ");
   const chip = day(t.verdictMeasuredAt)
     ? ` · scan ${esc(day(t.verdictMeasuredAt))}`
     : t.queryWindow && day(t.queryWindow.from)
@@ -110,46 +89,33 @@ function intelWhenChip(e) {
 
 function enrichBadges(ioc) {
   if (!ioc.enrichments) return ""; // not enriched yet
-  if (!ioc.enrichments.length)
-    return ` <span data-safe-style="color:var(--text-faint);font-size:11px">· checked, no intel</span>`;
-  return (
-    " " +
-    ioc.enrichments
-      .map((e) => {
-        const c = verdictColor(e.verdict);
-        const score = e.score ? String(e.score) : "";
-        // Drop tag chips already present in the score so they don't read as duplicated.
-        const shownTags = (e.tags || [])
-          .filter((t) => !scoreCoversTag(score, t))
-          .slice(0, 3);
-        const tags = shownTags.length ? ` — ${esc(shownTags.join(", "))}` : "";
-        // The IP-infrastructure providers (Reverse DNS / WHOIS / GeoIP / Shodan) return verdict
-        // "unknown" because they give CONTEXT, not a threat call. When there's data to show, omit
-        // the literal "unknown" so the badge reads as info — not "we don't know".
-        const asContext = e.verdict === "unknown" && (score || tags);
-        // WHEN the verdict applies (#933 item 19): a visible chip from the provider's own dated facts
-        // (a scan date, a report window) — raw facts, no relation computed here — and a title with
-        // every fact and the lookup time. A verdict never shows without its date.
-        const when = intelWhenChip(e);
-        const label = asContext
-          ? `${esc(e.source)}${score ? `: ${esc(score)}` : ""}${tags}`
-          : `${esc(e.source)}: ${esc(e.verdict)}${score ? ` (${esc(score)})` : ""}${tags}${when.chip}`;
-        const inner = `<span title="${escAttr(when.title)}" data-safe-style="display:inline-block;vertical-align:middle;color:${c};border:1px solid ${c};border-radius:4px;padding:0 6px;font-size:11px;white-space:normal;word-break:break-word">${label}</span>`;
-        return e.link
-          ? `<a href="${escAttr(e.link)}" target="_blank" rel="noopener" data-safe-style="text-decoration:none">${inner}</a>`
-          : inner;
-      })
-      .join(" ")
-  );
+  if (!ioc.enrichments.length) return ` <span data-safe-style="color:var(--text-faint);font-size:11px">· checked, no intel</span>`;
+  return " " + ioc.enrichments.map(e => {
+    const c = verdictColor(e.verdict);
+    const score = e.score ? String(e.score) : "";
+    // Drop tag chips already present in the score so they don't read as duplicated.
+    const shownTags = (e.tags || []).filter(t => !scoreCoversTag(score, t)).slice(0, 3);
+    const tags = shownTags.length ? ` — ${esc(shownTags.join(", "))}` : "";
+    // The IP-infrastructure providers (Reverse DNS / WHOIS / GeoIP / Shodan) return verdict
+    // "unknown" because they give CONTEXT, not a threat call. When there's data to show, omit
+    // the literal "unknown" so the badge reads as info — not "we don't know".
+    const asContext = e.verdict === "unknown" && (score || tags);
+    // WHEN the verdict applies (#933 item 19): a visible chip from the provider's own dated facts
+    // and a title with every fact — a verdict never shows without its date.
+    const when = intelWhenChip(e);
+    const label = asContext
+      ? `${esc(e.source)}${score ? `: ${esc(score)}` : ""}${tags}`
+      : `${esc(e.source)}: ${esc(e.verdict)}${score ? ` (${esc(score)})` : ""}${originSuffix(e)}${tags}${when.chip}`;
+    const inner = `<span title="${escAttr(when.title)}" data-safe-style="display:inline-block;vertical-align:middle;color:${c};border:1px solid ${c};border-radius:4px;padding:0 6px;font-size:11px;white-space:normal;word-break:break-word">${label}</span>`;
+    return e.link ? `<a href="${escAttr(e.link)}" target="_blank" rel="noopener" data-safe-style="text-decoration:none">${inner}</a>` : inner;
+  }).join(" ");
 }
 
 // Render the IOC list. Extracted from render() so paintIocImportMeta() can re-render it to paint
 // the "new since last import" highlight (green accent + NEW badge) without a full state re-render.
 // An IOC is "flagged" when any enrichment engine returned a malicious or suspicious verdict.
 function iocFlagged(i) {
-  return (i.enrichments || []).some(
-    (e) => e.verdict === "malicious" || e.verdict === "suspicious",
-  );
+  return (i.enrichments || []).some(e => e.verdict === "malicious" || e.verdict === "suspicious");
 }
 
 // A case file can end up with more than one IOC row sharing the same id (a known bug where
@@ -172,13 +138,8 @@ function dedupeIocsById(iocs) {
 // Deterministic display order — grouped by type, then alphabetical by value — instead of raw
 // insertion/id order (which is meaningless to an analyst and buries duplicates at the tail).
 function sortIocsForDisplay(iocs) {
-  return [...iocs].sort(
-    (a, b) =>
-      (a.type || "").localeCompare(b.type || "") ||
-      (a.value || "").localeCompare(b.value || "", undefined, {
-        sensitivity: "base",
-      }),
-  );
+  return [...iocs].sort((a, b) =>
+    (a.type || "").localeCompare(b.type || "") || (a.value || "").localeCompare(b.value || "", undefined, { sensitivity: "base" }));
 }
 
 // The IOC panel's three "noise" lenses, applied in two layers so that the lenses which depend on
@@ -208,10 +169,8 @@ function applyIocNoiseFilters(list, opts) {
   const isFlagged = o.isFlagged || (() => false);
   const corroboration = o.corroboration || (() => 0);
   const isSystemPath = o.isSystemPath || (() => false);
-  const enriched = (i) =>
-    Array.isArray(i.enrichments) && i.enrichments.length > 0;
-  const neverEnriched = (i) =>
-    Array.isArray(i.enrichments) && i.enrichments.length === 0;
+  const enriched = (i) => Array.isArray(i.enrichments) && i.enrichments.length > 0;
+  const neverEnriched = (i) => Array.isArray(i.enrichments) && i.enrichments.length === 0;
 
   // The floor: exclusions that survive the fallback because they are not about how far the case has
   // got. A false-positive mark is a judgement the analyst made about THAT IOC — no amount of
@@ -227,10 +186,7 @@ function applyIocNoiseFilters(list, opts) {
   // neither can match anything, which is why they must be able to stand down.
   let out = floor;
   if (o.hideFpNoIntel) out = out.filter((i) => !neverEnriched(i));
-  if (o.showSignalIocsOnly)
-    out = out.filter(
-      (i) => isFlagged(i) || corroboration(i) >= 2 || enriched(i),
-    );
+  if (o.showSignalIocsOnly) out = out.filter((i) => isFlagged(i) || corroboration(i) >= 2 || enriched(i));
 
   // Fall back to the FLOOR, never to the raw list.
   if (!out.length && floor.length) return { visible: floor, suppressed: true };
@@ -241,11 +197,9 @@ function applyIocNoiseFilters(list, opts) {
 // it the panel looks like it is ignoring its own filters. Empty string when nothing was suppressed.
 function iocNoiseNoticeHtml(suppressed, shown) {
   if (!suppressed) return "";
-  return (
-    `<div class="ioc-noise-notice">Showing ${shown} IOC${shown !== 1 ? "s" : ""} — ` +
+  return `<div class="ioc-noise-notice">Showing ${shown} IOC${shown !== 1 ? "s" : ""} — ` +
     `\u201CSignal only\u201D / \u201CHide FP/no-intel\u201D / \u201CHide OS system paths\u201D would have hidden ` +
-    `every one. Enrich the IOCs to make those filters meaningful.</div>`
-  );
+    `every one. Enrich the IOCs to make those filters meaningful.</div>`;
 }
 
 // Published for the inline script and the other helper modules. EVERY function this file
@@ -263,5 +217,6 @@ window.DfirIoc = {
   applyIocNoiseFilters,
   iocNoiseNoticeHtml,
   scoreCoversTag,
+  originSuffix,
   enrichBadges,
 };

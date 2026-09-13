@@ -5,6 +5,7 @@ import {
   mispTransportMessage,
 } from "../integrations/misp/mispConnectivity.js";
 import { readBoundedJson, RESPONSE_SIZE_LIMITS } from "../providers/boundedResponse.js";
+import { boundOrigins } from "../analysis/intelLineage.js";
 
 export interface MispOptions {
   baseUrl: string; // your MISP instance, e.g. https://misp.example.org
@@ -17,6 +18,8 @@ interface MispEvent {
   id?: string;
   info?: string;
   threat_level_id?: string;
+  orgc_id?: string; // creator org id — always present on an event
+  Orgc?: { id?: string; name?: string }; // the resolved creator org, returned with includeContext
 }
 interface MispTag {
   name?: string;
@@ -36,6 +39,16 @@ function verdictFor(attrs: MispAttribute[]): Verdict {
   if (attrs.length === 0) return "unknown";
   const high = attrs.some((a) => a.to_ids === true || a.Event?.threat_level_id === "1");
   return high ? "malicious" : "suspicious"; // present in MISP = at least suspicious
+}
+
+// Who created the event, as the record states it: the resolved org name when includeContext returned
+// one, else the bare org id (an identity on this instance, nameless), else nothing. The event's `info`
+// and tags are free text about the SUBJECT and are never read as a source.
+function creatorOf(ev: MispEvent): string {
+  const name = typeof ev.Orgc?.name === "string" ? ev.Orgc.name.trim() : "";
+  if (name) return name;
+  const id = ev.Orgc?.id ?? ev.orgc_id;
+  return id !== undefined && id !== null && String(id).trim() ? `org #${String(id).trim()}` : "";
 }
 
 // MISP (Malware Information Sharing Platform). Searches your instance's attributes for
@@ -85,7 +98,15 @@ export class MispProvider implements EnrichmentProvider {
         Accept: "application/json",
         "content-type": "application/json",
       },
-      body: JSON.stringify({ returnFormat: "json", value, limit: 25, includeEventTags: true }),
+      // includeContext: the event's creator organisation (Orgc) comes back with each attribute, so
+      // the record can say who made the claim (#933 item 18) — MISP RELAYS; it is not the origin.
+      body: JSON.stringify({
+        returnFormat: "json",
+        value,
+        limit: 25,
+        includeEventTags: true,
+        includeContext: true,
+      }),
       signal: AbortSignal.timeout(this.opts.timeoutMs ?? 20_000),
     });
     if (res.status === 401 || res.status === 403) throw new Error("MISP auth failed (check DFIR_MISP_KEY)");
@@ -99,16 +120,20 @@ export class MispProvider implements EnrichmentProvider {
 
     const events = new Map<string, MispEvent>();
     const tags = new Set<string>();
-    for (const a of attrs) {
+    attrs.forEach((a, i) => {
       const ev = a.Event;
-      if (ev?.id) events.set(ev.id, ev);
+      // Keyed by the event id from either place; an attribute whose Event object lacks an id still
+      // carries its creator, so it gets its own slot rather than being dropped.
+      if (ev) events.set(ev.id ?? a.event_id ?? `#${i}`, ev);
       for (const t of a.Tag ?? []) if (t.name) tags.add(t.name);
-    }
+    });
     const firstEventId = attrs[0].Event?.id ?? attrs[0].event_id;
     const eventInfo = attrs[0].Event?.info;
 
     return {
       source: this.name,
+      originKind: "relay",
+      ...boundOrigins([...events.values()].map(creatorOf)),
       verdict: verdictFor(attrs),
       score: `${attrs.length} attribute(s) in ${events.size || 1} event(s)${eventInfo ? `: ${eventInfo.slice(0, 80)}` : ""}`,
       detections: attrs.length,

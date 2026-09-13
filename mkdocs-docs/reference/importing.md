@@ -549,6 +549,11 @@ time cell was empty was dropped. Now:
   sorts after every dated row in the super-timeline, stays inside any time window you set (it
   cannot be proven out of range), and is searchable and promotable like any other row. The import
   response and the activity line say how many rows carry no clock.
+- **An undated row never borrows a time.** Correlation merges rows that share a file hash or a path
+  — but never an undated row into a dated one, so an installed-app entry cannot come out saying it
+  happened when some file event on the same host did. Undated rows still fold with each other.
+- **A Timesketch export says what it left out.** Timesketch requires a time per event, so undated
+  rows are omitted from the JSONL and the push; the status line gives the count.
 - **Each row keeps the meaning of its clock.** A LEAPP table often has several time columns
   (Timestamp, Created, Last Modified) and a row's populated one is not the same for every row. Each
   row takes its first populated time column and names it in the description —

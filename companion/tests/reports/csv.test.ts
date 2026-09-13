@@ -88,7 +88,8 @@ describe("CSV renderers", () => {
     const csv = iocsCsv(state);
     const row = csv.trim().split("\n")[1];
     expect(row).toContain("critical");
-    expect(row).toContain("corroborated by");
+    // #933 item 18: the factor names the origins and the local event that earned "corroborated".
+    expect(row).toContain("2 named origins: VirusTotal, AbuseIPDB) carried by a Medium+ event in this case");
   });
 
   it("forensicTimelineCsv emits a header and rows ordered by event time", () => {

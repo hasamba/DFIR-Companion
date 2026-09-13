@@ -9,7 +9,9 @@
 // (sha256/md5 — exact), OR the same normalized file PATH with event timestamps within a
 // small window (default ±2s; tools often differ by sub-second). Hashes are read from the
 // structured fields first, then extracted from the description text as a fallback so a
-// hash-bearing AI-extracted event still matches a structured THOR event.
+// hash-bearing AI-extracted event still matches a structured THOR event. A dated event and an
+// undated one never merge on either (#957): the survivor would carry a time the undated evidence
+// never had.
 
 import { SEVERITY_RANK, worstSeverity, type ForensicEvent, type Severity } from "./stateTypes.js";
 import { trustForSources, type SourceTrustMap } from "./sourceTrust.js";
@@ -159,6 +161,32 @@ function hostScopedGroups(indices: number[], evs: ForensicEvent[], crossHost: bo
   } // unambiguous → attach
   if (unknown.length) groups.push(unknown);
   return groups;
+}
+
+// A dated event and an undated one never merge on an artifact alone (#957). mergeGroup gives the
+// survivor the earliest time its members carry, so an undated YARA hit or memory finding that unioned
+// with a dated file event on a shared hash or path came out saying the hit happened at the file
+// event's time — a chronology the evidence never recorded. Undated rows still merge with each other
+// (a re-import must not double them) and dated rows still merge with each other; only the mixed
+// pair is refused, exactly as the record-id step already refuses an undated member. The pid and
+// command-line steps apply the same rule pairwise (sameDatedness below).
+function splitByDated(
+  indices: number[],
+  evs: ForensicEvent[],
+  timeOf: (e: ForensicEvent) => number | undefined,
+): number[][] {
+  const dated = indices.filter((i) => timeOf(evs[i]) !== undefined);
+  const undated = indices.filter((i) => timeOf(evs[i]) === undefined);
+  return [dated, undated].filter((half) => half.length > 1);
+}
+
+// The pairwise form of the same rule, for the steps that walk a time-sorted chain (path, pid,
+// command line): two undated events may union, two dated ones may union within the window, and a
+// dated–undated pair never does.
+function sameDatedness(a: number | undefined, b: number | undefined, windowMs: number): boolean {
+  if (a === undefined && b === undefined) return true;
+  if (a === undefined || b === undefined) return false;
+  return Math.abs(b - a) <= windowMs;
 }
 
 // Path+time correlation (step 2) exists for CROSS-tool corroboration — the same file reported by two
@@ -453,7 +481,9 @@ function groupEvents(
   for (const idxs of byHash.values()) {
     if (idxs.length < 2) continue;
     for (const group of hostScopedGroups(idxs, evs, crossHostArtifacts)) {
-      for (let k = 1; k < group.length; k++) union(group[0], group[k]);
+      for (const half of splitByDated(group, evs, timeOf)) {
+        for (let k = 1; k < half.length; k++) union(half[0], half[k]);
+      }
     }
   }
 
@@ -485,9 +515,11 @@ function groupEvents(
           b = dated[k];
         if (!a.structured && !b.structured) continue; // both free-text → too weak to merge
         if (!corroborates(evs[a.i], evs[b.i])) continue; // same tool sharing a container path → keep distinct
-        // Undated events on the same path correlate too (no time to disprove); dated ones
-        // must be within the window.
-        if (a.t === undefined || b.t === undefined || Math.abs(b.t - a.t) <= windowMs) union(a.i, b.i);
+        // Two undated events on the same path correlate (no time to disprove); two dated ones must be
+        // within the window. A dated and an undated one never do — see splitByDated (#957). The sort
+        // above puts every undated member after every dated one, so the mixed pair is one boundary
+        // and each side still chains among itself.
+        if (sameDatedness(a.t, b.t, windowMs)) union(a.i, b.i);
       }
     }
   }
@@ -514,7 +546,8 @@ function groupEvents(
       const a = dated[k - 1],
         b = dated[k];
       if (!corroborates(evs[a.i], evs[b.i])) continue;
-      if (a.t === undefined || b.t === undefined || Math.abs(b.t - a.t) <= pidWindowMs) union(a.i, b.i);
+      if (!sameDatedness(a.t, b.t, pidWindowMs)) continue; // an undated finding never borrows a time (#957)
+      union(a.i, b.i);
     }
   }
 
@@ -540,7 +573,8 @@ function groupEvents(
       const a = dated[k - 1],
         b = dated[k];
       if (!corroborates(evs[a.i], evs[b.i])) continue;
-      if (a.t === undefined || b.t === undefined || Math.abs(b.t - a.t) <= cmdWindowMs) union(a.i, b.i);
+      if (!sameDatedness(a.t, b.t, cmdWindowMs)) continue; // as in step 3 (#957)
+      union(a.i, b.i);
     }
   }
 

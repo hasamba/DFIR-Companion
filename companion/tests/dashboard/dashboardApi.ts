@@ -53,6 +53,8 @@ export interface IocLike {
     score?: string;
     tags?: string[];
     link?: string;
+    fetchedAt?: string;
+    temporal?: Record<string, unknown>;
   }>;
 }
 
@@ -168,6 +170,7 @@ export interface IocApi {
   scoreCoversTag(score: string, tag: string | null): boolean;
   /** The provider's dated facts as a visible chip and a title — raw facts, no relation computed. */
   intelWhenChip(e: Record<string, unknown>): { chip: string; title: string };
+  originSuffix(e: Record<string, unknown>): string;
   enrichBadges(ioc: IocLike): string;
   iocFlagged(i: IocLike): boolean;
   dedupeIocsById(iocs: IocLike[]): IocLike[];
