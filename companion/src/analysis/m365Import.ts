@@ -22,6 +22,7 @@ import { parseCsv } from "./csvImport.js";
 import { isEntraUalRecord } from "./entraAuditRecord.js";
 import { boundedAggKey, boundedTextTo } from "./aggKey.js";
 import { isExchangeRecord, mapExchangeRow } from "./exchangeAuditImport.js";
+import { entraPrivilegePaths } from "./entraPrivilegePath.js";
 import {
   isServicePrincipalSignIn,
   learnApiResolver,
@@ -410,6 +411,10 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
       sawAudit = true;
     }
   });
+
+  // The privilege path per application (#973): built over every record of this export, before
+  // aggregation and the cap, and emitted as one summary row per application beside the rows.
+  if (sawAudit || sawUal) mapped.push(...entraPrivilegePaths(normalized, resolve));
 
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,

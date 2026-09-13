@@ -305,7 +305,25 @@ export function isServicePrincipalSignIn(rec: Row): boolean {
   );
 }
 
-export function mapSpSignIn(rec: Row, sink: Map<string, SiemIoc>, index: number): MappedEvent {
+/** The fields a service-principal sign-in record carries, read once for the row and for the privilege path (#973). */
+export interface SpSignIn {
+  spId: string;
+  appId: string;
+  name: string;
+  resourceSp: string;
+  resourceAppId: string;
+  resourceName: string;
+  ip: string;
+  credType: string;
+  credKey: string;
+  tenant: string;
+  code: number | null;
+  rejected: string | false;
+  outcome: "success" | "failure" | "unknown";
+  observed: string;
+}
+
+export function readSpSignIn(rec: Row): SpSignIn {
   const spId = str(getCI(rec, "servicePrincipalId")).trim();
   const appId = str(getCI(rec, "appId")).trim();
   const name = oneLine(str(getCI(rec, "servicePrincipalName")) || str(getCI(rec, "appDisplayName"))).slice(
@@ -331,8 +349,42 @@ export function mapSpSignIn(rec: Row, sink: Map<string, SiemIoc>, index: number)
       : /^\d+$/.test(str(rawCode).trim())
         ? Number(str(rawCode).trim())
         : null;
-  const rejected = code !== null && code !== 0 && WORKLOAD_CREDENTIAL_FAILURES[code];
+  const rejected = code !== null && code !== 0 ? (WORKLOAD_CREDENTIAL_FAILURES[code] ?? false) : false;
   const outcome = code === 0 ? "success" : code === null ? "unknown" : "failure";
+  return {
+    spId,
+    appId,
+    name,
+    resourceSp,
+    resourceAppId,
+    resourceName,
+    ip,
+    credType,
+    credKey,
+    tenant,
+    code,
+    rejected,
+    outcome,
+    observed: str(getCI(rec, "createdDateTime")),
+  };
+}
+
+export function mapSpSignIn(rec: Row, sink: Map<string, SiemIoc>, index: number): MappedEvent {
+  const {
+    spId,
+    appId,
+    name,
+    resourceSp,
+    resourceAppId,
+    resourceName,
+    ip,
+    credType,
+    credKey,
+    tenant,
+    code,
+    rejected,
+    outcome,
+  } = readSpSignIn(rec);
   const isSecret = /clientsecret/i.test(credType);
   const severity: Severity = rejected
     ? "Medium"
@@ -364,7 +416,7 @@ export function mapSpSignIn(rec: Row, sink: Map<string, SiemIoc>, index: number)
     tail: "",
     qualifiers: [],
   });
-  const observed = str(getCI(rec, "createdDateTime"));
+  const observed = readSpSignIn(rec).observed;
   return {
     timestamp: normalizeTime(observed),
     description,
