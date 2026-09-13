@@ -118,6 +118,19 @@ describe("renderGapForPrompt / renderGapsForPrompt", () => {
   it("renders a placeholder for no gaps", () => {
     expect(renderGapsForPrompt([], new Map())).toBe("(no gaps)");
   });
+
+  // #991: the derived note a pass appended is the reason the event was raised. A head-only clip
+  // dropped it whenever the base text was long — the last renderer still doing so after #959.
+  it("keeps a derived note on a long description inside the prompt line", () => {
+    const base = `SRUM total: ${"x".repeat(320)} bytes sent to 203.0.113.9`;
+    const note = "[confirmed exfiltration: 1.2 GB sent within 10 min of archive staging]";
+    const long = ev("long", "2024-01-01T09:00:00Z", { description: `${base} ${note}` });
+    const text = renderGapForPrompt(gap(), [long], []);
+    const line = text.split("\n").find((l) => l.startsWith("[long]")) ?? "";
+    expect(line).toContain(note);
+    expect(line).toContain("SRUM total:");
+    expect(line.length).toBeLessThan(base.length);
+  });
 });
 
 describe("sanitizeGapHypotheses", () => {

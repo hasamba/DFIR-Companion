@@ -3,6 +3,7 @@ import type { ForensicEvent } from "./stateTypes.js";
 import { byEventTime } from "./forensicSort.js";
 import type { TimelineGap } from "./gapDetect.js";
 import { shadowArtifactsForGap, SHADOW_ARTIFACT_IDS, type ShadowArtifact } from "./shadowArtifacts.js";
+import { promptDescription } from "./ai/promptDescription.js";
 
 // AI hypothesis generation for timeline gaps (issue #96 — the "what happened during the silence" half).
 //
@@ -94,7 +95,9 @@ export function surroundingEvents(
 
 function renderEventLine(e: ForensicEvent): string {
   const asset = e.asset ? ` <${e.asset}>` : "";
-  return `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}]${asset} ${(e.description ?? "").replace(/\s+/g, " ").trim().slice(0, 240)}`;
+  // The shared head-and-tail renderer (#959) so a derived note past a long base survives (#991).
+  const description = promptDescription((e.description ?? "").replace(/\s+/g, " ").trim());
+  return `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}]${asset} ${description}`;
 }
 
 // A text digest of ONE gap and its before/after context for the prompt — the gap's id/kind/duration/
