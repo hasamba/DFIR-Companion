@@ -115,7 +115,11 @@ const strings = (v: unknown): string[] =>
 
 const propOf = (r: EntraAuditRecord, name: string): EntraProp | undefined =>
   r.props.find((p) => p.name.toLowerCase() === name.toLowerCase());
-const propText = (r: EntraAuditRecord, name: string): string => text(propOf(r, name)?.newValue).trim();
+// A removal record states the thing removed in the OLD value and leaves the new one empty.
+const propText = (r: EntraAuditRecord, name: string): string => {
+  const p = propOf(r, name);
+  return text(p?.newValue).trim() || text(p?.oldValue).trim();
+};
 const targetOf = (r: EntraAuditRecord, ...types: string[]): EntraTarget | undefined =>
   r.targets.find((t) => types.some((x) => x.toLowerCase() === t.type.toLowerCase()));
 const label = (t: { name: string; upn: string; id: string } | undefined): string =>

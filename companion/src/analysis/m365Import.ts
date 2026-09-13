@@ -22,6 +22,7 @@ import { parseCsv } from "./csvImport.js";
 import { isEntraUalRecord } from "./entraAuditRecord.js";
 import { boundedAggKey, boundedTextTo } from "./aggKey.js";
 import { isExchangeRecord, mapExchangeRow } from "./exchangeAuditImport.js";
+import { entraPrivilegePaths, PRIVILEGE_PATHS_MAX } from "./entraPrivilegePath.js";
 import {
   isServicePrincipalSignIn,
   learnApiResolver,
@@ -411,11 +412,24 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
     }
   });
 
-  const { events, groups } = aggregateEvents(mapped, {
+  const capped = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
+  // The privilege path per application (#973): built over every record of this export, before
+  // aggregation and the cap, and appended AFTER the cap under its own bound — a summary row never
+  // evicts the source row it summarises.
+  const summaries =
+    sawAudit || sawUal
+      ? aggregateEvents(entraPrivilegePaths(normalized, resolve), {
+          aggregate: opts.aggregate,
+          minSeverity: opts.minSeverity,
+          maxEvents: PRIVILEGE_PATHS_MAX + 1,
+        }).events
+      : [];
+  const events = [...capped.events, ...summaries];
+  const groups = capped.groups;
 
   const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
   const kinds: string[] = [];
