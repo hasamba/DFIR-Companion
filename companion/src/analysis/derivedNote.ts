@@ -30,6 +30,8 @@ export const DERIVED_NOTE_NAMES: readonly string[] = [
   "ran a download-marked file",
   "stream referenced by a command line",
   "command line references a stream",
+  "injection sequence",
+  "hollowing sequence",
 ];
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

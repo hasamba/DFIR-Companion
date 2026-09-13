@@ -1268,8 +1268,51 @@ directories), so two records with the same processes and different evidence stay
 **What a handle does not prove.** A read-capable handle on `lsass.exe` is the credential-dump
 shape; it is not a read. A write-capable handle is the injection precondition; it is not a write.
 A remote thread is an execution transfer; whether its code was hostile is not in the record. The
-sequence — access → write → execution transfer; suspended child → image replaced → resumed — is a
-join across records by process GUID and time, and a spec issue of its own.
+sequence is the join below.
+
+**What the case joins: sequences by process GUID.** At every merge, the Sysmon 10 / 8 / 25 / 1
+rows are joined only through a matching process GUID — the record's own identity, normalised one
+way for every row (braces off, the zero GUID rejected; a Sysmon 1 row now carries its GUID as
+`process.id`) — never through an image name and never through closeness in time alone. The facts
+the join reads are structured (`event.action`: the decoded rights, the thread start, the tamper
+type, whether the source is a path-anchored system image), never the prose; a row imported before
+this version says `structured rights unavailable — this row may predate the sequence mapping` and
+raises nothing.
+
+- **Injection-shaped: access, then execution transfer.** A write-capable handle (VM_WRITE with
+  VM_OPERATION, or ALL_ACCESS) — or, as its own shape, a thread-capable one (CREATE_THREAD) —
+  opened by source S on target T, then a remote thread from the *same* source GUID into the *same*
+  target GUID at or after the handle and within 10 minutes. Both rows read `[injection sequence:
+  injection-shaped: write-capable handle VM_WRITE|VM_OPERATION from evil.exe (guid 1111…) into
+  notepad.exe (guid aaaa…), then remote thread 3 s later starting at 0x7ff… — outside any module —
+  access, then execution transfer; no memory write was recorded]`, raised to High + T1055. The
+  words say what the records establish: a shape, never a completed injection — Sysmon never
+  records the write. A thread before the handle, or outside the window, is said (`not the
+  sequence: the thread precedes the handle by 7 s`) and raises nothing; a handle alone or a thread
+  alone gets nothing (Sysmon 10 is commonly filtered; silence is not evidence); a read-only handle
+  is not the shape.
+- **Hollowing: created, image replaced, reached into.** For a target whose Sysmon 25 says `Image
+  is replaced`: the Sysmon 1 that created it (`created 10:00:00 by evil.exe`, or `creation not in
+  the case (or imported before this version)`), the tamper (`image replaced 0.4 s after
+  creation`), and any handle or thread into it afterwards (`a remote thread into it 1 s later` /
+  `no handle or thread into it seen`) — on the tamper row, High + T1055.012; the creation row and
+  the rows into it are noted too. `suspended / resumed not in the records`: Sysmon has neither. A
+  tamper of another type is left to its own grade.
+- **GUID-less feeds** (eCAR, Velociraptor remote-thread rows, `pid:N` ids) join only on one host
+  with both endpoints' pids matching, inside an hour, every such note ending `by pid — PID reuse
+  not excluded`; a GUID and a pid are never compared.
+- **A path-anchored system source keeps its grade.** When the per-record rule applied its
+  path-anchored exception to both members (a Low grade from a source with a real system path — a
+  basename alone is never trusted), the sequence is noted with `source is a path-anchored system
+  image — shape kept, grade not raised`; the timeline never re-decides trust. A memory observation
+  for the target is not read here: a memory row has no process lifetime to attribute it by.
+- **Bounds, recompute, provenance.** The join slides with the record: the 64 handles nearest before
+  a thread inside its window (and the one just before the window and the one just after the
+  thread, so a stale or out-of-order pair is said), the 64 rows nearest after a tamper — the rest
+  counted on the row (`N rows beyond the index were not evaluated`), so old noise never hides a
+  new pair; four sequences named per row, the rest counted; every name and address neutralised, every note capped; the notes are recomputed from
+  the current evidence on every merge and nothing is lowered. Correlation now keeps every
+  registered note from every merged member, not one note from one member.
 
 ### NTFS alternate data streams: a download mark is not a hidden payload
 

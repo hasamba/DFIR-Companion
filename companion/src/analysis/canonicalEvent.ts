@@ -37,6 +37,8 @@ export const canonicalEntitySchema = z.object({
 });
 
 const canonicalProcessSchema = z.object({
+  /** The process GUID a Sysmon record carries (processAccess.ts normalises it) — the sequence join's identity (#987). */
+  id: z.string().optional(),
   pid: z.number().int().positive().optional(),
   name: z.string().optional(),
   executable: z.string().optional(),

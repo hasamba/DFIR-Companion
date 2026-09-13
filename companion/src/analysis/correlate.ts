@@ -18,6 +18,7 @@ import { trustForSources, type SourceTrustMap } from "./sourceTrust.js";
 import { computeChainSignature } from "./chainSignature.js";
 import { isLabProduced } from "./labIntel.js";
 import { mergeGroupCanonical } from "./canonicalMerge.js";
+import { DERIVED_NOTE_NAMES } from "./derivedNote.js";
 
 export interface CorrelateOptions {
   windowSeconds?: number; // path+time match tolerance (default 2)
@@ -210,10 +211,14 @@ function corroborates(a: ForensicEvent, b: ForensicEvent): boolean {
 // description. Stripped so it (a) never pollutes the text and (b) doesn't change the
 // dedup key — appending to the description used to break exact-duplicate re-matching.
 const CORRO_NOTE = /\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i;
-// The derived notes this codebase appends. Matched (not just stripped) so a merge can carry one
-// forward from whichever member holds it, instead of discarding the reason for a raised severity.
-const DERIVED_NOTE =
-  /\[(?:unexpected parent|sacrificial process|timestomp corroboration|ransomware precursors|certutil transfer|metadata credential access|cloud bulk read|noninteractive account browsing|container escape|download-marked file executed|ran a download-marked file|stream referenced by a command line|command line references a stream):[\s\S]{0,1200}?\]/u;
+// The derived notes this codebase appends — `unexpected parent`, `sacrificial process`
+// (processLifetime.ts), `timestomp corroboration`, the rest — ONE registry (derivedNote.ts), so a
+// name added there is matched here too: a merge carries every note forward from every member, and the duplicate key is
+// taken with every note stripped. Each note is matched on its own, bounded per note (a lazy
+// `[\s\S]*?` with no closing bracket rescans to the end of the string from every marker start).
+const NOTE_NAMES_RE = DERIVED_NOTE_NAMES.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+const DERIVED_NOTE = new RegExp(`\\[(?:${NOTE_NAMES_RE}):[\\s\\S]{0,1200}?\\]`, "u");
+const DERIVED_NOTE_ALL = new RegExp(DERIVED_NOTE.source, "gu");
 /**
  * The per-user tag the Shellbags mapper adds (#908 item 10).
  *
@@ -234,11 +239,8 @@ export function cleanDescription(d: string): string {
   // re-import. Correlation can also pick an unannotated primary while keeping an annotated
   // member's fields, and stripping is what stops the next pass appending a second marker.
   const withoutDerived = d
-    // The process-lifetime markers (#909 item 6).
-    .replace(
-      /\s*\[(?:unexpected parent|sacrificial process|timestomp corroboration|ransomware precursors|certutil transfer|metadata credential access|cloud bulk read|noninteractive account browsing|container escape|download-marked file executed|ran a download-marked file|stream referenced by a command line|command line references a stream):[\s\S]{0,1200}?\]\s*$/u,
-      "",
-    )
+    // Every registered derived note, each on its own (#909 item 6; the registry in derivedNote.ts).
+    .replace(DERIVED_NOTE_ALL, "")
     // The malfind interpretation (#909 item 4).
     .replace(
       / — (?:writable and executable|executable but not writable|protection (?:recorded as|was not recorded)|private memory|file-backed|VAD tag|no content preview|the captured preview|the tool reported)[\s\S]*$/u,
@@ -281,15 +283,18 @@ function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): Forensi
   // things follow. Its description must keep any explanation the group carried — stripping it left
   // a raised severity with no stated reason — and a modification time only another member recorded
   // must survive, or the timestomp comparison loses its input at the merge.
-  const annotated = events.find((e) => DERIVED_NOTE.test(e.description));
+  // Every registered note from every member, deduplicated, in member order — not one note from
+  // one member: a non-primary row carrying two passes' notes used to keep only its first (#987).
+  const notes = uniq(
+    events.flatMap((e) => Array.from(e.description.matchAll(DERIVED_NOTE_ALL), (m) => m[0].trim())),
+  );
   const fileModified = primary.fileModified ?? events.find((e) => e.fileModified)?.fileModified;
 
   const merged: ForensicEvent = {
     ...primary,
-    description:
-      annotated && annotated !== primary
-        ? `${cleanDescription(primary.description)} ${DERIVED_NOTE.exec(annotated.description)?.[0]?.trim() ?? ""}`.trim()
-        : primary.description,
+    description: notes.length
+      ? `${cleanDescription(primary.description)} ${notes.join(" ")}`.trim()
+      : primary.description,
     ...(fileModified ? { fileModified } : {}),
     severity: events.reduce<Severity>((acc, e) => worstSeverity(acc, e.severity), "Info"),
     timestamp: times[0] ?? primary.timestamp,

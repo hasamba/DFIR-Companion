@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { cleanDescription } from "../../src/analysis/correlate.js";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -655,7 +656,7 @@ describe("reachability", () => {
   });
 
   it("has its marker stripped before correlation keys a duplicate", () => {
-    const corr = readFileSync(join(process.cwd(), "src/analysis/correlate.ts"), "utf8");
-    expect(corr).toContain("cloud bulk read");
+    // The registry correlate.ts reads (derivedNote.ts), exercised: the note comes off the key.
+    expect(cleanDescription(`base text [cloud bulk read: a reason]`)).toBe("base text");
   });
 });
