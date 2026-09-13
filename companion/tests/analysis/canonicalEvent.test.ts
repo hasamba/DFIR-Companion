@@ -3,9 +3,9 @@ import {
   CANONICAL_EVENT_SCHEMA_VERSION,
   canonicalConformanceIssues,
   createCanonicalEvent,
-  mergeCanonicalEvents,
   upgradeForensicEvent,
 } from "../../src/analysis/canonicalEvent.js";
+import { mergeCanonicalEvents } from "../../src/analysis/canonicalMerge.js";
 import { parseAuditdLog } from "../../src/analysis/auditdImport.js";
 import { parseCloudTrail } from "../../src/analysis/awsImport.js";
 import { parseEcarJson } from "../../src/analysis/ecarImport.js";
