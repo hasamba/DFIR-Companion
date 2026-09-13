@@ -15,6 +15,7 @@ import { linkEmailDelivery } from "./initialAccess.js";
 import { linkArchiveToExfil } from "./exfilCorrelate.js";
 import { markProcessLifetimeSignals } from "./processLifetime.js";
 import { corroborateTimestompsOnTimeline } from "./timestompCorroborate.js";
+import { corroborateDownloadExecution } from "./downloadExecution.js";
 import { markRansomwarePrecursors } from "./ransomwarePrecursor.js";
 import { explainCertutilTransfers } from "./certutilTransfer.js";
 import {
@@ -370,11 +371,16 @@ export function mergeDelta(
   // (#909 item 8). Runs here because the MFT and ShimCache arrive as separate imports, so this is
   // the first point at which both are in hand. Only ever raises.
   const withTimestomp = corroborateTimestompsOnTimeline(withParents);
+  // A download mark against the records that say the same file ran, and a hidden stream against
+  // the command line that referenced it (#932 item 3, second half). Here for the same reason: the
+  // MFT and the Prefetch / Sysmon rows arrive as separate imports. Only ever raises; its notes are
+  // recomputed from the current evidence on every merge.
+  const withDownloads = corroborateDownloadExecution(withTimestomp);
   // Several distinct pre-encryption behaviours on one host inside one window (#908 item 3). Runs
   // here, with the other deterministic correlations, because the steps arrive from different
   // importers and no single one of them is remarkable — the combination is the finding. Only ever
   // raises, and never on one behaviour alone.
-  const withPrecursors = markRansomwarePrecursors(withTimestomp);
+  const withPrecursors = markRansomwarePrecursors(withDownloads);
   // Say what a certutil transfer actually did — where it connected, what it wrote — by stitching
   // the command to the network and file records of the same process (#908 item 4). Here, because
   // those three legs arrive from different importers.

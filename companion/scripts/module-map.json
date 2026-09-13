@@ -544,6 +544,7 @@
     "timelineDiff.ts": "analysis/timeline",
     "ransomwareDetect.ts": "analysis/detect",
     "timestompCorroborate.ts": "analysis/timeline",
+    "downloadExecution.ts": "analysis/timeline",
     "timestompDetect.ts": "analysis/detect",
     "tlsSession.ts": "analysis/ingest",
     "tlsSessionWords.ts": "analysis/ingest",
