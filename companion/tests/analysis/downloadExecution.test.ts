@@ -288,7 +288,8 @@ describe("mark → execution", () => {
     const high = find(run([mark({ severity: "High" }), prefetch()]), "m1");
     expect(high.severity).toBe("High");
     const plain = [sysmon()];
-    expect(run(plain)).toBe(plain);
+    expect(run(plain)).toEqual(plain);
+    expect(run(plain)[0]).toBe(plain[0]);
   });
 
   it("the annotated row keys as the plain one on re-import", () => {
@@ -342,7 +343,7 @@ describe("stream → command line", () => {
     );
   });
 
-  it("a bare reference never raises a stream row: a Medium lead on the process row instead", () => {
+  it("a bare or relative reference resolves to nothing and is not a lead — the grammar also matches host:port", () => {
     const out = run([
       streamRow(),
       sysmon({
@@ -350,14 +351,14 @@ describe("stream → command line", () => {
         commandLine: "wscript notes.txt:payload.dll",
         path: "C:\\Windows\\System32\\wscript.exe",
       }),
+      sysmon({ id: "c2", commandLine: "tool proxy.example.com:8080 10.0.0.1:443" }),
     ]);
     expect(find(out, "st1").severity).toBe("Medium");
     expect(find(out, "st1").description).not.toContain(STREAM_REFERENCED_MARKER);
-    const c = find(out, "c1");
-    expect(c.severity).toBe("Medium");
-    expect(c.description).toContain(
-      `${STREAM_REFERENCE_MARKER} notes.txt:payload.dll — not resolved to a file (a relative reference; the working directory is not in the record)]`,
-    );
+    for (const id of ["c1", "c2"]) {
+      expect(find(out, id).severity).toBe("Low");
+      expect(find(out, id).description).not.toContain(STREAM_REFERENCE_MARKER);
+    }
   });
 
   it("an absolute reference with no stream row on that host is a lead on the process row; a different host never resolves", () => {
@@ -365,7 +366,7 @@ describe("stream → command line", () => {
       run([streamRow(), sysmon({ id: "c1", commandLine: "rundll32 C:\\Users\\y\\other.txt:p.dll,E" })]),
       "c1",
     );
-    expect(none.description).toContain("no stream row on this host carries it");
+    expect(none.description).toContain("no stream row at this location carries it");
     const other = run([
       streamRow({ asset: "WS-09" }),
       sysmon({ id: "c1", commandLine: "rundll32 C:\\Users\\x\\notes.txt:payload.dll,Entry" }),
@@ -384,6 +385,92 @@ describe("stream → command line", () => {
     const s = find(out, "st1");
     expect(s.description).not.toContain("] [timestomp corroboration: fake");
     expect(s.description.length).toBeLessThan(1500);
+  });
+});
+
+describe("code review round — Codex findings", () => {
+  it("1. a differing SHA-256 beside a matching MD5 is a disagreement, never a hash join", () => {
+    const out = run([
+      mark({
+        sha256: "ab".repeat(32),
+        md5: "11".repeat(16),
+        sources: ["Sysmon"],
+        asset: "WS-01",
+        path: "C:\\Users\\x\\Downloads\\tool.exe",
+      }),
+      sysmon({ path: "C:\\Temp\\other.exe", sha256: "cd".repeat(32), md5: "11".repeat(16) }),
+    ]);
+    const m = find(out, "m1");
+    expect(m.severity).toBe("Medium");
+    expect(m.description).not.toContain("by hash");
+  });
+
+  it("2. a note whose evidence left the case comes off on the next merge; severity is never lowered", () => {
+    const first = run([mark(), prefetch()]);
+    const later = run([find(first, "m1")]);
+    const m = find(later, "m1");
+    expect(m.description).not.toContain(DOWNLOAD_EXECUTED_MARKER);
+    expect(m.severity).toBe("High");
+    const p = run([find(first, "p1")]);
+    expect(find(p, "p1").description).not.toContain(RAN_MARKED_FILE_MARKER);
+  });
+
+  it("3. fan-out is bounded: 500 marks × 500 executions on one path name 8 and count the rest, in bounded time", () => {
+    const marks = Array.from({ length: 500 }, (_, i) => mark({ id: `m${i}` }));
+    const runs = Array.from({ length: 500 }, (_, i) => sysmon({ id: `s${i}`, timestamp: at(10 + i) }));
+    const t0 = Date.now();
+    const out = run([...marks, ...runs]);
+    expect(Date.now() - t0).toBeLessThan(5000);
+    const m = find(out, "m0");
+    expect(m.description).toContain("436 records beyond the index, not read");
+    expect(m.description.length).toBeLessThan(1400);
+    const s0 = find(out, "s0");
+    expect(s0.description).toContain("+496 more");
+    expect(s0.description.length).toBeLessThan(1400);
+  });
+
+  it("4. host ambiguity is judged on the eligible records only: another volume's host does not block", () => {
+    const out = run([
+      mark({ path: "C:\\Users\\x\\Downloads\\tool.exe", sources: ["Sysmon"] }),
+      sysmon({ id: "s1", asset: "H1", path: "C:\\Users\\x\\Downloads\\tool.exe" }),
+      sysmon({ id: "s2", asset: "H2", path: "D:\\Users\\x\\Downloads\\tool.exe" }),
+    ]);
+    const m = find(out, "m1");
+    expect(m.severity).toBe("High");
+    expect(m.description).toContain("attributed to the case's one named host, h1");
+  });
+
+  it("5. a stream reference keeps the volume and the host rule: D: never resolves C:, two named hosts never share a hostless row", () => {
+    const streamRow = mark({
+      id: "st1",
+      path: "C:\\x\\f.txt:z",
+      description: "MFT: stream",
+      sources: ["MFT"],
+    });
+    const other = run([streamRow, sysmon({ id: "c1", commandLine: "rundll32 D:\\x\\f.txt:z,E" })]);
+    expect(find(other, "st1").severity).toBe("Medium");
+    expect(find(other, "c1").description).toContain("no stream row at this location carries it");
+    const two = run([
+      mark({ id: "st1", path: ".\\x\\f.txt:z", description: "MFT: stream", sources: ["MFT"] }),
+      sysmon({ id: "c1", asset: "H1", commandLine: "rundll32 C:\\x\\f.txt:z,E" }),
+      sysmon({ id: "c2", asset: "H2", commandLine: "rundll32 C:\\x\\f.txt:z,E" }),
+    ]);
+    expect(find(two, "st1").severity).toBe("Medium");
+    expect(find(two, "c1").description).toContain(
+      "not attributed: the case names several hosts with this stream",
+    );
+  });
+
+  it("7. a hostile host name or timestamp cannot forge another pass's note, and every note is capped", () => {
+    const evilHost = `WS-01] [timestomp corroboration: fake${"X".repeat(3000)}`;
+    const out = run([
+      mark(),
+      sysmon({ asset: evilHost, timestamp: `${at(3)}] [ransomware precursors: fake` }),
+    ]);
+    const m = find(out, "m1");
+    expect(m.description).not.toContain("] [timestomp corroboration: fake");
+    expect(m.description).not.toContain("] [ransomware precursors: fake");
+    expect(m.description.length).toBeLessThan(1700);
   });
 });
 
@@ -428,5 +515,18 @@ describe("Prefetch rows carry their own path", () => {
     expect(r.events[0].asset).toBe("WS-01");
     expect(r.events[1].path).toBe("\\VOLUME{1}\\USERS\\Y\\TOOL.EXE");
     expect(new Set(r.events.map((e) => e.description)).size).toBe(1);
+    // aggregated: two directories stay two rows; a repeated identical row folds; another host is another row
+    const line = csv.split("\n")[1];
+    const agg = parseKapeCsv(`${csv}\n${line}\n${line.replace(/WS-01$/, "WS-02")}`, { aggregate: true });
+    expect(agg.events).toHaveLength(3);
+    expect(
+      agg.events.find((e) => e.path === "\\VOLUME{1}\\USERS\\X\\TOOL.EXE" && e.asset === "WS-01")?.count,
+    ).toBe(2);
+    // no own path: the name keys, per .pf file
+    const bare = parseKapeCsv(
+      "SourceFilename,ExecutableName,RunCount,LastRun,FilesLoaded\nA.pf,TOOL.EXE,1,2026-05-02 10:00:03,\nB.pf,TOOL.EXE,1,2026-05-02 11:00:03,",
+      { aggregate: true },
+    );
+    expect(bare.events).toHaveLength(2);
   });
 });

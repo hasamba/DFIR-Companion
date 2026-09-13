@@ -1355,7 +1355,9 @@ row: a Sysmon 15 row's time is the stream's creation; an MFT host row's time is 
 host file's recorded creation, which does not prove download-before-execution. A run before the
 anchor (`1 d before`), within 2 s of it (`order not established (within 2 s)`) or with no readable
 time is said and raises nothing; presence records are listed as `present (not an execution
-record)` and raise nothing. Eight executions are named, the rest counted. The execution record
+record)` and raise nothing. Eight executions are named, the rest counted; 64 records are indexed
+per path or hash and the rest are `beyond the index, not read`. A note whose evidence has since
+left the case comes off on the next merge; the severity a pass raised stays — no pass lowers. The execution record
 that corroborated a mark is itself raised to Medium — `[ran a download-marked file: …]` — so it
 survives the Info cut. The notes are recomputed from the current evidence on every merge; nothing
 is ever lowered.
@@ -1370,12 +1372,16 @@ above Info (a named tool) is reachable in either order.
 payload or a code-named stream is read against every process start's command line for a
 `file:stream` token (`rundll32 C:\Users\x\notes.txt:payload.dll,Entry`; a drive letter is never
 one). An absolute reference that resolves to a stream row on the same host raises that row to
-High: `[stream referenced by a command line: rundll32 … (Sysmon 1, 2026-…, ws-01)]`. A bare or
-relative reference (`wscript notes.txt:run.js`) resolves to nothing — the working directory is not
-in the record — and is a Medium lead on the process row instead: `[command line references a
-stream: notes.txt:run.js — not resolved to a file …]`. Sysmon 15 stream rows carry the host path
-only and are outside this half; command lines are scanned to 4,096 characters, four references
-each, and every excerpt is neutralised.
+High: `[stream referenced by a command line: rundll32 … (Sysmon 1, 2026-…, ws-01)]` — the same
+volume and the same host rule as the mark join (a hostless stream row attaches only when the
+commands referencing it name at most one host). A bare or relative reference (`wscript
+notes.txt:run.js`) resolves to nothing — the working directory is not in the record — and is not
+a lead either: the same token shape is an ordinary `host:port` argument. An absolute reference
+with no stream row at that location is a Medium lead on the process row: `[command line
+references a stream: C:\…\other.txt:p.dll — no stream row at this location carries it]`.
+Sysmon 15 stream rows carry the host path only and are outside this half; command lines are
+scanned to 4,096 characters, four references each, every excerpt and every host, time and
+artifact label is neutralised, and every note is capped.
 ### Google Workspace OAuth: which app, which scopes, what it called
 
 A Workspace account takeover through OAuth leaves records of the `token` application in the

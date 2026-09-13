@@ -63,6 +63,12 @@ export const EXECUTIONS_NAMED_MAX = 8;
 /** A run inside this window of the anchor has no established order. */
 export const ORDER_TOLERANCE_MS = 2000;
 const COMMAND_LINE_SCAN_MAX = 4096;
+/** Records indexed per path or hash bucket; the rest are counted, never read. */
+const BUCKET_MAX = 64;
+/** Marks named on one corroborating execution row; the rest are counted. */
+const MARKS_PER_EXECUTION_MAX = 4;
+/** Command lines named on one stream row; the rest are counted. */
+const COMMANDS_PER_STREAM_MAX = 4;
 const REFERENCES_PER_COMMAND_MAX = 4;
 const EXCERPT_MAX = 200;
 const NOTE_MAX = 900;
@@ -225,67 +231,77 @@ interface Match<T> {
   hostNote?: string;
 }
 
+/** A bounded index bucket: the first BUCKET_MAX records read, the rest counted. */
+interface Bucket<T> {
+  records: Indexed<T>[];
+  beyond: number;
+}
+
+function addToBucket<T>(map: Map<string, Bucket<T>>, key: string, r: Indexed<T>): void {
+  const b = map.get(key) ?? map.set(key, { records: [], beyond: 0 }).get(key)!;
+  if (b.records.length < BUCKET_MAX) b.records.push(r);
+  else b.beyond += 1;
+}
+
 /**
- * The execution and presence records that name the mark's file. Host rule: two named hosts must
- * agree; an unnamed record attaches only when the named hosts holding this path number at most one.
+ * The execution and presence records that name the mark's file. Eligibility first — the same
+ * location (or the same bytes), no digest disagreement — then the host rule over the ELIGIBLE
+ * records only: two named hosts must agree; an unnamed record attaches only when the eligible
+ * records name at most one host.
  */
 function candidatesFor<T extends TimelineEventShape>(
   mark: Indexed<T>,
-  byPath: Map<string, Indexed<T>[]>,
-  byHash: Map<string, Indexed<T>[]>,
-): { matches: Match<T>[]; unattributed: number; reused: number } {
-  const matches: Match<T>[] = [];
-  let unattributed = 0;
-  let reused = 0;
-  const seen = new Set<Indexed<T>>();
-  const pool = [...(byPath.get(mark.file.relative) ?? [])];
-  const hashPool = [mark.event.sha256, mark.event.md5]
+  byPath: Map<string, Bucket<T>>,
+  byHash: Map<string, Bucket<T>>,
+): { matches: Match<T>[]; unattributed: number; reused: number; beyondIndex: number } {
+  const pathBucket = byPath.get(mark.file.relative);
+  const hashBuckets = [mark.event.sha256, mark.event.md5]
     .filter((h): h is string => !!h)
-    .flatMap((h) => byHash.get(h.toLowerCase()) ?? []);
-  const namedHosts = new Set(
-    [mark.host, ...pool.map((r) => r.host), ...hashPool.map((r) => r.host)].filter(Boolean),
-  );
-  const hostRule = (r: Indexed<T>): { ok: boolean; note?: string } => {
-    if (mark.host && r.host) return { ok: mark.host === r.host };
-    if (namedHosts.size > 1) return { ok: false };
-    if (namedHosts.size === 1)
-      return {
-        ok: true,
-        note: `host not named on one record — attributed to the case's one named host, ${[...namedHosts][0]}`,
-      };
-    return { ok: true, note: "host not named on either record" };
-  };
-  for (const r of pool) {
+    .map((h) => byHash.get(h.toLowerCase()))
+    .filter((b): b is Bucket<T> => !!b);
+  let reused = 0;
+  const eligible: Omit<Match<T>, "hostNote">[] = [];
+  const seen = new Set<Indexed<T>>();
+  for (const r of pathBucket?.records ?? []) {
     if (r === mark || seen.has(r)) continue;
     const loc = sameLocation(mark.file, r.file);
     if (!loc.same) continue;
-    const h = hostRule(r);
-    if (!h.ok) {
-      if (!r.host || !mark.host) unattributed += 1;
-      continue;
-    }
     if (hashVeto(mark.event, r.event)) {
       reused += 1;
       continue;
     }
     seen.add(r);
-    matches.push({
-      record: r,
-      by: "path",
-      ...(loc.volumeNote ? { volumeNote: loc.volumeNote } : {}),
-      ...(h.note ? { hostNote: h.note } : {}),
-    });
+    eligible.push({ record: r, by: "path", ...(loc.volumeNote ? { volumeNote: loc.volumeNote } : {}) });
   }
-  for (const r of hashPool) {
-    if (r === mark || seen.has(r) || r.kind !== "execution") continue;
-    if (!sameHash(mark.event, r.event)) continue;
-    const h = hostRule(r);
-    if (!h.ok) {
-      if (!r.host || !mark.host) unattributed += 1;
+  for (const b of hashBuckets)
+    for (const r of b.records) {
+      if (r === mark || seen.has(r) || r.kind !== "execution") continue;
+      // The same bytes — SHA-256 decides when both carry it, so a matching MD5 beside a
+      // differing SHA-256 is a disagreement, not a match.
+      if (hashVeto(mark.event, r.event) || !sameHash(mark.event, r.event)) continue;
+      seen.add(r);
+      eligible.push({ record: r, by: "hash" });
+    }
+  const namedHosts = new Set([mark.host, ...eligible.map((m) => m.record.host)].filter(Boolean));
+  const matches: Match<T>[] = [];
+  let unattributed = 0;
+  for (const m of eligible) {
+    const r = m.record;
+    if (mark.host && r.host) {
+      if (mark.host === r.host) matches.push(m);
       continue;
     }
-    seen.add(r);
-    matches.push({ record: r, by: "hash", ...(h.note ? { hostNote: h.note } : {}) });
+    if (namedHosts.size > 1) {
+      unattributed += 1;
+      continue;
+    }
+    matches.push({
+      ...m,
+      hostNote:
+        namedHosts.size === 1
+          ? `host not named on one record — attributed to the case's one named host, ${neutral([...namedHosts][0]).slice(0, 80)}`
+          : "host not named on either record",
+    });
   }
   matches.sort(
     (a, b) =>
@@ -293,7 +309,8 @@ function candidatesFor<T extends TimelineEventShape>(
       a.record.artifact.localeCompare(b.record.artifact) ||
       a.record.host.localeCompare(b.record.host),
   );
-  return { matches, unattributed, reused };
+  const beyondIndex = (pathBucket?.beyond ?? 0) + hashBuckets.reduce((n, b) => n + b.beyond, 0);
+  return { matches, unattributed, reused, beyondIndex };
 }
 
 /** One match's words; the anchor and the host rule are said once in the preface. */
@@ -303,7 +320,7 @@ function matchWords<T extends TimelineEventShape>(
   anchor: number | null,
 ): string {
   const r = m.record;
-  const when = r.event.timestamp ? r.event.timestamp : "no time";
+  const when = r.event.timestamp ? neutral(r.event.timestamp).slice(0, 40) : "no time";
   const order = r.kind === "execution" ? `, ${orderWords(ms(r.event.timestamp), anchor)}` : "";
   const what =
     r.kind === "execution" ? (r.artifact === "Prefetch" ? "last run" : "process start") : "present";
@@ -314,7 +331,7 @@ function matchWords<T extends TimelineEventShape>(
   ]
     .filter(Boolean)
     .join("; ");
-  return `${r.artifact} ${what} ${when}${order}${notes ? ` (${notes})` : ""}`;
+  return `${neutral(r.artifact).slice(0, 40)} ${what} ${when}${order}${notes ? ` (${notes})` : ""}`;
 }
 
 /** What every match in a mark's note is read against: the anchor, and how hosts and volumes were compared. */
@@ -404,28 +421,30 @@ const clipNote = (s: string): string => (s.length > NOTE_MAX ? `${s.slice(0, NOT
 export function corroborateDownloadExecution<T extends TimelineEventShape>(events: readonly T[]): T[] {
   const anyMark = events.some(isMark);
   const anyStream = events.some(isHiddenStream);
-  if (!anyMark && !anyStream) return events as T[];
+  if (!anyMark && !anyStream)
+    // Nothing to corroborate — but a note this pass wrote earlier, on a row whose evidence has
+    // since left the case, is stale and comes off. Severity stays: the pass only ever raises.
+    return events.map((e) => {
+      const description = withoutOwnNotes(e.description);
+      return description === (e.description ?? "") ? e : { ...e, description };
+    });
 
   const indexed = events.map(classify);
-  const byPath = new Map<string, Indexed<T>[]>();
-  const byHash = new Map<string, Indexed<T>[]>();
+  const byPath = new Map<string, Bucket<T>>();
+  const byHash = new Map<string, Bucket<T>>();
   for (const r of indexed) {
     if (!r || r.kind === "mark") continue;
-    (byPath.get(r.file.relative) ?? byPath.set(r.file.relative, []).get(r.file.relative)!).push(r);
-    for (const h of [r.event.sha256, r.event.md5]) {
-      if (!h) continue;
-      const k = h.toLowerCase();
-      (byHash.get(k) ?? byHash.set(k, []).get(k)!).push(r);
-    }
+    addToBucket(byPath, r.file.relative, r);
+    for (const h of [r.event.sha256, r.event.md5]) if (h) addToBucket(byHash, h.toLowerCase(), r);
   }
 
   // Mark → execution: the note per mark, and the executions that corroborated one.
   const markNotes = new Map<T, { note: string; executed: boolean }>();
-  const corroborating = new Map<T, string[]>();
+  const corroborating = new Map<T, { marks: string[]; more: number }>();
   for (const r of indexed) {
     if (!r || r.kind !== "mark") continue;
-    const { matches, unattributed, reused } = candidatesFor(r, byPath, byHash);
-    if (!matches.length && !unattributed && !reused) continue;
+    const { matches, unattributed, reused, beyondIndex } = candidatesFor(r, byPath, byHash);
+    if (!matches.length && !unattributed && !reused && !beyondIndex) continue;
     const anchor = ms(r.event.timestamp);
     // The counts are never clipped away: the named executions fill what the tail leaves.
     const tail: string[] = [];
@@ -437,6 +456,8 @@ export function corroborateDownloadExecution<T extends TimelineEventShape>(event
       tail.push(
         `${unattributed} record${unattributed === 1 ? "" : "s"} not attributed — the case names several hosts with this path`,
       );
+    if (beyondIndex)
+      tail.push(`${beyondIndex} record${beyondIndex === 1 ? "" : "s"} beyond the index, not read`);
     const named: string[] = [];
     let omitted = 0;
     for (const m of matches) {
@@ -471,43 +492,77 @@ export function corroborateDownloadExecution<T extends TimelineEventShape>(event
     };
     const executed = matches.some(after);
     markNotes.set(r.event, { note: parts.join("; "), executed });
-    for (const m of matches.filter(after))
-      (corroborating.get(m.record.event) ?? corroborating.set(m.record.event, []).get(m.record.event)!).push(
-        `${excerpt(r.event.path ?? "")}${r.host ? ` on ${r.host}` : ""}`,
-      );
+    for (const m of matches.filter(after)) {
+      const c =
+        corroborating.get(m.record.event) ??
+        corroborating.set(m.record.event, { marks: [], more: 0 }).get(m.record.event)!;
+      if (c.marks.length < MARKS_PER_EXECUTION_MAX)
+        c.marks.push(`${excerpt(r.event.path ?? "")}${r.host ? ` on ${neutral(r.host).slice(0, 80)}` : ""}`);
+      else c.more += 1;
+    }
   }
 
-  // Stream → command line: absolute references resolved to a stream row on the same host.
-  const streamRows = indexed.length ? events.filter(isHiddenStream) : [];
-  const streamByKey = new Map<string, T[]>();
-  for (const s of streamRows) {
-    const { hostPath, stream } = splitStream(s.path!);
-    const f = filePath(hostPath);
-    if (!f) continue;
-    const k = `${f.relative}:${stream.toLowerCase()}`;
-    (streamByKey.get(k) ?? streamByKey.set(k, []).get(k)!).push(s);
+  // Stream → command line: an absolute reference resolved to the stream row at that location on
+  // that host. A bare or relative reference resolves to nothing (the working directory is not in
+  // the record) and is not a lead either — the same token grammar matches `host:port` arguments.
+  const streamRows = events.filter(isHiddenStream);
+  const streamByKey = new Map<string, { row: T; file: FilePath; host: string }[]>();
+  for (const row of streamRows) {
+    const { hostPath, stream } = splitStream(row.path!);
+    const file = filePath(hostPath);
+    if (!file) continue;
+    const k = `${file.relative}:${stream.toLowerCase()}`;
+    (streamByKey.get(k) ?? streamByKey.set(k, []).get(k)!).push({ row, file, host: hostOf(row) });
   }
-  const streamNotes = new Map<T, string[]>();
+  const streamNotes = new Map<T, { commands: string[]; more: number }>();
   const processNotes = new Map<T, string[]>();
-  if (streamRows.length)
+  if (streamRows.length) {
+    // Two phases: every reference is located first, so the host rule is judged over ALL the
+    // commands that reference one stream — a hostless stream row attaches only when those
+    // commands and the row name at most one host between them.
+    interface Ref {
+      e: T;
+      host: string;
+      ref: StreamReference;
+      located: { row: T; file: FilePath; host: string }[];
+    }
+    const refs: Ref[] = [];
+    const byStream = new Map<T, Ref[]>();
     for (const e of events) {
       if (!e.commandLine || !isProcessStart(e)) continue;
+      const host = hostOf(e);
       for (const ref of streamReferences(e.commandLine)) {
-        const words = `${excerpt(e.commandLine)} (${artifactOf(e)}, ${e.timestamp || "no time"}${e.asset ? `, ${hostOf(e)}` : ""})`;
-        const f = ref.absolute ? filePath(ref.file) : null;
-        const rows = f ? (streamByKey.get(`${f.relative}:${ref.stream.toLowerCase()}`) ?? []) : [];
-        const onHost = rows.filter((s) => {
-          const sh = hostOf(s);
-          return !sh || !hostOf(e) || sh === hostOf(e);
-        });
-        if (ref.absolute && onHost.length)
-          for (const s of onHost) (streamNotes.get(s) ?? streamNotes.set(s, []).get(s)!).push(words);
-        else
-          (processNotes.get(e) ?? processNotes.set(e, []).get(e)!).push(
-            `${excerpt(`${ref.file}:${ref.stream}`)} — ${ref.absolute ? "no stream row on this host carries it" : "not resolved to a file (a relative reference; the working directory is not in the record)"}`,
-          );
+        if (!ref.absolute) continue;
+        const f = filePath(ref.file);
+        if (!f) continue;
+        const located = (streamByKey.get(`${f.relative}:${ref.stream.toLowerCase()}`) ?? []).filter(
+          (s) => sameLocation(f, s.file).same,
+        );
+        const r: Ref = { e, host, ref, located };
+        refs.push(r);
+        for (const s of located) (byStream.get(s.row) ?? byStream.set(s.row, []).get(s.row)!).push(r);
       }
     }
+    const attached = new Set<Ref>();
+    for (const [row, rs] of byStream) {
+      const rowHost = hostOf(row);
+      const namedHosts = new Set([rowHost, ...rs.map((r) => r.host)].filter(Boolean));
+      const eligible = rs.filter((r) => (rowHost && r.host ? r.host === rowHost : namedHosts.size <= 1));
+      for (const r of eligible) {
+        attached.add(r);
+        const words = `${excerpt(r.e.commandLine ?? "")} (${neutral(artifactOf(r.e)).slice(0, 40)}, ${r.e.timestamp ? neutral(r.e.timestamp).slice(0, 40) : "no time"}${r.host ? `, ${neutral(r.host).slice(0, 80)}` : ""})`;
+        const n = streamNotes.get(row) ?? streamNotes.set(row, { commands: [], more: 0 }).get(row)!;
+        if (n.commands.length < COMMANDS_PER_STREAM_MAX) n.commands.push(words);
+        else n.more += 1;
+      }
+    }
+    for (const r of refs) {
+      if (attached.has(r)) continue;
+      (processNotes.get(r.e) ?? processNotes.set(r.e, []).get(r.e)!).push(
+        `${excerpt(`${r.ref.file}:${r.ref.stream}`)} — ${r.located.length ? "not attributed: the case names several hosts with this stream" : "no stream row at this location carries it"}`,
+      );
+    }
+  }
 
   return events.map((e) => {
     const base = withoutOwnNotes(e.description);
@@ -515,22 +570,30 @@ export function corroborateDownloadExecution<T extends TimelineEventShape>(event
     let severity = e.severity ?? "Info";
     const mark = markNotes.get(e);
     if (mark) {
-      description = appendDerivedNote(description, DOWNLOAD_EXECUTED_MARKER, mark.note);
+      description = appendDerivedNote(description, DOWNLOAD_EXECUTED_MARKER, clipNote(mark.note));
       if (mark.executed) severity = raise(e, "High");
     }
     const ran = corroborating.get(e);
     if (ran) {
-      description = appendDerivedNote(description, RAN_MARKED_FILE_MARKER, clipNote(ran.join("; ")));
+      const words = [...ran.marks, ...(ran.more ? [`+${ran.more} more`] : [])].join("; ");
+      description = appendDerivedNote(description, RAN_MARKED_FILE_MARKER, clipNote(words));
       severity = raise({ ...e, severity }, "Medium");
     }
     const referenced = streamNotes.get(e);
     if (referenced) {
-      description = appendDerivedNote(description, STREAM_REFERENCED_MARKER, clipNote(referenced.join("; ")));
+      const words = [...referenced.commands, ...(referenced.more ? [`+${referenced.more} more`] : [])].join(
+        "; ",
+      );
+      description = appendDerivedNote(description, STREAM_REFERENCED_MARKER, clipNote(words));
       severity = raise({ ...e, severity }, "High");
     }
     const references = processNotes.get(e);
     if (references) {
-      description = appendDerivedNote(description, STREAM_REFERENCE_MARKER, clipNote(references.join("; ")));
+      description = appendDerivedNote(
+        description,
+        STREAM_REFERENCE_MARKER,
+        clipNote(references.slice(0, 4).join("; ")),
+      );
       severity = raise({ ...e, severity }, "Medium");
     }
     if (description === (e.description ?? "") && severity === (e.severity ?? "Info")) return e;
