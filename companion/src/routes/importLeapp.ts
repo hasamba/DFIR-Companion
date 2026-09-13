@@ -1,10 +1,8 @@
 import type { Express, Request, Response } from "express";
 import type { RouteContext } from "./context.js";
-import type { InvestigationState } from "../analysis/stateTypes.js";
 import { parseLeappTsv, type LeappImportOptions, type LeappPlatform } from "../analysis/mobileLeappImport.js";
-import { logActivity } from "../analysis/activityLog.js";
-import { beginImportSection, type ImportSection } from "./importSection.js";
-import { settleForensicImport, type SettleDeps } from "./importSettle.js";
+import type { SettleDeps } from "./importSettle.js";
+import { commitDedicatedImport, importerParameter, persistImportEvidence } from "./importCommit.js";
 
 /**
  * POST /cases/:id/import-leapp — one iLEAPP / ALEAPP TSV artifact export.
@@ -33,18 +31,11 @@ export function registerLeappImportRoute(
   ctx: RouteContext,
   settleDeps: SettleDeps | null,
 ): void {
-  const {
-    store,
-    options,
-    importLock,
-    recordImportFailure,
-    recordAiError,
-    pushImportCheckpoint,
-    resynthesizeInBackground,
-  } = ctx;
+  const { store, options } = ctx;
 
   app.post("/cases/:id/import-leapp", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const pipeline = options.pipeline;
     const caseId = req.params.id;
     const text = typeof req.body?.text === "string" ? req.body.text : "";
     const originalName = String(req.body?.filename ?? "leapp.tsv");
@@ -62,19 +53,11 @@ export function registerLeappImportRoute(
       if (preview.total === 0)
         return res.status(400).json({ error: "no parseable rows found (expected a LEAPP TSV export)" });
 
-      const seq = await store.nextImportSeq(caseId);
-      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "leapp.tsv";
-      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
-      const importedAt = new Date().toISOString();
-      await store.saveImport(caseId, storedName, text);
-      await store.appendImport(caseId, {
-        caseId,
-        sequenceNumber: seq,
-        importedAt,
-        filename: storedName,
+      const { seq, storedName, importedAt } = await persistImportEvidence(store, caseId, {
+        text,
         originalName,
+        fallbackName: "leapp.tsv",
         rows: preview.kept,
-        bytes: Buffer.byteLength(text, "utf8"),
       });
 
       res.status(202).json({
@@ -95,81 +78,26 @@ export function registerLeappImportRoute(
         detail: `importing ${preview.kept} LEAPP row(s)`,
       });
 
-      // Same shape as the generic route: the section (lock + snapshot) is taken inside run() so the
-      // 202 above never waits on another import, and released in the `finally` no matter what.
-      let stateBefore: InvestigationState | null = null;
-      let section: ImportSection | null = null;
-      const pipeline = options.pipeline;
-      const run = async (): Promise<void> => {
-        section = await beginImportSection(importLock, caseId, options.stateStore);
-        stateBefore = section.stateBefore;
-        await pipeline.importLeapp(caseId, text, {
-          label: storedName,
-          idPrefix: `lp${seq}`,
-          importedAt,
-          // The ORIGINAL name, not the stored one: the stored name is sequence-prefixed, and the
-          // artifact's identity lives in the basename LEAPP chose.
-          filename: originalName,
-          leapp: leappOpts,
-        });
-      };
-
-      void run()
-        .then(async () => {
-          if (settleDeps && stateBefore) {
-            // The seam is REQUIRED processing, not bookkeeping: a failure here leaves Info rows in
-            // the forensic timeline and none in the super-timeline — the defect this route existed
-            // with. So it is not caught; it reaches the failure handler below, which records the
-            // import as failed and reports the error status. Only the record, the activity line
-            // and the checkpoint after it are best-effort.
-            const settled = await settleForensicImport(settleDeps, caseId, stateBefore);
-            const { timelineDiff: tDiff, iocsDiff: iDiff } = settled;
-            options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-            try {
-              if (options.importMetaStore) {
-                await options.importMetaStore.record(caseId, {
-                  kind: "leapp",
-                  file: storedName,
-                  diff: tDiff,
-                  superTimelineAddedCount: settled.superTimelineAddedCount,
-                  iocsDiff: iDiff,
-                  linesIn: preview.total + 1,
-                  path: "deterministic",
-                });
-                options.onImportMeta?.(caseId);
-              }
-              void logActivity(options.activityLogStore, options.onActivity, caseId, {
-                category: "import",
-                action: "import",
-                detail:
-                  `leapp (${storedName}) — +${tDiff.added.length} event(s), +${iDiff.added.length} IOC(s)` +
-                  (preview.undated ? `, ${preview.undated} undated` : ""),
-              });
-              if (tDiff.added.length || tDiff.removed.length || iDiff.added.length || iDiff.removed.length) {
-                await pushImportCheckpoint(caseId, stateBefore, `leapp (${storedName})`);
-              }
-            } catch {
-              /* non-fatal — the import is merged and settled; only its bookkeeping failed */
-            }
-          } else {
-            options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-          }
-          resynthesizeInBackground(caseId);
-        })
-        .catch((err) => {
-          recordImportFailure(caseId, "leapp", storedName, err);
-          recordAiError(caseId, "import", err);
-          options.onAiStatus?.(caseId, {
-            status: "error",
-            at: new Date().toISOString(),
-            detail: (err as Error).message,
-          });
-        })
-        .finally(() => {
-          // Unconditional: a section left held would wedge every later import for this case.
-          section?.release();
-          section = null;
-        });
+      commitDedicatedImport(ctx, settleDeps, {
+        caseId,
+        kind: "leapp",
+        storedName,
+        importedAt,
+        linesIn: preview.total + 1,
+        path: "deterministic",
+        activitySuffix: preview.undated ? `, ${preview.undated} undated` : "",
+        parameters: { leapp: importerParameter(leappOpts) },
+        run: () =>
+          pipeline.importLeapp(caseId, text, {
+            label: storedName,
+            idPrefix: `lp${seq}`,
+            importedAt,
+            // The ORIGINAL name, not the stored one: the stored name is sequence-prefixed, and the
+            // artifact's identity lives in the basename LEAPP chose.
+            filename: originalName,
+            leapp: leappOpts,
+          }),
+      });
       return;
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
