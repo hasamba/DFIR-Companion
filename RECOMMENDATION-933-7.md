@@ -235,3 +235,9 @@ The joins, Gatekeeper/XProtect logs, browser history, any grade above Info.
 1. The ISO lossiness check compared the reading with itself, so `+02:00` and `+0200` rows were
    unmarked and folded after correlation. Fix: an ISO value is lossless only when the raw text is
    the emitted ISO verbatim; every other spelling marks the row (tested through correlateEvents).
+
+## Code round 14 (Codex, one finding)
+1. `716403200.5` and `716403200.5000` differed in identity but neither was marked, so the
+   shared-UUID pass gave them one description and correlation folded them. Fix: a numeric time is
+   lossless only in its canonical spelling (`raw === String(Number(raw))`) with at most a
+   millisecond of fraction; any other spelling marks the row (tested aggregated and not).

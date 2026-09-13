@@ -629,6 +629,21 @@ describe("through parseMacos and correlateEvents", () => {
     // a value the ISO carries back exactly is not marked for its time
     const exact = parseMacos(csv([row({ LSQuarantineTimeStamp: "716403200.5" })]));
     expect(exact.events[0].description).not.toMatch(/ #[A-Za-z0-9_-]{22}$/);
+    // a non-canonical spelling of the same number is other evidence: marked, and two rows after correlation
+    const spelled = [
+      row({ LSQuarantineTimeStamp: "716403200.5" }),
+      row({ LSQuarantineTimeStamp: "716403200.5000" }),
+    ];
+    const sp = parseMacos(csv(spelled));
+    expect(sp.events).toHaveLength(2);
+    expect(sp.events.some((e) => / #[A-Za-z0-9_-]{22}$/.test(e.description))).toBe(true);
+    expect(afterImport(sp.events)).toHaveLength(2);
+    expect(afterImport(parseMacos(csv(spelled), { aggregate: false }).events)).toHaveLength(2);
+    expect(
+      afterImport(
+        parseMacos(csv([row({ LSQuarantineTimeStamp: "0716403200.5" }), row()]), { aggregate: false }).events,
+      ),
+    ).toHaveLength(2);
   });
 
   it("two ISO spellings of one instant are two rows after correlation", () => {

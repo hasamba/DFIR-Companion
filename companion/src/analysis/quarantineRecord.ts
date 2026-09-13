@@ -261,9 +261,11 @@ function timeOccurrences(rec: Row): { header: string; value: string }[] {
 function timeRoundTrips(raw: string, when: QuarantineTime): boolean {
   // An ISO spelling the reading does not repeat verbatim (`+0200`, a space, an offset) is lost.
   if (when.encoding === "iso") return raw.trim() === when.iso;
-  // Date keeps milliseconds: more fraction digits than the encoding's millisecond has are lost.
-  const fraction = (raw.split(".")[1] ?? "").replace(/0+$/, "").length;
-  return fraction <= (when.encoding === "unix-ms" ? 0 : 3);
+  // Date keeps milliseconds: more fraction digits than the encoding's millisecond has are lost —
+  // and so is any spelling that is not the number's canonical one (`.5000`, `+5`, `01.5`).
+  const canonical = raw.trim() === String(Number(raw));
+  const fraction = (raw.split(".")[1] ?? "").length;
+  return canonical && fraction <= (when.encoding === "unix-ms" ? 0 : 3);
 }
 /** Length-framed `header=value` pairs: two different column sets never serialise alike. */
 const frameOccurrences = (times: { header: string; value: string }[]): string =>
