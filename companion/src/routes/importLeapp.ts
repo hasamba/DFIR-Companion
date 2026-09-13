@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import type { RouteContext } from "./context.js";
 import { parseLeappTsv, type LeappImportOptions, type LeappPlatform } from "../analysis/mobileLeappImport.js";
 import type { SettleDeps } from "./importSettle.js";
-import { commitDedicatedImport, persistImportEvidence } from "./importCommit.js";
+import { commitDedicatedImport, importerParameter, persistImportEvidence } from "./importCommit.js";
 
 /**
  * POST /cases/:id/import-leapp — one iLEAPP / ALEAPP TSV artifact export.
@@ -86,6 +86,7 @@ export function registerLeappImportRoute(
         linesIn: preview.total + 1,
         path: "deterministic",
         activitySuffix: preview.undated ? `, ${preview.undated} undated` : "",
+        parameters: { leapp: importerParameter(leappOpts) },
         run: () =>
           pipeline.importLeapp(caseId, text, {
             label: storedName,

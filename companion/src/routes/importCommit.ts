@@ -5,6 +5,9 @@ import { logActivity } from "../analysis/activityLog.js";
 import { beginImportSection, type ImportSection } from "./importSection.js";
 import { settleForensicImport, type SettleDeps } from "./importSettle.js";
 import { recordImportRun } from "./importRunRecorder.js";
+import { FalsePositiveStore } from "../analysis/falsePositive.js";
+import { matchFpPropagation } from "../analysis/fpPropagation.js";
+import type { ManifestValue } from "../analysis/analysisRunTypes.js";
 
 /**
  * The commit spine every dedicated `import-*` route runs after it has answered 202 (#956).
@@ -39,6 +42,11 @@ export interface DedicatedImportCommit {
   minSeverity?: Severity;
   /** Appended to the activity line after the counts, e.g. ", 3 undated". */
   activitySuffix?: string;
+  /**
+   * The route's own importer options, keyed by importer (`{ thor: thorOpts }`), for the run
+   * manifest. Build the value with `importerParameter` so an `undefined` option reads as null.
+   */
+  parameters?: Record<string, ManifestValue>;
   /** The importer call. Runs inside the section; a throw is recorded as an import failure. */
   run: () => Promise<unknown>;
 }
@@ -71,6 +79,14 @@ export async function persistImportEvidence(
   return { seq, storedName, importedAt };
 }
 
+/**
+ * An importer options object as a manifest value: a JSON round-trip drops `undefined` fields and
+ * anything that is not data, and an absent options object records as null, never as omitted.
+ */
+export function importerParameter(opts: object | undefined): ManifestValue {
+  return opts === undefined ? null : (JSON.parse(JSON.stringify(opts)) as ManifestValue);
+}
+
 /** Fire-and-forget: the route has already answered 202. Every outcome is reported through status. */
 export function commitDedicatedImport(
   ctx: RouteContext,
@@ -78,6 +94,7 @@ export function commitDedicatedImport(
   commit: DedicatedImportCommit,
 ): void {
   const {
+    store,
     options,
     importLock,
     recordImportFailure,
@@ -109,7 +126,25 @@ export function commitDedicatedImport(
         const { timelineDiff: tDiff, iocsDiff: iDiff } = settled;
         options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
         try {
+          // Proactive FP-pattern propagation (#15b), as the generic route does it: do the NEW
+          // forensic events repeat a pattern the analyst already marked a false positive? Surface a
+          // one-click bulk-mark suggestion on the import banner; never auto-mark.
+          let fpPropagation: Awaited<ReturnType<typeof matchFpPropagation>> = [];
+          try {
+            const beforeIds = new Set(stateBefore.forensicTimeline.map((e) => e.id));
+            const newEvents = settled.state.forensicTimeline.filter((e) => !beforeIds.has(e.id));
+            if (newEvents.length) {
+              const markers = await new FalsePositiveStore(store).load(caseId);
+              fpPropagation = matchFpPropagation(newEvents, markers);
+            }
+          } catch {
+            /* non-fatal — propagation is a suggestion, never blocks the import */
+          }
           if (options.importMetaStore) {
+            // Cap-hit truncation (#10 trigger b): consume what the log importer stashed for this
+            // case (null for every other kind). Consuming here, not only on the generic route, is
+            // what keeps a capped `/import-log` from billing its truncation to the next import.
+            const truncation = options.pipeline?.consumeImportTruncation?.(caseId) ?? null;
             await options.importMetaStore.record(caseId, {
               kind,
               file: storedName,
@@ -118,6 +153,8 @@ export function commitDedicatedImport(
               iocsDiff: iDiff,
               linesIn: commit.linesIn,
               path: commit.path,
+              fpPropagation,
+              truncation,
             });
             options.onImportMeta?.(caseId);
           }
@@ -147,6 +184,7 @@ export function commitDedicatedImport(
         stateBefore,
         minSeverity: commit.minSeverity,
         path: commit.path,
+        parameters: commit.parameters,
       });
       resynthesizeInBackground(caseId);
     })

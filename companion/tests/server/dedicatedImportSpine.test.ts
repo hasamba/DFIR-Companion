@@ -14,6 +14,8 @@ import { AnalysisRunStore } from "../../src/analysis/analysisRunStore.js";
 import { ImportLock } from "../../src/analysis/importLock.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
 import { pollFor, POLL_TIMEOUT_MS } from "../helpers/poll.js";
+import { FalsePositiveStore } from "../../src/analysis/falsePositive.js";
+import { patternKey } from "../../src/analysis/prevalence.js";
 
 // #956. Every dedicated `import-*` route used to call its importer and resynthesize — no lock, no
 // snapshot, no super-timeline dual-write, no tagger window, no demote, no import record, no undo
@@ -389,7 +391,7 @@ async function makeApp(opts: { ai?: boolean; importLock?: ImportLock } = {}) {
     .post("/cases")
     .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: opts.ai ? "mock" : null });
   if (opts.ai) await request(app).post("/cases/c1/ai-control").send({ enabled: true });
-  return { app, stateStore, superTimelineStore, analysisRunStore };
+  return { app, store, pipeline, stateStore, superTimelineStore, analysisRunStore };
 }
 
 interface Meta {
@@ -447,6 +449,99 @@ describe("dedicated import routes run the commit spine (#956)", () => {
       POLL_TIMEOUT_MS * 2,
     );
   }
+
+  // The three things the generic route records beside the seam, which a shared spine must not drop.
+
+  it("carries the route's own importer options into the analysis-run manifest", async () => {
+    const { app, analysisRunStore } = await makeApp();
+    const thor = CASES.find((c) => c.route === "import-thor")!;
+    const res = await request(app)
+      .post("/cases/c1/import-thor")
+      .send({ text: thor.text, filename: thor.filename, minLevel: "warning" });
+    expect(res.status).toBe(202);
+    const run = await pollFor("the thor analysis-run record", async () =>
+      (await analysisRunStore.list("c1")).find((r) => r.kind === "import"),
+    );
+    // A THOR import at minLevel=warning is not the same run as one at the default; the manifest
+    // must say which it was, not "case-default".
+    expect(run.configuration?.parameters).toMatchObject({
+      importPath: "deterministic",
+      thor: { minLevel: "Warning" },
+    });
+  });
+
+  it("consumes the capped-log truncation the pipeline stashed, so it cannot leak onto the next import", async () => {
+    const { app, pipeline } = await makeApp();
+    const siem = CASES.find((c) => c.route === "import-siem")!;
+    // analyzeLog parks its cap-hit statistics in a per-case side channel that the commit spine
+    // must consume (pipeline.consumeImportTruncation). Stage that state directly.
+    const stats = { distinctTemplates: 900, keptTemplates: 500 };
+    (pipeline as unknown as { importTruncation: Map<string, typeof stats> }).importTruncation.set(
+      "c1",
+      stats,
+    );
+    const res = await request(app)
+      .post("/cases/c1/import-siem")
+      .send({ text: siem.text, filename: siem.filename });
+    expect(res.status).toBe(202);
+    const meta = (await waitForImportRecord(app, res.body.file as string)) as Meta & { truncation: unknown };
+    expect(meta.truncation).toEqual(stats);
+    expect(pipeline.consumeImportTruncation("c1")).toBeUndefined();
+  });
+
+  it("surfaces false-positive propagation for events that repeat a marked pattern", async () => {
+    const { app, store, stateStore } = await makeApp();
+    // The analyst marked one earlier robocopy run a false positive. A later SIEM export carries three
+    // more runs of the same shape (same process, same command shape, different paths). The import
+    // banner must offer the bulk-mark suggestion, as it does when the file lands through the
+    // generic route. The marker's fingerprint is the pattern key of such a row, so land one first
+    // and read its key back rather than hand-writing the shape.
+    const row = (i: number) => ({
+      _source: {
+        "@timestamp": `2026-05-02T10:0${i}:00Z`,
+        log_name: "Security",
+        computer_name: "WS1",
+        event_id: 4688,
+        event_data: {
+          NewProcessName: "C:\\Windows\\System32\\robocopy.exe",
+          CommandLine: `robocopy C:\\data\\${i} \\\\srv\\bak /mir`,
+          SubjectUserName: "svc_backup",
+          ParentProcessName: "C:\\Windows\\System32\\cmd.exe",
+        },
+      },
+    });
+    const first = await request(app)
+      .post("/cases/c1/import-siem")
+      .send({ text: JSON.stringify({ data: [row(0)] }), filename: "first.json" });
+    await waitForImportRecord(app, first.body.file as string);
+    const anchor = (await stateStore.load("c1")).forensicTimeline[0];
+    await new FalsePositiveStore(store).save("c1", [
+      {
+        id: `event:${anchor.id}`,
+        kind: "event",
+        ref: anchor.id,
+        reason: "known-good-tool",
+        note: "nightly robocopy backup",
+        markedAt: ISO,
+        markedBy: "analyst",
+        patternFingerprint: patternKey(anchor),
+      },
+    ]);
+
+    const res = await request(app)
+      .post("/cases/c1/import-siem")
+      .send({ text: JSON.stringify({ data: [row(1), row(2), row(3)] }), filename: "second.json" });
+    expect(res.status).toBe(202);
+    const meta = (await waitForImportRecord(app, res.body.file as string)) as Meta & {
+      fpPropagation: Array<{ ref: string; count: number; note: string }>;
+    };
+    expect(meta.fpPropagation).toHaveLength(1);
+    expect(meta.fpPropagation[0]).toMatchObject({
+      ref: anchor.id,
+      count: 3,
+      note: "nightly robocopy backup",
+    });
+  });
 
   it("waits for the case's import lock, like the generic route", async () => {
     const importLock = new ImportLock();

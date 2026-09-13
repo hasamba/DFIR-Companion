@@ -27,7 +27,7 @@ import { parseSysdig, type SysdigImportOptions } from "../analysis/sysdigImport.
 import { parseWazuhAlerts, type WazuhImportOptions } from "../analysis/wazuhImport.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
 import { settleForensicImport, type SettleDeps } from "./importSettle.js";
-import { commitDedicatedImport, persistImportEvidence } from "./importCommit.js";
+import { commitDedicatedImport, importerParameter, persistImportEvidence } from "./importCommit.js";
 import { autoTagNewEvents } from "../analysis/taggerAuto.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import { FalsePositiveStore } from "../analysis/falsePositive.js";
@@ -997,6 +997,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         importedAt,
         linesIn: json.split(/\r?\n/).length,
         path: "deterministic",
+        parameters: { thor: importerParameter(thorOpts) },
         run: () =>
           pipeline.importThor(caseId, json, {
             label: storedName,
@@ -1099,6 +1100,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         linesIn: json.split(/\r?\n/).length,
         path: "deterministic",
         minSeverity,
+        parameters: { siem: importerParameter(siemOpts) },
         run: () =>
           pipeline.importSiem(caseId, json, {
             label: storedName,
@@ -1202,6 +1204,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         linesIn: json.split(/\r?\n/).length,
         path: "deterministic",
         minSeverity,
+        parameters: { chainsaw: importerParameter(chainsawOpts) },
         run: () =>
           pipeline.importChainsaw(caseId, json, {
             label: storedName,
@@ -1301,6 +1304,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         linesIn: text.split(/\r?\n/).length,
         path: "deterministic",
         minSeverity,
+        parameters: { hayabusa: importerParameter(hayabusaOpts) },
         run: () =>
           pipeline.importHayabusa(caseId, text, {
             label: storedName,
@@ -1400,6 +1404,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         linesIn: text.split(/\r?\n/).length,
         path: "deterministic",
         minSeverity,
+        parameters: { velociraptor: importerParameter(vrOpts) },
         run: () =>
           pipeline.importVelociraptor(caseId, text, {
             label: storedName,
@@ -1499,6 +1504,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         linesIn: text.split(/\r?\n/).length,
         path: "deterministic",
         minSeverity,
+        parameters: { network: importerParameter(netOpts) },
         run: () =>
           pipeline.importNetwork(caseId, text, {
             label: storedName,
@@ -1596,6 +1602,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         linesIn: text.split(/\r?\n/).length,
         path: "deterministic",
         minSeverity,
+        parameters: { kape: importerParameter(kapeOpts) },
         run: () =>
           pipeline.importKape(caseId, text, {
             label: storedName,
@@ -1701,6 +1708,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         linesIn: text.split(/\r?\n/).length,
         path: "deterministic",
         minSeverity,
+        parameters: { cybertriage: importerParameter(ctOpts) },
         run: () =>
           pipeline.importCybertriage(caseId, text, {
             label: storedName,
@@ -1802,6 +1810,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         linesIn: text.split(/\r?\n/).length,
         path: "deterministic",
         minSeverity,
+        parameters: { m365: importerParameter(m365Opts) },
         run: () =>
           pipeline.importM365(caseId, text, {
             label: storedName,
@@ -1895,6 +1904,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         linesIn: text.split(/\r?\n/).length,
         path: "deterministic",
         minSeverity,
+        parameters: { aws: importerParameter(awsOpts) },
         run: () =>
           pipeline.importAws(caseId, text, {
             label: storedName,
@@ -1988,6 +1998,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         linesIn: text.split(/\r?\n/).length,
         path: "deterministic",
         minSeverity,
+        parameters: { cloud: importerParameter(cloudOpts) },
         run: () =>
           pipeline.importCloudActivity(caseId, text, {
             label: storedName,
@@ -2085,6 +2096,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         linesIn: text.split(/\r?\n/).length,
         path: "deterministic",
         minSeverity,
+        parameters: { plaso: importerParameter(plasoOpts) },
         run: () =>
           pipeline.importPlaso(caseId, text, {
             label: storedName,
@@ -2177,6 +2189,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         linesIn: text.split(/\r?\n/).length,
         path: "deterministic",
         minSeverity,
+        parameters: { sandbox: importerParameter(sandboxOpts) },
         run: () =>
           pipeline.importSandbox(caseId, text, {
             label: storedName,
@@ -2278,6 +2291,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         linesIn: text.split(/\r?\n/).length,
         path: "deterministic",
         minSeverity,
+        parameters: { memory: importerParameter(memoryOpts) },
         run: () =>
           pipeline.importMemory(caseId, text, {
             label: storedName,
@@ -2370,6 +2384,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         linesIn: text.split(/\r?\n/).length,
         path: "deterministic",
         minSeverity,
+        parameters: { email: importerParameter(emailOpts) },
         run: () =>
           pipeline.importEmail(caseId, text, {
             label: storedName,
@@ -2518,6 +2533,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         linesIn: text.split(/\r?\n/).length,
         path: "deterministic",
         minSeverity,
+        parameters: { auditd: importerParameter(auditdOpts) },
         run: () =>
           pipeline.importAuditd(caseId, text, {
             label: storedName,
@@ -2597,6 +2613,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         linesIn: text.split(/\r?\n/).length,
         path: "deterministic",
         minSeverity,
+        parameters: { journald: importerParameter(journaldOpts) },
         run: () =>
           pipeline.importJournald(caseId, text, {
             label: storedName,
@@ -2677,6 +2694,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         linesIn: text.split(/\r?\n/).length,
         path: "deterministic",
         minSeverity,
+        parameters: { sysdig: importerParameter(sysdigOpts) },
         run: () =>
           pipeline.importSysdig(caseId, text, {
             label: storedName,
@@ -2756,6 +2774,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         linesIn: text.split(/\r?\n/).length,
         path: "deterministic",
         minSeverity,
+        parameters: { wazuh: importerParameter(wazuhOpts) },
         run: () =>
           pipeline.importWazuh(caseId, text, {
             label: storedName,
