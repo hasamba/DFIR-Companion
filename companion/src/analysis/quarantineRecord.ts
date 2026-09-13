@@ -107,10 +107,9 @@ export function readQuarantineTime(raw: string, header: string): QuarantineTime 
     const probe = new Date(Date.UTC(y, mo - 1, d, hh, mi, ss));
     if (probe.getUTCMonth() !== mo - 1 || probe.getUTCDate() !== d || hh > 23 || mi > 59 || ss > 60)
       return { iso: "", encoding: "unreadable" };
-    const iso = normalizeTime(text);
-    return iso && !Number.isNaN(Date.parse(iso))
-      ? { iso, encoding: "iso" }
-      : { iso: "", encoding: "unreadable" };
+    // The reading is the platform's millisecond ISO form; the raw spelling stays identity.
+    const iso = isoOf(Date.parse(normalizeTime(text) || text));
+    return iso ? { iso, encoding: "iso" } : { iso: "", encoding: "unreadable" };
   }
   const n = Number(text);
   const encoding = declaredEpoch(header);

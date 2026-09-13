@@ -279,3 +279,8 @@ The joins, Gatekeeper/XProtect logs, browser history, any grade above Info.
 3. A `://` prefilter refused WHATWG-absolute URLs (`https:example.com/a`). Fix: parse first, then
    accept by protocol and non-empty host — one helper (`fetchableHost`) for indicators and the
    legacy `# quarantine:` URL.
+
+## Code round 20 (Codex, one finding)
+1. A Zulu ISO value with microseconds was emitted verbatim (`.123456Z`) and unmarked. Fix: every
+   accepted ISO value reads as the platform's millisecond ISO form; the raw spelling stays identity
+   and marks the row when it differs (two microsecond values stay two rows after correlation).

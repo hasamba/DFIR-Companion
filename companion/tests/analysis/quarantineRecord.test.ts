@@ -46,7 +46,7 @@ describe("readQuarantineTime — decoded by declared representation, never by ma
   });
   it("an ISO string is ISO under any header", () => {
     expect(readQuarantineTime("2026-05-02T09:30:00Z", "LSQuarantineTimeStamp")).toEqual({
-      iso: "2026-05-02T09:30:00Z",
+      iso: "2026-05-02T09:30:00.000Z",
       encoding: "iso",
     });
     expect(readQuarantineTime("2026-05-02T09:30:00Z", "timestamp").encoding).toBe("iso");
@@ -686,6 +686,18 @@ describe("through parseMacos and correlateEvents", () => {
     // the platform's own spelling is carried back and not marked for its time
     const z = parseMacos(csv([row({ LSQuarantineTimeStamp: "2026-05-02T09:30:00.000Z" })]));
     expect(z.events[0].description).not.toMatch(/ #[A-Za-z0-9_-]{22}$/);
+    // a Zulu value with microseconds reads as milliseconds, is marked, and two of them stay two rows
+    const micro = [
+      row({ LSQuarantineTimeStamp: "2026-05-02T09:30:00.123456Z" }),
+      row({ LSQuarantineTimeStamp: "2026-05-02T09:30:00.123457Z" }),
+    ];
+    const m = parseMacos(csv(micro));
+    expect(m.events).toHaveLength(2);
+    expect(m.events.every((e) => e.timestamp === "2026-05-02T09:30:00.123Z")).toBe(true);
+    expect(m.events.every((e) => e.canonical?.time.normalized === "2026-05-02T09:30:00.123Z")).toBe(true);
+    expect(m.events.every((e) => / #[A-Za-z0-9_-]{22}$/.test(e.description))).toBe(true);
+    expect(afterImport(m.events)).toHaveLength(2);
+    expect(afterImport(parseMacos(csv(micro), { aggregate: false }).events)).toHaveLength(2);
   });
 
   it("two structured origin aliases under one UUID are two rows, aggregated or not", () => {
