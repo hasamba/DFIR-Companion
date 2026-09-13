@@ -8,12 +8,14 @@ import { createCanonicalEvent, type CanonicalEventEnvelope } from "./canonicalEv
 import type { TlsGraphBlock, TlsGraphEdge, TlsGraphNodeKind } from "./canonicalTls.js";
 import { identityMark, keyDigest, packTags } from "./recordIdentity.js";
 import type { MappedEvent } from "./siemImport.js";
-import { joinSessionsToCertificates, type TlsObservations } from "./tlsGraphJoin.js";
+import { joinSessionsToCertificates, mergeLateTally, type TlsObservations } from "./tlsGraphJoin.js";
 import {
   buildTlsGraph,
   TLS_DISTINCT_TRACK_MAX,
+  type CertSpan,
   type Distinct,
   type TlsGraph,
+  type TlsGraphOverflow,
   type TlsNode,
 } from "./tlsGraphNodes.js";
 import { mapTlsRows, tallyTls } from "./tlsSession.js";
@@ -38,6 +40,12 @@ const day = (iso: string): string => iso.slice(0, 10);
 
 // ───────────────────────────── identity ─────────────────────────────
 
+/** A name's certificate spans in identity order — the same order in any upload order. */
+const sortedSpans = (n: TlsNode): CertSpan[] =>
+  [...(n.certificates?.values() ?? [])].sort((a, b) =>
+    a.ref.value < b.ref.value ? -1 : a.ref.value > b.ref.value ? 1 : 0,
+  );
+
 const edgeBlock = (d: Distinct): TlsGraphEdge => ({
   count: d.count,
   listed: d.values.slice(0, LISTED_ENVELOPE_MAX),
@@ -56,21 +64,27 @@ function block(n: TlsNode, g: TlsGraph): TlsGraphBlock {
       ? {
           certificates: {
             count: n.certificates.size,
-            listed: [...n.certificates.values()].slice(0, LISTED_ENVELOPE_MAX).map((s) => s.ref.value),
+            listed: sortedSpans(n)
+              .slice(0, LISTED_ENVELOPE_MAX)
+              .map((s) => s.ref.value),
             ...(n.certificates.size >= TLS_DISTINCT_TRACK_MAX ? { atLeast: true } : {}),
           },
-          spans: [...n.certificates.values()].slice(0, LISTED_ENVELOPE_MAX).map((s) => ({
-            identity: s.ref.value,
-            ...(s.ref.alg ? { alg: s.ref.alg } : {}),
-            ...(s.first !== undefined ? { first: new Date(s.first).toISOString() } : {}),
-            ...(s.last !== undefined ? { last: new Date(s.last).toISOString() } : {}),
-            sessions: s.sessions,
-          })),
+          spans: sortedSpans(n)
+            .slice(0, LISTED_ENVELOPE_MAX)
+            .map((s) => ({
+              identity: s.ref.value,
+              ...(s.ref.alg ? { alg: s.ref.alg } : {}),
+              ...(s.first !== undefined ? { first: new Date(s.first).toISOString() } : {}),
+              ...(s.last !== undefined ? { last: new Date(s.last).toISOString() } : {}),
+              sessions: s.sessions,
+            })),
         }
       : {}),
     ...(n.kind === "certificate" ? { noSni: n.noSni, sniMismatches: n.sniMismatches } : {}),
     ...(n.chainChecks.count ? { chainChecks: n.chainChecks.values.slice(0, LISTED_ENVELOPE_MAX) } : {}),
     ...(n.kind === "name" ? { identityUnavailable: n.identityUnavailable } : {}),
+    ...(n.order ? { order: n.order } : {}),
+    ...(n.sameNames !== undefined ? { sameNames: n.sameNames } : {}),
     ...(f
       ? {
           certificate: {
@@ -98,13 +112,23 @@ function block(n: TlsNode, g: TlsGraph): TlsGraphBlock {
   };
 }
 
-/** Everything shown, less the aggregates (record counts, coverage) — the row's identity. */
+/**
+ * Everything shown, less the aggregates — the row's identity. The aggregates outside it: the
+ * session count, the coverage statement, the certificate record count and each span's session
+ * count. Two uploads with the same facts and edges fold whatever their duplicate record counts.
+ */
 export function tlsGraphKey(n: TlsNode, b: TlsGraphBlock): string {
-  const { sessions: _s, coverage: _c, ...shown } = b;
+  const { sessions: _s, coverage: _c, certificate, spans, ...rest } = b;
+  const shown = {
+    ...rest,
+    ...(certificate ? { certificate: { ...certificate, records: undefined } } : {}),
+    ...(spans ? { spans: spans.map((x) => ({ ...x, sessions: undefined })) } : {}),
+  };
   return `tlsg|${n.kind}|${n.sensor ? `t:${keyDigest(n.sensor)}` : "-"}|${keyDigest(JSON.stringify(shown))}`;
 }
 
-const OVERFLOW_KEY = (kind: TlsGraphNodeKind): string => `tlsg|${kind}|overflow`;
+const OVERFLOW_KEY = (kind: TlsGraphNodeKind, sensor: string, sources: readonly string[]): string =>
+  `tlsg|${kind}|${sensor ? `t:${keyDigest(sensor)}` : "-"}|${sources.join(",")}|overflow`;
 
 // ───────────────────────────── words ─────────────────────────────
 
@@ -157,17 +181,21 @@ function certificateTags(n: TlsNode): string[] {
 
 function nameTags(n: TlsNode): string[] {
   const tags: string[] = [`name: ${show(n.shown ?? n.id)}`];
-  const spans = [...(n.certificates?.values() ?? [])];
+  const spans = sortedSpans(n);
   if (spans.length && !n.leads.length) {
     const listed = spans
       .slice(0, LISTED_WORDS_MAX)
       .map((s) => `${refWords(s.ref)}${s.first !== undefined ? ` (${spanWords(s.first, s.last)})` : ""}`)
       .join(", ");
     const more = spans.length > LISTED_WORDS_MAX ? ` (+${spans.length - LISTED_WORDS_MAX} more)` : "";
+    // Sequence is said only when every identity has a range and every pair was compared; a name
+    // with an untimed identity, or more identities than the comparison bounds, says so instead.
     const how =
-      spans.length >= 2
+      n.order === "sequence"
         ? ` in sequence — a renewal or a replacement; the records do not say which${n.sameNames ? "; the later certificate lists the same DNS names" : ""}`
-        : "";
+        : n.order === "not established"
+          ? " — their order is not established by the readable times"
+          : "";
     tags.push(`served with: ${plural(spans.length, "certificate")}${how} — ${listed}${more}`);
   }
   if (n.identityUnavailable)
@@ -221,12 +249,14 @@ function tagsOf(n: TlsNode, g: TlsGraph): string[] {
 
 // ───────────────────────────── rows ─────────────────────────────
 
-const sourcesOf = (n: TlsNode): string[] => {
+const sourceNames = (sources: Iterable<string>): string[] => {
+  const all = [...sources];
   const out: string[] = [];
-  if ([...n.sources].some((s) => s.startsWith("zeek"))) out.push("Zeek");
-  if (n.sources.has("suricata-tls")) out.push("Suricata");
+  if (all.some((s) => s.startsWith("zeek"))) out.push("Zeek");
+  if (all.includes("suricata-tls")) out.push("Suricata");
   return out;
 };
+const sourcesOf = (n: TlsNode): string[] => sourceNames(n.sources);
 
 function envelopeOf(n: TlsNode, b: TlsGraphBlock, ts: string, key: string): CanonicalEventEnvelope {
   const sources = [...n.sources];
@@ -268,31 +298,33 @@ function mapNode(n: TlsNode, g: TlsGraph): MappedEvent {
   };
 }
 
-function mapOverflow(kind: TlsGraphNodeKind, count: number, firstTs: string, g: TlsGraph): MappedEvent {
-  const key = OVERFLOW_KEY(kind);
+/** One overflow row per (kind, sensor, source set): its provenance is the partition's, never a default. */
+function mapOverflow(o: TlsGraphOverflow, g: TlsGraph): MappedEvent {
+  const key = OVERFLOW_KEY(o.kind, o.sensor, o.sources);
+  const sensor = o.sensor ? ` @ ${show(o.sensor)}` : " [sensor not named in the records]";
   return {
-    timestamp: firstTs,
-    description: `[overflow: ${plural(count, `${KIND_WORDS[kind]} node`)} beyond the retained bound folded; none shown]${identityMark(key)}`,
+    timestamp: o.firstTs,
+    description: `[overflow: ${plural(o.count, `${KIND_WORDS[o.kind]} node`)} beyond the retained bound folded; none shown]${sensor}${identityMark(key)}`,
     severity: "Info",
     mitre: [],
     canonical: createCanonicalEvent({
       event: { category: "network", type: "tls-graph" },
       tlsGraph: {
-        node: { kind, id: "" },
-        sensor: { state: "not named" },
+        node: { kind: o.kind, id: "" },
+        sensor: o.sensor ? { name: o.sensor } : { state: "not named" },
         sessions: 0,
         leads: [],
         coverage: g.coverage,
         basis: BASIS,
         folded: true,
-        records: count,
+        records: o.count,
       },
-      time: { observed: firstTs, normalized: firstTs },
-      evidence: { rawRecords: [{ source: "zeek-ssl", locator: key }] },
+      time: { observed: o.firstTs, normalized: o.firstTs },
+      evidence: { rawRecords: [{ source: o.sources[0] ?? "zeek-ssl", locator: key }] },
       producer: { importer: "network", parserVersion: "1", mappingVersion: "tls-graph-v1" },
     }),
     aggKey: key,
-    sources: ["Zeek"],
+    sources: sourceNames(o.sources),
     origin: "wire",
   };
 }
@@ -301,16 +333,19 @@ function mapOverflow(kind: TlsGraphNodeKind, count: number, firstTs: string, g: 
 export function mapTlsGraphRows(g: TlsGraph, budget: number): MappedEvent[] {
   return [
     ...g.nodes.slice(0, budget).map((n) => mapNode(n, g)),
-    ...[...g.overflow.entries()].map(([kind, o]) => mapOverflow(kind, o.count, o.firstTs, g)),
+    ...[...g.overflow.values()].map((o) => mapOverflow(o, g)),
   ];
 }
 
 /**
  * The two TLS families of one upload: session and certificate rows (the retained sessions joined
- * to their x509 records, then folded into the shape tally beside the rest), and the graph rows.
+ * to their x509 records and folded first, the late sessions merged after them, the certificate
+ * shapes from their own tally), and the graph rows.
  */
 export function tlsFamilies(store: TlsObservations, budget: number): [MappedEvent[], MappedEvent[]] {
   const joined = joinSessionsToCertificates(store);
-  for (const o of joined) tallyTls(o, store.tally);
-  return [mapTlsRows(store.tally, budget), mapTlsGraphRows(buildTlsGraph(store, joined), budget)];
+  for (const o of joined) tallyTls(o, store.sessionTally);
+  mergeLateTally(store);
+  const tally = new Map([...store.certTally, ...store.sessionTally]);
+  return [mapTlsRows(tally, budget), mapTlsGraphRows(buildTlsGraph(store, joined), budget)];
 }

@@ -2,11 +2,14 @@
 // (#933 item 6, second half — #997).
 //
 // tlsSession.ts folds every record into a shape row; the graph needs each observation on its own,
-// so the store keeps sessions un-aggregated up to TLS_OBSERVATIONS_MAX and folds the rest straight
-// into the shape tally as before — a session past the bound still has its row, it is only absent
-// from the join and the graph, and every graph row says so. Certificate observations are tallied
-// as they arrive (their rows do not change) and retained, bounded the same way, for the join and
-// the node facts; past their bound a session whose chain FUID finds no retained x509 record says
+// so the store keeps sessions un-aggregated up to TLS_OBSERVATIONS_MAX and folds the rest into a
+// late tally as they arrive — a session past the bound still has its row, it is only absent from
+// the join and the graph, and every graph row says so. Sessions and certificates have SEPARATE
+// shape tallies (TLS_SHAPES_MAX each): the retained sessions are folded only after the loop, and
+// with one shared tally an upload of 8,192 distinct certificates arriving anywhere in the file
+// would have filled it before any session was folded. Certificate observations are tallied as
+// they arrive (their rows do not change) and retained, bounded the same way, for the join and the
+// node facts; past their bound a session whose chain FUID finds no retained x509 record says
 // `not among those read`, never a silent "unavailable".
 //
 // The join: a Zeek `ssl` row's `cert_chain_fuids[0]` (the leaf) against the `x509` row whose `id`
@@ -19,6 +22,8 @@
 
 import {
   tallyTls,
+  tallyTlsOverflow,
+  TLS_SHAPES_MAX,
   type CertJoinNote,
   type CertRef,
   type TlsObservation,
@@ -33,20 +38,32 @@ export interface TlsObservations {
   sessions: TlsObservation[];
   /** Retained certificate observations with an identity. */
   certs: TlsObservation[];
-  /** The shape tally: every certificate row, plus the sessions past the bound. */
-  tally: Map<string, TlsTally>;
+  /** Every certificate row's shape, folded as the records arrive. */
+  certTally: Map<string, TlsTally>;
+  /** Session shapes: the retained sessions after the join, then the late ones merged in. */
+  sessionTally: Map<string, TlsTally>;
+  /** Sessions past the retained bound, folded as they arrive; merged after the retained ones. */
+  lateTally: Map<string, TlsTally>;
   sessionsTotal: number;
   /** Certificate observations with an identity, retained or not. */
   certsTotal: number;
 }
 
 export function emptyTlsObservations(): TlsObservations {
-  return { sessions: [], certs: [], tally: new Map(), sessionsTotal: 0, certsTotal: 0 };
+  return {
+    sessions: [],
+    certs: [],
+    certTally: new Map(),
+    sessionTally: new Map(),
+    lateTally: new Map(),
+    sessionsTotal: 0,
+    certsTotal: 0,
+  };
 }
 
 export function addTls(store: TlsObservations, o: TlsObservation): void {
   if (o.kind === "certificate") {
-    tallyTls(o, store.tally);
+    tallyTls(o, store.certTally);
     if (!o.cert) return;
     store.certsTotal += 1;
     if (store.certs.length < TLS_OBSERVATIONS_MAX) store.certs.push(o);
@@ -54,7 +71,23 @@ export function addTls(store: TlsObservations, o: TlsObservation): void {
   }
   store.sessionsTotal += 1;
   if (store.sessions.length < TLS_OBSERVATIONS_MAX) store.sessions.push(o);
-  else tallyTls(o, store.tally);
+  else tallyTls(o, store.lateTally);
+}
+
+/** Fold the late tally into the session tally: a shape already there adds its count; a new one takes a slot or overflows. */
+export function mergeLateTally(store: TlsObservations): void {
+  for (const [key, late] of store.lateTally) {
+    const existing = store.sessionTally.get(key);
+    if (existing) {
+      existing.count += late.count;
+      if (late.firstTs && (!existing.firstTs || late.firstTs < existing.firstTs))
+        existing.firstTs = late.firstTs;
+    } else if (late.overflow || store.sessionTally.size >= TLS_SHAPES_MAX) {
+      // A late overflow row, or a shape past the bound: its records join the session overflow row.
+      tallyTlsOverflow(late.first, store.sessionTally, late.count, late.firstTs);
+    } else store.sessionTally.set(key, late);
+  }
+  store.lateTally = new Map();
 }
 
 /** The sensor partition a record belongs to: its observer's name, or "" for records that name none. */
@@ -93,13 +126,22 @@ function indexX509(store: TlsObservations): Map<string, Map<string, X509Entry>> 
   return bySensor;
 }
 
-/** The x509 entry for a FUID in the role the chain names, else an unmarked one; undefined when neither. */
+/**
+ * Every x509 record eligible for a chain: the ones marked with the role the chain names AND the
+ * unmarked ones, as one entry — so a marked and an unmarked record for one FUID that carry
+ * different identities are a disagreement, never a silent pick of the marked one.
+ */
 function lookup(
   byId: Map<string, X509Entry> | undefined,
   fuid: string,
   role: "server" | "client",
 ): X509Entry | undefined {
-  return byId?.get(`${role}|${fuid}`) ?? byId?.get(`any|${fuid}`);
+  const marked = byId?.get(`${role}|${fuid}`);
+  const unmarked = byId?.get(`any|${fuid}`);
+  if (!marked || !unmarked) return marked ?? unmarked;
+  const refs = [...marked.refs];
+  for (const r of unmarked.refs) if (!refs.some((m) => sameRef(m, r))) refs.push(r);
+  return { ...marked, refs };
 }
 
 // ───────────────────────────── the join ─────────────────────────────

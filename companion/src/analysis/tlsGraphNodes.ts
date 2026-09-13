@@ -11,7 +11,7 @@ import type { TlsGraphLead, TlsGraphNodeKind } from "./canonicalTls.js";
 import { asciiName, isValidQueryName } from "./dnsRecord.js";
 import { keyDigest } from "./recordIdentity.js";
 import { sensorKeyOf, type TlsObservations } from "./tlsGraphJoin.js";
-import { NAMES_KEPT_MAX, type CertRef, type TlsObservation } from "./tlsSession.js";
+import { isTlsHostname, NAMES_KEPT_MAX, type CertRef, type TlsObservation } from "./tlsSession.js";
 import { show } from "./tlsSessionWords.js";
 
 /** Nodes retained per kind; the rest fold into the kind's overflow row. */
@@ -34,7 +34,7 @@ export const CLUSTER_CAVEAT =
 // ───────────────────────────── bounded sets ─────────────────────────────
 
 export interface Distinct {
-  /** Insertion order; at most TLS_DISTINCT_TRACK_MAX. */
+  /** Sorted; at most TLS_DISTINCT_TRACK_MAX — the lexicographically smallest values seen, so the set is the same in any upload order. */
   values: string[];
   count: number;
   atLeast: boolean;
@@ -43,15 +43,30 @@ export interface Distinct {
 
 const distinct = (): Distinct => ({ values: [], count: 0, atLeast: false, seen: new Set() });
 
+/** Binary-search insert position in a sorted array. */
+function slot(values: readonly string[], v: string): number {
+  let lo = 0;
+  let hi = values.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (values[mid] < v) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
 function add(d: Distinct, v: string): void {
   if (d.seen.has(v)) return;
   if (d.seen.size >= TLS_DISTINCT_TRACK_MAX) {
     d.atLeast = true;
-    return;
-  }
+    // Past the bound the tracked set is the smallest values: a smaller newcomer displaces the largest.
+    const largest = d.values[d.values.length - 1];
+    if (v >= largest) return;
+    d.seen.delete(largest);
+    d.values.pop();
+  } else d.count += 1;
   d.seen.add(v);
-  d.values.push(v);
-  d.count += 1;
+  d.values.splice(slot(d.values, v), 0, v);
 }
 
 // ───────────────────────────── nodes ─────────────────────────────
@@ -103,15 +118,26 @@ export interface TlsNode {
   certificate?: CertRecordFacts;
   notListed?: NotListed;
   issuerString?: number;
+  /** What the identities' ranges establish about their order (name node with ≥2 identities). */
+  order?: "sequence" | "not established";
   /** In sequence (no alternation) and both records list the same DNS names. */
   sameNames?: boolean;
   leads: TlsGraphLead[];
   rank: number;
 }
 
+export interface TlsGraphOverflow {
+  kind: TlsGraphNodeKind;
+  sensor: string;
+  sources: string[];
+  count: number;
+  firstTs: string;
+}
+
 export interface TlsGraph {
   nodes: TlsNode[];
-  overflow: Map<TlsGraphNodeKind, { count: number; firstTs: string }>;
+  /** Nodes past TLS_NODES_MAX, counted per kind, sensor and source set — `kind|sensor|sources` → row. */
+  overflow: Map<string, TlsGraphOverflow>;
   coverage: {
     sessionsRead: number;
     sessionsTotal: number;
@@ -170,29 +196,36 @@ function touch(n: TlsNode, o: TlsObservation, t: number | undefined): void {
 
 const namesDigest = (names: string[]): string => keyDigest([...names].sort().join("\n"));
 
-function factsOf(store: TlsObservations): Map<string, CertRecordFacts> {
+/**
+ * The certificate facts per (sensor, identity): from the certificate records, and from the
+ * sessions that carry the certificate's own fields inline (a Suricata `tls` record) — the same
+ * record's facts under the same identity. `records` counts certificate records only.
+ */
+function factsOf(store: TlsObservations, sessions: TlsObservation[]): Map<string, CertRecordFacts> {
   const out = new Map<string, CertRecordFacts>();
-  for (const c of store.certs) {
+  const inline = sessions.filter((o) => o.cert && o.certificate && Object.keys(o.certificate).length);
+  for (const c of [...store.certs, ...inline]) {
     if (!c.cert || c.role === "client") continue;
     const key = `${sensorKeyOf(c)}|${refId(c.cert)}`;
     const f = c.certificate ?? {};
     const dns = f.dnsNames?.map(canonicalName);
+    const record = c.kind === "certificate" ? 1 : 0;
     const existing = out.get(key);
     if (!existing) {
       out.set(key, {
-        records: 1,
+        records: record,
         ...(f.subject !== undefined ? { subject: f.subject } : {}),
         ...(f.issuer !== undefined ? { issuer: f.issuer } : {}),
         ...(f.notBefore ? { notBefore: f.notBefore } : {}),
         ...(f.notAfter ? { notAfter: f.notAfter } : {}),
         ...(dns ? { dnsNames: dns, dnsNamesTotal: f.dnsNamesTotal ?? dns.length } : {}),
         disagree: [],
-        locators: c.locatorId ? [c.locatorId] : c.uid ? [c.uid] : [],
+        locators: record && c.locatorId ? [c.locatorId] : record && c.uid ? [c.uid] : [],
       });
       continue;
     }
-    existing.records += 1;
-    const loc = c.locatorId ?? c.uid;
+    existing.records += record;
+    const loc = record ? (c.locatorId ?? c.uid) : undefined;
     if (loc && existing.locators.length < LOCATORS_MAX && !existing.locators.includes(loc))
       existing.locators.push(loc);
     // Only two PRESENT values can disagree: a chain member carries no facts, and that is not a
@@ -268,8 +301,9 @@ function notListedOf(n: TlsNode, certsComplete: boolean): NotListed | undefined 
   const listed: string[] = [];
   let count = 0;
   for (const raw of n.names.values) {
-    // An invalid hostname is never compared: it can neither be listed nor be a coverage lead.
-    if (!isValidQueryName(raw)) continue;
+    // Only a hostname is compared — an IP literal, a wildcard or an invalid name can neither be
+    // listed by a dNSName SAN nor be a coverage lead.
+    if (!isTlsHostname(raw, "sni")) continue;
     if (listedBy(canonicalName(raw), f.dnsNames)) continue;
     count += 1;
     if (listed.length < 3) listed.push(raw);
@@ -306,18 +340,25 @@ export function alternates(a: CertSpan, b: CertSpan): boolean {
   return (a.first < b.first && b.first < a.last) || (b.first < a.first && a.first < b.last);
 }
 
-function nameLeads(n: TlsNode): TlsGraphLead[] {
-  const spans = [...(n.certificates?.values() ?? [])].slice(0, ALTERNATION_PAIRS_MAX);
+/** The alternation lead, or what the ranges establish about the identities' order when there is none. */
+function nameOrder(n: TlsNode): { leads: TlsGraphLead[]; order?: TlsNode["order"] } {
+  const all = [...(n.certificates?.values() ?? [])];
+  if (all.length < 2) return { leads: [] };
+  const spans = all.slice(0, ALTERNATION_PAIRS_MAX);
   for (let i = 0; i < spans.length; i++)
     for (let j = i + 1; j < spans.length; j++)
       if (alternates(spans[i], spans[j]))
-        return [
-          {
-            kind: "certificates-alternate",
-            words: `served with ${plural(n.certificates!.size, "certificate")} in alternation — observation ranges overlap; the records do not say both were served at one instant; ${CLUSTER_CAVEAT}`,
-          },
-        ];
-  return [];
+        return {
+          leads: [
+            {
+              kind: "certificates-alternate",
+              words: `served with ${plural(all.length, "certificate")} in alternation — observation ranges overlap; the records do not say both were served at one instant; ${CLUSTER_CAVEAT}`,
+            },
+          ],
+        };
+  // A sequence is established only when every identity has a range and every pair was compared.
+  const established = all.length <= ALTERNATION_PAIRS_MAX && all.every((s) => s.first !== undefined);
+  return { leads: [], order: established ? "sequence" : "not established" };
 }
 
 function ja3Leads(n: TlsNode): TlsGraphLead[] {
@@ -386,7 +427,7 @@ export function buildTlsGraph(store: TlsObservations, sessions: TlsObservation[]
     }
     if (name !== undefined) {
       const n = get("name", name, sensor);
-      n.shown ??= o.sni;
+      n.shown ??= name;
       touch(n, o, t);
       if (o.cert) {
         const id = refId(o.cert);
@@ -425,7 +466,7 @@ export function buildTlsGraph(store: TlsObservations, sessions: TlsObservation[]
     certificatesTotal: store.certsTotal,
   };
   const certsComplete = coverage.certificatesRead === coverage.certificatesTotal;
-  const facts = factsOf(store);
+  const facts = factsOf(store, sessions);
   const issuers = issuerCounts(store, sessions);
   const built: TlsNode[] = [];
   for (const n of nodes.values()) {
@@ -439,8 +480,10 @@ export function buildTlsGraph(store: TlsObservations, sessions: TlsObservation[]
         n.issuerString = issuers.get(`${n.sensor}|${issuer.trim()}`)?.size;
       n.leads = f?.disagree.length ? [] : certificateLeads(n);
     } else if (n.kind === "name") {
-      n.leads = nameLeads(n);
-      if (!n.leads.length) {
+      const { leads, order } = nameOrder(n);
+      n.leads = leads;
+      if (order) n.order = order;
+      if (order === "sequence") {
         const same = sameNamesOf(n, facts, certsComplete);
         if (same !== undefined) n.sameNames = same;
       }
@@ -467,11 +510,13 @@ export function buildTlsGraph(store: TlsObservations, sessions: TlsObservation[]
       continue;
     }
     const ts = n.first !== undefined ? new Date(n.first).toISOString() : "";
-    const over = overflow.get(n.kind);
+    const sources = [...n.sources].sort();
+    const key = `${n.kind}|${n.sensor}|${sources.join(",")}`;
+    const over = overflow.get(key);
     if (over) {
       over.count += 1;
       if (ts && (!over.firstTs || ts < over.firstTs)) over.firstTs = ts;
-    } else overflow.set(n.kind, { count: 1, firstTs: ts });
+    } else overflow.set(key, { kind: n.kind, sensor: n.sensor, sources, count: 1, firstTs: ts });
   }
   return { nodes: kept, overflow, coverage };
 }

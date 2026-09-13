@@ -1,10 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { createHash } from "node:crypto";
 import {
+  isTlsHostname,
   readZeekSsl,
   readZeekX509,
   readSuricataTls,
   readSuricataCertificates,
+  TLS_SHAPES_MAX,
 } from "../../src/analysis/tlsSession.js";
 import {
   addTls,
@@ -201,7 +203,7 @@ describe("certificate node — what one sensor's sessions show beside one identi
     expect(row.description).toContain(
       "[presented under: 3 names — a.example.net, b.example.net, cdn.example.net]",
     );
-    expect(row.description).toContain("[at server addresses: 2 — 203.0.113.9:443, 203.0.113.10:443]");
+    expect(row.description).toContain("[at server addresses: 2 — 203.0.113.10:443, 203.0.113.9:443]");
     expect(row.description).toContain("[client addresses: 2]");
     expect(row.description).toContain("[chain check: ok, self signed certificate]");
     expect(row.description).toContain("[observed 2023-11-14 22:13 → 2023-11-15 00:13]");
@@ -476,7 +478,7 @@ describe("client certificate and JA3 nodes", () => {
       r.description.startsWith("TLS-graph client certificate"),
     )!;
     expect(row.description).toContain("[presented by: 1 client address — 10.0.0.5]");
-    expect(row.description).toContain("[presented to: 2 servers — 203.0.113.9:443, 10.0.0.9:8443]");
+    expect(row.description).toContain("[presented to: 2 servers — 10.0.0.9:8443, 203.0.113.9:443]");
     expect(row.description).toContain("[under: 2 names — a.corp, b.corp]");
     expect(row.description).not.toMatch(/[0-9a-f]{40}/i);
   });
@@ -612,9 +614,11 @@ describe("identity, bounds, sensors", () => {
         .sort();
     expect(ids(a)).toHaveLength(TLS_NODES_MAX);
     expect(ids(a)).toEqual(ids(b));
-    expect(a.overflow.get("ja3")?.count).toBe(10);
+    expect(a.overflow.get("ja3||zeek-ssl")?.count).toBe(10);
     const over = mapTlsGraphRows(a, 20000).find((r) => r.description.startsWith("[overflow"))!;
-    expect(over.description).toContain("10 ja3 nodes beyond the retained bound folded; none shown");
+    expect(over.description).toContain(
+      "10 ja3 nodes beyond the retained bound folded; none shown] [sensor not named in the records]",
+    );
   });
 
   it("a hostile SNI is neutralised inside its span and the node row never unions with a file event", () => {
@@ -651,6 +655,248 @@ describe("identity, bounds, sensors", () => {
       md5: "d41d8cd98f00b204e9800998ecf8427e",
     };
     expect(correlateEvents([asEvent(siem, 0), file])).toHaveLength(2);
+  });
+});
+
+describe("code review round — Codex findings", () => {
+  it("1. certificate shapes never evict session shapes: separate tallies", () => {
+    const s = emptyTlsObservations();
+    addTls(s, readZeekSsl(ssl({ uid: "C1" }), ""));
+    for (let i = 0; i < TLS_SHAPES_MAX + 1; i++)
+      addTls(s, readZeekX509(x509({ id: `F${i}`, "certificate.serial": (i + 1).toString(16) }), ""));
+    const [rows] = tlsFamilies(s, 100000);
+    const sessions = rows.filter((r) => r.description.startsWith("TLS "));
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].description).not.toContain("overflow");
+    expect(rows.filter((r) => r.description.startsWith("[overflow"))).toHaveLength(1);
+  });
+
+  it("1b. late sessions merge after the retained ones and never displace them", () => {
+    const s = emptyTlsObservations();
+    for (let i = 0; i < TLS_OBSERVATIONS_MAX; i++)
+      addTls(s, readZeekSsl(ssl({ uid: `C${i}`, server_name: `n${i % 2}` }), ""));
+    for (let i = 0; i < TLS_SHAPES_MAX + 3; i++)
+      addTls(s, readZeekSsl(ssl({ uid: `L${i}`, server_name: `late${i}` }), ""));
+    const [rows] = tlsFamilies(s, 100000);
+    const kept = rows.filter((r) => r.description.startsWith("TLS "));
+    expect(kept.filter((r) => /\[sni: n[01]\]/.test(r.description))).toHaveLength(2);
+    const over = rows.find((r) => r.description.startsWith("[overflow"))!;
+    expect(over.description).toContain(`${TLS_SHAPES_MAX + 3 - (TLS_SHAPES_MAX - 2)} TLS records`);
+  });
+
+  it("2. a Suricata record with fingerprint and DER keys its session and its certificate row one way; fingerprint-only facts reach the node", () => {
+    const der = Buffer.from("leaf-der-2").toString("base64");
+    const both = {
+      timestamp: "2023-11-14T22:13:20.5+0000",
+      src_ip: "10.0.0.5",
+      dest_ip: "203.0.113.9",
+      dest_port: 443,
+      tls: {
+        sni: "evil.example",
+        subject: "CN=a",
+        fingerprint: "ab".repeat(20),
+        certificate: der,
+        subjectaltname: ["a.example"],
+      },
+    };
+    const s = emptyTlsObservations();
+    addTls(s, readSuricataTls(both, ""));
+    for (const c of readSuricataCertificates(both, "")) addTls(s, c);
+    const g = graphOf(s);
+    const fp = createHash("sha256").update("leaf-der-2").digest("hex");
+    const c = node(g.nodes, "certificate", fp)!;
+    expect(c.certificate?.records).toBe(1);
+    expect(c.certificate?.subject).toBe("CN=a");
+    expect(c.notListed).toEqual({ count: 1, listed: ["evil.example"] });
+    // fingerprint only, no DER: the session's inline facts feed the node; no certificate record is counted
+    const fpOnly = { ...both, tls: { ...both.tls, certificate: undefined } };
+    const s2 = emptyTlsObservations();
+    addTls(s2, readSuricataTls(fpOnly, ""));
+    const c2 = node(graphOf(s2).nodes, "certificate", "ab".repeat(20))!;
+    expect(c2.certificate?.records).toBe(0);
+    expect(c2.certificate?.subject).toBe("CN=a");
+    expect(c2.notListed).toEqual({ count: 1, listed: ["evil.example"] });
+    const [row] = mapTlsGraphRows(graphOf(s2), 10);
+    expect(row.description).toMatch(/— 1 session record #/);
+  });
+
+  it("3. identities, listings and descriptions are the same in any upload order — past 8 and past 256 edges too", () => {
+    const many = (n: number) =>
+      Array.from({ length: n }, (_, i) =>
+        ssl({
+          uid: `C${i}`,
+          ts: T0 + i,
+          server_name: `n${String(i).padStart(3, "0")}.example.net`,
+          "id.orig_h": `10.0.${i >> 8}.${i & 255}`,
+        }),
+      );
+    for (const n of [12, 300]) {
+      const fwd = mapTlsGraphRows(graphOf(store(many(n), [x509()])), 10)[0];
+      const rev = mapTlsGraphRows(graphOf(store([...many(n)].reverse(), [x509()])), 10)[0];
+      expect(rev.aggKey).toBe(fwd.aggKey);
+      expect(rev.description).toBe(fwd.description);
+      expect(rev.canonical?.tlsGraph).toEqual(fwd.canonical?.tlsGraph);
+    }
+    // a name node's spans and shown name too
+    const alt = [
+      ssl({ uid: "C1", ts: T0, server_name: "CDN.Example.NET" }),
+      ssl({ uid: "C2", ts: T0 + 100, cert_chain_fuids: ["F2"] }),
+    ];
+    const certs = [x509(), x509({ id: "F2", "certificate.serial": "0099" })];
+    const a = mapTlsGraphRows(graphOf(store(alt, certs)), 10).find((r) =>
+      r.description.startsWith("TLS-graph name"),
+    )!;
+    const b = mapTlsGraphRows(graphOf(store([...alt].reverse(), [...certs].reverse())), 10).find((r) =>
+      r.description.startsWith("TLS-graph name"),
+    )!;
+    expect(a.aggKey).toBe(b.aggKey);
+    expect(a.description).toBe(b.description);
+    expect(a.description).toContain("[name: cdn.example.net]");
+  });
+
+  it("4. untimed identities are never 'in sequence'; the envelope says the order is not established", () => {
+    const g = graphOf(
+      store(
+        [ssl({ uid: "C1", ts: "not a time" }), ssl({ uid: "C2", ts: T0 + 100, cert_chain_fuids: ["F2"] })],
+        [x509(), x509({ id: "F2", "certificate.serial": "0099" })],
+      ),
+    );
+    const n = node(g.nodes, "name", "cdn.example.net")!;
+    expect(n.order).toBe("not established");
+    expect(n.sameNames).toBeUndefined();
+    const row = mapTlsGraphRows(g, 10).find((r) => r.description.startsWith("TLS-graph name"))!;
+    expect(row.description).toContain(
+      "[served with: 2 certificates — their order is not established by the readable times — ",
+    );
+    expect(row.description).not.toContain("in sequence");
+    expect(row.canonical?.tlsGraph?.order).toBe("not established");
+  });
+
+  it("5. a role-marked and an unmarked x509 record for one FUID with different identities are a disagreement", () => {
+    const s = store(
+      [ssl()],
+      [
+        x509({ fingerprint: FP_A }),
+        x509({ fingerprint: FP_B, host_cert: undefined, client_cert: undefined }),
+      ],
+    );
+    const [j] = joinSessionsToCertificates(s);
+    expect(j.cert).toBeUndefined();
+    expect(j.certJoinNote).toBe("records disagree");
+    const c = store(
+      [ssl({ client_cert_chain_fuids: ["Fcli"], client_subject: "CN=user" })],
+      [
+        x509({ id: "Fcli", client_cert: true, host_cert: false, fingerprint: FP_A }),
+        x509({ id: "Fcli", host_cert: undefined, client_cert: undefined, fingerprint: FP_B }),
+      ],
+    );
+    expect(joinSessionsToCertificates(c)[0].clientCert?.joinNote).toBe("records disagree");
+  });
+
+  it("6. an IP SAN is not a DNS name; an IP or wildcard SNI is never compared", () => {
+    expect(isTlsHostname("1.2.3.4", "san")).toBe(false);
+    expect(isTlsHostname("*.example.net", "san")).toBe(true);
+    expect(isTlsHostname("*.example.net", "sni")).toBe(false);
+    expect(isTlsHostname("a.example.net", "sni")).toBe(true);
+    const sur = readSuricataTls(
+      {
+        timestamp: "2023-11-14T22:13:20.5+0000",
+        src_ip: "10.0.0.5",
+        dest_ip: "203.0.113.9",
+        dest_port: 443,
+        tls: {
+          sni: "a",
+          fingerprint: "ab".repeat(20),
+          subjectaltname: ["1.2.3.4", "a.example.net", "*.b.example"],
+        },
+      },
+      "",
+    );
+    expect(sur.certificate?.dnsNames).toEqual(["a.example.net", "*.b.example"]);
+    const g = graphOf(
+      store(
+        [
+          ssl({ uid: "C1", server_name: "203.0.113.9" }),
+          ssl({ uid: "C2", server_name: "*.example.net" }),
+          ssl({ uid: "C3", server_name: "x.example.net" }),
+        ],
+        [x509()],
+      ),
+    );
+    expect(node(g.nodes, "certificate", "certid")!.notListed).toEqual({ count: 0, listed: [] });
+  });
+
+  it("7. duplicate certificate records change the shown count but never the identity", () => {
+    const one = mapTlsGraphRows(graphOf(store([ssl()], [x509()])), 10)[0];
+    const two = mapTlsGraphRows(graphOf(store([ssl()], [x509(), x509({ ts: T0 + 1 })])), 10)[0];
+    expect(two.aggKey).toBe(one.aggKey);
+    expect(two.description).toContain("2 certificate records");
+    expect(one.description).toContain("1 certificate record");
+    // and a span's session count is an aggregate too
+    const certs = [x509(), x509({ id: "F2", "certificate.serial": "0099" })];
+    const a = mapTlsGraphRows(
+      graphOf(
+        store(
+          [ssl({ uid: "C1", ts: T0 }), ssl({ uid: "C2", ts: T0 + 100, cert_chain_fuids: ["F2"] })],
+          certs,
+        ),
+      ),
+      10,
+    );
+    const b = mapTlsGraphRows(
+      graphOf(
+        store(
+          [
+            ssl({ uid: "C1", ts: T0 }),
+            ssl({ uid: "C3", ts: T0 }),
+            ssl({ uid: "C2", ts: T0 + 100, cert_chain_fuids: ["F2"] }),
+          ],
+          certs,
+        ),
+      ),
+      10,
+    );
+    const nameA = a.find((r) => r.description.startsWith("TLS-graph name"))!;
+    const nameB = b.find((r) => r.description.startsWith("TLS-graph name"))!;
+    expect(nameA.aggKey).toBe(nameB.aggKey);
+  });
+
+  it("8. overflow rows keep their partition's sensor and sources", () => {
+    const rows: Row[] = [];
+    for (let i = 0; i < TLS_NODES_MAX + 2; i++) {
+      const r = ssl({
+        uid: `C${i}`,
+        ts: T0 + i,
+        ja3: i.toString(16).padStart(32, "0"),
+        "observer.name": "s1",
+      });
+      rows.push(r, { ...r, uid: `D${i}` });
+    }
+    const zeek = mapTlsGraphRows(graphOf(store(rows)), 20000).find((r) =>
+      r.description.startsWith("[overflow"),
+    )!;
+    expect(zeek.description).toContain("@ s1");
+    expect(zeek.canonical?.tlsGraph?.sensor).toEqual({ name: "s1" });
+    expect(zeek.sources).toEqual(["Zeek"]);
+    const s = emptyTlsObservations();
+    for (let i = 0; i < TLS_NODES_MAX + 2; i++)
+      for (const k of [0, 1])
+        addTls(
+          s,
+          readSuricataTls(
+            {
+              timestamp: `2023-11-14T22:13:20.${k}+0000`,
+              src_ip: "10.0.0.5",
+              dest_ip: "203.0.113.9",
+              dest_port: 443,
+              tls: { sni: "a.example", ja3: { hash: i.toString(16).padStart(32, "0") } },
+            },
+            "",
+          ),
+        );
+    const sur = mapTlsGraphRows(graphOf(s), 20000).find((r) => r.description.startsWith("[overflow"))!;
+    expect(sur.sources).toEqual(["Suricata"]);
+    expect(sur.aggKey).not.toBe(zeek.aggKey);
   });
 });
 

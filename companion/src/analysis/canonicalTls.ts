@@ -59,6 +59,10 @@ export const tlsGraphBlockSchema = z.object({
   sniMismatches: z.number().int().nonnegative().optional(),
   /** Sessions whose certificate identity was unavailable (name node). */
   identityUnavailable: z.number().int().nonnegative().optional(),
+  /** What the identities' ranges establish about their order (name node): a sequence, or nothing. */
+  order: z.enum(["sequence", "not established"]).optional(),
+  /** In sequence, and the earliest and latest certificate records list the same DNS names. */
+  sameNames: z.boolean().optional(),
   certificate: z
     .object({
       records: z.number().int().nonnegative(),

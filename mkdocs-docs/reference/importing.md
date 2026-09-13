@@ -473,9 +473,11 @@ what its records say:
   what it means is the analyst's call.
 - **A certificate row** — one per certificate identity — reads `[certificate: <fingerprint or cert
   identity>; subject …; issuer …; valid …–…; covers N names: a, b, c (+n more)] — N certificate
-  records`. A certificate's identity is a source-given fingerprint (Suricata `tls.fingerprint`, Zeek
-  builds that write one, a leaf's DER bytes hashed here), or else its issuer and serial — the pair
-  that names one certificate under one CA — spelled `certid-v1:…` and never called a fingerprint.
+  records`. A certificate's identity is the leaf's DER bytes hashed here when the record carries
+  them, else a source-given fingerprint (Suricata `tls.fingerprint`, Zeek builds that write one) —
+  the same order on the session and on the certificate row, so one certificate keys one way — or
+  else its issuer and serial — the pair that names one certificate under one CA — spelled
+  `certid-v1:…` and never called a fingerprint.
   A certificate with no serial and no fingerprint (a standard Zeek `ssl` row) has **no** identity:
   its subject and issuer are attributes of the session, and a renewed certificate with the same
   names is the same session shape. The attributes a certificate row shows are its first
@@ -533,9 +535,13 @@ leads a cluster suggests, and every claim is bounded to what the retained record
   with: 2 certificates in sequence — a renewal or a replacement; the records do not say which; the
   later certificate lists the same DNS names — cert identity certid-v1:… (2023-11-14 22:13 →
   2023-12-01 08:00), cert identity certid-v1:… (2023-12-01 08:00 → 2024-01-05 08:00)] [at server
-  addresses: 1 — 203.0.113.9:443] [client addresses: 14] …`. Sessions whose certificate identity
-  was unavailable are counted on the name. "The same DNS names" is said only when both certificate
-  records were retained, agree with themselves and list their names completely.
+  addresses: 1 — 203.0.113.9:443] [client addresses: 14] …`. "In sequence" is said only when
+  every identity has a readable range and every pair was compared (64 identities at most);
+  otherwise the row says `their order is not established by the readable times`. Sessions whose
+  certificate identity was unavailable are counted on the name. "The same DNS names" is said only
+  when both certificate records were retained, agree with themselves and list their names
+  completely. A Suricata record's inline certificate fields (subject, issuer, validity, SANs)
+  feed the node under the same identity, with no certificate record counted.
 - **A client certificate row** (mTLS) reads `TLS-graph client certificate sha256 … [presented by:
   1 client address — 10.0.0.5] [presented to: 2 servers — 10.0.0.9:8443, 10.0.0.10:8443] [under:
   2 names — a.corp, b.corp] …`.
@@ -580,12 +586,16 @@ leads a cluster suggests, and every claim is bounded to what the retained record
   per upload for the join and the graph; a session past the bound still folds into its session
   row but is absent from the graph, and every relationship row then says `[graph over 65,536 of
   90,000 session records]` and `[certificate records: 65,536 of 90,000 read]`. Distinct values are
-  tracked to 256 per edge and said as `256+` past it; three are shown, eight kept in the row's
-  data. 8,192 nodes are kept per kind, chosen by lead first, then most sessions, then earliest,
-  then identity — the same set in any upload order; the rest fold into one overflow row per kind.
+  tracked to 256 per edge (the 256 lexicographically smallest, so the listing is the same in any
+  upload order) and said as `256+` past it; three are shown, eight kept in the row's data. 8,192
+  nodes are kept per kind, chosen by lead first, then most sessions, then earliest, then identity
+  — the same set in any upload order; the rest fold into one overflow row per kind, sensor and
+  source set. Session shapes and certificate shapes have separate 8,192-shape bounds, so an
+  upload of many distinct certificates can never fold the session rows into overflow.
 - **Identity.** Every fact the words and the row's data show is the row's identity: a re-import
   of the same upload folds, another upload's different edges are another row. Session and
-  certificate record counts and the coverage statement are aggregates, like every row's count;
+  certificate record counts, each certificate's session count on a name row and the coverage
+  statement are aggregates, like every row's count;
   `uid`, x509 `id` and record indexes are never keyed. The graph, TLS session, flow, web and DNS
   families share the event budget the upload's detections leave, round-robin.
 - **What this does not do.** It does not relate records across uploads or sensors, decode chain

@@ -338,7 +338,7 @@ export function readSuricataTls(row: Row, fallbackTs: string): TlsObservation {
     ...(issuer !== undefined ? { issuer } : {}),
     ...(serial !== undefined && hexOf(serial) ? { serial: hexOf(serial) } : {}),
     ...(names ? boundedNames(names) : {}),
-    ...(names ? dnsNamesOf(names.filter(isValidQueryName)) : {}),
+    ...(names ? dnsNamesOf(names.filter((n) => isTlsHostname(n, "san"))) : {}),
     ...(validity(getCI(t, "notbefore")) ? { notBefore: validity(getCI(t, "notbefore")) } : {}),
     ...(validity(getCI(t, "notafter")) ? { notAfter: validity(getCI(t, "notafter")) } : {}),
   };
@@ -364,7 +364,9 @@ export function readSuricataTls(row: Row, fallbackTs: string): TlsObservation {
     !fingerprint(getCI(t, "fingerprint"), SURICATA_FINGERPRINT)
       ? { certificateSeen: true }
       : {}),
-    cert: fingerprint(getCI(t, "fingerprint"), SURICATA_FINGERPRINT) ?? derFp ?? identityRef(issuer, serial),
+    // The DER bytes' sha256 first — the identity the certificate rows use for the same leaf — then
+    // the SHA-1 the record writes, then issuer+serial: one certificate keys one way on both rows.
+    cert: derFp ?? fingerprint(getCI(t, "fingerprint"), SURICATA_FINGERPRINT) ?? identityRef(issuer, serial),
     ...(Object.keys(facts).length ? { certificate: facts } : {}),
   };
 }
@@ -419,8 +421,8 @@ function suricataClientCert(t: Row): TlsObservation["clientCert"] {
   const c = getCI(t, "client");
   if (!isObject(c)) return undefined;
   const fp =
-    fingerprint(getCI(c, "fingerprint"), SURICATA_FINGERPRINT) ??
     derFingerprint(text(getCI(c, "certificate")) ?? list(getCI(c, "chain"))?.[0]) ??
+    fingerprint(getCI(c, "fingerprint"), SURICATA_FINGERPRINT) ??
     identityRef(text(getCI(c, "issuerdn")) ?? text(getCI(c, "issuer")), text(getCI(c, "serial")));
   // Every client fact the record carries (serial, SANs, validity) is evidence, with or without an
   // identity: a filtered record with only a serial is not a record with no client certificate.
@@ -450,10 +452,20 @@ function suricataFacts(t: Row): CertificateFacts {
     ...(issuer !== undefined ? { issuer } : {}),
     ...(serial !== undefined && hexOf(serial) ? { serial: hexOf(serial) } : {}),
     ...(names ? boundedNames(names) : {}),
-    ...(names ? dnsNamesOf(names.filter(isValidQueryName)) : {}),
+    ...(names ? dnsNamesOf(names.filter((n) => isTlsHostname(n, "san"))) : {}),
     ...(validity(getCI(t, "notbefore")) ? { notBefore: validity(getCI(t, "notbefore")) } : {}),
     ...(validity(getCI(t, "notafter")) ? { notAfter: validity(getCI(t, "notafter")) } : {}),
   };
+}
+
+const IPV4_LITERAL = /^\d{1,3}(?:\.\d{1,3}){3}$/;
+/**
+ * A hostname for the covered-name comparison (#997): a valid name that is not an IP literal, with a
+ * leading wildcard only where the position allows one (a certificate's SAN, never a client's SNI).
+ */
+export function isTlsHostname(raw: string, position: "san" | "sni"): boolean {
+  if (!isValidQueryName(raw) || raw.includes(":") || IPV4_LITERAL.test(raw.replace(/\.$/, ""))) return false;
+  return position === "san" || !raw.includes("*");
 }
 
 /** The dNSName SANs: NAMES_KEPT_MAX kept with the total, so a truncated list is never compared as complete. */
@@ -551,21 +563,31 @@ export function tallyTls(o: TlsObservation, sink: Map<string, TlsTally>): void {
   // map is bounded DURING ingestion, not after: past the cap a new shape joins one overflow row
   // that shows no shape as representative.
   if (sink.size >= TLS_SHAPES_MAX) {
-    const ok = OVERFLOW_KEY(o);
-    const over = sink.get(ok);
-    if (over) {
-      over.count += 1;
-      if (o.timestamp && o.timestamp < over.firstTs) over.firstTs = o.timestamp;
-    } else
-      sink.set(ok, {
-        first: { source: o.source, kind: o.kind, timestamp: o.timestamp },
-        count: 1,
-        firstTs: o.timestamp,
-        overflow: true,
-      });
+    tallyTlsOverflow(o, sink, 1, o.timestamp);
     return;
   }
   sink.set(key, { first: o, count: 1, firstTs: o.timestamp });
+}
+
+/** `count` records of a kind and source into that kind's overflow row. */
+export function tallyTlsOverflow(
+  o: Pick<TlsObservation, "kind" | "source">,
+  sink: Map<string, TlsTally>,
+  count: number,
+  ts: string,
+): void {
+  const ok = OVERFLOW_KEY(o);
+  const over = sink.get(ok);
+  if (over) {
+    over.count += count;
+    if (ts && (!over.firstTs || ts < over.firstTs)) over.firstTs = ts;
+  } else
+    sink.set(ok, {
+      first: { source: o.source, kind: o.kind, timestamp: ts },
+      count,
+      firstTs: ts,
+      overflow: true,
+    });
 }
 
 // ───────────────────────────── rows ─────────────────────────────
