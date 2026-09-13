@@ -288,8 +288,18 @@ export interface LaunchJob {
   label: string;
   /** The executable, from Program or the first element of ProgramArguments. */
   program: string;
+  /** Whether Program was set — decides how a non-absolute value is read (macosLaunchTarget.ts). */
+  programSet: boolean;
+  /** ProgramArguments[0] when Program is ALSO set: then it is argv[0], not the executable. */
+  argv0: string;
   /** Arguments after the executable. */
   arguments: string[];
+  /** WorkingDirectory, which a relative target resolves against. */
+  workingDirectory: string;
+  /** LimitLoadToSessionType, verbatim — LoginWindow agents run as root, before anyone logs in. */
+  sessionType: string;
+  /** The condition keys when KeepAlive is a dictionary rather than a boolean. */
+  keepAliveConditions: string[];
   /** The whole command line as written, for the payload graders. */
   commandLine: string;
   runAtLoad: boolean;
@@ -327,14 +337,22 @@ export function readLaunchJob(plist: Record<string, PlistValue>): LaunchJob {
   // Program wins when both are present, which is launchd's own rule: ProgramArguments[0] is then
   // argv[0] and NOT the executable. Reading argv[0] as the program is how a job that sets Program to
   // a dropper and argv[0] to "/usr/sbin/cupsd" would have been read as cupsd.
+  const programSet = Boolean(str(plist.Program));
   const program = str(plist.Program) || args[0] || "";
-  const rest = str(plist.Program) ? args : args.slice(1);
+  const rest = programSet ? args : args.slice(1);
   const interval = typeof plist.StartInterval === "number" ? plist.StartInterval : null;
+  const keepAlive = plist.KeepAlive;
 
   return {
     label: str(plist.Label),
     program,
+    programSet,
+    argv0: programSet && args[0] && args[0] !== program ? args[0] : "",
     arguments: rest,
+    workingDirectory: str(plist.WorkingDirectory),
+    sessionType: str(plist.LimitLoadToSessionType),
+    keepAliveConditions:
+      keepAlive && typeof keepAlive === "object" && !Array.isArray(keepAlive) ? Object.keys(keepAlive) : [],
     commandLine: [program, ...rest].filter(Boolean).join(" "),
     runAtLoad: bool(plist.RunAtLoad),
     keepAlive: bool(plist.KeepAlive),
@@ -359,12 +377,19 @@ export function readLaunchJob(plist: Record<string, PlistValue>): LaunchJob {
   };
 }
 
-/** Where a launchd plist sits, which decides what runs it and with what privileges. */
-export type LaunchScope = "apple" | "system-daemon" | "system-agent" | "user-agent" | "elsewhere";
+/**
+ * Where a launchd plist sits, which decides which domain would load it and as whom.
+ *
+ * Apple's own directory is split into daemon and agent because UserName is honoured on one and
+ * ignored on the other, and one `apple` scope could not say which (#933 item 8).
+ */
+export type LaunchScope =
+  "apple-daemon" | "apple-agent" | "system-daemon" | "system-agent" | "user-agent" | "elsewhere";
 
 export function launchScope(path: string): LaunchScope {
   const p = path.toLowerCase();
-  if (p.startsWith("/system/library/launch")) return "apple";
+  if (p.startsWith("/system/library/launchdaemons/")) return "apple-daemon";
+  if (p.startsWith("/system/library/launchagents/")) return "apple-agent";
   if (p.startsWith("/library/launchdaemons/")) return "system-daemon";
   if (p.startsWith("/library/launchagents/")) return "system-agent";
   if (/\/users\/[^/]+\/library\/launchagents\//.test(p)) return "user-agent";

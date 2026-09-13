@@ -119,7 +119,8 @@ describe("readLaunchJob", () => {
 
 describe("launchScope and classifyMacArtifact", () => {
   it("names what runs a plist from where it sits", () => {
-    expect(launchScope("/System/Library/LaunchDaemons/com.apple.x.plist")).toBe("apple");
+    expect(launchScope("/System/Library/LaunchDaemons/com.apple.x.plist")).toBe("apple-daemon");
+    expect(launchScope("/System/Library/LaunchAgents/com.apple.x.plist")).toBe("apple-agent");
     expect(launchScope("/Library/LaunchDaemons/x.plist")).toBe("system-daemon");
     expect(launchScope("/Library/LaunchAgents/x.plist")).toBe("system-agent");
     expect(launchScope("/Users/alice/Library/LaunchAgents/x.plist")).toBe("user-agent");
