@@ -218,7 +218,7 @@ describe("sequence A — access, then execution transfer", () => {
 
   it("a path-anchored system source keeps its grade with the shape named", () => {
     const out = run([
-      access({ severity: "Medium" }, "access:vm_write,vm_operation;source=system-path"),
+      access({ severity: "Low" }, "access:vm_write,vm_operation;source=system-path"),
       thread(
         { severity: "Low", mitreTechniques: [] },
         "thread:module:KERNEL32.DLL!LoadLibraryW;source=system-path",
@@ -322,6 +322,75 @@ describe("recompute, bounds, safety", () => {
   });
 });
 
+describe("code review round — Codex findings", () => {
+  it("1. a basename-only source is never trusted: the mapper marks trust only when the per-record exception applied", async () => {
+    const { processOverlay } = await import("../../src/analysis/processAccess.js");
+    const overlay = (fields: Record<string, string>) =>
+      processOverlay({
+        kind: "thread",
+        description: "Sysmon 8",
+        severity: "High",
+        mitre: [],
+        recordId: "r",
+        row: 0,
+        field: (k) => fields[k] ?? "",
+        has: (k) => k in fields,
+      });
+    const bare = overlay({
+      SourceImage: "evil.exe",
+      TargetImage: "notepad.exe",
+      StartModule: "C:\\Windows\\System32\\ntdll.dll",
+      StartFunction: "RtlUserThreadStart",
+    });
+    expect(bare.action).not.toContain("source=system-path");
+    const system = overlay({
+      SourceImage: "C:\\Windows\\System32\\csrss.exe",
+      TargetImage: "C:\\Windows\\notepad.exe",
+      StartModule: "C:\\Windows\\System32\\ntdll.dll",
+      StartFunction: "RtlUserThreadStart",
+    });
+    expect(system.severity).toBe("Low");
+    expect(system.action).toContain(";source=system-path");
+  });
+
+  it("2. sixty-four stale handles never hide the in-window pair: the window slides to the thread", () => {
+    const stale = Array.from({ length: BUCKET_MAX }, (_, i) =>
+      access({ id: `old${i}`, timestamp: at(-86400 + i) }),
+    );
+    const out = run([
+      ...stale,
+      access({ id: "fresh", timestamp: at(-2) }),
+      thread({ severity: "Medium", mitreTechniques: [] }),
+    ]);
+    const t = find(out, "t1");
+    expect(t.severity).toBe("High");
+    expect(t.description).toContain("remote thread 5 s later");
+    expect(find(out, "fresh").description).toContain(INJECTION_SEQUENCE_MARKER);
+  });
+
+  it("4. correlation keeps an initial-access or exfiltration note from a non-primary member, and dedups past 1,200 characters of notes", () => {
+    const base: ForensicEvent = {
+      ...(access() as unknown as ForensicEvent),
+      id: "p",
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      sources: ["Sysmon"],
+    };
+    const notes = [
+      "[initial access: one]",
+      "[confirmed exfiltration: two]",
+      `[injection sequence: ${"x".repeat(700)}]`,
+      `[hollowing sequence: ${"y".repeat(700)}]`,
+    ].join(" ");
+    const annotated: ForensicEvent = { ...base, id: "q", description: `${base.description} ${notes}` };
+    const merged = correlateEvents([base, annotated]);
+    expect(merged).toHaveLength(1);
+    for (const n of ["[initial access: one]", "[confirmed exfiltration: two]"])
+      expect(merged[0].description).toContain(n);
+    expect(cleanDescription(annotated.description)).toBe(cleanDescription(base.description));
+  });
+});
+
 describe("through the Sysmon mapper", () => {
   it("Sysmon 1 carries its GUID as process.id (normalised), Event 10 carries the structured action; the pass joins them", () => {
     expect(processGuid("{AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE}")).toBe(TG);
@@ -369,6 +438,10 @@ describe("through the Sysmon mapper", () => {
     });
     const one = r.events.find((e) => e.canonical?.event.type === "start")!;
     expect(one.canonical?.process?.id).toBe(TG);
+    expect(one.canonical?.fieldProvenance["process.id"]).toMatchObject({
+      origin: "raw",
+      rawFields: ["EventData.ProcessGuid"],
+    });
     const ten = r.events.find((e) => e.canonical?.event.type === "access")!;
     expect(ten.canonical?.event.action).toBe("access:vm_operation,vm_write");
     expect(ten.canonical?.producer.mappingVersion).toBe("windows-event-v2");

@@ -220,7 +220,7 @@ interface Bucket<T> {
   beyond: number;
 }
 
-/** Buckets keep the first BUCKET_MAX rows by event time — the same rows in any upload order. */
+/** Every row per key, sorted by event time (untimed rows last) — the same order in any upload order. */
 function bucketed<T extends TimelineEventShape>(
   rows: Rec<T>[],
   keyOf: (r: Rec<T>) => string[],
@@ -232,12 +232,55 @@ function bucketed<T extends TimelineEventShape>(
   );
   const out = new Map<string, Bucket<T>>();
   for (const r of sorted)
-    for (const k of keyOf(r)) {
-      const b = out.get(k) ?? out.set(k, { rows: [], beyond: 0 }).get(k)!;
-      if (b.rows.length < BUCKET_MAX) b.rows.push(r);
-      else b.beyond += 1;
-    }
+    for (const k of keyOf(r)) (out.get(k) ?? out.set(k, { rows: [], beyond: 0 }).get(k)!).rows.push(r);
   return out;
+}
+
+/** The first timed index at or after `t` in a time-sorted bucket. */
+function lowerBound<T extends TimelineEventShape>(rows: Rec<T>[], t: number): number {
+  let lo = 0;
+  let hi = rows.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    const v = rows[mid].time ?? Number.MAX_SAFE_INTEGER;
+    if (v < t) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/**
+ * A sliding window: the BUCKET_MAX rows nearest BEFORE `t` (inclusive) within `window`, and the
+ * count of in-window rows past that bound — so 64 stale rows never crowd out the row that matters.
+ */
+function windowBefore<T extends TimelineEventShape>(
+  bucket: Bucket<T> | undefined,
+  t: number | null,
+  window: number,
+): { rows: Rec<T>[]; beyond: number } {
+  if (!bucket) return { rows: [], beyond: 0 };
+  if (t === null)
+    return { rows: bucket.rows.slice(0, BUCKET_MAX), beyond: Math.max(0, bucket.rows.length - BUCKET_MAX) };
+  const end = lowerBound(bucket.rows, t + 1);
+  const start = lowerBound(bucket.rows, t - window);
+  const inWindow = bucket.rows.slice(start, end);
+  const rows = inWindow.slice(Math.max(0, inWindow.length - BUCKET_MAX));
+  return { rows, beyond: inWindow.length - rows.length };
+}
+
+/** The BUCKET_MAX rows nearest AFTER `t` (inclusive) within `window`, and the count past the bound. */
+function windowAfter<T extends TimelineEventShape>(
+  bucket: Bucket<T> | undefined,
+  t: number | null,
+  window: number,
+): { rows: Rec<T>[]; beyond: number } {
+  if (!bucket) return { rows: [], beyond: 0 };
+  if (t === null)
+    return { rows: bucket.rows.slice(0, BUCKET_MAX), beyond: Math.max(0, bucket.rows.length - BUCKET_MAX) };
+  const start = lowerBound(bucket.rows, t);
+  const end = lowerBound(bucket.rows, t + window + 1);
+  const inWindow = bucket.rows.slice(start, end);
+  return { rows: inWindow.slice(0, BUCKET_MAX), beyond: Math.max(0, inWindow.length - BUCKET_MAX) };
 }
 
 // ───────────────────────────── notes ─────────────────────────────
@@ -314,7 +357,24 @@ export function corroborateInjectionSequences<T extends TimelineEventShape>(even
       const bucket = accessByPair.get(key);
       if (!bucket) continue;
       const window = byPid ? Math.min(INJECTION_WINDOW_MS, PID_FALLBACK_WINDOW_MS) : INJECTION_WINDOW_MS;
-      for (const access of bucket.rows) {
+      const inWindow = windowBefore(bucket, thread.time, window);
+      // Beside the in-window handles: the one handle just before the window and the one just after
+      // the thread, so an out-of-order or stale pair is said rather than silently dropped.
+      const outside =
+        thread.time === null
+          ? []
+          : [
+              ...bucket.rows.slice(
+                Math.max(0, lowerBound(bucket.rows, thread.time - window) - 1),
+                lowerBound(bucket.rows, thread.time - window),
+              ),
+              ...bucket.rows.slice(
+                lowerBound(bucket.rows, thread.time + 1),
+                lowerBound(bucket.rows, thread.time + 1) + 1,
+              ),
+            ];
+      if (inWindow.beyond) noteFor(injection, thread.event).beyond += inWindow.beyond;
+      for (const access of [...inWindow.rows, ...outside]) {
         const rights = rightsOf(access.action);
         const capable = rights.state === "structured" && (rights.writeCapable || rights.threadCapable);
         if (rights.state === "structured" && !capable) continue;
@@ -335,7 +395,11 @@ export function corroborateInjectionSequences<T extends TimelineEventShape>(even
               ? `write-capable handle ${rights.words}`
               : `thread-capable handle ${rights.words}`;
         const caveat = byPid ? "; by pid — PID reuse not excluded" : "";
-        const benign = access.systemSource && thread.systemSource;
+        const benign =
+          access.systemSource &&
+          thread.systemSource &&
+          RANK[access.event.severity ?? "Info"] <= RANK.Low &&
+          RANK[thread.event.severity ?? "Info"] <= RANK.Low;
         const raise = inSequence && rights.state === "structured" && !benign;
         const label = inSequence
           ? rights.state === "structured"
@@ -346,7 +410,6 @@ export function corroborateInjectionSequences<T extends TimelineEventShape>(even
         say(injection, thread.event, `${label}${caveat}`, raise, mitre);
         say(injection, access.event, `${label}${caveat}`, raise, mitre);
       }
-      if (bucket.beyond) noteFor(injection, thread.event).beyond += bucket.beyond;
     }
   }
 
@@ -362,13 +425,12 @@ export function corroborateInjectionSequences<T extends TimelineEventShape>(even
   for (const tamper of recs.filter((r) => r.kind === "tamper" && isReplaced(r.action))) {
     for (const { key, byPid } of targetKeys(tamper.host, tamper.target)) {
       const caveat = byPid ? "; by pid — PID reuse not excluded" : "";
-      const starts = (startsByTarget.get(key)?.rows ?? []).filter(
-        (s) =>
-          s.time === null ||
-          tamper.time === null ||
-          (tamper.time >= s.time && (!byPid || tamper.time - s.time <= PID_FALLBACK_WINDOW_MS)),
+      const before = windowBefore(
+        startsByTarget.get(key),
+        tamper.time,
+        byPid ? PID_FALLBACK_WINDOW_MS : Number.MAX_SAFE_INTEGER / 4,
       );
-      const start = starts[starts.length - 1];
+      const start = before.rows[before.rows.length - 1];
       const created = start
         ? `created ${start.time !== null ? new Date(start.time).toISOString() : "at a time not readable"}${start.event.canonical?.process?.parent?.name ? ` by ${excerpt(start.event.canonical.process.parent.name)}` : ""}`
         : "creation not in the case (or imported before this version)";
@@ -376,12 +438,8 @@ export function corroborateInjectionSequences<T extends TimelineEventShape>(even
         start && start.time !== null && tamper.time !== null
           ? `image replaced ${gapWords(tamper.time - start.time)} after creation`
           : "image replaced";
-      const into = (intoByTarget.get(key)?.rows ?? []).filter(
-        (r) =>
-          r.time === null ||
-          tamper.time === null ||
-          (r.time >= tamper.time && r.time - tamper.time <= INJECTION_WINDOW_MS),
-      );
+      const after = windowAfter(intoByTarget.get(key), tamper.time, INJECTION_WINDOW_MS);
+      const into = after.rows;
       const reached = into.length
         ? `${into.length === 1 ? "a" : into.length} ${into[0].kind === "thread" ? "remote thread" : "handle"}${into.length > 1 ? "s / threads" : ""} into it ${into[0].time !== null && tamper.time !== null ? `${gapWords(into[0].time - tamper.time)} later` : ""}`.trim()
         : "no handle or thread into it seen";
@@ -401,8 +459,7 @@ export function corroborateInjectionSequences<T extends TimelineEventShape>(even
           ),
           false,
         );
-      const beyond = (startsByTarget.get(key)?.beyond ?? 0) + (intoByTarget.get(key)?.beyond ?? 0);
-      if (beyond) noteFor(hollowing, tamper.event).beyond += beyond;
+      if (after.beyond) noteFor(hollowing, tamper.event).beyond += after.beyond;
     }
   }
 

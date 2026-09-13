@@ -437,12 +437,13 @@ export function processOverlay(input: OverlayInput): ProcessOverlay {
   };
   // The source's path-anchored trust, as a structured fact the sequence join can read without
   // re-deciding it (the timeline layer never imports the trust tables).
-  const sourceTrust =
+  // Set only when the per-record rule APPLIED its path-anchored exception (a Low grade from a
+  // benign predicate that saw a real path) — a basename-only image has no path to trust.
+  const trustApplied = (g: { severity: Severity }): boolean =>
     kind !== "tamper" &&
-    source.image.trim() &&
-    (isTrustedSystemImage(source.image) || isBenignThreadSource(source.image))
-      ? ";source=system-path"
-      : "";
+    g.severity === "Low" &&
+    /[\\/]/.test(source.image) &&
+    (isBenignThreadSource(source.image) || isBenignLsassAccessor(source.image));
   const common = (
     words: string[],
     g: { severity: Severity; mitre: string[] },
@@ -456,7 +457,7 @@ export function processOverlay(input: OverlayInput): ProcessOverlay {
     severity: g.severity,
     mitre: [...g.mitre],
     type,
-    action: `${action}${sourceTrust}`,
+    action: `${action}${trustApplied(g) ? ";source=system-path" : ""}`,
     identity,
     entities,
     process,

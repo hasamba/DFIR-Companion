@@ -1090,6 +1090,7 @@ export function mapWindows(
         ? { "process.name": ["EventData.Image", "EventData.NewProcessName", "EventData.SourceImage"] }
         : {}),
       ...(pid !== undefined ? { "process.pid": ["EventData.ProcessId", "EventData.NewProcessId"] } : {}),
+      ...(processGuid(str(getCI(ed, "ProcessGuid"))) ? { "process.id": ["EventData.ProcessGuid"] } : {}),
       ...(commandLine ? { "process.commandLine": ["EventData.CommandLine"] } : {}),
     },
   });
