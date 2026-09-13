@@ -644,16 +644,13 @@ describe("code round 1", () => {
       action(),
     ];
     const asEvents = (tag: string): ForensicEvent[] =>
-      importPaths(records).map(
-        (e, i) =>
-          ({
-            ...e,
-            id: `${tag}-${i}`,
-            relatedFindingIds: [],
-            sourceScreenshots: [],
-            sources: ["Entra audit"],
-          }) as unknown as ForensicEvent,
-      );
+      importPaths(records).map((e, i) => ({
+        ...e,
+        id: `${tag}-${i}`,
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        sources: ["Entra audit"],
+      }));
     expect(correlateEvents([...asEvents("a"), ...asEvents("b")])).toHaveLength(1);
   });
 
