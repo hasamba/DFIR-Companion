@@ -126,7 +126,7 @@ describe("the full chain — request → response → body, transfer → request
   it("the hash IOC names the transfer row as its extraction (extractedFrom)", () => {
     const hash = r.iocs.find((i) => i.type === "hash" && i.value === SHA)!;
     expect(hash.sourceAggKeys).toEqual([xfer.aggKey]);
-    const resolved = resolveExtractedFrom([hash], new Map([[xfer.aggKey, "ev-xfer"]]));
+    const resolved = resolveExtractedFrom([hash], new Map([[xfer.aggKey!, "ev-xfer"]]));
     expect(resolved[0].extractedFrom).toEqual(["ev-xfer"]);
   });
 
