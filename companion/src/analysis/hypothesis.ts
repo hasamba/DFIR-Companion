@@ -37,6 +37,19 @@ export const hypothesisStatusChangeSchema = z.object({
 });
 export type HypothesisStatusChange = z.infer<typeof hypothesisStatusChangeSchema>;
 
+// One analyst exclusion of an observation from one hypothesis's assessment (#933 item 22). Closed
+// by a restore (`restoredAt`/`restoredBy`), or automatically with restoredBy "unlinked" when the
+// observation leaves the hypothesis's link lists — relinking never revives a closed entry.
+export const evidenceExclusionSchema = z.object({
+  eventId: z.string(),
+  reason: z.string().default("").catch(""),
+  by: z.string().default("").catch(""),
+  excludedAt: z.string(),
+  restoredAt: z.string().optional(),
+  restoredBy: z.string().optional(),
+});
+export type EvidenceExclusion = z.infer<typeof evidenceExclusionSchema>;
+
 // Lenient (.catch / .default everywhere) so one off field in a hand-edited or older file never
 // rejects the whole array — same posture as responseSchema.ts and the other side-file stores.
 export const hypothesisSchema = z.object({
@@ -70,6 +83,16 @@ export const hypothesisSchema = z.object({
   // A pristine (untouched) hypothesis is ALSO flipped to `unknown`; a touched one keeps its status
   // (freeze contract) and only carries the flag. Cleared on analyst PATCH and on synthesis refresh.
   needsReview: z.boolean().default(false).catch(false),
+  // WHY it is flagged (#933 item 22): the false-positive cascade, a withdrawn support, a new
+  // contradiction, an excluded observation that now distinguishes. Cleared with `needsReview`.
+  reviewReason: z.string().default("").catch(""),
+  // Analyst-named competing set (#933 item 22). When empty, every live (not refuted / exhausted)
+  // hypothesis is an alternative; the analyst narrows it when a title is not a real competitor.
+  alternativeIds: z.array(z.string()).default([]).catch([]),
+  // Audit trail of observations the analyst excluded from THIS hypothesis's assessment (#933 item
+  // 22). The link and the event both stay; the reading (hypothesisDiagnostics.ts) skips an ACTIVE
+  // entry (no `restoredAt`). Analyst-owned like `notes`: a refresh never reads or writes it.
+  excludedEvidence: z.array(evidenceExclusionSchema).default([]).catch([]),
   // Stable derive key for a synthesis hypothesis (= its id). Absent for analyst-authored ones.
   sourceKey: z.string().optional(),
   author: z.string().optional(),
@@ -126,10 +149,11 @@ export type HypothesisPatch = Partial<
     | "relatedIocIds"
     | "contradictingEventIds"
     | "discriminator"
+    | "alternativeIds"
     | "assignee"
     | "notes"
   >
->;
+> & { acknowledgeReview?: boolean }; // #933 item 22: the explicit "✓ reviewed" that clears the flag
 
 export const HYPOTHESIS_MAX_DEFAULT = 8; // cap on auto-generated hypotheses kept per synthesis
 const MAX_TITLE_LEN = 200;
@@ -299,6 +323,7 @@ export function mergeHypotheses(
           contradictingEventIds: [...(seed.contradictingEventIds ?? [])], // ACH (#14)
           discriminator: seed.discriminator ?? "",
           needsReview: false, // authoritative refresh clears any interim FP-cascade flag (#12)
+          reviewReason: "",
           statusHistory: appendStatusChange(cur.statusHistory, seed.status, now),
           updatedAt: now,
         };
@@ -323,6 +348,9 @@ export function mergeHypotheses(
         source: "synthesis",
         analystTouched: false,
         needsReview: false,
+        reviewReason: "",
+        alternativeIds: [],
+        excludedEvidence: [],
         sourceKey: seed.sourceKey,
         createdAt: now,
         updatedAt: now,
@@ -334,10 +362,11 @@ export function mergeHypotheses(
     }
   }
 
-  // Prune pristine synthesis hypotheses whose seed is no longer proposed.
+  // Prune pristine synthesis hypotheses whose seed is no longer proposed. One that carries an
+  // exclusion entry is kept: the entry is an audit trail the analyst wrote (#933 item 22).
   const seedKeys = new Set(seeds.map((s) => s.sourceKey));
   const pruned = result.filter((h) => {
-    if (isPristineSynthesis(h) && h.sourceKey && !seedKeys.has(h.sourceKey)) {
+    if (isPristineSynthesis(h) && h.sourceKey && !seedKeys.has(h.sourceKey) && !h.excludedEvidence.length) {
       changed = true;
       return false;
     }
@@ -392,6 +421,9 @@ export function buildAnalystHypothesis(input: NewHypothesis, id: string, now: st
     source: "analyst",
     analystTouched: true,
     needsReview: false,
+    reviewReason: "",
+    alternativeIds: [],
+    excludedEvidence: [],
     author: (input.author || "").trim() || "anonymous",
     createdAt: now,
     updatedAt: now,
@@ -401,9 +433,12 @@ export function buildAnalystHypothesis(input: NewHypothesis, id: string, now: st
 
 // Apply an analyst patch to a hypothesis, marking it analystTouched and bumping updatedAt. Pure —
 // the store passes `now` and persists the result. Unknown status values are ignored (kept as-is).
+// The review flag clears only on a STATUS change or an explicit `acknowledgeReview` (#933 item
+// 22): editing the assignee or the notes is not a review, and must not erase a warning.
 export function applyHypothesisPatch(h: Hypothesis, patch: HypothesisPatch, now: string): Hypothesis {
   const statusChanged =
     patch.status !== undefined && VALID_STATUS.has(patch.status) && patch.status !== h.status;
+  const clearReview = statusChanged || patch.acknowledgeReview === true;
   return {
     ...h,
     ...(patch.title !== undefined ? { title: String(patch.title).trim().slice(0, MAX_TITLE_LEN) } : {}),
@@ -429,10 +464,17 @@ export function applyHypothesisPatch(h: Hypothesis, patch: HypothesisPatch, now:
     ...(patch.discriminator !== undefined
       ? { discriminator: String(patch.discriminator).trim().slice(0, MAX_TEXT_LEN) }
       : {}),
+    ...(patch.alternativeIds !== undefined
+      ? {
+          alternativeIds: dedupeStrings(patch.alternativeIds)
+            .filter((id) => id !== h.id)
+            .slice(0, MAX_LINKS),
+        }
+      : {}),
     ...(patch.assignee !== undefined ? { assignee: String(patch.assignee).trim() } : {}),
     ...(patch.notes !== undefined ? { notes: String(patch.notes).trim().slice(0, MAX_TEXT_LEN) } : {}),
     analystTouched: true,
-    needsReview: false, // the analyst is editing it now — that IS the review (#12)
+    ...(clearReview ? { needsReview: false, reviewReason: "" } : {}),
     ...(statusChanged
       ? { statusHistory: appendStatusChange(h.statusHistory, patch.status as HypothesisStatus, now) }
       : {}),
@@ -456,6 +498,8 @@ export interface ReconsiderHypothesesResult {
 // (untouched) hypothesis is ALSO flipped to `unknown` — its support just eroded; a TOUCHED one keeps its
 // status (the analyst-owned freeze contract) and only carries the flag. Pure + idempotent — no clock use
 // beyond `now`, applied only to hypotheses that actually intersect a marker.
+export const FP_REVIEW_REASON = "an event or IOC that supported this hypothesis was marked false positive";
+
 export function reconsiderHypotheses(
   hypotheses: readonly Hypothesis[],
   input: ReconsiderHypothesesInput,
@@ -473,6 +517,7 @@ export function reconsiderHypotheses(
     return {
       ...h,
       needsReview: true,
+      reviewReason: FP_REVIEW_REASON,
       ...(flipStatus
         ? { status: "unknown", statusHistory: appendStatusChange(h.statusHistory, "unknown", now) }
         : {}),
@@ -558,20 +603,8 @@ export function sanitizeHypothesisReviews(
   return out;
 }
 
-// ACH ranking (investigation-guidance #14). Analysis of Competing Hypotheses ranks by FEWEST
-// contradictions, not most support — the explanation that survives the most disconfirming evidence
-// wins, which is exactly what stops a well-supported-but-wrong red herring from topping the list.
-// Exhausted / refuted hypotheses sink (they're negative knowledge). Pure; returns a sorted COPY.
-export function rankHypothesesAch(hypotheses: readonly Hypothesis[]): Hypothesis[] {
-  const dead = (h: Hypothesis): number => (h.exhausted || h.status === "refuted" ? 1 : 0);
-  return hypotheses.slice().sort(
-    (a, b) =>
-      dead(a) - dead(b) ||
-      a.contradictingEventIds.length - b.contradictingEventIds.length || // fewest contradictions first
-      b.relatedEventIds.length - a.relatedEventIds.length || // then most support
-      a.title.localeCompare(b.title),
-  );
-}
+// ACH ranking (`rankHypothesesAch`) lives in hypothesisDiagnostics.ts (#933 item 22): it reads
+// diagnosticity across the set, which this module must not import (the type flows the other way).
 
 // One hunting signal against a hypothesis (investigation-guidance #14): a collected hunt either tied to
 // the hypothesis explicitly (`relatedHypothesisId`) or matched to it by shared ATT&CK technique, and

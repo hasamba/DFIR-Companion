@@ -554,6 +554,12 @@
     "clearPendingHuntHypothesis",
     "hypDelete",
     "hypApplyReview",
+    "hypExcludeStart",
+    "hypExcludeCancel",
+    "hypExcludeConfirm",
+    "hypRestoreEvidence",
+    "hypAcknowledgeReview",
+    "hypToggleAlternative",
     "promoteToHypothesis",
     // Inline IOC quick-actions. `initIocQuickActions` is the sentinel, and QA_AUDIT_MARK is
     // deliberately absent: it is evidence vocabulary, and a stubbed function in its place would make
