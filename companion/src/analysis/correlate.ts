@@ -55,8 +55,11 @@ const PATH_RE = /(?:[A-Za-z]:\\|\\\\)[^\s"'|<>]+|(?<![\w/:])\/(?:[\w.\-]+\/)+[\w
 // attacker who appends `/tmp/payload.exe` to a request, or answers a TXT query with 32 hex, would
 // union that row with the endpoint event that really carries the file or the hash. Each span is
 // well-formed by construction (the importer turns `]` into `)` inside it), so it cannot close early.
+// A web request or transfer row (#993) shows the request target, the MIME type, the filename, the
+// user, the Referer, the User-Agent, the proxy headers and the server's stated redirect target the
+// same way — each in its own span.
 const UNTRUSTED_SPAN_RE =
-  /\[(?:trailer|query|returned|the record also carries returned values|sni|cert|client cert|certificate|kind|agent|data url|origin|sender|quarantine mark|quarantine mark \(not decodable\)|quarantine url|event identifier not decodable): [^\]]*\]/g;
+  /\[(?:trailer|query|returned|the record also carries returned values|sni|cert|client cert|certificate|kind|agent|data url|origin|sender|quarantine mark|quarantine mark \(not decodable\)|quarantine url|event identifier not decodable|target|mime|filename|user|referrer|ua|proxied|matched|redirect target \(stated by the server\)): [^\]]*\]/g;
 function scannedText(description: string): string {
   return description.replace(UNTRUSTED_SPAN_RE, " ");
 }
@@ -385,9 +388,15 @@ function groupEvents(
   // injection. New lab rows never reach this function (ingest sends them to the super-timeline);
   // this guard is for rows persisted before that, and for any future producer that forgets.
   // Lab-with-lab unions stay allowed: two copies of one report should still dedup.
-  const lab = evs.map(isLabProduced);
+  // A WIRE row (a sensor's request or transfer record, #993) is never unioned with a host
+  // observation either: the transfer that carried a file and the endpoint event that wrote it are
+  // two facts joined by a hash, and folding them would give the wire row the endpoint's path and
+  // the endpoint row the sensor's time. Wire with wire unions only through step 0 (the same record
+  // re-imported): two transfers of one file at two times are two transfers, so the hash and path
+  // steps below skip wire rows altogether.
+  const klass = evs.map((e) => (isLabProduced(e) ? "lab" : e.origin === "wire" ? "wire" : "host"));
   const union = (a: number, b: number): void => {
-    if (lab[a] !== lab[b]) return;
+    if (klass[a] !== klass[b]) return;
     dsu.union(a, b);
   };
 
@@ -472,7 +481,7 @@ function groupEvents(
     // `Compress-Archive` collection and `Invoke-RestMethod` exfil) into one row, destroying the kill
     // chain. Skipping pid-bearing events keeps distinct creations distinct; re-import dedup is still
     // covered by step 0 (exact time+description) and genuine cross-tool pairs by step 3.
-    if (e.pid !== undefined) return;
+    if (e.pid !== undefined || klass[i] === "wire") return;
     for (const h of eventHashes(e)) {
       const key = `${h}:${e.action ?? ""}`;
       (byHash.get(key) ?? byHash.set(key, []).get(key)!).push(i);
@@ -493,6 +502,7 @@ function groupEvents(
   //    a structured path matching a text path still corroborates (AI-extracted event ↔ import).
   const byPath = new Map<string, { i: number; structured: boolean }[]>();
   evs.forEach((e, i) => {
+    if (klass[i] === "wire") return;
     const p = eventPath(e);
     if (p) (byPath.get(p.path) ?? byPath.set(p.path, []).get(p.path)!).push({ i, structured: p.structured });
   });

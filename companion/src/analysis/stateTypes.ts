@@ -61,7 +61,10 @@ export type OutcomeSource = "analyst" | "machine";
 // event that actually carries the hash. The one contamination this exists to end was a KAPE "file
 // created X.exe" at Info unioned by hash with a CAPE "injects into explorer.exe" at High — the merge
 // made the sandbox row primary, and a real host event was suddenly described as an injection.
-export type EvidenceOrigin = "lab";
+// "lab": a sandbox detonation (never unioned with a host observation, correlate.ts). "wire": a
+// network sensor's record of bytes in flight — a web request or a transfer (#993); a transfer
+// never unions with the endpoint file that carries the same hash, the two stay side by side.
+export type EvidenceOrigin = "lab" | "wire";
 
 // One sandbox detonation of one sample, as recorded in `InvestigationState.labIntel` and rendered on
 // each incident event that carries the same sha256. Keyed by (sha256, source, runId).

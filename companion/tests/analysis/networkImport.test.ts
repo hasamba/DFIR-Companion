@@ -37,6 +37,8 @@ function suricataFileinfo(): object {
       filename: "/payload.exe",
       sha256: "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
       size: 1024,
+      state: "CLOSED",
+      gaps: false,
     },
   };
 }
@@ -68,6 +70,9 @@ function zeekFiles(): object {
     _path: "files",
     mime_type: "application/x-dosexec",
     filename: "x.exe",
+    seen_bytes: 4096,
+    total_bytes: 4096,
+    missing_bytes: 0,
     sha256: "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
   };
 }
@@ -89,9 +94,11 @@ describe("parseNetworkLogs — Suricata eve.json", () => {
     expect(ips).toContain("203.0.113.9");
   });
 
-  it("does NOT create timeline events for telemetry, but extracts its IOCs", () => {
+  it("creates no detection for telemetry, but extracts its IOCs; a fileinfo is a transfer row (#993)", () => {
     const r = parseNetworkLogs(JSON.stringify([suricataDns(), suricataFileinfo()]));
-    expect(r.events).toHaveLength(0); // dns + fileinfo are telemetry
+    expect(r.events).toHaveLength(1); // dns is IOC-only; the fileinfo is an Info transfer row
+    expect(r.events[0].description).toMatch(/^Transfer/);
+    expect(r.events[0].severity).toBe("Info");
     expect(r.alerts).toBe(0);
     expect(r.iocs.find((i) => i.type === "domain")?.value).toBe("evil-c2.example.com");
     expect(r.iocs.some((i) => i.type === "hash")).toBe(true);
@@ -104,7 +111,8 @@ describe("parseNetworkLogs — Suricata eve.json", () => {
       .join("\n");
     const r = parseNetworkLogs(text);
     expect(r.format).toBe("suricata");
-    expect(r.events).toHaveLength(1); // only the alert
+    expect(r.events).toHaveLength(2); // the alert and the fileinfo transfer row
+    expect(r.alerts).toBe(1);
     expect(r.iocs.some((i) => i.type === "domain")).toBe(true);
     expect(r.iocs.some((i) => i.type === "hash")).toBe(true);
   });
@@ -115,8 +123,9 @@ describe("parseNetworkLogs — Zeek JSON", () => {
     const text = [zeekNotice(), zeekDns(), zeekFiles()].map((o) => JSON.stringify(o)).join("\n");
     const r = parseNetworkLogs(text);
     expect(r.format).toBe("zeek");
-    expect(r.events).toHaveLength(1); // only the notice
-    const e = r.events[0];
+    expect(r.events).toHaveLength(2); // the notice and the files transfer row (#993)
+    expect(r.alerts).toBe(1);
+    const e = r.events.find((x) => x.description.startsWith("Zeek notice"))!;
     expect(e.description).toContain("Zeek notice: Scan::Port_Scan");
     expect(e.severity).toBe("Medium");
     expect(e.sources).toEqual(["Zeek"]);
@@ -180,6 +189,9 @@ describe("parseNetworkLogs — Zeek per-stream JSON (no _path)", () => {
     fuid: "F1",
     mime_type: "application/x-dosexec",
     filename: "x.exe",
+    seen_bytes: 4096,
+    total_bytes: 4096,
+    missing_bytes: 0,
     sha256: "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff",
   };
   const x509 = {
@@ -205,11 +217,14 @@ describe("parseNetworkLogs — Zeek per-stream JSON (no _path)", () => {
     expect(r.iocs.find((i) => i.type === "domain")?.value).toBe("evil-c2.example.com");
   });
 
-  it("extracts http host + uri without a filename (field inference)", () => {
+  it("extracts http host + uri without a filename (field inference) and keeps the request row", () => {
     const r = parseNetworkLogs(JSON.stringify(http));
     expect(r.iocs.some((i) => i.type === "domain" && i.value === "download.bad.test")).toBe(true);
     expect(r.iocs.some((i) => i.type === "url" && i.value === "/x.exe")).toBe(false); // uri w/o scheme is not a URL IOC
-    expect(r.events).toHaveLength(0);
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].description).toContain(
+      "HTTP GET [target: download.bad.test/x.exe] → no response recorded",
+    );
   });
 
   it("extracts file hashes from a per-stream files.json", () => {

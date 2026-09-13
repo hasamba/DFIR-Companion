@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { ForensicEvent } from "./stateTypes.js";
+import { transferBlockSchema, webBlockSchema } from "./canonicalWeb.js";
 
 export const CANONICAL_EVENT_SCHEMA_VERSION = "1.0.0" as const;
 /** The producer stamped on an envelope DERIVED from legacy flat fields at the read boundary. */
@@ -263,6 +264,10 @@ export const canonicalEventEnvelopeSchema = z.object({
       md5: z.string().optional(),
     })
     .optional(),
+  // A web request row and a transfer row as the sensor logged them, with the hops one upload
+  // establishes through shared identifiers (canonicalWeb.ts, #993).
+  web: webBlockSchema.optional(),
+  transfer: transferBlockSchema.optional(),
   registry: z
     .object({
       key: z.string().optional(),
@@ -346,6 +351,11 @@ export type CreateCanonicalEventInput = Omit<CanonicalNormalizedFields, "time"> 
   rawFieldMap?: Record<string, string[]>;
   confidenceMap?: Record<string, CanonicalFieldProvenance["confidence"]>;
   derivationMap?: Record<string, string>;
+  // Which raw record a field came from when the envelope joins several (#993): a path prefix
+  // (`web.bodies.0`, `transfer.requests.1`) → that record's locator, which must be one of
+  // `evidence.rawRecords`. Every field under the prefix is attributed to it; the longest matching
+  // prefix wins; fields under no prefix keep the first record.
+  locatorMap?: Record<string, string>;
 };
 
 function timezoneOf(observed: string): string {
@@ -388,8 +398,23 @@ function normalizedPart(envelope: CanonicalEventEnvelope): CanonicalNormalizedFi
   return normalized;
 }
 
+// The records a normalized path is attributed to. An ANCESTOR entry (the longest `locatorMap`
+// prefix naming the path, matched on whole segments) replaces the first record; a DESCENDANT
+// entry (a prefix under the path — an array is one leaf, so `web.bodies.0.transfer` sits under
+// the leaf `web.bodies`) is added to it: the leaf then rests on every record that fed it.
+function locatorsFor(path: string, locatorMap: Record<string, string>, first: string): string[] {
+  let best = "";
+  const under: string[] = [];
+  for (const prefix of Object.keys(locatorMap)) {
+    if (path === prefix || path.startsWith(`${prefix}.`)) {
+      if (prefix.length > best.length) best = prefix;
+    } else if (prefix.startsWith(`${path}.`)) under.push(locatorMap[prefix]);
+  }
+  return [...new Set([best ? locatorMap[best] : first, ...under])];
+}
+
 export function createCanonicalEvent(input: CreateCanonicalEventInput): CanonicalEventEnvelope {
-  const { rawFieldMap = {}, confidenceMap = {}, derivationMap = {}, ...fields } = input;
+  const { rawFieldMap = {}, confidenceMap = {}, derivationMap = {}, locatorMap = {}, ...fields } = input;
   const time: CanonicalEventEnvelope["time"] = {
     observed: input.time.observed,
     normalized: input.time.normalized,
@@ -403,18 +428,24 @@ export function createCanonicalEvent(input: CreateCanonicalEventInput): Canonica
   } as CanonicalNormalizedFields & Pick<CanonicalEventEnvelope, "evidence" | "producer">;
   const firstLocator = input.evidence.rawRecords[0]?.locator;
   if (!firstLocator) throw new Error("Canonical events require at least one raw-record locator");
+  const known = new Set(input.evidence.rawRecords.map((r) => r.locator));
+  for (const locator of Object.values(locatorMap)) {
+    if (!known.has(locator))
+      throw new Error(`locatorMap names a record not in evidence.rawRecords: ${locator}`);
+  }
   const fieldProvenance: CanonicalEventEnvelope["fieldProvenance"] = {};
   for (const path of normalizedLeafPaths(base).filter(
     (path) => !path.startsWith("evidence.") && !path.startsWith("producer."),
   )) {
     const rawFields = rawFieldMap[path];
     const derivation = derivationMap[path];
+    const recordLocators = locatorsFor(path, locatorMap, firstLocator);
     fieldProvenance[path] = rawFields?.length
       ? {
           origin: "raw",
           confidence: confidenceMap[path] ?? "high",
           rawFields: [...rawFields],
-          recordLocators: [firstLocator],
+          recordLocators,
         }
       : {
           origin: "derived",
@@ -422,7 +453,7 @@ export function createCanonicalEvent(input: CreateCanonicalEventInput): Canonica
           derivation:
             derivation ??
             `${input.producer.mappingVersion}: deterministic mapping from referenced raw record`,
-          recordLocators: [firstLocator],
+          recordLocators,
         };
   }
   return canonicalEventEnvelopeSchema.parse({
