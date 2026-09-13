@@ -1600,9 +1600,48 @@ profile id, the key or the application's client id otherwise, typed as `user`, `
 `application`), the tenant, the API method as the resource, and a locator to the record and
 event they came from.
 
-The lifecycle across records — an authorization, the activity under it, the revocation, "every
-user who authorized this client" — is a join by `client_id` across users and time, not a
-per-record fact; it is a spec issue of its own.
+**What one export joins: the OAuth lifecycle per client.** Beside the rows, the importer emits
+one summary row per client whose export records form a lifecycle — `Google Workspace OAuth
+lifecycle: Mail Backup Pro (client 1234….apps.googleusercontent.com) [alice@…: authorized
+2026-05-02T10:00:00Z (High: gmail.readonly) — record:0/event:0; activity: 42 calls, 184,220,113
+bytes returned, 3 methods (gmail.users.messages.get ×38, …) 10:01:00Z → 12:03:00Z; 42 after an
+authorization and before a revocation; revoked 2026-05-02T18:00:00Z (record:91/event:0); bob@…:
+authorized … no activity record in this export; no revocation record in this export; the current
+grant state is not established; 2 users authorized this client in the 1,204 token records of this
+export (2026-05-01 → 2026-05-31); the Reports API retains token events for 6 months; the export's
+completeness for the period is not established by this evidence; highest authorization covered:
+High]`. It is built over every record of ONE export, before aggregation and the event cap, because
+`activity` rows are Info and leave the forensic timeline at import; a lifecycle across exports is
+not built.
+
+- **Identity is the tenant, the client id and the user's profile id.** The app name is a label —
+  two clients named "Mail Backup Pro" are two rows. A user is a real `profileId` (Google's
+  placeholder id and an empty id join nothing); an email resolves only through a record of the
+  same export that states both, and two ids for one email teach nothing. A token record missing
+  a tenant, a client id or a user is counted (`N token records without … — not joined`).
+- **Activity is placed in time, never tied to a grant.** A call is "after an authorization and
+  before a revocation" for the same user, "before any authorization in this export — the grant
+  predates the export or was not exported", or "after a revocation": with a later authorization
+  before it, said so; with none, `delayed delivery of earlier calls or a live token; not
+  established`. No record carries a grant or token id, so nothing says "under the grant" or which
+  scopes a call used. An equal timestamp establishes no order.
+- **A request never opens a lifecycle**; request- or deny-only clients get a Low summary so the
+  evidence stays visible. A missing revocation is `no revocation record in this export; the
+  current grant state is not established` — never "live".
+- **Beside, never joined into the grade:** admin app-control rows (`ADD_TO_TRUSTED_OAUTH2_APPS`,
+  `REMOVE_FROM_TRUSTED_OAUTH2_APPS`, `ADD_TO_BLOCKED_OAUTH2_APPS`, `REMOVE_FROM_BLOCKED_
+  OAUTH2_APPS`) joined by `OAUTH2_APP_ID` only for a `WEB_APPLICATION`; login rows of the user
+  within ±10 minutes of an authorization (`contemporaneous, not established as the same
+  session`); Drive rows of the user between an authorization and a revocation are counted, `not
+  attributed to the app`.
+- **Totals cover every record, the narration is bounded.** Calls and bytes are summed over every
+  activity record (bytes as an exact big integer); 64 methods tracked per user (8 named, calls
+  beyond them counted); 16 users named per row (the rest counted); 256 rows per export ordered by
+  grade, then the highest scope tier, then users — the omitted row carries the count and the
+  highest omitted grade. The grade is the highest authorization the row covers (the scope tier);
+  activity with no authorization in the export is Medium (the scopes are unknown). The row's
+  identity is (tenant, client id), so a re-import folds; the summaries never evict a source row
+  (`maxEvents` bounds source rows; the result's `summaries` counts these).
 
 ## Evidence Drop Folder (Auto-Import Inbox)
 
