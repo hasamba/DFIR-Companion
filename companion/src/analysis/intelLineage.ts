@@ -26,7 +26,8 @@ export interface IntelOrigins {
   unrecorded: number; // hits whose record names nobody — never counted
   folded: number; // hits whose family was already counted (MISP-by-abuse.ch beside ThreatFox)
   unrecordedVia: string[]; // provider labels of the unrecorded hits, for the words
-  hitLabels: string[]; // provider/source labels of every hit, first-seen order
+  hitLabels: string[]; // provider/source labels of the RECORDED hits only, first-seen order
+  truncated: boolean; // some record cut creators past its cap — the family list may be incomplete
 }
 
 // Names that are ONE publisher. Built-in and exact (lowercased) — no fuzzy match, so a relay-controlled
@@ -89,14 +90,18 @@ export function cleanOriginName(raw: unknown): string {
     .slice(0, MAX_ORIGIN_NAME);
 }
 
-// Distinct cleaned names, bounded, plus how many were cut — the adapter's helper for `origins`.
+// Distinct cleaned names, one per origin FAMILY (so five abuse.ch aliases cannot push a sixth,
+// different creator past the cap), bounded, plus how many were cut — the adapter's helper for
+// `origins`. The first spelling seen for a family is the one kept.
 export function boundOrigins(names: readonly unknown[]): { origins: string[]; moreOrigins?: number } {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const n of names) {
     const c = cleanOriginName(n);
-    if (!c || seen.has(c.toLowerCase())) continue;
-    seen.add(c.toLowerCase());
+    if (!c) continue;
+    const fam = originFamily(c);
+    if (seen.has(fam)) continue;
+    seen.add(fam);
     out.push(c);
   }
   const origins = out.slice(0, MAX_ORIGINS_PER_RECORD);
@@ -117,6 +122,7 @@ export interface LineageInput {
   provider?: string;
   originKind?: OriginKind;
   origins?: string[];
+  moreOrigins?: number;
 }
 
 // The lineage ONE record carries. A record that states its kind is read as stated (its `origins` may still
@@ -147,13 +153,13 @@ export function intelOrigins(enrichments: readonly LineageInput[] | undefined): 
     folded: 0,
     unrecordedVia: [],
     hitLabels: [],
+    truncated: false,
   };
   const families = new Set<string>();
   for (const e of enrichments ?? []) {
     if (!isHit(e)) continue;
     out.hits += 1;
     const label = (e.source || e.provider || "?").trim();
-    if (!out.hitLabels.includes(label)) out.hitLabels.push(label);
     const lin = lineageOf(e);
     const named = lin?.origins ?? [];
     if (!named.length) {
@@ -161,6 +167,8 @@ export function intelOrigins(enrichments: readonly LineageInput[] | undefined): 
       if (!out.unrecordedVia.includes(label)) out.unrecordedVia.push(label);
       continue;
     }
+    if (!out.hitLabels.includes(label)) out.hitLabels.push(label);
+    if ((e.moreOrigins ?? 0) > 0) out.truncated = true;
     let added = false;
     for (const n of named) {
       const fam = originFamily(n);
@@ -184,7 +192,7 @@ export type IntelClass = "corroborated" | "multi-origin" | "lone-intel";
 // The words for the IOC risk factor (dashboard tooltip, Markdown IOC table, CSV) — one line, and the
 // only place "corroborated" is used is beside the local event that earned it.
 export function originsFactor(o: IntelOrigins, cls: IntelClass): string {
-  const list = o.origins.join(", ");
+  const list = o.origins.join(", ") + (o.truncated ? ", more creators not listed" : "");
   if (cls === "corroborated") {
     const who = o.origins.length
       ? `${o.origins.length} named origin${o.origins.length === 1 ? "" : "s"}: ${list}`
@@ -209,7 +217,7 @@ export function originsFactor(o: IntelOrigins, cls: IntelClass): string {
 export function originsTag(o: IntelOrigins, cls: IntelClass): string {
   if (cls === "corroborated") return "[corroborated: carried by a Medium+ event in this case]";
   if (cls === "multi-origin")
-    return `[multi-origin: ${o.origins.length} named origins — ${o.origins.join(", ")}; independence not established]`;
+    return `[multi-origin: ${o.origins.length} named origins — ${o.origins.join(", ")}${o.truncated ? ", more not listed" : ""}; independence not established]`;
   if (!o.origins.length) return "[lone-intel: lineage not recorded]";
   const counted = o.hits - o.unrecorded;
   return counted > 1 ? `[lone-intel: ${counted} hits, 1 origin]` : "[lone-intel: 1 named origin]";

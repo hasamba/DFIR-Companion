@@ -120,11 +120,13 @@ export class MispProvider implements EnrichmentProvider {
 
     const events = new Map<string, MispEvent>();
     const tags = new Set<string>();
-    for (const a of attrs) {
+    attrs.forEach((a, i) => {
       const ev = a.Event;
-      if (ev?.id) events.set(ev.id, ev);
+      // Keyed by the event id from either place; an attribute whose Event object lacks an id still
+      // carries its creator, so it gets its own slot rather than being dropped.
+      if (ev) events.set(ev.id ?? a.event_id ?? `#${i}`, ev);
       for (const t of a.Tag ?? []) if (t.name) tags.add(t.name);
-    }
+    });
     const firstEventId = attrs[0].Event?.id ?? attrs[0].event_id;
     const eventInfo = attrs[0].Event?.info;
 

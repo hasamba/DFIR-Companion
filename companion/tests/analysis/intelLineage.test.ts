@@ -229,4 +229,45 @@ describe("intelOrigins — legacy records, folding, bounds", () => {
     expect(boundOrigins(names)).toEqual({ origins: ["a", "b", "c", "d", "e"], moreOrigins: 2 });
     expect(boundOrigins(["a"])).toEqual({ origins: ["a"] });
   });
+
+  it("bounds by family, so five abuse.ch spellings cannot push a different sixth creator past the cap", () => {
+    const names = ["abuse.ch", "ThreatFox", "URLhaus", "MalwareBazaar", "YARAify", "ACME CSIRT"];
+    expect(boundOrigins(names)).toEqual({ origins: ["abuse.ch", "ACME CSIRT"] });
+    const o = intelOrigins([
+      { source: "MISP", verdict: "malicious", originKind: "relay", origins: boundOrigins(names).origins },
+    ]);
+    expect(o.origins).toEqual(["abuse.ch", "ACME CSIRT"]);
+  });
+
+  it("says when a record cut creators, so a bounded list never reads as complete", () => {
+    const rec: LineageInput = {
+      source: "MISP",
+      verdict: "malicious",
+      originKind: "relay",
+      origins: ["a", "b"],
+      moreOrigins: 3,
+    };
+    const o = intelOrigins([rec]);
+    expect(o.truncated).toBe(true);
+    expect(originsFactor(o, "multi-origin")).toBe(
+      "intel verdict from 2 named origins (a, b, more creators not listed) — independence not established",
+    );
+    expect(originsTag(o, "multi-origin")).toBe(
+      "[multi-origin: 2 named origins — a, b, more not listed; independence not established]",
+    );
+  });
+
+  it("never lists an unrecorded hit as a member of the named origin", () => {
+    const octiNobody: LineageInput = {
+      source: "OpenCTI",
+      verdict: "malicious",
+      originKind: "relay",
+      origins: [],
+    };
+    const o = intelOrigins([threatfox, urlhaus, octiNobody]);
+    expect(o.hitLabels).toEqual(["ThreatFox", "URLhaus"]);
+    expect(originsFactor(o, "lone-intel")).toBe(
+      "single intel origin (abuse.ch — 2 hits: ThreatFox, URLhaus), not seen in a Medium+ event in this case (unverified lead); 1 hit with lineage not recorded (OpenCTI) — not counted as an origin; re-check with force to record the creator",
+    );
+  });
 });

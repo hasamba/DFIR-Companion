@@ -72,6 +72,24 @@ describe("OpenCtiProvider", () => {
     expect(await octi.lookup("hash", "deadbeef")).toBeNull();
   });
 
+  // A full-text search can return a near match. Its score, labels and creator belong to some other
+  // object; attaching them to the requested value would let a stranger's record earn this IOC risk
+  // points (#933 item 18). No exact match reads as "not tracked".
+  it("returns null when only a near match comes back, never the first node's verdict", async () => {
+    const fetchFn = fetchMock(async () =>
+      jsonResponse(
+        observableResponse({
+          id: "obs-near",
+          observable_value: "1.2.3.45",
+          x_opencti_score: 95,
+          createdBy: { name: "Stranger" },
+        }),
+      ),
+    );
+    const octi = new OpenCtiProvider({ baseUrl: "https://opencti.test", apiKey: "k", fetchFn });
+    expect(await octi.lookup("ip", "1.2.3.4")).toBeNull();
+  });
+
   it("respects a custom maliciousScore threshold", async () => {
     const fetchFn = fetchMock(async () =>
       jsonResponse(

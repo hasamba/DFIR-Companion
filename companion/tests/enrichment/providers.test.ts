@@ -796,6 +796,24 @@ describe("intel lineage on provider results (#933 item 18)", () => {
     expect(await bare.lookup("hash", "x")).toMatchObject({ originKind: "relay", origins: [] });
   });
 
+  it("MISP keeps a creator whose Event object carries no id (keyed by the attribute's event_id)", async () => {
+    const misp = new MispProvider({
+      baseUrl: "https://m",
+      apiKey: "k",
+      fetchFn: fetchMock(async () =>
+        jsonResponse({
+          response: {
+            Attribute: [
+              { value: "x", event_id: "3", Event: { Orgc: { name: "ACME CSIRT" } } },
+              { value: "x", Event: { Orgc: { name: "abuse.ch" } } },
+            ],
+          },
+        }),
+      ),
+    });
+    expect(await misp.lookup("hash", "x")).toMatchObject({ origins: ["ACME CSIRT", "abuse.ch"] });
+  });
+
   it("MISP never reads a creator from the event's free text, and cleans a hostile org name", async () => {
     const misp = new MispProvider({
       baseUrl: "https://m",

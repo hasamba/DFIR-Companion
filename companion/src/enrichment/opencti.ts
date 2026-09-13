@@ -115,9 +115,12 @@ export class OpenCtiProvider implements EnrichmentProvider {
       .filter((n): n is OctiObservable => !!n);
     if (nodes.length === 0) return null; // not tracked in OpenCTI
 
-    // `search` is full-text and may return near matches — prefer an exact value match, else first.
+    // `search` is full-text and may return near matches. Only an exact value match is THIS
+    // indicator's record; a near match's score, labels and creator belong to some other object and
+    // must not be attached here (#933 item 18) — no exact match reads as "not tracked".
     const lower = value.toLowerCase();
-    const node = nodes.find((n) => (n.observable_value ?? "").toLowerCase() === lower) ?? nodes[0];
+    const node = nodes.find((n) => (n.observable_value ?? "").toLowerCase() === lower);
+    if (!node) return null;
 
     const labels = (node.objectLabel ?? []).map((l) => l.value ?? "").filter((v) => v.length > 0);
     const indicatorCount = node.indicators?.edges?.length ?? 0;
