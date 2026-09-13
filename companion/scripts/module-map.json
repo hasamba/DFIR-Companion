@@ -182,6 +182,7 @@
     "casePassword.ts": "analysis/case",
     "caseSqliteSchema.ts": "storage",
     "caseSqliteWorker.ts": "storage",
+    "caseSqliteWorkerSuper.ts": "storage",
     "caseStats.ts": "analysis/case",
     "caseTransientPaths.ts": "storage",
     "certutilTransfer.ts": "analysis/timeline",
