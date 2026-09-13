@@ -680,6 +680,23 @@ describe("through parseMacos and correlateEvents", () => {
     expect(z.events[0].description).not.toMatch(/ #[A-Za-z0-9_-]{22}$/);
   });
 
+  it("two structured origin aliases under one UUID are two rows, aggregated or not", () => {
+    const { LSQuarantineOriginAlias: _a, ...rest } = row();
+    const recs = [
+      { ...rest, LSQuarantineOriginAlias: { type: "Buffer", data: [1] } },
+      { ...rest, LSQuarantineOriginAlias: { type: "Buffer", data: [2] } },
+    ];
+    const agg = parseMacos(JSON.stringify(recs));
+    expect(agg.events).toHaveLength(2);
+    expect(
+      agg.events.every((e) =>
+        e.description.includes("[event identifier shared by records with different facts]"),
+      ),
+    ).toBe(true);
+    expect(agg.events[0].description).not.toContain("[object Object]");
+    expect(afterImport(parseMacos(JSON.stringify(recs), { aggregate: false }).events)).toHaveLength(2);
+  });
+
   it("a path-shaped unreadable type never joins a real path event after import", () => {
     const q = parseMacos(csv([row({ LSQuarantineTypeNumber: "/tmp/evil/payload" })]));
     expect(q.events[0].description).toContain("[kind: kind not readable (/tmp/evil/payload)]");

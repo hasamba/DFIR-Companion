@@ -251,3 +251,8 @@ The joins, Gatekeeper/XProtect logs, browser history, any grade above Info.
    a JSON number is its value, not its token text (JSON defines no spelling obligation for
    numbers); a JSON string keeps its text. Tests pin both, and that two distinct doubles stay two
    rows aggregated or not.
+
+## Code round 16 (Codex, one finding)
+1. A structured JSON value (a BLOB exported as `{type:"Buffer",data:[…]}`) became `[object
+   Object]`, so two different aliases were one identity. Fix: an object or array value keeps its
+   shape as JSON text in every field the reader takes.

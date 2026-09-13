@@ -231,7 +231,10 @@ export interface QuarantineRow extends MappedEvent {
   iocs: SiemIoc[];
 }
 
-const text = (v: unknown): string => (typeof v === "string" ? v : v == null ? "" : String(v));
+// A structured JSON value (an exporter's BLOB as `{type:"Buffer",data:[…]}`) keeps its shape as
+// JSON text — never `[object Object]`, which would make every such value one value.
+const text = (v: unknown): string =>
+  typeof v === "string" ? v : v == null ? "" : typeof v === "object" ? JSON.stringify(v) : String(v);
 const first = (rec: Row, keys: readonly string[]): { value: string; header: string } => {
   for (const k of keys) {
     const v = getCI(rec, k);
