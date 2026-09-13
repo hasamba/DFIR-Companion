@@ -25,7 +25,7 @@
 
 import type { Severity } from "./stateTypes.js";
 import type { CollectedFile } from "./linuxPersistence.js";
-import { readQuarantineXattr, type QuarantineXattr } from "./quarantineRecord.js";
+import { fetchableHost, readQuarantineXattr, type QuarantineXattr } from "./quarantineRecord.js";
 import { breakHashRuns, showToken } from "./recordIdentity.js";
 import { judgePayload, homeAccount, type LinuxContext, type LinuxSignal } from "./linuxPersistRules.js";
 import {
@@ -109,15 +109,6 @@ export interface MacContext extends LinuxContext {
 }
 
 /** Signing and quarantine facts a collection attached to this plist's header. */
-function isDownloadUrl(value: string): boolean {
-  if (!/^(?:https?|ftp):\/\//i.test(value)) return false;
-  try {
-    return new URL(value).hostname !== "";
-  } catch {
-    return false;
-  }
-}
-
 function factsFor(file: CollectedFile): MacFileFacts | undefined {
   const extra = file.extra;
   if (!extra) return undefined;
@@ -129,7 +120,7 @@ function factsFor(file: CollectedFile): MacFileFacts | undefined {
   // an opaque scheme is neither a decodable mark nor a download, and is kept as text and said to
   // be undecodable — never "downloaded from <garbage>".
   const quarantineUrl =
-    !mark && extra.quarantine && isDownloadUrl(extra.quarantine) ? extra.quarantine : undefined;
+    !mark && extra.quarantine && fetchableHost(extra.quarantine) !== undefined ? extra.quarantine : undefined;
   const quarantineRaw = !mark && !quarantineUrl ? extra.quarantine : undefined;
   if (!signing && !quarantineUrl && !mark && !quarantineRaw) return undefined;
   return {

@@ -125,10 +125,13 @@ const RESOURCE_ALIASES = ["data_url", "url"];
 const SIGNAL_DIMENSIONS = [["event_id"], ["agent"], ["origin_url", "referrer"]];
 const NATIVE_RE = /^lsquarantine/i;
 function isQuarantineRecord(rec: Row, headers: readonly string[]): boolean {
+  // A repeated header is filled when any of its values is.
+  const hasValue = (v: unknown) =>
+    v instanceof RepeatedColumn ? v.values.some((x) => x.trim() !== "") : text(v).trim() !== "";
   const filled = (k: string) =>
-    Object.entries(rec).some(([h, v]) => h.trim().toLowerCase() === k && text(v).trim() !== "");
+    Object.entries(rec).some(([h, v]) => h.trim().toLowerCase() === k && hasValue(v));
   if (headers.some((h) => NATIVE_RE.test(h.trim())))
-    return Object.entries(rec).some(([h, v]) => NATIVE_RE.test(h.trim()) && text(v).trim() !== "");
+    return Object.entries(rec).some(([h, v]) => NATIVE_RE.test(h.trim()) && hasValue(v));
   const resource = RESOURCE_ALIASES.some(filled);
   const signals = SIGNAL_DIMENSIONS.filter((dim) => dim.some(filled)).length;
   return resource && signals >= 1;

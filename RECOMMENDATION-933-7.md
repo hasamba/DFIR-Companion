@@ -270,3 +270,12 @@ The joins, Gatekeeper/XProtect logs, browser history, any grade above Info.
 2. `# quarantine: https://` or `custom://opaque` counted as a legacy download URL and raised the
    finding. Fix: a legacy value is a download only as an http(s)/ftp URL with a host; anything else
    is undecodable text.
+
+## Code round 19 (Codex, three findings)
+1. The classifier read a repeated native header as `[object Object]` (filled). Fix: a repeated
+   header is filled only when one of its values is.
+2. A blank duplicate of a time header did not count as a column. Fix: a repeated header is that
+   many columns, blank or not (a single blank key is none).
+3. A `://` prefilter refused WHATWG-absolute URLs (`https:example.com/a`). Fix: parse first, then
+   accept by protocol and non-empty host — one helper (`fetchableHost`) for indicators and the
+   legacy `# quarantine:` URL.

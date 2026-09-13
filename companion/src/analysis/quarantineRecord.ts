@@ -269,10 +269,10 @@ function timeOccurrences(rec: Row): { header: string; value: string }[] {
   for (const [k, v] of Object.entries(rec)) {
     const rank = TIME_HEADER_RANK.get(k.trim().toLowerCase());
     if (rank === undefined) continue;
-    for (const one of isRepeatedColumn(v) ? v.values : [v]) {
-      const value = text(one).trim();
-      if (value) out.push({ header: k.trim(), value, rank });
-    }
+    // A header the source repeated is that many columns, blank or not; a single blank key is none.
+    if (isRepeatedColumn(v))
+      for (const one of v.values) out.push({ header: k.trim(), value: one.trim(), rank });
+    else if (text(v).trim()) out.push({ header: k.trim(), value: text(v).trim(), rank });
   }
   return out.sort((a, b) => a.rank - b.rank).map(({ header, value }) => ({ header, value }));
 }
@@ -298,14 +298,13 @@ const show = (v: string, max = TEXT_SHOWN_MAX): string => {
  * The URL and its host as indicators: an address is `ip`, a name is `domain`; http(s)/ftp only. A
  * URL past URL_IOC_MAX mints no `url` indicator (the host still does) and says so.
  */
-function mintUrl(sink: Map<string, SiemIoc>, url: string, schemes: RegExp): "minted" | "omitted" | undefined {
-  if (!schemes.test(url)) return undefined;
-  let host = "";
-  try {
-    host = new URL(url).hostname;
-  } catch {
-    return undefined;
-  }
+function mintUrl(
+  sink: Map<string, SiemIoc>,
+  url: string,
+  schemes: readonly string[],
+): "minted" | "omitted" | undefined {
+  const host = fetchableHost(url, schemes);
+  if (host === undefined) return undefined;
   const urlIoc = url.length <= URL_IOC_MAX;
   if (urlIoc) addIoc(sink, "url", url);
   const bare = host.startsWith("[") ? host.slice(1, -1) : host;
@@ -315,6 +314,25 @@ function mintUrl(sink: Map<string, SiemIoc>, url: string, schemes: RegExp): "min
   }
   return urlIoc ? "minted" : "omitted";
 }
+
+/**
+ * The host of a URL under one of `schemes` (WHATWG grammar: `https:example.com/a` is absolute too),
+ * or undefined when the value is not such a URL or names no host.
+ */
+export function fetchableHost(
+  value: string,
+  schemes: readonly string[] = DOWNLOAD_SCHEMES,
+): string | undefined {
+  let u: URL;
+  try {
+    u = new URL(value);
+  } catch {
+    return undefined;
+  }
+  return schemes.includes(u.protocol) && u.hostname !== "" ? u.hostname : undefined;
+}
+const DOWNLOAD_SCHEMES = ["http:", "https:", "ftp:"];
+const PAGE_SCHEMES = ["http:", "https:"];
 
 /** One LSQuarantineEventsV2 record → a row that says what the record establishes. */
 export function quarantineOverlay(
@@ -352,10 +370,7 @@ export function quarantineOverlay(
   const eventId = canonicalUuid(idRaw);
 
   // Indicators: the resource the agent fetched, and a lure page — only under a fetchable scheme.
-  const urlIndicators = [
-    mintUrl(sink, dataUrl, /^(?:https?|ftp):\/\//i),
-    mintUrl(sink, originUrl, /^https?:\/\//i),
-  ];
+  const urlIndicators = [mintUrl(sink, dataUrl, DOWNLOAD_SCHEMES), mintUrl(sink, originUrl, PAGE_SCHEMES)];
   const urlOmitted = urlIndicators.includes("omitted");
 
   const tags: string[] = [`kind: ${type.kind}${type.typeRaw ? ` (${show(type.typeRaw)})` : ""}`];

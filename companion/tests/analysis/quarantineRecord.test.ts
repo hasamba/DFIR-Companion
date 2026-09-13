@@ -730,6 +730,38 @@ describe("through parseMacos and correlateEvents", () => {
     expect(j.iocs).toHaveLength(0);
   });
 
+  it("repeated empty native headers are not a filled field; a blank duplicate time column is still a column; WHATWG URLs mint", () => {
+    const sparse =
+      "LSQuarantineTimeStamp,LSQuarantineTimeStamp,url,agent\n,,https://api.vendor.invalid/status,telemetryd\n";
+    const r = parseMacos(sparse);
+    expect(r.events.filter((e) => e.description.startsWith("macOS quarantine"))).toHaveLength(0);
+    expect(r.iocs).toHaveLength(0);
+    const dup = parseMacos(
+      `LSQuarantineEventIdentifier,LSQuarantineTimeStamp,LSQuarantineTimeStamp,LSQuarantineDataURLString\n${UUID},716403200,,https://cdn.example.invalid/a.dmg\n`,
+    );
+    expect(dup.events[0].timestamp).toBe("");
+    expect(dup.events[0].description).toContain("2 time columns in this record");
+    expect(dup.events[0].canonical?.quarantine?.timeRaw).toBe(
+      "21:LSQuarantineTimeStamp=9:716403200|21:LSQuarantineTimeStamp=0:",
+    );
+    for (const u of ["https:example.com/payload", "https:/example.com/payload", "ftp:example.com/payload"]) {
+      const w = parseMacos(csv([row({ LSQuarantineDataURLString: u, LSQuarantineOriginURLString: "" })]));
+      expect(
+        w.iocs.some((i) => i.type === "domain" && i.value === "example.com"),
+        u,
+      ).toBe(true);
+      expect(
+        w.iocs.some((i) => i.type === "url" && i.value === u),
+        u,
+      ).toBe(true);
+    }
+    expect(
+      parseMacos(csv([row({ LSQuarantineDataURLString: "mailto:a@example.com" })])).iocs.some((i) =>
+        i.value.startsWith("mailto:"),
+      ),
+    ).toBe(false);
+  });
+
   it("a path-shaped unreadable type never joins a real path event after import", () => {
     const q = parseMacos(csv([row({ LSQuarantineTypeNumber: "/tmp/evil/payload" })]));
     expect(q.events[0].description).toContain("[kind: kind not readable (/tmp/evil/payload)]");

@@ -64,6 +64,7 @@ describe("the # quarantine: header (#933 item 7)", () => {
     expect(bad.severity).toBe("Medium");
     expect(bad.reason).toContain("[quarantine mark (not decodable):");
     // a legacy value is a download only as a fetchable URL with a host
+    expect(grade("https:example.com/payload").severity).toBe("High");
     for (const v of ["https://", "custom://opaque", "file:///tmp/x"]) {
       const s = grade(v);
       expect(s.severity, v).toBe("Medium");
