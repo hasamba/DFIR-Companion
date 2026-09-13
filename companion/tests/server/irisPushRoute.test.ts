@@ -7,6 +7,7 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { IrisExportStore } from "../../src/integrations/iris/irisExportStore.js";
+import { ReportWriter } from "../../src/reports/reportWriter.js";
 import type { IrisClient } from "../../src/integrations/iris/irisClient.js";
 
 // A recording mock IRIS client covering every method pushCaseToIris calls, plus a `cases`
@@ -88,7 +89,9 @@ async function makeApp(irisClient: IrisClient) {
     store,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
-  const app = createApp(store, { pipeline, stateStore, irisClient, irisExportStore });
+  // The push reads the report projection, not the raw state (#951), so the route needs a writer.
+  const reportWriter = new ReportWriter(store, stateStore);
+  const app = createApp(store, { pipeline, stateStore, reportWriter, irisClient, irisExportStore });
   await request(app)
     .post("/cases")
     .send({ caseId: "c1", name: "Ransomware FS01", investigator: "i", aiProvider: null });

@@ -4,6 +4,9 @@ cases/
 .qa-cases-root/
 # Notification channel config (issue #58) — holds webhook URLs + SMTP passwords. Never commit.
 notifications/
+# SIEM audit-export destinations (issue #929) — holds Splunk HEC tokens and Elasticsearch
+# credentials, plus the delivery positions. Never commit.
+audit-export/
 # Velociraptor client inventory (issue #70) — the fleet's real hostnames/FQDNs/IPs. ANCHORED so it
 # matches companion/velociraptor/ (the data dir) but NOT companion/src/integrations/velociraptor/.
 /velociraptor/

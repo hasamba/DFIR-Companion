@@ -707,6 +707,10 @@ false-positive, AI runs (synthesis / 2nd opinion / Ask-the-case / …), enrichme
 toggles, settings changes, playbook edits, comments/tags, hunt runs, and exports, each with a
 timestamp and the analyst who did it (where applicable).
 
+This log can be forwarded to a SIEM — see [Audit Export](settings.md#audit-export). It is the only
+surface that carries it off the box on its own; a whole-case ZIP or encrypted `.dfircase` archive
+includes the raw file too, but that is an evidence package rather than a log feed.
+
 ---
 
 ## Analysis Run Ledger
@@ -836,6 +840,7 @@ A Timesketch-style complete record of **every** imported event, kept separately 
 - **Save named timeframes** for quick recall
 - **Label** events for your own triage
 - **Promote** selected events into the forensic timeline so AI synthesis picks them up
+- **Star or tag** a row to keep it. The super-timeline holds at most `DFIR_SUPERTIMELINE_MAX` rows (default 100,000) and drops the oldest-imported rows past that — but a row you starred or tagged is never dropped, whatever the count. Tags the automatic content tagger writes do not count; only your own do.
 - Each row can expand a **[details ▶]** toggle for the full untruncated message, and a Velociraptor-sourced row shows a **↗ Velociraptor** link back to the originating hunt/flow
 
 A **"Super-Timeline Triage"** Velociraptor bundle collects raw Windows host artifacts (MFT, USN, EVTX, registry, Prefetch, Amcache, LNK, browser history, RecycleBin, scheduled tasks, ActivitiesCache) directly into the super-timeline only.

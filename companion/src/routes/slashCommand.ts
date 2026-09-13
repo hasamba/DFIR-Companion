@@ -24,7 +24,7 @@ import {
   isAllowedResponseUrl,
   parseHostList,
 } from "../analysis/slashCommandAuth.js";
-import { getAiLimiter } from "../http/rateLimiter.js";
+import { getAiLimiter, getSlashCommandSecretLimiter } from "../http/rateLimiter.js";
 import { TelegramPoller, sendTelegramMessage, type TelegramUpdate } from "../analysis/telegramPoller.js";
 import { SlackSocketMode, type SlackCommandPayload } from "../analysis/slackSocketMode.js";
 import { isValidCaseId } from "../storage/caseStore.js";
@@ -91,7 +91,53 @@ export function registerSlashCommandRoutes(app: Express, ctx: RouteContext): voi
   );
 
   const limiter = getAiLimiter();
+  const secretLimiter = getSlashCommandSecretLimiter();
   const envList = (name: string): string[] => parseHostList(process.env[name]);
+
+  // Teams and Telegram compare an operator secret, so the compare runs INSIDE the failed-guess
+  // budget (#944): the lockout check and the comparison are one serialized step, as the bootstrap
+  // route does (#920), and a locked platform refuses even the correct value. The budget is keyed
+  // on the platform, never on the channel id — the body chooses that, so it is the guesser's to
+  // rotate. Two refusals never reach the budget, because neither is a guess: an unconfigured
+  // route (refused before this runs) and a request that presents no credential at all — the
+  // manual's own health check is a header-less curl, and five of those must not lock the
+  // operator's bot. The AI limiter below is a different job (per-channel spend after a GOOD
+  // token) and keeps its place.
+  const guardedCompare = async (
+    platform: "teams" | "telegram",
+    req: Request,
+    presented: string | undefined,
+    verify: () => { ok: boolean; error?: string },
+  ): Promise<{ ok: true } | { ok: false; status: 401 | 429; error: string; retryAfterMs?: number }> => {
+    let reason = "unauthorized";
+    if (!presented) return { ok: false, status: 401, error: verify().error ?? reason };
+    const outcome = await secretLimiter.attempt(platform, async () => {
+      const result = verify();
+      if (!result.ok) reason = result.error ?? reason;
+      return result.ok;
+    });
+    if (outcome.kind === "locked") {
+      return {
+        ok: false,
+        status: 429,
+        error: "too many attempts, try again later",
+        retryAfterMs: outcome.retryAfterMs,
+      };
+    }
+    if (outcome.kind === "failed") {
+      // The address and the platform, never the presented value: a near-miss is a hint.
+      ctx.serverLogger.warn(`[slash] ${platform} secret rejected from ${req.ip ?? "unknown"} (${reason})`);
+      return { ok: false, status: 401, error: reason };
+    }
+    return { ok: true };
+  };
+  const refuse = (
+    res: Response,
+    guess: { status: 401 | 429; error: string; retryAfterMs?: number },
+  ): void => {
+    if (guess.retryAfterMs) res.setHeader("Retry-After", String(Math.ceil(guess.retryAfterMs / 1_000)));
+    res.status(guess.status).json({ error: guess.error });
+  };
 
   // ── Slack ───────────────────────────────────────────────────────────────────────────────
   app.post("/integrations/slack/command", async (req: Request, res: Response) => {
@@ -130,11 +176,11 @@ export function registerSlashCommandRoutes(app: Express, ctx: RouteContext): voi
     const body = req.body ?? {};
     const channelId = String(body.channel?.id ?? body.channelId ?? "");
 
-    const tok = verifyTeamsToken(
-      String(req.headers["authorization"] ?? "") || undefined,
-      (process.env.DFIR_TEAMS_TOKEN ?? "").trim(),
-    );
-    if (!tok.ok) return void res.status(401).json({ error: tok.error ?? "unauthorized" });
+    const expected = (process.env.DFIR_TEAMS_TOKEN ?? "").trim();
+    if (!expected) return void res.status(401).json({ error: "no Teams token configured" });
+    const presented = String(req.headers["authorization"] ?? "") || undefined;
+    const guess = await guardedCompare("teams", req, presented, () => verifyTeamsToken(presented, expected));
+    if (!guess.ok) return void refuse(res, guess);
     if (!limiter.tryAcquire(`teams:${channelId}`)) {
       return void res.status(429).json({ error: "rate limit exceeded — try again in a minute" });
     }
@@ -161,11 +207,13 @@ export function registerSlashCommandRoutes(app: Express, ctx: RouteContext): voi
     const message = body.message ?? body.edited_message ?? body.channel_post ?? {};
     const channelId = String(message.chat?.id ?? "");
 
-    const tok = verifyTelegramSecret(
-      String(req.headers["x-telegram-bot-api-secret-token"] ?? "") || undefined,
-      (process.env.DFIR_TELEGRAM_SECRET_TOKEN ?? "").trim(),
+    const expected = (process.env.DFIR_TELEGRAM_SECRET_TOKEN ?? "").trim();
+    if (!expected) return void res.status(401).json({ error: "no Telegram webhook secret configured" });
+    const presented = String(req.headers["x-telegram-bot-api-secret-token"] ?? "") || undefined;
+    const guess = await guardedCompare("telegram", req, presented, () =>
+      verifyTelegramSecret(presented, expected),
     );
-    if (!tok.ok) return void res.status(401).json({ error: tok.error ?? "unauthorized" });
+    if (!guess.ok) return void refuse(res, guess);
     if (!limiter.tryAcquire(`telegram:${channelId}`)) {
       return void res.status(429).json({ error: "rate limit exceeded — try again in a minute" });
     }

@@ -14,6 +14,7 @@
 // already-merged timeline is a no-op. No AI, no network.
 
 import { worstSeverity, type ForensicEvent } from "./stateTypes.js";
+import { appendDerivedNote } from "./derivedNote.js";
 
 const MARKER = "[confirmed exfiltration:";
 
@@ -75,13 +76,17 @@ export function linkArchiveToExfil(
       ...e,
       severity: worstSeverity(e.severity, "High"),
       ...(isSrumTotal ? { mitreTechniques: [...new Set([...(e.mitreTechniques ?? []), "T1041"])] } : {}),
-      description:
-        `${e.description ?? ""} ${MARKER} preceded by archive staging on ${e.asset}` +
-        (isSrumTotal
-          ? ". SRUM records the volume and the application, not the destination or the contents, so this" +
-            " pairs a staging event with a large send — it does not show what left."
-          : "") +
-        `]`.slice(0, 900),
+      // Appended after a clipped base, so a long description cannot push the reason off the end
+      // and a later pass's clip cannot remove it (#939, see derivedNote.ts).
+      description: appendDerivedNote(
+        e.description,
+        MARKER,
+        `preceded by archive staging on ${e.asset}` +
+          (isSrumTotal
+            ? ". SRUM records the volume and the application, not the destination or the contents, so this" +
+              " pairs a staging event with a large send — it does not show what left."
+            : ""),
+      ),
     };
   });
 }

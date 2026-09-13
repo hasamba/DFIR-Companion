@@ -91,11 +91,14 @@ describe("bootstrap limiter — the legitimate operator", () => {
     expect(authStore.countIdentities()).toBe(1);
   });
 
-  it("still bootstraps from loopback when no token is configured", async () => {
+  it("a token-less refusal is not counted as a guess — the operator's own retries stay open (#945)", async () => {
     resetLimiters();
     await build(undefined);
-    const res = await request(app).post("/auth/bootstrap").send(ADMIN); // supertest connects over loopback
-    expect(res.status).toBe(201);
+    for (let i = 0; i < 7; i++) {
+      // supertest connects over loopback; since #945 that no longer opens the door
+      expect((await request(app).post("/auth/bootstrap").send(ADMIN)).status).toBe(403);
+    }
+    expect(authStore.countIdentities()).toBe(0);
   });
 });
 

@@ -81,10 +81,13 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
       return res
         .status(501)
         .json({ error: "DFIR-IRIS not configured (set DFIR_IRIS_URL and DFIR_IRIS_KEY)" });
-    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     const caseId = req.params.id;
     try {
-      const state = await options.stateStore.load(caseId);
+      // The report projection, not the raw state (#951): scope, clock-skew alignment and the
+      // analyst's false-positive markers all apply. IRIS never retracts a pushed timeline row, so a
+      // false positive sent from the raw state would have stayed on the remote case for good.
+      const state = await options.reportWriter.filteredState(caseId);
       const meta = options.reportMetaStore ? await options.reportMetaStore.load(caseId) : undefined;
       // Push the analyst-curated playbook (status-aware) when available, else the raw next steps.
       const playbookTasks = options.playbookStore ? await syncPlaybook(caseId) : undefined;
@@ -279,10 +282,12 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
   app.post("/cases/:id/push/misp", async (req: Request, res: Response) => {
     if (!options.mispPushClient)
       return res.status(501).json({ error: "MISP not configured (set DFIR_MISP_URL and DFIR_MISP_KEY)" });
-    if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
+    if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     const caseId = req.params.id;
     try {
-      const state = await options.stateStore.load(caseId);
+      // Same projection the reports and the Timesketch/Notion pushes read (#951) — a false-positive
+      // event must never become a MISP attribute, and MISP only ever adds, never retracts.
+      const state = await options.reportWriter.filteredState(caseId);
       logLine(`[misp] ${caseId} push START`);
       const result = await pushCaseToMisp(options.mispPushClient, { caseId, state }, options.mispPushOptions);
       logLine(

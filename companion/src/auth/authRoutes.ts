@@ -295,9 +295,11 @@ export function registerTeamAuthRoutes(app: Express, auth: TeamAuth, cases: Case
         );
         return res.status(403).json({ error: "valid bootstrap token required" });
       }
-    } else if (!auth.isLoopbackRequest(req)) {
-      // Token-less setup is loopback-only. Not a guess, so not counted: a LAN neighbour hammering
-      // this must not lock the operator out of their own console.
+    } else {
+      // No token, no bootstrap. A loopback-peer fallback lived here; behind a same-host reverse
+      // proxy every client is a loopback peer, so it gated nothing (#945). authFactory refuses to
+      // start with an empty store and no token, so this branch is the route holding the same line
+      // on its own. Not a guess, so not counted against the limiter.
       return res.status(403).json({ error: "valid bootstrap token required" });
     }
     try {

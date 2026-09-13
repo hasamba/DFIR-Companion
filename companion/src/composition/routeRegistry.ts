@@ -21,6 +21,7 @@ import { registerGeoTileRoutes } from "../routes/geoTiles.js";
 import { registerAiModelRoutes } from "../routes/aiModels.js";
 import { registerCaptureRoutes } from "../routes/captures.js";
 import { registerPushNotifyRoutes } from "../routes/pushNotify.js";
+import { registerAuditExportRoutes } from "../routes/auditExport.js";
 import { registerTemplatesViewsRoutes } from "../routes/templatesViews.js";
 import { registerToolsRoutes } from "../routes/tools.js";
 import { registerImportRoutes } from "../routes/import.js";
@@ -86,6 +87,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerAiModelRoutes(app, ctx);
   registerCaptureRoutes(app, ctx);
   registerPushNotifyRoutes(app, ctx);
+  registerAuditExportRoutes(app, ctx);
   registerTemplatesViewsRoutes(app, ctx);
   registerToolsRoutes(app, ctx);
   registerMcpRoutes(app, ctx);

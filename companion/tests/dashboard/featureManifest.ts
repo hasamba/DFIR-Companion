@@ -1226,6 +1226,23 @@ export const FEATURES: Feature[] = [
     private: ["ntfChannels", "NTF_TYPE_LABEL", "NTF_WEBHOOK_PLACEHOLDER", "NTF_TG_TOKEN_PLACEHOLDER"],
   },
   {
+    // SIEM audit export (#929). Owns more of its own wiring than the others — its pane delegation
+    // and the observer that loads the list when the pane becomes visible both live in the module,
+    // so the page spends one line on it rather than sixteen.
+    file: "dashboard-audit-export.js",
+    initializer: "initAuditExport",
+    publish: [
+      "initAuditExport",
+      "loadAuditExport",
+      "axAddDestination",
+      "axBackfill",
+      "axTest",
+      "axToggle",
+      "axTypeChanged",
+    ],
+    private: ["axDestinations", "AX_TYPE_LABEL"],
+  },
+  {
     // Starred events. No initializer. Reported five escapes until the IOC view state that shared
     // its banner — and belongs to renderIocs, not to starring — moved out to the page's shared state.
     file: "dashboard-starred.js",

@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import { StateLock } from "./stateLock.js";
+import { TAGGER_AUTHOR_PREFIX } from "./superTimeline.js";
 
 // Analyst tags (triage labels) attached to any case entity (a forensic event, finding, IOC,
 // key question, asset…), so investigators can hand-label evidence — "confirmed-malicious",
@@ -57,6 +58,19 @@ export function normalizeLabel(label: string): string {
   return String(label).trim().toLowerCase().replace(/\s+/g, "-");
 }
 
+// Where an analyst event tag also exempts the raw super-timeline row it names from the cap (#958).
+// SuperTimelineStore satisfies this; the store is passed in so tags.ts never imports it.
+export interface EventProtectionSink {
+  protect(caseId: string, eventId: string): Promise<boolean>;
+  unprotect(caseId: string, eventId: string): Promise<void>;
+}
+
+// An analyst-authored tag on an event. Tagger tags are automatic and can cover most rows, so they
+// never protect; that is what keeps the cap a cap.
+function protectsEvent(tag: Pick<Tag, "targetType" | "author">): boolean {
+  return tag.targetType === "event" && !tag.author.startsWith(TAGGER_AUTHOR_PREFIX);
+}
+
 export class TagsStore {
   // Serializes this case's load->modify->save section (#216). Guards tags.json only — a PRIVATE
   // lock, like HypothesisStore's, so it can never contend with the investigation-state lock.
@@ -64,7 +78,21 @@ export class TagsStore {
   // together both saw "no duplicate" and both were written.
   private readonly lock = new StateLock();
 
-  constructor(private readonly cases: CaseStore) {}
+  constructor(
+    private readonly cases: CaseStore,
+    private readonly protection?: EventProtectionSink,
+  ) {}
+
+  // Drop protection for each target that no analyst event tag names any more. Runs after the
+  // tags file is saved, so a reader never sees a protected row whose tag is already gone.
+  private async releaseUnreferenced(caseId: string, removed: Tag[], remaining: Tag[]): Promise<void> {
+    if (!this.protection) return;
+    const stillHeld = new Set(remaining.filter(protectsEvent).map((t) => t.targetId));
+    const released = new Set(removed.filter(protectsEvent).map((t) => t.targetId));
+    for (const targetId of released) {
+      if (!stillHeld.has(targetId)) await this.protection.unprotect(caseId, targetId);
+    }
+  }
 
   private path(caseId: string): string {
     return join(this.cases.stateDir(caseId), "tags.json");
@@ -105,6 +133,9 @@ export class TagsStore {
         author: (input.author || "").trim() || "anonymous",
         createdAt: new Date().toISOString(),
       };
+      // Protect BEFORE the tag is saved: a row that was already evicted reports false and the tag
+      // is still kept — most event tags name forensic-timeline events, which are never raw rows.
+      if (this.protection && protectsEvent(tag)) await this.protection.protect(caseId, targetId);
       await this.save(caseId, [...existingTags, tag]);
       return tag;
     });
@@ -117,10 +148,9 @@ export class TagsStore {
       const tags = await this.load(caseId);
       const removed = tags.find((t) => t.id === tagId) ?? null;
       if (!removed) return null;
-      await this.save(
-        caseId,
-        tags.filter((t) => t.id !== tagId),
-      );
+      const remaining = tags.filter((t) => t.id !== tagId);
+      await this.save(caseId, remaining);
+      await this.releaseUnreferenced(caseId, [removed], remaining);
       return removed;
     });
   }
@@ -133,7 +163,14 @@ export class TagsStore {
       const tags = await this.load(caseId);
       const next = tags.filter((t) => !t.author.startsWith(prefix));
       const removed = tags.length - next.length;
-      if (removed) await this.save(caseId, next);
+      if (removed) {
+        await this.save(caseId, next);
+        await this.releaseUnreferenced(
+          caseId,
+          tags.filter((t) => t.author.startsWith(prefix)),
+          next,
+        );
+      }
       return removed;
     });
   }

@@ -20,6 +20,7 @@
 import type { Severity } from "./stateTypes.js";
 import { parseCsv } from "./csvImport.js";
 import { isEntraUalRecord } from "./entraAuditRecord.js";
+import { boundedAggKey, boundedTextTo } from "./aggKey.js";
 import { isExchangeRecord, mapExchangeRow } from "./exchangeAuditImport.js";
 import {
   isServicePrincipalSignIn,
@@ -208,9 +209,11 @@ function mapUal(rec: Row, sink: Map<string, SiemIoc>): MappedEvent {
   let description = `M365 ${workload || "audit"}: ${op}`;
   if (user) description += ` by ${user}`;
   if (ip) description += ` from ${ip}`;
-  if (target && target !== user) description += ` → ${oneLine(target).slice(0, 120)}`;
+  // The target and the description are both identities downstream (correlation keys on the
+  // description once aggKey is gone), so each clip keeps a digest of what it removed (#940).
+  if (target && target !== user) description += ` → ${boundedTextTo(oneLine(target), 120)}`;
   if (failed) description += " [FAILED]";
-  description = description.slice(0, 600);
+  description = boundedTextTo(description, 600);
 
   return {
     timestamp: normalizeTime(pickStr(rec, ["CreationTime", "CreationDate"])),
@@ -222,9 +225,9 @@ function mapUal(rec: Row, sink: Map<string, SiemIoc>): MappedEvent {
     // bulk-read detection (#908 item 8) was structurally blind to this provider. Only data-plane
     // reads carry it: a hundred management calls by one principal genuinely are one thing, and
     // adding the resource everywhere would undo the aggregation this importer exists to do.
-    aggKey: `m365|${workload}|${op}|${user}|${ip}${isFileRead(op) && target ? `|${target}` : ""}`
-      .toLowerCase()
-      .slice(0, 400),
+    aggKey: boundedAggKey(
+      `m365|${workload}|${op}|${user}|${ip}${isFileRead(op) && target ? `|${target}` : ""}`.toLowerCase(),
+    ),
     sources: ["Microsoft 365"],
   };
 }
@@ -324,7 +327,7 @@ function mapSignIn(rec: Row, sink: Map<string, SiemIoc>): MappedEvent {
     description += ` [FAILED${code === null ? "" : ` ${code}`}${failureReason ? `: ${oneLine(failureReason).slice(0, 80)}` : ""}]`;
   if (risk && risk !== "none") description += ` [risk: ${risk}]`;
   if (isRopc) description += " [legacy-auth ROPC — no interactive MFA prompt]";
-  description = description.slice(0, 600);
+  description = boundedTextTo(description, 600); // an identity downstream — see mapUal
 
   return {
     timestamp: normalizeTime(pickStr(rec, ["createdDateTime"])),
@@ -334,9 +337,9 @@ function mapSignIn(rec: Row, sink: Map<string, SiemIoc>): MappedEvent {
     // `outcome` and `isRopc` are both discriminators: keying on the raw code alone folded an
     // unreadable status into the `0` bucket that genuine successes use, and left a ROPC grant to
     // merge with an ordinary sign-in by the same user (aggregation keeps ONE description).
-    aggKey: `entra-signin|${upn}|${ip}|${app}|${outcome}|${code ?? "?"}|${risk}|${isRopc ? "ropc" : ""}`
-      .toLowerCase()
-      .slice(0, 400),
+    aggKey: boundedAggKey(
+      `entra-signin|${upn}|${ip}|${app}|${outcome}|${code ?? "?"}|${risk}|${isRopc ? "ropc" : ""}`.toLowerCase(),
+    ),
     sources: ["Entra ID"],
   };
 }

@@ -43,6 +43,11 @@ const TLS_HOST_URL: Partial<Record<string, string | (() => string | undefined)>>
   // built at all. Threading the real per-send URL through would let a loopback webhook keep
   // using insecure on its own, which this deliberately no longer does.
   NOTIFY: () => (isEnvFlag(process.env.DFIR_NOTIFY_INSECURE) ? "https://notify-webhook.invalid" : undefined),
+  // Audit-export destinations (#929) are the same shape as NOTIFY: an arbitrary Splunk collector or
+  // Elasticsearch cluster, known only at send time from AuditExportStore, so there is no env var to
+  // read at boot. Same fail-closed sentinel for the same reason — a hostUrl of undefined makes the
+  // loopback guard allow everything, which is precisely the bypass the NOTIFY entry exists to close.
+  AUDIT: () => (isEnvFlag(process.env.DFIR_AUDIT_INSECURE) ? "https://audit-export.invalid" : undefined),
 };
 
 export type TlsIntegration =
@@ -54,6 +59,7 @@ export type TlsIntegration =
   | "NOTION"
   | "CLICKUP"
   | "NOTIFY"
+  | "AUDIT"
   | "JIRA"
   | "SERVICENOW";
 

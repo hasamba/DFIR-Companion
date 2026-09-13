@@ -22,9 +22,18 @@ const AGG_KEY_MAX = 400;
 const AGG_KEY_DIGEST = 16; // 64 bits of hex — collision-free at any case's row count
 
 export function boundedAggKey(key: string): string {
-  if (key.length <= AGG_KEY_MAX) return key;
-  const digest = createHash("sha256").update(key).digest("hex").slice(0, AGG_KEY_DIGEST);
-  return `${key.slice(0, AGG_KEY_MAX - AGG_KEY_DIGEST - 1)}#${digest}`;
+  return boundedTextTo(key, AGG_KEY_MAX);
+}
+
+// The same bound at a caller-chosen length. A description an importer clips to 600, or a target it
+// shows at 120, is an identity downstream (see boundedText) and needs the digest tail at THAT
+// length — the import route drops aggKey before the timeline, and correlation's exact-duplicate
+// pass keys on timestamp + description + host, so a key that kept two rows apart is undone by two
+// clipped descriptions that read the same (#940 review).
+export function boundedTextTo(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const digest = createHash("sha256").update(text).digest("hex").slice(0, AGG_KEY_DIGEST);
+  return `${text.slice(0, max - AGG_KEY_DIGEST - 1)}#${digest}`;
 }
 
 // The same bound for PROSE that is also an identity. An importer whose description is what every

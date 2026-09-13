@@ -11,6 +11,7 @@
 
 import { worstSeverity, type ForensicEvent } from "./stateTypes.js";
 import { escapeRegExp } from "./regexEscape.js";
+import { appendDerivedNote } from "./derivedNote.js";
 
 const DOMAIN_RE = /\b[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9-]+)+\b/gi;
 const MARKER = "[initial access:";
@@ -65,8 +66,13 @@ export function linkEmailDelivery(events: ForensicEvent[]): ForensicEvent[] {
           ...e,
           severity: worstSeverity(e.severity, "Medium"),
           mitreTechniques: mitre,
-          description:
-            `${e.description ?? ""} ${MARKER} host contacted email-delivered domain ${domain}]`.slice(0, 600),
+          // Appended after a clipped base, so a long description cannot push the reason off the
+          // end and a later pass's clip cannot remove it (#939, see derivedNote.ts).
+          description: appendDerivedNote(
+            e.description,
+            MARKER,
+            `host contacted email-delivered domain ${domain}`,
+          ),
         };
       }
     }

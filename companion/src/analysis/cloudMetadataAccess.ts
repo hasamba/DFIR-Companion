@@ -37,6 +37,7 @@
 
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 import { addressReach } from "./publicAddress.js";
+import { appendDerivedNote } from "./derivedNote.js";
 
 /** The link-local addresses and names that serve instance metadata. */
 export const METADATA_TARGETS: readonly string[] = [
@@ -335,7 +336,6 @@ export function gradeHit(hit: MetadataHit, rawText: string): MetadataVerdict | n
 }
 
 const RANK: Record<Severity, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Critical: 4 };
-const DESCRIPTION_MAX = 700;
 
 /**
  * Explain metadata credential access on the timeline.
@@ -356,8 +356,7 @@ export function explainMetadataAccess(events: readonly ForensicEvent[]): Forensi
       ...e,
       severity,
       mitreTechniques: [...new Set([...(e.mitreTechniques ?? []), ...verdict.mitre])],
-      description:
-        `${(e.description ?? "").slice(0, DESCRIPTION_MAX)} ${METADATA_MARKER} ${verdict.reason}]`.trim(),
+      description: appendDerivedNote(e.description, METADATA_MARKER, verdict.reason),
     };
   });
   return changed ? out : (events as ForensicEvent[]);
@@ -430,7 +429,7 @@ export function instanceCredentialUseAway(events: readonly ForensicEvent[]): For
         reach === "public"
           ? [...new Set([...(e.mitreTechniques ?? []), "T1552.005", "T1078.004"])]
           : (e.mitreTechniques ?? []),
-      description: `${(e.description ?? "").slice(0, DESCRIPTION_MAX)} ${METADATA_MARKER} ${reason}]`.trim(),
+      description: appendDerivedNote(e.description, METADATA_MARKER, reason),
     };
   });
   return changed ? out : (events as ForensicEvent[]);

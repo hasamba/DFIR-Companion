@@ -31,6 +31,7 @@
 
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 import { judgePayload } from "./linuxPayload.js";
+import { appendDerivedNote } from "./derivedNote.js";
 
 /** The marker this pass appends. Stripped by correlate.ts before a duplicate key is taken. */
 export const ESCAPE_MARKER = "[container escape:";
@@ -515,7 +516,7 @@ export function markContainerEscape(events: readonly ForensicEvent[]): ForensicE
         ...e,
         severity: RANK.High > RANK[e.severity] ? "High" : e.severity,
         mitreTechniques: [...new Set([...(e.mitreTechniques ?? []), ...behaviors.flatMap((b) => b.mitre)])],
-        description: `${(e.description ?? "").slice(0, DESCRIPTION_MAX)} ${ESCAPE_MARKER} ${reason}]`.trim(),
+        description: appendDerivedNote(e.description, ESCAPE_MARKER, reason, DESCRIPTION_MAX),
       };
     }
 
@@ -535,7 +536,7 @@ export function markContainerEscape(events: readonly ForensicEvent[]): ForensicE
       // estate would bury the behaviours that are the real finding.
       severity: RANK.Medium > RANK[e.severity] ? "Medium" : e.severity,
       mitreTechniques: [...new Set([...(e.mitreTechniques ?? []), ...risks.flatMap((r) => r.mitre)])],
-      description: `${(e.description ?? "").slice(0, DESCRIPTION_MAX)} ${ESCAPE_MARKER} ${reason}]`.trim(),
+      description: appendDerivedNote(e.description, ESCAPE_MARKER, reason, DESCRIPTION_MAX),
     };
   });
 

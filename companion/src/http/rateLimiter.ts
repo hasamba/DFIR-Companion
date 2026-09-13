@@ -239,6 +239,8 @@ let _oidcStartLimiter: SlidingWindowLimiter | null = null;
 let _oidcStartSweepTimer: NodeJS.Timeout | null = null;
 let _bootstrapLimiter: AttemptLimiter | null = null;
 let _bootstrapSweepTimer: NodeJS.Timeout | null = null;
+let _slashSecretLimiter: AttemptLimiter | null = null;
+let _slashSecretSweepTimer: NodeJS.Timeout | null = null;
 
 export function getUnlockLimiter(): AttemptLimiter {
   if (!_unlockLimiter) {
@@ -381,6 +383,24 @@ export function getBootstrapLimiter(): AttemptLimiter {
   return _bootstrapLimiter;
 }
 
+/** Failed-guess budget for the shared-secret slash-command endpoints — Teams and Telegram (#944).
+ *  Same schedule as the bootstrap limiter, and keyed the same way, on a constant per platform
+ *  (the limiter's own key is the platform name). Each platform has ONE operator secret, so the
+ *  budget is the secret's: a guesser gains nothing by rotating source addresses, and nothing by
+ *  rotating the channel id either, which the request body lets them choose per call. A locked
+ *  secret refuses even the correct value — a war-room bot that goes quiet because someone is
+ *  hammering its webhook is the operator's signal that someone is. Slack is not consulted here:
+ *  its requests are HMAC-signed over the body inside a replay window, not compared to a secret. */
+export function getSlashCommandSecretLimiter(): AttemptLimiter {
+  if (!_slashSecretLimiter) {
+    const limiter = new AttemptLimiter(5, 30_000);
+    _slashSecretLimiter = limiter;
+    _slashSecretSweepTimer = setInterval(() => limiter.sweep(), SWEEP_INTERVAL_MS);
+    _slashSecretSweepTimer.unref?.();
+  }
+  return _slashSecretLimiter;
+}
+
 /** Reset singletons (tests). Also clears each singleton's sweep timer so repeated
  *  reset+get cycles in a test suite don't stack up abandoned intervals. */
 export function resetLimiters(): void {
@@ -393,6 +413,7 @@ export function resetLimiters(): void {
   if (_loginIpSweepTimer) clearInterval(_loginIpSweepTimer);
   if (_oidcStartSweepTimer) clearInterval(_oidcStartSweepTimer);
   if (_bootstrapSweepTimer) clearInterval(_bootstrapSweepTimer);
+  if (_slashSecretSweepTimer) clearInterval(_slashSecretSweepTimer);
   _unlockSweepTimer = null;
   _aiSweepTimer = null;
   _importSweepTimer = null;
@@ -411,4 +432,6 @@ export function resetLimiters(): void {
   _oidcStartLimiter = null;
   _bootstrapSweepTimer = null;
   _bootstrapLimiter = null;
+  _slashSecretSweepTimer = null;
+  _slashSecretLimiter = null;
 }

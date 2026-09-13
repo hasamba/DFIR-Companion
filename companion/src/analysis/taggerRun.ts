@@ -7,11 +7,12 @@
 
 import type { ForensicEvent } from "./stateTypes.js";
 import { normalizeLabel, type TagsStore } from "./tags.js";
+import { TAGGER_AUTHOR_PREFIX } from "./superTimeline.js";
 import { runTagger, applyToForensicEvent, type TaggerResult } from "./tagger.js";
 import type { CompiledRuleset } from "./taggerRules.js";
 
-/** Author prefix stamped on every tagger-written tag; `<ruleId>` follows. */
-export const TAGGER_AUTHOR_PREFIX = "tagger:";
+/** Author prefix stamped on every tagger-written tag; `<ruleId>` follows. Defined in superTimeline.ts (#958). */
+export { TAGGER_AUTHOR_PREFIX };
 
 export type TaggerScope = "both" | "forensic" | "super";
 

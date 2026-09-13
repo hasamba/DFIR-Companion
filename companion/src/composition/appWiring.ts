@@ -83,6 +83,9 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     dashboardViewStore,
     taggerStore,
     activityLogStore,
+    auditExportStore,
+    auditExportCursors,
+    auditExporter,
     commentsStore,
     tagsStore,
     pinnedFindingsStore,
@@ -191,7 +194,19 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     taggerStore,
     onReportTemplate: (caseId) => hub.broadcastTo(caseId, { type: "report_template_changed" }),
     activityLogStore,
-    onActivity: (caseId) => hub.broadcastTo(caseId, { type: "activity_changed" }),
+    auditExportStore,
+    auditExportCursors,
+    auditExporter,
+    // One append does two things: it pings the dashboard, and it hands the case to the SIEM
+    // exporter. Fire-and-forget with an explicit catch — an unreachable collector must never turn
+    // an analyst's action into a failed request, and the exporter holds its durable position on a
+    // failure so the entry goes on the next append or on the next restart (#929).
+    onActivity: (caseId) => {
+      hub.broadcastTo(caseId, { type: "activity_changed" });
+      void auditExporter?.exportCase(caseId).catch(() => {
+        /* already recorded in the exporter's status and the server log */
+      });
+    },
     commentsStore,
     onComments: (caseId) => hub.broadcastTo(caseId, { type: "comments_changed" }),
     tagsStore,

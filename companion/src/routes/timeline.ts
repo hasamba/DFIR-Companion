@@ -232,7 +232,8 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
     if (!eventId) return res.status(400).json({ error: "eventId is required" });
     const labels = Array.isArray(req.body?.labels) ? req.body.labels.map(String) : [];
     try {
-      await options.superTimelineStore.setLabels(req.params.id, eventId, labels);
+      if (!(await options.superTimelineStore.setLabels(req.params.id, eventId, labels)))
+        return res.status(404).json({ error: "super-timeline event not found" });
       options.onSuperTimeline?.(req.params.id);
       return res.status(200).json({ eventId, labels });
     } catch (err) {

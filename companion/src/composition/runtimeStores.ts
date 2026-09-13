@@ -14,6 +14,7 @@
  * build an app with three stores wired and the rest absent.
  */
 import { join, dirname, isAbsolute, resolve } from "node:path";
+import { hostname } from "node:os";
 import { CaseStore } from "../storage/caseStore.js";
 import { StateStore as StateStoreImpl } from "../analysis/stateStore.js";
 import { ReportWriter as ReportWriterImpl } from "../reports/reportWriter.js";
@@ -23,6 +24,7 @@ import { startOperationalCapacityMonitor } from "../analysis/operationalCapacity
 import { LoggerImpl, normalizeLogLevel } from "../logging/logger.js";
 import { logLine, setServerLogger } from "../logging/serverLogger.js";
 import { createTeamAuthRuntime } from "../auth/authFactory.js";
+import { assertSlashCommandSecretLengths } from "../analysis/slashCommandAuth.js";
 import { TemplateStore } from "../analysis/templateStore.js";
 import { IncidentTypeStore } from "../analysis/incidentTypeStore.js";
 import { CollectionPlanStore } from "../analysis/collectionPlanStore.js";
@@ -45,6 +47,10 @@ import { getAppVersion } from "../version.js";
 import { NotificationConfigStore } from "../analysis/notificationStore.js";
 import { SlashCommandChannelStore } from "../analysis/slashCommandStore.js";
 import { createNotifier } from "../integrations/notify/notifyDispatch.js";
+import { AuditExportStore } from "../analysis/auditExportStore.js";
+import { AuditCursorStore } from "../analysis/auditExportCursor.js";
+import { createAuditExporter } from "../integrations/audit/auditExporter.js";
+import { syslogSend } from "../integrations/audit/syslogTransport.js";
 import { nodeSmtpConnect } from "../integrations/notify/smtpClient.js";
 import { tlsFetchFor } from "./tlsFetch.js";
 import { VeloHuntStore } from "../analysis/veloHuntStore.js";
@@ -114,6 +120,10 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
   const demoMode = process.env.DFIR_DEMO_MODE === "true" || process.env.DFIR_DEMO_MODE === "1";
   const store = new CaseStore(casesRoot);
   const { teamAuth, writerGuard } = createTeamAuthRuntime(casesRoot, host, port);
+  // The war-room bot's shared secrets are read per request from process.env and are neither
+  // writable nor reloadable from the dashboard, so startup is the one place a short value can be
+  // refused before it guards a public route (#944).
+  assertSlashCommandSecretLengths(process.env);
   if (writerGuard) process.once("exit", () => writerGuard.release());
   // File-backed global and per-case session logs retain the investigation audit trail.
   // Timestamp punctuation is stripped for Windows-compatible filenames.
@@ -280,8 +290,28 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
   const analysisRunStore = new AnalysisRunStore(store, { appVersion });
   const reportTemplateControlStore = new ReportTemplateControlStore(store);
   const activityLogStore = new ActivityLogStore(store);
+  // SIEM audit export (#929): destinations and delivery positions in their own subdir beside
+  // `cases/`, for the same reason the notification config is there — a Splunk collector or an
+  // Elasticsearch cluster is environment-level infrastructure shared across investigations, and the
+  // subdir keeps the files creatable when DFIR_CASES_ROOT is a drive-root child on Windows.
+  const auditExportStore = new AuditExportStore(join(dirname(casesRoot), "audit-export", "config.json"));
+  const auditExportCursors = new AuditCursorStore(join(dirname(casesRoot), "audit-export", "cursors.json"));
+  const auditExporter = createAuditExporter({
+    store: auditExportStore,
+    cursors: auditExportCursors,
+    activity: activityLogStore,
+    listCaseIds: async () => (await store.listCases()).map((c) => c.caseId),
+    transport: {
+      // Destinations are arbitrary operator-named hosts known only at send time, exactly like the
+      // notification webhooks — so DFIR_AUDIT_CA / DFIR_AUDIT_INSECURE are scoped the same way and
+      // fail closed against the non-loopback TLS-MITM guard (see tlsFetch.ts).
+      fetchFn: tlsFetchFor("AUDIT") ?? fetch,
+      syslogSend,
+      hostname: hostname(),
+    },
+    log: (m) => logLine(m),
+  });
   const commentsStore = new CommentsStore(store);
-  const tagsStore = new TagsStore(store);
   const pinnedFindingsStore = new PinnedFindingsStore(
     store,
     Number(process.env.DFIR_MAX_PINNED_FINDINGS) || undefined,
@@ -299,6 +329,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
     Number(process.env.DFIR_SUPERTIMELINE_MAX) || undefined,
     operationalMetrics,
   );
+  const tagsStore = new TagsStore(store, superTimelineStore); // #958 analyst event tags exempt raw rows from the cap
   const starredReportStore = new StarredReportStore(store);
   const forensicGateControlStore = new ForensicGateControlStore(store);
   const custodyStore = new CustodyStore(store);
@@ -416,6 +447,9 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
     analysisRunStore,
     reportTemplateControlStore,
     activityLogStore,
+    auditExportStore,
+    auditExportCursors,
+    auditExporter,
     commentsStore,
     tagsStore,
     pinnedFindingsStore,

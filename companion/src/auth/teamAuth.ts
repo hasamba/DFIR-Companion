@@ -122,11 +122,6 @@ export class TeamAuth {
     return this.bootstrapToken !== undefined && safeStringEqual(candidate, this.bootstrapToken);
   }
 
-  isLoopbackRequest(req: Request): boolean {
-    const address = req.socket.remoteAddress ?? "";
-    return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
-  }
-
   authenticateCookieHeader(cookieHeader: string | undefined): RequestAuthentication | null {
     const token = parseCookieHeader(cookieHeader)[SESSION_COOKIE];
     return token ? this.store.authenticateSession(token) : null;

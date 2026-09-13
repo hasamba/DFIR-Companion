@@ -8,6 +8,7 @@ import { INVESTIGATION_DB_FILENAME } from "./stateStore.js";
 import {
   NO_HOST_FACET,
   STARRED_LABEL,
+  TAGGER_AUTHOR_PREFIX,
   superHostOf,
   superOriginOf,
   type SuperLabelMap,
@@ -28,13 +29,24 @@ import type { OperationalMetricsStore, QueryIndex } from "./operationalMetrics.j
 // the first thing a time window returned. Undated rows stay inside a time window — they cannot be
 // proven out of range — but after the dated ones.
 //
-// RETENTION. At `max` rows the cap evicts in INSERTION order: the super-timeline keeps the most
-// recently imported `max` rows, whatever their event time. It used to evict by event time with an
-// undated row counting as the oldest, so an undated import was the first thing a case forgot; the
-// opposite rank — undated as newest — would let undated rows fill the cap and evict every later
-// dated row on arrival while still reporting it added. Insertion order privileges no class of row,
-// and the analyst can re-import what it dropped. `append` returns the rows RETAINED after eviction.
-// Analyst stars and tags do not protect a row under either policy — that gap is #958.
+// RETENTION. The cap bounds UNPROTECTED rows: at `max` unprotected rows it evicts in INSERTION
+// order, so the super-timeline keeps the most recently imported `max` unprotected rows, whatever
+// their event time, plus every protected row. It used to evict by event time with an undated row
+// counting as the oldest, so an undated import was the first thing a case forgot; the opposite
+// rank — undated as newest — would let undated rows fill the cap and evict every later dated row
+// on arrival while still reporting it added. Insertion order privileges no class of row, and the
+// analyst can re-import what it dropped. `append` returns the rows RETAINED after eviction.
+//
+// PROTECTION (#958). A row the analyst starred or tagged is protected and is never evicted. The
+// relation (`super_protected`) lives in the case database beside the rows, is written only for a
+// row that exists (a tag on an evicted or unknown id protects nothing and stores nothing), and is
+// fed by TagsStore from analyst-authored event tags — never from the automatic tagger, whose tags
+// can cover most rows. The legacy `super_labels` sidecar takes no part in it. Migration protects
+// tagged legacy rows before the cap runs, and a tagged id that content-dedup drops hands its
+// protection to the retained row with the same content. The tags file stays the authority: it is
+// written and snapshotted apart from the database, so whenever it changed since the last sync
+// (a restore, a crash between the two writes, a case indexed before #958) the worker re-derives
+// the exact set from it. Releasing a row — by unstar or by that sync — enforces the cap at once.
 export const DEFAULT_SUPER_MAX = 100_000;
 export const DEFAULT_SUPER_QUERY_LIMIT = 500;
 const SCAN_BATCH_SIZE = 1_000;
@@ -86,12 +98,19 @@ export class SuperTimelineStore {
     return join(this.cases.stateDir(caseId), "super-timeline-labels.json");
   }
 
+  // TagsStore's side file; read by the worker only to seed protection at migration time.
+  private tagsPath(caseId: string): string {
+    return join(this.cases.stateDir(caseId), "tags.json");
+  }
+
   private async ensureMigrated(caseId: string): Promise<void> {
     await caseSqliteWorker.request<void>({
       op: "migrateSuper",
       dbPath: this.databasePath(caseId),
       eventsPath: this.eventsPath(caseId),
       labelsPath: this.labelsPath(caseId),
+      tagsPath: this.tagsPath(caseId),
+      excludeAuthorPrefix: TAGGER_AUTHOR_PREFIX,
       max: this.max,
     });
   }
@@ -245,13 +264,44 @@ export class SuperTimelineStore {
     if (batch.length) yield batch;
   }
 
-  async setLabels(caseId: string, eventId: string, labels: string[]): Promise<void> {
+  // Legacy label sidecar. False when the row is not in the store — nothing is written for it.
+  async setLabels(caseId: string, eventId: string, labels: string[]): Promise<boolean> {
     await this.ensureMigrated(caseId);
-    await caseSqliteWorker.request<void>({
+    return caseSqliteWorker.request<boolean>({
       op: "setSuperLabels",
       dbPath: this.databasePath(caseId),
       eventId,
       labels,
+    });
+  }
+
+  // Exempt one row from the cap. False when the row is not in the store (unknown, or already
+  // evicted): the relation never names a row that is not there, so the caller learns the tag it is
+  // syncing points at nothing.
+  async protect(caseId: string, eventId: string): Promise<boolean> {
+    await this.ensureMigrated(caseId);
+    return caseSqliteWorker.request<boolean>({
+      op: "protectSuper",
+      dbPath: this.databasePath(caseId),
+      eventId,
+    });
+  }
+
+  async unprotect(caseId: string, eventId: string): Promise<void> {
+    await this.ensureMigrated(caseId);
+    await caseSqliteWorker.request<void>({
+      op: "unprotectSuper",
+      dbPath: this.databasePath(caseId),
+      eventId,
+      max: this.max,
+    });
+  }
+
+  async protectedIds(caseId: string): Promise<string[]> {
+    await this.ensureMigrated(caseId);
+    return caseSqliteWorker.request<string[]>({
+      op: "listSuperProtected",
+      dbPath: this.databasePath(caseId),
     });
   }
 

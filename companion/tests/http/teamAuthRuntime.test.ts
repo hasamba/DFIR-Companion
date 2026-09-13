@@ -19,6 +19,7 @@ describe("team-auth runtime", () => {
       DFIR_AUTH_MODE: "team",
       DFIR_AUTH_COOKIE_SECURE: "false",
       DFIR_AUTH_DATA_DIR: dataDir,
+      DFIR_AUTH_BOOTSTRAP_TOKEN: "bootstrap-token-with-enough-entropy-1",
     });
     expect(runtime.teamAuth).toBeDefined();
     const guardPath = join(casesRoot, ".dfir-team-writer.lock");
@@ -112,5 +113,37 @@ describe("team-auth runtime", () => {
         DFIR_AUTH_DATA_DIR: join(root, "auth"),
       }),
     ).toThrow(/BOOTSTRAP_TOKEN/);
+  });
+
+  it("requires a bootstrap token on a LOOPBACK bind too while the identity store is empty (#945)", async () => {
+    // A same-host reverse proxy makes every client a loopback peer, so "the bind is loopback"
+    // proves nothing about who can reach the endpoint. The token is the only guard that holds.
+    const root = await mkdtemp(join(tmpdir(), "dfir-auth-runtime-"));
+    expect(() =>
+      createTeamAuthRuntime(join(root, "cases"), "127.0.0.1", 4773, {
+        DFIR_AUTH_MODE: "team",
+        DFIR_AUTH_DATA_DIR: join(root, "auth"),
+      }),
+    ).toThrow(/BOOTSTRAP_TOKEN/);
+  });
+
+  it("starts without a token once the first administrator exists — the docs say to remove it after setup", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-auth-runtime-"));
+    const env = { DFIR_AUTH_MODE: "team", DFIR_AUTH_DATA_DIR: join(root, "auth") };
+    const first = createTeamAuthRuntime(join(root, "cases"), "127.0.0.1", 4773, {
+      ...env,
+      DFIR_AUTH_BOOTSTRAP_TOKEN: "bootstrap-token-with-enough-entropy-1",
+    });
+    await first.teamAuth!.store.bootstrapLocalAdministrator({
+      username: "admin",
+      password: "correct horse battery staple",
+      displayName: "Primary Admin",
+    });
+    first.teamAuth!.store.close();
+    first.writerGuard?.release();
+    const second = createTeamAuthRuntime(join(root, "cases"), "127.0.0.1", 4773, env);
+    expect(second.teamAuth).toBeDefined();
+    second.teamAuth!.store.close();
+    second.writerGuard?.release();
   });
 });
