@@ -49,6 +49,19 @@ function scoreCoversTag(score, tag) {
   return new RegExp(`(^|[^a-z0-9])${re}([^a-z0-9]|$)`, "i").test(score);
 }
 
+// #933 item 18: MISP / OpenCTI / YETI RELAY records other parties created. Their badge says who the
+// record names as creator — or that it names nobody (a pre-change record, or an event with no
+// org). Aggregate / first-party providers are the origin themselves and get no suffix.
+const RELAY_PROVIDERS = new Set(["misp", "opencti", "yeti"]);
+function originSuffix(e) {
+  const isRelay = e.originKind === "relay" || (!e.originKind && RELAY_PROVIDERS.has(String(e.provider || e.source || "").toLowerCase()));
+  if (!isRelay) return "";
+  const names = (e.origins || []).filter(n => typeof n === "string" && n.trim());
+  if (!names.length) return " — origin not recorded";
+  const more = e.moreOrigins > 0 ? ` +${e.moreOrigins} more` : "";
+  return ` — created by ${esc(names.join(", "))}${more}`;
+}
+
 function enrichBadges(ioc) {
   if (!ioc.enrichments) return ""; // not enriched yet
   if (!ioc.enrichments.length) return ` <span data-safe-style="color:var(--text-faint);font-size:11px">· checked, no intel</span>`;
@@ -64,7 +77,7 @@ function enrichBadges(ioc) {
     const asContext = e.verdict === "unknown" && (score || tags);
     const label = asContext
       ? `${esc(e.source)}${score ? `: ${esc(score)}` : ""}${tags}`
-      : `${esc(e.source)}: ${esc(e.verdict)}${score ? ` (${esc(score)})` : ""}${tags}`;
+      : `${esc(e.source)}: ${esc(e.verdict)}${score ? ` (${esc(score)})` : ""}${originSuffix(e)}${tags}`;
     const inner = `<span data-safe-style="display:inline-block;vertical-align:middle;color:${c};border:1px solid ${c};border-radius:4px;padding:0 6px;font-size:11px;white-space:normal;word-break:break-word">${label}</span>`;
     return e.link ? `<a href="${escAttr(e.link)}" target="_blank" rel="noopener" data-safe-style="text-decoration:none">${inner}</a>` : inner;
   }).join(" ");
@@ -175,5 +188,6 @@ window.DfirIoc = {
   applyIocNoiseFilters,
   iocNoiseNoticeHtml,
   scoreCoversTag,
+  originSuffix,
   enrichBadges,
 };

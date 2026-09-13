@@ -129,3 +129,34 @@ describe("OpenCtiProvider", () => {
     expect(octi.supports("process")).toBe(false);
   });
 });
+
+describe("OpenCtiProvider — lineage (#933 item 18)", () => {
+  it("asks for createdBy and records the creator as a relay origin — who created the object", async () => {
+    const fetchFn = fetchMock(async () =>
+      jsonResponse(
+        observableResponse({
+          id: "obs-9",
+          observable_value: "1.2.3.4",
+          x_opencti_score: 90,
+          createdBy: { name: "AlienVault" },
+          externalReferences: { edges: [{ node: { source_name: "VirusTotal" } }] },
+        }),
+      ),
+    );
+    const octi = new OpenCtiProvider({ baseUrl: "https://opencti.test", apiKey: "k", fetchFn });
+    const r = await octi.lookup("ip", "1.2.3.4");
+    expect(r).toMatchObject({ originKind: "relay", origins: ["AlienVault"] });
+    // External references are pointers, not attestations: never an origin.
+    expect(r!.origins).not.toContain("VirusTotal");
+    expect(String((fetchFn.mock.calls[0][1] as RequestInit).body)).toContain("createdBy");
+  });
+
+  it("records nothing when the observable has no creator", async () => {
+    const fetchFn = fetchMock(async () =>
+      jsonResponse(observableResponse({ id: "obs-10", observable_value: "1.2.3.4", x_opencti_score: 90 })),
+    );
+    const octi = new OpenCtiProvider({ baseUrl: "https://opencti.test", apiKey: "k", fetchFn });
+    const r = await octi.lookup("ip", "1.2.3.4");
+    expect(r).toMatchObject({ originKind: "relay", origins: [] });
+  });
+});

@@ -107,6 +107,15 @@ export interface IocEnrichment {
   lon?: number;
   country?: string;
   city?: string;
+  // Lineage (#933 item 18): how the provider came to hold the claim, and who the record names as its
+  // creator. `first-party` = the provider's own data (abuse.ch, CrowdStrike); `aggregate` = it sums
+  // other parties' answers and is ONE origin (VirusTotal engines, AbuseIPDB reporters); `relay` = it
+  // stores records another party created (MISP, OpenCTI, YETI) — `origins` is then the creator name(s)
+  // the record carries, and [] / absent means NOT RECORDED, which counts as no origin (never the
+  // platform's own name). Optional: pre-change records fall back to intelLineage.ts's inferred table.
+  originKind?: "first-party" | "aggregate" | "relay";
+  origins?: string[];
+  moreOrigins?: number; // creators cut by the per-record cap, so a bounded list never reads as complete
 }
 
 export interface IOC {

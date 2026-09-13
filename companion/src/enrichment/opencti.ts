@@ -1,5 +1,6 @@
 import type { EnrichmentProvider, EnrichmentResult, FetchFn, IocKind, Verdict } from "./provider.js";
 import { readBoundedJson, RESPONSE_SIZE_LIMITS } from "../providers/boundedResponse.js";
+import { boundOrigins } from "../analysis/intelLineage.js";
 
 export interface OpenCtiOptions {
   baseUrl: string; // your OpenCTI instance, e.g. https://opencti.example.org
@@ -19,6 +20,7 @@ interface OctiObservable {
   x_opencti_score?: number | null;
   objectLabel?: OctiLabel[];
   indicators?: { edges?: Array<{ node?: { id?: string } }> };
+  createdBy?: { name?: string } | null; // who created the object on this instance (#933 item 18)
 }
 interface GraphQlResponse<T> {
   data?: T;
@@ -43,6 +45,7 @@ const OBSERVABLE_QUERY = `query($search: String!) {
       x_opencti_score
       objectLabel { value }
       indicators { edges { node { id } } }
+      createdBy { name }
     } }
   }
 }`;
@@ -130,6 +133,10 @@ export class OpenCtiProvider implements EnrichmentProvider {
 
     return {
       source: this.name,
+      // OpenCTI RELAYS: `createdBy` is who created the observable on the instance — not who authored
+      // the score or labels, and external references are pointers, not attestations (not read).
+      originKind: "relay",
+      ...boundOrigins([node.createdBy?.name]),
       verdict,
       score: parts.join(", "),
       detections: indicatorCount,
