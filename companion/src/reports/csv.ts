@@ -2,6 +2,8 @@ import { getEffectiveSeverity, type InvestigationState } from "../analysis/state
 import { byEventTime } from "../analysis/forensicSort.js";
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { scoreIocsFromState } from "../analysis/iocRiskScore.js";
+import { buildIocProvenanceChains } from "../analysis/iocProvenanceChain.js";
+import { caseTime, intelTemporal } from "../analysis/intelTemporal.js";
 import type { GeoMapData } from "../analysis/geoMap.js";
 
 function cell(value: string): string {
@@ -41,9 +43,17 @@ export function iocsCsv(state: InvestigationState): string {
   const header = "id,type,value,firstSeen,sources,sourceCount,enrichment,riskScore,riskFactors";
   const iocSrc = deriveIocSources(state.iocs, state.forensicTimeline);
   const risk = scoreIocsFromState(state); // #63 composite risk (verdict + severity + corroboration)
+  // WHEN each verdict applies (#933 item 19) rides in the same cell, in braces, so a spreadsheet
+  // never shows "malicious" without the provider's dates against the case time.
+  const chains = buildIocProvenanceChains(state.iocs, state.forensicTimeline, state.findings);
+  const nowIso = new Date().toISOString();
   const rows = state.iocs.map((i) => {
+    const when = caseTime(i, chains[i.id]);
     const intel = (i.enrichments ?? [])
-      .map((e) => `${e.source}:${e.verdict}${e.score ? ` (${e.score})` : ""}`)
+      .map(
+        (e) =>
+          `${e.source}:${e.verdict}${e.score ? ` (${e.score})` : ""} {${intelTemporal(e, when, nowIso).words}}`,
+      )
       .join(" | ");
     const src = iocSrc[i.id] ?? [];
     const r = risk[i.id];

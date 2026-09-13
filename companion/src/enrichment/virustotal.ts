@@ -13,6 +13,7 @@ export interface VirusTotalOptions {
   apiKey: string;
   fetchFn?: FetchFn;
   timeoutMs?: number;
+  now?: () => string; // injectable clock, so the epoch plausibility bound is testable
 }
 
 // VirusTotal v3. One object type per IOC kind (process isn't lookup-able on VT).
@@ -50,6 +51,17 @@ function verdictFromStats(s: VtStats): { verdict: Verdict; detections: number; t
   const verdict: Verdict =
     malicious > 0 ? "malicious" : suspicious > 0 ? "suspicious" : total > 0 ? "harmless" : "unknown";
   return { verdict, detections: malicious, total };
+}
+
+/**
+ * An epoch-seconds field as ISO, under `key` — only a finite integer NUMBER (VirusTotal documents
+ * integer JSON fields), between 2000-01-01 and one day past the lookup instant. Anything else is
+ * dropped: a digit string, a millisecond value, a fraction or a future date is not a scan.
+ */
+function epochField(v: unknown, key: string, nowMs: number): Record<string, string> {
+  if (typeof v !== "number" || !Number.isInteger(v)) return {};
+  if (v < 946_684_800 || v * 1000 > nowMs + 86_400_000) return {};
+  return { [key]: new Date(v * 1000).toISOString() };
 }
 
 export class VirusTotalProvider implements EnrichmentProvider {
@@ -99,6 +111,20 @@ export class VirusTotalProvider implements EnrichmentProvider {
     for (const t of ((attrs.tags as string[] | undefined) ?? []).slice(0, 5)) tags.add(t);
 
     const id = json.data?.id ?? (kind === "url" ? urlId(value) : value);
+    // The object's own dated facts, each of its kind (#933 item 19): files and URLs carry a
+    // first-submission date; every object carries the latest scan the verdict comes from; ip and
+    // domain objects carry a record-modification date that is not an observation. Epoch seconds,
+    // as VirusTotal documents them; anything else is dropped.
+    const nowMs = Date.parse(this.opts.now?.() ?? new Date().toISOString());
+    const temporal = {
+      ...(kind === "hash" || kind === "url"
+        ? epochField(attrs.first_submission_date, "firstSubmittedAt", nowMs)
+        : {}),
+      ...epochField(attrs.last_analysis_date, "verdictMeasuredAt", nowMs),
+      ...(kind === "ip" || kind === "domain"
+        ? epochField(attrs.last_modification_date, "recordUpdatedAt", nowMs)
+        : {}),
+    };
     return {
       source: this.name,
       // Lineage (#933 item 18): VT sums AV engines — one aggregate origin; the engines are not origins.
@@ -110,6 +136,7 @@ export class VirusTotalProvider implements EnrichmentProvider {
       total,
       tags: [...tags],
       link: `https://www.virustotal.com/gui/${GUI[kind] ?? "search"}/${encodeURIComponent(id)}`,
+      ...(Object.keys(temporal).length ? { temporal } : {}),
     };
   }
 }
