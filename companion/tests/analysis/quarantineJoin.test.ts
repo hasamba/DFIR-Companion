@@ -336,6 +336,136 @@ describe("the join, by the event identifier inside one upload", () => {
   });
 });
 
+describe("code review round — Codex findings", () => {
+  it("1. fan-out is bounded: 300 files and 3 duplicate database rows name 8 attribute records at most, and 256+ paths", () => {
+    const files = Array.from({ length: 300 }, (_, i) => attr({ path: `/f/${String(i).padStart(3, "0")}` }));
+    const r = rowsOf([db(), db(), db(), ...files]);
+    const dbs = r.events.filter((e) => e.description.startsWith("macOS quarantine ["));
+    expect(dbs).toHaveLength(3);
+    for (const d of dbs) {
+      expect(d.canonical!.evidence.rawRecords).toHaveLength(9);
+      expect(d.canonical?.quarantine?.localFile).toMatchObject({
+        state: "joined",
+        count: 256,
+        atLeast: true,
+      });
+    }
+  });
+
+  it("2. an ambiguous, absent or clipped path never joins — on either side", () => {
+    const two = rowsOf([db(), { ...attr(), FullPath: "/other" }]);
+    expect(attrRows(two)[0].description).toContain(
+      "[download event: the file's path is not established by this record — not joined]",
+    );
+    expect(dbRow(two).description).toContain("no attribute record carries this identifier in this upload");
+    const none = rowsOf([db(), { "com.apple.quarantine": attr()["com.apple.quarantine"] }]);
+    expect(attrRows(none)[0].canonical?.quarantineAttribute?.join.state).toBe("path not established");
+    expect(dbRow(none).description).toContain("no attribute record carries this identifier in this upload");
+    const clipped = rowsOf([db(), attr({ path: `/Users/x/${"a".repeat(ATTRIBUTE_PATH_MAX)}` })]);
+    expect(attrRows(clipped)[0].canonical?.quarantineAttribute?.join.state).toBe("path not established");
+    expect(dbRow(clipped).description).toContain(
+      "no attribute record carries this identifier in this upload",
+    );
+  });
+
+  it("3. a valid hash rides on the row and correlates with a file event; the path still does not", () => {
+    const r = rowsOf([attr({ sha256: "ab".repeat(32) })]);
+    const [a] = attrRows(r);
+    expect(a.sha256).toBe("ab".repeat(32));
+    expect(a.path).toBeUndefined();
+    const asEvent = (e: Omit<SiemEvent, "id" | "mitreTechniques">, i: number): ForensicEvent =>
+      ({
+        ...e,
+        id: `t${i}`,
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        sources: ["macOS Quarantine"],
+      }) as unknown as ForensicEvent;
+    const { aggKey: _k, ...siem } = a;
+    const file: ForensicEvent = {
+      id: "f1",
+      timestamp: "2020-08-17T05:52:45.000Z",
+      description: "File created",
+      severity: "Low",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      sha256: "ab".repeat(32),
+    };
+    expect(correlateEvents([asEvent(siem, 0), file])).toHaveLength(1);
+  });
+
+  it("4. two readings of one file that differ only in hash or size are two rows, never silently one; the identity carries both", () => {
+    const r = rowsOf([db(), attr({ sha256: "ab".repeat(32) }), attr({ sha256: "cd".repeat(32) })]);
+    const rows = attrRows(r);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].aggKey).not.toBe(rows[1].aggKey);
+    // one file for the database row all the same
+    expect(dbRow(r).description).toContain("[local file: /Users/x/Downloads/installer.dmg —");
+    const sized = rowsOf([attr({ size: 10 }), attr({ size: 11 })]);
+    expect(attrRows(sized)).toHaveLength(2);
+  });
+
+  it("5. a disagreement carries every database record it rests on, each addressed apart", () => {
+    const r = rowsOf([db(), db({ LSQuarantineDataURLString: "https://other.example.invalid/x" }), attr()]);
+    const [a] = attrRows(r);
+    const locs = a.canonical!.evidence.rawRecords.map((x) => x.locator);
+    expect(locs).toEqual(["attribute:2", "record:0", "record:1"]);
+    expect(a.canonical!.fieldProvenance["quarantineAttribute.join.state"].recordLocators.sort()).toEqual([
+      "attribute:2",
+      "record:0",
+      "record:1",
+    ]);
+    expect(a.canonical!.evidence.rawRecords[1].recordId).toBe(UUID);
+  });
+
+  it("6. several files: each listed path rests on its own attribute record; the state on the database record and every file", () => {
+    const r = rowsOf([db(), attr({ path: "/a" }), attr({ path: "/b" })]);
+    const prov = dbRow(r).canonical!.fieldProvenance;
+    expect(prov["quarantine.localFile.paths"].recordLocators.sort()).toEqual(["attribute:1", "attribute:2"]);
+    expect(prov["quarantine.localFile.state"].recordLocators.sort()).toEqual([
+      "attribute:1",
+      "attribute:2",
+      "record:0",
+    ]);
+  });
+
+  it("7. two host values on one record establish no host and never join; hostnames partition case-insensitively", () => {
+    const amb = rowsOf([db(), { ...attr(), hostname: "mac-01", host: "mac-02" }]);
+    expect(attrRows(amb)[0].description).toContain("[host: 2 values in this record]");
+    expect(attrRows(amb)[0].canonical?.quarantineAttribute?.join.state).toBe("host not established");
+    expect(dbRow(amb).description).toContain("no attribute record carries this identifier in this upload");
+    const dbAmb = rowsOf([{ ...db(), hostname: "mac-01", host: "mac-02" }, attr({ hostname: "mac-01" })]);
+    expect(dbRow(dbAmb).description).toContain("[host: 2 values in this record]");
+    expect(dbRow(dbAmb).description).toContain(
+      "[local file: the host is not established by this record — not joined]",
+    );
+    const cased = rowsOf([db({ hostname: "MAC-01" }), attr({ hostname: "mac-01" })]);
+    expect(dbRow(cased).description).toContain("[local file: /Users/x/Downloads/installer.dmg —");
+  });
+
+  it("8. 'sandbox mark only' is said only when the flag word is exactly the sandbox bit", () => {
+    const zero = rowsOf([db(), attr({ "com.apple.quarantine": `0000;${UNIX_HEX};Safari;${UUID}` })]);
+    expect(dbRow(zero).description).toContain("[download flag not set]");
+    expect(dbRow(zero).description).not.toContain("sandbox mark only");
+    const sandbox = rowsOf([db(), attr({ "com.apple.quarantine": `0002;${UNIX_HEX};Safari;${UUID}` })]);
+    expect(dbRow(sandbox).description).toContain("[download flag not set — sandbox mark only]");
+    const mixed = rowsOf([db(), attr({ "com.apple.quarantine": `0042;${UNIX_HEX};Safari;${UUID}` })]);
+    expect(dbRow(mixed).description).toContain("[download flag not set]");
+    expect(dbRow(mixed).description).not.toContain("sandbox mark only");
+  });
+
+  it("9. attribute rows cut by the event cap are counted as dropped", () => {
+    const r = parseMacos(JSON.stringify([attr({ path: "/a" }), attr({ path: "/b" }), attr({ path: "/c" })]), {
+      maxEvents: 1,
+      aggregate: false,
+    });
+    expect(r.total).toBe(3);
+    expect(r.kept).toBe(1);
+    expect(r.dropped).toBe(2);
+  });
+});
+
 describe("detection and routing", () => {
   it("a CSV with the com.apple.quarantine header routes to macOS; generic path/quarantine inventories do not", () => {
     expect(

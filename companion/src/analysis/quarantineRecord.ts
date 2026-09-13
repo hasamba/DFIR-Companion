@@ -332,7 +332,7 @@ const PAGE_SCHEMES = ["http:", "https:"];
 export function quarantineOverlay(
   rec: Row,
   fileSink: Map<string, SiemIoc>,
-  opts: { deferIocs?: boolean } = {},
+  opts: { deferIocs?: boolean; index?: number } = {},
 ): QuarantineRow {
   // Indicators go to the row first; the importer merges them after the per-UUID bound, so a flood
   // of variants under one identifier cannot fill the file's indicator budget either.
@@ -365,7 +365,10 @@ export function quarantineOverlay(
   const originTitle = read(["LSQuarantineOriginTitle", "origin_title"]);
   const senderName = read(["LSQuarantineSenderName", "sender"]);
   const senderAddress = read(["LSQuarantineSenderAddress", "sender_address"]);
-  const host = read(HOST_COLUMNS);
+  // Every host occurrence: two different values name no host, and the join (#1037) refuses it.
+  const hosts = [...new Set(HOST_COLUMNS.map((k) => read([k])).filter(Boolean))];
+  const host = hosts.length === 1 ? hosts[0] : "";
+  const hostAmbiguous = hosts.length > 1;
   // The origin alias is bookmark data — identity, never words: two dumps that differ only in it
   // are two records, and the row says the alias is present without showing it.
   const originAlias = read(["LSQuarantineOriginAlias", "origin_alias"]);
@@ -407,6 +410,7 @@ export function quarantineOverlay(
   );
   tags.push("local file: not in this record — joined by the event identifier");
   if (host) tags.push(`host: ${show(host)}`);
+  if (hostAmbiguous) tags.push("host: 2 values in this record");
 
   // Every shown fact, framed; the time as its ISO form or a digest of the raw text.
   const facts = [
@@ -418,7 +422,7 @@ export function quarantineOverlay(
     originTitle,
     senderName,
     senderAddress,
-    host,
+    hostAmbiguous ? `hosts:${hosts.join("|")}` : host,
     originAlias ? `alias:${keyDigest(originAlias)}` : "",
     `cols:${columns.map((c) => `${c.length}:${c}`).join("|")}`,
     // The instant AND its representation AND the raw text: a Cocoa row and an ISO row of one instant
@@ -490,14 +494,27 @@ export function quarantineOverlay(
       ? { urlIndicator: `omitted: a URL longer than ${URL_IOC_MAX} characters; the host is the indicator` }
       : {}),
     localFile: "not in this record",
-    host: host ? { name: host } : { state: "not named" },
+    host: host
+      ? { name: host }
+      : hostAmbiguous
+        ? { state: "2 values in this record" }
+        : { state: "not named" },
   };
   const canonicalInput: CreateCanonicalEventInput = {
     event: { category: "file", type: "download-record" },
     ...(agent ? { actor: { kind: "process", name: agent } } : {}),
     quarantine: envelope,
     time: { observed: when.iso || time.value, normalized: when.iso },
-    evidence: { rawRecords: [{ source: "macos-quarantine", locator: eventId ?? `facts:${factsDigest}` }] },
+    // A positional locator: two variants of one identifier are two records, addressed apart.
+    evidence: {
+      rawRecords: [
+        {
+          source: "macos-quarantine",
+          locator: opts.index !== undefined ? `record:${opts.index}` : (eventId ?? `facts:${factsDigest}`),
+          ...(eventId ? { recordId: eventId } : {}),
+        },
+      ],
+    },
     producer: { importer: "macos", parserVersion: "1", mappingVersion: "quarantine-v1" },
     rawFieldMap: {
       ...(when.iso ? { "time.observed": [time.header] } : {}),

@@ -466,9 +466,12 @@ the two are joined only through the event identifier both carry, inside one uplo
   `com.apple.quarantine`; `quarantine`, `xattr` and a path column are not a signature. The path
   columns read are `path`, `file`, `fullpath`, `name`, `filename`, `OSPath`; every occurrence is
   read, and a record with two different paths or two different attribute values says so
-  (`[path: 2 values in this record]`) and joins nothing. An optional `sha256`/`md5` column is
-  carried when it is valid hex; a `size` column when it is a number. Nothing is minted as an
-  indicator — a path is not one, and the database row already carries the URLs.
+  (`[path: 2 values in this record]`) and joins nothing — as does a record with two different host
+  values (`[host: 2 values in this record]`) or a clipped path. An optional `sha256`/`md5` column
+  is carried when it is valid hex and rides on the row, so the file correlates with any other
+  record carrying the same hash; a `size` column when it is a number. Two readings of one file that
+  differ in hash or size are two rows, never silently one. Nothing is minted as an indicator — a
+  path is not one, and the database row already carries the URLs.
 - **An empty cell is not absence.** `[attribute value empty or not reported — absence of the
   attribute not established]`: a blank cell can be a collection failure, a null the exporter
   wrote, or a field the collector did not read. The row never says "no quarantine attribute"
@@ -486,8 +489,8 @@ the two are joined only through the event identifier both carry, inside one uplo
   ≤10 s after the record …]` / `[marked ≤24 h before the record …]` (a band, never the exact
   seconds, with both encodings named — the attribute is written when the file is created, the
   record when the agent logs the event, so they can differ) or `[time not compared: the database
-  time is not readable]`; `[download flag set]` or `[download flag not set — sandbox mark
-  only]`. Several files with one identifier read `[local files: 2 — a.zip, a/app.bin — the same
+  time is not readable]`; `[download flag set]` or `[download flag not set]` — `— sandbox mark
+  only` is added only when the flag word is exactly the sandbox bit. Several files with one identifier read `[local files: 2 — a.zip, a/app.bin — the same
   identifier on several files: a copy, or an archive's extracted members; the records do not say
   which]` (a `.zip` propagates the mark to what is extracted; the row never decides). Identical
   attribute records are one file; a file with two different attribute values is an ambiguity —
@@ -497,8 +500,9 @@ the two are joined only through the event identifier both carry, inside one uplo
   database records disagree (#1009's `[event identifier shared by records with different facts]`
   — both sides say `database records with this identifier disagree — not joined`); a record on
   another host (a `hostname`/`host`/`computer`/`fqdn`/`clientid`/`machinename` column partitions
-  the join; records naming no host are one partition per upload and every joined row says `[host
-  not named in the records]`; a named host never joins an unnamed record); an attribute with no
+  the join, hostnames compared case-insensitively; records naming no host are one partition per
+  upload and every joined row says `[host not named in the records]`; a named host never joins an
+  unnamed record; a record with two host values joins nothing); an attribute with no
   database record (`[download event: not among this upload's database records]`) or a database
   record with no attribute (`[local file: not in this record — no attribute record carries this
   identifier in this upload]`, said only when the upload carried attribute records at all — a
@@ -509,11 +513,13 @@ the two are joined only through the event identifier both carry, inside one uplo
   joined fact are the attribute row's identity; the join state and its facts join the database
   row's, so a joined row is another row than the unjoined one and a re-dump folds. 65,536
   attribute records are retained per upload (the rest fold into one overflow row that shows
-  nothing); 256 files are tracked per identifier (`256+` past it), three shown. Every row is Info
+  nothing); 256 files are tracked per identifier while the lists are built (`256+` past it), three
+  shown, eight named in the database row's provenance. Every row is Info
   with no technique: quarantine presence is provenance, not execution and not maliciousness —
   the join says which link it established and which it did not. Each joined field's provenance
-  names the record it came from: the path, mark and hash rest on the attribute record, the URLs
-  and agent on the database record, the agreement facts on both.
+  names the record it came from: each listed path rests on its own attribute record, the URLs and
+  agent on the database record (addressed by position, `record:N`), the agreement facts on both,
+  and a refused join on every database record it consulted.
 - **What this does not do.** It does not join the file to the evidence it ran (no macOS
   process-execution record is parsed — link 2 of #1037), the origin URL to a browser-history
   visit (link 3), a persistence target's own attribute to a database record (a different upload

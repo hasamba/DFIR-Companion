@@ -93,11 +93,17 @@ function sampleObjects(root: unknown): Row[] {
   let arr: unknown[] | undefined;
   if (Array.isArray(root)) arr = root;
   else if (isObject(root)) {
-    const hits = (root).hits;
-    if (isObject(hits) && Array.isArray((hits).hits)) arr = (hits).hits as unknown[];
+    const hits = root.hits;
+    if (isObject(hits) && Array.isArray(hits.hits)) arr = hits.hits as unknown[];
     else for (const k of CONTAINERS) if (Array.isArray(getCI(root, k))) arr = getCI(root, k) as unknown[];
   }
-  return (arr ?? [root]).filter(isObject).slice(0, MACOS_SAMPLE_MAX);
+  // Stop at the eighth object: the scan never walks an attacker-sized array.
+  const out: Row[] = [];
+  for (const el of arr ?? [root]) {
+    if (isObject(el)) out.push(el);
+    if (out.length >= MACOS_SAMPLE_MAX) break;
+  }
+  return out;
 }
 
 const isQuarantineDbRecord = (s: Row): boolean =>

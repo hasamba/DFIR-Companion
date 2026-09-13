@@ -48,6 +48,7 @@ export interface AttributeObservation {
   attributeState?: ValueState | "empty";
   mark?: QuarantineXattr;
   host?: string;
+  hostState?: "2 values in this record";
   sha256?: string;
   md5?: string;
   size?: number;
@@ -115,6 +116,7 @@ export function readQuarantineAttributeRecord(rec: Row, index: number): Attribut
     ...(attributeState ? { attributeState } : {}),
     ...(mark ? { mark } : {}),
     ...(hosts.length === 1 ? { host: hosts[0] } : {}),
+    ...(hosts.length > 1 ? { hostState: "2 values in this record" as const } : {}),
     ...(sha ? { sha256: sha } : {}),
     ...(md5 ? { md5 } : {}),
     ...(Number.isInteger(size) && size >= 0 ? { size } : {}),
@@ -133,8 +135,8 @@ export type AttributeJoin = QuarantineAttributeBlock["join"];
 export interface AttributeJoinFacts {
   join: AttributeJoin;
   download?: QuarantineAttributeBlock["download"];
-  /** The joined database record's locator, for the envelope's provenance. */
-  databaseLocator?: string;
+  /** The database records consulted (one when joined; every variant when they disagree), for the provenance. */
+  databaseLocators?: string[];
   /** The joined database records' words for the `download event` span. */
   downloadWords?: string;
 }
@@ -157,14 +159,27 @@ export function joinTags(join: AttributeJoin, downloadWords: string | undefined)
     case "two attribute values for one path":
       tags.push("download event: two attribute values for one path — not joined");
       break;
+    case "path not established":
+      tags.push("download event: the file's path is not established by this record — not joined");
+      break;
+    case "host not established":
+      tags.push("download event: the host is not established by this record — not joined");
+      break;
     case "no identifier":
       break;
   }
   if (join.agentAgreement === "agrees") tags.push("agent agrees");
   if (join.timeAgreement) tags.push(timeWords(join.timeAgreement));
-  if (join.downloadFlag === true) tags.push("download flag set");
-  if (join.downloadFlag === false) tags.push("download flag not set — sandbox mark only");
+  tags.push(...flagTags(join));
   return tags;
+}
+
+/** The download bit as the record has it; "sandbox mark only" only when the sandbox bit is the whole word. */
+export function flagTags(join: Pick<AttributeJoin, "downloadFlag" | "sandboxOnly">): string[] {
+  if (join.downloadFlag === true) return ["download flag set"];
+  if (join.downloadFlag === false)
+    return [join.sandboxOnly ? "download flag not set — sandbox mark only" : "download flag not set"];
+  return [];
 }
 
 const ENCODING_WORDS: Record<string, string> = {
@@ -198,6 +213,7 @@ export function mapAttributeRow(a: AttributeObservation, facts: AttributeJoinFac
   if (a.size !== undefined) tags.push(`size ${a.size}`);
   tags.push(...joinTags(facts.join, facts.downloadWords));
   if (a.host) tags.push(`host: ${show(a.host)}`);
+  else if (a.hostState) tags.push("host: 2 values in this record");
   else tags.push("host not named in the records");
 
   const block: QuarantineAttributeBlock = {
@@ -220,29 +236,38 @@ export function mapAttributeRow(a: AttributeObservation, facts: AttributeJoinFac
           : a.attributeState === "clipped"
             ? { state: "clipped" }
             : { state: "not decodable", raw: a.raw },
-    host: a.host ? { name: a.host } : { state: "not named" },
+    host: a.host ? { name: a.host } : a.hostState ? { state: a.hostState } : { state: "not named" },
     ...(a.sha256 ? { sha256: a.sha256 } : {}),
     ...(a.md5 ? { md5: a.md5 } : {}),
     ...(a.size !== undefined ? { size: a.size } : {}),
     ...(facts.download ? { download: facts.download } : {}),
     join: facts.join,
   };
-  // Every shown fact is identity: the host, the path, the raw value, the join and its facts.
-  const key = `macos-quarantine-attr|${a.host ? `h:${keyDigest(a.host)}` : "-"}|${keyDigest(a.path ?? `?${a.pathState}`)}|${keyDigest(a.raw)}|${keyDigest(JSON.stringify(facts.join))}|${keyDigest(JSON.stringify(facts.download ?? null))}`;
+  // Every shown fact is identity: the host, the path, the raw value, the hashes, the size, the
+  // join and its facts.
+  const key = `macos-quarantine-attr|${a.host ? `h:${keyDigest(a.host)}` : a.hostState ? "h:2" : "-"}|${keyDigest(a.path ?? `?${a.pathState}`)}|${keyDigest(a.raw)}|${a.sha256 ?? "-"}|${a.md5 ?? "-"}|${a.size ?? "-"}|${keyDigest(JSON.stringify(facts.join))}|${keyDigest(JSON.stringify(facts.download ?? null))}`;
   const mark = identityMark(key);
   const head = "macOS quarantine attribute";
   const own = attributeLocator(a);
+  const dbLocators = facts.databaseLocators ?? [];
   const rawRecords = [
     { source: "macos-quarantine-attribute", locator: own },
-    ...(facts.databaseLocator ? [{ source: "macos-quarantine", locator: facts.databaseLocator }] : []),
+    ...dbLocators.map((locator) => ({
+      source: "macos-quarantine",
+      locator,
+      ...(a.mark?.eventId ? { recordId: a.mark.eventId } : {}),
+    })),
   ];
   const locatorMap: Record<string, string> = {};
-  if (facts.databaseLocator) {
-    locatorMap["quarantineAttribute.download"] = facts.databaseLocator;
-    // Agreement fields rest on both records: the database record is added under the leaf.
+  if (dbLocators.length) {
+    locatorMap["quarantineAttribute.download"] = dbLocators[0];
+    // The join state rests on every database record consulted; the agreement fields on both records.
+    dbLocators.forEach(
+      (locator, i) => (locatorMap[`quarantineAttribute.join.state.database.${i}`] = locator),
+    );
     for (const leaf of ["agentAgreement", "timeAgreement", "downloadFlag"] as const)
       if (facts.join[leaf] !== undefined)
-        locatorMap[`quarantineAttribute.join.${leaf}.database`] = facts.databaseLocator;
+        locatorMap[`quarantineAttribute.join.${leaf}.database`] = dbLocators[0];
   }
   const input: CreateCanonicalEventInput = {
     event: { category: "file", type: "quarantine-attribute" },
@@ -269,7 +294,10 @@ export function mapAttributeRow(a: AttributeObservation, facts: AttributeJoinFac
     aggKey: key,
     sources: ["macOS Quarantine"],
     canonical: createCanonicalEvent(input),
-    // No `path` on the row: correlate.ts case-folds paths and APFS may not; the exact path is in the envelope.
+    // No `path` on the row: correlate.ts case-folds paths and APFS may not; the exact path is in the
+    // envelope. A valid hash IS on the row: a hash names the bytes on any volume.
+    ...(a.sha256 ? { sha256: a.sha256 } : {}),
+    ...(a.md5 ? { md5: a.md5 } : {}),
   };
 }
 

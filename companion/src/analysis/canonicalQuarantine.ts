@@ -22,6 +22,7 @@ export const quarantineLocalFileSchema = z.union([
   z.object({ state: z.literal("no attribute record carries this identifier in this upload") }),
   z.object({ state: z.literal("database records with this identifier disagree — not joined") }),
   z.object({ state: z.literal("the file carries two attribute values — not joined") }),
+  z.object({ state: z.literal("host not established — not joined") }),
 ]);
 
 export const quarantineBlockSchema = z.object({
@@ -42,13 +43,22 @@ export const quarantineBlockSchema = z.object({
   timeRaw: z.string().optional(),
   urlIndicator: z.string().optional(),
   localFile: quarantineLocalFileSchema,
-  /** The host column the record carries, or that none did. */
-  host: z.union([z.object({ name: z.string() }), z.object({ state: z.literal("not named") })]).optional(),
+  /** The host column the record carries, that none did, or that two disagreed. */
+  host: hostSchema().optional(),
   agentAgreement: z.enum(["agrees", "differs", "not compared"]).optional(),
   timeAgreement: quarantineTimeAgreementSchema().optional(),
   downloadFlag: z.boolean().optional(),
+  sandboxOnly: z.boolean().optional(),
   folded: z.boolean().optional(),
 });
+
+function hostSchema() {
+  return z.union([
+    z.object({ name: z.string() }),
+    z.object({ state: z.literal("not named") }),
+    z.object({ state: z.literal("2 values in this record") }),
+  ]);
+}
 
 function quarantineTimeAgreementSchema() {
   return z.union([
@@ -82,7 +92,7 @@ export const quarantineAttributeBlockSchema = z.object({
       z.object({ state: z.literal("clipped") }),
     ])
     .optional(),
-  host: z.union([z.object({ name: z.string() }), z.object({ state: z.literal("not named") })]),
+  host: hostSchema(),
   sha256: z.string().optional(),
   md5: z.string().optional(),
   size: z.number().int().nonnegative().optional(),
@@ -104,10 +114,14 @@ export const quarantineAttributeBlockSchema = z.object({
       "database records disagree",
       "two attribute values for one path",
       "no identifier",
+      "path not established",
+      "host not established",
     ]),
     agentAgreement: z.enum(["agrees", "differs", "not compared"]).optional(),
     timeAgreement: quarantineTimeAgreementSchema().optional(),
     downloadFlag: z.boolean().optional(),
+    /** The flag word is exactly the sandbox bit. */
+    sandboxOnly: z.boolean().optional(),
   }),
   folded: z.boolean().optional(),
   records: z.number().int().positive().optional(),

@@ -117,8 +117,8 @@ function mapUnifiedLog(rec: Row): MappedEvent | null {
 // One LSQuarantineEventsV2 record → what it establishes (quarantineRecord.ts, #933 item 7): the
 // kind, the agent, the RESOURCE and the ORIGIN as distinct URLs, the time by the encoding its column declares,
 // the event identifier — and never the local file, which this record does not name.
-function mapQuarantine(rec: Row, sink: Map<string, SiemIoc>): QuarantineRow | null {
-  return quarantineOverlay(rec, sink, { deferIocs: true });
+function mapQuarantine(rec: Row, sink: Map<string, SiemIoc>, index: number): QuarantineRow | null {
+  return quarantineOverlay(rec, sink, { deferIocs: true, index });
 }
 
 // A quarantine RECORD names itself by its values, never by its header alone: a native
@@ -174,7 +174,7 @@ export function parseMacos(input: string, opts: MacosImportOptions = {}): MacosP
       return true;
     }
     const isQuarantine = isQuarantineRecord(rec, headers);
-    const event = isQuarantine ? mapQuarantine(rec, iocSink) : mapUnifiedLog(rec);
+    const event = isQuarantine ? mapQuarantine(rec, iocSink, index) : mapUnifiedLog(rec);
     if (event) mapped.push(event);
     if (event && isQuarantine) quarantineRows.push(event as QuarantineRow);
     return isQuarantine;
@@ -247,7 +247,8 @@ export function parseMacos(input: string, opts: MacosImportOptions = {}): MacosP
     iocs: [...iocSink.values()].slice(0, maxIocs),
     total,
     kept: events.length,
-    dropped: Math.max(0, mapped.length - represented),
+    // Every routed row counts — the attribute rows live outside `mapped`.
+    dropped: Math.max(0, kept.length + dropped.size - represented),
     groups,
     format: kept.length ? format : "empty",
   };
