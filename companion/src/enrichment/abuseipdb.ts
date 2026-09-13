@@ -62,6 +62,9 @@ export class AbuseIpdbProvider implements EnrichmentProvider {
 
     return {
       source: this.name,
+      // Lineage (#933 item 18): community reports summed into one confidence — one aggregate origin.
+      originKind: "aggregate",
+      origins: [this.name],
       verdict,
       score: `${score}% abuse${d.totalReports ? `, ${d.totalReports} reports` : ""}`,
       detections: d.totalReports,

@@ -13,7 +13,7 @@
 // network), matching the IRIS-push / enrichment-service pattern.
 
 import type { ForensicEvent, InvestigationState } from "../../analysis/stateTypes.js";
-import { toTimesketchEventsFromList } from "./timesketchMap.js";
+import { splitTimesketchEvents, timesketchOmittedWarning } from "./timesketchMap.js";
 import type { TimesketchSketchRef, TimesketchTimelineRef } from "./timesketchClient.js";
 
 // Structural subset of TimesketchClient used here — lets tests pass a lightweight mock.
@@ -49,6 +49,7 @@ export interface TimesketchPushResult {
   created: boolean; // true = the sketch was newly created
   timelineName: string;
   events: number; // events uploaded (with a parseable timestamp)
+  omitted: number; // events left out for lack of one — also named in `warnings` (#957)
   replacedTimeline: boolean; // true = an existing same-named timeline was deleted first
   sketchUrl?: string;
   warnings: string[];
@@ -79,8 +80,10 @@ async function pushEventsToTimesketch(
     created = true;
   }
 
-  // 3. Build the JSONL from the event list.
-  const events = toTimesketchEventsFromList(input.events);
+  // 3. Build the JSONL from the event list. Rows with no parseable time cannot be Timesketch events;
+  // they are counted and named in the warnings so a partial push is not mistaken for a whole one.
+  const { events, omitted } = splitTimesketchEvents(input.events);
+  if (omitted > 0) warnings.push(timesketchOmittedWarning(omitted));
   const jsonl = events.length ? events.map((e) => JSON.stringify(e)).join("\n") + "\n" : "";
 
   // 4. Clean-replace: delete any existing SAME-NAMED timeline so re-pushes don't duplicate events
@@ -117,6 +120,7 @@ async function pushEventsToTimesketch(
     created,
     timelineName,
     events: events.length,
+    omitted,
     replacedTimeline,
     sketchUrl: options.baseUrl
       ? `${options.baseUrl.replace(/\/+$/, "")}/sketch/${sketch.id}/explore`

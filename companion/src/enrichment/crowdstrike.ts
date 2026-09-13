@@ -78,6 +78,12 @@ function escapeFqlLiteral(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 }
 
+// Lineage (#933 item 18): Falcon Intelligence and MalQuery are CrowdStrike's own data — first-party.
+const CROWDSTRIKE_ORIGIN = (): Pick<EnrichmentResult, "originKind" | "origins"> => ({
+  originKind: "first-party",
+  origins: ["CrowdStrike"],
+});
+
 // CrowdStrike Falcon — Threat Intelligence enrichment (NO endpoint/SIEM data). One indicator is
 // looked up across the abuse-free, intel-only back-ends and each hit is a SEPARATE result:
 //   hash         → Falcon Intelligence Indicators + MalQuery sample metadata
@@ -176,7 +182,13 @@ export class CrowdStrikeProvider implements EnrichmentProvider {
     if (conf) parts.push(`${conf} confidence`);
     if (families[0]) parts.push(families[0]);
     if (actors[0]) parts.push(`actor: ${actors[0]}`);
-    return { source: "CrowdStrike Intel", verdict, score: parts.join(" — ") || "tracked indicator", tags };
+    return {
+      source: "CrowdStrike Intel",
+      ...CROWDSTRIKE_ORIGIN(),
+      verdict,
+      score: parts.join(" — ") || "tracked indicator",
+      tags,
+    };
   }
 
   // MalQuery — CrowdStrike's malware sample corpus (keyed by sha256).
@@ -195,6 +207,7 @@ export class CrowdStrikeProvider implements EnrichmentProvider {
     const tags = [family, fileType].filter(Boolean);
     return {
       source: "CrowdStrike MalQuery",
+      ...CROWDSTRIKE_ORIGIN(),
       verdict: malicious ? "malicious" : "unknown",
       score: malicious
         ? `known sample${family ? `: ${family}` : ""}${fileType ? ` (${fileType})` : ""}`

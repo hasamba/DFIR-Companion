@@ -169,7 +169,9 @@ export function malfindContext(row: Row, corroboration: MalfindCorroboration = {
   }
 
   if (corroboration.networkPid) {
-    observations.push("the same process also holds a network connection in this image");
+    observations.push(
+      "a network object with the same PID is reported in this image, and one submitted process row is consistent with it",
+    );
     independent++;
   }
   if (corroboration.suspiciousCommandLine) {

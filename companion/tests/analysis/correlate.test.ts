@@ -396,6 +396,120 @@ describe("correlateEvents", () => {
     expect(correlateEvents([a, b])).toHaveLength(1);
   });
 
+  // An undated row must not acquire a time from correlation (#957). A YARA hit or a memory finding
+  // carries a hash and a path but no clock; unioning it with a dated host observation on that
+  // artifact alone made the survivor say the hit happened at the observation's time.
+  describe("undated rows keep their lack of a time (#957)", () => {
+    const HASH = "a".repeat(64);
+    it("does NOT merge an undated row into a dated one on a shared hash", () => {
+      const undated = ev({
+        id: "u",
+        timestamp: "",
+        description: "YARA hit",
+        sha256: HASH,
+        asset: "HOST1",
+        sources: ["YARA"],
+      });
+      const dated = ev({
+        id: "d",
+        description: "file created",
+        sha256: HASH,
+        asset: "HOST1",
+        sources: ["KAPE"],
+      });
+      const out = correlateEvents([undated, dated]);
+      expect(out.map((e) => [e.id, e.timestamp])).toEqual([
+        ["u", ""],
+        ["d", "2026-05-26T12:00:00Z"],
+      ]);
+    });
+    it("does NOT merge an undated row into a dated one on a shared structured path", () => {
+      const undated = ev({
+        id: "u",
+        timestamp: "",
+        description: "installed package",
+        path: "c:\\u.exe",
+        asset: "HOST1",
+        sources: ["LEAPP"],
+      });
+      const dated = ev({
+        id: "d",
+        description: "prefetch run",
+        path: "c:\\u.exe",
+        asset: "HOST1",
+        sources: ["KAPE"],
+      });
+      const out = correlateEvents([undated, dated]);
+      expect(out.map((e) => [e.id, e.timestamp])).toEqual([
+        ["u", ""],
+        ["d", "2026-05-26T12:00:00Z"],
+      ]);
+    });
+    it("still merges two undated rows on a shared hash, and two dated ones", () => {
+      const u1 = ev({ id: "u1", timestamp: "", sha256: HASH, sources: ["YARA"] });
+      const u2 = ev({ id: "u2", timestamp: "", sha256: HASH, sources: ["THOR"] });
+      const d1 = ev({ id: "d1", sha256: HASH, sources: ["KAPE"] });
+      const d2 = ev({ id: "d2", sha256: HASH, sources: ["Velociraptor"] });
+      const out = correlateEvents([u1, u2, d1, d2]);
+      expect(out.map((e) => e.timestamp).sort()).toEqual(["", "2026-05-26T12:00:00Z"]);
+      expect(out.find((e) => e.timestamp === "")?.sources?.sort()).toEqual(["THOR", "YARA"]);
+      expect(out.find((e) => e.timestamp !== "")?.sources?.sort()).toEqual(["KAPE", "Velociraptor"]);
+    });
+    it("does NOT merge an undated process finding into a dated creation on host+pid", () => {
+      // A memory pslist row carries a pid and no clock; the EDR's creation of that pid is dated.
+      const undated = ev({
+        id: "u",
+        timestamp: "",
+        description: "pslist svchost.exe",
+        pid: 4321,
+        asset: "HOST1",
+        sources: ["Volatility"],
+      });
+      const dated = ev({
+        id: "d",
+        description: "process created svchost.exe",
+        pid: 4321,
+        asset: "HOST1",
+        sources: ["ECAR"],
+      });
+      const out = correlateEvents([undated, dated]);
+      expect(out.map((e) => e.timestamp).sort()).toEqual(["", "2026-05-26T12:00:00Z"]);
+    });
+    it("does NOT merge an undated process finding into a dated creation on the command line", () => {
+      const cmd = {
+        processName: "powershell.exe",
+        commandLine: "powershell -enc AAAA",
+        parentName: "cmd.exe",
+        asset: "HOST1",
+      };
+      const undated = ev({
+        id: "u",
+        timestamp: "",
+        description: "cmdline powershell",
+        pid: 1,
+        ...cmd,
+        sources: ["Volatility"],
+      });
+      const dated = ev({
+        id: "d",
+        description: "process created powershell",
+        pid: 2,
+        ...cmd,
+        sources: ["Sysmon"],
+      });
+      const out = correlateEvents([undated, dated]);
+      expect(out.map((e) => e.timestamp).sort()).toEqual(["", "2026-05-26T12:00:00Z"]);
+    });
+    it("a dated chain on a path is not bridged through an undated member", () => {
+      // Two dated rows outside the window share a path with an undated third. Before, the undated
+      // row unioned with both and the whole trio became one event at the earliest time.
+      const a = ev({ id: "a", path: "c:\\x.exe", timestamp: "2026-05-26T12:00:00Z", sources: ["THOR"] });
+      const b = ev({ id: "b", path: "c:\\x.exe", timestamp: "2026-05-26T12:05:00Z", sources: ["KAPE"] });
+      const u = ev({ id: "u", path: "c:\\x.exe", timestamp: "", sources: ["YARA"] });
+      expect(correlateEvents([a, b, u], { windowSeconds: 2 })).toHaveLength(3);
+    });
+  });
+
   it("does NOT borrow artifactName from a non-primary event — it must match the shown description", () => {
     // mergeGroup picks `primary` by worst-severity then longest-description; `description` always comes
     // from primary. artifactName is an ATTRIBUTION of that description (which artifact produced it), not

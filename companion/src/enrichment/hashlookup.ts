@@ -117,6 +117,16 @@ export class HashlookupProvider implements EnrichmentProvider {
     const score =
       (verdict === "malicious" ? "known malicious" : "known file") + (fileName ? `: ${fileName}` : "");
 
-    return { source: this.name, verdict, score, tags, link: url };
+    // Lineage (#933 item 18): hashlookup is a corpus of datasets — a relay; the record's `source` names
+    // the dataset the hash came from (NSRL, a distro …), or nothing.
+    return {
+      source: this.name,
+      originKind: "relay",
+      origins: source ? [source] : [],
+      verdict,
+      score,
+      tags,
+      link: url,
+    };
   }
 }

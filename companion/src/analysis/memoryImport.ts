@@ -52,6 +52,7 @@ import {
 import {
   GENERIC_TIME_KEYS,
   cellStr,
+  isPlaceholderCell,
   filePathIoc,
   malfindDescription,
   malfindRegion,
@@ -59,6 +60,26 @@ import {
   serviceImagePath,
 } from "./memoryFields.js";
 import { pstreeChildren } from "./pstreeDepth.js";
+import { extractTables, SHORT_PLUGIN } from "./memoryTables.js";
+import { carryImage, imageFactsEvents, isImageInfoTable, readImageFacts } from "./memoryImageFacts.js";
+import { exportShapeEvents, exportShapeNote } from "./memoryExportShape.js";
+import { boundedAggKey } from "./aggKey.js";
+import { identityMark, packTags } from "./recordIdentity.js";
+import {
+  indexProcessRows,
+  objectOffset,
+  ownerConsistency,
+  ownerDigest,
+  normalizeAddress,
+  readState,
+  readTime,
+  shown,
+  socketProvenance,
+  SOCKET_CREATED_KEYS,
+  tupleShape,
+  type ProcessIndex,
+} from "./memoryNetObjects.js";
+export { isRekallCommandList, looksLikeVolatilityText } from "./memoryTables.js";
 import { parseCsv } from "./csvImport.js";
 import { tradecraftSignal } from "./tradecraftRules.js";
 import { malfindContext } from "./malfindContext.js";
@@ -90,14 +111,25 @@ export interface MemoryParseResult {
   injected: number; // malfind (injected-code) rows seen
   processes: number; // process-listing rows seen
   connections: number; // network-connection rows seen
-  format: string; // "volatility" | "volatility-jsonl" | "volatility-map" | "volatility-text" | "rekall" | "empty"
+  format: string; // "volatility" | "volatility-jsonl" | "volatility-map" | "volatility-text" | "volatility2-text" | "rekall" | "empty"
   tool: string; // "Volatility" | "Rekall" | ""
+  // What the export's SHAPE says (memoryExportShape.ts): zero-row labels, an unread Volatility 2
+  // layout, diagnostic-looking text — for the import note. Never a completion claim.
+  note?: string;
 }
 
 type Category =
-  "process" | "netscan" | "malfind" | "cmdline" | "service" | "module" | "dll" | "handle" | "generic";
+  | "process"
+  | "netscan"
+  | "malfind"
+  | "cmdline"
+  | "service"
+  | "module"
+  | "dll"
+  | "handle"
+  | "imageinfo"
+  | "generic";
 
-const REKALL_DIRECTIVES = new Set(["m", "t", "r", "s", "e", "p", "f", "L", "c"]);
 const PRIVATE_IP =
   /^(?:10\.|127\.|169\.254\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|0\.|255\.|22[4-9]\.|23\d\.|::1$|fe80:|fc|fd)/i;
 
@@ -107,7 +139,8 @@ const PRIVATE_IP =
 function pick(row: Row, keys: string[]): string {
   for (const k of keys) {
     const s = cellStr(getCI(row, k)).trim();
-    if (s) return s;
+    // Volatility's `-` (unreadable) and `N/A` are ABSENT values, not names, paths or addresses.
+    if (s && !isPlaceholderCell(s)) return s;
   }
   return "";
 }
@@ -172,9 +205,6 @@ function classify(plugin: string, cols: Set<string>): Category {
   return "generic";
 }
 
-const SHORT_PLUGIN =
-  /(pstree|pslist|psscan|psxview|netscan|netstat|connscan|connections|sockscan|sockets|malfind|hollowfind|ldrmodules|cmdline|cmdscan|consoles|svcscan|services|modscan|modules|driverscan|driverirp|dlllist|handles|getsids|envars|privileges|callbacks|ssdt|mutantscan|filescan|hivelist|hashdump)/;
-
 // A short, human label for the plugin: the Rekall/known plugin name, the os.module from a
 // Volatility dotted id, or a filename/category fallback.
 function displayLabel(plugin: string, category: Category, rows: Row[]): string {
@@ -200,6 +230,7 @@ function displayLabel(plugin: string, category: Category, rows: Row[]): string {
     module: "modules",
     dll: "dlllist",
     handle: "handles",
+    imageinfo: "info",
     generic: "memory",
   };
   return byCat[category];
@@ -342,46 +373,157 @@ function mapProcess(label: string, tool: string, rows: Row[], sink: Map<string, 
   return out;
 }
 
-function mapNetscan(label: string, tool: string, rows: Row[], sink: Map<string, SiemIoc>): MappedEvent[] {
+/**
+ * Rekall's socket rows carry combined `ip:port` cells and are OUTSIDE the object contract below;
+ * they keep the rendering they had (#933 item 14 excludes them by design).
+ */
+function mapNetscanLegacy(
+  label: string,
+  tool: string,
+  rows: Row[],
+  sink: Map<string, SiemIoc>,
+): MappedEvent[] {
   const out: MappedEvent[] = [];
   for (const r of rows) {
-    const proto = pick(r, ["Proto", "proto", "Protocol"]);
+    const proto = pick(r, ["Proto", "proto", "Protocol", "protocol"]);
     const laddr = pick(r, ["LocalAddr", "local_addr", "LocalAddress", "Source"]);
     const lport = pick(r, ["LocalPort", "local_port", "Lport"]);
-    const faddr = pick(r, ["ForeignAddr", "foreign_addr", "ForeignAddress", "RemoteAddr", "Destination"]);
+    const faddr = pick(r, [
+      "ForeignAddr",
+      "foreign_addr",
+      "ForeignAddress",
+      "RemoteAddr",
+      "remote_addr",
+      "Destination",
+    ]);
     const fport = pick(r, ["ForeignPort", "foreign_port", "RemotePort"]);
     const state = pick(r, ["State", "state"]);
     const owner = pick(r, ["Owner", "Process", "owner", "ImageFileName"]);
     const pid = pickPid(r);
-    const created = pickTime(r, ["Created", "create_time", "Time", "time"]);
-
-    const fip = cleanIp(faddr);
-    const lip = cleanIp(laddr);
+    const created = pickTime(r, ["Created", "create_time", "created"]);
+    const fip = cleanIp(faddr.replace(/:\d+$/, ""));
     if (fip) addIoc(sink, "ip", fip);
-    const proc = owner ? baseName(owner) : "";
-    if (proc && /\.\w{2,4}$/.test(proc)) addIoc(sink, "process", proc);
-
-    const external = !!fip && !PRIVATE_IP.test(fip);
-    const severity: Severity = external && /establish|estab/i.test(state) ? "Low" : "Info";
-    const portN = Number(fport);
-
     out.push({
       timestamp: created,
       description:
-        `${tool} ${label}: ${proto || "?"} ${laddr || "?"}:${lport || "?"} → ${faddr || "*"}:${fport || "*"}${state ? ` [${state}]` : ""}${owner ? ` owner ${owner}` : ""}${pid ? ` (PID ${pid})` : ""}`.slice(
+        `${tool} ${label}: ${shown(proto, 12) || "?"} ${shown(laddr, 48) || "?"}${lport ? `:${shown(lport, 8)}` : ""} → ${shown(faddr, 48) || "*"}${fport ? `:${shown(fport, 8)}` : ""}${state ? ` [state: ${shown(state, 40)}]` : ""}${owner ? ` owner ${shown(owner, 80)}` : ""}${/^\d+$/.test(pid) ? ` (PID ${pid})` : ""}`.slice(
           0,
           600,
         ),
+      severity: "Info",
+      mitre: [],
+      aggKey: boundedAggKey(
+        `mem|net|rekall|${proto}|${laddr}|${lport}|${faddr}|${fport}|${state}|${pid}`.toLowerCase(),
+      ),
+      sources: [tool],
+      ...(fip ? { dstIp: fip } : {}),
+    });
+  }
+  return out;
+}
+
+/** The socket row's own fields, read once for the pre-pass and the mapper alike. */
+function socketFields(r: Row) {
+  return {
+    tuple: {
+      proto: pick(r, ["Proto", "proto", "Protocol"]),
+      laddr: pick(r, ["LocalAddr", "local_addr", "LocalAddress", "Source"]),
+      lport: pick(r, ["LocalPort", "local_port", "Lport"]),
+      faddr: pick(r, ["ForeignAddr", "foreign_addr", "ForeignAddress", "RemoteAddr", "Destination"]),
+      fport: pick(r, ["ForeignPort", "foreign_port", "RemotePort"]),
+      state: pick(r, ["State", "state"]),
+    },
+    owner: pick(r, ["Owner", "Process", "owner", "ImageFileName"]),
+    pidRaw: pickPid(r),
+    // Only a canonical numeric PID is compared or shown as a PID; anything else is "not readable".
+    pid: /^\d{1,10}$/.test(pickPid(r)) ? pickPid(r) : "",
+    created: readTime(r, SOCKET_CREATED_KEYS),
+  };
+}
+
+/**
+ * A socket object, read for what its record establishes (#933 item 14, memoryNetObjects.ts): the
+ * stored state and Volatility's reading of it, how the plugin reported the object, the owner's own
+ * two fields, a consistency note against the submitted process rows, and the tuple's shape. The
+ * identity is the object's offset, shown in the row: two rows at one offset are one object
+ * reported twice; a row with no offset never folds.
+ */
+function mapNetscan(
+  plugin: string,
+  label: string,
+  tool: string,
+  rows: Row[],
+  sink: Map<string, SiemIoc>,
+  index: ProcessIndex,
+): MappedEvent[] {
+  if (tool === "Rekall") return mapNetscanLegacy(label, tool, rows, sink);
+  const out: MappedEvent[] = [];
+  const provenance = socketProvenance(plugin);
+  rows.forEach((r, rowIndex) => {
+    const { tuple, owner, pidRaw, pid, created } = socketFields(r);
+    const state = readState(tuple.state, tuple.proto);
+    const shape = tupleShape(tuple);
+    const consistency = ownerConsistency(pid, owner, created, index);
+    const offset = objectOffset(r);
+
+    const peer = shape.ok ? cleanIp(shape.peer) : "";
+    const lip = shape.ok ? cleanIp(normalizeAddress(tuple.laddr)) : "";
+    if (peer && !state.listening) addIoc(sink, "ip", peer);
+    const proc = consistency.consistent && owner ? baseName(owner) : "";
+    if (proc && /\.\w{2,4}$/.test(proc)) addIoc(sink, "process", proc);
+
+    const external = !!peer && !state.listening && !PRIVATE_IP.test(peer);
+    const severity: Severity = external && state.token.toUpperCase() === "ESTABLISHED" ? "Low" : "Info";
+
+    const pidWords = pid
+      ? `PID ${pid}`
+      : pidRaw
+        ? `PID not readable (${shown(pidRaw, 20)})`
+        : "PID not in the record";
+    const ownerWords =
+      !owner && !pidRaw
+        ? "owner: not in the record — not an indicator of concealment"
+        : `owner: ${owner ? `${shown(owner, 80)}, ${pidWords}` : `${pidWords}, name not in the record`} — ${consistency.words}`;
+    // Mandatory qualifications first, so a long owner can never push them past the cap.
+    const tags = [
+      `state: ${state.token ? `${state.token} — ` : ""}${state.reading}`,
+      provenance,
+      shape.ok ? "" : `tuple incomplete: ${shape.problem}`,
+      severity === "Low"
+        ? "externally addressed object in stored state ESTABLISHED: triage priority, not a claim of traffic"
+        : "",
+      ownerWords,
+      created.status === "ok"
+        ? `created: ${created.iso}`
+        : created.status === "unreadable"
+          ? `created: not readable — ${shown(created.raw, 40)}`
+          : "",
+      offset ? `object 0x${offset}` : "object offset not in the record",
+    ].filter(Boolean);
+    const endpoint = `${shown(tuple.proto, 12) || "?"} ${shown(tuple.laddr, 48) || "?"}:${shown(tuple.lport, 8) || "?"} → ${shown(tuple.faddr, 48) || "*"}:${shown(tuple.fport, 8) || "*"}`;
+    const head = `${tool} ${label}: ${endpoint}`;
+    const key = boundedAggKey(
+      `mem|net|${provenance.slice(0, 12)}|${tuple.proto}|${tuple.laddr}|${tuple.lport}|${tuple.faddr}|${tuple.fport}|${tuple.state}|${pidRaw}|${ownerDigest(owner, pidRaw)}|${created.raw}|${offset ? `off:${offset}` : `row:${rowIndex}`}`.toLowerCase(),
+    );
+    const mark = identityMark(key);
+    const packed = packTags(tags, 600 - head.length - mark.length);
+    const kept = packed ? packed.split("] [").length : 0;
+
+    out.push({
+      timestamp: created.iso,
+      // A row without an offset carries its identity mark: two such rows must stay two rows
+      // downstream, where only the description survives.
+      description: `${head}${packed}${kept < tags.length || !offset ? mark : ""}`,
       severity,
       mitre: [],
-      aggKey: `mem|net|${proto}|${faddr}|${fport}|${proc}`.toLowerCase().slice(0, 400),
+      aggKey: key,
       sources: [tool],
       ...(proc ? { processName: proc } : {}),
       ...(lip ? { srcIp: lip } : {}),
-      ...(fip ? { dstIp: fip } : {}),
-      ...(Number.isFinite(portN) && portN > 0 ? { port: portN } : {}),
+      ...(peer ? { dstIp: peer } : {}),
+      ...(Number.isFinite(shape.fport) && shape.fport > 0 && shape.ok ? { port: shape.fport } : {}),
     });
-  }
+  });
   return out;
 }
 
@@ -593,241 +735,6 @@ function mapGeneric(label: string, tool: string, rows: Row[], sink: Map<string, 
 }
 
 // ───────────────────────────── table extraction ─────────────────────────────
-
-interface Table {
-  plugin: string;
-  rows: Row[];
-}
-
-const VOL_PLUGIN_KEY = /^(windows|linux|mac)\.[a-z]/; // lowercase os ⇒ Volatility (Velociraptor uses "Windows.")
-
-function isVolatilityPluginMap(root: unknown): boolean {
-  if (!isObject(root) || Array.isArray(root)) return false;
-  const entries = Object.entries(root);
-  return (
-    entries.length > 0 &&
-    entries.every(([, v]) => Array.isArray(v)) &&
-    entries.some(([k]) => VOL_PLUGIN_KEY.test(k))
-  );
-}
-
-export function isRekallCommandList(root: unknown): boolean {
-  if (!Array.isArray(root) || root.length === 0) return false;
-  let stmts = 0,
-    hits = 0;
-  for (const el of root) {
-    if (Array.isArray(el) && typeof el[0] === "string" && el[0].length <= 2) {
-      stmts++;
-      if (REKALL_DIRECTIVES.has(el[0])) hits++;
-    }
-  }
-  return hits >= 2 && hits >= stmts * 0.5;
-}
-
-// Walk a Rekall `[directive, payload]` statement list into plugin tables.
-function parseRekall(root: unknown[]): Table[] {
-  const tables: Table[] = [];
-  let curPlugin = "";
-  let cur: Table | null = null;
-  const startTable = (): void => {
-    cur = { plugin: curPlugin, rows: [] };
-    tables.push(cur);
-  };
-  for (const el of root) {
-    if (!Array.isArray(el) || typeof el[0] !== "string") continue;
-    const directive = el[0];
-    const payload = el[1];
-    if (directive === "m" && isObject(payload)) {
-      const pl = getCI(payload, "plugin");
-      const name = isObject(pl) ? cellStr(getCI(pl, "name")) : cellStr(pl);
-      // The plugin name precedes its table; a later table picks it up via curPlugin.
-      if (name) curPlugin = name;
-    } else if (directive === "s" && isObject(payload)) {
-      const nm = cellStr(getCI(payload, "name")) || cellStr(getCI(payload, "plugin_name"));
-      if (nm) curPlugin = nm;
-    } else if (directive === "t") {
-      startTable();
-    } else if (directive === "r" && isObject(payload)) {
-      if (!cur) startTable();
-      cur!.rows.push(payload);
-    }
-  }
-  return tables.filter((t) => t.rows.length > 0);
-}
-
-function pluginFromFilename(name: string | undefined): string {
-  const n = (name ?? "").toLowerCase();
-  const dotted = /\b(windows|linux|mac)\.(\w+)/.exec(n);
-  if (dotted) return `${dotted[1]}.${dotted[2]}`;
-  const m = SHORT_PLUGIN.exec(n);
-  return m ? m[1] : "";
-}
-
-// ───────────────────────────── Volatility 3 TEXT/grid renderer ─────────────────────────────
-//
-// The DEFAULT `vol <plugin>` output (no `-r json`): a "Volatility 3 Framework <ver>" banner, a
-// TAB-separated column header, then TAB-separated data rows. `malfind`/`pstree` interleave a
-// multi-line hexdump + disassembly block AFTER each row — those continuation lines are skipped. We
-// parse the grid into the SAME header-keyed Row objects the JSON path produces, so all the
-// column-fingerprint classification and per-category mappers above are reused unchanged.
-
-const VOL_TEXT_BANNER = /^Volatility 3 Framework\b/i;
-const VOL_TEXT_HEXDUMP = /^[0-9a-fA-F]{2}( [0-9a-fA-F]{2}){3,}/; // a hexdump gutter line: "48 89 54 24 …"
-const VOL_TEXT_DISASM = /^0x[0-9a-fA-F]+:/; // a disassembly line: "0x…:\tmov …"
-// Column names that appear in Volatility 3 text headers — used (with the banner) to recognize the
-// format when the banner was stripped. Lowercased; matched against the TAB-split header cells.
-const VOL_TEXT_HEADER_COLS = new Set([
-  "pid",
-  "ppid",
-  "process",
-  "imagefilename",
-  "comm",
-  "offset(v)",
-  "offset",
-  "protection",
-  "tag",
-  "createtime",
-  "exittime",
-  "threads",
-  "handles",
-  "sessionid",
-  "wow64",
-  "args",
-  "cmd",
-  "localaddr",
-  "foreignaddr",
-  "localport",
-  "foreignport",
-  "proto",
-  "state",
-  "owner",
-  "created",
-  "name",
-  "displayname",
-  "binary",
-  "start",
-  "path",
-  "base",
-  "size",
-  "start vpn",
-  "end vpn",
-]);
-
-// Recognize a Volatility 3 text/grid export — the banner, or a TAB-separated header carrying several
-// known Volatility column names. Pure; exported so the unified import detector can route to "memory".
-export function looksLikeVolatilityText(text: string): boolean {
-  const head = (text ?? "").slice(0, 4000);
-  if (VOL_TEXT_BANNER.test(head.trimStart())) return true;
-  for (const line of head.split(/\r\n|\r|\n/).slice(0, 12)) {
-    if (!line.includes("\t")) continue;
-    const cols = line.split("\t").map((c) => c.trim().toLowerCase());
-    if (cols.filter((c) => VOL_TEXT_HEADER_COLS.has(c)).length >= 3) return true;
-  }
-  return false;
-}
-
-// Parse a Volatility 3 text/grid export into one header-keyed table (or null if no rows found).
-function parseVolatilityText(text: string, filename: string | undefined): Table | null {
-  const lines = text.split(/\r\n|\r|\n/);
-  let header: string[] | null = null;
-  let i = 0;
-  // Find the header: the first TAB-containing line that is not the banner / a progress line.
-  for (; i < lines.length; i++) {
-    const line = lines[i].replace(/\s+$/, "");
-    if (!line.trim()) continue;
-    const trimmed = line.trim();
-    if (VOL_TEXT_BANNER.test(trimmed) || /^Progress:/i.test(trimmed)) continue;
-    if (!line.includes("\t")) continue;
-    header = line.split("\t").map((c) => c.trim());
-    while (header.length && header[header.length - 1] === "") header.pop(); // drop trailing empties
-    i++;
-    break;
-  }
-  if (!header || !header.length) return null;
-
-  const rows: Row[] = [];
-  for (; i < lines.length; i++) {
-    const raw = lines[i];
-    const trimmed = raw.trim();
-    if (!trimmed) continue;
-    if (VOL_TEXT_DISASM.test(trimmed) || VOL_TEXT_HEXDUMP.test(trimmed)) continue; // hexdump/disasm continuation
-    if (!raw.includes("\t")) continue; // ascii gutter etc.
-    const cells = raw.split("\t");
-    cells[0] = cells[0].replace(/^[*\s]+/, "").trim(); // strip pstree depth markers ("* ", "** ")
-    if (cells.filter((c) => c.trim() !== "").length < 2) continue;
-    const row: Row = {};
-    header.forEach((col, idx) => {
-      if (col) row[col] = (cells[idx] ?? "").trim();
-    });
-    rows.push(row);
-  }
-  if (!rows.length) return null;
-  return { plugin: pluginFromFilename(filename), rows };
-}
-
-function extractTables(
-  text: string,
-  filename: string | undefined,
-): { tables: Table[]; format: string; tool: string } {
-  const trimmed = text.trim();
-  if (!trimmed) return { tables: [], format: "empty", tool: "" };
-
-  let root: unknown;
-  let parsed = false;
-  try {
-    root = JSON.parse(trimmed);
-    parsed = true;
-  } catch {
-    /* NDJSON below */
-  }
-
-  if (parsed) {
-    if (Array.isArray(root)) {
-      if (isRekallCommandList(root)) return { tables: parseRekall(root), format: "rekall", tool: "Rekall" };
-      const rows = root.filter(isObject) as Row[];
-      return {
-        tables: rows.length ? [{ plugin: pluginFromFilename(filename), rows }] : [],
-        format: "volatility",
-        tool: "Volatility",
-      };
-    }
-    if (isObject(root) && isVolatilityPluginMap(root)) {
-      const tables = Object.entries(root)
-        .filter(([, v]) => Array.isArray(v))
-        .map(([k, v]) => ({ plugin: k, rows: (v as unknown[]).filter(isObject) }))
-        .filter((t) => t.rows.length > 0);
-      return { tables, format: "volatility-map", tool: "Volatility" };
-    }
-    // A bare object that is not a plugin map is not a Volatility export (its rows are an array).
-    return { tables: [], format: "empty", tool: "" };
-  }
-
-  // NDJSON: one Volatility row object per line (jsonl renderer).
-  const rows: Row[] = [];
-  for (const line of trimmed.split(/\r\n|\r|\n/)) {
-    const l = line.trim();
-    if (!l || l[0] !== "{") continue;
-    try {
-      const o = JSON.parse(l);
-      if (isObject(o)) rows.push(o);
-    } catch {
-      /* skip */
-    }
-  }
-  if (rows.length)
-    return {
-      tables: [{ plugin: pluginFromFilename(filename), rows }],
-      format: "volatility-jsonl",
-      tool: "Volatility",
-    };
-
-  // Volatility 3 TEXT/grid renderer (the default `vol <plugin>`, no -r json).
-  if (looksLikeVolatilityText(trimmed)) {
-    const table = parseVolatilityText(trimmed, filename);
-    if (table) return { tables: [table], format: "volatility-text", tool: "Volatility" };
-  }
-  return { tables: [], format: "empty", tool: "" };
-}
 
 // ───────────────────────────── MemProcFS findevil ─────────────────────────────
 //
@@ -1501,9 +1408,13 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
   }
 
   const maxIocs = opts.maxIocs ?? 5000;
-  const { tables, format, tool } = extractTables(text, opts.filename);
+  const { tables, format, tool, empty } = extractTables(text, opts.filename);
   const total = tables.reduce((n, t) => n + t.rows.length, 0);
-  if (tables.length === 0 || total === 0) {
+  // What the export's shape says — a zero-row export or an unread layout is one Low row, never a
+  // 400 and never a completion claim (#933 item 12).
+  const shapeRows = exportShapeEvents(format, empty, tool);
+  const note = exportShapeNote(text, format, empty, tables.length);
+  if (total === 0 && shapeRows.length === 0) {
     return {
       events: [],
       iocs: [],
@@ -1517,11 +1428,12 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
       connections: 0,
       format,
       tool: "",
+      ...(note ? { note } : {}),
     };
   }
 
   const sink = new Map<string, SiemIoc>();
-  const mapped: MappedEvent[] = [];
+  const mapped: MappedEvent[] = [...shapeRows];
   let injected = 0,
     processes = 0,
     connections = 0;
@@ -1531,14 +1443,23 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
   // to be strengthened by process context, network behaviour and independent detections; without
   // this the note could only ever tell the analyst to go and check those themselves. Confined to one
   // image and one PID, per the issue.
+  // The process rows the upload submitted, by PID — what a socket's owner is compared with. Built
+  // before the socket pass, because a socket counts as corroboration only when exactly one
+  // submitted process row is consistent with its owner (#933 item 14).
+  const processIndex = indexProcessRows(
+    tables.filter((t) => classify(t.plugin, colSet(t.rows)) === "process"),
+  );
   const corroborating = { network: new Set<string>(), suspiciousCmd: new Set<string>() };
   for (const t of tables) {
     const cat = classify(t.plugin, colSet(t.rows));
-    if (cat === "netscan") {
+    if (cat === "netscan" && tool !== "Rekall") {
       for (const r of t.rows) {
-        const pid = pickPid(r);
-        const foreign = pick(r, ["ForeignAddr", "foreign_addr", "ForeignAddress", "RemoteAddr"]);
-        if (pid && foreign && !/^(?:0\.0\.0\.0|::|\*)?$/.test(foreign.trim())) corroborating.network.add(pid);
+        const { tuple, owner, pid, created } = socketFields(r);
+        const shape = tupleShape(tuple);
+        const consistent = ownerConsistency(pid, owner, created, processIndex).consistent;
+        if (pid && shape.ok && shape.peer && !readState(tuple.state, tuple.proto).listening && consistent) {
+          corroborating.network.add(pid);
+        }
       }
     } else if (cat === "cmdline") {
       for (const r of t.rows) {
@@ -1563,7 +1484,10 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
 
   for (const t of tables) {
     const cols = colSet(t.rows);
-    const category = classify(t.plugin, cols);
+    // An image-facts table is decided by its own fields, never by a label (memoryImageFacts.ts).
+    const category: Category = isImageInfoTable(t.plugin, cols, t.rows)
+      ? "imageinfo"
+      : classify(t.plugin, cols);
     if (category === "process") {
       for (const r of t.rows) {
         const nm = procName(r);
@@ -1588,7 +1512,7 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
         processes += t.rows.length;
         break;
       case "netscan":
-        mapped.push(...mapNetscan(label, tool, t.rows, sink));
+        mapped.push(...mapNetscan(t.plugin, label, tool, t.rows, sink, processIndex));
         connections += t.rows.length;
         break;
       case "malfind":
@@ -1609,6 +1533,9 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
         break;
       case "handle":
         break; // handle tables are pure telemetry — neither events nor IOCs
+      case "imageinfo":
+        mapped.push(...imageFactsEvents(tool, t.rows, t.plugin)); // one row, no IOCs
+        break;
       default:
         mapped.push(...mapGeneric(label, tool, t.rows, sink));
     }
@@ -1629,7 +1556,8 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
     });
   }
 
-  const { events, groups } = aggregateEvents(mapped, {
+  // The upload's image facts ride on every row (envelope; text from Medium up). One upload only.
+  const { events, groups } = aggregateEvents(carryImage(mapped, readImageFacts(tables)), {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
@@ -1650,5 +1578,6 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
     connections,
     format,
     tool,
+    ...(note ? { note } : {}),
   };
 }

@@ -12,6 +12,7 @@ import {
   iocHasBehavioralEvent,
 } from "./iocAnchors.js";
 import { scoreIocs, RISK_TIER_RANK } from "./iocRiskScore.js";
+import { intelOrigins, originsTag } from "./intelLineage.js";
 import { rankHosts, buildSignalConcentrationDigest } from "./hostRanking.js";
 
 // Widened to string keys: severity values reaching the selectors are not all statically Severity.
@@ -386,12 +387,13 @@ export function buildSynthesisContext(
     });
     if (cls === "none") continue;
     const base = `${i.value} = ${hit.verdict}${hit.source ? ` (${hit.source}${hit.score ? ` ${hit.score}` : ""})` : ""}`;
+    const tag = cls === "conflicted" ? "" : originsTag(intelOrigins(i.enrichments), cls);
     if (cls === "conflicted") {
       conflictVerdicts.push(
         `- ${base} ⚠ CONFLICT: also one of this case's OWN host assets or an internal address — this verdict is most likely stale/wrong; do NOT treat it as confirmed malicious or as external C2`,
       );
     } else {
-      trustedVerdicts.push(`- ${base} [${cls}]`);
+      trustedVerdicts.push(`- ${base} ${tag}`);
     }
     if (trustedVerdicts.length + conflictVerdicts.length >= 25) break;
   }
@@ -441,7 +443,7 @@ export function buildSynthesisContext(
   if (assetLines.length)
     block += `COMPROMISED ASSETS (host/account ← IoCs seen on it):\n${assetLines.join("\n")}\n\n`;
   if (trustedVerdicts.length)
-    block += `THREAT-INTEL VERDICTS (third-party — [corroborated] = 2+ providers or intel PLUS behavioral evidence; [lone-intel] = a single provider with no corroborating activity, treat as a LEAD, not a confirmed compromise):\n${trustedVerdicts.join("\n")}\n\n`;
+    block += `THREAT-INTEL VERDICTS (third-party — origins are the creator names the records carry, not providers: copied feeds fold to one origin, a hit with no recorded origin counts as none. [corroborated] = a Medium+ event in this case carries the value; [multi-origin] = 2+ named origins, independence NOT established; [lone-intel] = one origin or no recorded origin, treat as a LEAD, not a confirmed compromise):\n${trustedVerdicts.join("\n")}\n\n`;
   if (conflictVerdicts.length)
     block += `INTEL CONFLICTS (do NOT treat as confirmed — a verdict on the case's OWN infrastructure or an internal address, most likely stale/incorrect third-party data):\n${conflictVerdicts.join("\n")}\n\n`;
   if (kevBlock) block += kevBlock;

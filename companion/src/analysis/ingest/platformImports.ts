@@ -229,7 +229,7 @@ export async function importMemory(
   const parsedRaw = parseMemoryOrIntact(text, { ...opts.memory, filename: opts.label });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
   if (parsed.events.length === 0 && parsed.iocs.length === 0)
-    return noteEmptyImport(ctx, caseId, opts, "Memory", parsed.total);
+    return noteEmptyImport(ctx, caseId, opts, "Memory", parsed.total, parsed.note);
 
   const tool = parsed.tool || "Volatility";
   const raw = {
@@ -253,7 +253,10 @@ export async function importMemory(
       (parsed.yaraHits ? `, ${parsed.yaraHits} YARA hit(s)` : "") +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       `, ${parsed.iocs.length} IOC(s)` +
-      (parsed.truncated?.length ? ` — ${intactTruncationNote(parsed.truncated)}` : ""),
+      (parsed.truncated?.length ? ` — ${intactTruncationNote(parsed.truncated)}` : "") +
+      // The export's shape — zero rows, an unread layout, diagnostic-looking text — never grades
+      // and never claims a plugin completed (#933 item 12).
+      (parsed.note ? ` — ${parsed.note}` : ""),
     summary: "",
   };
   const delta = deltaSchema.parse(raw);

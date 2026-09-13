@@ -23,6 +23,7 @@ import {
   type NextStep,
 } from "./stateTypes.js";
 import { classifyVerdict, iocHasBehavioralEvent, shortHost } from "./iocAnchors.js";
+import { intelOrigins } from "./intelLineage.js";
 import { SEVERITY_RANK } from "./forensicGate.js";
 import { extractCveIds } from "./kev.js";
 import { trustForSources, type SourceTrustMap } from "./sourceTrust.js";
@@ -149,13 +150,15 @@ export interface GroundingInput {
   aliasIndex?: HostAliasIndex;
 }
 
-// The IOC ids that carry at least one malicious/suspicious intel verdict — the finding-level "intel
-// backs this" signal.
-function intelFlaggedIocIds(iocs: readonly IOC[]): Set<string> {
+// The IOC ids that carry at least one malicious/suspicious intel verdict WITH a recorded origin — the
+// finding-level "intel backs this" signal that lifts the single-source cap and the hunt-artifact
+// penalty below. A hit whose record names no creator (#933 item 18: a MISP/OpenCTI/YETI record with
+// no orgc / createdBy, or a pre-change relay record) lifts nothing: missing lineage stays unknown and
+// never silently becomes confirmation.
+export function intelFlaggedIocIds(iocs: readonly IOC[]): Set<string> {
   const out = new Set<string>();
   for (const i of iocs) {
-    if ((i.enrichments ?? []).some((e) => e.verdict === "malicious" || e.verdict === "suspicious"))
-      out.add(i.id);
+    if (intelOrigins(i.enrichments).origins.length > 0) out.add(i.id);
   }
   return out;
 }
@@ -348,8 +351,9 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
 
 // An intel-only High/Critical finding can't keep its severity — the confidence cap (investigation-
 // guidance #7 coordinating with #6). A finding whose ONLY malicious signal is threat-intel (all its
-// verdict-carrying IOCs are lone-intel/conflicted) and which has no behavioral corroboration (≤1 tool,
-// not graph-linked) is floored to Medium / confidence ≤ 60 with a reason. This is the northpeak class:
+// verdict-carrying IOCs are lone-intel / multi-origin / conflicted — names, not activity) and which has
+// no behavioral corroboration (≤1 tool, not graph-linked) is floored to Medium / confidence ≤ 60 with a
+// reason. Two named origins do not escape it (#933 item 18): they may be one copied report. This is the northpeak class:
 // a stale OpenCTI verdict on the org's own db-01 became a Critical "C2" finding on a benign connection.
 export const INTEL_ONLY_SEVERITY_FLOOR: Severity = "Medium";
 export const INTEL_ONLY_CONFIDENCE_CAP = 60;
@@ -367,6 +371,7 @@ export interface IntelCapInput {
 interface IntelOnlyVerdict {
   verdictIocs: IOC[];
   hasConflict: boolean;
+  multiOrigin: boolean; // at least one IOC rests on 2+ named origins (still names, not activity)
 }
 function classifyIntelOnlyFinding(
   f: Finding,
@@ -385,11 +390,15 @@ function classifyIntelOnlyFinding(
   const classes = verdictIocs.map((i) =>
     classifyVerdict(i, { hasBehavioralEvent: iocHasBehavioralEvent(i.value, scopedEvents), hostNames }),
   );
-  const intelOnly = classes.every((c) => c === "lone-intel" || c === "conflicted");
+  const intelOnly = classes.every((c) => c === "lone-intel" || c === "multi-origin" || c === "conflicted");
   const behavioralGrounding =
     !!f.corroboration && (f.corroboration.distinctTools >= 2 || f.corroboration.graphLinked);
   if (!intelOnly || behavioralGrounding) return null;
-  return { verdictIocs, hasConflict: classes.some((c) => c === "conflicted") };
+  return {
+    verdictIocs,
+    hasConflict: classes.some((c) => c === "conflicted"),
+    multiOrigin: classes.some((c) => c === "multi-origin"),
+  };
 }
 
 export function capIntelOnlyFindings(input: IntelCapInput): Finding[] {
@@ -400,7 +409,9 @@ export function capIntelOnlyFindings(input: IntelCapInput): Finding[] {
     if (!v) return f;
     const note = v.hasConflict
       ? "capped: rests on a threat-intel verdict about the case's OWN infrastructure — most likely stale/wrong, verify before acting"
-      : "capped: rests on uncorroborated single-provider threat-intel only — a lead, not a confirmed compromise; verify before acting";
+      : v.multiOrigin
+        ? "capped: rests on threat-intel names only — 2+ named origins, independence not established; no activity in this case backs it; verify before acting"
+        : "capped: rests on uncorroborated single-provider threat-intel only — a lead, not a confirmed compromise; verify before acting";
     return {
       ...f,
       severity: INTEL_ONLY_SEVERITY_FLOOR,

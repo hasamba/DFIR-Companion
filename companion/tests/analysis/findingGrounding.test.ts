@@ -107,11 +107,32 @@ describe("groundAndScoreFindings", () => {
     const out = groundAndScoreFindings({
       findings: [f({ id: "f1", confidence: 88, relatedEventIds: ["e1"], relatedIocs: ["i1"] })],
       scopedEvents: [ev({ id: "e1", sources: ["OneTool"], asset: "H1" })],
-      iocs: [ioc({ id: "i1", enrichments: [{ source: "VT", verdict: "malicious", fetchedAt: "" }] })],
+      iocs: [ioc({ id: "i1", enrichments: [{ source: "VirusTotal", verdict: "malicious", fetchedAt: "" }] })],
       graphLinkedEventIds: new Set(),
     });
     expect(out[0].corroboration?.intelSources).toBe(1);
     expect(out[0].confidence).toBe(88); // intel corroboration → not capped
+  });
+
+  // #933 item 18: a hit whose record names no creator (a relay platform with no orgc / createdBy, or a
+  // pre-change MISP record) is not "intel backs this" — missing lineage never lifts the cap.
+  it("does not count an intel hit with no recorded origin, so the single-source cap still applies", () => {
+    const out = groundAndScoreFindings({
+      findings: [f({ id: "f1", confidence: 88, relatedEventIds: ["e1"], relatedIocs: ["i1"] })],
+      scopedEvents: [ev({ id: "e1", sources: ["OneTool"], asset: "H1" })],
+      iocs: [
+        ioc({
+          id: "i1",
+          enrichments: [
+            { source: "MISP", verdict: "malicious", fetchedAt: "", originKind: "relay", origins: [] },
+          ],
+        }),
+      ],
+      graphLinkedEventIds: new Set(),
+    });
+    expect(out[0].corroboration?.intelSources).toBe(0);
+    expect(out[0].confidence).toBe(65);
+    expect(out[0].confidenceReason).toMatch(/single-source, uncorroborated/);
   });
 
   it("never RAISES confidence and is idempotent", () => {
@@ -441,7 +462,7 @@ describe("groundAndScoreFindings — verdict-first / hunt-artifact / KEV signals
     const out = groundAndScoreFindings({
       findings: [f({ id: "f1", confidence: 90, relatedEventIds: ["e1"], relatedIocs: ["i1"] })],
       scopedEvents: [ev({ id: "e1", severity: "Info", sources: ["Velociraptor"], asset: "H1" })],
-      iocs: [ioc({ id: "i1", enrichments: [{ source: "VT", verdict: "malicious", fetchedAt: "" }] })],
+      iocs: [ioc({ id: "i1", enrichments: [{ source: "VirusTotal", verdict: "malicious", fetchedAt: "" }] })],
       graphLinkedEventIds: new Set(),
     });
     expect(out[0].corroboration?.huntArtifactOnly).toBe(true);

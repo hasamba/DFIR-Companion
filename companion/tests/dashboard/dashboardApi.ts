@@ -166,6 +166,7 @@ export interface IocApi {
   /** `undefined` for an IOC that was never enriched — not "unknown". */
   worstIocVerdict(ioc: IocLike): string | undefined;
   scoreCoversTag(score: string, tag: string | null): boolean;
+  originSuffix(e: Record<string, unknown>): string;
   enrichBadges(ioc: IocLike): string;
   iocFlagged(i: IocLike): boolean;
   dedupeIocsById(iocs: IocLike[]): IocLike[];

@@ -334,7 +334,10 @@ describe("buildSynthesisContext", () => {
     });
     const ctx = buildSynthesisContext(s, s.forensicTimeline);
     expect(ctx).toContain("THREAT-INTEL VERDICTS");
-    expect(ctx).toContain("evil.exe = malicious (VirusTotal 52/73) [corroborated]");
+    expect(ctx).toContain(
+      "evil.exe = malicious (VirusTotal 52/73) [corroborated: carried by a Medium+ event in this case]",
+    );
+    expect(ctx).toContain("independence NOT established");
   });
 
   it("tags a single-provider verdict with no behavioral evidence as [lone-intel]", () => {
@@ -347,6 +350,54 @@ describe("buildSynthesisContext", () => {
       enrichments: [{ source: "VirusTotal", verdict: "suspicious", score: "", fetchedAt: "" }],
     });
     const ctx = buildSynthesisContext(s, s.forensicTimeline);
-    expect(ctx).toContain("[lone-intel]");
+    expect(ctx).toContain("[lone-intel: 1 named origin]");
+  });
+
+  it("tags two named origins with no local activity as [multi-origin], never [corroborated] (#933 item 18)", () => {
+    const s = emptyState("c1");
+    s.iocs.push({
+      id: "i1",
+      type: "domain",
+      value: "two-names.example",
+      firstSeen: "",
+      enrichments: [
+        {
+          source: "VirusTotal",
+          verdict: "malicious",
+          score: "",
+          fetchedAt: "",
+          originKind: "aggregate",
+          origins: ["VirusTotal"],
+        },
+        {
+          source: "MISP",
+          verdict: "malicious",
+          score: "",
+          fetchedAt: "",
+          originKind: "relay",
+          origins: ["ACME CSIRT"],
+        },
+      ],
+    });
+    const ctx = buildSynthesisContext(s, s.forensicTimeline);
+    expect(ctx).toContain(
+      "[multi-origin: 2 named origins — VirusTotal, ACME CSIRT; independence not established]",
+    );
+    expect(ctx).not.toContain("two-names.example = malicious (VirusTotal) [corroborated");
+  });
+
+  it("tags a relay hit that names nobody as lineage not recorded", () => {
+    const s = emptyState("c1");
+    s.iocs.push({
+      id: "i1",
+      type: "domain",
+      value: "nobody.example",
+      firstSeen: "",
+      enrichments: [
+        { source: "MISP", verdict: "malicious", score: "", fetchedAt: "", originKind: "relay", origins: [] },
+      ],
+    });
+    const ctx = buildSynthesisContext(s, s.forensicTimeline);
+    expect(ctx).toContain("nobody.example = malicious (MISP) [lone-intel: lineage not recorded]");
   });
 });

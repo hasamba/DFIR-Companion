@@ -201,6 +201,58 @@ of volume.
 records it; where it does not, the note says the format could not be confirmed against the tool that
 wrote it.
 
+### What a memory export establishes
+
+A Volatility export establishes three things, and the Companion reads each on its own:
+
+- **The rows** — the process list, the connections, the injected regions, as before.
+- **The export's shape.** An export that holds **zero rows** — a text export with only a header, a
+  `[]`, an empty array under a plugin key — used to be refused ("no parseable memory output"). It
+  now imports as one Low row: *Memory export holds zero rows [label: windows.malfind (claimed by the
+  export name)] — completion of the search and the pages it covered are not established by this
+  export.* That is all the export establishes. Volatility writes the header before the plugin
+  runs, `[]` is an empty tree, and the filename is a name you chose — none of them shows that the
+  plugin completed, or that it found nothing. "Malfind was clean" needs the run's exit status and
+  its stderr, which the export does not carry; treat the row as "this search was attempted" and
+  keep the result outside the case notes until you have both.
+- **The image**, when the upload holds `windows.info` or `windows.crashinfo`. Those used to be
+  twenty generic rows. They are now one Low row that says only what the table says: the **kernel
+  SystemTime recovered from the image** (the clock value the plugin reads out of the kernel —
+  never "captured at", because a snapshot may be smeared), the OS version, bitness, the symbol
+  table used, the **layer stack** with the dump kind for the layer classes Volatility names
+  (crash dump, LiME, AVML, VMware, ELF core, QEMU suspend; a bare file layer establishes no
+  format), and for a crash dump its **type as Volatility renders it** — a `Bitmap Dump (0x5)`
+  holds only the pages its bitmap lists, and which pages were excluded is not in the record. Every
+  row from the same upload carries those facts, and rows of Medium or above say the kernel
+  SystemTime in their text. **Do not clear user-space behaviour from a bitmap dump**: an empty
+  user-space plugin over it says nothing about pages the dump never held.
+
+- **A socket object.** `netscan` / `netstat` rows say what the record holds and how the plugin
+  reported it: the stored **state** verbatim with Volatility's own reading (a listening endpoint,
+  stored state ESTABLISHED, a connection setup state, a TCP teardown state, a closed-state object,
+  a UDP endpoint with no state), whether the object was **reported by pool scan** (an allocated or
+  a freed object) or **by traversal of the network tracking structures**, and the owner's own two
+  fields (PID and name, either of which can be absent — an absent owner is "not in the record",
+  never an indicator of concealment). Nothing says the connection was live or that traffic passed.
+  When the same upload holds process rows, the row adds an **internal consistency note** against
+  them — "consistent with one submitted process row: X, created T", "not consistent: the
+  submitted process row at PID N is named Y", "…was created after this socket's Created value",
+  "…reports exit before this socket's Created value", "ambiguous: 2 distinct submitted process
+  rows have PID N", or "no process rows submitted to compare". It is a comparison of submitted
+  rows, not validation, and it never rewrites the socket's own owner fields; cross-tool
+  correlation on the process name happens only when exactly one submitted row is consistent. A
+  tuple outside its protocol's shape (a non-listening TCP object with no peer, a port above 65535,
+  an address that is not one) is kept as a row marked *tuple incomplete* and mints no indicator.
+  Two rows at one object offset are one object reported twice; a row without an offset never
+  folds. An externally addressed object in stored state ESTABLISHED is Low as a triage priority,
+  not as a claim of traffic.
+
+Text that looks like a Volatility diagnostic (`Unsatisfied requirement …`, a traceback, `unable to
+read a requested page`) is shown in the import note as **unverified text**, never used to grade or
+to claim a failure — an artifact value can spell it. A **Volatility 2** export is recognised only
+to say that its profile-based layout is not read; re-run under Volatility 3 or export JSON.
+Volatility's `-` and `N/A` cells are absent values and never become a name, a path or an IOC.
+
 ### Intact (trimmed VolWeb output)
 
 Intact runs VolWeb over a RAM image, then combines and trims the result into two files. Drop either
@@ -497,6 +549,11 @@ time cell was empty was dropped. Now:
   sorts after every dated row in the super-timeline, stays inside any time window you set (it
   cannot be proven out of range), and is searchable and promotable like any other row. The import
   response and the activity line say how many rows carry no clock.
+- **An undated row never borrows a time.** Correlation merges rows that share a file hash or a path
+  — but never an undated row into a dated one, so an installed-app entry cannot come out saying it
+  happened when some file event on the same host did. Undated rows still fold with each other.
+- **A Timesketch export says what it left out.** Timesketch requires a time per event, so undated
+  rows are omitted from the JSONL and the push; the status line gives the count.
 - **Each row keeps the meaning of its clock.** A LEAPP table often has several time columns
   (Timestamp, Created, Last Modified) and a row's populated one is not the same for every row. Each
   row takes its first populated time column and names it in the description —
