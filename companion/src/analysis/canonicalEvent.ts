@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { ForensicEvent } from "./stateTypes.js";
 import { transferBlockSchema, webBlockSchema } from "./canonicalWeb.js";
 import { dnsBlockSchema } from "./canonicalDns.js";
+import { tlsGraphBlockSchema } from "./canonicalTls.js";
 
 export const CANONICAL_EVENT_SCHEMA_VERSION = "1.0.0" as const;
 /** The producer stamped on an envelope DERIVED from legacy flat fields at the read boundary. */
@@ -47,6 +48,13 @@ const canonicalProcessSchema = z.object({
     })
     .optional(),
 });
+
+const tlsJoinNoteSchema = z.enum([
+  "records disagree",
+  "disagrees with this record",
+  "not among those read",
+  "subject/issuer differ",
+]);
 
 const rawRecordPointerSchema = z.object({
   source: z.string().min(1),
@@ -133,6 +141,9 @@ export const canonicalEventEnvelopeSchema = z.object({
     })
     .optional(),
   process: canonicalProcessSchema.optional(),
+  // A TLS relationship row (tlsGraphRows.ts, #997): a certificate, name, client-certificate or
+  // JA3 node with what one sensor's records in one upload showed beside it.
+  tlsGraph: tlsGraphBlockSchema.optional(),
   // A TLS record's own reading (tlsSession.ts, #933 item 6): the client's SNI, the protocol facts
   // the sensor saw, the certificate the server presented, the sensor's chain check, the observer.
   tls: z
@@ -159,9 +170,15 @@ export const canonicalEventEnvelopeSchema = z.object({
           names: z.array(z.string()).optional(),
           namesTotal: z.number().int().nonnegative().optional(),
           namesDigest: z.string().optional(),
+          dnsNames: z.array(z.string()).optional(),
+          dnsNamesTotal: z.number().int().nonnegative().optional(),
           notBefore: z.string().optional(),
           notAfter: z.string().optional(),
           ca: z.boolean().optional(),
+          // The identity was filled from the upload's x509 record by FUID (tlsGraphJoin.ts, #997),
+          // or why that join was not made.
+          identityFrom: z.literal("x509 record").optional(),
+          x509Join: tlsJoinNoteSchema.optional(),
         })
         .optional(),
       // On a certificate row: which side presented it (Zeek x509 client_cert / host_cert).
@@ -177,9 +194,13 @@ export const canonicalEventEnvelopeSchema = z.object({
           names: z.array(z.string()).optional(),
           namesTotal: z.number().int().nonnegative().optional(),
           namesDigest: z.string().optional(),
+          dnsNames: z.array(z.string()).optional(),
+          dnsNamesTotal: z.number().int().nonnegative().optional(),
           notBefore: z.string().optional(),
           notAfter: z.string().optional(),
           chainFuids: z.array(z.string()).optional(),
+          identityFrom: z.literal("x509 record").optional(),
+          x509Join: tlsJoinNoteSchema.optional(),
         })
         .optional(),
       observer: z.object({ name: z.string(), sourceField: z.string() }).optional(),

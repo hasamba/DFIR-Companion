@@ -14,12 +14,15 @@
 // indicators), that two sessions sharing a certificate share an operator, that "ok" means benign,
 // or that a JA3 hash is an identity (it is a library signature). A fingerprint is never a `hash`
 // indicator — that type means a file — and is never shown as a bare hex run, or the merge would
-// read it as one. The graph over these facts is a spec; every fact it needs is in the envelope.
+// read it as one. The graph over these facts — the x509 join by Zeek's own FUID and the
+// certificate / name / client / JA3 relationship rows one upload establishes — is tlsGraph*.ts (#997).
 
 import { createHash } from "node:crypto";
 import { createCanonicalEvent, type CanonicalEventEnvelope } from "./canonicalEvent.js";
-import { breakHashRuns, identityMark, keyDigest, showToken } from "./recordIdentity.js";
+import { isValidQueryName } from "./dnsRecord.js";
+import { identityMark, keyDigest } from "./recordIdentity.js";
 import { cleanIp, getCI, getPath, isObject, normalizeTime, str, type MappedEvent } from "./siemImport.js";
+import { certificateTag, clipTag, sessionTags } from "./tlsSessionWords.js";
 
 type Row = Record<string, unknown>;
 
@@ -37,14 +40,24 @@ export interface CertificateFacts {
   /** The complete SAN list's count and digest — the envelope keeps NAMES_KEPT_MAX names, the identity all of them. */
   namesTotal?: number;
   namesDigest?: string;
+  /** The dNSName SANs only (Zeek `san.dns`; Suricata entries that parse as hostnames), for the covered-name comparison (#997). */
+  dnsNames?: string[];
+  dnsNamesTotal?: number;
   notBefore?: string;
   notAfter?: string;
   ca?: boolean;
 }
 
+/** Why the x509 join did not fill an identity, or what it found beside one (tlsGraphJoin.ts, #997). */
+export type CertJoinNote =
+  "records disagree" | "disagrees with this record" | "not among those read" | "subject/issuer differ";
+
 export interface TlsObservation {
   source: "zeek-ssl" | "zeek-x509" | "suricata-tls";
   kind: "session" | "certificate";
+  /** The server certificate's identity came from the upload's x509 record, joined by FUID — a keyed fact. */
+  certFrom?: "x509";
+  certJoinNote?: CertJoinNote;
   timestamp: string;
   uid?: string;
   /** The x509 observation id (a FUID) — a locator, never an identity. */
@@ -85,12 +98,12 @@ export interface TlsObservation {
     facts?: CertificateFacts;
     /** Certificate data was present but not readable into an identity. */
     seen?: boolean;
+    from?: "x509";
+    joinNote?: CertJoinNote;
   };
 }
 
-const NAMES_KEPT_MAX = 64;
-const NAMES_SHOWN_MAX = 3;
-const TEXT_SHOWN_MAX = 80;
+export const NAMES_KEPT_MAX = 64;
 const DESCRIPTION_MAX = 600;
 const CERT_ID_VERSION = "certid-v1";
 const CHAIN_MAX = 16;
@@ -292,6 +305,7 @@ export function readZeekX509(row: Row, fallbackTs: string): TlsObservation {
       ...(issuer !== undefined ? { issuer } : {}),
       ...(serial !== undefined && hexOf(serial) ? { serial: hexOf(serial) } : {}),
       ...boundedNames([...san("dns"), ...san("uri"), ...san("email"), ...san("ip")]),
+      ...dnsNamesOf(san("dns")),
       ...(validity(cert("not_valid_before")) ? { notBefore: validity(cert("not_valid_before")) } : {}),
       ...(validity(cert("not_valid_after")) ? { notAfter: validity(cert("not_valid_after")) } : {}),
       ...(ca !== undefined ? { ca } : {}),
@@ -324,6 +338,7 @@ export function readSuricataTls(row: Row, fallbackTs: string): TlsObservation {
     ...(issuer !== undefined ? { issuer } : {}),
     ...(serial !== undefined && hexOf(serial) ? { serial: hexOf(serial) } : {}),
     ...(names ? boundedNames(names) : {}),
+    ...(names ? dnsNamesOf(names.filter(isValidQueryName)) : {}),
     ...(validity(getCI(t, "notbefore")) ? { notBefore: validity(getCI(t, "notbefore")) } : {}),
     ...(validity(getCI(t, "notafter")) ? { notAfter: validity(getCI(t, "notafter")) } : {}),
   };
@@ -435,9 +450,15 @@ function suricataFacts(t: Row): CertificateFacts {
     ...(issuer !== undefined ? { issuer } : {}),
     ...(serial !== undefined && hexOf(serial) ? { serial: hexOf(serial) } : {}),
     ...(names ? boundedNames(names) : {}),
+    ...(names ? dnsNamesOf(names.filter(isValidQueryName)) : {}),
     ...(validity(getCI(t, "notbefore")) ? { notBefore: validity(getCI(t, "notbefore")) } : {}),
     ...(validity(getCI(t, "notafter")) ? { notAfter: validity(getCI(t, "notafter")) } : {}),
   };
+}
+
+/** The dNSName SANs: NAMES_KEPT_MAX kept with the total, so a truncated list is never compared as complete. */
+function dnsNamesOf(dns: string[]): Pick<CertificateFacts, "dnsNames" | "dnsNamesTotal"> {
+  return dns.length ? { dnsNames: dns.slice(0, NAMES_KEPT_MAX), dnsNamesTotal: dns.length } : {};
 }
 
 /** The names a certificate covers: NAMES_KEPT_MAX kept, every one of them in the count and digest. */
@@ -494,6 +515,8 @@ export function tlsKey(o: TlsObservation): string {
     short(o.sniMatchesCert),
     short(o.directionFlipped),
     cert,
+    short(o.certFrom),
+    seg(o.certJoinNote),
     // The client certificate's identity and facts — not its chain FUIDs, which are locators of one
     // observation and would make every mTLS session its own shape.
     o.clientCert ? `c:${keyDigest(JSON.stringify({ ...o.clientCert, chainFuids: undefined }))}` : "-",
@@ -545,92 +568,6 @@ export function tallyTls(o: TlsObservation, sink: Map<string, TlsTally>): void {
   sink.set(key, { first: o, count: 1, firstTs: o.timestamp });
 }
 
-// ───────────────────────────── words ─────────────────────────────
-
-const show = (v: string): string => {
-  const shown = breakHashRuns(showToken(v));
-  return shown.length > TEXT_SHOWN_MAX ? `${shown.slice(0, TEXT_SHOWN_MAX - 1)}…` : shown;
-};
-const ends = (hex: string): string => (hex.length > 12 ? `${hex.slice(0, 8)}…${hex.slice(-4)}` : hex);
-
-/** A certificate reference as words: a fingerprint by its ends, a cert identity by its ends. */
-const refWords = (r: CertRef): string =>
-  r.kind === "identity"
-    ? `cert identity ${breakHashRuns(r.value)}`
-    : `${r.alg === "sha256" ? "sha256" : "fp"} ${ends(r.value)}`;
-
-function certWords(o: TlsObservation): string {
-  const ref = !o.cert ? "identity unavailable" : refWords(o.cert);
-  return [
-    o.subject !== undefined ? `subject ${show(o.subject)}` : "",
-    o.issuer !== undefined ? `issuer ${show(o.issuer)}` : "",
-    ref,
-  ]
-    .filter(Boolean)
-    .join("; ");
-}
-
-function sessionTags(o: TlsObservation): string[] {
-  const tags: string[] = [];
-  tags.push(o.sni !== undefined ? `sni: ${show(o.sni)}` : "no SNI");
-  const proto = [
-    o.version !== undefined ? show(o.version) : "",
-    o.cipher !== undefined ? `cipher ${show(o.cipher)}` : "",
-    o.curve !== undefined ? `curve ${show(o.curve)}` : "",
-  ]
-    .filter(Boolean)
-    .join(", ");
-  if (proto) tags.push(proto);
-  // A chain FUID is Zeek saying it saw a certificate, even when the export kept no other field.
-  const hasCert =
-    o.subject !== undefined ||
-    o.issuer !== undefined ||
-    o.cert !== undefined ||
-    (o.certChainFuids?.length ?? 0) > 0 ||
-    o.certificateSeen === true ||
-    Object.keys(o.certificate ?? {}).length > 0;
-  tags.push(hasCert ? `cert: ${certWords(o)}` : "no server certificate observed in this record");
-  if (o.clientCert) {
-    const cc = o.clientCert;
-    const ref = cc.ref ? refWords(cc.ref) : cc.chainFuids?.length || cc.seen ? "identity unavailable" : "";
-    tags.push(
-      `client cert: ${[cc.subject !== undefined ? `subject ${show(cc.subject)}` : "", cc.issuer !== undefined ? `issuer ${show(cc.issuer)}` : "", ref].filter(Boolean).join("; ")}`,
-    );
-  }
-  if (o.directionFlipped) tags.push("TLS client was the connection responder");
-  if (o.validation !== undefined) tags.push(`chain check: ${show(o.validation)}`);
-  if (o.sniMatchesCert !== undefined)
-    tags.push(o.sniMatchesCert ? "SNI matches the certificate" : "SNI does not match the certificate");
-  if (o.established === false) tags.push("not established");
-  if (o.resumed === true) tags.push("session resumed");
-  if (o.ja3 !== undefined) tags.push(`ja3 ${ends(o.ja3)}`);
-  if (o.ja3s !== undefined) tags.push(`ja3s ${ends(o.ja3s)}`);
-  return tags;
-}
-
-function certificateTag(o: TlsObservation): string {
-  const c = o.certificate ?? {};
-  const names = c.names ?? [];
-  const total = c.namesTotal ?? names.length;
-  const shownNames = names.slice(0, NAMES_SHOWN_MAX).map(show).join(", ");
-  const more = total > NAMES_SHOWN_MAX ? ` (+${total - NAMES_SHOWN_MAX} more)` : "";
-  return [
-    `certificate: ${o.role ? `${o.role}-presented; ` : ""}${certWords({ ...o, subject: undefined, issuer: undefined })}`,
-    c.subject !== undefined ? `subject ${show(c.subject)}` : "",
-    c.issuer !== undefined ? `issuer ${show(c.issuer)}` : "",
-    c.notBefore || c.notAfter ? `valid ${show(c.notBefore ?? "?")}–${show(c.notAfter ?? "?")}` : "",
-    total ? `covers ${total} name${total === 1 ? "" : "s"}: ${shownNames}${more}` : "",
-  ]
-    .filter(Boolean)
-    .join("; ");
-}
-
-/** One bracketed tag, clipped inside its brackets so it can never end half-open. */
-function clipTag(tag: string, room: number): string {
-  const inner = tag.length + 2 <= room ? tag : `${tag.slice(0, Math.max(0, room - 3))}…`;
-  return `[${inner}]`;
-}
-
 // ───────────────────────────── rows ─────────────────────────────
 
 function envelopeOf(o: TlsObservation, count: number): CanonicalEventEnvelope {
@@ -679,6 +616,8 @@ function envelopeOf(o: TlsObservation, count: number): CanonicalEventEnvelope {
                 ? { fingerprint: o.cert.value, fingerprintAlg: o.cert.alg }
                 : {}),
               identity: o.cert?.kind === "identity" ? o.cert.value : o.cert ? o.cert.value : "unavailable",
+              ...(o.certFrom ? { identityFrom: "x509 record" as const } : {}),
+              ...(o.certJoinNote ? { x509Join: o.certJoinNote } : {}),
               ...(o.subject !== undefined ? { subject: o.subject } : {}),
               ...(o.issuer !== undefined ? { issuer: o.issuer } : {}),
               ...o.certificate,
@@ -697,6 +636,8 @@ function envelopeOf(o: TlsObservation, count: number): CanonicalEventEnvelope {
               ...(!o.clientCert.ref && (o.clientCert.seen || o.clientCert.chainFuids?.length)
                 ? { identity: "unavailable" }
                 : {}),
+              ...(o.clientCert.from ? { identityFrom: "x509 record" as const } : {}),
+              ...(o.clientCert.joinNote ? { x509Join: o.clientCert.joinNote } : {}),
               ...(o.clientCert.facts?.serial !== undefined ? { serial: o.clientCert.facts.serial } : {}),
               ...(o.clientCert.facts?.names ? { names: o.clientCert.facts.names } : {}),
               ...(o.clientCert.facts?.notBefore ? { notBefore: o.clientCert.facts.notBefore } : {}),

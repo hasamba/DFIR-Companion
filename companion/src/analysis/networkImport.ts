@@ -6,7 +6,8 @@
 // (an IDS signature hit: signature/category/severity + ATT&CK metadata) and Zeek `_path:"notice"`
 // (Zeek's notice framework) — are the graded rows. The surrounding TELEMETRY is high-volume and
 // is folded into bounded Info rows that land in the analyst-only super-timeline: `conn` per flow
-// (below), `ssl`/`x509`/`tls` per relationship (tlsSession.ts), and `http`/`files`/`fileinfo` per
+// (below), `ssl`/`x509`/`tls` per relationship (tlsSession.ts) with the certificate / name / client /
+// JA3 relationship rows one upload establishes (tlsGraph*.ts, #997), and `http`/`files`/`fileinfo` per
 // request and per transfer with the hops one upload establishes (webChainRows.ts, #993), and
 // `dns` per exchange with what the same upload's `conn` / `flow` records establish about the
 // client contacting a returned address (dnsWireRows.ts, #996). The rest contribute OBSERVED IOCs
@@ -17,15 +18,9 @@
 // Events are tagged "Suricata" / "Zeek" for cross-source correlation.
 
 import type { Severity } from "./stateTypes.js";
-import {
-  mapTlsRows,
-  readSuricataCertificates,
-  readSuricataTls,
-  readZeekSsl,
-  readZeekX509,
-  tallyTls,
-  type TlsTally,
-} from "./tlsSession.js";
+import { readSuricataCertificates, readSuricataTls, readZeekSsl, readZeekX509 } from "./tlsSession.js";
+import { addTls, emptyTlsObservations } from "./tlsGraphJoin.js";
+import { tlsFamilies } from "./tlsGraphRows.js";
 import { createCanonicalEvent, stampSourceArtifactHash } from "./canonicalEvent.js";
 import {
   readSuricataFileinfo,
@@ -641,7 +636,7 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
   const hostTally = new Map<string, number>();
   const mapped: MappedEvent[] = [];
   const flowSink = new Map<string, FlowAgg>();
-  const tlsSink = new Map<string, TlsTally>();
+  const tlsObs = emptyTlsObservations();
   const webObs = emptyWebObservations();
   const dnsObs = emptyDnsObservations();
   let flowHost = "";
@@ -671,8 +666,8 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
         alerts++;
       } else {
         if (etype === "tls") {
-          tallyTls(readSuricataTls(row, ""), tlsSink);
-          for (const c of readSuricataCertificates(row, "")) tallyTls(c, tlsSink);
+          addTls(tlsObs, readSuricataTls(row, ""));
+          for (const c of readSuricataCertificates(row, "")) addTls(tlsObs, c);
         }
         if (etype === "http") addRequest(webObs, readSuricataHttp(row, recordIndex));
         if (etype === "fileinfo") addTransfer(webObs, readSuricataFileinfo(row, recordIndex));
@@ -715,9 +710,10 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
           const o = readZeekDns(row, recordIndex);
           if (o) addDns(dnsObs, o);
         }
-        // ssl / x509 fold per record shape into TLS session and certificate rows (tlsSession.ts).
-        if (zstream === "ssl") tallyTls(readZeekSsl(row, ""), tlsSink);
-        if (zstream === "x509") tallyTls(readZeekX509(row, ""), tlsSink);
+        // ssl / x509 are joined after the loop (an x509 record may come later in the file) and
+        // folded into TLS session, certificate and relationship rows (tlsSession.ts, tlsGraph*.ts).
+        if (zstream === "ssl") addTls(tlsObs, readZeekSsl(row, ""));
+        if (zstream === "x509") addTls(tlsObs, readZeekX509(row, ""));
         // http / files are joined after the loop (a body's files record may come later in the
         // file) and folded into request and transfer rows (webChainRows.ts).
         if (zstream === "http") addRequest(webObs, readZeekHttp(row, recordIndex));
@@ -737,17 +733,21 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
   const flows = [...flowSink.values()]
     .sort((a, b) => b.origBytes + b.respBytes - (a.origBytes + a.respBytes))
     .slice(0, flowBudget);
-  // Every telemetry family is pre-selected in its own order (flows by bytes, TLS most-seen, web
-  // file-identity first, DNS in-window leads first) and the families share ONE budget round-robin
+  // Every telemetry family is pre-selected in its own order (flows by bytes, TLS most-seen, TLS
+  // graph leads first, web file-identity first, DNS in-window leads first) and the families share ONE budget round-robin
   // — the event budget less the detection rows already mapped, which outrank telemetry at the
   // shared aggregator's cut — so the largest family (a day of dns.log) cannot evict the biggest
   // flow at that cut, which orders Info rows by time alone.
   const telemetryBudget = Math.max(0, flowBudget - mapped.length);
+  // TLS session rows (the retained sessions joined to their x509 records first) and the
+  // relationship rows one upload establishes (#997) are two families.
+  const [tlsRows, tlsGraphRows] = tlsFamilies(tlsObs, flowBudget);
   mapped.push(
     ...interleave(
       [
         flows.map((f) => mapFlow(f, flowHost)),
-        mapTlsRows(tlsSink, flowBudget),
+        tlsRows,
+        tlsGraphRows,
         // Request and transfer rows: joined through the identifiers both records carry, each chain's
         // indicators minted against its row key so the hash IOC's provenance names the transfer row.
         mapWebRows(tallyWebChains(webObs, joinWebChain(webObs), iocSink), flowBudget),
