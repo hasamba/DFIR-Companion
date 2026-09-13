@@ -2,6 +2,7 @@ import { hashManifestValue } from "../analysis/analysisRunHash.js";
 import { importedArtifact, investigationOutput } from "../analysis/analysisRunSnapshot.js";
 import { getCsvPrompt, getLogPrompt } from "../analysis/pipeline.js";
 import type { InvestigationState, Severity } from "../analysis/stateTypes.js";
+import type { ManifestValue } from "../analysis/analysisRunTypes.js";
 import type { RouteContext } from "./context.js";
 
 export interface ImportRunRecord {
@@ -12,6 +13,12 @@ export interface ImportRunRecord {
   stateBefore: InvestigationState | null;
   minSeverity: Severity | undefined;
   path: "ai" | "deterministic";
+  /**
+   * The importer options the route parsed beyond the severity floor (THOR `minLevel`, Cyber
+   * Triage `fileTelemetry`, LEAPP `platform`, …), keyed by importer. They change what the run
+   * produced, so a manifest that omits them does not describe a reproducible run.
+   */
+  parameters?: Record<string, ManifestValue>;
 }
 
 export async function recordImportRun(ctx: RouteContext, input: ImportRunRecord): Promise<void> {
@@ -48,6 +55,7 @@ export async function recordImportRun(ctx: RouteContext, input: ImportRunRecord)
       parameters: {
         importPath: input.path,
         minSeverity: input.minSeverity ?? null,
+        ...(input.parameters ?? {}),
       },
       filteringPolicy: {
         forensicMinimumSeverity: input.minSeverity ?? "case-default",
