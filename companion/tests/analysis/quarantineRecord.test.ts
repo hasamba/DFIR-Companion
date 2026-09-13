@@ -118,6 +118,8 @@ describe("readQuarantineXattr — flags;unix hex;agent;uuid per QuarantineSPI.h"
       "user-approved",
     ]);
     expect(readQuarantineXattr(`0004;5f3a1b2c;Safari;${UUID}`)!.flags.named).toEqual(["hard"]);
+    expect(readQuarantineXattr(`80000001;5f3a1b2c;Safari;${UUID}`)!.flags.unnamed).toBe("0x80000000");
+    expect(readQuarantineXattr(`ffffffff;5f3a1b2c;Safari;${UUID}`)!.flags.unnamed).toBe("0xffffffb8");
     expect(readQuarantineXattr(`0001;5f3a1b2c;Safari;${UUID}`)!.words).toContain("download; agent");
   });
   it("a malformed value is shown as text, never decoded", () => {
@@ -439,6 +441,27 @@ describe("through parseMacos and correlateEvents", () => {
     const other = row({ LSQuarantineEventIdentifier: "660e8400-e29b-41d4-a716-446655440000" });
     const r = parseMacos(csv([...flood, other]), { maxEvents: 20 });
     expect(r.events.some((e) => e.description.includes("660e8400-e29b-41d4-a716-446655440000"))).toBe(true);
+  });
+
+  it("a long malformed identifier or an unreadable time keeps two records apart after import", () => {
+    const longId = (t: string) => row({ LSQuarantineEventIdentifier: `${"x".repeat(90)}${t}` });
+    const r1 = parseMacos(csv([longId("a"), longId("b")]));
+    expect(r1.events).toHaveLength(2);
+    expect(afterImport(r1.events)).toHaveLength(2);
+    const bad = (t: string) => row({ LSQuarantineEventIdentifier: "", LSQuarantineTimeStamp: t });
+    const r2 = parseMacos(csv([bad("yesterday"), bad("tomorrow")]));
+    expect(r2.events).toHaveLength(2);
+    expect(afterImport(r2.events)).toHaveLength(2);
+  });
+
+  it("a unified-log record in a quarantine json array is never a download event", () => {
+    const mixed = [
+      row(),
+      { timestamp: "2026-05-02 10:00:00.000000+0000", eventMessage: "hello", process: "kernel" },
+    ];
+    const r = parseMacos(JSON.stringify(mixed));
+    expect(r.events.filter((e) => e.description.startsWith("macOS quarantine"))).toHaveLength(1);
+    expect(r.events.some((e) => e.description.startsWith("macOS log"))).toBe(true);
   });
 
   it("the import option declares a converted dump's epoch", () => {

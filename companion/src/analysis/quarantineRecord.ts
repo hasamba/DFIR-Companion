@@ -129,7 +129,8 @@ export function readQuarantineXattr(raw: string): QuarantineXattr | null {
   if (!/^[0-9a-f]{1,8}$/i.test(flagsHex) || !/^[0-9a-f]{1,16}$/i.test(timeHex)) return null;
   const flagsRaw = parseInt(flagsHex, 16);
   const named = XATTR_FLAGS.filter(([bit]) => flagsRaw & bit).map(([, name]) => name);
-  const unnamedBits = XATTR_FLAGS.reduce((rest, [bit]) => rest & ~bit, flagsRaw);
+  // Unsigned: a 32-bit flag word's high bit must never read as a negative mask.
+  const unnamedBits = XATTR_FLAGS.reduce((rest, [bit]) => (rest & ~bit) >>> 0, flagsRaw >>> 0);
   const unnamed = unnamedBits ? `0x${unnamedBits.toString(16).padStart(4, "0")}` : undefined;
   const iso = isoOf(parseInt(timeHex, 16) * 1000);
   const agent = breakHashRuns(showToken(agentRaw)).slice(0, TEXT_SHOWN_MAX);
@@ -285,11 +286,14 @@ export function quarantineOverlay(
 
   // Lossy when anything shown is not the record's own text.
   const shownAll = [agent, bundleId, dataUrl, originUrl, originTitle, senderName, senderAddress, idRaw];
+  // …including an identifier clipped past the shown width and a time the row cannot show at all
+  // (an unreadable `timeRaw` is identity the words do not carry).
   const lossy =
     shownAll.some((v) => v && breakHashRuns(showToken(v)) !== v) ||
     dataUrl.length > URL_SHOWN_MAX ||
     originUrl.length > URL_SHOWN_MAX ||
-    [agent, bundleId, originTitle, senderName, senderAddress].some((v) => v.length > TEXT_SHOWN_MAX);
+    [agent, bundleId, originTitle, senderName, senderAddress, idRaw].some((v) => v.length > TEXT_SHOWN_MAX) ||
+    (when.encoding === "unreadable" && time.value !== "");
   const mark = identityMark(aggKey);
   const head = "macOS quarantine";
   const full = `${head}${packTags(tags, Number.POSITIVE_INFINITY)}`;

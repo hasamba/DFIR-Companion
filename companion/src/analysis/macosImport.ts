@@ -163,12 +163,15 @@ export function parseMacos(input: string, opts: MacosImportOptions = {}): MacosP
   if (trimmed[0] === "[" || trimmed[0] === "{") {
     const records = extractRecords(trimmed).records.filter(isObject) as Row[];
     total = records.length;
-    // A JSON dump of the quarantine database is a quarantine file too.
-    const quarantine = records.some((r) => looksLikeQuarantine(Object.keys(r)));
+    // A JSON dump of the quarantine database is a quarantine file too — record by record: a
+    // unified-log record in the same array is never a download event.
+    let quarantine = false;
     for (const rec of records) {
-      const event = quarantine ? mapQuarantine(rec, iocSink, opts) : mapUnifiedLog(rec);
+      const isQuarantine = looksLikeQuarantine(Object.keys(rec));
+      quarantine ||= isQuarantine;
+      const event = isQuarantine ? mapQuarantine(rec, iocSink, opts) : mapUnifiedLog(rec);
       if (event) mapped.push(event);
-      if (event && quarantine) quarantineRows.push(event as QuarantineRow);
+      if (event && isQuarantine) quarantineRows.push(event as QuarantineRow);
     }
     format = quarantine ? "macos-quarantine" : "macos-unified-log";
   } else {
