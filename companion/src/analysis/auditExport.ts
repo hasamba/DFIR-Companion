@@ -223,7 +223,9 @@ export function parseDestinationInput(raw: unknown, existing?: AuditDestination)
   const draft: DestinationDraft = {
     type: v.type,
     name: (v.name ?? "").trim() || DEFAULT_NAMES[v.type],
-    enabled: v.enabled ?? true,
+    // An edit that omits the flag keeps the saved state. Defaulting to ON here would let a rename
+    // from an API client silently resume forwarding a destination the operator switched off (#998).
+    enabled: v.enabled ?? existing?.enabled ?? true,
   };
 
   if (v.type === "splunk") {
