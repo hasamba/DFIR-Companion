@@ -738,9 +738,11 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
     .sort((a, b) => b.origBytes + b.respBytes - (a.origBytes + a.respBytes))
     .slice(0, flowBudget);
   // Every telemetry family is pre-selected in its own order (flows by bytes, TLS most-seen, web
-  // file-identity first, DNS in-window leads first) and the families share ONE budget round-robin,
-  // so the largest family — a day of dns.log — cannot evict the biggest flow at the shared
-  // aggregator's cut, which orders Info rows by time alone.
+  // file-identity first, DNS in-window leads first) and the families share ONE budget round-robin
+  // — the event budget less the detection rows already mapped, which outrank telemetry at the
+  // shared aggregator's cut — so the largest family (a day of dns.log) cannot evict the biggest
+  // flow at that cut, which orders Info rows by time alone.
+  const telemetryBudget = Math.max(0, flowBudget - mapped.length);
   mapped.push(
     ...interleave(
       [
@@ -752,7 +754,7 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
         // DNS exchange rows with the leads the upload's connection records establish (#996).
         mapDnsRows(tallyDnsChains(dnsObs, joinDnsLeads(dnsObs), iocSink), flowBudget),
       ],
-      flowBudget,
+      telemetryBudget,
     ),
   );
 

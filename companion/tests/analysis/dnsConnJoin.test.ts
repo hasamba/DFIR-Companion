@@ -125,7 +125,8 @@ describe("a Zeek dns.log record is an Info exchange row", () => {
     expect(e.description).toContain("[returned: cdn.example.net, 203.0.113.1, 203.0.113.2");
     expect(e.description).toContain("+5 more]");
     expect(e.canonical?.dns?.returnedTotal).toBe(13);
-    expect(e.canonical?.dns?.ttl).toEqual({ min: 60, max: 300 });
+    // the TTL range is the one the windows were read against: addresses only, never a CNAME's
+    expect(e.canonical?.dns?.ttl).toEqual({ min: 300, max: 300 });
   });
 
   it("more than 32 returned values: the rest are counted as not read and the identity still covers them", () => {
@@ -378,6 +379,158 @@ describe("folding", () => {
   });
 });
 
+// ── code round 1 ────────────────────────────────────────────────────────────
+
+describe("code review round", () => {
+  it("a loopback / link-local / multicast client is not joinable — never 'no address returned'", () => {
+    for (const client of ["127.0.0.1", "fe80::1", "::1", "169.254.1.2"]) {
+      const e = one([zeekDns({ "id.orig_h": client, "id.resp_h": "ff02::fb" }), zeekConn()]);
+      expect(e.description).toContain(`DNS ${client} → ff02::fb:`);
+      expect(e.description).toContain(`[returned: ${A1}]`);
+      expect(e.description).toContain(
+        "[connection join: the asking address is not one a sensor's connection records can be matched to",
+      );
+      expect(e.description).not.toContain("no address returned");
+      expect(e.canonical?.dns?.joinState).toBe("client not joinable");
+    }
+  });
+
+  it("'open at the time' names the record that WAS open, with its reply — not the latest earlier one", () => {
+    const rows: Row[] = [
+      zeekDns({ ts: T0 }),
+      zeekConn({ uid: "LONG", ts: T0 - 2000, duration: 3000, conn_state: "S1" }),
+    ];
+    for (let i = 0; i < 70; i++)
+      rows.push(zeekConn({ uid: `S${i}`, ts: T0 - 1000 + i, duration: 0.5, conn_state: "REJ" }));
+    const e = one(rows);
+    expect(e.description).toContain(
+      `[${A1}: a connection open at the time of this answer — started before it — answered by the peer]`,
+    );
+    expect(e.canonical?.evidence.rawRecords.map((r) => r.recordId)).toEqual(["D1", "LONG"]);
+  });
+
+  it("an in-window contact is always said, with 'also began before' beside it, and ranks first", () => {
+    const e = one([
+      zeekDns({ rtt: 0.8 }),
+      zeekConn({ uid: "C0", ts: T0 + 0.2, conn_state: "REJ", duration: 0.1 }),
+      zeekConn({ uid: "C1", ts: T0 + 5 }),
+    ]);
+    expect(e.description).toContain(
+      `[${A1}: connection record ≤10 s after the answer arrived, inside the window — answered by the peer; a record also began before this answer arrived]`,
+    );
+    expect(e.canonical?.dns?.leads?.[0]).toMatchObject({
+      state: "connected inside the window",
+      alsoBefore: "began before this answer arrived",
+    });
+  });
+
+  it("a beacon — one name every second, a 2 s connection each time — says the in-window lead on every row", () => {
+    const rows: Row[] = [];
+    for (let i = 0; i < 2000; i++) {
+      rows.push(zeekDns({ uid: `D${i}`, ts: T0 + i, rtt: 0.01 }));
+      rows.push(zeekConn({ uid: `C${i}`, ts: T0 + i + 0.1, duration: 2 }));
+    }
+    const started = Date.now();
+    const r = dnsRows(rows);
+    expect(Date.now() - started).toBeLessThan(5000);
+    // the first exchange had nothing open yet; every later one also had the previous beacon open
+    expect(r).toHaveLength(2);
+    const steady = r.find((x) => x.description.includes("— 1999 records"))!;
+    expect(steady.description).toContain(
+      `[${A1}: connection record ≤1 s after the answer arrived, inside the window — answered by the peer; a connection was also open at the time of this answer]`,
+    );
+  });
+
+  it("the same address answered at 09:00 and 12:58 with a connection at 13:00: the 12:58 answer is the lead, the 09:00 one is 'after the window'", () => {
+    const rows = [
+      zeekDns({ uid: "D1", ts: T0 + 3600 }),
+      zeekDns({ uid: "D2", ts: T0 + 3600 + 3 * 3600 + 58 * 60 }),
+      zeekConn({ ts: T0 + 3600 + 4 * 3600 }),
+    ];
+    const r = dnsRows(rows);
+    expect(r).toHaveLength(2);
+    expect(
+      r.some((x) =>
+        x.description.includes("first connection record ≤24 h after the answer arrived — after the window"),
+      ),
+    ).toBe(true);
+    expect(
+      r.some((x) =>
+        x.description.includes("connection record ≤10 min after the answer arrived, inside the window"),
+      ),
+    ).toBe(true);
+  });
+
+  it("a v6 answer joins a v6 connection whatever the case the records wrote it in", () => {
+    const e = one([
+      zeekDns({ answers: ["2606:2800:220:1:248:1893:25C8:1946"], TTLs: [300] }),
+      zeekConn({ "id.resp_h": "2606:2800:220:1:248:1893:25c8:1946" }),
+    ]);
+    expect(e.description).toContain(
+      "[2606:2800:220:1:248:1893:25c8:1946: connection record ≤10 s after the answer arrived, inside the window",
+    );
+  });
+
+  it("a TXT answer that spells an address is data, not a lead", () => {
+    const e = one([zeekDns({ qtype_name: "TXT", answers: [A1], TTLs: [60] }), zeekConn()]);
+    expect(e.description).toContain("[no address returned — no connection can be matched]");
+    expect(e.canonical?.dns?.returned[0]?.kind).toBe("other");
+  });
+
+  it("the sensor is shown, and Suricata's bare host names it", () => {
+    const e = one([zeekDns({ "observer.name": "sensor-a" }), zeekConn({ "observer.name": "sensor-a" })]);
+    expect(e.description).toMatch(/ @ sensor-a — 1 record #/);
+    expect(e.canonical?.dns?.sensor).toBe("sensor-a");
+    const s = one([zeekDns({ host: "sensor-b" }), zeekConn({ host: "sensor-c" })]);
+    expect(s.description).toContain(`[${A1}: no connection from ${CLIENT} in this upload]`);
+  });
+
+  it("'-' placeholders are absent, not values", () => {
+    const e = one([zeekDns({ rcode_name: "-", qtype_name: "-", answers: undefined, TTLs: undefined })]);
+    expect(e.description).toContain("[query: www.example.com] → no response recorded");
+  });
+
+  it("the own exchange is never 'other clients connected'", () => {
+    const forwarder = "10.0.0.1";
+    const rows = [
+      zeekDns({ uid: "D1", "id.orig_h": forwarder, "id.resp_h": A1, answers: [A1], TTLs: [300] }),
+      zeekDns({ uid: "D2", ts: T0 - 1, "id.orig_h": "10.0.0.7", "id.resp_h": forwarder }),
+      zeekConn({
+        uid: "D1",
+        ts: T0,
+        "id.orig_h": forwarder,
+        "id.resp_h": A1,
+        "id.resp_p": 53,
+        proto: "udp",
+        duration: 0.02,
+      }),
+    ];
+    const f = dnsRows(rows).find((r) => r.description.startsWith(`DNS ${forwarder} → ${A1}`))!;
+    expect(f.description).toContain(`[${A1}: no connection from ${forwarder} in this upload]`);
+  });
+
+  it("an old endpoint envelope still validates against the widened block", async () => {
+    const { canonicalEventEnvelopeSchema } = await import("../../src/analysis/canonicalEvent.js");
+    const { createCanonicalEvent } = await import("../../src/analysis/canonicalEvent.js");
+    const env = createCanonicalEvent({
+      event: { category: "network", type: "query" },
+      dns: {
+        query: "a.example",
+        queryValid: true,
+        indicator: true,
+        state: "success",
+        returned: [],
+        ownership: "not in this record",
+        vantage: "endpoint",
+      },
+      time: { observed: "2026-01-01T00:00:00Z", normalized: "2026-01-01T00:00:00.000Z" },
+      evidence: { rawRecords: [{ source: "sysmon", locator: "record:0" }] },
+      producer: { importer: "siem", parserVersion: "1", mappingVersion: "t" },
+    });
+    expect(canonicalEventEnvelopeSchema.safeParse(env).success).toBe(true);
+  });
+});
+
 // ── Suricata ────────────────────────────────────────────────────────────────
 
 describe("Suricata dns and flow", () => {
@@ -439,6 +592,45 @@ describe("Suricata dns and flow", () => {
     expect(e.sources).toEqual(["Suricata"]);
   });
 
+  it("the client is the non-53 side in both shapes; ambiguous ports assert no client", () => {
+    const flowDirection = one([
+      v2Answer({ src_ip: CLIENT, src_port: 51000, dest_ip: SERVER, dest_port: 53 }),
+      flow(),
+    ]);
+    expect(flowDirection.description).toContain(`DNS ${CLIENT} → ${SERVER}:`);
+    expect(flowDirection.description).toContain("inside the window");
+    const ambiguous = one([v2Answer({ src_port: 53, dest_port: 53 }), flow()]);
+    expect(ambiguous.description).toContain(`DNS ${SERVER} ↔ ${CLIENT} (direction not in this record):`);
+    expect(ambiguous.canonical?.dns?.joinState).toBe("client not joinable");
+    expect(ambiguous.description).not.toContain("no connection from");
+  });
+
+  it("a v1 per-RR answer event carries the RR owner, not the question: no query is asserted and nothing is minted", () => {
+    const r = parse([
+      v2Answer(
+        {},
+        { version: 1, answers: undefined, rrname: "cdn.example.net", rrtype: "A", rdata: A1, ttl: 300 },
+      ),
+    ]);
+    const e = r.events[0];
+    expect(e.description).toContain(
+      "[query: (not in this record)] → answered [answers: cdn.example.net A 93.184.216.34]",
+    );
+    expect(r.iocs).toEqual([]);
+  });
+
+  it("a flow with no start time is not placeable — the row never says the upload had no connection records", () => {
+    const e = one([v2Answer(), flow({}, { flow: { pkts_toserver: 5, pkts_toclient: 4, state: "closed" } })]);
+    expect(e.description).toContain(
+      "[connection join: the upload's connection records carry no start time — not joined]",
+    );
+  });
+
+  it("an answer event with no rcode says the code is not in the record — the event is the response", () => {
+    const e = one([v2Answer({}, { rcode: undefined })]);
+    expect(e.description).toContain("→ response code not in this record");
+  });
+
   it("a flow with no packets to the client is no reply", () => {
     const e = one([
       v2Answer(),
@@ -475,7 +667,9 @@ describe("Suricata dns and flow", () => {
     const grouped = one([v2Answer({}, { answers: undefined, grouped: { A: [A1] } }), flow()]);
     expect(grouped.description).toContain("[window: fixed 300 s — no TTL in this record]");
     const v1 = one([v2Answer({}, { version: 1, answers: undefined, rdata: A1, ttl: 300 })]);
-    expect(v1.description).toContain(`[answers: www.example.com A ${A1}]`);
+    expect(v1.description).toContain(
+      `[query: (not in this record)] → answered [answers: www.example.com A ${A1}]`,
+    );
   });
 
   it("a netflow record is a connection with no reply fact", () => {

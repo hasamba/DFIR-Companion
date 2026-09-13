@@ -15,7 +15,7 @@ import { createCanonicalEvent, type CanonicalEventEnvelope } from "./canonicalEv
 import { isIndicatorName } from "./dnsRecord.js";
 import { DNS_WINDOW_SLACK_S, type DnsChain, type DnsObservations, type Lead } from "./dnsConnJoin.js";
 import type { DnsObservation, DnsSource } from "./dnsWireRead.js";
-import { dnsHead, dnsTags, outcomeState } from "./dnsWireWords.js";
+import { dnsHead, dnsTags, outcomeState, sensorWords } from "./dnsWireWords.js";
 import { identityMark, keyDigest, packTags } from "./recordIdentity.js";
 import {
   foldOverflow,
@@ -25,7 +25,7 @@ import {
   type ShapeRow,
   type ShapeSink,
 } from "./shapeSink.js";
-import { addIoc, mergeRowIocs, type MappedEvent, type SiemIoc } from "./siemImport.js";
+import type { MappedEvent, SiemIoc } from "./siemImport.js";
 
 /** Distinct row shapes one import keeps; every later new shape folds into an overflow row. */
 export const DNS_SHAPES_MAX = 8192;
@@ -50,6 +50,7 @@ const leadFacts = (l: Lead): string =>
     l.reply ?? "-",
     l.window.basis,
     l.sharedWithOtherNames ? "shared" : "-",
+    l.alsoBefore ?? "-",
   ].join(":");
 
 export function dnsKey(c: DnsChain): string {
@@ -65,7 +66,10 @@ export function dnsKey(c: DnsChain): string {
     // string is its own exact identity — the #1009 rule.
     `q${keyDigest(d.queryValid ? d.queryAscii : d.query)}`,
     d.queryValid ? "v" : "x",
-    `t${d.queryType ?? d.queryTypeName ?? "-"}`,
+    // Both the number and the name: two records with one number and different names show
+    // different words, so they are two rows.
+    `t${d.queryType ?? "-"}/${d.queryTypeName ?? "-"}`,
+    d.ends ? `${d.ends.a}${d.ends.direction === "client → server" ? ">" : "<>"}${d.ends.b}` : "-",
     `r${d.rejected ? "rejected" : (d.rcode ?? "-")}`,
     `${d.aa ? "aa" : "-"}${d.ra ? "ra" : "-"}`,
     `o${d.ownership === "stated in the record" ? "s" : "-"}`,
@@ -83,10 +87,11 @@ const rankOf = (c: DnsChain): number =>
 
 // ───────────────────────────── tally ─────────────────────────────
 
+// The TTLs the WINDOWS were read against: address values only — a CNAME's TTL bounds no lead.
 function ttlRange(d: DnsObservation): { min: number; max: number } | undefined {
   let range: { min: number; max: number } | undefined;
   for (const v of d.returned)
-    if (v.ttl !== undefined)
+    if (v.kind === "address" && v.ttl !== undefined)
       range = range
         ? { min: Math.min(range.min, v.ttl), max: Math.max(range.max, v.ttl) }
         : { min: v.ttl, max: v.ttl };
@@ -94,9 +99,10 @@ function ttlRange(d: DnsObservation): { min: number; max: number } | undefined {
 }
 
 /**
- * Fold every joined chain into row shapes, minting the query indicator against its row key so
- * the domain IOC's provenance names the row. Records past the retained bound join their source's
- * overflow row: counted, never read.
+ * Fold every joined chain into row shapes, then mint each retained row's query indicator against
+ * its key so the domain IOC's provenance names the row. Minting per RETAINED row (not per chain)
+ * keeps one name queried by ten thousand clients from appending ten thousand keys one by one.
+ * Records past the retained bound join their source's overflow row: counted, never read.
  */
 export function tallyDnsChains(
   obs: DnsObservations,
@@ -106,11 +112,21 @@ export function tallyDnsChains(
   const sink = newShapeSink<DnsTallyRow>(DNS_SHAPES_MAX, 3, OVERFLOW_KEY);
   for (const chain of chains) {
     const key = dnsKey(chain);
-    const rowIocs = new Map<string, SiemIoc>();
-    if (isIndicatorName(chain.dns.query)) addIoc(rowIocs, "domain", chain.dns.queryAscii);
-    mergeRowIocs(iocSink, rowIocs, key);
     const ttl = ttlRange(chain.dns);
     const existing = sink.rows.get(key);
+    if (existing?.first) {
+      // A repeat of a retained shape: the TTL range is an aggregate, widened on every fold.
+      if (ttl)
+        existing.first = {
+          ...existing.first,
+          ttl: existing.first.ttl
+            ? {
+                min: Math.min(existing.first.ttl.min, ttl.min),
+                max: Math.max(existing.first.ttl.max, ttl.max),
+              }
+            : ttl,
+        };
+    }
     foldShape(sink, {
       key,
       source: chain.dns.source,
@@ -118,17 +134,24 @@ export function tallyDnsChains(
       first: { chain, ...(ttl ? { ttl } : {}) },
       rank: rankOf(chain),
     });
-    // The TTL range is an aggregate over the folded observations, widened on every fold.
-    const row = sink.rows.get(key);
-    if (existing && row?.first && ttl)
-      row.first = {
-        ...row.first,
-        ttl: row.first.ttl
-          ? { min: Math.min(row.first.ttl.min, ttl.min), max: Math.max(row.first.ttl.max, ttl.max) }
-          : ttl,
-      };
   }
-  for (const [source, n] of obs.dnsOverflow) foldOverflow(sink, source, "", n);
+  for (const [source, over] of obs.dnsOverflow) foldOverflow(sink, source, over.firstTs, over.count);
+  const keysByIoc = new Map<string, { ioc: SiemIoc; keys: string[] }>();
+  for (const row of sink.rows.values()) {
+    const d = row.first?.chain.dns;
+    if (!d || !isIndicatorName(d.query)) continue;
+    const value = d.queryAscii;
+    const entry =
+      keysByIoc.get(value) ?? keysByIoc.set(value, { ioc: { type: "domain", value }, keys: [] }).get(value)!;
+    entry.keys.push(row.key);
+  }
+  for (const { ioc, keys } of keysByIoc.values()) {
+    const id = `${ioc.type}:${ioc.value.toLowerCase()}`;
+    const existing = iocSink.get(id);
+    const known = new Set(existing?.sourceAggKeys ?? []);
+    const merged = [...(existing?.sourceAggKeys ?? []), ...keys.filter((k) => !known.has(k))];
+    iocSink.set(id, { ...(existing ?? ioc), sourceAggKeys: merged });
+  }
   return sink;
 }
 
@@ -139,8 +162,9 @@ const leadBlock = (l: Lead): DnsLead => ({
   state: l.state,
   ...(l.band ? { band: l.band } : {}),
   ...(l.reply ? { reply: l.reply } : {}),
-  window: { basis: l.window.basis, slackSeconds: DNS_WINDOW_SLACK_S },
+  window: { basis: l.window.basis, seconds: l.window.seconds, slackSeconds: DNS_WINDOW_SLACK_S },
   ...(l.sharedWithOtherNames ? { sharedWithOtherNames: true } : {}),
+  ...(l.alsoBefore ? { alsoBefore: l.alsoBefore } : {}),
 });
 
 function dnsBlock(row: DnsTallyRow, count: number): DnsBlock {
@@ -162,6 +186,7 @@ function dnsBlock(row: DnsTallyRow, count: number): DnsBlock {
     vantage: "sensor",
     ...(d.client ? { client: d.client } : {}),
     ...(d.server ? { server: d.server } : {}),
+    ...(d.observer ? { sensor: d.observer.name } : {}),
     ...(d.rcode ? { rcode: d.rcode } : {}),
     flags: {
       ...(d.aa !== undefined ? { aa: d.aa } : {}),
@@ -244,7 +269,7 @@ function envelopeOf(t: ShapeRow<DnsTallyRow>): CanonicalEventEnvelope {
     },
     producer: { importer: "network", parserVersion: "1", mappingVersion: "dns-wire-v1" },
     rawFieldMap: {
-      "dns.query": [d.source === "zeek-dns" ? "query" : "dns.rrname"],
+      ...(d.queryField ? { "dns.query": [d.queryField] } : {}),
       "time.observed": [d.source === "zeek-dns" ? "ts" : "timestamp"],
     },
     locatorMap,
@@ -273,10 +298,11 @@ function mapRow(t: ShapeRow<DnsTallyRow>): MappedEvent {
   const { chain, ttl } = t.first;
   const d = chain.dns;
   const head = dnsHead(d);
-  const room = DESCRIPTION_MAX - mark.length - head.length - tail.length;
+  const sensor = sensorWords(d);
+  const room = DESCRIPTION_MAX - mark.length - head.length - sensor.length - tail.length;
   return {
     timestamp: t.firstTs,
-    description: `${head}${packTags(dnsTags(chain, ttl), Math.max(0, room))}${tail}${mark}`,
+    description: `${head}${packTags(dnsTags(chain, ttl), Math.max(0, room))}${sensor}${tail}${mark}`,
     severity: "Info",
     mitre: [],
     canonical: envelopeOf(t),

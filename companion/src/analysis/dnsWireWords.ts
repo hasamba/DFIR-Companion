@@ -4,7 +4,7 @@
 // when it scrapes free text for a hash or a path. A lead is worded as what the connection records
 // establish: order and address, a reply or its absence — never "resolved", never "C2".
 
-import type { DnsChain, Lead } from "./dnsConnJoin.js";
+import type { AlsoBefore, DnsChain, Lead } from "./dnsConnJoin.js";
 import { DNS_WINDOW_SLACK_S } from "./dnsConnJoin.js";
 import type { DnsObservation, ReturnedWire } from "./dnsWireRead.js";
 import { breakHashRuns, showToken } from "./recordIdentity.js";
@@ -12,6 +12,7 @@ import { breakHashRuns, showToken } from "./recordIdentity.js";
 const RETURNED_SHOWN_MAX = 8;
 const VALUE_SHOWN_MAX = 60;
 const NAME_SHOWN_MAX = 120;
+const SHORT_MAX = 80;
 
 const show = (v: string, max: number): string => {
   const shown = breakHashRuns(showToken(v));
@@ -23,7 +24,8 @@ const show = (v: string, max: number): string => {
 /** What the response code establishes, in the record's own words where the code is not in the table. */
 export function outcomeWords(d: DnsObservation): string {
   if (d.rejected) return "rejected by the server";
-  if (!d.rcode) return "no response recorded";
+  // A Zeek line with no rcode saw no response; a Suricata answer event IS the response.
+  if (!d.rcode) return d.anchor === "answer" ? "response code not in this record" : "no response recorded";
   switch (d.rcode) {
     case "NOERROR":
       return d.returnedTotal ? "answered" : "NOERROR — no records of the queried type";
@@ -41,16 +43,30 @@ export function outcomeWords(d: DnsObservation): string {
 /** The state word the envelope carries for the outcome. */
 export function outcomeState(d: DnsObservation): string {
   if (d.rejected) return "rejected";
-  if (!d.rcode) return "no-response";
+  if (!d.rcode) return d.anchor === "answer" ? "rcode-not-in-record" : "no-response";
   if (d.rcode === "NOERROR") return d.returnedTotal ? "answered" : "no-records";
   return d.rcode.toLowerCase();
+}
+
+// The two ends as the record names them: `a → b` when the record says which end asked, `a ↔ b
+// (direction not in this record)` when it does not, and what is missing when an end is.
+function endsWords(d: DnsObservation): string {
+  if (d.ends)
+    return d.ends.direction === "client → server"
+      ? `${d.ends.a} → ${d.ends.b}`
+      : `${d.ends.a} ↔ ${d.ends.b} (direction not in this record)`;
+  return `${d.client ?? "client not in this record"} → ${d.server ?? "server not in this record"}`;
 }
 
 export function dnsHead(d: DnsObservation): string {
   const query = d.query ? show(d.query, NAME_SHOWN_MAX) : "(not in this record)";
   const type = d.queryTypeName ?? (d.queryType !== undefined ? `type ${d.queryType}` : "");
-  return `DNS ${d.client ?? "client not in this record"} → ${d.server ?? "server not in this record"}: [query: ${query}]${type ? ` ${type}` : ""} → ${outcomeWords(d)}`;
+  return `DNS ${endsWords(d)}: [query: ${query}]${type ? ` ${type}` : ""} → ${outcomeWords(d)}`;
 }
+
+/** ` @ sensor` when the record names one — the sensor is identity, so it is shown. */
+export const sensorWords = (d: DnsObservation): string =>
+  d.observer ? ` @ ${show(d.observer.name, SHORT_MAX)}` : "";
 
 // ───────────────────────────── returned values ─────────────────────────────
 
@@ -76,10 +92,17 @@ export function returnedTag(d: DnsObservation): string | undefined {
 const replyWords = (l: Lead): string =>
   l.reply && l.reply !== "reply not in this record" ? ` — ${l.reply}` : "";
 
+const alsoWords = (a: AlsoBefore | undefined): string =>
+  a === "began before this answer arrived"
+    ? "; a record also began before this answer arrived"
+    : a === "open at the time of this answer"
+      ? "; a connection was also open at the time of this answer"
+      : "";
+
 export function leadTag(l: Lead, client: string): string {
-  const shared = l.sharedWithOtherNames
-    ? " — also returned for other names to this client inside the window"
-    : "";
+  const shared =
+    (l.sharedWithOtherNames ? " — also returned for other names to this client inside the window" : "") +
+    alsoWords(l.alsoBefore);
   let words: string;
   switch (l.state) {
     case "connected inside the window":
@@ -100,21 +123,20 @@ export function leadTag(l: Lead, client: string): string {
     case "other clients connected inside the window":
       words = `no connection from ${client}; other clients connected inside the window — the record does not say they used this answer`;
       break;
-    case "connection records exceed the index":
-      words = "connection records exceed the index — not joined";
-      break;
     default:
       words = `no connection from ${client} in this upload`;
   }
   return `${l.address}: ${words}${shared}`;
 }
 
-/** In-window leads first, then the rest in address order. */
-export function leadTags(c: DnsChain): string[] {
+/** The lead tags split: in-window leads (packed first of all), then the rest in address order. */
+export function leadTags(c: DnsChain): { inWindow: string[]; rest: string[] } {
   const client = c.dns.client ?? "the client";
-  const inWindow = c.leads.filter((l) => l.state === "connected inside the window");
-  const rest = c.leads.filter((l) => l.state !== "connected inside the window");
-  return [...inWindow, ...rest].map((l) => leadTag(l, client));
+  const tag = (l: Lead): string => leadTag(l, client);
+  return {
+    inWindow: c.leads.filter((l) => l.state === "connected inside the window").map(tag),
+    rest: c.leads.filter((l) => l.state !== "connected inside the window").map(tag),
+  };
 }
 
 /** The window every lead was read against, with its basis; a range when the row folded TTLs. */
@@ -136,19 +158,27 @@ export function joinTag(c: DnsChain): string | undefined {
       return "connection join: connection records exceed the index — not joined";
     case "answered with no address":
       return "no address returned — no connection can be matched";
+    case "client not joinable":
+      return "connection join: the asking address is not one a sensor's connection records can be matched to (loopback, link-local, multicast, or not in the record)";
+    case "connection records not placeable":
+      return "connection join: the upload's connection records carry no start time — not joined";
     default:
       return undefined;
   }
 }
 
-/** Every tag of the row, in evidence order: the values, the leads, the window, the flags. */
+/**
+ * Every tag of the row: the in-window leads first (the fact the row ranks on can never be the
+ * one the length bound drops), then the values, the other leads, the window, the flags.
+ */
 export function dnsTags(c: DnsChain, ttl: { min: number; max: number } | undefined): string[] {
   const d = c.dns;
-  const tags: string[] = [];
+  const leads = leadTags(c);
+  const tags: string[] = [...leads.inWindow];
   if (d.query && !d.queryValid) tags.push("query name is not a valid name");
   const returned = returnedTag(d);
   if (returned) tags.push(returned);
-  tags.push(...leadTags(c));
+  tags.push(...leads.rest);
   const window = windowTag(c, ttl);
   if (window) tags.push(window);
   const join = joinTag(c);

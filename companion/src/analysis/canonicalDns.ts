@@ -55,11 +55,20 @@ export const dnsLeadSchema = z.object({
   band: dnsGapBandSchema.optional(),
   reply: dnsReplySchema.optional(),
   // The window this lead was read against: the answer's own TTL, or a fixed window when the
-  // record carries none. `seconds` is the first observation's; folded rows carry the range in
-  // `ttl` on the row.
-  window: z.object({ basis: z.enum(["ttl", "fixed"]), slackSeconds: z.number().nonnegative() }).optional(),
+  // record carries none. `seconds` is the FIRST folded observation's; the row's `ttl` carries the
+  // range across all of them.
+  window: z
+    .object({
+      basis: z.enum(["ttl", "fixed"]),
+      seconds: z.number().nonnegative(),
+      slackSeconds: z.number().nonnegative(),
+    })
+    .optional(),
   // The same client was returned this address for another name inside the window.
   sharedWithOtherNames: z.boolean().optional(),
+  // Beside an in-window / after-window lead: an earlier record also began before the answer
+  // arrived, or was open at that time — the client did not wait for this answer.
+  alsoBefore: z.enum(["began before this answer arrived", "open at the time of this answer"]).optional(),
 });
 
 export const dnsBlockSchema = z.object({
@@ -92,12 +101,19 @@ export const dnsBlockSchema = z.object({
   // The TTL range across the folded observations (a cached answer counts down on re-query).
   ttl: z.object({ min: z.number().nonnegative(), max: z.number().nonnegative() }).optional(),
   returnedTotal: z.number().int().nonnegative().optional(),
+  // The sensor that wrote the record (a shipper's observer field, or Suricata's own `host`).
+  sensor: z.string().optional(),
   joinState: z
     .enum([
       "joined",
       "no connection records in this upload",
       "answered with no address",
+      // A loopback, link-local or multicast client, or one the record does not name: nothing a
+      // sensor's connection records can be matched to.
+      "client not joinable",
       "connection records exceed the index",
+      // The upload's connection records carry no start time (a Suricata flow without `flow.start`).
+      "connection records not placeable",
     ])
     .optional(),
   leads: z.array(dnsLeadSchema).optional(),
