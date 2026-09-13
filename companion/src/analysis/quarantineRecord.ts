@@ -74,6 +74,9 @@ const TIME_HEADERS = [
   ...GENERIC_TIME_HEADERS,
 ];
 const NUMERIC = /^-?\d+(?:\.\d+)?$/;
+/** A native LSQuarantineEventsV2 column name, exactly. */
+const NATIVE_COLUMN_RE =
+  /^LSQuarantine(?:EventIdentifier|TimeStamp|AgentName|AgentBundleIdentifier|DataURLString|SenderName|SenderAddress|TypeNumber|OriginTitle|OriginURLString|OriginAlias)$/;
 const ISO_8601 = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/;
 const DESCRIPTION_MAX = 600;
 const URL_SHOWN_MAX = 200;
@@ -361,20 +364,31 @@ export function quarantineOverlay(
     times.length > 1
       ? { iso: "", encoding: "unreadable" as const }
       : readQuarantineTime(time.value, time.header);
-  const type = readQuarantineType(first(rec, ["LSQuarantineTypeNumber", "type"]).value);
-  const agent = first(rec, ["LSQuarantineAgentName", "agent"]).value;
-  const bundleId = first(rec, ["LSQuarantineAgentBundleIdentifier", "bundle_id"]).value;
+  // Every field with the column it came from: the columns are identity too (an export that names
+  // a column differently is other evidence), and a column the words do not name marks the row.
+  const columns: string[] = [];
+  const read = (keys: readonly string[]): string => {
+    const f = first(rec, keys);
+    if (f.header) columns.push(f.header);
+    return f.value;
+  };
+  const type = readQuarantineType(read(["LSQuarantineTypeNumber", "type"]));
+  const agent = read(["LSQuarantineAgentName", "agent"]);
+  const bundleId = read(["LSQuarantineAgentBundleIdentifier", "bundle_id"]);
   const dataUrlField = first(rec, ["LSQuarantineDataURLString", "data_url", "url"]);
-  const dataUrl = dataUrlField.value;
-  const originUrl = first(rec, ["LSQuarantineOriginURLString", "origin_url", "referrer"]).value;
-  const originTitle = first(rec, ["LSQuarantineOriginTitle", "origin_title"]).value;
-  const senderName = first(rec, ["LSQuarantineSenderName", "sender"]).value;
-  const senderAddress = first(rec, ["LSQuarantineSenderAddress", "sender_address"]).value;
+  const dataUrl = read(["LSQuarantineDataURLString", "data_url", "url"]);
+  const originUrl = read(["LSQuarantineOriginURLString", "origin_url", "referrer"]);
+  const originTitle = read(["LSQuarantineOriginTitle", "origin_title"]);
+  const senderName = read(["LSQuarantineSenderName", "sender"]);
+  const senderAddress = read(["LSQuarantineSenderAddress", "sender_address"]);
   // The origin alias is bookmark data — identity, never words: two dumps that differ only in it
   // are two records, and the row says the alias is present without showing it.
-  const originAlias = first(rec, ["LSQuarantineOriginAlias", "origin_alias"]).value;
+  const originAlias = read(["LSQuarantineOriginAlias", "origin_alias"]);
   // Only the native column and the declared alias: a generic `id` is export metadata, not an event.
-  const idRaw = first(rec, ["LSQuarantineEventIdentifier", "event_id"]).value;
+  const idRaw = read(["LSQuarantineEventIdentifier", "event_id"]);
+  // The words name no column but the time's; any other column that is not the native name is
+  // identity the words do not carry.
+  const columnsUnnamed = columns.some((c) => !NATIVE_COLUMN_RE.test(c));
   const eventId = canonicalUuid(idRaw);
 
   // Indicators: the resource the agent fetched, and a lure page — only under a fetchable scheme.
@@ -419,6 +433,7 @@ export function quarantineOverlay(
     senderName,
     senderAddress,
     originAlias ? `alias:${keyDigest(originAlias)}` : "",
+    `cols:${columns.map((c) => `${c.length}:${c}`).join("|")}`,
     // The instant AND its representation AND the raw text: a Cocoa row and an ISO row of one instant
     // are two records with different evidence, and so are two REAL values that round to one
     // millisecond (716403200.5001 vs .5002) — the raw text is the evidence, the ISO is a reading.
@@ -455,6 +470,7 @@ export function quarantineOverlay(
       (v) => v.length > TEXT_SHOWN_MAX,
     ) ||
     (when.encoding === "unreadable" && time.value !== "") ||
+    columnsUnnamed ||
     // …and a time whose text the ISO reading does not carry back (sub-millisecond digits,
     // a non-canonical spelling): the words then show a reading, not the record's value.
     (when.iso !== "" && (!timeRoundTrips(time.value, when) || show(time.header, 40) !== time.header)) ||

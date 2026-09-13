@@ -313,3 +313,8 @@ The joins, Gatekeeper/XProtect logs, browser history, any grade above Info.
 1. The classifier recognised a padded key (` data_url `) but the reader did not, so a routed row
    lost its URL and indicators. Fix: the reader resolves aliases by the same trimmed,
    case-insensitive recognition and names the matched key verbatim in provenance.
+
+## Code round 27 (Codex, one finding)
+1. `data_url` and `DATA_URL` rows shared identity though their provenance differed. Fix: every
+   field's source column is part of the facts digest; a row whose columns are not the native
+   names (an alias export) is marked, since the words name no column but the time's.

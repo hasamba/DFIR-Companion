@@ -606,6 +606,20 @@ describe("through parseMacos and correlateEvents", () => {
     }
   });
 
+  it("the column a value came from is identity: data_url vs DATA_URL are two rows, and an alias row is marked", () => {
+    const recs = [
+      { event_id: UUID, agent: "Safari", data_url: "https://cdn.example.invalid/a" },
+      { event_id: UUID, agent: "Safari", DATA_URL: "https://cdn.example.invalid/a" },
+    ];
+    const r = parseMacos(JSON.stringify(recs));
+    expect(r.events).toHaveLength(2);
+    expect(r.events.every((e) => / #[A-Za-z0-9_-]{22}$/.test(e.description))).toBe(true);
+    expect(afterImport(r.events)).toHaveLength(2);
+    expect(afterImport(parseMacos(JSON.stringify(recs), { aggregate: false }).events)).toHaveLength(2);
+    // a native dump names every column: no mark for its columns
+    expect(parseMacos(csv([row()])).events[0].description).not.toMatch(/ #[A-Za-z0-9_-]{22}$/);
+  });
+
   it("a padded JSON key is its own column name", () => {
     const { LSQuarantineTimeStamp: _t, ...rest } = row();
     const recs = [
