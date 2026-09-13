@@ -3,6 +3,7 @@ import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { injectPrintTrigger } from "../reports/html.js";
 import { logActivity } from "../analysis/activityLog.js";
+import { logEvidenceSafety } from "./evidenceSafetyLog.js";
 import { milestoneEvent } from "../analysis/notifications.js";
 import { reloadEnvPrefix } from "../settings/envManager.js";
 import { fetchIrisCase } from "../integrations/iris/irisImportFetch.js";
@@ -97,6 +98,9 @@ export function registerReportsExportRoutes(app: Express, ctx: RouteContext): vo
         action: "report-generated",
         detail: "report (Markdown + HTML) regenerated",
       });
+      // The export still ships with its findings (#1006): the warning is in the document, on the
+      // activity log, and in this response for the dashboard's status line.
+      logEvidenceSafety(options, req.params.id, "html", paths.evidenceSafety ?? []);
       return res.status(200).json(paths);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -148,7 +152,8 @@ export function registerReportsExportRoutes(app: Express, ctx: RouteContext): vo
   app.get("/cases/:id/report.docx", async (req: Request, res: Response) => {
     if (!options.reportWriter) return res.status(501).json({ error: "report writer not configured" });
     try {
-      const buf = await options.reportWriter.docx(req.params.id);
+      const { buffer: buf, evidenceSafety } = await options.reportWriter.docx(req.params.id);
+      logEvidenceSafety(options, req.params.id, "docx", evidenceSafety);
       res.type("application/vnd.openxmlformats-officedocument.wordprocessingml.document");
       res.setHeader("Content-Disposition", attachmentContentDisposition(`report-${req.params.id}.docx`));
       res.setHeader("Cache-Control", "private, no-cache");

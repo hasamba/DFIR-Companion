@@ -19,6 +19,20 @@ Generating a report also writes `custody-manifest.json` beside it, and the encry
 carries one inside — a signed record of every artifact's chain of custody. See
 [Chain of Custody](chain-of-custody.md).
 
+### Indicators are defanged, and the export checks itself
+
+Every human-readable export — the HTML, Markdown and Word reports, the interactive HTML report and
+the presentation deck — renders indicators inert (`hxxp://evil[.]example`, `203[.]0[.]113[.]9`) so a
+reader cannot click through to attacker infrastructure. Machine exports (CSV, STIX, JSON, the IOC
+block-list, case archives) keep the live values because the tools that read them match on them.
+
+Before one of those files is handed over, the Companion checks the finished file against the case's
+own recorded indicators and evidence text. If a live indicator or an unescaped piece of evidence
+made it through — an exporter defect, not something you did — the export still ships, with a
+warning in three places: a banner at the top of the document itself, a line on the case activity
+log, and the report status line in the dashboard. Fix the cause and regenerate before the file
+leaves the team.
+
 ---
 
 ## Report Customisation

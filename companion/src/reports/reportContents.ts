@@ -18,6 +18,13 @@ import { defaultReportTemplate, type ReportTemplate } from "./reportTemplate.js"
 import type { ReportMeta } from "./reportMeta.js";
 import { findingsCsv, iocsCsv, timelineCsv, forensicTimelineCsv } from "./csv.js";
 import type { RedactedReportContents } from "../analysis/redactedExport.js";
+import {
+  checkEvidenceSafety,
+  dedupeEvidenceSafety,
+  evidenceSafetyLines,
+  withEvidenceSafetyHtmlBanner,
+  withEvidenceSafetyMarkdownBanner,
+} from "./evidenceSafety.js";
 
 // Assembly of every report artifact from an already-loaded state, lifted out of reportWriter.ts —
 // that file is frozen at its recorded length by the size ratchet, and the rule when the gate fails
@@ -47,29 +54,9 @@ export function renderReportContents(
   hostScope?: HostScopeLedger | null,
 ): RedactedReportContents {
   const scopeSection = hostScope ? `\n\n${renderScopeSection(hostScope)}` : "";
-  return {
-    // Defanged after the scope section is appended — see html.ts for why this sits at the seam.
-    markdown: defangIndicators(
-      renderMarkdownReport(
-        state,
-        meta,
-        exposure,
-        graph,
-        notebookEntries,
-        playbookTasks,
-        template,
-        kevCatalog,
-        hypotheses,
-        secondLookLeads,
-        coverage,
-        lateralPaths,
-        modelPerf,
-        complianceControl,
-        custody,
-      ) + scopeSection,
-      caseDomains(state),
-    ),
-    html: renderHtmlReport(
+  // Defanged after the scope section is appended — see html.ts for why this sits at the seam.
+  const markdown = defangIndicators(
+    renderMarkdownReport(
       state,
       meta,
       exposure,
@@ -77,10 +64,39 @@ export function renderReportContents(
       notebookEntries,
       playbookTasks,
       template,
+      kevCatalog,
       hypotheses,
+      secondLookLeads,
+      coverage,
+      lateralPaths,
+      modelPerf,
+      complianceControl,
       custody,
-      hostScope,
-    ),
+    ) + scopeSection,
+    caseDomains(state),
+  );
+  const html = renderHtmlReport(
+    state,
+    meta,
+    exposure,
+    graph,
+    notebookEntries,
+    playbookTasks,
+    template,
+    hypotheses,
+    custody,
+    hostScope,
+  );
+  // The last check at the door (#1006): asked of the finished text, before the warning it may
+  // add — the banner names its values defanged, so it can never be what the check finds.
+  const evidenceSafety = dedupeEvidenceSafety([
+    ...checkEvidenceSafety(state, markdown, { unescaped: false }),
+    ...checkEvidenceSafety(state, html),
+  ]);
+  return {
+    markdown: withEvidenceSafetyMarkdownBanner(markdown, evidenceSafety),
+    html: withEvidenceSafetyHtmlBanner(html, evidenceSafety),
+    evidenceSafety: evidenceSafetyLines(evidenceSafety),
     findingsCsv: findingsCsv(state),
     iocsCsv: iocsCsv(state),
     timelineCsv: timelineCsv(state),
