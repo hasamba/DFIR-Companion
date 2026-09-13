@@ -7,6 +7,7 @@ import { tlsGraphBlockSchema } from "./canonicalTls.js";
 import { quarantineAttributeBlockSchema, quarantineBlockSchema } from "./canonicalQuarantine.js";
 import { entraPathBlockSchema } from "./canonicalEntra.js";
 import { awsLineageBlockSchema } from "./canonicalAwsLineage.js";
+import { mailboxChainBlockSchema } from "./canonicalMailbox.js";
 
 export const CANONICAL_EVENT_SCHEMA_VERSION = "1.0.0" as const;
 /** The producer stamped on an envelope DERIVED from legacy flat fields at the read boundary. */
@@ -153,6 +154,8 @@ export const canonicalEventEnvelopeSchema = z.object({
   entra: entraPathBlockSchema.optional(),
   // An AWS credential-lineage summary row (awsLineage.ts, #979); the block lives in canonicalAwsLineage.ts.
   awsLineage: awsLineageBlockSchema.optional(),
+  // A mailbox-chain summary row (mailboxChain.ts, #975); the block lives in canonicalMailbox.ts.
+  mailboxChain: mailboxChainBlockSchema.optional(),
   // A TLS record's own reading (tlsSession.ts, #933 item 6): the client's SNI, the protocol facts
   // the sensor saw, the certificate the server presented, the sensor's chain check, the observer.
   tls: z

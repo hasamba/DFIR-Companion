@@ -1308,8 +1308,60 @@ went unlogged for the rest of the day) has no Microsoft-published retirement dat
 row therefore says the gap depends on the service behaviour at the time of the event. An absent
 `MailItemsAccessed` row never proves absence of access without verified coverage for the period.
 
-The chain across records — a suspicious sign-in, then access, then a rule, then sending or
-deletion — is a join by session and time, not a per-record fact; it is #975.
+**What one export joins: the mailbox chain per mailbox and session.** Beside the rows, the
+importer emits one summary row per mailbox and session whose records form a chain — `Mailbox
+chain: alice@… (join: session 3f2a1b0c…) [2024-05-01T10:00:00Z signed in from 203.0.113.9
+(Chrome…) OAuth2:Authorize; 2024-05-01T10:03:00Z accessed: binds 5 items in 2 folders (7
+operations) as delegate via REST; 2024-05-01T10:05:00Z configured: creates inbox rule "."
+forwards to drop@… (outside the mailbox's domain), deletes the message — delivery through the
+forwarding is not in this evidence; 2024-05-01T10:08:00Z sends as alice@… to cfo@…; items listed:
+6 across the joined records; continuous coverage of the window is not established by this
+export; licence, audit configuration and retention are not in this evidence; four stages in
+order]`. It is built over every record of ONE export, before aggregation and the event cap,
+because the sign-in and the owner's access rows are Info and leave the forensic timeline at
+import; a chain across exports is not built.
+
+- **The join is said, never assumed.** Records that carry the same `SessionId` (mailbox-audit
+  access, `UpdateInboxRules`, sends, deletes; a UAL logon whose device properties name one) join
+  by session. A record with no session — an admin cmdlet such as `New-InboxRule` or `Set-Mailbox`,
+  a logon without one — joins the ONE session of that mailbox sharing its actor and client address
+  within 24 hours, and the step says `(joined by actor + address, not by session)`; with two or
+  more matching sessions it joins none and is counted; with none, such records form an
+  `actor + address, 24-hour window` chain of their own. A session is one id, one actor and one
+  address inside one window — a placeholder id shared by another actor, or reused months apart,
+  joins nothing. A record with no actor or address to join by joins nothing and is counted. A
+  logon joins only inside its own tenant. Two sessions on one mailbox are two findings; one
+  session on two mailboxes is two findings.
+- **Identity.** The mailbox is its GUID; a UPN resolves to the GUID a record of the same export
+  states beside it; a cmdlet naming the mailbox by an alias, a display name or a DN joins nothing
+  and is counted. A name is never a join.
+- **Stages count only in order and only for what landed.** sign-in < access < rule / forwarding /
+  permission < send / delete (sends and deletions only; a bind is an access; a move, copy or
+  update is `not a stage:`), each strictly after the previous — the subsequence with the most
+  stages, then the highest-graded one; a step before the stage it would follow is listed as out
+  of order. A failed or partial command, a `-WhatIf` run, a removal, a disable or a cleared
+  forwarding is listed as `attempt:` / `simulation:` / `reversal:` and never counted; a rule
+  record with no decoded action (an enable, a rename) is `not a stage:`. A UAL `UserLoggedIn` is a sign-in only when `ErrorNumber` is absent or 0, no
+  `LogonError` is set and `ResultStatus` says success — `ResultStatus` alone reports the
+  operation, not the authentication.
+- **Risk.** An interactive sign-in of the export for the same user, address and tenant within
+  ±10 minutes lends its verdict as `a contemporaneous sign-in in the sign-in log (1 min apart)
+  carries risk: atRisk, medium — not established as the same sign-in`. Nothing says "suspicious".
+- **Never said.** "forwarded" (only configured, with `delivery through the forwarding is not in
+  this evidence`), "read" (accessed / bound; a folder sync adds `possible offline copy after a
+  folder sync — inferred, not observed`), a count the records do not list (`items listed: N across
+  the M cited records; K operations in aggregated records, items not listed` — every cited record
+  is in the row's evidence), absence as proof: an
+  absent stage is `no access record for this mailbox among the 1,204 supplied Exchange
+  mailbox-audit records (earliest …, latest …)` or `… log not in this export`, always with the
+  coverage clause above.
+- **Grade only raises.** The row is never below its highest step; an owner signing in, reading
+  and sending their own mail is all Info and is no row. Three or more stages with a persistence
+  step → High when the destination is outside the mailbox's domain, else Medium; three stages
+  without one → Medium; two → Low. Techniques are the steps' own. 256 chains per import, 1,024
+  steps per mailbox and stage (the earliest kept, the rest counted — the same finding whatever the
+  file order); the summaries never evict a source row; the row's identity is (tenant, mailbox,
+  join), so a re-import folds.
 
 ### Process access and remote threads: what the record establishes
 
