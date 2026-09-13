@@ -5,6 +5,7 @@ import {
   readQuarantineXattr,
   quarantineOverlay,
   markSharedIdentifiers,
+  QUARANTINE_VARIANTS_MAX,
   canonicalUuid,
 } from "../../src/analysis/quarantineRecord.js";
 import { parseMacos } from "../../src/analysis/macosImport.js";
@@ -65,6 +66,12 @@ describe("readQuarantineTime — decoded by declared representation, never by ma
     expect(readQuarantineTime("1789257600", "LSQuarantineTimeStamp", "unix-seconds").iso).toBe(
       "2026-09-13T00:00:00.000Z",
     );
+  });
+  it("an impossible calendar date is unreadable, never rolled over", () => {
+    expect(readQuarantineTime("2026-04-31T00:00:00+02:00", "timestamp").encoding).toBe("unreadable");
+    expect(readQuarantineTime("2023-02-29T00:00:00Z", "timestamp").encoding).toBe("unreadable");
+    expect(readQuarantineTime("2024-02-29T00:00:00Z", "timestamp").encoding).toBe("iso");
+    expect(readQuarantineTime("2026-01-01T24:00:00Z", "timestamp").encoding).toBe("unreadable");
   });
   it("a non-ISO date string is unreadable, never asserted as UTC", () => {
     expect(readQuarantineTime("May 7, 2026 @ 16:31:04.000", "LSQuarantineTimeStamp").encoding).toBe(
@@ -258,6 +265,30 @@ describe("quarantineOverlay — what one record establishes", () => {
   });
 });
 
+describe("boundQuarantineVariants", () => {
+  it("variants under one identifier are bounded; a later legitimate record survives the cap", () => {
+    const sink = new Map<string, SiemIoc>();
+    const flood = Array.from({ length: 40 }, (_, i) =>
+      quarantineOverlay(row({ LSQuarantineOriginTitle: `t${i}` }), sink, {}),
+    );
+    const other = quarantineOverlay(
+      row({ LSQuarantineEventIdentifier: "660e8400-e29b-41d4-a716-446655440000" }),
+      sink,
+      {},
+    );
+    const rows = [...flood, other];
+    markSharedIdentifiers(rows);
+    const keys = new Set(rows.map((r) => r.aggKey));
+    expect(keys.size).toBe(QUARANTINE_VARIANTS_MAX + 2);
+    const over = rows.filter((r) => r.aggKey.endsWith("|overflow"));
+    expect(over).toHaveLength(40 - QUARANTINE_VARIANTS_MAX);
+    expect(over[0].description).toContain(
+      "[overflow: records with this event identifier and further differing facts beyond 16 sets folded; none shown]",
+    );
+    expect(rows[rows.length - 1].description).not.toContain("overflow");
+  });
+});
+
 describe("markSharedIdentifiers", () => {
   it("one uuid with two fact sets is two rows, both marked; a re-dump is one", () => {
     const sink = new Map<string, SiemIoc>();
@@ -352,6 +383,13 @@ describe("through parseMacos and correlateEvents", () => {
     };
     expect(correlateEvents([...afterImport(r.events), file])).toHaveLength(2);
   });
+  it("a flood of variants under one identifier cannot push a legitimate record out of the budget", () => {
+    const flood = Array.from({ length: 300 }, (_, i) => row({ LSQuarantineOriginTitle: `t${i}` }));
+    const other = row({ LSQuarantineEventIdentifier: "660e8400-e29b-41d4-a716-446655440000" });
+    const r = parseMacos(csv([...flood, other]), { maxEvents: 20 });
+    expect(r.events.some((e) => e.description.includes("660e8400-e29b-41d4-a716-446655440000"))).toBe(true);
+  });
+
   it("the import option declares a converted dump's epoch", () => {
     const r = parseMacos(csv([{ ...row(), LSQuarantineTimeStamp: "1789257600" }]), {
       quarantineTime: "unix-seconds",

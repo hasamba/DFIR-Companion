@@ -53,7 +53,7 @@ const PATH_RE = /(?:[A-Za-z]:\\|\\\\)[^\s"'|<>]+|(?<![\w/:])\/(?:[\w.\-]+\/)+[\w
 // union that row with the endpoint event that really carries the file or the hash. Each span is
 // well-formed by construction (the importer turns `]` into `)` inside it), so it cannot close early.
 const UNTRUSTED_SPAN_RE =
-  /\[(?:trailer|query|returned|the record also carries returned values|sni|cert|client cert|certificate|agent|data url|origin|sender|quarantine mark|event identifier not decodable): [^\]]*\]/g;
+  /\[(?:trailer|query|returned|the record also carries returned values|sni|cert|client cert|certificate|agent|data url|origin|sender|quarantine mark|quarantine mark \(not decodable\)|quarantine url|event identifier not decodable): [^\]]*\]/g;
 function scannedText(description: string): string {
   return description.replace(UNTRUSTED_SPAN_RE, " ");
 }

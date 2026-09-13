@@ -50,7 +50,12 @@ describe("the # quarantine: header (#933 item 7)", () => {
     const [s] = job(susp, "/Library/LaunchDaemons/x.plist", {
       extra: { quarantine: "https://evil.test/update.zip" },
     });
-    expect(s.reason).toContain("it was downloaded from https://evil.test/update.zip");
+    expect(s.reason).toContain("[quarantine url: https://evil.test/update.zip]");
+    expect(s.reason).not.toContain("downloaded from");
+    const [h] = job(susp, "/Library/LaunchDaemons/x.plist", {
+      extra: { quarantine: "https://evil.test/d41d8cd98f00b204e9800998ecf8427e" },
+    });
+    expect(h.reason).not.toMatch(/[0-9a-f]{32}/);
   });
   it("a value that is neither a mark nor a URL is said to be undecodable, never a download URL", () => {
     const [s] = job(susp, "/Library/LaunchDaemons/x.plist", {
@@ -253,7 +258,7 @@ describe("what only raises or explains, never fires alone", () => {
       "/Library/LaunchDaemons/x.plist",
       { extra: { quarantine: "https://evil.test/agent.zip" } },
     );
-    expect(s.reason).toContain("downloaded from https://evil.test/agent.zip");
+    expect(s.reason).toContain("[quarantine url: https://evil.test/agent.zip]");
     expect(s.severity).toBe("High");
   });
 

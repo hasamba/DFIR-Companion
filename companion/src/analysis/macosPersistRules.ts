@@ -364,7 +364,7 @@ export function gradeLaunchd(file: CollectedFile, ctx: MacContext = {}): LinuxSi
       ? ` The program carries a quarantine record [${facts.quarantineMark.words}].`
       : facts.quarantineRaw
         ? ` The program carries a quarantine record [quarantine mark (not decodable): ${clip(breakHashRuns(showToken(facts.quarantineRaw)))}].`
-        : ` The program carries a quarantine record: it was downloaded from ${clip(facts.quarantineUrl ?? "")}.`;
+        : ` The program carries a quarantine record [quarantine url: ${clip(breakHashRuns(showToken(facts.quarantineUrl ?? "")))}] (a legacy collection: the URL the xattr does not carry, read from the database at collection time).`;
     if (RANK[severity] < RANK.High) severity = "High";
   }
   if (facts?.signing === "unsigned" || facts?.signing === "adhoc") {

@@ -1,7 +1,7 @@
 import type { Severity } from "./stateTypes.js";
 import { parseCsv } from "./csvImport.js";
 import {
-  markSharedIdentifiers,
+  boundQuarantineVariants,
   quarantineOverlay,
   type QuarantineRow,
   type QuarantineTimeOption,
@@ -186,8 +186,9 @@ export function parseMacos(input: string, opts: MacosImportOptions = {}): MacosP
   }
 
   if (total === 0) return empty;
-  // A UUID that names two different fact sets is said on both rows (quarantineRecord.ts).
-  markSharedIdentifiers(quarantineRows);
+  // A UUID that names two different fact sets is said on both rows; past a budget of fact sets
+  // per UUID the rest fold into one overflow row (quarantineRecord.ts).
+  boundQuarantineVariants(quarantineRows);
 
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,

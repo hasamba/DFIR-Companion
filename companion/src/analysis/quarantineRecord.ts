@@ -33,7 +33,7 @@ export interface QuarantineTime {
 const COCOA_EPOCH_OFFSET = 978307200;
 const NATIVE_TIME_HEADER = /^lsquarantinetimestamp$/i;
 const NUMERIC = /^-?\d+(?:\.\d+)?$/;
-const ISO_8601 = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/;
+const ISO_8601 = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/;
 const DESCRIPTION_MAX = 600;
 const URL_SHOWN_MAX = 200;
 const TEXT_SHOWN_MAX = 80;
@@ -58,7 +58,13 @@ export function readQuarantineTime(
   if (!NUMERIC.test(text)) {
     // ISO-8601 with an explicit offset or Z, and nothing else: "May 7, 2026 @ 16:31" carries no
     // zone and no declared representation, so it establishes no instant.
-    if (!ISO_8601.test(text)) return { iso: "", encoding: "unreadable" };
+    const m = ISO_8601.exec(text);
+    if (!m) return { iso: "", encoding: "unreadable" };
+    // A real calendar date: Date.parse rolls "04-31" into May and accepts "02-29" in a common year.
+    const [y, mo, d, hh, mi, ss] = [m[1], m[2], m[3], m[4], m[5], m[6] ?? "0"].map(Number);
+    const probe = new Date(Date.UTC(y, mo - 1, d, hh, mi, ss));
+    if (probe.getUTCMonth() !== mo - 1 || probe.getUTCDate() !== d || hh > 23 || mi > 59 || ss > 60)
+      return { iso: "", encoding: "unreadable" };
     const iso = normalizeTime(text);
     return iso && !Number.isNaN(Date.parse(iso))
       ? { iso, encoding: "iso" }
@@ -325,20 +331,37 @@ export function quarantineOverlay(
 }
 
 const SHARED_MARK = " [event identifier shared by records with different facts]";
+/** Distinct fact sets one event identifier may keep as rows; the rest fold into one overflow row. */
+export const QUARANTINE_VARIANTS_MAX = 16;
 
 /**
  * A UUID names ONE download event. Two records that share a UUID but disagree on a fact are two
  * rows (their keys differ by the facts digest), and both say so — the join must refuse a UUID that
- * names more than one fact set. Rewrites descriptions in place; a re-dump (same facts) is untouched.
+ * names more than one fact set. Past QUARANTINE_VARIANTS_MAX distinct fact sets the rest fold into
+ * one overflow row per UUID that shows none of them, so a flood of variants under one identifier
+ * cannot consume the import's event budget. Rewrites in place; a re-dump (same facts) is untouched.
  */
-export function markSharedIdentifiers(rows: QuarantineRow[]): void {
-  const byId = new Map<string, Set<string>>();
-  for (const r of rows)
-    if (r.eventId) (byId.get(r.eventId) ?? byId.set(r.eventId, new Set()).get(r.eventId)!).add(r.factsDigest);
+export function boundQuarantineVariants(rows: QuarantineRow[]): void {
+  const byId = new Map<string, string[]>();
   for (const r of rows) {
-    if (!r.eventId || (byId.get(r.eventId)?.size ?? 0) < 2 || r.description.includes(SHARED_MARK)) continue;
+    if (!r.eventId) continue;
+    const seen = byId.get(r.eventId) ?? byId.set(r.eventId, []).get(r.eventId)!;
+    if (!seen.includes(r.factsDigest) && seen.length < QUARANTINE_VARIANTS_MAX) seen.push(r.factsDigest);
+  }
+  for (const r of rows) {
+    if (!r.eventId) continue;
+    const seen = byId.get(r.eventId) ?? [];
+    if (!seen.includes(r.factsDigest)) {
+      r.aggKey = `macos-quarantine|event:${r.eventId}|overflow`;
+      r.description = `macOS quarantine [event: ${r.eventId}] [overflow: records with this event identifier and further differing facts beyond ${QUARANTINE_VARIANTS_MAX} sets folded; none shown]${identityMark(r.aggKey)}`;
+      continue;
+    }
+    if (seen.length < 2 || r.description.includes(SHARED_MARK)) continue;
     const mark = / #[A-Za-z0-9_-]{22}$/.exec(r.description)?.[0] ?? "";
     const body = mark ? r.description.slice(0, -mark.length) : r.description;
     r.description = `${body.slice(0, DESCRIPTION_MAX - SHARED_MARK.length - mark.length)}${SHARED_MARK}${mark}`;
   }
 }
+
+/** The marking-only name the tests use; boundQuarantineVariants marks and bounds. */
+export const markSharedIdentifiers = boundQuarantineVariants;
