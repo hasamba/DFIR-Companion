@@ -14,7 +14,8 @@ const cited = z.object({ time: z.string(), locator: z.string() });
 export const gwsAuthorizationSchema = z.object({
   time: z.string(),
   locator: z.string(),
-  tier: z.enum(["High", "Medium", "Low"]),
+  /** "unknown" when the record carries no scope — nothing is claimed about the tier. */
+  tier: z.enum(["High", "Medium", "Low", "unknown"]),
   scopes: z.array(z.string()),
   scopesBeyond: z.number().int().nonnegative(),
 });
@@ -36,6 +37,8 @@ export const gwsGrantSchema = z.object({
   }),
   /** Activity before the first authorization of this user in the export. */
   beforeAuthorization: z.number().int().nonnegative(),
+  /** Activity at the same timestamp as an authorization or a revocation — order not established. */
+  unplaced: z.number().int().nonnegative(),
   revocations: z.array(cited),
   afterRevocation: z.object({
     calls: z.number().int().nonnegative(),

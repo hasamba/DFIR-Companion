@@ -205,11 +205,14 @@ describe("what is never claimed", () => {
     expect(rows[0].description).toMatch(/no authorization in this export; the scopes are not known\]$/);
     expect(rows[0].canonical?.gwsLifecycle?.coveredTier).toBe("unknown");
     const equal = lifecycles([authorize(at(0)), activity(at(0))]);
-    expect(equal[0].description).toContain("1 before any authorization in this export");
+    expect(equal[0].description).toContain(
+      "1 at the same timestamp as an authorization or revocation — order not established",
+    );
     expect(equal[0].description).not.toContain("after an authorization and before a revocation");
+    expect(equal[0].canonical?.gwsLifecycle?.grants[0].unplaced).toBe(1);
   });
 
-  it("a wider re-authorization is said; scopes not in the record read High", () => {
+  it("a wider re-authorization is said; scopes not in the record claim no tier (the row keeps the record's own grade)", () => {
     const rows = lifecycles([
       authorize(at(0), ALICE, [G + "drive.file"]),
       authorize(at(60), ALICE, [G + "drive.file", G + "gmail.readonly"]),
@@ -217,7 +220,11 @@ describe("what is never claimed", () => {
     expect(rows[0].description).toContain("re-authorized with wider scopes");
     expect(rows[0].severity).toBe("High");
     const none = lifecycles([token("authorize", clientParams())]);
-    expect(none[0].description).toContain("(High: scopes not in this record)");
+    expect(none[0].description).toContain("authorized 2026-05-02T10:00:00.000Z (scopes not in this record)");
+    expect(none[0].canonical?.gwsLifecycle?.coveredTier).toBe("unknown");
+    expect(none[0].canonical?.gwsLifecycle?.grants[0].authorizations[0].tier).toBe("unknown");
+    expect(none[0].mitre).toEqual([]);
+    expect(none[0].severity).toBe("High");
   });
 
   it("identity needs a tenant, a client id and a real profile id; an email resolves only through a record stating both; placeholders join nothing", () => {
@@ -372,5 +379,131 @@ describe("bounds, identity, the importer", () => {
     expect(capped.kept).toBe(1);
     expect(capped.summaries).toBe(1);
     expect(capped.dropped).toBe(2);
+  });
+});
+
+// Code round 1 (Codex): the cases the review named.
+describe("code round 1", () => {
+  const OTHER_TENANT = { id: { customerId: "C02xyz" } };
+  const inTenant = (r: Record<string, unknown>, customerId: string) => ({
+    ...r,
+    id: { ...(r.id as Record<string, unknown>), customerId },
+  });
+
+  it("an email learns its profile id only inside its own tenant; a tenantless record teaches nothing", () => {
+    const rows = lifecycles([
+      authorize(at(0)),
+      inTenant(activity(at(60), { email: ALICE.email, profileId: "" }), "C02xyz"),
+    ]);
+    // Tenant B's email-only activity does not resolve through tenant A's record.
+    expect(rows).toHaveLength(1);
+    expect(rows[0].canonical?.gwsLifecycle?.grants[0].activity.calls).toBe(0);
+    expect(rows[0].canonical?.gwsLifecycle?.incomplete).toBe(1);
+    const tenantless = { ...authorize(at(0)), id: { time: at(0), applicationName: "token" } };
+    const rows2 = lifecycles([tenantless, activity(at(60), { email: ALICE.email, profileId: "" })]);
+    expect(rows2).toHaveLength(0);
+  });
+
+  it("logins and Drive rows join only inside the grant's tenant; only login_success / login_failure are logins", () => {
+    const rows = lifecycles([
+      authorize(at(0)),
+      inTenant(
+        rec("login", [{ type: "login", name: "login_success", parameters: [] }], { id: { time: at(-60) } }),
+        "C02xyz",
+      ),
+      inTenant(
+        rec("drive", [{ type: "access", name: "download", parameters: [] }], { id: { time: at(500) } }),
+        "C02xyz",
+      ),
+      rec("login", [{ type: "login", name: "logout", parameters: [] }], { id: { time: at(-60) } }),
+      rec("login", [{ type: "login", name: "2sv_disable", parameters: [] }], { id: { time: at(-60) } }),
+      rec("login", [{ type: "login", name: "login_failure", parameters: [] }], { id: { time: at(-60) } }),
+    ]);
+    expect(rows[0].canonical?.gwsLifecycle?.grants[0]).toMatchObject({
+      contemporaneousLogins: 1,
+      driveEventsInWindow: 0,
+    });
+  });
+
+  it("admin app control uses the documented OAUTH2_CLIENT type; Android, iOS and Chrome-extension ids are not client ids", () => {
+    const admin = (type: string) =>
+      rec(
+        "admin",
+        [
+          {
+            type: "APPLICATION_SETTINGS",
+            name: "ADD_TO_BLOCKED_OAUTH2_APPS",
+            parameters: [
+              { name: "OAUTH2_APP_ID", value: CLIENT },
+              { name: "OAUTH2_APP_NAME", value: "Mail Backup Pro" },
+              { name: "OAUTH2_APP_TYPE", value: type },
+            ],
+          },
+        ],
+        {
+          id: { time: at(300) },
+          actor: { email: "admin@example.invalid", profileId: "100000000000000000009", callerType: "USER" },
+        },
+      );
+    expect(
+      lifecycles([authorize(at(0)), admin("OAUTH2_CLIENT")])[0].canonical?.gwsLifecycle?.adminControls,
+    ).toHaveLength(1);
+    for (const t of ["ANDROID", "IOS", "CHROME_EXTENSION"])
+      expect(lifecycles([authorize(at(0)), admin(t)])[0].canonical?.gwsLifecycle?.adminControls).toHaveLength(
+        0,
+      );
+  });
+
+  it("every activity record is placed — the 4,097th call after a revocation counts; coverage counts records, not events", () => {
+    const flood = [
+      authorize(at(0)),
+      ...Array.from({ length: 4096 }, (_, i) => activity(at(10 + i))),
+      revoke(at(5000)),
+      activity(at(6000)),
+    ];
+    const r = lifecycles(flood)[0];
+    expect(r.canonical?.gwsLifecycle?.grants[0].activity.calls).toBe(4097);
+    expect(r.canonical?.gwsLifecycle?.grants[0].afterRevocation).toEqual({ calls: 1, reauthorized: 0 });
+    expect(r.description).toContain("4096 after an authorization and before a revocation");
+    const multi = rec("token", [
+      {
+        type: "auth",
+        name: "authorize",
+        parameters: [...clientParams(), { name: "scope", multiValue: [G + "drive"] }],
+      },
+      {
+        type: "auth",
+        name: "activity",
+        parameters: [...clientParams(), { name: "method_name", value: "drive.files.get" }],
+      },
+    ]);
+    expect(lifecycles([multi])[0].canonical?.gwsLifecycle?.coverage.records).toBe(1);
+    expect(lifecycles([multi])[0].description).toContain("in the 1 token record of this export");
+  });
+
+  it("activity at a revocation's timestamp is unplaced; the pass stays linear with many clients per profile and many side rows", () => {
+    const r = lifecycles([authorize(at(0)), revoke(at(100)), activity(at(100))])[0];
+    expect(r.canonical?.gwsLifecycle?.grants[0]).toMatchObject({
+      unplaced: 1,
+      afterRevocation: { calls: 0, reauthorized: 0 },
+    });
+    const many = [
+      ...Array.from({ length: 3000 }, (_, i) =>
+        authorize(
+          at(i),
+          ALICE,
+          [G + "userinfo.email"],
+          `${String(i).padStart(12, "0")}-c.apps.googleusercontent.com`,
+        ),
+      ),
+      ...Array.from({ length: 3000 }, (_, i) =>
+        rec("drive", [{ type: "access", name: "download", parameters: [] }], { id: { time: at(10 + i) } }),
+      ),
+    ];
+    const started = Date.now();
+    const rows = lifecycles(many);
+    expect(Date.now() - started).toBeLessThan(5000);
+    // A profile with more clients than the bound: side rows are not correlated.
+    expect(rows[0].canonical?.gwsLifecycle?.grants[0].driveEventsInWindow).toBe(0);
   });
 });

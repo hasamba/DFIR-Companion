@@ -1617,23 +1617,25 @@ not built.
 - **Identity is the tenant, the client id and the user's profile id.** The app name is a label —
   two clients named "Mail Backup Pro" are two rows. A user is a real `profileId` (Google's
   placeholder id and an empty id join nothing); an email resolves only through a record of the
-  same export that states both, and two ids for one email teach nothing. A token record missing
+  same tenant that states both, and two ids for one email teach nothing. A token record missing
   a tenant, a client id or a user is counted (`N token records without … — not joined`).
 - **Activity is placed in time, never tied to a grant.** A call is "after an authorization and
   before a revocation" for the same user, "before any authorization in this export — the grant
   predates the export or was not exported", or "after a revocation": with a later authorization
   before it, said so; with none, `delayed delivery of earlier calls or a live token; not
   established`. No record carries a grant or token id, so nothing says "under the grant" or which
-  scopes a call used. An equal timestamp establishes no order.
+  scopes a call used. A call at the same timestamp as an authorization or a revocation is
+  `order not established`. An authorization with no scope in the record claims no tier.
 - **A request never opens a lifecycle**; request- or deny-only clients get a Low summary so the
   evidence stays visible. A missing revocation is `no revocation record in this export; the
   current grant state is not established` — never "live".
 - **Beside, never joined into the grade:** admin app-control rows (`ADD_TO_TRUSTED_OAUTH2_APPS`,
   `REMOVE_FROM_TRUSTED_OAUTH2_APPS`, `ADD_TO_BLOCKED_OAUTH2_APPS`, `REMOVE_FROM_BLOCKED_
-  OAUTH2_APPS`) joined by `OAUTH2_APP_ID` only for a `WEB_APPLICATION`; login rows of the user
-  within ±10 minutes of an authorization (`contemporaneous, not established as the same
-  session`); Drive rows of the user between an authorization and a revocation are counted, `not
-  attributed to the app`.
+  OAUTH2_APPS`) joined by `OAUTH2_APP_ID` only for an `OAUTH2_CLIENT` (an Android, iOS or
+  Chrome-extension id is not a client id); `login_success` / `login_failure` rows of the user, in
+  the same tenant, within ±10 minutes of an authorization (`contemporaneous, not established as
+  the same session`); Drive rows of the user between an authorization and a revocation are
+  counted, `not attributed to the app`.
 - **Totals cover every record, the narration is bounded.** Calls and bytes are summed over every
   activity record (bytes as an exact big integer); 64 methods tracked per user (8 named, calls
   beyond them counted); 16 users named per row (the rest counted); 256 rows per export ordered by

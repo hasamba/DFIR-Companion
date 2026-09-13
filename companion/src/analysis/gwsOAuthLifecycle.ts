@@ -43,6 +43,11 @@ const RANK: Record<Severity, number> = { Critical: 4, High: 3, Medium: 2, Low: 1
 const TIER_RANK: Record<ScopeTier | "unknown", number> = { High: 3, Medium: 2, Low: 1, unknown: 0 };
 const RETENTION_NOTE =
   "the Reports API retains token events for 6 months; the export's completeness for the period is not established by this evidence";
+/** The app-type values that name an OAuth client (the documented `OAUTH2_CLIENT`; the older `WEB_APPLICATION`); Android / iOS / Chrome-extension ids are not client ids. */
+const OAUTH_CLIENT_TYPES = new Set(["OAUTH2_CLIENT", "WEB_APPLICATION"]);
+const LOGIN_EVENTS = new Set(["login_success", "login_failure"]);
+/** Side rows (logins, Drive) are correlated for a profile with at most this many clients; beyond it they are counted, not correlated. */
+const GRANTS_PER_PROFILE_MAX = 256;
 const ADMIN_CONTROL_EVENTS = new Set([
   "ADD_TO_TRUSTED_OAUTH2_APPS",
   "REMOVE_FROM_TRUSTED_OAUTH2_APPS",
@@ -73,14 +78,19 @@ interface Cited {
   locator: string;
 }
 interface Authorization extends Cited {
-  tier: ScopeTier;
+  /** "unknown" when the record carries no scope — nothing is claimed about the tier. */
+  tier: ScopeTier | "unknown";
   scopes: string[];
 }
 interface Grant {
   profileId: string;
   email: string;
   authorizations: Authorization[];
-  activity: Cited[];
+  /** Sorted boundary times, built once after pass 1 (side rows and placement read them). */
+  authTimes: number[];
+  revTimes: number[];
+  /** The placement of every activity record, computed in pass 2 against the boundaries. */
+  placement: { before: number; between: number; reauthorized: number; after: number; unplaced: number };
   calls: number;
   bytes: bigint;
   methods: Map<string, number>;
@@ -102,8 +112,8 @@ interface Client {
   top: Severity;
 }
 
-/** Activity rows kept per grant for the time placement; totals count every one. */
-const ACTIVITY_KEPT_MAX = 4096;
+/** Side rows cited per grant (the rest counted). */
+const SIDE_ROWS_MAX = 4096;
 
 function grantFor(c: Client, profileId: string, email: string): Grant {
   const g =
@@ -113,7 +123,9 @@ function grantFor(c: Client, profileId: string, email: string): Grant {
         profileId,
         email,
         authorizations: [],
-        activity: [],
+        authTimes: [],
+        revTimes: [],
+        placement: { before: 0, between: 0, reauthorized: 0, after: 0, unplaced: 0 },
         calls: 0,
         bytes: 0n,
         methods: new Map(),
@@ -151,23 +163,32 @@ function clientFor(clients: Map<string, Client>, tenant: string, clientId: strin
 
 // ───────────────────────────── the users ─────────────────────────────
 
-/** A user is a validated, non-placeholder profile id; an email resolves through a record that states both. */
+const isProfileId = (pid: string): boolean => /^\d{6,}$/.test(pid) && pid !== PLACEHOLDER_PROFILE;
+
+/**
+ * A user is a validated, non-placeholder profile id; an email resolves through a record OF THE
+ * SAME TENANT that states both (conflicts teach nothing; a tenantless record teaches nothing).
+ */
 function learnUsers(records: readonly Row[]): (rec: Row) => { profileId: string; email: string } | null {
   const byEmail = new Map<string, string>();
   const conflicts = new Set<string>();
   for (const rec of records) {
+    if (!isObject(rec)) continue;
+    const tenant = lower(text(getPath(rec, "id.customerId")));
     const email = lower(text(getPath(rec, "actor.email")));
     const pid = text(getPath(rec, "actor.profileId"));
-    if (!email || !/^\d{6,}$/.test(pid) || pid === PLACEHOLDER_PROFILE) continue;
-    const prev = byEmail.get(email);
-    if (prev && prev !== pid) conflicts.add(email);
-    else byEmail.set(email, pid);
+    if (!tenant || !email || !isProfileId(pid)) continue;
+    const k = `${tenant}|${email}`;
+    const prev = byEmail.get(k);
+    if (prev && prev !== pid) conflicts.add(k);
+    else byEmail.set(k, pid);
   }
   return (rec) => {
     const email = text(getPath(rec, "actor.email"));
     const pid = text(getPath(rec, "actor.profileId"));
-    if (/^\d{6,}$/.test(pid) && pid !== PLACEHOLDER_PROFILE) return { profileId: pid, email };
-    const learned = email && !conflicts.has(lower(email)) ? (byEmail.get(lower(email)) ?? "") : "";
+    if (isProfileId(pid)) return { profileId: pid, email };
+    const k = `${lower(text(getPath(rec, "id.customerId")))}|${lower(email)}`;
+    const learned = email && !conflicts.has(k) ? (byEmail.get(k) ?? "") : "";
     return learned ? { profileId: learned, email } : null;
   };
 }
@@ -208,6 +229,57 @@ function scan(records: readonly Row[]): Scanned[] {
   return out;
 }
 
+/** Index of the first element > t in a sorted array (upper bound). */
+const upperBound = (arr: readonly number[], t: number): number => {
+  let lo = 0;
+  let hi = arr.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (arr[mid] <= t) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+};
+/** Index of the first element >= t in a sorted array (lower bound). */
+const lowerBound = (arr: readonly number[], t: number): number => {
+  let lo = 0;
+  let hi = arr.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (arr[mid] < t) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+};
+
+/** Place one activity time against the grant's sorted boundaries; equal timestamps establish no order. */
+function place(g: Grant, t: number): void {
+  const p = g.placement;
+  if (
+    (g.authTimes.length && g.authTimes[lowerBound(g.authTimes, t)] === t) ||
+    (g.revTimes.length && g.revTimes[lowerBound(g.revTimes, t)] === t)
+  ) {
+    p.unplaced += 1;
+    return;
+  }
+  const ai = upperBound(g.authTimes, t) - 1;
+  const ri = upperBound(g.revTimes, t) - 1;
+  if (ai < 0) p.before += 1;
+  else if (ri >= 0 && g.revTimes[ri] > g.authTimes[ai]) p.after += 1;
+  else {
+    p.between += 1;
+    if (ri >= 0) p.reauthorized += 1;
+  }
+}
+
+/** Between an authorization and the first later revocation of this user (or the end of the export). */
+function inWindow(g: Grant, t: number): boolean {
+  const ai = upperBound(g.authTimes, t) - 1;
+  if (ai < 0 || g.authTimes[ai] === t) return false;
+  const ri = upperBound(g.revTimes, t) - 1;
+  return ri < 0 || g.revTimes[ri] <= g.authTimes[ai];
+}
+
 /** One summary row per (tenant, client id) whose export records form a lifecycle; the rows say what they rest on. */
 export function gwsOAuthLifecycles(records: readonly Row[]): MappedEvent[] {
   const clients = new Map<string, Client>();
@@ -215,13 +287,20 @@ export function gwsOAuthLifecycles(records: readonly Row[]): MappedEvent[] {
   let incomplete = 0;
   const userOf = learnUsers(records);
   const scanned = scan(records);
-  // Pass 1: the token rows.
+  // Coverage counts token RECORDS (a record fans out into events), by their own time.
+  const seenRecords = new Set<Row>();
   for (const s of scanned) {
-    if (s.app !== "token") continue;
+    if (s.app !== "token" || seenRecords.has(s.rec)) continue;
+    seenRecords.add(s.rec);
     coverage.records += 1;
     const t = normalizeTime(text(getPath(s.rec, "id.time")));
     if (!coverage.first || t < coverage.first) coverage.first = t;
     if (!coverage.last || t > coverage.last) coverage.last = t;
+  }
+  // Pass 1: the token events — authorizations, revocations, the activity totals.
+  const activities: { s: Scanned; tenant: string; clientId: string; profileId: string }[] = [];
+  for (const s of scanned) {
+    if (s.app !== "token") continue;
     const reading = decodeGwsToken(s.name, s.params);
     if (!reading) continue;
     const tenant = text(getPath(s.rec, "id.customerId"));
@@ -243,11 +322,12 @@ export function gwsOAuthLifecycles(records: readonly Row[]): MappedEvent[] {
     const g = grantFor(c, user.profileId, user.email);
     const cited: Cited = { time: s.time, locator: s.locator };
     if (reading.kind === "authorize") {
-      const tier = reading.scopes.length
+      // No scope in the record: the tier is unknown — nothing is claimed about it.
+      const tier: ScopeTier | "unknown" = reading.scopes.length
         ? reading.scopes
             .map(scopeTier)
             .reduce((m, x) => (TIER_RANK[x] > TIER_RANK[m] ? x : m), "Low" as ScopeTier)
-        : "High";
+        : "unknown";
       g.authorizations.push({ ...cited, tier, scopes: reading.scopes });
     } else if (reading.kind === "revoke") g.revocations.push(cited);
     else {
@@ -260,37 +340,57 @@ export function gwsOAuthLifecycles(records: readonly Row[]): MappedEvent[] {
       if (n !== undefined) g.methods.set(method, n + 1);
       else if (g.methods.size < METHODS_TRACKED_MAX) g.methods.set(method, 1);
       else g.callsBeyondTrackedMethods += 1;
-      if (g.activity.length < ACTIVITY_KEPT_MAX) g.activity.push(cited);
+      activities.push({ s, tenant, clientId: reading.client.id, profileId: user.profileId });
     }
   }
-  // Pass 2: the rows beside — admin app control by OAUTH2_APP_ID (web applications only), logins
-  // and Drive rows of the users the lifecycles name.
+  // The boundaries, sorted once per grant.
+  for (const c of clients.values())
+    for (const g of c.grants.values()) {
+      g.authTimes = g.authorizations.map((a) => a.time).sort((a, b) => a - b);
+      g.revTimes = g.revocations.map((r) => r.time).sort((a, b) => a - b);
+    }
+  // Pass 2: EVERY activity placed against its grant's boundaries — exact counts, nothing retained.
+  for (const a of activities) {
+    const g = clients.get(`${lower(a.tenant)}|${a.clientId}`)?.grants.get(a.profileId);
+    if (g) place(g, a.s.time);
+  }
+  // Pass 3: the rows beside — admin app control by OAUTH2_APP_ID (OAuth clients only), logins and
+  // Drive rows of the users the lifecycles name, inside their own tenant, indexed by
+  // (tenant, profile id); a profile with more clients than the bound is counted, not correlated.
   const byProfile = new Map<string, Grant[]>();
   for (const c of clients.values())
-    for (const g of c.grants.values())
-      (byProfile.get(g.profileId) ?? byProfile.set(g.profileId, []).get(g.profileId)!).push(g);
+    for (const g of c.grants.values()) {
+      const k = `${lower(c.tenant)}|${g.profileId}`;
+      (byProfile.get(k) ?? byProfile.set(k, []).get(k)!).push(g);
+    }
   for (const s of scanned) {
+    const tenant = text(getPath(s.rec, "id.customerId"));
+    if (!tenant) continue;
     if (s.app === "admin" && ADMIN_CONTROL_EVENTS.has(s.name.toUpperCase())) {
       const appId = param(s.params, "OAUTH2_APP_ID");
       const appType = param(s.params, "OAUTH2_APP_TYPE").toUpperCase();
-      const tenant = text(getPath(s.rec, "id.customerId"));
-      if (!appId || appType !== "WEB_APPLICATION" || !tenant) continue;
+      if (!appId || !OAUTH_CLIENT_TYPES.has(appType)) continue;
       const c = clients.get(`${lower(tenant)}|${appId}`);
       if (c && c.adminControls.length < ADMIN_CONTROLS_MAX)
         c.adminControls.push({ event: s.name.toUpperCase(), time: s.time, locator: s.locator });
       continue;
     }
-    if (s.app !== "login" && s.app !== "drive") continue;
+    const isLogin = s.app === "login" && LOGIN_EVENTS.has(lower(s.name));
+    if (!isLogin && s.app !== "drive") continue;
     const user = userOf(s.rec);
     if (!user) continue;
-    for (const g of byProfile.get(user.profileId) ?? []) {
-      if (s.app === "login") {
+    const grants = byProfile.get(`${lower(tenant)}|${user.profileId}`) ?? [];
+    if (grants.length > GRANTS_PER_PROFILE_MAX) continue;
+    for (const g of grants) {
+      if (isLogin) {
+        const i = lowerBound(g.authTimes, s.time - LOGIN_WINDOW_MS);
         if (
-          g.authorizations.some((a) => Math.abs(a.time - s.time) <= LOGIN_WINDOW_MS) &&
-          g.logins.length < ACTIVITY_KEPT_MAX
+          i < g.authTimes.length &&
+          g.authTimes[i] <= s.time + LOGIN_WINDOW_MS &&
+          g.logins.length < SIDE_ROWS_MAX
         )
           g.logins.push({ time: s.time, locator: s.locator });
-      } else if (inWindow(g, s.time) && g.driveEvents.length < ACTIVITY_KEPT_MAX)
+      } else if (inWindow(g, s.time) && g.driveEvents.length < SIDE_ROWS_MAX)
         g.driveEvents.push({ time: s.time, locator: s.locator });
     }
   }
@@ -315,18 +415,6 @@ export function gwsOAuthLifecycles(records: readonly Row[]): MappedEvent[] {
   return rows;
 }
 
-/** Between an authorization and the first later revocation of this user (or the end of the export). */
-function inWindow(g: Grant, t: number): boolean {
-  const auths = g.authorizations.map((a) => a.time).sort((a, b) => a - b);
-  const revs = g.revocations.map((r) => r.time).sort((a, b) => a - b);
-  for (const a of auths) {
-    if (t <= a) continue;
-    const end = revs.find((r) => r > a);
-    if (end === undefined || t < end) return true;
-  }
-  return false;
-}
-
 function coveredTier(c: Client): ScopeTier | "unknown" {
   let tier: ScopeTier | "unknown" = "unknown";
   for (const g of c.grants.values())
@@ -344,37 +432,11 @@ function gradeOf(c: Client): Severity {
 
 // ───────────────────────────── the row ─────────────────────────────
 
-/**
- * The placement of a grant's activity in time: before any authorization in the export; after an
- * authorization and before a revocation (`between`, of which `reauthorized` follow a revocation
- * AND a later authorization); after a revocation with no later authorization before it (`after`).
- */
-function placement(g: Grant): { before: number; between: number; after: number; reauthorized: number } {
-  const auths = g.authorizations.map((a) => a.time).sort((a, b) => a - b);
-  const revs = g.revocations.map((r) => r.time).sort((a, b) => a - b);
-  let before = 0;
-  let between = 0;
-  let after = 0;
-  let reauthorized = 0;
-  for (const a of g.activity) {
-    const lastAuth = [...auths].reverse().find((x) => x < a.time);
-    const lastRev = [...revs].reverse().find((x) => x < a.time);
-    if (lastAuth === undefined) before += 1;
-    else if (lastRev !== undefined && lastRev > lastAuth) after += 1;
-    else {
-      between += 1;
-      // A call after a revocation that a LATER authorization precedes: re-authorized, not orphaned.
-      if (lastRev !== undefined) reauthorized += 1;
-    }
-  }
-  return { before, between, after, reauthorized };
-}
-
 function grantWords(g: Grant): string {
   const auths = [...g.authorizations].sort((a, b) => a.time - b.time);
   const revs = [...g.revocations].sort((a, b) => a.time - b.time);
   const who = show(g.email || `profile ${g.profileId}`, 60);
-  const p = placement(g);
+  const p = g.placement;
   const authWords = auths.slice(0, AUTHORIZATIONS_NAMED_MAX).map((a, i) => {
     const wider = i > 0 && a.scopes.some((s) => !auths[i - 1].scopes.includes(s));
     const scopes = a.scopes.length
@@ -385,7 +447,7 @@ function grantWords(g: Grant): string {
             ", ",
           )}${a.scopes.length > SCOPES_NAMED_MAX ? ` +${a.scopes.length - SCOPES_NAMED_MAX} more` : ""}`
       : "scopes not in this record";
-    return `${i === 0 ? "authorized" : wider ? "re-authorized with wider scopes" : "re-authorized"} ${iso(a.time)} (${a.tier}: ${scopes}) — ${a.locator}`;
+    return `${i === 0 ? "authorized" : wider ? "re-authorized with wider scopes" : "re-authorized"} ${iso(a.time)} (${a.tier === "unknown" ? scopes : `${a.tier}: ${scopes}`}) — ${a.locator}`;
   });
   const methods = [...g.methods.entries()].sort((a, b) => b[1] - a[1]);
   const activityWords =
@@ -403,7 +465,7 @@ function grantWords(g: Grant): string {
           p.after
             ? `; after a revocation with no re-authorization in the export before them: ${p.after} — delayed delivery of earlier calls or a live token; not established`
             : ""
-        }${g.activity.length < g.calls ? `; placement read on the first ${g.activity.length} of ${g.calls} calls` : ""}`
+        }${p.unplaced ? `; ${p.unplaced} at the same timestamp as an authorization or revocation — order not established` : ""}`
       : "no activity record in this export";
   const revWords = revs.length
     ? `revoked ${revs
@@ -480,7 +542,7 @@ function summaryRow(
     .digest("hex")
     .slice(0, 32);
   const blockGrants: GwsGrant[] = grants.slice(0, USERS_NAMED_MAX).map((g) => {
-    const p = placement(g);
+    const p = g.placement;
     return {
       profileId: g.profileId,
       ...(g.email ? { email: g.email } : {}),
@@ -504,6 +566,7 @@ function summaryRow(
         ...(g.last ? { last: { time: iso(g.last.time), locator: g.last.locator } } : {}),
       },
       beforeAuthorization: p.before,
+      unplaced: p.unplaced,
       revocations: g.revocations.slice(0, 8).map((r) => ({ time: iso(r.time), locator: r.locator })),
       afterRevocation: { calls: p.after, reauthorized: p.reauthorized },
       contemporaneousLogins: g.logins.length,
