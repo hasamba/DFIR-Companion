@@ -1136,7 +1136,7 @@ emits one summary row per application whose records form a path — `Entra privi
 (app id …) [2024-05-01T10:00:00Z credential added by admin@…: Password k-new "deploy";
 2024-05-01T10:02:00Z privileged capability granted by admin@…: application permission
 RoleManagement.ReadWrite.Directory on Microsoft Graph (directory RBAC); 2024-05-01T10:05:00Z
-signed in → Microsoft Graph with the new credential (clientSecret k-new); 2024-05-01T10:06:00Z
+signed in → Microsoft Graph (clientSecret k-new) — with the new credential; 2024-05-01T10:06:00Z
 acted: Add member to role — consistent with the granted RoleManagement.ReadWrite.Directory; the
 authorization the token carried is not in the record; all four stages in order]`. It is built
 over every record of ONE export, before aggregation and the event cap, because sign-in rows are
@@ -1151,26 +1151,34 @@ Info or Low and leave the forensic timeline at import; a chain across exports is
 - **Four stages, in order, inside a 30-day window opened by the credential.** A credential added;
   a capability granted (an application permission or a directory role — a delegated scope needs a
   signed-in user and is not a step; an eligible role is not an activated one; a failed attempt is
-  not a step); a *successful* sign-in whose credential key matches a key this path added (`signed
-  in … with the new credential (clientSecret k-new)` only on the exact match — otherwise `with an
-  unmatched credential`; a rejected attempt with the matched key is listed and never counted); an
+  not a step); a *successful* sign-in whose credential key id matches the key this episode added
+  (`signed in … — with the new credential` only on the exact key-id match — otherwise `with an
+  unmatched credential`; a certificate thumbprint is never a key id; a rejected attempt with the
+  matched key is listed and never counted; a matched sign-in before the grant says so); an
   action by the application whose operation is *consistent* with a granted permission by the
   literal table (`Add member to role` ↔ `RoleManagement.ReadWrite.Directory`, `Add app role
   assignment to service principal` ↔ `AppRoleAssignment.ReadWrite.All`, application writes ↔
-  `Application.ReadWrite.All` or `.OwnedBy`, user writes ↔ `User.ReadWrite.All`, …; a tier-0
-  directory role covers any) — worded `consistent with …; the authorization the token carried is
-  not in the record`, never "exercised". An operation the table does not name says `the action's
-  required permission was not mapped`; one mapped but not granted says `needs …, not among the
-  granted`. A credential removed, or a grant or role revoked, before a later step ends it.
+  `Application.ReadWrite.All` or `.OwnedBy`, owner writes need `Directory.Read.All` as well, user
+  writes ↔ `User.ReadWrite.All`, …; a tier-0 directory role covers any) — worded `consistent with
+  …; the authorization the token carried is not in the record`, never "exercised". An operation the
+  table does not name says `the action's required permission was not mapped`; one mapped but not
+  granted says `needs …, not among the permissions live at that time`. A credential removed, or a
+  grant or role revoked, ends its interval: a later step is judged against what was live at its
+  time; a re-grant after a revocation is its own interval. The order is a real one — each stage
+  strictly after the one before; equal timestamps establish none.
 - **Grade by stages.** All four with a tenant-control grant (app-role grant management,
   delegated-grant management, credential management, directory RBAC, identity takeover, or a
   tier-0 / admin directory role) → High; three → Medium; two → Low; a lone step is no row. A
   data-class grant (`Mail.Read`) is a stage but never carries the path to High. Techniques are
   the steps' own: T1098.001 for the credential, T1098.003 for a directory role.
-- **Absence rests on the export.** `no successful sign-in with the new credential by this
-  application among the 88 sign-in records of this export (2024-05-01 → 2024-05-31)`, or `sign-in
-  log not in this export`; the same for directory changes. Every credential opens an episode; the
-  finding is the episode of the highest grade, then the most recent, and names the others.
+- **Absence rests on the export and is scoped to the window.** `no successful sign-in with the
+  new credential inside the window among the 88 sign-in records of this export (2024-05-01 →
+  2024-05-31)`, or `sign-in log not in this export`; the same for directory changes; a match
+  outside the window is listed under `outside the 30-day window`, never contradicted. Graph
+  directory audits name no tenant: they join the export's sign-ins only when those name one
+  tenant, else the row says so. Every credential opens an episode; the finding is the episode of
+  the highest grade, then the most recent, and names the others. 1,024 steps per application are
+  read; the rest are counted.
 - **Never said:** "enabled", "exercised", "automation" or "rotation" (the initiator is named on
   every step — `by Deployer (an application, not a user)` when it is one), that a failed sign-in
   was a use, that a name links records. 256 findings per import, by grade, then completeness,

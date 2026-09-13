@@ -315,6 +315,10 @@ export interface SpSignIn {
   resourceName: string;
   ip: string;
   credType: string;
+  /** The key id and the certificate thumbprint the sign-in names, kept apart: a key id matches only a key id. */
+  credKeyId: string;
+  credThumbprint: string;
+  /** Whichever of the two the sign-in names, for the words and the aggregation key. */
   credKey: string;
   tenant: string;
   code: number | null;
@@ -337,9 +341,9 @@ export function readSpSignIn(rec: Row): SpSignIn {
   ).slice(0, WHO_MAX);
   const ip = cleanIp(str(getCI(rec, "ipAddress")));
   const credType = str(getCI(rec, "clientCredentialType")).trim();
-  const credKey =
-    str(getCI(rec, "servicePrincipalCredentialKeyId")).trim() ||
-    str(getCI(rec, "servicePrincipalCredentialThumbprint")).trim();
+  const credKeyId = str(getCI(rec, "servicePrincipalCredentialKeyId")).trim();
+  const credThumbprint = str(getCI(rec, "servicePrincipalCredentialThumbprint")).trim();
+  const credKey = credKeyId || credThumbprint;
   const tenant = str(getCI(rec, "resourceTenantId")).trim() || str(getCI(rec, "homeTenantId")).trim();
   const status = getCI(rec, "status");
   const rawCode = isObject(status) ? getCI(status, "errorCode") : undefined;
@@ -360,6 +364,8 @@ export function readSpSignIn(rec: Row): SpSignIn {
     resourceName,
     ip,
     credType,
+    credKeyId,
+    credThumbprint,
     credKey,
     tenant,
     code,

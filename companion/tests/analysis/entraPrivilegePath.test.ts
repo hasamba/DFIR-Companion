@@ -6,7 +6,10 @@ import {
   OPERATION_PERMISSIONS,
   PRIVILEGE_PATH_WINDOW_DAYS,
   PRIVILEGE_PATHS_MAX,
+  STEPS_PER_APP_MAX,
 } from "../../src/analysis/entraPrivilegePath.js";
+import { correlateEvents } from "../../src/analysis/correlate.js";
+import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 import { learnApiResolver } from "../../src/analysis/entraAuditImport.js";
 import { canonicalEventEnvelopeSchema } from "../../src/analysis/canonicalEvent.js";
 
@@ -18,8 +21,9 @@ const GRAPH_SP = "3c8e4d2b-2222-4bbb-9ccc-000000000002";
 const GRAPH_APP = "00000003-0000-0000-c000-000000000000";
 const USER = "4d9f5e3c-3333-4ccc-addd-000000000003";
 const GA = "62e90394-69f5-4237-9190-012177145e10";
-const APP = "app-1";
-const TENANT = "tenant-1";
+const APP = "5e0a6f4d-4444-4ddd-beee-000000000004";
+const APP2 = "5e0a6f4d-4444-4ddd-beee-000000000005";
+const TENANT = "6f1b7a5e-5555-4eee-8fff-000000000006";
 const T = "2024-05-01T10:00:00Z";
 const at = (s: number) => new Date(Date.parse(T) + s * 1000).toISOString();
 const key = (k: string, t: string, d: string) =>
@@ -155,7 +159,7 @@ describe("the full path", () => {
       "privileged capability granted by admin@example.invalid: application permission RoleManagement.ReadWrite.Directory on Microsoft Graph (directory RBAC)",
     );
     expect(r.description).toContain(
-      "signed in → Microsoft Graph with the new credential (clientSecret k-new)",
+      "signed in → Microsoft Graph (clientSecret k-new) — with the new credential",
     );
     expect(r.description).toContain(
       "acted: Add member to role — consistent with the granted RoleManagement.ReadWrite.Directory; the authorization the token carried is not in the record",
@@ -194,7 +198,9 @@ describe("the full path", () => {
     const data = paths([credential(), grant("Mail.Read", { activityDateTime: at(120) }), signIn(), action()]);
     expect(data[0].severity).toBe("Medium");
     expect(data[0].description).toContain("no privileged capability granted inside the window");
-    expect(data[0].description).toContain("needs RoleManagement.ReadWrite.Directory, not among the granted");
+    expect(data[0].description).toContain(
+      "needs RoleManagement.ReadWrite.Directory, not among the permissions live at that time",
+    );
   });
 });
 
@@ -207,7 +213,7 @@ describe("what is never claimed", () => {
     ]);
     expect(unmatched[0].severity).toBe("Low");
     expect(unmatched[0].description).toContain(
-      "no successful sign-in with the new credential by this application among the 1 sign-in records of this export (2024-05-01 → 2024-05-01)",
+      "no successful sign-in with the new credential inside the window among the 1 sign-in records of this export (2024-05-01 → 2024-05-01)",
     );
     const rejected = paths([
       credential(),
@@ -234,10 +240,15 @@ describe("what is never claimed", () => {
     ]);
     expect(notGranted[0].severity).toBe("Medium");
     expect(notGranted[0].description).toContain(
-      "needs RoleManagement.ReadWrite.Directory, not among the granted",
+      "needs RoleManagement.ReadWrite.Directory, not among the permissions live at that time",
     );
     expect(OPERATION_PERMISSIONS.get("add app role assignment to service principal")).toEqual([
-      "AppRoleAssignment.ReadWrite.All",
+      ["AppRoleAssignment.ReadWrite.All"],
+    ]);
+    // Owner operations need the read permission as well as the write: a conjunction, not two alternatives.
+    expect(OPERATION_PERMISSIONS.get("add owner to application")).toEqual([
+      ["Application.ReadWrite.All", "Directory.Read.All"],
+      ["Application.ReadWrite.OwnedBy", "Directory.Read.All"],
     ]);
   });
 
@@ -313,7 +324,7 @@ describe("identity", () => {
       credential({}, SP, "k-a"),
       grant("RoleManagement.ReadWrite.Directory", { activityDateTime: at(120) }, SP, APP),
       credential({}, SP2, "k-b"),
-      grant("RoleManagement.ReadWrite.Directory", { activityDateTime: at(120) }, SP2, "app-2"),
+      grant("RoleManagement.ReadWrite.Directory", { activityDateTime: at(120) }, SP2, APP2),
       signIn({ servicePrincipalCredentialKeyId: "k-a" }),
     ]);
     expect(rows).toHaveLength(2);
@@ -322,7 +333,7 @@ describe("identity", () => {
   });
 
   it("an object id links to an app id only through a record that states both; otherwise the change is counted as not joined", () => {
-    const resolver = learnSubjectResolver([signIn()]);
+    const resolver = learnSubjectResolver([signIn()], "");
     expect(resolver(SP, TENANT)).toBe(APP);
     expect(resolver(SP2, TENANT)).toBe("");
     const rows = paths([
@@ -397,7 +408,12 @@ describe("episodes, bounds, identity of the row", () => {
       const sp = `2b7f3c1a-1111-4aaa-8bbb-${String(i).padStart(12, "0")}`;
       return [
         credential({}, sp, `k-${i}`),
-        grant("RoleManagement.ReadWrite.Directory", { activityDateTime: at(120) }, sp, `app-${i}`),
+        grant(
+          "RoleManagement.ReadWrite.Directory",
+          { activityDateTime: at(120) },
+          sp,
+          `5e0a6f4d-4444-4ddd-beee-${String(i).padStart(12, "0")}`,
+        ),
       ];
     }).flat();
     const rows = paths(many);
@@ -405,5 +421,252 @@ describe("episodes, bounds, identity of the row", () => {
     expect(rows[rows.length - 1].description).toContain(
       "3 further applications with a path in this export beyond the 256 reported — not shown",
     );
+  });
+});
+
+// Code round 1 (Codex): the cases the review named.
+describe("code round 1", () => {
+  const TENANT2 = "6f1b7a5e-5555-4eee-8fff-000000000007";
+  const removeCredential = (k: string, at_: string, sp = SP) =>
+    graph(
+      "Remove service principal credentials",
+      [
+        {
+          type: "ServicePrincipal",
+          id: sp,
+          displayName: "Sync",
+          modifiedProperties: [
+            P("KeyDescription", JSON.stringify([]), JSON.stringify([key(k, "Password", "deploy")])),
+          ],
+        },
+      ],
+      { activityDateTime: at_ },
+    );
+
+  it("a failed action is excluded from the stages; a success by the same application counts", () => {
+    const failed = paths([
+      credential(),
+      grant("RoleManagement.ReadWrite.Directory", { activityDateTime: at(120) }),
+      signIn(),
+      action("Add member to role", { result: "failure" }),
+    ]);
+    expect(failed[0].severity).toBe("Medium");
+    expect(failed[0].description).toContain("three of four stages");
+    expect(failed[0].description).not.toContain("all four stages");
+  });
+
+  it("two credentials live at once: a sign-in matches only the episode of its own key id", () => {
+    const rows = paths([
+      credential({}, SP, "k-a"),
+      credential({ activityDateTime: at(60) }, SP, "k-b"),
+      grant("RoleManagement.ReadWrite.Directory", { activityDateTime: at(120) }),
+      signIn({ servicePrincipalCredentialKeyId: "k-b" }),
+      action(),
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].severity).toBe("High");
+    expect(rows[0].description).toContain("Password k-b");
+    expect(rows[0].description).toContain("1 other episode: Medium");
+    expect(rows[0].canonical?.entra?.steps.find((s) => s.stage === "credential")?.keyId).toBe("k-b");
+  });
+
+  it("a thumbprint-only sign-in never matches a key id", () => {
+    const rows = paths([
+      credential(),
+      grant("RoleManagement.ReadWrite.Directory", { activityDateTime: at(120) }),
+      signIn({ servicePrincipalCredentialKeyId: undefined, servicePrincipalCredentialThumbprint: "k-new" }),
+    ]);
+    expect(rows[0].severity).toBe("Low");
+    expect(rows[0].description).toContain("identified by thumbprint only, not matched to a key id");
+    expect(rows[0].description).not.toContain("— with the new credential");
+  });
+
+  it("order is a subsequence: a sign-in before the grant, or an action before the sign-in, is not a stage", () => {
+    const early = paths([
+      credential(),
+      signIn({ createdDateTime: at(60) }),
+      grant("RoleManagement.ReadWrite.Directory", { activityDateTime: at(120) }),
+      action(),
+    ]);
+    // credential < grant < action: the action is consistent with the grant, but no sign-in sits between.
+    expect(early[0].severity).toBe("Medium");
+    expect(early[0].description).toContain("no successful sign-in with the new credential inside the window");
+    expect(early[0].description).toContain("— with the new credential, before the grant");
+    const before = paths([
+      credential(),
+      grant("RoleManagement.ReadWrite.Directory", { activityDateTime: at(120) }),
+      action("Add member to role", { activityDateTime: at(200) }),
+      signIn(),
+    ]);
+    expect(before[0].severity).toBe("Medium");
+    expect(before[0].description).toContain(
+      "no consistent directory change by this application inside the window",
+    );
+  });
+
+  it("a revoked grant is not live for a later action; a re-grant after the revocation is", () => {
+    const revoke = graph(
+      "Remove app role assignment from service principal",
+      [
+        {
+          type: "ServicePrincipal",
+          id: GRAPH_SP,
+          displayName: "Microsoft Graph",
+          modifiedProperties: [
+            P("AppRole.Value", null, "RoleManagement.ReadWrite.Directory"),
+            P("ServicePrincipal.AppId", APP),
+            P("ServicePrincipal.ObjectID", SP),
+          ],
+        },
+      ],
+      { activityDateTime: at(240) },
+    );
+    const revoked = paths([
+      credential(),
+      grant("RoleManagement.ReadWrite.Directory", { activityDateTime: at(120) }),
+      revoke,
+      signIn(),
+      action(),
+    ]);
+    expect(revoked[0].severity).toBe("Medium");
+    expect(revoked[0].description).toContain("not among the permissions live at that time");
+    const regranted = paths([
+      credential(),
+      grant("RoleManagement.ReadWrite.Directory", { activityDateTime: at(120) }),
+      revoke,
+      signIn(),
+      grant("RoleManagement.ReadWrite.Directory", { activityDateTime: at(330) }),
+      action(),
+    ]);
+    expect(regranted[0].severity).toBe("High");
+    // A credential removed before the sign-in ends its interval: the later sign-in is not a use.
+    const removed = paths([
+      credential(),
+      grant("RoleManagement.ReadWrite.Directory", { activityDateTime: at(120) }),
+      removeCredential("k-new", at(200)),
+      signIn(),
+    ]);
+    expect(removed[0].severity).toBe("Low");
+  });
+
+  it("the resolver learns only from one target tuple: an object id on one target and an app id on another teach nothing", () => {
+    const crossed = graph("Add app role assignment to service principal", [
+      { type: "ServicePrincipal", id: GRAPH_SP, modifiedProperties: [P("ServicePrincipal.ObjectID", SP2)] },
+      { type: "ServicePrincipal", id: SP, modifiedProperties: [P("ServicePrincipal.AppId", APP2)] },
+    ]);
+    const resolver = learnSubjectResolver([crossed], "");
+    expect(resolver(SP2, TENANT)).toBe("");
+    // The second target IS the application the app id is stated on.
+    expect(resolver(SP, TENANT)).toBe(APP2.toLowerCase());
+    // Two records that disagree on one object id teach nothing for it.
+    const conflict = learnSubjectResolver([signIn(), signIn({ appId: APP2 })], "");
+    expect(conflict(SP, TENANT)).toBe("");
+    // A non-GUID app id is never an identity.
+    expect(learnSubjectResolver([signIn({ appId: "Sync" })], "")(SP, TENANT)).toBe("");
+  });
+
+  it("Graph directory audits name no tenant: they join the export's sign-ins only when those name one tenant", () => {
+    const untagged = (r: Record<string, unknown>) => {
+      const { tenantId: _t, ...rest } = r;
+      return rest;
+    };
+    const one = paths([
+      untagged(credential()),
+      untagged(grant("RoleManagement.ReadWrite.Directory", { activityDateTime: at(120) })),
+      signIn(),
+      untagged(action()),
+    ]);
+    expect(one).toHaveLength(1);
+    expect(one[0].severity).toBe("High");
+    expect(one[0].canonical?.entra?.tenant).toBe(TENANT.toLowerCase());
+    const two = paths([
+      untagged(credential()),
+      untagged(grant("RoleManagement.ReadWrite.Directory", { activityDateTime: at(120) })),
+      signIn(),
+      signIn({ resourceTenantId: TENANT2, servicePrincipalId: SP2, appId: APP2 }),
+      untagged(action()),
+    ]);
+    // Two tenants among the sign-ins: the tenantless audits join no sign-in, and say so.
+    expect(two[0].severity).toBe("Medium");
+    expect(two[0].description).toContain(
+      "the sign-in records of this export name 2 tenants and the directory-audit records name none — not joined",
+    );
+    expect(two[0].canonical?.entra?.tenant).toBeUndefined();
+  });
+
+  it("owner operations need the read permission as well: the conjunction is checked, an alternative met suffices", () => {
+    const owner = (extra: string[]) =>
+      paths([
+        credential(),
+        ...extra.map((v, i) => grant(v, { activityDateTime: at(120 + i) })),
+        signIn(),
+        action("Add owner to application"),
+      ]);
+    expect(owner(["Application.ReadWrite.All"])[0].description).toContain(
+      "needs Application.ReadWrite.All + Directory.Read.All or Application.ReadWrite.OwnedBy + Directory.Read.All, not among the permissions live at that time",
+    );
+    expect(owner(["Application.ReadWrite.OwnedBy", "Directory.Read.All"])[0].description).toContain(
+      "consistent with the granted Application.ReadWrite.OwnedBy + Directory.Read.All",
+    );
+  });
+
+  it("the summary rows are appended after the cap: a cap of one keeps the source row AND the path", () => {
+    const records = [
+      credential(),
+      grant("RoleManagement.ReadWrite.Directory", { activityDateTime: at(120) }),
+      signIn(),
+      action(),
+    ];
+    const r = parseM365Audit(JSON.stringify(records), { aggregate: false, maxEvents: 1 });
+    const summaries = r.events.filter((e) => e.description.startsWith("Entra privilege path:"));
+    expect(summaries).toHaveLength(1);
+    expect(r.events.length - summaries.length).toBe(1);
+  });
+
+  it("a matching record outside the window is listed beside the scoped absence, never contradicted", () => {
+    const rows = paths([
+      credential(),
+      grant("RoleManagement.ReadWrite.Directory", { activityDateTime: at(120) }),
+      signIn({ createdDateTime: at(40 * 86400) }),
+    ]);
+    expect(rows[0].description).toContain(
+      "no successful sign-in with the new credential inside the window among the 1 sign-in records",
+    );
+    expect(rows[0].description).toContain("outside the 30-day window: 2024-06-10");
+    expect(rows[0].canonical?.entra?.outsideWindow).toBe(1);
+  });
+
+  it("a re-import of the same export folds at merge: two parses, one row", () => {
+    const records = [
+      credential(),
+      grant("RoleManagement.ReadWrite.Directory", { activityDateTime: at(120) }),
+      signIn(),
+      action(),
+    ];
+    const asEvents = (tag: string): ForensicEvent[] =>
+      importPaths(records).map(
+        (e, i) =>
+          ({
+            ...e,
+            id: `${tag}-${i}`,
+            relatedFindingIds: [],
+            sourceScreenshots: [],
+            sources: ["Entra audit"],
+          }) as unknown as ForensicEvent,
+      );
+    expect(correlateEvents([...asEvents("a"), ...asEvents("b")])).toHaveLength(1);
+  });
+
+  it("stress: steps past the per-application bound are counted, never read; the pass stays linear", () => {
+    const many = [
+      credential(),
+      grant("RoleManagement.ReadWrite.Directory", { activityDateTime: at(120) }),
+      ...Array.from({ length: STEPS_PER_APP_MAX + 5 }, (_, i) => signIn({ createdDateTime: at(300 + i) })),
+    ];
+    const started = Date.now();
+    const rows = paths(many);
+    expect(Date.now() - started).toBeLessThan(5000);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].description).toMatch(/\d+ steps beyond the bound, not evaluated/);
   });
 });

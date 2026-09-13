@@ -51,27 +51,44 @@ export const PRIVILEGED_CLASSES: ReadonlySet<CapabilityClass> = new Set<Capabili
 const PRIVILEGED_TIERS: ReadonlySet<RoleTier> = new Set<RoleTier>(["tier-0", "admin"]);
 
 /**
- * The Microsoft Graph application permissions that SUFFICE for an operation, as sets — an
- * operation with several sufficient permissions lists them all; one this table does not name is
- * unmapped. A directory role of tier-0 also suffices for any directory operation.
+ * The Microsoft Graph application permissions that SUFFICE for an operation: alternatives, each a
+ * conjunction (Graph's own contracts — an owner write needs Directory.Read.All beside the
+ * application permission). An operation this table does not name is unmapped; a tier-0 directory
+ * role suffices for any directory operation.
  */
-export const OPERATION_PERMISSIONS: ReadonlyMap<string, readonly string[]> = new Map([
-  ["add member to role", ["RoleManagement.ReadWrite.Directory"]],
-  ["add eligible member to role", ["RoleManagement.ReadWrite.Directory"]],
-  ["add app role assignment to service principal", ["AppRoleAssignment.ReadWrite.All"]],
-  ["add delegated permission grant", ["DelegatedPermissionGrant.ReadWrite.All"]],
-  ["add service principal credentials", ["Application.ReadWrite.All", "Application.ReadWrite.OwnedBy"]],
+export const OPERATION_PERMISSIONS: ReadonlyMap<string, readonly (readonly string[])[]> = new Map([
+  ["add member to role", [["RoleManagement.ReadWrite.Directory"]]],
+  ["add eligible member to role", [["RoleManagement.ReadWrite.Directory"]]],
+  ["add app role assignment to service principal", [["AppRoleAssignment.ReadWrite.All"]]],
+  ["add delegated permission grant", [["DelegatedPermissionGrant.ReadWrite.All"]]],
+  ["add service principal credentials", [["Application.ReadWrite.All"], ["Application.ReadWrite.OwnedBy"]]],
   [
     "update application - certificates and secrets management",
-    ["Application.ReadWrite.All", "Application.ReadWrite.OwnedBy"],
+    [["Application.ReadWrite.All"], ["Application.ReadWrite.OwnedBy"]],
   ],
-  ["add owner to application", ["Application.ReadWrite.All", "Application.ReadWrite.OwnedBy"]],
-  ["add owner to service principal", ["Application.ReadWrite.All", "Application.ReadWrite.OwnedBy"]],
-  ["add user", ["User.ReadWrite.All"]],
-  ["update user", ["User.ReadWrite.All"]],
-  ["reset user password", ["User.ReadWrite.All", "User-PasswordProfile.ReadWrite.All"]],
-  ["change user password", ["User.ReadWrite.All", "User-PasswordProfile.ReadWrite.All"]],
+  [
+    "add owner to application",
+    [
+      ["Application.ReadWrite.All", "Directory.Read.All"],
+      ["Application.ReadWrite.OwnedBy", "Directory.Read.All"],
+    ],
+  ],
+  [
+    "add owner to service principal",
+    [
+      ["Application.ReadWrite.All", "Directory.Read.All"],
+      ["Application.ReadWrite.OwnedBy", "Directory.Read.All"],
+    ],
+  ],
+  ["add user", [["User.ReadWrite.All"]]],
+  ["update user", [["User.ReadWrite.All"]]],
+  ["reset user password", [["User.ReadWrite.All"], ["User-PasswordProfile.ReadWrite.All"]]],
+  ["change user password", [["User.ReadWrite.All"], ["User-PasswordProfile.ReadWrite.All"]]],
 ]);
+/** Steps read per application; the rest are counted. */
+export const STEPS_PER_APP_MAX = 1024;
+/** Credential episodes evaluated per application; the rest are counted. */
+const EPISODES_PER_APP_MAX = 32;
 
 // ───────────────────────────── readings ─────────────────────────────
 
@@ -108,7 +125,9 @@ interface Step {
   /** grant / role steps */
   permission?: string;
   privileged?: boolean;
-  /** sign-in steps */
+  /** sign-in steps: the key the record carries (a thumbprint is not one) and the outcome */
+  signInKey?: string;
+  thumbprintOnly?: boolean;
   matched?: boolean;
   success?: boolean;
   /** action steps */
@@ -120,8 +139,8 @@ interface Chain {
   appId: string;
   name: string;
   steps: Step[];
-  /** Records that named this application by an id no record of the export links to an app id. */
-  unlinked: number;
+  /** Steps past STEPS_PER_APP_MAX — counted, never read. */
+  beyond: number;
 }
 
 // ───────────────────────────── identity ─────────────────────────────
@@ -131,12 +150,12 @@ interface Chain {
  * (servicePrincipalId + appId), a consent property (ServicePrincipal.ObjectID + .AppId), an
  * `AppId` property on a record whose target is the application. A conflict unlearns the id.
  */
-export function learnSubjectResolver(records: readonly Row[]): Resolver {
+export function learnSubjectResolver(records: readonly Row[], exportTenant: string): Resolver {
   const map = new Map<string, string>();
   const conflicts = new Set<string>();
   const learn = (tenant: string, objectId: string, appId: string) => {
-    if (!isGuid(objectId) || !appId.trim()) return;
-    const k = `${lower(tenant)}|${lower(objectId)}`;
+    if (!isGuid(objectId) || !isGuid(appId)) return;
+    const k = `${lower(tenant || exportTenant)}|${lower(objectId)}`;
     const prev = map.get(k);
     if (prev && prev !== lower(appId)) conflicts.add(k);
     else map.set(k, lower(appId));
@@ -149,20 +168,45 @@ export function learnSubjectResolver(records: readonly Row[]): Resolver {
     }
     const audit = readEntraAuditRecord(rec);
     if (!audit) continue;
-    const prop = (name: string) => audit.props.find((p) => p.name.toLowerCase() === name.toLowerCase());
-    const objectId = prop("ServicePrincipal.ObjectID");
-    const propAppId = prop("ServicePrincipal.AppId") ?? prop("Application.AppId") ?? prop("AppId");
-    if (objectId && propAppId)
-      learn(audit.tenant, String(objectId.newValue ?? ""), String(propAppId.newValue ?? ""));
-    else if (propAppId) {
-      const target = audit.targets.find((t) => /serviceprincipal|application/i.test(t.type));
-      if (target?.id) learn(audit.tenant, target.id, String(propAppId.newValue ?? ""));
+    // Only properties of ONE target tuple teach a mapping: the object id and the app id must sit
+    // on the same target index, or the app id on a target that IS the application.
+    const byTarget = new Map<number, { objectId?: string; appId?: string }>();
+    for (const p of audit.props) {
+      const slot = byTarget.get(p.targetIndex) ?? byTarget.set(p.targetIndex, {}).get(p.targetIndex)!;
+      const name = p.name.toLowerCase();
+      if (name === "serviceprincipal.objectid") slot.objectId = String(p.newValue ?? "");
+      if (name === "serviceprincipal.appid" || name === "application.appid" || name === "appid")
+        slot.appId = String(p.newValue ?? "");
+    }
+    for (const [index, slot] of byTarget) {
+      if (!slot.appId) continue;
+      if (slot.objectId) learn(audit.tenant, slot.objectId, slot.appId);
+      else {
+        const target = audit.targets[index];
+        if (target && /serviceprincipal|application/i.test(target.type) && target.id)
+          learn(audit.tenant, target.id, slot.appId);
+      }
     }
   }
   return (objectId, tenant) => {
-    const k = `${lower(tenant)}|${lower(objectId)}`;
+    const k = `${lower(tenant || exportTenant)}|${lower(objectId)}`;
     return conflicts.has(k) ? "" : (map.get(k) ?? "");
   };
+}
+
+/**
+ * The one tenant an export's sign-in records name, for the Graph directory-audit records that
+ * name none (Graph directoryAudits carry no tenant field) — "" when the sign-ins name none or
+ * several, in which case a tenantless audit record joins nothing outside its own tenantless set.
+ */
+export function exportTenantOf(records: readonly Row[]): string {
+  const tenants = new Set(
+    records
+      .filter(isServicePrincipalSignIn)
+      .map((rec) => lower(readSpSignIn(rec).tenant))
+      .filter(Boolean),
+  );
+  return tenants.size === 1 ? [...tenants][0] : "";
 }
 
 // ───────────────────────────── steps ─────────────────────────────
@@ -254,19 +298,11 @@ function changeStep(r: EntraAuditRecord, c: EntraAppChange, index: number): Step
   return null;
 }
 
-function signInStep(s: SpSignIn, index: number, keys: ReadonlySet<string>): Step {
-  const matched = !!s.credKey && keys.has(lower(s.credKey));
+function signInStep(s: SpSignIn, index: number): Step {
   const success = s.outcome === "success";
   const cred = s.credType
-    ? `${show(s.credType, 20)}${s.credKey ? ` ${shortId(s.credKey)}` : ""}`
+    ? `${show(s.credType, 20)}${s.credKeyId ? ` ${shortId(s.credKeyId)}` : s.credThumbprint ? ` thumbprint ${shortId(s.credThumbprint)}` : ""}`
     : "credential not in the record";
-  const words = success
-    ? matched
-      ? `signed in${s.resourceName ? ` → ${show(s.resourceName, 40)}` : ""} with the new credential (${cred})`
-      : `signed in${s.resourceName ? ` → ${show(s.resourceName, 40)}` : ""} with an unmatched credential (${cred})`
-    : matched
-      ? `attempted sign-in with the new credential (${cred}) — ${s.rejected ? `rejected: ${s.rejected}` : s.outcome === "failure" ? `failed (AADSTS${s.code})` : "outcome unknown"}; not a use`
-      : `sign-in attempt${s.rejected ? ` rejected: ${s.rejected}` : ""} — not counted`;
   return {
     kind: "sign-in",
     time: ms(s.observed),
@@ -274,32 +310,62 @@ function signInStep(s: SpSignIn, index: number, keys: ReadonlySet<string>): Step
     locator: `record:${index}`,
     initiator: "",
     initiatorIsApp: true,
-    matched,
+    ...(s.credKeyId ? { signInKey: lower(s.credKeyId) } : {}),
+    ...(!s.credKeyId && s.credThumbprint ? { thumbprintOnly: true } : {}),
     success,
-    words,
+    // The words are finished per episode (the key it is matched against is the episode's).
+    words: `${success ? "signed in" : "sign-in attempt"}${s.resourceName ? ` → ${show(s.resourceName, 40)}` : ""} (${cred})${
+      success
+        ? ""
+        : s.rejected
+          ? ` — rejected: ${s.rejected}`
+          : s.outcome === "failure"
+            ? ` — failed (AADSTS${s.code})`
+            : " — outcome unknown"
+    }`,
   };
 }
 
-function actionStep(r: EntraAuditRecord, index: number, granted: ReadonlySet<string>, tier0: boolean): Step {
-  const sufficient = OPERATION_PERMISSIONS.get(lower(r.operation));
-  const consistent = sufficient?.find((p) => granted.has(lower(p)));
-  const words = !sufficient
-    ? `acted: ${show(r.operation, 60)} — the action's required permission was not mapped`
-    : tier0
-      ? `acted: ${show(r.operation, 60)} — consistent with the tier-0 directory role granted; the authorization the token carried is not in the record`
-      : consistent
-        ? `acted: ${show(r.operation, 60)} — consistent with the granted ${consistent}; the authorization the token carried is not in the record`
-        : `acted: ${show(r.operation, 60)} — needs ${sufficient.join(" or ")}, not among the granted`;
+function actionStep(r: EntraAuditRecord, index: number): Step {
   return {
-    kind: "action",
+    kind: r.outcome === "success" ? "action" : "excluded",
     time: ms(r.time),
     observed: r.time,
     locator: `record:${index}`,
     initiator: "",
     initiatorIsApp: true,
     operation: r.operation,
-    matched: !!(sufficient && (consistent || tier0)),
-    words,
+    words:
+      r.outcome === "success"
+        ? `acted: ${show(r.operation, 60)}`
+        : `attempted: ${show(r.operation, 60)} — ${r.outcome}; not a step`,
+  };
+}
+
+/** An action's words against the permissions LIVE at its time: consistent, not among them, or unmapped. */
+function actionWords(
+  op: string,
+  live: ReadonlySet<string>,
+  tier0: boolean,
+): { words: string; matched: boolean } {
+  const alternatives = OPERATION_PERMISSIONS.get(lower(op));
+  const shown = show(op, 60);
+  if (!alternatives)
+    return { words: `acted: ${shown} — the action's required permission was not mapped`, matched: false };
+  if (tier0)
+    return {
+      words: `acted: ${shown} — consistent with the tier-0 directory role granted; the authorization the token carried is not in the record`,
+      matched: true,
+    };
+  const met = alternatives.find((conj) => conj.every((p) => live.has(lower(p))));
+  if (met)
+    return {
+      words: `acted: ${shown} — consistent with the granted ${met.join(" + ")}; the authorization the token carried is not in the record`,
+      matched: true,
+    };
+  return {
+    words: `acted: ${shown} — needs ${alternatives.map((c) => c.join(" + ")).join(" or ")}, not among the permissions live at that time`,
+    matched: false,
   };
 }
 
@@ -307,86 +373,115 @@ function actionStep(r: EntraAuditRecord, index: number, granted: ReadonlySet<str
 
 interface Episode {
   credential: Step;
+  /** Every grant inside the window; `grant` is the first — the one the order is judged against. */
   grants: Step[];
+  grant?: Step;
   signIns: Step[];
+  signIn?: Step;
   actions: Step[];
+  action?: Step;
   outside: Step[];
   removed: Step[];
   grade: Severity | null;
   stages: number;
+  privileged: boolean;
 }
 
-function episodesOf(chain: Chain): Episode[] {
+function episodesOf(chain: Chain): { episodes: Episode[]; episodesBeyond: number } {
   const sorted = [...chain.steps].sort(
     (a, b) => (a.time ?? Infinity) - (b.time ?? Infinity) || a.locator.localeCompare(b.locator),
   );
+  const credentials = sorted.filter((s) => s.kind === "credential" && s.time !== null);
   const out: Episode[] = [];
-  for (const cred of sorted.filter((s) => s.kind === "credential" && s.time !== null)) {
+  for (const cred of credentials.slice(0, EPISODES_PER_APP_MAX)) {
     const open = cred.time!;
     const close = open + WINDOW_MS;
-    const inWindow = (s: Step) => s.time !== null && s.time >= open && s.time <= close;
-    const later = sorted.filter((s) => s !== cred && s.time !== null && s.time >= open);
-    const outside = later.filter((s) => !inWindow(s) && s.kind !== "excluded");
-    const within = later.filter(inWindow);
-    // Effective intervals: a grant or role revoked, or the credential removed, before a later step
-    // ends it — the later step then does not count.
-    const removedAt = (kind: Step["kind"], key: string | undefined): number | null => {
-      const r = within.find((s) => s.kind === kind && (s.keyId ?? s.permission) === key);
-      return r?.time ?? null;
-    };
-    const credEnd = removedAt("credential-removed", cred.keyId);
-    // Every grant is a stage; only a PRIVILEGED one can carry the path to High.
+    // Strictly after the credential: an equal timestamp establishes no order.
+    const later = sorted.filter((s) => s !== cred && s.time !== null && s.time > open);
+    const outside = later.filter((s) => s.time! > close && s.kind !== "excluded");
+    const within = later.filter((s) => s.time! <= close);
+    // Effective intervals per exact grant / role / credential: ended by the FIRST removal of the
+    // same key after it; a re-grant after a removal is its own interval.
+    const endOf = (start: Step, kind: Step["kind"], key: string | undefined): number | null =>
+      within.find((s) => s.kind === kind && s.time! > start.time! && (s.keyId ?? s.permission) === key)
+        ?.time ?? null;
+    const credEnd = endOf(cred, "credential-removed", cred.keyId);
     const grants = within.filter((s) => s.kind === "grant" || s.kind === "role");
-    const privileged = grants.some((g) => g.privileged);
-    const live = (s: Step, end: number | null) => end === null || (s.time !== null && s.time < end);
-    const grantEnds = new Map(
-      grants.map((g) => [g, removedAt(g.kind === "grant" ? "grant-removed" : "role-removed", g.permission)]),
+    const grantEnd = new Map(
+      grants.map((g) => [g, endOf(g, g.kind === "grant" ? "grant-removed" : "role-removed", g.permission)]),
     );
-    const granted = new Set(grants.map((g) => g.permission!));
-    const tier0 = grants.some((g) => g.kind === "role" && g.words.includes("can take over the tenant"));
-    const signIns = within.filter((s) => s.kind === "sign-in" && s.matched && s.success && live(s, credEnd));
+    const liveAt = (t: number): { permissions: Set<string>; tier0: boolean } => {
+      const live = grants.filter(
+        (g) => g.time! <= t && ((grantEnd.get(g) ?? null) === null || t < grantEnd.get(g)!),
+      );
+      return {
+        permissions: new Set(live.map((g) => g.permission!)),
+        tier0: live.some((g) => g.kind === "role" && g.words.includes("can take over the tenant")),
+      };
+    };
+    // The ordered subsequence: the first grant after the credential; the first SUCCESSFUL sign-in
+    // with THIS credential's key after that grant (after the credential when there is no grant),
+    // while the credential is live; the first successful action after that sign-in (after the
+    // grant when there is no sign-in) consistent with a permission live at its time.
+    // The first privileged grant when there is one, else the first grant.
+    const grant = grants.find((g) => g.privileged) ?? grants[0];
+    const signInsRaw = within
+      .filter((s) => s.kind === "sign-in")
+      .map((s) => ({
+        ...s,
+        matched: !!s.signInKey && s.signInKey === cred.keyId,
+        words: s.thumbprintOnly
+          ? `${s.words} — identified by thumbprint only, not matched to a key id`
+          : s.signInKey && s.signInKey === cred.keyId
+            ? s.success
+              ? `${s.words} — with the new credential`
+              : `${s.words} — with the new credential; not a use`
+            : `${s.words} — with an unmatched credential`,
+      }));
+    const afterGrant = grant ? grant.time! : open;
+    const inOrder = (s: Step): boolean => s.time! > afterGrant && (credEnd === null || s.time! < credEnd);
+    const chosen = signInsRaw.find((s) => s.matched && s.success && inOrder(s));
+    // A matched sign-in that is not the stage says why: before the grant, or after the removal.
+    const signIns = signInsRaw.map((s) =>
+      s.matched && s.success && s !== chosen
+        ? {
+            ...s,
+            words: `${s.words}${s.time! <= afterGrant ? ", before the grant" : credEnd !== null && s.time! >= credEnd ? ", after the credential was removed" : ""}`,
+          }
+        : s,
+    );
+    const signIn = chosen ? signIns[signInsRaw.indexOf(chosen)] : undefined;
+    const afterSignIn = signIn ? signIn.time! : afterGrant;
     const actions = within
-      .filter(
-        (s) =>
-          s.kind === "action" &&
-          s.time !== null &&
-          grants.some((g) => g.time !== null && s.time! >= g.time && live(s, grantEnds.get(g) ?? null)),
-      )
-      .map((s) => ({ ...s, ...(s.operation ? refreshAction(s, granted, tier0) : {}) }));
+      .filter((s) => s.kind === "action" && s.time! > afterSignIn)
+      .map((s) => {
+        const { permissions, tier0 } = liveAt(s.time!);
+        return { ...s, ...actionWords(s.operation ?? "", permissions, tier0) };
+      });
+    const action = actions.find((a) => a.matched);
     const removed = within.filter(
       (s) => s.kind === "credential-removed" || s.kind === "grant-removed" || s.kind === "role-removed",
     );
-    const stages =
-      1 + (grants.length ? 1 : 0) + (signIns.length ? 1 : 0) + (actions.some((a) => a.matched) ? 1 : 0);
+    const privileged = !!grant?.privileged;
+    const stages = 1 + (grant ? 1 : 0) + (signIn ? 1 : 0) + (action ? 1 : 0);
     const grade: Severity | null =
       stages >= 4 && privileged ? "High" : stages >= 3 ? "Medium" : stages === 2 ? "Low" : null;
-    out.push({ credential: cred, grants, signIns, actions, outside, removed, grade, stages });
+    out.push({
+      credential: cred,
+      grants,
+      grant,
+      signIns,
+      signIn,
+      actions,
+      action,
+      outside,
+      removed,
+      grade,
+      stages,
+      privileged,
+    });
   }
-  return out;
-}
-
-/** An action's words against the grants of THIS episode (the same operation can be consistent in one episode and not another). */
-function refreshAction(
-  s: Step,
-  granted: ReadonlySet<string>,
-  tier0: boolean,
-): Pick<Step, "words" | "matched"> {
-  const sufficient = OPERATION_PERMISSIONS.get(lower(s.operation ?? ""));
-  const consistent = sufficient?.find((p) => granted.has(lower(p)));
-  const op = show(s.operation ?? "", 60);
-  if (!sufficient)
-    return { words: `acted: ${op} — the action's required permission was not mapped`, matched: false };
-  if (tier0)
-    return {
-      words: `acted: ${op} — consistent with the tier-0 directory role granted; the authorization the token carried is not in the record`,
-      matched: true,
-    };
-  if (consistent)
-    return {
-      words: `acted: ${op} — consistent with the granted ${consistent}; the authorization the token carried is not in the record`,
-      matched: true,
-    };
-  return { words: `acted: ${op} — needs ${sufficient.join(" or ")}, not among the granted`, matched: false };
+  return { episodes: out, episodesBeyond: Math.max(0, credentials.length - EPISODES_PER_APP_MAX) };
 }
 
 const RANK: Record<string, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Critical: 4 };
@@ -397,17 +492,22 @@ export interface ExportCoverage {
   tenant: string;
   signIns: { records: number; first: string; last: string } | null;
   audits: { records: number; first: string; last: string } | null;
+  /** For the tenantless set only: how many tenants the export's sign-ins name (0 when they are joined). */
+  signInTenantsUnjoined: number;
 }
 
 /** One summary row per application whose export records form a path; the rows say what they rest on. */
 export function entraPrivilegePaths(records: readonly Row[], resolve: Resolver): MappedEvent[] {
-  const subjectOf = learnSubjectResolver(records);
+  const exportTenant = exportTenantOf(records);
+  const subjectOf = learnSubjectResolver(records, exportTenant);
   const chains = new Map<string, Chain>();
   const coverage = new Map<string, ExportCoverage>();
+  const tenantOf = (t: string): string => lower(t) || exportTenant;
   const cover = (tenant: string, kind: "signIns" | "audits", time: string) => {
+    const k = tenantOf(tenant);
     const c =
-      coverage.get(lower(tenant)) ??
-      coverage.set(lower(tenant), { tenant, signIns: null, audits: null }).get(lower(tenant))!;
+      coverage.get(k) ??
+      coverage.set(k, { tenant: k, signIns: null, audits: null, signInTenantsUnjoined: 0 }).get(k)!;
     const t = normalizeTime(time);
     const cur = c[kind] ?? { records: 0, first: t, last: t };
     c[kind] = {
@@ -417,14 +517,20 @@ export function entraPrivilegePaths(records: readonly Row[], resolve: Resolver):
     };
   };
   const chainOf = (tenant: string, appId: string, name: string): Chain => {
-    const k = `${lower(tenant)}|${lower(appId)}`;
+    const k = `${tenantOf(tenant)}|${lower(appId)}`;
     const c =
-      chains.get(k) ?? chains.set(k, { tenant, appId: lower(appId), name, steps: [], unlinked: 0 }).get(k)!;
+      chains.get(k) ??
+      chains.set(k, { tenant: tenantOf(tenant), appId: lower(appId), name, steps: [], beyond: 0 }).get(k)!;
     if (!c.name && name) c.name = name;
     return c;
   };
+  const push = (c: Chain, step: Step) => {
+    if (c.steps.length < STEPS_PER_APP_MAX) c.steps.push(step);
+    else c.beyond += 1;
+  };
+  // An app id the record states (a GUID), else the object id resolved through a record that states both.
   const appOf = (tenant: string, objectId: string, appId: string): string =>
-    appId.trim() ? lower(appId) : isGuid(objectId) ? subjectOf(objectId, tenant) : "";
+    isGuid(appId) ? lower(appId) : isGuid(objectId) ? subjectOf(objectId, tenant) : "";
 
   // First pass: every change, by the application it is ABOUT; every sign-in; every app-initiated action.
   const signIns: { s: SpSignIn; index: number }[] = [];
@@ -450,44 +556,40 @@ export function entraPrivilegePaths(records: readonly Row[], resolve: Resolver):
         continue;
       }
       const step = changeStep(r, c, index);
-      if (step) chainOf(r.tenant, appId, c.subject.name).steps.push(step);
+      if (step) push(chainOf(r.tenant, appId, c.subject.name), step);
     }
     if (r.initiator.kind === "app") {
       const appId = appOf(r.tenant, r.initiator.id, r.initiator.appId);
       if (appId) actions.push({ r, index, appId });
     }
   });
+  if (!exportTenant) {
+    const tenantless = coverage.get("");
+    if (tenantless) tenantless.signInTenantsUnjoined = new Set(signIns.map((x) => lower(x.s.tenant))).size;
+  }
   for (const { s, index } of signIns) {
     const appId = appOf(s.tenant, s.spId, s.appId);
-    if (!appId) continue;
-    const c = chains.get(`${lower(s.tenant)}|${appId}`);
-    if (!c) continue;
-    c.steps.push(
-      signInStep(
-        s,
-        index,
-        new Set(c.steps.filter((x) => x.kind === "credential" && x.keyId).map((x) => x.keyId!)),
-      ),
-    );
+    const c = appId ? chains.get(`${tenantOf(s.tenant)}|${appId}`) : undefined;
+    if (c) push(c, signInStep(s, index));
   }
   for (const { r, index, appId } of actions) {
-    const c = chains.get(`${lower(r.tenant)}|${appId}`);
-    if (!c) continue;
-    c.steps.push(actionStep(r, index, new Set(), false));
+    const c = chains.get(`${tenantOf(r.tenant)}|${appId}`);
+    if (c) push(c, actionStep(r, index));
   }
 
   // Episodes, the best per application, ranked, bounded.
   const findings = [...chains.values()]
     .map((chain) => {
-      const episodes = episodesOf(chain).filter((e) => e.grade !== null);
-      if (!episodes.length) return null;
-      episodes.sort(
+      const { episodes, episodesBeyond } = episodesOf(chain);
+      const graded = episodes.filter((e) => e.grade !== null);
+      if (!graded.length) return null;
+      graded.sort(
         (a, b) =>
           RANK[b.grade!] - RANK[a.grade!] ||
           b.stages - a.stages ||
           (b.credential.time ?? 0) - (a.credential.time ?? 0),
       );
-      return { chain, best: episodes[0], others: episodes.slice(1) };
+      return { chain, best: graded[0], others: graded.slice(1), beyond: chain.beyond + episodesBeyond };
     })
     .filter((f): f is NonNullable<typeof f> => f !== null)
     .sort(
@@ -499,7 +601,7 @@ export function entraPrivilegePaths(records: readonly Row[], resolve: Resolver):
     );
   const rows = findings
     .slice(0, PRIVILEGE_PATHS_MAX)
-    .map((f) => summaryRow(f.chain, f.best, f.others, coverage.get(lower(f.chain.tenant))));
+    .map((f) => summaryRow(f.chain, f.best, f.others, f.beyond, coverage.get(f.chain.tenant)));
   if (findings.length > PRIVILEGE_PATHS_MAX) rows.push(omittedRow(findings.length - PRIVILEGE_PATHS_MAX));
   return rows.map((row) =>
     unlinked
@@ -520,6 +622,7 @@ function summaryRow(
   chain: Chain,
   e: Episode,
   others: Episode[],
+  beyond: number,
   coverage: ExportCoverage | undefined,
 ): MappedEvent {
   const iso = (t: number | null) => (t === null ? "time not readable" : new Date(t).toISOString());
@@ -529,22 +632,30 @@ function summaryRow(
     const more = steps.length > STEPS_NAMED_MAX ? [`+${steps.length - STEPS_NAMED_MAX} more ${label}`] : [];
     return [...shown, ...more];
   };
+  // Absence is scoped to the episode's window and backed by the export's own counts; a matching
+  // record OUTSIDE the window is listed beside it, never contradicted.
   const absence = (kind: "signIns" | "audits", what: string): string => {
     const c = coverage?.[kind];
-    return c
-      ? `no ${what} by this application among the ${c.records} ${kind === "signIns" ? "sign-in" : "directory-audit"} records of this export (${c.first.slice(0, 10)} → ${c.last.slice(0, 10)})`
-      : `${kind === "signIns" ? "sign-in" : "directory-audit"} log not in this export`;
+    if (c)
+      return `no ${what} inside the window among the ${c.records} ${kind === "signIns" ? "sign-in" : "directory-audit"} records of this export (${c.first.slice(0, 10)} → ${c.last.slice(0, 10)})`;
+    if (kind === "signIns" && coverage?.signInTenantsUnjoined)
+      return `the sign-in records of this export name ${coverage.signInTenantsUnjoined} tenants and the directory-audit records name none — not joined`;
+    return `${kind === "signIns" ? "sign-in" : "directory-audit"} log not in this export`;
   };
+  const unmatchedSignIns = e.signIns.filter((s) => s !== e.signIn);
+  const otherActions = e.actions.filter((a) => a !== e.action);
   const parts = [
     stepWords(e.credential),
     ...(e.grants.length ? named(e.grants, "grants") : ["no capability granted inside the window"]),
-    ...(e.grants.length && !e.grants.some((g) => g.privileged)
-      ? ["no privileged capability granted inside the window"]
-      : []),
-    ...(e.signIns.length
-      ? named(e.signIns, "sign-ins")
+    ...(e.grants.length && !e.privileged ? ["no privileged capability granted inside the window"] : []),
+    ...(e.signIn
+      ? [stepWords(e.signIn)]
       : [absence("signIns", "successful sign-in with the new credential")]),
-    ...(e.actions.length ? named(e.actions, "actions") : [absence("audits", "directory change")]),
+    ...(unmatchedSignIns.length ? named(unmatchedSignIns, "other sign-ins") : []),
+    ...(e.action
+      ? [stepWords(e.action)]
+      : [absence("audits", "consistent directory change by this application")]),
+    ...(otherActions.length ? named(otherActions, "other actions") : []),
     ...(e.removed.length ? named(e.removed, "removals") : []),
     ...(e.outside.length
       ? [`outside the ${PRIVILEGE_PATH_WINDOW_DAYS}-day window: ${named(e.outside, "steps").join("; ")}`]
@@ -554,22 +665,32 @@ function summaryRow(
           `${others.length} other episode${others.length === 1 ? "" : "s"}: ${others.map((o) => o.grade).join(", ")}`,
         ]
       : []),
+    ...(beyond ? [`${beyond} step${beyond === 1 ? "" : "s"} beyond the bound, not evaluated`] : []),
     e.stages >= 4
       ? e.grade === "High"
         ? "all four stages in order"
-        : "all four stages in order; the capability granted is not a tenant-control one"
+        : "all four stages in order; no privileged capability granted"
       : e.stages === 3
         ? "three of four stages"
         : "two of four stages",
   ];
   const head = `Entra privilege path: ${show(chain.name || "(unnamed application)")} (app id ${chain.appId})`;
-  const body = `${head} [${parts.join("; ")}]`;
-  const description = body.length > DESCRIPTION_MAX ? `${body.slice(0, DESCRIPTION_MAX - 2)}…]` : body;
+  // The counts and the stage sentence are packed first; the step words are cut to what remains.
+  const tailFrom = parts.length - (1 + (beyond ? 1 : 0) + (others.length ? 1 : 0));
+  const tail = parts.slice(tailFrom).join("; ");
+  const room = DESCRIPTION_MAX - head.length - tail.length - 6;
+  const lead = parts.slice(0, tailFrom).join("; ");
+  const description = `${head} [${lead.length > room ? `${lead.slice(0, Math.max(0, room - 1))}…` : lead}; ${tail}]`;
   const identity = createHash("sha256")
     .update(`${chain.tenant.length}:${chain.tenant}|${chain.appId.length}:${chain.appId}`)
     .digest("hex")
     .slice(0, 32);
-  const steps: EntraPathStep[] = [e.credential, ...e.grants, ...e.signIns, ...e.actions]
+  const steps: EntraPathStep[] = [
+    e.credential,
+    ...e.grants,
+    ...(e.signIn ? [e.signIn] : []),
+    ...(e.action ? [e.action] : []),
+  ]
     .slice(0, 4 * STEPS_NAMED_MAX)
     .map((s) => ({
       stage:
