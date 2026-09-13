@@ -7,6 +7,8 @@ import {
   quarantineOverlay,
   type QuarantineRow,
 } from "./quarantineRecord.js";
+import { isQuarantineAttributeRecord, readQuarantineAttributeRecord } from "./quarantineAttribute.js";
+import { addAttribute, emptyAttributeObservations, joinQuarantine } from "./quarantineJoin.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -31,6 +33,9 @@ import {
 //      com.apple.LaunchServices.QuarantineEventsV2`), dumped to CSV. This is macOS's Mark-of-the-Web:
 //      which app downloaded a file, from which URL, and from which referring page. On an initial-
 //      access question it is often the single most useful macOS artifact there is.
+//   3. FILE ATTRIBUTES — a path and its raw `com.apple.quarantine` value per record (#1037), joined
+//      to the database records of the same upload through the event identifier they share
+//      (quarantineJoin.ts) and to nothing else.
 //
 // EVERY ROW IS Info, like kapeImport and hindsightImport. Neither artifact adjudicates anything: a
 // quarantine record proves a file arrived from a URL, not that the file was malicious. Escalation is
@@ -160,19 +165,27 @@ export function parseMacos(input: string, opts: MacosImportOptions = {}): MacosP
   let format = "empty";
 
   const quarantineRows: QuarantineRow[] = [];
+  const attributes = emptyAttributeObservations();
+  // Record by record: an attribute record, a database record, or unified-log telemetry — a
+  // unified-log record in the same array is never a download event.
+  const route = (rec: Row, headers: readonly string[], index: number): boolean => {
+    if (isQuarantineAttributeRecord(rec)) {
+      addAttribute(attributes, readQuarantineAttributeRecord(rec, index));
+      return true;
+    }
+    const isQuarantine = isQuarantineRecord(rec, headers);
+    const event = isQuarantine ? mapQuarantine(rec, iocSink) : mapUnifiedLog(rec);
+    if (event) mapped.push(event);
+    if (event && isQuarantine) quarantineRows.push(event as QuarantineRow);
+    return isQuarantine;
+  };
   if (trimmed[0] === "[" || trimmed[0] === "{") {
     const records = extractRecords(trimmed).records.filter(isObject) as Row[];
     total = records.length;
-    // A JSON dump of the quarantine database is a quarantine file too — record by record: a
-    // unified-log record in the same array is never a download event.
     let quarantine = false;
-    for (const rec of records) {
-      const isQuarantine = isQuarantineRecord(rec, Object.keys(rec));
-      quarantine ||= isQuarantine;
-      const event = isQuarantine ? mapQuarantine(rec, iocSink) : mapUnifiedLog(rec);
-      if (event) mapped.push(event);
-      if (event && isQuarantine) quarantineRows.push(event as QuarantineRow);
-    }
+    records.forEach((rec, i) => {
+      quarantine = route(rec, Object.keys(rec), i) || quarantine;
+    });
     format = quarantine ? "macos-quarantine" : "macos-unified-log";
   } else {
     const { headers, rows } = parseCsv(trimmed);
@@ -195,13 +208,9 @@ export function parseMacos(input: string, opts: MacosImportOptions = {}): MacosP
     // Row by row, like JSON: a row of a quarantine dump whose native columns are empty is not a
     // download record — it is read as telemetry or dropped, and mints nothing.
     let quarantine = false;
-    for (const rec of objects) {
-      const isQuarantine = isQuarantineRecord(rec, headers);
-      quarantine ||= isQuarantine;
-      const event = isQuarantine ? mapQuarantine(rec, iocSink) : mapUnifiedLog(rec);
-      if (event) mapped.push(event);
-      if (event && isQuarantine) quarantineRows.push(event as QuarantineRow);
-    }
+    objects.forEach((rec, i) => {
+      quarantine = route(rec, headers, i) || quarantine;
+    });
     format = quarantine ? "macos-quarantine" : "macos-unified-log";
   }
 
@@ -212,10 +221,18 @@ export function parseMacos(input: string, opts: MacosImportOptions = {}): MacosP
   // The excess variants leave `mapped` too, so the bound holds with aggregation off; indicators come
   // only from the rows that survived, linked to their rows.
   const dropped = new Set(quarantineRows.filter((r) => !bounded.includes(r)));
-  const kept = mapped.filter((m) => !dropped.has(m as QuarantineRow));
+  // The join (#1037): every surviving database row rewritten with what the upload's attribute
+  // records establish, and the attribute rows beside them. Indicators are the database rows' own,
+  // linked to the joined row's key.
+  const joined = joinQuarantine(bounded, attributes);
+  const kept = mapped
+    .filter((m) => !dropped.has(m as QuarantineRow))
+    .map((m) => joined.db.get(m as QuarantineRow) ?? m)
+    .concat(joined.attributes);
+  if (attributes.records.length) format = "macos-quarantine";
   for (const r of bounded) {
     const rowSink = new Map<string, SiemIoc>(r.iocs.map((i) => [`${i.type}:${i.value.toLowerCase()}`, i]));
-    mergeRowIocs(iocSink, rowSink, r.aggKey);
+    mergeRowIocs(iocSink, rowSink, (joined.db.get(r) ?? r).aggKey);
   }
 
   const { events, groups } = aggregateEvents(kept, {
@@ -232,6 +249,6 @@ export function parseMacos(input: string, opts: MacosImportOptions = {}): MacosP
     kept: events.length,
     dropped: Math.max(0, mapped.length - represented),
     groups,
-    format: mapped.length ? format : "empty",
+    format: kept.length ? format : "empty",
   };
 }

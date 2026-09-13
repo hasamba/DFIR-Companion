@@ -4,6 +4,7 @@ import type { ForensicEvent } from "./stateTypes.js";
 import { transferBlockSchema, webBlockSchema } from "./canonicalWeb.js";
 import { dnsBlockSchema } from "./canonicalDns.js";
 import { tlsGraphBlockSchema } from "./canonicalTls.js";
+import { quarantineAttributeBlockSchema, quarantineBlockSchema } from "./canonicalQuarantine.js";
 
 export const CANONICAL_EVENT_SCHEMA_VERSION = "1.0.0" as const;
 /** The producer stamped on an envelope DERIVED from legacy flat fields at the read boundary. */
@@ -214,31 +215,11 @@ export const canonicalEventEnvelopeSchema = z.object({
       records: z.number().int().positive(),
     })
     .optional(),
-  // A macOS quarantine record's own reading (quarantineRecord.ts, #933 item 7): the kind, the agent,
-  // the resource and origin URLs, the sender, the event identifier, and how its time was decoded.
-  // `localFile` is always "not in this record" — the database keeps no path.
-  quarantine: z
-    .object({
-      kind: z.string(),
-      typeNumber: z.number().int().nonnegative().optional(),
-      typeRaw: z.string().optional(),
-      agent: z.string().optional(),
-      bundleId: z.string().optional(),
-      dataUrl: z.string().optional(),
-      originUrl: z.string().optional(),
-      originTitle: z.string().optional(),
-      originAliasDigest: z.string().optional(),
-      senderName: z.string().optional(),
-      senderAddress: z.string().optional(),
-      eventId: z.string().optional(),
-      eventIdRaw: z.string().optional(),
-      timeEncoding: z.enum(["cocoa-seconds", "iso", "unix-seconds", "unix-ms", "unreadable"]),
-      timeRaw: z.string().optional(),
-      urlIndicator: z.string().optional(),
-      localFile: z.literal("not in this record"),
-      folded: z.boolean().optional(),
-    })
-    .optional(),
+  // A macOS quarantine record's own reading (quarantineRecord.ts, #933 item 7) and what the same
+  // upload's file-attribute records establish about its local file (quarantineJoin.ts, #1037); the
+  // attribute row's own block beside it. Both live in canonicalQuarantine.ts.
+  quarantine: quarantineBlockSchema.optional(),
+  quarantineAttribute: quarantineAttributeBlockSchema.optional(),
   // What the memory image the row came from says about itself (memoryImageFacts.ts, #933 item 12):
   // the kernel SystemTime recovered from the image (never "captured at"), the layer stack, the
   // dump kind for a known layer class, the crash-dump type as rendered, the symbol table. Only

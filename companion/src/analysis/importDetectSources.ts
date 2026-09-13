@@ -77,11 +77,43 @@ export function isMacosUnifiedLog(s: Row): boolean {
   );
 }
 
-// Hindsight CSV export: url + timestamp plus one of its own columns.
-// LSQuarantine CSV dump — the column prefix is unmistakable.
+// LSQuarantine CSV dump — the column prefix is unmistakable; a file-attribute listing (#1037) by
+// the one header no other export carries, `com.apple.quarantine` — `quarantine`, `xattr` and a
+// path column are not a signature (a generic inventory carries those too).
 export function macosQuarantineCsvSig(h: Set<string>): boolean {
-  for (const k of h) if (k.startsWith("lsquarantine")) return true;
+  for (const k of h) if (k.startsWith("lsquarantine") || k === "com.apple.quarantine") return true;
   return false;
+}
+
+const MACOS_SAMPLE_MAX = 8;
+const CONTAINERS = ["Records", "data", "events", "records", "results", "logs", "value", "alerts"];
+
+/** Up to MACOS_SAMPLE_MAX objects from an array root or a wrapped one — the macOS family is read record by record. */
+function sampleObjects(root: unknown): Row[] {
+  let arr: unknown[] | undefined;
+  if (Array.isArray(root)) arr = root;
+  else if (isObject(root)) {
+    const hits = (root).hits;
+    if (isObject(hits) && Array.isArray((hits).hits)) arr = (hits).hits as unknown[];
+    else for (const k of CONTAINERS) if (Array.isArray(getCI(root, k))) arr = getCI(root, k) as unknown[];
+  }
+  return (arr ?? [root]).filter(isObject).slice(0, MACOS_SAMPLE_MAX);
+}
+
+const isQuarantineDbRecord = (s: Row): boolean =>
+  Object.keys(s).some((k) => k.trim().toLowerCase().startsWith("lsquarantine"));
+const isQuarantineAttrRecord = (s: Row): boolean =>
+  Object.keys(s).some((k) => k.trim().toLowerCase() === "com.apple.quarantine");
+
+/**
+ * The macOS JSON family, in any record order: a database record, an attribute record or a
+ * unified-log record among the first MACOS_SAMPLE_MAX objects — and no Velociraptor stamp on any of
+ * them, which keeps a collector's own export on its own route.
+ */
+export function isMacosFamily(root: unknown): boolean {
+  const objs = sampleObjects(root);
+  if (objs.some((s) => typeof getCI(s, "_Source") === "string" && !!getCI(s, "_Source"))) return false;
+  return objs.some((s) => isQuarantineDbRecord(s) || isQuarantineAttrRecord(s) || isMacosUnifiedLog(s));
 }
 
 export function hindsightCsvSig(h: Set<string>): boolean {
