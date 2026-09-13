@@ -10,7 +10,8 @@
   // request made just before, put on the status line where the analyst is looking (#957).
   function downloadTimesketchJsonl(caseId, scope) {
     const status = document.getElementById("status");
-    const url = `/cases/${caseId}/${scope === "super" ? "super-timeline" : "timeline"}.jsonl`;
+    const url =
+      scope === "super" ? `/cases/${caseId}/super-timeline.jsonl` : `/cases/${caseId}/timeline.jsonl`;
     status.textContent = "checking Timesketch export…";
     fetch(`/cases/${caseId}/timesketch-omitted?scope=${scope}`)
       .then((r) => (r.ok ? r.json() : {}))
