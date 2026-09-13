@@ -114,11 +114,24 @@ describe("esc drift guard", () => {
 
   it("still escapes both quote flavours, whichever copy runs", () => {
     const { esc, escAttr } = loadDashboardModule<EscapeApi>("dashboard-escape.js");
-    expect(esc('<img src=x onerror="alert(1)">')).toBe('&lt;img src=x onerror="alert(1)"&gt;');
+    expect(esc('<img src=x onerror="alert(1)">')).toBe("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;");
     expect(escAttr(`" onmouseover='x'`)).toBe("&quot; onmouseover=&#39;x&#39;");
     expect(esc(null)).toBe("");
     expect(esc(undefined)).toBe("");
     expect(esc(0)).toBe("0");
+  });
+
+  // #1004: 51 attribute sites interpolate `esc` (not `escAttr`) inside a double-quoted attribute.
+  // A quote-blind esc let evidence text close the attribute and forge a sibling one; safe-dom
+  // strips the on* handler but not the forged data-* attribute. esc itself must hold the line.
+  it("cannot break out of a quoted attribute, so esc-in-attribute sites are safe on their own", () => {
+    const { esc, escAttr } = loadDashboardModule<EscapeApi>("dashboard-escape.js");
+    const evil = `x" onclick="alert(1)" data-id="other`;
+    expect(`<div data-id="${esc(evil)}">`).toBe(
+      '<div data-id="x&quot; onclick=&quot;alert(1)&quot; data-id=&quot;other">',
+    );
+    expect(esc("it's")).toBe("it&#39;s");
+    expect(escAttr(evil)).toBe(esc(evil)); // escAttr is idempotent over esc's output
   });
 });
 

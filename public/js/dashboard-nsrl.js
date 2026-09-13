@@ -152,7 +152,7 @@
         msg.textContent =
           `loaded ${(j.added || 0).toLocaleString()} new hash${j.added !== 1 ? "es" : ""} (${(j.total || 0).toLocaleString()} total)` +
           (errs.length
-            ? ` · ${errs.length} file(s) failed: ${esc(errs.map((f) => f.error).join("; "))}`
+            ? ` · ${errs.length} file(s) failed: ${errs.map((f) => f.error).join("; ")}`
             : "");
         if (!errs.length) document.getElementById("nsrlFilePath").value = "";
         loadNsrl();

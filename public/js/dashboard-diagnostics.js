@@ -489,10 +489,10 @@
         }
         if (body.ok) {
           msg.style.color = "#5ad17a";
-          msg.textContent = `✓ ${esc(body.provider)} responded in ${body.latencyMs} ms`;
+          msg.textContent = `✓ ${body.provider || ""} responded in ${body.latencyMs} ms`;
         } else {
           msg.style.color = "#ff9f9f";
-          msg.textContent = `✗ ${esc(body.kind || "error")}: ${esc(body.error || "failed")}`;
+          msg.textContent = `✗ ${body.kind || "error"}: ${body.error || "failed"}`;
         }
       })
       .catch((e) => {

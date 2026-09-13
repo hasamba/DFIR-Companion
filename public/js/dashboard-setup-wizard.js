@@ -59,13 +59,13 @@
         const j = await save.json().catch(() => ({}));
         result.style.color = "#ff9f9f";
         result.textContent =
-          "Could not save: " + esc(j.error || "HTTP " + save.status);
+          "Could not save: " + (j.error || "HTTP " + save.status);
         btn.disabled = false;
         return;
       }
     } catch (e) {
       result.style.color = "#ff9f9f";
-      result.textContent = "Could not reach the server: " + esc(e.message);
+      result.textContent = "Could not reach the server: " + (e.message || "");
       btn.disabled = false;
       return;
     }
@@ -232,13 +232,13 @@
         const j = await save.json().catch(() => ({}));
         resultEl.style.color = "#ff9f9f";
         resultEl.textContent =
-          "Could not save: " + esc(j.error || "HTTP " + save.status);
+          "Could not save: " + (j.error || "HTTP " + save.status);
         if (btn) btn.disabled = false;
         return;
       }
     } catch (e) {
       resultEl.style.color = "#ff9f9f";
-      resultEl.textContent = "Could not reach the server: " + esc(e.message);
+      resultEl.textContent = "Could not reach the server: " + (e.message || "");
       if (btn) btn.disabled = false;
       return;
     }
@@ -284,7 +284,7 @@
           resultEl.style.color = "#ffb05a";
           resultEl.textContent =
             "Saved, but " +
-            esc(body.error || "still not fully configured") +
+            (body.error || "still not fully configured") +
             ".";
         } else {
           resultEl.style.color = "#ff9f9f";
@@ -295,7 +295,7 @@
         }
       } catch (e) {
         resultEl.style.color = "#ff9f9f";
-        resultEl.textContent = "Saved, but the test failed: " + esc(e.message);
+        resultEl.textContent = "Saved, but the test failed: " + (e.message || "");
       }
     } else {
       resultEl.style.color = "#5ad17a";
@@ -403,7 +403,7 @@
         // which reads as "Failed: fetch failed" — say what actually happened instead.
         res.textContent = /^fetch failed$/i.test(body.error)
           ? "✗ Failed — could not reach that URL"
-          : "✗ Failed: " + esc(body.error);
+          : "✗ Failed: " + (body.error || "");
         btn.disabled = false;
         return;
       }
@@ -412,7 +412,7 @@
         "✓ Connected — now Save, then restart the server to activate it.";
     } catch (e) {
       res.style.color = "#ff9f9f";
-      res.textContent = "Could not reach the server: " + esc(e.message);
+      res.textContent = "Could not reach the server: " + (e.message || "");
     }
     btn.disabled = false;
   }
@@ -521,14 +521,14 @@
       if (!add.ok) {
         res.style.color = "#ff9f9f";
         res.textContent =
-          "Could not add channel: " + esc(body.error || "HTTP " + add.status);
+          "Could not add channel: " + (body.error || "HTTP " + add.status);
         btn.disabled = false;
         return;
       }
       channelId = body.id;
     } catch (e) {
       res.style.color = "#ff9f9f";
-      res.textContent = "Could not reach the server: " + esc(e.message);
+      res.textContent = "Could not reach the server: " + (e.message || "");
       btn.disabled = false;
       return;
     }
@@ -557,7 +557,7 @@
     } catch (e) {
       res.style.color = "#ffb05a";
       res.textContent =
-        "Channel added, but the test request failed: " + esc(e.message);
+        "Channel added, but the test request failed: " + (e.message || "");
     }
     btn.disabled = false;
     await wizRefreshStatus();
