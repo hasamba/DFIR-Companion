@@ -162,10 +162,11 @@ describe("every moved function still resolves at its call sites", () => {
   // function (#918); 111 with the four full-text search helpers (#928) — _canonValues/_evSearchParts
   // build the widened haystack, and _evMatchesNarrow/_iocMatchesNarrow are the pre-#928 predicates
   // kept so the EXCLUDE filter did not silently widen with search; 112 with originSuffix, the relay
-  // badge's "created by …" / "origin not recorded" words (#933 item 18). The number is a vacuity
+  // badge's "created by …" / "origin not recorded" words (#933 item 18); 113 with intelWhenChip,
+  // the badge's "when does this verdict apply" chip (#933 item 19). The number is a vacuity
   // guard, not a budget.
-  it("moved 112 functions, so the check below is not vacuous", () => {
-    expect(MOVED.length).toBe(112);
+  it("moved 113 functions, so the check below is not vacuous", () => {
+    expect(MOVED.length).toBe(113);
   });
 
   it("provides every one of them as a global once the tagged scripts have run", async () => {

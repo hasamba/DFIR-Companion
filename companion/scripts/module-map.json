@@ -328,6 +328,7 @@
     "instanceSecret.ts": "analysis/privacy",
     "internalIp.ts": "analysis/ingest",
     "investigationStateFiles.ts": "storage",
+    "intelTemporal.ts": "analysis/findings",
     "iocAlias.ts": "analysis/findings",
     "iocAnchors.ts": "analysis/findings",
     "iocBulkOps.ts": "analysis/findings",

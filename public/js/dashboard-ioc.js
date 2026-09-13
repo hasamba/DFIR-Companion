@@ -62,6 +62,31 @@ function originSuffix(e) {
   return ` — created by ${esc(names.join(", "))}${more}`;
 }
 
+// The provider's dated facts as the badge shows them (#933 item 19): the visible chip names the
+// one fact that dates the verdict (VirusTotal's latest scan; AbuseIPDB's report window); the title
+// lists every fact and the lookup time. Raw facts only — no relation to the case time is computed
+// here; a date is the first ten characters of an ISO string, so nothing else reaches the attribute.
+function intelWhenChip(e) {
+  const t = e.temporal || {};
+  const day = (iso) => (typeof iso === "string" && /^\d{4}-\d{2}-\d{2}/.test(iso) ? iso.slice(0, 10) : "");
+  const facts = [];
+  if (day(t.verdictMeasuredAt)) facts.push(`verdict measured by the latest scan: ${day(t.verdictMeasuredAt)}`);
+  if (day(t.firstSubmittedAt)) facts.push(`first submitted to the provider: ${day(t.firstSubmittedAt)} (a submission date, not when it came to exist)`);
+  if (day(t.recordUpdatedAt)) facts.push(`record last updated: ${day(t.recordUpdatedAt)} (not an observation)`);
+  if (t.queryWindow && day(t.queryWindow.from) && day(t.queryWindow.to)) facts.push(`reports counted over the window ${day(t.queryWindow.from)} → ${day(t.queryWindow.to)}${typeof t.reportCount === "number" ? ` (${t.reportCount} reports)` : ""}`);
+  if (day(t.lastReportAt)) facts.push(`latest report: ${day(t.lastReportAt)}`);
+  const fetched = day(e.fetchedAt) ? `lookup ran ${day(e.fetchedAt)}` : "";
+  const title = [...facts, fetched, facts.length ? "" : "the provider reports no dates: current reputation, not evidence about the time of the case"].filter(Boolean).join("; ");
+  const chip = day(t.verdictMeasuredAt)
+    ? ` · scan ${esc(day(t.verdictMeasuredAt))}`
+    : t.queryWindow && day(t.queryWindow.from)
+      ? ` · window ${esc(day(t.queryWindow.from))}→${esc(day(t.queryWindow.to))}`
+      : day(e.fetchedAt) && e.verdict !== "unknown"
+        ? ` · looked up ${esc(day(e.fetchedAt))}`
+        : "";
+  return { chip, title };
+}
+
 function enrichBadges(ioc) {
   if (!ioc.enrichments) return ""; // not enriched yet
   if (!ioc.enrichments.length) return ` <span data-safe-style="color:var(--text-faint);font-size:11px">· checked, no intel</span>`;
@@ -75,10 +100,13 @@ function enrichBadges(ioc) {
     // "unknown" because they give CONTEXT, not a threat call. When there's data to show, omit
     // the literal "unknown" so the badge reads as info — not "we don't know".
     const asContext = e.verdict === "unknown" && (score || tags);
+    // WHEN the verdict applies (#933 item 19): a visible chip from the provider's own dated facts
+    // and a title with every fact — a verdict never shows without its date.
+    const when = intelWhenChip(e);
     const label = asContext
       ? `${esc(e.source)}${score ? `: ${esc(score)}` : ""}${tags}`
-      : `${esc(e.source)}: ${esc(e.verdict)}${score ? ` (${esc(score)})` : ""}${originSuffix(e)}${tags}`;
-    const inner = `<span data-safe-style="display:inline-block;vertical-align:middle;color:${c};border:1px solid ${c};border-radius:4px;padding:0 6px;font-size:11px;white-space:normal;word-break:break-word">${label}</span>`;
+      : `${esc(e.source)}: ${esc(e.verdict)}${score ? ` (${esc(score)})` : ""}${originSuffix(e)}${tags}${when.chip}`;
+    const inner = `<span title="${escAttr(when.title)}" data-safe-style="display:inline-block;vertical-align:middle;color:${c};border:1px solid ${c};border-radius:4px;padding:0 6px;font-size:11px;white-space:normal;word-break:break-word">${label}</span>`;
     return e.link ? `<a href="${escAttr(e.link)}" target="_blank" rel="noopener" data-safe-style="text-decoration:none">${inner}</a>` : inner;
   }).join(" ");
 }
@@ -179,6 +207,7 @@ function iocNoiseNoticeHtml(suppressed, shown) {
 // dashboard.html is a ReferenceError, which is the mistake #414 shipped and then fixed.
 window.DfirIoc = {
   verdictColor,
+  intelWhenChip,
   attackUrl,
   mitreLinks,
   worstIocVerdict,
