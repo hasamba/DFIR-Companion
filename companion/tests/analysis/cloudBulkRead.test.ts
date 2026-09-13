@@ -181,7 +181,9 @@ describe("role assumption", () => {
 
   it("ties a bulk read back to who opened the session", () => {
     const group = groupBulkReads(manyReads(MIN_OBJECTS + 1))[0];
-    expect(assumptionFor(group, roleAssumptions([assume]))?.by).toBe("alice");
+    const m = assumptionFor(group, roleAssumptions([assume]));
+    expect(m?.assumption.by).toBe("alice");
+    expect(m?.by).toBe("role-time");
   });
 
   it("ignores an assumption that happened after the reads", () => {
@@ -205,6 +207,7 @@ describe("role assumption", () => {
 describe("gradeGroup — breadth is a question, not an answer", () => {
   const group = (over: Partial<BulkGroup> = {}): BulkGroup => ({
     principal: ROLE_PRINCIPAL,
+    credentialId: "",
     sourceIp: "10.0.1.5",
     userAgent: "",
     objectCount: 4000,
@@ -228,10 +231,11 @@ describe("gradeGroup — breadth is a question, not an answer", () => {
 
   it("raises when the session was opened by someone assuming the role", () => {
     const v = gradeGroup(group(), {
-      assumptions: [{ role: "app-role", by: "alice", time: Date.parse(at(-10)) }],
+      assumptions: [{ role: "app-role", by: "alice", time: Date.parse(at(-10)), issuedKey: "" }],
     });
     expect(v?.severity).toBe("High");
     expect(v?.reason).toContain("opened by alice");
+    expect(v?.reason).toContain("matched by role name and time; the key id is not on these rows");
   });
 
   it("raises when the reads came from outside the cloud", () => {
@@ -418,13 +422,10 @@ describe("regressions", () => {
   // anything — a false causal attribution of one person's action to another.
   it("matches the role segment exactly, not as a substring", () => {
     const group = groupBulkReads(manyReads(MIN_OBJECTS + 1))[0];
-    expect(assumptionFor(group, [{ role: "app", by: "mallory", time: Date.parse(at(-5)) }])).toBeNull();
-    expect(
-      assumptionFor(group, [{ role: "superapp-role", by: "mallory", time: Date.parse(at(-5)) }]),
-    ).toBeNull();
-    expect(assumptionFor(group, [{ role: "app-role", by: "alice", time: Date.parse(at(-5)) }])?.by).toBe(
-      "alice",
-    );
+    const a = (role: string, by: string) => ({ role, by, time: Date.parse(at(-5)), issuedKey: "" });
+    expect(assumptionFor(group, [a("app", "mallory")])).toBeNull();
+    expect(assumptionFor(group, [a("superapp-role", "mallory")])).toBeNull();
+    expect(assumptionFor(group, [a("app-role", "alice")])?.assumption.by).toBe("alice");
   });
 
   it("reads the role name out of an ARN", () => {
@@ -658,5 +659,47 @@ describe("reachability", () => {
   it("has its marker stripped before correlation keys a duplicate", () => {
     // The registry correlate.ts reads (derivedNote.ts), exercised: the note comes off the key.
     expect(cleanDescription(`base text [cloud bulk read: a reason]`)).toBe("base text");
+  });
+});
+
+// #979: a group is one credential; the issuance that minted THAT key decides the attribution.
+describe("credential-id attribution (#979)", () => {
+  const withKey = (key: string, over: Parameters<typeof read>[0] = {}) =>
+    manyReads(MIN_OBJECTS + 1, over).map((e) => ({
+      ...e,
+      canonical: { ...e.canonical!, authentication: { credentialId: key } },
+    }));
+  it("two keys under one role, address and client are two groups; a key match beats time and says so", () => {
+    const groups = groupBulkReads([...withKey("ASIAAAAA"), ...withKey("ASIABBBB", { min: 1 })]);
+    expect(groups).toHaveLength(2);
+    expect(groups.map((g) => g.credentialId).sort()).toEqual(["ASIAAAAA", "ASIABBBB"]);
+    const issued = { role: "app-role", by: "alice", time: Date.parse(at(-300)), issuedKey: "ASIAAAAA" };
+    const other = { role: "app-role", by: "bob", time: Date.parse(at(-5)), issuedKey: "ASIABBBB" };
+    const a = groups.find((g) => g.credentialId === "ASIAAAAA")!;
+    const m = assumptionFor(a, [issued, other]);
+    expect(m?.assumption.by).toBe("alice");
+    expect(m?.by).toBe("key");
+    // Rows that name a key no issuance minted: no role-name fallback — that would name another person.
+    expect(
+      assumptionFor(a, [{ role: "app-role", by: "bob", time: Date.parse(at(-5)), issuedKey: "" }]),
+    ).toBeNull();
+    const v = gradeGroup(a, { assumptions: [issued] });
+    expect(v?.reason).toContain("issued to alice assuming this role");
+    expect(v?.reason).toContain("(matched by the key id)");
+  });
+  it("roleAssumptions reads the issued key off an issuance row's target", () => {
+    const issuance = {
+      ...read({
+        action: "AssumeRole",
+        principal: "alice",
+        resource: "arn:aws:iam::123456789012:role/app-role",
+        min: -10,
+      }),
+    };
+    issuance.canonical = {
+      ...issuance.canonical!,
+      target: { kind: "other", id: "ASIAAAAA", name: "temporary credential" },
+    };
+    expect(roleAssumptions([issuance])[0].issuedKey).toBe("ASIAAAAA");
   });
 });
