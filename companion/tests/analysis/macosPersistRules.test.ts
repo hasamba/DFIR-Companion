@@ -324,7 +324,8 @@ describe("judgeJob and runsAs", () => {
   it("names who runs the job", () => {
     expect(runsAs(readLaunchJob({}), "system-daemon")).toBe("root at boot");
     expect(runsAs(readLaunchJob({}), "user-agent")).toBe("that user at login");
-    expect(runsAs(readLaunchJob({ UserName: "www" }), "system-daemon")).toBe("www");
+    expect(runsAs(readLaunchJob({ UserName: "www" }), "system-daemon")).toBe("www at boot");
+    expect(runsAs(readLaunchJob({ UserName: "root" }), "user-agent")).toBe("that user at login");
   });
 
   it("reads a transient path out of the arguments, not just the program", () => {

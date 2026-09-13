@@ -102,7 +102,9 @@ function describe(s: LinuxSignal, label: string): string {
  */
 /** A stable id for one finding, so re-importing the same collection updates rather than duplicates. */
 export function stableEventId(keyPrefix: string, s: LinuxSignal): string {
-  const key = `${keyPrefix}|${s.artifact}|${s.line}|${s.kind}|${s.mitre.join(",")}|${s.reason.slice(0, 80)}`;
+  // The rule id when the grader supplies one; else the reason's head. The launchd grader supplies
+  // one, so adding `# target:`/`# launchctl:` lines and re-importing updates the row (#933 item 8).
+  const key = `${keyPrefix}|${s.artifact}|${s.line}|${s.kind}|${s.mitre.join(",")}|${s.rule ?? s.reason.slice(0, 80)}`;
   let h = 5381;
   for (let i = 0; i < key.length; i++) h = ((h * 33) ^ key.charCodeAt(i)) >>> 0;
   let h2 = 52711;

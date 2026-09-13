@@ -24,6 +24,11 @@ export interface LinuxSignal {
   timeUnknown: boolean;
   /** The file the finding is ABOUT, when the rule identified one — the payload, not the artifact. */
   target?: string;
+  /**
+   * A short stable id of the rule that fired. When set, the event id is derived from it instead of
+   * the reason's first 80 characters, so rewording a finding does not re-key the row (#933 item 8).
+   */
+  rule?: string;
 }
 
 export interface LinuxBaseline {

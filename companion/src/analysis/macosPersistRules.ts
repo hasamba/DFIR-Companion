@@ -22,6 +22,13 @@
 //   • signing status, when the collection recorded it
 //
 // The first three each stand alone. The rest raise or explain; none of them creates a finding.
+//
+// ─────────────────────────── A PLIST IS A CONFIGURATION ───────────────────────────
+//
+// Every sentence here says what the file ASKS FOR — "configured to run as", "asks launchd to start
+// it" — and never that the job ran. Nothing in a plist shows it was loaded or executed. The two
+// collection facts that can (`# target:`, `# launchctl:`) are read in macosLaunchTarget.ts and
+// worded in macosLaunchFacts.ts as the collector's observations at collection time (#933 item 8).
 
 import type { Severity } from "./stateTypes.js";
 import type { CollectedFile } from "./linuxPersistence.js";
@@ -37,6 +44,8 @@ import {
   type LaunchJob,
   type LaunchScope,
 } from "./macosPersistence.js";
+import { configuredContext, resolveTarget, type ResolvedTarget } from "./macosLaunchTarget.js";
+import { launchctlWords, targetFactWords } from "./macosLaunchFacts.js";
 
 // Directories on macOS that any process can write, and nothing installed should run from.
 //
@@ -155,20 +164,16 @@ export function claimsApple(label: string): boolean {
  */
 export function misleadingLabel(job: LaunchJob, scope: LaunchScope): boolean {
   if (!claimsApple(job.label)) return false;
-  if (scope === "apple") return false;
+  if (scope === "apple-daemon" || scope === "apple-agent") return false;
   // An interpreter or transfer tool is shipped by Apple but is not an Apple service, so its path
   // does not vouch for a com.apple.* label the way /usr/libexec/softwareupdated does.
   if (APPLE_SHIPPED_TOOL_RE.test(job.program)) return true;
   return !APPLE_PROGRAM_RE.test(job.program);
 }
 
-/** Who runs this job, in words the analyst can act on. */
+/** Who this job is configured to run as, in words the analyst can act on (macosLaunchTarget.ts). */
 export function runsAs(job: LaunchJob, scope: LaunchScope): string {
-  if (job.userName) return job.userName;
-  if (scope === "system-daemon") return "root at boot";
-  if (scope === "system-agent") return "each user at login";
-  if (scope === "user-agent") return "that user at login";
-  return "an unknown context";
+  return configuredContext(job, scope).who;
 }
 
 export interface MacJudgement {
@@ -185,7 +190,11 @@ export interface MacJudgement {
   rootRunsUserFile: string;
 }
 
-export function judgeJob(job: LaunchJob, scope: LaunchScope): MacJudgement {
+export function judgeJob(
+  job: LaunchJob,
+  scope: LaunchScope,
+  resolved: ResolvedTarget = resolveTarget(job),
+): MacJudgement {
   // The Linux payload grader reads the command text; the path rules are macOS's own.
   //
   // EnvironmentVariables is read as part of both. DYLD_INSERT_LIBRARIES is macOS persistence in one
@@ -201,11 +210,16 @@ export function judgeJob(job: LaunchJob, scope: LaunchScope): MacJudgement {
   // When the program is an interpreter, the SCRIPT is what runs — `/bin/sh /private/tmp/x.sh` runs
   // the file in /tmp, and calling that a mere reference would be as wrong as the opposite mistake.
   // Same for a library the job injects: DYLD_INSERT_LIBRARIES names code that will execute.
-  const wrapper = /\/(?:(?:ba|z|k|da|a)?sh|python[\d.]*|perl|ruby|osascript|node|php|open|env)$/i.test(
+  const wrapper = /(?:^|\/)(?:(?:ba|z|k|da|a)?sh|python[\d.]*|perl|ruby|osascript|node|php|open|env)$/i.test(
     job.program,
   );
+  // The path rules judge what launchd would try to launch: the absolute path the plist names, or
+  // a relative one joined to WorkingDirectory. A bare name is no path (launchd looks it up in its
+  // own standard path); a `~` is kept as written, since launchd never expands it — the text after
+  // it still says where the author meant the file to be.
+  const target = resolved.target || job.program;
   const programTransient =
-    MAC_TRANSIENT_RE.test(job.program) ||
+    MAC_TRANSIENT_RE.test(target) ||
     (wrapper && job.arguments.some((a) => MAC_TRANSIENT_RE.test(a))) ||
     Object.values(job.environment).some((v) => MAC_TRANSIENT_RE.test(v));
   return {
@@ -214,8 +228,7 @@ export function judgeJob(job: LaunchJob, scope: LaunchScope): MacJudgement {
     // Hidden paths are read from the ARGUMENTS too: `Program=/usr/bin/osascript` with an argument
     // of `~/.cache/.update.scpt` is the ordinary shape of macOS persistence, and reading only the
     // program missed all of it.
-    hiddenPath:
-      hidden(job.program) || job.arguments.some(hidden) || Object.values(job.environment).some(hidden),
+    hiddenPath: hidden(target) || job.arguments.some(hidden) || Object.values(job.environment).some(hidden),
     fetchExec: j.fetchExec,
     reverseShell: j.reverseShell,
     encoded: j.encoded,
@@ -225,7 +238,7 @@ export function judgeJob(job: LaunchJob, scope: LaunchScope): MacJudgement {
     // had none of it because homeAccount() did not know /Users.
     rootRunsUserFile:
       !job.userName && (scope === "system-daemon" || scope === "system-agent")
-        ? (homeAccount(job.program) ?? "")
+        ? (homeAccount(target) ?? "")
         : "",
   };
 }
@@ -240,28 +253,59 @@ function worthReporting(m: MacJudgement): boolean {
   return standsAlone(m) || m.hiddenPath || m.transientRef || !!m.rootRunsUserFile;
 }
 
-function primaryReason(m: MacJudgement, job: LaunchJob, scope: LaunchScope): string {
-  const who = runsAs(job, scope);
+/** The stable id of the reason a job is reported — the event id is derived from it, not the prose. */
+function primaryRule(m: MacJudgement): string {
+  if (m.misleading) return "misleading";
+  if (m.reverseShell) return "reverse-shell";
+  if (m.fetchExec) return "fetch-exec";
+  if (m.encoded) return "encoded";
+  if (m.rootRunsUserFile) return "root-runs-user-file";
+  if (m.transient) return "transient";
+  if (m.hiddenPath) return "hidden";
+  return "transient-ref";
+}
+
+function primaryReason(m: MacJudgement, job: LaunchJob, who: string): string {
   if (m.misleading) {
-    return `This launchd job is labelled "${job.label}", which claims to be Apple's, but it is not in /System/Library and the program it runs is not one of Apple's. Apple does not install jobs anywhere else. It runs as ${who}.`;
+    return `This launchd job is labelled "${clip(showToken(job.label))}", which claims to be Apple's, but it is not in /System/Library and the program it is configured to run is not one of Apple's. Apple does not install jobs anywhere else. It is configured to run as ${who}. The label is a string the author chose; it says nothing about what the program is.`;
   }
   if (m.reverseShell)
-    return `A launchd job running as ${who} opens an interactive connection back to a remote host.`;
+    return `A launchd job configured to run as ${who} names a command that opens an interactive connection back to a remote host.`;
   if (m.fetchExec)
-    return `A launchd job running as ${who} downloads code and executes it in the same command, so the payload never has to exist on disk before it runs.`;
-  if (m.encoded) return `A launchd job running as ${who} decodes its own payload before running it.`;
+    return `A launchd job configured to run as ${who} names a command that downloads code and executes it in the same command, so the payload never has to exist on disk before it runs.`;
+  if (m.encoded)
+    return `A launchd job configured to run as ${who} names a command that decodes its own payload before running it.`;
   if (m.rootRunsUserFile) {
-    return `A launchd job runs as ${who} but executes a program inside ${m.rootRunsUserFile}'s home directory, so that account can change what root runs.`;
+    return `A launchd job configured to run as ${who} names a program inside ${m.rootRunsUserFile}'s home directory, so that account can change what root runs.`;
   }
   if (m.transient)
-    return `A launchd job running as ${who} runs a program from a directory any process can write. Installed software does not live there.`;
+    return `A launchd job configured to run as ${who} names a program in a directory any process can write. Installed software does not live there.`;
   if (m.hiddenPath)
-    return `A launchd job running as ${who} runs from, or loads, something in a hidden directory.`;
-  return `A launchd job running as ${who} references a directory any process can write. Check whether that path is what runs or only where output goes — the program itself is ${job.program}.`;
+    return `A launchd job configured to run as ${who} names a program, or loads something, in a hidden directory.`;
+  return `A launchd job configured to run as ${who} references a directory any process can write. Check whether that path is what would run or only where output goes — the program itself is ${clip(showToken(job.program))}.`;
+}
+
+/** The triggers, as what the file asks launchd for — none of it applies unless the job is loaded. */
+function triggerWords(job: LaunchJob): string {
+  let out = "";
+  const conditions = job.keepAliveConditions.length
+    ? ` under these conditions: ${job.keepAliveConditions.map((k) => clip(showToken(k))).join(", ")}`
+    : "";
+  if (job.runAtLoad && job.keepAlive) {
+    out += ` It asks launchd to start it when loaded and to restart it when it exits${conditions}, so stopping the process does not remove it.`;
+  } else if (job.runAtLoad) out += " It asks launchd to start it when loaded.";
+  else if (job.keepAlive) out += ` It asks launchd to restart it when it exits${conditions}.`;
+  if (job.startInterval !== null && job.startInterval > 0 && job.startInterval <= 300) {
+    out += ` It asks launchd to run it every ${job.startInterval} second(s).`;
+  }
+  if (job.watchPaths.length)
+    out += ` It asks launchd to run it when ${clip(showToken(job.watchPaths[0]))} changes.`;
+  return `${out} All of this is what the file asks for; nothing in the file shows the job was loaded or ran.`;
 }
 
 const MITRE_BY_SCOPE: Record<LaunchScope, string> = {
-  apple: "T1543.001",
+  "apple-daemon": "T1543.004",
+  "apple-agent": "T1543.001",
   "system-daemon": "T1543.004",
   "system-agent": "T1543.001",
   "user-agent": "T1543.001",
@@ -322,8 +366,10 @@ export function gradeLaunchd(file: CollectedFile, ctx: MacContext = {}): LinuxSi
   if ((ctx.knownLabels ?? []).includes(job.label)) return [];
 
   const scope = launchScope(file.path);
-  const m = judgeJob(job, scope);
+  const resolved = resolveTarget(job);
+  const m = judgeJob(job, scope, resolved);
   if (!worthReporting(m)) return [];
+  const context = configuredContext(job, scope);
 
   let severity: Severity = standsAlone(m) || m.rootRunsUserFile ? "High" : "Medium";
   // Disabled is only the plist's DEFAULT. `launchctl load -w` overrides it in
@@ -332,18 +378,15 @@ export function gradeLaunchd(file: CollectedFile, ctx: MacContext = {}): LinuxSi
   if (job.disabled) {
     if (RANK[severity] > RANK.Medium) severity = "Medium";
   }
-  let reason = primaryReason(m, job, scope);
+  let reason = primaryReason(m, job, context.who) + triggerWords(job);
 
   // Everything below EXPLAINS or RAISES. None of it can produce a finding on its own.
-  if (job.runAtLoad && job.keepAlive) {
-    reason +=
-      " It starts by itself and is restarted when it is killed, so stopping the process does not remove it.";
-  } else if (job.runAtLoad) reason += " It starts by itself.";
-  else if (job.keepAlive) reason += " It is restarted when it is killed.";
-  if (job.startInterval !== null && job.startInterval > 0 && job.startInterval <= 300) {
-    reason += ` It re-runs every ${job.startInterval} second(s).`;
-  }
-  if (job.watchPaths.length) reason += ` It also runs whenever ${job.watchPaths[0]} changes.`;
+  if (context.note) reason += ` ${context.note}`;
+  if (resolved.note) reason += ` ${resolved.note}`;
+  const targetFact = targetFactWords(file.extra?.target, resolved, context, ctx.incident);
+  const loadFact = launchctlWords(file.extra?.launchctl, job, scope);
+  reason += targetFact.words + loadFact.words;
+  if ((targetFact.raise || loadFact.raise) && RANK[severity] < RANK.High) severity = "High";
   if (job.disabled) {
     reason +=
       " The plist sets Disabled, which is only the default — `launchctl load -w` overrides it, so this may still be loaded. Check /var/db/com.apple.xpc.launchd/disabled.plist.";
@@ -417,7 +460,8 @@ export function gradeLaunchd(file: CollectedFile, ctx: MacContext = {}): LinuxSi
       evidence: clip(`${job.label} → ${job.commandLine}`),
       line: 1,
       timeUnknown,
-      target: job.program,
+      target: resolved.target || job.program,
+      rule: primaryRule(m),
     },
   ];
 }
