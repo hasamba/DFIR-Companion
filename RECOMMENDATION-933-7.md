@@ -284,3 +284,8 @@ The joins, Gatekeeper/XProtect logs, browser history, any grade above Info.
 1. A Zulu ISO value with microseconds was emitted verbatim (`.123456Z`) and unmarked. Fix: every
    accepted ISO value reads as the platform's millisecond ISO form; the raw spelling stays identity
    and marks the row when it differs (two microsecond values stay two rows after correlation).
+
+## Code round 21 (Codex, one finding)
+1. A time cell's surrounding whitespace was trimmed before identity, so two cells that differ only
+   in padding folded. Fix: the untrimmed cell text is the identity and the verbatim comparison;
+   trimming decides only blankness and the decode.

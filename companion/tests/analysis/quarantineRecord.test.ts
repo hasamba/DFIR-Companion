@@ -686,6 +686,15 @@ describe("through parseMacos and correlateEvents", () => {
     // the platform's own spelling is carried back and not marked for its time
     const z = parseMacos(csv([row({ LSQuarantineTimeStamp: "2026-05-02T09:30:00.000Z" })]));
     expect(z.events[0].description).not.toMatch(/ #[A-Za-z0-9_-]{22}$/);
+    // the cell's whitespace is spelling too: two rows, one marked
+    const padded = [
+      row({ LSQuarantineTimeStamp: "2026-05-02T09:30:00.000Z" }),
+      row({ LSQuarantineTimeStamp: " 2026-05-02T09:30:00.000Z " }),
+    ];
+    const pd = parseMacos(csv(padded));
+    expect(pd.events).toHaveLength(2);
+    expect(afterImport(pd.events)).toHaveLength(2);
+    expect(afterImport(parseMacos(csv(padded), { aggregate: false }).events)).toHaveLength(2);
     // a Zulu value with microseconds reads as milliseconds, is marked, and two of them stay two rows
     const micro = [
       row({ LSQuarantineTimeStamp: "2026-05-02T09:30:00.123456Z" }),
