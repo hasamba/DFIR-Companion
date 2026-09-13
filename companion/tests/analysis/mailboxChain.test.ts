@@ -194,7 +194,14 @@ describe("the full chain by session", () => {
     expect(r.description).toContain("delivery through the forwarding is not in this evidence");
     expect(r.description).toContain("sends as alice@example.invalid to cfo@example.invalid");
     expect(r.description).toContain("hard-deletes 4 items");
-    expect(r.description).toContain("items listed: 10 across the joined records");
+    expect(r.description).toContain("items listed: 10 across the 5 cited records");
+    expect(r.canonical?.evidence.rawRecords.map((x) => x.locator)).toEqual([
+      "record:0",
+      "record:1",
+      "record:2",
+      "record:3",
+      "record:4",
+    ]);
     expect(r.description).toContain("four stages in order]");
     expect(r.description).not.toMatch(/forwarded|\bread\b|suspicious|compromised|attacker\b(?!\.invalid)/);
     expect(r.mitre).toEqual(expect.arrayContaining(["T1114.003", "T1564.008"]));
@@ -203,7 +210,7 @@ describe("the full chain by session", () => {
       mailbox: GUID,
       mailboxIdKind: "guid",
       tenant: TENANT.toLowerCase(),
-      join: { kind: "session", key: SESSION },
+      join: { kind: "session", key: `${SESSION}|${ACTOR}|${IP}|${T.replace("Z", ".000Z")}` },
       windowHours: MAILBOX_CHAIN_WINDOW_HOURS,
       stages: 4,
       itemsListed: 10,
@@ -214,12 +221,6 @@ describe("the full chain by session", () => {
       "access",
       "persistence",
       "consequence",
-    ]);
-    expect(r.canonical?.evidence.rawRecords.map((x) => x.locator)).toEqual([
-      "record:0",
-      "record:1",
-      "record:2",
-      "record:3",
     ]);
   });
 
@@ -234,7 +235,9 @@ describe("the full chain by session", () => {
       hardDelete({ CreationTime: at(3800), SessionId: S2 }),
     ]);
     expect(two).toHaveLength(2);
-    expect(two.map((r) => r.canonical?.mailboxChain?.join.key).sort()).toEqual([SESSION, S2].sort());
+    expect(two.map((r) => r.canonical?.mailboxChain?.join.key.split("|")[0]).sort()).toEqual(
+      [SESSION, S2].sort(),
+    );
     expect(new Set(two.map((r) => r.aggKey)).size).toBe(2);
     const OTHER = "bbbbbbbb-0000-0000-0000-000000000002";
     const mailboxes = chains([
@@ -421,7 +424,7 @@ describe("what is never claimed", () => {
     });
     const rows = chains([logon(), access(), aggregate, rule()]);
     expect(rows[0].description).toContain(
-      "items listed: 5 across the joined records; 40 operations in aggregated records, items not listed",
+      "items listed: 5 across the 4 cited records; 40 operations in aggregated records, items not listed",
     );
     expect(rows[0].canonical?.mailboxChain).toMatchObject({ itemsListed: 5, operationsUnlisted: 40 });
   });
@@ -458,13 +461,30 @@ describe("risk, order, grading", () => {
     expect(readEntraSignIn(signIn({ isInteractive: "false" })).interactive).toBe(false);
   });
 
-  it("stages count only in order: a rule before the access is listed as out of order, not counted", () => {
-    const rows = chains([logon(), rule({ CreationTime: at(60) }), access({ CreationTime: at(180) }), send()]);
+  it("stages count only in order: the most stages win, then the highest grade; a send before the rule is listed as out of order, not counted", () => {
+    const rows = chains([
+      logon(),
+      access({ CreationTime: at(180) }),
+      send({ CreationTime: at(200) }),
+      rule(),
+    ]);
     expect(rows[0].description).toContain("before the stage it would follow, not counted:");
     expect(rows[0].description).toContain("three of four stages");
     expect(rows[0].canonical?.mailboxChain?.steps.map((s) => s.stage)).toEqual([
       "sign-in",
       "access",
+      "persistence",
+    ]);
+    // A rule before the access: sign-in → persistence → consequence outranks sign-in → access → consequence.
+    const early = chains([
+      logon(),
+      rule({ CreationTime: at(60) }),
+      access({ CreationTime: at(180) }),
+      send(),
+    ]);
+    expect(early[0].canonical?.mailboxChain?.steps.map((s) => s.stage)).toEqual([
+      "sign-in",
+      "persistence",
       "consequence",
     ]);
   });
@@ -550,5 +570,250 @@ describe("identity, bounds, the importer", () => {
     expect(shuffled[0].description.replace(/record:\d+/g, "")).toBe(
       bounded[0].description.replace(/record:\d+/g, ""),
     );
+  });
+});
+
+// Code round 1 (Codex): the cases the review named.
+describe("code round 1", () => {
+  const OTHER_UPN = "bob@example.invalid";
+
+  it("a malformed MailboxGuid is never an identity: two owners sharing 'unknown' stay two mailboxes by UPN", () => {
+    const rows = chains([
+      logon(),
+      access({ MailboxGuid: "unknown" }),
+      rule({ MailboxGuid: "unknown", MailboxOwnerUPN: OTHER_UPN }),
+    ]);
+    expect(rows.map((r) => r.canonical?.mailboxChain?.mailbox).sort()).toEqual([
+      `upn:${OWNER}`,
+      `upn:${OTHER_UPN}`,
+    ]);
+    expect(rows.every((r) => r.canonical?.mailboxChain?.mailboxIdKind === "upn")).toBe(true);
+  });
+
+  it("a session id shared by another actor or address, or reused months apart, joins nothing it should not", () => {
+    const other = chains([logon(), access(), rule({ UserId: OTHER_UPN, ClientIPAddress: "198.51.100.1" })]);
+    expect(other).toHaveLength(1);
+    expect(other[0].description).not.toContain("configured:");
+    expect(other[0].description).toContain("two of four stages");
+    const distant = chains([
+      logon(),
+      access({ SessionId: "0" }),
+      rule({ SessionId: "0", CreationTime: "2024-07-01T10:00:00Z" }),
+    ]);
+    expect(
+      distant.every((r) => !(r.description.includes("configured:") && r.description.includes("accessed:"))),
+    ).toBe(true);
+  });
+
+  it("records with no actor and no address are never joined by actor + address; they are counted", () => {
+    const rows = chains([logon(), access(), cmdletRule({ UserId: "", ClientIP: "" })]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].description).not.toContain("configured:");
+    expect(rows[0].description).toContain(
+      "1 record with no time, or no actor and address to join by — not joined",
+    );
+    expect(rows[0].canonical?.mailboxChain?.incomplete).toBe(1);
+    expect(
+      chains([
+        access({ UserId: "", ClientIPAddress: "", SessionId: "" }),
+        cmdletRule({ UserId: "", ClientIP: "" }),
+      ]),
+    ).toHaveLength(0);
+  });
+
+  it("a logon joins only inside its own tenant, both stated and equal", () => {
+    const foreign = chains([logon({ OrganizationId: "" }), access(), rule()]);
+    expect(foreign[0].description).not.toContain("signed in from");
+    const otherTenant = chains([
+      logon({ OrganizationId: "00000000-0000-0000-0000-00000000dead" }),
+      access(),
+      rule(),
+    ]);
+    expect(otherTenant[0].description).not.toContain("signed in from");
+    expect(chains([logon(), access(), rule()])[0].description).toContain("signed in from");
+  });
+
+  it("sessionless grouping starts at the earliest step, never exceeds the window, and is the same under a shuffle", () => {
+    const records = [
+      logon({ DeviceProperties: [] }),
+      cmdletRule({ CreationTime: at(25 * 3600) }),
+      cmdletRule({
+        CreationTime: at(26 * 3600),
+        Parameters: [
+          { Name: "Name", Value: "r2" },
+          { Name: "MoveToFolder", Value: "Archive" },
+        ],
+      }),
+    ];
+    const rows = chains(records);
+    // The logon at T0 opens its own window; the rules at T+25h / T+26h form a second episode.
+    expect(
+      rows.every((r) => !r.description.includes("signed in") || !r.description.includes("configured:")),
+    ).toBe(true);
+    const shuffled = chains([...records].reverse());
+    expect(shuffled.map((r) => r.aggKey).sort()).toEqual(rows.map((r) => r.aggKey).sort());
+  });
+
+  it("an actionless or unrecognised UpdateInboxRules, a Set-InboxRule rename and an Enable-InboxRule are changes, never persistence stages", () => {
+    const empty = chains([logon(), access(), rule({ OperationProperties: [] })]);
+    expect(empty[0].description).toContain("not a stage:");
+    expect(empty[0].description).not.toContain("configured:");
+    const unknownOp = chains([
+      logon(),
+      access(),
+      rule({
+        OperationProperties: [
+          { Name: "RuleOperation", Value: "Something" },
+          { Name: "RuleName", Value: "r" },
+        ],
+      }),
+    ]);
+    expect(unknownOp[0].description).not.toContain("configured:");
+    const rename = chains([
+      logon(),
+      access(),
+      cmdletRule({
+        Operation: "Set-InboxRule",
+        Parameters: [
+          { Name: "Identity", Value: "r" },
+          { Name: "Name", Value: "quiet" },
+        ],
+      }),
+    ]);
+    expect(rename[0].description).not.toContain("configured:");
+    const enable = chains([
+      logon(),
+      access(),
+      cmdletRule({ Operation: "Enable-InboxRule", Parameters: [{ Name: "Identity", Value: "r" }] }),
+    ]);
+    expect(enable[0].description).not.toContain("configured:");
+    expect(enable[0].description).toContain("not a stage: enables inbox rule");
+  });
+
+  it("only sends and deletions are consequences: a MessageBind is an access, a Move or Update is not a stage", () => {
+    const bind = chains([
+      logon(),
+      rule(),
+      base({
+        RecordType: 2,
+        Operation: "MessageBind",
+        CreationTime: at(400),
+        LogonType: 2,
+        MailboxOwnerUPN: OWNER,
+        MailboxGuid: GUID,
+        SessionId: SESSION,
+        Item: { Id: "i9" },
+      }),
+    ]);
+    expect(bind[0].description).toContain("two of four stages");
+    expect(bind[0].canonical?.mailboxChain?.steps.map((s) => s.stage)).toEqual(["sign-in", "persistence"]);
+    const move = chains([
+      logon(),
+      access(),
+      rule(),
+      base({
+        RecordType: 2,
+        Operation: "Move",
+        CreationTime: at(400),
+        LogonType: 2,
+        MailboxOwnerUPN: OWNER,
+        MailboxGuid: GUID,
+        SessionId: SESSION,
+        Item: { Id: "i9" },
+        DestFolder: { Path: "\\Archive" },
+      }),
+    ]);
+    expect(move[0].description).toContain("three of four stages");
+    expect(move[0].description).toContain("not a stage: moves");
+    expect(
+      chains([logon(), access(), rule(), hardDelete({ Operation: "SoftDelete" })])[0].description,
+    ).toContain("four stages in order");
+  });
+
+  it("logons are bounded with the other steps and indexed, not scanned: many mailboxes and many logons stay linear", () => {
+    const manyLogons = Array.from({ length: STEPS_PER_STAGE_MAX + 5 }, (_, i) =>
+      logon({ CreationTime: at(-i - 1), DeviceProperties: [] }),
+    );
+    const mailboxes = Array.from({ length: 200 }, (_, i) => {
+      const guid = `aaaaaaaa-0000-0000-0000-${String(i).padStart(12, "0")}`;
+      return [
+        access({ MailboxGuid: guid, MailboxOwnerUPN: `u${i}@example.invalid`, SessionId: "" }),
+        rule({ MailboxGuid: guid, MailboxOwnerUPN: `u${i}@example.invalid`, SessionId: "" }),
+      ];
+    }).flat();
+    const started = Date.now();
+    const rows = chains([...manyLogons, ...mailboxes]);
+    expect(Date.now() - started).toBeLessThan(8000);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows[0].description).toContain("steps beyond the bound, not evaluated");
+  });
+
+  it("the counts, the coverage clause and the stage sentence survive the description bound", () => {
+    const rows = chains([
+      logon(),
+      ...Array.from({ length: 12 }, (_, i) =>
+        access({
+          CreationTime: at(180 + i),
+          Folders: [
+            {
+              Id: `f${i}`,
+              Path: `\\A very long folder name number ${i} that goes on and on`,
+              FolderItems: [{ InternetMessageId: `<m${i}@x>` }],
+            },
+          ],
+        }),
+      ),
+      rule(),
+      send(),
+      hardDelete(),
+    ]);
+    const d = rows[0].description;
+    expect(d.length).toBeLessThanOrEqual(1400);
+    expect(d).toContain("items listed: 17 across the 16 cited records");
+    expect(d).toContain("continuous coverage of the window is not established by this export");
+    expect(d).toMatch(/four stages in order\]$/);
+  });
+
+  it("every record a count comes from is cited in the envelope", () => {
+    const rows = chains([
+      logon(),
+      access(),
+      access({
+        CreationTime: at(200),
+        Folders: [{ Id: "f9", Path: "\\Inbox", FolderItems: [{ InternetMessageId: "<z@x>" }] }],
+      }),
+      rule(),
+    ]);
+    expect(rows[0].description).toContain("items listed: 6 across the 4 cited records");
+    expect(rows[0].canonical?.evidence.rawRecords).toHaveLength(4);
+  });
+
+  it("coverage counts every supplied Exchange record, narrated or not", () => {
+    const unsupported = Array.from({ length: 5 }, (_, i) =>
+      base({ RecordType: 1, Operation: "Get-Mailbox", CreationTime: at(i), ObjectId: OWNER, Parameters: [] }),
+    );
+    const rows = chains([logon(), access(), ...unsupported]);
+    expect(rows[0].description).toContain("among the 6 supplied Exchange mailbox-audit records");
+  });
+
+  it("the omitted-count row carries the grade of the omitted, so a severity floor never hides it", () => {
+    const many = Array.from({ length: MAILBOX_CHAINS_MAX + 2 }, (_, i) => {
+      const guid = `aaaaaaaa-0000-0000-0000-${String(i).padStart(12, "0")}`;
+      const s = `sess-${i}`;
+      return [
+        access({ MailboxGuid: guid, MailboxOwnerUPN: `u${i}@example.invalid`, SessionId: s }),
+        rule({ MailboxGuid: guid, MailboxOwnerUPN: `u${i}@example.invalid`, SessionId: s }),
+      ];
+    }).flat();
+    const r = parseM365Audit(JSON.stringify(many), {
+      aggregate: false,
+      minSeverity: "Medium",
+      maxEvents: 5000,
+    });
+    const rows = r.events.filter((e) => e.description.startsWith("Mailbox chain:"));
+    expect(rows).toHaveLength(MAILBOX_CHAINS_MAX + 1);
+    const omitted = rows.find((e) => e.description.includes("further mailbox chains"))!;
+    expect(omitted.description).toContain("2 further mailbox chains");
+    expect(omitted.severity).toBe("High");
   });
 });

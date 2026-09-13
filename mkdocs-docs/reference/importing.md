@@ -1279,16 +1279,21 @@ import; a chain across exports is not built.
   a logon without one — joins the ONE session of that mailbox sharing its actor and client address
   within 24 hours, and the step says `(joined by actor + address, not by session)`; with two or
   more matching sessions it joins none and is counted; with none, such records form an
-  `actor + address, 24-hour window` chain of their own. Two sessions on one mailbox are two
-  findings; one session on two mailboxes is two findings.
+  `actor + address, 24-hour window` chain of their own. A session is one id, one actor and one
+  address inside one window — a placeholder id shared by another actor, or reused months apart,
+  joins nothing. A record with no actor or address to join by joins nothing and is counted. A
+  logon joins only inside its own tenant. Two sessions on one mailbox are two findings; one
+  session on two mailboxes is two findings.
 - **Identity.** The mailbox is its GUID; a UPN resolves to the GUID a record of the same export
   states beside it; a cmdlet naming the mailbox by an alias, a display name or a DN joins nothing
   and is counted. A name is never a join.
 - **Stages count only in order and only for what landed.** sign-in < access < rule / forwarding /
-  permission < send / move / delete, each strictly after the previous; a step before the stage it
-  would follow is listed as out of order. A failed or partial command, a `-WhatIf` run, a removal,
-  a disable or a cleared forwarding is listed as `attempt:` / `simulation:` / `reversal:` and
-  never counted. A UAL `UserLoggedIn` is a sign-in only when `ErrorNumber` is absent or 0, no
+  permission < send / delete (sends and deletions only; a bind is an access; a move, copy or
+  update is `not a stage:`), each strictly after the previous — the subsequence with the most
+  stages, then the highest-graded one; a step before the stage it would follow is listed as out
+  of order. A failed or partial command, a `-WhatIf` run, a removal, a disable or a cleared
+  forwarding is listed as `attempt:` / `simulation:` / `reversal:` and never counted; a rule
+  record with no decoded action (an enable, a rename) is `not a stage:`. A UAL `UserLoggedIn` is a sign-in only when `ErrorNumber` is absent or 0, no
   `LogonError` is set and `ResultStatus` says success — `ResultStatus` alone reports the
   operation, not the authentication.
 - **Risk.** An interactive sign-in of the export for the same user, address and tenant within
@@ -1297,7 +1302,8 @@ import; a chain across exports is not built.
 - **Never said.** "forwarded" (only configured, with `delivery through the forwarding is not in
   this evidence`), "read" (accessed / bound; a folder sync adds `possible offline copy after a
   folder sync — inferred, not observed`), a count the records do not list (`items listed: N across
-  the joined records; M operations in aggregated records, items not listed`), absence as proof: an
+  the M cited records; K operations in aggregated records, items not listed` — every cited record
+  is in the row's evidence), absence as proof: an
   absent stage is `no access record for this mailbox among the 1,204 supplied Exchange
   mailbox-audit records (earliest …, latest …)` or `… log not in this export`, always with the
   coverage clause above.

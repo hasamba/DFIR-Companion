@@ -22,7 +22,7 @@ import type { MailboxChainBlock, MailboxChainStep } from "./canonicalMailbox.js"
 import { decodeExchangeRecord, type ExchangeChange } from "./exchangeAudit.js";
 import { isExchangeRecord } from "./exchangeAuditImport.js";
 import { breakHashRuns, showToken } from "./recordIdentity.js";
-import { normalizeTime, type MappedEvent } from "./siemImport.js";
+import { getCI, normalizeTime, str, type MappedEvent } from "./siemImport.js";
 import { isEntraSignIn, isUalLogon, readEntraSignIn, readUalLogon, type EntraSignIn } from "./ualLogon.js";
 
 type Row = Record<string, unknown>;
@@ -33,8 +33,10 @@ export const MAILBOX_CHAINS_MAX = 256;
 export const STEPS_PER_STAGE_MAX = 1024;
 const RISK_JOIN_MINUTES = 10;
 const STEPS_NAMED_MAX = 8;
+const RAW_RECORDS_MAX = 256;
 const NAME_MAX = 80;
-const DESCRIPTION_MAX = 900;
+// A chain row names up to four stages, their extras and the coverage clause: wider than a record row.
+const DESCRIPTION_MAX = 1400;
 const WINDOW_MS = MAILBOX_CHAIN_WINDOW_HOURS * 3_600_000;
 const RANK: Record<Severity, number> = { Critical: 4, High: 3, Medium: 2, Low: 1, Info: 0 };
 const COVERAGE_NOTE =
@@ -64,6 +66,8 @@ interface Step {
   stage: Stage | "excluded";
   time: number | null;
   locator: string;
+  /** The record's own id when it carries one — stable across a shuffled export; else the locator. */
+  recordId: string;
   actor: string;
   ip: string;
   session: string;
@@ -77,20 +81,31 @@ interface Step {
   joinedBy: "session" | "actor-address";
 }
 
-const STAGE_OF: Record<ExchangeChange["kind"], Stage> = {
-  access: "access",
-  aggregate: "access",
-  rule: "persistence",
-  forwarding: "persistence",
-  permission: "persistence",
-  item: "consequence",
-};
+const CONSEQUENCE_OPS = new Set([
+  "send",
+  "sendas",
+  "sendonbehalf",
+  "harddelete",
+  "softdelete",
+  "movetodeleteditems",
+]);
+const BIND_OPS = new Set(["messagebind", "folderbind"]);
+/** The stage a record's kind and operation establish; null for an item operation the chain does not read as a stage. */
+function stageOf(c: ExchangeChange): Stage | null {
+  if (c.kind === "access" || c.kind === "aggregate") return "access";
+  if (c.kind === "rule" || c.kind === "forwarding" || c.kind === "permission") return "persistence";
+  const op = lower(c.operation);
+  if (CONSEQUENCE_OPS.has(op)) return "consequence";
+  if (BIND_OPS.has(op)) return "access";
+  return null;
+}
 
 /** One Exchange record as a step: a stage when it counts, an excluded line when it does not. */
 function exchangeStep(c: ExchangeChange, index: number): Step {
   const base: Omit<Step, "stage" | "words"> = {
     time: ms(c.time),
     locator: `record:${index}`,
+    recordId: c.recordId || `record:${index}`,
     actor: c.actor,
     ip: c.ip,
     session: c.session,
@@ -118,7 +133,15 @@ function exchangeStep(c: ExchangeChange, index: number): Step {
     };
   if (c.polarity === "removes")
     return { ...base, stage: "excluded", severity: "Info", mitre: [], words: `reversal: ${show(body, 160)}` };
-  const stage = STAGE_OF[c.kind];
+  const stage = stageOf(c);
+  if (c.polarity === "none" || stage === null)
+    return {
+      ...base,
+      stage: "excluded",
+      severity: "Info",
+      mitre: [],
+      words: `not a stage: ${show(body, 160)}`,
+    };
   const lead = stage === "access" ? "accessed: " : stage === "persistence" ? "configured: " : "";
   const notes = [
     ...(stage === "persistence" && (c.forwardsOutside || (c.kind !== "permission" && c.target))
@@ -146,6 +169,7 @@ function logonStep(rec: Row, index: number, signIns: readonly EntraSignIn[]): Lo
   const base: Omit<Step, "stage" | "words"> = {
     time,
     locator: `record:${index}`,
+    recordId: l.recordId || `record:${index}`,
     actor: l.user,
     ip: l.ip,
     session: l.session,
@@ -213,7 +237,7 @@ function learnMailboxes(changes: readonly ExchangeChange[]): (c: ExchangeChange)
   const byUpn = new Map<string, string>();
   const conflicts = new Set<string>();
   for (const c of changes) {
-    if (!c.mailboxId || !c.mailbox.includes("@")) continue;
+    if (!isGuid(c.mailboxId) || !c.mailbox.includes("@")) continue;
     const upn = lower(c.mailbox);
     const prev = byUpn.get(upn);
     if (prev && prev !== lower(c.mailboxId)) conflicts.add(upn);
@@ -241,81 +265,85 @@ interface Episode {
   ip: string;
 }
 
+const hasJoinFacts = (s: Step): boolean => !!lower(s.actor) && !!s.ip;
+const sameActor = (e: Episode, s: Step): boolean => lower(e.actor) === lower(s.actor) && e.ip === s.ip;
+
 /** A sessionless step joins the ONE session of the mailbox sharing its actor and address inside the window. */
 function candidatesFor(step: Step, sessions: readonly Episode[]): Episode[] {
-  if (step.time === null) return [];
+  if (step.time === null || !hasJoinFacts(step)) return [];
   return sessions.filter(
-    (e) =>
-      lower(e.actor) === lower(step.actor) &&
-      e.ip === step.ip &&
-      step.time! >= e.first - WINDOW_MS &&
-      step.time! <= e.last + WINDOW_MS,
+    (e) => sameActor(e, step) && step.time! >= e.first - WINDOW_MS && step.time! <= e.last + WINDOW_MS,
   );
 }
 
-/** Group one mailbox's steps into episodes: by session id, then sessionless steps by the stated rule. */
-function episodesOf(steps: readonly Step[]): { episodes: Episode[]; ambiguous: number } {
-  const bySession = new Map<string, Episode>();
+/** Open an episode at a step; the key is the step's own id and time, stable whatever the file order. */
+function open(kind: MailboxChainBlock["join"]["kind"], key: string, s: Step): Episode {
+  return { join: { kind, key }, steps: [s], first: s.time!, last: s.time!, actor: s.actor, ip: s.ip };
+}
+
+/**
+ * Group one mailbox's steps (already sorted by time, then record id) into episodes: by session id
+ * — one actor and address per episode, split at the window — then sessionless steps by the
+ * stated rule. A step with no time, or no actor and address to join by, joins nothing.
+ */
+function episodesOf(steps: readonly Step[]): { episodes: Episode[]; ambiguous: number; incomplete: number } {
+  const sessions: Episode[] = [];
+  const openBySession = new Map<string, Episode>();
   const sessionless: Step[] = [];
+  let incomplete = 0;
   for (const s of steps) {
+    if (s.time === null) {
+      incomplete += 1;
+      continue;
+    }
     if (!s.session) {
       sessionless.push(s);
       continue;
     }
-    const e =
-      bySession.get(s.session) ??
-      bySession
-        .set(s.session, {
-          join: { kind: "session", key: s.session },
-          steps: [],
-          first: s.time ?? Infinity,
-          last: s.time ?? -Infinity,
-          actor: s.actor,
-          ip: s.ip,
-        })
-        .get(s.session)!;
-    e.steps.push(s);
-    if (s.time !== null) {
-      e.first = Math.min(e.first, s.time);
-      e.last = Math.max(e.last, s.time);
+    // One session id, one actor, one address: a record that shares the id with another actor or
+    // address is its own episode (a reused or placeholder id joins nothing it should not).
+    const k = `${s.session}|${lower(s.actor)}|${s.ip}`;
+    const cur = openBySession.get(k);
+    if (cur && s.time <= cur.first + WINDOW_MS) {
+      cur.steps.push(s);
+      cur.last = Math.max(cur.last, s.time);
+      continue;
     }
+    const e = open("session", `${s.session}|${lower(s.actor)}|${s.ip}|${iso(s.time)}`, s);
+    openBySession.set(k, e);
+    sessions.push(e);
   }
-  const sessions = [...bySession.values()];
   let ambiguous = 0;
   const loose: Step[] = [];
   for (const s of sessionless) {
+    if (!hasJoinFacts(s)) {
+      incomplete += 1;
+      continue;
+    }
     const c = candidatesFor(s, sessions);
-    if (c.length === 1) c[0].steps.push({ ...s, joinedBy: "actor-address" });
-    else if (c.length > 1) ambiguous += 1;
+    if (c.length === 1) {
+      c[0].steps.push({ ...s, joinedBy: "actor-address" });
+      c[0].last = Math.max(c[0].last, s.time!);
+    } else if (c.length > 1) ambiguous += 1;
     else loose.push(s);
   }
-  // Steps that match no session form actor + address episodes of their own, split at the window.
-  const byActor = new Map<string, Step[]>();
+  // Steps that match no session form actor + address episodes of their own, from the earliest
+  // step, split at the window.
+  const own: Episode[] = [];
+  const openByActor = new Map<string, Episode>();
   for (const s of loose) {
     const k = `${lower(s.actor)}|${s.ip}`;
-    (byActor.get(k) ?? byActor.set(k, []).get(k)!).push(s);
-  }
-  const own: Episode[] = [];
-  for (const group of byActor.values()) {
-    let cur: Episode | null = null;
-    for (const s of group) {
-      if (s.time === null) continue;
-      if (!cur || s.time > cur.first + WINDOW_MS) {
-        cur = {
-          join: { kind: "actor-address", key: `${s.locator}@${iso(s.time)}` },
-          steps: [],
-          first: s.time,
-          last: s.time,
-          actor: s.actor,
-          ip: s.ip,
-        };
-        own.push(cur);
-      }
+    const cur = openByActor.get(k);
+    if (cur && s.time! <= cur.first + WINDOW_MS) {
       cur.steps.push(s);
-      cur.last = Math.max(cur.last, s.time);
+      cur.last = Math.max(cur.last, s.time!);
+      continue;
     }
+    const e = open("actor-address", `${s.recordId}@${iso(s.time)}`, s);
+    openByActor.set(k, e);
+    own.push(e);
   }
-  return { episodes: [...sessions, ...own], ambiguous };
+  return { episodes: [...sessions, ...own], ambiguous, incomplete };
 }
 
 // ───────────────────────────── the chain of one episode ─────────────────────────────
@@ -324,6 +352,8 @@ interface Chain {
   episode: Episode;
   stages: Partial<Record<Stage, Step>>;
   ordered: Step[];
+  /** Every joined record the counts come from, in order — the envelope's evidence. */
+  cited: Step[];
   outOfOrder: Step[];
   excluded: Step[];
   others: Record<Stage, Step[]>;
@@ -333,22 +363,52 @@ interface Chain {
   operationsUnlisted: number;
 }
 
-/** The ordered subsequence sign-in < access < persistence < consequence, each strictly after the previous. */
+const STAGES = ["sign-in", "access", "persistence", "consequence"] as const;
+
+/**
+ * The ordered subsequence sign-in < access < persistence < consequence, each strictly after the
+ * previous, with the most stages; among equal counts the one whose steps grade highest, then the
+ * one reaching the later stages (a rule outranks a bind it precedes). Sixteen stage subsets, the
+ * earliest qualifying step per chosen stage.
+ */
+function pickStages(sorted: readonly Step[]): Partial<Record<Stage, Step>> {
+  let best: { picked: Partial<Record<Stage, Step>>; count: number; rank: number; mask: number } | null = null;
+  for (let mask = 1; mask < 16; mask += 1) {
+    const picked: Partial<Record<Stage, Step>> = {};
+    let after = -Infinity;
+    let ok = true;
+    let rank = 0;
+    for (let i = 0; i < STAGES.length && ok; i += 1) {
+      if (!(mask & (1 << i))) continue;
+      const stage = STAGES[i];
+      const pick = sorted.find((s) => s.stage === stage && s.time !== null && s.time > after);
+      if (!pick) ok = false;
+      else {
+        picked[stage] = pick;
+        after = pick.time!;
+        rank += RANK[pick.severity];
+      }
+    }
+    if (!ok) continue;
+    const count = Object.keys(picked).length;
+    if (
+      !best ||
+      count > best.count ||
+      (count === best.count && (rank > best.rank || (rank === best.rank && mask > best.mask)))
+    )
+      best = { picked, count, rank, mask };
+  }
+  return best?.picked ?? {};
+}
+
+/** The chain of one episode: the picked stages, the rest listed beside them, the grade. */
 function chainOf(episode: Episode): Chain | null {
   const sorted = [...episode.steps].sort(
     (a, b) => (a.time ?? Infinity) - (b.time ?? Infinity) || a.locator.localeCompare(b.locator),
   );
-  const stages: Partial<Record<Stage, Step>> = {};
+  const stages = pickStages(sorted);
   const others: Record<Stage, Step[]> = { "sign-in": [], access: [], persistence: [], consequence: [] };
   const outOfOrder: Step[] = [];
-  let after = -Infinity;
-  for (const stage of ["sign-in", "access", "persistence", "consequence"] as const) {
-    const pick = sorted.find((s) => s.stage === stage && s.time !== null && s.time > after);
-    if (pick) {
-      stages[stage] = pick;
-      after = pick.time!;
-    }
-  }
   for (const s of sorted) {
     if (s.stage === "excluded") continue;
     if (stages[s.stage] === s) continue;
@@ -380,7 +440,8 @@ function chainOf(episode: Episode): Chain | null {
         ? "Medium"
         : "Low";
   const grade = RANK[top] > RANK[floor] ? top : floor;
-  const listing = [...counted, ...Object.values(others).flat()];
+  // The records the row cites — every joined step that contributes to a count — bounded.
+  const listing = [...counted, ...Object.values(others).flat()].slice(0, RAW_RECORDS_MAX);
   return {
     episode,
     stages,
@@ -388,6 +449,7 @@ function chainOf(episode: Episode): Chain | null {
     outOfOrder,
     excluded: sorted.filter((s) => s.stage === "excluded"),
     others,
+    cited: listing,
     stageCount,
     grade,
     itemsListed: listing.reduce((n, s) => n + (s.itemsListed ?? 0), 0),
@@ -404,6 +466,9 @@ interface Coverage {
 }
 type ExportCoverage = Record<"mailboxAudit" | "logons" | "signIns", Coverage | null>;
 
+const byTime = (a: Step, b: Step): number =>
+  (a.time ?? Infinity) - (b.time ?? Infinity) || a.recordId.localeCompare(b.recordId);
+
 /** One summary row per (tenant, mailbox, join) whose export records form a chain; the rows say what they rest on. */
 export function mailboxChains(records: readonly Row[]): MappedEvent[] {
   const coverage = new Map<string, ExportCoverage>();
@@ -418,16 +483,16 @@ export function mailboxChains(records: readonly Row[]): MappedEvent[] {
       latest: t && (!cur.latest || t > cur.latest) ? t : cur.latest,
     };
   };
-  // First pass: every Exchange record decoded, every logon, every interactive sign-in.
+  // First pass: every Exchange record counted for coverage (narrated or not), every logon, every
+  // interactive sign-in.
   const changes: { c: ExchangeChange; index: number }[] = [];
   const logonRecords: { rec: Row; index: number }[] = [];
   const signIns: EntraSignIn[] = [];
   records.forEach((rec, index) => {
     if (isExchangeRecord(rec)) {
+      cover(str(getCI(rec, "OrganizationId")), "mailboxAudit", str(getCI(rec, "CreationTime")));
       const c = decodeExchangeRecord(rec, index);
-      if (!c) return;
-      cover(c.tenant, "mailboxAudit", c.time);
-      changes.push({ c, index });
+      if (c) changes.push({ c, index });
     } else if (isUalLogon(rec)) {
       const l = readUalLogon(rec);
       cover(l.tenant, "logons", l.observed);
@@ -438,11 +503,27 @@ export function mailboxChains(records: readonly Row[]): MappedEvent[] {
       signIns.push(s);
     }
   });
-  const logons = logonRecords.map(({ rec, index }) => logonStep(rec, index, signIns));
+  // Logons indexed by tenant + session and tenant + actor + address: a logon joins a mailbox's
+  // steps only inside its own tenant (both stated and equal), never across.
+  const logonsBySession = new Map<string, Step[]>();
+  const logonsByActor = new Map<string, Step[]>();
+  for (const { rec, index } of logonRecords) {
+    const l = logonStep(rec, index, signIns);
+    const tenant = lower(l.tenant);
+    if (!tenant) continue;
+    if (l.step.session) {
+      const k = `${tenant}|${l.step.session}`;
+      (logonsBySession.get(k) ?? logonsBySession.set(k, []).get(k)!).push(l.step);
+    } else if (lower(l.step.actor) && l.step.ip) {
+      const k = `${tenant}|${lower(l.step.actor)}|${l.step.ip}`;
+      (logonsByActor.get(k) ?? logonsByActor.set(k, []).get(k)!).push(l.step);
+    }
+  }
   const refOf = learnMailboxes(changes.map((x) => x.c));
 
-  // Steps per (tenant, mailbox), sorted by (time, locator) and bounded per stage kind —
-  // deterministic whatever the file order (design round finding 8).
+  // Steps per (tenant, mailbox): the Exchange records, then the logons their sessions / actors
+  // name, sorted by (time, record id) and bounded per stage kind — deterministic whatever the file
+  // order (design round finding 8; code round findings 5 and 8).
   const perMailbox = new Map<string, { tenant: string; ref: MailboxRef; steps: Step[]; beyond: number }>();
   const unlinked = new Map<string, number>();
   for (const { c, index } of changes) {
@@ -457,7 +538,16 @@ export function mailboxChains(records: readonly Row[]): MappedEvent[] {
     m.steps.push(exchangeStep(c, index));
   }
   for (const m of perMailbox.values()) {
-    m.steps.sort((a, b) => (a.time ?? Infinity) - (b.time ?? Infinity) || a.locator.localeCompare(b.locator));
+    if (m.tenant) {
+      const seenLogon = new Set<Step>();
+      const sessions = new Set(m.steps.map((s) => s.session).filter(Boolean));
+      const actors = new Set(m.steps.filter(hasJoinFacts).map((s) => `${lower(s.actor)}|${s.ip}`));
+      for (const sid of sessions)
+        for (const l of logonsBySession.get(`${m.tenant}|${sid}`) ?? []) seenLogon.add(l);
+      for (const a of actors) for (const l of logonsByActor.get(`${m.tenant}|${a}`) ?? []) seenLogon.add(l);
+      m.steps.push(...seenLogon);
+    }
+    m.steps.sort(byTime);
     const kept: Step[] = [];
     const seen = new Map<string, number>();
     for (const s of m.steps) {
@@ -468,24 +558,15 @@ export function mailboxChains(records: readonly Row[]): MappedEvent[] {
       } else m.beyond += 1;
     }
     m.steps = kept;
-    // A logon joins a mailbox's steps through its session id, or through actor + address as any
-    // sessionless step does — it names no mailbox itself.
-    const sessions = new Set(kept.map((s) => s.session).filter(Boolean));
-    const actors = new Set(kept.map((s) => `${lower(s.actor)}|${s.ip}`));
-    for (const l of logons) {
-      if (lower(l.tenant) !== m.tenant && l.tenant && m.tenant) continue;
-      if (l.step.session ? sessions.has(l.step.session) : actors.has(`${lower(l.step.actor)}|${l.step.ip}`))
-        kept.push(l.step);
-    }
   }
 
   const findings = [...perMailbox.values()]
     .flatMap((m) => {
-      const { episodes, ambiguous } = episodesOf(m.steps);
+      const { episodes, ambiguous, incomplete } = episodesOf(m.steps);
       return episodes
         .map((e) => chainOf(e))
         .filter((c): c is Chain => c !== null)
-        .map((chain) => ({ m, chain, ambiguous, beyond: m.beyond }));
+        .map((chain) => ({ m, chain, ambiguous, incomplete, beyond: m.beyond }));
     })
     .sort(
       (a, b) =>
@@ -495,34 +576,44 @@ export function mailboxChains(records: readonly Row[]): MappedEvent[] {
         a.m.ref.key.localeCompare(b.m.ref.key) ||
         a.chain.episode.join.key.localeCompare(b.chain.episode.join.key),
     );
-  const rows = findings
-    .slice(0, MAILBOX_CHAINS_MAX)
-    .map((f) =>
-      summaryRow(
-        f.m.tenant,
-        f.m.ref,
-        f.chain,
-        f.ambiguous,
-        f.beyond,
-        unlinked.get(f.m.tenant) ?? 0,
-        coverage.get(f.m.tenant),
-      ),
-    );
-  if (findings.length > MAILBOX_CHAINS_MAX) rows.push(omittedRow(findings.length - MAILBOX_CHAINS_MAX));
+  const rows = findings.slice(0, MAILBOX_CHAINS_MAX).map((f) =>
+    summaryRow(
+      f.m.tenant,
+      f.m.ref,
+      f.chain,
+      {
+        ambiguous: f.ambiguous,
+        incomplete: f.incomplete,
+        beyond: f.beyond,
+        unlinked: unlinked.get(f.m.tenant) ?? 0,
+      },
+      coverage.get(f.m.tenant),
+    ),
+  );
+  // The omitted row carries the highest grade among the omitted, so a severity floor that keeps
+  // any omitted finding keeps the count too.
+  if (findings.length > MAILBOX_CHAINS_MAX)
+    rows.push(omittedRow(findings.length - MAILBOX_CHAINS_MAX, findings[MAILBOX_CHAINS_MAX].chain.grade));
   return rows;
 }
 
 // ───────────────────────────── the row ─────────────────────────────
 
+interface Counts {
+  ambiguous: number;
+  incomplete: number;
+  beyond: number;
+  unlinked: number;
+}
+
 function summaryRow(
   tenant: string,
   ref: MailboxRef,
   chain: Chain,
-  ambiguous: number,
-  beyond: number,
-  unlinked: number,
+  counts: Counts,
   coverage: ExportCoverage | undefined,
 ): MappedEvent {
+  const { ambiguous, incomplete, beyond, unlinked } = counts;
   const e = chain.episode;
   const stepWords = (s: Step) =>
     `${iso(s.time)} ${s.words}${e.join.kind === "session" && s.joinedBy === "actor-address" ? " (joined by actor + address, not by session)" : ""}`;
@@ -561,14 +652,19 @@ function summaryRow(
       ? [`before the stage it would follow, not counted: ${named(chain.outOfOrder, "steps").join("; ")}`]
       : []),
     ...named(chain.excluded, "non-steps"),
-    `items listed: ${chain.itemsListed} across the joined records${chain.operationsUnlisted ? `; ${chain.operationsUnlisted} operations in aggregated records, items not listed` : ""}`,
-    COVERAGE_NOTE,
   ];
+  // The counts, the coverage clause and the stage sentence are packed first; the step words are
+  // cut to what remains.
   const tail = [
+    `items listed: ${chain.itemsListed} across the ${plural(chain.cited.length, "cited record")}${chain.operationsUnlisted ? `; ${chain.operationsUnlisted} operations in aggregated records, items not listed` : ""}`,
+    COVERAGE_NOTE,
     ...(ambiguous
       ? [
           `${plural(ambiguous, "record")} by this actor from this address inside the window match${ambiguous === 1 ? "es" : ""} two or more sessions — not joined`,
         ]
+      : []),
+    ...(incomplete
+      ? [`${plural(incomplete, "record")} with no time, or no actor and address to join by — not joined`]
       : []),
     ...(unlinked
       ? [
@@ -584,7 +680,7 @@ function summaryRow(
   ].join("; ");
   const joinWords =
     e.join.kind === "session"
-      ? `join: session ${show(e.join.key, 16)}`
+      ? `join: session ${show(e.join.key.split("|")[0], 16)}`
       : `join: actor + address, ${MAILBOX_CHAIN_WINDOW_HOURS}-hour window`;
   const head = `Mailbox chain: ${show(ref.name || ref.key)} (${joinWords})`;
   const room = DESCRIPTION_MAX - head.length - tail.length - 6;
@@ -614,6 +710,7 @@ function summaryRow(
     itemsListed: chain.itemsListed,
     operationsUnlisted: chain.operationsUnlisted,
     ambiguous,
+    incomplete,
     coverage: {
       ...(coverage?.mailboxAudit ? { mailboxAudit: coverage.mailboxAudit } : {}),
       ...(coverage?.logons ? { logons: coverage.logons } : {}),
@@ -638,7 +735,7 @@ function summaryRow(
       ...(first.ip ? { network: { source: { address: first.ip } } } : {}),
       cloud: { provider: "m365", ...(tenant ? { tenant } : {}), principalType: "user" },
       time: { observed, normalized: normalizeTime(observed) },
-      evidence: { rawRecords: chain.ordered.map((x) => ({ source: "m365-ual", locator: x.locator })) },
+      evidence: { rawRecords: chain.cited.map((x) => ({ source: "m365-ual", locator: x.locator })) },
       producer: {
         importer: "m365-audit",
         parserVersion: "1",
@@ -650,12 +747,12 @@ function summaryRow(
   };
 }
 
-function omittedRow(count: number): MappedEvent {
+function omittedRow(count: number, severity: Severity): MappedEvent {
   const description = `Mailbox chain: ${count} further mailbox chain${count === 1 ? "" : "s"} in this export beyond the ${MAILBOX_CHAINS_MAX} reported — not shown`;
   return {
     timestamp: "",
     description,
-    severity: "Low",
+    severity,
     mitre: [],
     aggKey: boundedAggKey(`mailbox-chain|omitted|${count}`),
     sources: ["Microsoft 365"],

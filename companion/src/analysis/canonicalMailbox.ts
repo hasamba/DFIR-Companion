@@ -37,6 +37,8 @@ export const mailboxChainBlockSchema = z.object({
   operationsUnlisted: z.number().int().nonnegative(),
   /** Records that share the mailbox, actor and address with two or more sessions — joined to none. */
   ambiguous: z.number().int().nonnegative(),
+  /** Records with no time, or no actor and address to join by — joined to none. */
+  incomplete: z.number().int().nonnegative(),
   coverage: z.object({
     mailboxAudit: coverageSchema.optional(),
     logons: coverageSchema.optional(),

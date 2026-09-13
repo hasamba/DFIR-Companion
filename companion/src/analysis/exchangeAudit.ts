@@ -304,7 +304,7 @@ function ruleCmdlet(c: Common, pp: Pairs): ExchangeChange | null {
       severity: "Low",
       scope,
       incompleteScope: pp.truncated,
-      polarity: verb === "enable" ? "adds" : "removes",
+      polarity: verb === "enable" ? "none" : "removes",
     });
   }
   const isSet = verb === "set";
@@ -330,6 +330,7 @@ function ruleCmdlet(c: Common, pp: Pairs): ExchangeChange | null {
     scope,
     target,
     incompleteScope: pp.truncated,
+    polarity: r.actions.length ? "adds" : "none",
     forwardsOutside: r.forwardsOutside,
     hides: r.hides,
   });
@@ -424,7 +425,9 @@ function ruleMailboxAudit(c: Common): ExchangeChange | null {
     scope: `rule:${op}:${name}:${pp.digest}`,
     target: forwardTargets.join(", "),
     incompleteScope: pp.truncated,
-    polarity: verb === "removes" ? "removes" : "adds",
+    // A persistence step needs a recognised operation AND a decoded action; an actionless or
+    // unrecognised record is a change the chain lists, never a stage.
+    polarity: /^remove/.test(op) ? "removes" : /^(add|modify)/.test(op) && r.actions.length ? "adds" : "none",
     forwardsOutside: r.forwardsOutside,
     hides: r.hides,
   });
