@@ -20,9 +20,9 @@
  * server-side from the filename (an analyst-supplied password cannot reach it), and it extracts
  * through Python's zipfile, which cannot open AES archives at all.
  */
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { openNoFollow } from "../storage/noFollowRead.js";
-import { isSafeDropRelpath } from "../storage/dropRelpath.js";
+import { resolveInsideDropDir } from "../storage/dropRelpath.js";
 import { FileTooLargeError, readHandleBounded } from "../storage/boundedRead.js";
 import { randomUUID } from "node:crypto";
 import type { Buffer } from "node:buffer";
@@ -199,8 +199,20 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
     // had only the schema, so a future writer of that file that bypassed it would have had an
     // arbitrary path opened and uploaded to SO-CRATES with nothing else in the way (#980). The
     // spawn branch's case-dir containment is wider than drop/, so this guard covers both.
-    if (dropRelpath !== undefined && !isSafeDropRelpath(dropRelpath)) {
-      throw new Error(`refused to read a path outside the drop folder (security): ${dropRelpath}`);
+    //
+    // The guard is bound to the file that is opened, not to a label beside it: the path is
+    // re-derived from the case's own drop folder (with the real parent directory checked, so a
+    // symlinked subdirectory cannot carry a safe-looking relpath outside), and a caller whose
+    // fullPath names something else is a bug, refused rather than trusted.
+    let target = fullPath;
+    if (dropRelpath !== undefined) {
+      const dropDir = dropDirOf(store, caseId);
+      if (resolve(fullPath) !== resolve(join(dropDir, dropRelpath))) {
+        throw new Error(
+          `refused to read a path outside the drop folder (security): "${fullPath}" is not drop/${dropRelpath}`,
+        );
+      }
+      target = await resolveInsideDropDir(dropDir, dropRelpath);
     }
     const cfg = liveToolConfigs().get(toolId);
     if (!cfg) throw new Error(`tool "${toolId}" is not configured`);
@@ -214,7 +226,7 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
       // stat of the path followed by a readFile of the path checks one inode and reads whatever
       // occupies the path afterwards, so a swap in a synced folder defeated the cap.
       const maxBytes = dropMaxBytesFromEnv();
-      const handle = await openNoFollow(fullPath);
+      const handle = await openNoFollow(target);
       let data: Buffer;
       try {
         data = await readHandleBounded(handle, maxBytes);
@@ -232,7 +244,7 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
       await startSocratesAnalysis(caseId, { data, filename: name, dropRelpath });
       return true;
     }
-    const r = await runToolAndIngest(caseId, toolId, fullPath, { cache });
+    const r = await runToolAndIngest(caseId, toolId, target, { cache });
     if (!r.analyzed)
       throw new Error(`${toolId} ran but AI is off — output saved as evidence but not analyzed`);
     return false;
