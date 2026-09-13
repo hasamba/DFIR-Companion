@@ -566,7 +566,24 @@ describe("through parseMacos and correlateEvents", () => {
     expect(r.events[0].description).toContain(
       "[time: not readable — 2 time columns in this record (unix_time, timestamp)]",
     );
-    expect(r.events[0].canonical?.quarantine?.timeRaw).toBe("unix_time=1789257600; timestamp=1789257600");
+    expect(r.events[0].canonical?.quarantine?.timeRaw).toBe(
+      "9:unix_time=10:1789257600|9:timestamp=10:1789257600",
+    );
+    // by any case, in JSON
+    const j = parseMacos(JSON.stringify([{ ...rest, unix_time: "1789257600", UNIX_TIME: "1789344000" }]));
+    expect(j.events[0].timestamp).toBe("");
+    expect(j.events[0].description).toContain("2 time columns in this record (unix_time, UNIX_TIME)");
+    // one header twice, in CSV
+    const dup = parseMacos(
+      `event_id,unix_time,data_url,unix_time\n${UUID},1789257600,https://cdn.example.invalid/a.dmg,1789344000\n`,
+    );
+    expect(dup.events[0].timestamp).toBe("");
+    expect(dup.events[0].description).toContain("2 time columns in this record (unix_time, unix_time)");
+    // a delimiter inside a value never makes two column sets one identity
+    const a = parseMacos(JSON.stringify([{ ...rest, unix_time: "x|9:timestamp=1:y", timestamp: "z" }]));
+    const b = parseMacos(JSON.stringify([{ ...rest, unix_time: "x", timestamp: "y|9:timestamp=1:z" }]));
+    expect(a.events[0].aggKey).not.toBe(b.events[0].aggKey);
+    expect(afterImport([a.events[0], b.events[0]])).toHaveLength(2);
     // two rows that differ only in a second time column are two rows
     const two = parseMacos(
       csv([

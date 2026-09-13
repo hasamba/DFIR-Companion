@@ -168,8 +168,12 @@ export function parseMacos(input: string, opts: MacosImportOptions = {}): MacosP
     const quarantine = looksLikeQuarantine(headers);
     const objects = rows.map((cols) => {
       const r: Row = {};
+      // A header the file repeats keeps every value (an array) — the quarantine reader treats a
+      // repeated time column as two time columns, never as the last one.
       headers.forEach((h, i) => {
-        r[h.trim()] = cols[i] ?? "";
+        const k = h.trim();
+        const v = cols[i] ?? "";
+        r[k] = k in r ? [...(Array.isArray(r[k]) ? (r[k] as unknown[]) : [r[k]]), v] : v;
       });
       return r;
     });

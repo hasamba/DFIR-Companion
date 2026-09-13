@@ -208,3 +208,11 @@ The joins, Gatekeeper/XProtect logs, browser history, any grade above Info.
    is both the grammar and the columns read; the test walks all fifteen spellings.
 3. A path-shaped unreadable type (`/tmp/evil/payload`) sat in a `[kind: …]` span the correlator
    still scanned for paths. Fix: `kind` is an untrusted span; the test unions nothing.
+
+## Code round 10 (Codex, two findings)
+1. `unix_time` beside `UNIX_TIME` (JSON), or one header twice (CSV), slipped past the two-column
+   rule and claimed an instant. Fix: the reader walks the record's actual keys by normalised name
+   (the CSV projection keeps a repeated header's values as an array); more than one occurrence is
+   no time.
+2. `header=value; …` framing let two different column sets serialise alike. Fix: length-framed
+   pairs (`9:unix_time=10:…|…`) in `timeRaw` and identity.

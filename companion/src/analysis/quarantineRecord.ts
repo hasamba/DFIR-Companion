@@ -237,6 +237,27 @@ const first = (rec: Row, keys: readonly string[]): { value: string; header: stri
   }
   return { value: "", header: "" };
 };
+const TIME_HEADER_RANK = new Map(TIME_HEADERS.map((h, i) => [h.toLowerCase(), i]));
+/**
+ * Every time column the record actually carries — each key whose name is a time header by any case,
+ * and each value of a header the source repeated (the CSV projection keeps repeats as an array) —
+ * native first, then declared epochs, then generic names, source order within a rank.
+ */
+function timeOccurrences(rec: Row): { header: string; value: string }[] {
+  const out: { header: string; value: string; rank: number }[] = [];
+  for (const [k, v] of Object.entries(rec)) {
+    const rank = TIME_HEADER_RANK.get(k.trim().toLowerCase());
+    if (rank === undefined) continue;
+    for (const one of Array.isArray(v) ? v : [v]) {
+      const value = text(one).trim();
+      if (value) out.push({ header: k.trim(), value, rank });
+    }
+  }
+  return out.sort((a, b) => a.rank - b.rank).map(({ header, value }) => ({ header, value }));
+}
+/** Length-framed `header=value` pairs: two different column sets never serialise alike. */
+const frameOccurrences = (times: { header: string; value: string }[]): string =>
+  times.map((t) => `${t.header.length}:${t.header}=${t.value.length}:${t.value}`).join("|");
 const show = (v: string, max = TEXT_SHOWN_MAX): string => {
   const shown = breakHashRuns(showToken(v));
   return shown.length > max ? `${shown.slice(0, max - 1)}…` : shown;
@@ -273,14 +294,15 @@ export function quarantineOverlay(
   // Indicators go to the row first; the importer merges them after the per-UUID bound, so a flood
   // of variants under one identifier cannot fill the file's indicator budget either.
   const sink = opts.deferIocs ? new Map<string, SiemIoc>() : fileSink;
-  // Two time columns in one record name no single instant: the row keeps both, decodes neither.
-  const timeColumns = TIME_HEADERS.filter((k) => text(getCI(rec, k) ?? "").trim() !== "");
+  // Two time columns in one record — by any spelling or case, or one header twice — name no
+  // single instant: the row keeps every occurrence, decodes none.
+  const times = timeOccurrences(rec);
   const time =
-    timeColumns.length > 1
-      ? { value: timeColumns.map((k) => `${k}=${text(getCI(rec, k)).trim()}`).join("; "), header: "" }
-      : first(rec, TIME_HEADERS);
+    times.length > 1
+      ? { value: frameOccurrences(times), header: "" }
+      : (times[0] ?? { value: "", header: "" });
   const when =
-    timeColumns.length > 1
+    times.length > 1
       ? { iso: "", encoding: "unreadable" as const }
       : readQuarantineTime(time.value, time.header);
   const type = readQuarantineType(first(rec, ["LSQuarantineTypeNumber", "type"]).value);
@@ -316,7 +338,7 @@ export function quarantineOverlay(
     );
   tags.push(
     when.encoding === "unreadable"
-      ? `time: not readable — ${timeColumns.length > 1 ? `${timeColumns.length} time columns in this record (${timeColumns.join(", ")})` : EPOCH_WORDS[declaredEpoch(time.header) ?? "none"]}`
+      ? `time: not readable — ${times.length > 1 ? `${times.length} time columns in this record (${times.map((t) => show(t.header, 40)).join(", ")})` : EPOCH_WORDS[declaredEpoch(time.header) ?? "none"]}`
       : when.encoding === "cocoa-seconds"
         ? "time: Cocoa seconds"
         : when.encoding === "iso"
