@@ -482,6 +482,7 @@
     "socratesImport.ts": "analysis/ingest",
     "sourceTrust.ts": "analysis/intel",
     "sourceTrustStore.ts": "analysis/intel",
+    "winEventTables.ts": "analysis/ingest",
     "sqliteRuntime.ts": "storage",
     "srumNetwork.ts": "analysis/ingest",
     "sshBruteForce.ts": "analysis/detect",
