@@ -3,6 +3,8 @@ import { z } from "zod";
 import type { ForensicEvent } from "./stateTypes.js";
 
 export const CANONICAL_EVENT_SCHEMA_VERSION = "1.0.0" as const;
+/** The producer stamped on an envelope DERIVED from legacy flat fields at the read boundary. */
+export const LEGACY_UPGRADE_IMPORTER = "legacy-upgrade";
 
 const confidenceSchema = z.enum(["high", "medium", "low"]);
 const entityKindSchema = z.enum([
@@ -465,45 +467,6 @@ export function stampSourceArtifactHash<T extends { canonical?: CanonicalEventEn
   );
 }
 
-export function mergeCanonicalEvents(
-  first: CanonicalEventEnvelope | undefined,
-  incoming: CanonicalEventEnvelope | undefined,
-): CanonicalEventEnvelope | undefined {
-  if (!first) return incoming;
-  if (!incoming) return first;
-  const firstVersion = (first as { schemaVersion?: string }).schemaVersion;
-  const incomingVersion = (incoming as { schemaVersion?: string }).schemaVersion;
-  if (firstVersion !== CANONICAL_EVENT_SCHEMA_VERSION) return first;
-  if (incomingVersion !== CANONICAL_EVENT_SCHEMA_VERSION) return incoming;
-  const pointers = [...first.evidence.rawRecords];
-  for (const pointer of incoming.evidence.rawRecords) {
-    if (!pointers.some((p) => p.source === pointer.source && p.locator === pointer.locator))
-      pointers.push(pointer);
-  }
-  const fieldProvenance = { ...first.fieldProvenance };
-  for (const [path, provenance] of Object.entries(incoming.fieldProvenance)) {
-    const existing = fieldProvenance[path];
-    if (!existing) {
-      fieldProvenance[path] = provenance;
-      continue;
-    }
-    fieldProvenance[path] = {
-      ...existing,
-      recordLocators: [
-        ...new Set([...(existing.recordLocators ?? []), ...(provenance.recordLocators ?? [])]),
-      ],
-    };
-  }
-  return {
-    ...first,
-    evidence: {
-      rawRecords: pointers,
-      sourceArtifactHash: first.evidence.sourceArtifactHash ?? incoming.evidence.sourceArtifactHash,
-    },
-    fieldProvenance,
-  };
-}
-
 interface LegacyLogon {
   account: string;
   outcome: "success" | "failed";
@@ -649,7 +612,7 @@ function legacyCanonical(event: ForensicEvent): CanonicalEventEnvelope {
       rawRecords: [{ source: "legacy-forensic-event", locator: `event:${event.id}`, recordId: event.id }],
     },
     producer: {
-      importer: "legacy-upgrade",
+      importer: LEGACY_UPGRADE_IMPORTER,
       parserVersion: "1",
       mappingVersion: "legacy-event-to-canonical-v1",
     },

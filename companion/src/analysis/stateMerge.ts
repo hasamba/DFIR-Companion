@@ -29,7 +29,7 @@ import { toUtcIso } from "./timeUtc.js";
 import { matchIocToExclude } from "./iocExclude.js";
 import { repairIocValue } from "./iocValue.js";
 import { sanitizeUncertainties } from "./uncertainty.js";
-import { mergeCanonicalEvents } from "./canonicalEvent.js";
+import { mergeCanonicalEvents } from "./canonicalMerge.js";
 import { annotateSightingsWithLabIntel, upsertLabIntel } from "./labIntel.js";
 
 // Trim a raw collect directive (investigation-guidance #8) to its non-empty string fields; returns

@@ -15,6 +15,7 @@ import { SEVERITY_RANK, worstSeverity, type ForensicEvent, type Severity } from 
 import { trustForSources, type SourceTrustMap } from "./sourceTrust.js";
 import { computeChainSignature } from "./chainSignature.js";
 import { isLabProduced } from "./labIntel.js";
+import { mergeGroupCanonical } from "./canonicalMerge.js";
 
 export interface CorrelateOptions {
   windowSeconds?: number; // path+time match tolerance (default 2)
@@ -299,6 +300,10 @@ function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): Forensi
     dstIp: primary.dstIp ?? events.find((e) => e.dstIp)?.dstIp,
     port: primary.port ?? events.find((e) => e.port !== undefined)?.port,
     deobfuscated: primary.deobfuscated ?? events.find((e) => e.deobfuscated)?.deobfuscated,
+    // The typed envelope is a union too (#965): the primary is picked for severity and trust, and a
+    // High Sigma hit over a Defender record carries no envelope of its own — spreading only the
+    // primary threw away the importer's action/outcome/object the episode pass reads.
+    ...(events.some((e) => e.canonical) ? { canonical: mergeGroupCanonical(primary, events) } : {}),
   };
   const lastEnd = ends[ends.length - 1];
   if (lastEnd && lastEnd !== merged.timestamp) merged.endTimestamp = lastEnd;

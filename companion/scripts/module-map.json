@@ -172,6 +172,7 @@
     "bsdTime.ts": "analysis/ingest",
     "burstDetect.ts": "analysis/detect",
     "canonicalEvent.ts": "shared",
+    "canonicalMerge.ts": "analysis/timeline",
     "caseArchive.ts": "analysis/case",
     "caseArchiveManifest.ts": "analysis/case",
     "caseEncryption.ts": "analysis/privacy",
