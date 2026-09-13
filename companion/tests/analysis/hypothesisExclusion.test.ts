@@ -4,6 +4,7 @@ import {
   mergeHypotheses,
   reconsiderHypotheses,
   hypothesesSchema,
+  FP_REVIEW_REASON,
   type Hypothesis,
   type HypothesisSeed,
 } from "../../src/analysis/hypothesis.js";
@@ -231,6 +232,57 @@ describe("flagMaterialChanges — frozen judgments preserved, material changes m
     // Re-running with the same input is a no-op.
     expect(
       flagMaterialChanges(before, hypotheses, new Map(), undefined, "2026-02-03T00:00:00Z").changed,
+    ).toBe(false);
+  });
+
+  it("an observation excluded while it already distinguished is the analyst's call — not re-raised on the next merge", () => {
+    const before = [
+      excludeEvidence(
+        h({
+          id: "H1",
+          title: "H1",
+          status: "supported",
+          analystTouched: true,
+          relatedEventIds: ["e1", "e2"],
+        }),
+        "e1",
+        "noise despite the split",
+        "a",
+        T1,
+      )!,
+      h({ id: "H2", title: "H2", contradictingEventIds: ["e1"], relatedEventIds: ["e2"] }),
+    ];
+    // An unrelated merge: H2 is refreshed with the same links.
+    const after = [before[0], h({ ...before[1], description: "reworded" })];
+    expect(flagMaterialChanges(before, after, new Map(), undefined, T2).changed).toBe(false);
+    // But a NEW alternative that the excluded observation separates it from is a transition.
+    const withNew = [...after, h({ id: "H3", title: "H3", contradictingEventIds: ["e1"] })];
+    const { hypotheses } = flagMaterialChanges(before, withNew, new Map(), undefined, T2);
+    expect(hypotheses[0].reviewReason).toBe("an observation you excluded (e1) now separates this from 'H3'");
+  });
+
+  it("adds a material-change reason to an existing false-positive flag, and the cascade adds its reason to a material-change flag", () => {
+    const flagged = h({
+      id: "H1",
+      title: "H1",
+      analystTouched: true,
+      needsReview: true,
+      reviewReason: FP_REVIEW_REASON,
+      contradictingEventIds: ["c1"],
+      relatedEventIds: ["e1"],
+    });
+    const before = [flagged, h({ id: "H2", title: "H2" })];
+    const after = [flagged, h({ id: "H2", title: "H2", relatedEventIds: ["c1"] })];
+    const { hypotheses } = flagMaterialChanges(before, after, new Map(), undefined, T2);
+    expect(hypotheses[0].reviewReason).toBe(`${FP_REVIEW_REASON}; c1 now supports 'H2'`);
+    // The other way round: a material-change flag, then the supporting event is marked false positive.
+    const material = h({ ...flagged, reviewReason: "c1 now supports 'H2'" });
+    const out = reconsiderHypotheses([material], { fpEventIds: new Set(["e1"]), fpIocIds: new Set() }, T2);
+    expect(out.changed).toBe(true);
+    expect(out.hypotheses[0].reviewReason).toBe(`c1 now supports 'H2'; ${FP_REVIEW_REASON}`);
+    // And a second cascade for the same cause changes nothing.
+    expect(
+      reconsiderHypotheses(out.hypotheses, { fpEventIds: new Set(["e1"]), fpIocIds: new Set() }, T2).changed,
     ).toBe(false);
   });
 

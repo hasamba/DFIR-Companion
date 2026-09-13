@@ -52,14 +52,14 @@ function render(hyps: Hypothesis[], events: ForensicEvent[]): string {
   return lines.join("\n");
 }
 
-describe("hypothesesSection — decisive evidence, alternatives, unresolved", () => {
+describe("hypothesesSection — distinguishing evidence, alternatives, unresolved", () => {
   const events = [
     ev("e1", "winword.exe spawned powershell.exe", { yearInferred: true }),
     ev("e2", "VPN logon for jdoe"),
     ev("e3", "outbound 443 to 203.0.113.9"),
   ];
 
-  it("names the decisive observation, the alternative it separates from, and the record's own uncertainty", () => {
+  it("names the distinguishing observation, the alternative it separates from, and the record's own uncertainty", () => {
     const md = render(
       [
         h({
@@ -78,7 +78,7 @@ describe("hypothesesSection — decisive evidence, alternatives, unresolved", ()
       events,
     );
     expect(md).toContain("### Initial access was phishing — Supported\n");
-    expect(md).toContain("Decisive evidence — separates this from a named alternative:");
+    expect(md).toContain("Distinguishing evidence — each separates this from a named alternative:");
     expect(md).toContain(
       "2026-01-02T03:04:05Z — winword.exe spawned powershell.exe _[year inferred, not read from the record]_ — separates this from 'Initial access was VPN'",
     );
@@ -105,7 +105,7 @@ describe("hypothesesSection — decisive evidence, alternatives, unresolved", ()
     );
     expect(shared).toContain("### A — Supported — no observation separates it from an alternative");
     expect(shared).toContain(
-      "Decisive evidence: none — no supporting observation separates this from an alternative.",
+      "Distinguishing evidence: none — no supporting observation separates this from an alternative.",
     );
     const alone = render([h({ id: "a", title: "A", status: "supported", relatedEventIds: ["e2"] })], events);
     expect(alone).toContain("### A — Supported — no alternative offered");

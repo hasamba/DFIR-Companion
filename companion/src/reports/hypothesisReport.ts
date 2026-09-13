@@ -45,17 +45,20 @@ function assessmentBlock(
 ): void {
   lines.push("**Evidence assessment**", "");
   if (a.support.distinguishing.length) {
-    lines.push("Decisive evidence — separates this from a named alternative:", "");
+    lines.push("Distinguishing evidence — each separates this from a named alternative:", "");
     for (const d of a.support.distinguishing)
       lines.push(
         `- ${eventLine(rows.get(d.eventId), d.eventId)} — separates this from ${titles(d.separatesFrom)}`,
       );
     lines.push("");
   } else if (a.alternatives.length) {
-    lines.push("Decisive evidence: none — no supporting observation separates this from an alternative.", "");
+    lines.push(
+      "Distinguishing evidence: none — no supporting observation separates this from an alternative.",
+      "",
+    );
   }
   if (a.contradiction.distinguishing.length) {
-    lines.push("Decisive contradictions — each supports a named alternative:", "");
+    lines.push("Distinguishing contradictions — each supports a named alternative:", "");
     for (const d of a.contradiction.distinguishing)
       lines.push(`- ${eventLine(rows.get(d.eventId), d.eventId)} — supports ${titles(d.supports)}`);
     lines.push("");

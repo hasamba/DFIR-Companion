@@ -105,15 +105,25 @@
     (h.relatedTechniques || []).forEach((t) =>
       chips.push(`<span class="hyp-chip">${esc(t)}</span>`),
     );
-    if ((h.relatedEventIds || []).length)
+    // Counts come from the assessment (#933 item 22): a linked observation that is excluded, marked
+    // false positive, missing from the timeline or assessed both ways is linked but NOT counted, and
+    // the chip must not read as if it were. Raw link counts are the fallback for an older server.
+    const a = h.assessment;
+    const linked = (h.relatedEventIds || []).length;
+    const counted = a
+      ? (a.support.distinguishing || []).length +
+        (a.support.consistentWithAlternatives || []).length +
+        (a.support.notAssessedElsewhere || []).length
+      : linked;
+    if (linked)
       chips.push(
-        `<span class="hyp-chip" title="supporting forensic events">↳ ${h.relatedEventIds.length} event${h.relatedEventIds.length === 1 ? "" : "s"}</span>`,
+        `<span class="hyp-chip" title="supporting observations counted in the assessment / linked to this hypothesis (excluded, false-positive, missing or both-ways links are linked but not counted)">↳ ${counted} of ${linked} linked event${linked === 1 ? "" : "s"} counted</span>`,
       );
-    // ACH (#14): contradicting-event count is the primary ranking signal — show it prominently (red).
-    const contraN = (h.contradictingEventIds || []).length;
+    // ACH (#14): active contradictions are the primary ranking signal — show them prominently (red).
+    const contraN = a ? a.activeContradictions : (h.contradictingEventIds || []).length;
     if (contraN)
       chips.push(
-        `<span class="hyp-chip hyp-contra" title="events INCONSISTENT with this explanation (ACH: judged by fewest contradictions)">⊖ ${contraN} contradicting</span>`,
+        `<span class="hyp-chip hyp-contra" title="observations INCONSISTENT with this explanation, counted (ACH: judged by fewest contradictions)">⊖ ${contraN} contradicting</span>`,
       );
     if ((h.relatedIocIds || []).length)
       chips.push(

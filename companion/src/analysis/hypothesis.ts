@@ -512,12 +512,17 @@ export function reconsiderHypotheses(
       h.relatedIocIds.some((id) => input.fpIocIds.has(id));
     if (!hits) return h;
     const flipStatus = !h.analystTouched && h.status !== "unknown";
-    if (h.needsReview && !flipStatus) return h; // already flagged, nothing more to change
+    // Already flagged for this very reason and nothing to flip → nothing to change. Flagged for a
+    // material change (#933 item 22) → the false-positive cause is ADDED to the reason, never lost.
+    const reasons = h.needsReview && h.reviewReason ? h.reviewReason.split("; ") : [];
+    if (h.needsReview && !flipStatus && reasons.includes(FP_REVIEW_REASON)) return h;
     changed = true;
     return {
       ...h,
       needsReview: true,
-      reviewReason: FP_REVIEW_REASON,
+      reviewReason: reasons.includes(FP_REVIEW_REASON)
+        ? h.reviewReason
+        : [...reasons, FP_REVIEW_REASON].join("; "),
       ...(flipStatus
         ? { status: "unknown", statusHistory: appendStatusChange(h.statusHistory, "unknown", now) }
         : {}),

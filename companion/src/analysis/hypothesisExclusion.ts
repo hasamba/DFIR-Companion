@@ -86,24 +86,30 @@ const MAX_REVIEW_REASON_LEN = 1000;
 
 // Reasons for one hypothesis, compared before → after. Only the hypotheses the analyst owns a
 // judgment on are read: touched ones, and ones carrying an active exclusion.
+function distinguishingRefs(a: HypothesisAssessment | undefined, id: string) {
+  const sup = a?.support.distinguishing.find((d) => d.eventId === id);
+  const con = a?.contradiction.distinguishing.find((d) => d.eventId === id);
+  return sup?.separatesFrom ?? con?.supports ?? [];
+}
+
 function materialReasons(
   h: Hypothesis,
   before: HypothesisAssessment | undefined,
   after: HypothesisAssessment,
-  withoutExclusions: HypothesisAssessment | undefined,
+  bare: { before: HypothesisAssessment | undefined; after: HypothesisAssessment | undefined },
   seed: HypothesisSeed | undefined,
 ): string[] {
   const reasons: string[] = [];
-  if (withoutExclusions) {
-    for (const id of activeExclusionIds(h)) {
-      const sup = withoutExclusions.support.distinguishing.find((d) => d.eventId === id);
-      const con = withoutExclusions.contradiction.distinguishing.find((d) => d.eventId === id);
-      const named = sup?.separatesFrom ?? con?.supports;
-      if (named?.length)
-        reasons.push(
-          `an observation you excluded (${id}) now separates this from ${named.map((x) => `'${x.title}'`).join(", ")}`,
-        );
-    }
+  // An excluded observation that BECAME distinguishing — a transition, not a state. One the analyst
+  // excluded while it already distinguished was their call; it is not raised again on every merge.
+  for (const id of activeExclusionIds(h)) {
+    const now = distinguishingRefs(bare.after, id);
+    const was = new Set(distinguishingRefs(bare.before, id).map((x) => x.id));
+    const fresh = now.filter((x) => !was.has(x.id));
+    if (fresh.length)
+      reasons.push(
+        `an observation you excluded (${id}) now separates this from ${fresh.map((x) => `'${x.title}'`).join(", ")}`,
+      );
   }
   if (before) {
     if (
@@ -134,10 +140,39 @@ function materialReasons(
   return reasons;
 }
 
+// The reading of one hypothesis with its own exclusions lifted — what its excluded observations
+// WOULD bear if counted.
+function bareAssessment(
+  all: readonly Hypothesis[],
+  id: string,
+  e: AssessmentEligibility,
+): HypothesisAssessment | undefined {
+  const h = all.find((o) => o.id === id);
+  if (!h || !activeExclusionIds(h).size) return h ? assessHypothesisEvidence(all, e).get(id) : undefined;
+  return assessHypothesisEvidence(
+    all.map((o) => (o.id === id ? { ...o, excludedEvidence: [] } : o)),
+    e,
+  ).get(id);
+}
+
+// Add reasons to a review flag without losing the ones already shown: the false-positive cascade
+// and a material change can both apply, and the analyst must see every cause before acknowledging.
+export function mergeReviewReasons(existing: string, incoming: readonly string[]): string {
+  const parts = existing ? existing.split("; ") : [];
+  const seen = new Set(parts);
+  for (const r of incoming) {
+    if (!seen.has(r)) {
+      seen.add(r);
+      parts.push(r);
+    }
+  }
+  return parts.join("; ").slice(0, MAX_REVIEW_REASON_LEN);
+}
+
 // Compare the readings before and after a synthesis merge and flag the analyst-owned hypotheses
 // whose footing changed. Status, text, links, notes and exclusions are never touched — only
-// `needsReview` / `reviewReason` / `updatedAt`. Idempotent: an already-flagged hypothesis with the
-// same reason is left alone.
+// `needsReview` / `reviewReason` / `updatedAt`. Idempotent: an already-flagged hypothesis whose
+// reasons are all already shown is left alone.
 export function flagMaterialChanges(
   before: readonly Hypothesis[],
   after: readonly Hypothesis[],
@@ -152,16 +187,13 @@ export function flagMaterialChanges(
   const hypotheses = after.map((h) => {
     const owned = h.analystTouched || activeExclusionIds(h).size > 0;
     if (!owned) return h;
-    const withoutExclusions = activeExclusionIds(h).size
-      ? assessHypothesisEvidence(
-          after.map((o) => (o.id === h.id ? { ...o, excludedEvidence: [] } : o)),
-          e,
-        ).get(h.id)
-      : undefined;
+    const bare = activeExclusionIds(h).size
+      ? { before: bareAssessment(before, h.id, e), after: bareAssessment(after, h.id, e) }
+      : { before: undefined, after: undefined };
     const seed = h.sourceKey ? seedsByKey.get(h.sourceKey) : undefined;
-    const reasons = materialReasons(h, beforeA.get(h.id), afterA.get(h.id)!, withoutExclusions, seed);
+    const reasons = materialReasons(h, beforeA.get(h.id), afterA.get(h.id)!, bare, seed);
     if (!reasons.length) return h;
-    const reviewReason = reasons.join("; ").slice(0, MAX_REVIEW_REASON_LEN);
+    const reviewReason = mergeReviewReasons(h.needsReview ? h.reviewReason : "", reasons);
     if (h.needsReview && h.reviewReason === reviewReason) return h;
     changed = true;
     return { ...h, needsReview: true, reviewReason, updatedAt: now };
