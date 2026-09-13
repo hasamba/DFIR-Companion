@@ -73,9 +73,15 @@ export function readQuarantineTime(
   const n = Number(text);
   const encoding = declared ?? (NATIVE_TIME_HEADER.test(header) ? "cocoa" : undefined);
   if (!encoding || !Number.isFinite(n) || n < 0) return { iso: "", encoding: "unreadable" };
-  if (encoding === "cocoa") return { iso: isoOf((n + COCOA_EPOCH_OFFSET) * 1000), encoding: "cocoa-seconds" };
-  if (encoding === "unix-ms") return { iso: isoOf(n), encoding: "unix-ms" };
-  return { iso: isoOf(n * 1000), encoding: "unix-seconds" };
+  // A value the epoch cannot express (out of Date's range) is unreadable, never a readable blank.
+  const iso =
+    encoding === "cocoa"
+      ? isoOf((n + COCOA_EPOCH_OFFSET) * 1000)
+      : encoding === "unix-ms"
+        ? isoOf(n)
+        : isoOf(n * 1000);
+  if (!iso) return { iso: "", encoding: "unreadable" };
+  return { iso, encoding: encoding === "cocoa" ? "cocoa-seconds" : encoding };
 }
 
 /** Apple's LSQuarantineType, and nothing else. */
@@ -354,7 +360,7 @@ export const QUARANTINE_VARIANTS_MAX = 16;
  * one overflow row per UUID that shows none of them, so a flood of variants under one identifier
  * cannot consume the import's event budget. Rewrites in place; a re-dump (same facts) is untouched.
  */
-export function boundQuarantineVariants(rows: QuarantineRow[]): void {
+export function boundQuarantineVariants(rows: QuarantineRow[]): QuarantineRow[] {
   const byId = new Map<string, string[]>();
   for (const r of rows) {
     if (!r.eventId) continue;
@@ -366,7 +372,6 @@ export function boundQuarantineVariants(rows: QuarantineRow[]): void {
     const seen = byId.get(r.eventId) ?? [];
     if (!seen.includes(r.factsDigest)) {
       r.aggKey = `macos-quarantine|event:${r.eventId}|overflow`;
-      r.description = `macOS quarantine [event: ${r.eventId}] [overflow: records with this event identifier and further differing facts beyond ${QUARANTINE_VARIANTS_MAX} sets folded; none shown]${identityMark(r.aggKey)}`;
       // The envelope shows no folded record as the row's: only the identifier and the fold.
       r.envelope = {
         kind: "folded",
@@ -390,6 +395,30 @@ export function boundQuarantineVariants(rows: QuarantineRow[]): void {
     const body = mark ? r.description.slice(0, -mark.length) : r.description;
     r.description = `${body.slice(0, DESCRIPTION_MAX - SHARED_MARK.length - mark.length)}${SHARED_MARK}${mark}`;
   }
+  // The rows that remain: every kept variant, and ONE overflow row per UUID that says how many
+  // records it stands for — so the bound holds whether or not the caller aggregates. The row's time
+  // is the earliest folded record's; the description names the fold, never a folded fact.
+  const out: QuarantineRow[] = [];
+  const overflow = new Map<string, { row: QuarantineRow; folded: number }>();
+  for (const r of rows) {
+    if (!r.aggKey.endsWith("|overflow")) {
+      out.push(r);
+      continue;
+    }
+    const seen = overflow.get(r.aggKey);
+    if (!seen) {
+      overflow.set(r.aggKey, { row: r, folded: 1 });
+      out.push(r);
+      continue;
+    }
+    seen.folded += 1;
+    if (r.timestamp && (!seen.row.timestamp || r.timestamp < seen.row.timestamp))
+      seen.row.timestamp = r.timestamp;
+  }
+  for (const { row, folded } of overflow.values()) {
+    row.description = `macOS quarantine [event: ${row.eventId}] [overflow: ${folded} records with this event identifier and further differing facts beyond ${QUARANTINE_VARIANTS_MAX} sets folded; none shown]${identityMark(row.aggKey)}`;
+  }
+  return out;
 }
 
 /** The marking-only name the tests use; boundQuarantineVariants marks and bounds. */

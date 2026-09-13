@@ -197,14 +197,17 @@ export function parseMacos(input: string, opts: MacosImportOptions = {}): MacosP
   if (total === 0) return empty;
   // A UUID that names two different fact sets is said on both rows; past a budget of fact sets
   // per UUID the rest fold into one overflow row (quarantineRecord.ts).
-  boundQuarantineVariants(quarantineRows);
-  // Indicators only from the rows that survived the bound, linked to their rows.
-  for (const r of quarantineRows) {
+  const bounded = boundQuarantineVariants(quarantineRows);
+  // The excess variants leave `mapped` too, so the bound holds with aggregation off; indicators come
+  // only from the rows that survived, linked to their rows.
+  const dropped = new Set(quarantineRows.filter((r) => !bounded.includes(r)));
+  const kept = mapped.filter((m) => !dropped.has(m as QuarantineRow));
+  for (const r of bounded) {
     const rowSink = new Map<string, SiemIoc>(r.iocs.map((i) => [`${i.type}:${i.value.toLowerCase()}`, i]));
     mergeRowIocs(iocSink, rowSink, r.aggKey);
   }
 
-  const { events, groups } = aggregateEvents(mapped, {
+  const { events, groups } = aggregateEvents(kept, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? maxEventsDefault(),

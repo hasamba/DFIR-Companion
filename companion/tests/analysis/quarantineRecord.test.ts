@@ -279,13 +279,15 @@ describe("boundQuarantineVariants", () => {
       {},
     );
     const rows = [...flood, other];
-    markSharedIdentifiers(rows);
+    const bounded = markSharedIdentifiers(rows);
     const keys = new Set(rows.map((r) => r.aggKey));
     expect(keys.size).toBe(QUARANTINE_VARIANTS_MAX + 2);
-    const over = rows.filter((r) => r.aggKey.endsWith("|overflow"));
-    expect(over).toHaveLength(40 - QUARANTINE_VARIANTS_MAX);
+    const over = bounded.filter((r) => r.aggKey.endsWith("|overflow"));
+    expect(over).toHaveLength(1);
+    expect(over[0].description).toContain(`[overflow: ${40 - QUARANTINE_VARIANTS_MAX} records`);
+    expect(bounded).toHaveLength(QUARANTINE_VARIANTS_MAX + 2);
     expect(over[0].description).toContain(
-      "[overflow: records with this event identifier and further differing facts beyond 16 sets folded; none shown]",
+      `[overflow: ${40 - QUARANTINE_VARIANTS_MAX} records with this event identifier and further differing facts beyond 16 sets folded; none shown]`,
     );
     expect(rows[rows.length - 1].description).not.toContain("overflow");
     // the overflow row's envelope shows no folded record
@@ -452,6 +454,27 @@ describe("through parseMacos and correlateEvents", () => {
     const r2 = parseMacos(csv([bad("yesterday"), bad("tomorrow")]));
     expect(r2.events).toHaveLength(2);
     expect(afterImport(r2.events)).toHaveLength(2);
+  });
+
+  it("the bound holds with aggregation off, and an out-of-range number is unreadable", () => {
+    const flood = Array.from({ length: 300 }, (_, i) => row({ LSQuarantineOriginTitle: `t${i}` }));
+    const other = row({ LSQuarantineEventIdentifier: "660e8400-e29b-41d4-a716-446655440000" });
+    const r = parseMacos(csv([...flood, other]), { aggregate: false });
+    expect(r.events.length).toBeLessThanOrEqual(QUARANTINE_VARIANTS_MAX + 2);
+    expect(r.events.filter((e) => e.description.includes("|overflow") || (e.count ?? 1) > 1)).toHaveLength(0);
+    expect(r.dropped).toBe(300 - QUARANTINE_VARIANTS_MAX - 1); // the fold row stands for one of them
+    const fold = r.events.find((e) => e.description.includes("[overflow:"));
+    expect(fold?.description).toContain(`[overflow: ${300 - QUARANTINE_VARIANTS_MAX} records`);
+    expect(r.events.some((e) => e.description.includes("660e8400-e29b-41d4-a716-446655440000"))).toBe(true);
+    expect(readQuarantineTime("999999999999999", "LSQuarantineTimeStamp")).toEqual({
+      iso: "",
+      encoding: "unreadable",
+    });
+    const big = (t: string) => row({ LSQuarantineEventIdentifier: "", LSQuarantineTimeStamp: t });
+    const r2 = parseMacos(csv([big("999999999999999"), big("999999999999998")]));
+    expect(r2.events).toHaveLength(2);
+    expect(afterImport(r2.events)).toHaveLength(2);
+    expect(r2.events[0].canonical?.quarantine?.timeRaw).toBeDefined();
   });
 
   it("a unified-log record in a quarantine json array is never a download event", () => {
