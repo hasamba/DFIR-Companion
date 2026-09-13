@@ -39,7 +39,7 @@ import { streamOverlay } from "./ntfsStreams.js";
 import { boundDnsVariants, dnsOverlay } from "./dnsRecord.js";
 import { WIN_EVENTS, channelTable, type WinEventDef } from "./winEventTables.js";
 export { WIN_EVENTS, type WinEventDef };
-import { processOverlay } from "./processAccess.js";
+import { processGuid, processOverlay } from "./processAccess.js";
 import { aggregateEvents, maxEventsDefault } from "./eventAggregate.js";
 import { evtxRecordIdentity } from "./evtxRecordId.js";
 import { LOLBINS, NOISY_LOLBINS, SUSP_PATH } from "./winProcessBaseline.js";
@@ -216,47 +216,8 @@ const RECORD_ARRAY_KEYS = [
 ];
 
 // Parse the file and extract the flat array of event records + a label for the shape.
-// Parse a stream of CONCATENATED top-level JSON values (objects/arrays), tolerating pretty-
-// printing and any separators (commas / whitespace / newlines) between them. This is the shape
-// Hayabusa's `json-timeline` emits by default: many multi-line `{ … }` objects with NO array
-// wrapper and NO commas — which is neither a single JSON document nor NDJSON, so both the
-// whole-file parse and the line-by-line NDJSON parse miss it. Walks the string tracking brace/
-// bracket depth (ignoring braces inside string literals) and JSON.parses each depth-0 value.
-// Pure; malformed chunks are skipped rather than throwing.
-export function parseConcatenatedJson(text: string): unknown[] {
-  const out: unknown[] = [];
-  let depth = 0,
-    start = -1,
-    inStr = false,
-    esc = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (inStr) {
-      if (esc) esc = false;
-      else if (ch === "\\") esc = true;
-      else if (ch === '"') inStr = false;
-      continue;
-    }
-    if (ch === '"') {
-      inStr = true;
-      continue;
-    }
-    if (ch === "{" || ch === "[") {
-      if (depth === 0) start = i;
-      depth++;
-    } else if (ch === "}" || ch === "]") {
-      if (depth > 0 && --depth === 0 && start !== -1) {
-        try {
-          out.push(JSON.parse(text.slice(start, i + 1)));
-        } catch {
-          /* skip malformed chunk */
-        }
-        start = -1;
-      }
-    }
-  }
-  return out;
-}
+import { parseConcatenatedJson } from "./concatenatedJson.js";
+export { parseConcatenatedJson };
 
 export function extractRecords(text: string): { records: Row[]; format: string } {
   const trimmed = text.trim();
@@ -991,7 +952,13 @@ export function mapWindows(
               : def.kind === "dns"
                 ? "query"
                 : (defender?.eventType ?? def.kind ?? "event"),
-      ...(isLogon ? { outcome: eid === 4624 ? "success" : "failed" } : defender ? defender.event : {}),
+      ...(isLogon
+        ? { outcome: eid === 4624 ? "success" : "failed" }
+        : pa
+          ? { action: pa.action }
+          : defender
+            ? defender.event
+            : {}),
     },
     ...(accountName ? { actor: { kind: "account" as const, name: accountName } } : {}),
     ...(host ? { target: { kind: "host" as const, name: host } } : {}),
@@ -1040,6 +1007,9 @@ export function mapWindows(
     ...(def.kind === "process"
       ? {
           process: {
+            ...(processGuid(str(getCI(ed, "ProcessGuid")))
+              ? { id: processGuid(str(getCI(ed, "ProcessGuid"))) }
+              : {}),
             ...(pid !== undefined ? { pid } : {}),
             ...(processName ? { name: processName } : {}),
             ...(imagePath ? { executable: imagePath } : {}),
@@ -1105,7 +1075,7 @@ export function mapWindows(
     producer: {
       importer: "windows-event",
       parserVersion: "1",
-      mappingVersion: "windows-event-v1",
+      mappingVersion: pa ? "windows-event-v2" : "windows-event-v1",
       ruleVersions: ["windows-event-severity-v1"],
     },
     rawFieldMap: {

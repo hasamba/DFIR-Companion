@@ -40,6 +40,13 @@ export interface ProcessOverlay {
   mitre: string[];
   /** `event.type` — access, remote_thread, tamper. */
   type: string;
+  /**
+   * `event.action` — the record's structured fact for the sequence join (#987): the decoded
+   * rights (`access:vm_write,vm_operation`), the thread start (`thread:unbacked:<address>` /
+   * `thread:module:<mod>!<fn>` / `thread:absent`), the tamper type (`tamper:<type>`); and
+   * `;source=system-path` when the source is a path-anchored system image.
+   */
+  action: string;
   /** Appended to the aggregation key: rights/start, both process identities, the record fallback. */
   identity: string;
   entities: { subject?: CanonicalEntity; object?: CanonicalEntity };
@@ -197,12 +204,15 @@ const clip = (s: string, max: number): string => {
 };
 const pidOf = (v: string): number | undefined =>
   /^\d{1,10}$/.test(v.trim()) && Number(v.trim()) > 0 ? Number(v.trim()) : undefined;
-// A bare GUID or a fully braced `{GUID}` — a half brace is malformed, not a GUID.
-const guidOf = (v: string): string => {
+// A bare GUID or a fully braced `{GUID}` — a half brace is malformed, not a GUID. The one
+// normaliser every process identity goes through (Sysmon 1's own GUID too, siemImport.ts), so the
+// sequence join (#987) compares like with like: lowercased, braces off, the zero GUID rejected.
+export const processGuid = (v: string): string => {
   const t = v.trim();
   const g = /^\{.*\}$/.test(t) ? t.slice(1, -1) : /^[{}]|[{}]$/.test(t) ? "" : t;
-  return GUID.test(g) && !ZERO_GUID.test(g) ? g : "";
+  return GUID.test(g) && !ZERO_GUID.test(g) ? g.toLowerCase() : "";
 };
+const guidOf = processGuid;
 
 interface ProcessIdentity {
   guid: string;
@@ -425,6 +435,14 @@ export function processOverlay(input: OverlayInput): ProcessOverlay {
     ...(target.pid !== undefined ? { pid: target.pid } : {}),
     ...(target.image ? { name: baseName(target.image), executable: target.image } : {}),
   };
+  // The source's path-anchored trust, as a structured fact the sequence join can read without
+  // re-deciding it (the timeline layer never imports the trust tables).
+  const sourceTrust =
+    kind !== "tamper" &&
+    source.image.trim() &&
+    (isTrustedSystemImage(source.image) || isBenignThreadSource(source.image))
+      ? ";source=system-path"
+      : "";
   const common = (
     words: string[],
     g: { severity: Severity; mitre: string[] },
@@ -432,11 +450,13 @@ export function processOverlay(input: OverlayInput): ProcessOverlay {
     identity: string,
     entities: ProcessOverlay["entities"],
     rawFields: Record<string, string[]>,
+    action: string,
   ): ProcessOverlay => ({
     description: `${input.description} — ${[...words, guidsNote].filter(Boolean).join(" — ")}`.slice(0, 600),
     severity: g.severity,
     mitre: [...g.mitre],
     type,
+    action: `${action}${sourceTrust}`,
     identity,
     entities,
     process,
@@ -451,6 +471,7 @@ export function processOverlay(input: OverlayInput): ProcessOverlay {
       `|tamper:${type.toLowerCase()}|proc:${target.id}${fallback}`,
       { ...(entityOf(target) ? { object: entityOf(target) } : {}) },
       { ...rawFieldsFor("object", "", target), ...processFieldsFor("", target) },
+      `tamper:${type.toLowerCase()}`,
     );
   }
   const entities = {
@@ -488,6 +509,7 @@ export function processOverlay(input: OverlayInput): ProcessOverlay {
       `|thread:${startKey.toLowerCase()}${ids}`,
       entities,
       rawFields,
+      `thread:${start.state === "module" ? `module:${startKey}` : start.state === "unbacked" ? `unbacked:${start.address || ""}` : "absent"}`,
     );
   }
   const mask = decodeAccessMask(has("GrantedAccess") ? field("GrantedAccess") : undefined);
@@ -513,5 +535,6 @@ export function processOverlay(input: OverlayInput): ProcessOverlay {
     `|access:${rightsKey}${ids}|${traceKey}`,
     entities,
     rawFields,
+    `access:${rightsKey}`,
   );
 }
