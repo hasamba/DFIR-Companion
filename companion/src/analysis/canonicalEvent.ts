@@ -189,6 +189,27 @@ export const canonicalEventEnvelopeSchema = z.object({
       records: z.number().int().positive(),
     })
     .optional(),
+  // A macOS quarantine record's own reading (quarantineRecord.ts, #933 item 7): the kind, the agent,
+  // the resource and origin URLs, the sender, the event identifier, and how its time was decoded.
+  // `localFile` is always "not in this record" — the database keeps no path.
+  quarantine: z
+    .object({
+      kind: z.string(),
+      typeNumber: z.number().int().nonnegative().optional(),
+      agent: z.string().optional(),
+      bundleId: z.string().optional(),
+      dataUrl: z.string().optional(),
+      originUrl: z.string().optional(),
+      originTitle: z.string().optional(),
+      senderName: z.string().optional(),
+      senderAddress: z.string().optional(),
+      eventId: z.string().optional(),
+      eventIdRaw: z.string().optional(),
+      timeEncoding: z.enum(["cocoa-seconds", "iso", "unix-seconds", "unix-ms", "unreadable"]),
+      timeRaw: z.string().optional(),
+      localFile: z.literal("not in this record"),
+    })
+    .optional(),
   // A DNS record's own reading (dnsRecord.ts, #933 item 2): what the resolver client reported and
   // the values it RETURNED — owner-less, so never "answers"; the vantage is the endpoint's own.
   dns: z

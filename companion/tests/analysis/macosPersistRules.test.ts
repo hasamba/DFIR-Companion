@@ -31,6 +31,36 @@ const job = (
   over: Partial<CollectedFile> = {},
 ) => gradeLaunchd(file(path, plist(entries), over), {});
 
+describe("the # quarantine: header (#933 item 7)", () => {
+  const susp = {
+    Label: "<string>com.vendor.helper</string>",
+    ProgramArguments: prog("/Users/Shared/.a/agent"),
+  };
+  it("a raw xattr value is decoded by its documented form: flags, Unix hex time, agent, event id", () => {
+    const [s] = job(susp, "/Library/LaunchDaemons/x.plist", {
+      extra: { quarantine: "0083;5f3a1b2c;Safari;550E8400-E29B-41D4-A716-446655440000" },
+    });
+    expect(s.reason).toContain(
+      "[quarantine mark: download, sandbox (+0x0080); agent Safari; marked 2020-08-17T05:52:44.000Z (Unix hex); event 550e8400-e29b-41d4-a716-446655440000]",
+    );
+    expect(s.reason).not.toContain("downloaded from");
+    expect(s.severity).toBe("High");
+  });
+  it("the legacy URL form keeps its words", () => {
+    const [s] = job(susp, "/Library/LaunchDaemons/x.plist", {
+      extra: { quarantine: "https://evil.test/update.zip" },
+    });
+    expect(s.reason).toContain("it was downloaded from https://evil.test/update.zip");
+  });
+  it("an agent that spells a tag or a hash is neutralised", () => {
+    const [s] = job(susp, "/Library/LaunchDaemons/x.plist", {
+      extra: { quarantine: `0001;5f3a1b2c;${"a".repeat(32)}] [x;550E8400-E29B-41D4-A716-446655440000` },
+    });
+    expect(s.reason).not.toMatch(/[0-9a-f]{32}/);
+    expect(s.reason).not.toContain("] [x");
+  });
+});
+
 describe("what a launchd finding needs", () => {
   it("reports a program in a directory anything can write", () => {
     const [s] = job({

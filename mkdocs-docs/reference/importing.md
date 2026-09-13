@@ -116,11 +116,15 @@ under the plist's header:
 ==> /Library/LaunchDaemons/com.example.plist <==
 # mtime: 2026-01-02T09:00:00Z
 # codesign: unsigned
-# quarantine: https://example.test/update.zip
+# quarantine: 0083;5f3a1b2c;Safari;550E8400-E29B-41D4-A716-446655440000
 ```
 
 `codesign -dv --verbose=2 <program>` gives the first; `xattr -p com.apple.quarantine <program>` gives
-the second.
+the second — paste its value verbatim. The Companion decodes it by its documented form: the flags
+(`download`, `sandbox`, `hard`, `user-approved` — any other bit shown as hex), the time it was
+marked (a Unix epoch in hex — not the database's Cocoa epoch), the agent, and the event identifier
+that joins the file to its row in the quarantine database. An older collection that put a bare URL
+here is still read as before.
 
 **Neither one is a finding on its own, by design.** Homebrew formulas, internal builds and much
 commercial software are unsigned, and almost every Mac application installs a LaunchAgent. Signing
@@ -313,6 +317,41 @@ does not, the target's form, and the uninterpreted trailer last.
 which response carried which payload, and which file on an endpoint matches a transfer cannot be
 read from one line. That chain (and the proxy-to-workstation link) is a join across records and
 formats, with its own issue.
+
+### macOS quarantine records: what one record establishes
+
+An `LSQuarantineEventsV2` row (CSV or JSON dump) is a **download event**, and the row says only
+what the record establishes:
+
+`macOS quarantine [kind: web download] [agent: Safari (com.apple.Safari)] [data url: https://…]
+[origin: https://… ("page title")] [sender: name <address>] [time: Cocoa seconds] [event: <uuid>]
+[local file: not in this record — joined by the event identifier]`
+
+- **The kind** is Apple's `LSQuarantineTypeNumber` (web download, other download, email
+  attachment, message attachment, calendar attachment, other attachment); a number the table does
+  not name is shown as such.
+- **Two URLs, two facts.** The data URL is the *resource* the agent fetched; the origin is the
+  *referring page* (the lure, on a phishing question). The URL's last path segment is never called
+  the file: the database keeps no local path. The file is joined through the event identifier —
+  the same UUID sits in the file's `com.apple.quarantine` attribute — and that join is a separate
+  design. A row therefore never says the file ran or was malicious; every row is Info.
+- **Time by its declared form, never by its size.** The native `LSQuarantineTimeStamp` column is
+  Cocoa seconds (since 2001) and is decoded as such; an ISO string is ISO. A number under a generic
+  header (`timestamp`, `time`) could be either an aliased native column or a converted one, so it
+  establishes no time until the import declares its epoch (`quarantineTime`); the row then says
+  `[time: not readable — an epoch declared on import expected]` and keeps the raw value. The
+  encoding used is always named on the row.
+- **Indicators.** The data URL and its host (an address is an `ip`, a name a `domain`) when the
+  scheme is http(s) or ftp; the origin URL and its host only when http(s) — a `mailto:` origin or
+  a `file:` data URL mints nothing. A sender name or address is never an indicator.
+- **Identity.** Each event identifier is its own row; a re-dump of the same record folds; two
+  records that share an identifier but disagree on a fact stay two rows and both say `[event
+  identifier shared by records with different facts]`. An identifier that is not a UUID is shown
+  as text and is never used to join.
+- **The xattr.** When a persistence collection pastes the raw `com.apple.quarantine` value under a
+  plist header, the finding says `[quarantine mark: download, sandbox (+0x0080); agent Safari;
+  marked 2020-08-17T05:52:44.000Z (Unix hex); event …]` — the flags per Apple's SPI, the time in
+  the attribute's own Unix-hex form, the agent, the event id. The attribute carries no URL.
 
 ### TLS records: what one record establishes
 

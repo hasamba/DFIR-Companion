@@ -1,9 +1,14 @@
 import type { Severity } from "./stateTypes.js";
 import { parseCsv } from "./csvImport.js";
 import {
+  markSharedIdentifiers,
+  quarantineOverlay,
+  type QuarantineRow,
+  type QuarantineTimeOption,
+} from "./quarantineRecord.js";
+import {
   extractRecords,
   aggregateEvents,
-  addIoc,
   oneLine,
   isObject,
   getCI,
@@ -36,6 +41,8 @@ export interface MacosImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
+  /** A converted quarantine dump's epoch, declared by the analyst (quarantineRecord.ts). */
+  quarantineTime?: QuarantineTimeOption;
 }
 
 export interface MacosParseResult {
@@ -72,14 +79,6 @@ function baseName(path: string): string {
   return parts[parts.length - 1] || path;
 }
 
-function hostOf(url: string): string {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return "";
-  }
-}
-
 function mapUnifiedLog(rec: Row): MappedEvent | null {
   const timestamp = pick(rec, ["timestamp", "time"]);
   if (!timestamp) return null;
@@ -110,41 +109,23 @@ function mapUnifiedLog(rec: Row): MappedEvent | null {
   };
 }
 
-function mapQuarantine(rec: Row, sink: Map<string, SiemIoc>): MappedEvent | null {
-  const timestamp = pick(rec, ["LSQuarantineTimeStamp", "timestamp", "time"]);
-  const dataUrl = pick(rec, ["LSQuarantineDataURLString", "data_url", "url"]);
-  const originUrl = pick(rec, ["LSQuarantineOriginURLString", "origin_url", "referrer"]);
-  if (!timestamp || (!dataUrl && !originUrl)) return null;
-
-  const agent = pick(rec, ["LSQuarantineAgentName", "agent"]);
-  const sender = pick(rec, ["LSQuarantineSenderName", "sender"]);
-
-  // Both URLs matter and they are different facts: the data URL is where the file came from, the
-  // origin URL is the page that led there — the lure, on a phishing question.
-  for (const url of [dataUrl, originUrl]) {
-    if (!url) continue;
-    addIoc(sink, "url", url.slice(0, 500));
-    const host = hostOf(url);
-    if (host) addIoc(sink, "domain", host);
-  }
-
-  const file = dataUrl ? baseName(dataUrl.split("?")[0] ?? dataUrl) : "";
-  let description = "macOS quarantine";
-  if (agent) description += ` via ${agent}`;
-  if (file) description += `: ${oneLine(file).slice(0, 160)}`;
-  if (dataUrl) description += ` from ${oneLine(dataUrl).slice(0, 200)}`;
-  if (originUrl && originUrl !== dataUrl) description += ` (referred by ${oneLine(originUrl).slice(0, 160)})`;
-  if (sender) description += ` [sender: ${oneLine(sender).slice(0, 80)}]`;
-  description = description.slice(0, 600);
-
-  return {
-    timestamp: normalizeTime(timestamp),
-    description,
-    severity: "Info", // provenance, not a verdict
-    mitre: [],
-    aggKey: `macos-quarantine|${agent}|${hostOf(dataUrl)}`.toLowerCase().slice(0, 400),
-    sources: ["macOS Quarantine"],
-  };
+// One LSQuarantineEventsV2 record → what it establishes (quarantineRecord.ts, #933 item 7): the
+// kind, the agent, the RESOURCE and the ORIGIN as distinct URLs, the time by its declared encoding,
+// the event identifier — and never the local file, which this record does not name.
+function mapQuarantine(rec: Row, sink: Map<string, SiemIoc>, opts: MacosImportOptions): QuarantineRow | null {
+  const hasAny = [
+    "LSQuarantineDataURLString",
+    "data_url",
+    "url",
+    "LSQuarantineOriginURLString",
+    "origin_url",
+    "referrer",
+  ].some((k) => text(getCI(rec, k)).trim() !== "");
+  return hasAny
+    ? quarantineOverlay(rec, sink, {
+        ...(opts.quarantineTime ? { quarantineTime: opts.quarantineTime } : {}),
+      })
+    : null;
 }
 
 function looksLikeQuarantine(headers: readonly string[]): boolean {
@@ -171,14 +152,18 @@ export function parseMacos(input: string, opts: MacosImportOptions = {}): MacosP
   let total = 0;
   let format = "empty";
 
+  const quarantineRows: QuarantineRow[] = [];
   if (trimmed[0] === "[" || trimmed[0] === "{") {
     const records = extractRecords(trimmed).records.filter(isObject) as Row[];
     total = records.length;
+    // A JSON dump of the quarantine database is a quarantine file too.
+    const quarantine = records.some((r) => looksLikeQuarantine(Object.keys(r)));
     for (const rec of records) {
-      const event = mapUnifiedLog(rec);
+      const event = quarantine ? mapQuarantine(rec, iocSink, opts) : mapUnifiedLog(rec);
       if (event) mapped.push(event);
+      if (event && quarantine) quarantineRows.push(event as QuarantineRow);
     }
-    format = "macos-unified-log";
+    format = quarantine ? "macos-quarantine" : "macos-unified-log";
   } else {
     const { headers, rows } = parseCsv(trimmed);
     if (!headers.length) return empty;
@@ -192,13 +177,16 @@ export function parseMacos(input: string, opts: MacosImportOptions = {}): MacosP
     });
     total = objects.length;
     for (const rec of objects) {
-      const event = quarantine ? mapQuarantine(rec, iocSink) : mapUnifiedLog(rec);
+      const event = quarantine ? mapQuarantine(rec, iocSink, opts) : mapUnifiedLog(rec);
       if (event) mapped.push(event);
+      if (event && quarantine) quarantineRows.push(event as QuarantineRow);
     }
     format = quarantine ? "macos-quarantine" : "macos-unified-log";
   }
 
   if (total === 0) return empty;
+  // A UUID that names two different fact sets is said on both rows (quarantineRecord.ts).
+  markSharedIdentifiers(quarantineRows);
 
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,

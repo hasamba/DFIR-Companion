@@ -425,6 +425,7 @@
     "pushAuth.ts": "analysis/notify",
     "pushPayload.ts": "analysis/notify",
     "pushTokenStore.ts": "analysis/notify",
+    "quarantineRecord.ts": "analysis/ingest",
     "queryTranslate.ts": "analysis/ai",
     "ransomwarePrecursor.ts": "analysis/timeline",
     "rcloneImport.ts": "analysis/ingest",
