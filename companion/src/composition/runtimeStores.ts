@@ -312,7 +312,6 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
     log: (m) => logLine(m),
   });
   const commentsStore = new CommentsStore(store);
-  const tagsStore = new TagsStore(store);
   const pinnedFindingsStore = new PinnedFindingsStore(
     store,
     Number(process.env.DFIR_MAX_PINNED_FINDINGS) || undefined,
@@ -330,6 +329,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
     Number(process.env.DFIR_SUPERTIMELINE_MAX) || undefined,
     operationalMetrics,
   );
+  const tagsStore = new TagsStore(store, superTimelineStore); // #958 analyst event tags exempt raw rows from the cap
   const starredReportStore = new StarredReportStore(store);
   const forensicGateControlStore = new ForensicGateControlStore(store);
   const custodyStore = new CustodyStore(store);

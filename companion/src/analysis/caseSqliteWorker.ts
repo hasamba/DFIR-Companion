@@ -1,12 +1,14 @@
 import { Worker } from "node:worker_threads";
 import { loadDatabaseSync } from "./sqliteRuntime.js";
 import { CASE_SQLITE_SCHEMA_SQL } from "./caseSqliteSchema.js";
+import { SUPER_WORKER_SOURCE } from "./caseSqliteWorkerSuper.js";
 
 // node:sqlite is synchronous. Keeping the entire database lifecycle in this worker prevents a
 // checkpoint, migration, large import, or integrity check from pinning Express/WebSocket work on
 // the main event loop. The worker opens a database only for one transaction/query and closes it
 // before replying, which also leaves a checkpointed single-file database for backups and exports.
-const WORKER_SOURCE = String.raw`
+const WORKER_SOURCE =
+  String.raw`
 const { parentPort } = require("node:worker_threads");
 const { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } = require("node:fs");
 const { dirname } = require("node:path");
@@ -413,177 +415,9 @@ function appendEntities(dbPath, kind, entities) {
     db.close();
   }
 }
-
-function superContentKey(event) {
-  const description = String((event && event.description) || "")
-    .replace(/\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i, "").trim();
-  const host = (event && event.asset) || "(no host)";
-  return String((event && event.timestamp) || "") + " " + description + " " + host;
-}
-
-function writeSuperEvents(db, events, max) {
-  return withTransaction(db, () => {
-    const writer = createEntityWriter(db);
-    const incoming = events || [];
-    const incomingIds = [...new Set(incoming.map((event) => scalarText(event && event.id)).filter(Boolean))];
-    const incomingContent = [...new Set(incoming.map(superContentKey))];
-    const existingIds = incomingIds.length
-      ? new Set(db.prepare(
-        "SELECT entity_id FROM entities WHERE kind='superTimeline' " +
-        "AND entity_id IN (SELECT value FROM json_each(?))"
-      ).all(JSON.stringify(incomingIds)).map((row) => row.entity_id))
-      : new Set();
-    const existingContent = incomingContent.length
-      ? new Set(db.prepare(
-        "SELECT content_key FROM entities WHERE kind='superTimeline' " +
-        "AND content_key IN (SELECT value FROM json_each(?))"
-      ).all(JSON.stringify(incomingContent)).map((row) => row.content_key))
-      : new Set();
-    let ordinal = Number(db.prepare(
-      "SELECT coalesce(max(ordinal), -1) AS n FROM entities WHERE kind='superTimeline'"
-    ).get().n) + 1;
-    let added = 0;
-    let firstRowId = null; // batch rows have the highest row_ids: survivors are one range count
-    const seenIds = new Set();
-    const seenContent = new Set();
-    for (const event of incoming) {
-      const id = scalarText(event && event.id);
-      const contentKey = superContentKey(event);
-      if ((id && (seenIds.has(id) || existingIds.has(id))) ||
-          seenContent.has(contentKey) || existingContent.has(contentKey)) continue;
-      if (id) seenIds.add(id);
-      seenContent.add(contentKey);
-      const rowId = writer.insert(entityProjection("superTimeline", event, ordinal++, contentKey), event);
-      if (firstRowId === null) firstRowId = rowId;
-      added++;
-    }
-    const cap = Number.isFinite(max) ? Math.max(0, Math.floor(max)) : 100000;
-    const count = Number(db.prepare("SELECT count(*) AS n FROM entities WHERE kind='superTimeline'").get().n);
-    let deleted = 0; // eviction policy: superTimelineStore.ts "Retention"
-    if (count > cap) {
-      deleted = db.prepare(
-        "DELETE FROM entities WHERE row_id IN (SELECT row_id FROM entities WHERE kind='superTimeline' ORDER BY row_id LIMIT ?)"
-      ).run(count - cap).changes;
-      db.prepare("DELETE FROM super_labels WHERE event_id NOT IN " +
-        "(SELECT entity_id FROM entities WHERE kind='superTimeline' AND entity_id IS NOT NULL)").run();
-    }
-    db.prepare(
-      "INSERT INTO entity_counts(kind, count) VALUES('superTimeline', ?) " +
-      "ON CONFLICT(kind) DO UPDATE SET count=excluded.count"
-    ).run(count - deleted);
-    // retained, not inserted: a batch past the cap loses its own head
-    return firstRowId === null ? 0 : Number(db.prepare("SELECT count(*) AS n FROM entities WHERE kind='superTimeline' AND row_id>=?").get(firstRowId).n);
-  });
-}
-
-function migrateSuper(dbPath, eventsPath, labelsPath, max) {
-  const db = openDatabase(dbPath);
-  try {
-    if (db.prepare("SELECT 1 AS x FROM storage_meta WHERE key='super_migrated'").get()) return;
-    let events = [];
-    let labels = {};
-    try {
-      const parsed = JSON.parse(readFileSync(eventsPath, "utf8"));
-      if (Array.isArray(parsed)) events = parsed;
-    } catch {}
-    try {
-      const parsed = JSON.parse(readFileSync(labelsPath, "utf8"));
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) labels = parsed;
-    } catch {}
-    const legacyMs = (e) => { const t = Date.parse(e && e.timestamp); return Number.isNaN(t) ? Number.MAX_SAFE_INTEGER : t; }; // row_id is retention age; a legacy array has none
-    writeSuperEvents(db, events.map((e, i) => [legacyMs(e), i, e]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((x) => x[2]), max);
-    withTransaction(db, () => {
-      const labelStatement = db.prepare("INSERT OR IGNORE INTO super_labels(event_id, label) VALUES(?, ?)");
-      for (const [id, values] of Object.entries(labels)) {
-        for (const label of Array.isArray(values) ? values : []) {
-          if (typeof label === "string" && label.trim()) labelStatement.run(id, label.trim());
-        }
-      }
-      db.prepare("INSERT INTO storage_meta(key,value) VALUES('super_migrated','1')").run();
-    });
-  } finally {
-    db.close();
-  }
-}
-
-function appendSuper(dbPath, events, max) {
-  const db = openDatabase(dbPath);
-  try { return writeSuperEvents(db, events, max); } finally { db.close(); }
-}
-
-function scanSuper(dbPath, query) {
-  if (!existsSync(dbPath)) return { rows: [], nextCursor: null };
-  const db = openDatabase(dbPath);
-  try {
-    const where = ["e.kind='superTimeline'"];
-    const params = [];
-    if (query && typeof query.from === "string" && Number.isFinite(Date.parse(query.from))) {
-      where.push("(e.timestamp_ms IS NULL OR e.timestamp_ms>=?)");
-      params.push(Date.parse(query.from));
-    }
-    if (query && typeof query.to === "string" && Number.isFinite(Date.parse(query.to))) {
-      where.push("(e.timestamp_ms IS NULL OR e.timestamp_ms<=?)");
-      params.push(Date.parse(query.to));
-    }
-    const afterMs = query && Number.isFinite(query.afterMs) ? query.afterMs : -9007199254740992;
-    const afterRowId = query && Number.isFinite(query.afterRowId) ? query.afterRowId : 0; // undated sort LAST: superTimelineStore.ts "Ordering"
-    where.push("(coalesce(e.timestamp_ms, 9007199254740991)>? OR " +
-      "(coalesce(e.timestamp_ms, 9007199254740991)=? AND e.row_id>?))");
-    params.push(afterMs, afterMs, afterRowId);
-    const limit = Math.max(1, Math.min(10000, Math.floor((query && query.limit) || 1000)));
-    const rows = db.prepare(
-      "SELECT e.row_id, coalesce(e.timestamp_ms, 9007199254740991) AS sort_ms, e.payload, " +
-      "CASE WHEN count(l.label)=0 THEN '[]' ELSE json_group_array(l.label) END AS labels " +
-      "FROM entities e LEFT JOIN super_labels l ON l.event_id=e.entity_id " +
-      "WHERE " + where.join(" AND ") + " GROUP BY e.row_id " +
-      "ORDER BY sort_ms, e.row_id LIMIT ?"
-    ).all(...params, limit + 1);
-    const hasMore = rows.length > limit;
-    const pageRows = hasMore ? rows.slice(0, limit) : rows;
-    const mapped = pageRows.map((row) => ({
-      event: JSON.parse(row.payload),
-      labels: JSON.parse(row.labels),
-      rowId: row.row_id,
-      sortMs: row.sort_ms,
-    }));
-    return {
-      rows: mapped,
-      nextCursor: hasMore && mapped.length
-        ? { afterMs: mapped[mapped.length - 1].sortMs, afterRowId: mapped[mapped.length - 1].rowId }
-        : null,
-    };
-  } finally {
-    db.close();
-  }
-}
-
-function getSuper(dbPath, id) {
-  if (!existsSync(dbPath)) return null;
-  const db = openDatabase(dbPath);
-  try {
-    const row = db.prepare(
-      "SELECT payload FROM entities WHERE kind='superTimeline' AND entity_id=? ORDER BY ordinal LIMIT 1"
-    ).get(id);
-    return row ? JSON.parse(row.payload) : null;
-  } finally {
-    db.close();
-  }
-}
-
-function setSuperLabels(dbPath, eventId, labels) {
-  const db = openDatabase(dbPath);
-  try {
-    withTransaction(db, () => {
-      db.prepare("DELETE FROM super_labels WHERE event_id=?").run(eventId);
-      const statement = db.prepare("INSERT OR IGNORE INTO super_labels(event_id,label) VALUES(?,?)");
-      for (const label of [...new Set((labels || []).map((value) => String(value).trim()).filter(Boolean))]) {
-        statement.run(eventId, label);
-      }
-    });
-  } finally {
-    db.close();
-  }
-}
+` +
+  SUPER_WORKER_SOURCE +
+  String.raw`
 
 function integrity(dbPath) {
   if (!existsSync(dbPath)) return { ok: true, message: "missing" };
@@ -671,11 +505,14 @@ async function dispatch(message) {
     case "hasEntityIds": return hasEntityIds(message.dbPath, message.kind, message.ids);
     case "entityCounts": return entityCounts(message.dbPath, message.kinds);
     case "appendEntities": return appendEntities(message.dbPath, message.kind, message.entities);
-    case "migrateSuper": return migrateSuper(message.dbPath, message.eventsPath, message.labelsPath, message.max);
+    case "migrateSuper": return migrateSuper(message.dbPath, message.eventsPath, message.labelsPath, message.tagsPath, message.excludeAuthorPrefix, message.max);
     case "appendSuper": return appendSuper(message.dbPath, message.events, message.max);
     case "scanSuper": return scanSuper(message.dbPath, message.query || {});
     case "getSuper": return getSuper(message.dbPath, message.id);
     case "setSuperLabels": return setSuperLabels(message.dbPath, message.eventId, message.labels);
+    case "protectSuper": return protectSuper(message.dbPath, message.eventId);
+    case "unprotectSuper": return unprotectSuper(message.dbPath, message.eventId);
+    case "listSuperProtected": return listSuperProtected(message.dbPath);
     case "integrity": return integrity(message.dbPath);
     case "backupDatabase": return backupDatabase(message.dbPath, message.targetPath);
     case "restoreDatabase": return restoreDatabase(message.sourcePath, message.targetPath);

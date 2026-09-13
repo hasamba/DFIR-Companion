@@ -17,6 +17,11 @@ export const NO_HOST_FACET = "(no host)";
 // facet and taggedOnly both ignore this label — the ☆ Starred button (starred=1) is its only filter UI.
 export const STARRED_LABEL = "starred";
 
+// Author prefix of every tag the automatic content tagger writes (`tagger:<ruleId>`). Defined
+// beside STARRED_LABEL because the raw record must tell an analyst tag from a tagger tag (#958:
+// only analyst tags exempt a row from the cap) without importing the tagger, which sits above it.
+export const TAGGER_AUTHOR_PREFIX = "tagger:";
+
 export interface SuperQuery {
   from?: string; // ISO lower bound (inclusive)
   to?: string; // ISO upper bound (inclusive)
