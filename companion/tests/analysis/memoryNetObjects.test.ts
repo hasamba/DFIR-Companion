@@ -357,3 +357,143 @@ describe("every shown value is neutralised", () => {
     expect(d).toContain("[state: ESTAB) (LISHED");
   });
 });
+
+describe("Codex round 1 pins", () => {
+  const created = readTime({ Created: "2021-04-29 21:41:00.000100" }, ["Created"]);
+  it("a nameless candidate is not comparable, never consistent", () => {
+    const idx = indexProcessRows([{ plugin: "windows.pslist", rows: [proc({ ImageFileName: "-" })] }]);
+    const c = ownerConsistency("3120", "evil.exe", created, idx);
+    expect(c.consistent).toBe(false);
+    expect(c.words).toBe("not comparable: the submitted process row at PID 3120 carries no name");
+  });
+  it("microseconds order the comparison; an equal exit is said as equal; a zero epoch is absent", () => {
+    const late = indexProcessRows([
+      { plugin: "windows.pslist", rows: [proc({ CreateTime: "2021-04-29 21:41:00.000900" })] },
+    ]);
+    expect(ownerConsistency("3120", "evil.exe", created, late).consistent).toBe(false);
+    const same = indexProcessRows([
+      { plugin: "windows.psscan", rows: [proc({ ExitTime: "2021-04-29 21:41:00.000100" })] },
+    ]);
+    expect(ownerConsistency("3120", "evil.exe", created, same).words).toContain(
+      "the same value as this socket's Created",
+    );
+    expect(readTime({ Created: { epoch: 0 } }, ["Created"]).status).toBe("absent");
+    expect(readTime({ Created: "1601-01-01 00:00:00" }, ["Created"]).status).toBe("absent");
+  });
+  it("a pstree child is a submitted row; equivalent offsets and equal instants are one candidate", () => {
+    const tree = indexProcessRows([
+      {
+        plugin: "windows.pstree",
+        rows: [{ ...proc({ PID: 1000, ImageFileName: "explorer.exe" }), __children: [proc()] }],
+      },
+    ]);
+    expect(ownerConsistency("3120", "evil.exe", created, tree).consistent).toBe(true);
+    const offsets = indexProcessRows([
+      { plugin: "windows.pslist", rows: [proc({ Offset: "0xE0000AAA0000" })] },
+      { plugin: "windows.psscan", rows: [proc({ Offset: "e0000aaa0000" })] },
+      { plugin: "windows.pstree", rows: [proc({ Offset: 246290783535104 })] },
+    ]);
+    expect(ownerConsistency("3120", "evil.exe", created, offsets).consistent).toBe(true);
+    const zones = indexProcessRows([
+      { plugin: "windows.pslist", rows: [proc({ Offset: null, CreateTime: "2021-04-29T21:40:00Z" })] },
+      { plugin: "windows.psscan", rows: [proc({ Offset: null, CreateTime: "2021-04-29T23:40:00+02:00" })] },
+    ]);
+    expect(ownerConsistency("3120", "evil.exe", created, zones).consistent).toBe(true);
+    const nameless = indexProcessRows([{ plugin: "windows.pslist", rows: [proc({ PID: "-" })] }]);
+    expect(ownerConsistency("3120", "evil.exe", created, nameless).words).toBe(
+      "no submitted process row has PID 3120",
+    );
+  });
+  it("tuple shape: a local '*' is not a wildcard, a bracketed IPv6 peer is one address, a UDP peer is not a shape", () => {
+    expect(
+      tupleShape({
+        proto: "TCPv4",
+        laddr: "*",
+        lport: "1",
+        faddr: "203.0.113.50",
+        fport: "443",
+        state: "ESTABLISHED",
+      }).ok,
+    ).toBe(false);
+    const v6 = tupleShape({
+      proto: "TCPv6",
+      laddr: "::",
+      lport: "1",
+      faddr: "[2001:db8::1]",
+      fport: "443",
+      state: "ESTABLISHED",
+    });
+    expect(v6.ok).toBe(true);
+    expect(v6.peer).toBe("2001:db8::1");
+    expect(
+      tupleShape({
+        proto: "TCPv6",
+        laddr: "::1",
+        lport: "1",
+        faddr: "[::]",
+        fport: "0",
+        state: "ESTABLISHED",
+      }).ok,
+    ).toBe(false);
+    expect(
+      tupleShape({
+        proto: "UDPv4",
+        laddr: "0.0.0.0",
+        lport: "137",
+        faddr: "203.0.113.50",
+        fport: "137",
+        state: "",
+      }).ok,
+    ).toBe(false);
+    const r = run({
+      "windows.netscan.NetScan": [sock({ Proto: "TCPv6", LocalAddr: "::", ForeignAddr: "[2001:db8::1]" })],
+    });
+    expect(r.events[0].dstIp).toBe("2001:db8::1");
+  });
+  it("a PID that is not a number is neutralised and never shown as a PID", () => {
+    const r = run({ "windows.netscan.NetScan": [sock({ PID: "] [x\nboom" })] });
+    const d = r.events[0].description;
+    expect(d).not.toContain("] [x");
+    expect(d).not.toContain("\n");
+    expect(d).toContain("PID not readable (");
+    expect(d).not.toMatch(/PID \] /);
+  });
+  it("a long owner never pushes the tuple or traffic qualification past the cap; whole tags only", () => {
+    const r = run({ "windows.netscan.NetScan": [sock({ Owner: "o".repeat(500), ForeignPort: 70000 })] });
+    const d = r.events[0].description;
+    expect(d.length).toBeLessThanOrEqual(600);
+    expect(d).toContain("[tuple incomplete: foreign port = 70000]");
+    expect((d.match(/\[/g) ?? []).length).toBe((d.match(/\]/g) ?? []).length);
+  });
+  it("the object offset is shown; two rows without one stay two rows downstream (distinct descriptions)", () => {
+    const r = run({ "windows.netscan.NetScan": [sock()] });
+    expect(r.events[0].description).toContain("[object 0xe0001a2b3c40]");
+    const none = run({ "windows.netscan.NetScan": [sock({ Offset: null }), sock({ Offset: null })] });
+    expect(none.events).toHaveLength(2);
+    expect(none.events[0].description).not.toBe(none.events[1].description);
+    expect(none.events[0].description).toContain("[object offset not in the record]");
+  });
+  it("Rekall socket rows keep their legacy rendering and make no state, owner or provenance claim", () => {
+    const rekall = [
+      ["m", { plugin: { name: "netscan" } }],
+      ["t", [{ cname: "protocol" }]],
+      [
+        "r",
+        {
+          protocol: "TCPv4",
+          local_addr: "10.0.0.5:50122",
+          remote_addr: "203.0.113.50:443",
+          state: "ESTABLISHED",
+          pid: 3120,
+          owner: "evil.exe",
+        },
+      ],
+    ];
+    const r = parseMemory(JSON.stringify(rekall));
+    expect(r.tool).toBe("Rekall");
+    const d = r.events[0].description;
+    expect(d).toContain("10.0.0.5:50122 → 203.0.113.50:443 [state: ESTABLISHED] owner evil.exe (PID 3120)");
+    expect(d).not.toMatch(/pool scan|traversal|submitted process|tuple incomplete/);
+    expect(r.iocs.some((i) => i.type === "ip" && i.value === "203.0.113.50")).toBe(true);
+  });
+});

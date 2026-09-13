@@ -25,6 +25,7 @@ import { isIP } from "node:net";
 import { cellStr, isPlaceholderCell } from "./memoryFields.js";
 import { baseName, getCI, isObject, normalizeTime } from "./siemImport.js";
 import { breakHashRuns, keyDigest, showToken } from "./recordIdentity.js";
+import { pstreeChildren } from "./pstreeDepth.js";
 
 type Row = Record<string, unknown>;
 
@@ -92,8 +93,24 @@ export function socketProvenance(plugin: string): string {
 
 export interface TimeReading {
   status: "absent" | "unreadable" | "ok";
+  /** Canonical ISO (millisecond) — the row's timestamp. */
   iso: string;
+  /** The instant at the record's full precision, for ordering: [epoch ms, fraction beyond ms]. */
+  instant?: [number, number];
   raw: string;
+}
+
+/** Order two full-precision instants: negative, zero, positive. */
+export function compareInstants(a: [number, number], b: [number, number]): number {
+  return a[0] !== b[0] ? a[0] - b[0] : a[1] - b[1];
+}
+
+function instantOf(iso: string): [number, number] | undefined {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return undefined;
+  // Digits beyond the millisecond, as a fraction of one millisecond (Volatility renders microseconds).
+  const frac = /\.(\d{3})(\d+)(?:Z|[+-]\d{2}:?\d{2})$/.exec(iso)?.[2] ?? "";
+  return [t, frac ? Number(`0.${frac}`) : 0];
 }
 
 const SENTINEL_DATE = /^(?:1601-01-01|0001-01-01|1970-01-01)/;
@@ -106,19 +123,23 @@ export function readTime(row: Row, keys: readonly string[]): TimeReading {
     if (isObject(v)) {
       const ep = getCI(v, "epoch") ?? getCI(v, "value");
       const n = typeof ep === "number" ? ep : Number(cellStr(ep));
+      if (ep === undefined || ep === null || n === 0) return { status: "absent", iso: "", raw: "" }; // Rekall's zero epoch
       if (Number.isFinite(n) && n > 1e8) {
         const d = new Date(n > 1e12 ? n : n * 1000);
-        if (!Number.isNaN(d.getTime())) return { status: "ok", iso: d.toISOString(), raw: String(ep) };
+        if (!Number.isNaN(d.getTime())) {
+          return { status: "ok", iso: d.toISOString(), instant: [d.getTime(), 0], raw: String(ep) };
+        }
       }
       return { status: "unreadable", iso: "", raw: JSON.stringify(v).slice(0, 80) };
     }
     const raw = cellStr(v).trim();
-    if (!raw || raw === "0" || isPlaceholderCell(raw) || SENTINEL_DATE.test(raw))
+    if (!raw || raw === "0" || isPlaceholderCell(raw) || SENTINEL_DATE.test(raw)) {
       return { status: "absent", iso: "", raw };
+    }
     const iso = normalizeTime(raw);
-    const t = iso ? Date.parse(iso) : NaN;
-    return Number.isFinite(t)
-      ? { status: "ok", iso: new Date(t).toISOString(), raw }
+    const instant = iso ? instantOf(iso) : undefined;
+    return instant
+      ? { status: "ok", iso: new Date(instant[0]).toISOString(), instant, raw }
       : { status: "unreadable", iso: "", raw };
   }
   return { status: "absent", iso: "", raw: "" };
@@ -157,35 +178,49 @@ function processPid(row: Row): string {
   return /^\d+$/.test(s) ? s : "";
 }
 
+/** An object offset in canonical form: hex or decimal, with or without 0x, any case → one number. */
+export function canonicalOffset(row: Row): string {
+  const raw = cellStr(getCI(row, "Offset(V)") ?? getCI(row, "Offset") ?? getCI(row, "offset")).trim();
+  if (!raw || isPlaceholderCell(raw)) return "";
+  const hex = /^0x([0-9a-f]+)$/i.exec(raw);
+  if (hex) return BigInt(`0x${hex[1]}`).toString(16);
+  if (/^\d+$/.test(raw)) return BigInt(raw).toString(16);
+  if (/^[0-9a-f]+$/i.test(raw)) return BigInt(`0x${raw}`).toString(16);
+  return raw.toLowerCase();
+}
+
 /**
  * Index the process rows an upload submitted, by PID. One EPROCESS listed by two plugins (pslist
- * and psscan) is ONE candidate: rows are de-duplicated by object offset when the record carries
- * one, else by (name, create time).
+ * and psscan) is ONE candidate: rows are de-duplicated by canonical object offset when the record
+ * carries one, else by (name, canonical create time). pstree's nested children are rows too.
  */
 export function indexProcessRows(tables: readonly { plugin: string; rows: readonly Row[] }[]): ProcessIndex {
   const byPid = new Map<string, ProcessCandidate[]>();
   const seen = new Set<string>();
   let any = false;
-  for (const t of tables) {
-    for (const r of t.rows) {
-      const pid = processPid(r);
-      if (!pid) continue;
+  const walk = (rows: readonly Row[], depth: number): void => {
+    for (const r of rows) {
       any = true;
-      const name = processName(r);
-      const created = readTime(r, PROCESS_CREATED_KEYS);
-      const exited = readTime(r, PROCESS_EXIT_KEYS);
-      const offset = cellStr(getCI(r, "Offset(V)") ?? getCI(r, "Offset") ?? getCI(r, "offset")).trim();
-      const key =
-        offset && !isPlaceholderCell(offset)
-          ? `${pid}|off:${offset.toLowerCase()}`
-          : `${pid}|${name.toLowerCase()}|${created.raw}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const list = byPid.get(pid) ?? [];
-      list.push({ name, created, exited });
-      byPid.set(pid, list);
+      const pid = processPid(r);
+      if (pid) {
+        const name = processName(r);
+        const created = readTime(r, PROCESS_CREATED_KEYS);
+        const exited = readTime(r, PROCESS_EXIT_KEYS);
+        const offset = canonicalOffset(r);
+        const key = offset
+          ? `${pid}|off:${offset}`
+          : `${pid}|${name.toLowerCase()}|${created.iso || created.raw}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          const list = byPid.get(pid) ?? [];
+          list.push({ name, created, exited });
+          byPid.set(pid, list);
+        }
+      }
+      walk(pstreeChildren(r, depth), depth + 1);
     }
-  }
+  };
+  for (const t of tables) walk(t.rows, 0);
   return { any, byPid };
 }
 
@@ -213,6 +248,12 @@ export function ownerConsistency(
     };
   }
   const [c] = candidates;
+  if (owner && !c.name) {
+    return {
+      consistent: false,
+      words: `not comparable: the submitted process row at PID ${pid} carries no name`,
+    };
+  }
   if (owner && c.name && baseName(owner).toLowerCase() !== c.name.toLowerCase()) {
     return {
       consistent: false,
@@ -229,14 +270,18 @@ export function ownerConsistency(
   }
   if (c.created.status === "unreadable") notComparable.push("the process row's create time is not readable");
   if (c.exited.status === "unreadable") notComparable.push("the process row's exit time is not readable");
-  const socketAt = created.status === "ok" ? Date.parse(created.iso) : NaN;
-  if (created.status === "ok" && c.created.status === "ok" && Date.parse(c.created.iso) > socketAt) {
+  const socketAt = created.instant;
+  const after = (t: TimeReading): boolean =>
+    !!socketAt && !!t.instant && compareInstants(t.instant, socketAt) > 0;
+  const before = (t: TimeReading): boolean =>
+    !!socketAt && !!t.instant && compareInstants(t.instant, socketAt) < 0;
+  if (after(c.created)) {
     return {
       consistent: false,
       words: `not consistent: the submitted process row was created at ${c.created.iso}, after this socket's Created value`,
     };
   }
-  if (created.status === "ok" && c.exited.status === "ok" && Date.parse(c.exited.iso) < socketAt) {
+  if (before(c.exited)) {
     return {
       consistent: false,
       words: `not consistent: the submitted process row reports exit at ${c.exited.iso}, before this socket's Created value`,
@@ -246,8 +291,10 @@ export function ownerConsistency(
   const createdWords =
     c.created.status === "ok" ? `created ${c.created.iso}` : "create time not in the record";
   let words = `consistent with one submitted process row: ${name}, ${createdWords}`;
-  if (created.status === "ok" && c.exited.status === "ok") {
+  if (after(c.exited)) {
     words += `; that row reports exit at ${c.exited.iso}, after this socket's Created value`;
+  } else if (socketAt && c.exited.instant) {
+    words += `; that row reports exit at ${c.exited.iso}, the same value as this socket's Created`;
   }
   if (notComparable.length) words += `; lifetime not comparable (${notComparable.join("; ")})`;
   return { consistent: true, words };
@@ -275,14 +322,17 @@ export interface TupleShape {
 }
 
 const PROTO_RE = /^(?:TCP|UDP)(?:v4|v6)?$/i;
-const WILDCARD = new Set(["", "*", "0.0.0.0", "::", "0"]);
+/** A local wildcard is the unspecified address; the foreign side also renders `*` for UDP. */
+const LOCAL_WILDCARD = new Set(["0.0.0.0", "::"]);
+const FOREIGN_WILDCARD = new Set(["", "*", "0.0.0.0", "::"]);
 
 function port(v: string): number {
   return /^\d{1,5}$/.test(v) && Number(v) <= 65535 ? Number(v) : NaN;
 }
 
-function address(v: string): boolean {
-  return WILDCARD.has(v) || isIP(v.replace(/^\[|\]$/g, "")) !== 0;
+/** `[::1]` and `::1` are one address; the bracketed form is normalised once, here. */
+export function normalizeAddress(v: string): string {
+  return (v ?? "").trim().replace(/^\[(.*)\]$/, "$1");
 }
 
 /** Does the tuple have the shape its protocol and state imply? */
@@ -297,22 +347,26 @@ export function tupleShape(t: Tuple): TupleShape {
   if (!PROTO_RE.test(t.proto)) return bad("proto", t.proto);
   const lp = port(t.lport);
   if (!Number.isFinite(lp)) return bad("local port", t.lport);
-  if (!t.laddr || !address(t.laddr)) return bad("local address", t.laddr);
+  const laddr = normalizeAddress(t.laddr);
+  if (!laddr || !(LOCAL_WILDCARD.has(laddr) || isIP(laddr) !== 0)) return bad("local address", t.laddr);
   const fp = port(t.fport === "" || t.fport === "*" ? "0" : t.fport);
   if (!Number.isFinite(fp)) return bad("foreign port", t.fport);
-  if (!address(t.faddr)) return bad("foreign address", t.faddr);
-  const wildcardPeer = WILDCARD.has(t.faddr) || fp === 0;
+  const faddr = normalizeAddress(t.faddr);
+  if (!(FOREIGN_WILDCARD.has(faddr) || isIP(faddr) !== 0)) return bad("foreign address", t.faddr);
+  const wildcardPeer = FOREIGN_WILDCARD.has(faddr) || fp === 0;
   const listening = t.state.trim().toUpperCase() === "LISTENING";
   const udp = /^udp/i.test(t.proto);
-  if (!udp && !listening && wildcardPeer)
-    return bad("foreign endpoint", `${t.faddr || "*"}:${t.fport || "0"}`);
-  return { ok: true, problem: "", peer: wildcardPeer ? "" : t.faddr, lport: lp, fport: fp };
+  const endpoint = `${t.faddr || "*"}:${t.fport || "0"}`;
+  // A non-listening TCP object has a peer; a UDP or listening object has none — either way round
+  // is not the shape Volatility renders.
+  if (!udp && !listening && wildcardPeer) return bad("foreign endpoint", endpoint);
+  if ((udp || listening) && !wildcardPeer) return bad("foreign endpoint", endpoint);
+  return { ok: true, problem: "", peer: wildcardPeer ? "" : faddr, lport: lp, fport: fp };
 }
 
-/** The object's identity key: the offset when the record carries one, else nothing folds. */
-export function objectKey(row: Row, rowIndex: number): string {
-  const offset = cellStr(getCI(row, "Offset") ?? getCI(row, "Offset(V)") ?? getCI(row, "offset")).trim();
-  return offset && !isPlaceholderCell(offset) ? `off:${offset.toLowerCase()}` : `row:${rowIndex}`;
+/** The object's identity: its canonical offset when the record carries one, else "" (nothing folds). */
+export function objectOffset(row: Row): string {
+  return canonicalOffset(row);
 }
 
 /** A digest for a shown value in a key. */
