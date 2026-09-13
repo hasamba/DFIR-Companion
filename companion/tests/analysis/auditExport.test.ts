@@ -136,6 +136,26 @@ describe("parseDestinationInput", () => {
     expect(next.splunk?.token).toBe("hec-secret");
   });
 
+  it("keeps a disabled destination disabled when the edit omits `enabled` (#998)", () => {
+    // The dashboard always sends the flag; an API client renaming a destination may not. Silence
+    // must not mean "switch forwarding back on".
+    const existing = dest({ enabled: false });
+    const parsed = parseDestinationInput(
+      { type: "splunk", name: "renamed", splunk: { url: "https://splunk.example.com:8088", token: "" } },
+      existing,
+    );
+    expect(parsed.ok).toBe(true);
+    expect(parsed.draft?.enabled).toBe(false);
+  });
+
+  it("still defaults a NEW destination to enabled when the flag is omitted", () => {
+    const parsed = parseDestinationInput({
+      type: "splunk",
+      splunk: { url: "https://splunk.example.com:8088", token: "t" },
+    });
+    expect(parsed.draft?.enabled).toBe(true);
+  });
+
   it("refuses to inherit the credential when the collector URL changes", () => {
     // The same defect as the type change below, one step subtler: keeping the type but repointing
     // the URL and leaving the redacted token blank would send the old collector's HEC token to a

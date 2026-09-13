@@ -3,7 +3,7 @@
   "analysis/evidenceGraph.ts": 855,
   "analysis/memoryImport.ts": 1655,
   "analysis/seedDemoCase.ts": 2700,
-  "analysis/siemImport.ts": 1672,
+  "analysis/siemImport.ts": 1566,
   "analysis/velociraptorImport.ts": 1882,
   "integrations/velociraptor/velociraptorApi.ts": 1245,
   "public/dashboard.html#inline-js": 1958,
@@ -12,7 +12,7 @@
   "routes/aiSynthesis.ts": 863,
   "routes/caseLifecycle.ts": 829,
   "routes/findings.ts": 833,
-  "routes/import.ts": 3098,
+  "routes/import.ts": 2914,
   "routes/mcp.ts": 913,
   "routes/threatIntel.ts": 892,
   "routes/velociraptor.ts": 1070
