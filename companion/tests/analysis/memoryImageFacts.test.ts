@@ -260,8 +260,6 @@ describe("image facts carry onto the rows of the same upload", () => {
     expect(d).toMatch(/ #[A-Za-z0-9_-]{22}$/);
   });
   it("readImageFacts finds nothing in an upload without an info table", () => {
-    expect(
-      readImageFacts([{ plugin: "windows.pslist", rows: pslist() }]),
-    ).toBeNull();
+    expect(readImageFacts([{ plugin: "windows.pslist", rows: pslist() }])).toBeNull();
   });
 });
