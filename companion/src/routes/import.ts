@@ -27,6 +27,7 @@ import { parseSysdig, type SysdigImportOptions } from "../analysis/sysdigImport.
 import { parseWazuhAlerts, type WazuhImportOptions } from "../analysis/wazuhImport.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
 import { settleForensicImport, type SettleDeps } from "./importSettle.js";
+import { commitDedicatedImport, persistImportEvidence } from "./importCommit.js";
 import { autoTagNewEvents } from "../analysis/taggerAuto.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import { FalsePositiveStore } from "../analysis/falsePositive.js";
@@ -811,6 +812,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   app.post("/cases/:id/import-csv", async (req: Request, res: Response) => {
     if (!options.pipeline || !options.pipeline.hasSynthesisProvider())
       return res.status(501).json({ error: "AI provider not configured for CSV analysis" });
+    const pipeline = options.pipeline;
     const caseId = req.params.id;
     const csv = typeof req.body?.csv === "string" ? req.body.csv : "";
     const originalName = String(req.body?.filename ?? "import.csv");
@@ -821,19 +823,11 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       if (rows.length === 0) return res.status(400).json({ error: "CSV has no data rows" });
 
       // Evidence-first: persist the raw CSV + append the audit line before analysis.
-      const seq = await store.nextImportSeq(caseId);
-      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "import.csv";
-      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
-      const importedAt = new Date().toISOString();
-      await store.saveImport(caseId, storedName, csv);
-      await store.appendImport(caseId, {
-        caseId,
-        sequenceNumber: seq,
-        importedAt,
-        filename: storedName,
+      const { seq, storedName, importedAt } = await persistImportEvidence(store, caseId, {
+        text: csv,
         originalName,
+        fallbackName: "import.csv",
         rows: rows.length,
-        bytes: Buffer.byteLength(csv, "utf8"),
       });
 
       // Acknowledge immediately; the dashboard watches AI status + state over the WS.
@@ -846,30 +840,27 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         at: importedAt,
         detail: `importing ${rows.length} CSV row(s)`,
       });
-      void options.pipeline
-        .analyzeCsv(caseId, csv, {
-          label: storedName,
-          idPrefix: `m${seq}`,
-          importedAt,
-          onProgress: (done, total) =>
-            options.onAiStatus?.(caseId, {
-              status: "analyzing",
-              phase: "extracting",
-              at: new Date().toISOString(),
-              detail: `CSV import — batch ${done}/${total}`,
-            }),
-        })
-        .then(() => {
-          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-          resynthesizeInBackground(caseId);
-        })
-        .catch((err) =>
-          options.onAiStatus?.(caseId, {
-            status: "error",
-            at: new Date().toISOString(),
-            detail: (err as Error).message,
+      commitDedicatedImport(ctx, settleDeps, {
+        caseId,
+        kind: "csv",
+        storedName,
+        importedAt,
+        linesIn: csv.split(/\r?\n/).length,
+        path: "ai",
+        run: () =>
+          pipeline.analyzeCsv(caseId, csv, {
+            label: storedName,
+            idPrefix: `m${seq}`,
+            importedAt,
+            onProgress: (done, total) =>
+              options.onAiStatus?.(caseId, {
+                status: "analyzing",
+                phase: "extracting",
+                at: new Date().toISOString(),
+                detail: `CSV import — batch ${done}/${total}`,
+              }),
           }),
-        );
+      });
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -883,6 +874,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   app.post("/cases/:id/import-log", async (req: Request, res: Response) => {
     if (!options.pipeline || !options.pipeline.hasSynthesisProvider())
       return res.status(501).json({ error: "AI provider not configured for log analysis" });
+    const pipeline = options.pipeline;
     const caseId = req.params.id;
     const text = typeof req.body?.text === "string" ? req.body.text : "";
     const originalName = String(req.body?.filename ?? "import.log");
@@ -894,21 +886,11 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       const { lines } = parseLogLines(text);
       if (lines.length === 0) return res.status(400).json({ error: "log file has no non-empty lines" });
 
-      const seq = await store.nextImportSeq(caseId);
-      // Preserve the original extension (.log / .txt / etc.) so it round-trips through
-      // the evidence endpoint with the right content-type.
-      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "import.log";
-      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
-      const importedAt = new Date().toISOString();
-      await store.saveImport(caseId, storedName, text);
-      await store.appendImport(caseId, {
-        caseId,
-        sequenceNumber: seq,
-        importedAt,
-        filename: storedName,
+      const { seq, storedName, importedAt } = await persistImportEvidence(store, caseId, {
+        text: text,
         originalName,
+        fallbackName: "import.log",
         rows: lines.length,
-        bytes: Buffer.byteLength(text, "utf8"),
       });
 
       res.status(202).json({ accepted: true, file: storedName, lines: lines.length });
@@ -919,30 +901,27 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         at: importedAt,
         detail: `importing ${lines.length} log line(s)`,
       });
-      void options.pipeline
-        .analyzeLog(caseId, text, {
-          label: storedName,
-          idPrefix: `l${seq}`,
-          importedAt,
-          onProgress: (done, total) =>
-            options.onAiStatus?.(caseId, {
-              status: "analyzing",
-              phase: "extracting",
-              at: new Date().toISOString(),
-              detail: `log import — batch ${done}/${total}`,
-            }),
-        })
-        .then(() => {
-          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-          resynthesizeInBackground(caseId);
-        })
-        .catch((err) =>
-          options.onAiStatus?.(caseId, {
-            status: "error",
-            at: new Date().toISOString(),
-            detail: (err as Error).message,
+      commitDedicatedImport(ctx, settleDeps, {
+        caseId,
+        kind: "log",
+        storedName,
+        importedAt,
+        linesIn: text.split(/\r?\n/).length,
+        path: "ai",
+        run: () =>
+          pipeline.analyzeLog(caseId, text, {
+            label: storedName,
+            idPrefix: `l${seq}`,
+            importedAt,
+            onProgress: (done, total) =>
+              options.onAiStatus?.(caseId, {
+                status: "analyzing",
+                phase: "extracting",
+                at: new Date().toISOString(),
+                detail: `log import — batch ${done}/${total}`,
+              }),
           }),
-        );
+      });
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -954,6 +933,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // dropping scan-lifecycle/info noise. Synthesis (findings/attacker path) runs after.
   app.post("/cases/:id/import-thor", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const pipeline = options.pipeline;
     const caseId = req.params.id;
     const json =
       typeof req.body?.json === "string"
@@ -989,19 +969,11 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         });
       }
 
-      const seq = await store.nextImportSeq(caseId);
-      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "thor.json";
-      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
-      const importedAt = new Date().toISOString();
-      await store.saveImport(caseId, storedName, json);
-      await store.appendImport(caseId, {
-        caseId,
-        sequenceNumber: seq,
-        importedAt,
-        filename: storedName,
+      const { seq, storedName, importedAt } = await persistImportEvidence(store, caseId, {
+        text: json,
         originalName,
+        fallbackName: "thor.json",
         rows: preview.kept,
-        bytes: Buffer.byteLength(json, "utf8"),
       });
 
       res.status(202).json({
@@ -1018,31 +990,28 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         at: importedAt,
         detail: `importing ${preview.kept} THOR finding(s)`,
       });
-      void options.pipeline
-        .importThor(caseId, json, {
-          label: storedName,
-          idPrefix: `t${seq}`,
-          importedAt,
-          thor: thorOpts,
-          onProgress: (done, total) =>
-            options.onAiStatus?.(caseId, {
-              status: "analyzing",
-              phase: "extracting",
-              at: new Date().toISOString(),
-              detail: `THOR import — ${done}/${total}`,
-            }),
-        })
-        .then(() => {
-          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-          resynthesizeInBackground(caseId);
-        })
-        .catch((err) =>
-          options.onAiStatus?.(caseId, {
-            status: "error",
-            at: new Date().toISOString(),
-            detail: (err as Error).message,
+      commitDedicatedImport(ctx, settleDeps, {
+        caseId,
+        kind: "thor",
+        storedName,
+        importedAt,
+        linesIn: json.split(/\r?\n/).length,
+        path: "deterministic",
+        run: () =>
+          pipeline.importThor(caseId, json, {
+            label: storedName,
+            idPrefix: `t${seq}`,
+            importedAt,
+            thor: thorOpts,
+            onProgress: (done, total) =>
+              options.onAiStatus?.(caseId, {
+                status: "analyzing",
+                phase: "extracting",
+                at: new Date().toISOString(),
+                detail: `THOR import — ${done}/${total}`,
+              }),
           }),
-        );
+      });
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -1056,6 +1025,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // field auto-detection), and repetitive events aggregate. Synthesis runs after.
   app.post("/cases/:id/import-siem", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const pipeline = options.pipeline;
     const caseId = req.params.id;
     const json =
       typeof req.body?.json === "string"
@@ -1098,19 +1068,11 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
           error: `no events after the '${rawLevel}' severity floor (${preview.total} record(s) parsed)`,
         });
 
-      const seq = await store.nextImportSeq(caseId);
-      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "siem.json";
-      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
-      const importedAt = new Date().toISOString();
-      await store.saveImport(caseId, storedName, json);
-      await store.appendImport(caseId, {
-        caseId,
-        sequenceNumber: seq,
-        importedAt,
-        filename: storedName,
+      const { seq, storedName, importedAt } = await persistImportEvidence(store, caseId, {
+        text: json,
         originalName,
+        fallbackName: "siem.json",
         rows: preview.kept,
-        bytes: Buffer.byteLength(json, "utf8"),
       });
 
       res.status(202).json({
@@ -1129,31 +1091,29 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         at: importedAt,
         detail: `importing ${preview.kept} SIEM event(s)`,
       });
-      void options.pipeline
-        .importSiem(caseId, json, {
-          label: storedName,
-          idPrefix: `s${seq}`,
-          importedAt,
-          siem: siemOpts,
-          onProgress: (done, total) =>
-            options.onAiStatus?.(caseId, {
-              status: "analyzing",
-              phase: "extracting",
-              at: new Date().toISOString(),
-              detail: `SIEM import — ${done}/${total}`,
-            }),
-        })
-        .then(() => {
-          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-          resynthesizeInBackground(caseId);
-        })
-        .catch((err) =>
-          options.onAiStatus?.(caseId, {
-            status: "error",
-            at: new Date().toISOString(),
-            detail: (err as Error).message,
+      commitDedicatedImport(ctx, settleDeps, {
+        caseId,
+        kind: "siem",
+        storedName,
+        importedAt,
+        linesIn: json.split(/\r?\n/).length,
+        path: "deterministic",
+        minSeverity,
+        run: () =>
+          pipeline.importSiem(caseId, json, {
+            label: storedName,
+            idPrefix: `s${seq}`,
+            importedAt,
+            siem: siemOpts,
+            onProgress: (done, total) =>
+              options.onAiStatus?.(caseId, {
+                status: "analyzing",
+                phase: "extracting",
+                at: new Date().toISOString(),
+                detail: `SIEM import — ${done}/${total}`,
+              }),
           }),
-        );
+      });
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -1167,6 +1127,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // severity/MITRE. Synthesis runs after.
   app.post("/cases/:id/import-chainsaw", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const pipeline = options.pipeline;
     const caseId = req.params.id;
     const json =
       typeof req.body?.json === "string"
@@ -1208,19 +1169,11 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
           error: `no events after the '${rawLevel}' severity floor (${preview.total} record(s) parsed)`,
         });
 
-      const seq = await store.nextImportSeq(caseId);
-      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "chainsaw.json";
-      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
-      const importedAt = new Date().toISOString();
-      await store.saveImport(caseId, storedName, json);
-      await store.appendImport(caseId, {
-        caseId,
-        sequenceNumber: seq,
-        importedAt,
-        filename: storedName,
+      const { seq, storedName, importedAt } = await persistImportEvidence(store, caseId, {
+        text: json,
         originalName,
+        fallbackName: "chainsaw.json",
         rows: preview.kept,
-        bytes: Buffer.byteLength(json, "utf8"),
       });
 
       res.status(202).json({
@@ -1241,31 +1194,29 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         at: importedAt,
         detail: `importing ${preview.kept} ${kind} event(s)`,
       });
-      void options.pipeline
-        .importChainsaw(caseId, json, {
-          label: storedName,
-          idPrefix: `c${seq}`,
-          importedAt,
-          chainsaw: chainsawOpts,
-          onProgress: (done, total) =>
-            options.onAiStatus?.(caseId, {
-              status: "analyzing",
-              phase: "extracting",
-              at: new Date().toISOString(),
-              detail: `${kind} import — ${done}/${total}`,
-            }),
-        })
-        .then(() => {
-          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-          resynthesizeInBackground(caseId);
-        })
-        .catch((err) =>
-          options.onAiStatus?.(caseId, {
-            status: "error",
-            at: new Date().toISOString(),
-            detail: (err as Error).message,
+      commitDedicatedImport(ctx, settleDeps, {
+        caseId,
+        kind: "chainsaw",
+        storedName,
+        importedAt,
+        linesIn: json.split(/\r?\n/).length,
+        path: "deterministic",
+        minSeverity,
+        run: () =>
+          pipeline.importChainsaw(caseId, json, {
+            label: storedName,
+            idPrefix: `c${seq}`,
+            importedAt,
+            chainsaw: chainsawOpts,
+            onProgress: (done, total) =>
+              options.onAiStatus?.(caseId, {
+                status: "analyzing",
+                phase: "extracting",
+                at: new Date().toISOString(),
+                detail: `${kind} import — ${done}/${total}`,
+              }),
           }),
-        );
+      });
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -1278,6 +1229,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // description + MITRE, and IOCs/asset/process-chain come from the rendered detail fields.
   app.post("/cases/:id/import-hayabusa", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const pipeline = options.pipeline;
     const caseId = req.params.id;
     const text =
       typeof req.body?.text === "string"
@@ -1318,19 +1270,11 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
           error: `no events after the '${rawLevel}' severity floor (${preview.total} record(s) parsed)`,
         });
 
-      const seq = await store.nextImportSeq(caseId);
-      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "hayabusa.csv";
-      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
-      const importedAt = new Date().toISOString();
-      await store.saveImport(caseId, storedName, text);
-      await store.appendImport(caseId, {
-        caseId,
-        sequenceNumber: seq,
-        importedAt,
-        filename: storedName,
+      const { seq, storedName, importedAt } = await persistImportEvidence(store, caseId, {
+        text: text,
         originalName,
+        fallbackName: "hayabusa.csv",
         rows: preview.kept,
-        bytes: Buffer.byteLength(text, "utf8"),
       });
 
       res.status(202).json({
@@ -1349,31 +1293,29 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         at: importedAt,
         detail: `importing ${preview.kept} Hayabusa event(s)`,
       });
-      void options.pipeline
-        .importHayabusa(caseId, text, {
-          label: storedName,
-          idPrefix: `h${seq}`,
-          importedAt,
-          hayabusa: hayabusaOpts,
-          onProgress: (done, total) =>
-            options.onAiStatus?.(caseId, {
-              status: "analyzing",
-              phase: "extracting",
-              at: new Date().toISOString(),
-              detail: `Hayabusa import — ${done}/${total}`,
-            }),
-        })
-        .then(() => {
-          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-          resynthesizeInBackground(caseId);
-        })
-        .catch((err) =>
-          options.onAiStatus?.(caseId, {
-            status: "error",
-            at: new Date().toISOString(),
-            detail: (err as Error).message,
+      commitDedicatedImport(ctx, settleDeps, {
+        caseId,
+        kind: "hayabusa",
+        storedName,
+        importedAt,
+        linesIn: text.split(/\r?\n/).length,
+        path: "deterministic",
+        minSeverity,
+        run: () =>
+          pipeline.importHayabusa(caseId, text, {
+            label: storedName,
+            idPrefix: `h${seq}`,
+            importedAt,
+            hayabusa: hayabusaOpts,
+            onProgress: (done, total) =>
+              options.onAiStatus?.(caseId, {
+                status: "analyzing",
+                phase: "extracting",
+                at: new Date().toISOString(),
+                detail: `Hayabusa import — ${done}/${total}`,
+              }),
           }),
-        );
+      });
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -1385,6 +1327,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // generic) and mapped — detection rows verdict-driven, the rest auto-detect time + IOCs.
   app.post("/cases/:id/import-velociraptor", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const pipeline = options.pipeline;
     const caseId = req.params.id;
     const text =
       typeof req.body?.text === "string"
@@ -1425,19 +1368,11 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
           error: `no events after the '${rawLevel}' severity floor (${preview.total} row(s) parsed)`,
         });
 
-      const seq = await store.nextImportSeq(caseId);
-      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "velociraptor.json";
-      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
-      const importedAt = new Date().toISOString();
-      await store.saveImport(caseId, storedName, text);
-      await store.appendImport(caseId, {
-        caseId,
-        sequenceNumber: seq,
-        importedAt,
-        filename: storedName,
+      const { seq, storedName, importedAt } = await persistImportEvidence(store, caseId, {
+        text: text,
         originalName,
+        fallbackName: "velociraptor.json",
         rows: preview.kept,
-        bytes: Buffer.byteLength(text, "utf8"),
       });
 
       res.status(202).json({
@@ -1457,31 +1392,29 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         at: importedAt,
         detail: `importing ${preview.kept} Velociraptor event(s)`,
       });
-      void options.pipeline
-        .importVelociraptor(caseId, text, {
-          label: storedName,
-          idPrefix: `v${seq}`,
-          importedAt,
-          velociraptor: vrOpts,
-          onProgress: (done, total) =>
-            options.onAiStatus?.(caseId, {
-              status: "analyzing",
-              phase: "extracting",
-              at: new Date().toISOString(),
-              detail: `Velociraptor import — ${done}/${total}`,
-            }),
-        })
-        .then(() => {
-          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-          resynthesizeInBackground(caseId);
-        })
-        .catch((err) =>
-          options.onAiStatus?.(caseId, {
-            status: "error",
-            at: new Date().toISOString(),
-            detail: (err as Error).message,
+      commitDedicatedImport(ctx, settleDeps, {
+        caseId,
+        kind: "velociraptor",
+        storedName,
+        importedAt,
+        linesIn: text.split(/\r?\n/).length,
+        path: "deterministic",
+        minSeverity,
+        run: () =>
+          pipeline.importVelociraptor(caseId, text, {
+            label: storedName,
+            idPrefix: `v${seq}`,
+            importedAt,
+            velociraptor: vrOpts,
+            onProgress: (done, total) =>
+              options.onAiStatus?.(caseId, {
+                status: "analyzing",
+                phase: "extracting",
+                at: new Date().toISOString(),
+                detail: `Velociraptor import — ${done}/${total}`,
+              }),
           }),
-        );
+      });
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -1493,6 +1426,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // from the detections (Suricata alerts + Zeek notices); telemetry contributes IOCs only.
   app.post("/cases/:id/import-network", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const pipeline = options.pipeline;
     const caseId = req.params.id;
     const text =
       typeof req.body?.text === "string"
@@ -1533,19 +1467,11 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
           error: `no detections or IOCs found (${preview.total} record(s) parsed${rawLevel ? `, after the '${rawLevel}' floor` : ""})`,
         });
 
-      const seq = await store.nextImportSeq(caseId);
-      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "eve.json";
-      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
-      const importedAt = new Date().toISOString();
-      await store.saveImport(caseId, storedName, text);
-      await store.appendImport(caseId, {
-        caseId,
-        sequenceNumber: seq,
-        importedAt,
-        filename: storedName,
+      const { seq, storedName, importedAt } = await persistImportEvidence(store, caseId, {
+        text: text,
         originalName,
+        fallbackName: "eve.json",
         rows: preview.kept,
-        bytes: Buffer.byteLength(text, "utf8"),
       });
 
       res.status(202).json({
@@ -1565,31 +1491,29 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         at: importedAt,
         detail: `importing ${preview.kept} network detection(s)`,
       });
-      void options.pipeline
-        .importNetwork(caseId, text, {
-          label: storedName,
-          idPrefix: `n${seq}`,
-          importedAt,
-          network: netOpts,
-          onProgress: (done, total) =>
-            options.onAiStatus?.(caseId, {
-              status: "analyzing",
-              phase: "extracting",
-              at: new Date().toISOString(),
-              detail: `Network import — ${done}/${total}`,
-            }),
-        })
-        .then(() => {
-          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-          resynthesizeInBackground(caseId);
-        })
-        .catch((err) =>
-          options.onAiStatus?.(caseId, {
-            status: "error",
-            at: new Date().toISOString(),
-            detail: (err as Error).message,
+      commitDedicatedImport(ctx, settleDeps, {
+        caseId,
+        kind: "network",
+        storedName,
+        importedAt,
+        linesIn: text.split(/\r?\n/).length,
+        path: "deterministic",
+        minSeverity,
+        run: () =>
+          pipeline.importNetwork(caseId, text, {
+            label: storedName,
+            idPrefix: `n${seq}`,
+            importedAt,
+            network: netOpts,
+            onProgress: (done, total) =>
+              options.onAiStatus?.(caseId, {
+                status: "analyzing",
+                phase: "extracting",
+                at: new Date().toISOString(),
+                detail: `Network import — ${done}/${total}`,
+              }),
           }),
-        );
+      });
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -1601,6 +1525,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // the CSV header and mapped DETERMINISTICALLY (no AI extraction), reading the artifact's own time.
   app.post("/cases/:id/import-kape", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const pipeline = options.pipeline;
     const caseId = req.params.id;
     const text =
       typeof req.body?.text === "string"
@@ -1640,19 +1565,11 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
           .status(400)
           .json({ error: `no events from the ${preview.artifact} CSV (${preview.total} row(s) parsed)` });
 
-      const seq = await store.nextImportSeq(caseId);
-      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "kape.csv";
-      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
-      const importedAt = new Date().toISOString();
-      await store.saveImport(caseId, storedName, text);
-      await store.appendImport(caseId, {
-        caseId,
-        sequenceNumber: seq,
-        importedAt,
-        filename: storedName,
+      const { seq, storedName, importedAt } = await persistImportEvidence(store, caseId, {
+        text: text,
         originalName,
+        fallbackName: "kape.csv",
         rows: preview.kept,
-        bytes: Buffer.byteLength(text, "utf8"),
       });
 
       res.status(202).json({
@@ -1671,31 +1588,29 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         at: importedAt,
         detail: `importing ${preview.kept} ${preview.artifact} event(s)`,
       });
-      void options.pipeline
-        .importKape(caseId, text, {
-          label: storedName,
-          idPrefix: `k${seq}`,
-          importedAt,
-          kape: kapeOpts,
-          onProgress: (done, total) =>
-            options.onAiStatus?.(caseId, {
-              status: "analyzing",
-              phase: "extracting",
-              at: new Date().toISOString(),
-              detail: `${preview.artifact} import — ${done}/${total}`,
-            }),
-        })
-        .then(() => {
-          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-          resynthesizeInBackground(caseId);
-        })
-        .catch((err) =>
-          options.onAiStatus?.(caseId, {
-            status: "error",
-            at: new Date().toISOString(),
-            detail: (err as Error).message,
+      commitDedicatedImport(ctx, settleDeps, {
+        caseId,
+        kind: "kape",
+        storedName,
+        importedAt,
+        linesIn: text.split(/\r?\n/).length,
+        path: "deterministic",
+        minSeverity,
+        run: () =>
+          pipeline.importKape(caseId, text, {
+            label: storedName,
+            idPrefix: `k${seq}`,
+            importedAt,
+            kape: kapeOpts,
+            onProgress: (done, total) =>
+              options.onAiStatus?.(caseId, {
+                status: "analyzing",
+                phase: "extracting",
+                at: new Date().toISOString(),
+                detail: `${preview.artifact} import — ${done}/${total}`,
+              }),
           }),
-        );
+      });
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -1707,6 +1622,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // become Info evidence, the bulk File super-timeline is dropped unless `fileTelemetry` is set.
   app.post("/cases/:id/import-cybertriage", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const pipeline = options.pipeline;
     const caseId = req.params.id;
     const text =
       typeof req.body?.text === "string"
@@ -1753,19 +1669,11 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
           .status(400)
           .json({ error: `no events or IOCs from the Cyber Triage export (${preview.total} row(s) parsed)` });
 
-      const seq = await store.nextImportSeq(caseId);
-      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "cybertriage.jsonl";
-      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
-      const importedAt = new Date().toISOString();
-      await store.saveImport(caseId, storedName, text);
-      await store.appendImport(caseId, {
-        caseId,
-        sequenceNumber: seq,
-        importedAt,
-        filename: storedName,
+      const { seq, storedName, importedAt } = await persistImportEvidence(store, caseId, {
+        text: text,
         originalName,
+        fallbackName: "cybertriage.jsonl",
         rows: preview.kept,
-        bytes: Buffer.byteLength(text, "utf8"),
       });
 
       res.status(202).json({
@@ -1785,31 +1693,29 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         at: importedAt,
         detail: `importing ${preview.kept} Cyber Triage event(s)`,
       });
-      void options.pipeline
-        .importCybertriage(caseId, text, {
-          label: storedName,
-          idPrefix: `ct${seq}`,
-          importedAt,
-          cybertriage: ctOpts,
-          onProgress: (done, total) =>
-            options.onAiStatus?.(caseId, {
-              status: "analyzing",
-              phase: "extracting",
-              at: new Date().toISOString(),
-              detail: `Cyber Triage import — ${done}/${total}`,
-            }),
-        })
-        .then(() => {
-          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-          resynthesizeInBackground(caseId);
-        })
-        .catch((err) =>
-          options.onAiStatus?.(caseId, {
-            status: "error",
-            at: new Date().toISOString(),
-            detail: (err as Error).message,
+      commitDedicatedImport(ctx, settleDeps, {
+        caseId,
+        kind: "cybertriage",
+        storedName,
+        importedAt,
+        linesIn: text.split(/\r?\n/).length,
+        path: "deterministic",
+        minSeverity,
+        run: () =>
+          pipeline.importCybertriage(caseId, text, {
+            label: storedName,
+            idPrefix: `ct${seq}`,
+            importedAt,
+            cybertriage: ctOpts,
+            onProgress: (done, total) =>
+              options.onAiStatus?.(caseId, {
+                status: "analyzing",
+                phase: "extracting",
+                at: new Date().toISOString(),
+                detail: `Cyber Triage import — ${done}/${total}`,
+              }),
           }),
-        );
+      });
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -1825,6 +1731,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
 
   app.post("/cases/:id/import-m365", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const pipeline = options.pipeline;
     const caseId = req.params.id;
     const text =
       typeof req.body?.text === "string"
@@ -1864,19 +1771,11 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
           error: `no events after the '${rawLevel}' severity floor (${preview.total} record(s) parsed)`,
         });
 
-      const seq = await store.nextImportSeq(caseId);
-      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "m365.json";
-      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
-      const importedAt = new Date().toISOString();
-      await store.saveImport(caseId, storedName, text);
-      await store.appendImport(caseId, {
-        caseId,
-        sequenceNumber: seq,
-        importedAt,
-        filename: storedName,
+      const { seq, storedName, importedAt } = await persistImportEvidence(store, caseId, {
+        text: text,
         originalName,
+        fallbackName: "m365.json",
         rows: preview.kept,
-        bytes: Buffer.byteLength(text, "utf8"),
       });
 
       res.status(202).json({
@@ -1895,31 +1794,29 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         at: importedAt,
         detail: `importing ${preview.kept} M365/Entra event(s)`,
       });
-      void options.pipeline
-        .importM365(caseId, text, {
-          label: storedName,
-          idPrefix: `m${seq}`,
-          importedAt,
-          m365: m365Opts,
-          onProgress: (done, total) =>
-            options.onAiStatus?.(caseId, {
-              status: "analyzing",
-              phase: "extracting",
-              at: new Date().toISOString(),
-              detail: `M365 import — ${done}/${total}`,
-            }),
-        })
-        .then(() => {
-          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-          resynthesizeInBackground(caseId);
-        })
-        .catch((err) =>
-          options.onAiStatus?.(caseId, {
-            status: "error",
-            at: new Date().toISOString(),
-            detail: (err as Error).message,
+      commitDedicatedImport(ctx, settleDeps, {
+        caseId,
+        kind: "m365",
+        storedName,
+        importedAt,
+        linesIn: text.split(/\r?\n/).length,
+        path: "deterministic",
+        minSeverity,
+        run: () =>
+          pipeline.importM365(caseId, text, {
+            label: storedName,
+            idPrefix: `m${seq}`,
+            importedAt,
+            m365: m365Opts,
+            onProgress: (done, total) =>
+              options.onAiStatus?.(caseId, {
+                status: "analyzing",
+                phase: "extracting",
+                at: new Date().toISOString(),
+                detail: `M365 import — ${done}/${total}`,
+              }),
           }),
-        );
+      });
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -1931,6 +1828,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // root/console-failure bumps; the caller sourceIPAddress becomes an IOC.
   app.post("/cases/:id/import-aws", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const pipeline = options.pipeline;
     const caseId = req.params.id;
     const text =
       typeof req.body?.text === "string"
@@ -1966,19 +1864,11 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
             "no parseable CloudTrail records found (expected a { Records: [...] } envelope, NDJSON, or a JSON array of CloudTrail events)",
         });
 
-      const seq = await store.nextImportSeq(caseId);
-      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "cloudtrail.json";
-      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
-      const importedAt = new Date().toISOString();
-      await store.saveImport(caseId, storedName, text);
-      await store.appendImport(caseId, {
-        caseId,
-        sequenceNumber: seq,
-        importedAt,
-        filename: storedName,
+      const { seq, storedName, importedAt } = await persistImportEvidence(store, caseId, {
+        text: text,
         originalName,
+        fallbackName: "cloudtrail.json",
         rows: preview.kept,
-        bytes: Buffer.byteLength(text, "utf8"),
       });
 
       res.status(202).json({
@@ -1997,31 +1887,29 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         at: importedAt,
         detail: `importing ${preview.kept} CloudTrail event(s)`,
       });
-      void options.pipeline
-        .importAws(caseId, text, {
-          label: storedName,
-          idPrefix: `a${seq}`,
-          importedAt,
-          aws: awsOpts,
-          onProgress: (done, total) =>
-            options.onAiStatus?.(caseId, {
-              status: "analyzing",
-              phase: "extracting",
-              at: new Date().toISOString(),
-              detail: `CloudTrail import — ${done}/${total}`,
-            }),
-        })
-        .then(() => {
-          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-          resynthesizeInBackground(caseId);
-        })
-        .catch((err) =>
-          options.onAiStatus?.(caseId, {
-            status: "error",
-            at: new Date().toISOString(),
-            detail: (err as Error).message,
+      commitDedicatedImport(ctx, settleDeps, {
+        caseId,
+        kind: "aws",
+        storedName,
+        importedAt,
+        linesIn: text.split(/\r?\n/).length,
+        path: "deterministic",
+        minSeverity,
+        run: () =>
+          pipeline.importAws(caseId, text, {
+            label: storedName,
+            idPrefix: `a${seq}`,
+            importedAt,
+            aws: awsOpts,
+            onProgress: (done, total) =>
+              options.onAiStatus?.(caseId, {
+                status: "analyzing",
+                phase: "extracting",
+                at: new Date().toISOString(),
+                detail: `CloudTrail import — ${done}/${total}`,
+              }),
           }),
-        );
+      });
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -2033,6 +1921,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // derived from the action + denied bump; the caller IP becomes an IOC.
   app.post("/cases/:id/import-cloud-activity", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const pipeline = options.pipeline;
     const caseId = req.params.id;
     const text =
       typeof req.body?.text === "string"
@@ -2068,19 +1957,11 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
             "no parseable GCP/Azure records found (expected GCP Cloud Audit Logs or an Azure Activity Log export, as JSON array or NDJSON)",
         });
 
-      const seq = await store.nextImportSeq(caseId);
-      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "cloud-activity.json";
-      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
-      const importedAt = new Date().toISOString();
-      await store.saveImport(caseId, storedName, text);
-      await store.appendImport(caseId, {
-        caseId,
-        sequenceNumber: seq,
-        importedAt,
-        filename: storedName,
+      const { seq, storedName, importedAt } = await persistImportEvidence(store, caseId, {
+        text: text,
         originalName,
+        fallbackName: "cloud-activity.json",
         rows: preview.kept,
-        bytes: Buffer.byteLength(text, "utf8"),
       });
 
       res.status(202).json({
@@ -2099,31 +1980,29 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         at: importedAt,
         detail: `importing ${preview.kept} ${preview.format} event(s)`,
       });
-      void options.pipeline
-        .importCloudActivity(caseId, text, {
-          label: storedName,
-          idPrefix: `g${seq}`,
-          importedAt,
-          cloud: cloudOpts,
-          onProgress: (done, total) =>
-            options.onAiStatus?.(caseId, {
-              status: "analyzing",
-              phase: "extracting",
-              at: new Date().toISOString(),
-              detail: `Cloud activity import — ${done}/${total}`,
-            }),
-        })
-        .then(() => {
-          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-          resynthesizeInBackground(caseId);
-        })
-        .catch((err) =>
-          options.onAiStatus?.(caseId, {
-            status: "error",
-            at: new Date().toISOString(),
-            detail: (err as Error).message,
+      commitDedicatedImport(ctx, settleDeps, {
+        caseId,
+        kind: "cloud",
+        storedName,
+        importedAt,
+        linesIn: text.split(/\r?\n/).length,
+        path: "deterministic",
+        minSeverity,
+        run: () =>
+          pipeline.importCloudActivity(caseId, text, {
+            label: storedName,
+            idPrefix: `g${seq}`,
+            importedAt,
+            cloud: cloudOpts,
+            onProgress: (done, total) =>
+              options.onAiStatus?.(caseId, {
+                status: "analyzing",
+                phase: "extracting",
+                at: new Date().toISOString(),
+                detail: `Cloud activity import — ${done}/${total}`,
+              }),
           }),
-        );
+      });
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -2135,6 +2014,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // own time, with IOCs scraped from the message + source file path.
   app.post("/cases/:id/import-plaso", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const pipeline = options.pipeline;
     const caseId = req.params.id;
     const text =
       typeof req.body?.text === "string"
@@ -2174,19 +2054,11 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
           .status(400)
           .json({ error: `no events from the Plaso ${preview.format} CSV (${preview.total} row(s) parsed)` });
 
-      const seq = await store.nextImportSeq(caseId);
-      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "plaso.csv";
-      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
-      const importedAt = new Date().toISOString();
-      await store.saveImport(caseId, storedName, text);
-      await store.appendImport(caseId, {
-        caseId,
-        sequenceNumber: seq,
-        importedAt,
-        filename: storedName,
+      const { seq, storedName, importedAt } = await persistImportEvidence(store, caseId, {
+        text: text,
         originalName,
+        fallbackName: "plaso.csv",
         rows: preview.kept,
-        bytes: Buffer.byteLength(text, "utf8"),
       });
 
       res.status(202).json({
@@ -2205,31 +2077,29 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         at: importedAt,
         detail: `importing ${preview.kept} Plaso event(s)`,
       });
-      void options.pipeline
-        .importPlaso(caseId, text, {
-          label: storedName,
-          idPrefix: `p${seq}`,
-          importedAt,
-          plaso: plasoOpts,
-          onProgress: (done, total) =>
-            options.onAiStatus?.(caseId, {
-              status: "analyzing",
-              phase: "extracting",
-              at: new Date().toISOString(),
-              detail: `Plaso import — ${done}/${total}`,
-            }),
-        })
-        .then(() => {
-          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-          resynthesizeInBackground(caseId);
-        })
-        .catch((err) =>
-          options.onAiStatus?.(caseId, {
-            status: "error",
-            at: new Date().toISOString(),
-            detail: (err as Error).message,
+      commitDedicatedImport(ctx, settleDeps, {
+        caseId,
+        kind: "plaso",
+        storedName,
+        importedAt,
+        linesIn: text.split(/\r?\n/).length,
+        path: "deterministic",
+        minSeverity,
+        run: () =>
+          pipeline.importPlaso(caseId, text, {
+            label: storedName,
+            idPrefix: `p${seq}`,
+            importedAt,
+            plaso: plasoOpts,
+            onProgress: (done, total) =>
+              options.onAiStatus?.(caseId, {
+                status: "analyzing",
+                phase: "extracting",
+                at: new Date().toISOString(),
+                detail: `Plaso import — ${done}/${total}`,
+              }),
           }),
-        );
+      });
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -2241,6 +2111,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // map to events, and dropped/extracted hashes + network indicators are harvested as IOCs.
   app.post("/cases/:id/import-sandbox", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const pipeline = options.pipeline;
     const caseId = req.params.id;
     const text =
       typeof req.body?.text === "string"
@@ -2276,19 +2147,11 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
             "no parseable sandbox report found (expected a CAPEv2 report.json or a CrowdStrike Falcon Sandbox summary JSON)",
         });
 
-      const seq = await store.nextImportSeq(caseId);
-      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "sandbox.json";
-      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
-      const importedAt = new Date().toISOString();
-      await store.saveImport(caseId, storedName, text);
-      await store.appendImport(caseId, {
-        caseId,
-        sequenceNumber: seq,
-        importedAt,
-        filename: storedName,
+      const { seq, storedName, importedAt } = await persistImportEvidence(store, caseId, {
+        text: text,
         originalName,
+        fallbackName: "sandbox.json",
         rows: preview.kept,
-        bytes: Buffer.byteLength(text, "utf8"),
       });
 
       res.status(202).json({
@@ -2306,31 +2169,29 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         at: importedAt,
         detail: `importing ${preview.kept} sandbox event(s)`,
       });
-      void options.pipeline
-        .importSandbox(caseId, text, {
-          label: storedName,
-          idPrefix: `sb${seq}`,
-          importedAt,
-          sandbox: sandboxOpts,
-          onProgress: (done, total) =>
-            options.onAiStatus?.(caseId, {
-              status: "analyzing",
-              phase: "extracting",
-              at: new Date().toISOString(),
-              detail: `Sandbox import — ${done}/${total}`,
-            }),
-        })
-        .then(() => {
-          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-          resynthesizeInBackground(caseId);
-        })
-        .catch((err) =>
-          options.onAiStatus?.(caseId, {
-            status: "error",
-            at: new Date().toISOString(),
-            detail: (err as Error).message,
+      commitDedicatedImport(ctx, settleDeps, {
+        caseId,
+        kind: "sandbox",
+        storedName,
+        importedAt,
+        linesIn: text.split(/\r?\n/).length,
+        path: "deterministic",
+        minSeverity,
+        run: () =>
+          pipeline.importSandbox(caseId, text, {
+            label: storedName,
+            idPrefix: `sb${seq}`,
+            importedAt,
+            sandbox: sandboxOpts,
+            onProgress: (done, total) =>
+              options.onAiStatus?.(caseId, {
+                status: "analyzing",
+                phase: "extracting",
+                at: new Date().toISOString(),
+                detail: `Sandbox import — ${done}/${total}`,
+              }),
           }),
-        );
+      });
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -2343,6 +2204,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // foreign IPs / file paths / process names are harvested as IOCs.
   app.post("/cases/:id/import-memory", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const pipeline = options.pipeline;
     const caseId = req.params.id;
     const text =
       typeof req.body?.text === "string"
@@ -2384,19 +2246,11 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
             "no parseable memory output found (expected a Volatility 3 JSON-renderer array or a Rekall JSON statement list)",
         });
 
-      const seq = await store.nextImportSeq(caseId);
-      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "memory.json";
-      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
-      const importedAt = new Date().toISOString();
-      await store.saveImport(caseId, storedName, text);
-      await store.appendImport(caseId, {
-        caseId,
-        sequenceNumber: seq,
-        importedAt,
-        filename: storedName,
+      const { seq, storedName, importedAt } = await persistImportEvidence(store, caseId, {
+        text: text,
         originalName,
+        fallbackName: "memory.json",
         rows: preview.kept,
-        bytes: Buffer.byteLength(text, "utf8"),
       });
 
       res.status(202).json({
@@ -2416,31 +2270,29 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         at: importedAt,
         detail: `importing ${preview.kept} memory event(s)`,
       });
-      void options.pipeline
-        .importMemory(caseId, text, {
-          label: storedName,
-          idPrefix: `mem${seq}`,
-          importedAt,
-          memory: memoryOpts,
-          onProgress: (done, total) =>
-            options.onAiStatus?.(caseId, {
-              status: "analyzing",
-              phase: "extracting",
-              at: new Date().toISOString(),
-              detail: `Memory import — ${done}/${total}`,
-            }),
-        })
-        .then(() => {
-          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-          resynthesizeInBackground(caseId);
-        })
-        .catch((err) =>
-          options.onAiStatus?.(caseId, {
-            status: "error",
-            at: new Date().toISOString(),
-            detail: (err as Error).message,
+      commitDedicatedImport(ctx, settleDeps, {
+        caseId,
+        kind: "memory",
+        storedName,
+        importedAt,
+        linesIn: text.split(/\r?\n/).length,
+        path: "deterministic",
+        minSeverity,
+        run: () =>
+          pipeline.importMemory(caseId, text, {
+            label: storedName,
+            idPrefix: `mem${seq}`,
+            importedAt,
+            memory: memoryOpts,
+            onProgress: (done, total) =>
+              options.onAiStatus?.(caseId, {
+                status: "analyzing",
+                phase: "extracting",
+                at: new Date().toISOString(),
+                detail: `Memory import — ${done}/${total}`,
+              }),
           }),
-        );
+      });
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -2452,6 +2304,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // sender heuristics, URLs/domains/IP/attachment-names as IOCs. Covers ATT&CK T1566 (Phishing).
   app.post("/cases/:id/import-email", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const pipeline = options.pipeline;
     const caseId = req.params.id;
     const text =
       typeof req.body?.text === "string"
@@ -2486,19 +2339,11 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
           error: "no parseable email found (expected an .eml RFC 2822 message, or an Outlook .msg export)",
         });
 
-      const seq = await store.nextImportSeq(caseId);
-      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "message.eml";
-      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
-      const importedAt = new Date().toISOString();
-      await store.saveImport(caseId, storedName, text);
-      await store.appendImport(caseId, {
-        caseId,
-        sequenceNumber: seq,
-        importedAt,
-        filename: storedName,
+      const { seq, storedName, importedAt } = await persistImportEvidence(store, caseId, {
+        text: text,
         originalName,
+        fallbackName: "message.eml",
         rows: preview.kept,
-        bytes: Buffer.byteLength(text, "utf8"),
       });
 
       res.status(202).json({
@@ -2517,31 +2362,29 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         at: importedAt,
         detail: `importing email "${preview.subject.slice(0, 60)}"`,
       });
-      void options.pipeline
-        .importEmail(caseId, text, {
-          label: storedName,
-          idPrefix: `em${seq}`,
-          importedAt,
-          email: emailOpts,
-          onProgress: (done, total) =>
-            options.onAiStatus?.(caseId, {
-              status: "analyzing",
-              phase: "extracting",
-              at: new Date().toISOString(),
-              detail: `Email import — ${done}/${total}`,
-            }),
-        })
-        .then(() => {
-          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-          resynthesizeInBackground(caseId);
-        })
-        .catch((err) =>
-          options.onAiStatus?.(caseId, {
-            status: "error",
-            at: new Date().toISOString(),
-            detail: (err as Error).message,
+      commitDedicatedImport(ctx, settleDeps, {
+        caseId,
+        kind: "email",
+        storedName,
+        importedAt,
+        linesIn: text.split(/\r?\n/).length,
+        path: "deterministic",
+        minSeverity,
+        run: () =>
+          pipeline.importEmail(caseId, text, {
+            label: storedName,
+            idPrefix: `em${seq}`,
+            importedAt,
+            email: emailOpts,
+            onProgress: (done, total) =>
+              options.onAiStatus?.(caseId, {
+                status: "analyzing",
+                phase: "extracting",
+                at: new Date().toISOString(),
+                detail: `Email import — ${done}/${total}`,
+              }),
           }),
-        );
+      });
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -2553,6 +2396,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // scale, MITRE from ATT&CK-tagged tags, TLP/PAP prepended; observables → IOCs by dataType.
   app.post("/cases/:id/import-thehive", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const pipeline = options.pipeline;
     const caseId = req.params.id;
     const text = typeof req.body?.text === "string" ? req.body.text : "";
     const originalName = String(req.body?.filename ?? "thehive-export.json");
@@ -2566,19 +2410,11 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
             "no parseable TheHive records found (expected a case/alert JSON export or an observable list)",
         });
 
-      const seq = await store.nextImportSeq(caseId);
-      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "thehive-export.json";
-      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
-      const importedAt = new Date().toISOString();
-      await store.saveImport(caseId, storedName, text);
-      await store.appendImport(caseId, {
-        caseId,
-        sequenceNumber: seq,
-        importedAt,
-        filename: storedName,
+      const { seq, storedName, importedAt } = await persistImportEvidence(store, caseId, {
+        text: text,
         originalName,
+        fallbackName: "thehive-export.json",
         rows: preview.kept,
-        bytes: Buffer.byteLength(text, "utf8"),
       });
 
       res.status(202).json({
@@ -2597,30 +2433,27 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         at: importedAt,
         detail: `importing TheHive export (${preview.format})`,
       });
-      void options.pipeline
-        .importTheHive(caseId, text, {
-          label: storedName,
-          idPrefix: `th${seq}`,
-          importedAt,
-          onProgress: (done, total) =>
-            options.onAiStatus?.(caseId, {
-              status: "analyzing",
-              phase: "extracting",
-              at: new Date().toISOString(),
-              detail: `TheHive import — ${done}/${total}`,
-            }),
-        })
-        .then(() => {
-          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-          resynthesizeInBackground(caseId);
-        })
-        .catch((err) =>
-          options.onAiStatus?.(caseId, {
-            status: "error",
-            at: new Date().toISOString(),
-            detail: (err as Error).message,
+      commitDedicatedImport(ctx, settleDeps, {
+        caseId,
+        kind: "thehive",
+        storedName,
+        importedAt,
+        linesIn: text.split(/\r?\n/).length,
+        path: "deterministic",
+        run: () =>
+          pipeline.importTheHive(caseId, text, {
+            label: storedName,
+            idPrefix: `th${seq}`,
+            importedAt,
+            onProgress: (done, total) =>
+              options.onAiStatus?.(caseId, {
+                status: "analyzing",
+                phase: "extracting",
+                at: new Date().toISOString(),
+                detail: `TheHive import — ${done}/${total}`,
+              }),
           }),
-        );
+      });
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -2632,6 +2465,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // severity/MITRE, read at the audit() epoch.
   app.post("/cases/:id/import-auditd", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const pipeline = options.pipeline;
     const caseId = req.params.id;
     const text =
       typeof req.body?.text === "string"
@@ -2653,19 +2487,11 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
             "no parseable auditd records found (expected raw audit.log / ausearch 'type=… msg=audit(…)' lines or an aureport table)",
         });
 
-      const seq = await store.nextImportSeq(caseId);
-      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "audit.log";
-      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
-      const importedAt = new Date().toISOString();
-      await store.saveImport(caseId, storedName, text);
-      await store.appendImport(caseId, {
-        caseId,
-        sequenceNumber: seq,
-        importedAt,
-        filename: storedName,
+      const { seq, storedName, importedAt } = await persistImportEvidence(store, caseId, {
+        text: text,
         originalName,
+        fallbackName: "audit.log",
         rows: preview.kept,
-        bytes: Buffer.byteLength(text, "utf8"),
       });
 
       res.status(202).json({
@@ -2684,31 +2510,29 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         at: importedAt,
         detail: `importing ${preview.kept} auditd event(s)`,
       });
-      void options.pipeline
-        .importAuditd(caseId, text, {
-          label: storedName,
-          idPrefix: `ad${seq}`,
-          importedAt,
-          auditd: auditdOpts,
-          onProgress: (done, total) =>
-            options.onAiStatus?.(caseId, {
-              status: "analyzing",
-              phase: "extracting",
-              at: new Date().toISOString(),
-              detail: `auditd import — ${done}/${total}`,
-            }),
-        })
-        .then(() => {
-          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-          resynthesizeInBackground(caseId);
-        })
-        .catch((err) =>
-          options.onAiStatus?.(caseId, {
-            status: "error",
-            at: new Date().toISOString(),
-            detail: (err as Error).message,
+      commitDedicatedImport(ctx, settleDeps, {
+        caseId,
+        kind: "auditd",
+        storedName,
+        importedAt,
+        linesIn: text.split(/\r?\n/).length,
+        path: "deterministic",
+        minSeverity,
+        run: () =>
+          pipeline.importAuditd(caseId, text, {
+            label: storedName,
+            idPrefix: `ad${seq}`,
+            importedAt,
+            auditd: auditdOpts,
+            onProgress: (done, total) =>
+              options.onAiStatus?.(caseId, {
+                status: "analyzing",
+                phase: "extracting",
+                at: new Date().toISOString(),
+                detail: `auditd import — ${done}/${total}`,
+              }),
           }),
-        );
+      });
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -2720,6 +2544,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // entry's own µs-epoch time.
   app.post("/cases/:id/import-journald", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const pipeline = options.pipeline;
     const caseId = req.params.id;
     const text =
       typeof req.body?.text === "string"
@@ -2741,19 +2566,11 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
             "no parseable journald entries found (expected `journalctl -o json` / `-o json-pretty` output)",
         });
 
-      const seq = await store.nextImportSeq(caseId);
-      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "journal.json";
-      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
-      const importedAt = new Date().toISOString();
-      await store.saveImport(caseId, storedName, text);
-      await store.appendImport(caseId, {
-        caseId,
-        sequenceNumber: seq,
-        importedAt,
-        filename: storedName,
+      const { seq, storedName, importedAt } = await persistImportEvidence(store, caseId, {
+        text: text,
         originalName,
+        fallbackName: "journal.json",
         rows: preview.kept,
-        bytes: Buffer.byteLength(text, "utf8"),
       });
 
       res.status(202).json({
@@ -2772,31 +2589,29 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         at: importedAt,
         detail: `importing ${preview.kept} journald event(s)`,
       });
-      void options.pipeline
-        .importJournald(caseId, text, {
-          label: storedName,
-          idPrefix: `jd${seq}`,
-          importedAt,
-          journald: journaldOpts,
-          onProgress: (done, total) =>
-            options.onAiStatus?.(caseId, {
-              status: "analyzing",
-              phase: "extracting",
-              at: new Date().toISOString(),
-              detail: `journald import — ${done}/${total}`,
-            }),
-        })
-        .then(() => {
-          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-          resynthesizeInBackground(caseId);
-        })
-        .catch((err) =>
-          options.onAiStatus?.(caseId, {
-            status: "error",
-            at: new Date().toISOString(),
-            detail: (err as Error).message,
+      commitDedicatedImport(ctx, settleDeps, {
+        caseId,
+        kind: "journald",
+        storedName,
+        importedAt,
+        linesIn: text.split(/\r?\n/).length,
+        path: "deterministic",
+        minSeverity,
+        run: () =>
+          pipeline.importJournald(caseId, text, {
+            label: storedName,
+            idPrefix: `jd${seq}`,
+            importedAt,
+            journald: journaldOpts,
+            onProgress: (done, total) =>
+              options.onAiStatus?.(caseId, {
+                status: "analyzing",
+                phase: "extracting",
+                at: new Date().toISOString(),
+                detail: `journald import — ${done}/${total}`,
+              }),
           }),
-        );
+      });
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -2808,6 +2623,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // syscall events → Info evidence, read at each event's own time.
   app.post("/cases/:id/import-sysdig", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const pipeline = options.pipeline;
     const caseId = req.params.id;
     const text =
       typeof req.body?.text === "string"
@@ -2829,19 +2645,11 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
             "no parseable sysdig/Falco records found (expected Falco alert JSON or sysdig `-j` event JSON; a binary .scap must be exported to JSON first)",
         });
 
-      const seq = await store.nextImportSeq(caseId);
-      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "falco.json";
-      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
-      const importedAt = new Date().toISOString();
-      await store.saveImport(caseId, storedName, text);
-      await store.appendImport(caseId, {
-        caseId,
-        sequenceNumber: seq,
-        importedAt,
-        filename: storedName,
+      const { seq, storedName, importedAt } = await persistImportEvidence(store, caseId, {
+        text: text,
         originalName,
+        fallbackName: "falco.json",
         rows: preview.kept,
-        bytes: Buffer.byteLength(text, "utf8"),
       });
 
       res.status(202).json({
@@ -2861,31 +2669,29 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         at: importedAt,
         detail: `importing ${preview.kept} sysdig/Falco event(s)`,
       });
-      void options.pipeline
-        .importSysdig(caseId, text, {
-          label: storedName,
-          idPrefix: `sd${seq}`,
-          importedAt,
-          sysdig: sysdigOpts,
-          onProgress: (done, total) =>
-            options.onAiStatus?.(caseId, {
-              status: "analyzing",
-              phase: "extracting",
-              at: new Date().toISOString(),
-              detail: `sysdig import — ${done}/${total}`,
-            }),
-        })
-        .then(() => {
-          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-          resynthesizeInBackground(caseId);
-        })
-        .catch((err) =>
-          options.onAiStatus?.(caseId, {
-            status: "error",
-            at: new Date().toISOString(),
-            detail: (err as Error).message,
+      commitDedicatedImport(ctx, settleDeps, {
+        caseId,
+        kind: "sysdig",
+        storedName,
+        importedAt,
+        linesIn: text.split(/\r?\n/).length,
+        path: "deterministic",
+        minSeverity,
+        run: () =>
+          pipeline.importSysdig(caseId, text, {
+            label: storedName,
+            idPrefix: `sd${seq}`,
+            importedAt,
+            sysdig: sysdigOpts,
+            onProgress: (done, total) =>
+              options.onAiStatus?.(caseId, {
+                status: "analyzing",
+                phase: "extracting",
+                at: new Date().toISOString(),
+                detail: `sysdig import — ${done}/${total}`,
+              }),
           }),
-        );
+      });
       return;
     } catch (err) {
       return sendPipelineError(res, err);
@@ -2897,6 +2703,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // rule.mitre.technique → MITRE, agent.name → asset, data fields → IOCs.
   app.post("/cases/:id/import-wazuh", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
+    const pipeline = options.pipeline;
     const caseId = req.params.id;
     const text =
       typeof req.body?.text === "string"
@@ -2918,19 +2725,11 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
             "no parseable Wazuh alerts found (expected an array or NDJSON of Wazuh alert objects with rule.level, rule.description, and agent fields, or a Wazuh API export { data: { affected_items: [...] } })",
         });
 
-      const seq = await store.nextImportSeq(caseId);
-      const safeName = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "wazuh-alerts.json";
-      const storedName = `${String(seq).padStart(4, "0")}_${safeName}`;
-      const importedAt = new Date().toISOString();
-      await store.saveImport(caseId, storedName, text);
-      await store.appendImport(caseId, {
-        caseId,
-        sequenceNumber: seq,
-        importedAt,
-        filename: storedName,
+      const { seq, storedName, importedAt } = await persistImportEvidence(store, caseId, {
+        text: text,
         originalName,
+        fallbackName: "wazuh-alerts.json",
         rows: preview.kept,
-        bytes: Buffer.byteLength(text, "utf8"),
       });
 
       res.status(202).json({
@@ -2949,31 +2748,29 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         at: importedAt,
         detail: `importing ${preview.kept} Wazuh alert(s)`,
       });
-      void options.pipeline
-        .importWazuh(caseId, text, {
-          label: storedName,
-          idPrefix: `wz${seq}`,
-          importedAt,
-          wazuh: wazuhOpts,
-          onProgress: (done, total) =>
-            options.onAiStatus?.(caseId, {
-              status: "analyzing",
-              phase: "extracting",
-              at: new Date().toISOString(),
-              detail: `Wazuh import — ${done}/${total}`,
-            }),
-        })
-        .then(() => {
-          options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-          resynthesizeInBackground(caseId);
-        })
-        .catch((err) =>
-          options.onAiStatus?.(caseId, {
-            status: "error",
-            at: new Date().toISOString(),
-            detail: (err as Error).message,
+      commitDedicatedImport(ctx, settleDeps, {
+        caseId,
+        kind: "wazuh",
+        storedName,
+        importedAt,
+        linesIn: text.split(/\r?\n/).length,
+        path: "deterministic",
+        minSeverity,
+        run: () =>
+          pipeline.importWazuh(caseId, text, {
+            label: storedName,
+            idPrefix: `wz${seq}`,
+            importedAt,
+            wazuh: wazuhOpts,
+            onProgress: (done, total) =>
+              options.onAiStatus?.(caseId, {
+                status: "analyzing",
+                phase: "extracting",
+                at: new Date().toISOString(),
+                detail: `Wazuh import — ${done}/${total}`,
+              }),
           }),
-        );
+      });
       return;
     } catch (err) {
       return sendPipelineError(res, err);
