@@ -1,11 +1,6 @@
 import type { Severity } from "./stateTypes.js";
 import { parseCsv } from "./csvImport.js";
-import {
-  boundQuarantineVariants,
-  quarantineOverlay,
-  type QuarantineRow,
-  type QuarantineTimeOption,
-} from "./quarantineRecord.js";
+import { boundQuarantineVariants, quarantineOverlay, type QuarantineRow } from "./quarantineRecord.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -42,8 +37,6 @@ export interface MacosImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
-  /** A converted quarantine dump's epoch, declared by the analyst (quarantineRecord.ts). */
-  quarantineTime?: QuarantineTimeOption;
 }
 
 export interface MacosParseResult {
@@ -111,18 +104,13 @@ function mapUnifiedLog(rec: Row): MappedEvent | null {
 }
 
 // One LSQuarantineEventsV2 record → what it establishes (quarantineRecord.ts, #933 item 7): the
-// kind, the agent, the RESOURCE and the ORIGIN as distinct URLs, the time by its declared encoding,
+// kind, the agent, the RESOURCE and the ORIGIN as distinct URLs, the time by the encoding its column declares,
 // the event identifier — and never the local file, which this record does not name.
-function mapQuarantine(rec: Row, sink: Map<string, SiemIoc>, opts: MacosImportOptions): QuarantineRow | null {
+function mapQuarantine(rec: Row, sink: Map<string, SiemIoc>): QuarantineRow | null {
   // Once the file is a quarantine dump every record with ANY quarantine fact is a row — an email
   // attachment carries no URL and is still a download event.
   const hasAny = Object.entries(rec).some(([k, v]) => k.trim() !== "" && text(v).trim() !== "");
-  return hasAny
-    ? quarantineOverlay(rec, sink, {
-        ...(opts.quarantineTime ? { quarantineTime: opts.quarantineTime } : {}),
-        deferIocs: true,
-      })
-    : null;
+  return hasAny ? quarantineOverlay(rec, sink, { deferIocs: true }) : null;
 }
 
 // A quarantine dump names itself by its native columns, or — a converted export — by a coherent
@@ -169,7 +157,7 @@ export function parseMacos(input: string, opts: MacosImportOptions = {}): MacosP
     for (const rec of records) {
       const isQuarantine = looksLikeQuarantine(Object.keys(rec));
       quarantine ||= isQuarantine;
-      const event = isQuarantine ? mapQuarantine(rec, iocSink, opts) : mapUnifiedLog(rec);
+      const event = isQuarantine ? mapQuarantine(rec, iocSink) : mapUnifiedLog(rec);
       if (event) mapped.push(event);
       if (event && isQuarantine) quarantineRows.push(event as QuarantineRow);
     }
@@ -187,7 +175,7 @@ export function parseMacos(input: string, opts: MacosImportOptions = {}): MacosP
     });
     total = objects.length;
     for (const rec of objects) {
-      const event = quarantine ? mapQuarantine(rec, iocSink, opts) : mapUnifiedLog(rec);
+      const event = quarantine ? mapQuarantine(rec, iocSink) : mapUnifiedLog(rec);
       if (event) mapped.push(event);
       if (event && quarantine) quarantineRows.push(event as QuarantineRow);
     }

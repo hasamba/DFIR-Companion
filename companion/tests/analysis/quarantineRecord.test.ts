@@ -30,12 +30,9 @@ const row = (over: Record<string, string> = {}) => ({
   LSQuarantineOriginAlias: "",
   ...over,
 });
-const overlay = (
-  r: Record<string, string>,
-  opts: { quarantineTime?: "cocoa" | "unix-seconds" | "unix-ms" } = {},
-) => {
+const overlay = (r: Record<string, string>) => {
   const sink = new Map<string, SiemIoc>();
-  const o = quarantineOverlay(r, sink, opts);
+  const o = quarantineOverlay(r, sink);
   return { ...o, iocs: [...sink.values()].map((i) => `${i.type}:${i.value}`) };
 };
 
@@ -54,18 +51,18 @@ describe("readQuarantineTime — decoded by declared representation, never by ma
     });
     expect(readQuarantineTime("2026-05-02T09:30:00Z", "timestamp").encoding).toBe("iso");
   });
-  it("a number under a generic header establishes no epoch unless declared", () => {
+  it("a number under a generic header establishes no epoch; a column named for its epoch declares it", () => {
     expect(readQuarantineTime("660060258.698253", "timestamp")).toEqual({ iso: "", encoding: "unreadable" });
-    expect(readQuarantineTime("1789257600", "timestamp", "unix-seconds")).toEqual({
+    expect(readQuarantineTime("1789257600", "time").encoding).toBe("unreadable");
+    expect(readQuarantineTime("1789257600", "unix_time")).toEqual({
       iso: "2026-09-13T00:00:00.000Z",
       encoding: "unix-seconds",
     });
-    expect(readQuarantineTime("1789257600000", "time", "unix-ms").iso).toBe("2026-09-13T00:00:00.000Z");
-    expect(readQuarantineTime("660060258.698253", "timestamp", "cocoa").iso).toBe("2021-12-01T14:04:18.698Z");
-    // the option overrides the native header for a converted dump that kept it
-    expect(readQuarantineTime("1789257600", "LSQuarantineTimeStamp", "unix-seconds").iso).toBe(
-      "2026-09-13T00:00:00.000Z",
-    );
+    expect(readQuarantineTime("1789257600", "epoch").encoding).toBe("unix-seconds");
+    expect(readQuarantineTime("1789257600000", "unix_ms").iso).toBe("2026-09-13T00:00:00.000Z");
+    expect(readQuarantineTime("1789257600000", "epoch_ms").encoding).toBe("unix-ms");
+    // the magnitude never decides: seconds under a milliseconds column are 1970
+    expect(readQuarantineTime("1789257600", "unix_ms").iso).toBe("1970-01-21T17:00:57.600Z");
   });
   it("an impossible calendar date is unreadable, never rolled over", () => {
     expect(readQuarantineTime("2026-04-31T00:00:00+02:00", "timestamp").encoding).toBe("unreadable");
@@ -515,11 +512,15 @@ describe("through parseMacos and correlateEvents", () => {
     expect(r.events.some((e) => e.description.startsWith("macOS log"))).toBe(true);
   });
 
-  it("the import option declares a converted dump's epoch", () => {
-    const r = parseMacos(csv([{ ...row(), LSQuarantineTimeStamp: "1789257600" }]), {
-      quarantineTime: "unix-seconds",
-    });
+  it("a converted dump declares its epoch in the column name, through the import", () => {
+    const { LSQuarantineTimeStamp: _t, ...rest } = row();
+    const r = parseMacos(csv([{ ...rest, unix_time: "1789257600" }]));
     expect(r.events[0].timestamp).toBe("2026-09-13T00:00:00.000Z");
-    expect(r.events[0].description).toContain("[time: Unix seconds, declared]");
+    expect(r.events[0].description).toContain("[time: Unix seconds (column unix_time)]");
+    const g = parseMacos(csv([{ ...rest, timestamp: "1789257600" }]));
+    expect(g.events[0].timestamp).toBe("");
+    expect(g.events[0].description).toContain(
+      "[time: not readable — the column names no epoch (a converted dump names it: unix_time or unix_ms)]",
+    );
   });
 });

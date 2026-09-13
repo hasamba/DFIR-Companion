@@ -336,11 +336,12 @@ what the record establishes:
   the same UUID sits in the file's `com.apple.quarantine` attribute — and that join is a separate
   design. A row therefore never says the file ran or was malicious; every row is Info.
 - **Time by its declared form, never by its size.** The native `LSQuarantineTimeStamp` column is
-  Cocoa seconds (since 2001) and is decoded as such; an ISO string is ISO. A number under a generic
-  header (`timestamp`, `time`) could be either an aliased native column or a converted one, so it
-  establishes no time until the import declares its epoch (`quarantineTime`); the row then says
-  `[time: not readable — an epoch declared on import expected]` and keeps the raw value. The
-  encoding used is always named on the row.
+  Cocoa seconds (since 2001) and is decoded as such; an ISO string is ISO. A converted dump names
+  its epoch in the column: `unix_time` (or `epoch`) is Unix seconds, `unix_ms` (or `epoch_ms`) is
+  Unix milliseconds. A number under a generic header (`timestamp`, `time`) could be either an
+  aliased native column or a converted one, so it establishes no time; the row then says
+  `[time: not readable — the column names no epoch …]` and keeps the raw value. The encoding used
+  is always named on the row.
 - **Indicators.** The data URL and its host (an address is an `ip`, a name a `domain`) when the
   scheme is http(s) or ftp; the origin URL and its host only when http(s) — a `mailto:` origin or
   a `file:` data URL mints nothing. A sender name or address is never an indicator.

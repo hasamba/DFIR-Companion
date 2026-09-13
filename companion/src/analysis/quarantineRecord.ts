@@ -22,8 +22,6 @@ import { createCanonicalEvent } from "./canonicalEvent.js";
 
 type Row = Record<string, unknown>;
 
-export type QuarantineTimeOption = "cocoa" | "unix-seconds" | "unix-ms";
-
 export interface QuarantineTime {
   iso: string;
   encoding: "cocoa-seconds" | "iso" | "unix-seconds" | "unix-ms" | "unreadable";
@@ -32,6 +30,25 @@ export interface QuarantineTime {
 /** Seconds between the Unix epoch and Apple's Core Data / Cocoa epoch (2001-01-01T00:00:00Z). */
 const COCOA_EPOCH_OFFSET = 978307200;
 const NATIVE_TIME_HEADER = /^lsquarantinetimestamp$/i;
+// A converted dump declares its epoch in the column name; `timestamp`/`time` declare nothing.
+const UNIX_SECONDS_HEADER = /^(?:unix_?time|unix_?seconds|epoch|epoch_?seconds)$/i;
+const UNIX_MS_HEADER = /^(?:unix_?ms|unix_?millis|epoch_?ms|epoch_?millis)$/i;
+const EPOCH_WORDS = {
+  cocoa: "Cocoa seconds expected",
+  "unix-seconds": "Unix seconds expected",
+  "unix-ms": "Unix milliseconds expected",
+  none: "the column names no epoch (a converted dump names it: unix_time or unix_ms)",
+};
+const TIME_HEADERS = [
+  "LSQuarantineTimeStamp",
+  "timestamp",
+  "time",
+  "epoch",
+  "unix_time",
+  "unix_seconds",
+  "unix_ms",
+  "epoch_ms",
+];
 const NUMERIC = /^-?\d+(?:\.\d+)?$/;
 const ISO_8601 = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/;
 const DESCRIPTION_MAX = 600;
@@ -45,16 +62,22 @@ function isoOf(ms: number): string {
   return Number.isNaN(d.getTime()) ? "" : d.toISOString();
 }
 
+/** The epoch a column name declares, or none: `timestamp`/`time` may alias the native column. */
+export function declaredEpoch(header: string): "cocoa" | "unix-seconds" | "unix-ms" | undefined {
+  const h = header.trim();
+  if (NATIVE_TIME_HEADER.test(h)) return "cocoa";
+  if (UNIX_SECONDS_HEADER.test(h)) return "unix-seconds";
+  if (UNIX_MS_HEADER.test(h)) return "unix-ms";
+  return undefined;
+}
+
 /**
  * The record's time by its declared representation. `header` is the column the value came from:
- * the native `LSQuarantineTimeStamp` holds Cocoa seconds; a generic header (`timestamp`, `time`)
- * may be an aliased native column or a converted one, and establishes no epoch on its own.
+ * the native `LSQuarantineTimeStamp` holds Cocoa seconds; a converted dump names its epoch in the
+ * column (`unix_time`, `unix_ms`); a generic header (`timestamp`, `time`) may be an aliased native
+ * column or a converted one, and establishes no epoch on its own.
  */
-export function readQuarantineTime(
-  raw: string,
-  header: string,
-  declared?: QuarantineTimeOption,
-): QuarantineTime {
+export function readQuarantineTime(raw: string, header: string): QuarantineTime {
   const text = raw.trim();
   if (!text) return { iso: "", encoding: "unreadable" };
   if (!NUMERIC.test(text)) {
@@ -73,7 +96,7 @@ export function readQuarantineTime(
       : { iso: "", encoding: "unreadable" };
   }
   const n = Number(text);
-  const encoding = declared ?? (NATIVE_TIME_HEADER.test(header) ? "cocoa" : undefined);
+  const encoding = declaredEpoch(header);
   if (!encoding || !Number.isFinite(n) || n < 0) return { iso: "", encoding: "unreadable" };
   // A value the epoch cannot express (out of Date's range) is unreadable, never a readable blank.
   const iso =
@@ -228,13 +251,13 @@ function mintUrl(sink: Map<string, SiemIoc>, url: string, schemes: RegExp): "min
 export function quarantineOverlay(
   rec: Row,
   fileSink: Map<string, SiemIoc>,
-  opts: { quarantineTime?: QuarantineTimeOption; deferIocs?: boolean },
+  opts: { deferIocs?: boolean } = {},
 ): QuarantineRow {
   // Indicators go to the row first; the importer merges them after the per-UUID bound, so a flood
   // of variants under one identifier cannot fill the file's indicator budget either.
   const sink = opts.deferIocs ? new Map<string, SiemIoc>() : fileSink;
-  const time = first(rec, ["LSQuarantineTimeStamp", "timestamp", "time", "epoch", "unix_time"]);
-  const when = readQuarantineTime(time.value, time.header, opts.quarantineTime);
+  const time = first(rec, TIME_HEADERS);
+  const when = readQuarantineTime(time.value, time.header);
   const type = readQuarantineType(first(rec, ["LSQuarantineTypeNumber", "type"]).value);
   const agent = first(rec, ["LSQuarantineAgentName", "agent"]).value;
   const bundleId = first(rec, ["LSQuarantineAgentBundleIdentifier", "bundle_id"]).value;
@@ -268,12 +291,12 @@ export function quarantineOverlay(
     );
   tags.push(
     when.encoding === "unreadable"
-      ? `time: not readable — ${NATIVE_TIME_HEADER.test(time.header) && !opts.quarantineTime ? "Cocoa seconds" : opts.quarantineTime ? `${opts.quarantineTime} (declared)` : "an epoch declared on import"} expected`
+      ? `time: not readable — ${EPOCH_WORDS[declaredEpoch(time.header) ?? "none"]}`
       : when.encoding === "cocoa-seconds"
         ? "time: Cocoa seconds"
         : when.encoding === "iso"
           ? "time: ISO"
-          : `time: ${when.encoding === "unix-ms" ? "Unix milliseconds" : "Unix seconds"}, declared`,
+          : `time: ${when.encoding === "unix-ms" ? "Unix milliseconds" : "Unix seconds"} (column ${time.header})`,
   );
   tags.push(
     eventId

@@ -37,15 +37,17 @@ Severity Info throughout — unchanged.
 - `LSQuarantineTimeStamp` holding a NUMBER → Cocoa seconds (schema fact). A Cocoa reading before
   2001-01-01 (negative) → unreadable.
 - Any column holding an ISO-8601 string → ISO.
-- A NUMBER under a generic header (`timestamp`, `time`, `epoch`, `unix_time`) establishes NO epoch
-  (an export may alias the native column: `SELECT LSQuarantineTimeStamp AS timestamp`) →
-  unreadable unless the import option `quarantineTime: "cocoa" | "unix-seconds" | "unix-ms"`
-  declares it; the option also overrides the native header for a converted dump that kept it.
+- A NUMBER under a column that names its epoch → that epoch: `unix_time` / `unix_seconds` /
+  `epoch` / `epoch_seconds` = Unix seconds; `unix_ms` / `unix_millis` / `epoch_ms` / `epoch_millis`
+  = Unix milliseconds (the column name is the exporter's declaration; the row names the column).
+- A NUMBER under a generic header (`timestamp`, `time`) establishes NO epoch (an export may alias
+  the native column: `SELECT LSQuarantineTimeStamp AS timestamp`) → unreadable. There is no import
+  option: one existed through round 6 and was reachable only from unit tests (Codex round 7).
 - The xattr's 2nd field → Unix epoch hex seconds (its documented form; NOT Cocoa).
 - Unreadable → no timestamp claim: the row's timestamp is empty, the raw text is kept in the
   envelope (`timeRaw`), and the words say `[time: not readable — <encoding expected>]`. The
-  encoding used is always named: `[time: Cocoa seconds]`, `[time: ISO]`, `[time: Unix seconds,
-  declared]`.
+  encoding used is always named: `[time: Cocoa seconds]`, `[time: ISO]`, `[time: Unix seconds
+  (column unix_time)]`.
 
 ### Row (one per DB record)
 `macOS quarantine [kind: web download] [agent: Safari (com.apple.Safari)] [data url: https://…]
@@ -108,7 +110,7 @@ senderName?, senderAddress?, eventId?, timeEncoding: "cocoa-seconds" | "iso" | "
 
 ## Tests (TDD)
 - `quarantineRecord.test.ts`: time — native number = Cocoa (with fraction), native ISO, generic
-  numeric header = unreadable, generic + option = declared, native + option override, negative,
+  numeric header = unreadable, epoch-named column = declared, negative,
   garbage; every type value + unknown + absent; xattr `0083;5f3a1b2c;Safari;UUID` exact words,
   unnamed bits, malformed; identity with/without UUID (re-dump folds; no-UUID rows keyed on every
   shown fact incl. origin title); indicators (http data URL yes; file: no; mailto origin no;
@@ -184,3 +186,10 @@ The joins, Gatekeeper/XProtect logs, browser history, any grade above Info.
 3. The overflow row's canonical time was built from the first folded record, then its timestamp
    moved to the earliest. Fix: words, envelope and canonical form are built once, after the time is
    final.
+
+## Code round 7 (Codex, one finding)
+1. The `quarantineTime` import option was reachable only from unit tests: no route, job parameter
+   or dashboard field carried it, so a converted dump's numbers were always unreadable in
+   production. Fix: the option is gone; a converted dump declares its epoch in the column name
+   (`unix_time`/`epoch` = seconds, `unix_ms`/`epoch_ms` = milliseconds), which needs no route or
+   UI and is the exporter's own declaration. Generic `timestamp`/`time` stay unreadable.
