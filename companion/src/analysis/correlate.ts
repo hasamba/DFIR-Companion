@@ -55,8 +55,11 @@ const PATH_RE = /(?:[A-Za-z]:\\|\\\\)[^\s"'|<>]+|(?<![\w/:])\/(?:[\w.\-]+\/)+[\w
 // attacker who appends `/tmp/payload.exe` to a request, or answers a TXT query with 32 hex, would
 // union that row with the endpoint event that really carries the file or the hash. Each span is
 // well-formed by construction (the importer turns `]` into `)` inside it), so it cannot close early.
+// A web request or transfer row (#993) shows the request target, the MIME type, the filename, the
+// user, the Referer, the User-Agent, the proxy headers and the server's stated redirect target the
+// same way — each in its own span.
 const UNTRUSTED_SPAN_RE =
-  /\[(?:trailer|query|returned|the record also carries returned values|sni|cert|client cert|certificate|kind|agent|data url|origin|sender|quarantine mark|quarantine mark \(not decodable\)|quarantine url|event identifier not decodable): [^\]]*\]/g;
+  /\[(?:trailer|query|returned|the record also carries returned values|sni|cert|client cert|certificate|kind|agent|data url|origin|sender|quarantine mark|quarantine mark \(not decodable\)|quarantine url|event identifier not decodable|target|mime|filename|user|referrer|ua|proxied|matched|redirect target \(stated by the server\)): [^\]]*\]/g;
 function scannedText(description: string): string {
   return description.replace(UNTRUSTED_SPAN_RE, " ");
 }
@@ -385,9 +388,13 @@ function groupEvents(
   // injection. New lab rows never reach this function (ingest sends them to the super-timeline);
   // this guard is for rows persisted before that, and for any future producer that forgets.
   // Lab-with-lab unions stay allowed: two copies of one report should still dedup.
-  const lab = evs.map(isLabProduced);
+  // A WIRE row (a sensor's request or transfer record, #993) is never unioned with a host
+  // observation either: the transfer that carried a file and the endpoint event that wrote it are
+  // two facts joined by a hash, and folding them would give the wire row the endpoint's path and
+  // the endpoint row the sensor's time. Wire-with-wire unions stay allowed (a re-import dedups).
+  const klass = evs.map((e) => (isLabProduced(e) ? "lab" : e.origin === "wire" ? "wire" : "host"));
   const union = (a: number, b: number): void => {
-    if (lab[a] !== lab[b]) return;
+    if (klass[a] !== klass[b]) return;
     dsu.union(a, b);
   };
 
