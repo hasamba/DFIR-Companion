@@ -384,7 +384,6 @@ describe("bounds, identity, the importer", () => {
 
 // Code round 1 (Codex): the cases the review named.
 describe("code round 1", () => {
-  const OTHER_TENANT = { id: { customerId: "C02xyz" } };
   const inTenant = (r: Record<string, unknown>, customerId: string) => ({
     ...r,
     id: { ...(r.id as Record<string, unknown>), customerId },
