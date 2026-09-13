@@ -42,6 +42,35 @@ The IOC panel's enrichment system checks indicators against external and interna
 
 ---
 
+## When a verdict applies
+
+A provider's verdict is **current reputation**: what the provider says today, measured when it
+last looked. It is not evidence about the time of the case — an address is reassigned, a domain
+changes hands, a certificate is reused. So every verdict now carries the provider's own dated
+facts, each of its kind, against the case time:
+
+- **VirusTotal** — the latest scan the verdict comes from (*verdict measured by the latest scan
+  on 2026-04-30 — 1,827 days after the case time (2021-04-29)*); for a file or URL, the date it
+  was first submitted to VirusTotal (*a submission date, not when the file or URL came to
+  exist*); for an IP or domain, when its record was last updated (*not an observation*).
+- **AbuseIPDB** — the report window the lookup covered (`maxAgeInDays`, 90 by default), where
+  the case time falls relative to it, the latest report and the count. A clean answer over the
+  window *says nothing about earlier dates*.
+- Every other provider is **undated**: *the provider reports no dates; the lookup ran on …, N
+  days after the case time*.
+
+The **case time** is the earliest dated timeline event the indicator was extracted from
+(authoritative when the importer linked it; *the approximately matching event* when it was
+matched by value). An indicator with no dated event says so — its "first seen" is the import
+time, never a sighting. The words appear on the AI's threat-intel verdict lines, in the IOC CSV
+`enrichment` column, in the risk factors (*current reputation, measured …*), and on the dashboard
+badge as a visible chip (`scan 2026-04-30`, `window 2026-01-31→2026-05-01`) with the full facts
+on hover. The risk score itself is unchanged. Nothing says "was malicious at the time".
+
+**Not yet covered:** MISP, OpenCTI and Hunting.ch dates; keeping a provider's earlier assertion
+when a re-check replaces it; expired or revoked assertions; a rule-retirement review. Each has
+its own semantics and is tracked as a spec.
+
 ## IOC Whitelist
 
 Add known-good patterns in **Settings → IOC Whitelist**:

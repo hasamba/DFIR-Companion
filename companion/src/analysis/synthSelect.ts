@@ -12,6 +12,8 @@ import {
   iocHasBehavioralEvent,
 } from "./iocAnchors.js";
 import { scoreIocs, RISK_TIER_RANK } from "./iocRiskScore.js";
+import { buildIocProvenanceChains } from "./iocProvenanceChain.js";
+import { caseTime, intelTimeTag } from "./intelTemporal.js";
 import { rankHosts, buildSignalConcentrationDigest } from "./hostRanking.js";
 
 // Widened to string keys: severity values reaching the selectors are not all statically Severity.
@@ -375,11 +377,18 @@ export function buildSynthesisContext(
   // to their own "do not treat as confirmed" block so the model can't read them as external C2.
   const trustedVerdicts: string[] = [];
   const conflictVerdicts: string[] = [];
+  // WHEN each verdict applies (#933 item 19): the provider's own dated facts against the case
+  // time, one bounded tag per IOC covering every bad-verdict provider. The chains are built only
+  // when an IOC has such a hit, and only once.
+  let chains: ReturnType<typeof buildIocProvenanceChains> | undefined;
+  const nowIso = new Date().toISOString();
   for (const i of state.iocs) {
     const hit =
       (i.enrichments ?? []).find((x) => x.verdict === "malicious") ??
       (i.enrichments ?? []).find((x) => x.verdict === "suspicious");
     if (!hit) continue;
+    chains ??= buildIocProvenanceChains(state.iocs, scopedEvents, state.findings);
+    const when = intelTimeTag(i.enrichments ?? [], caseTime(i, chains[i.id]), nowIso);
     const cls = classifyVerdict(i, {
       hasBehavioralEvent: iocHasBehavioralEvent(i.value, scopedEvents),
       hostNames,
@@ -388,10 +397,10 @@ export function buildSynthesisContext(
     const base = `${i.value} = ${hit.verdict}${hit.source ? ` (${hit.source}${hit.score ? ` ${hit.score}` : ""})` : ""}`;
     if (cls === "conflicted") {
       conflictVerdicts.push(
-        `- ${base} ⚠ CONFLICT: also one of this case's OWN host assets or an internal address — this verdict is most likely stale/wrong; do NOT treat it as confirmed malicious or as external C2`,
+        `- ${base} ⚠ CONFLICT: also one of this case's OWN host assets or an internal address — this verdict is most likely stale/wrong; do NOT treat it as confirmed malicious or as external C2${when ? ` ${when}` : ""}`,
       );
     } else {
-      trustedVerdicts.push(`- ${base} [${cls}]`);
+      trustedVerdicts.push(`- ${base} [${cls}]${when ? ` ${when}` : ""}`);
     }
     if (trustedVerdicts.length + conflictVerdicts.length >= 25) break;
   }

@@ -350,3 +350,50 @@ describe("buildSynthesisContext", () => {
     expect(ctx).toContain("[lone-intel]");
   });
 });
+
+describe("WHEN a verdict applies rides on every verdict line (#933 item 19)", () => {
+  it("names the provider's scan date against the case time, for every bad-verdict provider", () => {
+    const s = emptyState("c1");
+    s.forensicTimeline.push({
+      id: "e1",
+      timestamp: "2021-04-29T21:41:00.000Z",
+      description: "outbound to 203.0.113.50",
+      severity: "High",
+      mitreTechniques: [],
+      sources: ["Zeek"],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    });
+    s.iocs.push({
+      id: "i1",
+      type: "ip",
+      value: "203.0.113.50",
+      firstSeen: "2026-04-01T00:00:00.000Z",
+      extractedFrom: ["e1"],
+      enrichments: [
+        {
+          source: "VirusTotal",
+          verdict: "malicious",
+          score: "52/73",
+          fetchedAt: "2026-05-01T12:00:00.000Z",
+          temporal: { verdictMeasuredAt: "2026-04-30T10:00:00.000Z" },
+        },
+        {
+          source: "AbuseIPDB",
+          verdict: "suspicious",
+          score: "20% abuse",
+          fetchedAt: "2026-05-01T12:00:00.000Z",
+          temporal: {
+            queryWindow: { from: "2026-01-31T12:00:00.000Z", to: "2026-05-01T12:00:00.000Z" },
+            reportCount: 2,
+          },
+        },
+      ],
+    });
+    const ctx = buildSynthesisContext(s, s.forensicTimeline);
+    expect(ctx).toContain(
+      "203.0.113.50 = malicious (VirusTotal 52/73) [corroborated] [intel time: VirusTotal — verdict measured by the latest scan on 2026-04-30 — 1,827 days after the case time (2021-04-29); AbuseIPDB — 2 reports counted over the window 2026-01-31 → 2026-05-01; the case time (2021-04-29) is before that window]",
+    );
+    expect(ctx).not.toMatch(/was malicious|still malicious/);
+  });
+});

@@ -213,3 +213,39 @@ describe("iocRole — indicator vs observation (the 5,000-file-path problem)", (
     expect(summarizeIocRoles(risks)).toEqual({ indicators: 1, observations: 2 });
   });
 });
+
+describe("a verdict factor says it is current reputation and when it was measured (#933 item 19)", () => {
+  it("names the latest scan date; the points are unchanged", async () => {
+    const { scoreIoc, reputationMeasuredAt } = await import("../../src/analysis/iocRiskScore.js");
+    const base = {
+      distinctTools: 1,
+      maxSeverityRank: -1,
+      kevMatch: false,
+      nsrlKnownGood: false,
+      whitelisted: false,
+      suspiciousDomain: false,
+    };
+    const dated = scoreIoc({
+      ...base,
+      verdictClass: "corroborated",
+      reputationMeasuredAt: "2026-04-30T10:00:00.000Z",
+    });
+    const undated = scoreIoc({ ...base, verdictClass: "corroborated" });
+    expect(dated.score).toBe(undated.score);
+    expect(dated.factors.join(" ")).toContain("(current reputation, measured 2026-04-30)");
+    expect(undated.factors.join(" ")).toContain("(current reputation)");
+    expect(
+      reputationMeasuredAt({
+        enrichments: [
+          {
+            source: "VirusTotal",
+            verdict: "malicious",
+            fetchedAt: "2026-05-01T00:00:00.000Z",
+            temporal: { verdictMeasuredAt: "2026-04-30T10:00:00.000Z" },
+          },
+          { source: "GeoIP", verdict: "unknown", fetchedAt: "2026-05-02T00:00:00.000Z" },
+        ],
+      }),
+    ).toBe("2026-04-30T10:00:00.000Z");
+  });
+});

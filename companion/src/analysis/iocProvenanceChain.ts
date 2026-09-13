@@ -16,7 +16,7 @@
 // task referenced this IOC" (playbook tasks don't carry IOC ids) — that leg is intentionally omitted
 // rather than faked as an always-empty field; playbook linkage would need new state, tracked in #247.
 
-import type { Finding, ForensicEvent, IOC } from "./stateTypes.js";
+import type { Finding, ForensicEvent, IOC, IocEnrichmentTemporal } from "./stateTypes.js";
 
 const TOKEN_RE = /[\w.@:/\\-]{3,}/g;
 const MAX_EXTRACTION_EVENTS = 25;
@@ -40,6 +40,9 @@ export interface ProvenanceEnrichmentLookup {
   score?: string;
   fetchedAt: string;
   link?: string;
+  // The provider's own dated facts (#933 item 19) — a scan date, a submission date, a report
+  // window — so the chain shows WHEN the assertion was measured beside when the lookup ran.
+  temporal?: IocEnrichmentTemporal;
 }
 
 export interface ProvenanceFindingRef {
@@ -183,6 +186,7 @@ export function buildIocProvenanceChains(
         score: en.score,
         fetchedAt: en.fetchedAt,
         link: en.link,
+        ...(en.temporal ? { temporal: en.temporal } : {}),
       }));
 
     const citing: ProvenanceFindingRef[] = (findingIndex.get(ioc.id) ?? [])

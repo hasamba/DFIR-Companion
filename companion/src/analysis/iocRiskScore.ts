@@ -56,6 +56,9 @@ export interface IocRiskSignals {
   nsrlKnownGood: boolean; // NSRL known-good hash
   whitelisted: boolean; // matches an IOC-whitelist rule (analyst-marked known-good)
   suspiciousDomain: boolean; // risky-TLD / DGA-like domain heuristic (domain/url only)
+  // When the reputation behind `verdictClass` was measured (#933 item 19): the latest scan date a
+  // provider reported, else the latest lookup time. Words only — the score never reads it.
+  reputationMeasuredAt?: string;
 }
 
 const { Medium, High, Critical } = SEVERITY_RANK;
@@ -64,6 +67,16 @@ const { Medium, High, Critical } = SEVERITY_RANK;
 const CRITICAL_AT = 7;
 const HIGH_AT = 4;
 const MEDIUM_AT = 2;
+
+/** The latest scan date behind a bad verdict, else the latest lookup time — "" when no hit. */
+export function reputationMeasuredAt(ioc: Pick<IOC, "enrichments">): string {
+  const bad = (ioc.enrichments ?? []).filter((e) => e.verdict === "malicious" || e.verdict === "suspicious");
+  const dates = bad
+    .map((e) => e.temporal?.verdictMeasuredAt ?? e.fetchedAt)
+    .filter(Boolean)
+    .sort();
+  return dates.at(-1) ?? "";
+}
 
 /** Grade one indicator from its signal bundle. Pure. */
 export function scoreIoc(s: IocRiskSignals): IocRisk {
@@ -74,15 +87,22 @@ export function scoreIoc(s: IocRiskSignals): IocRisk {
   const factors: string[] = [];
   let points = 0;
 
-  // 2. Threat-intel verdict (the dominant signal), via classifyVerdict.
+  // 2. Threat-intel verdict (the dominant signal), via classifyVerdict. Every verdict factor says
+  // it is CURRENT reputation and when it was measured — a provider's verdict is not evidence about
+  // the case time (#933 item 19); the points are unchanged.
+  const measured = s.reputationMeasuredAt
+    ? ` (current reputation, measured ${s.reputationMeasuredAt.slice(0, 10)})`
+    : " (current reputation)";
   if (s.verdictClass === "corroborated") {
     points += 4;
-    factors.push("malicious/suspicious verdict corroborated by ≥2 sources");
+    factors.push(`malicious/suspicious verdict corroborated by ≥2 sources${measured}`);
   } else if (s.verdictClass === "lone-intel") {
     points += 2;
-    factors.push("single-source threat-intel verdict (unverified lead)");
+    factors.push(`single-source threat-intel verdict (unverified lead)${measured}`);
   } else if (s.verdictClass === "conflicted") {
-    factors.push("threat-intel verdict on the case's OWN/internal infrastructure — most likely stale");
+    factors.push(
+      `threat-intel verdict on the case's OWN/internal infrastructure — most likely stale${measured}`,
+    );
   }
 
   // 3. Internal severity: the worst graded event the indicator appears in.
@@ -167,6 +187,7 @@ export function scoreIocs(
       nsrlKnownGood,
       whitelisted,
       suspiciousDomain: (ioc.type === "domain" || ioc.type === "url") && looksSuspiciousDomain(ioc.value),
+      reputationMeasuredAt: reputationMeasuredAt(ioc),
     });
     risk.role = iocRole(ioc, risk.score);
     out[ioc.id] = risk;

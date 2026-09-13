@@ -3,6 +3,8 @@
 // configured from env (DFIR_VT_KEY etc.). A provider looks up ONE indicator and returns
 // a normalized verdict, or null when the indicator is unknown to that source.
 
+import type { IocEnrichmentTemporal } from "../analysis/stateTypes.js";
+
 export type IocKind = "hash" | "ip" | "domain" | "url" | "process";
 export type Verdict = "malicious" | "suspicious" | "harmless" | "unknown";
 
@@ -20,6 +22,10 @@ export interface EnrichmentResult {
   lon?: number;
   country?: string;
   city?: string;
+  // The provider's own dated facts (stateTypes.ts IocEnrichmentTemporal, #933 item 19) — carried
+  // onto the stored IocEnrichment by enrichService's spread. Set only from a documented field in
+  // its documented form; never guessed.
+  temporal?: IocEnrichmentTemporal;
 }
 
 // "local" = the analyst's OWN self-hosted instance (MISP / YETI) — querying it does NOT

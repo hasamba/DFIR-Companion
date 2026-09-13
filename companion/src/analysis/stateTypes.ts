@@ -107,6 +107,21 @@ export interface IocEnrichment {
   lon?: number;
   country?: string;
   city?: string;
+  // The provider's own DATED FACTS, each of its kind and none interchangeable (#933 item 19,
+  // intelTemporal.ts). A scan date is when the verdict was measured; a submission date is when the
+  // sample reached the provider — never when infrastructure came to exist; an AbuseIPDB window
+  // bounds what its report count means. Absent on older hits and on providers that report none
+  // ("undated"). ISO strings keep the provider's precision.
+  temporal?: IocEnrichmentTemporal;
+}
+
+export interface IocEnrichmentTemporal {
+  firstSubmittedAt?: string; // VirusTotal file/url first_submission_date
+  verdictMeasuredAt?: string; // VirusTotal last_analysis_date — the latest scan the verdict comes from
+  recordUpdatedAt?: string; // VirusTotal ip/domain last_modification_date — any field changed; not an observation
+  lastReportAt?: string; // AbuseIPDB lastReportedAt — one point
+  reportCount?: number; // AbuseIPDB totalReports — counted over queryWindow only
+  queryWindow?: { from: string; to: string }; // AbuseIPDB [now − maxAgeInDays, now]
 }
 
 export interface IOC {

@@ -204,3 +204,46 @@ describe("geoMapCsv (#133)", () => {
     expect(row).toContain('"yes"');
   });
 });
+
+describe("the enrichment cell says when the verdict applies (#933 item 19)", () => {
+  it("each hit carries the provider's dated facts against the case time, inside the quoted cell", async () => {
+    const { iocsCsv } = await import("../../src/reports/csv.js");
+    const { emptyState } = await import("../../src/analysis/stateTypes.js");
+    const s = emptyState("c1");
+    s.forensicTimeline.push({
+      id: "e1",
+      timestamp: "2021-04-29T21:41:00.000Z",
+      description: "outbound to 203.0.113.50",
+      severity: "High",
+      mitreTechniques: [],
+      sources: ["Zeek"],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    });
+    s.iocs.push({
+      id: "i1",
+      type: "ip",
+      value: "203.0.113.50",
+      firstSeen: "2026-04-01T00:00:00.000Z",
+      extractedFrom: ["e1"],
+      enrichments: [
+        {
+          source: "VirusTotal",
+          verdict: "malicious",
+          score: '=1+1 "quoted"',
+          fetchedAt: "2026-05-01T12:00:00.000Z",
+          temporal: { verdictMeasuredAt: "2026-04-30T10:00:00.000Z" },
+        },
+      ],
+    });
+    const csv = iocsCsv(s);
+    expect(csv).toContain(
+      "{verdict measured by the latest scan on 2026-04-30 — 1,827 days after the case time (2021-04-29)}",
+    );
+    // the completed cell is still one quoted CSV field: quotes doubled, the words inside it
+    const line = csv.split("\n").find((l) => l.includes("203.0.113.50")) ?? "";
+    expect(line).toContain(
+      '"VirusTotal:malicious (=1+1 ""quoted"") {verdict measured by the latest scan on 2026-04-30',
+    );
+  });
+});
