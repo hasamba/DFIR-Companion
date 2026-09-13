@@ -43,6 +43,10 @@ Severity Info throughout — unchanged.
 - A NUMBER under a generic header (`timestamp`, `time`) establishes NO epoch (an export may alias
   the native column: `SELECT LSQuarantineTimeStamp AS timestamp`) → unreadable. There is no import
   option: one existed through round 6 and was reachable only from unit tests (Codex round 7).
+- A JSON NUMBER is its value (an IEEE double), not its token text: JSON has no canonical spelling
+  obligation, so `716403200.5` and `716403200.5000` are one number and one record spelled twice;
+  `716403200.5001` and `.5002` are two doubles and two rows. A JSON STRING keeps its text. (CSV is
+  text: the spelling is the evidence.)
 - The xattr's 2nd field → Unix epoch hex seconds (its documented form; NOT Cocoa).
 - Unreadable → no timestamp claim: the row's timestamp is empty, the raw text is kept in the
   envelope (`timeRaw`), and the words say `[time: not readable — <encoding expected>]`. The
@@ -241,3 +245,9 @@ The joins, Gatekeeper/XProtect logs, browser history, any grade above Info.
    shared-UUID pass gave them one description and correlation folded them. Fix: a numeric time is
    lossless only in its canonical spelling (`raw === String(Number(raw))`) with at most a
    millisecond of fraction; any other spelling marks the row (tested aggregated and not).
+
+## Code round 15 (Codex, one finding — decided, not coded)
+1. JSON number tokens `716403200.5` and `716403200.5000` reach the reader as one double. Decision:
+   a JSON number is its value, not its token text (JSON defines no spelling obligation for
+   numbers); a JSON string keeps its text. Tests pin both, and that two distinct doubles stay two
+   rows aggregated or not.

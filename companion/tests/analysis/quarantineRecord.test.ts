@@ -646,6 +646,25 @@ describe("through parseMacos and correlateEvents", () => {
     ).toHaveLength(2);
   });
 
+  it("a JSON number is its value: two doubles are two rows, one double spelled twice is one record", () => {
+    const { LSQuarantineTimeStamp: _t, ...rest } = row();
+    const json = (spellings: string[]) =>
+      `[${spellings.map((t) => JSON.stringify({ ...rest }).replace(/}$/, `,"LSQuarantineTimeStamp":${t}}`)).join(",")}]`;
+    const two = parseMacos(json(["716403200.5001", "716403200.5002"]));
+    expect(two.events).toHaveLength(2);
+    expect(
+      afterImport(parseMacos(json(["716403200.5001", "716403200.5002"]), { aggregate: false }).events),
+    ).toHaveLength(2);
+    // JSON has no token text: 716403200.5 and 716403200.5000 are one number, so one record twice
+    const one = parseMacos(json(["716403200.5", "716403200.5000"]));
+    expect(one.events).toHaveLength(1);
+    expect(one.events[0].count).toBe(2);
+    expect(one.events[0].timestamp).toBe("2023-09-14T16:53:20.500Z");
+    // a JSON STRING keeps its text
+    const str = parseMacos(json(['"716403200.5"', '"716403200.5000"']));
+    expect(str.events).toHaveLength(2);
+  });
+
   it("two ISO spellings of one instant are two rows after correlation", () => {
     const rows = [
       row({ LSQuarantineTimeStamp: "2026-05-02T09:30:00+02:00" }),
