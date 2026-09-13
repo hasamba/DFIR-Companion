@@ -11,9 +11,10 @@
 //     hexdump + disassembly block per row, which is skipped).
 //   • Rekall JSON renderer: a list of `[directive, payload]` statements.
 //
-// A table is returned even when it has NO ROWS? No — a zero-row table is reported by LABEL in
-// `empty`, so the importer can say the export holds zero rows without ever claiming the plugin
-// completed (a filename or a map key is a label the uploader chose; see memoryExportShape.ts).
+// A zero-row table is never a table: it is reported by LABEL in `empty`, so the importer can say
+// the export holds zero rows without claiming that a plugin completed (a filename or a map key is
+// a label the uploader chose; see memoryExportShape.ts). A Volatility 2 banner is recognised only
+// to say that its layout is not read (`volatility2-text`).
 
 import { cellStr } from "./memoryFields.js";
 import { getCI, isObject } from "./siemImport.js";
@@ -192,16 +193,27 @@ export function parseVolatilityText(text: string, filename: string | undefined):
     });
     rows.push(row);
   }
-  if (!rows.length) return null;
   return { plugin: pluginFromFilename(filename), rows };
 }
 
-export function extractTables(
-  text: string,
-  filename: string | undefined,
-): { tables: Table[]; format: string; tool: string } {
+const VOL2_BANNER = /^Volatility Foundation Volatility Framework 2\b/i;
+
+/** A Volatility 2 text export — recognised only so the importer can say it is not read. */
+export function looksLikeVolatility2Text(text: string): boolean {
+  return VOL2_BANNER.test((text ?? "").trimStart().slice(0, 200));
+}
+
+export interface Extracted {
+  tables: Table[];
+  format: string;
+  tool: string;
+  /** Labels (claimed by a map key or the filename) of zero-row tables — never a completion claim. */
+  empty: string[];
+}
+
+export function extractTables(text: string, filename: string | undefined): Extracted {
   const trimmed = text.trim();
-  if (!trimmed) return { tables: [], format: "empty", tool: "" };
+  if (!trimmed) return { tables: [], format: "empty", tool: "", empty: [] };
 
   let root: unknown;
   let parsed = false;
@@ -214,23 +226,34 @@ export function extractTables(
 
   if (parsed) {
     if (Array.isArray(root)) {
-      if (isRekallCommandList(root)) return { tables: parseRekall(root), format: "rekall", tool: "Rekall" };
+      if (isRekallCommandList(root))
+        return { tables: parseRekall(root), format: "rekall", tool: "Rekall", empty: [] };
       const rows = root.filter(isObject) as Row[];
       return {
         tables: rows.length ? [{ plugin: pluginFromFilename(filename), rows }] : [],
         format: "volatility",
         tool: "Volatility",
+        empty: rows.length ? [] : [pluginFromFilename(filename)],
       };
     }
     if (isObject(root) && isVolatilityPluginMap(root)) {
-      const tables = Object.entries(root)
+      const all = Object.entries(root)
         .filter(([, v]) => Array.isArray(v))
-        .map(([k, v]) => ({ plugin: k, rows: (v as unknown[]).filter(isObject) }))
-        .filter((t) => t.rows.length > 0);
-      return { tables, format: "volatility-map", tool: "Volatility" };
+        .map(([k, v]) => ({ plugin: k, rows: (v as unknown[]).filter(isObject) }));
+      // Only a key that looks like a plugin is a label worth reporting empty; anything else is
+      // an uploader's key beside the plugin tables.
+      const empty = all
+        .filter((t) => t.rows.length === 0 && VOL_PLUGIN_KEY.test(t.plugin))
+        .map((t) => t.plugin);
+      return {
+        tables: all.filter((t) => t.rows.length > 0),
+        format: "volatility-map",
+        tool: "Volatility",
+        empty,
+      };
     }
     // A bare object that is not a plugin map is not a Volatility export (its rows are an array).
-    return { tables: [], format: "empty", tool: "" };
+    return { tables: [], format: "empty", tool: "", empty: [] };
   }
 
   // NDJSON: one Volatility row object per line (jsonl renderer).
@@ -250,12 +273,23 @@ export function extractTables(
       tables: [{ plugin: pluginFromFilename(filename), rows }],
       format: "volatility-jsonl",
       tool: "Volatility",
+      empty: [],
     };
 
-  // Volatility 3 TEXT/grid renderer (the default `vol <plugin>`, no -r json).
+  // Volatility 3 TEXT/grid renderer (the default `vol <plugin>`, no -r json). A banner with no
+  // header (a run that wrote nothing tabular) is still a Volatility export that holds zero rows.
   if (looksLikeVolatilityText(trimmed)) {
     const table = parseVolatilityText(trimmed, filename);
-    if (table) return { tables: [table], format: "volatility-text", tool: "Volatility" };
+    if (table && table.rows.length)
+      return { tables: [table], format: "volatility-text", tool: "Volatility", empty: [] };
+    return {
+      tables: [],
+      format: "volatility-text",
+      tool: "Volatility",
+      empty: [pluginFromFilename(filename)],
+    };
   }
-  return { tables: [], format: "empty", tool: "" };
+  if (looksLikeVolatility2Text(trimmed))
+    return { tables: [], format: "volatility2-text", tool: "Volatility", empty: [] };
+  return { tables: [], format: "empty", tool: "", empty: [] };
 }

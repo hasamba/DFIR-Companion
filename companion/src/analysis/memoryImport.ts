@@ -52,6 +52,7 @@ import {
 import {
   GENERIC_TIME_KEYS,
   cellStr,
+  isPlaceholderCell,
   filePathIoc,
   malfindDescription,
   malfindRegion,
@@ -59,7 +60,9 @@ import {
   serviceImagePath,
 } from "./memoryFields.js";
 import { pstreeChildren } from "./pstreeDepth.js";
-import { extractTables, SHORT_PLUGIN, type Table } from "./memoryTables.js";
+import { extractTables, SHORT_PLUGIN } from "./memoryTables.js";
+import { carryImage, imageFactsEvents, isImageInfoTable, readImageFacts } from "./memoryImageFacts.js";
+import { exportShapeEvents, exportShapeNote } from "./memoryExportShape.js";
 export { isRekallCommandList, looksLikeVolatilityText } from "./memoryTables.js";
 import { parseCsv } from "./csvImport.js";
 import { tradecraftSignal } from "./tradecraftRules.js";
@@ -92,12 +95,24 @@ export interface MemoryParseResult {
   injected: number; // malfind (injected-code) rows seen
   processes: number; // process-listing rows seen
   connections: number; // network-connection rows seen
-  format: string; // "volatility" | "volatility-jsonl" | "volatility-map" | "volatility-text" | "rekall" | "empty"
+  format: string; // "volatility" | "volatility-jsonl" | "volatility-map" | "volatility-text" | "volatility2-text" | "rekall" | "empty"
   tool: string; // "Volatility" | "Rekall" | ""
+  // What the export's SHAPE says (memoryExportShape.ts): zero-row labels, an unread Volatility 2
+  // layout, diagnostic-looking text — for the import note. Never a completion claim.
+  note?: string;
 }
 
 type Category =
-  "process" | "netscan" | "malfind" | "cmdline" | "service" | "module" | "dll" | "handle" | "generic";
+  | "process"
+  | "netscan"
+  | "malfind"
+  | "cmdline"
+  | "service"
+  | "module"
+  | "dll"
+  | "handle"
+  | "imageinfo"
+  | "generic";
 
 const PRIVATE_IP =
   /^(?:10\.|127\.|169\.254\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|0\.|255\.|22[4-9]\.|23\d\.|::1$|fe80:|fc|fd)/i;
@@ -108,7 +123,8 @@ const PRIVATE_IP =
 function pick(row: Row, keys: string[]): string {
   for (const k of keys) {
     const s = cellStr(getCI(row, k)).trim();
-    if (s) return s;
+    // Volatility's `-` (unreadable) and `N/A` are ABSENT values, not names, paths or addresses.
+    if (s && !isPlaceholderCell(s)) return s;
   }
   return "";
 }
@@ -139,6 +155,7 @@ function classify(plugin: string, cols: Set<string>): Category {
   const has = (k: string): boolean => cols.has(k);
   const any = (...ks: string[]): boolean => ks.some(has);
 
+  if (isImageInfoTable(p, cols)) return "imageinfo";
   if (/malfind|hollow|injec|malthfind|threadmap/.test(p)) return "malfind";
   if (has("protection") && any("tag", "disasm", "hexdump", "vad tag", "vadtag")) return "malfind";
 
@@ -173,7 +190,6 @@ function classify(plugin: string, cols: Set<string>): Category {
   return "generic";
 }
 
-
 // A short, human label for the plugin: the Rekall/known plugin name, the os.module from a
 // Volatility dotted id, or a filename/category fallback.
 function displayLabel(plugin: string, category: Category, rows: Row[]): string {
@@ -199,6 +215,7 @@ function displayLabel(plugin: string, category: Category, rows: Row[]): string {
     module: "modules",
     dll: "dlllist",
     handle: "handles",
+    imageinfo: "info",
     generic: "memory",
   };
   return byCat[category];
@@ -592,7 +609,6 @@ function mapGeneric(label: string, tool: string, rows: Row[], sink: Map<string, 
 }
 
 // ───────────────────────────── table extraction ─────────────────────────────
-
 
 // ───────────────────────────── MemProcFS findevil ─────────────────────────────
 //
@@ -1266,9 +1282,13 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
   }
 
   const maxIocs = opts.maxIocs ?? 5000;
-  const { tables, format, tool } = extractTables(text, opts.filename);
+  const { tables, format, tool, empty } = extractTables(text, opts.filename);
   const total = tables.reduce((n, t) => n + t.rows.length, 0);
-  if (tables.length === 0 || total === 0) {
+  // What the export's shape says — a zero-row export or an unread layout is one Low row, never a
+  // 400 and never a completion claim (#933 item 12).
+  const shapeRows = exportShapeEvents(format, empty, tool);
+  const note = exportShapeNote(text, format, empty);
+  if (total === 0 && shapeRows.length === 0) {
     return {
       events: [],
       iocs: [],
@@ -1282,11 +1302,12 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
       connections: 0,
       format,
       tool: "",
+      ...(note ? { note } : {}),
     };
   }
 
   const sink = new Map<string, SiemIoc>();
-  const mapped: MappedEvent[] = [];
+  const mapped: MappedEvent[] = [...shapeRows];
   let injected = 0,
     processes = 0,
     connections = 0;
@@ -1374,6 +1395,9 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
         break;
       case "handle":
         break; // handle tables are pure telemetry — neither events nor IOCs
+      case "imageinfo":
+        mapped.push(...imageFactsEvents(tool, t.rows, t.plugin)); // one row, no IOCs
+        break;
       default:
         mapped.push(...mapGeneric(label, tool, t.rows, sink));
     }
@@ -1394,7 +1418,8 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
     });
   }
 
-  const { events, groups } = aggregateEvents(mapped, {
+  // The upload's image facts ride on every row (envelope; text from Medium up). One upload only.
+  const { events, groups } = aggregateEvents(carryImage(mapped, readImageFacts(tables)), {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
@@ -1415,5 +1440,6 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
     connections,
     format,
     tool,
+    ...(note ? { note } : {}),
   };
 }

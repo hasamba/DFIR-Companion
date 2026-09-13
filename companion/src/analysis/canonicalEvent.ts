@@ -216,6 +216,20 @@ export const canonicalEventEnvelopeSchema = z.object({
       folded: z.boolean().optional(),
     })
     .optional(),
+  // What the memory image the row came from says about itself (memoryImageFacts.ts, #933 item 12):
+  // the kernel SystemTime recovered from the image (never "captured at"), the layer stack, the
+  // dump kind for a known layer class, the crash-dump type as rendered, the symbol table. Only
+  // from a windows.info / windows.crashinfo table in the SAME upload.
+  image: z
+    .object({
+      systemTime: z.string().optional(),
+      systemTimeRaw: z.string().optional(),
+      dumpKind: z.string().optional(),
+      dumpType: z.string().optional(),
+      symbols: z.string().optional(),
+      layers: z.array(z.string()),
+    })
+    .optional(),
   // A DNS record's own reading (dnsRecord.ts, #933 item 2): what the resolver client reported and
   // the values it RETURNED — owner-less, so never "answers"; the vantage is the endpoint's own.
   dns: z
