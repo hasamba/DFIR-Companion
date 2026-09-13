@@ -29,31 +29,42 @@ export interface QuarantineTime {
 
 /** Seconds between the Unix epoch and Apple's Core Data / Cocoa epoch (2001-01-01T00:00:00Z). */
 const COCOA_EPOCH_OFFSET = 978307200;
-const NATIVE_TIME_HEADER = /^lsquarantinetimestamp$/i;
-// A converted dump declares its epoch in the column name; `timestamp`/`time` declare nothing.
-const UNIX_SECONDS_HEADER = /^(?:unix_?time|unix_?seconds|epoch|epoch_?seconds)$/i;
-const UNIX_MS_HEADER = /^(?:unix_?ms|unix_?millis|epoch_?ms|epoch_?millis)$/i;
+const NATIVE_TIME_HEADER = "LSQuarantineTimeStamp";
+// A converted dump declares its epoch in the column name; `timestamp`/`time` declare nothing. One
+// list per epoch is both the grammar declaredEpoch reads and the columns the reader extracts.
+const UNIX_SECONDS_HEADERS = [
+  "unix_time",
+  "unixtime",
+  "unix_seconds",
+  "unixseconds",
+  "epoch",
+  "epoch_seconds",
+  "epochseconds",
+];
+const UNIX_MS_HEADERS = [
+  "unix_ms",
+  "unixms",
+  "unix_millis",
+  "unixmillis",
+  "epoch_ms",
+  "epochms",
+  "epoch_millis",
+  "epochmillis",
+];
+const GENERIC_TIME_HEADERS = ["timestamp", "time"];
 const EPOCH_WORDS = {
   cocoa: "Cocoa seconds expected",
   "unix-seconds": "Unix seconds expected",
   "unix-ms": "Unix milliseconds expected",
   none: "the column names no epoch (a converted dump names it: unix_time or unix_ms)",
 };
-// Every column readQuarantineTime can decode, native first, then each epoch spelling declaredEpoch names.
+// Every column readQuarantineTime can decode: the native column, then each declared epoch, then the
+// generic names — so a declaration is never shadowed by a generic alias beside it.
 const TIME_HEADERS = [
-  "LSQuarantineTimeStamp",
-  "timestamp",
-  "time",
-  "unix_time",
-  "unixtime",
-  "unix_seconds",
-  "epoch",
-  "epoch_seconds",
-  "unix_ms",
-  "unixms",
-  "unix_millis",
-  "epoch_ms",
-  "epoch_millis",
+  NATIVE_TIME_HEADER,
+  ...UNIX_SECONDS_HEADERS,
+  ...UNIX_MS_HEADERS,
+  ...GENERIC_TIME_HEADERS,
 ];
 const NUMERIC = /^-?\d+(?:\.\d+)?$/;
 const ISO_8601 = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/;
@@ -70,10 +81,10 @@ function isoOf(ms: number): string {
 
 /** The epoch a column name declares, or none: `timestamp`/`time` may alias the native column. */
 export function declaredEpoch(header: string): "cocoa" | "unix-seconds" | "unix-ms" | undefined {
-  const h = header.trim();
-  if (NATIVE_TIME_HEADER.test(h)) return "cocoa";
-  if (UNIX_SECONDS_HEADER.test(h)) return "unix-seconds";
-  if (UNIX_MS_HEADER.test(h)) return "unix-ms";
+  const h = header.trim().toLowerCase();
+  if (h === NATIVE_TIME_HEADER.toLowerCase()) return "cocoa";
+  if (UNIX_SECONDS_HEADERS.includes(h)) return "unix-seconds";
+  if (UNIX_MS_HEADERS.includes(h)) return "unix-ms";
   return undefined;
 }
 
@@ -262,8 +273,16 @@ export function quarantineOverlay(
   // Indicators go to the row first; the importer merges them after the per-UUID bound, so a flood
   // of variants under one identifier cannot fill the file's indicator budget either.
   const sink = opts.deferIocs ? new Map<string, SiemIoc>() : fileSink;
-  const time = first(rec, TIME_HEADERS);
-  const when = readQuarantineTime(time.value, time.header);
+  // Two time columns in one record name no single instant: the row keeps both, decodes neither.
+  const timeColumns = TIME_HEADERS.filter((k) => text(getCI(rec, k) ?? "").trim() !== "");
+  const time =
+    timeColumns.length > 1
+      ? { value: timeColumns.map((k) => `${k}=${text(getCI(rec, k)).trim()}`).join("; "), header: "" }
+      : first(rec, TIME_HEADERS);
+  const when =
+    timeColumns.length > 1
+      ? { iso: "", encoding: "unreadable" as const }
+      : readQuarantineTime(time.value, time.header);
   const type = readQuarantineType(first(rec, ["LSQuarantineTypeNumber", "type"]).value);
   const agent = first(rec, ["LSQuarantineAgentName", "agent"]).value;
   const bundleId = first(rec, ["LSQuarantineAgentBundleIdentifier", "bundle_id"]).value;
@@ -297,7 +316,7 @@ export function quarantineOverlay(
     );
   tags.push(
     when.encoding === "unreadable"
-      ? `time: not readable — ${EPOCH_WORDS[declaredEpoch(time.header) ?? "none"]}`
+      ? `time: not readable — ${timeColumns.length > 1 ? `${timeColumns.length} time columns in this record (${timeColumns.join(", ")})` : EPOCH_WORDS[declaredEpoch(time.header) ?? "none"]}`
       : when.encoding === "cocoa-seconds"
         ? "time: Cocoa seconds"
         : when.encoding === "iso"

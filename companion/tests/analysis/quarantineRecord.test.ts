@@ -514,8 +514,25 @@ describe("through parseMacos and correlateEvents", () => {
 
   it("every declared epoch spelling is read through the import; two declared times are two rows", () => {
     const { LSQuarantineTimeStamp: _t, ...rest } = row();
-    const seconds = ["unix_time", "unixtime", "unix_seconds", "epoch", "epoch_seconds"];
-    const millis = ["unix_ms", "unixms", "unix_millis", "epoch_ms", "epoch_millis"];
+    const seconds = [
+      "unix_time",
+      "unixtime",
+      "unix_seconds",
+      "unixseconds",
+      "epoch",
+      "epoch_seconds",
+      "epochseconds",
+    ];
+    const millis = [
+      "unix_ms",
+      "unixms",
+      "unix_millis",
+      "unixmillis",
+      "epoch_ms",
+      "epochms",
+      "epoch_millis",
+      "epochmillis",
+    ];
     for (const h of seconds) {
       const r = parseMacos(csv([{ ...rest, [h]: "1789257600" }]));
       expect(r.events[0].timestamp, h).toBe("2026-09-13T00:00:00.000Z");
@@ -539,6 +556,42 @@ describe("through parseMacos and correlateEvents", () => {
         e.description.includes("[event identifier shared by records with different facts]"),
       ),
     ).toBe(true);
+  });
+
+  it("a declared epoch beside a generic alias is read; two time columns are no time", () => {
+    const { LSQuarantineTimeStamp: _t, ...rest } = row();
+    // a generic alias never shadows a declaration
+    const r = parseMacos(csv([{ ...rest, timestamp: "1789257600", unix_time: "1789257600" }]));
+    expect(r.events[0].timestamp).toBe("");
+    expect(r.events[0].description).toContain(
+      "[time: not readable — 2 time columns in this record (unix_time, timestamp)]",
+    );
+    expect(r.events[0].canonical?.quarantine?.timeRaw).toBe("unix_time=1789257600; timestamp=1789257600");
+    // two rows that differ only in a second time column are two rows
+    const two = parseMacos(
+      csv([
+        { ...rest, timestamp: "1789257600", unix_time: "1789257600" },
+        { ...rest, timestamp: "1789257600", unix_time: "1789344000" },
+      ]),
+    );
+    expect(two.events).toHaveLength(2);
+    expect(afterImport(two.events)).toHaveLength(2);
+  });
+
+  it("a path-shaped unreadable type never joins a real path event after import", () => {
+    const q = parseMacos(csv([row({ LSQuarantineTypeNumber: "/tmp/evil/payload" })]));
+    expect(q.events[0].description).toContain("[kind: kind not readable (/tmp/evil/payload)]");
+    const file: ForensicEvent = {
+      id: "f1",
+      timestamp: "2023-09-14T16:53:21.000Z",
+      description: "File created",
+      severity: "Low",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      path: "/tmp/evil/payload",
+    };
+    expect(correlateEvents([...afterImport(q.events), file])).toHaveLength(2);
   });
 
   it("a converted dump declares its epoch in the column name, through the import", () => {

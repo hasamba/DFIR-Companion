@@ -199,3 +199,12 @@ The joins, Gatekeeper/XProtect logs, browser history, any grade above Info.
    were not in the column list the reader extracts, so their rows had no time and two rows with
    different declared times folded. Fix: the column list holds every spelling; a test walks each
    through the import and keeps two declared times as two rows.
+
+## Code round 9 (Codex, three findings)
+1. A generic `timestamp` beside a declared `unix_time` shadowed the declaration. Fix: native, then
+   declared, then generic; a record with two or more time columns names no instant — the row keeps
+   every column's value (`timeRaw`), says how many time columns it has, and each is identity.
+2. Five spellings the epoch grammar accepted were not in the column list. Fix: one list per epoch
+   is both the grammar and the columns read; the test walks all fifteen spellings.
+3. A path-shaped unreadable type (`/tmp/evil/payload`) sat in a `[kind: …]` span the correlator
+   still scanned for paths. Fix: `kind` is an untrusted span; the test unions nothing.
