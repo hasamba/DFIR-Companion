@@ -286,6 +286,16 @@ describe("boundQuarantineVariants", () => {
       "[overflow: records with this event identifier and further differing facts beyond 16 sets folded; none shown]",
     );
     expect(rows[rows.length - 1].description).not.toContain("overflow");
+    // the overflow row's envelope shows no folded record
+    expect(over[0].envelope).toEqual({
+      kind: "folded",
+      eventId: UUID.toLowerCase(),
+      timeEncoding: "unreadable",
+      localFile: "not in this record",
+      folded: true,
+    });
+    expect(over[0].canonical?.quarantine?.dataUrl).toBeUndefined();
+    expect(over[0].iocs).toEqual([]);
   });
 });
 
@@ -383,6 +393,47 @@ describe("through parseMacos and correlateEvents", () => {
     };
     expect(correlateEvents([...afterImport(r.events), file])).toHaveLength(2);
   });
+  it("routing by dimension: url + agent is a dump; origin_url + referrer alone is not; a generic id is not an event", () => {
+    const byUrl = parseMacos(
+      JSON.stringify([
+        {
+          event_id: UUID,
+          timestamp: "2023-09-14T16:53:20.500Z",
+          agent: "Safari",
+          url: "https://cdn.example.invalid/a",
+        },
+      ]),
+    );
+    expect(byUrl.format).toBe("macos-quarantine");
+    expect(byUrl.iocs.map((i) => i.value)).toContain("cdn.example.invalid");
+    const notQuarantine = parseMacos(
+      JSON.stringify([
+        {
+          timestamp: "2023-09-14T16:53:20.500Z",
+          origin_url: "https://a.invalid/",
+          referrer: "https://b.invalid/",
+        },
+      ]),
+    );
+    expect(notQuarantine.format).toBe("macos-unified-log");
+    const genericId = overlay({ ...row({ LSQuarantineEventIdentifier: "" }), id: UUID });
+    expect(genericId.envelope.eventId).toBeUndefined();
+    expect(genericId.description).toContain("[event identifier not in this record]");
+  });
+
+  it("a flood of variants under one identifier fills neither the event budget nor the indicator budget", () => {
+    const flood = Array.from({ length: 300 }, (_, i) =>
+      row({ LSQuarantineDataURLString: `https://h${i}.example.invalid/x`, LSQuarantineOriginTitle: `t${i}` }),
+    );
+    const other = row({
+      LSQuarantineEventIdentifier: "660e8400-e29b-41d4-a716-446655440000",
+      LSQuarantineDataURLString: "https://legit.example.invalid/y",
+    });
+    const r = parseMacos(csv([...flood, other]), { maxEvents: 20, maxIocs: 40 });
+    expect(r.events.some((e) => e.description.includes("660e8400-e29b-41d4-a716-446655440000"))).toBe(true);
+    expect(r.iocs.map((i) => i.value)).toContain("legit.example.invalid");
+  });
+
   it("a flood of variants under one identifier cannot push a legitimate record out of the budget", () => {
     const flood = Array.from({ length: 300 }, (_, i) => row({ LSQuarantineOriginTitle: `t${i}` }));
     const other = row({ LSQuarantineEventIdentifier: "660e8400-e29b-41d4-a716-446655440000" });

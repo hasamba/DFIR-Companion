@@ -9,6 +9,7 @@ import {
 import {
   extractRecords,
   aggregateEvents,
+  mergeRowIocs,
   oneLine,
   isObject,
   getCI,
@@ -119,18 +120,23 @@ function mapQuarantine(rec: Row, sink: Map<string, SiemIoc>, opts: MacosImportOp
   return hasAny
     ? quarantineOverlay(rec, sink, {
         ...(opts.quarantineTime ? { quarantineTime: opts.quarantineTime } : {}),
+        deferIocs: true,
       })
     : null;
 }
 
 // A quarantine dump names itself by its native columns, or — a converted export — by a coherent
 // set of the aliases the reader accepts (a data url with an event id, an agent or an origin).
-const QUARANTINE_ALIASES = ["data_url", "origin_url", "event_id", "referrer", "agent"];
+// Aliases by DIMENSION: the resource (`data_url`/`url`) plus one independent quarantine signal —
+// `origin_url` and `referrer` are one dimension, so two synonyms never count as two signals.
+const RESOURCE_ALIASES = ["data_url", "url"];
+const SIGNAL_DIMENSIONS = [["event_id"], ["agent"], ["origin_url", "referrer"]];
 function looksLikeQuarantine(headers: readonly string[]): boolean {
   const h = headers.map((x) => x.trim().toLowerCase());
   if (h.some((x) => /lsquarantine/i.test(x))) return true;
-  const hits = QUARANTINE_ALIASES.filter((k) => h.includes(k));
-  return hits.length >= 2 && (h.includes("data_url") || h.includes("origin_url"));
+  const resource = RESOURCE_ALIASES.some((k) => h.includes(k));
+  const signals = SIGNAL_DIMENSIONS.filter((dim) => dim.some((k) => h.includes(k))).length;
+  return resource && signals >= 1;
 }
 
 export function parseMacos(input: string, opts: MacosImportOptions = {}): MacosParseResult {
@@ -189,6 +195,11 @@ export function parseMacos(input: string, opts: MacosImportOptions = {}): MacosP
   // A UUID that names two different fact sets is said on both rows; past a budget of fact sets
   // per UUID the rest fold into one overflow row (quarantineRecord.ts).
   boundQuarantineVariants(quarantineRows);
+  // Indicators only from the rows that survived the bound, linked to their rows.
+  for (const r of quarantineRows) {
+    const rowSink = new Map<string, SiemIoc>(r.iocs.map((i) => [`${i.type}:${i.value.toLowerCase()}`, i]));
+    mergeRowIocs(iocSink, rowSink, r.aggKey);
+  }
 
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,

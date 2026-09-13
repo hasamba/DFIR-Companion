@@ -208,6 +208,7 @@ export const canonicalEventEnvelopeSchema = z.object({
       timeEncoding: z.enum(["cocoa-seconds", "iso", "unix-seconds", "unix-ms", "unreadable"]),
       timeRaw: z.string().optional(),
       localFile: z.literal("not in this record"),
+      folded: z.boolean().optional(),
     })
     .optional(),
   // A DNS record's own reading (dnsRecord.ts, #933 item 2): what the resolver client reported and

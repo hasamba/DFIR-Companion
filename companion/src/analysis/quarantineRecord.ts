@@ -162,13 +162,17 @@ export interface QuarantineEnvelope {
   timeEncoding: QuarantineTime["encoding"];
   timeRaw?: string;
   localFile: "not in this record";
+  /** An overflow row: records with this identifier beyond the variant budget folded; nothing shown. */
+  folded?: boolean;
 }
 
 export interface QuarantineRow extends MappedEvent {
   envelope: QuarantineEnvelope;
-  /** The canonical UUID and the digest of every shown fact — for markSharedIdentifiers. */
+  /** The canonical UUID and the digest of every shown fact — for boundQuarantineVariants. */
   eventId?: string;
   factsDigest: string;
+  /** This row's own indicators — merged into the file sink only for rows that survive the bound. */
+  iocs: SiemIoc[];
 }
 
 const text = (v: unknown): string => (typeof v === "string" ? v : v == null ? "" : String(v));
@@ -203,9 +207,12 @@ function mintUrl(sink: Map<string, SiemIoc>, url: string, schemes: RegExp): void
 /** One LSQuarantineEventsV2 record → a row that says what the record establishes. */
 export function quarantineOverlay(
   rec: Row,
-  sink: Map<string, SiemIoc>,
-  opts: { quarantineTime?: QuarantineTimeOption },
+  fileSink: Map<string, SiemIoc>,
+  opts: { quarantineTime?: QuarantineTimeOption; deferIocs?: boolean },
 ): QuarantineRow {
+  // Indicators go to the row first; the importer merges them after the per-UUID bound, so a flood
+  // of variants under one identifier cannot fill the file's indicator budget either.
+  const sink = opts.deferIocs ? new Map<string, SiemIoc>() : fileSink;
   const time = first(rec, ["LSQuarantineTimeStamp", "timestamp", "time", "epoch", "unix_time"]);
   const when = readQuarantineTime(time.value, time.header, opts.quarantineTime);
   const type = readQuarantineType(first(rec, ["LSQuarantineTypeNumber", "type"]).value);
@@ -216,7 +223,8 @@ export function quarantineOverlay(
   const originTitle = first(rec, ["LSQuarantineOriginTitle", "origin_title"]).value;
   const senderName = first(rec, ["LSQuarantineSenderName", "sender"]).value;
   const senderAddress = first(rec, ["LSQuarantineSenderAddress", "sender_address"]).value;
-  const idRaw = first(rec, ["LSQuarantineEventIdentifier", "event_id", "id"]).value;
+  // Only the native column and the declared alias: a generic `id` is export metadata, not an event.
+  const idRaw = first(rec, ["LSQuarantineEventIdentifier", "event_id"]).value;
   const eventId = canonicalUuid(idRaw);
 
   // Indicators: the resource the agent fetched, and a lure page — only under a fetchable scheme.
@@ -327,6 +335,7 @@ export function quarantineOverlay(
     envelope,
     ...(eventId ? { eventId } : {}),
     factsDigest,
+    iocs: opts.deferIocs ? [...sink.values()] : [],
   };
 }
 
@@ -354,6 +363,22 @@ export function boundQuarantineVariants(rows: QuarantineRow[]): void {
     if (!seen.includes(r.factsDigest)) {
       r.aggKey = `macos-quarantine|event:${r.eventId}|overflow`;
       r.description = `macOS quarantine [event: ${r.eventId}] [overflow: records with this event identifier and further differing facts beyond ${QUARANTINE_VARIANTS_MAX} sets folded; none shown]${identityMark(r.aggKey)}`;
+      // The envelope shows no folded record as the row's: only the identifier and the fold.
+      r.envelope = {
+        kind: "folded",
+        eventId: r.eventId,
+        timeEncoding: "unreadable",
+        localFile: "not in this record",
+        folded: true,
+      };
+      r.canonical = createCanonicalEvent({
+        event: { category: "file", type: "download-record" },
+        quarantine: r.envelope,
+        time: { observed: r.timestamp, normalized: r.timestamp },
+        evidence: { rawRecords: [{ source: "macos-quarantine", locator: `overflow:${r.eventId}` }] },
+        producer: { importer: "macos", parserVersion: "1", mappingVersion: "quarantine-v1" },
+      });
+      r.iocs = [];
       continue;
     }
     if (seen.length < 2 || r.description.includes(SHARED_MARK)) continue;
