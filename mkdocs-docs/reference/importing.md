@@ -1084,8 +1084,9 @@ timeline at import; a lineage across uploads is not built.
 - **Joined through the access key id only** (or the Identity Center credential id). A session name
   or a role's display name never joins: two sessions named `ci-42` under two keys are two rows.
   The owning account is the target role's for `AssumeRole*`, the target principal's for
-  `AssumeRoot`, the caller's for a session or federation token — so a cross-account assumption's
-  issuance and its uses meet on the role's account. A cross-account replica counts once.
+  `AssumeRoot` (as an account id or a root ARN), the caller's for a session or federation token —
+  so a cross-account assumption's issuance and its uses meet on the role's account. A cross-account
+  replica counts once, and the informative replica is the one read whichever the file lists first.
 - **"Issued at" only on the exact key.** A use whose key no issuance record exposes says `no
   issuance record in this upload exposes this credential id (N records, first → last)`; an
   `AssumeRole` request for the same role and session whose response is not in the record is listed
@@ -1105,13 +1106,16 @@ timeline at import; a lineage across uploads is not built.
   → Low (a lineage to pivot on, not a finding). An issuance alone, or single-source uses with no
   issuance and no shape, is no row. Techniques are the shapes' own.
 - **Every record is scanned; only the narration is bounded.** 256 rows per upload (the rest
-  counted), 64 sources tracked per key (8 named, the rest counted), 256 records cited (the rest
-  counted as `N further records not individually cited`). The row's identity is (account, key), so
-  a re-import folds; the summaries never evict a source row (`maxEvents` bounds source rows; the
-  result's `summaries` counts these).
-- **Bulk reads match by key.** A cloud bulk-read group is now one credential; the assumption that
-  produced the reader's session is the issuance that minted THAT key (`matched by the key id`);
-  rows without a key fall back to the role-name-and-time match and say so.
+  counted), the 64 earliest sources tracked per key (8 named, further distinct sources counted,
+  further records "from untracked sources"), 256 records cited with the issuance, the first and
+  last use and the decisive shape always among them (the rest counted as `N further records not
+  individually cited`). The decisive shape — the record the grade rests on — is never clipped from
+  the words. The row's identity is (account, key), so a re-import folds; the summaries never evict
+  a source row (`maxEvents` bounds source rows; the result's `summaries` counts these).
+- **Bulk reads match by key.** A cloud bulk-read group is now one credential in one account of
+  one provider; the assumption that produced the reader's session is the issuance that minted THAT
+  key in that account, before the reads began (`matched by the key id`); rows without a key fall
+  back to the role-name-and-time match and say so.
 
 ### Entra applications: credentials, grants, roles, sign-ins
 

@@ -40,6 +40,10 @@ export const SOURCES_PER_KEY_MAX = 64;
 const RAW_RECORDS_MAX = 256;
 const SOURCES_NAMED_MAX = 8;
 const SHAPES_NAMED_MAX = 6;
+/** Distinct sources past the tracked 64 that are still counted as distinct; further records count as untracked. */
+const OVERFLOW_SOURCES_MAX = 1024;
+/** Enumeration calls kept per key for the window scan — the earliest by time. */
+const ENUMERATION_BUFFER_MAX = 512;
 const CHAIN_MAX = 8;
 const ENUMERATION_WINDOW_MS = 10 * 60_000;
 const ENUMERATION_SERVICES_MIN = 3;
@@ -124,9 +128,10 @@ const PRIVILEGED_CHANGE = new Set([
   ...call("organizations", "LeaveOrganization"),
   ...call("s3", "PutBucketPolicy", "PutBucketAcl"),
 ]);
+// Invocation only: deploying code (CreateFunction, UpdateFunctionCode) is not execution of it.
 const REMOTE_EXECUTION = new Set([
   ...call("ssm", "SendCommand", "StartSession"),
-  ...call("lambda", "Invoke", "UpdateFunctionCode", "CreateFunction"),
+  ...call("lambda", "Invoke"),
   ...call("ec2-instance-connect", "SendSSHPublicKey"),
 ]);
 const SHAPE_MITRE: Record<AwsLineageShape["kind"], string> = {
@@ -145,7 +150,7 @@ function shapeOf(source: string, name: string): AwsLineageShape["kind"] | null {
   return null;
 }
 
-// ───────────────────────────── accumulators ─────────────────────────────
+// ───────────────────────────── accumulators (bounded) ─────────────────────────────
 
 interface Cited {
   time: number;
@@ -156,6 +161,12 @@ interface Source {
   agent: string;
   first: Cited;
   records: number;
+}
+interface ShapeHit {
+  kind: AwsLineageShape["kind"];
+  time: number;
+  locator: string;
+  call: string;
 }
 interface Key {
   account: string;
@@ -168,12 +179,19 @@ interface Key {
   first: Cited | null;
   last: Cited | null;
   locators: string[];
+  /** The EARLIEST sources by first use — the second source is exact whatever the file order. */
   sources: Map<string, Source>;
-  sourcesBeyond: number;
-  /** Time of the first use from the second source, when there is one. */
+  overflowSources: Set<string>;
+  untrackedRecords: number;
   secondSourceAt: number | null;
-  enumeration: { time: number; service: string; locator: string; call: string }[];
-  shapes: AwsLineageShape[];
+  /** Enumeration calls, the earliest by time, bounded; the count of every one. */
+  enumeration: ShapeHit[];
+  enumerationCount: number;
+  /** Per kind: the earliest shape, the earliest AFTER the second source (the decisive one), a few more for the words, the count. */
+  shapes: Record<
+    Exclude<AwsLineageShape["kind"], "enumeration">,
+    { earliest: ShapeHit | null; decisive: ShapeHit | null; named: ShapeHit[]; count: number }
+  >;
   attempts: number;
   serviceInvoked: number;
   sourceIdentity: string;
@@ -199,10 +217,15 @@ function keyFor(keys: Map<string, Key>, account: string, credentialId: string): 
         last: null,
         locators: [],
         sources: new Map(),
-        sourcesBeyond: 0,
+        overflowSources: new Set(),
+        untrackedRecords: 0,
         secondSourceAt: null,
         enumeration: [],
-        shapes: [],
+        enumerationCount: 0,
+        shapes: {
+          "privileged-change": { earliest: null, decisive: null, named: [], count: 0 },
+          "remote-execution": { earliest: null, decisive: null, named: [], count: 0 },
+        },
         attempts: 0,
         serviceInvoked: 0,
         sourceIdentity: "",
@@ -217,7 +240,10 @@ function keyFor(keys: Map<string, Key>, account: string, credentialId: string): 
 
 /** The account that owns the credential an issuance minted (design round finding 1). */
 function owningAccount(issuance: CredentialIssuance, caller: string): string {
-  if (issuance.action === "AssumeRoot") return issuance.targetPrincipal || caller;
+  if (issuance.action === "AssumeRoot") {
+    const t = issuance.targetPrincipal.trim();
+    return accountOfArn(t) || (/^\d{12}$/.test(t) ? t : caller);
+  }
   if (issuance.role?.arn) return accountOfArn(issuance.role.arn) || caller;
   return caller;
 }
@@ -230,7 +256,49 @@ function workloadOf(who: AwsIdentity): string {
   return "";
 }
 
-/** Record one use of a key: counts, bounds, the source's first use, the shape when the call is one. */
+/** Keep the EARLIEST sources by first use: a later-arriving earlier source evicts the latest tracked one. */
+function trackSource(
+  k: Key,
+  sk: string,
+  address: string,
+  agent: string,
+  time: number,
+  locator: string,
+): void {
+  const src = k.sources.get(sk);
+  if (src) {
+    src.records += 1;
+    if (time < src.first.time) src.first = { time, locator };
+    return;
+  }
+  if (k.sources.size < SOURCES_PER_KEY_MAX) {
+    k.sources.set(sk, { address, agent, first: { time, locator }, records: 1 });
+    return;
+  }
+  let latest: [string, Source] | null = null;
+  for (const e of k.sources) if (!latest || e[1].first.time > latest[1].first.time) latest = e;
+  if (latest && time < latest[1].first.time) {
+    k.sources.delete(latest[0]);
+    k.overflowSources.add(latest[0]);
+    k.sources.set(sk, { address, agent, first: { time, locator }, records: 1 });
+    return;
+  }
+  if (k.overflowSources.size < OVERFLOW_SOURCES_MAX) k.overflowSources.add(sk);
+  else k.untrackedRecords += 1;
+}
+
+/** Insert an enumeration call into the bounded earliest-by-time buffer. */
+function trackEnumeration(k: Key, hit: ShapeHit): void {
+  k.enumerationCount += 1;
+  const buf = k.enumeration;
+  if (buf.length >= ENUMERATION_BUFFER_MAX && hit.time >= buf[buf.length - 1].time) return;
+  let i = buf.length;
+  while (i > 0 && buf[i - 1].time > hit.time) i -= 1;
+  buf.splice(i, 0, hit);
+  if (buf.length > ENUMERATION_BUFFER_MAX) buf.pop();
+}
+
+/** Pass 1: counts, bounds, sources, provenance; the shapes wait for the second source's time. */
 function recordUse(
   k: Key,
   rec: Row,
@@ -246,19 +314,16 @@ function recordUse(
   if (RANK[severity] > RANK[k.top]) k.top = severity;
   const address = cleanIp(str(getCI(rec, "sourceIPAddress"))) || str(getCI(rec, "sourceIPAddress")).trim();
   const agent = str(getCI(rec, "userAgent")).trim();
-  const sk = `${address}|${agent}`;
-  const src = k.sources.get(sk);
-  if (src) {
-    src.records += 1;
-    if (time < src.first.time) src.first = { time, locator };
-  } else if (k.sources.size < SOURCES_PER_KEY_MAX)
-    k.sources.set(sk, { address, agent, first: { time, locator }, records: 1 });
-  else k.sourcesBeyond += 1;
+  trackSource(k, `${address}|${agent}`, address, agent, time, locator);
   if (!k.workload) k.workload = workloadOf(who);
   if (!k.sourceIdentity && who.session.sourceIdentity) k.sourceIdentity = who.session.sourceIdentity;
   if (!k.issuerArn && who.issuer?.arn) k.issuerArn = who.issuer.arn;
   if (!k.sessionName && who.session.name) k.sessionName = who.session.name;
   if (who.invokedBy) k.serviceInvoked += 1;
+}
+
+/** Pass 2: the shapes, judged against the second source's time known from pass 1. */
+function recordShape(k: Key, rec: Row, time: number, locator: string): void {
   const source = str(getCI(rec, "eventSource"));
   const name = str(getCI(rec, "eventName"));
   const kind = shapeOf(source, name);
@@ -267,26 +332,32 @@ function recordUse(
     k.attempts += 1;
     return;
   }
-  const callWords = `${serviceOf(source)} ${name}`;
-  if (kind === "enumeration")
-    k.enumeration.push({ time, service: serviceOf(source), locator, call: callWords });
-  else k.shapes.push({ kind, time: iso(time), locator, call: callWords, afterSecondSource: false });
+  const hit: ShapeHit = { kind, time, locator, call: `${serviceOf(source)} ${name}` };
+  if (kind === "enumeration") {
+    trackEnumeration(k, hit);
+    return;
+  }
+  const slot = k.shapes[kind];
+  slot.count += 1;
+  if (!slot.earliest || time < slot.earliest.time) slot.earliest = hit;
+  if (k.secondSourceAt !== null && time > k.secondSourceAt && (!slot.decisive || time < slot.decisive.time))
+    slot.decisive = hit;
+  if (slot.named.length < SHAPES_NAMED_MAX) slot.named.push(hit);
 }
 
 /** Enumeration is a shape only across ≥ 3 services inside 10 minutes; the first such window is cited. */
-function enumerationShape(k: Key): AwsLineageShape | null {
-  const calls = [...k.enumeration].sort((a, b) => a.time - b.time);
+function enumerationShape(k: Key): ShapeHit | null {
+  const calls = k.enumeration;
   for (let i = 0; i < calls.length; i += 1) {
     const services = new Set<string>();
     for (let j = i; j < calls.length && calls[j].time - calls[i].time <= ENUMERATION_WINDOW_MS; j += 1) {
-      services.add(calls[j].service);
+      services.add(calls[j].call.split(" ")[0]);
       if (services.size >= ENUMERATION_SERVICES_MIN)
         return {
           kind: "enumeration",
-          time: iso(calls[i].time),
+          time: calls[i].time,
           locator: calls[i].locator,
           call: `${[...services].join(", ")} within 10 min (${calls[i].call} first)`,
-          afterSecondSource: false,
         };
     }
   }
@@ -295,37 +366,60 @@ function enumerationShape(k: Key): AwsLineageShape | null {
 
 // ───────────────────────────── the pass ─────────────────────────────
 
+interface Scanned {
+  rec: Row;
+  index: number;
+  time: number;
+  who: AwsIdentity;
+}
+
+/**
+ * One record per cross-account action: the replicas sharing a `sharedEventID` are grouped first
+ * and the informative one (a named principal, not an account or service view) is read, whichever
+ * the file lists first (code round finding 1).
+ */
+function scan(records: readonly Row[]): Scanned[] {
+  const chosen = new Map<string, Scanned>();
+  const order: string[] = [];
+  records.forEach((rec, index) => {
+    if (!str(getCI(rec, "eventName")) || !str(getCI(rec, "eventSource"))) return;
+    const time = ms(str(getCI(rec, "eventTime")));
+    if (time === null) return;
+    const who = readAwsIdentity(rec);
+    const replica = str(getCI(rec, "sharedEventID")).trim();
+    const own = str(getCI(rec, "eventID")).trim();
+    const id = replica ? `shared:${replica}` : own ? `event:${own}` : `record:${index}`;
+    const cur = chosen.get(id);
+    const informative = !["AWSAccount", "AWSService", "Unknown"].includes(who.kind);
+    if (!cur) {
+      chosen.set(id, { rec, index, time, who });
+      order.push(id);
+    } else if (informative && ["AWSAccount", "AWSService", "Unknown"].includes(cur.who.kind))
+      chosen.set(id, { rec, index, time, who });
+  });
+  return order.map((id) => chosen.get(id)!);
+}
+
 /** One summary row per credential whose upload records form a lineage; the rows say what they rest on. */
 export function awsLineages(records: readonly Row[]): MappedEvent[] {
   const keys = new Map<string, Key>();
-  const seen = new Set<string>();
   const coverage = { records: 0, first: "", last: "" };
   // Issuance requests whose response was unavailable, by (role arn, session name) — listed beside
   // a key whose uses name that role and session, never joined (design round finding 6).
   const unresolved = new Map<string, Cited[]>();
-  records.forEach((rec, index) => {
-    const name = str(getCI(rec, "eventName"));
-    const source = str(getCI(rec, "eventSource"));
-    if (!name || !source) return;
-    const time = ms(str(getCI(rec, "eventTime")));
-    if (time === null) return;
-    // A cross-account action writes two records that share an id: the lineage counts it once.
-    const replica = str(getCI(rec, "sharedEventID")).trim();
-    const own = str(getCI(rec, "eventID")).trim();
-    const dedupe = replica ? `shared:${replica}` : own ? `event:${own}` : `record:${index}`;
-    if (seen.has(dedupe)) return;
-    seen.add(dedupe);
+  const scanned = scan(records);
+  // Pass 1: issuances, uses, sources, chaining.
+  for (const { rec, index, time, who } of scanned) {
     const t = normalizeTime(str(getCI(rec, "eventTime")));
     coverage.records += 1;
     if (!coverage.first || t < coverage.first) coverage.first = t;
     if (!coverage.last || t > coverage.last) coverage.last = t;
     const locator = `record:${index}`;
-    const who = readAwsIdentity(rec);
     const caller = who.accounts.caller;
     const errorCode = str(getCI(rec, "errorCode")).trim();
     const severity: Severity = errorCode ? "Medium" : "Info";
     const issuance = readCredentialIssuance(
-      name,
+      str(getCI(rec, "eventName")),
       getCI(rec, "requestParameters"),
       getCI(rec, "responseElements"),
       errorCode,
@@ -335,12 +429,11 @@ export function awsLineages(records: readonly Row[]): MappedEvent[] {
     if (issuance) {
       if (issuance.result === "issued" && issuance.issuedKey) {
         const k = keyFor(keys, owningAccount(issuance, caller), issuance.issuedKey);
-        const at = time;
-        if (!k.issuance || at < k.issuance.at)
+        if (!k.issuance || time < k.issuance.at)
           k.issuance = {
-            at,
+            at: time,
             action: issuance.action,
-            time: iso(at),
+            time: iso(time),
             locator,
             ...(issuance.role?.arn ? { role: issuance.role.arn } : {}),
             ...(issuance.sessionName ? { sessionName: issuance.sessionName } : {}),
@@ -364,29 +457,30 @@ export function awsLineages(records: readonly Row[]): MappedEvent[] {
     }
     // The use: every record signed with a key — the issuance call itself is a use of ITS signer.
     const signer = who.credential.accessKeyId || who.credential.credentialId;
-    if (!signer || !caller) return;
+    if (!signer || !caller) continue;
     recordUse(keyFor(keys, caller, signer), rec, who, time, locator, severity);
-  });
+  }
   for (const k of keys.values()) {
+    const sorted = [...k.sources.values()].sort((a, b) => a.first.time - b.first.time);
+    if (sorted.length >= 2) k.secondSourceAt = sorted[1].first.time;
     if (k.issuerArn && k.sessionName) {
       const rk = `${lower(k.issuerArn.replace(/:sts::/, ":iam::").replace(/assumed-role\/([^/]+)\/.*$/, "role/$1"))}|${lower(k.sessionName)}`;
       k.unresolvedRequests = unresolved.get(rk) ?? [];
     }
-    const sources = [...k.sources.values()].sort((a, b) => a.first.time - b.first.time);
-    if (sources.length >= 2) k.secondSourceAt = sources[1].first.time;
-    const e = enumerationShape(k);
-    if (e) k.shapes.push(e);
-    k.shapes = k.shapes
-      .map((s) => ({
-        ...s,
-        afterSecondSource: k.secondSourceAt !== null && Date.parse(s.time) > k.secondSourceAt,
-      }))
-      .sort((a, b) => Date.parse(a.time) - Date.parse(b.time));
+  }
+  // Pass 2: the shapes, each judged against its key's second source.
+  for (const { rec, index, time, who } of scanned) {
+    const signer = who.credential.accessKeyId || who.credential.credentialId;
+    const caller = who.accounts.caller;
+    if (!signer || !caller) continue;
+    const k = keys.get(`${lower(caller)}|${lower(signer)}`);
+    if (k) recordShape(k, rec, time, `record:${index}`);
   }
   // A row when the upload holds the issuance AND a use, or two sources, or a shape.
   const findings = [...keys.values()]
-    .filter((k) => k.uses > 0 && (k.issuance || k.sources.size >= 2 || k.shapes.length > 0))
-    .map((k) => ({ k, grade: gradeOf(k) }))
+    .map((k) => ({ k, shapes: shapesOf(k) }))
+    .filter(({ k, shapes }) => k.uses > 0 && (k.issuance || k.sources.size >= 2 || shapes.length > 0))
+    .map((f) => ({ ...f, grade: gradeOf(f.k, f.shapes) }))
     .sort(
       (a, b) =>
         RANK[b.grade] - RANK[a.grade] ||
@@ -394,16 +488,43 @@ export function awsLineages(records: readonly Row[]): MappedEvent[] {
         (b.k.first?.time ?? 0) - (a.k.first?.time ?? 0) ||
         a.k.credentialId.localeCompare(b.k.credentialId),
     );
-  const rows = findings.slice(0, AWS_LINEAGE_MAX).map((f) => summaryRow(f.k, f.grade, coverage));
+  const rows = findings.slice(0, AWS_LINEAGE_MAX).map((f) => summaryRow(f.k, f.shapes, f.grade, coverage));
   if (findings.length > AWS_LINEAGE_MAX)
     rows.push(omittedRow(findings.length - AWS_LINEAGE_MAX, findings[AWS_LINEAGE_MAX].grade));
   return rows;
 }
 
+/** The shapes the row carries: the decisive one first (after the second source), then the earliest, then the named — bounded, deduplicated. */
+function shapesOf(k: Key): AwsLineageShape[] {
+  const after = (t: number): boolean => k.secondSourceAt !== null && t > k.secondSourceAt;
+  const out: ShapeHit[] = [];
+  const seen = new Set<string>();
+  const push = (h: ShapeHit | null) => {
+    if (h && !seen.has(h.locator)) {
+      seen.add(h.locator);
+      out.push(h);
+    }
+  };
+  for (const kind of ["privileged-change", "remote-execution"] as const) push(k.shapes[kind].decisive);
+  for (const kind of ["privileged-change", "remote-execution"] as const) push(k.shapes[kind].earliest);
+  push(enumerationShape(k));
+  for (const kind of ["privileged-change", "remote-execution"] as const)
+    for (const h of k.shapes[kind].named) push(h);
+  return out
+    .slice(0, SHAPES_NAMED_MAX)
+    .map((h) => ({
+      kind: h.kind,
+      time: iso(h.time),
+      locator: h.locator,
+      call: h.call,
+      afterSecondSource: after(h.time),
+    }));
+}
+
 /** High: a privileged change or remote execution after the first use from a second source; Medium: a shape or a second source; Low: a lineage. Never below the top use row. */
-function gradeOf(k: Key): Severity {
-  const high = k.shapes.some((s) => s.afterSecondSource && s.kind !== "enumeration");
-  const floor: Severity = high ? "High" : k.shapes.length || k.sources.size >= 2 ? "Medium" : "Low";
+function gradeOf(k: Key, shapes: readonly AwsLineageShape[]): Severity {
+  const high = shapes.some((s) => s.afterSecondSource && s.kind !== "enumeration");
+  const floor: Severity = high ? "High" : shapes.length || k.sources.size >= 2 ? "Medium" : "Low";
   return RANK[k.top] > RANK[floor] ? k.top : floor;
 }
 
@@ -411,6 +532,7 @@ function gradeOf(k: Key): Severity {
 
 function summaryRow(
   k: Key,
+  shapes: readonly AwsLineageShape[],
   grade: Severity,
   coverage: { records: number; first: string; last: string },
 ): MappedEvent {
@@ -437,18 +559,20 @@ function summaryRow(
       (s) =>
         `${show(s.address, 45) || "(no address)"}${s.agent ? ` ${show(s.agent, 40)}` : ""} at ${iso(s.first.time)} (${s.first.locator}, ${plural(s.records, "record")})`,
     );
-  const beyondSources = sources.length - Math.min(sources.length, SOURCES_NAMED_MAX) + k.sourcesBeyond;
-  const shapeWords = k.shapes
-    .slice(0, SHAPES_NAMED_MAX)
-    .map(
-      (s) =>
-        `${s.kind === "privileged-change" ? "privileged change" : s.kind === "remote-execution" ? "remote execution" : "enumeration"}: ${show(s.call, 120)} at ${s.time} (${s.locator})${s.afterSecondSource ? " — after the second source" : ""}`,
-    );
+  const beyondSources = sources.length - Math.min(sources.length, SOURCES_NAMED_MAX) + k.overflowSources.size;
+  const shapeLine = (s: AwsLineageShape) =>
+    `${s.kind === "privileged-change" ? "privileged change" : s.kind === "remote-execution" ? "remote execution" : "enumeration"}: ${show(s.call, 120)} at ${s.time} (${s.locator})${s.afterSecondSource ? " — after the second source" : ""}`;
+  // The decisive shape — the one the grade rests on — is packed with the tail, never clipped.
+  const decisive = shapes.find((s) => s.afterSecondSource && s.kind !== "enumeration");
+  const shapeCount =
+    k.shapes["privileged-change"].count +
+    k.shapes["remote-execution"].count +
+    (shapes.some((s) => s.kind === "enumeration") ? 1 : 0);
   const parts = [
     issuanceWords,
     ...unresolvedWords,
     `uses: ${plural(k.uses, "record")} ${iso(k.first!.time)} (${k.first!.locator}) → ${iso(k.last!.time)} (${k.last!.locator})`,
-    `first use from each source: ${sourceWords.join("; ")}${beyondSources ? `; +${plural(beyondSources, "more source")}` : ""}`,
+    `first use from each source: ${sourceWords.join("; ")}${beyondSources ? `; +${plural(beyondSources, "more source")}` : ""}${k.untrackedRecords ? `; ${plural(k.untrackedRecords, "record")} from untracked sources` : ""}`,
     ...(k.secondSourceAt !== null
       ? [
           `second source ${Math.round((k.secondSourceAt - (k.issuance?.at ?? k.first!.time)) / 60_000)} min after ${k.issuance ? "the issuance" : "the first use"}; ${ADDRESSES_NOTE}`,
@@ -456,8 +580,11 @@ function summaryRow(
       : k.workload
         ? [ADDRESSES_NOTE]
         : []),
-    ...shapeWords,
-    ...(k.shapes.length > SHAPES_NAMED_MAX ? [`+${k.shapes.length - SHAPES_NAMED_MAX} more shapes`] : []),
+    ...shapes.filter((s) => s !== decisive).map(shapeLine),
+    ...(shapeCount > shapes.length ? [`+${shapeCount - shapes.length} more shape records`] : []),
+    ...(k.enumerationCount > k.enumeration.length
+      ? [`${k.enumerationCount - k.enumeration.length} enumeration calls beyond the scanned buffer`]
+      : []),
     ...(k.attempts ? [`attempts: ${plural(k.attempts, "denied call")} of these shapes — not counted`] : []),
     ...(k.serviceInvoked
       ? [`${plural(k.serviceInvoked, "record")} made by an AWS service on the caller's behalf`]
@@ -473,8 +600,18 @@ function summaryRow(
           : `issued from a session of ${show(c.credentialId, 30)} (${c.locator})`,
       ),
   ];
-  const notCited = Math.max(0, k.uses - k.locators.length);
+  // One deduplicated evidence list: the issuance, the bounds, the decisive shape, then every other
+  // contributing record up to the cap; `notCited` is what that list leaves out.
+  const reserved = [
+    ...(k.issuance ? [k.issuance.locator] : []),
+    k.first!.locator,
+    k.last!.locator,
+    ...(decisive ? [decisive.locator] : []),
+  ];
+  const cited = [...new Set([...reserved, ...k.locators])].slice(0, RAW_RECORDS_MAX);
+  const notCited = Math.max(0, k.uses + (k.issuance ? 1 : 0) - cited.length);
   const tail = [
+    ...(decisive ? [shapeLine(decisive)] : []),
     ...(notCited ? [`${plural(notCited, "further record")} not individually cited`] : []),
     COVERAGE_NOTE,
     k.workload
@@ -507,8 +644,8 @@ function summaryRow(
       firstUse: { time: iso(s.first.time), locator: s.first.locator },
       records: s.records,
     })),
-    sourcesBeyond: k.sourcesBeyond,
-    shapes: k.shapes,
+    sourcesBeyond: k.overflowSources.size,
+    shapes: [...shapes],
     attempts: k.attempts,
     chained: k.chained,
     notCited,
@@ -517,15 +654,11 @@ function summaryRow(
       "records of this upload only; joined through the access key id; the workload's addresses are not in this evidence",
   };
   const observed = k.issuance?.time ?? iso(k.first!.time);
-  const locators = [...new Set([...(k.issuance ? [k.issuance.locator] : []), ...k.locators])].slice(
-    0,
-    RAW_RECORDS_MAX,
-  );
   return {
     timestamp: normalizeTime(observed),
     description,
     severity: grade,
-    mitre: grade === "Low" ? [] : [...new Set(k.shapes.map((s) => SHAPE_MITRE[s.kind]))],
+    mitre: grade === "Low" ? [] : [...new Set(shapes.map((s) => SHAPE_MITRE[s.kind]))],
     aggKey: boundedAggKey(`aws-credential-lineage|${identity}`),
     sources: ["AWS CloudTrail"],
     canonical: createCanonicalEvent({
@@ -535,7 +668,7 @@ function summaryRow(
       authentication: { credentialId: k.credentialId, ...(k.issuerArn ? { issuer: k.issuerArn } : {}) },
       cloud: { provider: "aws", ...(k.account ? { accountId: k.account } : {}) },
       time: { observed, normalized: normalizeTime(observed) },
-      evidence: { rawRecords: locators.map((l) => ({ source: "cloudtrail", locator: l })) },
+      evidence: { rawRecords: cited.map((l) => ({ source: "cloudtrail", locator: l })) },
       producer: {
         importer: "aws-cloudtrail",
         parserVersion: "1",

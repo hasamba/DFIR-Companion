@@ -208,6 +208,8 @@ describe("gradeGroup — breadth is a question, not an answer", () => {
   const group = (over: Partial<BulkGroup> = {}): BulkGroup => ({
     principal: ROLE_PRINCIPAL,
     credentialId: "",
+    provider: "aws",
+    account: "",
     sourceIp: "10.0.1.5",
     userAgent: "",
     objectCount: 4000,
@@ -231,7 +233,7 @@ describe("gradeGroup — breadth is a question, not an answer", () => {
 
   it("raises when the session was opened by someone assuming the role", () => {
     const v = gradeGroup(group(), {
-      assumptions: [{ role: "app-role", by: "alice", time: Date.parse(at(-10)), issuedKey: "" }],
+      assumptions: [{ role: "app-role", by: "alice", time: Date.parse(at(-10)), issuedKey: "", account: "" }],
     });
     expect(v?.severity).toBe("High");
     expect(v?.reason).toContain("opened by alice");
@@ -422,7 +424,13 @@ describe("regressions", () => {
   // anything — a false causal attribution of one person's action to another.
   it("matches the role segment exactly, not as a substring", () => {
     const group = groupBulkReads(manyReads(MIN_OBJECTS + 1))[0];
-    const a = (role: string, by: string) => ({ role, by, time: Date.parse(at(-5)), issuedKey: "" });
+    const a = (role: string, by: string) => ({
+      role,
+      by,
+      time: Date.parse(at(-5)),
+      issuedKey: "",
+      account: "",
+    });
     expect(assumptionFor(group, [a("app", "mallory")])).toBeNull();
     expect(assumptionFor(group, [a("superapp-role", "mallory")])).toBeNull();
     expect(assumptionFor(group, [a("app-role", "alice")])?.assumption.by).toBe("alice");
@@ -673,15 +681,29 @@ describe("credential-id attribution (#979)", () => {
     const groups = groupBulkReads([...withKey("ASIAAAAA"), ...withKey("ASIABBBB", { min: 1 })]);
     expect(groups).toHaveLength(2);
     expect(groups.map((g) => g.credentialId).sort()).toEqual(["ASIAAAAA", "ASIABBBB"]);
-    const issued = { role: "app-role", by: "alice", time: Date.parse(at(-300)), issuedKey: "ASIAAAAA" };
-    const other = { role: "app-role", by: "bob", time: Date.parse(at(-5)), issuedKey: "ASIABBBB" };
+    const issued = {
+      role: "app-role",
+      by: "alice",
+      time: Date.parse(at(-300)),
+      issuedKey: "ASIAAAAA",
+      account: "",
+    };
+    const other = {
+      role: "app-role",
+      by: "bob",
+      time: Date.parse(at(-5)),
+      issuedKey: "ASIABBBB",
+      account: "",
+    };
     const a = groups.find((g) => g.credentialId === "ASIAAAAA")!;
     const m = assumptionFor(a, [issued, other]);
     expect(m?.assumption.by).toBe("alice");
     expect(m?.by).toBe("key");
     // Rows that name a key no issuance minted: no role-name fallback — that would name another person.
     expect(
-      assumptionFor(a, [{ role: "app-role", by: "bob", time: Date.parse(at(-5)), issuedKey: "" }]),
+      assumptionFor(a, [
+        { role: "app-role", by: "bob", time: Date.parse(at(-5)), issuedKey: "", account: "" },
+      ]),
     ).toBeNull();
     const v = gradeGroup(a, { assumptions: [issued] });
     expect(v?.reason).toContain("issued to alice assuming this role");
@@ -701,5 +723,42 @@ describe("credential-id attribution (#979)", () => {
       target: { kind: "other", id: "ASIAAAAA", name: "temporary credential" },
     };
     expect(roleAssumptions([issuance])[0].issuedKey).toBe("ASIAAAAA");
+  });
+});
+
+// Code round 1 on #979: a group is one account of one provider; the key match is the (account, key)
+// tuple and never an issuance after the reads began.
+describe("account, provider and chronology (#979 code round)", () => {
+  const inAccount = (account: string, provider = "aws", over: Parameters<typeof read>[0] = {}) =>
+    manyReads(MIN_OBJECTS + 1, { principal: "Backup", ...over }).map((e) => ({
+      ...e,
+      canonical: { ...e.canonical!, cloud: { ...e.canonical!.cloud, provider, accountId: account } },
+    }));
+  it("the same role name, address and client in two accounts, or on two providers, are two groups", () => {
+    expect(groupBulkReads([...inAccount("111122223333"), ...inAccount("444455556666")])).toHaveLength(2);
+    expect(groupBulkReads([...inAccount("111122223333"), ...inAccount("111122223333", "gcp")])).toHaveLength(
+      2,
+    );
+    expect(
+      groupBulkReads([...inAccount("111122223333"), ...inAccount("111122223333")]).length,
+    ).toBeLessThanOrEqual(1);
+  });
+  it("a key issued in another account, or after the reads began, is not the group's issuance", () => {
+    const rows = manyReads(MIN_OBJECTS + 1).map((e) => ({
+      ...e,
+      canonical: {
+        ...e.canonical!,
+        authentication: { credentialId: "ASIAAAAA" },
+        cloud: { ...e.canonical!.cloud, provider: "aws", accountId: "111122223333" },
+      },
+    }));
+    const g = groupBulkReads(rows)[0];
+    const base = { role: "app-role", by: "alice", issuedKey: "ASIAAAAA" };
+    expect(assumptionFor(g, [{ ...base, time: Date.parse(at(-5)), account: "444455556666" }])).toBeNull();
+    expect(assumptionFor(g, [{ ...base, time: Date.parse(at(5)), account: "111122223333" }])).toBeNull();
+    expect(assumptionFor(g, [{ ...base, time: Date.parse(at(-5)), account: "111122223333" }])?.by).toBe(
+      "key",
+    );
+    expect(assumptionFor(g, [{ ...base, time: Date.parse(at(-5)), account: "" }])?.by).toBe("key");
   });
 });

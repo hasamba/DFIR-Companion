@@ -115,7 +115,7 @@ describe("issuance → use by key id", () => {
       notCited: 0,
     });
     expect(r.canonical?.awsLineage?.sources.map((s) => s.address)).toEqual([IP, IP2]);
-    expect(r.canonical?.evidence.rawRecords.map((x) => x.locator)).toEqual([
+    expect(r.canonical?.evidence.rawRecords.map((x) => x.locator).sort()).toEqual([
       "record:0",
       "record:1",
       "record:2",
@@ -439,5 +439,156 @@ describe("identity, bounds, the importer", () => {
     expect(r.canonical?.evidence.rawRecords.length).toBeLessThanOrEqual(256);
     expect(r.description.length).toBeLessThanOrEqual(1400);
     expect(r.description).toMatch(/issuance and 5068 uses in this upload\]$/);
+  });
+});
+
+// Code round 1 (Codex): the cases the review named.
+describe("code round 1", () => {
+  it("replicas are grouped first: the informative identity is read whichever replica the file lists first", () => {
+    const shared = { sharedEventID: "shared-9" };
+    const accountView = use({
+      ...shared,
+      userIdentity: { type: "AWSAccount", principalId: "AIDA", accountId: ACCT },
+      recipientAccountId: OTHER,
+    });
+    const roleView = use({ ...shared, eventID: "evt-r" });
+    const a = lineages([
+      issuance(),
+      accountView,
+      roleView,
+      use({ eventTime: at(600), sourceIPAddress: IP2 }),
+    ]);
+    const b = lineages([
+      issuance(),
+      roleView,
+      accountView,
+      use({ eventTime: at(600), sourceIPAddress: IP2 }),
+    ]);
+    expect(a[0].canonical?.awsLineage?.uses.records).toBe(2);
+    expect(b[0].canonical?.awsLineage?.uses.records).toBe(2);
+    expect(a[0].description.replace(/record:\d+/g, "")).toBe(b[0].description.replace(/record:\d+/g, ""));
+  });
+
+  it("an AssumeRoot target given as a root ARN owns the key the same as the 12-digit form", () => {
+    for (const target of [OTHER, `arn:aws:iam::${OTHER}:root`]) {
+      const rows = lineages([
+        issuance({
+          eventName: "AssumeRoot",
+          requestParameters: {
+            targetPrincipal: target,
+            taskPolicyArn: { arn: "arn:aws:iam::aws:policy/root-task/IAMAuditRootUserCredentials" },
+          },
+        }),
+        use({ userIdentity: session(KEY, { accountId: OTHER }) }),
+      ]);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].canonical?.awsLineage?.account).toBe(OTHER);
+      expect(rows[0].description).not.toContain("no issuance record");
+    }
+  });
+
+  it("deploying Lambda code is not remote execution; only Invoke is", () => {
+    const deploy = lineages([
+      issuance(),
+      use(),
+      use({ eventTime: at(3600), sourceIPAddress: IP2 }),
+      use({
+        eventTime: at(3700),
+        sourceIPAddress: IP2,
+        eventSource: "lambda.amazonaws.com",
+        eventName: "UpdateFunctionCode",
+      }),
+    ]);
+    expect(deploy[0].severity).toBe("Medium");
+    expect(deploy[0].description).not.toContain("remote execution");
+    const invoke = lineages([
+      issuance(),
+      use(),
+      use({ eventTime: at(3600), sourceIPAddress: IP2 }),
+      use({
+        eventTime: at(3700),
+        sourceIPAddress: IP2,
+        eventSource: "lambda.amazonaws.com",
+        eventName: "Invoke",
+      }),
+    ]);
+    expect(invoke[0].severity).toBe("High");
+    expect(invoke[0].mitre).toEqual(["T1651"]);
+  });
+
+  it("the decisive shape is always in the words and the evidence, whatever precedes it; the state stays bounded", () => {
+    const many = [
+      issuance(),
+      use(),
+      ...Array.from({ length: 40 }, (_, i) =>
+        use({ eventTime: at(20 + i), eventSource: "iam.amazonaws.com", eventName: "CreateAccessKey" }),
+      ),
+      use({ eventTime: at(3600), sourceIPAddress: IP2 }),
+      use({
+        eventTime: at(3700),
+        sourceIPAddress: IP2,
+        eventSource: "ssm.amazonaws.com",
+        eventName: "SendCommand",
+      }),
+      ...Array.from({ length: 3000 }, (_, i) =>
+        use({ eventTime: at(4000 + i), eventSource: "iam.amazonaws.com", eventName: "ListUsers" }),
+      ),
+    ];
+    const r = lineages(many)[0];
+    expect(r.severity).toBe("High");
+    expect(r.description).toContain(
+      "remote execution: ssm SendCommand at 2024-05-01T10:01:40.000Z (record:43) — after the second source",
+    );
+    expect(r.canonical?.evidence.rawRecords.map((x) => x.locator)).toContain("record:43");
+    expect(r.canonical?.awsLineage?.shapes.length).toBeLessThanOrEqual(6);
+    expect(r.canonical?.awsLineage?.shapes[0]).toMatchObject({
+      kind: "remote-execution",
+      locator: "record:43",
+      afterSecondSource: true,
+    });
+    expect(r.description).toContain("+35 more shape records");
+    expect(r.description).toContain("enumeration calls beyond the scanned buffer");
+    expect(JSON.stringify(r.canonical).length).toBeLessThan(60_000);
+  });
+
+  it("sources past the tracked bound are counted as distinct sources, not as records; the second source is exact whatever the order", () => {
+    const flood = [
+      issuance(),
+      ...Array.from({ length: SOURCES_PER_KEY_MAX + 1 }, (_, i) =>
+        use({
+          eventTime: at(100 + i),
+          sourceIPAddress: `198.51.100.${(i % 200) + 1}`,
+          userAgent: `agent-${i}`,
+        }),
+      ),
+      ...Array.from({ length: 500 }, (_, i) =>
+        use({ eventTime: at(5000 + i), sourceIPAddress: "192.0.2.77", userAgent: "one-more" }),
+      ),
+    ];
+    const r = lineages(flood)[0];
+    expect(r.canonical?.awsLineage?.sourcesBeyond).toBe(2);
+    expect(r.description).toContain("+58 more sources");
+    // The earliest source arrives LAST in the file: it still becomes the first source.
+    const reversed = lineages([
+      issuance(),
+      ...Array.from({ length: SOURCES_PER_KEY_MAX + 5 }, (_, i) =>
+        use({ eventTime: at(100 + i), sourceIPAddress: `198.51.100.${i + 1}` }),
+      ).reverse(),
+    ])[0];
+    expect(reversed.canonical?.awsLineage?.sources[0].address).toBe("198.51.100.1");
+    expect(reversed.canonical?.awsLineage?.sources[1].address).toBe("198.51.100.2");
+  });
+
+  it("citations are one deduplicated list: an issuance plus exactly 256 uses cites 256 and says one is not", () => {
+    const r = lineages([
+      issuance(),
+      ...Array.from({ length: 256 }, (_, i) => use({ eventTime: at(10 + i) })),
+    ])[0];
+    expect(r.canonical?.evidence.rawRecords).toHaveLength(256);
+    expect(r.canonical?.evidence.rawRecords.map((x) => x.locator)).toEqual(
+      expect.arrayContaining(["record:0", "record:1", "record:256"]),
+    );
+    expect(r.canonical?.awsLineage?.notCited).toBe(1);
+    expect(r.description).toContain("1 further record not individually cited");
   });
 });

@@ -84,6 +84,9 @@ export interface ReadRecord {
   principal: string;
   /** The credential that signed the call (`authentication.credentialId`, #931 item 5); "" when the row carries none. */
   credentialId: string;
+  /** The provider and the owning account / tenant (`cloud.provider`, `cloud.accountId` / `cloud.tenant`); "" when absent. */
+  provider: string;
+  account: string;
   sourceIp: string;
   userAgent: string;
   action: string;
@@ -121,6 +124,8 @@ export function readCloudRecord(e: ForensicEvent): ReadRecord | null {
     time,
     principal: principal.trim(),
     credentialId: (c?.authentication?.credentialId ?? "").trim(),
+    provider: (c?.cloud?.provider ?? "").trim(),
+    account: (c?.cloud?.accountId ?? c?.cloud?.tenant ?? "").trim(),
     sourceIp: (c?.network?.source?.address ?? e.srcIp ?? sourceFromDescription(e.description ?? "")).trim(),
     userAgent: clientFromDescription(e.description ?? ""),
     action: action.trim(),
@@ -215,6 +220,8 @@ export interface BulkGroup {
   principal: string;
   /** The one credential the group's rows carry; "" when they carry none. */
   credentialId: string;
+  provider: string;
+  account: string;
   sourceIp: string;
   userAgent: string;
   objectCount: number;
@@ -230,10 +237,11 @@ export interface BulkGroup {
   truncated: boolean;
 }
 
-// A group is ONE credential: two keys under one role name, address and client are two readers
-// (two sessions issued to two people), and a match to an assumption must never span them.
+// A group is ONE credential in ONE account of ONE provider: two keys under one role name, address
+// and client are two readers (two sessions issued to two people); a role named "Backup" in two
+// accounts, or on two providers, is two readers — a match to an assumption must never span them.
 function groupKey(r: ReadRecord): string {
-  return `${lower(r.principal)}|${lower(r.credentialId)}|${r.sourceIp}|${lower(r.userAgent)}`;
+  return `${lower(r.provider)}|${lower(r.account)}|${lower(r.principal)}|${lower(r.credentialId)}|${r.sourceIp}|${lower(r.userAgent)}`;
 }
 
 /**
@@ -345,6 +353,8 @@ export function groupBulkReads(
     out.push({
       principal: head.principal,
       credentialId: head.credentialId,
+      provider: head.provider,
+      account: head.account,
       sourceIp: head.sourceIp,
       userAgent: head.userAgent,
       objectCount: bestCounts.objects,
@@ -385,6 +395,8 @@ export interface RoleAssumption {
   time: number;
   /** The key the issuance minted (`target.id` on an issuance row, #931 item 5); "" when the row carries none. */
   issuedKey: string;
+  /** The account the issuance row names; "" when it names none. */
+  account: string;
 }
 
 const ASSUME_RE = /^(?:sts\.)?assumerole(?:withsaml|withwebidentity)?$/i;
@@ -412,7 +424,7 @@ export function roleAssumptions(events: readonly ForensicEvent[]): RoleAssumptio
     if (!role || !by) continue;
     const issuedKey =
       e.canonical?.target?.name === "temporary credential" ? (e.canonical.target.id ?? "").trim() : "";
-    out.push({ role, by: by.trim(), time, issuedKey });
+    out.push({ role, by: by.trim(), time, issuedKey, account: (e.canonical?.cloud?.accountId ?? "").trim() });
   }
   return out;
 }
@@ -440,16 +452,24 @@ export function assumptionFor(
   assumptions: readonly RoleAssumption[],
   windowMs = DEFAULT_WINDOW_MS,
 ): AssumptionMatch | null {
+  const start = Date.parse(group.first);
+  if (!Number.isFinite(start)) return null;
   if (group.credentialId) {
+    // The tuple (account, key) when both sides name the account; the key alone when either does
+    // not. An issuance AFTER the reads began minted nothing they used: not a match.
     const key = lower(group.credentialId);
-    const minted = assumptions.filter((a) => a.issuedKey && lower(a.issuedKey) === key);
+    const minted = assumptions.filter(
+      (a) =>
+        a.issuedKey &&
+        lower(a.issuedKey) === key &&
+        a.time <= start &&
+        (!a.account || !group.account || lower(a.account) === lower(group.account)),
+    );
     if (minted.length) return { assumption: minted.reduce((m, a) => (a.time > m.time ? a : m)), by: "key" };
     // The rows name a key and no issuance minted it: a role-name match would attribute another
     // person's session to this key.
     return null;
   }
-  const start = Date.parse(group.first);
-  if (!Number.isFinite(start)) return null;
   // The reader's identity is `arn:aws:sts::…:assumed-role/<role>/<session>`. The ROLE SEGMENT is
   // compared, not a substring of the whole string.
   //
