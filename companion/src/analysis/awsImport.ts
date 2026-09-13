@@ -18,6 +18,7 @@ import { decodeSsmCall, renderSsmDescription } from "./ssmExecution.js";
 import { decodeIamChange, renderAwsDescription } from "./iamChange.js";
 import { readAwsIdentity, readCredentialIssuance } from "./awsIdentity.js";
 import { mergeReplicas, type ReplicaCandidate } from "./awsReplicas.js";
+import { awsLineages, AWS_LINEAGE_MAX } from "./awsLineage.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -53,6 +54,8 @@ export interface AwsParseResult {
   kept: number;
   dropped: number;
   groups: number;
+  /** Derived summary rows appended after the source-row cap (the credential lineages, #979) — not in `kept`. */
+  summaries: number;
   format: string; // "cloudtrail" | "empty"
 }
 
@@ -499,7 +502,7 @@ export function parseCloudTrail(text: string, opts: AwsImportOptions = {}): AwsP
   const { records } = extractRecords(text);
   const total = records.length;
   if (total === 0) {
-    return { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, format: "empty" };
+    return { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, summaries: 0, format: "empty" };
   }
 
   const iocSink = new Map<string, SiemIoc>();
@@ -512,7 +515,7 @@ export function parseCloudTrail(text: string, opts: AwsImportOptions = {}): AwsP
   // independent of the optional aggregation.
   const mapped = mergeReplicas(candidates);
   if (mapped.length === 0) {
-    return { events: [], iocs: [], total, kept: 0, dropped: total, groups: 0, format: "empty" };
+    return { events: [], iocs: [], total, kept: 0, dropped: total, groups: 0, summaries: 0, format: "empty" };
   }
 
   const { events, groups } = aggregateEvents(mapped, {
@@ -520,11 +523,19 @@ export function parseCloudTrail(text: string, opts: AwsImportOptions = {}): AwsP
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
-  const finalEvents = stampSourceArtifactHash(events, text);
+  // The credential lineages (#979): built over every record of this upload, appended AFTER the
+  // source-row cap under their own bound — `maxEvents` bounds source rows, a summary never evicts
+  // one, and `kept` / `dropped` / `groups` count source rows alone.
+  const summaries = aggregateEvents(awsLineages(records), {
+    aggregate: opts.aggregate,
+    minSeverity: opts.minSeverity,
+    maxEvents: AWS_LINEAGE_MAX + 1,
+  }).events;
+  const finalEvents = stampSourceArtifactHash([...events, ...summaries], text);
 
   // A merged cross-account action is ONE event that represents every replica record it carries
   // (its raw-record pointers): those records are on the row, not dropped.
-  const represented = finalEvents.reduce(
+  const represented = events.reduce(
     (n, e) => n + (e.count ?? 1) * Math.max(1, e.canonical?.evidence.rawRecords.length ?? 1),
     0,
   );
@@ -532,9 +543,10 @@ export function parseCloudTrail(text: string, opts: AwsImportOptions = {}): AwsP
     events: finalEvents,
     iocs: [...iocSink.values()].slice(0, maxIocs),
     total,
-    kept: finalEvents.length,
+    kept: events.length,
     dropped: Math.max(0, total - represented),
     groups,
+    summaries: summaries.length,
     format: "cloudtrail",
   };
 }
