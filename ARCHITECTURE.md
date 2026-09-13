@@ -145,17 +145,24 @@ previewed and capped, like every other path below. `tests/analysis/taggerPromoti
 pins both halves — that the import-time promotion works and survives demote, and that a post-demote
 run moves nothing.
 
-### The seam is one function, and not every import route ran it
+### The seam is one function, and every import route runs it
 
 The dual-write → tag → demote sequence is `routes/importSettle.ts: settleForensicImport`. It used
 to be six inline copies (the generic import route twice, the streamed ingest, the hunt collector,
 both Velociraptor external-ingest paths) and **zero** copies on the dedicated `import-*` routes,
 which called their importer and resynthesized. The consequence was the exact thing the rule forbids: an Info row imported through
 a dedicated route stayed in the forensic timeline where the model reads it, and never reached the
-super-timeline at all — with no import lock and no import record either. `/import-leapp` is on the
-seam now (#932 item 12, `tests/server/importLeappRoute.test.ts` pins both entry points landing the
-same split); [#956](https://github.com/hasamba/DFIR-Companion/issues/956) tracks the remaining
-dedicated routes. A new import route calls `settleForensicImport` or it is not on the boundary.
+super-timeline at all — with no import lock and no import record either. `/import-leapp` was put
+on the seam first (#932 item 12); the other 22 dedicated routes followed in
+[#956](https://github.com/hasamba/DFIR-Companion/issues/956) through one commit orchestrator,
+`routes/importCommit.ts: commitDedicatedImport` — lock + snapshot, importer, seam, import record,
+activity line, undo checkpoint, run record, resynthesis — so a route cannot half-run it.
+`tests/server/dedicatedImportSpine.test.ts` drives every one of them and asserts the persisted
+stores. A new dedicated import route calls `commitDedicatedImport` — or `settleForensicImport`
+directly when it cannot — or it is not on the boundary. The resume path
+(`routes/importRecovery.ts`) keeps its own copy on purpose: it re-selects every row of the
+artifact by name, not the rows added since a snapshot, because a resumed import has no clean
+pre-import snapshot to diff against.
 
 ### Three analyst-initiated paths touch the raw record
 
@@ -231,7 +238,7 @@ established, and it works the same way.
 The graph is built the same way `check-imports.mjs` builds it: a regex over relative `.js`
 specifiers, because the companion imports its own modules exclusively that way. No resolver needed.
 
-For context: **2,152 of the 2,190 cross-domain file dependencies already comply.** The map is mostly
+For context: **2,157 of the 2,195 cross-domain file dependencies already comply.** The map is mostly
 a description of how this codebase is already written, which is the only kind of rule people follow.
 Both figures come from `npm run check:boundaries -- --json`, which counts them in the same pass that
 finds the violations, and a test asserts this sentence against it. The pair read 1,275 of 1,323 long

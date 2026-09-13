@@ -403,7 +403,8 @@ export function parseChannelInput(
   const draft: ChannelDraft = {
     type: v.type,
     name: (v.name ?? "").trim() || defaultName(v.type),
-    enabled: v.enabled ?? true,
+    // Omitted on an edit means "unchanged", not "on" — same trap as audit export (#998).
+    enabled: v.enabled ?? existing?.enabled ?? true,
     minSeverity: v.minSeverity ?? "High",
     events,
   };
