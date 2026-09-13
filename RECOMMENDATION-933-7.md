@@ -230,3 +230,8 @@ The joins, Gatekeeper/XProtect logs, browser history, any grade above Info.
 1. Two REAL timestamps that round to one millisecond (`716403200.5001` / `.5002`) shared a facts
    digest and folded. Fix: the raw time text is part of identity beside the encoding and the ISO
    reading; a value with more fraction digits than a millisecond carries marks the row.
+
+## Code round 13 (Codex, one finding)
+1. The ISO lossiness check compared the reading with itself, so `+02:00` and `+0200` rows were
+   unmarked and folded after correlation. Fix: an ISO value is lossless only when the raw text is
+   the emitted ISO verbatim; every other spelling marks the row (tested through correlateEvents).

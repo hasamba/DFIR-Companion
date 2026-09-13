@@ -259,7 +259,8 @@ function timeOccurrences(rec: Row): { header: string; value: string }[] {
 }
 /** Whether the ISO reading carries the raw text back exactly — else the words lost a digit. */
 function timeRoundTrips(raw: string, when: QuarantineTime): boolean {
-  if (when.encoding === "iso") return normalizeTime(raw) === when.iso;
+  // An ISO spelling the reading does not repeat verbatim (`+0200`, a space, an offset) is lost.
+  if (when.encoding === "iso") return raw.trim() === when.iso;
   // Date keeps milliseconds: more fraction digits than the encoding's millisecond has are lost.
   const fraction = (raw.split(".")[1] ?? "").replace(/0+$/, "").length;
   return fraction <= (when.encoding === "unix-ms" ? 0 : 3);

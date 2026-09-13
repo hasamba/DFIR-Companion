@@ -631,6 +631,21 @@ describe("through parseMacos and correlateEvents", () => {
     expect(exact.events[0].description).not.toMatch(/ #[A-Za-z0-9_-]{22}$/);
   });
 
+  it("two ISO spellings of one instant are two rows after correlation", () => {
+    const rows = [
+      row({ LSQuarantineTimeStamp: "2026-05-02T09:30:00+02:00" }),
+      row({ LSQuarantineTimeStamp: "2026-05-02T09:30:00+0200" }),
+    ];
+    const r = parseMacos(csv(rows));
+    expect(r.events).toHaveLength(2);
+    expect(r.events.every((e) => / #[A-Za-z0-9_-]{22}$/.test(e.description))).toBe(true);
+    expect(afterImport(r.events)).toHaveLength(2);
+    expect(afterImport(parseMacos(csv(rows), { aggregate: false }).events)).toHaveLength(2);
+    // the platform's own spelling is carried back and not marked for its time
+    const z = parseMacos(csv([row({ LSQuarantineTimeStamp: "2026-05-02T09:30:00.000Z" })]));
+    expect(z.events[0].description).not.toMatch(/ #[A-Za-z0-9_-]{22}$/);
+  });
+
   it("a path-shaped unreadable type never joins a real path event after import", () => {
     const q = parseMacos(csv([row({ LSQuarantineTypeNumber: "/tmp/evil/payload" })]));
     expect(q.events[0].description).toContain("[kind: kind not readable (/tmp/evil/payload)]");
