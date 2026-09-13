@@ -231,6 +231,7 @@
     "ROUTE GET /cases/:id/timeline.jsonl",
     "ROUTE GET /cases/:id/super-timeline",
     "ROUTE GET /cases/:id/super-timeline.jsonl",
+    "ROUTE GET /cases/:id/timesketch-omitted",
     "ROUTE POST /cases/:id/super-timeline/label",
     "ROUTE POST /cases/:id/super-timeline/promote",
     "ROUTE GET /cases/:id/asset-graph",

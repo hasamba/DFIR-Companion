@@ -1,8 +1,32 @@
 // Unified export menu — one button offering every export the case supports (#415 tier 3).
 //
-// WIRING ONLY: no declarations, no state, nothing outside calling in — one statement seventy-four
-// lines long. So the module publishes only its initializer, and the initializer is the module.
+// WIRING ONLY, plus one download helper: the Timesketch JSONL exports must tell the analyst how many
+// undated rows they left out (#957), which a bare navigation cannot do. So the module publishes
+// only its initializer, and the initializer is the module.
 (function () {
+  // Start a Timesketch JSONL download and report the rows it leaves out. Timesketch requires a
+  // time per event, so the server omits undated rows; the download itself stays a plain navigation
+  // (the browser streams it to disk — a super-timeline can be large), and the count comes from one
+  // request made just before, put on the status line where the analyst is looking (#957).
+  function downloadTimesketchJsonl(caseId, scope) {
+    const status = document.getElementById("status");
+    const url =
+      scope === "super" ? `/cases/${caseId}/super-timeline.jsonl` : `/cases/${caseId}/timeline.jsonl`;
+    status.textContent = "checking Timesketch export…";
+    fetch(`/cases/${caseId}/timesketch-omitted?scope=${scope}`)
+      .then((r) => (r.ok ? r.json() : {}))
+      .catch(() => ({}))
+      .then((preview) => {
+        const omitted = Number(preview.omitted || 0);
+        status.textContent =
+          "Timesketch JSONL downloading" +
+          (omitted > 0
+            ? ` — ${omitted} undated row(s) left out (Timesketch requires a time; they stay in the Companion)`
+            : "");
+        window.location.href = url;
+      });
+  }
+
   // The statements the inline block ran at module scope, in their original order.
   function initUnifiedExport() {
     // ── Unified export menu ───────────────────────────────────────────────────
@@ -75,9 +99,9 @@
         // On-demand ATT&CK Navigator layer (JSON) — import at mitre-attack.github.io/attack-navigator.
         window.location.href = `/cases/${c}/attack-layer.json`;
       } else if (action === "timesketch-jsonl") {
-        window.location.href = `/cases/${c}/timeline.jsonl`;
+        downloadTimesketchJsonl(c, "forensic");
       } else if (action === "timesketch-jsonl-super") {
-        window.location.href = `/cases/${c}/super-timeline.jsonl`;
+        downloadTimesketchJsonl(c, "super");
       } else if (action === "stix") {
         // On-demand STIX 2.1 bundle (JSON) — import into any TIP (OpenCTI, MISP, Anomali…).
         window.location.href = `/cases/${c}/export/stix`;

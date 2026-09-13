@@ -70,15 +70,27 @@ export function mapForensicEvent(event: ForensicEvent): TimesketchEvent | null {
   return ev;
 }
 
-// The forensic timeline as Timesketch import events, sorted by their true event time and with
-// unparseable-timestamp events dropped — the chronological attack story, ready for upload. Shared
-// by the forensic-timeline path (below) and the super-timeline export/push, which map a plain
-// ForensicEvent[] the same way.
+// The forensic timeline as Timesketch import events, sorted by their true event time, plus the
+// count of rows left out because they carry no parseable time. Timesketch requires a datetime, so
+// an undated row (an installed-app entry, a YARA hit with no clock) cannot go; the count lets every
+// export and push say so rather than shrink in silence (#957). Shared by the forensic-timeline path
+// (below) and the super-timeline export/push, which map a plain ForensicEvent[] the same way.
+export function splitTimesketchEvents(events: ForensicEvent[]): {
+  events: TimesketchEvent[];
+  omitted: number;
+} {
+  const mapped = [...events].sort(byEventTime).map(mapForensicEvent);
+  const kept = mapped.filter((e): e is TimesketchEvent => e !== null);
+  return { events: kept, omitted: mapped.length - kept.length };
+}
+
 export function toTimesketchEventsFromList(events: ForensicEvent[]): TimesketchEvent[] {
-  return [...events]
-    .sort(byEventTime)
-    .map(mapForensicEvent)
-    .filter((e): e is TimesketchEvent => e !== null);
+  return splitTimesketchEvents(events).events;
+}
+
+// The line the push warnings and the export status carry when rows were left out.
+export function timesketchOmittedWarning(omitted: number): string {
+  return `${omitted} event(s) omitted: no parseable timestamp (Timesketch requires one) — they remain in the Companion timeline`;
 }
 
 export function toTimesketchEvents(state: InvestigationState): TimesketchEvent[] {

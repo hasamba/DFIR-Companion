@@ -6,6 +6,7 @@ import {
   toTimesketchJsonl,
   toTimesketchEventsFromList,
   toTimesketchJsonlFromList,
+  splitTimesketchEvents,
 } from "../../src/integrations/timesketch/timesketchMap.js";
 import {
   scrapeCsrfToken,
@@ -115,6 +116,25 @@ describe("timesketchMap", () => {
     expect(jsonl).toHaveLength(2);
     expect(jsonl.map((l) => JSON.parse(l).message)).toEqual(["earlier", "later"]);
     expect(toTimesketchJsonlFromList([])).toBe(""); // no events → empty string
+  });
+});
+
+// An undated row cannot be a Timesketch event (the format requires a datetime), so it is omitted —
+// and the omission is counted, so the export can say so instead of shrinking in silence (#957).
+describe("splitTimesketchEvents", () => {
+  it("counts the rows it omits for lack of a parseable time", () => {
+    const { events, omitted } = splitTimesketchEvents([
+      event({ timestamp: "2026-05-26T12:00:00Z", description: "dated" }),
+      event({ timestamp: "", description: "undated" }),
+      event({ timestamp: "not a time", description: "junk" }),
+    ]);
+    expect(events.map((e) => e.message)).toEqual(["dated"]);
+    expect(omitted).toBe(2);
+  });
+  it("reports zero omitted when every row has a time", () => {
+    expect(
+      splitTimesketchEvents([event({ timestamp: "2026-05-26T12:00:00Z", description: "d" })]).omitted,
+    ).toBe(0);
   });
 });
 
@@ -316,6 +336,24 @@ describe("pushCaseToTimesketch", () => {
     expect(res.events).toBe(0);
     expect(m.uploads).toHaveLength(0);
     expect(res.warnings.some((w) => w.includes("no events with a parseable timestamp"))).toBe(true);
+  });
+
+  it("counts and warns about the undated rows a partial push leaves behind (#957)", async () => {
+    const m = new MockTimesketch();
+    const state = {
+      ...emptyState("Case Gamma"),
+      forensicTimeline: [
+        event({ timestamp: "2026-05-26T12:00:00Z", description: "dated" }),
+        event({ timestamp: "", description: "undated one" }),
+        event({ timestamp: "", description: "undated two" }),
+      ],
+    };
+    const res = await pushCaseToTimesketch(m, { sketchName: "Case Gamma", state });
+    expect(res.events).toBe(1);
+    expect(res.omitted).toBe(2);
+    expect(res.warnings).toEqual([
+      "2 event(s) omitted: no parseable timestamp (Timesketch requires one) — they remain in the Companion timeline",
+    ]);
   });
 
   it("does NOT delete an existing same-named timeline when there are no events to upload (data-loss guard)", async () => {
