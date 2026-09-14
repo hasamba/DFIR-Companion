@@ -91,7 +91,9 @@ export async function importPlasoFile(
 //                 asked for a report, not for a lab row to become incident evidence.
 //   second-look — the automated loop. A lab row is REFUSED here outright, marker or not: the loop
 //                 must never move sandbox behaviour into the incident chronology on its own.
-export type PromotionIntent = "manual" | "explain" | "starred-report" | "second-look";
+// `remediation-check` (#969): a super-timeline row attached as evidence to a remediation boundary
+// enters the case by promotion like any analyst promotion, and is marked like a manual one.
+export type PromotionIntent = "manual" | "explain" | "starred-report" | "second-look" | "remediation-check";
 
 export async function promoteSuperTimeline(
   ctx: ImportContext,
@@ -103,7 +105,7 @@ export async function promoteSuperTimeline(
     .filter((e) => !(opts.intent === "second-look" && isLabProduced(e)))
     .map((e) => (isLabProduced(e) ? { ...e, origin: "lab" as const, severity: "Info" as const } : e));
   const marked: Record<string, string[]> = { ...(opts.tagById ?? {}) };
-  if (opts.intent === "manual")
+  if (opts.intent === "manual" || opts.intent === "remediation-check")
     for (const e of events) marked[e.id] = [...new Set([...(marked[e.id] ?? []), PROMOTED_MARKER])];
   return ctx.withStateLock(caseId, async () => {
     let state = await ctx.opts.stateStore.load(caseId);

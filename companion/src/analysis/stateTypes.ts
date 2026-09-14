@@ -202,6 +202,38 @@ export interface IntelCheckState {
 
 // The analyst's recorded decision on one item of the intel retirement review (#1024). Records a
 // recommendation; changes no severity, status or deployed detection.
+/** What the report reads of a remediation boundary (remediationBoundary.ts owns the full shape). */
+export interface RemediationBoundaryView {
+  id: string;
+  host: string;
+  artifact: { kind: string; value: string };
+  remediatedAt: string;
+  windowHours: number;
+  note?: string;
+  status: string;
+  statusSetAt?: string;
+  statusNote?: string;
+  statusOverrideNote?: string;
+  statusReceiptId?: string;
+  evidence: string[];
+  receipts: {
+    id: string;
+    at: string;
+    spellings: string[];
+    window: { from: string; to: string; open: boolean };
+    coverage: { store: string; source: string; rows: number; earliest: string; latest: string }[];
+    families: { family: string; relevant: boolean; rowsInWindow: number; state: string }[];
+    hitTotal: number;
+    hitsByClass: Record<string, number>;
+    truncated: boolean;
+    undated: number;
+    coverageGapped: boolean;
+    inconsistent: boolean;
+    retentionNote?: string;
+    stale?: boolean;
+  }[];
+}
+
 export interface IntelRetirementDecision {
   findingId: string;
   decision: "retire" | "keep";
@@ -592,6 +624,10 @@ export interface InvestigationState {
   labIntel?: LabIntelRecord[];
   // Analyst decisions on the intel retirement review (#1024), keyed by finding id; newest wins.
   intelRetirementDecisions?: IntelRetirementDecision[];
+  // READ-TIME projection only (#969): the case's remediation boundaries, loaded from their side
+  // file by loadFilteredState so the report can render the analyst's recorded status. Never saved
+  // with the state; absent everywhere else.
+  remediationBoundaries?: RemediationBoundaryView[];
   updatedAt: string;
 }
 

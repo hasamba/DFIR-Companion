@@ -137,6 +137,7 @@ describe("dashboardViews — seed integrity", () => {
       "sec-inv-log",
       "sec-custody",
       "sec-intel-retirement",
+      "sec-remediation",
       "sec-case-details",
     ]);
   });

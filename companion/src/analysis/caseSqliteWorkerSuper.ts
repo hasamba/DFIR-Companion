@@ -60,7 +60,35 @@ function enforceSuperCap(db, max) {
     "INSERT INTO entity_counts(kind, count) VALUES('superTimeline', ?) " +
     "ON CONFLICT(kind) DO UPDATE SET count=excluded.count"
   ).run(count - deleted);
+  // The store's mutation generation (#969): bumped on every append, eviction and migration, since
+  // each of them runs this cap. A row count and a latest timestamp cannot tell an append-with-
+  // eviction at the cap from no change; a reader that captured the generation can.
+  db.prepare(
+    "INSERT INTO storage_meta(key, value) VALUES('super_generation', '1') " +
+    "ON CONFLICT(key) DO UPDATE SET value=CAST(CAST(value AS INTEGER)+1 AS TEXT)"
+  ).run();
   return deleted;
+}
+
+// The store's row count and mutation generation, and its distinct host spellings as stored —
+// index-only reads (entities_host_idx), never a scan of the payloads (#969).
+function superMeta(dbPath, hostLimit) {
+  if (!existsSync(dbPath)) return { rows: 0, generation: 0, hosts: [], hostsTruncated: false };
+  const db = openDatabase(dbPath);
+  try {
+    const countRow = db.prepare("SELECT count AS n FROM entity_counts WHERE kind='superTimeline'").get();
+    const rows = countRow ? Number(countRow.n) : Number(db.prepare("SELECT count(*) AS n FROM entities WHERE kind='superTimeline'").get().n);
+    const genRow = db.prepare("SELECT value FROM storage_meta WHERE key='super_generation'").get();
+    // Hosts only when asked, and bounded: one more than the limit is read so the caller can tell
+    // "exactly the limit" from "more than it".
+    const limit = Number.isFinite(hostLimit) ? Math.max(0, Math.floor(hostLimit)) : 0;
+    const hosts = limit
+      ? db.prepare("SELECT DISTINCT host FROM entities WHERE kind='superTimeline' AND host IS NOT NULL AND host<>'' ORDER BY host LIMIT ?").all(limit + 1).map((row) => String(row.host))
+      : [];
+    return { rows, generation: genRow ? Number(genRow.value) : 0, hosts: hosts.slice(0, limit), hostsTruncated: hosts.length > limit };
+  } finally {
+    db.close();
+  }
 }
 
 function writeSuperEvents(db, events, max, protectIds) {
