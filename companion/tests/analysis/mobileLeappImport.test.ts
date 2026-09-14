@@ -47,6 +47,10 @@ describe("parseLeappTsv", () => {
     expect(r.undated).toBe(0);
     expect(r.events[0].timestamp).toBe("2026-05-02T10:00:00Z");
     expect(r.events[0].description).toContain("[Visit Timestamp: 2026-05-02 10:00:00]");
+    // A qualifier header is metadata about a clock, never one: the row stays undated.
+    const meta = parseLeappTsv("Timestamp Source\tURL\n2026-05-02 10:00:00\thttps://a.example", "X.tsv");
+    expect(meta.undated).toBe(1);
+    expect(meta.events[0].timestamp).toBe("");
   });
 
   it("finds the timestamp column whatever it is called", () => {

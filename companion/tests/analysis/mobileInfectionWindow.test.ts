@@ -16,7 +16,7 @@ const SHA = "a".repeat(64);
 function rows(device?: string): ForensicEvent[] {
   const gass = registryEntry("installedappsGass")!;
   const inventory = parseLeappTsv(
-    [gass.headers.join("\t"), ["0", "com.evil.app", "7", SHA].join("\t")].join("\n"),
+    [gass.headers.join("\t"), [`user-${SHA.slice(0, 8)}`, "com.evil.app", "7", SHA].join("\t")].join("\n"),
     `${gass.name}.tsv`,
     { platform: "android", device },
   ).events;
@@ -111,6 +111,28 @@ describe("markInfectionWindow", () => {
     // Rerun with the live assertion: exactly one note per row.
     const again = markInfectionWindow(markInfectionWindow(marked, [ioc()], at(50)), [ioc()], at(51));
     for (const e of again) expect(e.description.split(INFECTION_WINDOW_MARKER).length).toBeLessThanOrEqual(2);
+    // An undated malicious inventory row on the device: no window at all, even with a dated one.
+    const withUndated = [...rows("P"), { ...rows("P")[0], id: "inv-undated", timestamp: "" }];
+    expect(
+      markInfectionWindow(withUndated, [ioc()], at(48)).every(
+        (e) => !e.description.includes(INFECTION_WINDOW_MARKER),
+      ),
+    ).toBe(true);
+    // A malicious value that only appears in the row's prose (not the typed package / digest)
+    // opens nothing: a `file` IOC equal to a User cell.
+    const userIoc = ioc({ id: "i3", type: "file", value: `user-${SHA.slice(0, 8)}` });
+    expect(
+      markInfectionWindow(rows("P"), [userIoc], at(48)).every(
+        (e) => !e.description.includes(INFECTION_WINDOW_MARKER),
+      ),
+    ).toBe(true);
+    // The package name as an `other` IOC does open one.
+    const pkgIoc = ioc({ id: "i4", type: "other", value: "COM.EVIL.APP" });
+    expect(
+      markInfectionWindow(rows("P"), [pkgIoc], at(48)).some((e) =>
+        e.description.includes(INFECTION_WINDOW_MARKER),
+      ),
+    ).toBe(true);
     // Another subject device is untouched by this one's sign.
     const two = [
       ...rows("P"),

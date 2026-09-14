@@ -157,9 +157,10 @@ function timeColumns(headers: readonly string[]): number[] {
     if (i >= 0 && !out.includes(i)) out.push(i);
   }
   // "Visit Timestamp", "Created Timestamp", "SEGB Timestamp" — the spelling most upstream
-  // iLEAPP / ALEAPP modules use (#988): `timestamp` inside a longer header is a clock too.
+  // iLEAPP / ALEAPP modules use (#988): a header ENDING in `timestamp` is a clock. A qualifier
+  // header ("Timestamp Source", "Timestamp Format") is metadata about a clock, never one.
   lower.forEach((h, i) => {
-    if (!out.includes(i) && /\btime\b|\bdate\b|timestamp/.test(h)) out.push(i);
+    if (!out.includes(i) && /\btime\b|\bdate\b|\btimestamp$/.test(h)) out.push(i);
   });
   return out;
 }

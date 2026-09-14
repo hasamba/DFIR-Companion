@@ -49,6 +49,8 @@ interface RegistryEntry {
   transitionColumn?: string;
   device?: { name: string; id?: string };
   account?: { name: string; type?: string };
+  /** App-inventory identity columns: the typed values the infection window compares. */
+  app?: { package?: string; sha256?: string };
 }
 
 const SAFARI_ICLOUD_TABS = [
@@ -156,10 +158,10 @@ export const REGISTRY: readonly RegistryEntry[] = [
       "Filename",
       "Offset",
     ],
+    // A notification is a record the device holds; the bundle id names the app that posted it and
+    // establishes neither delivery from outside nor that anyone read it.
     record: "notification",
     locality: "device-local",
-    acquisition: "received",
-    acquisitionColumn: "Bundle ID",
   },
   {
     platform: "ios",
@@ -263,10 +265,9 @@ export const REGISTRY: readonly RegistryEntry[] = [
       "Image Bitmap Filename",
       "Image Resource ID",
     ],
+    // As for Notification Duet: the package posted it; that is all the column says.
     record: "notification",
     locality: "device-local",
-    acquisition: "received",
-    acquisitionColumn: "Package Name",
   },
   {
     platform: "android",
@@ -301,6 +302,7 @@ export const REGISTRY: readonly RegistryEntry[] = [
     headers: ["User", "Bundle ID", "Version Code", "SHA-256 Hash"],
     record: "app-inventory",
     locality: "device-local",
+    app: { package: "Bundle ID", sha256: "SHA-256 Hash" },
   },
   {
     platform: "android",
@@ -347,7 +349,10 @@ export function readOrigin(
   headers: readonly string[],
   cells: readonly string[],
 ): OriginReading {
-  const entry = registryEntry(artifact);
+  const found = registryEntry(artifact);
+  // The registry entry must be the requested platform's: an Android import of a file named like
+  // an iOS artifact is not evidence of anything and is said so, not read as iOS.
+  const entry = found && found.platform !== platform && platform !== "unknown" ? undefined : found;
   const col = (name: string): string => {
     const i = headers.findIndex((h) => norm(h) === name);
     return i >= 0 ? (cells[i] ?? "").trim() : "";
@@ -365,7 +370,12 @@ export function readOrigin(
     evidence: [],
     conflicts: [],
   };
-  if (!entry) return { block: base, words: `not established — ${REGISTRY_VERSION}` };
+  if (!entry) {
+    const words = found
+      ? `not established — the artifact is a ${found.platform === "ios" ? "iLEAPP" : "ALEAPP"} table imported as ${platform} — ${REGISTRY_VERSION}`
+      : `not established — ${REGISTRY_VERSION}`;
+    return { block: base, words };
+  }
   const pinned = `${entry.platform === "ios" ? "iLEAPP" : "ALEAPP"}@${REGISTRY_PINS[entry.platform === "ios" ? "iLEAPP" : "ALEAPP"].commit}`;
   if (!headersMatch(entry, headers)) {
     return {
@@ -415,6 +425,8 @@ export function readOrigin(
   const deviceId = entry.device?.id ? col(entry.device.id) : "";
   const accountName = entry.account ? col(entry.account.name) : "";
   const accountType = entry.account?.type ? col(entry.account.type) : "";
+  const appPackage = entry.app?.package ? col(entry.app.package) : "";
+  const appSha = entry.app?.sha256 ? col(entry.app.sha256).toLowerCase() : "";
   const block: MobileBlock = {
     ...base,
     registry: { version: REGISTRY_VERSION, coverage: "schema-matches", pinned },
@@ -440,6 +452,14 @@ export function readOrigin(
           account: {
             name: accountName.slice(0, NAME_MAX),
             ...(accountType ? { type: accountType.slice(0, NAME_MAX) } : {}),
+          },
+        }
+      : {}),
+    ...(appPackage || /^[0-9a-f]{64}$/.test(appSha)
+      ? {
+          app: {
+            ...(appPackage ? { package: appPackage.slice(0, 200) } : {}),
+            ...(/^[0-9a-f]{64}$/.test(appSha) ? { sha256: appSha } : {}),
           },
         }
       : {}),

@@ -48,6 +48,8 @@ export const mobileBlockSchema = z.object({
   /** Two columns of one row that disagree: both said, nothing resolved. */
   conflicts: z.array(z.string()),
   device: z.object({ name: z.string(), id: z.string().optional() }).optional(),
+  /** An app-inventory row's typed identity, from the registry's declared columns — what the infection window compares. */
+  app: z.object({ package: z.string().optional(), sha256: z.string().optional() }).optional(),
   account: z.object({ name: z.string(), type: z.string().optional() }).optional(),
 });
 export type MobileBlock = z.infer<typeof mobileBlockSchema>;

@@ -184,8 +184,9 @@ describe("facets from the row's own columns", () => {
       "f",
       "0",
     ]);
+    // The bundle id names the app that posted it; that establishes neither delivery nor a read.
     expect(n.block.facets).toMatchObject({
-      acquisition: "received",
+      acquisition: "not-established",
       record: "notification",
       authorship: "not-established",
     });
@@ -193,7 +194,7 @@ describe("facets from the row's own columns", () => {
     expect(
       readOrigin("android", an.name, an.headers, ["", "T", "x", "com.pkg", "0", "1"]).block.facets
         .acquisition,
-    ).toBe("received");
+    ).toBe("not-established");
     const wv = registryEntry("Web Visits")!;
     for (const t of ["TYPED", "GENERATED", "LINK"]) {
       const r = readOrigin("android", wv.name, wv.headers, ["", "u", "t", "1", t, "", "", "Chrome"]);
@@ -236,7 +237,20 @@ describe("facets from the row's own columns", () => {
     const l = readOrigin("android", lib.name, lib.headers, ["0", "", "buyer@example.invalid", "doc"]);
     expect(l.block.facets).toMatchObject({ acquisition: "from-store-account", record: "app-inventory" });
     expect(l.block.account).toEqual({ name: "buyer@example.invalid" });
+    // The registry entry must be the requested platform's: an iOS table imported as Android is
+    // said so, never read as iOS.
+    const mismatch = readOrigin(
+      "android",
+      "Safari Browser - History",
+      registryEntry("Safari Browser - History")!.headers,
+      ["", "t", "u", "1", "", "", "1", "Local Device", "Default"],
+    );
+    expect(mismatch.block.registry.coverage).toBe("not-covered");
+    expect(mismatch.words).toContain("a iLEAPP table imported as android");
+    expect(mismatch.block.facets.acquisition).toBe("not-established");
     const gass = registryEntry("installedappsGass")!;
+    const g = readOrigin("android", gass.name, gass.headers, ["0", "com.evil", "1", "A".repeat(64)]);
+    expect(g.block.app).toEqual({ package: "com.evil", sha256: "a".repeat(64) });
     expect(
       readOrigin("android", gass.name, gass.headers, ["0", "com.evil", "1", "a".repeat(64)]).block.facets
         .record,
@@ -332,5 +346,33 @@ describe("the tag on every row and the identity bound", () => {
     expect(out.some((e) => e.description.includes("synced-from-another-device"))).toBe(true);
     // The other order too.
     expect(correlateEvents([ev(fresh[0], "new1"), legacy, ev(fresh[1], "new2")])).toHaveLength(2);
+    // Two tagged readings of one and the same text (the tag alone differs — built by hand, since
+    // every parsed column is in the detail too): the legacy row stays its own row and the two
+    // readings never meet — in every order.
+    const base = fresh[0].description.replace(/ \[origin: [^\]]*\]/, "");
+    const tagged = (id: string, reading: string): ForensicEvent => ({
+      ...ev(fresh[0], id),
+      description: base.replace(/\]: /, `] [origin: ${reading} — leapp-origin-x]: `),
+    });
+    const local2 = tagged("new1b", "recorded-on-this-device, device-local, history");
+    const synced2 = tagged("new2b", "synced-from-another-device, device-local, history");
+    const legacyOfBoth = { ...legacy, id: "old2" };
+    for (const order of [
+      [legacyOfBoth, local2, synced2],
+      [local2, legacyOfBoth, synced2],
+      [synced2, local2, legacyOfBoth],
+    ]) {
+      const out2 = correlateEvents(order);
+      expect(out2, order.map((e) => e.id).join(",")).toHaveLength(3);
+    }
+    // One tagged reading of that text: the legacy row joins it.
+    expect(correlateEvents([legacyOfBoth, local2])).toHaveLength(1);
+    // A non-LEAPP row with the same text and time never absorbs a tagged LEAPP row.
+    const foreign: ForensicEvent = {
+      ...legacy,
+      id: "x1",
+      description: legacy.description.replace(/^iLEAPP/, "Other tool"),
+    };
+    expect(correlateEvents([foreign, ev(fresh[0], "new1")])).toHaveLength(2);
   });
 });

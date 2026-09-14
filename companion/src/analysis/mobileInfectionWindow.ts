@@ -43,33 +43,45 @@ const ms = (iso: string | undefined): number | null => {
 
 const isMobile = (e: ForensicEvent): boolean => !!e.canonical?.mobile;
 
-/** The malicious app-inventory signs per subject device, earliest first. */
+/**
+ * The malicious app-inventory signs per subject device — the earliest DATED one; a device with a
+ * qualifying UNDATED inventory row gets no window at all, since that row may precede every dated
+ * one. Only the block's typed package and digest are compared, never the rendered text.
+ */
 export function infectionSigns(
   events: readonly ForensicEvent[],
   iocs: readonly IOC[],
   at: string,
 ): Map<string, Sign> {
-  const malicious = new Map<string, string>(); // lowercased value → what
+  const hashes = new Map<string, string>(); // lowercased sha256 → what
+  const packages = new Map<string, string>(); // lowercased package → what
   for (const ioc of iocs) {
-    if (ioc.type !== "hash" && ioc.type !== "other" && ioc.type !== "process" && ioc.type !== "file")
-      continue;
     const live = actionableAssertions(ioc, at).filter((a) => a.verdict === "malicious");
-    if (live.length) malicious.set(ioc.value.toLowerCase(), `${ioc.value} (${live[0].source}: malicious)`);
+    if (!live.length) continue;
+    const what = `${ioc.value} (${live[0].source}: malicious)`;
+    if (ioc.type === "hash" && /^[0-9a-f]{64}$/i.test(ioc.value)) hashes.set(ioc.value.toLowerCase(), what);
+    else if (ioc.type === "other" || ioc.type === "process" || ioc.type === "file")
+      packages.set(ioc.value.toLowerCase(), what);
   }
   const signs = new Map<string, Sign>();
-  if (!malicious.size) return signs;
+  if (!hashes.size && !packages.size) return signs;
+  const undatedSign = new Set<string>();
   for (const e of events) {
     const m = e.canonical?.mobile;
-    if (!m || m.facets.record !== "app-inventory" || !e.asset) continue;
+    if (!m || m.facets.record !== "app-inventory" || !e.asset || !m.app) continue;
+    const what =
+      (m.app.sha256 ? hashes.get(m.app.sha256.toLowerCase()) : undefined) ??
+      (m.app.package ? packages.get(m.app.package.toLowerCase()) : undefined);
+    if (!what) continue;
     const t = ms(e.timestamp);
-    if (t === null) continue;
-    // The inventory row's own text names the package and the digest; both are read as tokens.
-    const tokens = e.description.toLowerCase().match(/[a-z0-9][a-z0-9._-]{3,}/g) ?? [];
-    const hit = tokens.find((tok) => malicious.has(tok));
-    if (!hit) continue;
+    if (t === null) {
+      undatedSign.add(e.asset);
+      continue;
+    }
     const prev = signs.get(e.asset);
-    if (!prev || t < prev.at) signs.set(e.asset, { at: t, iso: e.timestamp, what: malicious.get(hit)! });
+    if (!prev || t < prev.at) signs.set(e.asset, { at: t, iso: e.timestamp, what });
   }
+  for (const asset of undatedSign) signs.delete(asset);
   return signs;
 }
 
