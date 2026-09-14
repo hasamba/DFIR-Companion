@@ -25,7 +25,7 @@
   function applyVeloEnabled() {
     const note = document.getElementById("veloDisabledNote");
     if (note) note.style.display = veloEnabled ? "none" : "block";
-    if (_veloBundles) renderVeloBundles(_veloBundles); // re-render so Run buttons reflect state
+    if (_veloBundles) renderVeloBundles(_veloBundles); // re-render so the run list's buttons reflect state
     // As soon as Velociraptor is known-on, pre-load the CLIENT_EVENT picker (once) so it's not empty.
     if (veloEnabled && !_veloMonAutoBrowsed) {
       _veloMonAutoBrowsed = true;
@@ -179,7 +179,10 @@
       });
   }
 
+  // Two surfaces from one load: the run list on the dashboard (js/dashboard-velo-collect.js, where
+  // the case-scoped work lives) and the shared library in Settings → Velociraptor, rendered here.
   function renderVeloBundles(bundles) {
+    if (typeof renderVeloRunList === "function") renderVeloRunList(bundles);
     const el = document.getElementById("veloBundleList");
     if (!el) return;
     if (!bundles.length) {
@@ -189,10 +192,6 @@
     }
     el.innerHTML = bundles
       .map((b) => {
-        const runBlocked = veloRunBlockedReason(veloEnabled, veloCaseId());
-        const runBtn = runBlocked
-          ? `<button disabled title="${escAttr(runBlocked)}">▶ Run</button>`
-          : `<button class="velo-run-btn" data-id="${escAttr(b.id)}" title="Run this bundle as a hunt on the configured Velociraptor server">▶ Run</button>`;
         const editBtn = `<button class="velo-edit-btn" data-id="${escAttr(b.id)}" title="Edit this bundle">Edit</button>`;
         const dupBtn = `<button class="velo-dup-btn" data-id="${escAttr(b.id)}" title="Copy into the builder as a new bundle">Duplicate</button>`;
         // Built-ins can be edited in place; "Reset to default" appears once an override exists. Custom
@@ -221,17 +220,13 @@
         return `<div class="velo-bundle" data-safe-style="border:1px solid var(--border-color);border-radius:6px;padding:8px 10px;margin-bottom:8px">
         <div data-safe-style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
           <div><strong>${esc(b.name)}</strong>${badge} <span data-safe-style="color:var(--text-muted);font-size:11px">${esc(b.artifacts.length)} artifact(s)${meta}</span></div>
-          <div data-safe-style="display:flex;gap:6px;flex-wrap:wrap">${runBtn}${editBtn}${dupBtn}${tailBtn}</div>
+          <div data-safe-style="display:flex;gap:6px;flex-wrap:wrap">${editBtn}${dupBtn}${tailBtn}</div>
         </div>
         ${b.description ? `<div data-safe-style="color:var(--text-muted);font-size:12px;margin-top:4px">${esc(b.description)}</div>` : ""}
         <div data-safe-style="color:var(--text-dim);font-size:11px;margin-top:4px">${b.artifacts.map((a) => esc(a)).join(", ")}</div>
-        <div class="velo-run-form" data-id="${escAttr(b.id)}" data-safe-style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid var(--border-color)"></div>
       </div>`;
       })
       .join("");
-    el.querySelectorAll(".velo-run-btn").forEach(
-      (btn) => (btn.onclick = () => toggleVeloRunForm(btn.dataset.id)),
-    );
     el.querySelectorAll(".velo-edit-btn").forEach(
       (btn) => (btn.onclick = () => veloEdit(btn.dataset.id)),
     );
@@ -244,84 +239,6 @@
     el.querySelectorAll(".velo-reset-btn").forEach(
       (btn) => (btn.onclick = () => veloResetBuiltin(btn.dataset.id)),
     );
-  }
-
-  function veloRunForm(id) {
-    const forms = document.querySelectorAll(".velo-run-form");
-    for (const f of forms) if (f.dataset.id === id) return f;
-    return null;
-  }
-  function toggleVeloRunForm(id) {
-    const bundle = (_veloBundles || []).find((b) => b.id === id);
-    const form = veloRunForm(id);
-    if (!form || !bundle) return;
-    if (form.style.display === "block") {
-      form.style.display = "none";
-      return;
-    }
-    document
-      .querySelectorAll(".velo-run-form")
-      .forEach((f) => (f.style.display = "none"));
-    const defWait = bundle.defaultWaitMinutes || 10;
-    // The collection timeout is a BUNDLE property (set in the editor) — the run uses it, not a re-prompt.
-    const timeoutNote = bundle.timeoutSeconds
-      ? `${esc(bundle.timeoutSeconds)}s`
-      : "600s (Velociraptor default)";
-    // Expiry defaults to the bundle's own default (1 hour when unset); it's overridable per run.
-    const defExpiry = bundle.expirySeconds || 3600;
-    // Only labels the cached fleet really carries; js/dashboard-velo-labels.js says why it is a picker.
-    const fleetLabels = veloFleetLabels(_veloClients);
-    const expiryOpts = [
-      [3600, "1 hour"],
-      [86400, "1 day"],
-      [604800, "1 week"],
-    ]
-      .map(
-        ([v, lbl]) =>
-          `<option value="${v}"${v === defExpiry ? " selected" : ""}>expires: ${lbl}</option>`,
-      )
-      .join("");
-    form.innerHTML = `
-      <div data-safe-style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <label data-safe-style="font-size:12px;color:var(--text-muted)">Wait <input type="number" class="velo-wait" min="1" max="1440" value="${esc(defWait)}" data-safe-style="width:64px;padding:4px" /> min</label>
-        <select class="velo-expiry" title="How long the hunt keeps scheduling on clients that check in later (Velociraptor's own default is a week)">${expiryOpts}</select>
-        <select class="velo-os" title="Restrict to a client OS"><option value="">any OS</option><option value="windows">windows</option><option value="linux">linux</option><option value="darwin">darwin</option></select>
-        <select class="velo-minsev" title="Only import events at or above this severity (keeps volume down). Telemetry with no severity is always kept."><option value="">all severities</option><option value="info">info+</option><option value="low">low+</option><option value="medium">medium+</option><option value="high">high+</option><option value="critical">critical only</option></select>
-        <select class="velo-timescope" title="Collect only data from this window. Applied AT THE SOURCE via each artifact's own date parameters — not filtered after collection.">
-          <option value="">All time</option>
-          <option value="24h">last 24 hours</option>
-          <option value="7d">last 7 days</option>
-          <option value="30d">last 30 days</option>
-          <option value="90d">last 90 days</option>
-          <option value="custom">custom range…</option>
-        </select>
-        <span class="velo-ts-custom" data-safe-style="display:none;gap:4px;align-items:center">
-          <input type="datetime-local" class="velo-ts-start" title="Collect from (UTC)" data-safe-style="padding:4px" />
-          <span data-safe-style="font-size:10px;color:var(--text-muted)">UTC</span>
-          <span data-safe-style="color:var(--text-dim)">–</span>
-          <input type="datetime-local" class="velo-ts-end" title="Collect until (UTC) — leave empty to keep collecting forward" data-safe-style="padding:4px" />
-          <span data-safe-style="font-size:10px;color:var(--text-muted)">UTC</span>
-        </span>
-        ${veloLabelPickerHtml("inc", fleetLabels)}
-        ${veloLabelPickerHtml("exc", fleetLabels)}
-        <button class="velo-run-go">Run hunt</button>
-        <span class="velo-run-msg" data-safe-style="font-size:12px;color:var(--text-muted)"></span>
-      </div>
-      <div data-safe-style="font-size:11px;color:var(--text-dim);margin-top:4px">Runs across all enrolled clients unless you set a label/OS filter. Collection timeout: <strong>${timeoutNote}</strong> — set it on the bundle (<em>Edit</em>) for slow artifacts like THOR. Results (+ any uploaded JSON report) are auto-collected after the wait, then imported + synthesized — or click <em>Collect now</em> on the job card.</div>
-      <div class="velo-ts-preview" data-safe-style="font-size:11px;color:var(--text-dim);margin-top:4px"></div>`;
-    form.style.display = "block";
-    veloWireLabelPickers(form);
-    form.querySelector(".velo-run-go").onclick = () => veloRunBundle(id, form);
-    const ts = form.querySelector(".velo-timescope");
-    const custom = form.querySelector(".velo-ts-custom");
-    ts.onchange = () => {
-      custom.style.display = ts.value === "custom" ? "inline-flex" : "none";
-      veloTimeScopePreview(id, form);
-    };
-    form.querySelector(".velo-ts-start").onchange = () =>
-      veloTimeScopePreview(id, form);
-    form.querySelector(".velo-ts-end").onchange = () =>
-      veloTimeScopePreview(id, form);
   }
 
   // Show which artifacts the chosen window will actually bound, before anything is launched. A bad
@@ -791,6 +708,8 @@
   window.doRefreshVeloClients = doRefreshVeloClients;
   window.doVeloReconnect = doVeloReconnect;
   window.veloImportExternal = veloImportExternal;
+  window.veloRunBundle = veloRunBundle;
+  window.veloTimeScopePreview = veloTimeScopePreview;
   window.veloBundlesList = veloBundlesList;
   window.veloClientsList = veloClientsList;
   window.veloMonAutoBrowsed = veloMonAutoBrowsed;

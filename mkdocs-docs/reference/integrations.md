@@ -22,7 +22,7 @@ See [MCP Analysis](mcp-analysis.md) for the complete setup and recommended
 
 Run fleet hunts, collect artifacts, and stream live monitoring events into cases.
 
-**Configure:** Settings → Velociraptor → set the API config file path. Click **Reconnect** to apply without restarting.
+**Configure:** Settings → Integrations → set the API config file path. Click **Test / reconnect** to apply without restarting.
 
 ### Capabilities
 
@@ -35,7 +35,7 @@ Run fleet hunts, collect artifacts, and stream live monitoring events into cases
 
 ### Triage Bundles
 
-Settings → Velociraptor. Four bundles ship built-in — **Best Practice** (the quick-wins detection sweep), **Best Practice - Big Hogs** (the DetectRaptor YARA file and webshell scans, the DetectRaptor MFT keyword scan, and THOR, split out because they all walk the whole disk and run far longer than the rest of Best Practice; 7200s default timeout, longer than the other bundles' 6000s), **Super-Timeline Triage** (raw host artifacts; results go to the super-timeline only), and **Linux Triage**. Every bundle is editable in place, and **Reset to default** restores a built-in. You can also create and save custom bundles. Run a bundle from the Settings tab — it launches a fleet hunt and auto-imports results. See [Step 3a of the walkthrough](../walkthrough.md) for the run procedure.
+Settings → Velociraptor. Four bundles ship built-in — **Best Practice** (the quick-wins detection sweep), **Best Practice - Big Hogs** (the DetectRaptor YARA file and webshell scans, the DetectRaptor MFT keyword scan, and THOR, split out because they all walk the whole disk and run far longer than the rest of Best Practice; 7200s default timeout, longer than the other bundles' 6000s), **Super-Timeline Triage** (raw host artifacts; results go to the super-timeline only), and **Linux Triage**. Every bundle is editable in place, and **Reset to default** restores a built-in. You can also create and save custom bundles. Run a bundle from the dashboard's **Fleet Collection** panel — it launches a fleet hunt into the connected case and auto-imports results. See [Step 3a of the walkthrough](../walkthrough.md) for the run procedure.
 
 #### Third-party tools
 

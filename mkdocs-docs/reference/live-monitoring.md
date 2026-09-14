@@ -8,7 +8,7 @@ These features bring evidence into a case in real time, as events happen.
 
 Stream CLIENT_EVENT artifacts (like Windows Event Log real-time forwarding or EDR telemetry) into a case automatically.
 
-**Set up:** Settings → Velociraptor → Live Monitoring.
+**Set up:** the dashboard's **Fleet Collection** panel → Live Monitoring. Monitors are per case, which is why they are not in Settings.
 
 - Add a monitor for a specific client+artifact, or use **⚡ Auto-monitor configured events** to pick up every artifact already enabled in Velociraptor's Client Monitoring table.
 - The server polls for new rows every 30 seconds (configurable via `DFIR_VELO_MONITOR_POLL_S`).

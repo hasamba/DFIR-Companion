@@ -698,7 +698,9 @@ describe("dashboard.html", () => {
       false,
     );
     expect(
-      /const fleetLabels = veloFleetLabels\(_veloClients\);/.test(html),
+      // The run form lives in js/dashboard-velo-collect.js and reads the fleet through the triage
+      // module's accessor rather than its private binding — same snapshot, one owner.
+      /const fleetLabels = veloFleetLabels\(veloClientsList\(\)\);/.test(html),
       "the run form's choices come from the cached fleet",
     ).toBe(true);
     expect(

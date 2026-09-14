@@ -40,7 +40,8 @@
     badge.style.display = "";
     badge.style.color = errored && !active ? "#ff9f43" : "#ff5a5a";
     badge.textContent = `🔴 LIVE ${active}${errored ? ` · ⚠ ${errored}` : ""}`;
-    badge.onclick = () => openSettingsTab("velociraptor");
+    // The monitors are per case, so the badge lands on the Fleet Collection panel, not in Settings.
+    badge.onclick = () => revealSection("sec-fleet-collection");
   }
   function renderVeloMonitors(monitors) {
     renderVeloMonitorBadge(monitors);

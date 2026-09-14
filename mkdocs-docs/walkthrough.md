@@ -38,7 +38,7 @@ For specifically recognised consoles (Security Onion Alerts/Hunt, Kibana, SO-CRA
 
 If Velociraptor is connected, start here. A hunt bundle collects a named set of artifacts from every enrolled endpoint and imports the results for you. No manual export, no file picker.
 
-Open **Settings → Velociraptor**. Four bundles ship built-in:
+Open the **Fleet Collection** panel on the dashboard. Four bundles ship built-in:
 
 | Bundle | What it collects | Where results land |
 |--------|------------------|--------------------|
@@ -56,7 +56,7 @@ Open **Settings → Velociraptor**. Four bundles ship built-in:
 To run a bundle:
 
 1. Connect the case you want the results in. **▶ Run** stays disabled until a case is selected — a collection has to land somewhere.
-2. Click **▶ Run** on the bundle.
+2. Click **▶ Run** on the bundle in the **Fleet Collection** panel.
 3. Set the run options: wait minutes, hunt expiry (1 hour / 1 day / 1 week), client OS, minimum severity, time scope, and the include/exclude label filters. The two label filters are pickers, not text boxes: each lists the labels your cached client inventory actually holds, and you can tick as many as you want. A label added in Velociraptor since your last snapshot appears once you press **↻ Refresh client list** on Settings → Velociraptor. The defaults are fine for a first pass.
 4. Click **Run hunt**.
 
@@ -65,7 +65,7 @@ The hunt runs on every enrolled client unless you set a label or OS filter. Afte
 !!! tip "Cut the volume before the hunt, not after"
     Set a **time scope** (e.g. last 7 days) to bound the collection at the source, and a **minimum severity** to hold back low-value rows at import. Both controls are on the run form.
 
-Every bundle is editable, built-ins included. Open **Edit** to add or drop artifacts, raise the collection timeout for slow artifacts, or tune per-artifact parameters and exclude filters. **Reset to default** restores a shipped built-in.
+Every bundle is editable, built-ins included, under **Settings → Velociraptor** (bundles are shared across cases, so they live with the other global settings). Open **Edit** to add or drop artifacts, raise the collection timeout for slow artifacts, or tune per-artifact parameters and exclude filters. **Reset to default** restores a shipped built-in.
 
 ---
 

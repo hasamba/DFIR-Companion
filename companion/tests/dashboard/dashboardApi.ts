@@ -501,3 +501,11 @@ export interface VeloTriageApi {
   activeCaseId: string | null;
   veloEnabled: boolean;
 }
+
+// public/js/dashboard-velo-collect.js — the Fleet Collection panel's run list: every bundle with a
+// Run button (or the reason it is blocked), rendered from the triage module's cached bundles.
+export interface VeloCollectApi {
+  renderVeloRunList(bundles: { id: string; name: string; artifacts: string[] }[]): void;
+  activeCaseId: string | null;
+  veloEnabled: boolean;
+}

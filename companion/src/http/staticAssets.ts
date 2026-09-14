@@ -246,6 +246,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-velo-case.js": "application/javascript; charset=utf-8",
   "/js/dashboard-velo-coverage.js": "application/javascript; charset=utf-8",
   "/js/dashboard-velo-labels.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-velo-collect.js": "application/javascript; charset=utf-8",
   "/js/dashboard-velo-triage.js": "application/javascript; charset=utf-8",
   // Vim-style keyboard navigation for the Forensic Timeline.
   "/js/dashboard-case-connect.js": "application/javascript; charset=utf-8",

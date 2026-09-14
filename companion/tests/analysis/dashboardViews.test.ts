@@ -101,6 +101,7 @@ describe("dashboardViews — seed integrity", () => {
       "sec-timeline",
       "sec-hunt-workbench",
       "sec-huntprofile",
+      "sec-fleet-collection",
       "sec-velohunts",
       "sec-super-timeline",
       "sec-iocs",

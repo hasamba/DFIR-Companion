@@ -628,6 +628,25 @@ re-running a sweep that came back empty, and to show what ground has been covere
 
 ---
 
+## Fleet Collection
+
+The case-scoped half of Velociraptor. Everything on this panel lands in the connected case:
+
+- **Run a bundle** — every saved bundle with a **▶ Run** button. The button is disabled, and says
+  why, until a case is connected and the Velociraptor API is configured. The run form (wait, expiry,
+  OS, minimum severity, time scope, label filters) opens under the bundle. The job card above the
+  list shows the running hunt, with **Collect now** to pull early.
+- **Import external hunt/flow** — paste a hunt id, a flow id or a Velociraptor GUI URL to import a
+  collection launched outside the Companion.
+- **Live Monitoring** — start, stop and watch the CLIENT_EVENT monitors streaming into this case
+  (see [Live Monitoring](live-monitoring.md)). The toolbar's **🔴 LIVE** badge jumps here.
+
+Bundles themselves are shared across cases, so building and editing them stays under
+**Settings → Velociraptor**; the panel links there. The connection is set under
+**Settings → Integrations**.
+
+---
+
 ## Suggested Fleet Hunts
 
 Turns the case's findings into proposed Velociraptor VQL hunts that sweep every enrolled endpoint

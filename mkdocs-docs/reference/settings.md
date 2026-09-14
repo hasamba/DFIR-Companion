@@ -160,13 +160,17 @@ Customer exposure check configuration:
 
 ## Velociraptor
 
-- API config file path
-- Reconnect button
+The shared bundle library — global, like every other Settings tab.
+
+- Reconnect button and **↻ Refresh client list**
 - Browse server artifacts
-- Triage bundle management (Fast/Full/custom)
-- Hunt parameters (timeout, filters)
-- **IR Templates** toggle for the Response Playbook
-- Live Monitoring tab (add/stop/start monitors)
+- Triage bundle management (built-ins, custom, edit in place, Reset to default)
+- Per-bundle defaults (wait, timeout, expiry, per-artifact parameters and exclude filters)
+
+Running a bundle, importing a hunt from the Velociraptor GUI and live monitoring act on the
+connected case, so they live on the dashboard's
+[Fleet Collection panel](dashboard.md#fleet-collection). The API config path is set under
+[Integrations](#integrations).
 
 ---
 
