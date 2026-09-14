@@ -525,17 +525,15 @@ export function decodeGcpAction(pp: Row, rec: Row, method: string, service: stri
   const key = keyReading(pp, method);
   if (key) return [key];
   const attachments = decodeGcpWorkloadAttachment(pp, service, method);
-  return attachments.map(
-    (a): GcpActionReading => ({
-      kind: "attachment",
-      severity: a.severity,
-      mitre: a.mitre,
-      posture: a.posture,
-      object: "",
-      qualifiers: [],
-      keySegment: a.keySegment,
-      serviceAccount: { email: a.serviceAccount.email },
-      attachment: a.attachment,
-    }),
-  );
+  return attachments.map((a): GcpActionReading => ({
+    kind: "attachment",
+    severity: a.severity,
+    mitre: a.mitre,
+    posture: a.posture,
+    object: "",
+    qualifiers: [],
+    keySegment: a.keySegment,
+    serviceAccount: { email: a.serviceAccount.email },
+    attachment: a.attachment,
+  }));
 }

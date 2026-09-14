@@ -37,21 +37,24 @@ import {
   readDelegation,
   readPrincipal,
   show,
-  showId,
 } from "./gcpIdentity.js";
-import { decodeGcpAction, type GcpActionReading } from "./gcpIamRecord.js";
+import { decodeGcpAction } from "./gcpIamRecord.js";
 import { matchGcpRule } from "./gcpSeverityRules.js";
 import { getCI, isObject, normalizeTime, str, worst, type MappedEvent } from "./siemImport.js";
 
 type Row = Record<string, unknown>;
 
 export const GCP_SA_JOIN_MAX = 4096;
-const BINDINGS_PER_SA_MAX = 1024;
-const CREDENTIALS_PER_SA_MAX = 1024;
-const KEYS_PER_SA_MAX = 512;
-const ATTACHMENTS_PER_SA_MAX = 512;
-const CALLS_PER_SA_MAX = 4096;
-const NAME_MAX = 80;
+// Every fact is accumulated in full (grading and the control-then-use upgrade must see every
+// admitted fact, or the kept set and the grade would depend on which facts happened to arrive
+// before a cap — the #1064 lesson, applied here from the start). These bound only how many facts
+// are SHOWN in the row's words and envelope; the rest are counted (`…Beyond`), never dropped from
+// grading.
+const BINDINGS_SHOWN_MAX = 1024;
+const CREDENTIALS_SHOWN_MAX = 1024;
+const KEYS_SHOWN_MAX = 512;
+const ATTACHMENTS_SHOWN_MAX = 512;
+const CALLS_SHOWN_MAX = 4096;
 const DESCRIPTION_MAX = 1600;
 const RANK: Record<Severity, number> = { Critical: 4, High: 3, Medium: 2, Low: 1, Info: 0 };
 const CONTROL_ROLES = new Set([
@@ -60,7 +63,6 @@ const CONTROL_ROLES = new Set([
   "roles/iam.serviceaccountadmin",
   "roles/iam.workloadidentityuser",
 ]);
-const SA_ADDRESS = /^[^@\s]+@[^@\s]+\.gserviceaccount\.com$/i;
 const UNIQUE_ID = /^\d{15,25}$/;
 const BASIS =
   "records of this export only; joined by unique id when present, else email; no effective permission is evaluated; a parent-scope binding is counted on this account's own project only, never attributed";
@@ -104,27 +106,33 @@ function learnAliases(pairs: readonly { email: string; uniqueId: string }[]): (e
 
 // ───────────────────────────── the accumulator ─────────────────────────────
 
-// Working shapes carry `time` as an epoch number for comparison; each converts to the schema's
-// ISO string only when the row is built.
+// Working shapes carry `time` as an epoch number for comparison, and the severity/mitre/denied
+// facts grading needs — every one is admitted in full (see the bound comment above); each
+// converts to the schema's ISO string, and is sliced to its shown bound, only when the row is built.
 interface WorkingBindingFact {
   time: number;
   locator: string;
   role: string;
   member?: string;
+  resource: string;
   action: string;
   denied: boolean;
+  severity: Severity;
+  mitre: string[];
 }
 interface WorkingCredentialFact {
   time: number;
   locator: string;
   fact: string;
   denied: boolean;
+  severity: Severity;
 }
 interface WorkingKeyFact {
   time: number;
   locator: string;
   action: string;
   denied: boolean;
+  severity: Severity;
 }
 interface WorkingAttachmentFact {
   time: number;
@@ -133,42 +141,36 @@ interface WorkingAttachmentFact {
   workloadVersion?: string;
   workloadName?: string;
   identityRole: string;
+  severity: Severity;
 }
 interface WorkingCallFact {
   time: number;
   locator: string;
   keyName?: string;
   delegation: string[];
+  denied: boolean;
+  severity: Severity;
 }
 const toIso = <T extends { time: number }>(f: T): Omit<T, "time"> & { time: string } => ({
   ...f,
   time: iso(f.time),
+});
+/** Slice to the shown bound; the rest are counted, never dropped from the facts already graded. */
+const shown = <T>(facts: readonly T[], max: number): { kept: T[]; beyond: number } => ({
+  kept: facts.slice(0, max),
+  beyond: Math.max(0, facts.length - max),
 });
 
 interface SaAgg {
   emails: Set<string>;
   uniqueIds: Set<string>;
   bindingsAsMember: WorkingBindingFact[];
-  bindingsAsMemberBeyond: number;
   bindingsAsResource: WorkingBindingFact[];
-  bindingsAsResourceBeyond: number;
   credentials: WorkingCredentialFact[];
-  credentialsBeyond: number;
   keys: WorkingKeyFact[];
-  keysBeyond: number;
   attachments: WorkingAttachmentFact[];
-  attachmentsBeyond: number;
   callsAsPrincipal: WorkingCallFact[];
-  callsAsPrincipalBeyond: number;
   projectsTouched: Map<string, GcpProjectRef>;
-  parentScopeCount: number;
-  /** Severity carried alongside each fact, kept parallel by index for the grading pass. */
-  bindingsAsResourceMeta: { severity: Severity; mitre: string[]; denied: boolean; time: number }[];
-  bindingsAsMemberMeta: { severity: Severity; mitre: string[]; denied: boolean; time: number }[];
-  credentialsMeta: { severity: Severity; denied: boolean; time: number }[];
-  keysMeta: { severity: Severity; denied: boolean; time: number }[];
-  attachmentsMeta: { severity: Severity }[];
-  callsMeta: { severity: Severity; time: number }[];
 }
 
 function newAgg(): SaAgg {
@@ -176,25 +178,12 @@ function newAgg(): SaAgg {
     emails: new Set(),
     uniqueIds: new Set(),
     bindingsAsMember: [],
-    bindingsAsMemberBeyond: 0,
     bindingsAsResource: [],
-    bindingsAsResourceBeyond: 0,
     credentials: [],
-    credentialsBeyond: 0,
     keys: [],
-    keysBeyond: 0,
     attachments: [],
-    attachmentsBeyond: 0,
     callsAsPrincipal: [],
-    callsAsPrincipalBeyond: 0,
     projectsTouched: new Map(),
-    parentScopeCount: 0,
-    bindingsAsResourceMeta: [],
-    bindingsAsMemberMeta: [],
-    credentialsMeta: [],
-    keysMeta: [],
-    attachmentsMeta: [],
-    callsMeta: [],
   };
 }
 
@@ -217,6 +206,12 @@ export function gcpServiceAccountJoins(records: readonly Row[]): MappedEvent[] {
     const g = gcpPayload(rec);
     if (!g) return;
     coverage.records += 1;
+    // Alias source 1: a `service_account`-typed LogEntry names both the email and the unique id —
+    // learned from EVERY such record, whether or not this record's own time parses (the alias is
+    // a fact about the address, not about this record's placement in time).
+    const emailId = field(rec, "resource", "labels", "email_id");
+    const uniqueId = field(rec, "resource", "labels", "unique_id");
+    if (emailId && uniqueId) aliasPairs.push({ email: emailId, uniqueId });
     const observed = str(getCI(rec, "timestamp")) || str(getCI(rec, "receiveTimestamp"));
     const t = normalizeTime(observed);
     if (!coverage.first || t < coverage.first) coverage.first = t;
@@ -224,10 +219,6 @@ export function gcpServiceAccountJoins(records: readonly Row[]): MappedEvent[] {
     const time = Date.parse(t);
     if (!Number.isFinite(time)) return;
     scanned.push({ pp: g.pp, rec, method: g.method, service: g.service, time, locator: `record:${i}` });
-    // Alias source 1: a `service_account`-typed LogEntry names both the email and the unique id.
-    const emailId = field(rec, "resource", "labels", "email_id");
-    const uniqueId = field(rec, "resource", "labels", "unique_id");
-    if (emailId && uniqueId) aliasPairs.push({ email: emailId, uniqueId });
   });
 
   // Pass 1: decode every record once (reusing gcpIamRecord.ts's own readings — never re-derived),
@@ -247,7 +238,8 @@ export function gcpServiceAccountJoins(records: readonly Row[]): MappedEvent[] {
   const aggs = new Map<string, SaAgg>();
   const parentScopeByProject = new Map<string, number>();
 
-  // Pass 2: attribute every reading and every "authenticated as this SA" call.
+  // Pass 2: attribute every reading and every "authenticated as this SA" call. Every fact is
+  // admitted in full here — bounding happens only when the row's words/envelope are built.
   for (const d of decoded) {
     for (const r of d.readings) {
       if (r.kind === "binding" && r.binding) {
@@ -258,28 +250,34 @@ export function gcpServiceAccountJoins(records: readonly Row[]): MappedEvent[] {
           const agg = aggFor(aggs, identity);
           if (r.serviceAccount.email) agg.emails.add(lower(r.serviceAccount.email));
           if (r.serviceAccount.uniqueId) agg.uniqueIds.add(r.serviceAccount.uniqueId);
-          pushBounded(agg.bindingsAsResource, agg.bindingsAsResourceMeta, BINDINGS_PER_SA_MAX, {
+          agg.bindingsAsResource.push({
             time: d.time,
             locator: d.locator,
             role: b.role,
             member: b.member,
+            resource: b.resource,
             action: b.action,
             denied: b.denied,
-          }, { severity: r.severity, mitre: r.mitre, denied: b.denied, time: d.time }, () => agg.bindingsAsResourceBeyond++);
+            severity: r.severity,
+            mitre: r.mitre,
+          });
         } else if (b.direction === "access-to-member" && b.memberKind === "service-account") {
           const email = b.member.replace(/^serviceAccount:/i, "");
           const identity = identityOf(email, undefined);
           if (!identity) continue;
           const agg = aggFor(aggs, identity);
           agg.emails.add(lower(email));
-          pushBounded(agg.bindingsAsMember, agg.bindingsAsMemberMeta, BINDINGS_PER_SA_MAX, {
+          agg.bindingsAsMember.push({
             time: d.time,
             locator: d.locator,
             role: b.role,
             member: b.member,
+            resource: b.resource,
             action: b.action,
             denied: b.denied,
-          }, { severity: r.severity, mitre: r.mitre, denied: b.denied, time: d.time }, () => agg.bindingsAsMemberBeyond++);
+            severity: r.severity,
+            mitre: r.mitre,
+          });
         } else if (b.direction === "parent-scope" && b.resourceKind === "project") {
           const ref = projectRefOf(b.resource);
           if (ref) parentScopeByProject.set(refKey(ref), (parentScopeByProject.get(refKey(ref)) ?? 0) + 1);
@@ -290,37 +288,40 @@ export function gcpServiceAccountJoins(records: readonly Row[]): MappedEvent[] {
         const agg = aggFor(aggs, identity);
         if (r.serviceAccount?.email) agg.emails.add(lower(r.serviceAccount.email));
         if (r.serviceAccount?.uniqueId) agg.uniqueIds.add(r.serviceAccount.uniqueId);
-        pushBounded(agg.credentials, agg.credentialsMeta, CREDENTIALS_PER_SA_MAX, {
+        agg.credentials.push({
           time: d.time,
           locator: d.locator,
           fact: r.credential.fact,
           denied: r.credential.denied,
-        }, { severity: r.severity, denied: r.credential.denied, time: d.time }, () => agg.credentialsBeyond++);
+          severity: r.severity,
+        });
       } else if (r.kind === "key" && r.key) {
         const identity = identityOf(r.serviceAccount?.email, r.serviceAccount?.uniqueId);
         if (!identity) continue;
         const agg = aggFor(aggs, identity);
         if (r.serviceAccount?.email) agg.emails.add(lower(r.serviceAccount.email));
         if (r.serviceAccount?.uniqueId) agg.uniqueIds.add(r.serviceAccount.uniqueId);
-        pushBounded(agg.keys, agg.keysMeta, KEYS_PER_SA_MAX, {
+        agg.keys.push({
           time: d.time,
           locator: d.locator,
           action: r.key.action,
           denied: r.key.denied,
-        }, { severity: r.severity, denied: r.key.denied, time: d.time }, () => agg.keysBeyond++);
+          severity: r.severity,
+        });
       } else if (r.kind === "attachment" && r.attachment) {
         const identity = identityOf(r.serviceAccount?.email, undefined);
         if (!identity) continue;
         const agg = aggFor(aggs, identity);
         if (r.serviceAccount?.email) agg.emails.add(lower(r.serviceAccount.email));
-        pushBounded(agg.attachments, agg.attachmentsMeta, ATTACHMENTS_PER_SA_MAX, {
+        agg.attachments.push({
           time: d.time,
           locator: d.locator,
           workloadKind: r.attachment.workloadKind,
           ...(r.attachment.workloadVersion ? { workloadVersion: r.attachment.workloadVersion } : {}),
           ...(r.attachment.workloadName ? { workloadName: r.attachment.workloadName } : {}),
           identityRole: r.attachment.identityRole,
-        }, { severity: r.severity }, () => agg.attachmentsBeyond++);
+          severity: r.severity,
+        });
       }
     }
     // Calls authenticated AS this account — independent of whatever the record's readings concern.
@@ -337,19 +338,14 @@ export function gcpServiceAccountJoins(records: readonly Row[]): MappedEvent[] {
         const denied = statusCode !== 0;
         const ruleSeverity = matchGcpRule(d.method)?.severity ?? "Low";
         const severity = denied ? worst(ruleSeverity, "Medium") : ruleSeverity;
-        pushBounded(
-          agg.callsAsPrincipal,
-          agg.callsMeta,
-          CALLS_PER_SA_MAX,
-          {
-            time: d.time,
-            locator: d.locator,
-            ...(principal.keyName ? { keyName: principal.keyName } : {}),
-            delegation,
-          },
-          { severity, time: d.time },
-          () => agg.callsAsPrincipalBeyond++,
-        );
+        agg.callsAsPrincipal.push({
+          time: d.time,
+          locator: d.locator,
+          ...(principal.keyName ? { keyName: principal.keyName } : {}),
+          delegation,
+          denied,
+          severity,
+        });
       }
     }
   }
@@ -357,29 +353,14 @@ export function gcpServiceAccountJoins(records: readonly Row[]): MappedEvent[] {
   const rows = [...aggs.entries()]
     .map(([identity, agg]) => buildRow(identity, agg, parentScopeByProject, coverage))
     .filter((r): r is { row: MappedEvent; grade: Severity; tier: 1 | 2 | 3 } => r !== null)
-    .sort((a, b) => b.tier - a.tier || RANK[b.grade] - RANK[a.grade] || a.row.aggKey.localeCompare(b.row.aggKey));
+    .sort(
+      (a, b) => b.tier - a.tier || RANK[b.grade] - RANK[a.grade] || a.row.aggKey.localeCompare(b.row.aggKey),
+    );
 
   const kept = rows.slice(0, GCP_SA_JOIN_MAX).map((r) => r.row);
   if (rows.length > GCP_SA_JOIN_MAX)
     kept.push(omittedRow(rows.length - GCP_SA_JOIN_MAX, rows[GCP_SA_JOIN_MAX].grade));
   return kept;
-}
-
-/** Push a fact, bounded — past the cap, the fact is counted (never individually retained). */
-function pushBounded<T, M>(
-  facts: T[],
-  meta: M[],
-  max: number,
-  fact: T,
-  metaEntry: M,
-  onBeyond: () => void,
-): void {
-  if (facts.length >= max) {
-    onBeyond();
-    return;
-  }
-  facts.push(fact);
-  meta.push(metaEntry);
 }
 
 // ───────────────────────────── the row ─────────────────────────────
@@ -420,54 +401,50 @@ function buildRow(
   // Grade: the highest severity among every admitted fact that carries one.
   let top: Severity = "Info";
   const mitreSet = new Set<string>();
-  for (const m of agg.bindingsAsResourceMeta) {
-    if (RANK[m.severity] > RANK[top]) top = m.severity;
-    for (const x of m.mitre) mitreSet.add(x);
+  for (const b of [...agg.bindingsAsResource, ...agg.bindingsAsMember]) {
+    if (RANK[b.severity] > RANK[top]) top = b.severity;
+    for (const x of b.mitre) mitreSet.add(x);
   }
-  for (const m of agg.bindingsAsMemberMeta) {
-    if (RANK[m.severity] > RANK[top]) top = m.severity;
-    for (const x of m.mitre) mitreSet.add(x);
-  }
-  for (const m of agg.credentialsMeta) if (RANK[m.severity] > RANK[top]) top = m.severity;
-  for (const m of agg.keysMeta) if (RANK[m.severity] > RANK[top]) top = m.severity;
-  for (const m of agg.attachmentsMeta) if (RANK[m.severity] > RANK[top]) top = m.severity;
-  for (const m of agg.callsMeta) if (RANK[m.severity] > RANK[top]) top = m.severity;
+  for (const c of agg.credentials) if (RANK[c.severity] > RANK[top]) top = c.severity;
+  for (const k of agg.keys) if (RANK[k.severity] > RANK[top]) top = k.severity;
+  for (const a of agg.attachments) if (RANK[a.severity] > RANK[top]) top = a.severity;
+  for (const c of agg.callsAsPrincipal) if (RANK[c.severity] > RANK[top]) top = c.severity;
 
   // Upgrade: a non-denied control grant over this account, followed by a non-denied credential
   // mint, key creation or authenticated call at a strictly later, parseable time.
-  const controlGrants = agg.bindingsAsResource
-    .map((b, i) => ({ b, meta: agg.bindingsAsResourceMeta[i] }))
-    .filter(({ b, meta }) => CONTROL_ROLES.has(lower(b.role)) && lower(b.action) === "add" && !meta.denied);
+  const controlGrants = agg.bindingsAsResource.filter(
+    (b) => CONTROL_ROLES.has(lower(b.role)) && lower(b.action) === "add" && !b.denied,
+  );
   const uses: { time: number; locator: string }[] = [
-    ...agg.credentials
-      .map((c, i) => ({ c, meta: agg.credentialsMeta[i] }))
-      .filter(({ meta }) => !meta.denied)
-      .map(({ c }) => ({ time: c.time, locator: c.locator })),
-    ...agg.keys
-      .map((k, i) => ({ k, meta: agg.keysMeta[i] }))
-      .filter(({ meta }) => !meta.denied)
-      .map(({ k }) => ({ time: k.time, locator: k.locator })),
-    ...agg.callsAsPrincipal.map((c) => ({ time: c.time, locator: c.locator })),
+    ...agg.credentials.filter((c) => !c.denied).map((c) => ({ time: c.time, locator: c.locator })),
+    ...agg.keys.filter((k) => !k.denied).map((k) => ({ time: k.time, locator: k.locator })),
+    ...agg.callsAsPrincipal.filter((c) => !c.denied).map((c) => ({ time: c.time, locator: c.locator })),
   ];
   let upgrade: { controlLocator: string; useLocator: string } | undefined;
-  outer: for (const { b, meta } of controlGrants)
+  outer: for (const g of controlGrants)
     for (const u of uses)
-      if (u.time > meta.time) {
-        upgrade = { controlLocator: b.locator, useLocator: u.locator };
+      if (u.time > g.time) {
+        upgrade = { controlLocator: g.locator, useLocator: u.locator };
         break outer;
       }
   if (upgrade && RANK[top] < RANK.High) top = "High";
 
-  // Projects touched: from every admitted binding's resource, when it is itself a project.
-  for (const b of [...agg.bindingsAsMember, ...agg.bindingsAsResource]) {
-    const ref = projectRefOf(b.member ?? "");
-    touchProjects(agg, ref);
-  }
+  // Projects touched: from every admitted binding's own RESOURCE, when it is itself a project
+  // (never the member — a member is an identity, not the resource the binding is on).
+  for (const b of [...agg.bindingsAsMember, ...agg.bindingsAsResource])
+    touchProjects(agg, projectRefOf(b.resource));
   if (homeProject) touchProjects(agg, homeProject);
   const projectsTouched = [...agg.projectsTouched.values()];
 
   const who = [...agg.emails][0] ?? identity;
   const head = `GCP service account join: ${show(who, 60)}${homeProject ? ` (project ${show(homeProject.value, 40)}, ${homeProject.kind === "id" ? "an id" : "a number"})` : ""}`;
+
+  const bindingsAsResourceShown = shown(agg.bindingsAsResource, BINDINGS_SHOWN_MAX);
+  const bindingsAsMemberShown = shown(agg.bindingsAsMember, BINDINGS_SHOWN_MAX);
+  const credentialsShown = shown(agg.credentials, CREDENTIALS_SHOWN_MAX);
+  const keysShown = shown(agg.keys, KEYS_SHOWN_MAX);
+  const attachmentsShown = shown(agg.attachments, ATTACHMENTS_SHOWN_MAX);
+  const callsShown = shown(agg.callsAsPrincipal, CALLS_SHOWN_MAX);
 
   const parts: string[] = [];
   if (upgrade)
@@ -476,45 +453,55 @@ function buildRow(
     );
   if (agg.bindingsAsResource.length)
     parts.push(
-      `authority granted over this account: ${agg.bindingsAsResource
+      `authority granted over this account: ${bindingsAsResourceShown.kept
         .slice(0, 4)
         .map((b) => `${b.role} ${b.action}${b.denied ? " (denied)" : ""} ${iso(b.time)} (${b.locator})`)
-        .join("; ")}${agg.bindingsAsResource.length > 4 ? ` +${agg.bindingsAsResource.length - 4} more` : ""}${agg.bindingsAsResourceBeyond ? `; ${plural(agg.bindingsAsResourceBeyond, "further binding")} beyond the retained bound` : ""}`,
+        .join(
+          "; ",
+        )}${agg.bindingsAsResource.length > 4 ? ` +${agg.bindingsAsResource.length - 4} more` : ""}${bindingsAsResourceShown.beyond ? `; ${plural(bindingsAsResourceShown.beyond, "further binding")} beyond the retained bound` : ""}`,
     );
   if (agg.bindingsAsMember.length)
     parts.push(
-      `access granted to this account as a member: ${agg.bindingsAsMember
+      `access granted to this account as a member: ${bindingsAsMemberShown.kept
         .slice(0, 4)
         .map((b) => `${b.role} ${b.action}${b.denied ? " (denied)" : ""} ${iso(b.time)} (${b.locator})`)
-        .join("; ")}${agg.bindingsAsMember.length > 4 ? ` +${agg.bindingsAsMember.length - 4} more` : ""}${agg.bindingsAsMemberBeyond ? `; ${plural(agg.bindingsAsMemberBeyond, "further binding")} beyond the retained bound` : ""}`,
+        .join(
+          "; ",
+        )}${agg.bindingsAsMember.length > 4 ? ` +${agg.bindingsAsMember.length - 4} more` : ""}${bindingsAsMemberShown.beyond ? `; ${plural(bindingsAsMemberShown.beyond, "further binding")} beyond the retained bound` : ""}`,
     );
   if (agg.credentials.length)
     parts.push(
-      `credentials minted: ${agg.credentials
+      `credentials minted: ${credentialsShown.kept
         .slice(0, 4)
         .map((c) => `${c.fact}${c.denied ? " (denied)" : ""} ${iso(c.time)} (${c.locator})`)
-        .join("; ")}${agg.credentials.length > 4 ? ` +${agg.credentials.length - 4} more` : ""}${agg.credentialsBeyond ? `; ${plural(agg.credentialsBeyond, "further credential")} beyond the retained bound` : ""}`,
+        .join(
+          "; ",
+        )}${agg.credentials.length > 4 ? ` +${agg.credentials.length - 4} more` : ""}${credentialsShown.beyond ? `; ${plural(credentialsShown.beyond, "further credential")} beyond the retained bound` : ""}`,
     );
   if (agg.keys.length)
     parts.push(
-      `${plural(agg.keys.length, "key action")}: ${agg.keys
+      `${plural(agg.keys.length, "key action")}: ${keysShown.kept
         .slice(0, 4)
         .map((k) => `${k.action}${k.denied ? " (denied)" : ""} ${iso(k.time)} (${k.locator})`)
-        .join("; ")}${agg.keys.length > 4 ? ` +${agg.keys.length - 4} more` : ""}${agg.keysBeyond ? `; ${plural(agg.keysBeyond, "further key action")} beyond the retained bound` : ""}`,
+        .join(
+          "; ",
+        )}${agg.keys.length > 4 ? ` +${agg.keys.length - 4} more` : ""}${keysShown.beyond ? `; ${plural(keysShown.beyond, "further key action")} beyond the retained bound` : ""}`,
     );
   if (agg.attachments.length)
     parts.push(
-      `attached to: ${agg.attachments
+      `attached to: ${attachmentsShown.kept
         .slice(0, 4)
         .map(
           (a) =>
             `${a.workloadKind}${a.workloadVersion ? ` ${a.workloadVersion}` : ""} ${show(a.workloadName || "(name not recorded)", 60)} (${a.identityRole}) ${iso(a.time)} (${a.locator})`,
         )
-        .join("; ")}${agg.attachments.length > 4 ? ` +${agg.attachments.length - 4} more` : ""}${agg.attachmentsBeyond ? `; ${plural(agg.attachmentsBeyond, "further attachment")} beyond the retained bound` : ""}`,
+        .join(
+          "; ",
+        )}${agg.attachments.length > 4 ? ` +${agg.attachments.length - 4} more` : ""}${attachmentsShown.beyond ? `; ${plural(attachmentsShown.beyond, "further attachment")} beyond the retained bound` : ""}`,
     );
   if (agg.callsAsPrincipal.length)
     parts.push(
-      `authenticated principal of ${plural(agg.callsAsPrincipal.length, "call")} in this export${agg.callsAsPrincipalBeyond ? ` (+${agg.callsAsPrincipalBeyond} beyond the retained bound)` : ""}`,
+      `authenticated principal of ${plural(agg.callsAsPrincipal.length, "call")} in this export${callsShown.beyond ? ` (+${callsShown.beyond} beyond the retained bound)` : ""}`,
     );
   if (agg.bindingsAsMember.length && agg.callsAsPrincipal.length)
     parts.push(
@@ -536,19 +523,19 @@ function buildRow(
     emails: [...agg.emails],
     uniqueIds: [...agg.uniqueIds],
     ...(homeProject ? { homeProject } : {}),
-    bindingsAsMember: agg.bindingsAsMember.map(toIso),
-    bindingsAsMemberBeyond: agg.bindingsAsMemberBeyond,
-    bindingsAsResource: agg.bindingsAsResource.map(toIso),
-    bindingsAsResourceBeyond: agg.bindingsAsResourceBeyond,
+    bindingsAsMember: bindingsAsMemberShown.kept.map(toIso),
+    bindingsAsMemberBeyond: bindingsAsMemberShown.beyond,
+    bindingsAsResource: bindingsAsResourceShown.kept.map(toIso),
+    bindingsAsResourceBeyond: bindingsAsResourceShown.beyond,
     parentScopeCount,
-    credentials: agg.credentials.map(toIso),
-    credentialsBeyond: agg.credentialsBeyond,
-    keys: agg.keys.map(toIso),
-    keysBeyond: agg.keysBeyond,
-    attachments: agg.attachments.map(toIso),
-    attachmentsBeyond: agg.attachmentsBeyond,
-    callsAsPrincipal: agg.callsAsPrincipal.map(toIso),
-    callsAsPrincipalBeyond: agg.callsAsPrincipalBeyond,
+    credentials: credentialsShown.kept.map(toIso),
+    credentialsBeyond: credentialsShown.beyond,
+    keys: keysShown.kept.map(toIso),
+    keysBeyond: keysShown.beyond,
+    attachments: attachmentsShown.kept.map(toIso),
+    attachmentsBeyond: attachmentsShown.beyond,
+    callsAsPrincipal: callsShown.kept.map(toIso),
+    callsAsPrincipalBeyond: callsShown.beyond,
     projectsTouched,
     ...(upgrade ? { upgrade } : {}),
     admissionTier: tier,

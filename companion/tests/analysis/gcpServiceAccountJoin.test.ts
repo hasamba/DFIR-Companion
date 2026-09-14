@@ -89,7 +89,13 @@ const insertVm = (time: string, saEmail: string, principalEmail = "alice@corp.ex
   );
 
 const callAs = (time: string, saEmail: string, method = "storage.objects.get", status: Row = {}) =>
-  gcp(time, method, "storage.googleapis.com", { resourceName: "projects/acme/buckets/b/objects/o", status }, saEmail);
+  gcp(
+    time,
+    method,
+    "storage.googleapis.com",
+    { resourceName: "projects/acme/buckets/b/objects/o", status },
+    saEmail,
+  );
 
 const named = (rows: Row[]) => gcpServiceAccountJoins(rows);
 const blockFor = (rows: Row[], email: string) => {
@@ -121,7 +127,11 @@ describe("GCP service account join: row existence", () => {
 
 describe("GCP service account join: the three binding facts", () => {
   it("access-to-member: this SA granted access on another resource", () => {
-    const rows = [setPolicy(at(0), "projects/acme/buckets/b", [delta("ADD", "roles/storage.admin", `serviceAccount:${SA}`)])];
+    const rows = [
+      setPolicy(at(0), "projects/acme/buckets/b", [
+        delta("ADD", "roles/storage.admin", `serviceAccount:${SA}`),
+      ]),
+    ];
     const b = blockFor(rows, SA);
     expect(b?.bindingsAsMember).toHaveLength(1);
     expect(b?.bindingsAsResource).toHaveLength(0);
@@ -200,13 +210,18 @@ describe("GCP service account join: grading", () => {
       genToken(at(100), SA, SA_UID, "carol@corp.example"),
     ];
     const r = named(rows);
-    const row = r.find((x) => canonicalEventEnvelopeSchema.parse(x.canonical).gcpServiceAccountJoin?.emails.includes(SA));
+    const row = r.find((x) =>
+      canonicalEventEnvelopeSchema.parse(x.canonical).gcpServiceAccountJoin?.emails.includes(SA),
+    );
     expect(row?.severity).toBe("High");
     expect(row?.description).toContain("control-then-use");
   });
 
   it("two credential mints alone (no control grant) never upgrade", () => {
-    const rows = [genToken(at(0), SA, SA_UID, "bob@corp.example"), genToken(at(100), SA, SA_UID, "bob@corp.example")];
+    const rows = [
+      genToken(at(0), SA, SA_UID, "bob@corp.example"),
+      genToken(at(100), SA, SA_UID, "bob@corp.example"),
+    ];
     const b = blockFor(rows, SA);
     expect(b?.upgrade).toBeUndefined();
   });
@@ -237,6 +252,28 @@ describe("GCP service account join: grading", () => {
     expect(b?.upgrade).toBeUndefined();
   });
 
+  it("a denied authenticated call never upgrades, even after a real control grant", () => {
+    const rows = [
+      setPolicy(at(0), `projects/acme/serviceAccounts/${SA}`, [
+        delta("ADD", "roles/iam.serviceAccountTokenCreator", "user:carol@corp.example"),
+      ]),
+      callAs(at(100), SA, "storage.objects.get", { code: 7, message: "PERMISSION_DENIED" }),
+    ];
+    const b = blockFor(rows, SA);
+    expect(b?.upgrade).toBeUndefined();
+  });
+
+  it("a real (non-denied) authenticated call after a control grant does upgrade", () => {
+    const rows = [
+      setPolicy(at(0), `projects/acme/serviceAccounts/${SA}`, [
+        delta("ADD", "roles/iam.serviceAccountTokenCreator", "user:carol@corp.example"),
+      ]),
+      callAs(at(100), SA, "storage.objects.get"),
+    ];
+    const b = blockFor(rows, SA);
+    expect(b?.upgrade).toBeDefined();
+  });
+
   it("a tie or an earlier use never upgrades (strictly later required)", () => {
     const rows = [
       setPolicy(at(50), `projects/acme/serviceAccounts/${SA}`, [
@@ -247,6 +284,18 @@ describe("GCP service account join: grading", () => {
     ];
     const b = blockFor(rows, SA);
     expect(b?.upgrade).toBeUndefined();
+  });
+});
+
+describe("GCP service account join: projects touched", () => {
+  it("touches the binding's own resource project (a member string is never project-shaped, so this proves the resource is read)", () => {
+    const rows = [
+      setPolicy(at(0), "projects/other-proj/buckets/b", [
+        delta("ADD", "roles/storage.admin", `serviceAccount:${SA}`),
+      ]),
+    ];
+    const b = blockFor(rows, SA);
+    expect(b?.projectsTouched.some((p) => p.value === "other-proj")).toBe(true);
   });
 });
 
@@ -263,7 +312,26 @@ describe("GCP service account join: alias folding", () => {
       return env.gcpServiceAccountJoin?.identity === SA_UID;
     });
     expect(withUid).toHaveLength(1);
-    expect(withUid[0].canonical && canonicalEventEnvelopeSchema.parse(withUid[0].canonical).gcpServiceAccountJoin?.credentials).toHaveLength(1);
+    expect(
+      withUid[0].canonical &&
+        canonicalEventEnvelopeSchema.parse(withUid[0].canonical).gcpServiceAccountJoin?.credentials,
+    ).toHaveLength(1);
+  });
+
+  it("an alias-source record with an unparseable time still teaches the alias (and still conflicts)", () => {
+    const badTime = gcp("not-a-time", "x", "y", {}, "alice@corp.example", {
+      email_id: SA,
+      unique_id: "333333333333333",
+    });
+    const rows = [
+      gcp(at(0), "x", "y", {}, "alice@corp.example", { email_id: SA, unique_id: "111111111111111" }),
+      badTime,
+      createKey(at(10), SA, "bob@corp.example"),
+    ];
+    const b = blockFor(rows, SA);
+    // Two conflicting uniqueIds were taught (one from a record with no readable time) -> the
+    // email itself is the identity, not silently folded under the first-seen uniqueId.
+    expect(b?.identity).toBe(SA.toLowerCase());
   });
 
   it("two different uniqueIds for one email is a conflict: neither resolves, records key on the email", () => {
@@ -283,8 +351,12 @@ describe("GCP service account join: alias folding", () => {
     // Neither uniqueId resolves the email; both key facts key on the plain email string -> one
     // row (the email itself is the identity), not split, not falsely merged under either uid.
     expect(forSa).toHaveLength(1);
-    expect(canonicalEventEnvelopeSchema.parse(forSa[0].canonical).gcpServiceAccountJoin?.identity).toBe(lower(SA));
-    expect(canonicalEventEnvelopeSchema.parse(forSa[0].canonical).gcpServiceAccountJoin?.keys).toHaveLength(2);
+    expect(canonicalEventEnvelopeSchema.parse(forSa[0].canonical).gcpServiceAccountJoin?.identity).toBe(
+      lower(SA),
+    );
+    expect(canonicalEventEnvelopeSchema.parse(forSa[0].canonical).gcpServiceAccountJoin?.keys).toHaveLength(
+      2,
+    );
   });
 });
 

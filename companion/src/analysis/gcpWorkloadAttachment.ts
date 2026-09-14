@@ -52,8 +52,8 @@ export function maskCovers(mask: unknown, targetField: string): boolean {
     ? mask.map((v) => String(v))
     : typeof mask === "string"
       ? mask.split(",")
-      : isObject(mask) && Array.isArray((mask as Row).paths)
-        ? ((mask as Row).paths as unknown[]).map((v) => String(v))
+      : isObject(mask) && Array.isArray(mask.paths)
+        ? mask.paths.map((v) => String(v))
         : [];
   const target = normPath(targetField);
   return raw.some((p) => {
@@ -91,12 +91,20 @@ function reading(
 }
 
 /** Zero, one, or more readings — a Cloud Functions v2 create/update can name three identities at once. */
-export function decodeGcpWorkloadAttachment(pp: Row, service: string, method: string): GcpAttachmentReading[] {
+export function decodeGcpWorkloadAttachment(
+  pp: Row,
+  service: string,
+  method: string,
+): GcpAttachmentReading[] {
   const svc = lower(service);
   const m = lower(method);
   const request = isObject(getCI(pp, "request")) ? (getCI(pp, "request") as Row) : {};
   const resourceName = field(pp, "resourceName");
   const out: GcpAttachmentReading[] = [];
+
+  // A denied call never attached anything — the request named an intent, not an established fact.
+  const statusCode = field(pp, "status", "code");
+  if (statusCode && statusCode !== "0") return out;
 
   if (svc === "compute.googleapis.com") {
     if (/(^|\.)instances\.insert$/.test(m)) {
@@ -121,21 +129,21 @@ export function decodeGcpWorkloadAttachment(pp: Row, service: string, method: st
     const fn = isObject(getCI(request, "function")) ? (getCI(request, "function") as Row) : {};
     const name = field(fn, "name") || resourceName;
     const mask = getCI(request, "updateMask");
-    if (isV1 && /createfunction$/.test(m)) {
+    if (isV1 && /(^|\.)createfunction$/.test(m)) {
       const email = field(fn, "serviceAccountEmail");
       if (email) out.push(reading("cloud-function", "v1", name, "runtime", email, false));
-    } else if (isV1 && /updatefunction$/.test(m)) {
+    } else if (isV1 && /(^|\.)updatefunction$/.test(m)) {
       const email = field(fn, "serviceAccountEmail");
       if (email && maskCovers(mask, "serviceAccountEmail"))
         out.push(reading("cloud-function", "v1", name, "runtime", email, true));
-    } else if (isV2 && /createfunction$/.test(m)) {
+    } else if (isV2 && /(^|\.)createfunction$/.test(m)) {
       const runtime = field(fn, "serviceConfig", "serviceAccountEmail");
       const build = saFromResourceName(field(fn, "buildConfig", "serviceAccount"));
       const trigger = field(fn, "eventTrigger", "serviceAccountEmail");
       if (runtime) out.push(reading("cloud-function", "v2", name, "runtime", runtime, false));
       if (build) out.push(reading("cloud-function", "v2", name, "build", build, false));
       if (trigger) out.push(reading("cloud-function", "v2", name, "trigger", trigger, false));
-    } else if (isV2 && /updatefunction$/.test(m)) {
+    } else if (isV2 && /(^|\.)updatefunction$/.test(m)) {
       const runtime = field(fn, "serviceConfig", "serviceAccountEmail");
       const build = saFromResourceName(field(fn, "buildConfig", "serviceAccount"));
       const trigger = field(fn, "eventTrigger", "serviceAccountEmail");
@@ -154,14 +162,14 @@ export function decodeGcpWorkloadAttachment(pp: Row, service: string, method: st
     const isV2 = m.includes(".v2.");
     const svcBody = isObject(getCI(request, "service")) ? (getCI(request, "service") as Row) : {};
     const name = field(svcBody, "metadata", "name") || resourceName;
-    if (isV1 && /(createservice|replaceservice)$/.test(m)) {
+    if (isV1 && /(^|\.)(createservice|replaceservice)$/.test(m)) {
       // Cloud Run v1 (Knative) has no field mask: create and replace always send the whole spec.
       const email = field(svcBody, "spec", "template", "spec", "serviceAccountName");
       if (email) out.push(reading("cloud-run-service", "v1", name, "runtime", email, false));
-    } else if (isV2 && /createservice$/.test(m)) {
+    } else if (isV2 && /(^|\.)createservice$/.test(m)) {
       const email = field(svcBody, "template", "serviceAccount");
       if (email) out.push(reading("cloud-run-service", "v2", name, "runtime", email, false));
-    } else if (isV2 && /updateservice$/.test(m)) {
+    } else if (isV2 && /(^|\.)updateservice$/.test(m)) {
       const email = field(svcBody, "template", "serviceAccount");
       const mask = getCI(request, "updateMask");
       if (email && maskCovers(mask, "template.serviceAccount"))

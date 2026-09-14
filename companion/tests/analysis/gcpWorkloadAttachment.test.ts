@@ -19,9 +19,9 @@ describe("maskCovers", () => {
     expect(maskCovers("labels", "serviceAccountEmail")).toBe(false);
   });
   it("a {paths:[...]} array names the field", () => {
-    expect(maskCovers({ paths: ["serviceConfig.serviceAccountEmail"] }, "serviceConfig.serviceAccountEmail")).toBe(
-      true,
-    );
+    expect(
+      maskCovers({ paths: ["serviceConfig.serviceAccountEmail"] }, "serviceConfig.serviceAccountEmail"),
+    ).toBe(true);
   });
   it("snake_case and lowerCamelCase compare equal", () => {
     expect(maskCovers("service_account_email", "serviceAccountEmail")).toBe(true);
@@ -44,7 +44,12 @@ describe("decodeGcpWorkloadAttachment — GCE", () => {
       pp(
         "v1.compute.instances.insert",
         "compute.googleapis.com",
-        { serviceAccounts: [{ email: "a@p.iam.gserviceaccount.com" }, { email: "b@p.iam.gserviceaccount.com" }] },
+        {
+          serviceAccounts: [
+            { email: "a@p.iam.gserviceaccount.com" },
+            { email: "b@p.iam.gserviceaccount.com" },
+          ],
+        },
         "projects/p/zones/z/instances/vm1",
       ),
       "compute.googleapis.com",
@@ -95,13 +100,20 @@ describe("decodeGcpWorkloadAttachment — Cloud Functions", () => {
   it("v1 CreateFunction always reads the field", () => {
     const r = decodeGcpWorkloadAttachment(
       pp("google.cloud.functions.v1.CloudFunctionsService.CreateFunction", "cloudfunctions.googleapis.com", {
-        function: { name: "projects/p/locations/l/functions/f1", serviceAccountEmail: "fn@p.iam.gserviceaccount.com" },
+        function: {
+          name: "projects/p/locations/l/functions/f1",
+          serviceAccountEmail: "fn@p.iam.gserviceaccount.com",
+        },
       }),
       "cloudfunctions.googleapis.com",
       "google.cloud.functions.v1.CloudFunctionsService.CreateFunction",
     );
     expect(r).toHaveLength(1);
-    expect(r[0].attachment).toMatchObject({ workloadKind: "cloud-function", workloadVersion: "v1", identityRole: "runtime" });
+    expect(r[0].attachment).toMatchObject({
+      workloadKind: "cloud-function",
+      workloadVersion: "v1",
+      identityRole: "runtime",
+    });
   });
 
   it("v1 UpdateFunction reads the field only when the mask names it", () => {
@@ -203,7 +215,10 @@ describe("decodeGcpWorkloadAttachment — Cloud Run", () => {
     );
     expect(updateWith).toHaveLength(1);
     const updateWithout = decodeGcpWorkloadAttachment(
-      pp("google.cloud.run.v2.Services.UpdateService", "run.googleapis.com", { ...body, updateMask: "template.image" }),
+      pp("google.cloud.run.v2.Services.UpdateService", "run.googleapis.com", {
+        ...body,
+        updateMask: "template.image",
+      }),
       "run.googleapis.com",
       "google.cloud.run.v2.Services.UpdateService",
     );
@@ -211,9 +226,38 @@ describe("decodeGcpWorkloadAttachment — Cloud Run", () => {
   });
 });
 
+it("a denied call never produces an attachment reading — a rejected request attached nothing", () => {
+  const r = decodeGcpWorkloadAttachment(
+    {
+      methodName: "v1.compute.instances.insert",
+      serviceName: "compute.googleapis.com",
+      resourceName: "projects/p/zones/z/instances/vm1",
+      request: { serviceAccounts: [{ email: "a@p.iam.gserviceaccount.com" }] },
+      status: { code: 7, message: "PERMISSION_DENIED" },
+    },
+    "compute.googleapis.com",
+    "v1.compute.instances.insert",
+  );
+  expect(r).toHaveLength(0);
+});
+
+it("BatchUpdateFunction never matches the UpdateFunction tail (a segment boundary, not a bare substring)", () => {
+  const r = decodeGcpWorkloadAttachment(
+    pp("google.cloud.functions.v2.FunctionService.BatchUpdateFunction", "cloudfunctions.googleapis.com", {
+      function: { name: "f1", serviceConfig: { serviceAccountEmail: "fn@p.iam.gserviceaccount.com" } },
+      updateMask: "serviceConfig.serviceAccountEmail",
+    }),
+    "cloudfunctions.googleapis.com",
+    "google.cloud.functions.v2.FunctionService.BatchUpdateFunction",
+  );
+  expect(r).toHaveLength(0);
+});
+
 it("an unrelated method under the same service never decodes", () => {
   const r = decodeGcpWorkloadAttachment(
-    pp("v1.compute.firewalls.insert", "compute.googleapis.com", { serviceAccounts: [{ email: "x@p.iam.gserviceaccount.com" }] }),
+    pp("v1.compute.firewalls.insert", "compute.googleapis.com", {
+      serviceAccounts: [{ email: "x@p.iam.gserviceaccount.com" }],
+    }),
     "compute.googleapis.com",
     "v1.compute.firewalls.insert",
   );
