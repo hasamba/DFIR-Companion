@@ -961,4 +961,42 @@ hosts, 20 evidence ids per cell; every unread count is shown, and an unread cell
 *incomplete* — never *unknown*. **Hunt leads** are text to run in the hunt workbench; nothing here
 contacts a recipient, collects a mailbox, or sends an attachment anywhere. The report section
 (off in every template until switched on) renders the same tables.
+## Served Exposure
+
+Catch data leaving as a response to an incoming request — a dump staged under the web root and
+fetched — without ever equating a request path with a file on your own.
+
+**Declare a served location.** On web server host H, URL prefix P is served from local root R.
+Virtual hosts, aliases and rewrites are server configuration the case does not hold, so nothing is
+guessed: without a declaration the panel says a request path is not a file path. Options: a
+virtual host (the mapping then applies only to rows that name it), index files (a directory
+request maps only through them), a case policy (folded by default for a drive-letter root),
+*public* (a download area or public backup — descriptive, see below), the relative paths you
+confirm sensitive, and the sha256 of the sensitive document.
+
+**What the rows establish, per resource under the root, stage by stage:**
+
+- *suspected exposure* — a file/create or write row opens a version of the resource (with its
+  digest when the row carries one), a delete closes it; an MFT or listing row is a point
+  observation at its own time; Amcache / ShimCache are historical leads and place nothing in time.
+- *retrieval requested* — an access-log request whose path maps through the location (the query is
+  split before decoding; one decoding pass; an encoded separator, a NUL, a malformed escape or a
+  `..` that escapes the root maps to nothing, counted by reason) while a version covered its time
+  or an observation sits at it. A request before the file existed or after its deletion is
+  *existence at request time not established*; a folded row spanning a boundary is *ambiguous*.
+- *response size recorded* — what the server logged: a body-permitting method with 200 or 206 and
+  a numeric positive size. It is the response's size, not the document's, and never client
+  receipt. 304 / 204 / 1xx are bodiless; 4xx / 5xx are an error response whose size is the error
+  page's; `-` is "size not recorded"; HEAD has no body.
+- *corroborated disclosure* — a size recorded while the resource was confirmed sensitive by you or
+  its covering version is the sensitive document by digest. A `.sql` extension, a 200, an
+  unfamiliar client establish nothing.
+
+Requests to paths under the prefix with no file evidence are leads. A public location's
+unconfirmed resources are negative controls; a confirmed sensitive resource under a public root is
+a surfaced conflict, never suppressed. Every reason says whether the read was complete (5,000 file
+rows per location, 20,000 web rows per host); past that it reads *unknown*, never a negative. Gaps
+are said: only web logs, only file rows, undated rows. A third-party leak report has no importer.
+Nothing is fetched and no server is contacted. The report section (off in saved templates until
+switched on) renders the same table.
 

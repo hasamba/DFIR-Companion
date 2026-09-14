@@ -74,6 +74,7 @@ import {
   type TrailerProfile,
 } from "./webRecordFields.js";
 import { isIP } from "node:net";
+import { createCanonicalEvent } from "./canonicalEvent.js";
 
 export interface CombinedLogImportOptions {
   aggregate?: boolean;
@@ -417,7 +418,11 @@ export function mapCombinedLogLine(
   // handed back. It is a VARIANT of the base instead, bounded by the same pass (see
   // boundRecordVariants), so a shown trailer cannot fold away silently and cannot explode either.
   const recordKey = `|form:${target.form}${trailer.dispositionKey}`;
-  const baseKey = `weblog|${method}|${status}|${client}|${host}${recordKey}${spill ? `|spill:${spill.families.join(",")}` : ""}`;
+  // The logged size is part of the identity (#930 item 4): two requests for one path that the
+  // server answered with different sizes are two facts, and a served-exposure reading must not
+  // inherit one row's size for the group. Bounded by its own frame, like the path below.
+  const sizeKey = /^\d{1,19}$/.test((bytesRaw ?? "").trim()) ? `|z${bytesRaw.trim()}` : "|z-";
+  const baseKey = `weblog|${method}|${status}${sizeKey}|${client}|${host}${recordKey}${spill ? `|spill:${spill.families.join(",")}` : ""}`;
   // The path is the one attacker-controlled part of the key, so it is FRAMED with its own length:
   // `|p<len>:<path>`. Unframed, a path could spell out another segment — `squid:tcp_hit:none|
   // trailer:overflow|foo` — and collide with the overflow row's key, hiding it inside an ordinary
@@ -436,7 +441,10 @@ export function mapCombinedLogLine(
   // trailer digest stays out, or trailer churn on one payload would consume the 64-payload
   // budget and fold a genuinely different payload into an overflow row, losing its excerpt. The
   // trailer's words still show on the row that survives — the trade the UA and the Referer take.
-  const fullKey = `${baseKey}${attackSegment}${attack ? "" : trailer.variantKey}${pathKey}`.toLowerCase();
+  // The path keeps its case (#930 item 4): on a case-sensitive root `/Secret` and `/secret` are two
+  // files, and folding them here would hand one representative's target to both. Method, status,
+  // client, host and the variant segments fold as before.
+  const fullKey = `${baseKey}${attackSegment}${attack ? "" : trailer.variantKey}`.toLowerCase() + pathKey;
   const mark = identityMark(fullKey);
   // Shown text that is not the record's own: a trailer (clipped per token and packed as a tag), a
   // neutralised bracket or control character in any client field.
@@ -476,14 +484,35 @@ export function mapCombinedLogLine(
     aggKey: boundedAggKey(fullKey),
     sources: [COMBINED_LOG_SOURCE],
     ...(client ? { srcIp: client } : {}),
+    // The line's own facts, typed (#930 item 4): what a join may read instead of the description.
+    // The target is kept AS SENT (bounded), so a reader decodes it under its own policy.
+    canonical: createCanonicalEvent({
+      event: { category: "network", type: "web-request" },
+      ...(client ? { network: { source: { address: client } } } : {}),
+      web: {
+        method,
+        ...(host ? { host } : {}),
+        target: uri.slice(0, 2048),
+        targetForm: target.form,
+        statusCode: status,
+        responseState: "recorded",
+        ...(/^\d{1,19}$/.test((bytesRaw ?? "").trim()) ? { responseBodyLen: Number(bytesRaw.trim()) } : {}),
+        bodies: [],
+        bodiesTotal: 0,
+        records: 1,
+      },
+      time: { observed: dateRaw ?? "", normalized: timestamp },
+      evidence: { rawRecords: [{ source: "combined-access-log", locator: `line:${identityMark(fullKey)}` }] },
+      producer: { importer: "combined-log", parserVersion: "1", mappingVersion: "combined-log-v1" },
+    }),
   };
   // Every row whose identity carries a variant — an attack payload, an unlabelled trailer, or
   // both — is bounded per base key, so neither can multiply groups without limit.
   if ((attack || trailer.variantKey) && attackMeta) {
     attackMeta.set(event, {
-      base: `${baseKey}${pathKey}`.toLowerCase(),
+      base: baseKey.toLowerCase() + pathKey,
       prefix: baseKey.toLowerCase(),
-      path: pathKey.toLowerCase(),
+      path: pathKey,
       families: attack?.families ?? [],
       digest: attack ? attack.digest : trailer.variantKey,
       hasAttack: Boolean(attack),

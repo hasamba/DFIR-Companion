@@ -482,6 +482,8 @@
     "regexSafety.ts": "analysis/privacy",
     "campaignScope.ts": "analysis/findings",
     "remediationBoundary.ts": "analysis/findings",
+    "servedExposure.ts": "analysis/findings",
+    "servedLocation.ts": "analysis/findings",
     "remediationRun.ts": "analysis/workflow",
     "remediationShapes.ts": "analysis/findings",
     "remediationVerify.ts": "analysis/findings",
