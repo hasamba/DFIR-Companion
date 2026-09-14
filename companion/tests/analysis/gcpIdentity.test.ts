@@ -80,6 +80,11 @@ describe("GCP identity — who acted, as the record states", () => {
       "service agent (Google-managed; home project not derivable from the address)",
     );
     expect(envelopeOf(agent).gcp?.principal.kind).toBe("service-agent");
+    const odd = one("x", {
+      authenticationInfo: { principalEmail: "Weird.Name@some-other.gserviceaccount.com" },
+    });
+    expect(odd.description).toContain("service account (home project not derivable from the address)");
+    expect(odd.description).not.toContain("service agent");
     const user = one("x");
     expect(user.description).toContain(`by ${USER}`);
     expect(envelopeOf(user).gcp?.principal.kind).toBe("user-or-unknown");

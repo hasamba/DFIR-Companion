@@ -70,7 +70,10 @@ export function principalOf(email: string): { kind: GcpPrincipal["kind"]; homePr
   const appspot = APPSPOT_SA.exec(e);
   if (appspot)
     return { kind: "service-account", homeProject: { namespace: "projects", kind: "id", value: appspot[1] } };
-  if (SERVICE_AGENT.test(e) || /gserviceaccount\.com$/.test(e)) return { kind: "service-agent" };
+  if (SERVICE_AGENT.test(e)) return { kind: "service-agent" };
+  // A gserviceaccount.com address of a shape the table does not name is a service account whose
+  // home project the address does not establish — never called a service agent.
+  if (/gserviceaccount\.com$/.test(e)) return { kind: "service-account" };
   return { kind: "user-or-unknown" };
 }
 
@@ -167,7 +170,7 @@ export function identityWords(
   const out: string[] = [];
   if (p.kind === "service-account")
     out.push(
-      `service account${p.homeProject ? ` (home project ${show(p.homeProject.value, 40)}, ${p.homeProject.kind === "id" ? "an id" : "a number"})` : ""}`,
+      `service account (${p.homeProject ? `home project ${show(p.homeProject.value, 40)}, ${p.homeProject.kind === "id" ? "an id" : "a number"}` : "home project not derivable from the address"})`,
     );
   else if (p.kind === "service-agent")
     out.push("service agent (Google-managed; home project not derivable from the address)");
