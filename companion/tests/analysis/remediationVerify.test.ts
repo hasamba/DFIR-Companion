@@ -267,8 +267,7 @@ describe("what a hit is (real importer shapes)", () => {
     expect(classifyHit(mft, Date.parse(T)).cls).toBe("listing-of-older-object");
     const mftNewer = upgradeForensicEvent(ev({ sources: ["MFT"], path: PATH, fileModified: at(3) }));
     expect(classifyHit(mftNewer, Date.parse(T)).cls).toBe("unclassified");
-    // A Sysmon 11 keys `path` to the creating image; the created file is in the text — a weak
-    // description match — and the untyped `other/event` from Sysmon reads as activity.
+    // A Sysmon 11 names the created file (#1049): the row's path, an exact match, activity.
     const sysmon11 = parseSiemExport(
       JSON.stringify([
         {
@@ -280,7 +279,8 @@ describe("what a hit is (real importer shapes)", () => {
         },
       ]),
     ).events.map((e) => upgradeForensicEvent(e as unknown as ForensicEvent))[0];
-    expect(matchArtifact(sysmon11, "path", PATH)).toMatchObject({ strength: "weak", on: "description" });
+    // Since #1049 the created file IS the row's path (file/create): an exact match, classed activity.
+    expect(matchArtifact(sysmon11, "path", PATH)).toMatchObject({ strength: "exact", on: "path" });
     expect(classifyHit(sysmon11, Date.parse(T))).toMatchObject({ cls: "activity" });
     const unknown = ev({ canonical: { event: { category: "email", type: "message" } } as never });
     expect(classifyHit(unknown, Date.parse(T))).toMatchObject({
