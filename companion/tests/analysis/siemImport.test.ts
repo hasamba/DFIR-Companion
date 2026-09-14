@@ -1978,6 +1978,18 @@ describe("Sysmon file events (11 / 23 / 26) key the target file, not the creatin
         .sort(),
     ).toEqual(["C:\\Users\\a\\Downloads\\evil.exe", "C:\\Windows\\explorer.exe"]);
   });
+  it("a row with no TargetFilename (or '-') names no file: the Image never stands in for it", () => {
+    for (const extra of [{ TargetFilename: "" }, { TargetFilename: "-" }]) {
+      const e = parseSiemExport(elastic(row(11, extra))).events[0];
+      expect(e.path, JSON.stringify(extra)).toBeUndefined();
+      expect(e.canonical?.file?.path).toBeUndefined();
+      expect(e.canonical?.process?.executable).toBe("C:\\Windows\\explorer.exe");
+      expect(e.canonical?.event).toMatchObject({ category: "file", type: "create" });
+    }
+    expect(parseSiemExport(elastic(row(11))).events[0].canonical?.producer.mappingVersion).toBe(
+      "windows-event-v3",
+    );
+  });
   it("a FileDelete (23 / 26) is file/delete on the deleted file; a process-create row is unchanged", () => {
     for (const eid of [23, 26]) {
       const e = parseSiemExport(elastic(row(eid))).events[0];
