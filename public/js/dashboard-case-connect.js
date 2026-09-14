@@ -358,6 +358,7 @@
       ["custody", () => loadCustody(caseId)],
       ["intelRetirement", () => loadIntelRetirement(caseId)],
       ["remediation", () => loadRemediation(caseId)],
+      ["campaignScope", () => loadCampaignScope(caseId)],
       ["count", () => pollCount(caseId)],
       ["aiToggle", () => loadAiToggle(caseId)],
       ["enrichToggle", () => loadEnrichToggle(caseId)],
