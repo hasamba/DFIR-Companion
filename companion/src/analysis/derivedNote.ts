@@ -32,6 +32,7 @@ export const DERIVED_NOTE_NAMES: readonly string[] = [
   "command line references a stream",
   "injection sequence",
   "hollowing sequence",
+  "after Defender",
 ];
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

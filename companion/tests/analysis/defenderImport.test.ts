@@ -47,6 +47,34 @@ describe("Defender Operational events through the Windows mapper", () => {
     });
     expect(e.canonical?.target).toEqual({ kind: "host", name: "WS-042.corp.example.invalid" }); // the host keeps its slot
     expect(e.canonical?.file?.path).toBe("C:\\Users\\a.mehta\\Downloads\\invoice.exe");
+    // The typed block the episode pass reads (#964): disposition, threat, every resource.
+    expect(e.canonical?.defender).toEqual({
+      disposition: "unknown",
+      threat: "Trojan:Win32/Wacatac.B!ml",
+      detectionId: "{5B6A6C58-1F33-4B4E-9A9F-0C0A1D2E3F40}",
+      eventType: "detection",
+      resources: ["C:\\Users\\a.mehta\\Downloads\\invoice.exe"],
+      resourcesTotal: 1,
+    });
+  });
+
+  it("lists every flagged archive member in the block, the container beside them (#964)", () => {
+    const r = parseSiemExport(
+      JSON.stringify([
+        record(1117, {
+          "Action Name": "Quarantine",
+          "Error Code": "0x00000000",
+          Path: "containerfile:_C:\\dl\\pack.zip; file:_C:\\dl\\pack.zip->a.exe; file:_C:\\dl\\pack.zip->b.dll",
+        }),
+      ]),
+    );
+    expect(r.events[0].canonical?.defender).toMatchObject({
+      disposition: "remediated",
+      eventType: "action",
+      container: "C:\\dl\\pack.zip",
+      resources: ["C:\\dl\\pack.zip->a.exe", "C:\\dl\\pack.zip->b.dll"],
+      resourcesTotal: 2,
+    });
   });
 
   it("keeps two actions on one file as two rows, in both input orders", () => {

@@ -27,8 +27,14 @@ const collectDirective = z
 export const AUTO_FINDING_ID_PREFIX = "f-auto-";
 export const GAP_FINDING_ID_PREFIX = "f-gap-";
 export const WAVES_FINDING_ID = "f-waves";
+/** A Defender action followed by a start of the same file (defenderEpisodeFindings.ts, #964). */
+export const DEFENDER_FINDING_ID_PREFIX = "f-defender-";
 
-const RESERVED_FINDING_ID_PREFIXES = [AUTO_FINDING_ID_PREFIX, GAP_FINDING_ID_PREFIX];
+const RESERVED_FINDING_ID_PREFIXES = [
+  AUTO_FINDING_ID_PREFIX,
+  GAP_FINDING_ID_PREFIX,
+  DEFENDER_FINDING_ID_PREFIX,
+];
 
 /** True for an id only a deterministic backfill is allowed to mint. */
 export function isDeterministicFindingId(id: string): boolean {
