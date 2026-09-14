@@ -404,6 +404,7 @@ describe("decodeGwsDrive — sharing changes: direction along the documented cha
       }),
     );
     expect(reconciled.severity).toBe("Info");
+    expect(reconciled.mitreTechniques).toEqual([]);
     expect(reconciled.description).toContain(
       "reconciled from a parent folder change — not an action on this item",
     );

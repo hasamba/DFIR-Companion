@@ -381,7 +381,10 @@ function readSharing(name: string, params: readonly GwsParam[]): GwsDriveReading
   ];
   // A reconciled child row or a side effect is an event, not an action: one folder change fans
   // out to thousands of these, so they never enter the forensic timeline on their own.
-  if (reconciled || !primary) severity = "Info";
+  if (reconciled || !primary) {
+    severity = "Info";
+    mitre.length = 0;
+  }
   const block: DriveSharingBlock = {
     ...(doc.id ? { docId: doc.id } : {}),
     ...(doc.title ? { docTitle: doc.title } : {}),
