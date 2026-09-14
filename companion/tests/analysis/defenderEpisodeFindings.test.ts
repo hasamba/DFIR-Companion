@@ -41,10 +41,9 @@ const defender = (disposition: string, over: Partial<ForensicEvent> = {}, withHa
     id: `d-${disposition}`,
     description: `[control: ${disposition}] Quarantine ${THREAT} — ${PATH} (EID 1117, Microsoft Defender) @ WS-042`,
     sources: ["Microsoft Defender"],
-    ...(withHash ? { sha256: SHA } : {}),
     canonical: {
       event: { category: "file", type: "action", action: "Quarantine", outcome: "success" },
-      file: { path: PATH, ...(withHash ? { sha256: SHA } : {}) },
+      file: { path: PATH },
       time: { normalized: over.timestamp ?? T },
       defender: {
         disposition,
@@ -53,6 +52,7 @@ const defender = (disposition: string, over: Partial<ForensicEvent> = {}, withHa
         eventType: "action",
         resources: [PATH],
         resourcesTotal: 1,
+        ...(withHash ? { sha256: SHA } : {}),
       },
     } as never,
     ...over,
@@ -164,10 +164,15 @@ describe("backfillDefenderEpisodeFindings", () => {
     expect(defenderFindingId(a)).toBe(defenderFindingId(b));
     expect(defenderFindingId(defender("allowed", { asset: "WS-043" }))).not.toBe(defenderFindingId(a));
   });
-  it("only in-scope pairs mint a finding; an existing finding is rebuilt on its machine fields, status kept", () => {
+  it("a window holding either endpoint keeps the finding under its id; one holding neither leaves it to the carry; a model echo is rebuilt, status kept", () => {
     const s = stateOf([defender("allowed"), start()]);
-    expect(backfillDefenderEpisodeFindings(s, new Set(["s1"]), at(2 * H)).findings).toHaveLength(0);
-    expect(backfillDefenderEpisodeFindings(s, new Set(["d-allowed"]), at(2 * H)).findings).toHaveLength(0);
+    // Either endpoint in scope mints the same id (code round 1, finding 3): a narrow window never
+    // drops the finding, and the dismissal marker re-applies by id.
+    const onlyStart = backfillDefenderEpisodeFindings(s, new Set(["s1"]), at(2 * H)).findings;
+    const onlyRecord = backfillDefenderEpisodeFindings(s, new Set(["d-allowed"]), at(2 * H)).findings;
+    expect(onlyStart.map((f) => f.id)).toEqual(onlyRecord.map((f) => f.id));
+    expect(onlyStart).toHaveLength(1);
+    expect(backfillDefenderEpisodeFindings(s, new Set(), at(2 * H)).findings).toHaveLength(0);
     // A model echoed the known id with its own words: the pass rebuilds title, severity, outcome
     // fields and description; the analyst's status survives.
     const id = defenderFindingId(s.forensicTimeline.find((e) => e.id === "d-allowed")!);
@@ -196,15 +201,35 @@ describe("backfillDefenderEpisodeFindings", () => {
       mitreTechniques: [],
     });
     expect(out.findings[0].title).not.toBe("nothing to see");
-    // The partner left the case: the finding stays, said to be unsupported now.
+    // The partner left the case: the finding stays under its id with the analyst's status, but its
+    // machine claims are withdrawn and its links removed (code round 1, finding 4).
     const partnerless = backfillDefenderEpisodeFindings(
       { ...out, forensicTimeline: out.forensicTimeline.filter((e) => e.id !== "s1") },
       new Set(["d-allowed"]),
       at(3 * H),
     );
     expect(partnerless.findings).toHaveLength(1);
+    expect(partnerless.findings[0]).toMatchObject({
+      id,
+      status: "dismissed",
+      severity: "Low",
+      confidence: 10,
+      execution: "unknown",
+      control: "unknown",
+    });
     expect(
       partnerless.findings[0].description.startsWith("No longer supported by the current evidence"),
     ).toBe(true);
+    expect(partnerless.forensicTimeline.find((e) => e.id === "d-allowed")!.relatedFindingIds).toEqual([]);
+    // Run again: the prefix does not stack.
+    const again = backfillDefenderEpisodeFindings(partnerless, new Set(["d-allowed"]), at(4 * H));
+    expect(again.findings[0].description.split("No longer supported")).toHaveLength(2);
+    // The record out of scope says nothing: the finding is left as it is.
+    const untouched = backfillDefenderEpisodeFindings(
+      { ...out, forensicTimeline: out.forensicTimeline.filter((e) => e.id !== "s1") },
+      new Set(),
+      at(3 * H),
+    );
+    expect(untouched.findings[0].severity).toBe("High");
   });
 });

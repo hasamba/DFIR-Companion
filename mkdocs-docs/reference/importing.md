@@ -1016,8 +1016,9 @@ never says "the same file", "retry" or "re-dropped", and adds no technique — a
 a user-mediated launch and supports execution, not completion. Only when the Defender record
 itself carries the file's digest (an export that includes it) and a start row carries the same
 sha256 does the note say *the same file (sha256) later started* and the row rise to High. A digest
-is never borrowed from an earlier row at the same path: the file may have been replaced before
-Defender looked. Every flagged resource counts, including a second archive member; a resource past
+is never borrowed from an earlier row at the same path, nor from another tool's row that
+correlation merged with the Defender record: the file may have been replaced before Defender
+looked. Every flagged resource counts, including a second archive member; a resource past
 the bounded list is said, not matched.
 
 **The finding.** For a record that *allowed* the threat, *failed to remediate* it, or says it
@@ -1026,8 +1027,12 @@ synthesis: severity High, `control` = that record's disposition and `execution: 
 machine-set (an analyst's outcome decision still wins). It links both rows, so the generic
 high-severity backfill does not raise a second finding. A path-only pairing gets no finding.
 
-**Hosts.** Two rows pair on the same full host name, or on a short name that names exactly one
-host in the case; `ws01.corp-a` and `ws01.corp-b` never pair.
+**Hosts and bounds.** Two rows pair on the same full host name, or on a short name that names
+exactly one host in the case; `ws01.corp-a` and `ws01.corp-b` never pair. Two explicit, differing
+drive letters are two locations. A start that falls inside the intervals of two Defender records
+binds to the later record; two records at the same instant establish no order and claim nothing.
+Per host the newest 512 Defender records are indexed (an unread one says so on its own row); per
+record at most 64 starts inside its interval are read and the rest counted on its note.
 
 **What it does not say.** No second AV alert is not evidence that the file ran or that remediation
 held; the scanner's identity is never the launcher — read the start row's own account; a drive

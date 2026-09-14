@@ -58,6 +58,16 @@ describe("Defender Operational events through the Windows mapper", () => {
     });
   });
 
+  it("carries the record's OWN digest on the block when the export has one; never otherwise (#964)", () => {
+    const sha = "425a1a21a4dbc212c3c3db5f8fecdd6235e7e7fe2fcfce3affe3f9f80aa24a92";
+    const withHash = parseSiemExport(
+      JSON.stringify([record(1117, { "Action Name": "Allow", Hashes: `SHA256=${sha}` })]),
+    );
+    expect(withHash.events[0].canonical?.defender?.sha256).toBe(sha);
+    const plain = parseSiemExport(JSON.stringify([record(1117, { "Action Name": "Allow" })]));
+    expect(plain.events[0].canonical?.defender?.sha256).toBeUndefined();
+  });
+
   it("lists every flagged archive member in the block, the container beside them (#964)", () => {
     const r = parseSiemExport(
       JSON.stringify([

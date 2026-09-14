@@ -39,6 +39,7 @@ interface Ev {
       resources: string[];
       container?: string;
       resourcesTotal: number;
+      sha256?: string;
     };
   };
 }
@@ -199,7 +200,7 @@ describe("what matches", () => {
     expect(find(out, "s0").description).not.toContain(DEFENDER_SEQUEL_MARKER);
     // The record carries its own digest (an export that has one): the same digest starting later is
     // "the same file", High; a different digest at the same path is a path match only.
-    const own = defender("allowed", { sha256: SHA, canonical: { file: { path: PATH, sha256: SHA } } });
+    const own = defender("allowed", {}, { sha256: SHA });
     const hashed = run([own, start({ sha256: SHA })]);
     expect(find(hashed, "s1").severity).toBe("High");
     expect(find(hashed, "s1").description).toContain(
@@ -208,6 +209,12 @@ describe("what matches", () => {
     const other = run([own, start({ sha256: "c".repeat(64) })]);
     expect(find(other, "s1").severity).toBe("Medium");
     expect(find(other, "s1").description).toContain("from the same path");
+    // A digest on the merged row (`file.sha256` / flat `sha256`, from another correlated member)
+    // is not the record's own: path match only (code round 1, finding 1).
+    const merged = defender("allowed", { sha256: SHA, canonical: { file: { path: PATH, sha256: SHA } } });
+    const viaRow = run([merged, start({ sha256: SHA })]);
+    expect(find(viaRow, "s1").severity).toBe("Medium");
+    expect(find(viaRow, "s1").description).not.toContain("same file");
   });
   it("a different host never matches; equal short labels pair only when the label names one host", () => {
     const d = defender("allowed", { asset: "ws01.corp-a.example" });
@@ -224,7 +231,7 @@ describe("what matches", () => {
     expect(find(ambiguous, "s1").description).not.toContain(DEFENDER_SEQUEL_MARKER);
   });
   it("a Prefetch / Amcache presence row is not a start; a non-start row's hash never enters", () => {
-    const own = defender("allowed", { sha256: SHA, canonical: { file: { path: PATH, sha256: SHA } } });
+    const own = defender("allowed", {}, { sha256: SHA });
     const pf = start({ id: "p1", sources: ["Prefetch"], canonical: undefined, sha256: SHA });
     const thor = start({
       id: "t1",
@@ -250,6 +257,9 @@ describe("what matches", () => {
     expect(note).toContain(`${STARTS_NAMED_MAX + 3} later starts from the same path`);
     expect(note).toContain("Bad(Thing)");
     expect(find(out, "s0").description).toContain("sample(1).exe");
+    // Every matched start is annotated and raised, not only the named ones (code round 1, finding 7).
+    expect(find(out, `s${STARTS_NAMED_MAX + 2}`).description).toContain(DEFENDER_SEQUEL_MARKER);
+    expect(find(out, `s${STARTS_NAMED_MAX + 2}`).severity).toBe("Medium");
     expect(cleanDescription(find(out, "s0").description)).toBe(cleanDescription(starts[0].description));
   });
 });
@@ -281,7 +291,7 @@ describe("merge and idempotence", () => {
     expect(gone[0].severity).toBe("Medium");
   });
   it("defenderEpisodeMatches exposes the typed pairing the finding pass reads", () => {
-    const own = defender("allowed", { sha256: SHA, canonical: { file: { path: PATH, sha256: SHA } } });
+    const own = defender("allowed", {}, { sha256: SHA });
     const m = defenderEpisodeMatches(
       [own, start({ sha256: SHA }), start({ id: "s2", timestamp: at(2 * H) })],
       24,
@@ -293,5 +303,67 @@ describe("merge and idempotence", () => {
       ["s1", "hash"],
       ["s2", "path"],
     ]);
+  });
+});
+
+describe("code round 1 — one record per start, volumes, bounds", () => {
+  it("a start inside two records' intervals binds to the latest one; two records at one instant claim nothing", () => {
+    // Two detection ids (two episodes) on one host, both open when the start happens.
+    const a = defender("allowed", { id: "d1", timestamp: T }, { detectionId: "{A}" });
+    const b = defender("remediated", { id: "d2", timestamp: at(H) }, { detectionId: "{B}" });
+    const s = start({ id: "s1", timestamp: at(2 * H) });
+    for (const order of [
+      [a, b, s],
+      [s, b, a],
+      [b, s, a],
+    ]) {
+      const out = run(order);
+      expect(find(out, "s1").description.split(DEFENDER_SEQUEL_MARKER)).toHaveLength(2);
+      expect(find(out, "s1").description).toContain("remediated of");
+      expect(find(out, "d1").description).not.toContain(DEFENDER_SEQUEL_MARKER);
+      expect(find(out, "d2").description).toContain("1 later start");
+      expect(defenderEpisodeMatches(order, 24)).toHaveLength(1);
+    }
+    // Same instant, different dispositions: no order between them, nothing claimed.
+    const same = defender("remediated", { id: "d3", timestamp: T }, { detectionId: "{C}" });
+    for (const order of [
+      [a, same, s],
+      [same, a, s],
+    ]) {
+      const out = run(order);
+      expect(find(out, "s1").description).not.toContain(DEFENDER_SEQUEL_MARKER);
+    }
+  });
+  it("two explicit, differing drive letters are two locations; a GUID or no volume is not compared", () => {
+    const d = defender("allowed");
+    expect(
+      find(run([d, start({ path: "D:\\Users\\a.mehta\\Downloads\\invoice.exe" })]), "s1").description,
+    ).not.toContain(DEFENDER_SEQUEL_MARKER);
+    expect(
+      find(run([d, start({ path: "\\VOLUME{guid-1}\\Users\\a.mehta\\Downloads\\invoice.exe" })]), "s1")
+        .description,
+    ).toContain(DEFENDER_SEQUEL_MARKER);
+  });
+  it("the per-interval bound is applied after the time filter: 64 earlier starts do not hide the one that followed", () => {
+    const d = defender("allowed", { timestamp: at(100 * 60) });
+    const earlier = Array.from({ length: 64 }, (_, i) => start({ id: `e${i}`, timestamp: at(i * 60) }));
+    const after = start({ id: "s-after", timestamp: at(200 * 60) });
+    const out = run([...earlier, d, after]);
+    expect(find(out, "s-after").description).toContain(DEFENDER_SEQUEL_MARKER);
+    for (const e of earlier) expect(find(out, e.id).description).not.toContain(DEFENDER_SEQUEL_MARKER);
+    // More starts in the interval than the bound: the rest are counted on the record, never read.
+    const many = Array.from({ length: 70 }, (_, i) => start({ id: `m${i}`, timestamp: at(200 * 60 + i) }));
+    const bounded = run([d, ...many]);
+    expect(find(bounded, "d-allowed").description).toContain("6 more in the interval not read");
+  });
+  it("past the per-host index the newest records are read and the rest say so on their own rows", () => {
+    const old = Array.from({ length: 512 }, (_, i) =>
+      defender("unknown", { id: `o${i}`, timestamp: at(-(i + 1) * 60) }, { detectionId: `{${i}}` }),
+    );
+    const newest = defender("allowed", { id: "d-new", timestamp: T }, { detectionId: "{new}" });
+    const out = run([...old, newest, start()]);
+    expect(find(out, "s1").description).toContain("allowed of");
+    expect(find(out, "o511").description).toContain("not read — more than 512 Defender records on this host");
+    expect(find(out, "o0").description).not.toContain("not read");
   });
 });

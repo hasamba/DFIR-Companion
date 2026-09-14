@@ -30,7 +30,7 @@ import type { Severity } from "./stateTypes.js";
 import type { DefenderBlock } from "./canonicalDefender.js";
 import { appendDerivedNote, splitDerivedNotes } from "./derivedNote.js";
 import { canonicalHostName } from "./hostAlias.js";
-import { filePath } from "./downloadExecution.js";
+import { filePath, type FilePath } from "./downloadExecution.js";
 import { createHash } from "node:crypto";
 
 /** The marker this pass appends. Registered in derivedNote.ts; stripped by correlate.ts before a duplicate key is taken. */
@@ -81,9 +81,9 @@ export interface DefenderRecord<T> {
   block: DefenderBlock;
   host: string;
   at: number;
-  /** Normalised resource paths (filePath relative form) the record flagged. */
-  resources: string[];
-  /** The record's OWN digest, when the export carried one. Never borrowed. */
+  /** The flagged resources as `filePath` reads them — relative path plus the volume it names. */
+  resources: FilePath[];
+  /** The record's OWN digest — `block.sha256`, decoded from the same raw record. Never a merged row's. */
   sha256?: string;
 }
 
@@ -105,8 +105,10 @@ export interface EpisodeMatch<T> {
   episode: DefenderEpisode<T>;
   record: DefenderRecord<T>;
   disposition: DefenderBlock["disposition"];
-  /** In time order, every matched start in this record's interval (bounded by the buckets). */
+  /** In time order, every start bound to this record (bounded per interval; the rest counted). */
   starts: StartMatch<T>[];
+  /** Starts inside the interval beyond the bound — never read. */
+  startsNotRead: number;
   /** Resources the record listed beyond the bounded list — never read. */
   resourcesNotRead: number;
 }
@@ -117,16 +119,16 @@ const ms = (iso: string | undefined): number | null => {
   return Number.isFinite(t) ? t : null;
 };
 
-const relativeOf = (raw: string): string | null => filePath(raw)?.relative ?? null;
-
 /** One Defender row as the matcher reads it, or null when the row carries no block, host or time. */
 export function readDefenderRecord<T extends DefenderTimelineShape>(e: T): DefenderRecord<T> | null {
   const block = e.canonical?.defender;
   if (!block || !e.asset) return null;
   const at = ms(e.canonical?.time?.normalized) ?? ms(e.timestamp);
   if (at === null) return null;
-  const resources = block.resources.map(relativeOf).filter((p): p is string => !!p);
-  const sha = (e.canonical?.file?.sha256 ?? e.sha256)?.toLowerCase();
+  const resources = block.resources.map(filePath).filter((p): p is FilePath => !!p);
+  // Only the block's own digest: a merged row's `file.sha256` may come from another member of the
+  // group (a hash-bearing row correlated with this one), and that is not the detected file's.
+  const sha = block.sha256?.toLowerCase();
   return {
     event: e,
     block,
@@ -148,8 +150,32 @@ const short = (s: string): string => createHash("sha256").update(s).digest("hex"
 export function defenderIdentity<T>(r: DefenderRecord<T>): string {
   const key = r.block.detectionId
     ? `id|${r.block.detectionId.toLowerCase()}`
-    : `threat|${r.block.threat.toLowerCase()}|${r.resources[0] ?? ""}`;
+    : `threat|${r.block.threat.toLowerCase()}|${r.resources[0]?.relative ?? ""}`;
   return `${r.host}|${key}`;
+}
+
+/** The Defender records read per host — the NEWEST ones, deterministically — and the ones left unread. */
+export function indexDefenderRecords<T extends DefenderTimelineShape>(
+  events: readonly T[],
+): { read: DefenderRecord<T>[]; unread: DefenderRecord<T>[] } {
+  const byHost = new Map<string, DefenderRecord<T>[]>();
+  for (const e of events) {
+    const r = readDefenderRecord(e);
+    if (r) (byHost.get(r.host) ?? byHost.set(r.host, []).get(r.host)!).push(r);
+  }
+  const read: DefenderRecord<T>[] = [];
+  const unread: DefenderRecord<T>[] = [];
+  for (const records of byHost.values()) {
+    if (records.length <= RECORDS_PER_HOST_MAX) {
+      read.push(...records);
+      continue;
+    }
+    // Newest first, ties by event id, so the cut is the same whatever the input order.
+    records.sort((a, b) => b.at - a.at || String(a.event.id).localeCompare(String(b.event.id)));
+    read.push(...records.slice(0, RECORDS_PER_HOST_MAX));
+    unread.push(...records.slice(RECORDS_PER_HOST_MAX));
+  }
+  return { read, unread };
 }
 
 /**
@@ -160,21 +186,15 @@ export function defenderEpisodes<T extends DefenderTimelineShape>(
   events: readonly T[],
   gapHours: number,
 ): DefenderEpisode<T>[] {
-  const perHost = new Map<string, number>();
   const byIdentity = new Map<string, DefenderRecord<T>[]>();
-  for (const e of events) {
-    const r = readDefenderRecord(e);
-    if (!r) continue;
-    const n = perHost.get(r.host) ?? 0;
-    perHost.set(r.host, n + 1);
-    if (n >= RECORDS_PER_HOST_MAX) continue;
+  for (const r of indexDefenderRecords(events).read) {
     const key = defenderIdentity(r);
     (byIdentity.get(key) ?? byIdentity.set(key, []).get(key)!).push(r);
   }
   const gap = gapHours * 3_600_000;
   const out: DefenderEpisode<T>[] = [];
   for (const [identity, records] of byIdentity) {
-    records.sort((a, b) => a.at - b.at);
+    records.sort((a, b) => a.at - b.at || String(a.event.id).localeCompare(String(b.event.id)));
     let current: DefenderRecord<T>[] = [];
     const flush = () => {
       if (!current.length) return;
@@ -190,40 +210,76 @@ export function defenderEpisodes<T extends DefenderTimelineShape>(
   return out.sort((a, b) => a.records[0].at - b.records[0].at || a.id.localeCompare(b.id));
 }
 
-// ───────────────────────────── hosts ─────────────────────────────
+// ───────────────────────────── hosts and paths ─────────────────────────────
 
 const label = (host: string): string => host.split(".")[0];
 
 /**
- * Whether two assets name one machine: equal canonical names, or equal first labels when that
- * label names exactly one host across the timeline. Two hosts sharing a label under different
- * domains never pair (hostAlias.ts: a short-name/FQDN pair nothing has linked is not one host).
+ * How many distinct FULL host names (the bare label not counted) each first label has across the
+ * timeline, computed once. Two assets name one machine when their canonical names are equal, or
+ * their labels are equal and that label names at most one full host — a short-name/FQDN pair
+ * nothing has linked is otherwise two hosts (hostAlias.ts).
  */
-function sameHost(a: string, b: string, hostsByLabel: ReadonlyMap<string, Set<string>>): boolean {
-  if (a === b) return true;
-  const la = label(a);
-  if (la !== label(b)) return false;
-  // Every distinct full name under this label, the bare label itself not counted.
-  const full = [...(hostsByLabel.get(la) ?? [])].filter((h) => h !== la);
-  return full.length <= 1;
+function fullHostsPerLabel(events: readonly DefenderTimelineShape[]): Map<string, number> {
+  const seen = new Map<string, Set<string>>();
+  for (const e of events) {
+    if (!e.asset) continue;
+    const h = canonicalHostName(e.asset);
+    const l = label(h);
+    if (h === l) continue;
+    (seen.get(l) ?? seen.set(l, new Set()).get(l)!).add(h);
+  }
+  return new Map([...seen].map(([l, set]) => [l, set.size]));
 }
+
+const sameHost = (a: string, b: string, fullPerLabel: ReadonlyMap<string, number>): boolean =>
+  a === b || (label(a) === label(b) && (fullPerLabel.get(label(a)) ?? 0) <= 1);
+
+/** Two explicit, differing drive letters are two locations; a GUID or no volume is not compared. */
+const volumesAgree = (a: FilePath, b: FilePath): boolean =>
+  a.volumeKind !== "drive" || b.volumeKind !== "drive" || a.volume === b.volume;
 
 // ───────────────────────────── the matcher ─────────────────────────────
 
-interface Bucket<T> {
-  starts: { event: T; at: number; path: string; sha256?: string }[];
-  beyond: number;
+interface Start<T> {
+  event: T;
+  at: number;
+  path: string;
+  file: FilePath;
+  host: string;
+  sha256?: string;
 }
 
-function addToBucket<T>(map: Map<string, Bucket<T>>, key: string, s: Bucket<T>["starts"][number]): void {
-  const b = map.get(key) ?? map.set(key, { starts: [], beyond: 0 }).get(key)!;
-  if (b.starts.length < BUCKET_MAX) b.starts.push(s);
-  else b.beyond += 1;
+/** Starts per key, sorted by time; the interval scan reads at most BUCKET_MAX of them. */
+type Buckets<T> = Map<string, Start<T>[]>;
+
+function push<T>(map: Buckets<T>, key: string, s: Start<T>): void {
+  (map.get(key) ?? map.set(key, []).get(key)!).push(s);
+}
+
+/** The first index whose time is greater than `t` (the starts are sorted by time). */
+function firstAfter<T>(starts: readonly Start<T>[], t: number): number {
+  let lo = 0;
+  let hi = starts.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (starts[mid].at <= t) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+interface Candidate<T> {
+  record: DefenderRecord<T>;
+  episode: DefenderEpisode<T>;
+  by: StartMatch<T>["by"];
 }
 
 /**
  * Every Defender record with at least one later start of the same path (or, with the record's
- * own digest, the same bytes) on the same host inside its interval. The typed result both the
+ * own digest, the same bytes) on the same host inside its interval. A start binds to ONE record:
+ * the latest record whose interval holds it; two records at the same instant that would both
+ * claim it establish no order, and the start is left unpaired. The typed result both the
  * annotator here and the finding pass (defenderEpisodeFindings.ts) read.
  */
 export function defenderEpisodeMatches<T extends DefenderTimelineShape>(
@@ -232,28 +288,27 @@ export function defenderEpisodeMatches<T extends DefenderTimelineShape>(
 ): EpisodeMatch<T>[] {
   const episodes = defenderEpisodes(events, gapHours);
   if (!episodes.length) return [];
-  const hostsByLabel = new Map<string, Set<string>>();
-  for (const e of events) {
-    if (!e.asset) continue;
-    const h = canonicalHostName(e.asset);
-    (hostsByLabel.get(label(h)) ?? hostsByLabel.set(label(h), new Set()).get(label(h))!).add(h);
-  }
-  // Starts bucketed by label+path and label+hash; the host rule is judged per candidate.
-  const byPath = new Map<string, Bucket<T>>();
-  const byHash = new Map<string, Bucket<T>>();
+  const fullPerLabel = fullHostsPerLabel(events);
+  const byPath: Buckets<T> = new Map();
+  const byHash: Buckets<T> = new Map();
   for (const e of events) {
     if (!isProcessStart(e) || !e.path || !e.asset) continue;
     const at = ms(e.timestamp);
-    const rel = relativeOf(e.path);
-    if (at === null || !rel) continue;
+    const file = filePath(e.path);
+    if (at === null || !file) continue;
     const host = canonicalHostName(e.asset);
     const sha = e.sha256?.toLowerCase();
-    const s = { event: e, at, path: e.path, ...(sha ? { sha256: sha } : {}) };
-    addToBucket(byPath, `${label(host)}|${rel}`, s);
-    if (sha) addToBucket(byHash, `${label(host)}|${sha}`, s);
+    const s: Start<T> = { event: e, at, path: e.path, file, host, ...(sha ? { sha256: sha } : {}) };
+    push(byPath, `${label(host)}|${file.relative}`, s);
+    if (sha) push(byHash, `${label(host)}|${sha}`, s);
   }
+  for (const list of byPath.values()) list.sort((a, b) => a.at - b.at);
+  for (const list of byHash.values()) list.sort((a, b) => a.at - b.at);
+
   const gap = gapHours * 3_600_000;
-  const out: EpisodeMatch<T>[] = [];
+  // Candidates per start, across every episode; then one record per start.
+  const candidates = new Map<T, { start: Start<T>; options: Candidate<T>[] }>();
+  const notRead = new Map<DefenderRecord<T>, number>();
   for (const episode of episodes) {
     for (const [i, record] of episode.records.entries()) {
       const next = episode.records[i + 1];
@@ -261,31 +316,56 @@ export function defenderEpisodeMatches<T extends DefenderTimelineShape>(
       // record of the episode, else at the gap bound.
       const from = record.at + DEFENDER_SEQUEL_TOLERANCE_MS;
       const to = next ? next.at : record.at + gap;
-      const seen = new Set<T>();
-      const starts: StartMatch<T>[] = [];
-      const consider = (bucket: Bucket<T> | undefined, by: StartMatch<T>["by"]) => {
-        for (const s of bucket?.starts ?? []) {
-          if (seen.has(s.event) || s.at <= from || s.at > to) continue;
-          if (!sameHost(record.host, canonicalHostName(s.event.asset ?? ""), hostsByLabel)) continue;
-          seen.add(s.event);
-          starts.push({ event: s.event, by, at: s.at, path: s.path });
+      let budget = BUCKET_MAX;
+      const scan = (list: readonly Start<T>[] | undefined, by: StartMatch<T>["by"], resource?: FilePath) => {
+        if (!list) return;
+        for (let k = firstAfter(list, from); k < list.length && list[k].at <= to; k += 1) {
+          const s = list[k];
+          if (!sameHost(record.host, s.host, fullPerLabel)) continue;
+          if (resource && !volumesAgree(resource, s.file)) continue;
+          if (budget <= 0) {
+            notRead.set(record, (notRead.get(record) ?? 0) + 1);
+            continue;
+          }
+          budget -= 1;
+          const c =
+            candidates.get(s.event) ?? candidates.set(s.event, { start: s, options: [] }).get(s.event)!;
+          // The record's own digest is read first, so a start that is both reads as "the same file".
+          if (!c.options.some((o) => o.record === record)) c.options.push({ record, episode, by });
         }
       };
-      // The record's own digest first, so a start that is both reads as "the same file".
-      if (record.sha256) consider(byHash.get(`${label(record.host)}|${record.sha256}`), "hash");
-      for (const rel of record.resources) consider(byPath.get(`${label(record.host)}|${rel}`), "path");
-      if (!starts.length) continue;
-      starts.sort((a, b) => a.at - b.at || String(a.event.id).localeCompare(String(b.event.id)));
-      out.push({
-        episode,
-        record,
-        disposition: record.block.disposition,
-        starts,
-        resourcesNotRead: Math.max(0, record.block.resourcesTotal - record.block.resources.length),
-      });
+      if (record.sha256) scan(byHash.get(`${label(record.host)}|${record.sha256}`), "hash");
+      for (const r of record.resources) scan(byPath.get(`${label(record.host)}|${r.relative}`), "path", r);
     }
   }
-  return out;
+
+  const perRecord = new Map<DefenderRecord<T>, EpisodeMatch<T>>();
+  for (const { start, options } of candidates.values()) {
+    const latest = Math.max(...options.map((o) => o.record.at));
+    const winners = options.filter((o) => o.record.at === latest);
+    // Two records at one instant: no order between them, so nothing is claimed for this start.
+    if (winners.length !== 1) continue;
+    const { record, episode, by } = winners[0];
+    const m =
+      perRecord.get(record) ??
+      perRecord
+        .set(record, {
+          episode,
+          record,
+          disposition: record.block.disposition,
+          starts: [],
+          startsNotRead: notRead.get(record) ?? 0,
+          resourcesNotRead: Math.max(0, record.block.resourcesTotal - record.block.resources.length),
+        })
+        .get(record)!;
+    m.starts.push({ event: start.event, by, at: start.at, path: start.path });
+  }
+  const out = [...perRecord.values()];
+  for (const m of out)
+    m.starts.sort((a, b) => a.at - b.at || String(a.event.id).localeCompare(String(b.event.id)));
+  return out.sort(
+    (a, b) => a.record.at - b.record.at || String(a.record.event.id).localeCompare(String(b.record.event.id)),
+  );
 }
 
 // ───────────────────────────── words ─────────────────────────────
@@ -295,7 +375,7 @@ const neutral = (t: string): string =>
   t
     .replace(/\[/g, "(")
     .replace(/\]/g, ")")
-    .replace(/[ --]/g, " ")
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
     .replace(/\s+/g, " ")
     .replace(/[a-f0-9]{32,}/gi, (m) => `${m.slice(0, 8)}…${m.slice(-4)}`)
     .trim();
@@ -334,9 +414,11 @@ function recordNote<T>(m: EpisodeMatch<T>): string {
         ? `from the same path (${byHash} the same file)`
         : `from the same path`;
   const first = new Date(m.starts[0].at).toISOString();
-  const tail = m.resourcesNotRead
-    ? `; ${m.resourcesNotRead} of ${m.record.block.resourcesTotal} listed resources not read`
-    : "";
+  const tail =
+    (m.startsNotRead ? `; ${m.startsNotRead} more in the interval not read` : "") +
+    (m.resourcesNotRead
+      ? `; ${m.resourcesNotRead} of ${m.record.block.resourcesTotal} listed resources not read`
+      : "");
   return `${dispositionWords(m.record.block)}; ${n} later start${n === 1 ? "" : "s"} ${what}, first at ${first}${tail}`;
 }
 
@@ -369,9 +451,16 @@ export function corroborateDefenderEpisodes<T extends DefenderTimelineShape>(
   const recordNotes = new Map<T, string>();
   for (const m of matches) {
     recordNotes.set(m.record.event, recordNote(m));
-    for (const s of m.starts.slice(0, STARTS_NAMED_MAX))
+    for (const s of m.starts)
       startNotes.set(s.event, { note: startNote(m, s), to: s.by === "hash" ? "High" : "Medium" });
   }
+  // A Defender record past the per-host index says so on its own row, so its silence is not read
+  // as "nothing followed".
+  for (const r of indexDefenderRecords(events).unread)
+    recordNotes.set(
+      r.event,
+      `not read — more than ${RECORDS_PER_HOST_MAX} Defender records on this host; the newest ${RECORDS_PER_HOST_MAX} were indexed`,
+    );
   return events.map((e) => {
     const base = withoutOwnNotes(e.description);
     let description = base;

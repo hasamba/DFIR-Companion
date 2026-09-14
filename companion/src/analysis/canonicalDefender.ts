@@ -20,6 +20,8 @@ export const defenderBlockSchema = z.object({
   container: z.string().optional(),
   /** How many file resources the record listed; more than `resources.length` when the list was clipped. */
   resourcesTotal: z.number().int().nonnegative(),
+  /** The detected file's digest when THIS record carries one (an export that includes it). Never from another row. */
+  sha256: z.string().optional(),
 });
 
 export type DefenderBlock = z.infer<typeof defenderBlockSchema>;
