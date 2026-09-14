@@ -54,6 +54,7 @@ import {
 } from "./synthesisInputs.js";
 import { carryOutOfWindowFindings, foldSynthesisDelta, gradeFindings } from "./synthesisMerge.js";
 import { persistSynthesis } from "./synthesisPersist.js";
+import { stampCollectDirectives } from "../collectSatisfaction.js";
 import { isPendingLabRow } from "../labIntel.js";
 import type { PromotionIntent } from "../ingest/timelineImports.js";
 
@@ -567,6 +568,14 @@ export async function synthesize(
   // links, and let projectScope hide them for as long as the narrow window is set. AFTER grading, so
   // a carried finding keeps the confidence it was stored with; a no-op when no scope is set.
   next = carryOutOfWindowFindings(next, { prior: state, inWindowEvents: run.inWindowEvents, markers });
+
+  // Every collection request this run is about to persist — the model's, and the corroboration steps
+  // grading just added — is stamped with the import high-water mark it was issued against, so the
+  // next run's SATISFIED COLLECTIONS block can only cite evidence that arrived AFTER the request. The
+  // evidence a request was written about must never be handed back as its result
+  // (collectSatisfaction.ts). LAST, after grading, so nothing downstream adds an unstamped request;
+  // against `loaded` — the persisted case, every import, before correlation merged any row.
+  next = stampCollectDirectives(next, loaded);
 
   // What this run changed vs the pre-AI findings. Findings are FINAL here — neither persistLatest
   // nor the hypothesis auto-gen below touch them — so it's computed once and reused for the
