@@ -424,8 +424,8 @@ export function renderKnownUnknowns(
     }
   }
 
-  if (!bullets.length) return "";
-  const capped = bullets.slice(0, Math.max(0, max));
+  if (!bullets.length || max <= 0) return "";
+  const capped = bullets.slice(0, max);
   return (
     "KNOWN UNKNOWNS / OPEN GAPS (evidence we'd expect in an intrusion but don't yet have — treat each " +
     "as an open question to investigate or hunt; an absence is a lead, not proof):\n" +
