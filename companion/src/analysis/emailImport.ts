@@ -73,6 +73,7 @@ export interface ParsedEmail {
   returnPath?: EmailAddress;
   to: EmailAddress[];
   cc: EmailAddress[];
+  attachmentsNotRead: number;
   /** Delivery indications: `Delivered-To` (unauthenticated) and the TOPMOST `Received … for <addr>` hop. */
   deliveryIndicated: DeliveryIndication[];
   originatingIp: string; // X-Originating-IP / earliest external Received hop
@@ -290,6 +291,8 @@ function suspiciousSender(p: ParsedEmail): boolean {
 interface BodyScan {
   text: string[]; // decoded text/html bodies, for URL + hash scanning
   attachments: EmailAttachment[];
+  /** Attachment parts past ATTACHMENTS_MAX: neither named nor decoded, counted (#930 item 2). */
+  attachmentsNotRead: number;
 }
 
 // Recursively walk a (possibly multipart) MIME entity, collecting decoded text bodies and
@@ -315,6 +318,10 @@ function walkMime(headers: Map<string, string[]>, body: string, sink: BodyScan, 
   const filename = headerParam(disp, "filename") || headerParam(ctype, "name");
   const isAttachment = /^attachment/i.test(disp) || (!!filename && !mediaType.startsWith("text/"));
   if (isAttachment && filename) {
+    if (sink.attachments.length >= ATTACHMENTS_MAX) {
+      sink.attachmentsNotRead += 1;
+      return;
+    }
     // The attachment's OWN digest, from its decoded bytes (#930 item 2): what an endpoint row's
     // hash can be matched against. A hash that appears in the headers or the body is not one.
     sink.attachments.push({
@@ -330,21 +337,27 @@ function walkMime(headers: Map<string, string[]>, body: string, sink: BodyScan, 
   }
 }
 
-/** The decoded bytes of an attachment part, bounded, with their sha256 / md5 and size. */
+/**
+ * The attachment's OWN digest (#930 item 2), from its decoded bytes. Only a base64 part yields one:
+ * base64 is whitespace-insensitive, so the text parser's line-ending normalisation cannot alter
+ * the bytes. A quoted-printable / 7bit / 8bit part's octets are NOT preserved by a parser that
+ * reads the message as text (line endings and non-UTF-8 bytes change), so its digest is honestly
+ * unavailable rather than wrong. The encoded size is bounded BEFORE decoding.
+ */
 const ATTACHMENT_BYTES_MAX = 25 * 1024 * 1024;
 function digestAttachment(
   body: string,
   encoding: string,
 ): Pick<EmailAttachment, "sha256" | "md5" | "size" | "digestUnavailable"> {
   const enc = encoding.trim().toLowerCase();
-  let bytes: Buffer;
-  if (enc === "base64") bytes = Buffer.from(body.replace(/\s+/g, ""), "base64");
-  else if (enc === "quoted-printable") bytes = Buffer.from(qpBodyDecode(body), "latin1");
-  else if (enc === "" || enc === "7bit" || enc === "8bit" || enc === "binary")
-    bytes = Buffer.from(body, "latin1");
-  else return { digestUnavailable: `unknown transfer encoding ${enc.slice(0, 40)}` };
-  if (bytes.length > ATTACHMENT_BYTES_MAX)
-    return { size: bytes.length, digestUnavailable: "part larger than the 25 MB bound" };
+  if (enc !== "base64")
+    return {
+      digestUnavailable: `transfer encoding ${enc || "7bit"}: the part's bytes are not preserved by the text parser`,
+    };
+  const compact = body.replace(/\s+/g, "");
+  if (compact.length * 0.75 > ATTACHMENT_BYTES_MAX)
+    return { digestUnavailable: "part larger than the 25 MB bound; not decoded" };
+  const bytes = Buffer.from(compact, "base64");
   return {
     sha256: createHash("sha256").update(bytes).digest("hex"),
     md5: createHash("md5").update(bytes).digest("hex"),
@@ -456,7 +469,7 @@ export function parseMimeEmail(raw: string): ParsedEmail {
 
   // Body walk for URLs + attachments. `.eml` parses MIME; `.msg` has no recoverable MIME tree, so
   // we scan the (de-NUL'd) decoded bytes directly for URLs.
-  const scan: BodyScan = { text: [], attachments: [] };
+  const scan: BodyScan = { text: [], attachments: [], attachmentsNotRead: 0 };
   if (isMsg) {
     scan.text.push(raw.replace(/\x00/g, ""));
   } else {
@@ -496,7 +509,8 @@ export function parseMimeEmail(raw: string): ParsedEmail {
     originatingIp,
     auth,
     urls,
-    attachments: scan.attachments.slice(0, ATTACHMENTS_MAX),
+    attachments: scan.attachments,
+    attachmentsNotRead: scan.attachmentsNotRead,
     hashes: [...hashSet],
     headers,
   };
@@ -627,6 +641,7 @@ function buildEvent(p: ParsedEmail, severity: Severity): SiemEvent {
       ...(p.cc.length ? { cc: p.cc.map((address) => address.address) } : {}),
       ...(p.subject ? { subject: p.subject } : {}),
       ...(p.deliveryIndicated.length ? { deliveryIndicated: p.deliveryIndicated } : {}),
+      ...(p.attachmentsNotRead ? { attachmentsNotRead: p.attachmentsNotRead } : {}),
       ...(p.attachments.length
         ? {
             attachments: p.attachments.map((a) => ({

@@ -302,6 +302,7 @@ export const canonicalEventEnvelopeSchema = z.object({
         .array(z.object({ address: z.string(), by: z.enum(["delivered-to", "received-for"]) }))
         .optional(),
       // Every attachment with its OWN digest from the decoded part; the campaign scope matches on it.
+      attachmentsNotRead: z.number().int().nonnegative().optional(),
       attachments: z
         .array(
           z.object({

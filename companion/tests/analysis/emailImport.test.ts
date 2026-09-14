@@ -317,6 +317,40 @@ describe("parseMimeEmail — attachment digests and delivery indications (#930 i
     expect(mb.cc).toEqual(["third@victim.com"]);
     expect(mb.recipients).toEqual(["victim@victim.com", "second@victim.com"]);
   });
+  it("only a base64 part yields a digest: quoted-printable / 7bit parts say why; parts past the bound are counted, not decoded", () => {
+    const qp = [
+      "From: a@b.example",
+      "To: c@d.example",
+      "Subject: s",
+      "Date: Tue, 01 Dec 2017 08:00:00 +0000",
+      "MIME-Version: 1.0",
+      'Content-Type: multipart/mixed; boundary="B"',
+      "",
+      "--B",
+      'Content-Type: application/octet-stream; name="a.bin"',
+      'Content-Disposition: attachment; filename="a.bin"',
+      "Content-Transfer-Encoding: quoted-printable",
+      "",
+      "=FF=FE",
+      ...Array.from({ length: 55 }, (_, i) => [
+        "--B",
+        `Content-Type: application/octet-stream; name="p${i}.bin"`,
+        `Content-Disposition: attachment; filename="p${i}.bin"`,
+        "Content-Transfer-Encoding: base64",
+        "",
+        Buffer.from(`part ${i}`).toString("base64"),
+      ]).flat(),
+      "--B--",
+    ].join("\n");
+    const p = parseMimeEmail(qp);
+    expect(p.attachments[0]).toMatchObject({ filename: "a.bin" });
+    expect(p.attachments[0].sha256).toBeUndefined();
+    expect(p.attachments[0].digestUnavailable).toContain("quoted-printable");
+    expect(p.attachments).toHaveLength(50);
+    expect(p.attachmentsNotRead).toBe(6);
+    expect(parseEmail(qp).events[0].canonical?.mailbox?.attachmentsNotRead).toBe(6);
+  });
+
   it("delivery is INDICATED by Delivered-To (an unauthenticated header) or by the topmost Received 'for' hop — never established, never the To list", () => {
     const top = parseEmail(eml()).events[0].canonical?.mailbox!;
     // Received is newest-first: the topmost hop's `for` names the receiving mailbox indication.

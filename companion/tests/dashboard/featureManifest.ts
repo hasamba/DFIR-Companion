@@ -122,7 +122,7 @@ export const FEATURES: Feature[] = [
   {
     file: "dashboard-campaign-scope.js",
     publish: ["loadCampaignScope"],
-    private: ["scope", "currentCaseId", "loadGen"],
+    private: ["scope", "currentCaseId", "loadGen", "status"],
   },
   { file: "dashboard-backup.js", publish: ["loadCaseBackups", "restoreCaseBackup"], private: [] },
   {

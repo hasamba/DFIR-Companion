@@ -65,7 +65,11 @@ export function campaignScopeSection(state: InvestigationState, lines: string[])
           `| ${cellMd(h.host)} | ${h.recipient ? cellMd(h.recipient) : "not established"} | ${cellMd(execution)} | ${controls} | ${h.present ? "yes" : h.incomplete ? "incomplete" : "no row"} | ${evidence || "—"} | ${leads} | ${h.coverage.map(cellMd).join(", ") || "none"} |`,
         );
       }
-      if (m.hostsNotRead) lines.push(`| … | | | | | | | +${m.hostsNotRead} host(s) not read |`);
+      if (m.hostsNotRead) lines.push(`| … | | | | | | | +${m.hostsNotRead} host entr(ies) not shown |`);
+      if (m.hostsUnread)
+        lines.push(
+          `| … | | | | | | | ${m.hostsUnread} host(s) whose digest rows were all past the read bound — not read |`,
+        );
     }
     if (m.huntLeads.length) {
       lines.push("", "Hunt leads (text to run; nothing is run for you):");

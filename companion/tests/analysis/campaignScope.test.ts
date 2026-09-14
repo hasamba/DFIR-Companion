@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
-import { campaignScope, ROWS_PER_DIGEST_MAX } from "../../src/analysis/campaignScope.js";
+import { campaignScope, HOSTS_MAX, ROWS_PER_DIGEST_MAX } from "../../src/analysis/campaignScope.js";
 import { parseEmail } from "../../src/analysis/emailImport.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 
@@ -136,11 +136,11 @@ describe("campaignScope", () => {
     ]);
   });
 
-  it("hosts: a start of the digest under the recipient's exact account → execution observed, attributed; another account → present only, 'recipient not established'", () => {
+  it("entries are per host AND per recipient: a start under the recipient's exact SMTP/UPN account is attributed; a DOMAIN\\user logon, another user, SYSTEM are 'not established' and never inherit it", () => {
     const s = campaignScope(
       stateOf([
         message("m1", ["alice@victim.com", "bob@victim.com"]),
-        start("WS-A", "VICTIM\\alice"), // a bare domain\user: no SMTP domain on both sides → not attributed
+        start("WS-A", "VICTIM\\alice"), // a down-level logon name is not an SMTP / UPN identity
         start("WS-B", "bob@victim.com"),
         listing("WS-C", {
           canonical: {
@@ -149,22 +149,30 @@ describe("campaignScope", () => {
           } as never,
         }),
         start("WS-D", "SYSTEM"),
+        // Alice's presence row and Bob's start on ONE workstation: two entries, Alice gets no execution.
+        listing("WS-S", {
+          id: "l-WS-S",
+          canonical: {
+            event: { category: "file", type: "observation" },
+            account: { name: "alice@victim.com" },
+          } as never,
+        }),
+        start("WS-S", "bob@victim.com", { id: "s-WS-S-bob" }),
       ]),
     );
     const m = s.messages[0];
-    const host = (h: string) => m.hosts.find((x) => x.host === h)!;
-    expect(host("WS-B")).toMatchObject({
-      recipient: "bob@victim.com",
-      execution: "observed",
-      present: false,
-    });
-    expect(host("WS-B").evidence.execution).toEqual(["s-WS-B-bob@victim.com"]);
-    expect(host("WS-A")).toMatchObject({ recipient: null, execution: "observed" });
-    expect(host("WS-C")).toMatchObject({ recipient: null, present: true, execution: "unknown" });
-    expect(host("WS-D")).toMatchObject({ recipient: null, execution: "observed" });
-    expect(m.recipients.find((r) => r.address === "bob@victim.com")!.hosts).toEqual(["WS-B"]);
-    expect(m.recipients.find((r) => r.address === "alice@victim.com")!.hosts).toEqual([]);
-    expect(host("WS-B").coverage).toContain("process");
+    const entry = (h: string, r: string | null) => m.hosts.find((x) => x.host === h && x.recipient === r)!;
+    expect(entry("WS-B", "bob@victim.com")).toMatchObject({ execution: "observed", present: false });
+    expect(entry("WS-B", "bob@victim.com").evidence.execution).toEqual(["s-WS-B-bob@victim.com"]);
+    expect(entry("WS-A", null)).toMatchObject({ execution: "observed" });
+    expect(m.hosts.some((x) => x.host === "WS-A" && x.recipient)).toBe(false);
+    expect(entry("WS-C", null)).toMatchObject({ present: true, execution: "unknown" });
+    expect(entry("WS-D", null)).toMatchObject({ execution: "observed" });
+    expect(entry("WS-S", "alice@victim.com")).toMatchObject({ present: true, execution: "unknown" });
+    expect(entry("WS-S", "bob@victim.com")).toMatchObject({ execution: "observed", present: false });
+    expect(m.recipients.find((r) => r.address === "bob@victim.com")!.hosts.sort()).toEqual(["WS-B", "WS-S"]);
+    expect(m.recipients.find((r) => r.address === "alice@victim.com")!.hosts).toEqual(["WS-S"]);
+    expect(entry("WS-B", "bob@victim.com").coverage).toContain("process");
   });
 
   it("two axes: a start then a remediated Defender record with its OWN digest keeps both; a Defender row without its own digest is no control", () => {
@@ -178,12 +186,50 @@ describe("campaignScope", () => {
       ]),
     );
     const m = s.messages[0];
-    const b = m.hosts.find((h) => h.host === "WS-B")!;
+    // The start names Bob; the Defender record names nobody: two entries on one host, each
+    // carrying only what its own rows say.
+    const b = m.hosts.find((h) => h.host === "WS-B" && h.recipient === "bob@victim.com")!;
     expect(b.execution).toBe("observed");
-    expect(b.controls.map((c) => c.disposition)).toEqual(["remediated"]);
+    expect(b.controls).toEqual([]);
+    const bNone = m.hosts.find((h) => h.host === "WS-B" && h.recipient === null)!;
+    expect(bNone.execution).toBe("unknown");
+    expect(bNone.controls.map((c) => c.disposition)).toEqual(["remediated"]);
     const e = m.hosts.find((h) => h.host === "WS-E")!;
     expect(e).toMatchObject({ execution: "unknown", present: false });
     expect(e.controls.map((c) => c.disposition)).toEqual(["allowed"]);
+    // A Defender row carrying only a flat sha256 (not its own block digest) is neither a control
+    // nor presence: a lead. An unclassified digest-bearing row likewise.
+    const flat = defender("WS-F", "blocked", undefined, at(2));
+    const withFlat = { ...flat, sha256: SHA };
+    const odd = ev({
+      id: "odd",
+      asset: "WS-G",
+      sha256: SHA,
+      sources: ["Custom"],
+      canonical: { event: { category: "email", type: "message" } } as never,
+    });
+    const s2 = campaignScope(stateOf([message("m1", ["bob@victim.com"]), withFlat, odd]));
+    for (const host of ["WS-F", "WS-G"]) {
+      const h = s2.messages[0].hosts.find((x) => x.host === host)!;
+      expect(h, host).toMatchObject({ execution: "unknown", present: false, controls: [] });
+      expect(h.leads[0].kind).toBe("digest-on-other-shape");
+    }
+    // An md5 match with a DISAGREEING sha256 is another file: no entry.
+    const md5 = "d".repeat(32);
+    const msgWithMd5 = message("m1", ["bob@victim.com"]);
+    msgWithMd5.canonical!.mailbox!.attachments![0].md5 = md5;
+    const other = start("WS-H", "bob@victim.com", { id: "h1", sha256: "e".repeat(64), md5 });
+    const h = campaignScope(stateOf([msgWithMd5, other])).messages[0].hosts.find((x) => x.host === "WS-H");
+    // At most a name-only lead: no execution, no presence, no control.
+    expect(h ? [h.execution, h.present, h.controls.length] : ["unknown", false, 0]).toEqual([
+      "unknown",
+      false,
+      0,
+    ]);
+    const noSha = start("WS-I", "bob@victim.com", { id: "i1", sha256: undefined, md5 });
+    expect(
+      campaignScope(stateOf([msgWithMd5, noSha])).messages[0].hosts.find((h) => h.host === "WS-I")!.execution,
+    ).toBe("observed");
   });
 
   it("a name-only row is a lead with no outcome; a zip's digest is not its member's; two ids with one attachment are two instances that say they share it", () => {
@@ -210,21 +256,46 @@ describe("campaignScope", () => {
     expect(m1.hosts.some((h) => h.host === "WS-Z")).toBe(false);
     expect(m1.sharedWith).toEqual([s.messages.find((m) => m.messageId === "m2")!.instanceId]);
     expect(m1.huntLeads.some((l) => l.startsWith("WS-N: only a name-only lead"))).toBe(true);
+    // Two rows of ONE instance (same id, sender, digests) merge: both recipients are kept.
+    const merged = campaignScope(
+      stateOf([message("m1", ["bob@victim.com"], "row-a"), message("m1", ["eve@victim.com"], "row-b")]),
+    );
+    expect(merged.messages).toHaveLength(1);
+    expect(merged.messages[0].recipients.map((r) => r.address).sort()).toEqual([
+      "alice@victim.com",
+      "bob@victim.com",
+      "eve@victim.com",
+    ]);
+    expect(merged.messages[0].eventIds).toEqual(["row-a", "row-b"]);
   });
 
-  it("bounds are deterministic and said: rows past the per-digest bound make the cell incomplete, never unknown", () => {
+  it("bounds are deterministic and said: rows past the per-digest bound make a host incomplete or counted unread, never absent or unknown; name-only leads never evict an outcome host", () => {
     const many = Array.from({ length: ROWS_PER_DIGEST_MAX + 5 }, (_, i) =>
       ev({ id: `r${i}`, asset: "WS-M", sources: ["MFT"], sha256: SHA, timestamp: at(1) }),
     );
-    const late = start("WS-LATE", "bob@victim.com", { id: "late" });
+    const late = start("WS-LATE", "bob@victim.com", { id: "late", path: "C:\\tmp\\other.bin" });
     const s = campaignScope(stateOf([message("m1", ["bob@victim.com"]), ...many, late]));
     const m = s.messages[0];
-    expect(m.hosts.find((h) => h.host === "WS-M")!.incomplete).toEqual({ rowsNotRead: 6 });
-    // The late host shows only through its name-only lead; its digest row was not read, so the
-    // cell is incomplete and no "only a name-only lead" hunt line claims an absence.
-    const lateHost = m.hosts.find((h) => h.host === "WS-LATE")!;
-    expect(lateHost).toMatchObject({ execution: "unknown", incomplete: { rowsNotRead: 6 } });
-    expect(m.huntLeads.some((l) => l.includes("WS-LATE"))).toBe(false);
+    expect(m.hosts.find((h) => h.host === "WS-M")!.incomplete).toEqual({ rowsNotRead: 5 });
     expect(m.hosts.find((h) => h.host === "WS-M")!.evidence.more).toBeGreaterThan(0);
+    // The late host's only row was past the bound: counted, not shown as absent, no hunt line.
+    expect(m.hosts.some((h) => h.host === "WS-LATE")).toBe(false);
+    expect(m.hostsUnread).toBe(1);
+    expect(m.huntLeads.some((l) => l.includes("WS-LATE"))).toBe(false);
+    // 200 alphabetically earlier name-only hosts and one execution host: the execution host stays.
+    const leads = Array.from({ length: HOSTS_MAX }, (_, i) =>
+      ev({
+        id: `n${i}`,
+        asset: `A-${String(i).padStart(3, "0")}`,
+        sources: ["Prefetch"],
+        path: "C:\\x\\invoice.pdf",
+      }),
+    );
+    const exec = start("Z-EXEC", "bob@victim.com", { id: "z" });
+    const s2 = campaignScope(stateOf([message("m1", ["bob@victim.com"]), ...leads, exec])).messages[0];
+    expect(s2.hosts).toHaveLength(HOSTS_MAX);
+    expect(s2.hosts[0]).toMatchObject({ host: "Z-EXEC", execution: "observed" });
+    expect(s2.hostsNotRead).toBe(1);
+    expect(s2.recipients[0].hosts).toEqual(["Z-EXEC"]);
   });
 });
