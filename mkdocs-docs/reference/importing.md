@@ -1909,6 +1909,98 @@ not built.
   identity is (tenant, client id), so a re-import folds; the summaries never evict a source row
   (`maxEvents` bounds source rows; the result's `summaries` counts these).
 
+### Google Drive sharing and access: what one record states
+
+A Drive audit sharing change used to import as `Google Workspace drive: change_user_access by
+alice → Q3 plan` — Medium whatever it said, a removal graded like a grant, the sharee and the old
+and new values unread. Each record now reads for what it states:
+
+`Google Workspace drive: change_user_access by alice@corp.example from 203.0.113.10 — broadens:
+none → can_edit for bob@partner.example (may be a user, a group or a domain; the recorded address
+domains differ) — overall visibility newly external; now shared_externally — on Q3 plan (doc
+1AbC…, spreadsheet, owner alice@corp.example)`
+
+- **Direction along the documented chain only.** A permission moves along `none < can_view <
+  can_comment < can_edit < organizer < owner`; a link audience along `private <
+  people_within_domain_with_link < public_in_the_domain < people_with_link < public_on_the_web`.
+  Up reads `broadens`, down `narrows` (`(access removed)` for `none`), equal `no change in
+  level`; a transition through a resource-specific value (`can_respond`, `can_view_published`) or
+  a value the table does not name reads `direction not established: old → new` — never a guess
+  from the event name.
+- **Three separate facts on a row.** The permission direction; the overall-visibility direction
+  from Google's own `visibility_change` (`newly external` / `back to internal` / `unchanged`);
+  the resulting `visibility`, quoted. A grant inside the domain on a document already shared
+  externally is `overall visibility unchanged; now shared_externally` — not a new exposure.
+- **"Newly external" comes only from `visibility_change = external`.** A target address whose
+  domain differs from the owner's reads `the recorded address domains differ` and grades nothing
+  (aliases, groups, domain targets, shared-drive owners and consumer accounts all defeat that
+  comparison). `target_user` "may be a user, a group or a domain" — the record does not say which.
+- **Grades by established capability.** High (T1537): newly external, or a link / public audience
+  (`people_with_link`, `public_on_the_web`), or a link scope for `all` domains. Medium: a grant of
+  `can_edit` / `organizer` / `owner`, an owner transfer, `change_acl_editors` to writers, a
+  shared-drive add or role raise, domain-wide visibility, `direction not established`. Low: an
+  internal `can_view` / `can_comment` grant, every narrowing or removal (an eradication step reads
+  as one), inherited permissions enabled / disabled (`direction not established by this
+  record`). Info: every `*_hierarchy_reconciled` row (`reconciled from a parent folder change —
+  not an action on this item`) and every `primary_event=false` row — one folder action fans out
+  to thousands of these, and they never enter the forensic timeline on their own.
+- **Access records read for what the event means.** `download` reads `download recorded`
+  (`by application project N — an application's fetch, not shown to be a person's download` when
+  `originating_app_id` is set); `preview` and `view` are never a download; `sync_item_content` is
+  `item content synced`; `access_item_content` / `prefetch_item_content` are `an application
+  accessed / prefetched content on behalf of the recorded user` with `api_method` when recorded;
+  `email_as_attachment` is `sent as an attachment`. A record with no actor fields reads `no actor
+  identity in this record` — never "anonymous". (Google logs edits and downloads by
+  not-signed-in link visitors but not their views, so absence of a view record is not absence of
+  a view — see [Drive log events](https://support.google.com/a/answer/4579696).) The table's
+  grades stand: `download` / `copy` Low, the rest Info.
+- **Identity is the document id.** A title is a label; the row's key carries the tenant, the
+  event, `doc_id`, the target, the actor, the direction and both values, so two sharees of one
+  action are two rows and a grant and its later removal are two rows. A record with no `doc_id`
+  reads `document not identified in this record` and never folds. Every displayed string is
+  neutralised and bounded; the envelope (`driveSharing` / `driveAccess`, `object` the file,
+  `cloud.resource` the document id) carries the values as recorded.
+
+Not built yet (stays open on #931 item 11): a per-document join of a broadening change to the
+access records after it — no record ties an access to a permission, and the join needs
+per-dimension intervals before it is honest.
+
+### Google Takeout: the records and the job lifecycle
+
+The Reports API `takeout` application (`applicationName=takeout`) records a user's data
+exports, and the importer now reads its four events by their own schemas:
+
+- `STARTED_USER_TAKEOUT` → `Google Workspace takeout: STARTED_USER_TAKEOUT by alice@corp.example —
+  Takeout requested — job 3f9c… — target user alice@corp.example; initiated by (as recorded)
+  alice@corp.example; products mail, drive; destination recorded as EMAIL (a download link);
+  START_TIME 1777716000 (as recorded)` — Medium, T1530.
+- `COMPLETED_USER_TAKEOUT` → `Takeout prepared — job … — status COMPLETED` (Medium); a status
+  of `FAILED`, `CANCELED` or `IN_PROGRESS` reads `Takeout not prepared — … — status FAILED` (Low).
+- `DOWNLOADED_USER_TAKEOUT` → `Takeout download started — job …` — High, T1530.
+- `SCHEDULED_USER_TAKEOUT` carries no job id: `periodic Takeout scheduled — every 2 MONTH;
+  expiration … (as recorded); status …` — Medium, never joined to a job.
+
+The audit actor, `USER_EMAIL` (the target user) and the literal `INITIATED_BY` value are three
+independent facts — no delegation is inferred from their inequality. The integer times are shown
+as recorded (`START_TIME 1777716000 (as recorded)`): Google documents them as integers, not as an
+epoch, so nothing converts them; `id.time` is the row's timestamp. A destination is a recorded
+setting (`destination recorded as DRIVE (Google Drive)`) — nothing says "transferred" or
+"delivered".
+
+**What one export joins: the Takeout job.** One row per job whose id appears in the export —
+`Google Workspace Takeout job: 3f9c… (target user alice@corp.example) [requested
+2026-05-02T10:00:00Z by alice@corp.example (record:2/event:0) — products mail, drive;
+destination recorded as EMAIL (a download link); prepared 2026-05-02T10:42:00Z — status COMPLETED
+(record:5/event:0); download started 2026-05-02T11:03:00Z by alice@corp.example
+(record:9/event:0); Takeout audit retention is not in this evidence]` — joined only by tenant +
+`TAKEOUT_ID` across the started / completed / downloaded records. Three stages, each from its own
+record; a missing one reads `no requested / prepared / download record in this export`; a
+completion with any status but `COMPLETED` reads `completion recorded — status FAILED, not
+prepared`. Download started → High; prepared → Medium; requested only → Medium (`requested; not
+shown to be prepared or downloaded`); failed or canceled with no download → Low. A Drive folder
+named "Takeout" or an uploaded archive is never a stage. 256 rows per export (the rest counted);
+the row's identity is (tenant, job id), so a re-import folds.
+
 ## Evidence Drop Folder (Auto-Import Inbox)
 
 Every case gets a `cases/<id>/drop/` folder on creation. Copy any file into it — at any depth, subfolders included — and a background poller picks it up once the file size/mtime is stable (safe for Dropbox/OneDrive sync), then imports it through the same detection + import chain as the **Import** button. Screenshots are ingested as capture evidence; everything else is imported as an artifact.

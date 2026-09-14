@@ -4,6 +4,13 @@ import { createCanonicalEvent, stampSourceArtifactHash } from "./canonicalEvent.
 import { renderAwsDescription } from "./awsDescription.js";
 import { decodeGwsToken, readGwsParams, type GwsTokenReading } from "./gwsOAuth.js";
 import { gwsOAuthLifecycles, GWS_LIFECYCLES_MAX } from "./gwsOAuthLifecycle.js";
+import { decodeGwsDrive, renderDriveDescription, type GwsDriveReading } from "./gwsDrive.js";
+import {
+  decodeGwsTakeout,
+  gwsTakeoutLifecycles,
+  GWS_TAKEOUT_MAX,
+  type GwsTakeoutReading,
+} from "./gwsTakeout.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -229,6 +236,8 @@ function targetLabel(event: Row): string {
 }
 
 const TOKEN_APP = "token";
+const DRIVE_APP = "drive";
+const TAKEOUT_APP = "takeout";
 
 // The record's actor, read for what it is. The Reports API names a USER by `email`/`profileId`,
 // a service-account or 2LO caller by `callerType: "KEY"` + `key`, and an APPLICATION by
@@ -434,6 +443,114 @@ function tokenEnvelope(
   });
 }
 
+/** The common envelope skeleton of a Drive or Takeout row: the actor as the record names it, the tenant, the address, the record. */
+function gwsEnvelope(
+  rec: Row,
+  name: string,
+  ip: string,
+  locator: string,
+  type: string,
+  mappingVersion: string,
+  extra: Record<string, unknown>,
+  extraFields: Record<string, string[]> = {},
+  resource = "",
+): MappedEvent["canonical"] {
+  const who = readActor(rec);
+  const tenant = text(getPath(rec, "id.customerId"));
+  const observed = text(getPath(rec, "id.time"));
+  const recordId = text(getPath(rec, "id.uniqueQualifier"));
+  const { self, impersonated, selfFields } = actorEntities(who);
+  const principalId = who.kind === "user" ? who.profileId : who.kind === "key" ? who.key : who.appId;
+  return createCanonicalEvent({
+    event: { category: "cloud", type, action: name, outcome: "success" },
+    ...(self ? { actor: self } : {}),
+    ...(impersonated ? { subject: impersonated } : {}),
+    ...(ip ? { network: { source: { address: ip } } } : {}),
+    cloud: {
+      provider: "google-workspace",
+      ...(tenant ? { tenant } : {}),
+      ...(principalId ? { principalId } : {}),
+      ...(who.kind ? { principalType: who.kind } : {}),
+      ...(resource ? { resource } : {}),
+    },
+    time: { observed, normalized: normalizeTime(observed) },
+    evidence: { rawRecords: [{ source: "google-workspace", locator, ...(recordId ? { recordId } : {}) }] },
+    producer: {
+      importer: "google-workspace",
+      parserVersion: "1",
+      mappingVersion,
+      ruleVersions: [mappingVersion],
+    },
+    rawFieldMap: {
+      "event.action": ["events[].name"],
+      "time.observed": ["id.time"],
+      ...(self ? fieldsFor("actor", selfFields) : {}),
+      ...(impersonated ? fieldsFor("subject", ACCOUNT_FIELDS) : {}),
+      "cloud.tenant": ["id.customerId"],
+      ...(ip ? { "network.source.address": ["ipAddress"] } : {}),
+      ...extraFields,
+    },
+    ...extra,
+  });
+}
+
+function driveEnvelope(
+  rec: Row,
+  d: GwsDriveReading,
+  name: string,
+  ip: string,
+  locator: string,
+): MappedEvent["canonical"] {
+  return gwsEnvelope(
+    rec,
+    name,
+    ip,
+    locator,
+    d.kind === "sharing" ? "drive-sharing" : "drive-access",
+    "gws-drive-v1",
+    {
+      ...(d.docId
+        ? { object: { kind: "file", id: d.docId, ...(d.docTitle ? { name: d.docTitle } : {}) } }
+        : {}),
+      ...("sharing" in d.block ? { driveSharing: d.block.sharing } : { driveAccess: d.block.access }),
+    },
+    d.docId
+      ? {
+          "cloud.resource": ["doc_id"],
+          "object.id": ["doc_id"],
+          ...(d.docTitle ? { "object.name": ["doc_title"] } : {}),
+        }
+      : {},
+    d.docId,
+  );
+}
+
+function takeoutEnvelope(
+  rec: Row,
+  t: GwsTakeoutReading,
+  name: string,
+  ip: string,
+  locator: string,
+): MappedEvent["canonical"] {
+  return gwsEnvelope(
+    rec,
+    name,
+    ip,
+    locator,
+    "takeout",
+    "gws-takeout-v1",
+    {
+      ...(t.block.userEmail ? { subject: { kind: "account", name: t.block.userEmail } } : {}),
+      takeout: t.block,
+    },
+    {
+      ...(t.jobId ? { "cloud.resource": ["TAKEOUT_ID"] } : {}),
+      ...(t.block.userEmail ? { "subject.name": ["USER_EMAIL"] } : {}),
+    },
+    t.jobId,
+  );
+}
+
 function mapEvent(rec: Row, event: Row, sink: Map<string, SiemIoc>, locator: string): MappedEvent {
   const app = text(getPath(rec, "id.applicationName"));
   const name = text(getCI(event, "name"));
@@ -479,6 +596,40 @@ function mapEvent(rec: Row, event: Row, sink: Map<string, SiemIoc>, locator: str
     };
   }
 
+  // Drive sharing and access records, read for what they state (#931 item 11); the events the
+  // decoder does not name keep the generic row below.
+  const drive =
+    app.toLowerCase() === DRIVE_APP ? decodeGwsDrive(name, readGwsParams(event), who.kind !== "") : null;
+  if (drive) {
+    const head = `Google Workspace ${app}: ${name}${actor ? ` by ${oneLine(actor).slice(0, WHO_MAX)}` : ""}${ip ? ` from ${ip}` : ""}`;
+    return {
+      timestamp,
+      description: renderDriveDescription(head, drive),
+      severity: drive.severity,
+      mitre: [...drive.mitre],
+      aggKey: boundedAggKey(
+        `${baseKey}${drive.keySegment}${drive.incomplete ? `|${locator}` : ""}`.toLowerCase(),
+      ),
+      sources: ["Google Workspace"],
+      canonical: driveEnvelope(rec, drive, name, ip, locator),
+    };
+  }
+  // Takeout records (#931 item 11): four event-specific schemas, the job id as the resource.
+  const takeout = app.toLowerCase() === TAKEOUT_APP ? decodeGwsTakeout(name, readGwsParams(event)) : null;
+  if (takeout) {
+    const head = `Google Workspace ${app}: ${name}${actor ? ` by ${oneLine(actor).slice(0, WHO_MAX)}` : ""}${ip ? ` from ${ip}` : ""}`;
+    return {
+      timestamp,
+      description: `${head} — ${takeout.posture} — ${takeout.object}`.slice(0, 600),
+      severity: takeout.severity,
+      mitre: [...takeout.mitre],
+      aggKey: boundedAggKey(
+        `${baseKey}${takeout.keySegment}${takeout.jobId ? "" : `|${locator}`}`.toLowerCase(),
+      ),
+      sources: ["Google Workspace"],
+      canonical: takeoutEnvelope(rec, takeout, name, ip, locator),
+    };
+  }
   const target = targetLabel(event);
   const def = defFor(name);
   let description = `Google Workspace ${app}: ${name}`;
@@ -544,11 +695,19 @@ export function parseGoogleWorkspaceReport(
   // The OAuth lifecycles (#983): built over every record of this export, appended AFTER the
   // source-row cap under their own bound — `maxEvents` bounds source rows, a summary never evicts
   // one, and `kept` / `dropped` / `groups` count source rows alone.
-  const summaries = aggregateEvents(gwsOAuthLifecycles(records), {
-    aggregate: opts.aggregate,
-    minSeverity: opts.minSeverity,
-    maxEvents: GWS_LIFECYCLES_MAX + 1,
-  }).events;
+  const summaries = [
+    ...aggregateEvents(gwsOAuthLifecycles(records), {
+      aggregate: opts.aggregate,
+      minSeverity: opts.minSeverity,
+      maxEvents: GWS_LIFECYCLES_MAX + 1,
+    }).events,
+    // The Takeout job lifecycles (#931 item 11), under their own bound.
+    ...aggregateEvents(gwsTakeoutLifecycles(records), {
+      aggregate: opts.aggregate,
+      minSeverity: opts.minSeverity,
+      maxEvents: GWS_TAKEOUT_MAX + 1,
+    }).events,
+  ];
   const events = stampSourceArtifactHash([...aggregated.events, ...summaries], input);
   const groups = aggregated.groups;
 
