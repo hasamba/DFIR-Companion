@@ -77,26 +77,22 @@ describe("veloRunBlockedReason", () => {
   });
 });
 
-describe("the bundle list's Run button", () => {
-  // The list renders at page load so bundles can be built with no case open — which is exactly why
-  // Velociraptor-is-configured was never enough on its own to make Run live.
-  it("is disabled, and says why, with no case connected", async () => {
+describe("the Settings bundle library", () => {
+  // The list renders at page load so bundles can be built with no case open. Run used to sit here
+  // too, gated on the connected case; it moved to the dashboard's Fleet Collection panel (the
+  // case-scoped surface — see dashboardVeloCollect.test.ts). Settings is global, so the library
+  // must offer the editing controls and never a Run.
+  it("offers the editing controls with no case connected", async () => {
     await triage.loadVeloBundles();
-    expect(bundleList.innerHTML).toContain("Connect to a case first");
+    expect(bundleList.innerHTML).toContain("velo-edit-btn");
     expect(bundleList.innerHTML).not.toContain("velo-run-btn");
-  });
-
-  it("is live once a case is connected", async () => {
-    triage.activeCaseId = "c1";
-    await triage.loadVeloBundles();
-    expect(bundleList.innerHTML).toContain("velo-run-btn");
     expect(bundleList.innerHTML).not.toContain("Connect to a case first");
   });
 
-  it("still names the unconfigured server when there is one", async () => {
-    triage.veloEnabled = false;
+  it("never grows a Run button once a case is connected", async () => {
     triage.activeCaseId = "c1";
     await triage.loadVeloBundles();
-    expect(bundleList.innerHTML).toContain("Velociraptor API not configured");
+    expect(bundleList.innerHTML).toContain("velo-edit-btn");
+    expect(bundleList.innerHTML).not.toContain("velo-run-btn");
   });
 });

@@ -361,6 +361,8 @@
   <script src="/js/dashboard-velo-case.js"></script>
   <script src="/js/dashboard-velo-coverage.js"></script>
   <script src="/js/dashboard-velo-labels.js"></script>
+  <!-- Velociraptor run list on the Fleet Collection panel. Pure helper over the triage module's cached bundles. -->
+  <script src="/js/dashboard-velo-collect.js"></script>
   <script src="/js/dashboard-velo-triage.js"></script>
   <!-- Vim-style keyboard navigation. initKeyboardNav() binds its four controls. -->
   <script src="/js/dashboard-case-connect.js"></script>
@@ -2103,36 +2105,14 @@
 
       <!-- Velociraptor Triage -->
       <div class="stab-pane" id="stab-velociraptor">
-        <p data-safe-style="font-size:12px;color:var(--text-muted);margin:0 0 10px">Build named bundles of Velociraptor CLIENT artifacts, then run one as a hunt — results (and any uploaded JSON report, e.g. THOR/Hayabusa) are auto-collected after a delay, imported, and synthesized into the case. Bundles are shared across cases; running a bundle uses the case you're connected to. Results appear on the dashboard.</p>
-        <div id="veloDisabledNote" data-safe-style="display:none;font-size:12px;color:var(--text-muted);margin:0 0 10px;background:var(--bg-tertiary);border:1px solid var(--border-color);border-radius:6px;padding:8px 10px">
-          Velociraptor API not configured — you can still build and edit bundles, but <strong>running a hunt</strong> needs the <strong>API config path</strong> set on the <strong>Integrations</strong> tab. After setting it (or once the Velociraptor server is up), click <strong>Reconnect</strong> below — no server restart needed.
-        </div>
-        <div data-safe-style="font-size:12px;color:var(--text-muted);margin:0 0 10px;background:var(--bg-tertiary);border:1px solid var(--border-color);border-radius:6px;padding:8px 10px">
-          <strong>A heavy artifact (Hayabusa, a large Evtx/MFT dump) can fail to collect with</strong> <code>grpc: received message larger than max (X vs. 4194304)</code>.
-          Edit your <code>api.yaml</code> file, add a top-level <code>max_grpc_recv_size: 67108864</code> (64 MB, or larger) and save it.
-          Then click <strong>Collect now</strong> on the hunt again.
-        </div>
+        <p data-safe-style="font-size:12px;color:var(--text-muted);margin:0 0 10px">The shared <strong>bundle library</strong> — named sets of Velociraptor CLIENT artifacts, kept once for every case. Build and edit them here. <strong>Running</strong> a bundle, importing a hunt from the Velociraptor GUI and live monitoring all act on the connected case, so they live on the dashboard's <a href="#" data-act="openFleetCollection" data-safe-style="color:var(--accent)">Fleet Collection</a> panel. The connection itself is set on the <strong>Integrations</strong> tab.</p>
         <!-- Client inventory (#70): the host ↔ client_id map a single-endpoint collection resolves against. -->
         <div id="veloClientsCard" data-safe-style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px;padding:8px 10px;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:6px">
           <button id="veloReconnectBtn" type="button" title="Re-read the Velociraptor config from .env, rebuild the connection, and refresh the client list. Use this after configuring Velociraptor or when the Velociraptor server was down at startup — no companion restart needed.">🔌 Reconnect</button>
           <button id="veloRefreshClientsBtn" type="button" title="Snapshot every enrolled Velociraptor client (hostname / FQDN ↔ client id). A single-endpoint playbook collection resolves the host from this inventory instead of a live lookup.">↻ Refresh client list</button>
           <span id="veloClientsMsg" data-safe-style="font-size:12px;color:var(--text-muted)">—</span>
         </div>
-        <div id="veloJobCard" data-safe-style="display:none;margin:0 0 12px"></div>
         <div id="veloBundleList" data-safe-style="margin-bottom:14px">—</div>
-
-        <div data-safe-style="margin-top:14px;border-top:1px solid var(--border-color);padding-top:10px">
-          <div data-safe-style="font-weight:600;margin-bottom:4px">Import external hunt/flow</div>
-          <div data-safe-style="font-size:12px;color:var(--text-muted);margin-bottom:6px">Pull results from a hunt or collection launched directly in the Velociraptor GUI. Paste a hunt id (<code>H.…</code>), a flow (<code>C.…/F.…</code>), or the GUI URL of either. For a flow, the host is resolved automatically.</div>
-          <div data-safe-style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-            <input id="veloExtRef" placeholder="H.xxxx  ·  C.xxxx/F.xxxx  ·  or a Velociraptor URL" data-safe-style="flex:1;min-width:220px;padding:4px" />
-            <select id="veloExtMinsev" title="Only import events at or above this severity"><option value="">all severities</option><option value="info">info+</option><option value="low">low+</option><option value="medium">medium+</option><option value="high">high+</option><option value="critical">critical only</option></select>
-            <label data-safe-style="font-size:12px;color:var(--text-muted)"><input type="checkbox" id="veloExtSuper" /> super-timeline only</label>
-            <button id="veloExtGo">Import</button>
-          </div>
-          <div id="veloExtMsg" data-safe-style="font-size:12px;color:var(--text-muted);margin-top:4px"></div>
-          <div data-safe-style="font-size:11px;color:var(--text-dim);margin-top:2px">Reads the flow/hunt's complete collected rows. For upload-only artifacts (THOR/Hayabusa reports), paste the GUI's <strong>Uploaded Files</strong> tab URL instead to import just the uploaded report (rows are skipped). A <strong>notebook</strong> URL (analyst-filtered VQL results) is rejected — use the DFIR Companion browser extension's "Push rows" button from that notebook page instead, which imports exactly what it shows.</div>
-        </div>
 
         <details id="veloBuilder" data-safe-style="border:1px solid var(--border-color);border-radius:6px;padding:10px;background:var(--bg-secondary)">
           <summary id="veloBuilderSummary" data-safe-style="cursor:pointer;font-size:13px;color:var(--text-primary);font-weight:600">Build a new bundle</summary>
@@ -2178,38 +2158,6 @@
           </div>
         </details>
 
-        <!-- Live CLIENT_EVENT monitoring (#84) -->
-        <div id="veloMonitorSection" data-safe-style="margin-top:18px;border-top:1px solid var(--border-color);padding-top:14px">
-          <div class="settings-group-head">🔴 Live Monitoring <span data-safe-style="color:var(--text-dim);font-weight:400">(Velociraptor client events)</span></div>
-          <p data-safe-style="font-size:12px;color:var(--text-muted);margin:2px 0 10px">Stream a Velociraptor <strong>client-monitoring</strong> artifact (e.g. <code>Windows.Events.ProcessCreation</code>, <code>Windows.Events.DNSQueries</code>) into this case <strong>as events fire</strong> — from one endpoint, or across <strong>all enrolled clients</strong> at once. The companion polls on an interval and imports new rows automatically; the last-seen cursor is saved so a restart never re-ingests old events. The artifact must also be enabled in Velociraptor → <em>Client Monitoring</em> for the target client(s). Needs the Velociraptor API configured.</p>
-          <div data-safe-style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 10px;padding:8px 10px;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:6px">
-            <button id="veloMonAutoBtn" type="button" title="Discover every client-event artifact already enabled in Velociraptor's Client Monitoring table and start an all-clients monitor for each">⚡ Auto-monitor configured events</button>
-            <span data-safe-style="font-size:12px;color:var(--text-muted)">Start an <strong>all-clients</strong> monitor for every artifact already enabled in Velociraptor's <em>Client Monitoring</em> table.</span>
-            <span id="veloMonAutoMsg" data-safe-style="font-size:12px;color:var(--text-muted)"></span>
-          </div>
-          <div id="veloMonitorList" data-safe-style="margin:0 0 12px"></div>
-          <details id="veloMonitorBuilder" data-safe-style="border:1px solid var(--border-color);border-radius:6px;padding:10px;background:var(--bg-secondary)">
-            <summary data-safe-style="cursor:pointer;font-size:13px;color:var(--text-primary);font-weight:600">Start a new monitor</summary>
-            <div data-safe-style="margin-top:10px;display:flex;flex-direction:column;gap:8px">
-              <div data-safe-style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-                <button id="veloMonBrowseBtn" type="button" title="Query the Velociraptor server for its CLIENT_EVENT (continuous monitoring) artifacts">Browse event artifacts…</button>
-                <select id="veloMonArtifact" data-safe-style="flex:1;min-width:240px;padding:5px"><option value="">— pick a CLIENT_EVENT artifact —</option></select>
-              </div>
-              <input id="veloMonArtifactManual" placeholder="…or type an artifact name (e.g. Windows.Events.ProcessCreation)" data-safe-style="padding:5px" />
-              <label data-safe-style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-primary)"><input type="checkbox" id="veloMonAllClients" /> All enrolled clients <span data-safe-style="color:var(--text-dim)">(monitor this artifact across the whole fleet — no specific endpoint)</span></label>
-              <div data-safe-style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-                <input id="veloMonClient" list="veloMonClientList" placeholder="client id (C.xxxxxxxx)" data-safe-style="flex:1;min-width:200px;padding:5px" />
-                <datalist id="veloMonClientList"></datalist>
-                <input id="veloMonPoll" type="number" min="5" max="3600" placeholder="poll (sec)" value="30" title="Poll interval in seconds (5–3600)" data-safe-style="width:120px;padding:5px" />
-                <select id="veloMonMinSev" title="Optional minimum-severity floor on the imported events" data-safe-style="width:140px;padding:5px">
-                  <option value="">all severities</option><option>Low</option><option>Medium</option><option>High</option><option>Critical</option>
-                </select>
-                <button id="veloMonStartBtn" type="button">▶ Start monitor</button>
-              </div>
-              <span id="veloMonMsg" class="manual-msg"></span>
-            </div>
-          </details>
-        </div>
       </div>
 
       <!-- External forensic tools (#211) -->
@@ -3575,6 +3523,67 @@
       </div>
       <div id="complianceFilter" class="cmp-filter"></div>
       <div id="compliancePanel">—</div></section>
+    <!-- Fleet Collection: the case-scoped half of Velociraptor. Bundles are built in Settings → Velociraptor (global);
+         running one, importing a GUI hunt and live monitoring all land in the connected case, so they live here. -->
+    <section id="sec-fleet-collection" data-safe-style="grid-column: 1 / -1"><h2>Fleet Collection<span class="ev-sub">run a Velociraptor bundle, pull a hunt from the Velociraptor GUI, or stream client events — into this case</span></h2>
+      <div id="veloDisabledNote" data-safe-style="display:none;font-size:12px;color:var(--text-muted);margin:0 0 10px;background:var(--bg-tertiary);border:1px solid var(--border-color);border-radius:6px;padding:8px 10px">
+        Velociraptor API not configured — running a bundle, importing a GUI hunt and live monitoring all need the <strong>API config path</strong> set on <strong>Settings → Integrations</strong>. After setting it (or once the Velociraptor server is up), click <strong>Reconnect</strong> on Settings → Velociraptor — no server restart needed. Bundles can still be built and edited there.
+      </div>
+      <div id="veloJobCard" data-safe-style="display:none;margin:0 0 12px"></div>
+      <div data-safe-style="font-weight:600;margin-bottom:4px">Run a bundle</div>
+      <div data-safe-style="font-size:12px;color:var(--text-muted);margin-bottom:6px">Pick a saved bundle and run it as a hunt. Results (and any uploaded JSON report, e.g. THOR/Hayabusa) are auto-collected after a delay, imported, and synthesized into this case.</div>
+      <div id="veloRunList" data-safe-style="margin-bottom:14px">—</div>
+      <div data-safe-style="font-size:12px;color:var(--text-muted);margin:0 0 14px;background:var(--bg-tertiary);border:1px solid var(--border-color);border-radius:6px;padding:8px 10px">
+        <strong>A heavy artifact (Hayabusa, a large Evtx/MFT dump) can fail to collect with</strong> <code>grpc: received message larger than max (X vs. 4194304)</code>.
+        Edit your <code>api.yaml</code> file, add a top-level <code>max_grpc_recv_size: 67108864</code> (64 MB, or larger) and save it.
+        Then click <strong>Collect now</strong> on the hunt again.
+      </div>
+      <div data-safe-style="margin-top:14px;border-top:1px solid var(--border-color);padding-top:10px">
+        <div data-safe-style="font-weight:600;margin-bottom:4px">Import external hunt/flow</div>
+        <div data-safe-style="font-size:12px;color:var(--text-muted);margin-bottom:6px">Pull results from a hunt or collection launched directly in the Velociraptor GUI. Paste a hunt id (<code>H.…</code>), a flow (<code>C.…/F.…</code>), or the GUI URL of either. For a flow, the host is resolved automatically.</div>
+        <div data-safe-style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+          <input id="veloExtRef" placeholder="H.xxxx  ·  C.xxxx/F.xxxx  ·  or a Velociraptor URL" data-safe-style="flex:1;min-width:220px;padding:4px" />
+          <select id="veloExtMinsev" title="Only import events at or above this severity"><option value="">all severities</option><option value="info">info+</option><option value="low">low+</option><option value="medium">medium+</option><option value="high">high+</option><option value="critical">critical only</option></select>
+          <label data-safe-style="font-size:12px;color:var(--text-muted)"><input type="checkbox" id="veloExtSuper" /> super-timeline only</label>
+          <button id="veloExtGo">Import</button>
+        </div>
+        <div id="veloExtMsg" data-safe-style="font-size:12px;color:var(--text-muted);margin-top:4px"></div>
+        <div data-safe-style="font-size:11px;color:var(--text-dim);margin-top:2px">Reads the flow/hunt's complete collected rows. For upload-only artifacts (THOR/Hayabusa reports), paste the GUI's <strong>Uploaded Files</strong> tab URL instead to import just the uploaded report (rows are skipped). A <strong>notebook</strong> URL (analyst-filtered VQL results) is rejected — use the DFIR Companion browser extension's "Push rows" button from that notebook page instead, which imports exactly what it shows.</div>
+      </div>
+
+      <!-- Live CLIENT_EVENT monitoring (#84) -->
+      <div id="veloMonitorSection" data-safe-style="margin-top:18px;border-top:1px solid var(--border-color);padding-top:14px">
+        <div data-safe-style="font-weight:600;margin-bottom:4px">🔴 Live Monitoring <span data-safe-style="color:var(--text-dim);font-weight:400">(Velociraptor client events)</span></div>
+        <p data-safe-style="font-size:12px;color:var(--text-muted);margin:2px 0 10px">Stream a Velociraptor <strong>client-monitoring</strong> artifact (e.g. <code>Windows.Events.ProcessCreation</code>, <code>Windows.Events.DNSQueries</code>) into this case <strong>as events fire</strong> — from one endpoint, or across <strong>all enrolled clients</strong> at once. The companion polls on an interval and imports new rows automatically; the last-seen cursor is saved so a restart never re-ingests old events. The artifact must also be enabled in Velociraptor → <em>Client Monitoring</em> for the target client(s). Needs the Velociraptor API configured (Settings → Integrations).</p>
+        <div data-safe-style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 10px;padding:8px 10px;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:6px">
+          <button id="veloMonAutoBtn" type="button" title="Discover every client-event artifact already enabled in Velociraptor's Client Monitoring table and start an all-clients monitor for each">⚡ Auto-monitor configured events</button>
+          <span data-safe-style="font-size:12px;color:var(--text-muted)">Start an <strong>all-clients</strong> monitor for every artifact already enabled in Velociraptor's <em>Client Monitoring</em> table.</span>
+          <span id="veloMonAutoMsg" data-safe-style="font-size:12px;color:var(--text-muted)"></span>
+        </div>
+        <div id="veloMonitorList" data-safe-style="margin:0 0 12px"></div>
+        <details id="veloMonitorBuilder" data-safe-style="border:1px solid var(--border-color);border-radius:6px;padding:10px;background:var(--bg-secondary)">
+          <summary data-safe-style="cursor:pointer;font-size:13px;color:var(--text-primary);font-weight:600">Start a new monitor</summary>
+          <div data-safe-style="margin-top:10px;display:flex;flex-direction:column;gap:8px">
+            <div data-safe-style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+              <button id="veloMonBrowseBtn" type="button" title="Query the Velociraptor server for its CLIENT_EVENT (continuous monitoring) artifacts">Browse event artifacts…</button>
+              <select id="veloMonArtifact" data-safe-style="flex:1;min-width:240px;padding:5px"><option value="">— pick a CLIENT_EVENT artifact —</option></select>
+            </div>
+            <input id="veloMonArtifactManual" placeholder="…or type an artifact name (e.g. Windows.Events.ProcessCreation)" data-safe-style="padding:5px" />
+            <label data-safe-style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-primary)"><input type="checkbox" id="veloMonAllClients" /> All enrolled clients <span data-safe-style="color:var(--text-dim)">(monitor this artifact across the whole fleet — no specific endpoint)</span></label>
+            <div data-safe-style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+              <input id="veloMonClient" list="veloMonClientList" placeholder="client id (C.xxxxxxxx)" data-safe-style="flex:1;min-width:200px;padding:5px" />
+              <datalist id="veloMonClientList"></datalist>
+              <input id="veloMonPoll" type="number" min="5" max="3600" placeholder="poll (sec)" value="30" title="Poll interval in seconds (5–3600)" data-safe-style="width:120px;padding:5px" />
+              <select id="veloMonMinSev" title="Optional minimum-severity floor on the imported events" data-safe-style="width:140px;padding:5px">
+                <option value="">all severities</option><option>Low</option><option>Medium</option><option>High</option><option>Critical</option>
+              </select>
+              <button id="veloMonStartBtn" type="button">▶ Start monitor</button>
+            </div>
+            <span id="veloMonMsg" class="manual-msg"></span>
+          </div>
+        </details>
+      </div>
+    </section>
     <section id="sec-velohunts" data-safe-style="grid-column: 1 / -1"><h2>Suggested Fleet Hunts<span class="ev-sub">AI-proposed Velociraptor VQL hunts from the findings — sweep the fleet for the same tradecraft</span><button id="suggestHuntsBtn" type="button" title="Ask the AI to propose proactive Velociraptor VQL hunts that run across all enrolled endpoints to find this case's tradecraft elsewhere (review the VQL before deploying)" data-safe-style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Suggest hunts</button><span id="suggestHuntsMsg" data-safe-style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted)"></span></h2><div id="veloHuntSuggest">—</div></section>
     <section id="sec-false-positive" data-safe-style="grid-column: 1 / -1"><h2>False Positives (excluded from analysis)<span id="fpCount" title="Total false-positive markers in scope; updates in real time"></span>
       <select id="fpReasonFilterSel" title="Show only false-positive markers with this reason" data-safe-style="font-size:12px;margin-left:10px;vertical-align:middle;background:var(--bg-tertiary);color:var(--text-bright);border:1px solid var(--border-color);border-radius:4px;padding:2px 4px">
@@ -4046,7 +4055,7 @@
       { id: "sec-playbook-match", label: "Playbook Match" },
       { id: "sec-d3fend",       label: "Mitigation & Defensive Countermeasures" },
       { id: "sec-compliance",   label: "Compliance Impact" },
-      { id: "sec-velohunts",    label: "Suggested Fleet Hunts" },
+      { id: "sec-fleet-collection", label: "Fleet Collection" }, { id: "sec-velohunts",    label: "Suggested Fleet Hunts" },
       { id: "sec-false-positive", label: "False Positives" },
       { id: "sec-source-trust", label: "Source Trust" },
       { id: "sec-hypotheses",   label: "Hypotheses" },

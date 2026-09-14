@@ -156,6 +156,13 @@
         g.scrollIntoView({ behavior: "smooth", block: "start" });
       }
     },
+    // Fleet Collection: the Settings → Velociraptor library points at the case-scoped panel the
+    // run / import / monitor controls moved to. Close the modal first or the reveal scrolls under it.
+    openFleetCollection: (el, e) => {
+      e.preventDefault();
+      closeSettingsModal();
+      revealSection("sec-fleet-collection");
+    },
     // Compliance Impact (#336)
     setComplianceDiscovered: (el) => setComplianceDiscovered(el),
     clearComplianceDiscovered: (el) => clearComplianceDiscovered(),
