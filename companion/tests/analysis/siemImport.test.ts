@@ -587,6 +587,79 @@ describe("parseSiemExport — Kerberoasting / AS-REP roasting (RC4 ticket verdic
   });
 });
 
+describe("parseSiemExport — who acted (#930 item 6): typed roles on the canonical envelope", () => {
+  it("4769 is a typed ticket-request: the requester acts, the service account is the object, enc type and outcome are read, the client address is the source", () => {
+    const r = parseSiemExport(
+      elastic({
+        "@timestamp": "2024-05-01T12:00:00Z",
+        log_name: "Security",
+        computer_name: "DC01.corp.local",
+        event_id: 4769,
+        level: "Information",
+        event_data: {
+          TargetUserName: "attacker@CORP.LOCAL",
+          TargetDomainName: "CORP.LOCAL",
+          ServiceName: "svc_sql",
+          TicketEncryptionType: "0x17",
+          Status: "0x0",
+          IpAddress: "::ffff:10.0.0.66",
+        },
+      }),
+    );
+    const c = r.events[0].canonical!;
+    expect(c.event).toMatchObject({ category: "authentication", type: "ticket-request", outcome: "success" });
+    expect(c.actor).toMatchObject({ kind: "account", name: "attacker@CORP.LOCAL" });
+    expect(c.object).toEqual({ kind: "account", name: "svc_sql" });
+    expect(c.authentication).toEqual({ protocol: "kerberos", mechanism: "0x17" });
+    expect(c.network?.source?.address).toBe("10.0.0.66");
+  });
+  it("two Sysmon 1 rows that differ only by User stay two rows; the actor's provenance names EventData.User", () => {
+    const r = parseSiemExport(
+      elastic(SYSMON_PROC, {
+        ...SYSMON_PROC,
+        event_data: { ...SYSMON_PROC.event_data, User: "CORP\\svc_sql" },
+      }),
+    );
+    expect(r.events).toHaveLength(2);
+    expect(r.events.map((e) => e.canonical?.actor?.name)).toEqual(["NT AUTHORITY\\SYSTEM", "CORP\\svc_sql"]);
+    expect(r.events[0].canonical?.fieldProvenance["actor.name"]?.rawFields).toEqual(["EventData.User"]);
+  });
+  it("Sysmon 1 carries its User as the acting account; 4648 carries the credential used as actor and the initiator as subject", () => {
+    const r = parseSiemExport(elastic(SYSMON_PROC));
+    expect(r.events[0].canonical?.actor).toEqual({
+      kind: "account",
+      name: "NT AUTHORITY\\SYSTEM",
+      domain: "NT AUTHORITY",
+    });
+    const x = parseSiemExport(
+      elastic({
+        "@timestamp": "2024-05-01T12:00:00Z",
+        log_name: "Security",
+        computer_name: "WS01.corp.local",
+        event_id: 4648,
+        level: "Information",
+        event_data: {
+          SubjectDomainName: "CORP",
+          SubjectUserName: "jdoe",
+          SubjectUserSid: "S-1-5-21-1-2-3-1001",
+          TargetDomainName: "CORP",
+          TargetUserName: "svc_sql",
+          TargetServerName: "FS01.corp.local",
+        },
+      }),
+    );
+    const c = x.events[0].canonical!;
+    expect(c.event).toMatchObject({ category: "authentication", type: "explicit-credential-logon" });
+    expect(c.actor).toEqual({ kind: "account", name: "CORP\\svc_sql", domain: "CORP" });
+    expect(c.subject).toEqual({
+      kind: "account",
+      name: "CORP\\jdoe",
+      domain: "CORP",
+      id: "S-1-5-21-1-2-3-1001",
+    });
+  });
+});
+
 describe('cleanIp — IPv6 shape validation (not just "contains a colon")', () => {
   it("rejects a free-text blob that merely contains colons as a bogus IPv6 IOC", () => {
     // A real observed case: a PowerShell cmdletization proxy-function dump (Get/Set-NetIPAddress

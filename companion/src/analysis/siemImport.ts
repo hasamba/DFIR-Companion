@@ -24,6 +24,7 @@
 import { worstSeverity as worst, type ForensicEvent, type Severity } from "./stateTypes.js";
 import { MONTHS, parseBsdTime } from "./bsdTime.js";
 import { isInternalIpv4 } from "./internalIp.js";
+import { winRoleBlocks } from "./winAccountRoles.js";
 import {
   createCanonicalEvent,
   stampSourceArtifactHash,
@@ -929,57 +930,61 @@ export function mapWindows(
   const logonTypeRaw = str(getCI(ed, "LogonType")).trim();
   const logonType = logonTypeRaw && Number.isFinite(Number(logonTypeRaw)) ? Number(logonTypeRaw) : undefined;
   const isLogon = !isSysmon && (eid === 4624 || eid === 4625);
-  const accountName = accts[0];
-  const category = isLogon
-    ? "authentication"
-    : def.kind === "process" || pa
-      ? "process"
-      : def.kind === "network" || def.kind === "dns"
-        ? "network"
-        : def.kind === "file"
-          ? "file"
-          : def.kind === "service"
-            ? "service"
-            : str(getCI(ed, "TaskName"))
-              ? "task"
-              : str(getCI(ed, "TargetObject"))
-                ? "registry"
-                : "other";
+  // Who acted / who initiated / the acting SID / the typed Kerberos ticket (winAccountRoles.ts).
+  const roles = winRoleBlocks(eid, isSysmon, (k) => str(getCI(ed, k)));
+  const accountName = roles.actor?.name; // kept for the rawFieldMap entry
+  const category = roles.event
+    ? roles.event.category
+    : isLogon
+      ? "authentication"
+      : def.kind === "process" || pa
+        ? "process"
+        : def.kind === "network" || def.kind === "dns"
+          ? "network"
+          : def.kind === "file"
+            ? "file"
+            : def.kind === "service"
+              ? "service"
+              : str(getCI(ed, "TaskName"))
+                ? "task"
+                : str(getCI(ed, "TargetObject"))
+                  ? "registry"
+                  : "other";
   const canonical = createCanonicalEvent({
     event: {
       category,
-      type: isLogon
-        ? "logon"
-        : def.kind === "process"
-          ? "start"
+      type: roles.event
+        ? roles.event.type
+        : isLogon
+          ? "logon"
+          : def.kind === "process"
+            ? "start"
+            : pa
+              ? pa.type
+              : def.kind === "network"
+                ? "connection"
+                : def.kind === "dns"
+                  ? "query"
+                  : (defender?.eventType ?? def.fileAction ?? def.kind ?? "event"),
+      ...(roles.event?.outcome
+        ? { outcome: roles.event.outcome }
+        : isLogon
+          ? { outcome: eid === 4624 ? "success" : "failed" }
           : pa
-            ? pa.type
-            : def.kind === "network"
-              ? "connection"
-              : def.kind === "dns"
-                ? "query"
-                : (defender?.eventType ?? def.fileAction ?? def.kind ?? "event"),
-      ...(isLogon
-        ? { outcome: eid === 4624 ? "success" : "failed" }
-        : pa
-          ? { action: pa.action }
-          : defender
-            ? defender.event
-            : {}),
+            ? { action: pa.action }
+            : defender
+              ? defender.event
+              : {}),
     },
-    ...(accountName ? { actor: { kind: "account" as const, name: accountName } } : {}),
+    ...(roles.actor ? { actor: roles.actor } : {}),
     ...(host ? { target: { kind: "host" as const, name: host } } : {}),
     ...(defender
       ? { object: defender.object, defender: { ...defender.block, ...(sha256 ? { sha256 } : {}) } }
       : (pa?.entities ?? {})),
-    ...(accountName
-      ? {
-          account: {
-            name: accountName,
-            ...(accountName.includes("\\") ? { domain: accountName.split("\\")[0] } : {}),
-          },
-        }
-      : {}),
+    ...(roles.account ? { account: roles.account } : {}),
+    ...(roles.subject ? { subject: roles.subject } : {}),
+    ...(roles.object ? { object: roles.object } : {}),
+    ...(roles.authentication ? { authentication: roles.authentication } : {}),
     ...(isLogon
       ? {
           authentication: {
@@ -1103,7 +1108,7 @@ export function mapWindows(
     rawFieldMap: {
       "time.observed": ["EventData.UtcTime", ...TIME_KEYS],
       ...(pa?.rawFields ?? {}),
-      ...(accountName ? { "actor.name": ["EventData.TargetDomainName", "EventData.TargetUserName"] } : {}),
+      ...(roles.actorFields ? { "actor.name": roles.actorFields } : {}),
       ...(host ? { "target.name": ["Computer", "host.name"] } : {}),
       ...(logonType !== undefined ? { "authentication.logonType": ["EventData.LogonType"] } : {}),
       ...(sourceIp ? { "network.source.address": ["EventData.IpAddress", "EventData.SourceIp"] } : {}),
@@ -1162,7 +1167,7 @@ export function mapWindows(
     // srv-a stay one host); a host-less export keys on "". pid keeps process creations distinct; a
     // Sysmon 15 stream carries its exact path's digest and the host file's hash (ntfsStreams.ts).
     aggKey:
-      `win|${host}|${channel}|${eid}|${accts.join(",")}|${pa ? "" : subject}${pid !== undefined ? `|pid=${pid}` : ""}${defender ? `|${defender.identity}` : ""}${ads?.identity ?? ""}${pa?.identity ?? ""}${dq?.identity ?? ""}`.toLowerCase(),
+      `win|${host}|${channel}|${eid}|${accts.join(",")}${isSysmon && accountName ? `|u=${accountName}` : ""}|${pa ? "" : subject}${pid !== undefined ? `|pid=${pid}` : ""}${defender ? `|${defender.identity}` : ""}${ads?.identity ?? ""}${pa?.identity ?? ""}${dq?.identity ?? ""}`.toLowerCase(),
     ...(sha256 ? { sha256 } : {}),
     ...(md5 ? { md5 } : {}),
     ...(imagePath ? { path: imagePath } : {}),

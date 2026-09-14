@@ -155,9 +155,9 @@ function saveRecents(r) {
   }
 }
 
-const ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" };
+const ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 function esc(s) {
-  return String(s).replace(/[&<>"]/g, (c) => ESCAPES[c]);
+  return String(s).replace(/[&<>"']/g, (c) => ESCAPES[c]);
 }
 
 function createPalette(config) {

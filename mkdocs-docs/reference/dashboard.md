@@ -1019,3 +1019,39 @@ are said: only web logs, only file rows, undated rows. A third-party leak report
 Nothing is fetched and no server is contacted. The report section (off in saved templates until
 switched on) renders the same table.
 
+
+## Kerberoast Chain
+
+Start from a service-ticket request and see what the case establishes about the service account
+afterwards — without ever saying a password was cracked.
+
+**What a request establishes.** A 4769 on a domain controller says the KDC issued (or refused) a
+service ticket for the named service account to the requester, from a client address, encrypted
+with a given type. RC4 (0x17 / 0x18) is an offline-cracking-compatible type; the record does not
+say who chose it, and an AES ticket is not immune — an AES-only account is listed when the same
+requester also holds an RC4 request. A machine account, `krbtgt`, and a service name in SPN or
+UPN form are not joined, each by reason: the record does not carry the owning account.
+
+**What a later row establishes.** A logon, an explicit-credential logon, a process start, a
+service install or a share access where the *exact* account acts is a use of the account: the
+short name must match and the realm must be compatible on both sides (the DC's domain, from its
+FQDN, against the row's domain — `CORP` matches `corp.local`). A bare name is a *candidate* that
+advances nothing; a different realm is another account. The SID, when the row carries one, is
+shown.
+
+**Stages, per service account:** *ticket requested* → *account used after* (a use after the
+earliest RC4 request) → *first-seen-host use* (a use on a host the account was not seen on
+before the request, in the available evidence — never "new"). A host with no rows of any kind
+before the request has no baseline, and "first seen" is not said for it. The baseline lists the
+hosts the account acted on before the request; with none it reads *no prior use observed in the
+case*. A *same observed address* facet pairs a use whose source address equals a request's
+client address, showing both observers and both raw strings — a shared address may be NAT, VPN
+or VDI, so it is a relation between records, not the same endpoint.
+
+Roasting-tool rows (Rubeus, GetUserSPNs, Invoke-Kerberoast) attach to an account only through
+the requester's identity; otherwise they are leads — tool presence alone does not establish that
+an attack ran. Whether a ticket was cracked is not in any row and is never said; a later use of
+the account does not prove it. Every negative reason says whether the read was complete (500
+ticket rows and 5,000 use rows per account). The report section (off in saved templates until
+switched on) renders the same tables.
+

@@ -66,6 +66,13 @@ export const REPORT_SECTION_DEFS = [
     label: "Served exposure (declared served locations: files, requests, what the server logged)",
     defaultEnabled: false,
   },
+  // Off by default (#930 item 6): a per-service-account chain belongs in a report the analyst
+  // chose to carry it.
+  {
+    key: "kerberoastChain",
+    label: "Kerberoast chain (ticket requests, baseline, later use of the exact account)",
+    defaultEnabled: false,
+  },
   // Opt-in EVERYWHERE (#969): a fresh template does not switch it on either, because the section
   // renders an analyst's recorded residual-risk status and must never appear in a report by
   // accident of "every section is what default means".
@@ -269,6 +276,7 @@ export const BUILT_IN_REPORT_TEMPLATES: readonly ReportTemplate[] = [
       { key: "intelRetirement", enabled: false },
       { key: "campaignScope", enabled: false },
       { key: "servedExposure", enabled: false },
+      { key: "kerberoastChain", enabled: false },
       { key: "remediationChecks", enabled: false },
     ],
   }),
