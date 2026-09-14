@@ -1,5 +1,6 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import { STATIC_ASSETS } from "../../src/http/staticAssets.js";
 import type { EscapeApi } from "./dashboardApi.js";
@@ -177,7 +178,8 @@ async function findEscCopies(): Promise<{ file: string; esc: (s: string) => stri
       const rel = file.slice(file.lastIndexOf(file.includes("/public/") ? "/public/" : "/src/") + 1);
       // The TS copy carries `s: string): string`; nothing else in any copy needs stripping.
       const js = window.replace(/:\s*string/g, "");
-      out.push({ file: rel, esc: new Function(`${js}\nreturn esc;`)() as (s: string) => string });
+      const esc = runInNewContext(`${js}\nesc;`, {}, { filename: rel }) as (s: string) => string;
+      out.push({ file: rel, esc });
     }
   }
   return out;
