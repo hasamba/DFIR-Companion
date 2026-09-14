@@ -361,6 +361,7 @@
       ["campaignScope", () => loadCampaignScope(caseId)],
       ["servedExposure", () => loadServedExposure(caseId)],
       ["kerberoastChain", () => loadKerberoastChain(caseId)],
+      ["sensitiveAccess", () => loadSensitiveAccess(caseId)],
       ["count", () => pollCount(caseId)],
       ["aiToggle", () => loadAiToggle(caseId)],
       ["enrichToggle", () => loadEnrichToggle(caseId)],

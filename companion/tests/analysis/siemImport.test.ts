@@ -660,6 +660,118 @@ describe("parseSiemExport — who acted (#930 item 6): typed roles on the canoni
   });
 });
 
+describe("parseSiemExport — object access (#930 item 7): typed rights, process, session on the envelope", () => {
+  const sec = (event_id: number, event_data: Record<string, string>, ts = "2026-06-01T12:00:00Z") => ({
+    "@timestamp": ts,
+    log_name: "Security",
+    computer_name: "FS01.corp.local",
+    event_id,
+    level: "Information",
+    event_data,
+  });
+  it("4663: file / access with the object, the unsigned mask by bit, the accessing process (hex pid) and the logon id", () => {
+    const r = parseSiemExport(
+      elastic(
+        sec(4663, {
+          SubjectUserName: "jdoe",
+          SubjectDomainName: "CORP",
+          SubjectUserSid: "S-1-5-21-1-2-3-1001",
+          SubjectLogonId: "0x3E7",
+          ObjectType: "File",
+          ObjectName: "C:\\Finance\\Board\\minutes.docx",
+          HandleId: "0x1234",
+          AccessMask: "0x1",
+          ProcessId: "0x1a4",
+          ProcessName: "C:\\Windows\\System32\\notepad.exe",
+        }),
+      ),
+    );
+    const c = r.events[0].canonical!;
+    expect(c.event).toMatchObject({ category: "file", type: "access" });
+    expect(c.file).toMatchObject({
+      path: "C:\\Finance\\Board\\minutes.docx",
+      access: {
+        mask: "0x1",
+        rights: ["ReadData/ListDirectory"],
+        classes: ["read-or-listing"],
+        objectType: "File",
+        handleId: "0x1234",
+      },
+    });
+    expect(c.process).toMatchObject({ pid: 420, executable: "C:\\Windows\\System32\\notepad.exe" });
+    expect(c.authentication).toEqual({ sessionId: "0x3e7" });
+    expect(c.actor).toMatchObject({ name: "CORP\\jdoe" });
+    expect(c.account?.id).toBe("S-1-5-21-1-2-3-1001");
+  });
+  it("4656 is a handle request; 4660 an object-deleted by handle; 5145 a share object check with the local path; 4689 / 4634 are process end / logoff", () => {
+    const r = parseSiemExport(
+      elastic(
+        sec(4656, {
+          ObjectType: "File",
+          ObjectName: "C:\\x.docx",
+          AccessMask: "0x10000",
+          HandleId: "0x1",
+          ProcessId: "0x10",
+          SubjectLogonId: "0x3e7",
+        }),
+        sec(4660, { HandleId: "0x1", ProcessId: "0x10", SubjectLogonId: "0x3e7" }),
+        sec(5145, {
+          ShareName: "\\\\*\\Finance",
+          ShareLocalPath: "\\??\\C:\\Finance",
+          RelativeTargetName: "Board\\minutes.docx",
+          AccessMask: "0x120089",
+          SubjectLogonId: "0x5",
+        }),
+        sec(4689, {
+          ProcessId: "0x10",
+          ProcessName: "C:\\Windows\\System32\\notepad.exe",
+          SubjectLogonId: "0x3e7",
+        }),
+        sec(4634, { TargetLogonId: "0x3e7", TargetUserName: "jdoe", TargetDomainName: "CORP" }),
+      ),
+    );
+    const by = (eid: number) => r.events.find((e) => e.description.includes(`(EID ${eid})`))!.canonical!;
+    const types = [4656, 4660, 5145, 4689, 4634].map(
+      (eid) => `${by(eid).event.category}/${by(eid).event.type}`,
+    );
+    expect(types).toEqual([
+      "file/handle-request",
+      "file/object-deleted",
+      "network/share-object-check",
+      "process/end",
+      "authentication/logoff",
+    ]);
+    expect(by(4656).file?.access?.classes).toEqual(["delete"]);
+    expect(by(4660).file?.access?.handleId).toBe("0x1");
+    expect(by(5145).file?.path).toBe("C:\\Finance\\Board\\minutes.docx");
+    expect(by(4689).process).toMatchObject({ pid: 16, executable: "C:\\Windows\\System32\\notepad.exe" });
+    expect(by(4634).authentication?.sessionId).toBe("0x3e7");
+  });
+});
+
+describe("parseSiemExport — Sysmon 5 keeps its image and GUID on the typed process end", () => {
+  it("process / end with pid, executable and id", () => {
+    const r = parseSiemExport(
+      elastic({
+        ...SYSMON_PROC,
+        event_id: 5,
+        event_data: {
+          UtcTime: "2017-03-20 09:47:00.000",
+          ProcessGuid: "{11111111-2222-3333-4444-555555555555}",
+          ProcessId: "420",
+          Image: "C:\\Windows\\System32\\taskeng.exe",
+        },
+      }),
+    );
+    expect(r.events[0].canonical?.event).toMatchObject({ category: "process", type: "end" });
+    expect(r.events[0].canonical?.process).toMatchObject({
+      pid: 420,
+      executable: "C:\\Windows\\System32\\taskeng.exe",
+      id: "11111111-2222-3333-4444-555555555555",
+    });
+  });
+});
+
 describe('cleanIp — IPv6 shape validation (not just "contains a colon")', () => {
   it("rejects a free-text blob that merely contains colons as a bogus IPv6 IOC", () => {
     // A real observed case: a PowerShell cmdletization proxy-function dump (Get/Set-NetIPAddress

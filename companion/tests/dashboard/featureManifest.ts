@@ -134,6 +134,11 @@ export const FEATURES: Feature[] = [
     publish: ["loadKerberoastChain"],
     private: ["chain", "currentCaseId", "loadGen", "status"],
   },
+  {
+    file: "dashboard-sensitive-access.js",
+    publish: ["loadSensitiveAccess"],
+    private: ["reading", "currentCaseId", "loadGen", "status", "mutationError"],
+  },
   { file: "dashboard-backup.js", publish: ["loadCaseBackups", "restoreCaseBackup"], private: [] },
   {
     // The load-time-heavy one: everything it does on load is wrapped in initTicketIntegrations(),

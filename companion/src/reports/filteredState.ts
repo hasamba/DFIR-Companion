@@ -11,6 +11,7 @@ import { withEventTechniques } from "../analysis/eventTechniques.js";
 import { FindingOutcomeStore, withAnalystOutcomes } from "../analysis/findingOutcome.js";
 import { RemediationStore } from "../analysis/remediationBoundary.js";
 import { ServedLocationStore } from "../analysis/servedLocation.js";
+import { SensitiveLocationStore } from "../analysis/sensitiveLocation.js";
 
 // The one state projection every report artifact reads — markdown, HTML, docx, the CSV and
 // Timesketch exports, the evidence graph, the lateral-movement paths. It was a private method on
@@ -59,12 +60,14 @@ export async function loadFilteredState(
     })),
   }));
   const servedLocations = await new ServedLocationStore(src.cases).load(caseId);
+  const sensitiveLocations = await new SensitiveLocationStore(src.cases).load(caseId);
   const withOutcomes = withAnalystOutcomes(
     {
       ...scoped,
       forensicTimeline: kept,
       ...(boundaries.length ? { remediationBoundaries } : {}),
       ...(servedLocations.length ? { servedLocations } : {}),
+      ...(sensitiveLocations.length ? { sensitiveLocations } : {}),
     },
     outcomes,
   );

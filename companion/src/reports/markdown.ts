@@ -13,6 +13,7 @@ import { remediationChecksSection } from "./remediationSection.js";
 import { campaignScopeSection } from "./campaignScopeSection.js";
 import { servedExposureSection } from "./servedExposureSection.js";
 import { kerberoastChainSection } from "./kerberoastChainSection.js";
+import { sensitiveAccessSection } from "./sensitiveAccessSection.js";
 import { byEventTime } from "../analysis/forensicSort.js";
 import { emptyReportMeta, type ReportMeta, type ReportRevision } from "./reportMeta.js";
 import { deriveGlossary } from "./glossary.js";
@@ -1491,6 +1492,7 @@ export function renderMarkdownReport(
     campaignScope: () => campaignScopeSection(state, lines),
     servedExposure: () => servedExposureSection(state, lines),
     kerberoastChain: () => kerberoastChainSection(state, lines),
+    sensitiveAccess: () => sensitiveAccessSection(state, lines),
   };
 
   for (const key of orderedEnabledSections(template)) builders[key]();

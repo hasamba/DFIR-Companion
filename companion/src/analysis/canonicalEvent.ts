@@ -268,6 +268,17 @@ export const canonicalEventEnvelopeSchema = z.object({
       name: z.string().optional(),
       sha256: z.string().optional(),
       md5: z.string().optional(),
+      // The rights a Security object-access record carries (objectAccess.ts, #930 item 7): the
+      // mask as logged, the rights by bit, their classes, the object type and the handle.
+      access: z
+        .object({
+          mask: z.string().optional(),
+          rights: z.array(z.string()),
+          classes: z.array(z.string()),
+          objectType: z.string().optional(),
+          handleId: z.string().optional(),
+        })
+        .optional(),
     })
     .optional(),
   // A web request row and a transfer row as the sensor logged them, with the hops one upload

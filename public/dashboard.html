@@ -201,6 +201,7 @@
   <script src="/js/dashboard-campaign-scope.js"></script>
   <script src="/js/dashboard-served-exposure.js"></script>
   <script src="/js/dashboard-kerberoast-chain.js"></script>
+  <script src="/js/dashboard-sensitive-access.js"></script>
   <script src="/js/dashboard-backup.js"></script>
   <script src="/js/dashboard-collection-plan.js"></script>
   <script src="/js/dashboard-host-scope.js"></script>
@@ -3908,6 +3909,9 @@
     <section id="sec-kerberoast-chain" data-safe-style="grid-column: 1 / -1" class="collapsed"><h2>Kerberoast Chain<span class="ev-sub">per service account a ticket request names: the requests, the baseline before the earliest RC4 request, every later row where the exact account acts &mdash; cracking is not observable and is never said; later use does not prove it</span></h2>
       <div id="kerberoastChainPanel">&mdash;</div>
     </section>
+    <section id="sec-sensitive-access" data-safe-style="grid-column: 1 / -1" class="collapsed"><h2>Sensitive Access<span class="ev-sub">declare the files and folders that matter; per object under them, what the object-access rows establish &mdash; a read only on an evidenced file, the process instance and the session as candidates, suspicious only from the candidate&rsquo;s own rows; accessed, later archive, later connection are three columns</span></h2>
+      <div id="sensitiveAccessPanel">&mdash;</div>
+    </section>
     <section id="sec-case-details" data-safe-style="grid-column: 1 / -1" class="collapsed">
       <h2>Case Details (for the generated report)</h2>
       <div id="reportMeta">
@@ -4064,7 +4068,7 @@
       { id: "sec-inv-log",      label: "Investigation Log" },
       { id: "sec-activity",     label: "Activity Log" },
       { id: "sec-mcp",          label: "MCP Analysis" },
-      { id: "sec-custody",      label: "Chain of Custody" }, { id: "sec-intel-retirement", label: "Intel Retirement Review" }, { id: "sec-remediation", label: "Remediation Checks" }, { id: "sec-campaign-scope", label: "Campaign Scope" }, { id: "sec-served-exposure", label: "Served Exposure" }, { id: "sec-kerberoast-chain", label: "Kerberoast Chain" },
+      { id: "sec-custody",      label: "Chain of Custody" }, { id: "sec-intel-retirement", label: "Intel Retirement Review" }, { id: "sec-remediation", label: "Remediation Checks" }, { id: "sec-campaign-scope", label: "Campaign Scope" }, { id: "sec-served-exposure", label: "Served Exposure" }, { id: "sec-kerberoast-chain", label: "Kerberoast Chain" }, { id: "sec-sensitive-access", label: "Sensitive Access" },
       { id: "sec-case-details", label: "Case Details" },
     ];
     let DASHBOARD_VIEWS = [];                  // dashboard-view presets (#142), fetched from /dashboard-views

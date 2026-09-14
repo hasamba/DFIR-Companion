@@ -1055,3 +1055,52 @@ the account does not prove it. Every negative reason says whether the read was c
 ticket rows and 5,000 use rows per account). The report section (off in saved templates until
 switched on) renders the same tables.
 
+
+## Sensitive Access
+
+Declare the files and folders that matter, then read what the object-access rows establish about
+each object under them — without ever calling an access exfiltration.
+
+**Declare a sensitive location.** An exact file or a folder, on one host or any host, with a note.
+The declaration is classification: it says what matters, never what an object *is*. A filename
+(`passwords.xlsx`, `board-minutes.docx`) is never a rule.
+
+**What a 4663 establishes.** At that time on that host, a process (pid and image) in a logon
+session, as an account, exercised the rights in the access mask on the object. The rights decode
+by bit: `0x1` is *ReadData or ListDirectory* — the same bit for a file read and a folder listing,
+and the record cannot tell which. It becomes a **data read** only when the object is evidenced as
+a file at that time by the case's own file rows (a create / write, an MFT or listing row, with no
+delete between). Writes, deletes, metadata and attribute rights are read as what they are. A 4656
+is a *handle request*, never an access; a 5145 is a share object check; a Key object is not a
+document.
+
+**Candidates, never established.** No object-access record carries a stable process or session
+id. The **process instance** is a candidate when exactly one process-start row on the host has
+that pid and image before the access with no other start of that pid between and no termination
+row before the access; a pid reused with another image, two same-image starts with no
+termination between, or an incomplete start read is *ambiguous*. The **logon session** is a
+candidate when one 4624 with that logon id precedes the access on the host with no logoff and no
+boot between.
+
+**Stages, per object:** *access recorded* → *data read* → *read by candidate instance* →
+*corroborated suspicious read* — only when the candidate's own process row or its session's
+logon is graded High or above by the tagger. A host's findings never make a read suspicious; they
+are shown as context.
+
+**Three columns that never imply each other.** *Later archive create* and *later connection* list
+rows by the same process GUID within 60 minutes after a data read — subsequent activity by that
+process, never "staged" or "transferred". A *deletion candidate* is a 4660 with the same host,
+pid, logon id and handle within five minutes of a DELETE access.
+
+**Collection shapes.** One candidate instance reading ten or more distinct evidenced files within
+15 minutes — an indexer, a backup, an AV scan or a collection: the record does not say which,
+and no image name is trusted to decide. The facet reads *indeterminate* when unread rows overlap
+the window.
+
+**Coverage, said.** Object-access rows elsewhere on a host are context, not coverage of a
+location; a location with no access rows reads "no conclusion is available for this location and
+interval" (audit policy, SACLs and collection continuity are not in the case). Bounds: 20,000
+object-access rows per host, 50,000 process starts per host, 500 objects per location; every
+unread count is said. The report section (off in saved templates until switched on) renders the
+same tables.
+

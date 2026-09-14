@@ -33,6 +33,7 @@ import type { FindingWorkflowStore } from "../analysis/findingWorkflow.js";
 import type { FindingOutcomeStore } from "../analysis/findingOutcome.js";
 import type { RemediationStore } from "../analysis/remediationBoundary.js";
 import type { ServedLocationStore } from "../analysis/servedLocation.js";
+import type { SensitiveLocationStore } from "../analysis/sensitiveLocation.js";
 import type { NotebookStore } from "../analysis/notebookStore.js";
 import type { HypothesisStore } from "../analysis/hypothesisStore.js";
 import type { LearnedPatternStore } from "../analysis/learnedPatternStore.js";
@@ -208,6 +209,7 @@ export interface AppOptions {
   remediationStore?: RemediationStore;
   // Served locations the analyst declared (#930 item 4) — a side file beside the state.
   servedLocationStore?: ServedLocationStore;
+  sensitiveLocationStore?: SensitiveLocationStore;
   onFindingOutcome?: (caseId: string) => void;
   // Per-case analyst notebook (hypotheses, notes, open questions). onNotebook pings dashboard
   // clients over the WS to re-fetch when an entry is added, updated, or removed.
