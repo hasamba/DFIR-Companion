@@ -70,7 +70,12 @@ const scopeChange = (time: string, from: string, to: string, targetDomain: strin
   );
 
 const inherit = (time: string, enable: boolean) =>
-  rec(time, "acl_change", enable ? "enable_inherited_permissions" : "disable_inherited_permissions", docParams());
+  rec(
+    time,
+    "acl_change",
+    enable ? "enable_inherited_permissions" : "disable_inherited_permissions",
+    docParams(),
+  );
 
 const ownerChange = (time: string, to: string) =>
   rec(time, "acl_change", "change_owner", docParams({ new_value: to }));
@@ -221,7 +226,11 @@ describe("Drive document exposure: one row per document with a broadening change
   it("an unparseable id.time is excluded from ordering and counted, never dropped silently", () => {
     const bad = userAccess(at(0), "none", "can_edit", "bob@corp.example");
     (bad as Record<string, unknown> & { id: Record<string, unknown> }).id.time = "not-a-time";
-    const r = rows([bad, userAccess(at(10), "none", "can_view", "carol@corp.example"), access(at(20), "download")]);
+    const r = rows([
+      bad,
+      userAccess(at(10), "none", "can_view", "carol@corp.example"),
+      access(at(20), "download"),
+    ]);
     expect(r).toHaveLength(1);
     const env = canonicalEventEnvelopeSchema.parse(r[0].canonical);
     expect(env.driveExposure?.timeNotEstablished).toBe(1);

@@ -28,11 +28,7 @@
 import type { Severity } from "./stateTypes.js";
 import { boundedAggKey } from "./aggKey.js";
 import { createCanonicalEvent } from "./canonicalEvent.js";
-import type {
-  DriveDirection,
-  DriveExposureBlock,
-  DriveSharingBlock,
-} from "./canonicalGwsDrive.js";
+import type { DriveDirection, DriveExposureBlock, DriveSharingBlock } from "./canonicalGwsDrive.js";
 import { decodeGwsDrive, type GwsDriveReading } from "./gwsDrive.js";
 import { readGwsParams } from "./gwsOAuth.js";
 import { breakHashRuns, showToken } from "./recordIdentity.js";
@@ -180,32 +176,6 @@ function dimensionKey(base: string, sharing: DriveSharingBlock): string | null {
 
 const sharingWords = (r: GwsDriveReading): string => [r.direction, r.target].filter(Boolean).join(" ").trim();
 
-// ───────────────────────────── the scan ─────────────────────────────
-
-interface Scanned {
-  rec: Row;
-  locator: string;
-  time: number | null;
-  name: string;
-}
-
-function scan(records: readonly Row[]): Scanned[] {
-  const out: Scanned[] = [];
-  records.forEach((rec, recordIndex) => {
-    if (!isObject(rec)) return;
-    const app = lower(text(getPath(rec, "id.applicationName")));
-    if (app !== "drive") return;
-    const time = ms(text(getPath(rec, "id.time")));
-    const events = getCI(rec, "events");
-    (Array.isArray(events) ? events : []).forEach((e, eventIndex) => {
-      if (!isObject(e)) return;
-      out.push({ rec, locator: `record:${recordIndex}/event:${eventIndex}`, time, name: text(getCI(e, "name")) });
-      void e;
-    });
-  });
-  return out;
-}
-
 /** One summary row per document with a broadening change in this export. */
 export function gwsDriveExposureRows(records: readonly Row[]): MappedEvent[] {
   const docs = new Map<string, DocAgg>();
@@ -324,7 +294,12 @@ function buildWindows(events: readonly DimEvent[]): { intervals: Interval[]; con
       openStart = t;
       openStartLocator = broaden.locator;
     } else if (narrow && openStart !== null) {
-      intervals.push({ start: openStart, startLocator: openStartLocator, end: t, endLocator: narrow.locator });
+      intervals.push({
+        start: openStart,
+        startLocator: openStartLocator,
+        end: t,
+        endLocator: narrow.locator,
+      });
       openStart = null;
     }
   }
@@ -341,7 +316,10 @@ const windowsOpenAt = (all: readonly LabeledInterval[], t: number): LabeledInter
 
 // ───────────────────────────── the row ─────────────────────────────
 
-function buildRow(doc: DocAgg, coverage: { records: number; first: string; last: string }): { row: MappedEvent; grade: Severity } | null {
+function buildRow(
+  doc: DocAgg,
+  coverage: { records: number; first: string; last: string },
+): { row: MappedEvent; grade: Severity } | null {
   const allIntervals: LabeledInterval[] = [];
   const allConflicts: { dimension: string; time: number; locators: string[] }[] = [];
   let topSeverity: Severity = "Info";
@@ -363,7 +341,14 @@ function buildRow(doc: DocAgg, coverage: { records: number; first: string; last:
 
   // Accessors: only access records whose time falls inside the union of open windows. A distinct
   // accessor beyond the cap is counted once (`accessorsBeyond`), not once per its access records.
-  const accessors = new Map<string, { kind: AccessorKind; identity?: string; records: { time: number; locator: string; meaning: string; strength: number; windowsOpen: string[] }[] }>();
+  const accessors = new Map<
+    string,
+    {
+      kind: AccessorKind;
+      identity?: string;
+      records: { time: number; locator: string; meaning: string; strength: number; windowsOpen: string[] }[];
+    }
+  >();
   const accessorsBeyondKeys = new Set<string>();
   for (const a of doc.access) {
     if (a.time === null) continue;
@@ -399,18 +384,21 @@ function buildRow(doc: DocAgg, coverage: { records: number; first: string; last:
         `${iv.dimension}: opened ${iso(iv.start)}${iv.end !== undefined ? ` → narrowed ${iso(iv.end)}` : " — no narrowing record after this broadening in this export"}`,
     );
   const conflictWords = allConflicts.map(
-    (c) => `conflicting same-instant sharing changes on ${c.dimension} at ${iso(c.time)} — window state not changed by this instant`,
+    (c) =>
+      `conflicting same-instant sharing changes on ${c.dimension} at ${iso(c.time)} — window state not changed by this instant`,
   );
-  const changeWords = changes
-    .slice(0, CHANGES_NAMED_MAX)
-    .map((c) => `${c.base} ${iso(c.time)}: ${c.words}`);
+  const changeWords = changes.slice(0, CHANGES_NAMED_MAX).map((c) => `${c.base} ${iso(c.time)}: ${c.words}`);
   const changesBeyond = Math.max(0, changes.length - CHANGES_NAMED_MAX);
 
   const accessorLines = [...accessors.values()].map((a) => {
     const recs = [...a.records].sort((x, y) => y.strength - x.strength || x.time - y.time);
     const shown = recs.slice(0, ACCESS_PER_ACCESSOR_MAX);
     const beyond = recs.length - shown.length;
-    const who = a.identity ? show(a.identity, 60) : a.kind === "none" ? "no actor identity in this record" : "(unnamed)";
+    const who = a.identity
+      ? show(a.identity, 60)
+      : a.kind === "none"
+        ? "no actor identity in this record"
+        : "(unnamed)";
     const label = a.kind === "application" ? `an application (client ${who})` : who;
     const lines = shown.map(
       (r) => `${r.meaning} ${iso(r.time)} (windows open at that time: ${r.windowsOpen.join(", ")})`,
@@ -426,7 +414,9 @@ function buildRow(doc: DocAgg, coverage: { records: number; first: string; last:
 
   const parts = [
     head,
-    changeWords.length ? `changes in time order: ${changeWords.join("; ")}${changesBeyond ? ` [+${changesBeyond} more]` : ""}` : "",
+    changeWords.length
+      ? `changes in time order: ${changeWords.join("; ")}${changesBeyond ? ` [+${changesBeyond} more]` : ""}`
+      : "",
     windowWords.length ? `windows: ${windowWords.join("; ")}` : "",
     conflictWords.join("; "),
     accessSection,
@@ -445,7 +435,9 @@ function buildRow(doc: DocAgg, coverage: { records: number; first: string; last:
       .map((iv) => ({
         dimension: iv.dimension,
         opened: { time: iso(iv.start), locator: iv.startLocator, words: iv.dimension },
-        ...(iv.end !== undefined ? { closed: { time: iso(iv.end), locator: iv.endLocator!, words: iv.dimension } } : {}),
+        ...(iv.end !== undefined
+          ? { closed: { time: iso(iv.end), locator: iv.endLocator!, words: iv.dimension } }
+          : {}),
       })),
     windowsBeyond: doc.dimsBeyond,
     conflicts: allConflicts.map((c) => ({ dimension: c.dimension, time: iso(c.time), locators: c.locators })),
@@ -456,7 +448,12 @@ function buildRow(doc: DocAgg, coverage: { records: number; first: string; last:
         .slice()
         .sort((x, y) => y.strength - x.strength || x.time - y.time)
         .slice(0, ACCESS_PER_ACCESSOR_MAX)
-        .map((r) => ({ time: iso(r.time), locator: r.locator, meaning: r.meaning, windowsOpen: r.windowsOpen })),
+        .map((r) => ({
+          time: iso(r.time),
+          locator: r.locator,
+          meaning: r.meaning,
+          windowsOpen: r.windowsOpen,
+        })),
       recordsBeyond: Math.max(0, a.records.length - ACCESS_PER_ACCESSOR_MAX),
     })),
     accessorsBeyond,
@@ -469,7 +466,11 @@ function buildRow(doc: DocAgg, coverage: { records: number; first: string; last:
 
   const identity = `gws-drive-exposure|${lower(doc.tenant)}|${doc.docId}`;
   const observed =
-    firstBroadening !== null ? iso(firstBroadening) : firstConflict !== null ? iso(firstConflict) : coverage.first;
+    firstBroadening !== null
+      ? iso(firstBroadening)
+      : firstConflict !== null
+        ? iso(firstConflict)
+        : coverage.first;
   const locators = [
     ...allIntervals.flatMap((iv) => [iv.startLocator, ...(iv.endLocator ? [iv.endLocator] : [])]),
     ...allConflicts.flatMap((c) => c.locators),
