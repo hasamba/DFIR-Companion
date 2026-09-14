@@ -1,4 +1,6 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
+import { join } from "node:path";
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import { STATIC_ASSETS } from "../../src/http/staticAssets.js";
 import type { EscapeApi } from "./dashboardApi.js";
@@ -133,7 +135,76 @@ describe("esc drift guard", () => {
     expect(esc("it's")).toBe("it&#39;s");
     expect(escAttr(evil)).toBe(esc(evil)); // escAttr is idempotent over esc's output
   });
+
+  // #1050: the identity guard above covers the two copies that share the dashboard's shape. The
+  // other copies (present.html, admin.html, mobile.html, command-palette.js, dashboard-text.js,
+  // emailFormat.ts) each have their own shape, so they cannot be compared text-for-text — and one
+  // of them stayed quote-blind through #1028's sweep because no test enumerated it. This one walks
+  // the tree, evaluates every copy and RUNS it: a source check that only looked for the entity
+  // text would pass a copy whose map still says &#39; while its regex stopped matching the quote.
+  it("every esc copy in the tree, run on the five characters, escapes all five", async () => {
+    const copies = await findEscCopies();
+    expect(copies.map((c) => c.file).sort()).toEqual(ESC_COPIES);
+    for (const { file, esc } of copies) {
+      expect(esc(`&<>"'`), file).toBe("&amp;&lt;&gt;&quot;&#39;");
+    }
+  });
 });
+
+/** Every HTML escaper named `esc` in the tree. A copy that appears or disappears must be listed here. */
+const ESC_COPIES = [
+  "public/admin.html",
+  "public/dashboard.html",
+  "public/js/command-palette.js",
+  "public/js/dashboard-escape.js",
+  "public/js/dashboard-text.js",
+  "public/js/diagnostics-panel.js",
+  "public/mobile.html",
+  "public/present.html",
+  "src/integrations/notify/emailFormat.ts",
+];
+
+/** Finds each `function esc(` / `const esc = <fn>` under public/ and companion/src and evaluates it. */
+async function findEscCopies(): Promise<{ file: string; esc: (s: string) => string }[]> {
+  const roots = [new URL("../../../public/", import.meta.url), new URL("../../src/", import.meta.url)];
+  const out: { file: string; esc: (s: string) => string }[] = [];
+  for (const root of roots) {
+    for (const entry of await readdir(root, { recursive: true, withFileTypes: true })) {
+      if (!entry.isFile() || !/\.(js|ts|html)$/.test(entry.name)) continue;
+      // A Windows checkout has backslash paths and CRLF endings; the window search and the copy
+      // list both assume the POSIX forms.
+      const file = join(entry.parentPath, entry.name).replace(/\\/g, "/");
+      const src = (await readFile(file, "utf8")).replace(/\r\n/g, "\n");
+      const window = escSourceWindow(src);
+      if (window === null) continue;
+      const rel = file.slice(file.lastIndexOf(file.includes("/public/") ? "/public/" : "/src/") + 1);
+      // The TS copy carries `s: string): string`; nothing else in any copy needs stripping.
+      const js = window.replace(/:\s*string/g, "");
+      const esc = runInNewContext(`${js}\nesc;`, {}, { filename: rel }) as (s: string) => string;
+      out.push({ file: rel, esc });
+    }
+  }
+  return out;
+}
+
+/**
+ * The declaration's source: a `function esc(` runs to the first line holding only its closing
+ * brace, a `const esc =` function to its terminating `;`. An object-literal `const` on the line above
+ * (command-palette.js keeps its entity map there) is kept, so the copy evaluates on its own.
+ */
+function escSourceWindow(src: string): string | null {
+  const m = /(?:function esc\(|const esc = (?=\(?\w+\)? =>|function\b))/.exec(src);
+  if (!m) return null;
+  const decl = m.index;
+  const end = m[0].startsWith("function")
+    ? decl + src.slice(decl).search(/\n\s*}\s*\n/) + 1 + src.slice(decl).match(/\n\s*}/)![0].length
+    : src.indexOf(";\n", decl) + 1;
+  const lineStart = src.lastIndexOf("\n", decl - 1) + 1;
+  const prevStart = src.lastIndexOf("\n", lineStart - 2) + 1;
+  const prev = src.slice(prevStart, lineStart);
+  const start = /^\s*const \w+ = \{/.test(prev) ? prevStart : lineStart;
+  return src.slice(start, end);
+}
 
 // The inline script keeps calling all 95 of these by bare name. A classic script's top-level
 // declarations are global, so that works — but only while the file stays a classic script. An
