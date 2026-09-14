@@ -613,6 +613,17 @@ describe("parseSiemExport — who acted (#930 item 6): typed roles on the canoni
     expect(c.authentication).toEqual({ protocol: "kerberos", mechanism: "0x17" });
     expect(c.network?.source?.address).toBe("10.0.0.66");
   });
+  it("two Sysmon 1 rows that differ only by User stay two rows; the actor's provenance names EventData.User", () => {
+    const r = parseSiemExport(
+      elastic(SYSMON_PROC, {
+        ...SYSMON_PROC,
+        event_data: { ...SYSMON_PROC.event_data, User: "CORP\\svc_sql" },
+      }),
+    );
+    expect(r.events).toHaveLength(2);
+    expect(r.events.map((e) => e.canonical?.actor?.name)).toEqual(["NT AUTHORITY\\SYSTEM", "CORP\\svc_sql"]);
+    expect(r.events[0].canonical?.fieldProvenance["actor.name"]?.rawFields).toEqual(["EventData.User"]);
+  });
   it("Sysmon 1 carries its User as the acting account; 4648 carries the credential used as actor and the initiator as subject", () => {
     const r = parseSiemExport(elastic(SYSMON_PROC));
     expect(r.events[0].canonical?.actor).toEqual({

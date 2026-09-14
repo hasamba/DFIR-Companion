@@ -16,6 +16,8 @@ export interface RoleEntity {
 
 export interface RoleBlocks {
   actor?: RoleEntity;
+  /** The raw fields the actor was read from (provenance). */
+  actorFields?: string[];
   subject?: RoleEntity;
   account?: { id?: string; name: string; domain?: string };
   event?: { category: "authentication" | "network"; type: string; outcome?: "success" | "failed" };
@@ -68,7 +70,11 @@ export function winRoleBlocks(eid: number, isSysmon: boolean, field: Field): Rol
   if (isSysmon) {
     const user = eid === SYSMON_PROCESS_CREATE ? entity(field("User"), "", "") : undefined;
     return user
-      ? { actor: user, account: { name: user.name, ...(user.domain ? { domain: user.domain } : {}) } }
+      ? {
+          actor: user,
+          actorFields: ["EventData.User"],
+          account: { name: user.name, ...(user.domain ? { domain: user.domain } : {}) },
+        }
       : {};
   }
   const target = entity(field("TargetUserName"), field("TargetDomainName"), field("TargetUserSid"));
@@ -80,6 +86,9 @@ export function winRoleBlocks(eid: number, isSysmon: boolean, field: Field): Rol
   if (acting) {
     const { id, ...actor } = acting;
     out.actor = actor;
+    out.actorFields = target
+      ? ["EventData.TargetDomainName", "EventData.TargetUserName"]
+      : ["EventData.SubjectDomainName", "EventData.SubjectUserName"];
     out.account = {
       ...(id ? { id } : {}),
       name: acting.name,

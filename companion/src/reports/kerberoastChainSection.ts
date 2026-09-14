@@ -26,15 +26,15 @@ export function kerberoastChainSection(state: InvestigationState, lines: string[
   lines.push(
     "A 4769 establishes that the KDC issued (or refused) a service ticket for the named account to the requester; whether it was cracked is not observable. A later row where the exact account acts is a use of the account — it does not prove cracking, and the account may be in normal operation or compromised another way. Identity is the account name with a compatible realm; a name alone is a candidate.",
     "",
-    "| Service account | Realm | Stage | Requests (RC4 / AES / refused) | Earliest RC4 request | Baseline before it | Uses after | First-seen-host uses | Same observed address | Reason |",
-    "|---|---|---|---|---|---|---|---|---|---|",
+    "| Service account | Realm | SIDs seen | Stage | Requests (RC4 issued / other / refused) | Earliest issued RC4 request | Baseline before it | Uses after | First-seen-host uses | Same observed address | Reason |",
+    "|---|---|---|---|---|---|---|---|---|---|---|",
   );
   for (const a of chain.accounts) {
     const baseline = a.baseline.hostsBefore.length
       ? a.baseline.hostsBefore.map((h) => `${h.host} (${h.count})`).join(", ")
       : a.baseline.note;
     lines.push(
-      `| ${cellMd(a.service)} | ${a.realm ? cellMd(a.realm) : "not established"} | ${a.stage} | ${a.requestsTotal} (${a.rc4Count} / ${a.aesCount} / ${a.refusedCount}) | ${a.t0 ? cellMd(a.t0) : "—"}${a.t0Anchors ? "" : " (anchors nothing)"} | ${cellMd(baseline)} | ${a.evidence["account-used-after"].length} | ${a.evidence["first-seen-host-use"].length} | ${a.sameObservedAddressCount} | ${cellMd(a.stageReason)} |`,
+      `| ${cellMd(a.service)} | ${a.realm ? cellMd(a.realm) : "not established"} | ${a.sids.map(cellMd).join(", ") || "—"}${a.identityConflict ? " (conflict)" : ""} | ${a.stage} | ${a.requestsTotal} (${a.rc4Count} / ${a.aesCount} / ${a.refusedCount}) | ${a.t0 ? cellMd(a.t0) : "—"}${a.t0Anchors ? "" : " (anchors nothing)"} | ${cellMd(baseline)} | ${a.evidence["account-used-after"].length} | ${a.evidence["first-seen-host-use"].length} | ${a.sameObservedAddressCount} | ${cellMd(a.stageReason)} |`,
     );
   }
   lines.push("");
@@ -52,6 +52,7 @@ export function kerberoastChainSection(state: InvestigationState, lines: string[
         `| … | | | | | | | | | ${a.usesTotal - a.uses.length + a.candidatesTotal - a.candidates.length} more not shown |`,
       );
     lines.push("");
+    if (a.identityConflict) lines.push(`Identity conflict: ${cellMd(a.identityConflict)}.`, "");
     if (a.hostsWithoutBaseline.length)
       lines.push(
         `Baseline unavailable for ${a.hostsWithoutBaseline.map(cellMd).join(", ")}: no rows on that host before the request, so "first seen" cannot be said there.`,
@@ -66,9 +67,9 @@ export function kerberoastChainSection(state: InvestigationState, lines: string[
 
 function useRow(u: AccountUse): string {
   const same = u.sameObservedAddress
-    ? `${u.sameObservedAddress.useAddress} = request ${u.sameObservedAddress.requestEventId} (seen by ${u.sameObservedAddress.requestObserver}) — a shared address may be NAT / VPN / VDI`
+    ? `${u.sameObservedAddress.useAddress} (this host) and ${u.sameObservedAddress.requestAddress} (seen by ${u.sameObservedAddress.requestObserver}, request ${u.sameObservedAddress.requestEventId}) both read ${u.sameObservedAddress.normalised} — a shared address may be NAT / VPN / VDI`
     : "—";
-  return `| ${cellMd(u.eventId)} | ${cellMd(u.at)} | ${cellMd(u.host)} | ${u.kind}${u.logonType !== undefined ? ` (type ${u.logonType})` : ""} | ${cellMd(u.account)}${u.realmState === "not-established" ? " (candidate: realm not established)" : ""}${u.initiator ? ` by ${cellMd(u.initiator)}` : ""} | ${u.placement} | ${u.hostBaseline} | ${u.firstSeenHost ? "yes" : "no"} | ${cellMd(same)} | ${cellMd(u.detail ?? "")} |`;
+  return `| ${cellMd(u.eventId)} | ${cellMd(u.at)} | ${cellMd(u.host)} | ${u.kind}${u.logonType !== undefined ? ` (type ${u.logonType})` : ""} | ${cellMd(u.account)}${u.sid ? ` [${cellMd(u.sid)}]` : ""}${u.realmState === "not-established" ? " (candidate: realm not established)" : ""}${u.initiator ? ` by ${cellMd(u.initiator)}` : ""} | ${u.placement} | ${u.hostBaseline} | ${u.firstSeenHost ? "yes" : "no"} | ${cellMd(same)} | ${cellMd(u.detail ?? "")} |`;
 }
 
 function leads(tool: ReturnType<typeof kerberoastChain>["toolLeads"], gaps: string[], lines: string[]): void {

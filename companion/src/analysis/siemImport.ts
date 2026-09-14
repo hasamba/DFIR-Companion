@@ -1108,7 +1108,7 @@ export function mapWindows(
     rawFieldMap: {
       "time.observed": ["EventData.UtcTime", ...TIME_KEYS],
       ...(pa?.rawFields ?? {}),
-      ...(accountName ? { "actor.name": ["EventData.TargetDomainName", "EventData.TargetUserName"] } : {}),
+      ...(roles.actorFields ? { "actor.name": roles.actorFields } : {}),
       ...(host ? { "target.name": ["Computer", "host.name"] } : {}),
       ...(logonType !== undefined ? { "authentication.logonType": ["EventData.LogonType"] } : {}),
       ...(sourceIp ? { "network.source.address": ["EventData.IpAddress", "EventData.SourceIp"] } : {}),
@@ -1167,7 +1167,7 @@ export function mapWindows(
     // srv-a stay one host); a host-less export keys on "". pid keeps process creations distinct; a
     // Sysmon 15 stream carries its exact path's digest and the host file's hash (ntfsStreams.ts).
     aggKey:
-      `win|${host}|${channel}|${eid}|${accts.join(",")}|${pa ? "" : subject}${pid !== undefined ? `|pid=${pid}` : ""}${defender ? `|${defender.identity}` : ""}${ads?.identity ?? ""}${pa?.identity ?? ""}${dq?.identity ?? ""}`.toLowerCase(),
+      `win|${host}|${channel}|${eid}|${accts.join(",")}${isSysmon && accountName ? `|u=${accountName}` : ""}|${pa ? "" : subject}${pid !== undefined ? `|pid=${pid}` : ""}${defender ? `|${defender.identity}` : ""}${ads?.identity ?? ""}${pa?.identity ?? ""}${dq?.identity ?? ""}`.toLowerCase(),
     ...(sha256 ? { sha256 } : {}),
     ...(md5 ? { md5 } : {}),
     ...(imagePath ? { path: imagePath } : {}),

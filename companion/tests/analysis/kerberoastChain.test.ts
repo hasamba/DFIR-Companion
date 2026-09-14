@@ -5,6 +5,8 @@ import {
   realmCompatible,
   normaliseAddress,
   TICKET_ROWS_PER_ACCOUNT_MAX,
+  USE_ROWS_PER_ACCOUNT_MAX,
+  ACCOUNTS_MAX,
 } from "../../src/analysis/kerberoastChain.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 
@@ -102,13 +104,11 @@ const proc = (
       process: { executable: exe },
     }),
   });
-const anyRow = (host: string, ts: string, id?: string): ForensicEvent =>
-  ev({
-    id: id ?? `x-${host}-${ts}`,
-    timestamp: ts,
-    asset: host,
-    ...canon({ event: { category: "other", type: "event" } }),
-  });
+/** A host's reach into the past, per telemetry family: another account's logon and process start. */
+const anyRow = (host: string, ts: string, id?: string): ForensicEvent[] => [
+  logon("CORP\\other", host, ts, { id: `${id ?? `x-${host}-${ts}`}-a` }),
+  proc("CORP\\other", host, ts, "C:\\Windows\\explorer.exe", `${id ?? `x-${host}-${ts}`}-p`),
+];
 const tool = (host: string, account: string, ts: string, id = "tool"): ForensicEvent =>
   ev({
     id,
@@ -139,6 +139,11 @@ describe("identity helpers", () => {
   });
   it("normalises IPv4-mapped IPv6 and refuses placeholders", () => {
     expect(normaliseAddress("::ffff:10.0.0.66")).toBe("10.0.0.66");
+    expect(normaliseAddress("2001:DB8::0001")).toBe("2001:db8:0:0:0:0:0:1");
+    expect(normaliseAddress("2001:db8:0:0:0:0:0:1")).toBe("2001:db8:0:0:0:0:0:1");
+    expect(normaliseAddress("not an ip")).toBeNull();
+    expect(normaliseAddress("10.0.0.66 ")).toBe("10.0.0.66");
+    for (const ll of ["fe80::1", "FEBF::1", "fe9a::2"]) expect(normaliseAddress(ll)).toBeNull();
     expect(normaliseAddress("10.0.0.66")).toBe("10.0.0.66");
     for (const bad of ["-", "", "::1", "127.0.0.1", "0.0.0.0", "::", "fe80::1", "169.254.1.1"])
       expect(normaliseAddress(bad)).toBeNull();
@@ -148,7 +153,7 @@ describe("identity helpers", () => {
 describe("kerberoastChain — stages over exact identity", () => {
   it("RC4 request → later type-3 logon of CORP\\svc_sql on a host not seen before from the same address: every stage; nothing says cracked", () => {
     const rows = [
-      anyRow("FS01", at(0)),
+      ...anyRow("FS01", at(0)),
       tgs("svc_sql", at(10), { id: "t1" }),
       logon("CORP\\svc_sql", "FS01", at(12), { id: "u1", src: "::ffff:10.0.0.66", sid: "S-1-5-21-1" }),
       proc("CORP\\svc_sql", "FS01", at(13), "C:\\Windows\\System32\\cmd.exe", "u2"),
@@ -181,6 +186,7 @@ describe("kerberoastChain — stages over exact identity", () => {
       requestObserver: "DC01.corp.local",
       requestAddress: "10.0.0.66",
       useAddress: "::ffff:10.0.0.66",
+      normalised: "10.0.0.66",
     });
     expect(a.uses[1].sameObservedAddress).toBeUndefined();
     expect(a.evidence["ticket-requested"]).toEqual(["t1"]);
@@ -220,7 +226,7 @@ describe("kerberoastChain — stages over exact identity", () => {
   });
   it("uses before T0 only → ticket-requested with 'no use after'; a failed logon is not a use but is counted", () => {
     const rows = [
-      anyRow("FS01", at(0)),
+      ...anyRow("FS01", at(0)),
       logon("CORP\\svc_sql", "FS01", at(5), { id: "b1" }),
       tgs("svc_sql", at(10), { id: "t1" }),
       logon("CORP\\svc_sql", "FS01", at(12), { id: "f1", outcome: "failed" }),
@@ -233,7 +239,7 @@ describe("kerberoastChain — stages over exact identity", () => {
   });
   it("identity: svc_sql2, OTHER\\svc_sql and a use with no realm never join; a bare-name use is a candidate that advances nothing", () => {
     const rows = [
-      anyRow("FS01", at(0)),
+      ...anyRow("FS01", at(0)),
       tgs("svc_sql", at(10), { id: "t1" }),
       logon("CORP\\svc_sql2", "FS01", at(12), { id: "x1" }),
       logon("OTHER\\svc_sql", "FS01", at(12), { id: "x2" }),
@@ -247,7 +253,7 @@ describe("kerberoastChain — stages over exact identity", () => {
   });
   it("the service account's realm comes from the DC's FQDN; a DC named without a domain leaves it not established and every use a candidate", () => {
     const rows = [
-      anyRow("FS01", at(0)),
+      ...anyRow("FS01", at(0)),
       tgs("svc_sql", at(10), { id: "t1", dc: "DC01" }),
       logon("CORP\\svc_sql", "FS01", at(12), { id: "u1" }),
     ];
@@ -301,7 +307,7 @@ describe("kerberoastChain — stages over exact identity", () => {
   });
   it("tool evidence attaches to an account only through the requester's identity; alone it is a lead with the gap said", () => {
     const withTicket = [
-      anyRow("FS01", at(0)),
+      ...anyRow("FS01", at(0)),
       tool("WS09", "CORP\\attacker", at(9)),
       tgs("svc_sql", at(10), { id: "t1", requester: "CORP\\attacker" }),
     ];
@@ -331,7 +337,7 @@ describe("kerberoastChain — stages over exact identity", () => {
       tgs("svc_sql", at(50 + i / 1000), { id: `t${i}` }),
     );
     const rows = [
-      anyRow("FS01", at(0)),
+      ...anyRow("FS01", at(0)),
       ...many,
       tgs("svc_sql", at(1), { id: "early" }),
       logon("CORP\\svc_sql", "FS01", at(60), { id: "u1" }),
@@ -344,5 +350,104 @@ describe("kerberoastChain — stages over exact identity", () => {
     expect(a.stage).toBe("ticket-requested");
     expect(a.stageReason).toContain("unknown: 3 ticket row(s) unread");
     expect(a.requests).toHaveLength(20);
+  });
+
+  it("Codex code round 1: same-named accounts in two realms are two chains; the realm is per request and never borrowed", () => {
+    const rows = [
+      ...anyRow("FS01", at(0)),
+      tgs("svc_sql", at(10), { id: "t-corp", dc: "DC01.corp.local" }),
+      tgs("svc_sql", at(11), { id: "t-other", dc: "DC02.other.local" }),
+      logon("CORP\\svc_sql", "FS01", at(12), { id: "u-corp" }),
+      logon("OTHER\\svc_sql", "FS01", at(13), { id: "u-other" }),
+    ];
+    const c = kerberoastChain(stateOf(rows), NOW);
+    expect(
+      c.accounts.map((a) => [
+        a.service,
+        a.realm,
+        a.evidence["ticket-requested"],
+        a.uses.map((u) => u.eventId),
+      ]),
+    ).toEqual([
+      ["svc_sql", "corp.local", ["t-corp"], ["u-corp"]],
+      ["svc_sql", "other.local", ["t-other"], ["u-other"]],
+    ]);
+    // A DC named by address carries no realm: its own realm-less account.
+    const byIp = kerberoastChain(stateOf([tgs("svc_sql", at(10), { id: "ip", dc: "10.0.0.1" })]), NOW)
+      .accounts[0];
+    expect(byIp.realmSource).toBe("not-established");
+  });
+  it("Codex code round 1: refused-only RC4 requests issue nothing — listed as refused, no issuance or acquisition words, no anchor", () => {
+    const rows = [
+      ...anyRow("FS01", at(0)),
+      tgs("svc_sql", at(5), { id: "r", outcome: "failed" }),
+      logon("CORP\\svc_sql", "FS01", at(12), { id: "u1" }),
+    ];
+    const a = kerberoastChain(stateOf(rows), NOW).accounts[0];
+    expect(a.listedBecause).toBe("rc4-refused-only");
+    expect(a.rc4Count).toBe(0);
+    expect(a.refusedCount).toBe(1);
+    expect(a.t0).toBeUndefined();
+    expect(a.rc4Words).toBe("the KDC refused the request(s); no ticket was issued");
+    expect(a.acquisition).not.toContain("was issued to the requester");
+    expect(a.stage).toBe("ticket-requested");
+    expect(a.stageReason).toContain("no ticket was issued");
+    expect(a.uses[0].placement).toBe("undetermined");
+  });
+  it("Codex code round 1: a use at exactly T0 is contemporaneous and advances nothing", () => {
+    const rows = [
+      ...anyRow("FS01", at(0)),
+      tgs("svc_sql", at(10), { id: "t1" }),
+      logon("CORP\\svc_sql", "FS01", at(10), { id: "same" }),
+    ];
+    const a = kerberoastChain(stateOf(rows), NOW).accounts[0];
+    expect(a.uses[0]).toMatchObject({ placement: "contemporaneous", firstSeenHost: false });
+    expect(a.stage).toBe("ticket-requested");
+  });
+  it("Codex code round 1: two SIDs under one realm-qualified name are an identity conflict — said, every SID shown, no stage past ticket-requested", () => {
+    const rows = [
+      ...anyRow("FS01", at(0)),
+      tgs("svc_sql", at(10), { id: "t1" }),
+      logon("CORP\\svc_sql", "FS01", at(12), { id: "u1", sid: "S-1-5-21-1-2-3-1105" }),
+      logon("CORP\\svc_sql", "FS01", at(13), { id: "u2", sid: "S-1-5-21-1-2-3-2200" }),
+    ];
+    const a = kerberoastChain(stateOf(rows), NOW).accounts[0];
+    expect(a.sids).toEqual(["S-1-5-21-1-2-3-1105", "S-1-5-21-1-2-3-2200"]);
+    expect(a.identityConflict).toContain("2 distinct SIDs");
+    expect(a.stage).toBe("ticket-requested");
+    expect(a.evidence["account-used-after"]).toEqual([]);
+    expect(a.uses).toHaveLength(2);
+  });
+  it("Codex code round 1: the host baseline is per telemetry family — an old process row does not make a logon's absence a 'first seen'", () => {
+    const rows = [
+      proc("CORP\\other", "FS01", at(0), "C:\\Windows\\explorer.exe", "old-proc"),
+      tgs("svc_sql", at(10), { id: "t1" }),
+      logon("CORP\\svc_sql", "FS01", at(12), { id: "u1" }),
+      proc("CORP\\svc_sql", "FS01", at(13), "C:\\Windows\\System32\\cmd.exe", "u2"),
+    ];
+    const a = kerberoastChain(stateOf(rows), NOW).accounts[0];
+    expect(a.uses.map((u) => [u.eventId, u.hostBaseline, u.firstSeenHost])).toEqual([
+      ["u1", "unavailable", false],
+      ["u2", "available", true],
+    ]);
+  });
+  it("Codex code round 1: identity is checked before the quota — thousands of OTHER\\svc_sql rows never hide the CORP\\svc_sql use; account cap applied before analysis", () => {
+    const noise = Array.from({ length: USE_ROWS_PER_ACCOUNT_MAX + 5 }, (_, i) =>
+      logon("OTHER\\svc_sql", "FS01", at(12 + i / 100000), { id: `n${i}` }),
+    );
+    const rows = [
+      ...anyRow("FS01", at(0)),
+      tgs("svc_sql", at(10), { id: "t1" }),
+      ...noise,
+      logon("CORP\\svc_sql", "FS01", at(20), { id: "u1" }),
+    ];
+    const a = kerberoastChain(stateOf(rows), NOW).accounts[0];
+    expect(a.uses.map((u) => u.eventId)).toEqual(["u1"]);
+    expect(a.read.useRowsUnread).toBe(0);
+    const many = Array.from({ length: ACCOUNTS_MAX + 3 }, (_, i) => tgs(`svc_${i}`, at(1), { id: `a${i}` }));
+    const c = kerberoastChain(stateOf(many), NOW);
+    expect(c.accounts).toHaveLength(ACCOUNTS_MAX);
+    expect(c.accountsNotShown).toBe(3);
+    expect(c.gaps).toContain("3 further service account(s) past the bound, not analysed");
   });
 });
