@@ -460,6 +460,9 @@ export function decodeCloudTrailLogging(
     }
     return null;
   }
+  // AWS Config recorder calls (#1071) are decoded in awsConfigLogging.ts, called directly by
+  // awsImport.ts — never delegated to from here, since that file imports this one's `reading()`
+  // and shared helpers, and importing it back here would create a cycle.
   if (svc === "ec2" && n === "deleteflowlogs") {
     const ids = flowLogIds(req);
     return reading(

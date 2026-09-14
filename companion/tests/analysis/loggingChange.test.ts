@@ -625,3 +625,247 @@ describe("Azure diagnostic settings — logs, metrics and destinations read apar
     ).toBe("High");
   });
 });
+
+// #1071: AWS Config recorder calls, read for the state they establish. A separate `cfg()` fixture
+// builder (not `ct()`) since the CloudTrail default injects a `requestParameters.name: TRAIL`
+// field that would misleadingly stand in for `configurationRecorder.name` (Codex design round 1,
+// finding #12).
+describe("AWS Config recorder calls — the state the request establishes (#1071)", () => {
+  const cfg = (name: string, requestParameters: Row = {}, over: Row = {}): Row => ({
+    eventVersion: "1.08",
+    eventTime: "2024-05-01T09:00:00Z",
+    eventSource: "config.amazonaws.com",
+    eventName: name,
+    awsRegion: "us-east-1",
+    sourceIPAddress: "203.0.113.5",
+    userAgent: "aws-cli/2.15",
+    recipientAccountId: ACCT,
+    userIdentity: {
+      type: "IAMUser",
+      principalId: "AIDAEXAMPLE",
+      arn: `arn:aws:iam::${ACCT}:user/alice`,
+      accountId: ACCT,
+      userName: "alice",
+    },
+    requestParameters,
+    responseElements: null,
+    ...over,
+  });
+  const put = (recorder: Row, over: Row = {}) =>
+    aws([cfg("PutConfigurationRecorder", { configurationRecorder: recorder }, over)])[0];
+
+  it("all-supported, global included, continuous: an explicitly maximal configuration grades Low, state is prior-state-not-in-record (never created/reconfigured)", () => {
+    const e = put({
+      name: "default",
+      roleARN: "arn:aws:iam::111122223333:role/config-role",
+      recordingGroup: { allSupported: true, includeGlobalResourceTypes: true },
+      recordingMode: { recordingFrequency: "CONTINUOUS" },
+    });
+    expect(e.severity).toBe("Low");
+    expect(e.description).toContain("Config recorder default: all supported resource types");
+    const block = env(e).loggingChange!;
+    expect(block.state).toBe("prior-state-not-in-record");
+    expect(block.targetKind).toBe("config-recorder");
+    expect(block.target).toBe("default");
+    expect(e.description).toContain("the prior configuration is not in this record");
+    expect(canonicalConformanceIssues(env(e))).toEqual([]);
+  });
+
+  it("all-supported with global resource types excluded grades High and names the reason", () => {
+    const e = put({
+      recordingGroup: { allSupported: true, includeGlobalResourceTypes: false },
+      recordingMode: { recordingFrequency: "CONTINUOUS" },
+    });
+    expect(e.severity).toBe("High");
+    expect(e.description).toContain("global resource types excluded");
+  });
+
+  it("all-supported with a DAILY default frequency grades High", () => {
+    const e = put({
+      recordingGroup: { allSupported: true, includeGlobalResourceTypes: true },
+      recordingMode: { recordingFrequency: "DAILY" },
+    });
+    expect(e.severity).toBe("High");
+    expect(e.description).toContain("daily (not continuous) recording");
+  });
+
+  it("all-supported with a per-resource-type DAILY override grades High even though the default is CONTINUOUS", () => {
+    const e = put({
+      recordingGroup: { allSupported: true, includeGlobalResourceTypes: true },
+      recordingMode: {
+        recordingFrequency: "CONTINUOUS",
+        recordingModeOverrides: [{ resourceTypes: ["AWS::EC2::Instance"], recordingFrequency: "DAILY" }],
+      },
+    });
+    expect(e.severity).toBe("High");
+    expect(e.description).toContain("daily (not continuous) recording");
+    expect(env(e).loggingChange?.facts).toEqual(
+      expect.arrayContaining([{ name: "recordingModeOverride", value: "AWS::EC2::Instance → DAILY" }]),
+    );
+  });
+
+  it("inclusion-by-resource-types strategy always grades High and names the list", () => {
+    const e = put({
+      recordingGroup: {
+        recordingStrategy: { useOnly: "INCLUSION_BY_RESOURCE_TYPES" },
+        resourceTypes: ["AWS::EC2::Instance", "AWS::IAM::Role"],
+      },
+    });
+    expect(e.severity).toBe("High");
+    expect(e.description).toContain("inclusion list (AWS::EC2::Instance, AWS::IAM::Role)");
+  });
+
+  it("legacy allSupported:false with an explicit resourceTypes list is treated the same as inclusion — High", () => {
+    const e = put({ recordingGroup: { allSupported: false, resourceTypes: ["AWS::S3::Bucket"] } });
+    expect(e.severity).toBe("High");
+    expect(e.description).toContain("inclusion list (AWS::S3::Bucket)");
+  });
+
+  it("exclusion-by-resource-types with a non-empty list grades High; includeGlobalResourceTypes has no effect under this strategy", () => {
+    const e = put({
+      recordingGroup: {
+        recordingStrategy: { useOnly: "EXCLUSION_BY_RESOURCE_TYPES" },
+        includeGlobalResourceTypes: false,
+        exclusionByResourceTypes: { resourceTypes: ["AWS::EC2::Instance"] },
+      },
+    });
+    expect(e.severity).toBe("High");
+    expect(e.description).toContain("exclusion list (AWS::EC2::Instance)");
+  });
+
+  it("exclusion-by-resource-types with an EMPTY exclusion list is effectively unrestricted — Low", () => {
+    const e = put({
+      recordingGroup: {
+        recordingStrategy: { useOnly: "EXCLUSION_BY_RESOURCE_TYPES" },
+        exclusionByResourceTypes: { resourceTypes: [] },
+      },
+    });
+    expect(e.severity).toBe("Low");
+    expect(e.description).toContain("exclusion strategy, no resource types excluded");
+  });
+
+  it("an unrecognized recordingStrategy value grades Medium and says so, never guessed into a known strategy", () => {
+    const e = put({ recordingGroup: { recordingStrategy: { useOnly: "SOMETHING_NEW" } } });
+    expect(e.severity).toBe("Medium");
+    expect(e.description).toContain("recording strategy not recognized in this record");
+  });
+
+  it("recordingGroup absent cites AWS's documented default rather than inventing a fact — Medium", () => {
+    const e = put({ recordingMode: { recordingFrequency: "CONTINUOUS" } });
+    expect(e.severity).toBe("Medium");
+    expect(e.description).toContain(
+      "recordingGroup absent; AWS's documented default records all supported resource types except the global IAM types",
+    );
+  });
+
+  it("recordingMode absent cites AWS's documented default (CONTINUOUS), never invents a frequency", () => {
+    const e = put({ recordingGroup: { allSupported: true, includeGlobalResourceTypes: true } });
+    expect(e.description).toContain("recordingMode absent; AWS's documented default is CONTINUOUS");
+    // No narrowing signal beyond the absence itself -> still Low, since the documented default IS continuous.
+    expect(e.severity).toBe("Low");
+  });
+
+  it("more than LIST_MAX resource types: the DISPLAYED list is bounded and discloses truncation, but two configurations differing only past the cap remain two distinct aggregated rows", () => {
+    const many = Array.from({ length: 12 }, (_, i) => `AWS::Service${i}::Type`);
+    const eA = put({
+      recordingGroup: {
+        recordingStrategy: { useOnly: "INCLUSION_BY_RESOURCE_TYPES" },
+        resourceTypes: many,
+      },
+      // An explicit recordingMode removes the "recordingMode absent" qualifier, keeping the
+      // combined qualifier text under renderLoggingDescription's own length bound so the
+      // truncation disclosure this test checks for is not itself clipped out.
+      recordingMode: { recordingFrequency: "CONTINUOUS" },
+    });
+    expect(eA.description).toContain("8 of 12 resource types shown");
+    const manyDiffering = [...many.slice(0, 8), "AWS::Different::TypeA", "AWS::Different::TypeB", "x", "y"];
+    const eB = put({
+      recordingGroup: {
+        recordingStrategy: { useOnly: "INCLUSION_BY_RESOURCE_TYPES" },
+        resourceTypes: manyDiffering,
+      },
+    });
+    const together = aws([
+      cfg("PutConfigurationRecorder", {
+        configurationRecorder: {
+          recordingGroup: {
+            recordingStrategy: { useOnly: "INCLUSION_BY_RESOURCE_TYPES" },
+            resourceTypes: many,
+          },
+        },
+      }),
+      cfg("PutConfigurationRecorder", {
+        configurationRecorder: {
+          recordingGroup: {
+            recordingStrategy: { useOnly: "INCLUSION_BY_RESOURCE_TYPES" },
+            resourceTypes: manyDiffering,
+          },
+        },
+      }),
+    ]);
+    expect(together).toHaveLength(2);
+    expect(eA.aggKey).not.toBe(eB.aggKey);
+  });
+
+  it("StopConfigurationRecorder is disabled/High, targetKind config-recorder", () => {
+    const e = aws([cfg("StopConfigurationRecorder", { configurationRecorderName: "default" })])[0];
+    expect(e.severity).toBe("High");
+    expect(e.description).toContain("Config recorder stopped: default");
+    expect(env(e).loggingChange?.targetKind).toBe("config-recorder");
+    expect(env(e).loggingChange?.state).toBe("disabled");
+  });
+
+  it("DeleteDeliveryChannel is deleted/High, targetKind config-delivery-channel, and states the recorder had to be stopped first (never 'may still run')", () => {
+    const e = aws([cfg("DeleteDeliveryChannel", { deliveryChannelName: "default" })])[0];
+    expect(e.severity).toBe("High");
+    expect(e.description).toContain(
+      "the customer-managed recorder had to be stopped first and cannot restart until a delivery channel exists again",
+    );
+    expect(e.description).not.toContain("may still run");
+    expect(env(e).loggingChange?.targetKind).toBe("config-delivery-channel");
+    expect(env(e).loggingChange?.state).toBe("deleted");
+  });
+
+  it("a denied PutConfigurationRecorder is an attempt — never establishes the resulting state", () => {
+    const e = aws([
+      cfg(
+        "PutConfigurationRecorder",
+        {
+          configurationRecorder: {
+            recordingGroup: { allSupported: false, resourceTypes: ["AWS::EC2::Instance"] },
+          },
+        },
+        { errorCode: "AccessDenied" },
+      ),
+    ])[0];
+    expect(e.description).toContain("requested (denied)");
+    expect(env(e).loggingChange?.state).toBe("requested");
+    expect(env(e).loggingChange?.requestedState).toBe("prior-state-not-in-record");
+  });
+
+  it("a denied StopConfigurationRecorder / DeleteDeliveryChannel is also an attempt", () => {
+    const stop = aws([
+      cfg(
+        "StopConfigurationRecorder",
+        { configurationRecorderName: "default" },
+        { errorCode: "AccessDenied" },
+      ),
+    ])[0];
+    expect(env(stop).loggingChange?.state).toBe("requested");
+    const del = aws([
+      cfg(
+        "DeleteDeliveryChannel",
+        { deliveryChannelName: "default" },
+        { errorCode: "NoSuchDeliveryChannel" },
+      ),
+    ])[0];
+    expect(env(del).loggingChange?.state).toBe("requested");
+  });
+
+  it("recorder and delivery-channel calls are canonically conformant", () => {
+    const put1 = put({ recordingGroup: { allSupported: true, includeGlobalResourceTypes: true } });
+    const stop = aws([cfg("StopConfigurationRecorder", { configurationRecorderName: "default" })])[0];
+    const del = aws([cfg("DeleteDeliveryChannel", { deliveryChannelName: "default" })])[0];
+    for (const e of [put1, stop, del]) expect(canonicalConformanceIssues(env(e))).toEqual([]);
+  });
+});
