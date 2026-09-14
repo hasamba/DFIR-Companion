@@ -28,6 +28,8 @@ import {
   LIMIT_NOTE,
   RAW_RECORDS_MAX,
   SOURCES_NAMED_MAX,
+  byTime,
+  firstTime,
   iso,
   orderOf,
   plural,
@@ -162,14 +164,13 @@ export function summaryRow(
   uploadId: string,
 ): MappedEvent {
   const lifecycle = inst.lifecycle.all();
-  const rules = [...inst.rules.values()]
-    .flatMap((b) => b.all())
-    .sort((a, b) => a.time - b.time || a.locator.localeCompare(b.locator));
+  const sess = inst.session;
+  const rules = [...inst.rules.values()].flatMap((b) => b.all()).sort(byTime);
   const rulesBeyond = [...inst.rules.values()].reduce((n, b) => n + b.beyond, 0);
   const changes = [
     ...lifecycle.map((e) => ({ time: e.time, words: lifecycleWords(inst, e) })),
     ...rules.map((r) => ({ time: r.time, words: ruleWords(inst, r) })),
-  ].sort((a, b) => a.time - b.time);
+  ].sort(byTime);
   const changesBeyond = Math.max(0, changes.length - CHANGES_NAMED_MAX) + inst.lifecycle.beyond + rulesBeyond;
   const parts = [
     inst.launch ? launchWords(inst.launch) : "launch not in this upload",
@@ -192,7 +193,7 @@ export function summaryRow(
       ? [
           `remote-access requests (requested; whether anything ran is not in CloudTrail): ${inst.remote
             .slice()
-            .sort((a, b) => a.time - b.time)
+            .sort(byTime)
             .map(
               (r) =>
                 `${show(r.call, 50)}${r.document ? ` [${show(r.document, 40)}]` : ""} ${whoAt(r.time, r.by, r.locator)}`,
@@ -204,12 +205,27 @@ export function summaryRow(
       ? [`attempts: ${inst.attempts.denied} denied, ${inst.attempts.failed} failed — not joined`]
       : []),
   ];
+  // Each fact is named with the record it rests on — the earliest of its kind — so the decisive
+  // evidence lives in the tail, which is never clipped.
   const factWords = facts.length
-    ? `recorded facts: ${facts.map((f) => FACT_WORDS[f]).join(", ")} (${plural(facts.length, "kind")})`
+    ? `recorded facts: ${facts
+        .map((f) => {
+          const c = inst.facts.get(f);
+          return `${FACT_WORDS[f]}${c ? ` (${c.locator})` : ""}`;
+        })
+        .join(", ")} (${plural(facts.length, "kind")})`
     : "recorded facts: none";
-  const cited = [...new Set([...(inst.launch?.locators ?? []), ...inst.locators])].slice(0, RAW_RECORDS_MAX);
-  const contributing = new Set([...(inst.launch?.locators ?? []), ...inst.locators]).size;
-  const notCited = Math.max(0, contributing - cited.length);
+  // One deduplicated evidence list: the launch, the session's bounds and every fact's record
+  // reserved first, then the other contributing records up to the cap; `notCited` is what the
+  // count of every citation leaves out.
+  const reserved = [
+    ...(inst.launch?.locators ?? []),
+    ...(sess.first ? [sess.first.locator] : []),
+    ...(sess.last ? [sess.last.locator] : []),
+    ...[...inst.facts.values()].map((c) => c.locator),
+  ];
+  const cited = [...new Set([...reserved, ...inst.locators])].slice(0, RAW_RECORDS_MAX);
+  const notCited = Math.max(0, inst.contributing - cited.length);
   // The sequence and the facts the grade rests on are packed with the tail, never clipped.
   const tail = [
     ...(correlatedSequence(lifecycle)
@@ -231,7 +247,6 @@ export function summaryRow(
     )
     .digest("hex")
     .slice(0, 32);
-  const sess = inst.session;
   const block: AwsComputeBlock = {
     instanceId: inst.id,
     account: inst.account,
@@ -283,8 +298,7 @@ export function summaryRow(
     coverage,
     basis: BASIS,
   };
-  const observedAt = inst.launch?.time ?? lifecycle[0]?.time ?? sess.first?.time ?? 0;
-  const observed = iso(observedAt);
+  const observed = iso(firstTime(inst));
   const mitre =
     grade === "Low"
       ? []
@@ -315,14 +329,22 @@ export function summaryRow(
   };
 }
 
-export function omittedRow(count: number, severity: Severity, untracked: number): MappedEvent {
-  const description = `AWS compute lifecycle — ${count} further instance${count === 1 ? "" : "s"} with a lifecycle in this upload beyond the ${AWS_COMPUTE_MAX} reported — not shown${untracked ? ` (${untracked} of them past the ${INSTANCES_TRACKED_MAX} tracked, their records not read)` : ""}`;
+/** The instances beyond the reported bound, and the records past the tracked bound — counts, never claims; keyed with the upload like every row. */
+export function omittedRow(
+  count: number,
+  severity: Severity,
+  untrackedRecords: number,
+  uploadId: string,
+): MappedEvent {
+  const description = `AWS compute lifecycle — ${count ? `${count} further instance${count === 1 ? "" : "s"} with a lifecycle in this upload beyond the ${AWS_COMPUTE_MAX} reported — not shown` : "no further instance beyond the reported"}${untrackedRecords ? `; ${plural(untrackedRecords, "record")} naming instances past the ${INSTANCES_TRACKED_MAX} tracked — not read` : ""}`;
   return {
     timestamp: "",
     description,
     severity,
     mitre: [],
-    aggKey: boundedAggKey(`aws-compute-lifecycle|omitted|${count}`),
+    aggKey: boundedAggKey(
+      `aws-compute-lifecycle|omitted|${createHash("sha256").update(uploadId).digest("hex").slice(0, 16)}|${count}|${untrackedRecords}`,
+    ),
     sources: ["AWS CloudTrail"],
     canonical: createCanonicalEvent({
       event: { category: "cloud", type: "compute-lifecycle", action: "omitted" },

@@ -50,11 +50,14 @@ import {
   cite,
   field,
   firstTime,
+  groupsAt,
   identityWords,
   instFor,
   items,
+  keepEarliest,
   lower,
   ms,
+  noteFact,
   orderOf,
   outcomeOf,
   strings,
@@ -79,12 +82,15 @@ export {
 
 // ───────────────────────────── scanning ─────────────────────────────
 
+/** Replica locators kept per shared event — a pathological sharedEventID never grows a list. */
+const REPLICA_LOCATORS_MAX = 8;
+
 interface Scanned {
   rec: Row;
   index: number;
   time: number;
   who: AwsIdentity;
-  /** Every replica record's locator — a cross-account launch cites both. */
+  /** Every replica record's locator (bounded) — a cross-account action cites each. */
   locators: string[];
   locator: string;
   request: Row;
@@ -97,16 +103,26 @@ interface Scanned {
   by: string;
 }
 
-/** One record per cross-account action (replicas grouped by sharedEventID; the informative one read; every replica cited). */
-function scan(records: readonly Row[]): Scanned[] {
+/**
+ * One record per cross-account action (replicas grouped by sharedEventID; the informative one
+ * read; every replica cited), in time order with the record position as the tie-breaker — so
+ * nothing downstream depends on the file's order. Coverage counts every raw record with a time.
+ */
+function scan(
+  records: readonly Row[],
+  coverage: { records: number; first: string; last: string },
+): Scanned[] {
   const chosen = new Map<string, Scanned>();
-  const order: string[] = [];
   records.forEach((rec, index) => {
     const name = str(getCI(rec, "eventName")).trim();
     const source = str(getCI(rec, "eventSource")).trim();
     if (!name || !source) return;
     const time = ms(str(getCI(rec, "eventTime")));
     if (time === null) return;
+    const t = normalizeTime(str(getCI(rec, "eventTime")));
+    coverage.records += 1;
+    if (!coverage.first || t < coverage.first) coverage.first = t;
+    if (!coverage.last || t > coverage.last) coverage.last = t;
     const who = readAwsIdentity(rec);
     const replica = str(getCI(rec, "sharedEventID")).trim();
     const own = str(getCI(rec, "eventID")).trim();
@@ -134,21 +150,20 @@ function scan(records: readonly Row[]): Scanned[] {
     const informative = !["AWSAccount", "AWSService", "Unknown"].includes(who.kind);
     if (!cur) {
       chosen.set(id, entry);
-      order.push(id);
       return;
     }
     const swap = informative && ["AWSAccount", "AWSService", "Unknown"].includes(cur.who.kind);
     const kept = swap ? entry : cur;
-    kept.locators = [...cur.locators, locator];
+    kept.locators = [...cur.locators, locator].slice(0, REPLICA_LOCATORS_MAX);
     // The response facts live on whichever replica carries them.
     if (Object.keys(kept.response).length === 0) kept.response = swap ? cur.response : entry.response;
     if (!kept.account) kept.account = swap ? cur.account : entry.account;
     chosen.set(id, kept);
   });
-  return order.map((id) => chosen.get(id)!);
+  return [...chosen.values()].sort((a, b) => a.time - b.time || a.index - b.index);
 }
 
-// ───────────────────────────── pass 1: records that name the instance ─────────────────────────────
+// ───────────────────────────── pass 1: the launches ─────────────────────────────
 
 function launchFacts(s: Scanned, item: Row): Omit<AwsComputeLaunch, "time"> & Timed {
   const userData = getCI(s.request, "userData");
@@ -191,8 +206,9 @@ function launchFacts(s: Scanned, item: Row): Omit<AwsComputeLaunch, "time"> & Ti
   };
 }
 
+/** Launches fill the tracked table first (in time order), so an instance that always emits is never displaced by a lone reference. */
 function recordLaunch(t: Tracked, s: Scanned): void {
-  if (s.outcome !== "success") return;
+  if (lower(s.name) !== "runinstances" || s.outcome !== "success") return;
   const account = field(s.response, "ownerId") || s.account;
   if (!account || !s.region) return;
   for (const item of items(getCI(s.response, "instancesSet"))) {
@@ -200,12 +216,19 @@ function recordLaunch(t: Tracked, s: Scanned): void {
     if (!INSTANCE_ID.test(id)) continue;
     const inst = instFor(t, account, s.region, id);
     if (!inst) continue;
-    if (!inst.launch || s.time < inst.launch.time) inst.launch = launchFacts(s, item);
-    for (const g of inst.launch.groups)
-      if (!inst.groups.has(lower(g.id))) inst.groups.set(lower(g.id), s.time);
-    for (const l of s.locators) cite(inst, l);
+    if (!inst.launch) {
+      inst.launch = launchFacts(s, item);
+      inst.groupSets.push({
+        time: s.time,
+        locator: s.locator,
+        groups: inst.launch.groups.map((g) => lower(g.id)),
+      });
+    }
+    cite(inst, s.locators);
   }
 }
+
+// ───────────────────────────── pass 2: records that name the instance ─────────────────────────────
 
 const noteAttempt = (inst: Inst, outcome: Outcome): void => {
   if (outcome === "denied") inst.attempts.denied += 1;
@@ -218,7 +241,12 @@ function pushLifecycle(
   entry: Omit<Lifecycle, "time" | "locator" | "by" | "call">,
 ): void {
   inst.lifecycle.push({ ...entry, call: s.name, time: s.time, locator: s.locator, by: s.by });
-  cite(inst, s.locator);
+  cite(inst, s.locators);
+  // The facts are noted on every record, not read back from the retained buffer — and only after the launch.
+  if (orderOf(inst, s.time) !== "after") return;
+  if (entry.kind === "startup-config-replaced") noteFact(inst, "startup-config-replaced", s.time, s.locator);
+  if (entry.kind === "profile-associated" || entry.kind === "profile-replaced")
+    noteFact(inst, "profile-changed", s.time, s.locator);
 }
 
 function recordState(t: Tracked, s: Scanned): void {
@@ -265,12 +293,19 @@ function recordModify(t: Tracked, s: Scanned): void {
   // The content of a startup configuration is never read — only that the call replaced one.
   if (has("userData")) return pushLifecycle(inst, s, { kind: "startup-config-replaced" });
   if (has("groupSet")) {
+    // A group set REPLACES the instance's groups: a new membership statement from this time on.
     const groups = items(getCI(s.request, "groupSet"))
       .map((g) => field(g, "groupId"))
       .filter(Boolean)
       .slice(0, GROUPS_MAX);
-    for (const g of groups)
-      if (!inst.groups.has(lower(g)) && inst.groups.size < GROUPS_MAX) inst.groups.set(lower(g), s.time);
+    if (
+      !keepEarliest(
+        inst.groupSets,
+        { time: s.time, locator: s.locator, groups: groups.map(lower) },
+        GROUPS_MAX,
+      )
+    )
+      inst.groupSetsBeyond += 1;
     return pushLifecycle(inst, s, { kind: "groups-set", groups });
   }
   if (has("disableApiTermination")) return pushLifecycle(inst, s, { kind: "termination-protection" });
@@ -279,6 +314,7 @@ function recordModify(t: Tracked, s: Scanned): void {
   pushLifecycle(inst, s, { kind: "attribute-modified", attribute: named ?? "other" });
 }
 
+/** All three profile operations read the instance, the profile and the state from the returned association — the authoritative one. */
 function recordProfile(t: Tracked, s: Scanned): void {
   const kind = (
     {
@@ -290,16 +326,24 @@ function recordProfile(t: Tracked, s: Scanned): void {
   if (!kind) return;
   const assoc = isObject(getCI(s.response, "iamInstanceProfileAssociation"))
     ? (getCI(s.response, "iamInstanceProfileAssociation") as Row)
-    : {};
-  // Replace and Disassociate name the instance only in a successful response.
-  const id = kind === "profile-associated" ? field(s.request, "instanceId") : field(assoc, "instanceId");
+    : null;
+  // A failed Associate still names the instance in its request — an attempt on that instance.
+  if (s.outcome !== "success") {
+    const id = kind === "profile-associated" ? field(s.request, "instanceId") : "";
+    if (INSTANCE_ID.test(id) && s.account && s.region) {
+      const inst = instFor(t, s.account, s.region, id);
+      if (inst) noteAttempt(inst, s.outcome);
+    }
+    return;
+  }
+  if (!assoc) return;
+  const id = field(assoc, "instanceId");
   if (!INSTANCE_ID.test(id) || !s.account || !s.region) return;
   const inst = instFor(t, s.account, s.region, id);
   if (!inst) return;
-  if (s.outcome !== "success") return noteAttempt(inst, s.outcome);
   const profile =
-    field(s.request, "iamInstanceProfile", "arn") ||
     field(assoc, "iamInstanceProfile", "arn") ||
+    field(s.request, "iamInstanceProfile", "arn") ||
     field(s.request, "iamInstanceProfile", "name");
   const state = field(assoc, "state");
   pushLifecycle(inst, s, {
@@ -309,45 +353,28 @@ function recordProfile(t: Tracked, s: Scanned): void {
   });
 }
 
-function recordAddress(t: Tracked, s: Scanned): void {
-  const name = lower(s.name);
-  if (name !== "associateaddress" && name !== "disassociateaddress") return;
-  if (!s.account || !s.region) return;
-  const push = (inst: Inst, entry: Omit<Address, "time" | "locator" | "by">): void => {
-    if (inst.addresses.length < ADDRESSES_MAX)
-      inst.addresses.push({ ...entry, time: s.time, locator: s.locator, by: s.by });
-    else inst.addressesBeyond += 1;
-    cite(inst, s.locator);
-  };
-  if (name === "associateaddress") {
-    const id = field(s.request, "instanceId");
-    if (!INSTANCE_ID.test(id)) return;
-    const inst = instFor(t, s.account, s.region, id);
-    if (!inst) return;
-    if (s.outcome !== "success") return noteAttempt(inst, s.outcome);
-    const associationId = field(s.response, "associationId");
-    if (associationId) inst.associationIds.add(lower(associationId));
-    const allocationId = field(s.request, "allocationId");
-    const address = field(s.request, "publicIp");
-    push(inst, {
-      action: "associate",
-      ...(allocationId ? { allocationId } : {}),
-      ...(address ? { address } : {}),
-      ...(associationId ? { associationId } : {}),
-    });
-    return;
-  }
-  // A disassociation joins only through an association id this instance's own records returned.
-  if (s.outcome !== "success") return;
-  const associationId = field(s.request, "associationId");
-  if (!associationId) return;
-  for (const inst of t.instances.values())
-    if (
-      inst.account === lower(s.account) &&
-      inst.region === lower(s.region) &&
-      inst.associationIds.has(lower(associationId))
-    )
-      push(inst, { action: "disassociate", associationId });
+function pushAddress(inst: Inst, s: Scanned, entry: Omit<Address, "time" | "locator" | "by">): void {
+  if (!keepEarliest(inst.addresses, { ...entry, time: s.time, locator: s.locator, by: s.by }, ADDRESSES_MAX))
+    inst.addressesBeyond += 1;
+  cite(inst, s.locators);
+}
+
+function recordAssociate(t: Tracked, s: Scanned): void {
+  if (lower(s.name) !== "associateaddress" || !s.account || !s.region) return;
+  const id = field(s.request, "instanceId");
+  if (!INSTANCE_ID.test(id)) return;
+  const inst = instFor(t, s.account, s.region, id);
+  if (!inst) return;
+  if (s.outcome !== "success") return noteAttempt(inst, s.outcome);
+  const associationId = field(s.response, "associationId");
+  const allocationId = field(s.request, "allocationId");
+  const address = field(s.request, "publicIp");
+  pushAddress(inst, s, {
+    action: "associate",
+    ...(allocationId ? { allocationId } : {}),
+    ...(address ? { address } : {}),
+    ...(associationId ? { associationId } : {}),
+  });
 }
 
 /** The instance ids a remote-access request names exactly — a tag selector never names one. */
@@ -376,20 +403,20 @@ function recordRemote(t: Tracked, s: Scanned): void {
       noteAttempt(inst, s.outcome);
       continue;
     }
-    if (inst.remote.length < REMOTE_MAX)
-      inst.remote.push({
-        call: `${s.service} ${s.name}`,
-        ...(document ? { document } : {}),
-        time: s.time,
-        locator: s.locator,
-        by: s.by,
-      });
-    else inst.remoteBeyond += 1;
-    cite(inst, s.locator);
+    const entry = {
+      call: `${s.service} ${s.name}`,
+      ...(document ? { document } : {}),
+      time: s.time,
+      locator: s.locator,
+      by: s.by,
+    };
+    if (!keepEarliest(inst.remote, entry, REMOTE_MAX)) inst.remoteBeyond += 1;
+    noteFact(inst, "remote-access-request", s.time, s.locator);
+    cite(inst, s.locators);
   }
 }
 
-// ───────────────────────────── pass 2: rules on the groups, the instance's own session ─────────────────────────────
+// ───────────────────────────── pass 3: rules on the groups, disassociations, the instance's own session ─────────────────────────────
 
 interface Permission {
   protocol: string;
@@ -397,39 +424,35 @@ interface Permission {
   source: string;
   anySource: boolean;
 }
-/** Every (permission, source) pair of an ingress request, as recorded — bounded per record. */
-function permissions(request: Row): Permission[] {
-  const out: Permission[] = [];
+/** Every (permission, source) pair of an ingress request, as recorded: the first few retained for the words, ALL read for the any-source fact. */
+function permissions(request: Row): { retained: Permission[]; anySource: boolean; total: number } {
+  const retained: Permission[] = [];
+  let anySource = false;
+  let total = 0;
   for (const p of items(getCI(request, "ipPermissions"))) {
     const proto = field(p, "ipProtocol");
     const protocol = proto === "-1" ? "all protocols" : proto || "protocol not recorded";
     const from = field(p, "fromPort");
     const to = field(p, "toPort");
     const ports = from && to && from !== to ? `${from}-${to}` : from || to;
-    const sources: { source: string; anySource: boolean }[] = [
-      ...items(getCI(p, "ipRanges")).map((r) => ({
-        source: field(r, "cidrIp"),
-        anySource: ANY_SOURCE.has(field(r, "cidrIp")),
-      })),
-      ...items(getCI(p, "ipv6Ranges")).map((r) => ({
-        source: field(r, "cidrIpv6"),
-        anySource: ANY_SOURCE.has(field(r, "cidrIpv6")),
-      })),
-      ...items(getCI(p, "groups")).map((g) => ({
-        source: `group ${field(g, "groupId") || field(g, "groupName")}${field(g, "userId") ? ` (owner ${field(g, "userId")})` : ""}`,
-        anySource: false,
-      })),
-      ...items(getCI(p, "prefixListIds")).map((l) => ({
-        source: `prefix list ${field(l, "prefixListId")}`,
-        anySource: false,
-      })),
-    ].filter((x) => x.source);
-    for (const src of sources) {
-      if (out.length >= RULE_SOURCES_PER_RECORD_MAX) return out;
-      out.push({ protocol, ports, ...src });
-    }
+    const push = (source: string, any: boolean): void => {
+      if (!source) return;
+      total += 1;
+      anySource = anySource || any;
+      if (retained.length < RULE_SOURCES_PER_RECORD_MAX)
+        retained.push({ protocol, ports, source, anySource: any });
+    };
+    for (const r of items(getCI(p, "ipRanges"))) push(field(r, "cidrIp"), ANY_SOURCE.has(field(r, "cidrIp")));
+    for (const r of items(getCI(p, "ipv6Ranges")))
+      push(field(r, "cidrIpv6"), ANY_SOURCE.has(field(r, "cidrIpv6")));
+    for (const g of items(getCI(p, "groups")))
+      push(
+        `group ${field(g, "groupId") || field(g, "groupName")}${field(g, "userId") ? ` (owner ${field(g, "userId")})` : ""}`,
+        false,
+      );
+    for (const l of items(getCI(p, "prefixListIds"))) push(`prefix list ${field(l, "prefixListId")}`, false);
   }
-  return out;
+  return { retained, anySource, total };
 }
 
 function recordRule(byGroup: Map<string, Inst[]>, s: Scanned): void {
@@ -443,15 +466,26 @@ function recordRule(byGroup: Map<string, Inst[]>, s: Scanned): void {
   const holders = byGroup.get(`${lower(s.account)}|${lower(s.region)}|${lower(groupId)}`) ?? [];
   const perms = permissions(s.request);
   for (const inst of holders) {
-    // Held at the rule's time: from the launch (any order — the instance launched into the group), or from a groups-set at or before it.
-    const heldFrom = inst.groups.get(lower(groupId));
-    const fromLaunch = inst.launch?.groups.some((g) => lower(g.id) === lower(groupId));
-    if (heldFrom === undefined || (!fromLaunch && s.time < heldFrom)) continue;
+    // Joined only against the membership statement in force at the rule's time.
+    if (!groupsAt(inst, s.time)?.includes(lower(groupId))) continue;
     const buf = inst.rules.get(lower(groupId)) ?? new EdgeBuffer<Rule>(RULES_EARLY_MAX, RULES_LATE_MAX);
     inst.rules.set(lower(groupId), buf);
-    for (const p of perms) buf.push({ groupId, action, ...p, time: s.time, locator: s.locator, by: s.by });
-    cite(inst, s.locator);
+    for (const p of perms.retained)
+      buf.push({ groupId, action, ...p, time: s.time, locator: s.locator, by: s.by });
+    buf.count += perms.total - perms.retained.length;
+    if (action === "authorize" && perms.anySource) noteFact(inst, "any-address-rule", s.time, s.locator);
+    cite(inst, s.locators);
   }
+}
+
+/** A disassociation joins only through an association id one of this instance's retained associations returned. */
+function recordDisassociate(byAssociation: Map<string, Inst[]>, s: Scanned): void {
+  if (lower(s.name) !== "disassociateaddress" || s.outcome !== "success" || !s.account || !s.region) return;
+  const associationId = field(s.request, "associationId");
+  if (!associationId) return;
+  for (const inst of byAssociation.get(`${lower(s.account)}|${lower(s.region)}|${lower(associationId)}`) ??
+    [])
+    pushAddress(inst, s, { action: "disassociate", associationId });
 }
 
 /** The instance's own session: AssumedRole, ec2RoleDelivery set, the id as the suffix of BOTH principalId and the ARN, the instance's account. */
@@ -505,7 +539,7 @@ function recordSession(byAccountId: Map<string, Inst[]>, s: Scanned): void {
       cleanIp(str(getCI(s.rec, "sourceIPAddress"))) || str(getCI(s.rec, "sourceIPAddress")).trim();
     const agent = str(getCI(s.rec, "userAgent")).trim();
     trackSource(sess, `${address}|${agent}`, address, agent, s.time, s.locator);
-    cite(inst, s.locator);
+    cite(inst, s.locators);
     const kind = shapeOf(str(getCI(s.rec, "eventSource")), s.name);
     if (!kind) continue;
     if (s.outcome !== "success") {
@@ -521,78 +555,81 @@ function recordSession(byAccountId: Map<string, Inst[]>, s: Scanned): void {
     slot.count += 1;
     if (!slot.earliest || s.time < slot.earliest.time) slot.earliest = hit;
     if (slot.named.length < SHAPES_NAMED_MAX) slot.named.push(hit);
+    noteFact(
+      inst,
+      kind === "privileged-change" ? "session-privileged-change" : "session-remote-execution",
+      s.time,
+      s.locator,
+    );
   }
 }
 
 // ───────────────────────────── the pass ─────────────────────────────
 
+const index = (map: Map<string, Inst[]>, key: string, inst: Inst): void => {
+  (map.get(key) ?? map.set(key, []).get(key)!).push(inst);
+};
+
 /** One summary row per instance the upload's records form a lifecycle for; the rows say what they rest on. */
 export function awsComputeLifecycles(records: readonly Row[], uploadId: string): MappedEvent[] {
-  const t: Tracked = { instances: new Map(), untracked: new Set() };
+  const t: Tracked = { instances: new Map(), untrackedRecords: 0 };
   const coverage = { records: 0, first: "", last: "" };
-  const scanned = scan(records);
-  for (const s of scanned) {
-    const time = normalizeTime(str(getCI(s.rec, "eventTime")));
-    coverage.records += 1;
-    if (!coverage.first || time < coverage.first) coverage.first = time;
-    if (!coverage.last || time > coverage.last) coverage.last = time;
-    if (s.service !== "ec2" && s.service !== "ssm" && s.service !== "ec2-instance-connect") continue;
-    if (lower(s.name) === "runinstances") recordLaunch(t, s);
+  const scanned = scan(records, coverage);
+  const own = scanned.filter(
+    (s) => s.service === "ec2" || s.service === "ssm" || s.service === "ec2-instance-connect",
+  );
+  // Pass 1: the launches, so a launched instance is always tracked and its launch time is known
+  // before any later record is ordered against it.
+  for (const s of own) recordLaunch(t, s);
+  // Pass 2: every other record that names the instance in its own request or response.
+  for (const s of own) {
     recordState(t, s);
     recordModify(t, s);
     recordProfile(t, s);
-    recordAddress(t, s);
+    recordAssociate(t, s);
     recordRemote(t, s);
   }
+  // Pass 3: the records joined through what the instance's own records established.
   const byGroup = new Map<string, Inst[]>();
   const byAccountId = new Map<string, Inst[]>();
+  const byAssociation = new Map<string, Inst[]>();
   for (const inst of t.instances.values()) {
-    for (const g of inst.groups.keys()) {
-      const k = `${inst.account}|${inst.region}|${g}`;
-      (byGroup.get(k) ?? byGroup.set(k, []).get(k)!).push(inst);
-    }
-    const k = `${inst.account}|${lower(inst.id)}`;
-    (byAccountId.get(k) ?? byAccountId.set(k, []).get(k)!).push(inst);
+    for (const g of new Set(inst.groupSets.flatMap((gs) => gs.groups)))
+      index(byGroup, `${inst.account}|${inst.region}|${g}`, inst);
+    index(byAccountId, `${inst.account}|${lower(inst.id)}`, inst);
+    for (const a of inst.addresses)
+      if (a.action === "associate" && a.associationId)
+        index(byAssociation, `${inst.account}|${inst.region}|${lower(a.associationId)}`, inst);
   }
   for (const s of scanned) {
     recordRule(byGroup, s);
+    recordDisassociate(byAssociation, s);
     recordSession(byAccountId, s);
   }
+  for (const inst of t.instances.values())
+    if (enumerationWindow(inst.session.enumeration)) {
+      const w = enumerationWindow(inst.session.enumeration)!;
+      noteFact(inst, "session-enumeration", w.time, w.locator);
+    }
   const findings = [...t.instances.values()]
-    .map((inst) => ({ inst, facts: factsOf(inst) }))
+    .map((inst) => ({ inst, facts: [...inst.facts.keys()] as AwsComputeFact[] }))
     .filter(({ inst, facts }) => inst.launch || inst.lifecycle.count >= 2 || facts.length > 0)
     .map((f) => ({ ...f, grade: gradeOf(f.facts) }))
     .sort(
       (a, b) =>
         RANK[b.grade] - RANK[a.grade] ||
         firstTime(a.inst) - firstTime(b.inst) ||
-        a.inst.id.localeCompare(b.inst.id),
+        a.inst.id.localeCompare(b.inst.id) ||
+        a.inst.account.localeCompare(b.inst.account) ||
+        a.inst.region.localeCompare(b.inst.region),
     );
   const rows = findings
     .slice(0, AWS_COMPUTE_MAX)
     .map((f) => summaryRow(f.inst, f.facts, f.grade, coverage, uploadId));
-  const omitted = findings.length - AWS_COMPUTE_MAX + t.untracked.size;
-  if (omitted > 0)
-    rows.push(omittedRow(omitted, findings[AWS_COMPUTE_MAX]?.grade ?? "Low", t.untracked.size));
+  const omitted = Math.max(0, findings.length - AWS_COMPUTE_MAX);
+  if (omitted > 0 || t.untrackedRecords > 0)
+    rows.push(omittedRow(omitted, findings[AWS_COMPUTE_MAX]?.grade ?? "Low", t.untrackedRecords, uploadId));
   return rows;
-}
-
-/** The earliest record of the instance — the launch, else its first lifecycle, remote or session record. */
-
-function factsOf(inst: Inst): AwsComputeFact[] {
-  const out = new Set<AwsComputeFact>();
-  for (const e of inst.lifecycle.all()) {
-    if (orderOf(inst, e.time) === "before") continue;
-    if (e.kind === "startup-config-replaced") out.add("startup-config-replaced");
-    if (e.kind === "profile-associated" || e.kind === "profile-replaced") out.add("profile-changed");
-  }
-  for (const buf of inst.rules.values())
-    if (buf.all().some((r) => r.action === "authorize" && r.anySource)) out.add("any-address-rule");
-  if (inst.session.shapes["privileged-change"].count) out.add("session-privileged-change");
-  if (inst.session.shapes["remote-execution"].count) out.add("session-remote-execution");
-  if (enumerationWindow(inst.session.enumeration)) out.add("session-enumeration");
-  if (inst.remote.length) out.add("remote-access-request");
-  return [...out];
 }
 
 /** Two or more distinct recorded-fact kinds → High; one → Medium; none → Low. */

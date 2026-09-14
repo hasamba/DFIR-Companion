@@ -289,7 +289,7 @@ describe("awsComputeLifecycles — recorded configuration changes", () => {
       "TerminateInstances: running → shutting-down at 2024-05-01T11:00:00.000Z",
     );
     expect(row.description).toContain(
-      "recorded facts: startup configuration replaced after the launch (1 kind)",
+      "recorded facts: startup configuration replaced after the launch (record:2) (1 kind)",
     );
     expect(row.description).not.toContain("not terminated within this upload");
     for (const s of [row.description, row.aggKey, JSON.stringify(row.canonical)])
@@ -544,6 +544,183 @@ describe("awsComputeLifecycles — recorded configuration changes", () => {
   });
 });
 
+describe("awsComputeLifecycles — code round 1 (Codex findings)", () => {
+  it("a group set REPLACES the launch groups: a later rule on the replaced-away group is not joined, and file order does not matter", () => {
+    const records = [
+      launch(),
+      rec({
+        eventName: "ModifyInstanceAttribute",
+        eventTime: at(30),
+        requestParameters: { instanceId: INST, groupSet: { items: [{ groupId: SG2 }] } },
+        responseElements: { _return: true },
+      }),
+      ingress(SG, "0.0.0.0/0", { eventTime: at(70) }),
+      ingress(SG, "0.0.0.0/0", { eventTime: at(10) }),
+    ];
+    const [row] = rows(records);
+    expect(row.severity).toBe("Medium");
+    expect(row.description).toContain(
+      `AuthorizeSecurityGroupIngress recorded on ${SG}: tcp 22 from 0.0.0.0/0 (any address) at 2024-05-01T09:00:10.000Z`,
+    );
+    expect(row.description).not.toContain("at 2024-05-01T09:01:10.000Z");
+    const shuffled = rows([records[2], records[3], records[1], records[0]]);
+    const norm = (d: string) => d.replace(/record:\d+/g, "record:x");
+    expect(norm(shuffled[0].description)).toBe(norm(row.description));
+  });
+
+  it("a fact is counted on the whole upload, not read back from a retained buffer: the ninth source of one rule, and a replacement evicted from the middle", () => {
+    const [ninth] = rows([
+      launch(),
+      rec({
+        eventName: "AuthorizeSecurityGroupIngress",
+        eventTime: at(70),
+        requestParameters: {
+          groupId: SG,
+          ipPermissions: {
+            items: [
+              {
+                ipProtocol: "tcp",
+                fromPort: 22,
+                toPort: 22,
+                ipRanges: {
+                  items: [
+                    ...Array.from({ length: 8 }, (_, i) => ({ cidrIp: `10.0.${i}.0/24` })),
+                    { cidrIp: "0.0.0.0/0" },
+                  ],
+                },
+              },
+            ],
+          },
+        },
+        responseElements: { _return: true },
+      }),
+    ]);
+    expect(ninth.severity).toBe("Medium");
+    expect(ninth.description).toContain(
+      "any-address ingress rule recorded on a group the instance holds (record:1)",
+    );
+    const [evicted] = rows([
+      launch(),
+      ...Array.from({ length: 30 }, (_, i) =>
+        state("StopInstances", "running", "stopping", { eventTime: at(60 + i) }),
+      ),
+      modifyUserData({ eventTime: at(95) }),
+      ...Array.from({ length: 30 }, (_, i) =>
+        state("StartInstances", "stopped", "pending", { eventTime: at(100 + i) }),
+      ),
+    ]);
+    expect(evicted.severity).toBe("Medium");
+    expect(evicted.description).toContain("startup configuration replaced after the launch (record:31)");
+    expect(evicted.canonical?.evidence.rawRecords.map((r) => r.locator)).toContain("record:31");
+  });
+
+  it("a startup configuration replaced at the launch's own time, or with no launch in the upload, is listed but not a fact", () => {
+    const [same] = rows([launch(), modifyUserData()]);
+    expect(same.severity).toBe("Low");
+    expect(same.mitre).toEqual([]);
+    const [noLaunch] = rows([
+      state("StopInstances", "running", "stopping", { eventTime: at(10) }),
+      modifyUserData({ eventTime: at(20) }),
+      state("StartInstances", "stopped", "pending", { eventTime: at(30) }),
+    ]);
+    expect(noLaunch.severity).toBe("Low");
+    expect(noLaunch.description).toContain("a correlated API sequence");
+    expect(noLaunch.description).toContain("recorded facts: none");
+  });
+
+  it("a profile operation without a returned association is not joined; the returned instance and profile win over the request", () => {
+    const [absent] = rows([
+      launch(),
+      rec({
+        eventName: "AssociateIamInstanceProfile",
+        eventTime: at(100),
+        requestParameters: {
+          instanceId: INST,
+          iamInstanceProfile: { arn: `arn:aws:iam::${ACCT}:instance-profile/admin` },
+        },
+        responseElements: { _return: true },
+      }),
+    ]);
+    expect(absent.severity).toBe("Low");
+    expect(absent.description).not.toContain("AssociateIamInstanceProfile");
+    const [conflict] = rows([
+      launch(),
+      rec({
+        eventName: "AssociateIamInstanceProfile",
+        eventTime: at(100),
+        requestParameters: { instanceId: INST2, iamInstanceProfile: { name: "requested" } },
+        responseElements: {
+          iamInstanceProfileAssociation: {
+            associationId: "iip-assoc-9",
+            instanceId: INST,
+            iamInstanceProfile: { arn: `arn:aws:iam::${ACCT}:instance-profile/returned` },
+            state: "associating",
+          },
+        },
+      }),
+    ]);
+    expect(conflict.description).toContain(
+      `AssociateIamInstanceProfile: instance profile arn:aws:iam::${ACCT}:instance-profile/returned`,
+    );
+    expect(conflict.description).not.toContain("requested");
+  });
+
+  it("a disassociation earlier in the file than its association still joins; the omitted row is keyed with the upload", () => {
+    const [row] = rows([
+      launch(),
+      rec({
+        eventName: "DisassociateAddress",
+        eventTime: at(900),
+        requestParameters: { associationId: "eipassoc-0bbb" },
+        responseElements: { _return: true },
+      }),
+      rec({
+        eventName: "AssociateAddress",
+        eventTime: at(120),
+        requestParameters: { instanceId: INST, allocationId: "eipalloc-0aaa" },
+        responseElements: { associationId: "eipassoc-0bbb", _return: true },
+      }),
+    ]);
+    expect(row.description).toContain(
+      "DisassociateAddress: association eipassoc-0bbb at 2024-05-01T09:15:00.000Z",
+    );
+    expect(envelopeOf(row).awsCompute?.addresses.map((a) => a.action)).toEqual(["associate", "disassociate"]);
+    const many = Array.from({ length: AWS_COMPUTE_MAX + 1 }, (_, i) =>
+      launch({ eventTime: at(i) }, [instanceItem(`i-${String(i).padStart(17, "0")}`)]),
+    );
+    const omittedA = awsComputeLifecycles(many, "upload-a").find((e) =>
+      e.description.includes("further instance"),
+    )!;
+    const omittedB = awsComputeLifecycles(many, "upload-b").find((e) =>
+      e.description.includes("further instance"),
+    )!;
+    expect(omittedA.aggKey).not.toBe(omittedB.aggKey);
+  });
+
+  it("a remote-access-only row is timestamped at its first record, never the epoch", () => {
+    const all = rows([sendCommand({ instanceIds: [INST2] })]);
+    expect(all).toHaveLength(1);
+    expect(all[0].timestamp).toBe("2024-05-01T09:30:00.000Z");
+    expect(all[0].canonical?.time.observed).toBe("2024-05-01T09:30:00.000Z");
+  });
+
+  it("replicas of one cross-account launch: both records cited, coverage counts both, the informative identity read", () => {
+    const shared = "shared-1";
+    const [row] = rows([
+      launch({
+        sharedEventID: shared,
+        userIdentity: { type: "AWSAccount", principalId: "", accountId: OTHER },
+        recipientAccountId: OTHER,
+      }),
+      launch({ sharedEventID: shared }),
+    ]);
+    expect(row.description).toContain("(record:0, record:1)");
+    expect(row.description).toContain("launched 2024-05-01T09:00:00.000Z by IAMUser");
+    expect(row.description).toContain("among the 2 records of this upload");
+    expect(row.canonical?.evidence.rawRecords.map((r) => r.locator)).toEqual(["record:0", "record:1"]);
+  });
+});
+
 describe("awsComputeLifecycles — API calls using instance-role credentials", () => {
   it("calls signed with the instance's own credentials are counted with their recorded sourceIPAddress — never called the instance's address", () => {
     const [row] = rows([
@@ -634,7 +811,7 @@ describe("awsComputeLifecycles — API calls using instance-role credentials", (
       "privileged change by the instance-role credentials: iam CreateAccessKey at 2024-05-01T09:11:40.000Z (record:1)",
     );
     expect(one.description).toContain(
-      "recorded facts: privileged change by the instance-role credentials (1 kind)",
+      "recorded facts: privileged change by the instance-role credentials (record:1) (1 kind)",
     );
     const [two] = rows([launch(), ingress(SG, "0.0.0.0/0", { eventTime: at(70) }), priv]);
     expect(two.severity).toBe("High");
@@ -711,7 +888,9 @@ describe("awsComputeLifecycles — remote-access requests to the instance", () =
     expect(row.description).not.toContain("2024-05-01T09:33:20.000Z");
     expect(row.description).toContain("ssm StartSession at 2024-05-01T09:35:00.000Z");
     expect(row.description).toContain("ec2-instance-connect SendSSHPublicKey at 2024-05-01T09:36:40.000Z");
-    expect(row.description).toContain("recorded facts: remote-access request to the instance (1 kind)");
+    expect(row.description).toContain(
+      "recorded facts: remote-access request to the instance (record:1) (1 kind)",
+    );
     expect(row.mitre).toContain("T1651");
     for (const s of [row.description, row.aggKey, JSON.stringify(row.canonical)]) {
       expect(s).not.toContain("SECRET-TOKEN");

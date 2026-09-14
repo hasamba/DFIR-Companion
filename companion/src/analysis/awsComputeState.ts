@@ -149,10 +149,24 @@ export class EdgeBuffer<T extends Timed> {
     return this.count - this.early.length - this.late.length;
   }
 }
-function insertSorted<T extends Timed>(buf: T[], v: T): void {
+/** Time order with the record position as the tie-breaker — equal timestamps never depend on file order. */
+export const byTime = (a: Timed, b: Timed): number =>
+  a.time - b.time ||
+  (a as { locator?: string }).locator?.localeCompare((b as { locator?: string }).locator ?? "") ||
+  0;
+export function insertSorted<T extends Timed>(buf: T[], v: T): void {
   let i = buf.length;
-  while (i > 0 && buf[i - 1].time > v.time) i -= 1;
+  while (i > 0 && byTime(buf[i - 1], v) > 0) i -= 1;
   buf.splice(i, 0, v);
+}
+/** Keep the earliest `max` entries by time, count the rest. */
+export function keepEarliest<T extends Timed>(buf: T[], v: T, max: number): boolean {
+  insertSorted(buf, v);
+  if (buf.length > max) {
+    buf.pop();
+    return false;
+  }
+  return true;
 }
 
 export interface Cited {
@@ -169,22 +183,29 @@ export type Lifecycle = Omit<AwsComputeLifecycle, "time" | "order"> & Timed;
 export type Rule = Omit<AwsComputeRule, "time" | "order"> & Timed;
 export type Address = Omit<AwsComputeAddress, "time"> & Timed;
 export type Remote = Omit<AwsComputeRemote, "time"> & Timed;
+/** One membership statement — the launch's group set, or a successful ModifyInstanceAttribute group set, which REPLACES it. */
+export interface GroupSet extends Timed {
+  locator: string;
+  groups: string[];
+}
 export interface Inst {
   account: string;
   region: string;
   id: string;
   launch: (Omit<AwsComputeLaunch, "time"> & Timed) | null;
-  /** Group id → the time the instance's own records first name it (the launch, or a groups-set). */
-  groups: Map<string, number>;
+  /** Membership statements in time order (the earliest kept); a rule joins against the statement in force at its time. */
+  groupSets: GroupSet[];
+  groupSetsBeyond: number;
   lifecycle: EdgeBuffer<Lifecycle>;
   rules: Map<string, EdgeBuffer<Rule>>;
+  /** The earliest address records by time. */
   addresses: Address[];
   addressesBeyond: number;
-  /** Association ids this instance's own associations returned — a disassociation joins through them. */
-  associationIds: Set<string>;
   remote: Remote[];
   remoteBeyond: number;
   attempts: { denied: number; failed: number };
+  /** Every fact kind seen while scanning — set on the whole upload, never from a retained buffer — with its earliest record. */
+  facts: Map<AwsComputeFact, Cited>;
   session: {
     records: number;
     first: Cited | null;
@@ -199,13 +220,16 @@ export interface Inst {
     >;
     attempts: number;
   };
+  /** The first cited locators, and the count of every citation — the row reserves the decisive ones first. */
   locators: string[];
+  contributing: number;
   terminatedAt: number | null;
 }
 
 export interface Tracked {
   instances: Map<string, Inst>;
-  untracked: Set<string>;
+  /** Records naming an instance past the tracked bound — counted, never read. */
+  untrackedRecords: number;
 }
 
 export function instFor(t: Tracked, account: string, region: string, id: string): Inst | null {
@@ -213,7 +237,7 @@ export function instFor(t: Tracked, account: string, region: string, id: string)
   const cur = t.instances.get(key);
   if (cur) return cur;
   if (t.instances.size >= INSTANCES_TRACKED_MAX) {
-    t.untracked.add(key);
+    t.untrackedRecords += 1;
     return null;
   }
   const inst: Inst = {
@@ -221,15 +245,16 @@ export function instFor(t: Tracked, account: string, region: string, id: string)
     region: lower(region),
     id,
     launch: null,
-    groups: new Map(),
+    groupSets: [],
+    groupSetsBeyond: 0,
     lifecycle: new EdgeBuffer(LIFECYCLE_EARLY_MAX, LIFECYCLE_LATE_MAX),
     rules: new Map(),
     addresses: [],
     addressesBeyond: 0,
-    associationIds: new Set(),
     remote: [],
     remoteBeyond: 0,
     attempts: { denied: 0, failed: 0 },
+    facts: new Map(),
     session: {
       records: 0,
       first: null,
@@ -245,23 +270,45 @@ export function instFor(t: Tracked, account: string, region: string, id: string)
       attempts: 0,
     },
     locators: [],
+    contributing: 0,
     terminatedAt: null,
   };
   t.instances.set(key, inst);
   return inst;
 }
 
-export const cite = (inst: Inst, locator: string): void => {
-  if (inst.locators.length < RAW_RECORDS_MAX) inst.locators.push(locator);
+/** Cite every replica locator of a record; the count runs on past the retained list. */
+export const cite = (inst: Inst, locators: readonly string[]): void => {
+  for (const locator of locators) {
+    inst.contributing += 1;
+    if (inst.locators.length < RAW_RECORDS_MAX) inst.locators.push(locator);
+  }
 };
 
+/** Note a fact kind with its earliest record — the grade counts kinds, the row cites this record. */
+export const noteFact = (inst: Inst, fact: AwsComputeFact, time: number, locator: string): void => {
+  const cur = inst.facts.get(fact);
+  if (!cur || time < cur.time) inst.facts.set(fact, { time, locator });
+};
+
+/** The groups the instance's own records say it held at `time`: the statement in force, else the launch's for a record before it. */
+export function groupsAt(inst: Inst, time: number): readonly string[] | null {
+  let inForce: GroupSet | null = null;
+  for (const g of inst.groupSets) if (g.time <= time) inForce = g;
+  if (inForce) return inForce.groups;
+  return inst.launch ? inst.launch.groups.map((g) => lower(g.id)) : null;
+}
+
+/** The earliest record of the instance — the launch, else its first lifecycle, address, remote or session record. */
 export const firstTime = (inst: Inst): number =>
   Math.min(
     ...[
       inst.launch?.time,
       inst.lifecycle.all()[0]?.time,
+      inst.addresses[0]?.time,
       inst.remote[0]?.time,
       inst.session.first?.time,
+      ...[...inst.facts.values()].map((f) => f.time),
     ].filter((t): t is number => t !== undefined),
     Number.MAX_SAFE_INTEGER,
   );
