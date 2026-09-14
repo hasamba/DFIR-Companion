@@ -227,6 +227,7 @@
     "ROUTE GET /cases/:id/timeline-gaps",
     "ROUTE POST /cases/:id/timeline-gaps/hypothesize",
     "ROUTE GET /cases/:id/known-unknowns",
+    "ROUTE GET /cases/:id/cloud-coverage",
     "ROUTE GET /cases/:id/incident-timeline.csv",
     "ROUTE GET /cases/:id/timeline.jsonl",
     "ROUTE GET /cases/:id/super-timeline",

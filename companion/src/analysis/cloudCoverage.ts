@@ -179,6 +179,26 @@ export class CloudCoverageStore {
   }
 }
 
+/**
+ * Best-effort: coverage is a derived convenience, never load-bearing for the import itself. Takes
+ * the store rather than being a method on it so `AnalysisPipeline`'s 4 cloud-importer delegations
+ * (`pipeline.ts`) can call it directly after unwrapping `{state, coverage}`, with no per-caller
+ * stash to remember (Codex code review, #1063: a stash missed the dedicated `/import-*` routes and
+ * could leak a stale entry into a later unrelated import).
+ */
+export async function persistCloudCoverage(
+  store: CloudCoverageStore | undefined,
+  caseId: string,
+  coverage: readonly CloudCoverageDraft[],
+): Promise<void> {
+  if (!coverage.length || !store) return;
+  try {
+    await store.record(caseId, coverage);
+  } catch {
+    /* best-effort */
+  }
+}
+
 // ───────────────────────────── read-time summary and caveats ─────────────────────────────
 
 // Documented category universes, for the read-time absence caveat only (never used to grade or
