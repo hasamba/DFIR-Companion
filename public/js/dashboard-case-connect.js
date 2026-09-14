@@ -360,6 +360,7 @@
       ["remediation", () => loadRemediation(caseId)],
       ["campaignScope", () => loadCampaignScope(caseId)],
       ["servedExposure", () => loadServedExposure(caseId)],
+      ["kerberoastChain", () => loadKerberoastChain(caseId)],
       ["count", () => pollCount(caseId)],
       ["aiToggle", () => loadAiToggle(caseId)],
       ["enrichToggle", () => loadEnrichToggle(caseId)],
