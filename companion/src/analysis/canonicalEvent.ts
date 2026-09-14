@@ -11,6 +11,7 @@ import { entraPathBlockSchema } from "./canonicalEntra.js";
 import { awsLineageBlockSchema } from "./canonicalAwsLineage.js";
 import { awsComputeBlockSchema } from "./canonicalAwsCompute.js";
 import { gcpBlockSchema } from "./canonicalGcp.js";
+import { gcpServiceAccountJoinBlockSchema } from "./canonicalGcpServiceAccountJoin.js";
 import { loggingChangeBlockSchema } from "./canonicalLogging.js";
 import {
   driveAccessBlockSchema,
@@ -170,8 +171,12 @@ export const canonicalEventEnvelopeSchema = z.object({
   awsLineage: awsLineageBlockSchema.optional(),
   // An AWS compute-lifecycle summary row (awsCompute.ts, #931 item 8); the block lives in canonicalAwsCompute.ts.
   awsCompute: awsComputeBlockSchema.optional(),
-  // A GCP audit row's identity, binding delta, credential fact or key step (gcpRow.ts, #931 item 12); the block lives in canonicalGcp.ts.
+  // A GCP audit row's identity, binding delta, credential fact, key step or workload attachment
+  // (gcpRow.ts, #931 item 12); the block lives in canonicalGcp.ts.
   gcp: gcpBlockSchema.optional(),
+  // A GCP per-service-account join row (gcpServiceAccountJoin.ts, #1065): every fact this export
+  // states about one service account, joined by unique id when present, else email.
+  gcpServiceAccountJoin: gcpServiceAccountJoinBlockSchema.optional(),
   // A logging-configuration row's state (loggingChange.ts, #931 item 14); the block lives in canonicalLogging.ts.
   loggingChange: loggingChangeBlockSchema.optional(),
   // A mailbox-chain summary row (mailboxChain.ts, #975); the block lives in canonicalMailbox.ts.

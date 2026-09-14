@@ -104,6 +104,7 @@ function row(
     ...(reading?.binding ? { binding: reading.binding } : {}),
     ...(reading?.credential ? { credential: reading.credential } : {}),
     ...(reading?.key ? { key: reading.key } : {}),
+    ...(reading?.attachment ? { attachment: reading.attachment } : {}),
   };
   const observed = str(getCI(rec, "timestamp")) || str(getCI(rec, "receiveTimestamp"));
   const type = reading
@@ -113,7 +114,9 @@ function row(
         ? "credential"
         : reading.kind === "logging"
           ? "logging-change"
-          : "service-account-key"
+          : reading.kind === "attachment"
+            ? "workload-attachment"
+            : "service-account-key"
     : "api-call";
   const actorEmail = base.principal.email ?? "";
   const actorKind =
