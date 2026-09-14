@@ -27,7 +27,9 @@ targetRules = ["internal-hostname"]
 regexTarget = "line"
 regexes = [
   '''(?i)[\w.-]+\.corp\b''',
-  '''(?i)\b(?:windomain|storage|adatumlab|corp|velociraptor|globaltech|northstar-branch|northstar|ai|d|companion|windmill|dc|wiz-scope|lab|dfir-companion|acme|eval)\.local\b''',
+  # `other.local` is the SECOND fake realm in companion/tests/analysis/kerberoastChain.test.ts,
+  # there only to prove that a same-named service account in another realm is another account.
+  '''(?i)\b(?:windomain|storage|adatumlab|corp|velociraptor|globaltech|northstar-branch|northstar|ai|d|companion|windmill|dc|wiz-scope|lab|dfir-companion|acme|eval|other)\.local\b''',
   '''(?i)\b(?:client01|other)\.lan\b''',
   '''(?i)\b(?:docker|m|s|hash|misp|api)\.internal\b''',
   # `metadata.google.internal` is Google Cloud's PUBLIC, documented address for the instance
