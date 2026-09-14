@@ -37,7 +37,7 @@ function bumpCategory(
 
 // ───────────────────────────── AWS CloudTrail ─────────────────────────────
 
-const CLOUDTRAIL_CATEGORIES = new Set(["management", "data", "insight"]);
+const CLOUDTRAIL_CATEGORIES = new Set(["management", "data", "insight", "networkactivity"]);
 /** `eventCategory` exists only from CloudTrail record version 1.07 onward. */
 const MIN_EVENT_CATEGORY_VERSION = 1.07;
 
@@ -72,7 +72,9 @@ export function awsCloudTrailCoverage(records: readonly Row[]): CloudCoverageDra
           ? "Data"
           : category === "insight"
             ? "Insight"
-            : "unknown";
+            : category === "networkactivity"
+              ? "NetworkActivity"
+              : "unknown";
     bumpCategory(entry.categories, label, (c) => {
       c.count += 1;
       if (category === "management" || category === "data") {
@@ -275,7 +277,7 @@ export function m365Coverage(records: readonly Row[]): CloudCoverageDraft[] {
     }
     const workload = field(rec, "Workload");
     const operation = field(rec, "Operation");
-    const label = workload && operation ? `${workload}/${operation}` : "unknown/unknown";
+    const label = `${workload || "unknown"}/${operation || "unknown"}`;
     const recordTypeRaw = field(rec, "RecordType");
     const recordTypeId = recordTypeRaw && /^\d+$/.test(recordTypeRaw) ? Number(recordTypeRaw) : null;
     bumpCategory(entry.categories, label, (c) => {

@@ -61,7 +61,6 @@ import type { AiCostStore } from "../analysis/aiCost.js";
 import type { CorrelationProfileStore } from "../analysis/correlationProfile.js";
 import type { SecondOpinionStore } from "../analysis/secondOpinionStore.js";
 import type { ImportMetaStore } from "../analysis/importMeta.js";
-import type { CloudCoverageStore } from "../analysis/cloudCoverage.js";
 import type { DropStatusStore } from "../analysis/dropStatus.js";
 import type { ImportUndoStore } from "../analysis/importUndo.js";
 import type { ScopeWindow } from "../analysis/scope.js";
@@ -322,11 +321,6 @@ export interface AppOptions {
   // route writes it after the importer completes; onImportMeta pings dashboard clients to re-fetch.
   importMetaStore?: ImportMetaStore;
   onImportMeta?: (caseId: string) => void;
-  // Per-upload cloud coverage (#1063): what each CloudTrail/GCP/Azure/M365/Workspace upload can
-  // and cannot answer, kept OUTSIDE the forensic timeline. The unified /import route writes it
-  // (best-effort) from the coverage the pipeline stashed during the four cloud/identity imports;
-  // the "Cloud Coverage" dashboard panel and the AI synthesis block both read it back.
-  cloudCoverageStore?: CloudCoverageStore;
   // Evidence drop folder (auto-import inbox): the last-sweep summary read by GET /cases/:id/drop-status
   // and the live "📥 Drop: N imported, M failed" banner. Presence of dropStatusStore also ARMS the
   // background watcher (so createApp-only unit tests that omit it never start a filesystem poller).

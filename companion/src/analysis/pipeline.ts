@@ -426,20 +426,21 @@ export class AnalysisPipeline {
     return v;
   }
   // Per-upload cloud coverage (#1063): the four cloud/identity importers return `{state,
-  // coverage}` from `analysis/ingest/cloudImports.ts`; the matching method below unwraps it and
-  // stashes coverage here so every OTHER caller (observe(), composition/importIngest.ts, every
-  // routes/import.ts call site) keeps seeing the unchanged `Promise<InvestigationState>` — the
-  // same side-channel shape as `importTruncation`, just populated from the ingest function's own
-  // return value instead of an AI-analysis callback.
-  private readonly cloudCoverage = new Map<string, CloudCoverageDraft[]>();
-  private recordCloudCoverage(caseId: string, coverage: CloudCoverageDraft[]): void {
-    if (!coverage.length) return;
-    this.cloudCoverage.set(caseId, [...(this.cloudCoverage.get(caseId) ?? []), ...coverage]);
-  }
-  consumeCloudCoverage(caseId: string): CloudCoverageDraft[] | undefined {
-    const v = this.cloudCoverage.get(caseId);
-    this.cloudCoverage.delete(caseId);
-    return v;
+  // coverage}` from `analysis/ingest/cloudImports.ts`. Written DIRECTLY to the store here, inside
+  // the same method that unwraps the import result — never stashed for a route to consume later
+  // (Codex code review, findings 1-2: a stash left the dedicated `/import-*` routes, which never
+  // had a consume step, silently dropping coverage; and a route-level failure between the import
+  // and its consume point left a stale entry that a LATER, unrelated import for the same case
+  // would then pick up and misattribute). Every caller of `importM365`/`importAws`/
+  // `importGoogleWorkspace`/`importCloudActivity` — generic route, dedicated routes, tests —
+  // gets correct persistence for free, with no per-caller step to remember.
+  private async persistCloudCoverage(caseId: string, coverage: CloudCoverageDraft[]): Promise<void> {
+    if (!coverage.length || !this.opts.cloudCoverageStore) return;
+    try {
+      await this.opts.cloudCoverageStore.record(caseId, coverage);
+    } catch {
+      /* best-effort — coverage is a derived convenience, never load-bearing for the import itself */
+    }
   }
   // Warn ONCE per process when a configured synthesis-prompt override is missing shipped capabilities
   // (investigation-guidance #1). Preflight surfaces the same drift in the UI; this covers a post-boot
@@ -569,7 +570,7 @@ export class AnalysisPipeline {
 
   async importM365(...args: ImporterArgs<typeof ingest.importM365>): Promise<InvestigationState> {
     const { state, coverage } = await ingest.importM365(this.importCtx, ...args);
-    this.recordCloudCoverage(args[0], coverage);
+    await this.persistCloudCoverage(args[0], coverage);
     return state;
   }
 
@@ -581,7 +582,7 @@ export class AnalysisPipeline {
     ...args: ImporterArgs<typeof ingest.importGoogleWorkspace>
   ): Promise<InvestigationState> {
     const { state, coverage } = await ingest.importGoogleWorkspace(this.importCtx, ...args);
-    this.recordCloudCoverage(args[0], coverage);
+    await this.persistCloudCoverage(args[0], coverage);
     return state;
   }
 
@@ -599,7 +600,7 @@ export class AnalysisPipeline {
 
   async importAws(...args: ImporterArgs<typeof ingest.importAws>): Promise<InvestigationState> {
     const { state, coverage } = await ingest.importAws(this.importCtx, ...args);
-    this.recordCloudCoverage(args[0], coverage);
+    await this.persistCloudCoverage(args[0], coverage);
     return state;
   }
 
@@ -607,7 +608,7 @@ export class AnalysisPipeline {
     ...args: ImporterArgs<typeof ingest.importCloudActivity>
   ): Promise<InvestigationState> {
     const { state, coverage } = await ingest.importCloudActivity(this.importCtx, ...args);
-    this.recordCloudCoverage(args[0], coverage);
+    await this.persistCloudCoverage(args[0], coverage);
     return state;
   }
 

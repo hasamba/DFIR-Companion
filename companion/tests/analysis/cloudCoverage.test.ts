@@ -127,6 +127,60 @@ describe("CloudCoverageStore", () => {
     const second = await store.record("c1", [a]);
     expect(second).toHaveLength(1);
   });
+
+  it("a mixed-provider upload (one call, two providers, same uploadId) is one eviction slot, never split", async () => {
+    let t = Date.parse("2026-01-01T00:00:00.000Z");
+    const at = () => new Date(t++).toISOString();
+    // One physical upload carrying BOTH a gcp row and an azure row under the same uploadId.
+    await store.record(
+      "c1",
+      [
+        { ...draft("proj-a"), provider: "gcp", uploadId: "mixed-upload" },
+        { ...draft("sub-a"), provider: "azure", uploadId: "mixed-upload" },
+      ],
+      at(),
+    );
+    for (let i = 0; i < UPLOADS_TRACKED_PER_CASE_MAX - 1; i++) {
+      await store.record("c1", [{ ...draft(`acct-${i}`), uploadId: `upload-${i}` }], at());
+    }
+    let list = await store.load("c1");
+    expect(new Set(list.map((r) => r.uploadId)).size).toBe(UPLOADS_TRACKED_PER_CASE_MAX);
+    expect(list.some((r) => r.uploadId === "mixed-upload" && r.provider === "gcp")).toBe(true);
+    expect(list.some((r) => r.uploadId === "mixed-upload" && r.provider === "azure")).toBe(true);
+
+    // One more NEW upload pushes past the bound -> "mixed-upload" (the oldest) is evicted WHOLE,
+    // both its gcp and azure rows together, never just one half.
+    await store.record("c1", [{ ...draft("acct-new"), uploadId: "upload-new" }], at());
+    list = await store.load("c1");
+    expect(list.some((r) => r.uploadId === "mixed-upload")).toBe(false);
+    expect(list.some((r) => r.uploadId === "upload-new")).toBe(true);
+  });
+
+  it("loadEverSeen accumulates category names per provider and never shrinks on eviction", async () => {
+    let t = Date.parse("2026-01-01T00:00:00.000Z");
+    const at = () => new Date(t++).toISOString();
+    await store.record(
+      "c1",
+      [
+        {
+          ...draft("acct-data", 1),
+          provider: "aws-cloudtrail",
+          uploadId: "upload-data",
+          categories: [{ name: "Data", count: 1 }],
+        },
+      ],
+      at(),
+    );
+    for (let i = 0; i < UPLOADS_TRACKED_PER_CASE_MAX; i++) {
+      await store.record("c1", [{ ...draft(`acct-${i}`), uploadId: `upload-${i}` }], at());
+    }
+    // "upload-data" (the oldest) is now evicted from the retained records...
+    const list = await store.load("c1");
+    expect(list.some((r) => r.uploadId === "upload-data")).toBe(false);
+    // ...but the "Data" category it carried is still remembered for the provider.
+    const everSeen = await store.loadEverSeen("c1");
+    expect(everSeen["aws-cloudtrail"]).toContain("Data");
+  });
 });
 
 describe("summarizeCloudCoverage — read-time caveats", () => {
@@ -143,6 +197,22 @@ describe("summarizeCloudCoverage — read-time caveats", () => {
       rec({ uploadId: "u2", categories: [{ name: "Data", count: 5 }] }),
     ]);
     expect(summary.caveats.some((c) => c.includes("no Data-category records"))).toBe(false);
+  });
+
+  it("a category recorded in the everSeen registry suppresses its caveat even with no matching CURRENT record (post-eviction honesty)", () => {
+    // The upload that carried "Data" has since been evicted -- no aws-cloudtrail record here
+    // carries it -- but the registry still remembers it was once seen.
+    const summary = summarizeCloudCoverage([rec({ categories: [{ name: "Management", count: 10 }] })], {
+      "aws-cloudtrail": ["Data"],
+    });
+    expect(summary.caveats.some((c) => c.includes("no Data-category records"))).toBe(false);
+    expect(summary.caveats.some((c) => c.includes("no Insight-category records"))).toBe(true);
+  });
+
+  it("everSeen alone (no current record for that provider) still gates the provider's caveats on", () => {
+    const summary = summarizeCloudCoverage([], { gcp: ["activity"] });
+    expect(summary.caveats.some((c) => c.includes("no data_access-category records"))).toBe(true);
+    expect(summary.caveats.some((c) => c.includes("no activity-category records"))).toBe(false);
   });
 
   it("Google Workspace always states the anonymous-views caveat, unconditionally", () => {

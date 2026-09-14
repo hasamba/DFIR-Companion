@@ -10,7 +10,7 @@ import {
 import type { CloudCoverageRecord, CloudCoverageStore } from "../../../src/analysis/cloudCoverage.js";
 
 const fakeStore = (load: () => Promise<CloudCoverageRecord[]>): CloudCoverageStore =>
-  ({ load }) as unknown as CloudCoverageStore;
+  ({ load, loadEverSeen: async () => ({}) }) as unknown as CloudCoverageStore;
 
 const rec = (value: string): CloudCoverageRecord => ({
   provider: "aws-cloudtrail",

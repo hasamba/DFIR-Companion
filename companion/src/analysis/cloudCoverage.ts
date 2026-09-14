@@ -64,7 +64,14 @@ const fileSchema = z.array(cloudCoverageRecordSchema);
 /** A record before the store assigns `uploadFirstSeenAt` and `importedAt`. */
 export type CloudCoverageDraft = Omit<CloudCoverageRecord, "uploadFirstSeenAt" | "importedAt">;
 
-const groupKey = (provider: string, uploadId: string): string => `${provider}|${uploadId}`;
+const SEEN_CATEGORIES_PER_PROVIDER_MAX = 64;
+// Category names ever recorded for a provider, in a case — kept in a SEPARATE file that eviction
+// never touches, so a documented-category absence caveat stays true even after the one upload
+// that carried that category ages out of UPLOADS_TRACKED_PER_CASE_MAX. Bounded per provider: the
+// caveat check only cares about a small, closed, documented set (or M365's workload prefix), so
+// this registry never grows with case size.
+const everSeenSchema = z.record(z.string(), z.array(z.string().max(CATEGORY_NAME_MAX)));
+export type CloudCoverageEverSeen = Record<string, string[]>;
 
 const lock = new StateLock();
 
@@ -73,6 +80,10 @@ export class CloudCoverageStore {
 
   private path(caseId: string): string {
     return join(this.cases.stateDir(caseId), "cloud-coverage.json");
+  }
+
+  private everSeenPath(caseId: string): string {
+    return join(this.cases.stateDir(caseId), "cloud-coverage-seen.json");
   }
 
   async load(caseId: string): Promise<CloudCoverageRecord[]> {
@@ -84,14 +95,26 @@ export class CloudCoverageStore {
     }
   }
 
+  /** Category names ever recorded per provider in this case — never shrinks, immune to eviction. */
+  async loadEverSeen(caseId: string): Promise<CloudCoverageEverSeen> {
+    try {
+      return everSeenSchema.parse(JSON.parse(await readFile(this.everSeenPath(caseId), "utf8")));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return {};
+      throw err;
+    }
+  }
+
   /**
-   * Record coverage drafts, grouped internally by `(provider, uploadId)` — a single call may
-   * span more than one group (a mixed GCP+Azure upload produces two). Each group replaces any
-   * existing records of the SAME upload id in place, preserving that upload's original
-   * `uploadFirstSeenAt` rather than resetting its eviction age. A brand-new group, once the case
-   * is past the tracked-uploads bound, evicts the single oldest group's ENTIRE record set
-   * atomically — never a partial upload left behind, and never triggered by re-importing an
-   * upload already tracked.
+   * Record coverage drafts, grouped internally by `uploadId` alone — a single call may span more
+   * than one group (a mixed GCP+Azure upload from one `cloudActivityImport.ts` call produces two
+   * providers' rows under the SAME upload id). Grouping by upload id alone, never `(provider,
+   * uploadId)`, is what keeps that one physical upload a single slot: a two-provider upload can
+   * never have only one provider's half evicted. Each group replaces any existing records of the
+   * SAME upload id in place, preserving that upload's original `uploadFirstSeenAt` rather than
+   * resetting its eviction age. A brand-new group, once the case is past the tracked-uploads
+   * bound, evicts the single oldest group's ENTIRE record set atomically — never a partial upload
+   * left behind, and never triggered by re-importing an upload already tracked.
    */
   async record(
     caseId: string,
@@ -100,45 +123,57 @@ export class CloudCoverageStore {
   ): Promise<CloudCoverageRecord[]> {
     return lock.runExclusive(caseId, async () => {
       let next = await this.load(caseId);
-      const byGroup = new Map<string, CloudCoverageDraft[]>();
+      const byUpload = new Map<string, CloudCoverageDraft[]>();
       for (const d of drafts) {
-        const k = groupKey(d.provider, d.uploadId);
-        (byGroup.get(k) ?? byGroup.set(k, []).get(k)!).push(d);
+        (byUpload.get(d.uploadId) ?? byUpload.set(d.uploadId, []).get(d.uploadId)!).push(d);
       }
-      for (const [key, groupDrafts] of byGroup) {
-        const existingOfThisUpload = next.filter((r) => groupKey(r.provider, r.uploadId) === key);
+      for (const [uploadId, uploadDrafts] of byUpload) {
+        const existingOfThisUpload = next.filter((r) => r.uploadId === uploadId);
         const firstSeenAt = existingOfThisUpload.length
           ? existingOfThisUpload.reduce(
               (min, r) => (r.uploadFirstSeenAt < min ? r.uploadFirstSeenAt : min),
               existingOfThisUpload[0].uploadFirstSeenAt,
             )
           : at;
-        const capped = groupDrafts.slice(0, SCOPES_PER_UPLOAD_MAX);
+        const capped = uploadDrafts.slice(0, SCOPES_PER_UPLOAD_MAX);
         const fresh: CloudCoverageRecord[] = capped.map((d) => ({
           ...d,
           uploadFirstSeenAt: firstSeenAt,
           importedAt: at,
         }));
-        // Replace this group's own records; every other group's records are untouched.
-        next = [...next.filter((r) => groupKey(r.provider, r.uploadId) !== key), ...fresh];
+        // Replace this upload's own records; every other upload's records are untouched.
+        next = [...next.filter((r) => r.uploadId !== uploadId), ...fresh];
       }
 
-      // Evict the oldest tracked group(s), atomically, only as far as needed — re-recording an
-      // already-tracked group never adds one, so this only fires for a genuinely NEW group.
+      // Evict the oldest tracked upload(s), atomically, only as far as needed — re-recording an
+      // already-tracked upload never adds one, so this only fires for a genuinely NEW upload.
       while (true) {
-        const groups = new Map<string, string>(); // key -> firstSeenAt
-        for (const r of next) {
-          const k = groupKey(r.provider, r.uploadId);
-          if (!groups.has(k)) groups.set(k, r.uploadFirstSeenAt);
-        }
-        if (groups.size <= UPLOADS_TRACKED_PER_CASE_MAX) break;
-        const oldestKey = [...groups.entries()].sort(
+        const uploads = new Map<string, string>(); // uploadId -> firstSeenAt
+        for (const r of next) if (!uploads.has(r.uploadId)) uploads.set(r.uploadId, r.uploadFirstSeenAt);
+        if (uploads.size <= UPLOADS_TRACKED_PER_CASE_MAX) break;
+        const oldestId = [...uploads.entries()].sort(
           (a, b) => a[1].localeCompare(b[1]) || a[0].localeCompare(b[0]),
         )[0][0];
-        next = next.filter((r) => groupKey(r.provider, r.uploadId) !== oldestKey);
+        next = next.filter((r) => r.uploadId !== oldestId);
       }
 
       await atomicWrite(this.path(caseId), JSON.stringify(next, null, 2));
+
+      const everSeen = await this.loadEverSeen(caseId);
+      let everSeenChanged = false;
+      for (const d of drafts) {
+        const existing = everSeen[d.provider] ?? [];
+        const names = new Set(existing);
+        for (const c of d.categories) names.add(c.name);
+        if (names.size > existing.length) {
+          everSeen[d.provider] = [...names].slice(0, SEEN_CATEGORIES_PER_PROVIDER_MAX);
+          everSeenChanged = true;
+        }
+      }
+      if (everSeenChanged) {
+        await atomicWrite(this.everSeenPath(caseId), JSON.stringify(everSeen, null, 2));
+      }
+
       return next;
     });
   }
@@ -151,7 +186,7 @@ export class CloudCoverageStore {
 // sets; M365's Workload values are numerous and not fully enumerable here, so a representative,
 // commonly-audited subset is used — the caveat is stated as resting on that subset, never as
 // exhaustive. Google Workspace carries no per-application caveat at all (see `renderCoverageCaveats`).
-const AWS_DOCUMENTED_CATEGORIES = ["Management", "Data", "Insight"];
+const AWS_DOCUMENTED_CATEGORIES = ["Management", "Data", "Insight", "NetworkActivity"];
 const GCP_DOCUMENTED_CATEGORIES = ["activity", "data_access", "system_event", "policy"];
 const AZURE_DOCUMENTED_CATEGORIES = [
   "Administrative",
@@ -199,8 +234,18 @@ function sortItems(items: readonly CloudCoverageItem[]): CloudCoverageItem[] {
   );
 }
 
-/** Pure — read-time only. Never stored, so an M365 caveat can compare across every upload of that provider in the case, and multiple absent categories each get their own sentence. */
-export function summarizeCloudCoverage(records: readonly CloudCoverageRecord[]): CloudCoverageSummary {
+/**
+ * Pure — read-time only. `records` drives the displayed items (currently-retained uploads only);
+ * `everSeen` is the non-evicting per-provider category registry (`CloudCoverageStore.loadEverSeen`)
+ * and is what the absence caveats are actually checked against, so a caveat stays true even after
+ * the one upload that carried that category ages out of `UPLOADS_TRACKED_PER_CASE_MAX`. Passing no
+ * `everSeen` (e.g. a unit test working with an in-memory record list) falls back to deriving
+ * presence from `records` alone.
+ */
+export function summarizeCloudCoverage(
+  records: readonly CloudCoverageRecord[],
+  everSeen: CloudCoverageEverSeen = {},
+): CloudCoverageSummary {
   const items: CloudCoverageItem[] = records.map((r) => ({
     provider: r.provider,
     scope: r.scope,
@@ -216,9 +261,14 @@ export function summarizeCloudCoverage(records: readonly CloudCoverageRecord[]):
 
   const caveats: string[] = [];
   const present = (provider: CloudCoverageProvider): Set<string> =>
-    new Set((byProvider.get(provider) ?? []).flatMap((r) => r.categories.map((c) => c.name)));
+    new Set([
+      ...(byProvider.get(provider) ?? []).flatMap((r) => r.categories.map((c) => c.name)),
+      ...(everSeen[provider] ?? []),
+    ]);
+  const everHad = (provider: CloudCoverageProvider): boolean =>
+    byProvider.has(provider) || (everSeen[provider]?.length ?? 0) > 0;
 
-  if (byProvider.has("aws-cloudtrail")) {
+  if (everHad("aws-cloudtrail")) {
     const seen = present("aws-cloudtrail");
     for (const cat of AWS_DOCUMENTED_CATEGORIES)
       if (!seen.has(cat))
@@ -226,7 +276,7 @@ export function summarizeCloudCoverage(records: readonly CloudCoverageRecord[]):
           `no ${cat}-category records occur in this case's CloudTrail uploads; this does not establish selector configuration or absence of${cat === "Data" ? " data-plane" : ""} activity`,
         );
   }
-  if (byProvider.has("gcp")) {
+  if (everHad("gcp")) {
     const seen = present("gcp");
     for (const cat of GCP_DOCUMENTED_CATEGORIES)
       if (!seen.has(cat))
@@ -236,7 +286,7 @@ export function summarizeCloudCoverage(records: readonly CloudCoverageRecord[]):
             : `no ${cat}-category records occur in this case's GCP uploads`,
         );
   }
-  if (byProvider.has("azure")) {
+  if (everHad("azure")) {
     const seen = present("azure");
     for (const cat of AZURE_DOCUMENTED_CATEGORIES)
       if (!seen.has(cat))
@@ -244,9 +294,12 @@ export function summarizeCloudCoverage(records: readonly CloudCoverageRecord[]):
           `no ${cat}-category records occur in this case's Azure uploads; this does not establish that no ${cat.toLowerCase()}-relevant activity occurred — Azure's own category assignment, not a completeness signal`,
         );
   }
-  if (byProvider.has("m365")) {
+  if (everHad("m365")) {
     const seenWorkloads = new Set(
-      (byProvider.get("m365") ?? []).flatMap((r) => r.categories.map((c) => c.name.split("/")[0])),
+      [
+        ...(byProvider.get("m365") ?? []).flatMap((r) => r.categories.map((c) => c.name)),
+        ...(everSeen.m365 ?? []),
+      ].map((name) => name.split("/")[0]),
     );
     for (const wl of M365_DOCUMENTED_WORKLOADS)
       if (!seenWorkloads.has(wl))
@@ -254,7 +307,7 @@ export function summarizeCloudCoverage(records: readonly CloudCoverageRecord[]):
           `no ${wl}-workload records occur in this case's M365 uploads (of the commonly-audited workloads checked); this does not establish the workload was not audited — only that no such record reached this export`,
         );
   }
-  if (byProvider.has("google-workspace"))
+  if (everHad("google-workspace"))
     caveats.push("anonymous views are not logged; anonymous edits and downloads are");
 
   return { items: sortItems(items), caveats };

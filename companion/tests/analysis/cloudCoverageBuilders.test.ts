@@ -173,7 +173,7 @@ describe("m365Coverage", () => {
     const noOrg = m365Coverage([{ Workload: "Exchange", Operation: "X", RecordType: "1" }]);
     expect(noOrg[0].scope.kind).toBe("unknown");
     const noOp = m365Coverage([{ OrganizationId: "t", Workload: "Exchange", RecordType: "1" }]);
-    expect(noOp[0].categories.map((c) => c.name)).toEqual(["unknown/unknown"]);
+    expect(noOp[0].categories.map((c) => c.name)).toEqual(["Exchange/unknown"]);
   });
 
   it("a record missing Workload or RecordType is not counted as an M365 audit record at all", () => {

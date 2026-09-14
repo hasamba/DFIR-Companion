@@ -114,7 +114,9 @@ export async function cloudCoverageSummary(
 ): Promise<CloudCoverageSummary> {
   if (!ctx.opts.cloudCoverageStore) return { items: [], caveats: [] };
   try {
-    return summarizeCloudCoverage(await ctx.opts.cloudCoverageStore.load(caseId));
+    const store = ctx.opts.cloudCoverageStore;
+    const [records, everSeen] = await Promise.all([store.load(caseId), store.loadEverSeen(caseId)]);
+    return summarizeCloudCoverage(records, everSeen);
   } catch {
     return { items: [], caveats: [] };
   }
