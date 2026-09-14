@@ -927,6 +927,40 @@ time — the check says so); detect that a host was rebuilt; re-check on its own
 delete anything. The report section (off in every template until you switch it on) renders your
 status, the receipt it names and the attached rows.
 
+## Campaign Scope
+
+Start from an imported message (`.eml` / `.msg`) and see, per recipient and per host, what the
+case establishes about its attachment — and what it does not.
+
+**Recipients.** Every address in To and Cc is *addressed*. A `Delivered-To` header (unauthenticated
+in an exported file) or the topmost `Received … for <address>` hop *indicates* delivery to that one
+mailbox — the panel never says "delivered". An address a header indicates that is in neither To nor
+Cc is listed as *indicated only*.
+
+**Attachments.** Each attachment's digest is computed from its decoded MIME part; a hash that
+merely appears in the message body is never an attachment's. A `.zip`'s digest is not its
+member's. A `.msg` cannot be decoded and says *digest unavailable*.
+
+**Hosts.** Every host with a row carrying an attachment's digest is listed with two axes:
+*execution* — *observed* when a process start carries the digest, else *unknown*; *control* — every
+Defender record whose own digest matches, with its disposition, in time order (a start followed
+by a remediation is both). *Present* says a listing, presence or file row carried the digest. A
+host is attributed to a recipient only when the outcome-bearing row itself names that recipient's
+account exactly (the SMTP address or a UPN with a domain on both sides); a shared workstation, a
+service account or SYSTEM leaves it *recipient not established*. A row that matches the attachment
+by **name only** is a lead — a name is not identity — and draws no outcome. *Coverage* lists the
+telemetry families the case holds for the host, so *unknown* reads with what was looked at.
+
+**Messages.** Two messages are one instance only when Message-ID, sender and attachment digests
+all agree; a message with no id is its own instance. Instances that share an attachment digest say
+"N other message(s) carry one of these attachments" — a campaign link is never drawn from subject
+or date alone.
+
+**Bounds.** 200 messages, 500 recipients per message, 2,000 endpoint rows read per digest, 200
+hosts, 20 evidence ids per cell; every unread count is shown, and an unread cell reads
+*incomplete* — never *unknown*. **Hunt leads** are text to run in the hunt workbench; nothing here
+contacts a recipient, collects a mailbox, or sends an attachment anywhere. The report section
+(off in every template until switched on) renders the same tables.
 ## Served Exposure
 
 Catch data leaving as a response to an incoming request — a dump staged under the web root and

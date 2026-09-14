@@ -10,6 +10,7 @@ import { chainOfCustodySection } from "./custodySection.js";
 import { sandboxReportsSection } from "./sandboxReportsSection.js";
 import { intelRetirementSection } from "./intelRetirementSection.js";
 import { remediationChecksSection } from "./remediationSection.js";
+import { campaignScopeSection } from "./campaignScopeSection.js";
 import { servedExposureSection } from "./servedExposureSection.js";
 import { byEventTime } from "../analysis/forensicSort.js";
 import { emptyReportMeta, type ReportMeta, type ReportRevision } from "./reportMeta.js";
@@ -1486,6 +1487,7 @@ export function renderMarkdownReport(
     sandboxReports: () => sandboxReportsSection(state, lines),
     intelRetirement: () => intelRetirementSection(state, lines),
     remediationChecks: () => remediationChecksSection(state, lines),
+    campaignScope: () => campaignScopeSection(state, lines),
     servedExposure: () => servedExposureSection(state, lines),
   };
 

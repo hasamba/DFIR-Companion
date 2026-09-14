@@ -480,6 +480,7 @@
     "naiveTimestamp.ts": "shared",
     "regexEscape.ts": "shared",
     "regexSafety.ts": "analysis/privacy",
+    "campaignScope.ts": "analysis/findings",
     "remediationBoundary.ts": "analysis/findings",
     "servedExposure.ts": "analysis/findings",
     "servedLocation.ts": "analysis/findings",

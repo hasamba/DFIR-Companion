@@ -198,6 +198,7 @@
   <script src="/js/dashboard-custody.js"></script>
   <script src="/js/dashboard-intel-retirement.js"></script>
   <script src="/js/dashboard-remediation.js"></script>
+  <script src="/js/dashboard-campaign-scope.js"></script>
   <script src="/js/dashboard-served-exposure.js"></script>
   <script src="/js/dashboard-backup.js"></script>
   <script src="/js/dashboard-collection-plan.js"></script>
@@ -3888,6 +3889,9 @@
     <section id="sec-remediation" data-safe-style="grid-column: 1 / -1" class="collapsed"><h2>Remediation Checks<span class="ev-sub">declare what was remediated, verify what the case holds for that host afterwards, record the residual risk yourself &mdash; the check reports facts, never a verdict</span></h2>
       <div id="remediationPanel">&mdash;</div>
     </section>
+    <section id="sec-campaign-scope" data-safe-style="grid-column: 1 / -1" class="collapsed"><h2>Campaign Scope<span class="ev-sub">per imported message: who was addressed, which mailbox a header indicates, and what each host's own rows establish about the attachment &mdash; a name is not identity, a header is not delivery</span></h2>
+      <div id="campaignScopePanel">&mdash;</div>
+    </section>
     <section id="sec-served-exposure" data-safe-style="grid-column: 1 / -1" class="collapsed"><h2>Served Exposure<span class="ev-sub">declare where a URL prefix is served from; per file under it, what the file rows and the access log establish &mdash; a logged size is what the server said, never a transfer; disclosure only with confirmed sensitivity</span></h2>
       <div id="servedExposurePanel">&mdash;</div>
     </section>
@@ -4047,7 +4051,7 @@
       { id: "sec-inv-log",      label: "Investigation Log" },
       { id: "sec-activity",     label: "Activity Log" },
       { id: "sec-mcp",          label: "MCP Analysis" },
-      { id: "sec-custody",      label: "Chain of Custody" }, { id: "sec-intel-retirement", label: "Intel Retirement Review" }, { id: "sec-remediation", label: "Remediation Checks" }, { id: "sec-served-exposure", label: "Served Exposure" },
+      { id: "sec-custody",      label: "Chain of Custody" }, { id: "sec-intel-retirement", label: "Intel Retirement Review" }, { id: "sec-remediation", label: "Remediation Checks" }, { id: "sec-campaign-scope", label: "Campaign Scope" }, { id: "sec-served-exposure", label: "Served Exposure" },
       { id: "sec-case-details", label: "Case Details" },
     ];
     let DASHBOARD_VIEWS = [];                  // dashboard-view presets (#142), fetched from /dashboard-views

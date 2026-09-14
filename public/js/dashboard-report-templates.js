@@ -37,6 +37,7 @@
     ["chainOfCustody", "Chain of Custody (per-artifact custody chain)"],
     ["sandboxReports", "Sandbox reports (detonation results and sighting status)"],
     ["intelRetirement", "Intel retirement review (findings whose intel is no longer actionable)"],
+    ["campaignScope", "Campaign scope (per recipient and per host, from imported messages)"],
     ["servedExposure", "Served exposure (declared served locations: files, requests, what the server logged)"],
     ["remediationChecks", "Remediation checks (analyst-recorded residual risk with the receipt it names)"],
   ];

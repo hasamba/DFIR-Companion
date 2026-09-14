@@ -22,6 +22,7 @@
 // auth/Received — exactly what we need) and scan the decoded bytes for URLs. For full fidelity,
 // export the message as `.eml`.
 
+import { createHash } from "node:crypto";
 import type { Severity } from "./stateTypes.js";
 import { createCanonicalEvent, stampSourceArtifactHash } from "./canonicalEvent.js";
 import { addIoc, cleanIp, isInternalIpv4, type SiemEvent, type SiemIoc } from "./siemImport.js";
@@ -41,8 +42,18 @@ export interface EmailAddress {
 export interface EmailAttachment {
   filename: string;
   contentType: string;
+  /** Computed from the decoded MIME part (#930 item 2) — never a hash seen in headers or body. */
   sha256?: string;
   md5?: string;
+  size?: number;
+  /** Why no digest: the part was not decodable (a `.msg`, an unknown encoding, over the bound). */
+  digestUnavailable?: string;
+}
+
+/** A header that INDICATES delivery to a mailbox — an indication, never an established fact. */
+export interface DeliveryIndication {
+  address: string;
+  by: "delivered-to" | "received-for";
 }
 
 export interface EmailAuth {
@@ -61,6 +72,10 @@ export interface ParsedEmail {
   replyTo?: EmailAddress;
   returnPath?: EmailAddress;
   to: EmailAddress[];
+  cc: EmailAddress[];
+  attachmentsNotRead: number;
+  /** Delivery indications: `Delivered-To` (unauthenticated) and the TOPMOST `Received … for <addr>` hop. */
+  deliveryIndicated: DeliveryIndication[];
   originatingIp: string; // X-Originating-IP / earliest external Received hop
   auth: EmailAuth;
   urls: string[];
@@ -276,6 +291,8 @@ function suspiciousSender(p: ParsedEmail): boolean {
 interface BodyScan {
   text: string[]; // decoded text/html bodies, for URL + hash scanning
   attachments: EmailAttachment[];
+  /** Attachment parts past ATTACHMENTS_MAX: neither named nor decoded, counted (#930 item 2). */
+  attachmentsNotRead: number;
 }
 
 // Recursively walk a (possibly multipart) MIME entity, collecting decoded text bodies and
@@ -301,13 +318,51 @@ function walkMime(headers: Map<string, string[]>, body: string, sink: BodyScan, 
   const filename = headerParam(disp, "filename") || headerParam(ctype, "name");
   const isAttachment = /^attachment/i.test(disp) || (!!filename && !mediaType.startsWith("text/"));
   if (isAttachment && filename) {
-    sink.attachments.push({ filename: decodeEncodedWords(filename).slice(0, 260), contentType: mediaType });
-    return; // don't decode attachment payloads (binary); names/hashes are what we want
+    if (sink.attachments.length >= ATTACHMENTS_MAX) {
+      sink.attachmentsNotRead += 1;
+      return;
+    }
+    // The attachment's OWN digest, from its decoded bytes (#930 item 2): what an endpoint row's
+    // hash can be matched against. A hash that appears in the headers or the body is not one.
+    sink.attachments.push({
+      filename: decodeEncodedWords(filename).slice(0, 260),
+      contentType: mediaType,
+      ...digestAttachment(body, cte),
+    });
+    return;
   }
 
   if (mediaType === "text/plain" || mediaType === "text/html" || (!mediaType && depth === 0)) {
     sink.text.push(decodeBody(body, cte));
   }
+}
+
+/**
+ * The attachment's OWN digest (#930 item 2), from its decoded bytes. Only a base64 part yields one:
+ * base64 is whitespace-insensitive, so the text parser's line-ending normalisation cannot alter
+ * the bytes. A quoted-printable / 7bit / 8bit part's octets are NOT preserved by a parser that
+ * reads the message as text (line endings and non-UTF-8 bytes change), so its digest is honestly
+ * unavailable rather than wrong. The encoded size is bounded BEFORE decoding.
+ */
+const ATTACHMENT_BYTES_MAX = 25 * 1024 * 1024;
+function digestAttachment(
+  body: string,
+  encoding: string,
+): Pick<EmailAttachment, "sha256" | "md5" | "size" | "digestUnavailable"> {
+  const enc = encoding.trim().toLowerCase();
+  if (enc !== "base64")
+    return {
+      digestUnavailable: `transfer encoding ${enc || "7bit"}: the part's bytes are not preserved by the text parser`,
+    };
+  const compact = body.replace(/\s+/g, "");
+  if (compact.length * 0.75 > ATTACHMENT_BYTES_MAX)
+    return { digestUnavailable: "part larger than the 25 MB bound; not decoded" };
+  const bytes = Buffer.from(compact, "base64");
+  return {
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    md5: createHash("md5").update(bytes).digest("hex"),
+    size: bytes.length,
+  };
 }
 
 // Split a multipart body on its `--boundary` delimiters into raw part strings.
@@ -407,12 +462,14 @@ export function parseMimeEmail(raw: string): ParsedEmail {
   const replyTo = parseAddress(firstHeader(headers, "reply-to"));
   const returnPath = parseAddress(firstHeader(headers, "return-path"));
   const to = parseAddressList(firstHeader(headers, "to"));
+  const cc = parseAddressList(firstHeader(headers, "cc"));
+  const deliveryIndicated = deliveryIndications(headers);
   const messageId = firstHeader(headers, "message-id").replace(/[<>]/g, "").slice(0, 200);
   const auth = parseAuth(headers);
 
   // Body walk for URLs + attachments. `.eml` parses MIME; `.msg` has no recoverable MIME tree, so
   // we scan the (de-NUL'd) decoded bytes directly for URLs.
-  const scan: BodyScan = { text: [], attachments: [] };
+  const scan: BodyScan = { text: [], attachments: [], attachmentsNotRead: 0 };
   if (isMsg) {
     scan.text.push(raw.replace(/\x00/g, ""));
   } else {
@@ -447,13 +504,41 @@ export function parseMimeEmail(raw: string): ParsedEmail {
     ...(replyTo ? { replyTo } : {}),
     ...(returnPath ? { returnPath } : {}),
     to,
+    cc,
+    deliveryIndicated,
     originatingIp,
     auth,
     urls,
     attachments: scan.attachments,
+    attachmentsNotRead: scan.attachmentsNotRead,
     hashes: [...hashSet],
     headers,
   };
+}
+
+const ATTACHMENTS_MAX = 50;
+
+/**
+ * What the headers INDICATE about delivery (#930 item 2): `Delivered-To` is written by the
+ * receiving system but is not authenticated in an exported file; a `Received … for <addr>`
+ * clause names the envelope recipient at THAT hop, so only the TOPMOST hop (Received headers are
+ * newest-first) is read — the last receiving system's own statement. Neither establishes mailbox
+ * placement; the campaign scope words them as indications.
+ */
+function deliveryIndications(headers: Map<string, string[]>): DeliveryIndication[] {
+  const out: DeliveryIndication[] = [];
+  const seen = new Set<string>();
+  const push = (address: string, by: DeliveryIndication["by"]) => {
+    const a = address.trim().toLowerCase().replace(/^<|>$/g, "");
+    if (!a || !a.includes("@") || seen.has(`${by}|${a}`)) return;
+    seen.add(`${by}|${a}`);
+    out.push({ address: a, by });
+  };
+  for (const v of headers.get("delivered-to") ?? []) push(v, "delivered-to");
+  const top = (headers.get("received") ?? [])[0] ?? "";
+  const m = /\bfor\s+<?([^\s<>;,]+@[^\s<>;,]+)>?/i.exec(top);
+  if (m) push(m[1], "received-for");
+  return out;
 }
 
 // Email Date headers always carry an explicit zone (RFC 2822), so `new Date()` is unambiguous.
@@ -553,7 +638,22 @@ function buildEvent(p: ParsedEmail, severity: Severity): SiemEvent {
       ...(p.messageId ? { messageId: p.messageId } : {}),
       ...(sender ? { sender } : {}),
       ...(p.to.length ? { recipients: p.to.map((address) => address.address) } : {}),
+      ...(p.cc.length ? { cc: p.cc.map((address) => address.address) } : {}),
       ...(p.subject ? { subject: p.subject } : {}),
+      ...(p.deliveryIndicated.length ? { deliveryIndicated: p.deliveryIndicated } : {}),
+      ...(p.attachmentsNotRead ? { attachmentsNotRead: p.attachmentsNotRead } : {}),
+      ...(p.attachments.length
+        ? {
+            attachments: p.attachments.map((a) => ({
+              name: a.filename,
+              contentType: a.contentType,
+              ...(a.size !== undefined ? { size: a.size } : {}),
+              ...(a.sha256 ? { sha256: a.sha256 } : {}),
+              ...(a.md5 ? { md5: a.md5 } : {}),
+              ...(a.digestUnavailable ? { digestUnavailable: a.digestUnavailable } : {}),
+            })),
+          }
+        : {}),
     },
     ...(p.originatingIp ? { network: { source: { address: p.originatingIp } } } : {}),
     time: { observed: p.rawDate, normalized: p.date },

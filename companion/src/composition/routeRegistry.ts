@@ -35,6 +35,7 @@ import { registerSessionSegmentationRoutes } from "../routes/sessionSegmentation
 import { registerFindingsRoutes } from "../routes/findings.js";
 import { registerFindingOutcomeRoutes } from "../routes/findingOutcome.js";
 import { registerRemediationRoutes } from "../routes/remediation.js";
+import { registerCampaignScopeRoutes } from "../routes/campaignScope.js";
 import { registerServedExposureRoutes } from "../routes/servedExposure.js";
 import { registerIntelRetirementRoutes } from "../routes/intelRetirement.js";
 import { registerTaggerRoutes } from "../routes/tagger.js";
@@ -129,6 +130,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerFindingsRoutes(app, ctx);
   registerFindingOutcomeRoutes(app, ctx);
   registerRemediationRoutes(app, ctx);
+  registerCampaignScopeRoutes(app, ctx);
   registerServedExposureRoutes(app, ctx);
   registerIntelRetirementRoutes(app, ctx);
   registerTaggerRoutes(app, ctx);
