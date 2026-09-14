@@ -334,12 +334,12 @@ describe("parseGoogleWorkspaceReport — OAuth token rows", () => {
     expect(
       parseGoogleWorkspaceReport(JSON.stringify([drive("C01abc"), drive("C01abc")])).events,
     ).toHaveLength(1);
-    // A Drive row reads as before — the tenant is in its key, not its words.
+    // A Drive download row reads its meaning (#931 item 11) — the tenant is in its key, not its words.
     const d = parseGoogleWorkspaceReport(JSON.stringify([drive("C01abc")])).events[0];
     expect(d.description).toBe(
-      "Google Workspace drive: download by jdoe@example.invalid → Q3 plan from 203.0.113.10",
+      "Google Workspace drive: download by jdoe@example.invalid from 203.0.113.10 — download recorded — on Q3 plan (doc doc-1)",
     );
-    expect(d.canonical).toBeUndefined();
+    expect(d.canonical?.cloud?.tenant).toBe("C01abc");
   });
 
   it("an authorize row with no scope reads High with 'scopes not in this record'; a per-file grant reads Low", () => {

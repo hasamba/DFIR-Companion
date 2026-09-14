@@ -10,6 +10,12 @@ import { mobileBlockSchema } from "./canonicalMobile.js";
 import { entraPathBlockSchema } from "./canonicalEntra.js";
 import { awsLineageBlockSchema } from "./canonicalAwsLineage.js";
 import { awsComputeBlockSchema } from "./canonicalAwsCompute.js";
+import {
+  driveAccessBlockSchema,
+  driveSharingBlockSchema,
+  takeoutBlockSchema,
+  takeoutLifecycleBlockSchema,
+} from "./canonicalGwsDrive.js";
 import { mailboxChainBlockSchema } from "./canonicalMailbox.js";
 import { memoryRunBlockSchema } from "./canonicalMemoryRun.js";
 import { gwsLifecycleBlockSchema } from "./canonicalGwsLifecycle.js";
@@ -167,6 +173,11 @@ export const canonicalEventEnvelopeSchema = z.object({
   memoryRun: memoryRunBlockSchema.optional(),
   // A Google Workspace OAuth-lifecycle summary row (gwsOAuthLifecycle.ts, #983); the block lives in canonicalGwsLifecycle.ts.
   gwsLifecycle: gwsLifecycleBlockSchema.optional(),
+  // Google Drive sharing / access rows and Takeout rows (#931 item 11); the blocks live in canonicalGwsDrive.ts.
+  driveSharing: driveSharingBlockSchema.optional(),
+  driveAccess: driveAccessBlockSchema.optional(),
+  takeout: takeoutBlockSchema.optional(),
+  takeoutLifecycle: takeoutLifecycleBlockSchema.optional(),
   // A TLS record's own reading (tlsSession.ts, #933 item 6): the client's SNI, the protocol facts
   // the sensor saw, the certificate the server presented, the sensor's chain check, the observer.
   tls: z
