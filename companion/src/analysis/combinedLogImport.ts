@@ -441,7 +441,10 @@ export function mapCombinedLogLine(
   // trailer digest stays out, or trailer churn on one payload would consume the 64-payload
   // budget and fold a genuinely different payload into an overflow row, losing its excerpt. The
   // trailer's words still show on the row that survives — the trade the UA and the Referer take.
-  const fullKey = `${baseKey}${attackSegment}${attack ? "" : trailer.variantKey}${pathKey}`.toLowerCase();
+  // The path keeps its case (#930 item 4): on a case-sensitive root `/Secret` and `/secret` are two
+  // files, and folding them here would hand one representative's target to both. Method, status,
+  // client, host and the variant segments fold as before.
+  const fullKey = `${baseKey}${attackSegment}${attack ? "" : trailer.variantKey}`.toLowerCase() + pathKey;
   const mark = identityMark(fullKey);
   // Shown text that is not the record's own: a trailer (clipped per token and packed as a tag), a
   // neutralised bracket or control character in any client field.
@@ -507,9 +510,9 @@ export function mapCombinedLogLine(
   // both — is bounded per base key, so neither can multiply groups without limit.
   if ((attack || trailer.variantKey) && attackMeta) {
     attackMeta.set(event, {
-      base: `${baseKey}${pathKey}`.toLowerCase(),
+      base: baseKey.toLowerCase() + pathKey,
       prefix: baseKey.toLowerCase(),
-      path: pathKey.toLowerCase(),
+      path: pathKey,
       families: attack?.families ?? [],
       digest: attack ? attack.digest : trailer.variantKey,
       hasAttack: Boolean(attack),

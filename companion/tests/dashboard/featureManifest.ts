@@ -122,7 +122,7 @@ export const FEATURES: Feature[] = [
   {
     file: "dashboard-served-exposure.js",
     publish: ["loadServedExposure"],
-    private: ["exposure", "currentCaseId", "loadGen", "status"],
+    private: ["exposure", "currentCaseId", "loadGen", "status", "mutationError"],
   },
   { file: "dashboard-backup.js", publish: ["loadCaseBackups", "restoreCaseBackup"], private: [] },
   {

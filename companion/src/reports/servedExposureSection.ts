@@ -69,6 +69,8 @@ export function servedExposureSection(state: InvestigationState, lines: string[]
       lines.push("", "Requests to paths with no file evidence (leads, no exposure claim):");
       for (const u of e.unevidencedRequests.slice(0, 20))
         lines.push(`- ${cellMd(u.path)}: ${u.count} request(s), status ${u.statuses.join("/")}`);
+      const omitted = e.unevidencedRequestsTotal - Math.min(20, e.unevidencedRequests.length);
+      if (omitted > 0) lines.push(`- … ${omitted} more path(s) not shown`);
     }
     lines.push("");
   }

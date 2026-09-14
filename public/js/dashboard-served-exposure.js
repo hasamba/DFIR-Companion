@@ -17,6 +17,7 @@
   let currentCaseId = "";
   let loadGen = 0;
   let status = "loading"; // "loading" | "loaded" | "error"
+  let mutationError = ""; // a failed declare / delete, shown beside the last loaded reading
 
   function api(path, init) {
     return fetch(`/cases/${encodeURIComponent(currentCaseId)}${path}`, init).then((r) =>
@@ -38,14 +39,17 @@
       <label data-safe-style="font-size:12px"><input name="public" type="checkbox"> public / authorised download area</label>
       <button type="submit">Declare served location</button>
     </form>`;
+    const mutation = mutationError
+      ? `<div data-safe-style='color:var(--danger, #b00);font-size:12px;margin-bottom:6px'>${esc(mutationError)} — the declared locations may differ from what is shown; reload to check.</div>`
+      : "";
     if (status === "loading") {
-      el.innerHTML = form + `<div data-safe-style='color:var(--text-muted);font-size:12px'>Loading…</div>`;
+      el.innerHTML = form + mutation + `<div data-safe-style='color:var(--text-muted);font-size:12px'>Loading…</div>`;
     } else if (status === "error") {
-      el.innerHTML = form + `<div data-safe-style='color:var(--danger, #b00);font-size:12px'>The served exposure could not be loaded (${esc(exposure.error || "request failed")}). Nothing here says the case holds no exposure.</div>`;
+      el.innerHTML = form + mutation + `<div data-safe-style='color:var(--danger, #b00);font-size:12px'>The served exposure could not be loaded (${esc(exposure.error || "request failed")}). Nothing here says the case holds no exposure.</div>`;
     } else if (!exposure.locations.length) {
-      el.innerHTML = form + `<div data-safe-style='color:var(--text-muted);font-size:12px'>No served location declared — a request path is not a file path without one. Declare where a URL prefix is served from on the web server.</div>`;
+      el.innerHTML = form + mutation + `<div data-safe-style='color:var(--text-muted);font-size:12px'>No served location declared — a request path is not a file path without one. Declare where a URL prefix is served from on the web server.</div>`;
     } else {
-      el.innerHTML = form + exposure.locations.map(renderLocation).join("");
+      el.innerHTML = form + mutation + exposure.locations.map(renderLocation).join("");
     }
     const f = el.querySelector("#servedLocationDeclare");
     if (f) f.addEventListener("submit", onDeclare);
@@ -60,7 +64,9 @@
       const sens = `${esc(r.sensitivity)}${r.negativeControl ? " — <span data-safe-style='color:var(--text-muted)'>negative control (public)</span>" : ""}${r.conflict ? ` — <b>conflict:</b> ${esc(r.conflict)}` : ""}`;
       return `<tr><td><code>${esc(r.url)}</code></td><td><b>${esc(r.stage)}</b></td><td>${sens}</td><td>${esc(String(r.versions.length))} version(s), ${esc(String(r.observations.length))} observation(s)${r.historicalLeads.length ? `, ${esc(String(r.historicalLeads.length))} historical lead(s)` : ""}</td><td>${requests || "none"}</td><td>${esc(r.stageReason)}</td></tr>`;
     }).join("");
-    const unevidenced = e.unevidencedRequests.slice(0, 20).map((u) => `<li><code>${esc(u.path)}</code>: ${esc(String(u.count))} request(s), status ${u.statuses.map(String).map(esc).join("/")}</li>`).join("");
+    const shownLeads = e.unevidencedRequests.slice(0, 20);
+    const leadsOmitted = (e.unevidencedRequestsTotal || e.unevidencedRequests.length) - shownLeads.length;
+    const unevidenced = shownLeads.map((u) => `<li><code>${esc(u.path)}</code>: ${esc(String(u.count))} request(s), status ${u.statuses.map(String).map(esc).join("/")}</li>`).join("") + (leadsOmitted > 0 ? `<li>… ${esc(String(leadsOmitted))} more path(s) not shown</li>` : "");
     const unmapped = e.unmapped.count ? ` · ${esc(String(e.unmapped.count))} request(s) not mapped (${Object.entries(e.unmapped.reasons).map(([k, v]) => `${esc(k)}: ${esc(String(v))}`).join(", ")})` : "";
     return `<details open data-safe-style="margin-bottom:8px;border:1px solid var(--border);border-radius:6px;padding:4px 8px">
       <summary data-safe-style="cursor:pointer"><b>${esc(l.host)}</b>${l.vhost ? ` (${esc(l.vhost)})` : ""}: <code>${esc(l.urlPrefix || "/")}</code> ← <code>${esc(l.localRoot)}</code>${l.public ? " <span data-safe-style='color:var(--text-muted)'>— declared public</span>" : ""} <button type="button" data-sl-delete="${esc(l.id)}" data-safe-style="margin-left:8px">Delete</button></summary>
@@ -94,23 +100,39 @@
       .then((r) => {
         if (currentCaseId !== caseId) return;
         if (!r.ok) {
-          window.alert(`Could not declare the served location: ${r.body && r.body.error ? r.body.error : r.status}`);
+          mutationError = `Could not declare the served location: ${r.body && r.body.error ? r.body.error : `HTTP ${r.status}`}`;
+          renderServedExposure();
           return;
         }
+        mutationError = "";
         loadServedExposure(caseId);
       })
-      .catch(() => {});
+      .catch((err) => {
+        if (currentCaseId !== caseId) return;
+        mutationError = `Could not declare the served location: ${String((err && err.message) || err)}`;
+        renderServedExposure();
+      });
   }
 
   function deleteLocation(id) {
     if (!window.confirm("Delete this served location?")) return;
     const caseId = currentCaseId;
     fetch(`/cases/${encodeURIComponent(caseId)}/served-locations/${encodeURIComponent(id)}`, { method: "DELETE" })
-      .then(() => {
+      .then((r) => {
         if (currentCaseId !== caseId) return;
+        if (!r.ok) {
+          mutationError = `Could not delete the served location (HTTP ${r.status})`;
+          renderServedExposure();
+          return;
+        }
+        mutationError = "";
         loadServedExposure(caseId);
       })
-      .catch(() => {});
+      .catch((err) => {
+        if (currentCaseId !== caseId) return;
+        mutationError = `Could not delete the served location: ${String((err && err.message) || err)}`;
+        renderServedExposure();
+      });
   }
 
   function loadServedExposure(caseId) {

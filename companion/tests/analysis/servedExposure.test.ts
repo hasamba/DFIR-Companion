@@ -127,21 +127,56 @@ describe("the served location", () => {
 describe("the path contract — fail closed", () => {
   const l = loc({ urlPrefix: "/dump", indexFiles: ["index.html"] });
   it("maps a plain path, a once-encoded path, a query-stripped path, a directory through its index; refuses every ambiguity", () => {
-    expect(mapRequestPath(l, "/dump/backup/db.sql")).toEqual({ ok: true, relative: "backup/db.sql" });
+    expect(mapRequestPath(l, "/dump/backup/db.sql")).toEqual({
+      ok: true,
+      relative: "backup/db.sql",
+      directory: false,
+    });
     expect(mapRequestPath(l, "/dump/backup/db%20x.sql?download=1#f")).toEqual({
       ok: true,
       relative: "backup/db x.sql",
+      directory: false,
     });
-    expect(mapRequestPath(l, "/DUMP/Backup/DB.SQL")).toEqual({ ok: true, relative: "Backup/DB.SQL" });
-    expect(mapRequestPath(l, "/dump/a/../backup/db.sql")).toEqual({ ok: true, relative: "backup/db.sql" });
-    expect(mapRequestPath(l, "/dump/backup/")).toEqual({ ok: true, relative: "backup/index.html" });
-    expect(mapRequestPath(l, "http://web01.example/dump/backup/db.sql")).toEqual({
+    expect(mapRequestPath(l, "/DUMP/Backup/DB.SQL")).toEqual({
+      ok: true,
+      relative: "Backup/DB.SQL",
+      directory: false,
+    });
+    expect(mapRequestPath(l, "/dump/a/../backup/db.sql")).toEqual({
       ok: true,
       relative: "backup/db.sql",
+      directory: false,
     });
+    expect(mapRequestPath(l, "/dump/backup/")).toEqual({ ok: true, relative: "backup", directory: true });
+    // Absolute-form (a proxy row): the authority must be this location's declared vhost.
+    expect(mapRequestPath(l, "http://web01.example/dump/backup/db.sql")).toEqual({
+      ok: false,
+      why: "foreign authority",
+    });
+    const vhl = loc({ urlPrefix: "/dump", vhost: "web01.example", indexFiles: ["index.html"] });
+    expect(mapRequestPath(vhl, "http://web01.example/dump/backup/db.sql")).toEqual({
+      ok: true,
+      relative: "backup/db.sql",
+      directory: false,
+    });
+    expect(mapRequestPath(vhl, "http://external.example/dump/backup/db.sql")).toEqual({
+      ok: false,
+      why: "foreign authority",
+    });
+    expect(mapRequestPath(vhl, "ftp://web01.example/dump/x")).toEqual({
+      ok: false,
+      why: "foreign authority",
+    });
+    // A Windows name with a trailing dot or space is an alias: ambiguous on a drive-letter root.
+    expect(mapRequestPath(l, "/dump/backup/db.sql.")).toEqual({ ok: false, why: "ambiguous windows name" });
+    expect(mapRequestPath(l, "/dump/backup%20/db.sql")).toEqual({ ok: false, why: "ambiguous windows name" });
     expect(mapRequestPath(l, "/dump/backup%2Fdb.sql")).toEqual({ ok: false, why: "encoded separator" });
     // ONE decoding pass: `%252F` is a literal "%2F" in a filename, never a separator.
-    expect(mapRequestPath(l, "/dump/backup%252Fdb.sql")).toEqual({ ok: true, relative: "backup%2Fdb.sql" });
+    expect(mapRequestPath(l, "/dump/backup%252Fdb.sql")).toEqual({
+      ok: true,
+      relative: "backup%2Fdb.sql",
+      directory: false,
+    });
     expect(mapRequestPath(l, "/dump/backup/db%zz.sql")).toEqual({ ok: false, why: "malformed escape" });
     expect(mapRequestPath(l, "/dump/../../etc/passwd")).toEqual({ ok: false, why: "escaping dot segment" });
     expect(mapRequestPath(l, "/dump2/backup/db.sql")).toEqual({ ok: false, why: "outside the prefix" });
@@ -154,10 +189,15 @@ describe("the path contract — fail closed", () => {
     const posix = loc({ urlPrefix: "/dump", localRoot: "/var/www" });
     expect(mapRequestPath(posix, "/DUMP/backup/db.sql")).toEqual({ ok: false, why: "outside the prefix" });
     const vh = loc({ urlPrefix: "/", vhost: "files.example" });
-    expect(mapRequestPath(vh, "/db.sql", "files.example")).toEqual({ ok: true, relative: "db.sql" });
+    expect(mapRequestPath(vh, "/db.sql", "files.example")).toEqual({
+      ok: true,
+      relative: "db.sql",
+      directory: false,
+    });
     expect(mapRequestPath(vh, "/db.sql", undefined)).toEqual({ ok: false, why: "vhost mismatch" });
     expect(relativeUnderRoot(l, "C:/inetpub/wwwroot/backup/db.sql")).toBe("backup/db.sql");
     expect(relativeUnderRoot(l, "C:\\inetpub\\wwwroot2\\x")).toBeNull();
+    expect(relativeUnderRoot(l, "C:/inetpub//wwwroot//backup/db.sql")).toBe("backup/db.sql");
     expect(relativeUnderRoot(loc({ localRoot: "/var/www" }), "/var/WWW/x")).toBeNull();
   });
 });
@@ -326,5 +366,172 @@ describe("servedExposure — stages over versions", () => {
     );
     expect(both.locations[0].resources[0].requests).toEqual([]);
     expect(both.locations[1].unevidencedRequests).toHaveLength(1);
+  });
+});
+
+describe("servedExposure — Codex code round 1", () => {
+  it("a body-bearing response is GET-only with 200 or 206: POST 200, GET 201, GET 205 and a missing status are all 'not recorded'", () => {
+    const rows = [
+      create(DUMP, at(1)),
+      req("/backup/db.sql", 200, "999", at(2), { id: "ppost", method: "POST" }),
+      req("/backup/db.sql", 201, "999", at(3), { id: "p201" }),
+      req("/backup/db.sql", 205, "999", at(4), { id: "p205" }),
+      req("/backup/db.sql", 200, "999", at(5), { id: "pdel", method: "DELETE" }),
+    ];
+    const r = servedExposure(stateOf(rows), [loc()], NOW).locations[0].resources[0];
+    const words = Object.fromEntries(r.requests.map((q) => [q.eventId, [q.sizeRecorded, q.sizeWords]]));
+    expect(words.ppost).toEqual([false, "POST: a response to it is not the resource's body"]);
+    expect(words.pdel[0]).toBe(false);
+    expect(words.p201).toEqual([false, "status 201 is not read as the resource's body"]);
+    expect(words.p205).toEqual([false, "status 205 is not read as the resource's body"]);
+    expect(r.stage).toBe("retrieval-requested");
+    const noStatus = { ...req("/backup/db.sql", 200, "999", at(6), { id: "ns" }) };
+    noStatus.canonical = {
+      ...noStatus.canonical,
+      web: { ...noStatus.canonical?.web, statusCode: undefined },
+    } as never;
+    const r2 = servedExposure(stateOf([create(DUMP, at(1)), noStatus]), [loc()], NOW).locations[0]
+      .resources[0];
+    expect(r2.requests[0]).toMatchObject({ sizeRecorded: false, sizeWords: "status not recorded" });
+  });
+  it("a digest on a point observation binds only at that instant: a later 200 is not covered and never corroborated", () => {
+    const l = loc({ sensitiveDigests: [SHA] });
+    const rows = [
+      { ...mft(DUMP, at(3), "msha"), sha256: SHA },
+      req("/backup/db.sql", 200, "10", at(3), { id: "same" }),
+      req("/backup/db.sql", 200, "10", at(9), { id: "later" }),
+    ];
+    const r = servedExposure(stateOf(rows), [l], NOW).locations[0].resources[0];
+    expect(r.versions).toEqual([]);
+    expect(r.observations).toEqual([{ eventId: "msha", at: at(3), sha256: SHA }]);
+    expect(r.sensitivity).toBe("content-identity");
+    expect(Object.fromEntries(r.requests.map((q) => [q.eventId, q.placement]))).toEqual({
+      same: "point-observation",
+      later: "not-established",
+    });
+    expect(r.evidence["corroborated-disclosure"]).toEqual(["same"]);
+  });
+  it("provenance before canonical type: an MFT row whose canonical type says delete is a point observation, not a close", () => {
+    const mftDel: ForensicEvent = {
+      ...mft(DUMP, at(3), "mdel"),
+      canonical: { event: { category: "file", type: "delete" } } as never,
+    };
+    const r = servedExposure(
+      stateOf([create(DUMP, at(1)), mftDel, req("/backup/db.sql", 200, "10", at(5), { id: "q" })]),
+      [loc()],
+      NOW,
+    ).locations[0].resources[0];
+    expect(r.versions).toEqual([{ from: at(1), openedBy: "c-" + at(1) }]);
+    expect(r.observations.map((o) => o.eventId)).toEqual(["mdel"]);
+    expect(r.requests[0].placement).toBe("covered");
+  });
+  it("a delete and a create at the same instant: the close is applied first whatever the ids, one version covers on", () => {
+    for (const [dId, cId] of [
+      ["a", "b"],
+      ["b", "a"],
+    ]) {
+      const rows = [
+        create(DUMP, at(1), undefined, "c1"),
+        del(DUMP, at(10), dId),
+        create(DUMP, at(10), undefined, cId),
+        req("/backup/db.sql", 200, "10", at(10), { id: "q" }),
+      ];
+      const r = servedExposure(stateOf(rows), [loc()], NOW).locations[0].resources[0];
+      expect(r.versions.map((v) => [v.from, v.to ?? null, v.openedBy])).toEqual([
+        [at(1), at(10), "c1"],
+        [at(10), null, cId],
+      ]);
+      expect(r.requests[0].placement).toBe("covered");
+    }
+  });
+  it("a folded row whose interval crosses an interior boundary (covered → gap → covered) is ambiguous", () => {
+    const rows = [
+      create(DUMP, at(1)),
+      del(DUMP, at(5)),
+      create(DUMP, at(7), undefined, "c7"),
+      req("/backup/db.sql", 200, "10", at(3), { id: "fold", count: 4, endTimestamp: at(9) }),
+      req("/backup/db.sql", 200, "10", at(8), { id: "inside", count: 2, endTimestamp: at(9) }),
+    ];
+    const r = servedExposure(stateOf(rows), [loc({ sensitive: ["backup/db.sql"] })], NOW).locations[0]
+      .resources[0];
+    expect(Object.fromEntries(r.requests.map((q) => [q.eventId, q.placement]))).toEqual({
+      fold: "ambiguous",
+      inside: "covered",
+    });
+    expect(r.evidence["corroborated-disclosure"]).toEqual(["inside"]);
+  });
+  it("the read bound is charged to file readings only: path-bearing process rows never push a real create past it", () => {
+    const noise = Array.from({ length: FILE_ROWS_PER_LOCATION_MAX }, (_, i) =>
+      ev({
+        id: `p${i}`,
+        path: `C:\\inetpub\\wwwroot\\tool${i}.exe`,
+        sources: ["Sysmon"],
+        canonical: { event: { category: "process", type: "start" } } as never,
+      }),
+    );
+    const e = servedExposure(
+      stateOf([...noise, create(DUMP, at(1)), req("/backup/db.sql", 200, "10", at(2))]),
+      [loc()],
+      NOW,
+    ).locations[0];
+    expect(e.read).toMatchObject({ fileRows: 1, fileRowsUnread: 0 });
+    expect(e.resources).toHaveLength(1);
+    expect(e.resources[0].stage).toBe("response-size-recorded");
+  });
+  it("host names fold case for the join and for coverage: 'web01' file rows and 'WEB01' web rows are one host", () => {
+    const e = servedExposure(
+      stateOf([{ ...create(DUMP, at(1)), asset: "web01" }, req("/backup/db.sql", 200, "10", at(2))]),
+      [loc({ host: "Web01" })],
+      NOW,
+    ).locations[0];
+    expect(e.resources[0].requests).toHaveLength(1);
+    expect(e.coverage.length).toBeGreaterThan(0);
+    expect(e.gaps).toEqual([]);
+  });
+  it("unevidenced paths: the total and the not-shown count are said when the list is capped", () => {
+    const rows = Array.from({ length: 501 }, (_, i) =>
+      req(`/lead${i}.zip`, 404, "10", at(2), { id: `u${i}` }),
+    );
+    const e = servedExposure(stateOf(rows), [loc()], NOW).locations[0];
+    expect(e.unevidencedRequestsTotal).toBe(501);
+    expect(e.unevidencedRequestsNotShown).toBe(1);
+    expect(e.unevidencedRequests).toHaveLength(500);
+  });
+  it("a directory request resolves to the first declared index file with evidence, else the first declared one as a lead", () => {
+    const idx = loc({ indexFiles: ["index.html", "default.htm"] });
+    const evidenced = servedExposure(
+      stateOf([
+        create("C:\\inetpub\\wwwroot\\pub\\default.htm", at(1), undefined, "dh"),
+        req("/pub/", 200, "10", at(2), { id: "dq" }),
+      ]),
+      [idx],
+      NOW,
+    ).locations[0];
+    expect(evidenced.resources[0]).toMatchObject({
+      relativePath: "pub/default.htm",
+      stage: "response-size-recorded",
+    });
+    const lead = servedExposure(stateOf([req("/pub/", 200, "10", at(2), { id: "dq" })]), [idx], NOW)
+      .locations[0];
+    expect(lead.unevidencedRequests).toHaveLength(1);
+    expect(lead.resources).toEqual([]);
+  });
+  it("end to end: /Secret.bin and /secret.bin stay two rows through the importer and map to two resources on a case-sensitive root", () => {
+    const rows = [
+      create("/var/www/Secret.bin", at(1), undefined, "cs"),
+      create("/var/www/secret.bin", at(1), undefined, "cl"),
+      req("/Secret.bin", 200, "10", at(2), { id: "qS" }),
+      req("/secret.bin", 200, "10", at(2), { id: "qs" }),
+    ];
+    expect((rows[2] as { aggKey?: string }).aggKey).not.toBe((rows[3] as { aggKey?: string }).aggKey);
+    const e = servedExposure(stateOf(rows), [loc({ localRoot: "/var/www", sensitive: ["Secret.bin"] })], NOW)
+      .locations[0];
+    const byPath = Object.fromEntries(
+      e.resources.map((r) => [r.relativePath, [r.stage, r.requests.map((q) => q.eventId)]]),
+    );
+    expect(byPath).toEqual({
+      "Secret.bin": ["corroborated-disclosure", ["qS"]],
+      "secret.bin": ["response-size-recorded", ["qs"]],
+    });
   });
 });

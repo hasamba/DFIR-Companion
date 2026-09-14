@@ -70,7 +70,7 @@ export interface ServedResource {
   relativePath: string;
   url: string;
   versions: ResourceVersion[];
-  observations: { eventId: string; at: string }[];
+  observations: { eventId: string; at: string; sha256?: string }[];
   historicalLeads: string[];
   requests: ResourceRequest[];
   requestsTotal: number;
@@ -88,6 +88,8 @@ export interface LocationExposure {
   resourcesNotShown: number;
   /** Requests under the prefix that map to a path with no file evidence — leads, no exposure. */
   unevidencedRequests: { path: string; count: number; statuses: number[]; eventIds: string[] }[];
+  unevidencedRequestsTotal: number;
+  unevidencedRequestsNotShown: number;
   unmapped: { count: number; reasons: Record<string, number> };
   gaps: string[];
   coverage: TelemetryFamily[];
@@ -98,6 +100,8 @@ export interface ServedExposure {
   locations: LocationExposure[];
   generated: string;
 }
+
+const hostKey = (h: string): string => h.trim().toLowerCase();
 
 const ms = (iso: string | undefined): number | null => {
   if (!iso) return null;
@@ -114,7 +118,9 @@ export type MapFailure =
   | "escaping dot segment"
   | "outside the prefix"
   | "directory without index"
-  | "vhost mismatch";
+  | "vhost mismatch"
+  | "foreign authority"
+  | "ambiguous windows name";
 
 /**
  * The relative path (below the root, `/`-separated) a request target maps to through a location,
@@ -124,11 +130,24 @@ export function mapRequestPath(
   location: ServedLocation,
   target: string,
   rowHost?: string,
-): { ok: true; relative: string } | { ok: false; why: MapFailure } {
-  if (location.vhost && (rowHost ?? "").toLowerCase() !== location.vhost)
-    return { ok: false, why: "vhost mismatch" };
-  // Absolute-form targets carry the origin first; only the path is mapped.
-  let path = target.startsWith("/") ? target : target.replace(/^[a-z]+:\/\/[^/]*/i, "");
+): { ok: true; relative: string; directory: boolean } | { ok: false; why: MapFailure } {
+  let path = target;
+  let authority = (rowHost ?? "").toLowerCase();
+  if (!target.startsWith("/")) {
+    // Absolute-form (a proxy log): the authority is the request's, and it must be a declared
+    // vhost of this location — a forward-proxy row for a foreign origin maps to nothing.
+    let url: URL;
+    try {
+      url = new URL(target);
+    } catch {
+      return { ok: false, why: "malformed escape" };
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") return { ok: false, why: "foreign authority" };
+    authority = url.hostname.toLowerCase();
+    if (!location.vhost || authority !== location.vhost) return { ok: false, why: "foreign authority" };
+    path = url.pathname;
+  }
+  if (location.vhost && authority !== location.vhost) return { ok: false, why: "vhost mismatch" };
   path = path.split("?")[0].split("#")[0];
   if (!/^(?:%[0-9A-Fa-f]{2}|[^%])*$/.test(path)) return { ok: false, why: "malformed escape" };
   if (/%2f|%5c|%00/i.test(path)) return { ok: false, why: "encoded separator" };
@@ -148,6 +167,8 @@ export function mapRequestPath(
       segments.pop();
       continue;
     }
+    // A Windows name with a trailing dot or space is an alias of the name without it: ambiguous.
+    if (location.caseInsensitive && /[. ]$/.test(seg)) return { ok: false, why: "ambiguous windows name" };
     segments.push(seg);
   }
   const prefixSegments = location.urlPrefix.split("/").filter(Boolean);
@@ -155,19 +176,19 @@ export function mapRequestPath(
   for (const [i, p] of prefixSegments.entries()) {
     if (fold(segments[i] ?? "") !== fold(p)) return { ok: false, why: "outside the prefix" };
   }
-  let relative = segments.slice(prefixSegments.length);
-  if (!segments.length && prefixSegments.length) return { ok: false, why: "outside the prefix" };
+  const relative = segments.slice(prefixSegments.length);
   const directory = decoded.endsWith("/") || relative.length === 0;
-  if (directory) {
-    if (!location.indexFiles.length) return { ok: false, why: "directory without index" };
-    relative = [...relative, location.indexFiles[0]];
-  }
-  return { ok: true, relative: relative.join("/") };
+  if (directory && !location.indexFiles.length) return { ok: false, why: "directory without index" };
+  return { ok: true, relative: relative.join("/"), directory };
 }
 
 /** A local file path's relative form below the location's root, or null when outside it. */
 export function relativeUnderRoot(location: ServedLocation, localPath: string): string | null {
-  const norm = (p: string) => p.replace(/\//g, "\\").replace(/\\+$/, "");
+  const norm = (p: string) =>
+    p
+      .replace(/\//g, "\\")
+      .replace(/\\{2,}/g, "\\")
+      .replace(/\\+$/, "");
   const root = norm(location.localRoot);
   const file = norm(localPath);
   const fold = (s: string) => (location.caseInsensitive ? s.toLowerCase() : s);
@@ -193,17 +214,31 @@ function readFileRow(e: ForensicEvent): FileReading | null {
   const src = (e.sources ?? []).join(" ");
   const at = ms(e.timestamp);
   const sha = (e.sha256 ?? e.canonical?.file?.sha256)?.toLowerCase();
+  // Provenance first: an MFT / listing row is a point observation whatever its canonical type
+  // says (a "deleted" MFT record is an observation of a record, not a delete event); Amcache /
+  // ShimCache / Prefetch are historical leads.
   if (HISTORICAL.test(src)) return { kind: "historical" };
+  if (LISTING.test(src)) return at === null ? null : { kind: "point", at, ...(sha ? { sha256: sha } : {}) };
   const ev = e.canonical?.event;
   if (ev?.category === "file" && (ev.type === "create" || ev.type === "write" || ev.type === "modify"))
     return at === null ? null : { kind: "open", at, ...(sha ? { sha256: sha } : {}) };
   if (ev?.category === "file" && ev.type === "delete") return at === null ? null : { kind: "close", at };
-  if (LISTING.test(src) || (ev?.category === "file" && (ev.type === "observation" || ev.type === "listing")))
+  if (ev?.category === "file" && (ev.type === "observation" || ev.type === "listing"))
     return at === null ? null : { kind: "point", at, ...(sha ? { sha256: sha } : {}) };
   return null;
 }
 
-const BODY_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
+/** Whether a row is a file reading at all (before any bound is charged). */
+const isFileReading = (e: ForensicEvent): boolean => {
+  const src = (e.sources ?? []).join(" ");
+  const ev = e.canonical?.event;
+  return (
+    HISTORICAL.test(src) ||
+    LISTING.test(src) ||
+    (ev?.category === "file" &&
+      ["create", "write", "modify", "delete", "observation", "listing"].includes(ev.type))
+  );
+};
 
 function sizeReading(
   method: string,
@@ -212,18 +247,18 @@ function sizeReading(
 ): { recorded: boolean; words: string } {
   const verb = method.toUpperCase();
   if (verb === "HEAD") return { recorded: false, words: "no body by definition (HEAD)" };
-  if (verb === "CONNECT" || verb === "OPTIONS")
-    return { recorded: false, words: `no resource body for ${verb}` };
+  if (verb !== "GET")
+    return { recorded: false, words: `${verb}: a response to it is not the resource's body` };
   if (status === undefined) return { recorded: false, words: "status not recorded" };
   if (status === 304 || status === 204 || (status >= 100 && status < 200))
     return { recorded: false, words: `bodiless status ${status}` };
   if (status >= 400)
     return { recorded: false, words: `error response ${status}; a logged size is the error page's` };
   if (status >= 300) return { recorded: false, words: `redirect ${status}; no resource body` };
+  if (status !== 200 && status !== 206)
+    return { recorded: false, words: `status ${status} is not read as the resource's body` };
   if (size === undefined) return { recorded: false, words: "size not recorded (-)" };
   if (size <= 0) return { recorded: false, words: "size 0 logged" };
-  if (!BODY_METHODS.has(verb))
-    return { recorded: false, words: `method ${verb} not read as a body transfer` };
   return {
     recorded: true,
     words: `${status === 206 ? "partial (206) " : ""}response size ${size} logged — the response's size, not the document's; not client receipt`,
@@ -242,7 +277,8 @@ export function servedExposure(
   for (const e of events) {
     if (!e.asset) continue;
     const f = familyOf(e);
-    if (f) (familiesByHost.get(e.asset) ?? familiesByHost.set(e.asset, new Set()).get(e.asset)!).add(f);
+    const k = hostKey(e.asset);
+    if (f) (familiesByHost.get(k) ?? familiesByHost.set(k, new Set()).get(k)!).add(f);
   }
   return {
     locations: locations.map((location) => exposureFor(location, events, familiesByHost)),
@@ -255,8 +291,8 @@ function exposureFor(
   events: readonly ForensicEvent[],
   familiesByHost: ReadonlyMap<string, Set<TelemetryFamily>>,
 ): LocationExposure {
-  const host = location.host.trim().toLowerCase();
-  const onHost = (e: ForensicEvent) => (e.asset ?? "").trim().toLowerCase() === host;
+  const host = hostKey(location.host);
+  const onHost = (e: ForensicEvent) => hostKey(e.asset ?? "") === host;
   type Res = ServedResource & {
     versionsRaw: { at: number; kind: "open" | "close"; sha256?: string; id: string }[];
   };
@@ -293,11 +329,11 @@ function exposureFor(
   let anyFileRow = false;
   let anyWebRow = false;
 
-  // File rows under the root.
+  // File rows under the root: a row is charged to the bound only when it IS a file reading.
   for (const e of events) {
     if (!onHost(e) || e.canonical?.web) continue;
     const path = e.path ?? e.canonical?.file?.path;
-    if (!path) continue;
+    if (!path || !isFileReading(e)) continue;
     const relative = relativeUnderRoot(location, path);
     if (relative === null) continue;
     anyFileRow = true;
@@ -308,12 +344,17 @@ function exposureFor(
     read.fileRows += 1;
     const reading = readFileRow(e);
     if (!reading) {
-      if (!ms(e.timestamp)) read.undated += 1;
+      read.undated += 1;
       continue;
     }
     const r = resourceFor(relative);
     if (reading.kind === "historical") r.historicalLeads.push(e.id);
-    else if (reading.kind === "point") r.observations.push({ eventId: e.id, at: e.timestamp });
+    else if (reading.kind === "point")
+      r.observations.push({
+        eventId: e.id,
+        at: e.timestamp,
+        ...(reading.sha256 ? { sha256: reading.sha256 } : {}),
+      });
     else
       r.versionsRaw.push({
         at: reading.at,
@@ -321,12 +362,12 @@ function exposureFor(
         ...(reading.kind === "open" && reading.sha256 ? { sha256: reading.sha256 } : {}),
         id: e.id,
       });
-    if (reading.kind === "point" && reading.sha256)
-      r.versionsRaw.push({ at: reading.at, kind: "open", sha256: reading.sha256, id: e.id });
   }
   // Versions from the open / close rows, in time order.
   for (const r of resources.values()) {
-    r.versionsRaw.sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
+    // Same instant: the close comes first, so a delete-then-create at one time yields a version
+    // that covers the boundary — never a choice made by event id.
+    r.versionsRaw.sort((a, b) => a.at - b.at || (a.kind === b.kind ? 0 : a.kind === "close" ? -1 : 1));
     let current: ResourceVersion | null = null;
     for (const v of r.versionsRaw) {
       if (v.kind === "open") {
@@ -369,7 +410,14 @@ function exposureFor(
       unmapped[mapped.why] = (unmapped[mapped.why] ?? 0) + 1;
       continue;
     }
-    const k = keyOf(location, mapped.relative);
+    // A directory request resolves to the first declared index file that has evidence, else
+    // to the first declared one (an unevidenced-path lead).
+    let relativePath = mapped.relative;
+    if (mapped.directory) {
+      const candidates = location.indexFiles.map((f) => (relativePath ? `${relativePath}/${f}` : f));
+      relativePath = candidates.find((c) => resources.has(keyOf(location, c))) ?? candidates[0];
+    }
+    const k = keyOf(location, relativePath);
     const r = resources.get(k);
     const size = sizeReading(web.method, web.statusCode, web.responseBodyLen);
     if (!r) {
@@ -405,13 +453,20 @@ function exposureFor(
     r.requests.sort((a, b) => a.at.localeCompare(b.at) || a.eventId.localeCompare(b.eventId));
     r.requestsTotal = r.requests.reduce((n, q) => n + q.count, 0);
     const confirmed = sensitivePaths.has(keyOf(location, r.relativePath));
+    // The sensitive digest binds to the version covering the request, or to a point observation
+    // at exactly the request's time — never across a folded interval.
     const coveredWithSensitiveDigest = (q: ResourceRequest) => {
+      if (q.placement === "ambiguous") return false;
       const t = ms(q.at)!;
+      if (q.placement === "point-observation")
+        return r.observations.some((o) => ms(o.at) === t && o.sha256 && sensitiveDigests.has(o.sha256));
       return r.versions.some(
         (v) => ms(v.from)! <= t && (!v.to || ms(v.to)! > t) && v.sha256 && sensitiveDigests.has(v.sha256),
       );
     };
-    const identity = r.versions.some((v) => v.sha256 && sensitiveDigests.has(v.sha256));
+    const identity =
+      r.versions.some((v) => v.sha256 && sensitiveDigests.has(v.sha256)) ||
+      r.observations.some((o) => o.sha256 && sensitiveDigests.has(o.sha256));
     r.sensitivity = confirmed ? "confirmed-by-analyst" : identity ? "content-identity" : "not-established";
     r.negativeControl = location.public && r.sensitivity === "not-established";
     if (location.public && r.sensitivity !== "not-established")
@@ -455,6 +510,14 @@ function exposureFor(
     (a, b) => stageRank(b.stage) - stageRank(a.stage) || a.relativePath.localeCompare(b.relativePath),
   );
   const shown = ordered.slice(0, RESOURCES_PER_LOCATION_MAX).map(({ versionsRaw: _v, ...rest }) => rest);
+  const unevidencedList = [...unevidenced.values()]
+    .sort((a, b) => b.count - a.count || a.path.localeCompare(b.path))
+    .map((u) => ({
+      path: u.path,
+      count: u.count,
+      statuses: [...u.statuses].sort((a, b) => a - b),
+      eventIds: u.eventIds,
+    }));
   const gaps: string[] = [];
   if (!anyFileRow)
     gaps.push(
@@ -470,15 +533,12 @@ function exposureFor(
     location,
     resources: shown,
     resourcesNotShown: Math.max(0, ordered.length - shown.length),
-    unevidencedRequests: [...unevidenced.values()].slice(0, RESOURCES_PER_LOCATION_MAX).map((u) => ({
-      path: u.path,
-      count: u.count,
-      statuses: [...u.statuses].sort((a, b) => a - b),
-      eventIds: u.eventIds,
-    })),
+    unevidencedRequests: unevidencedList.slice(0, RESOURCES_PER_LOCATION_MAX),
+    unevidencedRequestsTotal: unevidencedList.length,
+    unevidencedRequestsNotShown: Math.max(0, unevidencedList.length - RESOURCES_PER_LOCATION_MAX),
     unmapped: { count: Object.values(unmapped).reduce((n, c) => n + c, 0), reasons: unmapped },
     gaps,
-    coverage: [...(familiesByHost.get(location.host) ?? [])],
+    coverage: [...(familiesByHost.get(host) ?? [])],
     read,
   };
 }
@@ -489,9 +549,15 @@ function placement(
   endAt: number | null,
 ): ResourceRequest["placement"] {
   const covers = (t: number) => r.versions.some((v) => ms(v.from)! <= t && (!v.to || ms(v.to)! > t));
-  const first = covers(at);
-  if (endAt !== null && endAt !== at && covers(endAt) !== first) return "ambiguous";
-  if (first) return "covered";
+  // A folded row spans [first, last]: any version boundary inside the span makes it ambiguous.
+  if (endAt !== null && endAt !== at) {
+    const lo = Math.min(at, endAt);
+    const hi = Math.max(at, endAt);
+    const boundaries = r.versions.flatMap((v) => [ms(v.from)!, ...(v.to ? [ms(v.to)!] : [])]);
+    if (boundaries.some((b) => b > lo && b <= hi)) return "ambiguous";
+    if (covers(lo) !== covers(hi)) return "ambiguous";
+  }
+  if (covers(at)) return "covered";
   if (r.observations.some((o) => ms(o.at) === at)) return "point-observation";
   return "not-established";
 }
