@@ -182,8 +182,11 @@ describe("parseCloudActivity — Azure remote execution", () => {
     });
     const action = azure("Microsoft.Compute/virtualMachines/runCommand/action", { resourceId: VM });
     const r = parseCloudActivity(JSON.stringify([managed, action]));
-    for (const e of r.events) expect(e.description).toContain("→ vm1 —");
-    expect(r.events.every((e) => e.severity === "High")).toBe(true);
+    // #1066: a compute-lifecycle summary row for vm1 is also appended (the VM has a
+    // remote-access-request fact) — excluded here since this test is about the per-record rows.
+    const perRecord = r.events.filter((e) => !e.description.startsWith("Azure compute lifecycle:"));
+    for (const e of perRecord) expect(e.description).toContain("→ vm1 —");
+    expect(perRecord.every((e) => e.severity === "High")).toBe(true);
   });
   it("a scale-set instance is identified by set and instance; two VMs by one caller are two rows", () => {
     const vmss = azure("Microsoft.Compute/virtualMachineScaleSets/virtualMachines/runCommand/action", {
@@ -196,7 +199,9 @@ describe("parseCloudActivity — Azure remote execution", () => {
     const r = parseCloudActivity(
       JSON.stringify([vmss, other, azure("Microsoft.Compute/virtualMachines/runCommand/action")]),
     );
-    expect(r.events).toHaveLength(3);
+    // 3 per-record rows + 2 compute-lifecycle summary rows (#1066: vm1 and vm2 each have a
+    // remote-access-request fact; the VMSS member is out of scope, #1073, so it adds none).
+    expect(r.events).toHaveLength(5);
     expect(r.events.some((e) => e.description.includes("→ web/0 —"))).toBe(true);
   });
   it("two executions with no resource id stay two rows, keyed on their record ids", () => {
@@ -215,5 +220,56 @@ describe("parseCloudActivity — Azure remote execution", () => {
     const r = parseCloudActivity(JSON.stringify([azure("Microsoft.Compute/virtualMachines/write")]));
     expect(r.events[0].mitreTechniques).not.toContain("T1651");
     expect(r.events[0].description).not.toContain("→");
+  });
+});
+
+describe("parseCloudActivity — compute-lifecycle wiring (#1066)", () => {
+  it("an Azure VM write appends an azure-compute-lifecycle row after the per-record rows", () => {
+    const r = parseCloudActivity(JSON.stringify([azure("Microsoft.Compute/virtualMachines/write")]));
+    expect(r.events.some((e) => e.description.startsWith("Azure compute lifecycle:"))).toBe(true);
+  });
+
+  it("a GCP instances.insert appends a gcp-compute-lifecycle row after the per-record rows", () => {
+    const r = parseCloudActivity(
+      JSON.stringify([
+        gcp("v1.compute.instances.insert", {
+          serviceName: "compute.googleapis.com",
+          resourceName: "projects/acme/zones/us-central1-a/instances/vm1",
+        }),
+      ]),
+    );
+    expect(r.events.some((e) => e.description.startsWith("GCP compute lifecycle:"))).toBe(true);
+  });
+
+  it("no Azure records in the upload -> no azure-compute-lifecycle row appended", () => {
+    const r = parseCloudActivity(
+      JSON.stringify([
+        gcp("v1.compute.instances.insert", {
+          serviceName: "compute.googleapis.com",
+          resourceName: "projects/acme/zones/us-central1-a/instances/vm1",
+        }),
+      ]),
+    );
+    expect(r.events.some((e) => e.description.startsWith("Azure compute lifecycle:"))).toBe(false);
+  });
+
+  it("no GCP records in the upload -> no gcp-compute-lifecycle row appended", () => {
+    const r = parseCloudActivity(JSON.stringify([azure("Microsoft.Compute/virtualMachines/write")]));
+    expect(r.events.some((e) => e.description.startsWith("GCP compute lifecycle:"))).toBe(false);
+  });
+
+  it("the same uploadId (sourceArtifactHash of the raw text) threads through both new joins", () => {
+    const text = JSON.stringify([
+      azure("Microsoft.Compute/virtualMachines/write"),
+      gcp("v1.compute.instances.insert", {
+        serviceName: "compute.googleapis.com",
+        resourceName: "projects/acme/zones/us-central1-a/instances/vm1",
+      }),
+    ]);
+    const r1 = parseCloudActivity(text);
+    const r2 = parseCloudActivity(text);
+    const azureRow1 = r1.events.find((e) => e.description.startsWith("Azure compute lifecycle:"));
+    const azureRow2 = r2.events.find((e) => e.description.startsWith("Azure compute lifecycle:"));
+    expect(azureRow1?.aggKey).toBe(azureRow2?.aggKey);
   });
 });

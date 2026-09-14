@@ -19,6 +19,8 @@ import { gcpRows } from "./gcpRow.js";
 import { show as neutral } from "./gcpIdentity.js";
 import { matchGcpRule } from "./gcpSeverityRules.js";
 import { gcpServiceAccountJoins, GCP_SA_JOIN_MAX } from "./gcpServiceAccountJoin.js";
+import { azureComputeLifecycles, AZURE_COMPUTE_MAX } from "./azureCompute.js";
+import { gcpComputeLifecycles, GCP_COMPUTE_MAX } from "./gcpCompute.js";
 import { decodeAzureLogging } from "./loggingChangeCloud.js";
 import { renderLoggingDescription } from "./loggingChange.js";
 import { createCanonicalEvent, sourceArtifactHash } from "./canonicalEvent.js";
@@ -405,7 +407,24 @@ export function parseCloudActivity(
         maxEvents: GCP_SA_JOIN_MAX + 1,
       }).events
     : [];
-  const events = [...aggregated.events, ...summaries];
+  // The Azure VM / GCP instance compute-lifecycle joins (#931 item 8 second half, #1066): the
+  // same append-after-the-cap pattern as the per-service-account join above, each under its own
+  // bound, over the already-split azureRecords/gcpRecords arrays.
+  const azureLifecycles = sawAzure
+    ? aggregateEvents(azureComputeLifecycles(azureRecords, uploadId), {
+        aggregate: opts.aggregate,
+        minSeverity: opts.minSeverity,
+        maxEvents: AZURE_COMPUTE_MAX + 1,
+      }).events
+    : [];
+  const gcpLifecycles = sawGcp
+    ? aggregateEvents(gcpComputeLifecycles(gcpRecords, uploadId), {
+        aggregate: opts.aggregate,
+        minSeverity: opts.minSeverity,
+        maxEvents: GCP_COMPUTE_MAX + 1,
+      }).events
+    : [];
+  const events = [...aggregated.events, ...summaries, ...azureLifecycles, ...gcpLifecycles];
   const groups = aggregated.groups;
 
   const represented = aggregated.events.reduce((n, e) => n + (e.count ?? 1), 0);
