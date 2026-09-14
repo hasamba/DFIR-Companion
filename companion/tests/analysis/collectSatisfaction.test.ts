@@ -160,7 +160,12 @@ describe("collectSatisfiedBy", () => {
 
   it("does not count an event whose id carries no import sequence", () => {
     const hits = collectSatisfiedBy(target, [
-      ev({ id: "manual-7", asset: "DC01", description: "4624 logon", sources: ["Windows.EventLogs.Security"] }),
+      ev({
+        id: "manual-7",
+        asset: "DC01",
+        description: "4624 logon",
+        sources: ["Windows.EventLogs.Security"],
+      }),
     ]);
     expect(hits).toEqual([]);
   });
@@ -184,10 +189,24 @@ describe("stampCollectDirectives", () => {
   it("stamps a NEW directive with the case's current import high-water mark", () => {
     const next = emptyState("c1");
     next.nextSteps = [
-      { id: "n1", priority: "high", action: "a", rationale: "", pointer: "", collect: { host: "H1", logSource: "x" } },
+      {
+        id: "n1",
+        priority: "high",
+        action: "a",
+        rationale: "",
+        pointer: "",
+        collect: { host: "H1", logSource: "x" },
+      },
     ];
     next.keyQuestions = [
-      { id: "q1", question: "?", status: "unknown", answer: "", pointer: "", collect: { host: "H2", artifact: "y" } },
+      {
+        id: "q1",
+        question: "?",
+        status: "unknown",
+        answer: "",
+        pointer: "",
+        collect: { host: "H2", artifact: "y" },
+      },
     ];
     const out = stampCollectDirectives(next, prev());
     expect(out.nextSteps[0].collect?.issuedAfterImportSeq).toBe(7);
@@ -209,7 +228,14 @@ describe("stampCollectDirectives", () => {
     const next = emptyState("c1");
     next.nextSteps = [
       // same host+source, different id and wording — the model re-issued it
-      { id: "n4", priority: "medium", action: "pull x again", rationale: "", pointer: "", collect: { host: "h1", logSource: "X" } },
+      {
+        id: "n4",
+        priority: "medium",
+        action: "pull x again",
+        rationale: "",
+        pointer: "",
+        collect: { host: "h1", logSource: "X" },
+      },
     ];
     const out = stampCollectDirectives(next, p);
     expect(out.nextSteps[0].collect?.issuedAfterImportSeq).toBe(3);
@@ -219,7 +245,14 @@ describe("stampCollectDirectives", () => {
     const next = emptyState("c1");
     const steps = [
       { id: "n1", priority: "low" as const, action: "sandbox", rationale: "", pointer: "" },
-      { id: "n2", priority: "low" as const, action: "collect somewhere", rationale: "", pointer: "", collect: { logSource: "x" } },
+      {
+        id: "n2",
+        priority: "low" as const,
+        action: "collect somewhere",
+        rationale: "",
+        pointer: "",
+        collect: { logSource: "x" },
+      },
     ];
     next.nextSteps = steps;
     const out = stampCollectDirectives(next, prev());

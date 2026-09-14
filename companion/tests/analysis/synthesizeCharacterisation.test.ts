@@ -802,7 +802,11 @@ describe("synthesize — a collection request is satisfied only by evidence impo
         action: "Baseline the SCM Event Log Consumer on WIN-X against a clean host",
         rationale: "",
         pointer: "",
-        collect: { host: "WIN-X", artifact: "Windows.Sysinternals.Autoruns", logSource: "WMI event consumers" },
+        collect: {
+          host: "WIN-X",
+          artifact: "Windows.Sysinternals.Autoruns",
+          logSource: "WMI event consumers",
+        },
         relatedFindingIds: [],
       },
     ],
@@ -821,7 +825,9 @@ describe("synthesize — a collection request is satisfied only by evidence impo
   it("stamps the request with the import high-water mark of the run that issued it", async () => {
     const seeded = emptyState("c1");
     seeded.forensicTimeline.push(
-      event("2e926", "2026-01-01T00:00:00.000Z", "Sigma: Permanent WMI Event Consumer", "High", { asset: "WIN-X" }),
+      event("2e926", "2026-01-01T00:00:00.000Z", "Sigma: Permanent WMI Event Consumer", "High", {
+        asset: "WIN-X",
+      }),
       event("7e1", "2026-01-02T00:00:00.000Z", "unrelated", "Medium", { asset: "OTHER" }),
     );
     await stateStore.save(seeded);
@@ -835,7 +841,9 @@ describe("synthesize — a collection request is satisfied only by evidence impo
   it("does not report the request satisfied by the evidence that prompted it, and does once a later import lands", async () => {
     const seeded = emptyState("c1");
     seeded.forensicTimeline.push(
-      event("2e926", "2026-01-01T00:00:00.000Z", "Sigma: Permanent WMI Event Consumer", "High", { asset: "WIN-X" }),
+      event("2e926", "2026-01-01T00:00:00.000Z", "Sigma: Permanent WMI Event Consumer", "High", {
+        asset: "WIN-X",
+      }),
       event("2e137", "2026-01-01T00:00:01.000Z", "Sigma: WMI Persistence", "Medium", { asset: "WIN-X" }),
     );
     await stateStore.save(seeded);
@@ -848,7 +856,9 @@ describe("synthesize — a collection request is satisfied only by evidence impo
 
     const live: InvestigationState = await stateStore.load("c1");
     live.forensicTimeline.push(
-      event("3e1", "2026-01-03T00:00:00.000Z", "Autoruns: WMI consumers on WIN-X", "Medium", { asset: "WIN-X" }),
+      event("3e1", "2026-01-03T00:00:00.000Z", "Autoruns: WMI consumers on WIN-X", "Medium", {
+        asset: "WIN-X",
+      }),
     );
     await stateStore.save(live);
 

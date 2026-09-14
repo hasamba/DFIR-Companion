@@ -96,7 +96,10 @@ export function openCollectTargets(
 // by key, keeps its ORIGINAL stamp — the model re-emits open requests every run, and re-stamping would
 // push the bar past the very import that fulfilled them. Directives without a host are left untouched
 // (nothing can satisfy them anyway). Returns a new state; neither input is mutated.
-export function stampCollectDirectives(next: InvestigationState, prev: InvestigationState): InvestigationState {
+export function stampCollectDirectives(
+  next: InvestigationState,
+  prev: InvestigationState,
+): InvestigationState {
   const highWater = highestImportSeq(prev.forensicTimeline ?? []);
   const carried = new Map<string, number>();
   const remember = (c: CollectDirective | undefined): void => {
