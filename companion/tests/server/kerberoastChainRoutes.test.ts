@@ -70,7 +70,7 @@ async function harness() {
   state.forensicTimeline = parsed.events.map((e, i) => ({
     ...e,
     id: `e${i}`,
-    mitreTechniques: e.mitre ?? [],
+
     relatedFindingIds: [],
     sourceScreenshots: [],
   }));
