@@ -105,7 +105,21 @@ export interface TemporalReading {
 export function intelTemporal(hit: IocEnrichment, c: CaseTime, now: string): TemporalReading {
   const t = hit.temporal ?? {};
   const dated = Boolean(
-    t.verdictMeasuredAt || t.firstSubmittedAt || t.recordUpdatedAt || t.lastReportAt || t.queryWindow,
+    t.verdictMeasuredAt ||
+    t.firstSubmittedAt ||
+    t.recordUpdatedAt ||
+    t.lastReportAt ||
+    t.queryWindow ||
+    t.observedFrom ||
+    t.observedTo ||
+    t.recordEditedAt ||
+    t.eventDate ||
+    t.publishedAt ||
+    t.createdAt ||
+    t.addedAt ||
+    t.lastOnlineAt ||
+    hit.validity?.from ||
+    hit.validity?.until,
   );
   const cmp = (iso: string): string => (c.basis === "none" ? "" : ` — ${relation(iso, c)}`);
   const noCase =
@@ -138,6 +152,40 @@ export function intelTemporal(hit: IocEnrichment, c: CaseTime, now: string): Tem
   }
   if (t.recordUpdatedAt)
     parts.push(`VirusTotal record last updated ${day(t.recordUpdatedAt)} (not an observation)`);
+  // The other providers' facts (#1024), each of its kind: an observation interval is an
+  // observation; an edit, a creation, a publication and a dataset addition are not.
+  if (t.observedFrom || t.observedTo) {
+    const from = t.observedFrom ? day(t.observedFrom) : "?";
+    const to = t.observedTo ? day(t.observedTo) : undefined;
+    const rel =
+      c.basis === "none" ? "" : t.observedFrom ? cmp(t.observedFrom) : t.observedTo ? cmp(t.observedTo) : "";
+    parts.push(`observed by the provider ${to && to !== from ? `${from} → ${to}` : from}${rel}`);
+  }
+  if (t.addedAt)
+    parts.push(
+      `added to the provider's dataset on ${day(t.addedAt)}${cmp(t.addedAt)} (a dataset date, not when the infrastructure came to exist)`,
+    );
+  if (t.lastOnlineAt)
+    parts.push(`last seen online by the provider ${day(t.lastOnlineAt)}${cmp(t.lastOnlineAt)}`);
+  if (t.eventDate)
+    parts.push(`the event's stated date ${day(t.eventDate)} (as recorded, not an observation)`);
+  if (t.publishedAt) parts.push(`published ${day(t.publishedAt)} (a publication date)`);
+  if (t.recordEditedAt)
+    parts.push(`record created or last edited ${day(t.recordEditedAt)} (not an observation)`);
+  if (t.createdAt)
+    parts.push(`object created ${day(t.createdAt)} (creation, not publication, not an observation)`);
+  if (hit.validity?.from || hit.validity?.until) {
+    const until = hit.validity.until;
+    const ended = until && Number.isFinite(parse(until)) && parse(until) <= parse(now);
+    parts.push(
+      `valid ${hit.validity.from ? `from ${day(hit.validity.from)}` : ""}${until ? `${hit.validity.from ? " " : ""}until ${day(until)}` : " with no end stated"}${
+        ended ? ` — the assertion's validity ended${cmp(until)}` : ""
+      }`.replace(/\s+/g, " "),
+    );
+  }
+  if (t.truncated)
+    parts.push("the provider's result set was cut by its own limit; these facts cover what was returned");
+  if (hit.note) parts.push(hit.note);
 
   if (!dated) {
     const lookup = `the provider reports no dates; the lookup ran on ${day(hit.fetchedAt || now)}`;

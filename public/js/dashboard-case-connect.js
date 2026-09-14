@@ -356,6 +356,7 @@
     const panelApi = clpApi();
     const CASE_PANEL_LOADERS = [
       ["custody", () => loadCustody(caseId)],
+      ["intelRetirement", () => loadIntelRetirement(caseId)],
       ["count", () => pollCount(caseId)],
       ["aiToggle", () => loadAiToggle(caseId)],
       ["enrichToggle", () => loadEnrichToggle(caseId)],

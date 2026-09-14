@@ -74,9 +74,15 @@ describe("enrichIocs", () => {
     expect(summary.enrichable).toBe(2);
     expect(summary.queried).toBe(2);
     expect(summary.withHits).toBe(2);
-    expect(out[0].enrichments).toEqual([
-      { source: "VirusTotal", verdict: "malicious", score: "9/70", fetchedAt: now() },
-    ]);
+    expect(out[0].enrichments).toHaveLength(1);
+    expect(out[0].enrichments![0]).toMatchObject({
+      source: "VirusTotal",
+      verdict: "malicious",
+      score: "9/70",
+      fetchedAt: now(),
+      status: "live",
+    });
+    expect(out[0].enrichments![0].assertionId).toMatch(/^[0-9a-f]{24}$/);
     expect(out[2].enrichments).toBeUndefined(); // file untouched
     expect(out[3].enrichments).toBeUndefined(); // other untouched
   });

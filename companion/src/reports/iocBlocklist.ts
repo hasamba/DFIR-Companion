@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { actionableAssertions } from "../analysis/intelViews.js";
 import {
   SEVERITY_RANK,
   type InvestigationState,
@@ -34,9 +35,11 @@ const VERDICT_RANK: Record<IocEnrichment["verdict"], number> = {
   unknown: 0,
 };
 
+// A block-list ACTS: only actionable assertions decide its verdict (#1024) — an expired, revoked,
+// not-returned, errored-last-known or legacy assertion never reaches a blocked address.
 function worstVerdict(ioc: IOC): IocEnrichment["verdict"] | null {
   let best: IocEnrichment["verdict"] | null = null;
-  for (const e of ioc.enrichments ?? []) {
+  for (const e of actionableAssertions(ioc)) {
     if (best === null || VERDICT_RANK[e.verdict] > VERDICT_RANK[best]) best = e.verdict;
   }
   return best;
@@ -104,7 +107,7 @@ export function filterBlocklistIocs(
 function verdictSummary(ioc: IOC): string {
   const v = worstVerdict(ioc);
   if (!v) return "";
-  const hits = (ioc.enrichments ?? [])
+  const hits = actionableAssertions(ioc)
     .filter((e) => e.verdict === v)
     .map((e) => `${e.source}${e.score ? ` (${e.score})` : ""}`)
     .join(", ");

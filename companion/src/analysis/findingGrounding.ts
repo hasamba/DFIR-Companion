@@ -24,6 +24,7 @@ import {
 } from "./stateTypes.js";
 import { classifyVerdict, iocHasBehavioralEvent, shortHost } from "./iocAnchors.js";
 import { intelOrigins } from "./intelLineage.js";
+import { actionableAssertions } from "./intelViews.js";
 import { SEVERITY_RANK } from "./forensicGate.js";
 import { extractCveIds } from "./kev.js";
 import { trustForSources, type SourceTrustMap } from "./sourceTrust.js";
@@ -155,10 +156,12 @@ export interface GroundingInput {
 // penalty below. A hit whose record names no creator (#933 item 18: a MISP/OpenCTI/YETI record with
 // no orgc / createdBy, or a pre-change relay record) lifts nothing: missing lineage stays unknown and
 // never silently becomes confirmation.
-export function intelFlaggedIocIds(iocs: readonly IOC[]): Set<string> {
+// Only ACTIONABLE assertions count (#1024): an expired, revoked, not-returned, errored-last-known
+// or legacy (pre-tracking) assertion is last-known evidence for the report, never corroboration.
+export function intelFlaggedIocIds(iocs: readonly IOC[], at: string = new Date().toISOString()): Set<string> {
   const out = new Set<string>();
   for (const i of iocs) {
-    if (intelOrigins(i.enrichments).origins.length > 0) out.add(i.id);
+    if (intelOrigins(actionableAssertions(i, at)).origins.length > 0) out.add(i.id);
   }
   return out;
 }

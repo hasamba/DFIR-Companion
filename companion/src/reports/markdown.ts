@@ -8,6 +8,7 @@ import {
 import type { CustodyRecord } from "../analysis/custody.js";
 import { chainOfCustodySection } from "./custodySection.js";
 import { sandboxReportsSection } from "./sandboxReportsSection.js";
+import { intelRetirementSection } from "./intelRetirementSection.js";
 import { byEventTime } from "../analysis/forensicSort.js";
 import { emptyReportMeta, type ReportMeta, type ReportRevision } from "./reportMeta.js";
 import { deriveGlossary } from "./glossary.js";
@@ -1481,6 +1482,7 @@ export function renderMarkdownReport(
     },
     chainOfCustody: () => chainOfCustodySection(custody, lines),
     sandboxReports: () => sandboxReportsSection(state, lines),
+    intelRetirement: () => intelRetirementSection(state, lines),
   };
 
   for (const key of orderedEnabledSections(template)) builders[key]();
