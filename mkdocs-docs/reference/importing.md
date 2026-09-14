@@ -961,6 +961,61 @@ time cell was empty was dropped. Now:
   generic import path. The dedicated LEAPP button now runs the same import spine as the generic
   button: the import lock, the super-timeline copy, the tagger, the import record and undo.
 
+### Mobile rows: where the content came from (the origin registry)
+
+A LEAPP row says what an artifact table holds. It does not say that a person acted on this device:
+a synced tab, a notification, a cached link, a history row placed by iCloud sync, an app pushed by a
+managed account are all rows the device holds. So every LEAPP row now carries an **origin tag**,
+read from the row's own columns against a registry of known iLEAPP / ALEAPP artifacts:
+
+```
+iLEAPP Safari Browser - History [Visit Timestamp: 2026-05-02 10:00:00] [origin: synced-from-another-device, device-local, history — leapp-origin-2026-09-13]: …
+iLEAPP Safari Browser - iCloud Tabs [origin: synced, cloud, tab (row names device "Ana's iPad") — leapp-origin-2026-09-13]: …
+ALEAPP Android Notification History [origin: received, device-local, notification — leapp-origin-2026-09-13]: …
+ALEAPP Knowledge [origin: not established — leapp-origin-2026-09-13]: …
+```
+
+**Facets, not a class.** *Acquisition* (recorded on this device / synced from another device /
+synced / received / from a store account / not established), *locality* (device-local / cloud),
+*record type* (history, tab, notification, account, device, app inventory) and *authorship* are
+read separately, and each names the column that established it. A facet with no establishing
+column is *not established* — never inferred from another. **Authorship is "not established" on
+every row**: no column in the registry identifies a person. Safari's `Origin` is Safari's own
+record-origin fact (the visit record originated on this device, or was synced from another), not "a
+person visited"; a Chromium `Transition Type` is kept as a navigation fact. An account or device a
+row names is an association ("the row names device X"), never an actor or a source.
+
+**The registry is pinned to upstream** — iLEAPP `main@925f3d71e2e0` and ALEAPP `main@498491475597`
+(both 2026-09-13), registry version `leapp-origin-2026-09-13` — by the artifact's exact upstream
+name (the TSV filename) and its exact header tuple. A file whose headers differ from the pinned
+tuple reads "artifact known, headers differ from the pinned release"; an artifact not in the
+registry reads "not established"; a status or configuration sub-artifact reads "excluded". A bare
+TSV carries no producer version, so the most a row can say is that its headers match the pinned
+release — the file's own LEAPP version is not recorded. Covered artifacts: Safari History, iCloud
+Tabs, Tabs (BrowserState / SafariTabs), Notification Duet, Account Data, Apple Account Device List;
+Chromium Web History / Web Visits / Search Terms, Android Notification History, Accounts_ce,
+installedappsGass, InstalledappsLibrary. The import response, the activity line, the timeline note
+and the run manifest all carry the registry's coverage counts.
+
+**The subject device.** Give `device` on `/import-leapp` (the extraction's subject as you name it);
+it becomes the rows' host. It is never read from a row: a device a row names is an association.
+
+**The infection window.** When an app-inventory row of the subject device lists a package or
+SHA-256 that is a case IOC with a live malicious verdict, that row is the earliest sign of
+compromise on that device, and the device's other mobile rows say which side of it they sit on:
+*before the earliest sign of compromise*, or *after the earliest sign — malware present on the
+device is a possible alternative source of this record; its capabilities are not read*. Content
+the device holds (a malicious link in a notification, a synced history row) never opens a window.
+Rows with no subject device get none. The window is recomputed on every merge, so a revoked
+verdict takes it away; an undated sign gives no window; an inventory row's clock is the store's or
+the table's, not an install time.
+
+**What it never says.** Device possession does not establish authorship. Shared accounts and
+synchronised browsing or media place content on a device without a local action. A cached link is
+not an opened link. A notification is a message received, not read. Presence of malware alone
+neither attributes nor explains away unrelated activity. Rows imported before the tag existed
+join their tagged re-imports in correlation; two different readings of one content stay two rows.
+
 ### Defender detections: what the action means
 
 Microsoft Defender's Operational log records a detection (event 1116) and, separately, the action

@@ -219,6 +219,8 @@ const CORRO_NOTE = /\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i;
 const NOTE_NAMES_RE = DERIVED_NOTE_NAMES.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
 const DERIVED_NOTE = new RegExp(`\\[(?:${NOTE_NAMES_RE}):[\\s\\S]{0,1200}?\\]`, "u");
 const DERIVED_NOTE_ALL = new RegExp(DERIVED_NOTE.source, "gu");
+/** The origin tag a LEAPP row carries (#988) — part of the row's identity, stripped only for the legacy match above. */
+const MOBILE_ORIGIN_TAG = /\s*\[origin: [^\]]{0,260}\]/u;
 /**
  * The per-user tag the Shellbags mapper adds (#908 item 10).
  *
@@ -417,11 +419,21 @@ function groupEvents(
   // below this is never relaxed by crossHostArtifacts — two hosts' rows are not one observation, no
   // matter who is asking.
   const byExact = new Map<string, number>();
+  // A LEAPP row imported before the origin tag existed (#988) and its tagged re-import are one
+  // observation: the tagged row's key with its tag removed is a LEGACY key, and an untagged row
+  // whose key equals it joins. One-way only — two tagged rows never meet through a legacy key,
+  // so a local and a synced reading of one content stay two rows.
+  const taggedByLegacy = new Map<string, number>();
   evs.forEach((e, i) => {
-    const k = `${e.timestamp} ${cleanDescription(e.description)} ${shortHost(e.asset)}`;
-    const prev = byExact.get(k);
+    const cleaned = cleanDescription(e.description);
+    const k = `${e.timestamp} ${cleaned} ${shortHost(e.asset)}`;
+    const legacy = MOBILE_ORIGIN_TAG.test(cleaned)
+      ? `${e.timestamp} ${cleaned.replace(MOBILE_ORIGIN_TAG, "")} ${shortHost(e.asset)}`
+      : null;
+    const prev = byExact.get(k) ?? (legacy === null ? taggedByLegacy.get(k) : byExact.get(legacy));
     if (prev !== undefined) union(prev, i);
-    else byExact.set(k, i);
+    if (!byExact.has(k)) byExact.set(k, i);
+    if (legacy !== null && !taggedByLegacy.has(legacy)) taggedByLegacy.set(legacy, i);
   });
 
   // 0b) SAME SOURCE LOG RECORD, seen by DIFFERENT parsers → union. `sourceRecordId` names one

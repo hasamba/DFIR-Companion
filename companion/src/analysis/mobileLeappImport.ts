@@ -10,7 +10,9 @@ import {
   maxEventsDefault,
 } from "./siemImport.js";
 import { parseCsvRecords } from "./csvImport.js";
-import { boundedAggKey, boundedText } from "./aggKey.js";
+import { boundedAggKey, boundedText, boundedTextTo } from "./aggKey.js";
+import { createCanonicalEvent } from "./canonicalEvent.js";
+import { readOrigin, REGISTRY_VERSION } from "./mobileOriginRegistry.js";
 
 // Deterministic importer for iLEAPP / ALEAPP output — iOS and Android logical-extraction parsing.
 // No AI call.
@@ -59,6 +61,12 @@ export type LeappPlatform = "ios" | "android" | "unknown";
 
 export interface LeappImportOptions {
   platform?: LeappPlatform;
+  /**
+   * The extraction's subject device, as the analyst names it at import (#988). Stamped as the
+   * rows' `asset`, which is what the infection-window pass partitions by; without it no window is
+   * computed for these rows. Never read from a row: a device a row names is an association.
+   */
+  device?: string;
   aggregate?: boolean;
   minSeverity?: Severity;
   maxEvents?: number;
@@ -74,7 +82,17 @@ export interface LeappParseResult {
   groups: number;
   /** Rows imported with no usable time cell (counted in `kept` too — they are events). */
   undated: number;
+  /** What the origin registry could say about this file's rows (#988), with its version. */
+  origin: LeappOriginCounts;
   format: string; // "leapp-tsv" | "empty"
+}
+
+export interface LeappOriginCounts {
+  registry: string;
+  schemaMatches: number;
+  headersDiffer: number;
+  notCovered: number;
+  excluded: number;
 }
 
 // Bounds on the description's prefix components, so the digest tail of the bounded detail can
@@ -83,6 +101,8 @@ const ARTIFACT_MAX = 80;
 const CLOCK_NAME_MAX = 40;
 const CLOCK_RAW_MAX = 40;
 const DESCRIPTION_MAX = 600;
+/** The origin tag's words (#988): a closed vocabulary plus clipped names, digest-tailed past this. */
+const ORIGIN_TAG_MAX = 200;
 
 // Column names LEAPP uses for the row's time, in preference order. Matched case-insensitively and
 // as a whole cell, so a "Timestamp Source" column does not win over "Timestamp".
@@ -136,8 +156,10 @@ function timeColumns(headers: readonly string[]): number[] {
     const i = lower.indexOf(wanted);
     if (i >= 0 && !out.includes(i)) out.push(i);
   }
+  // "Visit Timestamp", "Created Timestamp", "SEGB Timestamp" — the spelling most upstream
+  // iLEAPP / ALEAPP modules use (#988): `timestamp` inside a longer header is a clock too.
   lower.forEach((h, i) => {
-    if (!out.includes(i) && /\btime\b|\bdate\b/.test(h)) out.push(i);
+    if (!out.includes(i) && /\btime\b|\bdate\b|timestamp/.test(h)) out.push(i);
   });
   return out;
 }
@@ -206,6 +228,7 @@ export function parseLeappTsv(
     dropped: 0,
     groups: 0,
     undated: 0,
+    origin: { registry: REGISTRY_VERSION, schemaMatches: 0, headersDiffer: 0, notCovered: 0, excluded: 0 },
     format: "empty",
   };
 
@@ -229,10 +252,27 @@ export function parseLeappTsv(
   const iocSink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
   let undated = 0;
+  const origin: LeappOriginCounts = {
+    registry: REGISTRY_VERSION,
+    schemaMatches: 0,
+    headersDiffer: 0,
+    notCovered: 0,
+    excluded: 0,
+  };
+  const platform = opts.platform ?? "unknown";
+  const device = (opts.device ?? "").trim().slice(0, 120);
 
-  for (const cells of rows) {
+  for (const [rowIndex, cells] of rows.entries()) {
     const clock = rowClock(headers, cells, candidates);
     if (!clock?.timestamp) undated++;
+    // The origin registry's reading of this row (#988): its facets from its own columns, or the
+    // plain statement that the registry does not cover it. Counted per coverage.
+    const reading = readOrigin(platform, artifact, headers, cells);
+    const coverage = reading.block.registry.coverage;
+    if (coverage === "schema-matches" || coverage === "producer-verified") origin.schemaMatches++;
+    else if (coverage === "headers-differ") origin.headersDiffer++;
+    else if (coverage === "excluded") origin.excluded++;
+    else origin.notCovered++;
 
     const detail = headers
       .map((h, i) => {
@@ -250,12 +290,22 @@ export function parseLeappTsv(
     }
 
     // Prefix components are each bounded at the source (see the constants above), the detail by
-    // boundedText, so the outer slice is a bound that is never reached — the digest tail survives.
+    // boundedText, and the WHOLE description by a digest-tailed bound at DESCRIPTION_MAX — never a
+    // raw slice, since the description is the row's identity downstream (#988: the origin tag is
+    // part of it, and a raw slice past the tag would collapse two long rows).
     const clockTag = clock ? ` [${clock.name}: ${clock.raw.slice(0, CLOCK_RAW_MAX)}]` : "";
+    const originTag = ` [origin: ${boundedTextTo(oneLine(reading.words), ORIGIN_TAG_MAX)}]`;
     const boundedDetail = detail ? boundedText(oneLine(detail)) : "";
-    let description = `${label}${artifact ? ` ${artifact}` : ""}${clockTag}`;
+    let description = `${label}${artifact ? ` ${artifact}` : ""}${clockTag}${originTag}`;
     if (boundedDetail) description += `: ${boundedDetail}`;
-    description = description.slice(0, DESCRIPTION_MAX);
+    description = boundedTextTo(description, DESCRIPTION_MAX);
+    const canonical = createCanonicalEvent({
+      event: { category: "other", type: `mobile-${reading.block.facets.record}` },
+      mobile: reading.block,
+      time: { observed: clock?.raw ?? "", normalized: clock?.timestamp ?? "" },
+      evidence: { rawRecords: [{ source: "leapp-tsv", locator: `${artifact}:row:${rowIndex + 1}` }] },
+      producer: { importer: "leapp", parserVersion: "1", mappingVersion: REGISTRY_VERSION },
+    });
 
     mapped.push({
       timestamp: clock?.timestamp ?? "",
@@ -270,10 +320,15 @@ export function parseLeappTsv(
       // `/data` are two paths on the filesystems these exports come from); only the artifact name,
       // which is a filename, is. Bounded fields first, the prose last, so the attacker-shaped detail
       // can never push a discriminator past the key's bound.
+      // The origin reading and the full device / account the row names sit in the key before the
+      // prose (#988): a synced and a local row of one content are two facts, and two devices
+      // whose names share a prefix stay two rows however the tag was clipped.
       aggKey: boundedAggKey(
-        `leapp|${artifact.toLowerCase()}|${clock?.name ?? ""}|${clock?.raw ?? ""}|${boundedDetail}`,
+        `leapp|${artifact.toLowerCase()}|${clock?.name ?? ""}|${clock?.raw ?? ""}|${coverage}|${reading.block.facets.acquisition}|${reading.block.device?.name ?? ""}|${reading.block.device?.id ?? ""}|${reading.block.account?.name ?? ""}|${boundedDetail}`,
       ),
       sources: [label],
+      canonical,
+      ...(device ? { asset: device } : {}),
     });
   }
 
@@ -292,6 +347,7 @@ export function parseLeappTsv(
     dropped: Math.max(0, mapped.length - represented),
     groups,
     undated,
+    origin,
     format: mapped.length ? "leapp-tsv" : "empty",
   };
 }

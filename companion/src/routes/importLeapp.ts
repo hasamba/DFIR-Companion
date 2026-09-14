@@ -46,7 +46,12 @@ export function registerLeappImportRoute(
       .toLowerCase();
     const platform: LeappPlatform =
       rawPlatform === "ios" ? "ios" : rawPlatform === "android" ? "android" : "unknown";
-    const leappOpts: LeappImportOptions = { platform };
+    // The extraction's subject device, as the analyst names it (#988): stamped as the rows' asset,
+    // the identity the infection window partitions by. Never read from a row.
+    const device = String(req.body?.device ?? "")
+      .trim()
+      .slice(0, 120);
+    const leappOpts: LeappImportOptions = { platform, ...(device ? { device } : {}) };
 
     try {
       const preview = parseLeappTsv(text, originalName, leappOpts);
@@ -69,6 +74,8 @@ export function registerLeappImportRoute(
         format: preview.format,
         iocs: preview.iocs.length,
         undated: preview.undated,
+        // What the origin registry could say about this file's rows (#988), with its version.
+        origin: preview.origin,
       });
 
       options.onAiStatus?.(caseId, {
@@ -85,8 +92,20 @@ export function registerLeappImportRoute(
         importedAt,
         linesIn: preview.total + 1,
         path: "deterministic",
-        activitySuffix: preview.undated ? `, ${preview.undated} undated` : "",
-        parameters: { leapp: importerParameter(leappOpts) },
+        activitySuffix:
+          (preview.undated ? `, ${preview.undated} undated` : "") +
+          `, origin ${preview.origin.registry}: ${preview.origin.schemaMatches} covered, ${preview.origin.headersDiffer} headers differ, ${preview.origin.notCovered} not covered, ${preview.origin.excluded} excluded`,
+        parameters: {
+          leapp: importerParameter(leappOpts),
+          // The registry's coverage of this file, durable in the run manifest (#988).
+          leappOrigin: {
+            registry: preview.origin.registry,
+            schemaMatches: preview.origin.schemaMatches,
+            headersDiffer: preview.origin.headersDiffer,
+            notCovered: preview.origin.notCovered,
+            excluded: preview.origin.excluded,
+          },
+        },
         run: () =>
           pipeline.importLeapp(caseId, text, {
             label: storedName,

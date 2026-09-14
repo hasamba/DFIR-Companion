@@ -39,6 +39,16 @@ describe("parseLeappTsv", () => {
     expect(android.events[0].sources).toContain("ALEAPP");
   });
 
+  it("reads a 'Visit Timestamp' / 'Created Timestamp' header as the row's clock (upstream's spelling, #988)", () => {
+    const r = parseLeappTsv(
+      "Visit Timestamp\tURL\n2026-05-02 10:00:00\thttps://a.example",
+      "Safari Browser - History.tsv",
+    );
+    expect(r.undated).toBe(0);
+    expect(r.events[0].timestamp).toBe("2026-05-02T10:00:00Z");
+    expect(r.events[0].description).toContain("[Visit Timestamp: 2026-05-02 10:00:00]");
+  });
+
   it("finds the timestamp column whatever it is called", () => {
     const alt = ["Start Time\tDetail", "2026-05-02 12:00:00\tsomething happened"].join("\n");
     const r = parseLeappTsv(alt, "Knowledge.tsv");
@@ -55,7 +65,7 @@ describe("parseLeappTsv", () => {
     expect(r.undated).toBe(1);
     const undated = r.events.find((e) => e.description.includes("no time here"))!;
     expect(undated.timestamp).toBe("");
-    expect(undated.description).not.toMatch(/\[/); // no clock prefix when there is no clock
+    expect(undated.description).not.toMatch(/\[[A-Za-z ]+: \d/); // no clock prefix when there is no clock
   });
 
   it("extracts a URL appearing in any column as an IOC", () => {
@@ -80,7 +90,9 @@ describe("parseLeappTsv", () => {
     for (const e of r.events) {
       expect(e.timestamp).toBe("");
       expect(e.severity).toBe("Info");
-      expect(e.description).toMatch(/^iLEAPP Installed Apps: /);
+      expect(e.description).toMatch(
+        /^iLEAPP Installed Apps \[origin: not established — leapp-origin-[\d-]+\]: /,
+      );
     }
     expect(r.iocs.map((i) => i.value)).toContain("lure.example.invalid");
   });

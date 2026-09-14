@@ -12,6 +12,7 @@ import { ForensicGateControlStore } from "../../src/analysis/forensicGateControl
 import { ActivityLogStore } from "../../src/analysis/activityLog.js";
 import { pollFor, POLL_TIMEOUT_MS } from "../helpers/poll.js";
 import { ImportLock } from "../../src/analysis/importLock.js";
+import { AnalysisRunStore } from "../../src/analysis/analysisRunStore.js";
 
 // #932 item 12. The dedicated LEAPP route used to call the importer and resynthesize — no lock, no
 // dual-write, no tagger, no demote, no import record — so every LEAPP row (all Info) stayed in the
@@ -40,6 +41,7 @@ async function makeApp(opts: { importLock?: ImportLock } = {}) {
   // every production wiring that has one.
   const forensicGateControlStore = new ForensicGateControlStore(store);
   const activityLogStore = new ActivityLogStore(store);
+  const analysisRunStore = new AnalysisRunStore(store, { appVersion: "test" });
   const pipeline = buildRuntimePipeline({
     provider: undefined,
     synthesisProvider: undefined,
@@ -54,6 +56,7 @@ async function makeApp(opts: { importLock?: ImportLock } = {}) {
     importMetaStore,
     forensicGateControlStore,
     activityLogStore,
+    analysisRunStore,
     ...(opts.importLock ? { importLock: opts.importLock } : {}),
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
@@ -86,7 +89,9 @@ describe("POST /cases/:id/import-leapp", () => {
     for (const e of st.events) {
       expect(e.timestamp).toBe("");
       expect(e.severity).toBe("Info");
-      expect(e.description).toMatch(/^iLEAPP Installed Apps: /);
+      expect(e.description).toMatch(
+        /^iLEAPP Installed Apps \[origin: not established — leapp-origin-[\d-]+\]: /,
+      );
     }
     // The IOC the row carried survived the seam.
     expect((await stateStore.load("c1")).iocs.map((i) => i.value)).toContain("lure.example.invalid");
@@ -116,6 +121,54 @@ describe("POST /cases/:id/import-leapp", () => {
         .find((d) => d.includes("leapp ("));
     });
     expect(line).toContain("1 undated");
+    // The origin registry's coverage is in the activity line, the response and the timeline note (#988).
+    expect(line).toContain("origin leapp-origin-");
+    expect(line).toContain("2 not covered");
+    expect(res.body.origin).toMatchObject({ schemaMatches: 0, notCovered: 2, headersDiffer: 0, excluded: 0 });
+  });
+
+  it("stamps the subject device the analyst named as the rows' asset, tags every row's origin, and writes the coverage into the timeline note and the run manifest (#988)", async () => {
+    const { app, stateStore, superTimelineStore } = await makeApp();
+    const safari = [
+      "Visit Timestamp\tTitle\tURL\tVisit Count\tRedirect Source\tRedirect Destination\tVisit ID\tOrigin\tProfile",
+      "2026-05-02 10:00:00\tt\thttps://a.example\t1\t\t\t1\tLocal Device\tDefault",
+      "2026-05-02 10:00:01\tt\thttps://b.example\t1\t\t\t2\tiCloud Synced Device\tDefault",
+    ].join("\n");
+    const res = await request(app).post("/cases/c1/import-leapp").send({
+      text: safari,
+      filename: "Safari Browser - History.tsv",
+      platform: "ios",
+      device: "Ana's iPhone",
+    });
+    expect(res.status).toBe(202);
+    expect(res.body.origin).toMatchObject({ schemaMatches: 2, notCovered: 0 });
+    await waitForImportRecord(app, res.body.file as string);
+    const state = await stateStore.load("c1");
+    const rows = [
+      ...state.forensicTimeline,
+      ...(await superTimelineStore.query("c1", { limit: 50 })).events,
+    ].filter((e) => e.description.includes("Safari Browser - History"));
+    expect(rows.length).toBe(2);
+    for (const e of rows) {
+      expect(e.asset).toBe("Ana's iPhone");
+      expect(e.description).toMatch(
+        /\[origin: (recorded-on-this-device|synced-from-another-device), device-local, history — leapp-origin-[\d-]+\]/,
+      );
+      expect(e.canonical?.mobile?.registry.coverage).toBe("schema-matches");
+    }
+    expect(
+      state.timeline.some(
+        (t) =>
+          t.description.includes("origin registry leapp-origin-") &&
+          t.description.includes("2 row(s) covered"),
+      ),
+    ).toBe(true);
+    const manifest = await pollFor("the run manifest with the origin coverage", async () => {
+      const body = (await request(app).get("/cases/c1/analysis-runs")).body as unknown;
+      const text = JSON.stringify(body);
+      return text.includes("leappOrigin") ? text : undefined;
+    });
+    expect(manifest).toContain('"schemaMatches":2');
   });
 
   it("lands the same split as the generic route for the same file", async () => {
