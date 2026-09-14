@@ -8,6 +8,9 @@ import type { Severity } from "./stateTypes.js";
 import type { GcpBinding, GcpCredential, GcpKey } from "./canonicalGcp.js";
 import { field, lower, seg, show, showId, strings } from "./gcpIdentity.js";
 import { getCI, isObject, str } from "./siemImport.js";
+import { decodeGcpAuditConfigDelta, decodeGcpLogging } from "./loggingChangeCloud.js";
+import type { LoggingReading } from "./loggingChange.js";
+import type { LoggingChangeBlock } from "./canonicalLogging.js";
 
 type Row = Record<string, unknown>;
 
@@ -85,7 +88,7 @@ export const GCP_ROLES: Readonly<Record<string, RoleDef>> = {
 };
 
 export interface GcpActionReading {
-  kind: "binding" | "credential" | "key";
+  kind: "binding" | "credential" | "key" | "logging";
   severity: Severity;
   mitre: string[];
   posture: string;
@@ -99,6 +102,42 @@ export interface GcpActionReading {
   binding?: GcpBinding;
   credential?: GcpCredential;
   key?: GcpKey;
+  loggingChange?: LoggingChangeBlock;
+}
+
+const asAction = (r: LoggingReading): GcpActionReading => ({
+  kind: "logging",
+  severity: r.severity,
+  mitre: r.mitre,
+  posture: r.posture,
+  object: r.detail,
+  qualifiers: r.qualifiers,
+  keySegment: r.keySegment,
+  replacesTableGrade: true,
+  loggingChange: r.block,
+});
+
+/** The audit-config deltas of a SetIamPolicy record from both documented locations, identical copies folded; a differing copy is kept and flagged. */
+function auditConfigDeltas(pp: Row): { deltas: Row[]; copiesDiffer: boolean } {
+  const read = (v: unknown): Row[] => {
+    const policyDelta = isObject(v) ? getCI(v, "policyDelta") : undefined;
+    const deltas = isObject(policyDelta) ? getCI(policyDelta, "auditConfigDeltas") : undefined;
+    return Array.isArray(deltas) ? deltas.filter(isObject) : [];
+  };
+  const key = (d: Row) =>
+    ["action", "service", "logType", "exemptedMember"].map((k) => field(d, k)).join("|");
+  const legacy = read(getCI(pp, "serviceData"));
+  const current = read(getCI(pp, "metadata"));
+  if (!legacy.length || !current.length)
+    return { deltas: legacy.length ? legacy : current, copiesDiffer: false };
+  const seen = new Map(legacy.map((d) => [key(d), d]));
+  let copiesDiffer = legacy.length !== current.length;
+  for (const d of current) {
+    if (seen.has(key(d))) continue;
+    copiesDiffer = true;
+    seen.set(key(d), d);
+  }
+  return { deltas: [...seen.values()], copiesDiffer };
 }
 
 const denied = (pp: Row): { denied: boolean; code: string; message: string } => {
@@ -452,19 +491,33 @@ function keyReading(pp: Row, method: string): GcpActionReading | null {
 
 /** The action readings of one GCP record: one per binding delta, or one credential / key fact, or none. */
 export function decodeGcpAction(pp: Row, rec: Row, method: string, service: string): GcpActionReading[] {
+  const den = denied(pp);
   if (isSetIamPolicy(method)) {
     const { deltas, copiesDiffer } = policyDeltas(pp);
-    if (!deltas.length) return [policyWithoutDelta(pp, service)];
+    // The audit-config deltas ride beside the binding deltas (#931 item 14): each is its own row.
+    const auditRead = auditConfigDeltas(pp);
+    const audit = auditRead.deltas.slice(0, DELTAS_PER_RECORD_MAX).map((d) => {
+      const r = asAction(decodeGcpAuditConfigDelta(d, den.denied));
+      return auditRead.copiesDiffer
+        ? { ...r, qualifiers: [...r.qualifiers, "the two delta copies in this record differ"] }
+        : r;
+    });
+    if (!deltas.length) return audit.length ? audit : [policyWithoutDelta(pp, service)];
     const shown = deltas.slice(0, DELTAS_PER_RECORD_MAX);
     const storage = /storage/i.test(service);
-    return shown.map((d, i) =>
-      bindingReading(pp, service, d, {
-        copiesDiffer,
-        further: i === shown.length - 1 ? deltas.length - shown.length : 0,
-        storage,
-      }),
-    );
+    return [
+      ...shown.map((d, i) =>
+        bindingReading(pp, service, d, {
+          copiesDiffer,
+          further: i === shown.length - 1 ? deltas.length - shown.length : 0,
+          storage,
+        }),
+      ),
+      ...audit,
+    ];
   }
+  const logging = decodeGcpLogging(service, method, getCI(pp, "request"), den.denied);
+  if (logging) return [asAction(logging)];
   const credential = /iamcredentials/i.test(service) ? credentialReading(pp, rec, method) : null;
   if (credential) return [credential];
   const key = keyReading(pp, method);

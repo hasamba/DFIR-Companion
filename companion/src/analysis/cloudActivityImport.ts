@@ -17,6 +17,9 @@ import type { Severity } from "./stateTypes.js";
 import { boundedAggKey, boundedTextTo } from "./aggKey.js";
 import { gcpRows } from "./gcpRow.js";
 import { show as neutral } from "./gcpIdentity.js";
+import { decodeAzureLogging } from "./loggingChangeCloud.js";
+import { renderLoggingDescription } from "./loggingChange.js";
+import { createCanonicalEvent } from "./canonicalEvent.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -176,7 +179,7 @@ function mapGcp(rec: Row, sink: Map<string, SiemIoc>, locator: string): MappedEv
 
 // ───────────────────────────── Azure ─────────────────────────────
 
-function mapAzure(rec: Row, sink: Map<string, SiemIoc>): MappedEvent | null {
+function mapAzure(rec: Row, sink: Map<string, SiemIoc>, recordIndex: number): MappedEvent | null {
   const op = pickStr(rec, ["operationName.value", "operationName", "OperationNameValue", "OperationName"]);
   if (!op) return null;
 
@@ -212,16 +215,37 @@ function mapAzure(rec: Row, sink: Map<string, SiemIoc>): MappedEvent | null {
       "OperationId",
     ]),
   );
+  // A diagnostic-setting or log-profile operation is read for the state its request body
+  // establishes (#931 item 14); the reading's grade replaces the table's blanket High.
+  const logging = decodeAzureLogging(
+    op,
+    resource,
+    getPath(rec, "properties.requestbody") ??
+      getPath(rec, "properties.requestBody") ??
+      getPath(rec, "Properties.requestbody") ??
+      getPath(rec, "Properties.requestBody") ??
+      getPath(rec, "properties"),
+    failed,
+  );
+  if (logging) {
+    severity = logging.severity;
+    mitre.length = 0;
+    mitre.push(...logging.mitre);
+  }
   let description = `Azure ${op}`;
   if (caller) description += ` by ${caller}`;
   if (ip) description += ` from ${ip}`;
   if (exec) description += ` → ${exec.display} — the script body is not in the Activity Log`;
-  else if (shortRes) description += ` on ${shortRes}`;
+  else if (shortRes && !logging) description += ` on ${shortRes}`;
   if (failed) description += ` [${status}]`;
-  description = boundedTextTo(description, 600); // an identity downstream — see mapGcp
+  // A logging row goes through the logging renderer: every slot neutralised, the qualifiers reserved.
+  description = logging
+    ? renderLoggingDescription(description, "", logging)
+    : boundedTextTo(description, 600); // an identity downstream — see mapGcp
+  const observed = pickStr(rec, ["eventTimestamp", "time", "TimeGenerated", "timeStamp"]);
 
   return {
-    timestamp: normalizeTime(pickStr(rec, ["eventTimestamp", "time", "TimeGenerated", "timeStamp"])),
+    timestamp: normalizeTime(observed),
     description,
     severity,
     mitre,
@@ -231,9 +255,53 @@ function mapAzure(rec: Row, sink: Map<string, SiemIoc>): MappedEvent | null {
     // reads carry it: a hundred management calls by one principal genuinely are one thing, and
     // adding the resource everywhere would undo the aggregation this importer exists to do.
     aggKey: boundedAggKey(
-      `azure|${op}|${caller}|${ip}|${status}${exec ? `|${exec.id}` : isObjectRead(op) && shortRes ? `|${shortRes}` : ""}`.toLowerCase(),
+      `azure|${op}|${caller}|${ip}|${status}${exec ? `|${exec.id}` : isObjectRead(op) && shortRes ? `|${shortRes}` : ""}${logging?.keySegment ?? ""}`.toLowerCase(),
     ),
     sources: ["Azure Activity"],
+    ...(logging
+      ? {
+          canonical: createCanonicalEvent({
+            event: {
+              category: "cloud",
+              type: "logging-change",
+              action: op,
+              outcome: failed ? "failure" : "success",
+            },
+            ...(caller ? { actor: { kind: "account", name: caller } } : {}),
+            ...(ip ? { network: { source: { address: ip } } } : {}),
+            cloud: { provider: "azure", ...(resource ? { resource } : {}) },
+            time: { observed, normalized: normalizeTime(observed) },
+            evidence: { rawRecords: [{ source: "azure-activity", locator: `record:${recordIndex}` }] },
+            producer: {
+              importer: "azure-activity",
+              parserVersion: "1",
+              mappingVersion: "azure-logging-v1",
+              ruleVersions: ["azure-logging-v1"],
+            },
+            rawFieldMap: {
+              "event.action": ["operationName.value", "operationName", "OperationNameValue", "OperationName"],
+              "event.outcome": ["status.value", "status", "ActivityStatusValue", "resultType", "ResultType"],
+              "time.observed": ["eventTimestamp", "time", "TimeGenerated", "timeStamp"],
+              ...(caller ? { "actor.name": ["caller", "Caller", "identity.claims.name"] } : {}),
+              ...(ip
+                ? {
+                    "network.source.address": [
+                      "httpRequest.clientIpAddress",
+                      "claims.ipaddr",
+                      "CallerIpAddress",
+                      "callerIpAddress",
+                    ],
+                  }
+                : {}),
+              "cloud.provider": ["operationName.value"],
+              ...(resource
+                ? { "cloud.resource": ["resourceId", "ResourceId", "resourceGroupName", "ResourceGroup"] }
+                : {}),
+            },
+            loggingChange: logging.block,
+          }),
+        }
+      : {}),
   };
 }
 
@@ -309,7 +377,7 @@ export function parseCloudActivity(
       if (rows.length) sawGcp = true;
       mapped.push(...rows);
     } else if (isAzure(rec)) {
-      const m = mapAzure(rec, iocSink);
+      const m = mapAzure(rec, iocSink, recordIndex);
       if (m) {
         sawAzure = true;
         mapped.push(m);
