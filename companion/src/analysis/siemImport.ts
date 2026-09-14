@@ -901,8 +901,14 @@ export function mapWindows(
 
   // Structured correlation/IOC fields.
   const { sha256, md5 } = parseHashes(rec, ed);
+  // A file event (Sysmon 11 / 23 / 26) is ABOUT its TargetFilename: that is the row's path, and the
+  // Image is the process that touched it (kept on the envelope's process block below).
   const imagePath = // a stream's host file (ntfsStreams.ts); else the flagged file, when the record names no image
-    ads?.hostPath || firstStr(ed, [...IMAGE_PATH_KEYS, "TargetImage"]) || defender?.image || "";
+    ads?.hostPath ||
+    (def.kind === "file" ? firstStr(ed, ["TargetFilename", ...IMAGE_PATH_KEYS]) : "") ||
+    firstStr(ed, [...IMAGE_PATH_KEYS, "TargetImage"]) ||
+    defender?.image ||
+    "";
   const processName =
     def.kind === "process" || def.kind === "procaccess"
       ? baseName(
@@ -951,7 +957,7 @@ export function mapWindows(
               ? "connection"
               : def.kind === "dns"
                 ? "query"
-                : (defender?.eventType ?? def.kind ?? "event"),
+                : (defender?.eventType ?? def.fileAction ?? def.kind ?? "event"),
       ...(isLogon
         ? { outcome: eid === 4624 ? "success" : "failed" }
         : pa
@@ -1006,6 +1012,18 @@ export function mapWindows(
       : {}),
     ...(pa ? { process: pa.process } : {}),
     ...(dq ? { dns: dq.dns } : {}),
+    // A file event carries the process that touched the file, by image and GUID, so the created
+    // file and its creator can be joined without reading the text.
+    ...(def.kind === "file" && str(getCI(ed, "Image")).trim()
+      ? {
+          process: {
+            ...(processGuid(str(getCI(ed, "ProcessGuid")))
+              ? { id: processGuid(str(getCI(ed, "ProcessGuid"))) }
+              : {}),
+            executable: str(getCI(ed, "Image")).trim(),
+          },
+        }
+      : {}),
     ...(def.kind === "process"
       ? {
           process: {

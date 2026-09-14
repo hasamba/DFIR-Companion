@@ -10,6 +10,8 @@ export interface WinEventDef {
   severity: Severity;
   mitre?: string[];
   kind?: "process" | "network" | "dns" | "procaccess" | "file" | "service" | "stream" | "thread" | "tamper";
+  /** For `kind: "file"`: what the record says happened to the file it names (its TargetFilename). */
+  fileAction?: "create" | "delete";
   dns?: DnsEventSchema; // the DNS fields THIS event defines (dnsRecord.ts)
 }
 
@@ -100,7 +102,7 @@ export const SYSMON_EVENTS: Record<number, WinEventDef> = {
   8: { label: "CreateRemoteThread", severity: "Low", kind: "thread" },
   9: { label: "RawAccessRead", severity: "Medium", mitre: ["T1006"] },
   10: { label: "Process accessed", severity: "Info", kind: "procaccess" },
-  11: { label: "File created", severity: "Low" },
+  11: { label: "File created", severity: "Low", kind: "file", fileAction: "create" },
   12: { label: "Registry object created/deleted", severity: "Low", mitre: ["T1112"] },
   13: { label: "Registry value set", severity: "Low", mitre: ["T1112"] },
   14: { label: "Registry object renamed", severity: "Low", mitre: ["T1112"] },
@@ -111,10 +113,22 @@ export const SYSMON_EVENTS: Record<number, WinEventDef> = {
   20: { label: "WMI event consumer registered", severity: "Medium", mitre: ["T1546.003"] },
   21: { label: "WMI consumer-to-filter binding", severity: "Medium", mitre: ["T1546.003"] },
   22: { label: "DNS query", severity: "Low", kind: "dns", dns: SYSMON_22_DNS },
-  23: { label: "File deleted (archived)", severity: "Low", mitre: ["T1070.004"] },
+  23: {
+    label: "File deleted (archived)",
+    severity: "Low",
+    mitre: ["T1070.004"],
+    kind: "file",
+    fileAction: "delete",
+  },
   24: { label: "Clipboard changed", severity: "Low" },
   25: { label: "Process image tampering", severity: "High", kind: "tamper", mitre: ["T1055.012"] },
-  26: { label: "File delete logged", severity: "Low", mitre: ["T1070.004"] },
+  26: {
+    label: "File delete logged",
+    severity: "Low",
+    mitre: ["T1070.004"],
+    kind: "file",
+    fileAction: "delete",
+  },
 };
 
 /** The channel's own table: the DNS Client's (dnsRecord.ts), Sysmon's, PowerShell's, else Security's. */
