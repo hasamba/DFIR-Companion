@@ -102,6 +102,21 @@ export const gcpKeySchema = z.object({
   denied: z.boolean(),
 });
 
+/** A workload that can be attached a service account's identity (#931 item 12, second half — #1065). */
+export const gcpWorkloadKinds = ["gce-instance", "cloud-function", "cloud-run-service"] as const;
+/** The runtime, build and trigger identities of a workload are three facts, never merged. */
+export const gcpIdentityRoles = ["runtime", "build", "trigger"] as const;
+
+export const gcpAttachmentBlockSchema = z.object({
+  workloadKind: z.enum(gcpWorkloadKinds),
+  workloadVersion: z.string().optional(),
+  workloadName: z.string().optional(),
+  identityRole: z.enum(gcpIdentityRoles),
+  serviceAccountEmail: z.string(),
+  /** True when this reading exists only because an UPDATE call's field mask named the field. */
+  fromUpdateMask: z.boolean(),
+});
+
 export const gcpBlockSchema = z.object({
   principal: gcpPrincipalSchema,
   delegation: z.array(gcpDelegationSchema),
@@ -114,6 +129,7 @@ export const gcpBlockSchema = z.object({
   binding: gcpBindingSchema.optional(),
   credential: gcpCredentialSchema.optional(),
   key: gcpKeySchema.optional(),
+  attachment: gcpAttachmentBlockSchema.optional(),
   basis: z.literal(
     "this record only; capabilities are the role's documented permissions, nominal; no effective permission is evaluated",
   ),
@@ -126,3 +142,4 @@ export type GcpDelegation = z.infer<typeof gcpDelegationSchema>;
 export type GcpBinding = z.infer<typeof gcpBindingSchema>;
 export type GcpCredential = z.infer<typeof gcpCredentialSchema>;
 export type GcpKey = z.infer<typeof gcpKeySchema>;
+export type GcpAttachment = z.infer<typeof gcpAttachmentBlockSchema>;

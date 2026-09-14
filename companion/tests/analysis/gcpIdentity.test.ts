@@ -187,7 +187,8 @@ describe("GCP IAM policy delta — the change as Google wrote it", () => {
         delta("ADD", "roles/iam.serviceAccountUser", "user:carol@corp.example"),
       ]),
     ]);
-    expect(r).toHaveLength(2);
+    // +1: the #1065 per-service-account join adds one summary row for the SA both deltas concern.
+    expect(r).toHaveLength(3);
     const [creator, user] = r;
     expect(creator.severity).toBe("High");
     expect(creator.mitreTechniques).toEqual(expect.arrayContaining(["T1098.003", "T1550.001"]));
@@ -345,7 +346,8 @@ describe("GCP IAM policy delta — the change as Google wrote it", () => {
         },
       }),
     ]);
-    expect(meta).toHaveLength(1);
+    // +1: the #1065 per-service-account join adds one summary row for the SA the delta concerns.
+    expect(meta).toHaveLength(2);
     expect(meta[0].description).toContain("added a binding for roles/iam.serviceAccountUser");
     const both = rows([
       gcp("google.iam.admin.v1.SetIAMPolicy", {
@@ -361,7 +363,8 @@ describe("GCP IAM policy delta — the change as Google wrote it", () => {
         },
       }),
     ]);
-    expect(both).toHaveLength(1);
+    // +1: the #1065 join's summary row for the SA the delta concerns.
+    expect(both).toHaveLength(2);
     const differ = rows([
       gcp("google.iam.admin.v1.SetIAMPolicy", {
         serviceData: {
@@ -376,7 +379,8 @@ describe("GCP IAM policy delta — the change as Google wrote it", () => {
         },
       }),
     ]);
-    expect(differ).toHaveLength(2);
+    // +1: the #1065 join's summary row for the SA both deltas concern.
+    expect(differ).toHaveLength(3);
     expect(differ[0].description).toContain("the two delta copies in this record differ");
     const none = rows([
       gcp("google.iam.admin.v1.SetIAMPolicy", {

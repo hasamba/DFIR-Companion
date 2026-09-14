@@ -17,6 +17,8 @@ import type { Severity } from "./stateTypes.js";
 import { boundedAggKey, boundedTextTo } from "./aggKey.js";
 import { gcpRows } from "./gcpRow.js";
 import { show as neutral } from "./gcpIdentity.js";
+import { matchGcpRule } from "./gcpSeverityRules.js";
+import { gcpServiceAccountJoins, GCP_SA_JOIN_MAX } from "./gcpServiceAccountJoin.js";
 import { decodeAzureLogging } from "./loggingChangeCloud.js";
 import { renderLoggingDescription } from "./loggingChange.js";
 import { createCanonicalEvent } from "./canonicalEvent.js";
@@ -58,21 +60,6 @@ export interface CloudActivityParseResult {
 }
 
 type Rule = [RegExp, Severity, string[]];
-
-// GCP audit methodName patterns (prefixes vary — v1./beta./google.iam.admin.v1. — so match
-// on the distinctive verb/resource fragment).
-const GCP_RULES: Rule[] = [
-  [/createserviceaccountkey/, "High", ["T1098.001"]],
-  [/createserviceaccount\b/, "Medium", ["T1136"]],
-  [/(create|update).*\brole\b/, "Medium", ["T1098.003"]],
-  [/firewalls?\.(insert|patch|update)/, "Medium", ["T1562.007"]],
-  [/sinks?\.(delete|update)|logentries.*delete/, "High", ["T1562.008"]],
-  [/accesssecretversion/, "Medium", ["T1552.001"]],
-  [/(snapshots|images|disks)\.(insert|setiampolicy)/, "High", ["T1537"]],
-  [/instances\.insert/, "Low", ["T1578.002"]],
-  [/storage\.objects\.(get|list)/, "Info", []],
-  [/\.delete$/, "Medium", []],
-];
 
 // Azure operationName patterns ("Microsoft.X/resource/action").
 const AZURE_RULES: Rule[] = [
@@ -137,7 +124,7 @@ function mapGcp(rec: Row, sink: Map<string, SiemIoc>, locator: string): MappedEv
   const statusMsg = str(getPath(pp, "status.message"));
 
   // setIamPolicy/setIamPermissions: priv-esc generally, but data exposure on storage.
-  let def = matchRule(GCP_RULES, method);
+  let def = matchGcpRule(method);
   if (!def && /setiam(policy|permissions)/i.test(method)) {
     def = /storage/i.test(service)
       ? { severity: "High", mitre: ["T1530"] }
@@ -388,20 +375,32 @@ export function parseCloudActivity(
     return { events: [], iocs: [], total, kept: 0, dropped: total, groups: 0, format: "empty" };
   }
 
-  const { events, groups } = aggregateEvents(mapped, {
+  const aggregated = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
+  // The per-service-account join (#1065): built over every GCP record of this export, appended
+  // AFTER the source-row cap under its own bound — `maxEvents` bounds source rows, a summary
+  // never evicts one, and `kept`/`dropped`/`groups` count source rows alone.
+  const summaries = sawGcp
+    ? aggregateEvents(gcpServiceAccountJoins(records), {
+        aggregate: opts.aggregate,
+        minSeverity: opts.minSeverity,
+        maxEvents: GCP_SA_JOIN_MAX + 1,
+      }).events
+    : [];
+  const events = [...aggregated.events, ...summaries];
+  const groups = aggregated.groups;
 
-  const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
+  const represented = aggregated.events.reduce((n, e) => n + (e.count ?? 1), 0);
   const format = sawGcp && sawAzure ? "mixed" : sawGcp ? "gcp" : sawAzure ? "azure" : "empty";
 
   return {
     events,
     iocs: [...iocSink.values()].slice(0, maxIocs),
     total,
-    kept: events.length,
+    kept: aggregated.events.length,
     dropped: Math.max(0, total - represented),
     groups,
     format,

@@ -125,7 +125,8 @@ describe("parseCloudActivity — inputs, floor & edges", () => {
       .join("\n");
     const r = parseCloudActivity(text);
     expect(r.format).toBe("mixed");
-    expect(r.events).toHaveLength(2);
+    // +1: the #1065 per-service-account join adds one summary row for the key's service account.
+    expect(r.events).toHaveLength(3);
   });
 
   it("applies a severity floor", () => {
@@ -134,8 +135,10 @@ describe("parseCloudActivity — inputs, floor & edges", () => {
       gcp("storage.objects.get", { serviceName: "storage.googleapis.com" }), // Info
     ]);
     const r = parseCloudActivity(text, { minSeverity: "Medium" });
-    expect(r.events).toHaveLength(1);
+    // +1: the #1065 join's own summary row for the key's service account, also High.
+    expect(r.events).toHaveLength(2);
     expect(r.events[0].severity).toBe("High");
+    expect(r.events[1].severity).toBe("High");
   });
 
   it("reports empty for a non-cloud file", () => {

@@ -5,8 +5,9 @@
 // lifecycle. A denied call is an attempt. No effective permission is ever emitted.
 
 import type { Severity } from "./stateTypes.js";
-import type { GcpBinding, GcpCredential, GcpKey } from "./canonicalGcp.js";
+import type { GcpAttachment, GcpBinding, GcpCredential, GcpKey } from "./canonicalGcp.js";
 import { field, lower, seg, show, showId, strings } from "./gcpIdentity.js";
+import { decodeGcpWorkloadAttachment } from "./gcpWorkloadAttachment.js";
 import { getCI, isObject, str } from "./siemImport.js";
 import { decodeGcpAuditConfigDelta, decodeGcpLogging } from "./loggingChangeCloud.js";
 import type { LoggingReading } from "./loggingChange.js";
@@ -88,7 +89,7 @@ export const GCP_ROLES: Readonly<Record<string, RoleDef>> = {
 };
 
 export interface GcpActionReading {
-  kind: "binding" | "credential" | "key" | "logging";
+  kind: "binding" | "credential" | "key" | "logging" | "attachment";
   severity: Severity;
   mitre: string[];
   posture: string;
@@ -103,6 +104,7 @@ export interface GcpActionReading {
   credential?: GcpCredential;
   key?: GcpKey;
   loggingChange?: LoggingChangeBlock;
+  attachment?: GcpAttachment;
 }
 
 const asAction = (r: LoggingReading): GcpActionReading => ({
@@ -521,5 +523,17 @@ export function decodeGcpAction(pp: Row, rec: Row, method: string, service: stri
   const credential = /iamcredentials/i.test(service) ? credentialReading(pp, rec, method) : null;
   if (credential) return [credential];
   const key = keyReading(pp, method);
-  return key ? [key] : [];
+  if (key) return [key];
+  const attachments = decodeGcpWorkloadAttachment(pp, service, method);
+  return attachments.map((a): GcpActionReading => ({
+    kind: "attachment",
+    severity: a.severity,
+    mitre: a.mitre,
+    posture: a.posture,
+    object: "",
+    qualifiers: [],
+    keySegment: a.keySegment,
+    serviceAccount: { email: a.serviceAccount.email },
+    attachment: a.attachment,
+  }));
 }
