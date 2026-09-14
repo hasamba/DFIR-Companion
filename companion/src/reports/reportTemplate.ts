@@ -59,6 +59,13 @@ export const REPORT_SECTION_DEFS = [
     label: "Campaign scope (per recipient and per host, from imported messages)",
     defaultEnabled: false,
   },
+  // Off by default (#930 item 4): a per-resource exposure table belongs in a report the analyst
+  // chose to carry it.
+  {
+    key: "servedExposure",
+    label: "Served exposure (declared served locations: files, requests, what the server logged)",
+    defaultEnabled: false,
+  },
   // Opt-in EVERYWHERE (#969): a fresh template does not switch it on either, because the section
   // renders an analyst's recorded residual-risk status and must never appear in a report by
   // accident of "every section is what default means".
@@ -261,6 +268,7 @@ export const BUILT_IN_REPORT_TEMPLATES: readonly ReportTemplate[] = [
       { key: "sandboxReports", enabled: false },
       { key: "intelRetirement", enabled: false },
       { key: "campaignScope", enabled: false },
+      { key: "servedExposure", enabled: false },
       { key: "remediationChecks", enabled: false },
     ],
   }),
