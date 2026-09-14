@@ -219,6 +219,10 @@ const CORRO_NOTE = /\s*\[corroborated by \d+ sources?:[^\]]*\]\s*$/i;
 const NOTE_NAMES_RE = DERIVED_NOTE_NAMES.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
 const DERIVED_NOTE = new RegExp(`\\[(?:${NOTE_NAMES_RE}):[\\s\\S]{0,1200}?\\]`, "u");
 const DERIVED_NOTE_ALL = new RegExp(DERIVED_NOTE.source, "gu");
+/** A LEAPP row: the importer's label opens the description. */
+const LEAPP_ROW = /^(?:i|A)?LEAPP\b/;
+/** The origin tag a LEAPP row carries (#988) — part of the row's identity, stripped only for the legacy match above. */
+const MOBILE_ORIGIN_TAG = /\s*\[origin: [^\]]{0,260}\]/u;
 /**
  * The per-user tag the Shellbags mapper adds (#908 item 10).
  *
@@ -417,12 +421,29 @@ function groupEvents(
   // below this is never relaxed by crossHostArtifacts — two hosts' rows are not one observation, no
   // matter who is asking.
   const byExact = new Map<string, number>();
+  // A LEAPP row imported before the origin tag existed (#988) and its tagged re-import are one
+  // observation. LEAPP-only, one-way and non-transitive: an untagged LEAPP row joins a tagged
+  // row only when EXACTLY ONE tagged row has that legacy key (its key with the tag removed) — two
+  // readings of one content (a local and a synced row) leave the legacy row alone, and tagged
+  // rows never meet each other through a legacy key.
+  const taggedByLegacy = new Map<string, number[]>();
+  const legacyRows = new Map<string, number[]>();
   evs.forEach((e, i) => {
-    const k = `${e.timestamp} ${cleanDescription(e.description)} ${shortHost(e.asset)}`;
+    const cleaned = cleanDescription(e.description);
+    const k = `${e.timestamp} ${cleaned} ${shortHost(e.asset)}`;
     const prev = byExact.get(k);
     if (prev !== undefined) union(prev, i);
     else byExact.set(k, i);
+    if (!LEAPP_ROW.test(cleaned)) return;
+    if (MOBILE_ORIGIN_TAG.test(cleaned)) {
+      const legacy = `${e.timestamp} ${cleaned.replace(MOBILE_ORIGIN_TAG, "")} ${shortHost(e.asset)}`;
+      (taggedByLegacy.get(legacy) ?? taggedByLegacy.set(legacy, []).get(legacy)!).push(i);
+    } else (legacyRows.get(k) ?? legacyRows.set(k, []).get(k)!).push(i);
   });
+  for (const [k, olds] of legacyRows) {
+    const tagged = taggedByLegacy.get(k);
+    if (tagged?.length === 1) for (const i of olds) union(tagged[0], i);
+  }
 
   // 0b) SAME SOURCE LOG RECORD, seen by DIFFERENT parsers → union. `sourceRecordId` names one
   // physical Windows event record (channel + EventRecordID), so a Hayabusa run and a Chainsaw run

@@ -325,7 +325,9 @@ export async function importLeapp(
       // A row with no usable time cell is kept undated (#932 item 12); the note says how many, so
       // "why is this one (undated)?" has an answer in the import record.
       (parsed.undated > 0 ? `, ${parsed.undated} undated` : "") +
-      `, ${parsed.iocs.length} IOC(s)`,
+      `, ${parsed.iocs.length} IOC(s)` +
+      // The origin registry's coverage (#988): how many rows it could read, how many it could not.
+      `; origin registry ${parsed.origin.registry}: ${parsed.origin.schemaMatches} row(s) covered, ${parsed.origin.headersDiffer} headers differ, ${parsed.origin.notCovered} not covered, ${parsed.origin.excluded} excluded`,
     summary: "",
   };
   const delta = deltaSchema.parse(raw);
