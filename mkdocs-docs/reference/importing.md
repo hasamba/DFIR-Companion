@@ -1333,6 +1333,81 @@ credential lineage; a lifecycle across uploads is not built.
   (account, region, instance id, this upload), so an identical re-import folds and two uploads
   about one instance stay two rows.
 
+### GCP identities: who acted, what a policy change did, what a credential call established
+
+A GCP Cloud Audit Log row used to read `GCP SetIamPolicy (iam) by alice@… on
+serviceAccounts/svc@…` — High whatever the policy change was, the member and the role unread,
+the impersonation chain and the key behind the call ignored. Each record now reads for what it
+states, and every capability is nominal:
+
+`GCP google.iam.admin.v1.SetIAMPolicy (iam) by alice@corp.example from 203.0.113.11 on
+serviceAccounts/svc@acme.iam.gserviceaccount.com — authority over service account
+svc@acme.iam.gserviceaccount.com granted to user:bob@corp.example — added a binding for
+roles/iam.serviceAccountTokenCreator, whose documented permissions include: generating access
+tokens and ID tokens for the service account, signing blobs and JWTs (nominal; conditions, deny
+policies, principal access boundaries and inheritance are not evaluated by this record)`
+
+- **Who acted, as the record says.** `principalEmail` is typed only by a documented
+  service-account address shape — `name@<project-id>.iam.gserviceaccount.com` (home project, an
+  id), `<number>-compute@developer…` (a number), `<id>@appspot…`, or a Google-managed service
+  agent (`home project not derivable from the address`); anything else is `user or unknown` —
+  groups never authenticate. `principalSubject` is kept verbatim and typed only by its prefix
+  (`a federated principal`, `a federated principal set`, else `opaque subject`).
+  `serviceAccountKeyName` reads `authenticated with credentials derived from key …/keys/<id>;
+  this record does not identify the key holder`. The delegation chain is whole, in order and
+  typed — `delegation authority recorded as: alice@… → mid@… → principal://…` — never
+  "impersonated by", never one selected impersonator.
+- **Projects are typed, never guessed.** The log's project (from `logName`, else
+  `resource.labels.project_id`) and the resource's project (from `resourceName`, any `//service/`
+  prefix skipped) carry their namespace (`projects`, `folders`, `organizations`,
+  `billingAccounts`) and kind (an id or a number); `projects/-` is ignored. `the log's project and
+  the resource's project differ` is said only for two ids or two numbers — never a "cross-project
+  use" verdict.
+- **A policy change is its delta.** `SetIamPolicy` / `setIamPermissions` reads
+  `serviceData.policyDelta` or `metadata.policyDelta` (`serviceData` is deprecated; identical
+  copies fold, differing copies are both kept and said); a response snapshot is never turned into
+  a delta, and a record with no delta reads `policy set on …; the delta is not in this record`
+  (Medium; a storage policy keeps the exposure reading). Each binding delta is one row, in one of
+  three directions: `authority over service account X granted to <member>` (the policy is on the
+  service account), `access granted to serviceAccount:X on <resource>` (the account is the
+  member), or `to <member> on project p — nominally applies to the service accounts under it;
+  inheritance not evaluated`. A condition is shown, never evaluated; `deleted:` members keep
+  their `?uid=`; `allUsers` / `allAuthenticatedUsers` read `(public member)`.
+- **A role's words are its documented permissions, nominal.** Classified predefined roles:
+  `serviceAccountTokenCreator` and `serviceAccountOpenIdTokenCreator` (token generation, High),
+  `serviceAccountUser` (`attaching the service account to a workload (actAs) — not the
+  permission to mint credentials`, Medium), `serviceAccountKeyAdmin` (High), `serviceAccountAdmin`
+  (High), `workloadIdentityUser` (federated token generation, Medium), `owner` / `editor`
+  (`service-account key creation and actAs`, Owner adds project IAM policy — High),
+  `securityAdmin` / `resourcemanager.projectIamAdmin` (`changing allow policies at its scope —
+  policy writing, not impersonation`, High), `securityReviewer` (`read-only reconnaissance of IAM
+  policies and keys`, Low). A custom role reads `its permissions are not in this record`
+  (Medium); any other predefined role `role as recorded; not classified here` (Medium on ADD).
+  A removal is Low. A public member is High only on a classified dangerous role or a storage
+  bucket; on an unclassified role it reads `public member on an unclassified role` (Medium). No
+  effective permission is ever emitted.
+- **IAM Credentials calls are four facts.** `GenerateAccessToken` → `access token generated for
+  service account …` and `GenerateIdToken` → `ID token generated …` (High, T1550.001);
+  `SignBlob` / `SignJwt` → `blob / JWT signed by service account … — no token established by
+  this record` (Medium). The lifetime, audience, scopes and delegates are quoted. The service
+  account is read from `request.name` and `resource.labels.email_id`; a numeric `resourceName`
+  is the 21-digit unique id — the durable identity, never read as an email or a project. Every
+  row says `a DATA_ACCESS record — present only where Data Access audit logging is enabled for
+  iamcredentials`.
+- **Keys.** `created key …/keys/<id> for service account … (USER_MANAGED, GOOGLE_PROVIDED); the
+  key material is not in the record` (High, T1098.001); `uploaded key` High; `deleted` /
+  `disabled` / `enabled key` Low.
+- **A denied call is an attempt** — `attempted, denied (7: PERMISSION_DENIED)`, `requested a
+  binding for …`, `access token requested for …` — Medium, never joined as done.
+- The head keeps the digest-preserving clip (#940); every imported string is neutralised and the
+  row stays within 600 characters. The envelope carries a `gcp` block (principal, delegation,
+  projects, binding / credential / key) and, for a binding or credential row, `object` the
+  service account (`cloud_principal`, its unique id when recorded).
+
+Not built yet (stays open on #931 item 12): workload attachment (a versioned method matrix for
+GCE / Functions v1–v2 / Run v1–v2 with update-mask handling), and the per-service-account join
+(control granted → credentials minted → calls authenticated as the account → projects touched).
+
 ### Entra applications: credentials, grants, roles, sign-ins
 
 An application that gains a credential, then a powerful permission, then acts, is the classic

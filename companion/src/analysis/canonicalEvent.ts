@@ -10,6 +10,7 @@ import { mobileBlockSchema } from "./canonicalMobile.js";
 import { entraPathBlockSchema } from "./canonicalEntra.js";
 import { awsLineageBlockSchema } from "./canonicalAwsLineage.js";
 import { awsComputeBlockSchema } from "./canonicalAwsCompute.js";
+import { gcpBlockSchema } from "./canonicalGcp.js";
 import {
   driveAccessBlockSchema,
   driveSharingBlockSchema,
@@ -167,6 +168,8 @@ export const canonicalEventEnvelopeSchema = z.object({
   awsLineage: awsLineageBlockSchema.optional(),
   // An AWS compute-lifecycle summary row (awsCompute.ts, #931 item 8); the block lives in canonicalAwsCompute.ts.
   awsCompute: awsComputeBlockSchema.optional(),
+  // A GCP audit row's identity, binding delta, credential fact or key step (gcpRow.ts, #931 item 12); the block lives in canonicalGcp.ts.
+  gcp: gcpBlockSchema.optional(),
   // A mailbox-chain summary row (mailboxChain.ts, #975); the block lives in canonicalMailbox.ts.
   mailboxChain: mailboxChainBlockSchema.optional(),
   // A memory run-envelope row (memoryRunEnvelope.ts, #1016); the block lives in canonicalMemoryRun.ts.
