@@ -87,7 +87,12 @@ export async function knownUnknownsBlock(
   caseId: string,
   aliasIndex?: HostAliasIndex,
 ): Promise<string> {
-  const max = Math.max(0, Number(process.env.DFIR_SYNTH_KNOWN_UNKNOWNS_MAX) || 10);
+  // `Number(x) || 10` would treat the STRING "0" as falsy and silently fall back to the default,
+  // breaking the documented "0 = disable" — parse explicitly instead: only an unset/empty/NaN
+  // value falls back; an explicit 0 is honoured.
+  const raw = process.env.DFIR_SYNTH_KNOWN_UNKNOWNS_MAX;
+  const parsed = raw === undefined || raw.trim() === "" ? NaN : Number(raw);
+  const max = Number.isFinite(parsed) ? Math.max(0, parsed) : 10;
   return renderKnownUnknowns(
     knownUnknownItems(state, scopedEvents, await loadYieldWarning(ctx, caseId), aliasIndex),
     max,

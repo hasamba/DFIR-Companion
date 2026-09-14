@@ -106,4 +106,9 @@ describe("buildKnownUnknowns", () => {
     const bulletCount = (block.match(/^- /gm) ?? []).length;
     expect(bulletCount).toBe(1);
   });
+
+  it("#1069: max: 0 returns the empty string, not a header with zero bullets", () => {
+    const block = buildKnownUnknowns(withFindings([finding("f1", "Critical", ["T1486"])]), [], { max: 0 });
+    expect(block).toBe("");
+  });
 });
