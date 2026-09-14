@@ -513,6 +513,7 @@ async function dispatch(message) {
     case "protectSuper": return protectSuper(message.dbPath, message.eventId);
     case "unprotectSuper": return unprotectSuper(message.dbPath, message.eventId, message.max);
     case "listSuperProtected": return listSuperProtected(message.dbPath);
+    case "superMeta": return superMeta(message.dbPath, message.hosts);
     case "integrity": return integrity(message.dbPath);
     case "backupDatabase": return backupDatabase(message.dbPath, message.targetPath);
     case "restoreDatabase": return restoreDatabase(message.sourcePath, message.targetPath);

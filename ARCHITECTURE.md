@@ -197,6 +197,26 @@ So it reads the raw record directly, under three constraints that keep it safe:
 The old 10,000 was more than a model summarizes usefully and more than an analyst can check, which
 made the single exception the widest path into the raw record in the codebase.
 
+### The remediation check is the second, narrower exception (#969)
+
+A post-remediation recurrence check (`remediationVerify.ts`, `remediationRun.ts`) reads the raw
+record for rows on one host inside one analyst-declared window, and no model sees any of it. Its
+constraints are the same three, tightened:
+
+1. **Analyst-initiated only** — a button on a boundary the analyst declared. Nothing re-checks.
+2. **Ephemeral in the record's terms.** What it persists is a **receipt** of aggregate facts: row
+   counts per store and source, coverage per telemetry family, the ids of the rows that named the
+   artifact, the read's own flags (truncated, undated, at-cap, inconsistent). Never a row's text,
+   never an envelope. A raw row enters the case only when the analyst **attaches** it, and that is
+   a promotion with intent `remediation-check`.
+3. **Bounded** — the window, a 200,000-row read budget, 200 hits in the response — and it tells
+   the analyst when the budget stopped the read.
+
+And a fourth that is this exception's own: it **never emits a negative verdict**. Absence of rows is
+a coverage fact; the residual-risk status is the analyst's, recorded against the receipt.
+`tests/server/remediationRoutes.test.ts` asserts the receipt on disk holds ids and counts and no
+raw text, and that a verify leaves both stores unchanged.
+
 ### How it is enforced
 
 `tests/analysis/forensicBoundary.test.ts` asserts each half: that `starredReport` promotes exactly
@@ -238,7 +258,7 @@ established, and it works the same way.
 The graph is built the same way `check-imports.mjs` builds it: a regex over relative `.js`
 specifiers, because the companion imports its own modules exclusively that way. No resolver needed.
 
-For context: **2,246 of the 2,284 cross-domain file dependencies already comply.** The map is mostly
+For context: **2,269 of the 2,307 cross-domain file dependencies already comply.** The map is mostly
 a description of how this codebase is already written, which is the only kind of rule people follow.
 Both figures come from `npm run check:boundaries -- --json`, which counts them in the same pass that
 finds the violations, and a test asserts this sentence against it. The pair read 1,275 of 1,323 long

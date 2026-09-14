@@ -31,6 +31,7 @@ import type { TagsStore } from "../analysis/tags.js";
 import type { PinnedFindingsStore } from "../analysis/pinnedFindings.js";
 import type { FindingWorkflowStore } from "../analysis/findingWorkflow.js";
 import type { FindingOutcomeStore } from "../analysis/findingOutcome.js";
+import type { RemediationStore } from "../analysis/remediationBoundary.js";
 import type { NotebookStore } from "../analysis/notebookStore.js";
 import type { HypothesisStore } from "../analysis/hypothesisStore.js";
 import type { LearnedPatternStore } from "../analysis/learnedPatternStore.js";
@@ -201,6 +202,9 @@ export interface AppOptions {
   // Analyst attack-outcome statements per finding (#930 item 8), same side-file pattern and the
   // same reason. onFindingOutcome pings dashboard clients to re-fetch on any change.
   findingOutcomeStore?: FindingOutcomeStore;
+  // Remediation boundaries, receipts and the analyst's residual-risk status (#969) — a side file
+  // beside the state, never wiped by a re-synthesis.
+  remediationStore?: RemediationStore;
   onFindingOutcome?: (caseId: string) => void;
   // Per-case analyst notebook (hypotheses, notes, open questions). onNotebook pings dashboard
   // clients over the WS to re-fetch when an entry is added, updated, or removed.

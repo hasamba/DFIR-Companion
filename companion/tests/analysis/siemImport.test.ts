@@ -1945,3 +1945,59 @@ describe("parseSiemExport — process access, remote threads and tampering (Sysm
     expect(r.events[0].canonical?.subject).toMatchObject({ kind: "process", id: "pid:1001", pid: 1001 });
   });
 });
+
+// Sysmon file events name the FILE they are about (found while building #969): before this, a
+// FileCreate (11) row's `path` was the creating process's image, so a search for the created file
+// by path missed the row and the envelope said `other/event` with the wrong file.
+describe("Sysmon file events (11 / 23 / 26) key the target file, not the creating process", () => {
+  const row = (event_id: number, extra: Record<string, string> = {}) => ({
+    "@timestamp": "2026-06-01T01:00:00Z",
+    log_name: "Microsoft-Windows-Sysmon/Operational",
+    computer_name: "WS-042",
+    event_id,
+    event_data: {
+      Image: "C:\\Windows\\explorer.exe",
+      TargetFilename: "C:\\Users\\a\\Downloads\\evil.exe",
+      ProcessGuid: "{9d7f1b1e-0000-0000-0000-000000000001}",
+      ...extra,
+    },
+  });
+  it("a FileCreate's path is the created file; the envelope is file/create with the creating process beside it", () => {
+    const e = parseSiemExport(elastic(row(11))).events[0];
+    expect(e.path).toBe("C:\\Users\\a\\Downloads\\evil.exe");
+    expect(e.canonical?.event).toMatchObject({ category: "file", type: "create" });
+    expect(e.canonical?.file?.path).toBe("C:\\Users\\a\\Downloads\\evil.exe");
+    expect(e.canonical?.process?.executable).toBe("C:\\Windows\\explorer.exe");
+    expect(e.canonical?.process?.id).toBeDefined();
+    // Both files stay IOCs, as before.
+    const r = parseSiemExport(elastic(row(11)));
+    expect(
+      r.iocs
+        .filter((i) => i.type === "file")
+        .map((i) => i.value)
+        .sort(),
+    ).toEqual(["C:\\Users\\a\\Downloads\\evil.exe", "C:\\Windows\\explorer.exe"]);
+  });
+  it("a row with no TargetFilename (or '-') names no file: the Image never stands in for it", () => {
+    for (const extra of [{ TargetFilename: "" }, { TargetFilename: "-" }]) {
+      const e = parseSiemExport(elastic(row(11, extra))).events[0];
+      expect(e.path, JSON.stringify(extra)).toBeUndefined();
+      expect(e.canonical?.file?.path).toBeUndefined();
+      expect(e.canonical?.process?.executable).toBe("C:\\Windows\\explorer.exe");
+      expect(e.canonical?.event).toMatchObject({ category: "file", type: "create" });
+    }
+    expect(parseSiemExport(elastic(row(11))).events[0].canonical?.producer.mappingVersion).toBe(
+      "windows-event-v3",
+    );
+  });
+  it("a FileDelete (23 / 26) is file/delete on the deleted file; a process-create row is unchanged", () => {
+    for (const eid of [23, 26]) {
+      const e = parseSiemExport(elastic(row(eid))).events[0];
+      expect(e.path, `EID ${eid}`).toBe("C:\\Users\\a\\Downloads\\evil.exe");
+      expect(e.canonical?.event, `EID ${eid}`).toMatchObject({ category: "file", type: "delete" });
+    }
+    const proc = parseSiemExport(elastic(SYSMON_PROC)).events[0];
+    expect(proc.canonical?.event).toMatchObject({ category: "process", type: "start" });
+    expect(proc.path?.toLowerCase()).toContain("taskeng.exe");
+  });
+});

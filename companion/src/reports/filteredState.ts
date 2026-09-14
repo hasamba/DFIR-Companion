@@ -9,6 +9,7 @@ import { projectScope } from "../analysis/scopeProject.js";
 import { applyFalsePositive, filterFalsePositiveEvents } from "../analysis/falsePositive.js";
 import { withEventTechniques } from "../analysis/eventTechniques.js";
 import { FindingOutcomeStore, withAnalystOutcomes } from "../analysis/findingOutcome.js";
+import { RemediationStore } from "../analysis/remediationBoundary.js";
 
 // The one state projection every report artifact reads — markdown, HTML, docx, the CSV and
 // Timesketch exports, the evidence graph, the lateral-movement paths. It was a private method on
@@ -43,7 +44,23 @@ export async function loadFilteredState(
   // re-synthesis would wipe them). Applied here so every report surface attributes a blocked or
   // executed attack the way the analyst said, over whatever the machine derived.
   const outcomes = await new FindingOutcomeStore(src.cases).load(caseId);
-  const withOutcomes = withAnalystOutcomes({ ...scoped, forensicTimeline: kept }, outcomes);
+  // The remediation boundaries (#969) are a side file too; projected here so the report section
+  // can render the analyst's recorded status beside the receipt it names. Stale marks are judged
+  // against the forensic store only — the super-timeline is not read on this path.
+  const boundaries = await new RemediationStore(src.cases).load(caseId);
+  const remediationBoundaries = boundaries.map((b) => ({
+    ...b,
+    receipts: b.receipts.map((r) => ({
+      ...r,
+      stale:
+        r.highWater.forensic.rows !== loaded.forensicTimeline.length ||
+        r.highWater.forensic.updatedAt !== (loaded.updatedAt ?? ""),
+    })),
+  }));
+  const withOutcomes = withAnalystOutcomes(
+    { ...scoped, forensicTimeline: kept, ...(boundaries.length ? { remediationBoundaries } : {}) },
+    outcomes,
+  );
   // MITRE completed LAST, from the events that survived both filters — see eventTechniques.ts (#893).
   return withEventTechniques(applyFalsePositive(withOutcomes, markers));
 }

@@ -52,11 +52,24 @@ export const REPORT_SECTION_DEFS = [
     label: "Intel retirement review (findings whose intel is no longer actionable)",
     defaultEnabled: false,
   },
+  // Opt-in EVERYWHERE (#969): a fresh template does not switch it on either, because the section
+  // renders an analyst's recorded residual-risk status and must never appear in a report by
+  // accident of "every section is what default means".
+  {
+    key: "remediationChecks",
+    label: "Remediation checks (analyst-recorded residual risk with the receipt it names)",
+    defaultEnabled: false,
+    alwaysOptIn: true,
+  },
 ] as const;
 
 export type ReportSectionKey = (typeof REPORT_SECTION_DEFS)[number]["key"];
 
 export const ALL_SECTION_KEYS: readonly ReportSectionKey[] = REPORT_SECTION_DEFS.map((s) => s.key);
+/** Sections a fresh template leaves OFF too — opt-in everywhere (#969). */
+export const ALWAYS_OPT_IN_SECTION_KEYS: readonly ReportSectionKey[] = REPORT_SECTION_DEFS.filter(
+  (s) => "alwaysOptIn" in s && s.alwaysOptIn,
+).map((s) => s.key);
 const SECTION_KEY_SET = new Set<string>(ALL_SECTION_KEYS);
 
 export interface ReportTemplateSection {
@@ -151,7 +164,10 @@ export function normalizeSections(input: unknown): ReportTemplateSection[] {
     if (!seen.has(def.key))
       out.push({
         key: def.key,
-        enabled: fresh || ("defaultEnabled" in def ? def.defaultEnabled !== false : true),
+        enabled:
+          "alwaysOptIn" in def && def.alwaysOptIn
+            ? false
+            : fresh || ("defaultEnabled" in def ? def.defaultEnabled !== false : true),
       });
   }
   return out;
@@ -237,6 +253,7 @@ export const BUILT_IN_REPORT_TEMPLATES: readonly ReportTemplate[] = [
       { key: "chainOfCustody", enabled: false },
       { key: "sandboxReports", enabled: false },
       { key: "intelRetirement", enabled: false },
+      { key: "remediationChecks", enabled: false },
     ],
   }),
   normalizeReportTemplate({

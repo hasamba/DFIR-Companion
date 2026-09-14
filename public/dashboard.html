@@ -197,6 +197,7 @@
   <script src="/js/dashboard-geo.js"></script>
   <script src="/js/dashboard-custody.js"></script>
   <script src="/js/dashboard-intel-retirement.js"></script>
+  <script src="/js/dashboard-remediation.js"></script>
   <script src="/js/dashboard-backup.js"></script>
   <script src="/js/dashboard-collection-plan.js"></script>
   <script src="/js/dashboard-host-scope.js"></script>
@@ -3883,6 +3884,9 @@
     <section id="sec-intel-retirement" data-safe-style="grid-column: 1 / -1" class="collapsed"><h2>Intel Retirement Review<span class="ev-sub">findings whose threat-intel corroboration is no longer actionable &mdash; a list to review; a decision changes nothing else</span></h2>
       <div id="intelRetirementPanel">&mdash;</div>
     </section>
+    <section id="sec-remediation" data-safe-style="grid-column: 1 / -1" class="collapsed"><h2>Remediation Checks<span class="ev-sub">declare what was remediated, verify what the case holds for that host afterwards, record the residual risk yourself &mdash; the check reports facts, never a verdict</span></h2>
+      <div id="remediationPanel">&mdash;</div>
+    </section>
     <section id="sec-case-details" data-safe-style="grid-column: 1 / -1" class="collapsed">
       <h2>Case Details (for the generated report)</h2>
       <div id="reportMeta">
@@ -4039,7 +4043,7 @@
       { id: "sec-inv-log",      label: "Investigation Log" },
       { id: "sec-activity",     label: "Activity Log" },
       { id: "sec-mcp",          label: "MCP Analysis" },
-      { id: "sec-custody",      label: "Chain of Custody" }, { id: "sec-intel-retirement", label: "Intel Retirement Review" },
+      { id: "sec-custody",      label: "Chain of Custody" }, { id: "sec-intel-retirement", label: "Intel Retirement Review" }, { id: "sec-remediation", label: "Remediation Checks" },
       { id: "sec-case-details", label: "Case Details" },
     ];
     let DASHBOARD_VIEWS = [];                  // dashboard-view presets (#142), fetched from /dashboard-views
