@@ -23,11 +23,29 @@ type Row = Record<string, unknown>;
 
 // ───────────────────────────── GCP ─────────────────────────────
 
-const maskHas = (request: Row, path: string): boolean =>
-  field(request, "updateMask")
-    .split(",")
-    .map((s) => s.trim())
-    .includes(path);
+/** The update mask's paths, whatever shape the export used: a comma string, `{ paths: [] }`, snake_case, qualified, or `*`. */
+function maskPaths(request: Row): string[] {
+  const raw = getCI(request, "updateMask") ?? getCI(request, "update_mask");
+  const values = Array.isArray(raw)
+    ? raw
+    : isObject(raw)
+      ? Array.isArray(getCI(raw, "paths"))
+        ? (getCI(raw, "paths") as unknown[])
+        : []
+      : typeof raw === "string"
+        ? raw.split(",")
+        : [];
+  return values
+    .map((v) => String(v).trim())
+    .filter(Boolean)
+    .map((v) =>
+      v.replace(/^(sink|exclusion|bucket)\./, "").replace(/_([a-z])/g, (_m, c: string) => c.toUpperCase()),
+    );
+}
+const maskHas = (request: Row, path: string): boolean => {
+  const paths = maskPaths(request);
+  return paths.includes("*") || paths.includes(path);
+};
 
 /** A Cloud Logging config call's reading (ConfigServiceV2 sinks, exclusions, buckets), or null. */
 export function decodeGcpLogging(
@@ -207,28 +225,37 @@ export function decodeGcpAuditConfigDelta(delta: Row, denied: boolean): LoggingR
   const service = field(delta, "service") || "(service not recorded)";
   const logType = field(delta, "logType") || "(log type not recorded)";
   const member = field(delta, "exemptedMember");
+  const known = action === "add" || action === "remove";
   const add = action === "add";
   const target = `${service}|${logType}`;
   const facts: Fact[] = [
+    { name: "action", value: field(delta, "action") || "(not recorded)" },
     { name: "service", value: service },
     { name: "logType", value: logType },
     ...(member ? [{ name: "exemptedMember", value: member }] : []),
   ];
-  const posture = member
-    ? `audit-config exemption ${add ? "added" : "removed"} for ${show(member, 80)} on ${show(logType, 20)} (${show(service, 60)})`
-    : `audit-config log type ${show(logType, 20)} entry ${add ? "added" : "removed"} for ${show(service, 60)}`;
-  const high = member ? add : !add;
+  // An action the record does not name as ADD or REMOVE is quoted, never read as a removal.
+  const posture = !known
+    ? `audit-config entry changed (action ${show(field(delta, "action"), 20) || "not recorded"}) for ${show(logType, 20)} on ${show(service, 60)}${member ? `, exempted member ${show(member, 80)}` : ""}`
+    : member
+      ? `audit-config exemption ${add ? "added" : "removed"} for ${show(member, 80)} on ${show(logType, 20)} (${show(service, 60)})`
+      : `audit-config log type ${show(logType, 20)} entry ${add ? "added" : "removed"} for ${show(service, 60)}`;
+  const high = known && (member ? add : !add);
   return reading(
     "gcp",
     "audit-config",
     target,
     "reconfigured",
-    high ? "High" : "Low",
+    !known ? "Medium" : high ? "High" : "Low",
     posture,
     facts,
     [],
     denied,
-    { effectiveNotEstablished: true, key: `${action}|${member}` },
+    {
+      effectiveNotEstablished: true,
+      key: `${action}|${member}`,
+      mitre: high ? [TECHNIQUE] : [],
+    },
   );
 }
 
@@ -246,6 +273,21 @@ const tail = (id: string): string => {
 };
 
 /** An Azure diagnostic-setting / log-profile operation's reading, or null. */
+/** The request body of an Azure write, whatever envelope the export used: a JSON string or an object, under `properties` or flat. */
+function azureBody(requestBody: unknown): Row | null {
+  let body: unknown = requestBody;
+  if (typeof body === "string") {
+    try {
+      body = JSON.parse(body);
+    } catch {
+      return null;
+    }
+  }
+  if (!isObject(body)) return null;
+  const props = getCI(body, "properties");
+  return isObject(props) ? props : body;
+}
+
 export function decodeAzureLogging(
   operation: string,
   resourceId: string,
@@ -263,7 +305,7 @@ export function decodeAzureLogging(
       resourceId,
       "deleted",
       "High",
-      `log profile ${failed ? "deletion requested" : "deleted"}: ${show(settingName, 60)}`,
+      `log profile deleted: ${show(settingName, 60)}`,
       [],
       [],
       failed,
@@ -275,26 +317,13 @@ export function decodeAzureLogging(
       resourceId,
       "deleted",
       "High",
-      `diagnostic setting ${failed ? "deletion requested" : "deleted"}: ${show(settingName, 60)} on ${show(scope, 80)}`,
+      `diagnostic setting deleted: ${show(settingName, 60)} on ${show(scope, 80)}`,
       [],
       [],
       failed,
     );
   if (!/microsoft\.insights\/diagnosticsettings\/write$/.test(op)) return null;
-  let body: unknown = requestBody;
-  if (typeof body === "string") {
-    try {
-      body = JSON.parse(body);
-    } catch {
-      body = undefined;
-    }
-  }
-  const props =
-    isObject(body) && isObject(getCI(body, "properties"))
-      ? (getCI(body, "properties") as Row)
-      : isObject(body)
-        ? body
-        : null;
+  const props = azureBody(requestBody);
   if (!props || (!has(props, "logs") && !has(props, "metrics")))
     return reading(
       "azure",
@@ -307,43 +336,45 @@ export function decodeAzureLogging(
       [],
       failed,
     );
-  const logs = objects(getCI(props, "logs"), 32).map((l) => ({
-    name: field(l, "category") || field(l, "categoryGroup") || "(category not recorded)",
-    on: bool(getCI(l, "enabled")) === true,
-  }));
-  const metrics = objects(getCI(props, "metrics"), 16).map((l) => ({
-    name: field(l, "category") || "(category not recorded)",
-    on: bool(getCI(l, "enabled")) === true,
-  }));
+  // `enabled` is read only when the entry states it: a missing or malformed flag is "not stated", never "off".
+  const entries = (v: unknown, max: number) =>
+    objects(getCI(props, v as string), max).map((l) => ({
+      name: field(l, "category") || field(l, "categoryGroup") || "(category not recorded)",
+      on: bool(getCI(l, "enabled")),
+    }));
+  const logs = entries("logs", 32);
+  const metrics = entries("metrics", 16);
   const destinations = Object.entries(DESTINATIONS)
     .filter(([k]) => field(props, k))
-    .map(([k, label]) => `${label} ${show(tail(field(props, k)), 80)}`);
-  const on = logs.filter((l) => l.on).map((l) => show(l.name, 40));
-  const off = logs.filter((l) => !l.on).map((l) => show(l.name, 40));
-  const allOff = logs.length > 0 && on.length === 0;
+    .map(([k, label]) => ({ label, id: field(props, k) }));
+  const on = logs.filter((l) => l.on === true).map((l) => show(l.name, 40));
+  const off = logs.filter((l) => l.on === false).map((l) => show(l.name, 40));
+  const unstated = logs.filter((l) => l.on === undefined).map((l) => show(l.name, 40));
+  const allOff = logs.length > 0 && off.length === logs.length;
+  const metricsOn = metrics.filter((m) => m.on === true).map((m) => show(m.name, 40));
+  const metricsOff = metrics.filter((m) => m.on === false).map((m) => show(m.name, 40));
   const parts = [
     ...(allOff
       ? [`every log category disabled in the resulting setting (${off.join(", ")})`]
       : logs.length
-        ? [`log categories on: ${on.join(", ") || "none"}; off: ${off.join(", ") || "none"}`]
+        ? [
+            `log categories on: ${on.join(", ") || "none"}; off: ${off.join(", ") || "none"}${unstated.length ? `; not stated: ${unstated.join(", ")}` : ""}`,
+          ]
         : []),
     ...(metrics.length
-      ? [
-          `metrics ${
-            metrics.some((m) => m.on)
-              ? `on: ${metrics
-                  .filter((m) => m.on)
-                  .map((m) => show(m.name, 40))
-                  .join(", ")}`
-              : `off: ${metrics.map((m) => show(m.name, 40)).join(", ")}`
-          }`,
-        ]
+      ? [`metrics on: ${metricsOn.join(", ") || "none"}; off: ${metricsOff.join(", ") || "none"}`]
       : []),
-    ...(destinations.length ? [`destination ${destinations.join(", ")}`] : []),
+    ...(destinations.length
+      ? [`destination ${destinations.map((d) => `${d.label} ${show(tail(d.id), 80)}`).join(", ")}`]
+      : []),
   ];
   const facts: Fact[] = [
-    ...logs.map((l) => ({ name: `log:${l.name}`, value: String(l.on) })),
-    ...metrics.map((m) => ({ name: `metric:${m.name}`, value: String(m.on) })),
+    ...logs.map((l) => ({ name: `log:${l.name}`, value: l.on === undefined ? "not stated" : String(l.on) })),
+    ...metrics.map((m) => ({
+      name: `metric:${m.name}`,
+      value: m.on === undefined ? "not stated" : String(m.on),
+    })),
+    ...destinations.map((d) => ({ name: d.label, value: d.id })),
   ];
   const state: LoggingState = allOff ? "reconfigured" : "prior-state-not-in-record";
   return reading(

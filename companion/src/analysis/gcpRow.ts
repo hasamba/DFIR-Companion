@@ -71,15 +71,10 @@ function row(
         ? reading.severity
         : input.severity
     : input.severity;
+  // A reading that replaces the table grade replaces the table's techniques too; any other
+  // reading adds its own beside them.
   const mitre = [
-    ...new Set([
-      ...(reading?.mitre ?? []),
-      ...(reading
-        ? input.mitre.filter(
-            (t) => reading.kind !== "binding" || t !== "T1098.003" || reading.mitre.includes(t),
-          )
-        : input.mitre),
-    ]),
+    ...new Set([...(reading?.mitre ?? []), ...(reading?.replacesTableGrade ? [] : input.mitre)]),
   ];
   // The head, the posture and the qualifiers (a condition, a denial, a differing copy) are
   // reserved; the object and the identity facts share what is left, the object first.

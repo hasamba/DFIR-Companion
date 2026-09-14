@@ -117,15 +117,27 @@ const asAction = (r: LoggingReading): GcpActionReading => ({
   loggingChange: r.block,
 });
 
-/** The audit-config deltas of a SetIamPolicy record, from either documented location. */
-function auditConfigDeltas(pp: Row): Row[] {
+/** The audit-config deltas of a SetIamPolicy record from both documented locations, identical copies folded; a differing copy is kept and flagged. */
+function auditConfigDeltas(pp: Row): { deltas: Row[]; copiesDiffer: boolean } {
   const read = (v: unknown): Row[] => {
     const policyDelta = isObject(v) ? getCI(v, "policyDelta") : undefined;
     const deltas = isObject(policyDelta) ? getCI(policyDelta, "auditConfigDeltas") : undefined;
     return Array.isArray(deltas) ? deltas.filter(isObject) : [];
   };
+  const key = (d: Row) =>
+    ["action", "service", "logType", "exemptedMember"].map((k) => field(d, k)).join("|");
   const legacy = read(getCI(pp, "serviceData"));
-  return legacy.length ? legacy : read(getCI(pp, "metadata"));
+  const current = read(getCI(pp, "metadata"));
+  if (!legacy.length || !current.length)
+    return { deltas: legacy.length ? legacy : current, copiesDiffer: false };
+  const seen = new Map(legacy.map((d) => [key(d), d]));
+  let copiesDiffer = legacy.length !== current.length;
+  for (const d of current) {
+    if (seen.has(key(d))) continue;
+    copiesDiffer = true;
+    seen.set(key(d), d);
+  }
+  return { deltas: [...seen.values()], copiesDiffer };
 }
 
 const denied = (pp: Row): { denied: boolean; code: string; message: string } => {
@@ -483,9 +495,13 @@ export function decodeGcpAction(pp: Row, rec: Row, method: string, service: stri
   if (isSetIamPolicy(method)) {
     const { deltas, copiesDiffer } = policyDeltas(pp);
     // The audit-config deltas ride beside the binding deltas (#931 item 14): each is its own row.
-    const audit = auditConfigDeltas(pp)
-      .slice(0, DELTAS_PER_RECORD_MAX)
-      .map((d) => asAction(decodeGcpAuditConfigDelta(d, den.denied)));
+    const auditRead = auditConfigDeltas(pp);
+    const audit = auditRead.deltas.slice(0, DELTAS_PER_RECORD_MAX).map((d) => {
+      const r = asAction(decodeGcpAuditConfigDelta(d, den.denied));
+      return auditRead.copiesDiffer
+        ? { ...r, qualifiers: [...r.qualifiers, "the two delta copies in this record differ"] }
+        : r;
+    });
     if (!deltas.length) return audit.length ? audit : [policyWithoutDelta(pp, service)];
     const shown = deltas.slice(0, DELTAS_PER_RECORD_MAX);
     const storage = /storage/i.test(service);

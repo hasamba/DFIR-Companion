@@ -18,6 +18,7 @@ import { boundedAggKey, boundedTextTo } from "./aggKey.js";
 import { gcpRows } from "./gcpRow.js";
 import { show as neutral } from "./gcpIdentity.js";
 import { decodeAzureLogging } from "./loggingChangeCloud.js";
+import { renderLoggingDescription } from "./loggingChange.js";
 import { createCanonicalEvent } from "./canonicalEvent.js";
 import {
   extractRecords,
@@ -219,7 +220,11 @@ function mapAzure(rec: Row, sink: Map<string, SiemIoc>, recordIndex: number): Ma
   const logging = decodeAzureLogging(
     op,
     resource,
-    getPath(rec, "properties.requestbody") ?? getPath(rec, "properties.requestBody"),
+    getPath(rec, "properties.requestbody") ??
+      getPath(rec, "properties.requestBody") ??
+      getPath(rec, "Properties.requestbody") ??
+      getPath(rec, "Properties.requestBody") ??
+      getPath(rec, "properties"),
     failed,
   );
   if (logging) {
@@ -231,11 +236,12 @@ function mapAzure(rec: Row, sink: Map<string, SiemIoc>, recordIndex: number): Ma
   if (caller) description += ` by ${caller}`;
   if (ip) description += ` from ${ip}`;
   if (exec) description += ` → ${exec.display} — the script body is not in the Activity Log`;
-  else if (logging)
-    description += ` — ${logging.posture}${logging.qualifiers.length ? ` [${logging.qualifiers.join("; ")}]` : ""}`;
-  else if (shortRes) description += ` on ${shortRes}`;
+  else if (shortRes && !logging) description += ` on ${shortRes}`;
   if (failed) description += ` [${status}]`;
-  description = boundedTextTo(description, 600); // an identity downstream — see mapGcp
+  // A logging row goes through the logging renderer: every slot neutralised, the qualifiers reserved.
+  description = logging
+    ? renderLoggingDescription(description, "", logging)
+    : boundedTextTo(description, 600); // an identity downstream — see mapGcp
   const observed = pickStr(rec, ["eventTimestamp", "time", "TimeGenerated", "timeStamp"]);
 
   return {
@@ -273,13 +279,24 @@ function mapAzure(rec: Row, sink: Map<string, SiemIoc>, recordIndex: number): Ma
               ruleVersions: ["azure-logging-v1"],
             },
             rawFieldMap: {
-              "event.action": ["operationName.value"],
-              "event.outcome": ["status.value"],
-              "time.observed": ["eventTimestamp"],
-              ...(caller ? { "actor.name": ["caller"] } : {}),
-              ...(ip ? { "network.source.address": ["httpRequest.clientIpAddress"] } : {}),
+              "event.action": ["operationName.value", "operationName", "OperationNameValue", "OperationName"],
+              "event.outcome": ["status.value", "status", "ActivityStatusValue", "resultType", "ResultType"],
+              "time.observed": ["eventTimestamp", "time", "TimeGenerated", "timeStamp"],
+              ...(caller ? { "actor.name": ["caller", "Caller", "identity.claims.name"] } : {}),
+              ...(ip
+                ? {
+                    "network.source.address": [
+                      "httpRequest.clientIpAddress",
+                      "claims.ipaddr",
+                      "CallerIpAddress",
+                      "callerIpAddress",
+                    ],
+                  }
+                : {}),
               "cloud.provider": ["operationName.value"],
-              ...(resource ? { "cloud.resource": ["resourceId"] } : {}),
+              ...(resource
+                ? { "cloud.resource": ["resourceId", "ResourceId", "resourceGroupName", "ResourceGroup"] }
+                : {}),
             },
             loggingChange: logging.block,
           }),

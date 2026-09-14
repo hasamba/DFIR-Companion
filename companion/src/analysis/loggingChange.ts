@@ -15,6 +15,7 @@
 //   - metrics never bear T1562.008; a publishing frequency is delivery cadence, not coverage;
 //   - a denied call is an attempt.
 
+import { createHash } from "node:crypto";
 import type { Severity } from "./stateTypes.js";
 import type { LoggingChangeBlock, LoggingState } from "./canonicalLogging.js";
 import { breakHashRuns, showToken } from "./recordIdentity.js";
@@ -73,11 +74,15 @@ export interface Fact {
 export const factWords = (facts: readonly Fact[]): string =>
   facts.map((f) => `${show(f.name, 40)} ${show(f.value, 100)}`).join("; ");
 
+/** A short digest of the normalised request facts — the key carries what the row asserts, not a display clip. */
+const digest = (parts: readonly string[]): string =>
+  createHash("sha256").update(parts.map(seg).join("|")).digest("hex").slice(0, 16);
+
 export function reading(
   provider: LoggingChangeBlock["provider"],
   targetKind: string,
   target: string,
-  state: LoggingState,
+  state: Exclude<LoggingState, "requested">,
   severity: Severity,
   posture: string,
   facts: Fact[],
@@ -89,24 +94,27 @@ export function reading(
   const detail = opts.detail ?? "";
   const grade: Severity = denied ? "Medium" : severity;
   const technique = opts.mitre ?? (grade === "High" ? [TECHNIQUE] : []);
+  // A denied call establishes nothing: the state is "requested" and the words say so.
+  const words = denied ? `requested (denied): ${posture}` : posture;
   return {
     severity: grade,
     mitre: denied ? [] : technique,
-    posture,
+    posture: words,
     detail,
     qualifiers: [
-      ...(state === "enabled" || state === "created" ? [PAST_NOTE] : []),
-      ...(state === "reconfigured" || state === "prior-state-not-in-record" ? [PRIOR_NOTE] : []),
+      ...(!denied && (state === "enabled" || state === "created") ? [PAST_NOTE] : []),
+      ...(!denied && (state === "reconfigured" || state === "prior-state-not-in-record") ? [PRIOR_NOTE] : []),
       ...(opts.effectiveNotEstablished ? [UNION_NOTE] : []),
       ...qualifiers,
-      ...(denied ? ["attempted, denied"] : []),
+      ...(denied ? ["attempted, denied — the resulting state is not established"] : []),
     ],
-    keySegment: `|logging|${[provider, targetKind, target, state, opts.key ?? "", ...bounded.map((f) => `${f.name}=${f.value}`)].map(seg).join("|")}`,
+    keySegment: `|logging|${[provider, targetKind, target, denied ? "requested" : state].map(seg).join("|")}|${digest([opts.key ?? "", ...bounded.map((f) => `${f.name}=${f.value}`)])}`,
     block: {
       provider,
       target,
       targetKind,
-      state,
+      state: denied ? "requested" : state,
+      ...(denied ? { requestedState: state } : {}),
       facts: bounded,
       priorStateInRecord: false,
       effectiveNotEstablished: opts.effectiveNotEstablished ?? false,
@@ -143,33 +151,57 @@ const trailFacts = (request: Row): Fact[] =>
 const shortTrail = (name: string): string =>
   name.includes("/") ? name.slice(name.lastIndexOf("/") + 1) : name;
 
-function selectorWords(request: Row): { words: string; excludesManagement: boolean; facts: Fact[] } {
+interface Selectors {
+  words: string;
+  /** The resulting set itself excludes coverage: management not selected / narrowed, or a source excluded. */
+  excludesCoverage: boolean;
+  facts: Fact[];
+  /** True when the request carried neither selector list. */
+  none: boolean;
+}
+const OPERATORS = ["equals", "notEquals", "startsWith", "endsWith", "notStartsWith", "notEndsWith"];
+function selectorWords(request: Row): Selectors {
   const basic = objects(getCI(request, "eventSelectors"));
   const advanced = objects(getCI(request, "advancedEventSelectors"));
-  const facts: Fact[] = [];
   if (advanced.length) {
+    let management = false;
+    let narrowed = false;
     const parts = advanced.map((s) => {
-      const fields = objects(getCI(s, "fieldSelectors"))
-        .map((f) => {
-          const name = field(f, "field");
-          const op = ["equals", "notEquals", "startsWith", "endsWith", "notStartsWith", "notEndsWith"].find(
-            (k) => list(getCI(f, k)).length,
-          );
-          return op
-            ? `${show(name, 40)} ${op} ${list(getCI(f, op))
-                .map((v) => show(v, 60))
-                .join("|")}`
-            : show(name, 40);
-        })
-        .join(", ");
-      return `${show(field(s, "name"), 40) || "(unnamed)"} (${fields})`;
+      const fields = objects(getCI(s, "fieldSelectors"), 16).map((f) => {
+        const name = field(f, "field");
+        const ops = OPERATORS.filter((k) => list(getCI(f, k)).length);
+        const values = ops.map(
+          (op) =>
+            `${op} ${list(getCI(f, op))
+              .map((v) => show(v, 60))
+              .join("|")}`,
+        );
+        if (lower(name) === "eventcategory") {
+          const eq = list(getCI(f, "equals")).map(lower);
+          if (eq.includes("management")) management = true;
+          if (list(getCI(f, "notEquals")).map(lower).includes("management")) narrowed = true;
+        } else if (management && ["readonly", "eventsource", "eventname"].includes(lower(name)))
+          narrowed = true;
+        return `${show(name, 40)}${values.length ? ` ${values.join(" ")}` : ""}`;
+      });
+      return `${show(field(s, "name"), 40) || "(unnamed)"} (${fields.join(", ")})`;
     });
-    facts.push({ name: "advancedEventSelectors", value: String(advanced.length) });
-    return { words: `resulting advanced selectors: ${parts.join("; ")}`, excludesManagement: false, facts };
+    const facts = advanced.map((sel, i) => ({ name: `advancedEventSelector[${i}]`, value: parts[i] }));
+    return {
+      words: `resulting advanced selectors: ${parts.join("; ")}${management ? "" : "; management events: not selected by any selector"}`,
+      excludesCoverage: !management || narrowed,
+      facts,
+      none: false,
+    };
   }
   if (!basic.length)
-    return { words: "resulting selectors: none in the request", excludesManagement: false, facts };
-  let excludesManagement = false;
+    return {
+      words: "resulting selectors: none in the request",
+      excludesCoverage: false,
+      facts: [],
+      none: true,
+    };
+  let excludesCoverage = false;
   const parts = basic.map((s) => {
     const include = bool(getCI(s, "includeManagementEvents"));
     const rw = field(s, "readWriteType") || "All";
@@ -179,47 +211,28 @@ function selectorWords(request: Row): { words: string; excludesManagement: boole
         .map((v) => show(v, 80))
         .join(", ")}`.trim(),
     );
-    if (include === false) excludesManagement = true;
+    if (include === false || lower(rw) !== "all" || excluded.length) excludesCoverage = true;
     const mgmt =
       include === false
         ? "management events excluded"
         : `management ${show(rw, 12)}${excluded.length ? ` (excluding ${excluded.map((e) => show(e, 40)).join(", ")})` : ""}`;
-    return `${mgmt}; data events: ${data.length ? data.join(", ") : "none selected"}`;
+    return `${mgmt}; data events: ${data.length ? data.join(", ") : "none selected"}; network activity: none (basic selectors)`;
   });
-  facts.push({ name: "eventSelectors", value: String(basic.length) });
-  return { words: `resulting selectors: ${parts.join(" | ")}`, excludesManagement, facts };
+  const facts = basic.map((sel, i) => ({ name: `eventSelector[${i}]`, value: parts[i] }));
+  return { words: `resulting selectors: ${parts.join(" | ")}`, excludesCoverage, facts, none: false };
 }
 
 function guardDuty(request: Row, denied: boolean): LoggingReading {
   const id = field(request, "detectorId") || "(detector id not recorded)";
   const enable = bool(getCI(request, "enable"));
-  if (enable === false)
-    return reading(
-      "aws",
-      "detector",
-      id,
-      "disabled",
-      "High",
-      `detector ${show(id, 40)} disabled`,
-      [],
-      [],
-      denied,
-    );
-  if (enable === true)
-    return reading(
-      "aws",
-      "detector",
-      id,
-      "enabled",
-      "Low",
-      `detector ${show(id, 40)} enabled`,
-      [],
-      [],
-      denied,
-    );
   const parts: string[] = [];
   const facts: Fact[] = [];
   let anyOff = false;
+  if (enable !== undefined) {
+    parts.push(`detector ${enable ? "enabled" : "disabled"}`);
+    facts.push({ name: "enable", value: String(enable) });
+    if (!enable) anyOff = true;
+  }
   const walk = (o: unknown, path: string[]): void => {
     if (!isObject(o)) return;
     for (const [k, v] of Object.entries(o)) {
@@ -234,7 +247,7 @@ function guardDuty(request: Row, denied: boolean): LoggingReading {
     }
   };
   walk(getCI(request, "dataSources"), []);
-  for (const f of objects(getCI(request, "features"))) {
+  for (const f of objects(getCI(request, "features"), 32)) {
     const name = field(f, "name");
     const status = field(f, "status");
     if (!name || !status) continue;
@@ -243,6 +256,34 @@ function guardDuty(request: Row, denied: boolean): LoggingReading {
     if (lower(status) === "disabled") anyOff = true;
   }
   const cadence = field(request, "findingPublishingFrequency");
+  if (cadence) facts.push({ name: "findingPublishingFrequency", value: cadence });
+  const cadenceWords = cadence
+    ? [`findingPublishingFrequency ${show(cadence, 20)} — delivery cadence, no coverage change`]
+    : [];
+  if (enable === false && parts.length === 1)
+    return reading(
+      "aws",
+      "detector",
+      id,
+      "disabled",
+      "High",
+      `detector ${show(id, 40)} disabled`,
+      facts,
+      cadenceWords,
+      denied,
+    );
+  if (enable === true && parts.length === 1)
+    return reading(
+      "aws",
+      "detector",
+      id,
+      "enabled",
+      "Low",
+      `detector ${show(id, 40)} enabled`,
+      facts,
+      cadenceWords,
+      denied,
+    );
   if (parts.length)
     return reading(
       "aws",
@@ -252,9 +293,7 @@ function guardDuty(request: Row, denied: boolean): LoggingReading {
       anyOff ? "High" : "Low",
       `detector ${show(id, 40)} reconfigured: ${parts.join("; ")}`,
       facts,
-      cadence
-        ? [`findingPublishingFrequency ${show(cadence, 20)} — delivery cadence, no coverage change`]
-        : [],
+      cadenceWords,
       denied,
     );
   if (cadence)
@@ -264,8 +303,8 @@ function guardDuty(request: Row, denied: boolean): LoggingReading {
       id,
       "reconfigured",
       "Low",
-      `detector ${show(id, 40)}: findingPublishingFrequency ${show(cadence, 20)} — delivery cadence, no coverage change`,
-      [{ name: "findingPublishingFrequency", value: cadence }],
+      `detector ${show(id, 40)}: ${cadenceWords[0]}`,
+      facts,
       [],
       denied,
       { mitre: [] },
@@ -281,6 +320,21 @@ function guardDuty(request: Row, denied: boolean): LoggingReading {
     [],
     denied,
   );
+}
+
+/** Every value under a key that names a flow-log id, whatever container the request used. */
+function flowLogIds(v: unknown, out: string[] = [], depth = 0, underKey = false): string[] {
+  if (depth > 6 || out.length >= 32) return out;
+  if (typeof v === "string") {
+    if (underKey && v.trim()) out.push(v.trim());
+  } else if (Array.isArray(v)) for (const x of v) flowLogIds(x, out, depth + 1, underKey);
+  else if (isObject(v))
+    for (const [k, x] of Object.entries(v)) {
+      if (/^flowlogid/i.test(k)) flowLogIds(x, out, depth + 1, true);
+      else if (/^(items|item|content)$/i.test(k)) flowLogIds(x, out, depth + 1, underKey);
+      else if (/flowlog/i.test(k)) flowLogIds(x, out, depth + 1, false);
+    }
+  return [...new Set(out)];
 }
 
 /** A CloudTrail record's logging-configuration reading, or null when the call is not one. */
@@ -304,7 +358,7 @@ export function decodeCloudTrailLogging(
         t,
         "disabled",
         "High",
-        `logging ${denied ? "stop requested" : "stopped"} for trail ${show(t)}`,
+        `logging stopped for trail ${show(t)}`,
         [],
         [],
         denied,
@@ -316,23 +370,13 @@ export function decodeCloudTrailLogging(
         t,
         "enabled",
         "Low",
-        `logging ${denied ? "start requested" : "started"} for trail ${show(t)}`,
+        `logging started for trail ${show(t)}`,
         [],
         [],
         denied,
       );
     if (n === "deletetrail")
-      return reading(
-        "aws",
-        "trail",
-        t,
-        "deleted",
-        "High",
-        `trail ${denied ? "deletion requested" : "deleted"}: ${show(t)}`,
-        [],
-        [],
-        denied,
-      );
+      return reading("aws", "trail", t, "deleted", "High", `trail deleted: ${show(t)}`, [], [], denied);
     if (n === "createtrail") {
       const facts = trailFacts(req);
       return reading(
@@ -373,11 +417,9 @@ export function decodeCloudTrailLogging(
         "aws",
         "trail",
         t,
-        "reconfigured",
-        sel.excludesManagement ? "High" : "Medium",
-        denied
-          ? `requested selectors: ${sel.words.replace(/^resulting (advanced )?selectors: /, "")}`
-          : sel.words,
+        sel.none ? "prior-state-not-in-record" : "reconfigured",
+        sel.excludesCoverage ? "High" : "Medium",
+        sel.words,
         sel.facts,
         ["the prior selectors are not in this record"],
         denied,
@@ -385,6 +427,7 @@ export function decodeCloudTrailLogging(
       );
     }
     if (n === "putinsightselectors") {
+      const present = has(req, "insightSelectors");
       const kinds = objects(getCI(req, "insightSelectors"))
         .map((s) => field(s, "insightType"))
         .filter(Boolean);
@@ -393,12 +436,12 @@ export function decodeCloudTrailLogging(
         "trail",
         t,
         "reconfigured",
-        kinds.length ? "Low" : "Medium",
-        `resulting insight selectors: ${kinds.length ? kinds.map((k) => show(k, 30)).join(", ") : "none"}`,
-        [],
+        "Medium",
+        `resulting insight selectors: ${!present ? "not in the request" : kinds.length ? kinds.map((k) => show(k, 30)).join(", ") : "none"}`,
+        kinds.map((k) => ({ name: "insightType", value: k })),
         ["the prior selectors are not in this record"],
         denied,
-        { key: kinds.join(",") },
+        { key: present ? kinds.join(",") : "absent" },
       );
     }
     if (n === "deleteeventdatastore") {
@@ -409,7 +452,7 @@ export function decodeCloudTrailLogging(
         store,
         "deleted",
         "High",
-        `event data store ${denied ? "deletion requested" : "deleted"}: ${show(store)}`,
+        `event data store deleted: ${show(store)}`,
         [],
         [],
         denied,
@@ -418,24 +461,15 @@ export function decodeCloudTrailLogging(
     return null;
   }
   if (svc === "ec2" && n === "deleteflowlogs") {
-    const ids = [
-      ...new Set([
-        ...list(getCI(req, "flowLogIds")),
-        ...list(
-          isObject(getCI(req, "DeleteFlowLogsRequest"))
-            ? getCI(getCI(req, "DeleteFlowLogsRequest") as Row, "FlowLogId")
-            : undefined,
-        ),
-      ]),
-    ];
+    const ids = flowLogIds(req);
     return reading(
       "aws",
       "flow-logs",
       ids.join(",") || "(ids not recorded)",
       "deleted",
       "High",
-      `flow logs ${denied ? "deletion requested" : "deleted"}: ${ids.map((i) => show(i, 30)).join(", ") || "(ids not recorded)"}`,
-      [],
+      `flow logs deleted: ${ids.map((i) => show(i, 30)).join(", ") || "(ids not recorded)"}`,
+      ids.map((i) => ({ name: "flowLogId", value: i })),
       [],
       denied,
     );
@@ -464,7 +498,7 @@ export function decodeCloudTrailLogging(
       id,
       "deleted",
       "High",
-      `detector ${denied ? "deletion requested" : "deleted"}: ${show(id, 40)}`,
+      `detector deleted: ${show(id, 40)}`,
       [],
       [],
       denied,
@@ -485,7 +519,10 @@ export function decodeCloudTrailLogging(
         "enabled",
         "Low",
         `bucket access logging enabled for bucket ${show(bucket, 60)} → ${show(target, 80)}`,
-        [],
+        [
+          { name: "TargetBucket", value: field(enabled, "TargetBucket") },
+          { name: "TargetPrefix", value: field(enabled, "TargetPrefix") },
+        ],
         [],
         denied,
       );
@@ -496,7 +533,7 @@ export function decodeCloudTrailLogging(
       bucket,
       "disabled",
       "High",
-      `bucket access logging ${denied ? "disable requested" : "disabled"} for bucket ${show(bucket, 60)}`,
+      `bucket access logging disabled for bucket ${show(bucket, 60)}`,
       [],
       [],
       denied,
@@ -513,31 +550,30 @@ const DETAIL_MAX = 150;
 const IDENTITY_MAX = 100;
 const QUALIFIERS_MAX = 170;
 const TOTAL_MAX = 600;
-const clip = (v: string, max: number): string => (v.length <= max ? v : `${v.slice(0, max - 1)}…`);
+const clip = (v: string, max: number): string =>
+  max <= 0 ? "" : v.length <= max ? v : `${v.slice(0, max - 1)}…`;
 
-/** A logging row's words: the head and the state sentence, the quoted fields, the identity, then the reserved qualifiers. */
+/** A logging row's words: every slot neutralised; the qualifiers and the tail are reserved, then the head and the state sentence, then the quoted fields and the identity. */
 export function renderLoggingDescription(
   head: string,
   identity: string,
   r: LoggingReading,
   tail = "",
 ): string {
-  const qualifiers = clip(r.qualifiers.filter(Boolean).join("; "), QUALIFIERS_MAX);
-  const h = clip(head.trim(), HEAD_MAX);
-  const posture = clip(r.posture.trim(), POSTURE_MAX);
-  let room =
-    TOTAL_MAX -
-    h.length -
-    posture.length -
-    (qualifiers ? qualifiers.length + 3 : 0) -
-    (tail ? tail.length + 1 : 0) -
-    4;
-  const detail = r.detail.trim() ? clip(r.detail.trim(), Math.max(0, Math.min(DETAIL_MAX, room - 3))) : "";
+  const qualifiers = clip(show(r.qualifiers.filter(Boolean).join("; "), QUALIFIERS_MAX), QUALIFIERS_MAX);
+  const t = clip(show(tail, 80), 80);
+  let room = TOTAL_MAX - (qualifiers ? qualifiers.length + 3 : 0) - (t ? t.length + 1 : 0);
+  const h = clip(show(head, HEAD_MAX), Math.max(0, Math.min(HEAD_MAX, room)));
+  room -= h.length;
+  const posture = clip(show(r.posture, POSTURE_MAX), Math.max(0, Math.min(POSTURE_MAX, room - 3)));
+  room -= posture ? posture.length + 3 : 0;
+  const detail = r.detail.trim()
+    ? clip(show(r.detail, DETAIL_MAX), Math.max(0, Math.min(DETAIL_MAX, room - 3)))
+    : "";
   room -= detail ? detail.length + 3 : 0;
-  const who = identity.trim() ? clip(identity.trim(), Math.max(0, Math.min(IDENTITY_MAX, room - 3))) : "";
+  const who = identity.trim()
+    ? clip(show(identity, IDENTITY_MAX), Math.max(0, Math.min(IDENTITY_MAX, room - 3)))
+    : "";
   const parts = [h, posture, detail.length > 8 ? detail : "", who.length > 8 ? who : ""].filter(Boolean);
-  return `${parts.join(" — ")}${tail ? ` ${tail}` : ""}${qualifiers ? ` [${qualifiers}]` : ""}`.slice(
-    0,
-    TOTAL_MAX,
-  );
+  return `${parts.join(" — ")}${t ? ` ${t}` : ""}${qualifiers ? ` [${qualifiers}]` : ""}`.slice(0, TOTAL_MAX);
 }

@@ -13,6 +13,7 @@ export const loggingStates = [
   "created",
   "reconfigured",
   "prior-state-not-in-record",
+  "requested",
 ] as const;
 
 export const loggingChangeBlockSchema = z.object({
@@ -25,6 +26,10 @@ export const loggingChangeBlockSchema = z.object({
   facts: z.array(z.object({ name: z.string(), value: z.string() })),
   /** Always false: no record here carries the previous configuration. */
   priorStateInRecord: z.literal(false),
+  /** The state the request asked for, kept when the call was denied (`state` is then `requested`). */
+  requestedState: z
+    .enum(["disabled", "enabled", "deleted", "created", "reconfigured", "prior-state-not-in-record"])
+    .optional(),
   /** The effective outcome depends on configurations outside this record (a GCP audit-config union). */
   effectiveNotEstablished: z.boolean(),
   denied: z.boolean(),

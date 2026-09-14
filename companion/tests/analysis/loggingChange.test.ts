@@ -125,9 +125,9 @@ describe("CloudTrail logging changes — the state the request establishes", () 
         },
       ],
     });
-    expect(writeOnly.severity).toBe("Medium");
+    expect(writeOnly.severity).toBe("High");
     expect(writeOnly.description).toContain(
-      "resulting selectors: management WriteOnly (excluding kms.amazonaws.com); data events: none selected",
+      "resulting selectors: management WriteOnly (excluding kms.amazonaws.com); data events: none selected; network activity: none (basic selectors)",
     );
     const data = one("PutEventSelectors", {
       trailName: TRAIL,
@@ -164,9 +164,14 @@ describe("CloudTrail logging changes — the state the request establishes", () 
       { errorCode: "AccessDenied", errorMessage: "no" },
     );
     expect(denied.severity).toBe("Medium");
-    expect(denied.description).toContain("attempted, denied");
-    expect(denied.description).toContain("requested selectors");
-    expect(env(denied).loggingChange?.denied).toBe(true);
+    expect(denied.description).toContain("attempted, denied — the resulting state is not established");
+    expect(denied.description).toContain("requested (denied): resulting selectors");
+    expect(env(denied).loggingChange).toMatchObject({
+      denied: true,
+      state: "requested",
+      requestedState: "reconfigured",
+    });
+    expect(denied.mitreTechniques).toEqual([]);
   });
 
   it("insight selectors, event data stores and flow logs; GuardDuty features read one by one and publishing frequency is delivery cadence; bucket access logging", () => {
@@ -175,19 +180,30 @@ describe("CloudTrail logging changes — the state the request establishes", () 
     );
     expect(one("PutInsightSelectors", { trailName: TRAIL, insightSelectors: [] }).severity).toBe("Medium");
     expect(
+      one("PutInsightSelectors", {
+        trailName: TRAIL,
+        insightSelectors: [{ insightType: "ApiCallRateInsight" }],
+      }).severity,
+    ).toBe("Medium");
+    expect(one("PutInsightSelectors", { trailName: TRAIL }).description).toContain(
+      "resulting insight selectors: not in the request",
+    );
+    expect(
       one("DeleteEventDataStore", {
         eventDataStore: "arn:aws:cloudtrail:us-east-1:111122223333:eventdatastore/abc",
       }).severity,
     ).toBe("High");
-    const flow = aws([
-      ct(
-        "DeleteFlowLogs",
-        { DeleteFlowLogsRequest: { FlowLogId: [{ content: "fl-0a" }] }, flowLogIds: ["fl-0a", "fl-0b"] },
-        { eventSource: "ec2.amazonaws.com" },
-      ),
-    ])[0];
-    expect(flow.severity).toBe("High");
-    expect(flow.description).toContain("flow logs deleted: fl-0a, fl-0b");
+    const flowShapes: Row[] = [
+      { flowLogIds: ["fl-0a", "fl-0b"] },
+      { DeleteFlowLogsRequest: { FlowLogId: [{ content: "fl-0a" }, { content: "fl-0b" }] } },
+      { flowLogIdSet: { items: [{ flowLogId: "fl-0a" }, { flowLogId: "fl-0b" }] } },
+      { FlowLogId: "fl-0a", flowLogId: "fl-0b" },
+    ];
+    for (const shape of flowShapes) {
+      const flow = aws([ct("DeleteFlowLogs", shape, { eventSource: "ec2.amazonaws.com" })])[0];
+      expect(flow.severity).toBe("High");
+      expect(flow.description).toContain("flow logs deleted: fl-0a, fl-0b");
+    }
     const createFlow = aws([
       ct(
         "CreateFlowLogs",
@@ -203,6 +219,21 @@ describe("CloudTrail logging changes — the state the request establishes", () 
       ])[0];
     expect(gd({ enable: false }).severity).toBe("High");
     expect(gd({ enable: false }).description).toContain("detector d1 disabled");
+    const mixed = gd({
+      enable: true,
+      features: [{ name: "EBS_MALWARE_PROTECTION", status: "DISABLED" }],
+      findingPublishingFrequency: "ONE_HOUR",
+    });
+    expect(mixed.severity).toBe("High");
+    expect(mixed.description).toContain(
+      "detector d1 reconfigured: detector enabled; EBS_MALWARE_PROTECTION DISABLED",
+    );
+    expect(mixed.description).toContain(
+      "findingPublishingFrequency ONE_HOUR — delivery cadence, no coverage change",
+    );
+    expect(env(mixed).loggingChange?.facts).toEqual(
+      expect.arrayContaining([{ name: "findingPublishingFrequency", value: "ONE_HOUR" }]),
+    );
     expect(gd({ enable: true }).severity).toBe("Low");
     const sources = gd({
       dataSources: { s3Logs: { enable: false }, kubernetes: { auditLogs: { enable: true } } },
@@ -245,6 +276,10 @@ describe("CloudTrail logging changes — the state the request establishes", () 
     ])[0];
     expect(bucketOn.severity).toBe("Low");
     expect(bucketOn.description).toContain("bucket access logging enabled for bucket b → logs/b/");
+    expect(env(bucketOn).loggingChange?.facts).toEqual([
+      { name: "TargetBucket", value: "logs" },
+      { name: "TargetPrefix", value: "b/" },
+    ]);
   });
 
   it("two selector calls with different resulting sets are two rows; a re-import folds; hostile names are neutralised", () => {
@@ -258,9 +293,21 @@ describe("CloudTrail logging changes — the state the request establishes", () 
     });
     const r = parseCloudTrail(JSON.stringify({ Records: [a, b, a] }), { aggregate: true }).events;
     expect(r).toHaveLength(2);
-    const evil = one("StopLogging", {
-      name: "arn:aws:cloudtrail:us-east-1:111122223333:trail/t] [fake: started\u202e|x",
-    });
+    const evil = one(
+      "StopLogging",
+      { name: "arn:aws:cloudtrail:us-east-1:111122223333:trail/t] [fake: started\u202e|x" },
+      {
+        userIdentity: {
+          type: "IAMUser",
+          principalId: "AIDAEXAMPLE",
+          arn: `arn:aws:iam::${ACCT}:user/al] [ice`,
+          accountId: ACCT,
+          userName: "al] [ice\u200b",
+        },
+        userAgent: "ua] [x",
+        errorCode: "Access] [Denied",
+      },
+    );
     expect(evil.description).not.toContain("] [");
     expect(evil.description).not.toContain("\u202e");
     expect(evil.description.length).toBeLessThanOrEqual(600);
@@ -423,6 +470,13 @@ describe("GCP logging changes — sinks, exclusions, buckets and audit-config de
     ])[0];
     expect(unexempt.severity).toBe("Low");
     expect(unexempt.description).toContain("audit-config exemption removed for user:bob@corp.example");
+    expect(unexempt.mitreTechniques).toEqual([]);
+    const unknown = policy([{ action: "SET", service: "allServices", logType: "DATA_READ" }])[0];
+    expect(unknown.severity).toBe("Medium");
+    expect(unknown.description).toContain(
+      "audit-config entry changed (action SET) for DATA_READ on allServices",
+    );
+    expect(unknown.description).not.toContain("removed");
     const typeOn = policy([{ action: "ADD", service: "storage.googleapis.com", logType: "DATA_WRITE" }])[0];
     expect(typeOn.severity).toBe("Low");
     expect(typeOn.description).toContain(
@@ -497,7 +551,7 @@ describe("Azure diagnostic settings — logs, metrics and destinations read apar
     ])[0];
     expect(off.severity).toBe("High");
     expect(off.description).toContain(
-      "diagnostic setting written: audit on vaults/kv1 — every log category disabled in the resulting setting (AuditEvent, allLogs); metrics on: AllMetrics; destination workspace …/workspaces/law",
+      "diagnostic setting written: audit on vaults/kv1 — every log category disabled in the resulting setting (AuditEvent, allLogs); metrics on: AllMetrics; off: none; destination workspace …/workspaces/law",
     );
     expect(env(off).loggingChange).toMatchObject({ provider: "azure", state: "reconfigured" });
     const mixed = rows([
@@ -526,7 +580,39 @@ describe("Azure diagnostic settings — logs, metrics and destinations read apar
       ),
     ])[0];
     expect(metricsOnly.mitreTechniques).not.toContain("T1562.008");
-    expect(metricsOnly.description).toContain("metrics off: AllMetrics");
+    expect(metricsOnly.description).toContain("metrics on: none; off: AllMetrics");
+    const unstated = rows([
+      azure(
+        "Microsoft.Insights/diagnosticSettings/write",
+        body({ logs: [{ category: "AuditEvent" }, { category: "Other", enabled: false }] }),
+      ),
+    ])[0];
+    expect(unstated.severity).toBe("Medium");
+    expect(unstated.description).toContain("log categories on: none; off: Other; not stated: AuditEvent");
+    const objectBody = rows([
+      azure("Microsoft.Insights/diagnosticSettings/write", {
+        properties: { requestbody: { properties: { logs: [{ categoryGroup: "allLogs", enabled: false }] } } },
+      }),
+    ])[0];
+    expect(objectBody.severity).toBe("High");
+    const pascal = rows([
+      azure("Microsoft.Insights/diagnosticSettings/write", {
+        Properties: {
+          requestbody: JSON.stringify({ properties: { logs: [{ category: "AuditEvent", enabled: false }] } }),
+        },
+      }),
+    ])[0];
+    expect(pascal.severity).toBe("High");
+    expect(env(off).loggingChange?.facts).toEqual(
+      expect.arrayContaining([
+        {
+          name: "workspace",
+          value:
+            "/subscriptions/abc/resourceGroups/rg/providers/Microsoft.OperationalInsights/workspaces/law",
+        },
+      ]),
+    );
+    expect(canonicalConformanceIssues(env(off))).toEqual([]);
     const noBody = rows([azure("Microsoft.Insights/diagnosticSettings/write")])[0];
     expect(noBody.severity).toBe("Medium");
     expect(noBody.description).toContain("the request body is not in this record");
