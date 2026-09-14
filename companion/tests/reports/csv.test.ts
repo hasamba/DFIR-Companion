@@ -234,6 +234,7 @@ describe("the enrichment cell says when the verdict applies (#933 item 19)", () 
           score: '=1+1 "quoted"',
           fetchedAt: "2026-05-01T12:00:00.000Z",
           temporal: { verdictMeasuredAt: "2026-04-30T10:00:00.000Z" },
+          status: "live",
         },
       ],
     });
@@ -245,6 +246,34 @@ describe("the enrichment cell says when the verdict applies (#933 item 19)", () 
     const line = csv.split("\n").find((l) => l.includes("203.0.113.50")) ?? "";
     expect(line).toContain(
       '"VirusTotal:malicious (=1+1 ""quoted"") {verdict measured by the latest scan on 2026-04-30',
+    );
+  });
+});
+
+// #1024: a hit that is no longer live stays in the CSV as history, labelled — never erased, never read as current.
+describe("the enrichment cell labels a non-live assertion", () => {
+  it("a revoked assertion and a legacy (pre-tracking) one each carry their label", () => {
+    const s = emptyState("c");
+    s.iocs.push({
+      id: "i1",
+      type: "ip",
+      value: "203.0.113.50",
+      firstSeen: "2026-04-01T00:00:00.000Z",
+      enrichments: [
+        {
+          source: "OpenCTI",
+          verdict: "malicious",
+          fetchedAt: "2026-05-01T12:00:00.000Z",
+          status: "revoked",
+          revoked: true,
+        },
+        { source: "VirusTotal", verdict: "malicious", fetchedAt: "2026-05-01T12:00:00.000Z" },
+      ],
+    });
+    const csv = iocsCsv(s);
+    expect(csv).toContain("OpenCTI:malicious [revoked by the provider; kept as history]");
+    expect(csv).toContain(
+      "VirusTotal:malicious [recorded before assertion tracking; re-check to make it actionable]",
     );
   });
 });

@@ -45,6 +45,13 @@ export const REPORT_SECTION_DEFS = [
     label: "Sandbox reports (detonation results and sighting status)",
     defaultEnabled: false,
   },
+  // Off by default for the same reason (#1024): an existing template does not sprout a review
+  // table on upgrade; a fresh template gets it.
+  {
+    key: "intelRetirement",
+    label: "Intel retirement review (findings whose intel is no longer actionable)",
+    defaultEnabled: false,
+  },
 ] as const;
 
 export type ReportSectionKey = (typeof REPORT_SECTION_DEFS)[number]["key"];
@@ -229,6 +236,7 @@ export const BUILT_IN_REPORT_TEMPLATES: readonly ReportTemplate[] = [
       // this template exists to keep the client-facing brief short. The full report carries it.
       { key: "chainOfCustody", enabled: false },
       { key: "sandboxReports", enabled: false },
+      { key: "intelRetirement", enabled: false },
     ],
   }),
   normalizeReportTemplate({

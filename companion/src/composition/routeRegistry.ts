@@ -34,6 +34,7 @@ import { registerAnalysisGraphRoutes } from "../routes/analysisGraph.js";
 import { registerSessionSegmentationRoutes } from "../routes/sessionSegmentation.js";
 import { registerFindingsRoutes } from "../routes/findings.js";
 import { registerFindingOutcomeRoutes } from "../routes/findingOutcome.js";
+import { registerIntelRetirementRoutes } from "../routes/intelRetirement.js";
 import { registerTaggerRoutes } from "../routes/tagger.js";
 import { registerCustodyRoutes } from "../routes/custody.js";
 import { registerMcpRoutes } from "../routes/mcp.js";
@@ -125,6 +126,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerSessionSegmentationRoutes(app, ctx);
   registerFindingsRoutes(app, ctx);
   registerFindingOutcomeRoutes(app, ctx);
+  registerIntelRetirementRoutes(app, ctx);
   registerTaggerRoutes(app, ctx);
   // Auto-record chain of custody for every artifact the companion stores (#231). Hooked onto the
   // store rather than onto the ~25 saveImport call sites, so no import route — including ones added

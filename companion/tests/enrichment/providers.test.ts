@@ -401,11 +401,14 @@ describe("MispProvider", () => {
       }),
     );
     const misp = new MispProvider({ baseUrl: "https://misp.example.org/", apiKey: "k", fetchFn });
-    const r = await misp.lookup("hash", "abcd");
+    // One assertion per attribute (#1024): the attribute's own record, its event as context.
+    const list = await misp.lookup("hash", "abcd");
+    expect(list).toHaveLength(1);
+    const r = list![0];
     expect(r).toMatchObject({ source: "MISP", verdict: "malicious", detections: 1 });
-    expect(r!.score).toContain("TrickBot campaign");
-    expect(r!.tags).toEqual(expect.arrayContaining(["tlp:amber", "malware:trickbot"]));
-    expect(r!.link).toBe("https://misp.example.org/events/view/42");
+    expect(r.score).toContain("TrickBot campaign");
+    expect(r.tags).toEqual(expect.arrayContaining(["tlp:amber", "malware:trickbot"]));
+    expect(r.link).toBe("https://misp.example.org/events/view/42");
     // Auth header sent, trailing slash on baseUrl normalized.
     const init = fetchFn.mock.calls[0][1] as RequestInit;
     expect((init.headers as Record<string, string>).Authorization).toBe("k");
@@ -423,7 +426,7 @@ describe("MispProvider", () => {
       }),
     );
     const misp = new MispProvider({ baseUrl: "https://m", apiKey: "k", fetchFn });
-    expect((await misp.lookup("ip", "1.2.3.4"))!.verdict).toBe("suspicious");
+    expect((await misp.lookup("ip", "1.2.3.4"))![0].verdict).toBe("suspicious");
   });
 
   it("returns null when the indicator is not present on the instance, and does not support process names", async () => {
@@ -770,7 +773,7 @@ describe("intel lineage on provider results (#933 item 18)", () => {
       }),
     );
     const misp = new MispProvider({ baseUrl: "https://misp.example.org", apiKey: "k", fetchFn });
-    const r = await misp.lookup("hash", "x");
+    const r = (await misp.lookup("hash", "x"))![0];
     expect(r).toMatchObject({ originKind: "relay", origins: ["abuse.ch", "ACME CSIRT"] });
     expect(JSON.parse(String((fetchFn.mock.calls[0][1] as RequestInit).body))).toMatchObject({
       includeContext: true,
@@ -785,7 +788,10 @@ describe("intel lineage on provider results (#933 item 18)", () => {
         jsonResponse({ response: { Attribute: [{ value: "x", Event: { id: "1", orgc_id: "7" } }] } }),
       ),
     });
-    expect(await withId.lookup("hash", "x")).toMatchObject({ originKind: "relay", origins: ["org #7"] });
+    expect((await withId.lookup("hash", "x"))![0]).toMatchObject({
+      originKind: "relay",
+      origins: ["org #7"],
+    });
     const bare = new MispProvider({
       baseUrl: "https://m",
       apiKey: "k",
@@ -793,7 +799,7 @@ describe("intel lineage on provider results (#933 item 18)", () => {
         jsonResponse({ response: { Attribute: [{ value: "x", event_id: "1" }] } }),
       ),
     });
-    expect(await bare.lookup("hash", "x")).toMatchObject({ originKind: "relay", origins: [] });
+    expect((await bare.lookup("hash", "x"))![0]).toMatchObject({ originKind: "relay", origins: [] });
   });
 
   it("MISP keeps a creator whose Event object carries no id (keyed by the attribute's event_id)", async () => {
@@ -811,7 +817,7 @@ describe("intel lineage on provider results (#933 item 18)", () => {
         }),
       ),
     });
-    expect(await misp.lookup("hash", "x")).toMatchObject({ origins: ["ACME CSIRT", "abuse.ch"] });
+    expect((await misp.lookup("hash", "x"))![0]).toMatchObject({ origins: ["ACME CSIRT", "abuse.ch"] });
   });
 
   it("MISP never reads a creator from the event's free text, and cleans a hostile org name", async () => {
@@ -836,10 +842,10 @@ describe("intel lineage on provider results (#933 item 18)", () => {
         }),
       ),
     });
-    const r = await misp.lookup("hash", "x");
-    expect(r!.origins).toHaveLength(1);
-    expect(r!.origins![0]).toMatch(/^Evil Corp z+$/);
-    expect(r!.origins![0]).toHaveLength(80);
+    const r = (await misp.lookup("hash", "x"))![0];
+    expect(r.origins).toHaveLength(1);
+    expect(r.origins![0]).toMatch(/^Evil Corp z+$/);
+    expect(r.origins![0]).toHaveLength(80);
   });
 
   it("MISP caps a record at five creators and says how many were cut", async () => {
@@ -852,9 +858,9 @@ describe("intel lineage on provider results (#933 item 18)", () => {
       apiKey: "k",
       fetchFn: fetchMock(async () => jsonResponse({ response: { Attribute: attrs } })),
     });
-    const r = await misp.lookup("hash", "x");
-    expect(r!.origins).toEqual(["org-0", "org-1", "org-2", "org-3", "org-4"]);
-    expect(r!.moreOrigins).toBe(2);
+    const r = (await misp.lookup("hash", "x"))![0];
+    expect(r.origins).toEqual(["org-0", "org-1", "org-2", "org-3", "org-4"]);
+    expect(r.moreOrigins).toBe(2);
   });
 
   it("YETI records no creator: its context sources are producers, not claimants", async () => {

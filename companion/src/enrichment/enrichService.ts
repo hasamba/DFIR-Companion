@@ -12,6 +12,7 @@ import {
 } from "./provider.js";
 import { isInternalTarget } from "../analysis/iocValue.js";
 import type { ProviderHealthCache } from "./providerHealth.js";
+import { assertionIdFor, foldCheck, statusAtCheck, type ProviderCheck } from "../analysis/intelHistory.js";
 
 // Emitted once per outbound provider call so callers can log exactly which threat-intel
 // API was hit, for which indicator, and how it resolved (hit / miss / error). Lets the
@@ -91,8 +92,24 @@ function needsEnrichment(ioc: IOC, providers: readonly EnrichmentProvider[]): bo
   const kind = iocKind(ioc.type);
   if (!kind) return false;
   if (isInternalTarget(ioc.value, ioc.type)) return false; // SSRF guard
-  const checked = new Set(ioc.enrichedBy ?? []);
-  return providers.some((p) => p.supports(kind) && !checked.has(p.name));
+  return providers.some((p) => p.supports(kind) && !providerChecked(ioc, p.name));
+}
+
+// A provider counts as CHECKED for an IOC only when it is in `enrichedBy` AND none of its backends'
+// last outcomes is an error (#1024): a fan-out provider whose ThreatFox timed out on a hash it had
+// never seen must be retried, even though its other backends answered.
+export function providerChecked(ioc: IOC, provider: string): boolean {
+  if (!(ioc.enrichedBy ?? []).includes(provider)) return false;
+  // A hit recorded before assertion tracking is not actionable until re-checked: offer the re-check.
+  if ((ioc.enrichments ?? []).some((e) => (e.provider ?? e.source) === provider && e.status === undefined))
+    return false;
+  const own = Object.entries(ioc.intelChecks ?? {}).filter(
+    ([k]) => k === provider || k.startsWith(`${provider}|`),
+  );
+  // No check record at all (an IOC enriched before the records existed): not checked.
+  if (own.length === 0) return false;
+  // Every record must be terminal (hit / miss) and complete.
+  return own.every(([, v]) => (v.outcome === "hit" || v.outcome === "miss") && !v.incomplete);
 }
 
 // Cheap pre-check mirroring enrichIocs' candidate filter, WITHOUT doing any lookups: is there at
@@ -141,8 +158,7 @@ export async function enrichIocs(
     .filter((c) => !opts.skipValues?.has(c.ioc.value))
     .map((c) => {
       const supporting = opts.providers.filter((p) => p.supports(c.kind));
-      const checked = new Set(c.ioc.enrichedBy ?? []);
-      const todo = opts.force ? supporting : supporting.filter((p) => !checked.has(p.name));
+      const todo = opts.force ? supporting : supporting.filter((p) => !providerChecked(c.ioc, p.name));
       return { ...c, todo };
     })
     .filter((c) => c.todo.length > 0)
@@ -161,8 +177,11 @@ export async function enrichIocs(
     unavailable: [],
   };
 
-  // Map of IOC index → { enrichments, enrichedBy }, so we can rebuild the list immutably.
-  const updates = new Map<number, { enrichments: IocEnrichment[]; enrichedBy: string[] }>();
+  // Map of IOC index → the intel fields to rebuild the list immutably.
+  const updates = new Map<
+    number,
+    Pick<IOC, "enrichments" | "intelHistory" | "intelChecks"> & { enrichedBy: string[] }
+  >();
   const lastCallAt = new Map<string, number>(); // provider name → monotonic timestamp of last call start
   const downReported = new Set<string>(); // providers we've already logged as unreachable this run
 
@@ -170,6 +189,7 @@ export async function enrichIocs(
     if (opts.signal?.aborted) break; // #225: analyst cancelled — stop before the next IOC, keep what's done
     const succeeded = new Set<string>(); // providers whose call returned (hit OR miss) — NOT errors
     const fresh: IocEnrichment[] = [];
+    const checks: ProviderCheck[] = []; // per provider / per backend outcomes of this run (#1024)
     let queriedThisIoc = false; // a real provider call was made for this IOC
     for (const provider of todo) {
       // Reachability gate (cached ~60s): skip a provider probed DOWN before spending a call.
@@ -208,20 +228,55 @@ export async function enrichIocs(
       try {
         // A single 429 doesn't abort the lookup: retry with backoff (honouring Retry-After)
         // before giving up and counting it as an error.
-        const r = await withRateLimitRetry(() => provider.lookup(kind, ioc.value), {
-          ...opts.retry,
-          sleep,
-          random,
-        });
+        // The per-backend form when the provider offers it (#1024): each backend's outcome is
+        // recorded on its own, so an errored backend keeps its last-known assertions and is
+        // retried, and an INCOMPLETE result concludes no absence.
+        const detailed = provider.lookupDetailed
+          ? await withRateLimitRetry(() => provider.lookupDetailed!(kind, ioc.value), {
+              ...opts.retry,
+              sleep,
+              random,
+            })
+          : null;
+        const r = detailed
+          ? detailed.results
+          : await withRateLimitRetry(() => provider.lookup(kind, ioc.value), {
+              ...opts.retry,
+              sleep,
+              random,
+            });
         // A provider may return a single result, several (a fan-out source like Hunting.ch),
         // or null/[] for a miss. When a result's displayed `source` differs from the provider
         // (a fan-out emits sub-sources like "MalwareBazaar"), stamp the OWNING provider so
         // re-checks/dedup key on it; single-source providers keep `source` as the key.
         const list = Array.isArray(r) ? r : r ? [r] : [];
+        const checkedAt = now();
         for (const one of list) {
           const owned = one.source !== provider.name ? { provider: provider.name } : {};
-          fresh.push({ ...one, ...owned, fetchedAt: now() });
+          const hit: IocEnrichment = { ...one, ...owned, fetchedAt: checkedAt };
+          fresh.push({
+            ...hit,
+            assertionId: assertionIdFor(hit, ioc.value),
+            status: statusAtCheck(hit, checkedAt),
+          });
         }
+        if (detailed) {
+          const singleSource = detailed.backends.length === 1 && detailed.backends[0].name === provider.name;
+          for (const b of detailed.backends)
+            checks.push({
+              provider: provider.name,
+              ...(singleSource ? {} : { backend: b.name }),
+              outcome: b.outcome,
+              ...(b.detail ? { detail: b.detail } : {}),
+              ...(b.incomplete ? { incomplete: true } : {}),
+            });
+          if (detailed.backends.some((b) => b.outcome === "error")) summary.errors += 1;
+          // The provider is "checked" only when no backend errored; an all-error result throws below.
+          if (detailed.backends.every((b) => b.outcome === "error" || b.outcome === "not-queried"))
+            throw new Error(
+              detailed.backends.find((b) => b.detail)?.detail ?? `${provider.name}: every backend errored`,
+            );
+        } else checks.push({ provider: provider.name, outcome: list.length ? "hit" : "miss" });
         succeeded.add(provider.name);
         opts.onLookup?.({
           provider: provider.name,
@@ -238,6 +293,8 @@ export async function enrichIocs(
         });
       } catch (err) {
         summary.errors += 1;
+        if (!checks.some((c) => c.provider === provider.name))
+          checks.push({ provider: provider.name, outcome: "error", detail: errorMessage(err).slice(0, 200) });
         opts.onLookup?.({
           provider: provider.name,
           kind,
@@ -257,27 +314,23 @@ export async function enrichIocs(
     // Only record providers whose call SUCCEEDED. A provider that threw stays out of
     // `enrichedBy`, so a later run retries it — a transient outage (or a since-fixed URL)
     // never gets cached as "checked". If nothing succeeded and the IOC was never enriched,
-    // leave it untouched (don't mark it "checked, no intel" when it actually errored).
-    if (succeeded.size === 0 && ioc.enrichments === undefined) continue;
-    // Keep existing hits from providers we did NOT successfully re-run (errored providers
-    // retain their last-known result); successful providers are superseded by `fresh`. Match on
-    // the owning `provider` (falling back to `source` for older single-source enrichments) so a
-    // fan-out provider's whole set is replaced, not left to accumulate duplicates. Also drop any
-    // stale hit whose `source` a fresh result now owns — so an enrichment from a retired provider
-    // (e.g. the old standalone MalwareBazaar) is replaced by Hunting.ch's "MalwareBazaar" instead
-    // of both showing.
-    const freshSources = new Set(fresh.map((f) => f.source));
-    const keptHits = (ioc.enrichments ?? []).filter(
-      (e) => !succeeded.has(e.provider ?? e.source) && !freshSources.has(e.source),
-    );
+    // leave it untouched (don't mark it "checked, no intel" when it actually errored) — but an
+    // error on a never-enriched IOC is still remembered in `intelChecks` so the retry is visible.
+    if (succeeded.size === 0 && ioc.enrichments === undefined && checks.length === 0) continue;
+    // Assertion history (#1024): a fresh assertion supersedes the one with the same identity; an
+    // assertion a successful, complete check did not return becomes "not-returned" (never a
+    // withdrawal); an errored provider or backend keeps its last-known assertions; a stale hit
+    // whose `source` a fresh result now owns (the retired standalone MalwareBazaar under
+    // Hunting.ch's "MalwareBazaar") is superseded by identity like any other.
+    const folded = foldCheck(ioc, fresh, checks, now());
     const enrichedBy = [...new Set([...(ioc.enrichedBy ?? []), ...succeeded])];
-    updates.set(idx, { enrichments: [...keptHits, ...fresh], enrichedBy });
+    updates.set(idx, { ...folded, enrichedBy });
     if (fresh.length) summary.withHits += 1;
   }
 
   const out = iocs.map((ioc, idx) => {
     const u = updates.get(idx);
-    return u ? { ...ioc, enrichments: u.enrichments, enrichedBy: u.enrichedBy } : ioc;
+    return u ? { ...ioc, ...u } : ioc;
   });
   return { iocs: out, summary };
 }

@@ -104,6 +104,7 @@ export const DASHBOARD_SECTION_IDS: readonly string[] = [
   "sec-activity",
   "sec-mcp",
   "sec-custody",
+  "sec-intel-retirement",
   "sec-case-details",
 ];
 
@@ -176,6 +177,7 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
       "sec-mcp",
       "sec-inv-log",
       "sec-custody",
+      "sec-intel-retirement",
       "sec-case-details",
     ],
     defaultSort: "time",
@@ -312,6 +314,7 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
       "sec-activity",
       "sec-inv-log",
       "sec-custody",
+      "sec-intel-retirement",
     ],
     defaultSort: "time",
     reportTemplateId: "technical-detailed",
@@ -338,6 +341,7 @@ export const BUILT_IN_DASHBOARD_VIEWS: readonly DashboardView[] = [
       "sec-iocs",
       "sec-timeline",
       "sec-login-graph",
+      "sec-intel-retirement",
     ],
     defaultSort: "severity",
     reportTemplateId: "standard",

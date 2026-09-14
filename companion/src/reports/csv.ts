@@ -4,6 +4,7 @@ import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { scoreIocsFromState } from "../analysis/iocRiskScore.js";
 import { buildIocProvenanceChains } from "../analysis/iocProvenanceChain.js";
 import { caseTime, intelTemporal } from "../analysis/intelTemporal.js";
+import { assertionLabel, lastKnownAssertions } from "../analysis/intelViews.js";
 import type { GeoMapData } from "../analysis/geoMap.js";
 
 function cell(value: string): string {
@@ -49,11 +50,13 @@ export function iocsCsv(state: InvestigationState): string {
   const nowIso = new Date().toISOString();
   const rows = state.iocs.map((i) => {
     const when = caseTime(i, chains[i.id]);
-    const intel = (i.enrichments ?? [])
-      .map(
-        (e) =>
-          `${e.source}:${e.verdict}${e.score ? ` (${e.score})` : ""} {${intelTemporal(e, when, nowIso).words}}`,
-      )
+    // Last-known assertions, each labelled when it is not live (#1024): an expired, revoked or
+    // not-returned verdict stays in the report as history and is never read as current.
+    const intel = lastKnownAssertions(i)
+      .map((e) => {
+        const label = assertionLabel(e, nowIso);
+        return `${e.source}:${e.verdict}${e.score ? ` (${e.score})` : ""}${label ? ` [${label}]` : ""} {${intelTemporal(e, when, nowIso).words}}`;
+      })
       .join(" | ");
     const src = iocSrc[i.id] ?? [];
     const r = risk[i.id];

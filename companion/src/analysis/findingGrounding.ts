@@ -24,6 +24,7 @@ import {
 } from "./stateTypes.js";
 import { classifyVerdict, iocHasBehavioralEvent, shortHost } from "./iocAnchors.js";
 import { intelOrigins } from "./intelLineage.js";
+import { actionableAssertions } from "./intelViews.js";
 import { SEVERITY_RANK } from "./forensicGate.js";
 import { extractCveIds } from "./kev.js";
 import { trustForSources, type SourceTrustMap } from "./sourceTrust.js";
@@ -155,10 +156,12 @@ export interface GroundingInput {
 // penalty below. A hit whose record names no creator (#933 item 18: a MISP/OpenCTI/YETI record with
 // no orgc / createdBy, or a pre-change relay record) lifts nothing: missing lineage stays unknown and
 // never silently becomes confirmation.
-export function intelFlaggedIocIds(iocs: readonly IOC[]): Set<string> {
+// Only ACTIONABLE assertions count (#1024): an expired, revoked, not-returned, errored-last-known
+// or legacy (pre-tracking) assertion is last-known evidence for the report, never corroboration.
+export function intelFlaggedIocIds(iocs: readonly IOC[], at: string = new Date().toISOString()): Set<string> {
   const out = new Set<string>();
   for (const i of iocs) {
-    if (intelOrigins(i.enrichments).origins.length > 0) out.add(i.id);
+    if (intelOrigins(actionableAssertions(i, at)).origins.length > 0) out.add(i.id);
   }
   return out;
 }
@@ -380,12 +383,13 @@ function classifyIntelOnlyFinding(
   hostNames: ReadonlySet<string>,
 ): IntelOnlyVerdict | null {
   if (SEV_ORDER[f.severity] > SEV_ORDER.High) return null; // only High/Critical can be over-graded by intel
+  // Only actionable assertions drive an intel-only grade or a corroboration step (#1024): a
+  // revoked, expired, not-returned, errored or legacy assertion is history, not a verdict.
   const verdictIocs = (f.relatedIocs ?? [])
     .map((id) => iocById.get(id))
-    .filter(
-      (i): i is IOC =>
-        !!i && (i.enrichments ?? []).some((e) => e.verdict === "malicious" || e.verdict === "suspicious"),
-    );
+    .filter((i): i is IOC => !!i)
+    .map((i) => ({ ...i, enrichments: actionableAssertions(i) }))
+    .filter((i) => i.enrichments.some((e) => e.verdict === "malicious" || e.verdict === "suspicious"));
   if (!verdictIocs.length) return null; // not intel-driven
   const classes = verdictIocs.map((i) =>
     classifyVerdict(i, { hasBehavioralEvent: iocHasBehavioralEvent(i.value, scopedEvents), hostNames }),

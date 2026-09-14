@@ -104,6 +104,17 @@ export interface IocEnrichment {
   tags?: string[]; // malware family / classification labels
   link?: string; // permalink to the report
   fetchedAt: string; // ISO time the lookup was made
+  // Assertion identity and state (#1024): the provider's own record id and the digest that
+  // supersession keys on; the validity the provider states; its status at the last check.
+  assertionId?: string;
+  providerRecordId?: string;
+  validity?: { from?: string; until?: string };
+  revoked?: boolean;
+  status?: IntelAssertionStatus;
+  /** When the stored state was last set — a hit's fetch, a miss, an error; the merge of two copies keys on it. */
+  stateAt?: string;
+  lastMissAt?: string; // the last successful check of this provider that did not return the assertion
+  note?: string; // a provider-specific reading rule the row must carry (ThreatFox's six-month API expiry)
   // Geo coordinates (#133): set by the GeoIP provider so the map can plot the IOC. Optional —
   // older enrichments without them still validate; nothing else needs wiring.
   lat?: number;
@@ -134,6 +145,70 @@ export interface IocEnrichmentTemporal {
   lastReportAt?: string; // AbuseIPDB lastReportedAt — one point
   reportCount?: number; // AbuseIPDB totalReports — counted over queryWindow only
   queryWindow?: { from: string; to: string }; // AbuseIPDB [now − maxAgeInDays, now]
+  // The other providers' dated facts (#933 item 19, second half — #1024), each of its kind:
+  observedFrom?: string; // MISP attribute first_seen; ThreatFox first_seen; URLhaus host/payload firstseen — an observation interval's start
+  observedTo?: string; // MISP attribute last_seen; ThreatFox last_seen; URLhaus payload lastseen
+  recordEditedAt?: string; // MISP attribute timestamp — creation or last edit of the record, not an observation
+  eventDate?: string; // MISP Event.date — the event's stated date (date-only), not an observation
+  publishedAt?: string; // MISP publish_timestamp — when the event was published
+  createdAt?: string; // OpenCTI indicator `created` — object creation, not publication and not an observation
+  addedAt?: string; // URLhaus date_added — when the URL entered the dataset, never when the infrastructure came to exist
+  lastOnlineAt?: string; // URLhaus last_online — the provider's last successful check, when it reports one
+  truncated?: boolean; // the provider's result set was cut by its own limit; the facts above cover what was returned
+}
+
+// The state of one intel assertion at its last check (#1024). `live` is the only actionable state;
+// the rest are kept as history and labelled wherever they are shown.
+export type IntelAssertionStatus =
+  | "live"
+  | "expired" // validity.until ≤ the check time
+  | "revoked" // the provider says so (OpenCTI revoked, MISP deleted)
+  | "not-returned" // a later successful check of the same provider did not return it — "no hit in that query", never a withdrawal
+  | "errored-last-known" // the provider (or its backend) errored on the last check; this is the last known state
+  | "legacy-unverified" // recorded before assertion tracking; re-check to make it actionable
+  | "superseded"; // history only: replaced by an assertion of another identity that now owns its source
+
+// One material state of one assertion, appended to the IOC's history on change (#1024).
+export interface IntelAssertionRecord {
+  assertionId: string;
+  provider: string; // the owning provider (Hunting.ch) — `source` is the backend / display label
+  source: string;
+  providerRecordId?: string;
+  verdict: IocEnrichment["verdict"];
+  score?: string;
+  tags?: string[];
+  temporal?: IocEnrichmentTemporal;
+  validity?: { from?: string; until?: string };
+  revoked?: boolean;
+  status: IntelAssertionStatus;
+  /** Digest of every material field; identical consecutive checks coalesce onto one record. */
+  fingerprint: string;
+  firstCheckedAt: string;
+  lastCheckedAt: string;
+  checkCount: number;
+  /** Earlier records of this assertion compacted away under the per-assertion bound. */
+  compacted?: number;
+}
+
+// The last outcome of one provider (or one backend of a fan-out provider) for one IOC (#1024):
+// independent of any assertion, so a first-time backend error is remembered and retried.
+export interface IntelCheckState {
+  outcome: "hit" | "miss" | "error" | "not-queried";
+  at: string;
+  detail?: string;
+  /** The check read an incomplete result set (a bound was hit); absence transitions were not applied. */
+  incomplete?: boolean;
+}
+
+// The analyst's recorded decision on one item of the intel retirement review (#1024). Records a
+// recommendation; changes no severity, status or deployed detection.
+export interface IntelRetirementDecision {
+  findingId: string;
+  decision: "retire" | "keep";
+  note?: string;
+  decidedAt: string;
+  /** The assertion ids the review named when the decision was recorded. */
+  assertionIds: string[];
 }
 
 export interface IOC {
@@ -143,6 +218,11 @@ export interface IOC {
   firstSeen: string;
   enrichments?: IocEnrichment[]; // threat-intel HITS (added by the enrich pass)
   enrichedBy?: string[]; // provider names that have CHECKED this IOC (hit or not) — so a newly-enabled provider re-checks every IOC, and checked ones aren't re-queried
+  // Assertion history and per-backend check state (#1024). `intelHistory` is append-only on
+  // material change, bounded per assertion with compaction; `intelChecks` is keyed by
+  // `provider` or `provider|backend` and remembers an error with no prior assertion.
+  intelHistory?: IntelAssertionRecord[];
+  intelChecks?: Record<string, IntelCheckState>;
   // Case-scoped forensic-event id(s) this IOC was authoritatively extracted from (set by the 5
   // priority importers via pipeline.ts). Absent/empty ⇒ iocProvenanceChain.ts falls back to
   // matching by value, same as before this field existed.
@@ -510,6 +590,8 @@ export interface InvestigationState {
   // key in mergeConcurrentAdditions — a reducer that rebuilds the state object drops what it does not
   // name, which is how an earlier draft of this would have silently lost every record.
   labIntel?: LabIntelRecord[];
+  // Analyst decisions on the intel retirement review (#1024), keyed by finding id; newest wins.
+  intelRetirementDecisions?: IntelRetirementDecision[];
   updatedAt: string;
 }
 
@@ -529,6 +611,7 @@ export function emptyState(caseId: string): InvestigationState {
     attackerPath: "",
     narrativeTimeline: "",
     iocExcludeRules: [],
+    intelRetirementDecisions: [],
     updatedAt: new Date(0).toISOString(),
   };
 }

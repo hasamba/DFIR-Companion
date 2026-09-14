@@ -12,7 +12,8 @@ function ioc(overrides: Partial<IOC>): IOC {
 }
 
 function enrich(verdict: IocEnrichment["verdict"], source = "VT", score?: string): IocEnrichment {
-  return { source, verdict, ...(score ? { score } : {}), fetchedAt: "2026-06-13T09:00:00Z" };
+  // A tracked, live assertion (#1024): the block-list acts only on actionable ones.
+  return { source, verdict, ...(score ? { score } : {}), fetchedAt: "2026-06-13T09:00:00Z", status: "live" };
 }
 
 // ── filterBlocklistIocs ───────────────────────────────────────────────────────

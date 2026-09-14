@@ -21,13 +21,20 @@ describe("mergeEnrichedSubset", () => {
     const all = [iocA, iocB, iocC];
     const enriched: IOC = {
       ...iocB,
-      enrichments: [{ source: "VirusTotal", verdict: "malicious", fetchedAt: "t" }],
+      enrichments: [{ source: "VirusTotal", verdict: "malicious", fetchedAt: "t", status: "live" }],
       enrichedBy: ["VirusTotal"],
     };
     const result = mergeEnrichedSubset(all, [enriched]);
     expect(result).toHaveLength(3);
     expect(result[0]).toBe(iocA); // unchanged reference
-    expect(result[1]).toBe(enriched); // replaced with enriched copy
+    // Merged by assertion (#1024), never a whole-object swap: the enriched fields arrive, the rest stays.
+    expect(result[1]).toMatchObject({ id: "b", enrichedBy: ["VirusTotal"] });
+    expect(result[1].enrichments).toHaveLength(1);
+    expect(result[1].enrichments![0]).toMatchObject({
+      source: "VirusTotal",
+      verdict: "malicious",
+      status: "live",
+    });
     expect(result[2]).toBe(iocC); // unchanged reference
   });
 
@@ -37,8 +44,8 @@ describe("mergeEnrichedSubset", () => {
     const enrichedA: IOC = { ...iocA, enrichedBy: ["MISP"] };
     const enrichedB: IOC = { ...iocB, enrichedBy: ["MISP"] };
     const result = mergeEnrichedSubset([iocA, iocB], [enrichedA, enrichedB]);
-    expect(result[0]).toBe(enrichedA);
-    expect(result[1]).toBe(enrichedB);
+    expect(result[0]).toMatchObject({ id: "a", enrichedBy: ["MISP"] });
+    expect(result[1]).toMatchObject({ id: "b", enrichedBy: ["MISP"] });
   });
 
   it("ignores subset IDs that are not in allIocs", () => {
@@ -60,7 +67,80 @@ describe("mergeEnrichedSubset", () => {
     expect(result[0].id).toBe("a");
     expect(result[1].id).toBe("b");
     expect(result[2].id).toBe("c");
-    expect(result[0]).toBe(enrichedA);
-    expect(result[2]).toBe(enrichedC);
+    expect(result[0]).toMatchObject({ id: "a", enrichedBy: ["VT"] });
+    expect(result[2]).toMatchObject({ id: "c", enrichedBy: ["VT"] });
+  });
+});
+
+// #1024: a stale completion of one re-check must not erase the history a faster one appended.
+describe("mergeEnrichedSubset keeps the newest assertion state", () => {
+  it("a later revoked state wins over a stale live copy; histories union", () => {
+    const current: IOC = {
+      ...base({ id: "a", value: "1.2.3.4" }),
+      enrichments: [
+        {
+          source: "OpenCTI",
+          verdict: "malicious",
+          fetchedAt: "2026-06-02T00:00:00Z",
+          assertionId: "x",
+          status: "revoked",
+          revoked: true,
+        },
+      ],
+      intelHistory: [
+        {
+          assertionId: "x",
+          provider: "OpenCTI",
+          source: "OpenCTI",
+          verdict: "malicious",
+          status: "live",
+          fingerprint: "f1",
+          firstCheckedAt: "2026-06-01T00:00:00Z",
+          lastCheckedAt: "2026-06-01T00:00:00Z",
+          checkCount: 1,
+        },
+        {
+          assertionId: "x",
+          provider: "OpenCTI",
+          source: "OpenCTI",
+          verdict: "malicious",
+          status: "revoked",
+          fingerprint: "f2",
+          firstCheckedAt: "2026-06-02T00:00:00Z",
+          lastCheckedAt: "2026-06-02T00:00:00Z",
+          checkCount: 1,
+        },
+      ],
+      enrichedBy: ["OpenCTI"],
+    };
+    const stale: IOC = {
+      ...base({ id: "a", value: "1.2.3.4" }),
+      enrichments: [
+        {
+          source: "OpenCTI",
+          verdict: "malicious",
+          fetchedAt: "2026-06-01T00:00:00Z",
+          assertionId: "x",
+          status: "live",
+        },
+      ],
+      intelHistory: [
+        {
+          assertionId: "x",
+          provider: "OpenCTI",
+          source: "OpenCTI",
+          verdict: "malicious",
+          status: "live",
+          fingerprint: "f1",
+          firstCheckedAt: "2026-06-01T00:00:00Z",
+          lastCheckedAt: "2026-06-01T00:00:00Z",
+          checkCount: 1,
+        },
+      ],
+      enrichedBy: ["OpenCTI"],
+    };
+    const [merged] = mergeEnrichedSubset([current], [stale]);
+    expect(merged.enrichments![0].status).toBe("revoked");
+    expect(merged.intelHistory).toHaveLength(2);
   });
 });

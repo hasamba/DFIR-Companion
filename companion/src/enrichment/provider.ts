@@ -32,6 +32,30 @@ export interface EnrichmentResult {
   originKind?: OriginKind;
   origins?: string[];
   moreOrigins?: number;
+  // Assertion identity and validity (#1024): the provider's own record id (a MISP attribute uuid,
+  // an OpenCTI indicator id, a ThreatFox ioc id, a URLhaus url id); the validity the provider
+  // states; whether the provider says the assertion is revoked / deleted; a reading rule the row
+  // must carry (ThreatFox's six-month API expiry).
+  providerRecordId?: string;
+  validity?: { from?: string; until?: string };
+  revoked?: boolean;
+  note?: string;
+}
+
+// One backend's outcome inside a fan-out provider's lookup (#1024): `hit` / `miss` are terminal;
+// `error` keeps the backend's last-known assertions and retries it; `not-queried` says the backend
+// does not serve this kind. `incomplete` marks a result cut by the backend's own limit — no
+// absence may be concluded from it.
+export interface BackendOutcome {
+  name: string;
+  outcome: "hit" | "miss" | "error" | "not-queried";
+  detail?: string;
+  incomplete?: boolean;
+}
+
+export interface DetailedLookup {
+  results: EnrichmentResult[];
+  backends: BackendOutcome[];
 }
 
 export type OriginKind = "first-party" | "aggregate" | "relay";
@@ -52,6 +76,11 @@ export interface EnrichmentProvider {
   // YARAify) may return an ARRAY of results — one per back-end that has a hit — and they show
   // as separate badges. An empty array means "checked, nothing found" (same as null).
   lookup(kind: IocKind, value: string): Promise<EnrichmentResult | EnrichmentResult[] | null>;
+  // OPTIONAL per-backend form (#1024): a fan-out provider reports every backend's outcome so an
+  // errored backend is neither recorded as "no hit" nor cached as checked; a single-source
+  // provider may use it to report an INCOMPLETE result (a pagination bound) so no absence is
+  // concluded from it. The service prefers it when present.
+  lookupDetailed?(kind: IocKind, value: string): Promise<DetailedLookup>;
   // OPTIONAL reachability check: a cheap request that verifies the server is up and auth
   // works WITHOUT sending a real indicator. Resolves when reachable; throws (like lookup)
   // when the server is unreachable / auth is broken. Used to gate sending hundreds of IOCs

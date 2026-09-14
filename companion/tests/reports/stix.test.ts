@@ -132,8 +132,14 @@ describe("buildStixBundle", () => {
         value: "b".repeat(64),
         firstSeen: "2026-05-19T08:00:00.000Z",
         enrichments: [
-          { source: "VirusTotal", verdict: "suspicious", score: "5/70", fetchedAt: "t" },
-          { source: "MalwareBazaar", verdict: "malicious", score: "family hit", fetchedAt: "t" },
+          { source: "VirusTotal", verdict: "suspicious", score: "5/70", fetchedAt: "t", status: "live" },
+          {
+            source: "MalwareBazaar",
+            verdict: "malicious",
+            score: "family hit",
+            fetchedAt: "t",
+            status: "live",
+          },
         ],
       }),
     );
@@ -194,7 +200,13 @@ describe("buildStixBundle", () => {
         type: "hash",
         value: "c".repeat(64),
         enrichments: [
-          { source: "ThreatFox", verdict: "malicious", tags: ["Emotet", "Loader"], fetchedAt: "t" },
+          {
+            source: "ThreatFox",
+            verdict: "malicious",
+            tags: ["Emotet", "Loader"],
+            fetchedAt: "t",
+            status: "live",
+          },
         ],
       }),
     );

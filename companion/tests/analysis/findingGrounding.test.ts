@@ -107,7 +107,12 @@ describe("groundAndScoreFindings", () => {
     const out = groundAndScoreFindings({
       findings: [f({ id: "f1", confidence: 88, relatedEventIds: ["e1"], relatedIocs: ["i1"] })],
       scopedEvents: [ev({ id: "e1", sources: ["OneTool"], asset: "H1" })],
-      iocs: [ioc({ id: "i1", enrichments: [{ source: "VirusTotal", verdict: "malicious", fetchedAt: "" }] })],
+      iocs: [
+        ioc({
+          id: "i1",
+          enrichments: [{ source: "VirusTotal", verdict: "malicious", fetchedAt: "", status: "live" }],
+        }),
+      ],
       graphLinkedEventIds: new Set(),
     });
     expect(out[0].corroboration?.intelSources).toBe(1);
@@ -462,7 +467,12 @@ describe("groundAndScoreFindings — verdict-first / hunt-artifact / KEV signals
     const out = groundAndScoreFindings({
       findings: [f({ id: "f1", confidence: 90, relatedEventIds: ["e1"], relatedIocs: ["i1"] })],
       scopedEvents: [ev({ id: "e1", severity: "Info", sources: ["Velociraptor"], asset: "H1" })],
-      iocs: [ioc({ id: "i1", enrichments: [{ source: "VirusTotal", verdict: "malicious", fetchedAt: "" }] })],
+      iocs: [
+        ioc({
+          id: "i1",
+          enrichments: [{ source: "VirusTotal", verdict: "malicious", fetchedAt: "", status: "live" }],
+        }),
+      ],
       graphLinkedEventIds: new Set(),
     });
     expect(out[0].corroboration?.huntArtifactOnly).toBe(true);

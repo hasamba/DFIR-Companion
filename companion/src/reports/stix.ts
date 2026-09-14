@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import type { InvestigationState, IOC, IocEnrichment } from "../analysis/stateTypes.js";
+import { actionableAssertions, assertionLabel, lastKnownAssertions } from "../analysis/intelViews.js";
+import { retiredFindingIds } from "../analysis/intelRetirement.js";
 
 // Build a STIX 2.1 bundle (https://docs.oasis-open.org/cti/stix/v2.1/stix-v2.1.html) from the
 // case state — a deterministic transform, no AI, no new storage. The bundle is what every CTI
@@ -138,18 +140,23 @@ const INDICATOR_TYPE: Record<IocEnrichment["verdict"], string> = {
   unknown: "unknown",
 };
 
+// A STIX bundle ACTS: only actionable assertions decide an indicator's verdict (#1024); the
+// summary lists every last-known assertion with its label so nothing is erased, only marked.
 function worstVerdict(ioc: IOC): IocEnrichment["verdict"] | null {
   let best: IocEnrichment["verdict"] | null = null;
-  for (const e of ioc.enrichments ?? []) {
+  for (const e of actionableAssertions(ioc)) {
     if (best === null || VERDICT_RANK[e.verdict] > VERDICT_RANK[best]) best = e.verdict;
   }
   return best;
 }
 
-// Human-readable enrichment summary, e.g. "VirusTotal: malicious (52/73 detections) | ThreatFox: malicious".
+// Human-readable enrichment summary, e.g. "VirusTotal: malicious (52/73 detections) | ThreatFox: malicious [revoked …]".
 function enrichmentSummary(ioc: IOC): string {
-  return (ioc.enrichments ?? [])
-    .map((e) => `${e.source}: ${e.verdict}${e.score ? ` (${e.score})` : ""}`)
+  return lastKnownAssertions(ioc)
+    .map((e) => {
+      const label = assertionLabel(e);
+      return `${e.source}: ${e.verdict}${e.score ? ` (${e.score})` : ""}${label ? ` [${label}]` : ""}`;
+    })
     .join(" | ");
 }
 
@@ -262,8 +269,9 @@ export function buildStixBundle(state: InvestigationState, opts: StixExportOptio
   // so we can wire indicator →indicates→ malware edges.
   const malwareIocs = new Map<string, Set<string>>(); // tagKey → ioc ids
   const malwareName = new Map<string, string>(); // tagKey → display name
+  // Only actionable assertions name a malware family (#1024): a revoked or expired tag is history.
   for (const ioc of state.iocs) {
-    for (const e of ioc.enrichments ?? []) {
+    for (const e of actionableAssertions(ioc)) {
       for (const tag of e.tags ?? []) {
         const name = tag.trim();
         if (!name) continue;
@@ -304,8 +312,24 @@ export function buildStixBundle(state: InvestigationState, opts: StixExportOptio
       }),
     );
   };
+  // indicator →indicates→ attack-pattern (#1024): an IOC whose intel assertions are ALL
+  // non-actionable (expired, revoked, not returned, errored, legacy) asserts no relationship in
+  // the bundle — the finding keeps its techniques in the report, the bundle does not repeat a
+  // claim the intel no longer supports; an IOC with no intel at all keeps the analyst's own link.
+  // A recorded "retire" decision suppresses the finding's relationships as well.
+  const iocById = new Map(state.iocs.map((i) => [i.id, i]));
+  // A retire decision applies only while the finding is still in the review (its intel still
+  // non-actionable): a later live assertion makes the decision stale and it suppresses nothing.
+  const retired = retiredFindingIds(state);
   for (const f of state.findings) {
+    if (retired.has(f.id)) continue;
     const indicators = f.relatedIocs
+      .filter((iid) => {
+        const ioc = iocById.get(iid);
+        if (!ioc) return false;
+        const known = lastKnownAssertions(ioc);
+        return known.length === 0 || actionableAssertions(ioc).length > 0;
+      })
       .map((iid) => indicatorId.get(iid))
       .filter((x): x is string => Boolean(x));
     const patterns = f.mitreTechniques

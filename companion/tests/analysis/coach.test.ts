@@ -245,8 +245,22 @@ describe("recommendNextActions — enrichment work comes from the engine", () =>
       forensicTimeline: [event()],
       findings: [finding({ status: "confirmed" })],
       iocs: [
-        ioc({ id: "i1", type: "ip", value: "185.220.101.47", enrichedBy: ["virustotal", "abuseipdb"] }),
-        ioc({ id: "i2", type: "hash", value: "abc", enrichedBy: ["virustotal"] }),
+        // Tracked checks (#1024): a check record per provider; an IOC enriched before the records
+        // existed is re-checked once, so it would count here.
+        ioc({
+          id: "i1",
+          type: "ip",
+          value: "185.220.101.47",
+          enrichedBy: ["virustotal", "abuseipdb"],
+          intelChecks: { virustotal: { outcome: "miss", at: "t" }, abuseipdb: { outcome: "miss", at: "t" } },
+        }),
+        ioc({
+          id: "i2",
+          type: "hash",
+          value: "abc",
+          enrichedBy: ["virustotal"],
+          intelChecks: { virustotal: { outcome: "miss", at: "t" } },
+        }),
         ioc({ id: "i3", type: "file", value: "C:\\Users\\j\\invoice.xlsm" }),
         ioc({ id: "i4", type: "sid", value: "S-1-5-21-1" }),
         ioc({ id: "i5", type: "other", value: "GLOBALTECH\\admin-deploy" }),

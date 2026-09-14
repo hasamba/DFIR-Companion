@@ -2,7 +2,8 @@ import type { FindingsDiff } from "../findingsDiff.js";
 import { sortByEventTime } from "../forensicSort.js";
 import type { StateLock } from "../stateLock.js";
 import type { StateStore } from "../stateStore.js";
-import type { InvestigationState, TimelineEntry } from "../stateTypes.js";
+import type { IntelRetirementDecision, InvestigationState, TimelineEntry } from "../stateTypes.js";
+import { mergeIntelState } from "../intelHistory.js";
 import { annotateSightingsWithLabIntel, upsertLabIntel } from "../labIntel.js";
 
 /**
@@ -88,8 +89,19 @@ export function mergeConcurrentAdditions(
   const snapIocVals = new Set(loaded.iocs.map((i) => i.value.toLowerCase()));
   const nextIocVals = new Set(next.iocs.map((i) => i.value.toLowerCase()));
   const latestIocByVal = new Map(latest.iocs.map((i) => [i.value.toLowerCase(), i]));
+  // An IOC both sides carry keeps the newest intel state per assertion (#1024): a re-check that
+  // finished while synthesis ran must not lose its appended history to the pre-import snapshot.
   const mergedIocs = [
-    ...next.iocs.map((i) => latestIocByVal.get(i.value.toLowerCase()) ?? i),
+    ...next.iocs.map((i) => {
+      const l = latestIocByVal.get(i.value.toLowerCase());
+      return l
+        ? {
+            ...l,
+            ...mergeIntelState(i, l),
+            enrichedBy: [...new Set([...(i.enrichedBy ?? []), ...(l.enrichedBy ?? [])])],
+          }
+        : i;
+    }),
     ...latest.iocs.filter(
       (i) => !snapIocVals.has(i.value.toLowerCase()) && !nextIocVals.has(i.value.toLowerCase()),
     ),
@@ -119,7 +131,25 @@ export function mergeConcurrentAdditions(
     // The sandbox registry is keyed, so two writers cannot conflict: union everything the snapshot
     // did not have with everything this synthesis kept (#932 item 5).
     labIntel: upsertLabIntel(next.labIntel, latest.labIntel ?? []),
+    // Analyst decisions recorded while synthesis ran are kept: keyed by finding id, newest wins.
+    intelRetirementDecisions: mergeRetirementDecisions(
+      next.intelRetirementDecisions,
+      latest.intelRetirementDecisions,
+    ),
   });
+}
+
+/** Union two decision lists by finding id, the newest `decidedAt` winning. */
+export function mergeRetirementDecisions(
+  a: readonly IntelRetirementDecision[] | undefined,
+  b: readonly IntelRetirementDecision[] | undefined,
+): IntelRetirementDecision[] {
+  const byId = new Map<string, IntelRetirementDecision>();
+  for (const d of [...(a ?? []), ...(b ?? [])]) {
+    const cur = byId.get(d.findingId);
+    if (!cur || d.decidedAt > cur.decidedAt) byId.set(d.findingId, d);
+  }
+  return [...byId.values()];
 }
 
 function buildSynthesisLogEntry(state: InvestigationState, diff: FindingsDiff): TimelineEntry {

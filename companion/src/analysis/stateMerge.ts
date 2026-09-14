@@ -503,6 +503,9 @@ export function mergeDelta(
     // Union by (sha256, source, runId). Named here on purpose: this literal is what a reducer keeps,
     // and a field it does not name is gone after the first merge (#932 item 5).
     labIntel,
+    // Analyst decisions on the intel retirement review (#1024): kept across every merge, keyed by
+    // finding id, newest wins — a field this literal does not name is gone after the first merge.
+    intelRetirementDecisions: state.intelRetirementDecisions ?? [],
     updatedAt: ctx.timestamp,
   };
 }

@@ -22,11 +22,14 @@ describe("OpenCtiProvider", () => {
       ),
     );
     const octi = new OpenCtiProvider({ baseUrl: "https://opencti.test", apiKey: "k", fetchFn });
-    const r = await octi.lookup("ip", "1.2.3.4");
-    expect(r).toMatchObject({ source: "OpenCTI", verdict: "malicious", detections: 1 });
-    expect(r!.score).toContain("score 90/100");
-    expect(r!.score).toContain("1 linked indicator");
-    expect(r!.link).toBe("https://opencti.test/dashboard/observations/observables/obs-1");
+    // One assertion per linked indicator (#1024): the indicator's own id and link, the observable's score when the indicator states none.
+    const list = await octi.lookup("ip", "1.2.3.4");
+    const r = list![0];
+    expect(list).toHaveLength(1);
+    expect(r).toMatchObject({ source: "OpenCTI", verdict: "malicious", providerRecordId: "ind-1" });
+    expect(r.score).toContain("score 90/100");
+    expect(r.score).toContain("no valid_until");
+    expect(r.link).toBe("https://opencti.test/dashboard/observations/indicators/ind-1");
     const [url, init] = fetchFn.mock.calls[0];
     expect(url).toBe("https://opencti.test/graphql");
     expect(init?.headers).toMatchObject({ authorization: "Bearer k" });
@@ -45,9 +48,9 @@ describe("OpenCtiProvider", () => {
       ),
     );
     const octi = new OpenCtiProvider({ baseUrl: "https://opencti.test/", apiKey: "k", fetchFn });
-    const r = await octi.lookup("domain", "evil.test");
-    expect(r!.verdict).toBe("malicious");
-    expect(r!.tags).toContain("ransomware");
+    const r = (await octi.lookup("domain", "evil.test"))![0];
+    expect(r.verdict).toBe("malicious");
+    expect(r.tags).toContain("ransomware");
   });
 
   it("a low-score, non-malicious-label hit is suspicious (present = at least suspicious)", async () => {
@@ -62,8 +65,8 @@ describe("OpenCtiProvider", () => {
       ),
     );
     const octi = new OpenCtiProvider({ baseUrl: "https://opencti.test", apiKey: "k", fetchFn });
-    const r = await octi.lookup("ip", "9.9.9.9");
-    expect(r!.verdict).toBe("suspicious");
+    const r = (await octi.lookup("ip", "9.9.9.9"))![0];
+    expect(r.verdict).toBe("suspicious");
   });
 
   it("returns null when no observable matches (unknown indicator)", async () => {
@@ -106,8 +109,8 @@ describe("OpenCtiProvider", () => {
       fetchFn,
       maliciousScore: 50,
     });
-    const r = await octi.lookup("ip", "5.5.5.5");
-    expect(r!.verdict).toBe("malicious"); // 60 >= 50
+    const r = (await octi.lookup("ip", "5.5.5.5"))![0];
+    expect(r.verdict).toBe("malicious"); // 60 >= 50
   });
 
   it("throws an auth error on HTTP 401", async () => {
@@ -162,10 +165,10 @@ describe("OpenCtiProvider — lineage (#933 item 18)", () => {
       ),
     );
     const octi = new OpenCtiProvider({ baseUrl: "https://opencti.test", apiKey: "k", fetchFn });
-    const r = await octi.lookup("ip", "1.2.3.4");
+    const r = (await octi.lookup("ip", "1.2.3.4"))![0];
     expect(r).toMatchObject({ originKind: "relay", origins: ["AlienVault"] });
     // External references are pointers, not attestations: never an origin.
-    expect(r!.origins).not.toContain("VirusTotal");
+    expect(r.origins).not.toContain("VirusTotal");
     expect(String((fetchFn.mock.calls[0][1] as RequestInit).body)).toContain("createdBy");
   });
 
@@ -174,7 +177,7 @@ describe("OpenCtiProvider — lineage (#933 item 18)", () => {
       jsonResponse(observableResponse({ id: "obs-10", observable_value: "1.2.3.4", x_opencti_score: 90 })),
     );
     const octi = new OpenCtiProvider({ baseUrl: "https://opencti.test", apiKey: "k", fetchFn });
-    const r = await octi.lookup("ip", "1.2.3.4");
+    const r = (await octi.lookup("ip", "1.2.3.4"))![0];
     expect(r).toMatchObject({ originKind: "relay", origins: [] });
   });
 });

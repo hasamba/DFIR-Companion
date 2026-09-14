@@ -74,9 +74,15 @@ describe("enrichIocs", () => {
     expect(summary.enrichable).toBe(2);
     expect(summary.queried).toBe(2);
     expect(summary.withHits).toBe(2);
-    expect(out[0].enrichments).toEqual([
-      { source: "VirusTotal", verdict: "malicious", score: "9/70", fetchedAt: now() },
-    ]);
+    expect(out[0].enrichments).toHaveLength(1);
+    expect(out[0].enrichments![0]).toMatchObject({
+      source: "VirusTotal",
+      verdict: "malicious",
+      score: "9/70",
+      fetchedAt: now(),
+      status: "live",
+    });
+    expect(out[0].enrichments![0].assertionId).toMatch(/^[0-9a-f]{24}$/);
     expect(out[2].enrichments).toBeUndefined(); // file untouched
     expect(out[3].enrichments).toBeUndefined(); // other untouched
   });
@@ -237,11 +243,14 @@ describe("enrichIocs", () => {
   it("skips already-enriched IOCs unless force is set (cache)", async () => {
     const calls: string[] = [];
     const vt = fakeProvider("VirusTotal", ["hash"], { source: "VirusTotal", verdict: "malicious" }, calls);
+    // A TRACKED check (#1024): a check record and a status on the hit. An IOC enriched before the
+    // records existed is re-checked once — see "a legacy IOC is re-checked" below.
     const cached = ioc({
       value: "h1",
       type: "hash",
       enrichedBy: ["VirusTotal"],
-      enrichments: [{ source: "VirusTotal", verdict: "malicious", fetchedAt: "old" }],
+      enrichments: [{ source: "VirusTotal", verdict: "malicious", fetchedAt: "old", status: "live" }],
+      intelChecks: { VirusTotal: { outcome: "hit", at: "old" } },
     });
 
     const first = await enrichIocs([cached], { providers: [vt], sleep: noSleep, now });
@@ -288,7 +297,12 @@ describe("enrichIocs", () => {
     const calls: string[] = [];
     const vt = fakeProvider("VT", ["hash"], { source: "VT", verdict: "malicious" }, calls);
     const iocs = [
-      ioc({ value: "done1", type: "hash", enrichedBy: ["VT"] }), // cached — not a cap victim
+      ioc({
+        value: "done1",
+        type: "hash",
+        enrichedBy: ["VT"],
+        intelChecks: { VT: { outcome: "miss", at: "t" } },
+      }), // cached — not a cap victim
       ioc({ value: "h1", type: "hash" }),
       ioc({ value: "h2", type: "hash" }),
       ioc({ value: "h3", type: "hash" }),
@@ -654,8 +668,20 @@ describe("hasEnrichableWork", () => {
   const misp = fakeProvider("MISP", ["hash"], null, []);
 
   it("is false when every enrichable IOC has already been checked by every enabled provider", async () => {
-    const iocs = [ioc({ value: "h1", type: "hash", enrichedBy: ["VirusTotal", "MISP"] })];
+    const iocs = [
+      ioc({
+        value: "h1",
+        type: "hash",
+        enrichedBy: ["VirusTotal", "MISP"],
+        intelChecks: { VirusTotal: { outcome: "miss", at: "t" }, MISP: { outcome: "miss", at: "t" } },
+      }),
+    ];
     expect(hasEnrichableWork(iocs, [vt, misp])).toBe(false);
+  });
+
+  it("a legacy IOC (checked before the check records existed) is re-checked once (#1024)", () => {
+    const iocs = [ioc({ value: "h1", type: "hash", enrichedBy: ["VirusTotal", "MISP"] })];
+    expect(hasEnrichableWork(iocs, [vt, misp])).toBe(true);
   });
 
   it("is true when a newly-enabled provider hasn't checked an existing IOC yet", () => {

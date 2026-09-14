@@ -19,6 +19,7 @@ function enr(p: Partial<IocEnrichment>): IocEnrichment {
     source: p.provider ?? "VirusTotal",
     verdict: "malicious",
     fetchedAt: "2026-01-01T00:00:00Z",
+    status: "live", // a tracked, live assertion (#1024) — the gate reads actionable ones only
     ...p,
   };
 }

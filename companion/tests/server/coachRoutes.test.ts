@@ -94,6 +94,7 @@ describe("GET /cases/:id/coach/next-actions", () => {
             value: "185.220.101.47",
             firstSeen: "2026-06-01T00:00:00Z",
             enrichedBy: ["virustotal"],
+            intelChecks: { virustotal: { outcome: "miss", at: "2026-06-01T00:00:00Z" } },
           },
           // Never queryable: no provider supports these kinds, so they are not pending work.
           { id: "i2", type: "file", value: "C:\\Users\\j\\invoice.xlsm", firstSeen: "2026-06-01T00:00:00Z" },
@@ -121,6 +122,7 @@ describe("GET /cases/:id/coach/next-actions", () => {
             value: "1.1.1.1",
             firstSeen: "2026-06-01T00:00:00Z",
             enrichedBy: ["virustotal"],
+            intelChecks: { virustotal: { outcome: "miss", at: "2026-06-01T00:00:00Z" } },
           },
           { id: "i2", type: "other", value: "GLOBALTECH\\admin-deploy", firstSeen: "2026-06-01T00:00:00Z" },
         ],

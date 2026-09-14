@@ -794,6 +794,19 @@ four hours). See [Chain of Custody](chain-of-custody.md) for the full picture.
 
 ---
 
+## Intel Retirement Review
+
+Findings whose threat-intel corroboration rests only on assertions that are no longer actionable
+(expired, revoked by the provider, not returned on a later check, errored on the last check, or
+recorded before assertion tracking), each with the assertions named and labelled and the
+finding's other corroboration. **Keep** / **Retire** record your decision with an optional note;
+the decision is written to the case and the investigation log and changes nothing else — the
+finding keeps its severity and status until you act through its own controls. Off in the Lead,
+Executive, Triage and Report profiles; on in Analyst, Deep-Dive and Hunt-Prep. See [IOC
+enrichment → Intel retirement review](ioc-enrichment.md#intel-retirement-review).
+
+---
+
 ## Customer Exposure
 
 Check whether the victim organisation's own domains and email addresses appear in breach databases.

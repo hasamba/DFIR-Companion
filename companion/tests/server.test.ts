@@ -1243,15 +1243,13 @@ describe("server analysis wiring", () => {
     });
     const legitApp = createApp(store, { pipeline, stateStore });
 
-    const res = await request(legitApp)
-      .post("/cases/c1/false-positive")
-      .send({
-        kind: "event",
-        ref: "e1",
-        reason: "authorized-test",
-        note: "client's own admin",
-        label: "client admin task",
-      });
+    const res = await request(legitApp).post("/cases/c1/false-positive").send({
+      kind: "event",
+      ref: "e1",
+      reason: "authorized-test",
+      note: "client's own admin",
+      label: "client admin task",
+    });
     expect(res.status).toBe(200);
     const stored = res.body.find((m: { kind: string }) => m.kind === "event");
     expect(stored).toMatchObject({ kind: "event", ref: "e1", label: "client admin task" });
@@ -1370,8 +1368,14 @@ describe("server analysis wiring", () => {
 
       // Background enrichment annotates the hash (not the file) — poll until it lands.
       const state = await pollForFirstIocEnrichment(stateStore, "c1");
-      expect(state.iocs[0].enrichments).toEqual([
-        { source: "VirusTotal", verdict: "malicious", score: "60/72", fetchedAt: expect.any(String) },
+      expect(state.iocs[0].enrichments).toMatchObject([
+        {
+          source: "VirusTotal",
+          verdict: "malicious",
+          score: "60/72",
+          fetchedAt: expect.any(String),
+          status: "live",
+        },
       ]);
       expect(state.iocs[1].enrichments).toBeUndefined(); // file path not enrichable
     },
@@ -1797,14 +1801,12 @@ describe("state and report routes", () => {
         .post("/notifications")
         .send({ type: "slack", webhookUrl: "https://hooks.slack.com/services/mentions" });
 
-      const post = await request(app)
-        .post("/cases/c1/comments")
-        .send({
-          targetType: "finding",
-          targetId: "f1",
-          author: "Alice",
-          text: "cc @bob can you take a look?",
-        });
+      const post = await request(app).post("/cases/c1/comments").send({
+        targetType: "finding",
+        targetId: "f1",
+        author: "Alice",
+        text: "cc @bob can you take a look?",
+      });
       expect(post.status).toBe(201);
       expect(post.body.mentions).toEqual(["bob"]);
 
@@ -1900,7 +1902,16 @@ describe("state and report routes", () => {
     const before = await stateStore.load("c1");
     await stateStore.save({
       ...before,
-      iocs: [{ id: "i1", type: "ip", value: "1.2.3.4", firstSeen: "t0", enrichedBy: ["VirusTotal"] }],
+      iocs: [
+        {
+          id: "i1",
+          type: "ip",
+          value: "1.2.3.4",
+          firstSeen: "t0",
+          enrichedBy: ["VirusTotal"],
+          intelChecks: { VirusTotal: { outcome: "miss", at: "t0" } },
+        },
+      ],
     });
 
     const res = await request(app2)
