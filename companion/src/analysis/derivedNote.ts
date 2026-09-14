@@ -33,6 +33,7 @@ export const DERIVED_NOTE_NAMES: readonly string[] = [
   "injection sequence",
   "hollowing sequence",
   "after Defender",
+  "infection window",
 ];
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

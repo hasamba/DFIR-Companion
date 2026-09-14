@@ -17,6 +17,7 @@ import { markProcessLifetimeSignals } from "./processLifetime.js";
 import { corroborateTimestompsOnTimeline } from "./timestompCorroborate.js";
 import { corroborateDownloadExecution } from "./downloadExecution.js";
 import { corroborateDefenderEpisodes } from "./defenderEpisodes.js";
+import { markInfectionWindow } from "./mobileInfectionWindow.js";
 import { corroborateInjectionSequences } from "./injectionSequence.js";
 import { markRansomwarePrecursors } from "./ransomwarePrecursor.js";
 import { explainCertutilTransfers } from "./certutilTransfer.js";
@@ -382,11 +383,15 @@ export function mergeDelta(
   // Here because the Defender record and the process start arrive from different imports. Only
   // ever raises; its notes are recomputed from the current evidence on every merge.
   const withDefender = corroborateDefenderEpisodes(withDownloads);
+  // A mobile extraction's infection window (#932 item 18): rows of a subject device before or
+  // after its earliest malicious app-inventory sign. Here because the verdict that makes a sign
+  // arrives with enrichment, after the import; recomputed on every merge, notes only.
+  const withWindow = markInfectionWindow(withDefender, iocs, ctx.timestamp);
   // A write-capable handle, then a remote thread from the same source into the same target; a
   // process created, its image replaced, then reached into — joined by process GUID (#932 item 9,
   // second half). Here because the records may arrive in separate imports. Only ever raises;
   // recomputed on every merge.
-  const withInjection = corroborateInjectionSequences(withDefender);
+  const withInjection = corroborateInjectionSequences(withWindow);
   // Several distinct pre-encryption behaviours on one host inside one window (#908 item 3). Runs
   // here, with the other deterministic correlations, because the steps arrive from different
   // importers and no single one of them is remarkable — the combination is the finding. Only ever

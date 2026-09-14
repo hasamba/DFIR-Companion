@@ -6,6 +6,7 @@ import { dnsBlockSchema } from "./canonicalDns.js";
 import { tlsGraphBlockSchema } from "./canonicalTls.js";
 import { quarantineAttributeBlockSchema, quarantineBlockSchema } from "./canonicalQuarantine.js";
 import { defenderBlockSchema } from "./canonicalDefender.js";
+import { mobileBlockSchema } from "./canonicalMobile.js";
 import { entraPathBlockSchema } from "./canonicalEntra.js";
 import { awsLineageBlockSchema } from "./canonicalAwsLineage.js";
 import { mailboxChainBlockSchema } from "./canonicalMailbox.js";
@@ -241,6 +242,9 @@ export const canonicalEventEnvelopeSchema = z.object({
   // A Defender Operational record's own reading (defenderEvents.ts): disposition, threat, every
   // flagged resource. The block lives in canonicalDefender.ts; defenderEpisodes.ts reads it (#964).
   defender: defenderBlockSchema.optional(),
+  // A LEAPP row's origin reading (mobileOriginRegistry.ts, #988): the facets its columns
+  // established, the registry coverage, the device / account the row names.
+  mobile: mobileBlockSchema.optional(),
   // What the memory image the row came from says about itself (memoryImageFacts.ts, #933 item 12):
   // the kernel SystemTime recovered from the image (never "captured at"), the layer stack, the
   // dump kind for a known layer class, the crash-dump type as rendered, the symbol table. Only
