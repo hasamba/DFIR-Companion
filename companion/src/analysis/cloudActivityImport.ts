@@ -15,6 +15,8 @@
 
 import type { Severity } from "./stateTypes.js";
 import { boundedAggKey, boundedTextTo } from "./aggKey.js";
+import { gcpRows } from "./gcpRow.js";
+import { show as neutral } from "./gcpIdentity.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -115,7 +117,7 @@ function pickStr(row: Row, keys: string[]): string {
 
 // ───────────────────────────── GCP ─────────────────────────────
 
-function mapGcp(rec: Row, sink: Map<string, SiemIoc>): MappedEvent | null {
+function mapGcp(rec: Row, sink: Map<string, SiemIoc>, locator: string): MappedEvent[] {
   const pp = isObject(getCI(rec, "protoPayload"))
     ? (getCI(rec, "protoPayload") as Row)
     : isObject(getCI(rec, "jsonPayload"))
@@ -123,13 +125,13 @@ function mapGcp(rec: Row, sink: Map<string, SiemIoc>): MappedEvent | null {
       : null;
   const method = pp ? str(getCI(pp, "methodName")) : "";
   const service = pp ? str(getCI(pp, "serviceName")) : "";
-  if (!method) return null;
+  if (!method || !pp) return [];
 
-  const principal = pp ? str(getPath(pp, "authenticationInfo.principalEmail")) : "";
-  const ip = cleanIp(pp ? str(getPath(pp, "requestMetadata.callerIp")) : "");
-  const resource = pp ? str(getCI(pp, "resourceName")) : "";
-  const statusCode = Number(pp ? getPath(pp, "status.code") : 0) || 0;
-  const statusMsg = pp ? str(getPath(pp, "status.message")) : "";
+  const principal = str(getPath(pp, "authenticationInfo.principalEmail"));
+  const ip = cleanIp(str(getPath(pp, "requestMetadata.callerIp")));
+  const resource = str(getCI(pp, "resourceName"));
+  const statusCode = Number(getPath(pp, "status.code")) || 0;
+  const statusMsg = str(getPath(pp, "status.message"));
 
   // setIamPolicy/setIamPermissions: priv-esc generally, but data exposure on storage.
   let def = matchRule(GCP_RULES, method);
@@ -145,30 +147,31 @@ function mapGcp(rec: Row, sink: Map<string, SiemIoc>): MappedEvent | null {
 
   const shortSvc = service.replace(/\.googleapis\.com$/i, "");
   const shortRes = resource.split("/").slice(-2).join("/");
-  let description = `GCP ${method}${shortSvc ? ` (${shortSvc})` : ""}`;
-  if (principal) description += ` by ${principal}`;
-  if (ip) description += ` from ${ip}`;
-  if (shortRes) description += ` on ${shortRes}`;
-  if (statusCode !== 0) description += ` [DENIED${statusMsg ? `: ${oneLine(statusMsg).slice(0, 60)}` : ""}]`;
-  // An identity downstream: correlation keys on the description once aggKey is gone, so the clip
-  // keeps a digest of what it removed (#940).
-  description = boundedTextTo(description, 600);
-
-  return {
-    timestamp: normalizeTime(str(getCI(rec, "timestamp")) || str(getCI(rec, "receiveTimestamp"))),
-    description,
+  // Every imported string in the head is neutralised (brackets, controls, bidi) and bounded.
+  let head = `GCP ${neutral(method, 120)}${shortSvc ? ` (${neutral(shortSvc, 40)})` : ""}`;
+  if (principal) head += ` by ${neutral(principal, 80)}`;
+  if (ip) head += ` from ${ip}`;
+  // The object name is kept whole here: the row's digest-preserving clip (#940) is what bounds it.
+  if (shortRes) head += ` on ${neutral(shortRes, 800)}`;
+  if (statusCode !== 0) head += ` [DENIED${statusMsg ? `: ${neutral(oneLine(statusMsg), 60)}` : ""}]`;
+  // The identity facts, the binding delta, the credential fact and the key step are read by
+  // gcpRow.ts (#931 item 12); one record with N binding deltas is N rows. The RESOURCE is part of
+  // the key for an object read only — a hundred management calls by one principal are one thing.
+  return gcpRows({
+    rec,
+    pp,
+    method,
+    service,
+    principal,
+    ip,
+    resource,
+    statusCode,
+    head: boundedTextTo(head, 300),
     severity,
     mitre,
-    // The RESOURCE is part of the key for an object read. Without it, aggregation folded every
-    // read by one principal into a single counted event before any correlation could see it — so
-    // bulk-read detection (#908 item 8) was structurally blind to this provider. Only data-plane
-    // reads carry it: a hundred management calls by one principal genuinely are one thing, and
-    // adding the resource everywhere would undo the aggregation this importer exists to do.
-    aggKey: boundedAggKey(
-      `gcp|${method}|${principal}|${ip}|${statusCode}${isObjectRead(method) && shortRes ? `|${shortRes}` : ""}`.toLowerCase(),
-    ),
-    sources: ["GCP Audit"],
-  };
+    baseKey: `gcp|${method}|${principal}|${ip}|${statusCode}${isObjectRead(method) && shortRes ? `|${shortRes}` : ""}`,
+    locator,
+  });
 }
 
 // ───────────────────────────── Azure ─────────────────────────────
@@ -300,17 +303,19 @@ export function parseCloudActivity(
   let sawGcp = false,
     sawAzure = false;
 
-  for (const rec of records) {
-    let m: MappedEvent | null = null;
+  records.forEach((rec, recordIndex) => {
     if (isGcp(rec)) {
-      m = mapGcp(rec, iocSink);
-      if (m) sawGcp = true;
+      const rows = mapGcp(rec, iocSink, `record:${recordIndex}`);
+      if (rows.length) sawGcp = true;
+      mapped.push(...rows);
     } else if (isAzure(rec)) {
-      m = mapAzure(rec, iocSink);
-      if (m) sawAzure = true;
+      const m = mapAzure(rec, iocSink);
+      if (m) {
+        sawAzure = true;
+        mapped.push(m);
+      }
     }
-    if (m) mapped.push(m);
-  }
+  });
   if (mapped.length === 0) {
     return { events: [], iocs: [], total, kept: 0, dropped: total, groups: 0, format: "empty" };
   }
