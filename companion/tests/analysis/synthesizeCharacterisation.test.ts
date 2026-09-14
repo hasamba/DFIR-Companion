@@ -787,3 +787,84 @@ describe("synthesize — skip-when-unchanged", () => {
     expect(analyze).toHaveBeenCalledTimes(1); // … and the next run still skips
   });
 });
+
+describe("synthesize — a collection request is satisfied only by evidence imported after it", () => {
+  // A case on 2026-09-14: the model asked for a WMI-consumer baseline on a host whose only
+  // evidence was the two Sigma hits that prompted the request. The next run's SATISFIED COLLECTIONS
+  // block handed those same hits back as "evidence now present", and the model narrated them as a
+  // completed golden-image comparison — a method that was never performed — and dropped the
+  // finding to 15%. The request must stay open until an import that post-dates it lands.
+  const baselineRequest = delta({
+    nextSteps: [
+      {
+        id: "n9",
+        priority: "high",
+        action: "Baseline the SCM Event Log Consumer on WIN-X against a clean host",
+        rationale: "",
+        pointer: "",
+        collect: {
+          host: "WIN-X",
+          artifact: "Windows.Sysinternals.Autoruns",
+          logSource: "WMI event consumers",
+        },
+        relatedFindingIds: [],
+      },
+    ],
+  });
+
+  function pipelineFor(rawText: string) {
+    const { provider, sent } = spyProvider(rawText);
+    const pipeline = new AnalysisPipeline({
+      provider,
+      stateStore,
+      imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
+    });
+    return { pipeline, sent };
+  }
+
+  it("stamps the request with the import high-water mark of the run that issued it", async () => {
+    const seeded = emptyState("c1");
+    seeded.forensicTimeline.push(
+      event("2e926", "2026-01-01T00:00:00.000Z", "Sigma: Permanent WMI Event Consumer", "High", {
+        asset: "WIN-X",
+      }),
+      event("7e1", "2026-01-02T00:00:00.000Z", "unrelated", "Medium", { asset: "OTHER" }),
+    );
+    await stateStore.save(seeded);
+
+    const { pipeline } = pipelineFor(baselineRequest);
+    const state = await pipeline.synthesize("c1");
+
+    expect(state.nextSteps.find((s) => s.id === "n9")?.collect?.issuedAfterImportSeq).toBe(7);
+  });
+
+  it("does not report the request satisfied by the evidence that prompted it, and does once a later import lands", async () => {
+    const seeded = emptyState("c1");
+    seeded.forensicTimeline.push(
+      event("2e926", "2026-01-01T00:00:00.000Z", "Sigma: Permanent WMI Event Consumer", "High", {
+        asset: "WIN-X",
+      }),
+      event("2e137", "2026-01-01T00:00:01.000Z", "Sigma: WMI Persistence", "Medium", { asset: "WIN-X" }),
+    );
+    await stateStore.save(seeded);
+
+    const { pipeline, sent } = pipelineFor(baselineRequest);
+    await pipeline.synthesize("c1"); // run 1 issues the request
+    await pipeline.synthesize("c1", { force: true }); // run 2 sees the same evidence
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).not.toContain("SATISFIED COLLECTIONS");
+
+    const live: InvestigationState = await stateStore.load("c1");
+    live.forensicTimeline.push(
+      event("3e1", "2026-01-03T00:00:00.000Z", "Autoruns: WMI consumers on WIN-X", "Medium", {
+        asset: "WIN-X",
+      }),
+    );
+    await stateStore.save(live);
+
+    await pipeline.synthesize("c1", { force: true }); // run 3: the collection actually happened
+    expect(sent[2]).toContain("SATISFIED COLLECTIONS");
+    expect(sent[2]).toContain("3e1");
+    expect(sent[2]).not.toMatch(/evidence now present: [^\n]*2e926/);
+  });
+});

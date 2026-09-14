@@ -555,6 +555,14 @@ export interface CollectDirective {
   artifact?: string; // the artifact/tool to collect, e.g. "Windows.EventLogs" or "$MFT"
   logSource?: string; // the log source/channel/file, e.g. "Security.evtx 4624/4672", "web proxy logs"
   expectedOutcome?: string; // what a positive result would show — ties the collection to the question/hypothesis it serves
+  // The case's import high-water mark (highest `<seq>e<n>` event-id prefix) when this directive was
+  // FIRST issued; set post-synthesis by stampCollectDirectives, never by the model, and carried forward
+  // by target key when the model re-emits the same request. Only evidence from a LATER import can mark
+  // the directive satisfied (collectSatisfaction.ts) — the evidence that prompted a request must not be
+  // handed back as its result (a case on 2026-09-14: two pre-existing WMI Sigma hits "satisfied"
+  // a baseline request and were narrated as a completed golden-image comparison). Absent on directives
+  // persisted before this field existed; those are never satisfied.
+  issuedAfterImportSeq?: number;
 }
 
 export type QuestionStatus = "answered" | "partial" | "unknown";
