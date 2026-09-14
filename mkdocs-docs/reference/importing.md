@@ -984,9 +984,62 @@ on one file are two rows, whatever order they were logged in.
 What these rows do **not** say: a detection is the scanner's claim, not a verdict; `allowed` is not
 a compromise and `remediated` is not proof the payload never ran; no second alert is not evidence
 that it did; the scanner runs as SYSTEM, so its identity is never the person who launched the file;
-a drive letter alone is not removable media. Linking a detection to a later start of the same file
-is tracked separately (#964). Hayabusa's own Defender rows keep their Sigma grading and do not yet
-carry this token.
+a drive letter alone is not removable media. Hayabusa's own Defender rows keep their Sigma grading
+and do not yet carry this token.
+
+### Defender episodes: an action, then a later start of the same file
+
+When a process-start record (Sysmon 1, Security 4688, an EDR start row) names the same host and
+the same path as a file Defender acted on, and is dated after that action, the start row gains a
+note and rises to at least Medium:
+
+```
+[after Defender: remediation-failed of Trojan:Win32/Wacatac.B!ml; a process later started from the
+same path C:\Users\a.mehta\Downloads\invoice.exe (1h 5m later)]
+```
+
+The Defender row gains its own note saying how many starts followed and when the first was. The
+pass runs on every merge, so the two records can arrive in separate imports and in either order.
+
+**Which action the note names.** Defender's records about one detection on one host form an
+*episode* (the Detection ID, else the threat name and path; two records further apart than
+`DFIR_DEFENDER_EPISODE_GAP_HOURS`, default 24, are two episodes). A start binds to the **one**
+record whose interval it falls in — from that record until the next record of the episode — and
+the note carries that record's disposition. After *remediation failed*, then a start, then a
+successful quarantine, the start says `remediation-failed`; the reverse order says `remediated`.
+A start inside two seconds of the record has no established order and is not paired. A detection
+with no action yet reads `detected (no action recorded)`.
+
+**Path versus file.** Defender Operational records carry no file hash, so from an EVTX export the
+note says exactly what the evidence supports: *a process later started from the same path*. It
+never says "the same file", "retry" or "re-dropped", and adds no technique — a process start is not
+a user-mediated launch and supports execution, not completion. Only when the Defender record
+itself carries the file's digest (an export that includes it) and a start row carries the same
+sha256 does the note say *the same file (sha256) later started* and the row rise to High. A digest
+is never borrowed from an earlier row at the same path, nor from another tool's row that
+correlation merged with the Defender record: the file may have been replaced before Defender
+looked. Every flagged resource counts, including a second archive member; a resource past
+the bounded list is said, not matched.
+
+**The finding.** For a record that *allowed* the threat, *failed to remediate* it, or says it
+*remediated* it, followed by a same-sha256 start, one deterministic finding is created at
+synthesis: severity High, `control` = that record's disposition and `execution: observed`, both
+machine-set (an analyst's outcome decision still wins). It links both rows, so the generic
+high-severity backfill does not raise a second finding. A path-only pairing gets no finding.
+
+**Hosts and bounds.** Two rows pair on the same full host name, or on a short name that names
+exactly one host in the case; `ws01.corp-a` and `ws01.corp-b` never pair. Two explicit, differing
+drive letters are two locations. A start that falls inside the intervals of two Defender records
+binds to the later record; two records at the same instant establish no order and claim nothing.
+Per host the newest 512 Defender records are indexed (an unread one says so on its own row); per
+record at most 64 starts inside its interval are read and the rest counted on its note.
+
+**What it does not say.** No second AV alert is not evidence that the file ran or that remediation
+held; the scanner's identity is never the launcher — read the start row's own account; a drive
+letter is not removable media; `allowed` is not a compromise verdict and `remediated` is not proof
+the file never ran. Hayabusa's Defender rows carry no typed block and form no episode on their
+own; when a Hayabusa row and the Windows importer's row describe the same record they merge and
+the episode still forms.
 
 ### Cloud remote execution (AWS Systems Manager, Azure Run Command)
 

@@ -1,5 +1,6 @@
 import type { Severity } from "./stateTypes.js";
 import type { ControlDisposition } from "./stateTypes.js";
+import type { DefenderBlock } from "./canonicalDefender.js";
 
 // Microsoft Defender Antivirus Operational events (#930 item 1, part A). A detection (1116/1006/1015)
 // and the action taken on it (1117/1007), or the action's failure (1118/1008/1119), arrive as ordinary
@@ -48,6 +49,8 @@ export interface DecodedDefenderEvent {
   /** The detection as a canonical entity — a file when one was flagged, else the first other resource's kind. */
   object: { kind: "file" | "registry" | "service" | "other"; id?: string; name: string };
   disposition: DefenderControl;
+  /** The typed block for the envelope (#964): what the episode pass reads instead of the label. */
+  block: DefenderBlock;
 }
 
 export interface DefenderPath {
@@ -58,6 +61,8 @@ export interface DefenderPath {
   processes: string[];
   /** Registry keys, services, behaviours, AMSI content — `kind:value`, bounded. Never silently dropped. */
   others: string[];
+  /** How many file resources the record listed — more than `resources.length` when clipped. */
+  resourcesTotal: number;
 }
 
 const DEFENDER_CHANNEL = /windows defender/i;
@@ -100,6 +105,7 @@ export function parseDefenderPath(raw: string): DefenderPath {
   const others: string[] = [];
   let container: string | undefined;
   let firstMember: string | undefined;
+  let resourcesTotal = 0;
   for (const part of raw.split(";")) {
     const m =
       /^\s*(file|containerfile|process|regkey|regkeyvalue|webfile|behavior|service|internalbehavior|amsi)\s*:_?(.*)$/i.exec(
@@ -112,12 +118,16 @@ export function parseDefenderPath(raw: string): DefenderPath {
     if (kind === "process") processes.push(value);
     else if (kind === "containerfile") container ??= value;
     else if (kind === "file" || kind === "webfile") {
+      resourcesTotal += 1;
       if (resources.length < MAX_RESOURCES) resources.push(value);
       if (value.includes("->")) firstMember ??= value;
     } else if (others.length < MAX_RESOURCES) others.push(`${kind}:${value}`);
   }
   // A container named with no member listed is itself the file that was flagged.
-  if (!resources.length && container) resources.push(container);
+  if (!resources.length && container) {
+    resources.push(container);
+    resourcesTotal += 1;
+  }
   const primary = firstMember ?? resources[0];
   return {
     primary,
@@ -125,6 +135,7 @@ export function parseDefenderPath(raw: string): DefenderPath {
     resources,
     processes,
     others,
+    resourcesTotal,
   };
 }
 
@@ -243,5 +254,14 @@ export function decodeDefenderEvent(
     event: { action: DETECTED.has(eid) ? "detected" : action || "action", outcome },
     object: { kind: objectKind(path), ...(detectionId ? { id: detectionId } : {}), name: threat },
     disposition: control,
+    block: {
+      disposition: control,
+      threat,
+      ...(detectionId ? { detectionId } : {}),
+      eventType: DETECTED.has(eid) ? "detection" : "action",
+      resources: path.resources,
+      ...(path.container ? { container: path.container } : {}),
+      resourcesTotal: path.resourcesTotal,
+    },
   };
 }

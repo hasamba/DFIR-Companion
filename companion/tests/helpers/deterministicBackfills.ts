@@ -15,6 +15,8 @@
 import { backfillActivityWaveFinding, detectGapsWithWaves } from "../../src/analysis/activityWaves.js";
 import { backfillSilenceGapFindings, detectTimelineGaps } from "../../src/analysis/gapDetect.js";
 import { backfillHighSeverityFindings } from "../../src/analysis/highSeverityFindings.js";
+import { backfillDefenderEpisodeFindings } from "../../src/analysis/defenderEpisodeFindings.js";
+import { corroborateDefenderEpisodes } from "../../src/analysis/defenderEpisodes.js";
 import { emptyState, type ForensicEvent, type InvestigationState } from "../../src/analysis/stateTypes.js";
 
 const event = (id: string, timestamp: string): ForensicEvent => ({
@@ -36,6 +38,44 @@ export const burstEvents: ForensicEvent[] = [
 
 const stamp = "2026-01-21T00:00:00.000Z";
 const seed = (): InvestigationState => ({ ...emptyState("c1"), forensicTimeline: burstEvents });
+
+// A Defender record that allowed a file, carrying the file's own digest, then a start of the same
+// digest on the same host an hour later — the pair the Defender episode pass mints for (#964).
+const DEFENDER_SHA = "425a1a21a4dbc212c3c3db5f8fecdd6235e7e7fe2fcfce3affe3f9f80aa24a92";
+const DEFENDER_PATH = "C:\\Users\\a\\Downloads\\invoice.exe";
+export const defenderEvents: ForensicEvent[] = corroborateDefenderEpisodes([
+  {
+    ...event("d1", "2026-01-01T00:00:00.000Z"),
+    severity: "Medium",
+    asset: "WS-042",
+    path: DEFENDER_PATH,
+    sources: ["Microsoft Defender"],
+    canonical: {
+      event: { category: "file", type: "action", action: "Allow", outcome: "success" },
+      file: { path: DEFENDER_PATH },
+      time: { normalized: "2026-01-01T00:00:00.000Z" },
+      defender: {
+        disposition: "allowed",
+        threat: "Trojan:Win32/Test",
+        detectionId: "{D1}",
+        eventType: "action",
+        resources: [DEFENDER_PATH],
+        resourcesTotal: 1,
+        sha256: DEFENDER_SHA,
+      },
+    } as never,
+  },
+  {
+    ...event("s1", "2026-01-01T01:00:00.000Z"),
+    severity: "Low",
+    asset: "WS-042",
+    path: DEFENDER_PATH,
+    sha256: DEFENDER_SHA,
+    sources: ["Sysmon"],
+    canonical: { event: { category: "process", type: "start" } } as never,
+  },
+]);
+const defenderSeed = (): InvestigationState => ({ ...emptyState("c1"), forensicTimeline: defenderEvents });
 
 /**
  * One entry: the pass itself, plus the arguments to call it with.
@@ -84,4 +124,9 @@ export const BACKFILLS = [
   pass(backfillHighSeverityFindings)(() => [seed(), new Set(burstEvents.map((e) => e.id)), stamp]),
   pass(backfillSilenceGapFindings)(() => [seed(), detectTimelineGaps(burstEvents), stamp]),
   pass(backfillActivityWaveFinding)(() => [seed(), detectGapsWithWaves(burstEvents).pattern, stamp]),
+  pass(backfillDefenderEpisodeFindings)(() => [
+    defenderSeed(),
+    new Set(defenderEvents.map((e) => e.id)),
+    stamp,
+  ]),
 ];
