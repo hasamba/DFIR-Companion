@@ -27,6 +27,8 @@ import { classifyHit, familyOf, relevantFamilies, tripleOf, type HitClass } from
 
 export const HITS_IN_RESPONSE_MAX = 200;
 export const VERIFY_ROW_BUDGET = 200_000;
+/** Distinct super-timeline host spellings read for the spelling resolution; past this the read is truncated. */
+export const HOSTS_READ_MAX = 5_000;
 /** A family is covered with at least this many rows in the window … */
 export const COVERED_ROWS_MIN = 10;
 /** … whose span reaches this share of the elapsed window. */
@@ -78,9 +80,17 @@ export interface VerifyInput {
   /** Super-timeline rows inside the window, as read (undated included), plus whether the read stopped. */
   superRows: readonly ForensicEvent[];
   superTruncated: boolean;
-  superMeta: { rows: number; generation: number; hosts: string[]; atCap: boolean };
+  superMeta: {
+    rows: number;
+    generation: number;
+    hosts: string[];
+    hostsTruncated: boolean;
+    atCap: boolean;
+  };
   superMetaAfter: { rows: number; generation: number };
   forensicMeta: { rows: number; updatedAt: string };
+  /** The forensic store as read again after the scan; a change marks the receipt inconsistent. */
+  forensicMetaAfter: { rows: number; updatedAt: string };
   aliasIndex?: HostAliasIndex;
   /** Present only when alignment is enabled and has offsets. */
   offsets?: ReadonlyMap<string, number>;
@@ -180,6 +190,9 @@ export function matchArtifact(e: ForensicEvent, kind: string, value: string): Ma
         if (baseOf(normPath(tok)) === wantBase)
           return { strength: "weak", on: "commandLine (basename only)" };
       }
+      // A Sysmon file event names the created file only in its rendered text (the row's `path`
+      // is the creating process's image): the full path in the description is a weak match.
+      if (normPath(e.description).includes(want)) return { strength: "weak", on: "description" };
       return null;
     }
     case "hash": {
@@ -195,14 +208,21 @@ export function matchArtifact(e: ForensicEvent, kind: string, value: string): Ma
         ["account.name", c?.account?.name],
         ["actor", c?.actor?.kind === "account" ? c.actor.name : undefined],
       ] as const;
+      // Every candidate is read: an exact (user + domain) match anywhere wins; else a candidate
+      // with the user and no domain on one side is weak; a candidate under another domain is
+      // another principal and counts for nothing.
+      let weak: Match | null = null;
       for (const [on, raw] of names) {
         if (!raw) continue;
         const have = accountParts(raw);
         if (have.user !== want.user) continue;
-        if (have.domain && want.domain) return have.domain === want.domain ? { strength: "exact", on } : null;
-        return { strength: "weak", on: `${on} (domain not recorded on one side)` };
+        if (have.domain && want.domain) {
+          if (have.domain === want.domain) return { strength: "exact", on };
+          continue;
+        }
+        weak ??= { strength: "weak", on: `${on} (domain not recorded on one side)` };
       }
-      return null;
+      return weak;
     }
     case "ip":
     case "domain": {
@@ -356,10 +376,12 @@ export function verifyBoundary(input: VerifyInput): VerifyFacts {
   const hitsByClass: Record<string, number> = {};
   for (const h of hits) hitsByClass[h.cls] = (hitsByClass[h.cls] ?? 0) + 1;
 
-  const truncated = input.superTruncated;
+  const truncated = input.superTruncated || input.superMeta.hostsTruncated;
   const inconsistent =
     input.superMeta.generation !== input.superMetaAfter.generation ||
-    input.superMeta.rows !== input.superMetaAfter.rows;
+    input.superMeta.rows !== input.superMetaAfter.rows ||
+    input.forensicMeta.rows !== input.forensicMetaAfter.rows ||
+    input.forensicMeta.updatedAt !== input.forensicMetaAfter.updatedAt;
   const offsetMs = input.offsets?.get(hostKeyOf(boundary.host));
   const window = {
     from: new Date(win.fromMs).toISOString(),
@@ -390,10 +412,20 @@ export function verifyBoundary(input: VerifyInput): VerifyFacts {
     families,
     hitTotal: hits.length,
     hitsByClass,
-    hitIds: hits.slice(0, HITS_IN_RESPONSE_MAX).map((h) => h.id),
+    // Forensic ids only: a raw row's id is persisted when the analyst attaches it, not because a
+    // verify saw it (the boundary rule); raw hits are a count here.
+    hitIds: hits
+      .filter((h) => h.store === "forensic")
+      .slice(0, HITS_IN_RESPONSE_MAX)
+      .map((h) => h.id),
+    superHitTotal: hits.filter((h) => h.store === "super").length,
     truncated,
     ...(truncated
-      ? { truncatedBy: `the super-timeline read stopped at the ${VERIFY_ROW_BUDGET}-row budget` }
+      ? {
+          truncatedBy: input.superMeta.hostsTruncated
+            ? `the case holds more distinct host spellings than the ${HOSTS_READ_MAX} read`
+            : `the super-timeline read stopped at the ${VERIFY_ROW_BUDGET}-row budget`,
+        }
       : {}),
     undated,
     coverageGapped,
@@ -403,7 +435,7 @@ export function verifyBoundary(input: VerifyInput): VerifyFacts {
     lateImportNote,
     clock: { alignment: input.offsets ? "on" : "off", ...(offsetMs !== undefined ? { offsetMs } : {}) },
     highWater: {
-      forensic: input.forensicMeta,
+      forensic: input.forensicMetaAfter,
       super: { rows: input.superMetaAfter.rows, generation: input.superMetaAfter.generation },
     },
     inconsistent,

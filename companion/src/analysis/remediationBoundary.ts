@@ -95,8 +95,10 @@ export const receiptSchema = z.object({
   ),
   hitTotal: z.number(),
   hitsByClass: z.record(z.number()),
-  /** Ids of hits, so a status can be read against what the analyst saw — never a row's text. */
+  /** Ids of FORENSIC hits, so a status can be read against what the analyst saw — never a row's text, never a raw row's id. */
   hitIds: z.array(z.string()),
+  /** Raw-record hits are a count until the analyst attaches one (which promotes it). */
+  superHitTotal: z.number().catch(0),
   truncated: z.boolean(),
   truncatedBy: z.string().optional(),
   undated: z.number(),
@@ -161,8 +163,9 @@ export function normaliseArtifact(
   if (value.length > VALUE_MAX) return { ok: false, error: `artifact.value is longer than ${VALUE_MAX}` };
   if (kind === "hash") {
     const h = value.toLowerCase();
-    if (!HEX.test(h) || ![32, 40, 64].includes(h.length))
-      return { ok: false, error: "artifact.value must be an MD5, SHA-1 or SHA-256 hex digest" };
+    // MD5 or SHA-256 only: the rows carry no SHA-1 field, so a SHA-1 boundary could never match.
+    if (!HEX.test(h) || ![32, 64].includes(h.length))
+      return { ok: false, error: "artifact.value must be an MD5 or SHA-256 hex digest" };
     return { ok: true, kind, value: h };
   }
   if (kind === "ip") {
@@ -261,6 +264,10 @@ export function taskLinkState(
   return current.title === task.title ? "linked" : "text-changed";
 }
 
+export type StatusResult =
+  | { ok: true; boundary: RemediationBoundary }
+  | { ok: false; code: "missing" | "receipt-missing" | "needs-override"; reasons?: string[] };
+
 const lock = new StateLock();
 
 export class RemediationStore {
@@ -329,6 +336,12 @@ export class RemediationStore {
     return r === true;
   }
 
+  /**
+   * Record the analyst's status under the lock, validating there — the receipt it names must be
+   * on the boundary at commit time (a verify between a read and the write cannot evict it, and a
+   * pinned receipt never is), and `checked-not-observed` against a flagged receipt needs the
+   * override note. The override belongs to that one statement: any other status clears it.
+   */
   async setStatus(
     caseId: string,
     id: string,
@@ -339,26 +352,40 @@ export class RemediationStore {
       receiptId?: string;
       at: string;
     },
-  ): Promise<RemediationBoundary | null> {
-    return this.update(caseId, (list) => {
+  ): Promise<StatusResult> {
+    const r = await this.update<StatusResult>(caseId, (list) => {
       const b = list.find((x) => x.id === id);
-      if (!b) return null;
+      if (!b) return { boundaries: list, result: { ok: false, code: "missing" } };
+      const override = patch.status === "checked-not-observed" ? (patch.overrideNote ?? "").trim() : "";
+      if (patch.receiptId) {
+        const receipt = b.receipts.find((x) => x.id === patch.receiptId);
+        if (!receipt) return { boundaries: list, result: { ok: false, code: "receipt-missing" } };
+        if (patch.status === "checked-not-observed") {
+          const reasons = receiptNeedsOverride(receipt);
+          if (reasons.length && !override)
+            return { boundaries: list, result: { ok: false, code: "needs-override", reasons } };
+        }
+      }
       const next: RemediationBoundary = {
         ...b,
         status: patch.status,
         statusSetAt: patch.at,
         ...(patch.note !== undefined ? { statusNote: patch.note.slice(0, NOTE_MAX) } : {}),
-        ...(patch.overrideNote !== undefined
-          ? { statusOverrideNote: patch.overrideNote.slice(0, NOTE_MAX) }
-          : {}),
-        ...(patch.receiptId ? { statusReceiptId: patch.receiptId } : {}),
       };
-      if (patch.status === "unreviewed") {
-        delete next.statusReceiptId;
-        delete next.statusOverrideNote;
-      }
-      return { boundaries: list.map((x) => (x.id === id ? next : x)), result: next };
+      delete next.statusOverrideNote;
+      delete next.statusReceiptId;
+      if (override) next.statusOverrideNote = override.slice(0, NOTE_MAX);
+      if (patch.status !== "unreviewed" && patch.receiptId) next.statusReceiptId = patch.receiptId;
+      return { boundaries: list.map((x) => (x.id === id ? next : x)), result: { ok: true, boundary: next } };
     });
+    return r ?? { ok: false, code: "missing" };
+  }
+
+  /** Whether these evidence ids would fit; read before a promotion, which is permanent. */
+  async canAttach(caseId: string, id: string, eventIds: string[]): Promise<"ok" | "full" | "missing"> {
+    const b = (await this.load(caseId)).find((x) => x.id === id);
+    if (!b) return "missing";
+    return new Set([...b.evidence, ...eventIds]).size > EVIDENCE_PER_BOUNDARY_MAX ? "full" : "ok";
   }
 
   async attach(caseId: string, id: string, eventIds: string[]): Promise<RemediationBoundary | "full" | null> {

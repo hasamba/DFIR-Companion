@@ -14,6 +14,10 @@
   let boundaries = [];
   let facts = {}; // boundary id → the last verify result this session (never persisted here)
   let currentCaseId = "";
+  // Request generations: a load or a verify that resolves after a newer one is dropped, so an
+  // older answer for the SAME case never replaces newer boundaries or facts.
+  let loadGen = 0;
+  const verifyGen = {}; // boundary id → generation of the latest verify request
 
   const KINDS = ["path", "hash", "account", "domain", "ip", "service", "task", "regkey"];
   const STATUSES = ["unreviewed", "recurrence-observed", "checked-not-observed", "insufficient-coverage"];
@@ -131,9 +135,10 @@
 
   function verifyBoundary(id) {
     const caseId = currentCaseId;
+    const gen = (verifyGen[id] = (verifyGen[id] || 0) + 1);
     api(`/${encodeURIComponent(id)}/verify`, { method: "POST" })
       .then((r) => {
-        if (currentCaseId !== caseId) return;
+        if (currentCaseId !== caseId || verifyGen[id] !== gen) return;
         if (r.ok) facts[id] = r.body;
         else window.alert(`Verify failed: ${r.body && r.body.error ? r.body.error : r.status}`);
         loadRemediation(caseId, true);
@@ -194,11 +199,13 @@
     currentCaseId = caseId;
     boundaries = [];
     renderRemediation();
-    // A late answer for a case the user has left never overwrites the panel.
+    // A late answer for a case the user has left, or an older load for this case, never
+    // overwrites the panel.
+    const gen = ++loadGen;
     fetch(`/cases/${encodeURIComponent(caseId)}/remediation`)
       .then((r) => (r.ok ? r.json() : { boundaries: [] }))
       .then((d) => {
-        if (currentCaseId !== caseId) return;
+        if (currentCaseId !== caseId || loadGen !== gen) return;
         boundaries = d && Array.isArray(d.boundaries) ? d.boundaries : [];
         renderRemediation();
       })

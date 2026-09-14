@@ -72,15 +72,20 @@ function enforceSuperCap(db, max) {
 
 // The store's row count and mutation generation, and its distinct host spellings as stored —
 // index-only reads (entities_host_idx), never a scan of the payloads (#969).
-function superMeta(dbPath) {
-  if (!existsSync(dbPath)) return { rows: 0, generation: 0, hosts: [] };
+function superMeta(dbPath, hostLimit) {
+  if (!existsSync(dbPath)) return { rows: 0, generation: 0, hosts: [], hostsTruncated: false };
   const db = openDatabase(dbPath);
   try {
     const countRow = db.prepare("SELECT count AS n FROM entity_counts WHERE kind='superTimeline'").get();
     const rows = countRow ? Number(countRow.n) : Number(db.prepare("SELECT count(*) AS n FROM entities WHERE kind='superTimeline'").get().n);
     const genRow = db.prepare("SELECT value FROM storage_meta WHERE key='super_generation'").get();
-    const hosts = db.prepare("SELECT DISTINCT host FROM entities WHERE kind='superTimeline' AND host IS NOT NULL AND host<>'' ORDER BY host").all().map((row) => String(row.host));
-    return { rows, generation: genRow ? Number(genRow.value) : 0, hosts };
+    // Hosts only when asked, and bounded: one more than the limit is read so the caller can tell
+    // "exactly the limit" from "more than it".
+    const limit = Number.isFinite(hostLimit) ? Math.max(0, Math.floor(hostLimit)) : 0;
+    const hosts = limit
+      ? db.prepare("SELECT DISTINCT host FROM entities WHERE kind='superTimeline' AND host IS NOT NULL AND host<>'' ORDER BY host LIMIT ?").all(limit + 1).map((row) => String(row.host))
+      : [];
+    return { rows, generation: genRow ? Number(genRow.value) : 0, hosts: hosts.slice(0, limit), hostsTruncated: hosts.length > limit };
   } finally {
     db.close();
   }

@@ -109,6 +109,10 @@ export function classifyHit(e: ForensicEvent, boundaryMs: number): { cls: HitCla
     };
   if (ACTIVITY.has(pair))
     return { cls: "activity", ...(CLASS_NOTES[pair] ? { note: CLASS_NOTES[pair] } : {}) };
+  // A Sysmon row the Windows importer types as `other/event` (file create / stream / delete, a
+  // pipe, WMI …): the sensor recorded something happening; the envelope does not say what.
+  if (pair === "other/event" && /sysmon/i.test(`${src} ${e.description}`))
+    return { cls: "activity", note: "a Sysmon event the envelope does not type; read the row" };
   return { cls: "unclassified", note: `shape ${tripleOf(e)} is not in the table` };
 }
 

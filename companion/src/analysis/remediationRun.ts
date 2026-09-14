@@ -5,7 +5,7 @@ import type { ClockSkewRecord } from "./clockSkewStore.js";
 import { effectiveOffsets } from "./clockSkew.js";
 import { loadHostAliasIndex, type HostScopeSources } from "./hostScopeLoad.js";
 import { boundaryWindow, type RemediationBoundary } from "./remediationBoundary.js";
-import { verifyBoundary, VERIFY_ROW_BUDGET, type VerifyFacts } from "./remediationVerify.js";
+import { HOSTS_READ_MAX, verifyBoundary, VERIFY_ROW_BUDGET, type VerifyFacts } from "./remediationVerify.js";
 
 // The store recipe behind a verify (#969): load what the pure verify needs, capture the
 // super-timeline's generation before and after the read so the receipt can say whether the
@@ -15,7 +15,7 @@ import { verifyBoundary, VERIFY_ROW_BUDGET, type VerifyFacts } from "./remediati
 export interface RemediationRunSources {
   state: { load(caseId: string): Promise<InvestigationState> };
   superTimeline: {
-    meta(caseId: string): Promise<SuperTimelineMeta>;
+    meta(caseId: string, opts?: { hosts?: number }): Promise<SuperTimelineMeta>;
     scanWindow(
       caseId: string,
       time: { from: string; to: string },
@@ -35,7 +35,7 @@ export async function runRemediationVerify(
   boundary: RemediationBoundary,
   now: string = new Date().toISOString(),
 ): Promise<VerifyFacts> {
-  const before = await src.superTimeline.meta(caseId);
+  const before = await src.superTimeline.meta(caseId, { hosts: HOSTS_READ_MAX });
   const state = await src.state.load(caseId);
   const win = boundaryWindow(boundary, now);
   const superRows: ForensicEvent[] = [];
@@ -48,7 +48,8 @@ export async function runRemediationVerify(
     superRows.push(e);
     read += 1;
   }
-  const after = await src.superTimeline.meta(caseId);
+  const after = await src.superTimeline.meta(caseId, { hosts: 0 });
+  const stateAfter = await src.state.load(caseId);
   const skew = src.clockSkew ? await src.clockSkew.load(caseId).catch(() => undefined) : undefined;
   const offsets = skew?.alignEnabled ? effectiveOffsets(skew.results, skew.overrides) : undefined;
   const meta = src.importMeta ? await src.importMeta.load(caseId).catch(() => undefined) : undefined;
@@ -65,9 +66,19 @@ export async function runRemediationVerify(
     forensic: state.forensicTimeline,
     superRows,
     superTruncated: read >= VERIFY_ROW_BUDGET,
-    superMeta: { ...before, atCap: before.rows >= src.superTimeline.cap },
+    superMeta: {
+      rows: before.rows,
+      generation: before.generation,
+      hosts: before.hosts,
+      hostsTruncated: before.hostsTruncated,
+      atCap: before.rows >= src.superTimeline.cap,
+    },
     superMetaAfter: { rows: after.rows, generation: after.generation },
     forensicMeta: { rows: state.forensicTimeline.length, updatedAt: state.updatedAt ?? "" },
+    forensicMetaAfter: {
+      rows: stateAfter.forensicTimeline.length,
+      updatedAt: stateAfter.updatedAt ?? "",
+    },
     aliasIndex,
     ...(offsets && offsets.size ? { offsets } : {}),
     lastImportedAt: meta?.lastImportedAt ?? "",

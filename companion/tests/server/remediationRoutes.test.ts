@@ -120,7 +120,10 @@ describe("remediation routes", () => {
     // The receipt holds ids and counts, never a raw row's text (the boundary rule).
     const onDisk = await readFile(join(store.stateDir("c1"), "remediation-boundaries.json"), "utf8");
     expect(onDisk).not.toContain("RAW ROW TEXT");
-    expect(onDisk).toContain('"r1"');
+    // Forensic ids only; the raw hit is a count until attached.
+    expect(onDisk).toContain('"f1"');
+    expect(onDisk).not.toContain('"r1"');
+    expect(verified.body.receipt.superHitTotal).toBe(1);
 
     // Status: needs a receipt; checked-not-observed against a gapped receipt needs an override.
     expect(
@@ -162,6 +165,8 @@ describe("remediation routes", () => {
       .send({ status: "recurrence-observed", receiptId, note: "it came back" });
     expect(recorded.status).toBe(200);
     expect(recorded.body.boundary.receipts[0].stale).toBe(false);
+    // The override belonged to the checked-not-observed statement: another status clears it.
+    expect(recorded.body.boundary.statusOverrideNote).toBeUndefined();
 
     // Attach: the super row is promoted with the remediation-check intent, then attached by id.
     const attached = await request(app)
@@ -206,6 +211,27 @@ describe("remediation routes", () => {
     // Delete.
     expect((await request(app).delete(`/cases/c1/remediation/${bid}`)).status).toBe(204);
     expect((await request(app).delete(`/cases/c1/remediation/${bid}`)).status).toBe(404);
+  });
+
+  it("a full boundary refuses the attach before anything is promoted; a deleted boundary refuses the receipt", async () => {
+    const { app, stateStore, remediationStore } = await harness();
+    const bid = (
+      await request(app)
+        .post("/cases/c1/remediation")
+        .send({ host: "ws-042", artifact: { kind: "path", value: PATH }, remediatedAt: T })
+    ).body.boundary.id;
+    await remediationStore.attach(
+      "c1",
+      bid,
+      Array.from({ length: 200 }, (_, i) => `x${i}`),
+    );
+    const refused = await request(app)
+      .post(`/cases/c1/remediation/${bid}/attach`)
+      .send({ eventIds: ["r1"] });
+    expect(refused.status).toBe(400);
+    expect((await stateStore.load("c1")).forensicTimeline.map((e) => e.id)).toEqual(["f1"]);
+    await request(app).delete(`/cases/c1/remediation/${bid}`);
+    expect((await request(app).post(`/cases/c1/remediation/${bid}/verify`).send({})).status).toBe(404);
   });
 
   it("the receipt a status names is pinned outside the rolling bound", async () => {

@@ -69,9 +69,10 @@ const input = (over: Partial<VerifyInput> = {}): VerifyInput => ({
   forensic: [],
   superRows: [],
   superTruncated: false,
-  superMeta: { rows: 0, generation: 1, hosts: [], atCap: false },
+  superMeta: { rows: 0, generation: 1, hosts: [], hostsTruncated: false, atCap: false },
   superMetaAfter: { rows: 0, generation: 1 },
   forensicMeta: { rows: 0, updatedAt: T },
+  forensicMetaAfter: { rows: 0, updatedAt: T },
   lastImportedAt: "",
   ...over,
 });
@@ -192,6 +193,17 @@ describe("matching by rule", () => {
     expect(matchArtifact(acct("svc@corp.example"), "account", "svc@corp.example")).toMatchObject({
       strength: "exact",
     });
+    // A conflicting candidate first does not hide the exact one after it (code round 1).
+    const two = ev({
+      canonical: {
+        event: { category: "authentication", type: "logon" },
+        account: { name: "LAB\\svc" },
+        actor: { kind: "account", name: "CORP\\svc" },
+      } as never,
+    });
+    expect(matchArtifact(two, "account", "CORP\\svc")).toMatchObject({ strength: "exact", on: "actor" });
+    // SHA-1 is refused at declaration: no row carries one, so it could never match.
+    expect(normaliseArtifact("hash", "a".repeat(40))).toMatchObject({ ok: false });
   });
   it("domain / ip: addresses exact, description token weak on word boundaries; service/task/regkey by name", () => {
     expect(matchArtifact(ev({ dstIp: "10.0.0.7" }), "ip", "10.0.0.7")).toMatchObject({
@@ -255,6 +267,21 @@ describe("what a hit is (real importer shapes)", () => {
     expect(classifyHit(mft, Date.parse(T)).cls).toBe("listing-of-older-object");
     const mftNewer = upgradeForensicEvent(ev({ sources: ["MFT"], path: PATH, fileModified: at(3) }));
     expect(classifyHit(mftNewer, Date.parse(T)).cls).toBe("unclassified");
+    // A Sysmon 11 keys `path` to the creating image; the created file is in the text — a weak
+    // description match — and the untyped `other/event` from Sysmon reads as activity.
+    const sysmon11 = parseSiemExport(
+      JSON.stringify([
+        {
+          "@timestamp": at(2),
+          log_name: "Microsoft-Windows-Sysmon/Operational",
+          computer_name: "WS-042",
+          event_id: 11,
+          event_data: { TargetFilename: PATH, Image: "C:\\Windows\\explorer.exe" },
+        },
+      ]),
+    ).events.map((e) => upgradeForensicEvent(e as unknown as ForensicEvent))[0];
+    expect(matchArtifact(sysmon11, "path", PATH)).toMatchObject({ strength: "weak", on: "description" });
+    expect(classifyHit(sysmon11, Date.parse(T))).toMatchObject({ cls: "activity" });
     const unknown = ev({ canonical: { event: { category: "email", type: "message" } } as never });
     expect(classifyHit(unknown, Date.parse(T))).toMatchObject({
       cls: "unclassified",
@@ -274,7 +301,10 @@ describe("verifyBoundary — facts, never a verdict", () => {
       ev({ id: "u1", timestamp: "", asset: "WS-042" }), // undated
     ];
     const facts = verifyBoundary(
-      input({ forensic: rows, superMeta: { rows: 0, generation: 1, hosts: ["WS-042"], atCap: false } }),
+      input({
+        forensic: rows,
+        superMeta: { rows: 0, generation: 1, hosts: ["WS-042"], hostsTruncated: false, atCap: false },
+      }),
     );
     expect(facts.spellings).toEqual(["WS-042", "ws-042"]);
     expect(facts.hits.map((h) => h.id)).toEqual(["s1"]);
@@ -319,7 +349,7 @@ describe("verifyBoundary — facts, never a verdict", () => {
         forensic: [forensicCopy],
         superRows: [superCopy, start({ id: "s9", timestamp: at(7) })],
         superTruncated: true,
-        superMeta: { rows: 100_000, generation: 3, hosts: ["WS-042"], atCap: true },
+        superMeta: { rows: 100_000, generation: 3, hosts: ["WS-042"], hostsTruncated: false, atCap: true },
         superMetaAfter: { rows: 100_000, generation: 4 },
         lastImportedAt: at(9),
       }),
@@ -328,6 +358,9 @@ describe("verifyBoundary — facts, never a verdict", () => {
       ["s1", "forensic", "curated copy"],
       ["s9", "super", "Process create: evil.exe"],
     ]);
+    // The receipt keeps forensic ids only; a raw row is a count until the analyst attaches it.
+    expect(facts.receipt.hitIds).toEqual(["s1"]);
+    expect(facts.receipt.superHitTotal).toBe(1);
     expect(facts.truncated).toBe(true);
     expect(facts.retentionNote).toContain("retention cap");
     expect(facts.inconsistent).toBe(true);
@@ -344,6 +377,7 @@ describe("verifyBoundary — facts, never a verdict", () => {
         forensic: [start({ id: "s1", timestamp: at(5) }), start({ id: "s2", timestamp: at(30) })],
         offsets,
         forensicMeta: { rows: 2, updatedAt: T },
+        forensicMetaAfter: { rows: 2, updatedAt: T },
       }),
     );
     expect(facts.clock).toMatchObject({ alignment: "on", offsetMs: 6 * 3_600_000 });
@@ -368,5 +402,17 @@ describe("verifyBoundary — facts, never a verdict", () => {
         super: { rows: 0, generation: 1 },
       }),
     ).toBe(true);
+    // The forensic store moving during the read marks the receipt inconsistent too.
+    const moved = verifyBoundary(
+      input({ forensicMeta: { rows: 2, updatedAt: T }, forensicMetaAfter: { rows: 3, updatedAt: at(1) } }),
+    );
+    expect(moved.inconsistent).toBe(true);
+    expect(moved.receipt.highWater.forensic).toEqual({ rows: 3, updatedAt: at(1) });
+    // More distinct host spellings than the read: truncated, said why.
+    const hosts = verifyBoundary(
+      input({ superMeta: { rows: 0, generation: 1, hosts: [], hostsTruncated: true, atCap: false } }),
+    );
+    expect(hosts.truncated).toBe(true);
+    expect(hosts.truncatedBy).toContain("distinct host spellings");
   });
 });

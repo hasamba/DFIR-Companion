@@ -1,7 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { logActivity } from "../analysis/activityLog.js";
 import {
-  receiptNeedsOverride,
   RESIDUAL_RISK_STATUSES,
   taskLinkState,
   validateBoundaryInput,
@@ -121,7 +120,10 @@ export function registerRemediationRoutes(app: Express, ctx: RouteContext): void
         req.params.id,
         boundary,
       );
-      await s.addReceipt(req.params.id, boundary.id, facts.receipt);
+      if (!(await s.addReceipt(req.params.id, boundary.id, facts.receipt)))
+        return res
+          .status(409)
+          .json({ error: "the boundary was deleted while the check ran; nothing was recorded" });
       return res.status(200).json(facts);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -142,28 +144,26 @@ export function registerRemediationRoutes(app: Express, ctx: RouteContext): void
     const note = typeof req.body?.note === "string" ? req.body.note : undefined;
     const overrideNote = typeof req.body?.override === "string" ? req.body.override.trim() : "";
     try {
-      const boundary = (await s.load(req.params.id)).find((b) => b.id === req.params.bid);
-      if (!boundary) return res.status(404).json({ error: "boundary not found" });
-      if (receiptId) {
-        const receipt = boundary.receipts.find((r) => r.id === receiptId);
-        if (!receipt) return res.status(404).json({ error: "receipt not found on this boundary" });
-        if (status === "checked-not-observed") {
-          const reasons = receiptNeedsOverride(receipt);
-          if (reasons.length && !overrideNote)
-            return res.status(409).json({
-              error: `checked-not-observed needs an override note: ${reasons.join("; ")}`,
-              reasons,
-            });
-        }
-      }
-      const next = await s.setStatus(req.params.id, boundary.id, {
+      // Validation and the write happen under one lock in the store: the receipt named must be
+      // on the boundary at commit time, and the override rule is judged against that receipt.
+      const out = await s.setStatus(req.params.id, req.params.bid, {
         status,
         ...(note !== undefined ? { note } : {}),
         ...(overrideNote ? { overrideNote } : {}),
         ...(receiptId ? { receiptId } : {}),
         at: new Date().toISOString(),
       });
-      if (!next) return res.status(404).json({ error: "boundary not found" });
+      if (!out.ok) {
+        if (out.code === "missing") return res.status(404).json({ error: "boundary not found" });
+        if (out.code === "receipt-missing")
+          return res.status(404).json({ error: "receipt not found on this boundary" });
+        return res.status(409).json({
+          error: `checked-not-observed needs an override note: ${(out.reasons ?? []).join("; ")}`,
+          reasons: out.reasons ?? [],
+        });
+      }
+      const boundary = out.boundary;
+      const next = boundary;
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "triage",
         action: "remediation-status",
@@ -190,6 +190,12 @@ export function registerRemediationRoutes(app: Express, ctx: RouteContext): void
     try {
       const boundary = (await s.load(req.params.id)).find((b) => b.id === req.params.bid);
       if (!boundary) return res.status(404).json({ error: "boundary not found" });
+      // Capacity first: a promotion is permanent, so nothing is promoted for an attach the
+      // evidence bound would refuse.
+      if ((await s.canAttach(req.params.id, boundary.id, ids)) === "full")
+        return res
+          .status(400)
+          .json({ error: "this boundary already holds the maximum number of evidence rows" });
       const state = await options.stateStore.load(req.params.id);
       const forensic = new Set(state.forensicTimeline.map((e) => e.id));
       const toPromote: ForensicEvent[] = [];

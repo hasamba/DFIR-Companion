@@ -117,7 +117,7 @@ export const FEATURES: Feature[] = [
   {
     file: "dashboard-remediation.js",
     publish: ["loadRemediation"],
-    private: ["boundaries", "facts", "currentCaseId"],
+    private: ["boundaries", "facts", "currentCaseId", "loadGen", "verifyGen"],
   },
   { file: "dashboard-backup.js", publish: ["loadCaseBackups", "restoreCaseBackup"], private: [] },
   {

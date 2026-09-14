@@ -72,7 +72,9 @@ interface SuperScanResult {
 export interface SuperTimelineMeta {
   rows: number;
   generation: number;
+  /** Distinct host spellings as stored, up to the limit asked for (none when `hosts: 0`). */
   hosts: string[];
+  hostsTruncated: boolean;
 }
 
 export class SuperTimelineStore {
@@ -313,11 +315,12 @@ export class SuperTimelineStore {
     return this.max;
   }
 
-  async meta(caseId: string): Promise<SuperTimelineMeta> {
+  async meta(caseId: string, opts: { hosts?: number } = {}): Promise<SuperTimelineMeta> {
     await this.ensureMigrated(caseId);
     return caseSqliteWorker.request<SuperTimelineMeta>({
       op: "superMeta",
       dbPath: this.databasePath(caseId),
+      hosts: opts.hosts ?? 0,
     });
   }
 
