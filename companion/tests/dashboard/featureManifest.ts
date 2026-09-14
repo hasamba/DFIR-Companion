@@ -107,6 +107,13 @@ export const FEATURES: Feature[] = [
     // this list, so a fourth initializer cannot be added without an entry either.
     initializer: "initCustodyButtons",
   },
+  {
+    // The intel retirement review (#1024): the page's case loader calls loadIntelRetirement by bare
+    // name; the review, the current case id and the decision handler stay inside the closure.
+    file: "dashboard-intel-retirement.js",
+    publish: ["loadIntelRetirement"],
+    private: ["review", "currentCaseId"],
+  },
   { file: "dashboard-backup.js", publish: ["loadCaseBackups", "restoreCaseBackup"], private: [] },
   {
     // The load-time-heavy one: everything it does on load is wrapped in initTicketIntegrations(),

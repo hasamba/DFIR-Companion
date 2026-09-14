@@ -7,7 +7,9 @@ function ioc(id: string, value: string): IOC {
     id,
     type: "ip",
     value,
-    enrichments: [{ source: "OneCTI", verdict: "malicious", fetchedAt: "2026-01-01T00:00:00Z" }],
+    enrichments: [
+      { source: "OneCTI", verdict: "malicious", fetchedAt: "2026-01-01T00:00:00Z", status: "live" },
+    ],
   } as IOC;
 }
 function finding(partial: Partial<Finding> & { id: string }): Finding {

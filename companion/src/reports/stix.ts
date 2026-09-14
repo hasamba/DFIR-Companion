@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { InvestigationState, IOC, IocEnrichment } from "../analysis/stateTypes.js";
 import { actionableAssertions, assertionLabel, lastKnownAssertions } from "../analysis/intelViews.js";
-import { retiredFindingIds, retiredIocIds } from "../analysis/intelRetirement.js";
+import { retiredFindingIds } from "../analysis/intelRetirement.js";
 
 // Build a STIX 2.1 bundle (https://docs.oasis-open.org/cti/stix/v2.1/stix-v2.1.html) from the
 // case state — a deterministic transform, no AI, no new storage. The bundle is what every CTI
