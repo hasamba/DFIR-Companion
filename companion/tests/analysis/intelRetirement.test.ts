@@ -94,7 +94,7 @@ describe("intelRetirementReview", () => {
       s,
       { findingId: "f1", decision: "retire", note: "confirmed by the packet capture" },
       at(3),
-    );
+    )!;
     expect(next.intelRetirementDecisions).toEqual([
       {
         findingId: "f1",
@@ -110,16 +110,20 @@ describe("intelRetirementReview", () => {
       "Intel retirement review: retire finding f1 — confirmed by the packet capture (a recorded recommendation; the finding's severity and status are unchanged)",
     );
     expect(intelRetirementReview(next, at(4)).items[0].decision?.decision).toBe("retire");
-    const kept = recordRetirementDecision(next, { findingId: "f1", decision: "keep" }, at(5));
+    const kept = recordRetirementDecision(next, { findingId: "f1", decision: "keep" }, at(5))!;
     expect(kept.intelRetirementDecisions).toHaveLength(1);
     expect(kept.intelRetirementDecisions![0].decision).toBe("keep");
+    // A finding whose intel is still live is not in the review: a decision on it is refused.
+    expect(
+      recordRetirementDecision(stateWith([hit()]), { findingId: "f1", decision: "retire" }, at(5)),
+    ).toBeNull();
   });
   it("the decision survives mergeDelta and a concurrent synthesis; the newest per finding wins", () => {
     const s = recordRetirementDecision(
       stateWith([hit({ status: "revoked", revoked: true })]),
       { findingId: "f1", decision: "keep" },
       at(3),
-    );
+    )!;
     const merged = mergeDelta(
       s,
       {
@@ -134,7 +138,7 @@ describe("intelRetirementReview", () => {
       { timestamp: at(4), windowSequence: 1, sourceScreenshots: [] },
     );
     expect(merged.intelRetirementDecisions).toHaveLength(1);
-    const latest = recordRetirementDecision(s, { findingId: "f1", decision: "retire" }, at(6));
+    const latest = recordRetirementDecision(s, { findingId: "f1", decision: "retire" }, at(6))!;
     const concurrent = mergeConcurrentAdditions(s, s, latest);
     expect(concurrent.intelRetirementDecisions![0].decision).toBe("retire");
     expect(emptyState("x").intelRetirementDecisions).toEqual([]);
@@ -164,6 +168,15 @@ describe("the route", () => {
         .send({ decision: "keep" })
         .then((r) => r.status),
     ).toBe(404);
+    // A finding with live intel is not in the review: 409, nothing recorded.
+    await stateStore.save(stateWith([hit()]));
+    expect(
+      await request(app)
+        .post("/cases/c1/intel-retirement/f1")
+        .send({ decision: "retire" })
+        .then((r) => r.status),
+    ).toBe(409);
+    await stateStore.save(stateWith([hit({ status: "revoked", revoked: true })]));
     const posted = await request(app)
       .post("/cases/c1/intel-retirement/f1")
       .send({ decision: "retire", note: "n" });
@@ -173,5 +186,33 @@ describe("the route", () => {
     expect(saved.intelRetirementDecisions).toHaveLength(1);
     expect(saved.findings[0].severity).toBe("High");
     expect(saved.findings[0].status).toBe("open");
+  });
+});
+
+// Code round 1: a retire decision applies only while the finding is in the review; a later live
+// assertion makes it stale — nothing is suppressed; the block-list leaves out the retired
+// finding's own IOCs and keeps one another finding relates.
+describe("stale decisions and the block-list (code round 1)", () => {
+  it("a retire decision stops applying when the IOC regains a live assertion; the block-list honours a current one", async () => {
+    const { retiredFindingIds, retiredIocIds } = await import("../../src/analysis/intelRetirement.js");
+    const { filterBlocklistIocs, buildIocBlocklistTxt } = await import("../../src/reports/iocBlocklist.js");
+    const s = recordRetirementDecision(
+      stateWith([hit({ status: "revoked", revoked: true })]),
+      { findingId: "f1", decision: "retire" },
+      at(3),
+    )!;
+    expect([...retiredFindingIds(s, at(4))]).toEqual(["f1"]);
+    expect([...retiredIocIds(s, at(4))]).toEqual(["i1"]);
+    expect(buildIocBlocklistTxt(s, { minSeverity: "Info" })).not.toContain("203.0.113.5");
+    // Another, non-retired finding relates the same IOC: it stays in the block-list.
+    const shared = { ...s, findings: [...s.findings, finding({ id: "f2", relatedIocs: ["i1"] })] };
+    expect([...retiredIocIds(shared, at(4))]).toEqual([]);
+    expect(buildIocBlocklistTxt(shared, { minSeverity: "Info" })).toContain("203.0.113.5");
+    // The IOC regains a live assertion: the finding leaves the review and the decision is stale.
+    const revived = { ...s, iocs: [{ ...s.iocs[0], enrichments: [hit({ fetchedAt: at(5) })] }] };
+    expect(retiredFindingIds(revived, at(6)).size).toBe(0);
+    expect(
+      filterBlocklistIocs(revived.iocs, { verdictOnly: true, excludeIocIds: retiredIocIds(revived, at(6)) }),
+    ).toHaveLength(1);
   });
 });

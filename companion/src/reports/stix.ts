@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { InvestigationState, IOC, IocEnrichment } from "../analysis/stateTypes.js";
 import { actionableAssertions, assertionLabel, lastKnownAssertions } from "../analysis/intelViews.js";
+import { retiredFindingIds, retiredIocIds } from "../analysis/intelRetirement.js";
 
 // Build a STIX 2.1 bundle (https://docs.oasis-open.org/cti/stix/v2.1/stix-v2.1.html) from the
 // case state — a deterministic transform, no AI, no new storage. The bundle is what every CTI
@@ -268,8 +269,9 @@ export function buildStixBundle(state: InvestigationState, opts: StixExportOptio
   // so we can wire indicator →indicates→ malware edges.
   const malwareIocs = new Map<string, Set<string>>(); // tagKey → ioc ids
   const malwareName = new Map<string, string>(); // tagKey → display name
+  // Only actionable assertions name a malware family (#1024): a revoked or expired tag is history.
   for (const ioc of state.iocs) {
-    for (const e of ioc.enrichments ?? []) {
+    for (const e of actionableAssertions(ioc)) {
       for (const tag of e.tags ?? []) {
         const name = tag.trim();
         if (!name) continue;
@@ -316,9 +318,9 @@ export function buildStixBundle(state: InvestigationState, opts: StixExportOptio
   // claim the intel no longer supports; an IOC with no intel at all keeps the analyst's own link.
   // A recorded "retire" decision suppresses the finding's relationships as well.
   const iocById = new Map(state.iocs.map((i) => [i.id, i]));
-  const retired = new Set(
-    (state.intelRetirementDecisions ?? []).filter((d) => d.decision === "retire").map((d) => d.findingId),
-  );
+  // A retire decision applies only while the finding is still in the review (its intel still
+  // non-actionable): a later live assertion makes the decision stale and it suppresses nothing.
+  const retired = retiredFindingIds(state);
   for (const f of state.findings) {
     if (retired.has(f.id)) continue;
     const indicators = f.relatedIocs

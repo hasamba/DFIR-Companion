@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { actionableAssertions } from "../analysis/intelViews.js";
+import { retiredIocIds } from "../analysis/intelRetirement.js";
 import {
   SEVERITY_RANK,
   type InvestigationState,
@@ -20,6 +21,8 @@ export interface IocBlocklistOptions {
   types?: BlocklistIocType[];
   /** When true, only include IOCs with a malicious or suspicious verdict. Default: false. */
   verdictOnly?: boolean;
+  /** IOC ids a recorded retire decision leaves out (#1024) — the builders derive them from the state. */
+  excludeIocIds?: ReadonlySet<string>;
   /** Case name for TXT/CSV header comments. Falls back to caseId when absent. */
   caseName?: string;
   /** ISO timestamp for the "Generated:" header line. Defaults to current time when absent. */
@@ -89,6 +92,7 @@ export function filterBlocklistIocs(
 
   const results: { ioc: IOC; effectiveType: BlocklistIocType }[] = [];
   for (const ioc of iocs) {
+    if (opts.excludeIocIds?.has(ioc.id)) continue;
     const eff = effectiveType(ioc);
     if (!eff || !types.includes(eff)) continue;
     // Canonical SEVERITY_RANK: lower = more severe, so "below the floor" is a GREATER rank.
@@ -128,8 +132,14 @@ const TYPE_LABEL: Record<BlocklistIocType, string> = {
  * Build a plain-text IOC block-list: one value per line, grouped by type, with a header comment.
  * Pure — depends only on its arguments.
  */
+// A retire decision leaves the retired finding's own IOCs out of every block-list format (#1024).
+const withRetired = (state: InvestigationState, opts: IocBlocklistOptions): IocBlocklistOptions => ({
+  ...opts,
+  excludeIocIds: opts.excludeIocIds ?? retiredIocIds(state),
+});
+
 export function buildIocBlocklistTxt(state: InvestigationState, opts: IocBlocklistOptions = {}): string {
-  const filtered = filterBlocklistIocs(state.iocs, opts);
+  const filtered = filterBlocklistIocs(state.iocs, withRetired(state, opts));
   const minSev = opts.minSeverity ?? DEFAULT_MIN_SEVERITY;
   const types = opts.types ?? DEFAULT_TYPES;
   const ts = opts.generatedAt ?? new Date().toISOString();
@@ -179,7 +189,7 @@ function csvCell(s: string): string {
  * Pure — depends only on its arguments.
  */
 export function buildIocBlocklistCsv(state: InvestigationState, opts: IocBlocklistOptions = {}): string {
-  const filtered = filterBlocklistIocs(state.iocs, opts);
+  const filtered = filterBlocklistIocs(state.iocs, withRetired(state, opts));
   const rows: string[] = [["type", "value", "severity", "verdict", "description"].map(csvCell).join(",")];
   for (const { ioc, effectiveType: eff } of filtered) {
     const sev = iocSeverity(ioc);
@@ -227,7 +237,7 @@ const INDICATOR_TYPE: Record<IocEnrichment["verdict"], string> = {
  * Pure — depends only on its arguments.
  */
 export function buildIocBlocklistStix(state: InvestigationState, opts: IocBlocklistOptions = {}): StixBundle {
-  const filtered = filterBlocklistIocs(state.iocs, opts);
+  const filtered = filterBlocklistIocs(state.iocs, withRetired(state, opts));
   const now = stixTime(state.updatedAt, new Date(0).toISOString());
   const idFor = (type: string, key: string): string => `${type}--${uuidv5(`${state.caseId}|${type}|${key}`)}`;
 

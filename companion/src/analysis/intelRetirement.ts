@@ -122,20 +122,53 @@ function summarizeStatuses(assertions: readonly RetirementAssertion[]): string {
   return [...counts.entries()].map(([s, n]) => `${n} ${s}`).join(", ");
 }
 
-/** Record the analyst's decision: keyed by finding id, replacing an earlier one; nothing else changes. */
+/** The findings a recorded `retire` decision currently applies to: in the review now AND decided retire. */
+export function retiredFindingIds(
+  state: InvestigationState,
+  at: string = new Date().toISOString(),
+): Set<string> {
+  return new Set(
+    intelRetirementReview(state, at)
+      .items.filter((i) => i.decision?.decision === "retire")
+      .map((i) => i.findingId),
+  );
+}
+
+/**
+ * The IOCs a block-list must leave out on account of a retire decision: related only to retired
+ * findings (an IOC another, non-retired finding relates stays; an IOC with a live assertion is not
+ * in any retired finding, because such a finding is not in the review).
+ */
+export function retiredIocIds(state: InvestigationState, at: string = new Date().toISOString()): Set<string> {
+  const retired = retiredFindingIds(state, at);
+  if (retired.size === 0) return new Set();
+  const keep = new Set<string>();
+  for (const f of state.findings) if (!retired.has(f.id)) for (const id of f.relatedIocs ?? []) keep.add(id);
+  const out = new Set<string>();
+  for (const f of state.findings)
+    if (retired.has(f.id)) for (const id of f.relatedIocs ?? []) if (!keep.has(id)) out.add(id);
+  return out;
+}
+
+/**
+ * Record the analyst's decision: keyed by finding id, replacing an earlier one; nothing else
+ * changes. Refused (null) when the finding is not in the review — a decision on live intel would
+ * suppress evidence the case still holds.
+ */
 export function recordRetirementDecision(
   state: InvestigationState,
   decision: Omit<IntelRetirementDecision, "decidedAt" | "assertionIds"> & { decidedAt?: string },
   at: string = new Date().toISOString(),
-): InvestigationState {
+): InvestigationState | null {
   const review = intelRetirementReview(state, at);
   const item = review.items.find((i) => i.findingId === decision.findingId);
+  if (!item) return null;
   const record: IntelRetirementDecision = {
     findingId: decision.findingId,
     decision: decision.decision,
     ...(decision.note ? { note: decision.note.slice(0, 2000) } : {}),
     decidedAt: decision.decidedAt ?? at,
-    assertionIds: item ? item.assertions.map((a) => a.assertionId) : [],
+    assertionIds: item.assertions.map((a) => a.assertionId),
   };
   const others = (state.intelRetirementDecisions ?? []).filter((d) => d.findingId !== decision.findingId);
   return {

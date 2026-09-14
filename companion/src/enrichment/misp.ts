@@ -53,8 +53,8 @@ interface MispAttribute {
 /** Pagination (#1024): read every page up to the bound; a full last page means the read is INCOMPLETE. */
 const PAGE_SIZE = 100;
 const PAGES_MAX = 64;
-/** One assertion per attribute, bounded; the rest are counted on the last one. */
-const ASSERTIONS_MAX = 32;
+// Every fetched attribute is an assertion (#1024): a bounded LIST would make a complete read look
+// incomplete and mark the omitted ones "not returned". The page bound is the only bound.
 const epochIso = (v: string | number | undefined): string => {
   const n = typeof v === "number" ? v : /^\d+$/.test(String(v ?? "")) ? Number(v) : NaN;
   return Number.isFinite(n) && n > 0 ? new Date(n * 1000).toISOString() : "";
@@ -181,9 +181,7 @@ export class MispProvider implements EnrichmentProvider {
       for (const t of a.Tag ?? []) if (t.name) tags.add(t.name);
     });
     const lineage = { originKind: "relay" as const, ...boundOrigins([...events.values()].map(creatorOf)) };
-    const shown = attrs.slice(0, ASSERTIONS_MAX);
-    const beyond = attrs.length - shown.length;
-    const results: EnrichmentResult[] = shown.map((a, i) => {
+    const results: EnrichmentResult[] = attrs.map((a) => {
       const ev = a.Event;
       const eventId = ev?.id ?? a.event_id;
       const temporal = {
@@ -199,7 +197,6 @@ export class MispProvider implements EnrichmentProvider {
         a.to_ids ? "to_ids" : "",
         ev?.info ? `event: ${ev.info.slice(0, 80)}` : eventId ? `event ${eventId}` : "",
         a.deleted ? "deleted on the MISP instance; kept as history" : "",
-        i === shown.length - 1 && beyond ? `+${beyond} more attribute(s) not listed` : "",
       ].filter(Boolean);
       return {
         source: this.name,

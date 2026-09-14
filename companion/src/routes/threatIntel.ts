@@ -221,12 +221,10 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   app.post("/cases/:id/customer-exposure/check", async (req: Request, res: Response) => {
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     if (customerExposureProviders().length === 0) {
-      return res
-        .status(501)
-        .json({
-          error:
-            "no customer exposure providers configured (set DFIR_LEAKCHECK_KEY / DFIR_DEHASHED_KEY / DFIR_HIBP_KEY / DFIR_SHODAN_KEY)",
-        });
+      return res.status(501).json({
+        error:
+          "no customer exposure providers configured (set DFIR_LEAKCHECK_KEY / DFIR_DEHASHED_KEY / DFIR_HIBP_KEY / DFIR_SHODAN_KEY)",
+      });
     }
     const caseId = req.params.id;
     try {
@@ -312,12 +310,10 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   app.post("/cases/:id/iocs/bulk-enrich", async (req: Request, res: Response) => {
     const providers = options.enrichmentProviders ?? [];
     if (providers.length === 0)
-      return res
-        .status(501)
-        .json({
-          error:
-            "no enrichment providers configured (set DFIR_VT_KEY / DFIR_MB_KEY / DFIR_HUNTINGCH_KEY / DFIR_ABUSEIPDB_KEY / DFIR_CROWDSTRIKE_CLIENT_ID+_SECRET / DFIR_MISP_* / DFIR_YETI_*)",
-        });
+      return res.status(501).json({
+        error:
+          "no enrichment providers configured (set DFIR_VT_KEY / DFIR_MB_KEY / DFIR_HUNTINGCH_KEY / DFIR_ABUSEIPDB_KEY / DFIR_CROWDSTRIKE_CLIENT_ID+_SECRET / DFIR_MISP_* / DFIR_YETI_*)",
+      });
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     const caseId = req.params.id;
     const rawIds = Array.isArray(req.body?.iocIds) ? req.body.iocIds : [];
@@ -332,12 +328,10 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
         return res.status(404).json({ error: "none of the specified IOC IDs were found in this case" });
       const enabledProviders = await ctx.enabledProvidersFor(caseId);
       if (enabledProviders.length === 0)
-        return res
-          .status(422)
-          .json({
-            error:
-              "no enrichment providers enabled for this case — enable providers in the enrichment panel first",
-          });
+        return res.status(422).json({
+          error:
+            "no enrichment providers enabled for this case — enable providers in the enrichment panel first",
+        });
       void (async () => {
         options.onAiStatus?.(caseId, {
           status: "analyzing",
@@ -362,10 +356,15 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
               detail: `enriching selected IOC ${done}/${total}`,
             }),
         });
-        const current = await options.stateStore!.load(caseId);
-        const merged = mergeEnrichedSubset(current.iocs, enrichedSubset);
-        const next = { ...current, iocs: merged, updatedAt: new Date().toISOString() };
-        await options.stateStore!.save(next);
+        // Load, merge and save under the case lock (#1024): two bulk runs finishing together must
+        // not drop each other's assertions; the merge itself is by assertion, never a whole IOC.
+        const next = await runStateExclusive(caseId, async () => {
+          const current = await options.stateStore!.load(caseId);
+          const merged = mergeEnrichedSubset(current.iocs, enrichedSubset);
+          const saved = { ...current, iocs: merged, updatedAt: new Date().toISOString() };
+          await options.stateStore!.save(saved);
+          return saved;
+        });
         options.onState?.(next);
         options.onAiStatus?.(caseId, {
           status: "idle",
@@ -434,12 +433,10 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
     if (!options.iocWhitelistStore) return res.status(501).json({ error: "IOC whitelist not configured" });
     const input = sanitizeRuleInput(req.body ?? {});
     if (!input)
-      return res
-        .status(400)
-        .json({
-          error:
-            "invalid rule — need match (cidr|regex|exact) and a valid pattern (valid CIDR for cidr, valid regex for regex)",
-        });
+      return res.status(400).json({
+        error:
+          "invalid rule — need match (cidr|regex|exact) and a valid pattern (valid CIDR for cidr, valid regex for regex)",
+      });
     try {
       const rule = await options.iocWhitelistStore.add(input);
       return res.status(201).json(rule);
@@ -471,13 +468,11 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
           .status(400)
           .json({ error: "no valid rules found — expected JSON array or CSV with a 'pattern' column" });
       const added = await options.iocWhitelistStore.addMany(parsed);
-      return res
-        .status(200)
-        .json({
-          added: added.length,
-          parsed: parsed.length,
-          total: (await options.iocWhitelistStore.load()).length,
-        });
+      return res.status(200).json({
+        added: added.length,
+        parsed: parsed.length,
+        total: (await options.iocWhitelistStore.load()).length,
+      });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -523,12 +518,10 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     const input = sanitizeExcludeRuleInput(req.body ?? {});
     if (!input)
-      return res
-        .status(400)
-        .json({
-          error:
-            "invalid rule — need match (exact|suffix|regex) and a non-empty pattern (valid regex for regex)",
-        });
+      return res.status(400).json({
+        error:
+          "invalid rule — need match (exact|suffix|regex) and a non-empty pattern (valid regex for regex)",
+      });
     const caseId = req.params.id;
     const stateStore = options.stateStore;
     let rule: IocExcludeRule | undefined;
@@ -626,11 +619,9 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   // path the operator typed is intended (same trust as the env var).
   app.post("/nsrl/db", async (req: Request, res: Response) => {
     if (options.nsrlDbEnvManaged)
-      return res
-        .status(400)
-        .json({
-          error: "the NSRL RDS path is managed by the DFIR_NSRL_DB env var — unset it to configure here",
-        });
+      return res.status(400).json({
+        error: "the NSRL RDS path is managed by the DFIR_NSRL_DB env var — unset it to configure here",
+      });
     if (!options.nsrlDbConfigFile) return res.status(501).json({ error: "NSRL RDS database not configured" });
     const path = typeof req.body?.path === "string" ? req.body.path.trim() : "";
     if (!path)
@@ -676,12 +667,10 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
     try {
       const parsed = parseNsrlText(text);
       if (parsed.length === 0)
-        return res
-          .status(400)
-          .json({
-            error:
-              "no valid hashes found — expected MD5/SHA-1/SHA-256 hashes (NSRLFile.txt, a hashdeep CSV, or a hash-per-line list)",
-          });
+        return res.status(400).json({
+          error:
+            "no valid hashes found — expected MD5/SHA-1/SHA-256 hashes (NSRLFile.txt, a hashdeep CSV, or a hash-per-line list)",
+        });
       const { added, total } = await options.nsrlStore.addMany(parsed);
       logLine(`[nsrl] import — +${added} new (${parsed.length} parsed, ${total} total)`);
       return res.status(200).json({ added, parsed: parsed.length, total });
@@ -822,12 +811,10 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   // caching means only the newly-enabled providers query the existing IOCs.
   app.post("/cases/:id/enrich-control", async (req: Request, res: Response) => {
     if (allProviders().length === 0)
-      return res
-        .status(501)
-        .json({
-          error:
-            "no enrichment providers configured (set DFIR_VT_KEY / DFIR_MB_KEY / DFIR_HUNTINGCH_KEY / DFIR_ABUSEIPDB_KEY / DFIR_CROWDSTRIKE_CLIENT_ID+_SECRET / DFIR_MISP_* / DFIR_YETI_*)",
-        });
+      return res.status(501).json({
+        error:
+          "no enrichment providers configured (set DFIR_VT_KEY / DFIR_MB_KEY / DFIR_HUNTINGCH_KEY / DFIR_ABUSEIPDB_KEY / DFIR_CROWDSTRIKE_CLIENT_ID+_SECRET / DFIR_MISP_* / DFIR_YETI_*)",
+      });
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     const caseId = req.params.id;
     let providers: string[];
@@ -861,24 +848,20 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   app.post("/cases/:id/enrich", async (req: Request, res: Response) => {
     const providers = options.enrichmentProviders ?? [];
     if (providers.length === 0)
-      return res
-        .status(501)
-        .json({
-          error:
-            "no enrichment providers configured (set DFIR_VT_KEY / DFIR_MB_KEY / DFIR_HUNTINGCH_KEY / DFIR_ABUSEIPDB_KEY / DFIR_CROWDSTRIKE_CLIENT_ID+_SECRET)",
-        });
+      return res.status(501).json({
+        error:
+          "no enrichment providers configured (set DFIR_VT_KEY / DFIR_MB_KEY / DFIR_HUNTINGCH_KEY / DFIR_ABUSEIPDB_KEY / DFIR_CROWDSTRIKE_CLIENT_ID+_SECRET)",
+      });
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     const caseId = req.params.id;
     const force = req.body?.force === true || req.query.force === "true";
     try {
       const enabledProviders = await ctx.enabledProvidersFor(caseId);
       if (enabledProviders.length === 0)
-        return res
-          .status(422)
-          .json({
-            error:
-              "no enrichment providers enabled for this case — enable providers in the enrichment panel first",
-          });
+        return res.status(422).json({
+          error:
+            "no enrichment providers enabled for this case — enable providers in the enrichment panel first",
+        });
       const state = await options.stateStore.load(caseId);
       ctx.enrichInBackground(caseId, force);
       return res

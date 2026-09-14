@@ -111,6 +111,8 @@ export interface IocEnrichment {
   validity?: { from?: string; until?: string };
   revoked?: boolean;
   status?: IntelAssertionStatus;
+  /** When the stored state was last set — a hit's fetch, a miss, an error; the merge of two copies keys on it. */
+  stateAt?: string;
   lastMissAt?: string; // the last successful check of this provider that did not return the assertion
   note?: string; // a provider-specific reading rule the row must carry (ThreatFox's six-month API expiry)
   // Geo coordinates (#133): set by the GeoIP provider so the map can plot the IOC. Optional —

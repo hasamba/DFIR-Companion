@@ -136,7 +136,8 @@ describe("consumers act on the actionable view only", () => {
           (o as { relationship_type?: string }).relationship_type === "indicates",
       ),
     ).toBe(true);
-    // A recorded retire decision suppresses it again.
+    // A recorded retire decision applies only while the finding is in the review: with the live
+    // assertion it is stale and suppresses nothing; with the intel non-actionable again it applies.
     state.intelRetirementDecisions = [
       { findingId: "f1", decision: "retire", decidedAt: T, assertionIds: ["a"] },
     ];
@@ -146,6 +147,28 @@ describe("consumers act on the actionable view only", () => {
           o.type === "relationship" &&
           (o as { relationship_type?: string }).relationship_type === "indicates",
       ),
+    ).toBe(true);
+    state.iocs[0] = ioc([live({ status: "revoked", revoked: true })], {
+      type: "domain",
+      value: "c2.evil.invalid",
+    });
+    expect(
+      buildStixBundle(state).objects.some(
+        (o) =>
+          o.type === "relationship" &&
+          (o as { relationship_type?: string }).relationship_type === "indicates",
+      ),
     ).toBe(false);
+  });
+});
+
+describe("code round 1 — malware tags and the intel-only grade read actionable assertions only", () => {
+  it("a revoked assertion's family tag creates no malware object or relationship in the STIX bundle", () => {
+    const state = emptyState("c1");
+    state.iocs.push(ioc([live({ status: "revoked", revoked: true, tags: ["Emotet"] })]));
+    const bundle = buildStixBundle(state);
+    expect(bundle.objects.some((o) => o.type === "malware")).toBe(false);
+    state.iocs[0] = ioc([live({ tags: ["Emotet"] })]);
+    expect(buildStixBundle(state).objects.some((o) => o.type === "malware")).toBe(true);
   });
 });

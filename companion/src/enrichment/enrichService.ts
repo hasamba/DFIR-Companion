@@ -100,10 +100,16 @@ function needsEnrichment(ioc: IOC, providers: readonly EnrichmentProvider[]): bo
 // never seen must be retried, even though its other backends answered.
 export function providerChecked(ioc: IOC, provider: string): boolean {
   if (!(ioc.enrichedBy ?? []).includes(provider)) return false;
-  const checks = ioc.intelChecks ?? {};
-  return !Object.entries(checks).some(
-    ([k, v]) => (k === provider || k.startsWith(`${provider}|`)) && v.outcome === "error",
+  // A hit recorded before assertion tracking is not actionable until re-checked: offer the re-check.
+  if ((ioc.enrichments ?? []).some((e) => (e.provider ?? e.source) === provider && e.status === undefined))
+    return false;
+  const own = Object.entries(ioc.intelChecks ?? {}).filter(
+    ([k]) => k === provider || k.startsWith(`${provider}|`),
   );
+  // No check record at all (an IOC enriched before the records existed): not checked.
+  if (own.length === 0) return false;
+  // Every record must be terminal (hit / miss) and complete.
+  return own.every(([, v]) => (v.outcome === "hit" || v.outcome === "miss") && !v.incomplete);
 }
 
 // Cheap pre-check mirroring enrichIocs' candidate filter, WITHOUT doing any lookups: is there at

@@ -167,9 +167,9 @@ describe("MISP — pages, deletions, one assertion per attribute", () => {
     expect(fetchFn.mock.calls).toHaveLength(2);
     expect(d.backends[0]).toMatchObject({ name: "MISP", outcome: "hit" });
     expect(d.backends[0].incomplete).toBeUndefined();
-    expect(d.results).toHaveLength(32);
-    const last = d.results[d.results.length - 1];
-    expect(last.score).toContain("+69 more attribute(s) not listed");
+    // Every fetched attribute is an assertion: a complete read never marks an omitted one absent.
+    expect(d.results).toHaveLength(101);
+    expect(d.results[100]).toMatchObject({ revoked: true, providerRecordId: "u-x" });
     // One assertion per attribute: its own uuid, its own interval — never one span.
     expect(d.results[0].providerRecordId).toBe("u-0");
     expect(d.results[0].temporal?.observedFrom).toBe("2026-01-01T00:00:00+00:00");
@@ -391,5 +391,155 @@ describe("enrichService — backend errors keep the last-known state and are ret
       now: () => "2026-02-03T00:00:00Z",
     });
     expect(third.summary.queried).toBe(0);
+  });
+});
+
+describe("code round 1 — the cases the review named", () => {
+  it("a stale live hit completing after a newer miss never resurrects the assertion (the newest STATE wins)", async () => {
+    const { foldCheck, mergeIntelState } = await import("../../src/analysis/intelHistory.js");
+    const base: IOC = {
+      id: "i1",
+      type: "ip",
+      value: "203.0.113.5",
+      firstSeen: "2026-01-01T00:00:00Z",
+      enrichments: [
+        {
+          source: "OpenCTI",
+          verdict: "malicious",
+          fetchedAt: "2026-02-01T00:00:00Z",
+          assertionId: "x",
+          status: "live",
+          stateAt: "2026-02-01T00:00:00Z",
+        },
+      ],
+    };
+    const missed = {
+      ...base,
+      ...foldCheck(base, [], [{ provider: "OpenCTI", outcome: "miss" }], "2026-02-20T00:00:00Z"),
+    };
+    expect(missed.enrichments![0]).toMatchObject({ status: "not-returned", stateAt: "2026-02-20T00:00:00Z" });
+    const stale: IOC = {
+      ...base,
+      enrichments: [
+        {
+          source: "OpenCTI",
+          verdict: "malicious",
+          fetchedAt: "2026-02-10T00:00:00Z",
+          assertionId: "x",
+          status: "live",
+          stateAt: "2026-02-10T00:00:00Z",
+        },
+      ],
+    };
+    const merged = mergeIntelState(missed, stale);
+    expect(merged.enrichments![0].status).toBe("not-returned");
+    // The other order too.
+    expect(mergeIntelState(stale, missed).enrichments![0].status).toBe("not-returned");
+  });
+
+  it("an incomplete check and a legacy hit both leave the provider unchecked: the next run re-queries", async () => {
+    const { providerChecked } = await import("../../src/enrichment/enrichService.js");
+    const base: IOC = {
+      id: "i1",
+      type: "ip",
+      value: "203.0.113.5",
+      firstSeen: "2026-01-01T00:00:00Z",
+      enrichedBy: ["MISP"],
+    };
+    expect(
+      providerChecked(
+        { ...base, intelChecks: { MISP: { outcome: "hit", at: "t", incomplete: true } } },
+        "MISP",
+      ),
+    ).toBe(false);
+    expect(providerChecked({ ...base, intelChecks: { MISP: { outcome: "miss", at: "t" } } }, "MISP")).toBe(
+      true,
+    );
+    expect(providerChecked(base, "MISP")).toBe(false); // no check record: enriched before the records existed
+    expect(
+      providerChecked(
+        {
+          ...base,
+          enrichments: [{ source: "MISP", verdict: "malicious", fetchedAt: "t" }],
+          intelChecks: { MISP: { outcome: "hit", at: "t" } },
+        },
+        "MISP",
+      ),
+    ).toBe(false);
+    expect(
+      providerChecked(
+        {
+          ...base,
+          intelChecks: { "Hunting.ch|ThreatFox": { outcome: "error", at: "t" } },
+          enrichedBy: ["Hunting.ch"],
+        },
+        "Hunting.ch",
+      ),
+    ).toBe(false);
+  });
+
+  it("OpenCTI pages the indicators connection: the 65th, live indicator is read", async () => {
+    let calls = 0;
+    const fetchFn = fetchMock(async (_url, init) => {
+      calls += 1;
+      const body = JSON.parse(String(init?.body)) as { query: string; variables: Record<string, unknown> };
+      const expired = (i: number) => ({
+        id: `ind-${i}`,
+        valid_from: "2025-01-01T00:00:00.000Z",
+        valid_until: "2025-06-01T00:00:00.000Z",
+        revoked: false,
+        x_opencti_score: 90,
+      });
+      if (body.query.includes("stixCyberObservables"))
+        return jsonResponse({
+          data: {
+            stixCyberObservables: {
+              edges: [
+                {
+                  node: {
+                    id: "obs-1",
+                    observable_value: "203.0.113.5",
+                    x_opencti_score: 80,
+                    objectLabel: [],
+                    indicators: {
+                      edges: Array.from({ length: 64 }, (_, i) => ({ node: expired(i) })),
+                      pageInfo: { endCursor: "ic1", hasNextPage: true },
+                    },
+                    createdBy: { name: "ACME" },
+                  },
+                },
+              ],
+              pageInfo: { endCursor: "c1", hasNextPage: false },
+            },
+          },
+        });
+      expect(body.variables.after).toBe("ic1");
+      return jsonResponse({
+        data: {
+          stixCyberObservable: {
+            indicators: {
+              edges: [
+                {
+                  node: {
+                    id: "ind-live",
+                    valid_from: "2026-01-01T00:00:00.000Z",
+                    valid_until: "2027-01-01T00:00:00.000Z",
+                    revoked: false,
+                    x_opencti_score: 90,
+                  },
+                },
+              ],
+              pageInfo: { endCursor: "ic2", hasNextPage: false },
+            },
+          },
+        },
+      });
+    });
+    const octi = new OpenCtiProvider({ baseUrl: "https://opencti.invalid", apiKey: "k", fetchFn });
+    const d = await octi.lookupDetailed("ip", "203.0.113.5");
+    expect(calls).toBe(2);
+    expect(d.results).toHaveLength(65);
+    expect(d.results.find((r) => r.providerRecordId === "ind-live")).toBeDefined();
+    expect(d.backends[0].incomplete).toBeUndefined();
   });
 });

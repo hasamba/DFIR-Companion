@@ -31,9 +31,23 @@ interface OctiObservable {
   observable_value?: string;
   x_opencti_score?: number | null;
   objectLabel?: OctiLabel[];
-  indicators?: { edges?: Array<{ node?: OctiIndicator }>; pageInfo?: { hasNextPage?: boolean } };
+  indicators?: {
+    edges?: Array<{ node?: OctiIndicator }>;
+    pageInfo?: { endCursor?: string | null; hasNextPage?: boolean };
+  };
   createdBy?: { name?: string } | null; // who created the object on this instance (#933 item 18)
 }
+
+// The observable's remaining indicator pages, by its id (#1024): read to a bound, merged by id.
+const INDICATOR_PAGES_MAX = 8;
+const INDICATORS_QUERY = `query($id: String!, $first: Int!, $after: ID) {
+  stixCyberObservable(id: $id) {
+    indicators(first: $first, after: $after) {
+      edges { node { id name valid_from valid_until revoked x_opencti_score created pattern_type } }
+      pageInfo { endCursor hasNextPage }
+    }
+  }
+}`;
 interface GraphQlResponse<T> {
   data?: T;
   errors?: Array<{ message?: string }>;
@@ -65,7 +79,7 @@ const OBSERVABLE_QUERY = `query($search: String!, $first: Int!, $after: ID, $ind
       objectLabel { value }
       indicators(first: $indicators) {
         edges { node { id name valid_from valid_until revoked x_opencti_score created pattern_type } }
-        pageInfo { hasNextPage }
+        pageInfo { endCursor hasNextPage }
       }
       createdBy { name }
     } }
@@ -157,6 +171,33 @@ export class OpenCtiProvider implements EnrichmentProvider {
     return { node: null, searchIncomplete: true };
   }
 
+  /** Every indicator linked to the observable, across pages up to the bound; `indicatorsCut` when the bound was reached first. */
+  private async allIndicators(
+    node: OctiObservable,
+  ): Promise<{ indicators: OctiIndicator[]; indicatorsCut: boolean }> {
+    const byId = new Map<string, OctiIndicator>();
+    const add = (list: Array<{ node?: OctiIndicator }> | undefined) => {
+      for (const e of list ?? []) if (e.node) byId.set(e.node.id ?? `#${byId.size}`, e.node);
+    };
+    add(node.indicators?.edges);
+    let info = node.indicators?.pageInfo;
+    let pages = 1;
+    while (info?.hasNextPage && info.endCursor && node.id && pages < INDICATOR_PAGES_MAX) {
+      const data = await this.graphql<{
+        stixCyberObservable?: {
+          indicators?: {
+            edges?: Array<{ node?: OctiIndicator }>;
+            pageInfo?: { endCursor?: string | null; hasNextPage?: boolean };
+          };
+        };
+      }>(INDICATORS_QUERY, { id: node.id, first: INDICATORS_MAX, after: info.endCursor });
+      add(data.stixCyberObservable?.indicators?.edges);
+      info = data.stixCyberObservable?.indicators?.pageInfo;
+      pages += 1;
+    }
+    return { indicators: [...byId.values()], indicatorsCut: info?.hasNextPage === true };
+  }
+
   async lookup(kind: IocKind, value: string): Promise<EnrichmentResult[] | null> {
     const { results, backends } = await this.lookupDetailed(kind, value);
     if (backends[0]?.outcome === "error") throw new Error(backends[0].detail ?? "OpenCTI: incomplete search");
@@ -187,10 +228,7 @@ export class OpenCtiProvider implements EnrichmentProvider {
         : { results: [], backends: [{ name: this.name, outcome: "miss" }] };
 
     const labels = (node.objectLabel ?? []).map((l) => l.value ?? "").filter((v) => v.length > 0);
-    const indicators = (node.indicators?.edges ?? [])
-      .map((e) => e.node)
-      .filter((n): n is OctiIndicator => !!n);
-    const indicatorsCut = node.indicators?.pageInfo?.hasNextPage === true;
+    const { indicators, indicatorsCut } = await this.allIndicators(node);
     const observableScore = typeof node.x_opencti_score === "number" ? node.x_opencti_score : undefined;
     const labelMalicious = labels.some((l) => MALICIOUS_LABELS.test(l));
     const lineage = { originKind: "relay" as const, ...boundOrigins([node.createdBy?.name]) };

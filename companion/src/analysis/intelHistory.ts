@@ -176,14 +176,14 @@ export function foldCheck(
     .map((e) => {
       const c = outcomeFor(e);
       if (!c || c.outcome === "not-queried") return e;
-      if (c.outcome === "error") return { ...e, status: "errored-last-known" as const };
+      if (c.outcome === "error") return { ...e, status: "errored-last-known" as const, stateAt: checkedAt };
       if (c.incomplete) return e;
       // A revoked or expired assertion stays what it is; a live one the query did not return is "not returned".
       return e.status === "live" || e.status === "legacy-unverified" || e.status === "errored-last-known"
-        ? { ...e, status: "not-returned" as const, lastMissAt: checkedAt }
+        ? { ...e, status: "not-returned" as const, lastMissAt: checkedAt, stateAt: checkedAt }
         : e;
     });
-  const enrichments = [...carried, ...fresh];
+  const enrichments = [...carried, ...fresh.map((f) => ({ ...f, stateAt: f.stateAt ?? f.fetchedAt }))];
   let history = ioc.intelHistory ? [...ioc.intelHistory] : [];
   for (const e of supersededBySource)
     history = appendHistory(history, { ...e, status: "superseded" }, checkedAt);
@@ -220,17 +220,16 @@ export function mergeIntelState(
   base: IOC,
   incoming: IOC,
 ): Pick<IOC, "enrichments" | "intelHistory" | "intelChecks"> {
+  // The newest STATE wins — a miss or an error is a state as much as a hit is, so a stale hit
+  // completing after a newer miss never resurrects the assertion.
+  const stateTime = (e: IocEnrichment): string =>
+    e.stateAt ?? [e.fetchedAt, e.lastMissAt ?? ""].sort().pop()!;
   const byId = new Map<string, IocEnrichment>();
   for (const e of [...(base.enrichments ?? []), ...(incoming.enrichments ?? [])].map((x) =>
     withIdentity(x, base.value),
   )) {
     const cur = byId.get(e.assertionId!);
-    if (
-      !cur ||
-      e.fetchedAt > cur.fetchedAt ||
-      (e.fetchedAt === cur.fetchedAt && (e.lastMissAt ?? "") > (cur.lastMissAt ?? ""))
-    )
-      byId.set(e.assertionId!, e);
+    if (!cur || stateTime(e) > stateTime(cur)) byId.set(e.assertionId!, e);
   }
   const history = new Map<string, IntelAssertionRecord>();
   for (const r of [...(base.intelHistory ?? []), ...(incoming.intelHistory ?? [])]) {

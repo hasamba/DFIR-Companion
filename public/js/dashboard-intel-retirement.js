@@ -49,22 +49,35 @@
 
   function decideIntelRetirement(findingId, decision) {
     if (!currentCaseId || !findingId) return;
+    const caseId = currentCaseId;
     const note = window.prompt(`Note for the ${decision} decision (optional):`, "") || "";
-    fetch(`/cases/${encodeURIComponent(currentCaseId)}/intel-retirement/${encodeURIComponent(findingId)}`, {
+    fetch(`/cases/${encodeURIComponent(caseId)}/intel-retirement/${encodeURIComponent(findingId)}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ decision, ...(note ? { note } : {}) }),
     })
       .then((r) => (r.ok ? r.json() : review))
-      .then((d) => { review = d && Array.isArray(d.items) ? d : review; renderIntelRetirement(); })
+      .then((d) => {
+        if (currentCaseId !== caseId) return;
+        review = d && Array.isArray(d.items) ? d : review;
+        renderIntelRetirement();
+      })
       .catch(() => {});
   }
 
   function loadIntelRetirement(caseId) {
     currentCaseId = caseId;
+    review = { items: [], stillActionable: 0, at: "" };
+    renderIntelRetirement();
+    // A late answer for a case the user has left never overwrites the panel (another case's
+    // finding titles and indicators): the response is kept only while it is still the current case.
     fetch(`/cases/${encodeURIComponent(caseId)}/intel-retirement`)
       .then((r) => (r.ok ? r.json() : { items: [], stillActionable: 0, at: "" }))
-      .then((d) => { review = d && Array.isArray(d.items) ? d : { items: [], stillActionable: 0, at: "" }; renderIntelRetirement(); })
+      .then((d) => {
+        if (currentCaseId !== caseId) return;
+        review = d && Array.isArray(d.items) ? d : { items: [], stillActionable: 0, at: "" };
+        renderIntelRetirement();
+      })
       .catch(() => {});
   }
 

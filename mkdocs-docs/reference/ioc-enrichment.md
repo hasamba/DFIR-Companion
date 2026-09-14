@@ -62,12 +62,14 @@ facts, each of its kind, against the case time:
   last edited … (not an observation)*, the event's `date` as *the event's stated date … (as
   recorded, not an observation)*, and `publish_timestamp` as *published …*. The lookup asks for
   deleted attributes too and reads every page (up to 6,400 attributes; a read cut at the bound is
-  **incomplete** and concludes nothing about absence); 32 attributes are listed, the rest counted.
+  **incomplete** and concludes nothing about absence); every fetched attribute is its own
+  assertion.
 - **OpenCTI** — one assertion per linked **indicator** (its id is the record): `valid_from` /
   `valid_until` as *valid from … until …* (STIX validity — *the assertion's validity ended* when
   it has), `revoked`, its score, and `created` as *object created … (creation, not publication,
-  not an observation)*. The observable search is paged until the exact value is found; a bound
-  reached first is an incomplete search, never a miss.
+  not an observation)*. The observable search is paged until the exact value is found, and the
+  observable's indicators are paged too; a bound reached first is an incomplete search, never a
+  miss.
 - **Hunting.ch** — per backend: ThreatFox `first_seen` / `last_seen` (*observed by the
   provider*) with the rule *ThreatFox removes IOCs older than six months from its API; a miss is
   not a withdrawal*; URLhaus `date_added` as *added to the provider's dataset on … (a dataset
@@ -131,9 +133,12 @@ named, the labels above, and what else corroborates the finding (tools, hosts, g
 a list to **review**, never an action: **Keep** and **Retire** record the analyst's decision (with
 a note) in the case and on the investigation log, and change nothing else — no severity, no
 status, no deployed detection, and no erasure of the evidence a rule produced. A recorded
-*retire* additionally stops the STIX bundle asserting that finding's intel-derived relationships
-and labels it in the report; the finding itself is closed or dismissed only through its own
-controls. `GET /cases/:id/intel-retirement` returns the review; `POST
+*retire* additionally stops the STIX bundle asserting that finding's intel-derived relationships,
+leaves the finding's own IOCs out of the block-lists (an IOC another, non-retired finding relates
+stays), and labels it in the report; it applies only while the finding is in the review — an IOC
+that regains a live assertion takes the finding out of the review and the decision stops
+applying. A decision on a finding that is not in the review is refused. The finding itself is
+closed or dismissed only through its own controls. `GET /cases/:id/intel-retirement` returns the review; `POST
 /cases/:id/intel-retirement/:findingId` with `{ "decision": "retire" | "keep", "note": "…" }`
 records it.
 

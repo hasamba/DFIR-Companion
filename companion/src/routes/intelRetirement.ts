@@ -32,12 +32,17 @@ export function registerIntelRetirementRoutes(app: Express, ctx: RouteContext): 
     try {
       const next = await ctx.runStateExclusive(req.params.id, async () => {
         const state = await stateStore.load(req.params.id);
-        if (!state.findings.some((f) => f.id === findingId)) return null;
+        if (!state.findings.some((f) => f.id === findingId)) return "missing" as const;
         const updated = recordRetirementDecision(state, { findingId, decision, ...(note ? { note } : {}) });
+        if (!updated) return "not-in-review" as const;
         await stateStore.save({ ...updated, updatedAt: new Date().toISOString() });
         return updated;
       });
-      if (!next) return res.status(404).json({ error: "finding not found in this case" });
+      if (next === "missing") return res.status(404).json({ error: "finding not found in this case" });
+      if (next === "not-in-review")
+        return res
+          .status(409)
+          .json({ error: "finding is not in the retirement review (its intel is still actionable)" });
       options.onState?.(next);
       return res.status(200).json(intelRetirementReview(next));
     } catch (err) {
