@@ -9,6 +9,7 @@
 import { isObject, getCI, getPath, str, parseConcatenatedJson } from "./siemImport.js";
 import { isWerReport } from "./werImport.js";
 import { isRekallCommandList, looksLikeVolatilityText, looksLikeMemprocfsFindevil } from "./memoryImport.js";
+import { isRunEnvelopeUpload } from "./memoryRunEnvelope.js";
 import { isIntactMemoryFile, looksLikeIntactPrefix } from "./intactImport.js";
 import { parseCsv } from "./csvImport.js";
 import { looksLikeJournald } from "./journaldImport.js";
@@ -408,6 +409,8 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   // Intact (trimmed VolWeb) — FIRST: its `{plugins:{…},yara:[…]}` wrapper would fall through to the
   // event-shaped SIEM catch-all, and its YARA rows carry no field any other signature claims (#776).
   if (isIntactMemoryFile(root, sample)) return "memory";
+  // A Volatility run envelope or a bundle of them (#1016): the discriminator decides, never the shape.
+  if (isRunEnvelopeUpload(root)) return "memory";
   if (isVolatilityMap(root)) return "memory";
   if (isSandbox(sample)) return "sandbox";
   if (isAws(sample)) return "aws";

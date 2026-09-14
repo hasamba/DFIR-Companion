@@ -63,6 +63,7 @@ import { pstreeChildren } from "./pstreeDepth.js";
 import { extractTables, SHORT_PLUGIN } from "./memoryTables.js";
 import { carryImage, imageFactsEvents, isImageInfoTable, readImageFacts } from "./memoryImageFacts.js";
 import { exportShapeEvents, exportShapeNote } from "./memoryExportShape.js";
+import { isRunEnvelopeUpload, parseRunEnvelopes } from "./memoryRunEnvelope.js";
 import { boundedAggKey } from "./aggKey.js";
 import { identityMark, packTags } from "./recordIdentity.js";
 import {
@@ -1390,7 +1391,73 @@ function parseMemoryMemprocfsTimeline(text: string, opts: MemoryImportOptions): 
 
 // ───────────────────────────── top-level parse ─────────────────────────────
 
+/** The parsed JSON root when the upload is a run envelope or a bundle of them; undefined otherwise. */
+function runEnvelopeRoot(text: string): unknown {
+  const t = text.trim();
+  if (!t.startsWith("{") || !t.includes("dfir.volatility-run")) return undefined;
+  try {
+    const root: unknown = JSON.parse(t);
+    return isRunEnvelopeUpload(root) ? root : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Every run's export imports as the export it is; the run rows ride beside, under the same cap. */
+function parseMemoryRunBundle(root: unknown, text: string, opts: MemoryImportOptions): MemoryParseResult {
+  const maxEvents = opts.maxEvents ?? maxEventsDefault();
+  // The PLAIN parser reads each embedded export: an envelope nested in an envelope is not an export.
+  const { runRows, exports, note } = parseRunEnvelopes(root, (stdout, filename) =>
+    parseMemoryExport(stdout, { ...opts, filename, maxEvents }),
+  );
+  // One bundle-wide budget: the run rows are aggregated, then every row — run rows and the
+  // exports' already-aggregated rows — is ranked by severity and cut to `maxEvents` once, so a
+  // bundle of N runs never emits N × maxEvents. `total` counts export rows plus one record per
+  // run; `dropped` is what the final cut left unrepresented.
+  const runs = aggregateEvents(runRows, {
+    aggregate: opts.aggregate,
+    minSeverity: opts.minSeverity,
+    maxEvents,
+  });
+  const groups = runs.groups + exports.reduce((n, e) => n + e.groups, 0);
+  const rank: Record<Severity, number> = { Critical: 4, High: 3, Medium: 2, Low: 1, Info: 0 };
+  const ranked = [...runs.events, ...exports.flatMap((e) => e.events)]
+    .sort((a, b) => rank[b.severity] - rank[a.severity] || (b.count ?? 1) - (a.count ?? 1))
+    .slice(0, maxEvents);
+  const finalEvents = stampSourceArtifactHash(ranked, text);
+  const sum = (k: "total" | "tables") => exports.reduce((n, e) => n + e[k], 0);
+  const total = sum("total") + runRows.length;
+  const represented = finalEvents.reduce((n, e) => n + (e.count ?? 1), 0);
+  const notes = [
+    ...exports.map((e) => ("note" in e ? (e as MemoryParseResult).note : "")).filter(Boolean),
+    note,
+  ].filter(Boolean);
+  return {
+    events: finalEvents,
+    iocs: exports.flatMap((e) => e.iocs).slice(0, opts.maxIocs ?? 5000),
+    total,
+    kept: finalEvents.length,
+    dropped: Math.max(0, total - represented),
+    groups,
+    tables: sum("tables"),
+    injected: exports.reduce((n, e) => n + ((e as MemoryParseResult).injected ?? 0), 0),
+    processes: exports.reduce((n, e) => n + ((e as MemoryParseResult).processes ?? 0), 0),
+    connections: exports.reduce((n, e) => n + ((e as MemoryParseResult).connections ?? 0), 0),
+    format: "volatility-run-envelope",
+    tool: "Volatility",
+    ...(notes.length ? { note: notes.join("; ") } : {}),
+  };
+}
+
 export function parseMemory(text: string, opts: MemoryImportOptions = {}): MemoryParseResult {
+  // A run envelope (#1016): the runs' embedded exports import as exports, one run row each.
+  const envelope = runEnvelopeRoot(text);
+  if (envelope !== undefined) return parseMemoryRunBundle(envelope, text, opts);
+  return parseMemoryExport(text, opts);
+}
+
+/** Every memory export format EXCEPT a run envelope — the parser an envelope's embedded stdout goes through. */
+function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParseResult {
   // MemProcFS findevil: a flat finding-report table — check before JSON/text Volatility paths.
   if (looksLikeMemprocfsFindevil(text)) return parseMemoryFindevil(text, opts);
 
