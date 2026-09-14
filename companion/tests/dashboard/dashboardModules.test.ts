@@ -171,8 +171,10 @@ async function findEscCopies(): Promise<{ file: string; esc: (s: string) => stri
   for (const root of roots) {
     for (const entry of await readdir(root, { recursive: true, withFileTypes: true })) {
       if (!entry.isFile() || !/\.(js|ts|html)$/.test(entry.name)) continue;
-      const file = join(entry.parentPath, entry.name);
-      const src = await readFile(file, "utf8");
+      // A Windows checkout has backslash paths and CRLF endings; the window search and the copy
+      // list both assume the POSIX forms.
+      const file = join(entry.parentPath, entry.name).replace(/\\/g, "/");
+      const src = (await readFile(file, "utf8")).replace(/\r\n/g, "\n");
       const window = escSourceWindow(src);
       if (window === null) continue;
       const rel = file.slice(file.lastIndexOf(file.includes("/public/") ? "/public/" : "/src/") + 1);
