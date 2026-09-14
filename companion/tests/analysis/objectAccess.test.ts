@@ -75,5 +75,9 @@ describe("ids and paths", () => {
     });
     expect(normaliseWinPath("C:\\FINANC~1\\x.docx")).toEqual({ unmappable: "short (8.3) name" });
     expect(normaliseWinPath("")).toBeNull();
+    expect(normaliseWinPath("\\\\?\\UNC\\FS01\\Finance\\x.docx")).toEqual({
+      key: "\\\\fs01\\finance\\x.docx",
+    });
+    expect(normaliseWinPath("\\\\fs01\\finance\\x.docx\\")).toEqual({ key: "\\\\fs01\\finance\\x.docx" });
   });
 });

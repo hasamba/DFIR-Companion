@@ -91,8 +91,15 @@ export function normaliseId(raw: string | undefined): string | null {
 export function normaliseWinPath(raw: string | undefined): { key: string } | { unmappable: string } | null {
   const s = (raw ?? "").trim();
   if (!s) return null;
-  const stripped = s.replace(/^\\\\\?\\/, "").replace(/\//g, "\\");
+  // `\\?\C:\…` is the drive path; `\\?\UNC\server\share\…` is `\\server\share\…`.
+  const stripped = s
+    .replace(/\//g, "\\")
+    .replace(/^\\\\\?\\UNC\\/i, "\\\\")
+    .replace(/^\\\\\?\\/, "");
   if (/^\\device\\/i.test(stripped)) return { unmappable: "device path" };
   if (/~\d+(\\|$)/.test(stripped)) return { unmappable: "short (8.3) name" };
-  return { key: stripped.toLowerCase().replace(/\\+/g, "\\").replace(/\\$/, "") };
+  // A UNC root keeps its two leading separators; every other run of separators is one.
+  const unc = stripped.startsWith("\\\\");
+  const body = (unc ? stripped.slice(2) : stripped).toLowerCase().replace(/\\+/g, "\\").replace(/\\$/, "");
+  return { key: `${unc ? "\\\\" : ""}${body}` };
 }

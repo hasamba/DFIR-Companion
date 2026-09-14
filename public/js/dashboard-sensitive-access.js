@@ -39,10 +39,10 @@
     const loc = l.location;
     const objects = l.objects.map((o) => {
       const rows = o.accesses.map(accessRow).join("");
-      return `<details data-safe-style="margin:4px 0"><summary data-safe-style="cursor:pointer"><code>${esc(o.path)}</code> on ${esc(o.host)} — <span data-safe-style="color:${stageColor(o.stage)}">${esc(o.stage)}</span> <span data-safe-style="color:var(--text-muted);font-size:12px">${esc(o.stageReason)}</span></summary>
+      return `<details data-safe-style="margin:4px 0"><summary data-safe-style="cursor:pointer"><code>${esc(o.path)}</code> on ${esc(o.host)} — <span data-safe-style="color:${stageColor(o.stage)}">${esc(o.stage)}</span> <span data-safe-style="color:var(--text-muted);font-size:12px">${esc(o.stageReason)} — ${esc(String(o.accessesTotal))} row(s) analysed, ${esc(String(o.evidenceTotals["data-read"]))} data read(s), ${esc(String(o.evidenceTotals["corroborated-suspicious-read"]))} corroborated</span></summary>
         <table data-safe-style="margin-top:4px;font-size:11px"><thead><tr><th>Row</th><th>Time</th><th>Kind</th><th>Rights</th><th>Data read</th><th>Account</th><th>Process (pid)</th><th>Instance</th><th>Session</th><th>Corroboration</th><th>Later archive create</th><th>Later connection</th><th>Deletion candidate</th></tr></thead><tbody>${rows}${o.accessesTotal > o.accesses.length ? `<tr><td colspan="13">+${esc(String(o.accessesTotal - o.accesses.length))} more not shown</td></tr>` : ""}</tbody></table></details>`;
     });
-    const unread = l.hostsRead.filter((h) => h.accessRowsUnread).map((h) => `${esc(h.host)}: ${esc(String(h.accessRowsUnread))} object-access row(s) past the read bound, not read`).join("; ");
+    const unread = l.hostsRead.filter((h) => h.accessRowsUnread || h.contextRowsUnread).map((h) => `${esc(h.host)}: ${esc(String(h.accessRowsUnread))} object-access row(s) and ${esc(String(h.contextRowsUnread))} handle-request / share-check row(s) past the read bound, not read`).join("; ");
     return `<details open data-safe-style="margin-bottom:8px;border:1px solid var(--border);border-radius:6px;padding:4px 8px">
       <summary data-safe-style="cursor:pointer"><b>${esc(loc.path)}</b> <span data-safe-style="color:var(--text-muted);font-size:12px">${esc(loc.kind)}, ${loc.host ? esc(loc.host) : "any host"}${loc.note ? ` — ${esc(loc.note)}` : ""}</span> <button type="button" data-sn-delete="${esc(loc.id)}" data-safe-style="font-size:11px;margin-left:8px">delete</button></summary>
       <div data-safe-style="padding:6px 0;font-size:12px">
@@ -81,8 +81,8 @@
 
   function renderHosts() {
     if (!reading.hosts.length) return "";
-    const rows = reading.hosts.map((h) => `<tr><td>${esc(h.host)}</td><td>${esc(String(h.accessRows))}${h.accessRowsUnread ? ` (+${esc(String(h.accessRowsUnread))} unread)` : ""}</td><td>${h.span ? `${esc(String(h.span[0]).slice(0, 19))} → ${esc(String(h.span[1]).slice(0, 19))}` : "—"}</td><td>${esc(String(h.processStarts))}</td><td>${esc(String(h.logons))}</td><td>${esc(String(h.findings))}</td><td>${esc(h.note)}</td></tr>`).join("");
-    return `<div data-safe-style="margin-top:8px;font-size:12px"><b>Hosts</b> — context only: object-access rows elsewhere on a host are not coverage of a location; a host's findings never make a read suspicious.<table data-safe-style="margin-top:4px"><thead><tr><th>Host</th><th>Object-access rows</th><th>Span</th><th>Process starts</th><th>Logons</th><th>Rows in findings</th><th>Note</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    const rows = reading.hosts.map((h) => `<tr><td>${esc(h.host)}</td><td>${esc(String(h.accessRows))}${h.accessRowsUnread ? ` (+${esc(String(h.accessRowsUnread))} unread)` : ""}</td><td>${esc(String(h.contextRows))}${h.contextRowsUnread ? ` (+${esc(String(h.contextRowsUnread))} unread)` : ""}</td><td>${h.span ? `${esc(String(h.span[0]).slice(0, 19))} → ${esc(String(h.span[1]).slice(0, 19))}` : "—"}</td><td>${esc(String(h.processStarts))}</td><td>${esc(String(h.logons))}</td><td>${esc(String(h.findings))}</td><td>${esc(h.note)}</td></tr>`).join("");
+    return `<div data-safe-style="margin-top:8px;font-size:12px"><b>Hosts</b> — context only: object-access rows elsewhere on a host are not coverage of a location; a host's findings never make a read suspicious.<table data-safe-style="margin-top:4px"><thead><tr><th>Host</th><th>Object-access rows</th><th>Handle-request / share-check rows</th><th>Span</th><th>Process starts</th><th>Logons</th><th>Rows in findings</th><th>Note</th></tr></thead><tbody>${rows}</tbody></table></div>`;
   }
 
   function onDeclare(ev) {

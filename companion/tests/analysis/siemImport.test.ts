@@ -707,6 +707,7 @@ describe("parseSiemExport — object access (#930 item 7): typed rights, process
     const r = parseSiemExport(
       elastic(
         sec(4656, {
+          ObjectType: "File",
           ObjectName: "C:\\x.docx",
           AccessMask: "0x10000",
           HandleId: "0x1",
@@ -743,8 +744,31 @@ describe("parseSiemExport — object access (#930 item 7): typed rights, process
     expect(by(4656).file?.access?.classes).toEqual(["delete"]);
     expect(by(4660).file?.access?.handleId).toBe("0x1");
     expect(by(5145).file?.path).toBe("C:\\Finance\\Board\\minutes.docx");
-    expect(by(4689).process?.pid).toBe(16);
+    expect(by(4689).process).toMatchObject({ pid: 16, executable: "C:\\Windows\\System32\\notepad.exe" });
     expect(by(4634).authentication?.sessionId).toBe("0x3e7");
+  });
+});
+
+describe("parseSiemExport — Sysmon 5 keeps its image and GUID on the typed process end", () => {
+  it("process / end with pid, executable and id", () => {
+    const r = parseSiemExport(
+      elastic({
+        ...SYSMON_PROC,
+        event_id: 5,
+        event_data: {
+          UtcTime: "2017-03-20 09:47:00.000",
+          ProcessGuid: "{11111111-2222-3333-4444-555555555555}",
+          ProcessId: "420",
+          Image: "C:\\Windows\\System32\\taskeng.exe",
+        },
+      }),
+    );
+    expect(r.events[0].canonical?.event).toMatchObject({ category: "process", type: "end" });
+    expect(r.events[0].canonical?.process).toMatchObject({
+      pid: 420,
+      executable: "C:\\Windows\\System32\\taskeng.exe",
+      id: "11111111-2222-3333-4444-555555555555",
+    });
   });
 });
 

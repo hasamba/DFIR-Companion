@@ -37,7 +37,7 @@ export function sensitiveAccessSection(state: InvestigationState, lines: string[
     lines.push("| Object | Host | Stage | Accesses | Reason |", "|---|---|---|---|---|");
     for (const o of l.objects)
       lines.push(
-        `| ${cellMd(o.path)} | ${cellMd(o.host)} | ${o.stage} | ${o.accessesTotal} | ${cellMd(o.stageReason)} |`,
+        `| ${cellMd(o.path)} | ${cellMd(o.host)} | ${o.stage} | ${o.accessesTotal} (${o.evidenceTotals["data-read"]} data read(s), ${o.evidenceTotals["corroborated-suspicious-read"]} corroborated) | ${cellMd(o.stageReason)} |`,
       );
     if (l.objectsTotal > l.objects.length)
       lines.push(`| … | | | | ${l.objectsTotal - l.objects.length} more object(s) not shown |`);
@@ -56,9 +56,9 @@ export function sensitiveAccessSection(state: InvestigationState, lines: string[
       lines.push("");
     }
     for (const h of l.hostsRead)
-      if (h.accessRowsUnread)
+      if (h.accessRowsUnread || h.contextRowsUnread)
         lines.push(
-          `- ${cellMd(h.host)}: ${h.accessRowsUnread} object-access row(s) past the read bound, not read.`,
+          `- ${cellMd(h.host)}: ${h.accessRowsUnread} object-access row(s) and ${h.contextRowsUnread} handle-request / share-check row(s) past the read bound, not read.`,
         );
   }
   if (r.collections.length) {
@@ -77,12 +77,12 @@ export function sensitiveAccessSection(state: InvestigationState, lines: string[
   lines.push(
     "### Hosts",
     "",
-    "| Host | Object-access rows | Span | Process starts | Logons | Note |",
-    "|---|---|---|---|---|---|",
+    "| Host | Object-access rows | Handle-request / share-check rows | Span | Process starts | Logons | Note |",
+    "|---|---|---|---|---|---|---|",
   );
   for (const h of r.hosts)
     lines.push(
-      `| ${cellMd(h.host)} | ${h.accessRows}${h.accessRowsUnread ? ` (+${h.accessRowsUnread} unread)` : ""} | ${h.span ? `${cellMd(h.span[0])} → ${cellMd(h.span[1])}` : "—"} | ${h.processStarts} | ${h.logons} | ${cellMd(h.note)} |`,
+      `| ${cellMd(h.host)} | ${h.accessRows}${h.accessRowsUnread ? ` (+${h.accessRowsUnread} unread)` : ""} | ${h.contextRows}${h.contextRowsUnread ? ` (+${h.contextRowsUnread} unread)` : ""} | ${h.span ? `${cellMd(h.span[0])} → ${cellMd(h.span[1])}` : "—"} | ${h.processStarts} | ${h.logons} | ${cellMd(h.note)} |`,
     );
   lines.push("");
 }

@@ -390,4 +390,177 @@ describe("sensitiveAccess — stages over candidates", () => {
     );
     expect(any.locations[0].objects[0]).toMatchObject({ host: "FS02", stage: "access-recorded" });
   });
+
+  describe("Codex code round 1", () => {
+    const base = () => [
+      fileRow(DOC, at(0)),
+      start(420, "C:\\Windows\\System32\\notepad.exe", at(2), { id: "s1", guid: "{G1}" }),
+    ];
+    it("a Key object's mask is not read as file rights; a pid-only 4663 is no instance; an earlier start of another image with no termination is unresolved reuse", () => {
+      const key = sensitiveAccess(
+        stateOf([...base(), access(DOC, at(5), { id: "k", objectType: "Key", mask: "0x1" })]),
+        [loc()],
+        NOW,
+      ).locations[0].objects[0].accesses[0];
+      expect(key).toMatchObject({
+        rights: [],
+        classes: ["unknown"],
+        mask: "0x1",
+        objectType: "Key",
+        dataRead: false,
+      });
+      const pidOnly = sensitiveAccess(
+        stateOf([...base(), access(DOC, at(5), { id: "p", image: "" })]),
+        [loc()],
+        NOW,
+      ).locations[0].objects[0].accesses[0];
+      expect(pidOnly.instance.state).toBe("not-established");
+      expect(pidOnly.instance.reason).toContain("a pid alone is not an instance");
+      const reuse = sensitiveAccess(
+        stateOf([
+          fileRow(DOC, at(0)),
+          start(420, "C:\\Windows\\System32\\cmd.exe", at(1), { id: "s0" }),
+          ...base(),
+          access(DOC, at(5), { id: "a1" }),
+        ]),
+        [loc()],
+        NOW,
+      ).locations[0].objects[0].accesses[0];
+      expect(reuse.instance).toMatchObject({ state: "ambiguous", startEventId: "s1" });
+      expect(reuse.instance.reason).toContain("no termination row separates");
+    });
+    it("logon ids join across decimal and hex; a shutdown row (1074) between the 4624 and the access makes the session ambiguous", () => {
+      const dec = sensitiveAccess(
+        stateOf([
+          ...base(),
+          logon("999", at(1), { id: "l1" }),
+          access(DOC, at(5), { id: "a1", logonId: "0x3E7" }),
+        ]),
+        [loc()],
+        NOW,
+      ).locations[0].objects[0].accesses[0];
+      expect(dec.session).toMatchObject({ state: "candidate", logonEventId: "l1" });
+      const boot = ev({
+        id: "b1",
+        timestamp: at(3),
+        ...canon({ event: { category: "other", type: "boot" } }),
+      });
+      const cut = sensitiveAccess(
+        stateOf([...base(), logon("0x3e7", at(1), { id: "l1" }), boot, access(DOC, at(5), { id: "a1" })]),
+        [loc()],
+        NOW,
+      ).locations[0].objects[0].accesses[0];
+      expect(cut.session.state).toBe("ambiguous");
+      expect(cut.session.reason).toContain("boot");
+    });
+    it("a 4660 joins a DELETE access only inside the handle's 4656 … 4658 lifecycle; a reopened handle after the close never joins; a row missing the pid never joins", () => {
+      const ed = { HandleId: "0x1234", ProcessId: "0x1a4", SubjectLogonId: "0x3e7" };
+      const oa = (eid: number, ts: string, id: string, over: Record<string, string> = {}) =>
+        ev({
+          id,
+          timestamp: ts,
+          ...canon(
+            objectAccessBlocks(
+              eid,
+              false,
+              (k) => ({ ...ed, ObjectName: DOC, AccessMask: "0x10000", ...over })[k] ?? "",
+            ),
+          ),
+        });
+      const rows = [
+        fileRow(DOC, at(0)),
+        oa(4656, at(4), "open1"),
+        access(DOC, at(5), { id: "d1", mask: "0x10000", handleId: "0x1234" }),
+        oa(4658, at(6), "close1"),
+        oa(4656, at(7), "open2"),
+        oa(4660, at(8), "gone-after-close"),
+      ];
+      const r = sensitiveAccess(stateOf(rows), [loc()], NOW).locations[0].objects[0];
+      expect(r.accesses.find((a) => a.eventId === "d1")!.deletionCandidates).toEqual([]);
+      const inside = sensitiveAccess(
+        stateOf([
+          fileRow(DOC, at(0)),
+          oa(4656, at(4), "open1"),
+          access(DOC, at(5), { id: "d1", mask: "0x10000", handleId: "0x1234" }),
+          oa(4660, at(5.5), "gone"),
+          oa(4658, at(6), "close1"),
+        ]),
+        [loc()],
+        NOW,
+      ).locations[0].objects[0];
+      expect(inside.accesses.find((a) => a.eventId === "d1")!.deletionCandidates).toEqual(["gone"]);
+      const noPid = sensitiveAccess(
+        stateOf([
+          fileRow(DOC, at(0)),
+          access(DOC, at(5), { id: "d1", mask: "0x10000", handleId: "0x1234", pid: "" }),
+          oa(4660, at(5.5), "gone", { ProcessId: "" }),
+        ]),
+        [loc()],
+        NOW,
+      ).locations[0].objects[0];
+      expect(noPid.accesses[0].deletionCandidates).toEqual([]);
+    });
+    it("collection shapes come only from candidate instances; ambiguous reads never form a group", () => {
+      const files = Array.from({ length: 12 }, (_, i) => `C:\\Finance\\Board\\doc${i}.docx`);
+      const rows = [
+        ...files.map((f, i) => fileRow(f, at(0), "create", `f${i}`)),
+        start(420, "C:\\Windows\\System32\\cmd.exe", at(1), { id: "s0" }),
+        start(420, "C:\\Windows\\System32\\notepad.exe", at(1.5), { id: "s1", guid: "{G1}" }),
+        ...files.map((f, i) => access(f, at(2 + i), { id: `a${i}` })),
+      ];
+      expect(
+        sensitiveAccess(stateOf(rows), [loc({ path: "C:\\Finance\\Board", kind: "folder" })], NOW)
+          .collections,
+      ).toEqual([]);
+      const noStart = rows.filter((e) => !e.id.startsWith("s"));
+      expect(
+        sensitiveAccess(stateOf(noStart), [loc({ path: "C:\\Finance\\Board", kind: "folder" })], NOW)
+          .collections,
+      ).toEqual([]);
+    });
+    it("every bounded row feeds the stage: a High-corroborated read at position 30 lifts the object; totals count what was analysed", () => {
+      const rows = [
+        fileRow(DOC, at(0)),
+        start(420, "C:\\Windows\\System32\\notepad.exe", at(2), { id: "s1" }),
+        start(777, "C:\\Tools\\mimikatz.exe", at(2), { id: "s2", severity: "High", mitre: ["T1003"] }),
+        ...Array.from({ length: 29 }, (_, i) => access(DOC, at(5 + i / 100), { id: `a${i}` })),
+        access(DOC, at(6), { id: "late", pid: "0x309", image: "C:\\Tools\\mimikatz.exe" }),
+      ];
+      const o = sensitiveAccess(stateOf(rows), [loc()], NOW).locations[0].objects[0];
+      expect(o.stage).toBe("corroborated-suspicious-read");
+      expect(o.accesses).toHaveLength(20);
+      expect(o.accessesTotal).toBe(30);
+      expect(o.evidenceTotals["corroborated-suspicious-read"]).toBe(1);
+      expect(o.evidence["corroborated-suspicious-read"]).toEqual(["late"]);
+    });
+    it("a flood of handle requests never evicts an access row: the two families are bounded apart", () => {
+      const flood = Array.from({ length: 30 }, (_, i) =>
+        access(DOC, at(1 + i / 100), { id: `h${i}`, eid: 4656 }),
+      );
+      const rows = [
+        fileRow(DOC, at(0)),
+        start(420, "C:\\Windows\\System32\\notepad.exe", at(0.5), { id: "s1" }),
+        ...flood,
+        access(DOC, at(5), { id: "a1" }),
+      ];
+      const r = sensitiveAccess(stateOf(rows), [loc()], NOW);
+      const o = r.locations[0].objects[0];
+      expect(o.evidenceTotals["data-read"]).toBe(1);
+      expect(r.locations[0].hostsRead[0]).toMatchObject({
+        accessRows: 1,
+        contextRows: 30,
+        accessRowsUnread: 0,
+        contextRowsUnread: 0,
+      });
+    });
+    it("an extended-UNC access path equals the declared UNC path", () => {
+      const unc = loc({ host: "", path: "\\\\fs01\\finance\\board\\minutes.docx", kind: "file" });
+      const rows = [
+        fileRow("\\\\FS01\\Finance\\Board\\minutes.docx", at(0)),
+        access("\\\\?\\UNC\\FS01\\Finance\\Board\\minutes.docx", at(5), { id: "a1" }),
+      ];
+      const o = sensitiveAccess(stateOf(rows), [unc], NOW).locations[0].objects[0];
+      expect(o.accesses[0].dataRead).toBe(true);
+    });
+  });
 });

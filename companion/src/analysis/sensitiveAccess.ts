@@ -3,7 +3,8 @@ import type { SensitiveLocation } from "./sensitiveLocation.js";
 import { normaliseWinPath, type AccessClass } from "./canonicalObjectAccess.js";
 import {
   ACCESS_ROWS_PER_HOST_MAX,
-  fileEvidencedAt,
+  FileEvidenceCursor,
+  handleKey,
   hostKey,
   indexHosts,
   instanceCandidate,
@@ -74,14 +75,25 @@ export interface ObjectAccess {
   accessesTotal: number;
   stage: Stage;
   stageReason: string;
+  /** Evidence ids per stage, named up to the bound; `evidenceTotals` counts every row analysed. */
   evidence: Record<Stage, string[]>;
+  evidenceTotals: Record<Stage, number>;
+}
+
+export interface HostRead {
+  host: string;
+  accessRows: number;
+  accessRowsUnread: number;
+  contextRows: number;
+  contextRowsUnread: number;
+  span?: [string, string];
 }
 
 export interface LocationAccess {
   location: SensitiveLocation;
   objects: ObjectAccess[];
   objectsTotal: number;
-  hostsRead: { host: string; accessRows: number; accessRowsUnread: number; span?: [string, string] }[];
+  hostsRead: HostRead[];
   note: string;
 }
 
@@ -100,16 +112,7 @@ export interface CollectionShape {
 export interface SensitiveAccess {
   locations: LocationAccess[];
   collections: CollectionShape[];
-  hosts: {
-    host: string;
-    accessRows: number;
-    accessRowsUnread: number;
-    span?: [string, string];
-    processStarts: number;
-    logons: number;
-    findings: number;
-    note: string;
-  }[];
+  hosts: (HostRead & { processStarts: number; logons: number; findings: number; note: string })[];
   generated: string;
 }
 
@@ -121,37 +124,55 @@ interface AccessRow {
   kind: AccessRecord["kind"];
 }
 
-/** Per host: the object-access rows in event-time order, up to the bound. */
-function accessRowsByHost(
-  events: readonly ForensicEvent[],
-): Map<string, { rows: AccessRow[]; unread: number; total: number }> {
-  const out = new Map<string, { rows: AccessRow[]; unread: number; total: number }>();
+interface HostRows {
+  /** 4663 rows in event-time order, bounded on their own. */
+  access: AccessRow[];
+  accessUnread: number;
+  /** 4656 / 5145 context rows, bounded separately so a flood of them never evicts an access. */
+  context: AccessRow[];
+  contextUnread: number;
+}
+
+function readAccessRow(e: ForensicEvent): AccessRow | null {
+  const ev = e.canonical?.event;
+  const f = e.canonical?.file;
+  if (!ev || !f?.access || !e.asset) return null;
+  const kind: AccessRecord["kind"] | null =
+    ev.category === "file" && ev.type === "access"
+      ? "access"
+      : ev.category === "file" && ev.type === "handle-request"
+        ? "handle-request"
+        : ev.category === "network" && ev.type === "share-object-check"
+          ? "share-object-check"
+          : null;
+  if (!kind) return null;
+  const at = ms(e.timestamp);
+  const n = normaliseWinPath(f.path);
+  if (at === null || !n || !("key" in n)) return null;
+  return { e, at, key: n.key, classes: f.access.classes as AccessClass[], kind };
+}
+
+/** Per host: the object-access rows in event-time order, each family bounded on its own. */
+function accessRowsByHost(events: readonly ForensicEvent[]): Map<string, HostRows> {
+  const out = new Map<string, HostRows>();
   for (const e of events) {
-    const ev = e.canonical?.event;
-    const f = e.canonical?.file;
-    if (!ev || !f?.access || !e.asset) continue;
-    const kind: AccessRecord["kind"] | null =
-      ev.category === "file" && ev.type === "access"
-        ? "access"
-        : ev.category === "file" && ev.type === "handle-request"
-          ? "handle-request"
-          : ev.category === "network" && ev.type === "share-object-check"
-            ? "share-object-check"
-            : null;
-    if (!kind) continue;
-    const at = ms(e.timestamp);
-    const n = normaliseWinPath(f.path);
-    if (at === null || !n || !("key" in n)) continue;
+    const row = readAccessRow(e);
+    if (!row) continue;
     const k = hostKey(e.asset);
-    const b = out.get(k) ?? out.set(k, { rows: [], unread: 0, total: 0 }).get(k)!;
-    b.total += 1;
-    b.rows.push({ e, at, key: n.key, classes: f.access.classes as AccessClass[], kind });
+    const b =
+      out.get(k) ?? out.set(k, { access: [], accessUnread: 0, context: [], contextUnread: 0 }).get(k)!;
+    (row.kind === "access" ? b.access : b.context).push(row);
   }
   for (const b of out.values()) {
-    b.rows.sort((x, y) => x.at - y.at);
-    if (b.rows.length > ACCESS_ROWS_PER_HOST_MAX) {
-      b.unread = b.rows.length - ACCESS_ROWS_PER_HOST_MAX;
-      b.rows.length = ACCESS_ROWS_PER_HOST_MAX;
+    b.access.sort((x, y) => x.at - y.at);
+    b.context.sort((x, y) => x.at - y.at);
+    if (b.access.length > ACCESS_ROWS_PER_HOST_MAX) {
+      b.accessUnread = b.access.length - ACCESS_ROWS_PER_HOST_MAX;
+      b.access.length = ACCESS_ROWS_PER_HOST_MAX;
+    }
+    if (b.context.length > ACCESS_ROWS_PER_HOST_MAX) {
+      b.contextUnread = b.context.length - ACCESS_ROWS_PER_HOST_MAX;
+      b.context.length = ACCESS_ROWS_PER_HOST_MAX;
     }
   }
   return out;
@@ -189,27 +210,27 @@ function pivotsFor(idx: HostIndex, guid: string | undefined, at: number): Access
   };
 }
 
-function deletionCandidates(rows: readonly AccessRow[], row: AccessRow): string[] {
-  const f = row.e.canonical?.file?.access;
-  if (!row.classes.includes("delete") || !f?.handleId) return [];
-  const pid = row.e.canonical?.process?.pid;
-  const session = row.e.canonical?.authentication?.sessionId;
-  return rows
-    .filter((r) => {
-      const c = r.e.canonical;
-      return (
-        c?.event?.type === "object-deleted" &&
-        r.at >= row.at &&
-        r.at - row.at <= DELETE_WINDOW_MS &&
-        c.file?.access?.handleId === f.handleId &&
-        c.process?.pid === pid &&
-        c.authentication?.sessionId === session
-      );
-    })
-    .map((r) => r.e.id);
+/** 4660 rows that share host, pid, logon id and handle with a DELETE access, inside the handle's
+ * 4656 … 4658 lifecycle when the case holds it, else within five minutes after the access. */
+function deletionCandidates(idx: HostIndex, deletes: readonly AccessRow[], row: AccessRow): string[] {
+  if (!row.classes.includes("delete")) return [];
+  const hk = handleKey(row.e.canonical);
+  if (!hk) return [];
+  const life = idx.handles.get(hk) ?? [];
+  const open = [...life].reverse().find((h) => h.kind === "open" && h.at <= row.at);
+  const close = open ? life.find((h) => h.kind === "close" && h.at >= row.at) : undefined;
+  const to = close ? close.at : row.at + DELETE_WINDOW_MS;
+  return deletes
+    .filter((d) => handleKey(d.e.canonical) === hk && d.at >= row.at && d.at <= to)
+    .map((d) => d.e.id);
 }
 
-function record(row: AccessRow, idx: HostIndex, deletes: readonly AccessRow[]): AccessRecord {
+function record(
+  row: AccessRow,
+  idx: HostIndex,
+  cursor: FileEvidenceCursor,
+  deletes: readonly AccessRow[],
+): AccessRecord {
   const c = row.e.canonical!;
   const f = c.file!;
   const pid = c.process?.pid;
@@ -223,9 +244,7 @@ function record(row: AccessRow, idx: HostIndex, deletes: readonly AccessRow[]): 
         };
   const sess = sessionCandidate(idx, c.authentication?.sessionId, row.at);
   const fe =
-    row.classes.includes("read-or-listing") && row.kind === "access"
-      ? fileEvidencedAt(idx, row.key, row.at)
-      : null;
+    row.classes.includes("read-or-listing") && row.kind === "access" ? cursor.at(row.key, row.at) : null;
   const corroboration: string[] = [];
   if (inst.state === "candidate" && inst.start && HIGH.has(inst.start.severity))
     corroboration.push(
@@ -284,15 +303,16 @@ function record(row: AccessRow, idx: HostIndex, deletes: readonly AccessRow[]): 
             connections: [],
             note: "no pivot: the access is not a data read by a candidate instance",
           },
-    deletionCandidates: deletionCandidates(deletes, row),
+    deletionCandidates: deletionCandidates(idx, deletes, row),
   };
 }
 
-function objectOf(host: string, path: string, records: AccessRecord[], total: number): ObjectAccess {
+/** Every analysed record feeds the stage; only the serialised lists are capped. */
+function objectOf(host: string, path: string, records: AccessRecord[]): ObjectAccess {
   const reads = records.filter((r) => r.dataRead);
   const byInstance = reads.filter((r) => r.instance.state === "candidate");
   const corroborated = byInstance.filter((r) => r.corroboration.length);
-  const evidence: Record<Stage, string[]> = {
+  const all: Record<Stage, string[]> = {
     "access-recorded": records.map((r) => r.eventId),
     "data-read": reads.map((r) => r.eventId),
     "read-by-candidate-instance": byInstance.map((r) => r.eventId),
@@ -311,64 +331,78 @@ function objectOf(host: string, path: string, records: AccessRecord[], total: nu
     stage = "data-read";
     stageReason = `${reads.length} data read(s); the process instance is ${[...new Set(reads.map((r) => r.instance.state))].join(" / ")} (${reads[0].instance.reason})`;
   } else {
-    const first = records[0];
-    stageReason = records.some((r) => r.classes.includes("read-or-listing"))
-      ? `read or listing only — ${records.find((r) => r.classes.includes("read-or-listing"))!.fileEvidence}`
-      : `no read right exercised (${[...new Set(records.flatMap((r) => r.classes))].join(", ") || first.kind})`;
+    const listing = records.find((r) => r.classes.includes("read-or-listing"));
+    stageReason = listing
+      ? `read or listing only — ${listing.fileEvidence}`
+      : `no read right exercised (${[...new Set(records.flatMap((r) => r.classes))].join(", ") || records[0].kind})`;
   }
+  const stages = Object.keys(all) as Stage[];
   return {
     path,
     host,
     accesses: records.slice(0, NAMED_MAX),
-    accessesTotal: total,
+    accessesTotal: records.length,
     stage,
     stageReason,
-    evidence,
+    evidence: Object.fromEntries(stages.map((k) => [k, all[k].slice(0, NAMED_MAX)])) as Record<
+      Stage,
+      string[]
+    >,
+    evidenceTotals: Object.fromEntries(stages.map((k) => [k, all[k].length])) as Record<Stage, number>,
   };
 }
 
 function collections(
-  rowsByHost: ReadonlyMap<string, { rows: AccessRow[]; unread: number }>,
+  rowsByHost: ReadonlyMap<string, HostRows>,
   hosts: ReadonlyMap<string, HostIndex>,
 ): CollectionShape[] {
   const out: CollectionShape[] = [];
   for (const [hk, b] of rowsByHost) {
     const idx = hosts.get(hk);
     if (!idx) continue;
+    const cursor = new FileEvidenceCursor(idx);
+    // Only reads by a CANDIDATE instance, grouped by the candidate's own identity (its GUID, else
+    // its start row). Ambiguous or unestablished rows never form a group.
     const byInstance = new Map<
       string,
       { image?: string; reads: { at: number; key: string; id: string }[] }
     >();
-    for (const row of b.rows) {
-      if (row.kind !== "access" || !row.classes.includes("read-or-listing")) continue;
-      if (fileEvidencedAt(idx, row.key, row.at).state !== "file") continue;
+    for (const row of b.access) {
+      if (!row.classes.includes("read-or-listing")) continue;
+      if (cursor.at(row.key, row.at).state !== "file") continue;
       const c = row.e.canonical!;
       const inst = instanceCandidate(idx, c.process?.pid, c.process?.executable, row.at);
-      const key =
-        inst.start?.guid ?? inst.start?.eventId ?? `${c.process?.pid ?? "?"}|${c.process?.executable ?? "?"}`;
-      const g =
-        byInstance.get(key) ??
-        byInstance
-          .set(key, { ...(c.process?.executable ? { image: c.process.executable } : {}), reads: [] })
-          .get(key)!;
+      if (inst.state !== "candidate" || !inst.start) continue;
+      const key = inst.start.guid ?? inst.start.eventId;
+      const g = byInstance.get(key) ?? byInstance.set(key, { image: inst.start.image, reads: [] }).get(key)!;
       g.reads.push({ at: row.at, key: row.key, id: row.e.id });
     }
+    const lastRead = b.access.length ? b.access[b.access.length - 1].at : 0;
     for (const [instance, g] of byInstance) {
-      let best: { from: number; to: number; ids: string[]; n: number } | null = null;
-      for (let i = 0; i < g.reads.length; i++) {
-        const seen = new Set<string>();
-        const ids: string[] = [];
-        let j = i;
-        for (; j < g.reads.length && g.reads[j].at - g.reads[i].at <= COLLECTION_WINDOW_MS; j++) {
-          if (!seen.has(g.reads[j].key)) ids.push(g.reads[j].id);
-          seen.add(g.reads[j].key);
+      // Two pointers over the time-ordered reads with per-path counts: O(n) per instance.
+      const counts = new Map<string, number>();
+      let best: { from: number; to: number; n: number; start: number; end: number } | null = null;
+      let lo = 0;
+      for (let hi = 0; hi < g.reads.length; hi++) {
+        counts.set(g.reads[hi].key, (counts.get(g.reads[hi].key) ?? 0) + 1);
+        while (g.reads[hi].at - g.reads[lo].at > COLLECTION_WINDOW_MS) {
+          const k = g.reads[lo].key;
+          const n = (counts.get(k) ?? 1) - 1;
+          if (n) counts.set(k, n);
+          else counts.delete(k);
+          lo += 1;
         }
-        if (seen.size >= COLLECTION_OBJECTS && (!best || seen.size > best.n))
-          best = { from: g.reads[i].at, to: g.reads[j - 1].at, ids, n: seen.size };
+        if (counts.size >= COLLECTION_OBJECTS && (!best || counts.size > best.n))
+          best = { from: g.reads[lo].at, to: g.reads[hi].at, n: counts.size, start: lo, end: hi };
       }
       if (!best) continue;
-      const truncated =
-        b.unread > 0 && b.rows.length && best.to >= b.rows[b.rows.length - 1].at - COLLECTION_WINDOW_MS;
+      const seen = new Set<string>();
+      const ids: string[] = [];
+      for (let i = best.start; i <= best.end; i++) {
+        if (!seen.has(g.reads[i].key)) ids.push(g.reads[i].id);
+        seen.add(g.reads[i].key);
+      }
+      const truncated = b.accessUnread > 0 && best.to >= lastRead - COLLECTION_WINDOW_MS;
       out.push({
         host: idx.host,
         instance,
@@ -376,7 +410,7 @@ function collections(
         objects: best.n,
         from: new Date(best.from).toISOString(),
         to: new Date(best.to).toISOString(),
-        eventIds: best.ids.slice(0, NAMED_MAX),
+        eventIds: ids.slice(0, NAMED_MAX),
         state: truncated ? "indeterminate" : "shape",
         note: truncated
           ? "indeterminate (truncated read): rows past the host bound overlap this window"
@@ -386,6 +420,20 @@ function collections(
   }
   return out.sort((a, b) => b.objects - a.objects || a.host.localeCompare(b.host)).slice(0, NAMED_MAX);
 }
+
+const spanOf = (rows: readonly AccessRow[]): { span?: [string, string] } =>
+  rows.length
+    ? { span: [new Date(rows[0].at).toISOString(), new Date(rows[rows.length - 1].at).toISOString()] }
+    : {};
+
+const hostRead = (host: string, b: HostRows | undefined): HostRead => ({
+  host,
+  accessRows: b?.access.length ?? 0,
+  accessRowsUnread: b?.accessUnread ?? 0,
+  contextRows: b?.context.length ?? 0,
+  contextRowsUnread: b?.contextUnread ?? 0,
+  ...spanOf(b?.access ?? []),
+});
 
 /** The reading over the forensic timeline for the declared locations. Pure; no AI. */
 export function sensitiveAccess(
@@ -407,40 +455,29 @@ export function sensitiveAccess(
   }
   const out: LocationAccess[] = locations.map((loc) => {
     const locHost = hostKey(loc.host);
-    const objects = new Map<string, { host: string; path: string; records: AccessRecord[]; total: number }>();
-    const hostsRead: LocationAccess["hostsRead"] = [];
+    const objects = new Map<string, { host: string; path: string; records: AccessRecord[] }>();
+    const hostsRead: HostRead[] = [];
     for (const [hk, b] of rowsByHost) {
       if (locHost && hk !== locHost) continue;
       const idx = hosts.get(hk)!;
+      const cursor = new FileEvidenceCursor(idx);
+      const deletes = deletesByHost.get(hk) ?? [];
       let touched = false;
-      for (const row of b.rows) {
+      // Every bounded row is analysed; NAMED_MAX applies only when the object is serialised.
+      for (const row of [...b.access, ...b.context].sort((x, y) => x.at - y.at)) {
         if (!underLocation(loc, row.key)) continue;
         touched = true;
         const ok = `${hk}|${row.key}`;
         const o =
           objects.get(ok) ??
           objects
-            .set(ok, { host: idx.host, path: row.e.canonical?.file?.path ?? row.key, records: [], total: 0 })
+            .set(ok, { host: idx.host, path: row.e.canonical?.file?.path ?? row.key, records: [] })
             .get(ok)!;
-        o.total += 1;
-        if (o.records.length < NAMED_MAX * 5) o.records.push(record(row, idx, deletesByHost.get(hk) ?? []));
+        o.records.push(record(row, idx, cursor, deletes));
       }
-      if (touched || locHost)
-        hostsRead.push({
-          host: idx.host,
-          accessRows: b.rows.length,
-          accessRowsUnread: b.unread,
-          ...(b.rows.length
-            ? {
-                span: [
-                  new Date(b.rows[0].at).toISOString(),
-                  new Date(b.rows[b.rows.length - 1].at).toISOString(),
-                ] as [string, string],
-              }
-            : {}),
-        });
+      if (touched || locHost) hostsRead.push(hostRead(idx.host, b));
     }
-    const all = [...objects.values()].map((o) => objectOf(o.host, o.path, o.records, o.total));
+    const all = [...objects.values()].map((o) => objectOf(o.host, o.path, o.records));
     const rank: Record<Stage, number> = {
       "corroborated-suspicious-read": 0,
       "read-by-candidate-instance": 1,
@@ -463,26 +500,18 @@ export function sensitiveAccess(
     .map((idx) => {
       const b = rowsByHost.get(hostKey(idx.host));
       return {
-        host: idx.host,
-        accessRows: b?.rows.length ?? 0,
-        accessRowsUnread: b?.unread ?? 0,
-        ...(b?.rows.length
-          ? {
-              span: [
-                new Date(b.rows[0].at).toISOString(),
-                new Date(b.rows[b.rows.length - 1].at).toISOString(),
-              ] as [string, string],
-            }
-          : {}),
+        ...hostRead(idx.host, b),
         processStarts: idx.startsTotal,
-        logons: [...idx.logons.values()].reduce((n, l) => n + l.length, 0),
+        logons: [...idx.logons.values()].reduce((c, l) => c + l.length, 0),
         findings: idx.findings,
-        note: b?.rows.length
+        note: b?.access.length
           ? "object-access rows observed on this host — context only, not coverage of any location"
           : "no object-access row on this host — absence of access rows establishes nothing",
       };
     })
-    .filter((h) => h.accessRows || locations.some((l) => hostKey(l.host) === hostKey(h.host)))
+    .filter(
+      (h) => h.accessRows || h.contextRows || locations.some((l) => hostKey(l.host) === hostKey(h.host)),
+    )
     .sort((a, b) => a.host.localeCompare(b.host))
     .slice(0, NAMED_MAX * 5);
   return { locations: out, collections: collections(rowsByHost, hosts), hosts: hostRows, generated: now };

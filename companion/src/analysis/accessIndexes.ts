@@ -1,5 +1,5 @@
 import type { ForensicEvent } from "./stateTypes.js";
-import { normaliseWinPath } from "./canonicalObjectAccess.js";
+import { normaliseId, normaliseWinPath } from "./canonicalObjectAccess.js";
 
 // Per-host indexes the sensitive-access reading joins through (#930 item 7): process starts and
 // ends by pid, logons / logoffs by logon id, boot rows, and file evidence by normalised path.
@@ -58,7 +58,17 @@ export interface HostIndex {
   byGuid: Map<string, ForensicEvent[]>;
   /** File rows by normalised path (evidence that an object is a file). */
   files: Map<string, FileEvidence[]>;
+  /** Handle lifecycles by `pid|session|handle`: 4656 opens, 4658 closes, in time order. */
+  handles: Map<string, { at: number; kind: "open" | "close" }[]>;
   findings: number;
+}
+
+/** The identity a handle-bound join needs on BOTH records; null when any part is missing. */
+export function handleKey(c: ForensicEvent["canonical"]): string | null {
+  const pid = c?.process?.pid;
+  const session = normaliseId(c?.authentication?.sessionId);
+  const handle = c?.file?.access?.handleId;
+  return pid === undefined || !session || !handle ? null : `${pid}|${session}|${handle}`;
 }
 
 const FILE_OPEN = new Set(["create", "write", "modify"]);
@@ -87,6 +97,7 @@ function newIndex(host: string): HostIndex {
     earliest: null,
     byGuid: new Map(),
     files: new Map(),
+    handles: new Map(),
     findings: 0,
   };
 }
@@ -112,6 +123,7 @@ export function indexHosts(events: readonly ForensicEvent[]): Map<string, HostIn
     const ev = c?.event;
     if (!c || !ev) continue;
     if (c.process?.id) push(idx.byGuid, c.process.id, e);
+    const sessionKey = normaliseId(c.authentication?.sessionId);
     if (ev.category === "process" && ev.type === "start" && c.process?.pid !== undefined) {
       idx.startsTotal += 1;
       if (idx.startsTotal > PROCESS_STARTS_PER_HOST_MAX) {
@@ -135,20 +147,24 @@ export function indexHosts(events: readonly ForensicEvent[]): Map<string, HostIn
       ev.category === "authentication" &&
       ev.type === "logon" &&
       ev.outcome !== "failed" &&
-      c.authentication?.sessionId
+      sessionKey
     ) {
-      push(idx.logons, c.authentication.sessionId.toLowerCase(), {
+      push(idx.logons, sessionKey, {
         eventId: e.id,
         at,
-        sessionId: c.authentication.sessionId,
+        sessionId: sessionKey,
         ...(c.actor?.kind === "account" && c.actor.name ? { account: c.actor.name } : {}),
-        ...(c.authentication.logonType !== undefined ? { logonType: c.authentication.logonType } : {}),
+        ...(c.authentication?.logonType !== undefined ? { logonType: c.authentication?.logonType } : {}),
         ...(c.network?.source?.address ? { sourceAddress: c.network.source.address } : {}),
         severity: e.severity,
       });
-    } else if (ev.category === "authentication" && ev.type === "logoff" && c.authentication?.sessionId)
-      push(idx.logoffs, c.authentication.sessionId.toLowerCase(), at);
+    } else if (ev.category === "authentication" && ev.type === "logoff" && sessionKey)
+      push(idx.logoffs, sessionKey, at);
     else if (ev.type === "boot") idx.boots.push(at);
+    if (ev.category === "file" && (ev.type === "handle-request" || ev.type === "handle-closed")) {
+      const hk = handleKey(c);
+      if (hk) push(idx.handles, hk, { at, kind: ev.type === "handle-request" ? "open" : "close" });
+    }
     const fk = fileEvidenceOf(e);
     const path = c.file?.path ?? e.path;
     if (fk && path) {
@@ -162,6 +178,7 @@ export function indexHosts(events: readonly ForensicEvent[]): Map<string, HostIn
     for (const l of idx.logons.values()) l.sort((a, b) => a.at - b.at);
     for (const l of idx.logoffs.values()) l.sort((a, b) => a - b);
     for (const l of idx.files.values()) l.sort((a, b) => a.at - b.at);
+    for (const l of idx.handles.values()) l.sort((a, b) => a.at - b.at);
     idx.boots.sort((a, b) => a - b);
   }
   return out;
@@ -181,6 +198,11 @@ export function instanceCandidate(
   at: number,
 ): InstanceCandidate {
   if (pid === undefined) return { state: "not-established", reason: "no process id on the record" };
+  if (!imageKey(image))
+    return {
+      state: "not-established",
+      reason: "no process image on the record — a pid alone is not an instance",
+    };
   const starts = (idx.starts.get(pid) ?? []).filter((s) => s.at <= at);
   if (!starts.length)
     return {
@@ -190,27 +212,30 @@ export function instanceCandidate(
         : `no process-start row for pid ${pid} on this host before the access — name and pid only`,
     };
   const latest = starts[starts.length - 1];
-  const ended = (idx.ends.get(pid) ?? []).some((t) => t > latest.at && t <= at);
-  if (ended)
+  const ends = idx.ends.get(pid) ?? [];
+  if (ends.some((t) => t > latest.at && t <= at))
     return {
       state: "not-established",
       reason: `pid ${pid}'s latest start (${latest.eventId}) ended before the access`,
     };
-  if (image && imageKey(image) !== latest.imageKey)
+  if (!latest.imageKey)
+    return {
+      state: "ambiguous",
+      reason: `the latest start of pid ${pid} (${latest.eventId}) names no image`,
+      start: latest,
+    };
+  if (imageKey(image) !== latest.imageKey)
     return {
       state: "ambiguous",
       reason: `pid ${pid} reused: the latest start before the access is ${latest.image}, the record names ${image}`,
     };
-  const sameImageEarlier = starts
-    .slice(0, -1)
-    .filter(
-      (s) =>
-        s.imageKey === latest.imageKey && !(idx.ends.get(pid) ?? []).some((t) => t > s.at && t <= latest.at),
-    );
-  if (sameImageEarlier.length)
+  // Any earlier start of the pid with no termination row between it and the latest start is an
+  // unresolved reuse, whatever its image.
+  const unresolved = starts.slice(0, -1).filter((s) => !ends.some((t) => t > s.at && t <= latest.at));
+  if (unresolved.length)
     return {
       state: "ambiguous",
-      reason: `pid ${pid} started ${starts.length} times with the same image before the access and no termination row separates them`,
+      reason: `pid ${pid} started ${starts.length} times before the access and no termination row separates ${unresolved.length} of them from the latest start`,
       start: latest,
     };
   if (idx.startsUnread)
@@ -238,8 +263,9 @@ export function sessionCandidate(
   sessionId: string | undefined,
   at: number,
 ): SessionCandidate {
-  if (!sessionId) return { state: "not-established", reason: "no logon id on the record" };
-  const rows = (idx.logons.get(sessionId.toLowerCase()) ?? []).filter((l) => l.at <= at);
+  const key = normaliseId(sessionId);
+  if (!key) return { state: "not-established", reason: "no logon id on the record" };
+  const rows = (idx.logons.get(key) ?? []).filter((l) => l.at <= at);
   if (!rows.length)
     return {
       state: "not-established",
@@ -251,7 +277,7 @@ export function sessionCandidate(
       reason: `${rows.length} logons share logon id ${sessionId} on this host before the access`,
     };
   const logon = rows[0];
-  if ((idx.logoffs.get(sessionId.toLowerCase()) ?? []).some((t) => t > logon.at && t <= at))
+  if ((idx.logoffs.get(key) ?? []).some((t) => t > logon.at && t <= at))
     return { state: "ambiguous", reason: `logon id ${sessionId} logged off between its 4624 and the access` };
   if (idx.boots.some((t) => t > logon.at && t <= at))
     return { state: "ambiguous", reason: "a boot row lies between the 4624 and the access" };
@@ -260,6 +286,31 @@ export function sessionCandidate(
     reason: `4624 ${logon.eventId} precedes the access with no logoff or boot between`,
     logon,
   };
+}
+
+/** Per-host file-evidence cursors: accesses arrive in time order, so each path's cursor only moves
+ * forward — one pass over the file rows per path, however many accesses ask. */
+export class FileEvidenceCursor {
+  private readonly pos = new Map<string, { i: number; by: string | null; at: number }>();
+  constructor(private readonly idx: HostIndex) {}
+  at(key: string, at: number): ReturnType<typeof fileEvidencedAt> {
+    const rows = this.idx.files.get(key) ?? [];
+    const cur = this.pos.get(key) ?? { i: 0, by: null, at: -Infinity };
+    if (at < cur.at) return fileEvidencedAt(this.idx, key, at);
+    while (cur.i < rows.length && rows[cur.i].at <= at) {
+      cur.by = rows[cur.i].kind === "close" ? null : rows[cur.i].eventId;
+      cur.i += 1;
+    }
+    cur.at = at;
+    this.pos.set(key, cur);
+    if (cur.by) return { state: "file", by: cur.by };
+    return {
+      state: "not-evidenced",
+      reason: rows.length
+        ? "the last file row for this path before the access is a delete, or every file row is later than the access"
+        : "no file row for this path on this host before the access",
+    };
+  }
 }
 
 /** Whether a normalised path is evidenced as a FILE on this host at T: an open version covering T
