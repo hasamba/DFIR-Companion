@@ -24,6 +24,9 @@ import { boundedAggKey, boundedTextTo } from "./aggKey.js";
 import { isExchangeRecord, mapExchangeRow } from "./exchangeAuditImport.js";
 import { entraPrivilegePaths, PRIVILEGE_PATHS_MAX } from "./entraPrivilegePath.js";
 import { mailboxChains, MAILBOX_CHAINS_MAX } from "./mailboxChain.js";
+import { sourceArtifactHash } from "./canonicalEvent.js";
+import { m365Coverage } from "./cloudCoverageBuilders.js";
+import type { CloudCoverageDraft } from "./cloudCoverage.js";
 import {
   isServicePrincipalSignIn,
   learnApiResolver,
@@ -64,6 +67,8 @@ export interface M365ParseResult {
   dropped: number;
   groups: number;
   format: string; // "m365-ual" | "entra-signin" | "entra-audit" | "mixed" | "empty"
+  /** Per-upload coverage drafts (#1063) — Workload/Operation per tenant. */
+  coverage: CloudCoverageDraft[];
 }
 
 interface OpDef {
@@ -376,7 +381,7 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
   const records = extractM365(text);
   const total = records.length;
   if (total === 0) {
-    return { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, format: "empty" };
+    return { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, format: "empty", coverage: [] };
   }
 
   const iocSink = new Map<string, SiemIoc>();
@@ -389,6 +394,10 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
   // way a consent record, which names its API by object id alone, can identify Microsoft Graph.
   const normalized = records.map(normalizeRecord);
   const resolve = learnApiResolver(normalized);
+  // Coverage (#1063): normalized, since Workload/Operation/RecordType/OrganizationId can sit
+  // inside the raw record's `AuditData` envelope until normalizeRecord unwraps it.
+  const uploadId = sourceArtifactHash(text);
+  const coverage: CloudCoverageDraft[] = m365Coverage(normalized).map((d) => ({ ...d, uploadId }));
   normalized.forEach((rec, index) => {
     const kind = classify(rec);
     if (kind === "ual" && isEntraUalRecord(rec)) {
@@ -450,5 +459,6 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
     dropped: Math.max(0, total - represented),
     groups,
     format,
+    coverage,
   };
 }

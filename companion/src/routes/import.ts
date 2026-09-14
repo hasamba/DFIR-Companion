@@ -436,6 +436,12 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
                 });
                 options.onImportMeta?.(caseId);
               }
+              // Per-upload cloud coverage (#1063): consume whatever the pipeline stashed during
+              // one of the four cloud/identity imports (undefined for every other kind — a no-op).
+              if (options.cloudCoverageStore) {
+                const coverage = options.pipeline?.consumeCloudCoverage?.(caseId);
+                if (coverage?.length) await options.cloudCoverageStore.record(caseId, coverage);
+              }
               void logActivity(options.activityLogStore, options.onActivity, caseId, {
                 category: "import",
                 action: "import",
@@ -728,6 +734,12 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
                   truncation,
                 });
                 options.onImportMeta?.(caseId);
+              }
+              // Per-upload cloud coverage (#1063): consume whatever the pipeline stashed during
+              // one of the four cloud/identity imports (undefined for every other kind — a no-op).
+              if (options.cloudCoverageStore) {
+                const coverage = options.pipeline?.consumeCloudCoverage?.(caseId);
+                if (coverage?.length) await options.cloudCoverageStore.record(caseId, coverage);
               }
               if (tDiff.added.length || tDiff.removed.length || iDiff.added.length || iDiff.removed.length) {
                 await pushImportCheckpoint(caseId, stateBefore, `${kind} (${storedName})`);

@@ -69,6 +69,7 @@ import * as promptBlocks from "./ai/promptBlocks.js";
 import { safeAiErrorKind, safeAiPhase } from "./operationalMetrics.js";
 import { type SecondOpinion } from "./secondOpinion.js";
 import { type AggregateStats } from "./logAggregate.js";
+import type { CloudCoverageDraft, CloudCoverageSummary } from "./cloudCoverage.js";
 import { type FloorOption } from "./deepPass.js";
 import { type KevCatalog } from "./kev.js";
 import { type HuntSuggestion } from "./huntSuggest.js";
@@ -169,6 +170,9 @@ export class AnalysisPipeline {
         },
         get importMetaStore() {
           return opts.importMetaStore;
+        },
+        get cloudCoverageStore() {
+          return opts.cloudCoverageStore;
         },
         get provider() {
           return opts.provider;
@@ -421,6 +425,22 @@ export class AnalysisPipeline {
     this.importTruncation.delete(caseId);
     return v;
   }
+  // Per-upload cloud coverage (#1063): the four cloud/identity importers return `{state,
+  // coverage}` from `analysis/ingest/cloudImports.ts`; the matching method below unwraps it and
+  // stashes coverage here so every OTHER caller (observe(), composition/importIngest.ts, every
+  // routes/import.ts call site) keeps seeing the unchanged `Promise<InvestigationState>` — the
+  // same side-channel shape as `importTruncation`, just populated from the ingest function's own
+  // return value instead of an AI-analysis callback.
+  private readonly cloudCoverage = new Map<string, CloudCoverageDraft[]>();
+  private recordCloudCoverage(caseId: string, coverage: CloudCoverageDraft[]): void {
+    if (!coverage.length) return;
+    this.cloudCoverage.set(caseId, [...(this.cloudCoverage.get(caseId) ?? []), ...coverage]);
+  }
+  consumeCloudCoverage(caseId: string): CloudCoverageDraft[] | undefined {
+    const v = this.cloudCoverage.get(caseId);
+    this.cloudCoverage.delete(caseId);
+    return v;
+  }
   // Warn ONCE per process when a configured synthesis-prompt override is missing shipped capabilities
   // (investigation-guidance #1). Preflight surfaces the same drift in the UI; this covers a post-boot
   // edit to the override file, and keeps the warning from spamming every synthesis run.
@@ -547,18 +567,22 @@ export class AnalysisPipeline {
     return ingest.importCybertriage(this.importCtx, ...args);
   }
 
-  importM365(...args: ImporterArgs<typeof ingest.importM365>): Promise<InvestigationState> {
-    return ingest.importM365(this.importCtx, ...args);
+  async importM365(...args: ImporterArgs<typeof ingest.importM365>): Promise<InvestigationState> {
+    const { state, coverage } = await ingest.importM365(this.importCtx, ...args);
+    this.recordCloudCoverage(args[0], coverage);
+    return state;
   }
 
   importOkta(...args: ImporterArgs<typeof ingest.importOkta>): Promise<InvestigationState> {
     return ingest.importOkta(this.importCtx, ...args);
   }
 
-  importGoogleWorkspace(
+  async importGoogleWorkspace(
     ...args: ImporterArgs<typeof ingest.importGoogleWorkspace>
   ): Promise<InvestigationState> {
-    return ingest.importGoogleWorkspace(this.importCtx, ...args);
+    const { state, coverage } = await ingest.importGoogleWorkspace(this.importCtx, ...args);
+    this.recordCloudCoverage(args[0], coverage);
+    return state;
   }
 
   importHindsight(...args: ImporterArgs<typeof ingest.importHindsight>): Promise<InvestigationState> {
@@ -573,12 +597,18 @@ export class AnalysisPipeline {
     return ingest.importLeapp(this.importCtx, ...args);
   }
 
-  importAws(...args: ImporterArgs<typeof ingest.importAws>): Promise<InvestigationState> {
-    return ingest.importAws(this.importCtx, ...args);
+  async importAws(...args: ImporterArgs<typeof ingest.importAws>): Promise<InvestigationState> {
+    const { state, coverage } = await ingest.importAws(this.importCtx, ...args);
+    this.recordCloudCoverage(args[0], coverage);
+    return state;
   }
 
-  importCloudActivity(...args: ImporterArgs<typeof ingest.importCloudActivity>): Promise<InvestigationState> {
-    return ingest.importCloudActivity(this.importCtx, ...args);
+  async importCloudActivity(
+    ...args: ImporterArgs<typeof ingest.importCloudActivity>
+  ): Promise<InvestigationState> {
+    const { state, coverage } = await ingest.importCloudActivity(this.importCtx, ...args);
+    this.recordCloudCoverage(args[0], coverage);
+    return state;
   }
 
   importK8sAudit(...args: ImporterArgs<typeof ingest.importK8sAudit>): Promise<InvestigationState> {
@@ -645,6 +675,10 @@ export class AnalysisPipeline {
 
   knownUnknownsForCase(caseId: string): Promise<KnownUnknownItem[]> {
     return promptBlocks.knownUnknownsForCase(this.aiCtx, caseId);
+  }
+
+  cloudCoverageForCase(caseId: string): Promise<CloudCoverageSummary> {
+    return promptBlocks.cloudCoverageForCase(this.aiCtx, caseId);
   }
 
   suggestHunts(caseId: string, opts?: { excludeVql?: string }): Promise<HuntSuggestion[]> {

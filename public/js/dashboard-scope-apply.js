@@ -44,6 +44,7 @@
         schedulePhasesReload();
         scheduleTimelineGapsReload();
         scheduleEvidenceGapsReload();
+        scheduleCloudCoverageReload();
         scheduleBeaconsReload();
         scheduleAnomaliesReload();
         scheduleSessionsReload();

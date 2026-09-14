@@ -98,6 +98,7 @@ import { AiCostStore } from "../analysis/aiCost.js";
 import { CorrelationProfileStore } from "../analysis/correlationProfile.js";
 import { SecondOpinionStore } from "../analysis/secondOpinionStore.js";
 import { ImportMetaStore } from "../analysis/importMeta.js";
+import { CloudCoverageStore } from "../analysis/cloudCoverage.js";
 import { DropStatusStore } from "../analysis/dropStatus.js";
 import { ImportUndoStore, undoMaxBytesFromEnv } from "../analysis/importUndo.js";
 import { NotionExportStore } from "../integrations/notion/notionExportStore.js";
@@ -352,6 +353,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
   const correlationProfileStore = new CorrelationProfileStore(store);
   const secondOpinionStore = new SecondOpinionStore(store);
   const importMetaStore = new ImportMetaStore(store);
+  const cloudCoverageStore = new CloudCoverageStore(store); // #1063: per-upload cloud coverage, outside the timeline
   const dropStatusStore = new DropStatusStore(store); // evidence drop-folder last-sweep summary
   // #76: import undo/redo. Depth is the number of import levels kept (each = a full timeline+IOC copy).
   const importUndoStore = new ImportUndoStore(
@@ -487,6 +489,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
     correlationProfileStore,
     secondOpinionStore,
     importMetaStore,
+    cloudCoverageStore,
     dropStatusStore,
     importUndoStore,
     notionExportStore,

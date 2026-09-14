@@ -20,6 +20,32 @@ function envelope(...recs: object[]): string {
   return JSON.stringify({ Records: recs });
 }
 
+describe("parseCloudTrail — coverage (#1063)", () => {
+  it("returns one coverage draft per account, categorised by eventCategory/readOnly when the record states them", () => {
+    const r = parseCloudTrail(
+      envelope(
+        record({ recipientAccountId: "111122223333", eventVersion: "1.08", eventCategory: "Management" }),
+        record({
+          recipientAccountId: "111122223333",
+          eventVersion: "1.08",
+          eventCategory: "Data",
+          readOnly: false,
+        }),
+      ),
+    );
+    expect(r.coverage).toHaveLength(1);
+    expect(r.coverage[0].scope).toEqual({ kind: "account", value: "111122223333" });
+    expect(r.coverage[0].uploadId).toBeTruthy();
+    const names = r.coverage[0].categories.map((c) => c.name).sort();
+    expect(names).toEqual(["Data", "Management"]);
+  });
+
+  it("a record with no eventCategory/eventVersion buckets as unknown, never assumed Management", () => {
+    const r = parseCloudTrail(envelope(record({ recipientAccountId: "1" })));
+    expect(r.coverage[0].categories.map((c) => c.name)).toEqual(["unknown"]);
+  });
+});
+
 describe("parseCloudTrail — action-derived severity", () => {
   it("reads the { Records: [...] } envelope and derives High for CreateAccessKey", () => {
     const r = parseCloudTrail(envelope(record({ eventName: "CreateAccessKey", readOnly: false })));

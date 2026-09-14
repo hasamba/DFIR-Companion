@@ -16,6 +16,7 @@ import type { FindingsDiff } from "../findingsDiff.js";
 import type { HuntOutcomeStore } from "../huntOutcomeStore.js";
 import type { HypothesisStore } from "../hypothesisStore.js";
 import type { ImportMetaStore } from "../importMeta.js";
+import type { CloudCoverageStore } from "../cloudCoverage.js";
 import type { IncidentTypeStore } from "../incidentTypeStore.js";
 import type { IocAliasStore } from "../iocAlias.js";
 import type { KevStore } from "../kevStore.js";
@@ -172,6 +173,9 @@ export interface PipelineOptions {
   // Per-case import-meta store. When set, synthesis + the evidence-gap panel flag a zero-yield AI
   // import (a source read as "clean" that actually dropped everything — investigation-guidance #10).
   importMetaStore?: ImportMetaStore;
+  // Per-case cloud-coverage store (#1063). When set, synthesis + the "Cloud Coverage" dashboard
+  // panel read the same per-upload CloudTrail/GCP/Azure/M365/Workspace coverage facts.
+  cloudCoverageStore?: CloudCoverageStore;
   // Per-case incident-type store (#236). When set, synthesis prepends the chosen type's one-line
   // hint so the model prioritizes the techniques that matter for a ransomware / BEC / exfil case.
   // Absent → no hint (CLI/tests).

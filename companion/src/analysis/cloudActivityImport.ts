@@ -21,7 +21,9 @@ import { matchGcpRule } from "./gcpSeverityRules.js";
 import { gcpServiceAccountJoins, GCP_SA_JOIN_MAX } from "./gcpServiceAccountJoin.js";
 import { decodeAzureLogging } from "./loggingChangeCloud.js";
 import { renderLoggingDescription } from "./loggingChange.js";
-import { createCanonicalEvent } from "./canonicalEvent.js";
+import { createCanonicalEvent, sourceArtifactHash } from "./canonicalEvent.js";
+import { gcpCoverage, azureCoverage } from "./cloudCoverageBuilders.js";
+import type { CloudCoverageDraft } from "./cloudCoverage.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -57,6 +59,8 @@ export interface CloudActivityParseResult {
   dropped: number;
   groups: number;
   format: string; // "gcp" | "azure" | "mixed" | "empty"
+  /** Per-upload coverage drafts (#1063) for whichever of GCP/Azure this upload carried. */
+  coverage: CloudCoverageDraft[];
 }
 
 type Rule = [RegExp, Severity, string[]];
@@ -350,20 +354,24 @@ export function parseCloudActivity(
   const { records } = extractRecords(text);
   const total = records.length;
   if (total === 0) {
-    return { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, format: "empty" };
+    return { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, format: "empty", coverage: [] };
   }
 
   const iocSink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
+  const gcpRecords: Row[] = [];
+  const azureRecords: Row[] = [];
   let sawGcp = false,
     sawAzure = false;
 
   records.forEach((rec, recordIndex) => {
     if (isGcp(rec)) {
+      gcpRecords.push(rec);
       const rows = mapGcp(rec, iocSink, `record:${recordIndex}`);
       if (rows.length) sawGcp = true;
       mapped.push(...rows);
     } else if (isAzure(rec)) {
+      azureRecords.push(rec);
       const m = mapAzure(rec, iocSink, recordIndex);
       if (m) {
         sawAzure = true;
@@ -371,8 +379,15 @@ export function parseCloudActivity(
       }
     }
   });
+  // Coverage (#1063): every GCP/Azure record this upload states about itself, regardless of
+  // whether it mapped to a timeline row.
+  const uploadId = sourceArtifactHash(text);
+  const coverage: CloudCoverageDraft[] = [
+    ...gcpCoverage(gcpRecords).map((d) => ({ ...d, uploadId })),
+    ...azureCoverage(azureRecords).map((d) => ({ ...d, uploadId })),
+  ];
   if (mapped.length === 0) {
-    return { events: [], iocs: [], total, kept: 0, dropped: total, groups: 0, format: "empty" };
+    return { events: [], iocs: [], total, kept: 0, dropped: total, groups: 0, format: "empty", coverage };
   }
 
   const aggregated = aggregateEvents(mapped, {
@@ -404,5 +419,6 @@ export function parseCloudActivity(
     dropped: Math.max(0, total - represented),
     groups,
     format,
+    coverage,
   };
 }

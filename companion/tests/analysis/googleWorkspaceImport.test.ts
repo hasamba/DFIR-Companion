@@ -23,6 +23,16 @@ function act(over: Record<string, unknown> = {}): Record<string, unknown> {
   };
 }
 
+describe("parseGoogleWorkspaceReport — coverage (#1063)", () => {
+  it("tallies applicationName per tenant, over every record whether or not it mapped to a row", () => {
+    const r = parseGoogleWorkspaceReport(JSON.stringify([act(), act({ id: { applicationName: "drive" } })]));
+    expect(r.coverage).toHaveLength(1);
+    expect(r.coverage[0].scope).toEqual({ kind: "tenant", value: "C01abc" });
+    const names = r.coverage[0].categories.map((c) => c.name).sort();
+    expect(names).toEqual(["drive", "login"]);
+  });
+});
+
 describe("parseGoogleWorkspaceReport", () => {
   it("reports an empty result for empty input", () => {
     const r = parseGoogleWorkspaceReport("");

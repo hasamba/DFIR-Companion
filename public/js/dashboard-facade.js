@@ -60,6 +60,8 @@
     "scheduleBeaconsReload",
     "loadEvidenceGaps",
     "scheduleEvidenceGapsReload",
+    "loadCloudCoverage",
+    "scheduleCloudCoverageReload",
     "loadPlaybookMatch",
     "schedulePlaybookMatchReload",
     "loadAttackMitigations",

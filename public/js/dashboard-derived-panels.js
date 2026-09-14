@@ -122,6 +122,47 @@
     }).join("") + "</div>";
   }
 
+  // Cloud Coverage (#1063): what each imported CloudTrail/GCP/Azure/M365/Workspace upload can and
+  // cannot answer — GET /cases/:id/cloud-coverage returns the SAME structured summary (items +
+  // read-time absence caveats) the synthesis prompt's cloud-coverage block consumes.
+  let cloudCoverageData = { items: [], caveats: [] };
+  let cloudCoverageTimer = null;
+  function loadCloudCoverage(caseId) {
+    fetch(`/cases/${caseId}/cloud-coverage`).then(r => r.json()).then(j => {
+      cloudCoverageData = { items: (j && Array.isArray(j.items)) ? j.items : [], caveats: (j && Array.isArray(j.caveats)) ? j.caveats : [] };
+      renderCloudCoverage();
+    }).catch(() => {});
+  }
+  function scheduleCloudCoverageReload() {
+    const caseId = document.getElementById("caseId").value.trim();
+    if (!caseId) return;
+    clearTimeout(cloudCoverageTimer);
+    cloudCoverageTimer = setTimeout(() => loadCloudCoverage(caseId), 800);
+  }
+  const CC_PROVIDER_LABEL = { "aws-cloudtrail": "AWS CloudTrail", gcp: "GCP", azure: "Azure", m365: "M365", "google-workspace": "Google Workspace" };
+  function renderCloudCoverage() {
+    const el = document.getElementById("cloudCoverage");
+    if (!el) return;
+    const { items, caveats } = cloudCoverageData;
+    if (!items.length) { el.innerHTML = "<span data-safe-style='color:var(--text-muted)'>No cloud audit-log uploads (CloudTrail/GCP/Azure/M365/Workspace) in this case yet.</span>"; return; }
+    const rows = items.map(it => {
+      const scope = it.scope && it.scope.value ? `${esc(it.scope.kind)} ${esc(it.scope.value)}` : "<span data-safe-style='color:var(--text-muted)'>scope not recorded</span>";
+      const range = (it.first && it.last) ? `${esc(String(it.first).slice(0, 10))} → ${esc(String(it.last).slice(0, 10))}` : "";
+      const cats = (it.categories || []).map(c => {
+        const ro = c.readOnly ? ` (read-only ${esc(c.readOnly.true)} / mutating ${esc(c.readOnly.false)} / unknown ${esc(c.readOnly.unknown)})` : "";
+        return `<span class="cc-cat">${esc(c.name)} ${esc(c.count)}${ro}</span>`;
+      }).join(", ");
+      return `<tr><td>${esc(CC_PROVIDER_LABEL[it.provider] || it.provider)}</td><td>${scope}</td><td>${esc(it.recordCount)}</td><td data-safe-style="color:var(--text-muted);font-size:11px">${range}</td><td>${cats}</td></tr>`;
+    }).join("");
+    const caveatsHtml = caveats.length
+      ? `<div class="cc-caveats" data-safe-style="margin-top:8px;font-size:11px;color:var(--text-muted)">${caveats.map(c => `<div>${esc(c)}</div>`).join("")}</div>`
+      : "";
+    el.innerHTML =
+      `<div class="vql-result-wrap"><table class="vql-result"><thead><tr>` +
+      `<th>Provider</th><th>Scope</th><th>Records</th><th>Range</th><th>Categories</th>` +
+      `</tr></thead><tbody>${rows}</tbody></table></div>` + caveatsHtml;
+  }
+
   // ── Playbook Match (#230) ──────────────────────────────────────────────────────────────────
   // Adversary Hints above answers "which techniques does this case share with a known group".
   // This answers the harder question: did they happen in the ORDER a published playbook describes.
@@ -288,6 +329,8 @@
   window.scheduleBeaconsReload = scheduleBeaconsReload;
   window.loadEvidenceGaps = loadEvidenceGaps;
   window.scheduleEvidenceGapsReload = scheduleEvidenceGapsReload;
+  window.loadCloudCoverage = loadCloudCoverage;
+  window.scheduleCloudCoverageReload = scheduleCloudCoverageReload;
   window.loadPlaybookMatch = loadPlaybookMatch;
   window.schedulePlaybookMatchReload = schedulePlaybookMatchReload;
   window.loadAttackMitigations = loadAttackMitigations;

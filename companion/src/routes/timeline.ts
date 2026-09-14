@@ -106,6 +106,18 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
     }
   });
 
+  // Per-upload cloud coverage (#1063): what each CloudTrail/GCP/Azure/M365/Workspace upload in
+  // this case states about itself, and the read-time absence caveats — the SAME structured summary
+  // the synthesis prompt's cloud-coverage block consumes. Pure/offline; no AI call.
+  app.get("/cases/:id/cloud-coverage", async (req: Request, res: Response) => {
+    if (!options.pipeline) return res.status(501).json({ error: "pipeline not configured" });
+    try {
+      return res.status(200).json(await options.pipeline.cloudCoverageForCase(req.params.id));
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   // Export just the incident (forensic) timeline as CSV, generated on demand from the
   // current state (same scope/legitimate filtering as the report) — no full report needed.
   app.get("/cases/:id/incident-timeline.csv", async (req: Request, res: Response) => {
