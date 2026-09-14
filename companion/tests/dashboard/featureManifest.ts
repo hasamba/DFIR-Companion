@@ -119,6 +119,11 @@ export const FEATURES: Feature[] = [
     publish: ["loadRemediation"],
     private: ["boundaries", "facts", "currentCaseId", "loadGen", "verifyGen"],
   },
+  {
+    file: "dashboard-served-exposure.js",
+    publish: ["loadServedExposure"],
+    private: ["exposure", "currentCaseId", "loadGen", "status"],
+  },
   { file: "dashboard-backup.js", publish: ["loadCaseBackups", "restoreCaseBackup"], private: [] },
   {
     // The load-time-heavy one: everything it does on load is wrapped in initTicketIntegrations(),

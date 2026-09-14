@@ -35,6 +35,7 @@ import { registerSessionSegmentationRoutes } from "../routes/sessionSegmentation
 import { registerFindingsRoutes } from "../routes/findings.js";
 import { registerFindingOutcomeRoutes } from "../routes/findingOutcome.js";
 import { registerRemediationRoutes } from "../routes/remediation.js";
+import { registerServedExposureRoutes } from "../routes/servedExposure.js";
 import { registerIntelRetirementRoutes } from "../routes/intelRetirement.js";
 import { registerTaggerRoutes } from "../routes/tagger.js";
 import { registerCustodyRoutes } from "../routes/custody.js";
@@ -128,6 +129,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerFindingsRoutes(app, ctx);
   registerFindingOutcomeRoutes(app, ctx);
   registerRemediationRoutes(app, ctx);
+  registerServedExposureRoutes(app, ctx);
   registerIntelRetirementRoutes(app, ctx);
   registerTaggerRoutes(app, ctx);
   // Auto-record chain of custody for every artifact the companion stores (#231). Hooked onto the

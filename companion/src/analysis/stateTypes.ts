@@ -202,6 +202,22 @@ export interface IntelCheckState {
 
 // The analyst's recorded decision on one item of the intel retirement review (#1024). Records a
 // recommendation; changes no severity, status or deployed detection.
+/** A served location as the report reads it (servedLocation.ts owns the full shape). */
+export interface ServedLocationView {
+  id: string;
+  host: string;
+  vhost?: string;
+  urlPrefix: string;
+  localRoot: string;
+  caseInsensitive: boolean;
+  indexFiles: string[];
+  public: boolean;
+  sensitive: string[];
+  sensitiveDigests: string[];
+  note?: string;
+  declaredAt: string;
+}
+
 /** What the report reads of a remediation boundary (remediationBoundary.ts owns the full shape). */
 export interface RemediationBoundaryView {
   id: string;
@@ -628,6 +644,9 @@ export interface InvestigationState {
   // file by loadFilteredState so the report can render the analyst's recorded status. Never saved
   // with the state; absent everywhere else.
   remediationBoundaries?: RemediationBoundaryView[];
+  // READ-TIME projection only (#930 item 4): the case's served locations, loaded from their side
+  // file by loadFilteredState so the report can read the served exposure. Never saved with state.
+  servedLocations?: ServedLocationView[];
   updatedAt: string;
 }
 

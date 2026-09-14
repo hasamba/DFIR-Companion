@@ -32,6 +32,7 @@ import type { PinnedFindingsStore } from "../analysis/pinnedFindings.js";
 import type { FindingWorkflowStore } from "../analysis/findingWorkflow.js";
 import type { FindingOutcomeStore } from "../analysis/findingOutcome.js";
 import type { RemediationStore } from "../analysis/remediationBoundary.js";
+import type { ServedLocationStore } from "../analysis/servedLocation.js";
 import type { NotebookStore } from "../analysis/notebookStore.js";
 import type { HypothesisStore } from "../analysis/hypothesisStore.js";
 import type { LearnedPatternStore } from "../analysis/learnedPatternStore.js";
@@ -205,6 +206,8 @@ export interface AppOptions {
   // Remediation boundaries, receipts and the analyst's residual-risk status (#969) — a side file
   // beside the state, never wiped by a re-synthesis.
   remediationStore?: RemediationStore;
+  // Served locations the analyst declared (#930 item 4) — a side file beside the state.
+  servedLocationStore?: ServedLocationStore;
   onFindingOutcome?: (caseId: string) => void;
   // Per-case analyst notebook (hypotheses, notes, open questions). onNotebook pings dashboard
   // clients over the WS to re-fetch when an entry is added, updated, or removed.

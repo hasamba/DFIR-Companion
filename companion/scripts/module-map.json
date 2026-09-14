@@ -481,6 +481,8 @@
     "regexEscape.ts": "shared",
     "regexSafety.ts": "analysis/privacy",
     "remediationBoundary.ts": "analysis/findings",
+    "servedExposure.ts": "analysis/findings",
+    "servedLocation.ts": "analysis/findings",
     "remediationRun.ts": "analysis/workflow",
     "remediationShapes.ts": "analysis/findings",
     "remediationVerify.ts": "analysis/findings",
