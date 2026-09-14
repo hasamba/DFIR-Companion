@@ -253,6 +253,47 @@ to claim a failure — an artifact value can spell it. A **Volatility 2** export
 to say that its profile-based layout is not read; re-run under Volatility 3 or export JSON.
 Volatility's `-` and `N/A` cells are absent values and never become a name, a path or an IOC.
 
+**The run envelope: what makes an empty result a completed search.** Nothing in an export says
+whether the plugin completed. A **run envelope** written by the script that invoked Volatility —
+the command, the plugin, the exit status, **stderr as its own field** (never a `2>&1` capture),
+the SHA-256 of the image, and the stdout it describes — does. Upload one JSON object per run, or a
+bundle `{ "type": "dfir.volatility-run", "envelopeVersion": 1, "runs": [ … ] }`; each run carries
+`"type": "dfir.volatility-run"` and embeds its stdout (`stdoutBase64` for the raw bytes, or
+`stdout` as text) beside `command`, `plugin`, `exitStatus`, `stderr`, `imageSha256` and,
+optionally, `stdoutSha256`, `volatilityVersion`, `symbols`, `renderer`, `startedAt`, `endedAt`.
+The embedded export imports exactly as it would on its own, and one row per run states what the
+envelope establishes:
+
+- *Memory run envelope (uploader-supplied, unsigned) states: windows.malfind — **windows.malfind
+  completed with no rows over the pages this image holds and the structures the plugin reads; not
+  evidence about pages the dump does not hold** [exit 0; 0 rows in the embedded export; …]* — exit
+  0, a header or rows read, zero rows, no page-error line on stderr. Low.
+- *did not complete: symbol/translation validation failed: Unsatisfied requirement …; the absence
+  of rows is not evidence* — a validation line on stderr, or any non-zero exit (`did not complete:
+  exit status 137`). Medium.
+- *did not complete after N rows; later candidates may never have been searched* — `Volatility was
+  unable to read a requested page` on stderr (Volatility treats that error as terminal). Medium.
+- *a Volatility 2 run (profile-based); the export is not read; the envelope names the run* — a
+  `vol.py` / `--profile` command line. The legacy workflow is named, never imitated.
+- An exit 0 **wins over a traceback on stderr** (an optional import can fail loudly while the
+  plugin succeeds); the row says *stderr carries a traceback (unverified; the run exited 0)*.
+- A `windows.crashinfo` run **of the same image** (same `imageSha256`) in the same bundle whose
+  dump is a `Bitmap Dump (0x5)` adds *over a dump that may not hold user-space pages; an empty
+  result does not clear user-space behaviour* to an empty malfind / cmdline / dlllist /
+  ldrmodules / handles / envars / vadinfo / yarascan run; without one the row says *dump type not
+  established for this run*.
+
+What the envelope does **not** establish: its own provenance. It is uploader-supplied and
+unsigned, so every verdict is worded as the envelope's statement; an attestation scheme is out of
+scope. The whole `stderr` is scanned before anything is shortened (past 1 MB the verdict is
+*indeterminate*, never "completed"). The digest of the embedded stdout is computed over the bytes
+(`stdoutBase64`) or the UTF-8 text (`stdout`), and a stated `stdoutSha256` that disagrees — line
+endings, a BOM, an encoding — leaves the run *applied to nothing* while its export still imports.
+An envelope with no stdout embedded is applied to nothing: two images' empty exports are
+byte-identical, so a digest alone names no run — the envelope must travel with its stdout. The
+row's identity is the whole material envelope, so two runs with the same words stay two rows and
+a re-import folds. 256 runs per bundle are read; the rest are counted.
+
 ### Intact (trimmed VolWeb output)
 
 Intact runs VolWeb over a RAM image, then combines and trims the result into two files. Drop either
