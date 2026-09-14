@@ -38,6 +38,7 @@ import { registerRemediationRoutes } from "../routes/remediation.js";
 import { registerCampaignScopeRoutes } from "../routes/campaignScope.js";
 import { registerServedExposureRoutes } from "../routes/servedExposure.js";
 import { registerKerberoastChainRoutes } from "../routes/kerberoastChain.js";
+import { registerSensitiveAccessRoutes } from "../routes/sensitiveAccess.js";
 import { registerIntelRetirementRoutes } from "../routes/intelRetirement.js";
 import { registerTaggerRoutes } from "../routes/tagger.js";
 import { registerCustodyRoutes } from "../routes/custody.js";
@@ -134,6 +135,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerCampaignScopeRoutes(app, ctx);
   registerServedExposureRoutes(app, ctx);
   registerKerberoastChainRoutes(app, ctx);
+  registerSensitiveAccessRoutes(app, ctx);
   registerIntelRetirementRoutes(app, ctx);
   registerTaggerRoutes(app, ctx);
   // Auto-record chain of custody for every artifact the companion stores (#231). Hooked onto the

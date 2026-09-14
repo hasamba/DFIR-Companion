@@ -1062,6 +1062,8 @@ export function mapWindows(
           },
         }
       : {}),
+    ...(roles.file ? { file: roles.file } : {}),
+    ...(roles.process ? { process: roles.process } : {}),
     ...(str(getCI(ed, "TargetObject")).trim()
       ? {
           registry: {

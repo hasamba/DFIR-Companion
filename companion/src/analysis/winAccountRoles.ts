@@ -14,15 +14,25 @@ export interface RoleEntity {
   id?: string;
 }
 
+import { objectAccessBlocks } from "./objectAccess.js";
+
 export interface RoleBlocks {
   actor?: RoleEntity;
   /** The raw fields the actor was read from (provenance). */
   actorFields?: string[];
   subject?: RoleEntity;
   account?: { id?: string; name: string; domain?: string };
-  event?: { category: "authentication" | "network"; type: string; outcome?: "success" | "failed" };
-  authentication?: { protocol: "kerberos"; mechanism?: string };
+  event?: {
+    category: "authentication" | "network" | "file" | "process" | "other";
+    type: string;
+    outcome?: "success" | "failed";
+  };
+  authentication?: { protocol?: "kerberos"; mechanism?: string; sessionId?: string };
   object?: RoleEntity;
+  /** A Security object-access record's object and rights (objectAccess.ts). */
+  file?: ReturnType<typeof objectAccessBlocks>["file"];
+  /** The accessing process (4663 / 4656 / 4660) or the ended one (4689 / Sysmon 5). */
+  process?: ReturnType<typeof objectAccessBlocks>["process"];
 }
 
 type Field = (key: string) => string;
@@ -69,13 +79,16 @@ function ticketBlocks(eid: number, field: Field): Pick<RoleBlocks, "event" | "au
 export function winRoleBlocks(eid: number, isSysmon: boolean, field: Field): RoleBlocks {
   if (isSysmon) {
     const user = eid === SYSMON_PROCESS_CREATE ? entity(field("User"), "", "") : undefined;
-    return user
-      ? {
-          actor: user,
-          actorFields: ["EventData.User"],
-          account: { name: user.name, ...(user.domain ? { domain: user.domain } : {}) },
-        }
-      : {};
+    return {
+      ...(user
+        ? {
+            actor: user,
+            actorFields: ["EventData.User"],
+            account: { name: user.name, ...(user.domain ? { domain: user.domain } : {}) },
+          }
+        : {}),
+      ...objectAccessBlocks(eid, true, field),
+    };
   }
   const target = entity(field("TargetUserName"), field("TargetDomainName"), field("TargetUserSid"));
   const subject = entity(field("SubjectUserName"), field("SubjectDomainName"), field("SubjectUserSid"));
@@ -100,5 +113,11 @@ export function winRoleBlocks(eid: number, isSysmon: boolean, field: Field): Rol
     out.event = { category: "authentication", type: "explicit-credential-logon" };
   if (eid === SHARE_ACCESS) out.event = { category: "network", type: "share-access" };
   if (eid === TGS_REQUEST || eid === TGT_REQUEST) Object.assign(out, ticketBlocks(eid, field));
+  // Object access and lifecycle rows (4663 / 4656 / 4658 / 4660 / 5145 / 4689 / logoff / boot).
+  const oa = objectAccessBlocks(eid, false, field);
+  if (oa.event) out.event = oa.event;
+  if (oa.file) out.file = oa.file;
+  if (oa.process) out.process = oa.process;
+  if (oa.authentication) out.authentication = { ...out.authentication, ...oa.authentication };
   return out;
 }

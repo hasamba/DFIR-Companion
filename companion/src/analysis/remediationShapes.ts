@@ -132,7 +132,14 @@ export function familyOf(e: ForensicEvent): TelemetryFamily | null {
   if (cat === "process") return "process";
   if (cat === "authentication") return "authentication";
   if (cat === "network") return "network";
-  if (PRESENCE_SOURCES.test(src) || LISTING_SOURCES.test(src) || cat === "file") return "file-listing";
+  const type = e.canonical?.event?.type;
+  // A 4663 / 4656 is object-access telemetry about a process, not presence of the file.
+  if (
+    PRESENCE_SOURCES.test(src) ||
+    LISTING_SOURCES.test(src) ||
+    (cat === "file" && type !== "access" && type !== "handle-request")
+  )
+    return "file-listing";
   return null;
 }
 

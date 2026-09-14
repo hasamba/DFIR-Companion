@@ -141,6 +141,7 @@ describe("dashboardViews — seed integrity", () => {
       "sec-campaign-scope",
       "sec-served-exposure",
       "sec-kerberoast-chain",
+      "sec-sensitive-access",
       "sec-case-details",
     ]);
   });

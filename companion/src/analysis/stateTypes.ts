@@ -202,6 +202,17 @@ export interface IntelCheckState {
 
 // The analyst's recorded decision on one item of the intel retirement review (#1024). Records a
 // recommendation; changes no severity, status or deployed detection.
+/** A sensitive location as the report reads it (sensitiveLocation.ts owns the full shape). */
+export interface SensitiveLocationView {
+  id: string;
+  host: string;
+  path: string;
+  key: string;
+  kind: "file" | "folder";
+  note?: string;
+  declaredAt: string;
+}
+
 /** A served location as the report reads it (servedLocation.ts owns the full shape). */
 export interface ServedLocationView {
   id: string;
@@ -647,6 +658,8 @@ export interface InvestigationState {
   // READ-TIME projection only (#930 item 4): the case's served locations, loaded from their side
   // file by loadFilteredState so the report can read the served exposure. Never saved with state.
   servedLocations?: ServedLocationView[];
+  /** Sensitive locations the analyst declared (#930 item 7), projected for the report. */
+  sensitiveLocations?: SensitiveLocationView[];
   updatedAt: string;
 }
 

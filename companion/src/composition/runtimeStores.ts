@@ -74,6 +74,7 @@ import { FindingWorkflowStore } from "../analysis/findingWorkflow.js";
 import { FindingOutcomeStore } from "../analysis/findingOutcome.js";
 import { RemediationStore } from "../analysis/remediationBoundary.js";
 import { ServedLocationStore } from "../analysis/servedLocation.js";
+import { SensitiveLocationStore } from "../analysis/sensitiveLocation.js";
 import { NotebookStore } from "../analysis/notebookStore.js";
 import { HypothesisStore } from "../analysis/hypothesisStore.js";
 import { LearnedPatternStore } from "../analysis/learnedPatternStore.js";
@@ -322,6 +323,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
   const findingOutcomeStore = new FindingOutcomeStore(store);
   const remediationStore = new RemediationStore(store);
   const servedLocationStore = new ServedLocationStore(store);
+  const sensitiveLocationStore = new SensitiveLocationStore(store);
   const notebookStore = new NotebookStore(store);
   const hypothesisStore = new HypothesisStore(store);
   const learnedPatternStore = new LearnedPatternStore(store);
@@ -461,6 +463,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
     findingOutcomeStore,
     remediationStore,
     servedLocationStore,
+    sensitiveLocationStore,
     notebookStore,
     hypothesisStore,
     learnedPatternStore,

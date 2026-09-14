@@ -73,6 +73,14 @@ export const REPORT_SECTION_DEFS = [
     label: "Kerberoast chain (ticket requests, baseline, later use of the exact account)",
     defaultEnabled: false,
   },
+  // Off by default (#930 item 7): a per-object access table belongs in a report the analyst
+  // chose to carry it.
+  {
+    key: "sensitiveAccess",
+    label:
+      "Sensitive access (declared sensitive locations: object-access rows, candidates, what the rows establish)",
+    defaultEnabled: false,
+  },
   // Opt-in EVERYWHERE (#969): a fresh template does not switch it on either, because the section
   // renders an analyst's recorded residual-risk status and must never appear in a report by
   // accident of "every section is what default means".
@@ -277,6 +285,7 @@ export const BUILT_IN_REPORT_TEMPLATES: readonly ReportTemplate[] = [
       { key: "campaignScope", enabled: false },
       { key: "servedExposure", enabled: false },
       { key: "kerberoastChain", enabled: false },
+      { key: "sensitiveAccess", enabled: false },
       { key: "remediationChecks", enabled: false },
     ],
   }),
