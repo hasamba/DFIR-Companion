@@ -231,4 +231,136 @@ describe("gcpComputeLifecycles", () => {
     expect(rows).toHaveLength(GCP_COMPUTE_MAX + 1);
     expect(rows[rows.length - 1].description).toContain("2 further instance");
   });
+
+  // Regression tests for Codex code-round-1 findings (RECOMMENDATION-1066.md).
+  it("#1 a DENIED call from the attached email during an open interval is never tallied as a session or a privileged-change fact", () => {
+    const insert = gcp("v1.compute.instances.insert", { timestamp: at(0) });
+    const attach = gcp("v1.compute.instances.setServiceAccount", {
+      timestamp: at(5),
+      request: { email: "sa1@proj-1.iam.gserviceaccount.com" },
+    });
+    const denied = {
+      protoPayload: {
+        methodName: "google.iam.admin.v1.CreateServiceAccountKey",
+        serviceName: "iam.googleapis.com",
+        timestamp: at(10),
+        authenticationInfo: { principalEmail: "sa1@proj-1.iam.gserviceaccount.com" },
+        status: { code: 7, message: "PERMISSION_DENIED" },
+      },
+    };
+    const [row] = gcpComputeLifecycles([insert, attach, denied], "u1");
+    expect(row.canonical?.gcpCompute?.sessions).toHaveLength(0);
+    expect(row.canonical?.gcpCompute?.facts).not.toContain("session-privileged-change");
+    expect(row.canonical?.gcpCompute?.attempts.notSucceeded).toBe(1);
+    expect(row.severity).toBe("Medium");
+  });
+
+  it("#3 mixed-provider evidence: a GCP record's locator is its own index in the ORIGINAL upload, never an Azure record's index", () => {
+    // Placed in this file (not cloudActivityImport.test.ts) because it asserts the actual raw
+    // locator value the gcpCompute.ts join produced, not just that a row exists.
+    const azureRecord = {
+      operationName: { value: "Microsoft.Storage/storageAccounts/write" },
+      status: { value: "Succeeded" },
+    };
+    const insert = gcp("v1.compute.instances.insert", { timestamp: at(0) });
+    const [row] = gcpComputeLifecycles([azureRecord, insert], "u1");
+    expect(row.canonical?.evidence?.rawRecords.map((r) => r.locator)).toContain("record:1");
+  });
+
+  it("#4 metadata-replaced is a graded fact, not just an operation line", () => {
+    const insert = gcp("v1.compute.instances.insert", { timestamp: at(0) });
+    const setMeta = gcp("v1.compute.instances.setMetadata", { timestamp: at(5) });
+    const [row] = gcpComputeLifecycles([insert, setMeta], "u1");
+    expect(row.canonical?.gcpCompute?.facts).toContain("metadata-replaced");
+    expect(row.severity).toBe("Medium");
+  });
+
+  it("#5 attach -> call -> detach -> reattach same email -> call: two separate sessions, never merged across the gap", () => {
+    const insert = gcp("v1.compute.instances.insert", { timestamp: at(0) });
+    const attach1 = gcp("v1.compute.instances.setServiceAccount", {
+      timestamp: at(5),
+      request: { email: "sa1@proj-1.iam.gserviceaccount.com" },
+    });
+    const call1 = {
+      protoPayload: {
+        methodName: "storage.objects.get",
+        serviceName: "storage.googleapis.com",
+        timestamp: at(10),
+        authenticationInfo: { principalEmail: "sa1@proj-1.iam.gserviceaccount.com" },
+      },
+    };
+    const detach = gcp("v1.compute.instances.setServiceAccount", {
+      timestamp: at(15),
+      request: { email: "" },
+    });
+    const attach2 = gcp("v1.compute.instances.setServiceAccount", {
+      timestamp: at(20),
+      request: { email: "sa1@proj-1.iam.gserviceaccount.com" },
+    });
+    const call2 = {
+      protoPayload: {
+        methodName: "storage.objects.get",
+        serviceName: "storage.googleapis.com",
+        timestamp: at(25),
+        authenticationInfo: { principalEmail: "sa1@proj-1.iam.gserviceaccount.com" },
+      },
+    };
+    const [row] = gcpComputeLifecycles([insert, attach1, call1, detach, attach2, call2], "u1");
+    const sessions = row.canonical?.gcpCompute?.sessions ?? [];
+    expect(sessions).toHaveLength(2);
+    expect(sessions.every((s) => s.records === 1)).toBe(true);
+    expect(new Set(sessions.map((s) => s.attachmentFrom)).size).toBe(2);
+  });
+
+  it("#6 the privileged-call fact names the specific GCP_RULES check, never the record's final imported severity", () => {
+    const insert = gcp("v1.compute.instances.insert", { timestamp: at(0) });
+    const attach = gcp("v1.compute.instances.setServiceAccount", {
+      timestamp: at(5),
+      request: { email: "sa1@proj-1.iam.gserviceaccount.com" },
+    });
+    const key = {
+      protoPayload: {
+        methodName: "google.iam.admin.v1.CreateServiceAccountKey",
+        serviceName: "iam.googleapis.com",
+        timestamp: at(10),
+        authenticationInfo: { principalEmail: "sa1@proj-1.iam.gserviceaccount.com" },
+      },
+    };
+    const [row] = gcpComputeLifecycles([insert, attach, key], "u1");
+    expect(row.description).toContain("GCP_RULES");
+    expect(row.description).not.toContain("a High-severity call recorded from the attached service account");
+  });
+
+  it("#7 one record cited from two code paths (launch + attachment) counts once toward notCited, never twice", () => {
+    const insert = gcp("v1.compute.instances.insert", {
+      timestamp: at(0),
+      request: { serviceAccounts: [{ email: "default-sa@proj-1.iam.gserviceaccount.com" }] },
+    });
+    const [row] = gcpComputeLifecycles([insert], "u1");
+    expect(row.canonical?.gcpCompute?.notCited).toBe(0);
+  });
+
+  it("#2 GCP sessions are capped at the tracked bound; further distinct attached emails' calls are counted, never crash schema validation", () => {
+    const insert = gcp("v1.compute.instances.insert", { timestamp: at(0) });
+    const records: Record<string, unknown>[] = [insert];
+    // 9 distinct attach+call pairs -> 9 distinct sessions would exceed SESSIONS_MAX (8).
+    for (let i = 0; i < 9; i++) {
+      const email = `sa${i}@proj-1.iam.gserviceaccount.com`;
+      records.push(
+        gcp("v1.compute.instances.setServiceAccount", { timestamp: at(10 + i * 10), request: { email } }),
+      );
+      records.push({
+        protoPayload: {
+          methodName: "storage.objects.get",
+          serviceName: "storage.googleapis.com",
+          timestamp: at(11 + i * 10),
+          authenticationInfo: { principalEmail: email },
+        },
+      });
+    }
+    expect(() => gcpComputeLifecycles(records, "u1")).not.toThrow();
+    const [row] = gcpComputeLifecycles(records, "u1");
+    expect(row.canonical?.gcpCompute?.sessions.length).toBeLessThanOrEqual(8);
+    expect(row.canonical?.gcpCompute?.sessionsBeyond).toBeGreaterThan(0);
+  });
 });

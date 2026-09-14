@@ -272,4 +272,24 @@ describe("parseCloudActivity — compute-lifecycle wiring (#1066)", () => {
     const azureRow2 = r2.events.find((e) => e.description.startsWith("Azure compute lifecycle:"));
     expect(azureRow1?.aggKey).toBe(azureRow2?.aggKey);
   });
+
+  // Regression test for Codex code-round-1 finding #3 (RECOMMENDATION-1066.md): each join must
+  // cite the record's position in the ORIGINAL upload, never in a provider-filtered array — an
+  // Azure-before-GCP upload must not make the GCP row cite the Azure record's index.
+  it("#3 evidence locators reflect the ORIGINAL record position, never a provider-filtered array's position", () => {
+    const r = parseCloudActivity(
+      JSON.stringify([
+        azure("Microsoft.Compute/virtualMachines/write"), // record:0
+        gcp("v1.compute.instances.insert", {
+          // record:1
+          serviceName: "compute.googleapis.com",
+          resourceName: "projects/acme/zones/us-central1-a/instances/vm1",
+        }),
+      ]),
+    );
+    const gcpRow = r.events.find((e) => e.description.startsWith("GCP compute lifecycle:"));
+    const azureRow = r.events.find((e) => e.description.startsWith("Azure compute lifecycle:"));
+    expect(gcpRow?.canonical?.evidence?.rawRecords.map((rr) => rr.locator)).toContain("record:1");
+    expect(azureRow?.canonical?.evidence?.rawRecords.map((rr) => rr.locator)).toContain("record:0");
+  });
 });

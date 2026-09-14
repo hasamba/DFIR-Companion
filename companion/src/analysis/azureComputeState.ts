@@ -32,6 +32,13 @@ export const BASIS =
 /** A standalone VM's resource id — VM scale sets are out of scope (#1073). */
 const VM_RESOURCE_ID =
   /\/subscriptions\/([^/]+)\/resourcegroups\/([^/]+)\/providers\/microsoft\.compute\/virtualmachines\/([^/]+)/i;
+/**
+ * The Run Command operation family (the action form and the managed form) — the ONE shared
+ * source of this pattern. `cloudActivityImport.ts`'s `AZURE_RULES` severity table and its
+ * `azureRemoteExecutionTarget` both import this constant rather than keeping their own copies, so
+ * a security-sensitive match can never drift between the two files (Codex code review, finding #8).
+ */
+export const AZURE_RUN_COMMAND_RE = /virtualmachines(?:\/[^/]+)?\/runcommands?\/(?:action|write)/i;
 export const FACT_WORDS: Record<AzureComputeFact, string> = {
   "identity-assigned": "managed identity recorded on the VM's write",
   "remote-access-request": "remote-access request to the VM",

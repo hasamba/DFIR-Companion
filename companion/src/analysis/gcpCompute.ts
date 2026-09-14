@@ -25,7 +25,7 @@ import {
   GCP_COMPUTE_MAX,
   METADATA_KEYS_MAX,
   RANK,
-  attachedAt,
+  attachedInterval,
   cite,
   closeAttachment,
   field,
@@ -152,6 +152,7 @@ function recordCompute(t: Tracked, s: Scanned): void {
         by,
       };
       inst.operations.push(op);
+      noteFact(inst, "metadata-replaced", s.time, s.locator);
       cite(inst, s.locator);
     } else inst.notSucceeded += 1;
   } else if (tail(START_RE, s.method) || tail(STOP_RE, s.method) || tail(DELETE_RE, s.method)) {
@@ -208,14 +209,22 @@ export function gcpComputeLifecycles(records: readonly Row[], uploadId: string):
       (byEmail.get(a) ?? byEmail.set(a, []).get(a)!).push(inst);
 
   // Pass 2: calls recorded from an attached email, over EVERY GCP record of this upload (not only
-  // compute-service ones) — an attached identity can act against any other GCP service.
+  // compute-service ones) — an attached identity can act against any other GCP service. Gated on
+  // the SAME outcome function as pass 1 (Codex code review, finding #1): a denied call joins
+  // nothing and is tallied only as an attempt, never a session record or a privileged-call fact.
   for (const s of scanned) {
     if (!s.principal) continue;
     const candidates = byEmail.get(lower(s.principal));
     if (!candidates) continue;
+    const success = gcpAttemptOutcome(s.pp) === "success";
     for (const inst of candidates) {
-      if (!attachedAt(inst, s.principal, s.time)) continue;
-      tallySession(inst, s.principal, s.time, s.locator, `${s.service} ${s.method}`);
+      const interval = attachedInterval(inst, s.principal, s.time);
+      if (!interval) continue;
+      if (!success) {
+        inst.notSucceeded += 1;
+        continue;
+      }
+      tallySession(inst, interval, s.time, s.locator, `${s.service} ${s.method}`);
       if (matchGcpRule(s.method)?.severity === "High")
         noteFact(inst, "session-privileged-change", s.time, s.locator);
       cite(inst, s.locator);

@@ -188,4 +188,20 @@ describe("azureComputeLifecycles", () => {
     expect(rows).toHaveLength(AZURE_COMPUTE_MAX + 1);
     expect(rows[rows.length - 1].description).toContain("3 further VM");
   });
+
+  // Regression test for Codex code-round-1 finding #2 (RECOMMENDATION-1066.md): remote-access
+  // requests must be bounded during scanning, or a 9th genuinely valid request would throw a
+  // ZodError at canonical-envelope construction (the schema itself is capped at 8).
+  it("#2 remote requests beyond REMOTE_MAX are counted, never pushed past the schema's own bound", () => {
+    const write = azure("Microsoft.Compute/virtualMachines/write", { eventTimestamp: at(0) });
+    const records = [write];
+    for (let i = 0; i < 9; i++)
+      records.push(
+        azure("Microsoft.Compute/virtualMachines/runCommand/action", { eventTimestamp: at(10 + i) }),
+      );
+    expect(() => azureComputeLifecycles(records, "u1")).not.toThrow();
+    const [row] = azureComputeLifecycles(records, "u1");
+    expect(row.canonical?.azureCompute?.remote.length).toBeLessThanOrEqual(8);
+    expect(row.canonical?.azureCompute?.remoteBeyond).toBeGreaterThan(0);
+  });
 });

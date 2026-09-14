@@ -32,10 +32,13 @@ export const BASIS =
 /** The full documented GCE resourceName shape — `projectRefOf` (gcpIdentity.ts) parses only the leading scope, not this tail. */
 const INSTANCE_RESOURCE_NAME = /^projects\/([^/]+)\/zones\/([^/]+)\/instances\/([^/]+)$/i;
 export const FACT_WORDS: Record<GcpComputeFact, string> = {
+  "metadata-replaced": "metadata replaced after the launch",
   "service-account-attached": "service account recorded as attached to the instance",
-  "session-privileged-change": "a High-severity call recorded from the attached service account",
+  "session-privileged-change":
+    "a call from the attached service account matched a High entry in the shared GCP_RULES table (not necessarily the record's own final imported severity)",
 };
 export const FACT_MITRE: Record<GcpComputeFact, string> = {
+  "metadata-replaced": "T1578.005",
   "service-account-attached": "T1098.001",
   "session-privileged-change": "T1098",
 };
@@ -132,6 +135,8 @@ export interface Attachment extends Timed {
 }
 export interface SessionTally {
   email: string;
+  /** The interval's own start time (ms) — disambiguates two sessions for the same re-attached email. */
+  attachmentFrom: number;
   records: number;
   first: Cited | null;
   last: Cited | null;
@@ -147,8 +152,12 @@ export interface Instance {
   attachments: Attachment[];
   attachmentsBeyond: number;
   sessions: Map<string, SessionTally>;
+  sessionsBeyond: number;
   notSucceeded: number;
   facts: Map<GcpComputeFact, Cited>;
+  /** Locators already counted toward `contributing` — cite() is idempotent per locator, since one
+   * record (e.g. an insert that also attaches a service account) can be cited from two code paths. */
+  citedSet: Set<string>;
   locators: string[];
   contributing: number;
 }
@@ -180,8 +189,10 @@ export function instanceFor(
     attachments: [],
     attachmentsBeyond: 0,
     sessions: new Map(),
+    sessionsBeyond: 0,
     notSucceeded: 0,
     facts: new Map(),
+    citedSet: new Set(),
     locators: [],
     contributing: 0,
   };
@@ -189,7 +200,11 @@ export function instanceFor(
   return inst;
 }
 
+/** Idempotent per locator — a single record (e.g. an insert that also attaches a service
+ * account) can be cited from more than one code path in the same pass; it must count once. */
 export const cite = (inst: Instance, locator: string): void => {
+  if (inst.citedSet.has(locator)) return;
+  inst.citedSet.add(locator);
   inst.contributing += 1;
   if (inst.locators.length < RAW_RECORDS_MAX) inst.locators.push(locator);
 };
@@ -216,24 +231,46 @@ export function closeAttachment(inst: Instance, time: number): void {
   if (open) open.to = time;
 }
 
-/** Whether `email` was the instance's open attachment at `time`. */
-export function attachedAt(inst: Instance, email: string, time: number): boolean {
-  return inst.attachments.some(
-    (a) => lower(a.email) === lower(email) && a.time <= time && (a.to === null || time < a.to),
+/**
+ * The instance's own attachment interval covering `email` at `time` — or `null`. Returns the
+ * INTERVAL, not a boolean, so a session tally can be keyed per interval: an account attached,
+ * detached, then reattached later is two intervals, and their calls must never merge into one
+ * session whose first→last range spans the detached gap (Codex code review, finding #5).
+ */
+export function attachedInterval(inst: Instance, email: string, time: number): Attachment | null {
+  return (
+    inst.attachments.find(
+      (a) => lower(a.email) === lower(email) && a.time <= time && (a.to === null || time < a.to),
+    ) ?? null
   );
 }
 
+/** Sessions tracked per instance; further distinct intervals are counted, never tracked. */
+export const SESSIONS_MAX = 8;
+
 export function tallySession(
   inst: Instance,
-  email: string,
+  interval: Attachment,
   time: number,
   locator: string,
   call: string,
 ): void {
-  let s = inst.sessions.get(lower(email));
+  const key = `${lower(interval.email)}@${interval.time}`;
+  let s = inst.sessions.get(key);
   if (!s) {
-    s = { email, records: 0, first: null, last: null, cited: [] };
-    inst.sessions.set(lower(email), s);
+    if (inst.sessions.size >= SESSIONS_MAX) {
+      inst.sessionsBeyond += 1;
+      return;
+    }
+    s = {
+      email: interval.email,
+      attachmentFrom: interval.time,
+      records: 0,
+      first: null,
+      last: null,
+      cited: [],
+    };
+    inst.sessions.set(key, s);
   }
   s.records += 1;
   if (!s.first || time < s.first.time) s.first = { time, locator };

@@ -52,6 +52,8 @@ export const gcpComputeAttachmentSchema = z.object({
 
 export const gcpComputeSessionSchema = z.object({
   email: z.string(),
+  /** The attachment interval's own start time — disambiguates two sessions for a re-attached email. */
+  attachmentFrom: z.string(),
   records: z.number().int().nonnegative(),
   first: cited,
   last: cited,
@@ -59,7 +61,11 @@ export const gcpComputeSessionSchema = z.object({
   cited: z.array(z.object({ call: z.string(), time: z.string(), locator: z.string() })).max(8),
 });
 
-export const gcpComputeFactKinds = ["service-account-attached", "session-privileged-change"] as const;
+export const gcpComputeFactKinds = [
+  "metadata-replaced",
+  "service-account-attached",
+  "session-privileged-change",
+] as const;
 
 export const gcpComputeBlockSchema = z.object({
   instanceName: z.string(),
@@ -71,6 +77,8 @@ export const gcpComputeBlockSchema = z.object({
   attachments: z.array(gcpComputeAttachmentSchema).max(16),
   attachmentsBeyond: z.number().int().nonnegative(),
   sessions: z.array(gcpComputeSessionSchema).max(8),
+  /** Distinct attachment intervals with recorded calls beyond the tracked bound — counted, never dropped silently. */
+  sessionsBeyond: z.number().int().nonnegative(),
   attempts: z.object({ notSucceeded: z.number().int().nonnegative() }),
   /** The distinct recorded-fact kinds the grade counts: two or more → High, one → Medium, none → Low. */
   facts: z.array(z.enum(gcpComputeFactKinds)),

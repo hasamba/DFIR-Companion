@@ -67,7 +67,9 @@ function sessionWords(inst: Instance): string[] {
         .sort((a, b) => a.time - b.time)
         .map((c) => `${show(c.call, 80)} at ${new Date(c.time).toISOString()} (${c.locator})`)
         .join("; ");
-      return `calls recorded from ${show(s.email, 80)} while it was the instance's recorded service account (this account may be shared with other resources this upload does not distinguish): ${plural(s.records, "record")}${s.first ? ` ${new Date(s.first.time).toISOString()} (${s.first.locator})` : ""}${s.last ? ` → ${new Date(s.last.time).toISOString()} (${s.last.locator})` : ""}${cited ? `; ${cited}` : ""}`;
+      // The attachment interval's own start time disambiguates two sessions for the same email
+      // re-attached at different times (Codex code review, finding #5) — never merged into one.
+      return `calls recorded from ${show(s.email, 80)} while it was the instance's recorded service account since ${new Date(s.attachmentFrom).toISOString()} (this account may be shared with other resources this upload does not distinguish): ${plural(s.records, "record")}${s.first ? ` ${new Date(s.first.time).toISOString()} (${s.first.locator})` : ""}${s.last ? ` → ${new Date(s.last.time).toISOString()} (${s.last.locator})` : ""}${cited ? `; ${cited}` : ""}`;
     });
 }
 
@@ -91,6 +93,11 @@ export function summaryRow(
         ]
       : []),
     ...sessionWords(inst),
+    ...(inst.sessionsBeyond
+      ? [
+          `${plural(inst.sessionsBeyond, "further attached identity's")} calls beyond the tracked bound — not shown`,
+        ]
+      : []),
     ...(inst.notSucceeded
       ? [`${plural(inst.notSucceeded, "record")} without a recorded success — not joined`]
       : []),
@@ -142,6 +149,7 @@ export function summaryRow(
       .filter((s) => s.first && s.last)
       .map((s) => ({
         email: s.email,
+        attachmentFrom: new Date(s.attachmentFrom).toISOString(),
         records: s.records,
         first: { time: new Date(s.first!.time).toISOString(), locator: s.first!.locator },
         last: { time: new Date(s.last!.time).toISOString(), locator: s.last!.locator },
@@ -151,6 +159,7 @@ export function summaryRow(
           locator: c.locator,
         })),
       })),
+    sessionsBeyond: inst.sessionsBeyond,
     attempts: { notSucceeded: inst.notSucceeded },
     facts: [...facts],
     notCited,

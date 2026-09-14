@@ -17,8 +17,10 @@ import { parseAzureRequestBody } from "./loggingChangeCloud.js";
 import { getCI, getPath, isObject, normalizeTime, str, type MappedEvent } from "./siemImport.js";
 import {
   AZURE_COMPUTE_MAX,
+  AZURE_RUN_COMMAND_RE,
   NICS_MAX,
   RANK,
+  REMOTE_MAX,
   azureAttemptOutcome,
   cite,
   field,
@@ -171,25 +173,29 @@ function recordOperation(t: Tracked, s: Scanned): void {
   cite(vm, s.locator);
 }
 
-// The same Run Command operation match `cloudActivityImport.ts`'s `azureRemoteExecutionTarget`
-// uses — matched directly here, never by importing that helper, since its return `id` is a
-// different string SHAPE (the full lowercased resource path, not this join's `sub|rg|vm` key) and
-// importing it would create a cycle (`cloudActivityImport.ts` wires this join in). Because `scan()`
-// above already requires a record's OWN `resourceId` to parse as a standalone VM before it is kept
-// at all — true for both the "action" form (`resourceId` IS the VM) and the "managed" form
-// (`resourceId` is `<vm>/runCommands/<name>`, and the VM-id regex is not end-anchored) — no
-// separate target-resolution step is needed: `s.vmId` already IS the Run Command's target.
-const RUN_COMMAND_RE = /virtualmachines(?:\/[^/]+)?\/runcommands?\/(?:action|write)/i;
-
+// The Run Command operation match is the shared AZURE_RUN_COMMAND_RE (azureComputeState.ts) —
+// the same constant cloudActivityImport.ts's AZURE_RULES table and azureRemoteExecutionTarget
+// use, so the two files can never disagree about what counts as a Run Command call. Never by
+// importing azureRemoteExecutionTarget ITSELF here: its return `id` is a different string SHAPE
+// (the full lowercased resource path, not this join's `sub|rg|vm` key) and importing the function
+// (as opposed to the regex) would create a cycle, since cloudActivityImport.ts wires this join in.
+// Because `scan()` above already requires a record's OWN `resourceId` to parse as a standalone VM
+// before it is kept at all — true for both the "action" form (`resourceId` IS the VM) and the
+// "managed" form (`resourceId` is `<vm>/runCommands/<name>`, and the VM-id regex is not
+// end-anchored) — no separate target-resolution step is needed: `s.vmId` already IS the target.
 function recordRemote(t: Tracked, s: Scanned): void {
-  if (!RUN_COMMAND_RE.test(s.op)) return;
+  if (!AZURE_RUN_COMMAND_RE.test(s.op)) return;
   const vm = vmFor(t, s.vmId!.subscriptionId, s.vmId!.resourceGroup, s.vmId!.vmName);
   if (!vm) return;
   if (azureAttemptOutcome(s.status) !== "success") {
     vm.notSucceeded += 1;
     return;
   }
-  vm.remote.push({ call: s.op, time: s.time, locator: s.locator, by: s.by });
+  // Records arrive here in time order (scan() sorts before any pass runs), so keeping the first
+  // REMOTE_MAX encountered is equivalent to keeping the earliest — no separate sort needed.
+  if (vm.remote.length < REMOTE_MAX)
+    vm.remote.push({ call: s.op, time: s.time, locator: s.locator, by: s.by });
+  else vm.remoteBeyond += 1;
   noteFact(vm, "remote-access-request", s.time, s.locator);
   cite(vm, s.locator);
 }
