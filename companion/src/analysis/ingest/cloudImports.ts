@@ -13,6 +13,14 @@ import { applySeverityFloor } from "../severityFloor.js";
 import { type InvestigationState, type Severity } from "../stateTypes.js";
 import { noteEmptyImport } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
+import type { CloudCoverageDraft } from "../cloudCoverage.js";
+
+/** What the four cloud/identity importers return beside the state (#1063) — coverage lives
+ * outside InvestigationState, so it travels beside it rather than inside the delta. */
+export interface ImportWithCoverage {
+  state: InvestigationState;
+  coverage: CloudCoverageDraft[];
+}
 
 /**
  * Cloud control-plane and fleet-query sources.
@@ -38,10 +46,14 @@ export async function importM365(
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
   },
-): Promise<InvestigationState> {
+): Promise<ImportWithCoverage> {
   const parsedRaw = parseM365Audit(text, opts.m365);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Microsoft 365", parsed.total);
+  if (parsed.events.length === 0)
+    return {
+      state: await noteEmptyImport(ctx, caseId, opts, "Microsoft 365", parsed.total),
+      coverage: parsed.coverage,
+    };
 
   const raw = {
     findings: [],
@@ -62,18 +74,19 @@ export async function importM365(
   };
   const delta = deltaSchema.parse(raw);
 
-  return ctx.withStateLock(caseId, async () => {
-    let state = await ctx.opts.stateStore.load(caseId);
-    state = await ctx.mergeWithAliases(state, delta, {
+  const state = await ctx.withStateLock(caseId, async () => {
+    let s = await ctx.opts.stateStore.load(caseId);
+    s = await ctx.mergeWithAliases(s, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,
       sourceScreenshots: [opts.label],
     });
-    await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
+    await ctx.opts.stateStore.save(s);
+    ctx.opts.onState?.(s);
     opts.onProgress?.(1, 1);
-    return state;
+    return s;
   });
+  return { state, coverage: parsed.coverage };
 }
 
 // Import an Okta System Log export. Deterministic (no AI call): severity is derived from the
@@ -144,10 +157,14 @@ export async function importGoogleWorkspace(
     minSeverity?: Severity;
     onProgress?: (done: number, total: number) => void;
   },
-): Promise<InvestigationState> {
+): Promise<ImportWithCoverage> {
   const parsedRaw = parseGoogleWorkspaceReport(text, opts.gws);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Google Workspace", parsed.total);
+  if (parsed.events.length === 0)
+    return {
+      state: await noteEmptyImport(ctx, caseId, opts, "Google Workspace", parsed.total),
+      coverage: parsed.coverage,
+    };
 
   const raw = {
     findings: [],
@@ -168,18 +185,19 @@ export async function importGoogleWorkspace(
   };
   const delta = deltaSchema.parse(raw);
 
-  return ctx.withStateLock(caseId, async () => {
-    let state = await ctx.opts.stateStore.load(caseId);
-    state = await ctx.mergeWithAliases(state, delta, {
+  const state = await ctx.withStateLock(caseId, async () => {
+    let s = await ctx.opts.stateStore.load(caseId);
+    s = await ctx.mergeWithAliases(s, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,
       sourceScreenshots: [opts.label],
     });
-    await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
+    await ctx.opts.stateStore.save(s);
+    ctx.opts.onState?.(s);
     opts.onProgress?.(1, 1);
-    return state;
+    return s;
   });
+  return { state, coverage: parsed.coverage };
 }
 
 // Import Hindsight browser-artifact output. Deterministic (no AI call). Every row lands at Info —
@@ -361,10 +379,14 @@ export async function importAws(
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
   },
-): Promise<InvestigationState> {
+): Promise<ImportWithCoverage> {
   const parsedRaw = parseCloudTrail(text, opts.aws);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "AWS CloudTrail", parsed.total);
+  if (parsed.events.length === 0)
+    return {
+      state: await noteEmptyImport(ctx, caseId, opts, "AWS CloudTrail", parsed.total),
+      coverage: parsed.coverage,
+    };
 
   const raw = {
     findings: [],
@@ -385,18 +407,19 @@ export async function importAws(
   };
   const delta = deltaSchema.parse(raw);
 
-  return ctx.withStateLock(caseId, async () => {
-    let state = await ctx.opts.stateStore.load(caseId);
-    state = await ctx.mergeWithAliases(state, delta, {
+  const state = await ctx.withStateLock(caseId, async () => {
+    let s = await ctx.opts.stateStore.load(caseId);
+    s = await ctx.mergeWithAliases(s, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,
       sourceScreenshots: [opts.label],
     });
-    await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
+    await ctx.opts.stateStore.save(s);
+    ctx.opts.onState?.(s);
     opts.onProgress?.(1, 1);
-    return state;
+    return s;
   });
+  return { state, coverage: parsed.coverage };
 }
 
 // Import GCP Cloud Audit Logs + Azure Activity Log. Deterministic (no AI call): each record
@@ -414,10 +437,14 @@ export async function importCloudActivity(
     minSeverity?: Severity; // gate-aware import floor (unified Import button) — see applySeverityFloor
     onProgress?: (done: number, total: number) => void;
   },
-): Promise<InvestigationState> {
+): Promise<ImportWithCoverage> {
   const parsedRaw = parseCloudActivity(text, opts.cloud);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Cloud activity", parsed.total);
+  if (parsed.events.length === 0)
+    return {
+      state: await noteEmptyImport(ctx, caseId, opts, "Cloud activity", parsed.total),
+      coverage: parsed.coverage,
+    };
 
   const raw = {
     findings: [],
@@ -438,18 +465,19 @@ export async function importCloudActivity(
   };
   const delta = deltaSchema.parse(raw);
 
-  return ctx.withStateLock(caseId, async () => {
-    let state = await ctx.opts.stateStore.load(caseId);
-    state = await ctx.mergeWithAliases(state, delta, {
+  const state = await ctx.withStateLock(caseId, async () => {
+    let s = await ctx.opts.stateStore.load(caseId);
+    s = await ctx.mergeWithAliases(s, delta, {
       windowSequence: -1,
       timestamp: opts.importedAt,
       sourceScreenshots: [opts.label],
     });
-    await ctx.opts.stateStore.save(state);
-    ctx.opts.onState?.(state);
+    await ctx.opts.stateStore.save(s);
+    ctx.opts.onState?.(s);
     opts.onProgress?.(1, 1);
-    return state;
+    return s;
   });
+  return { state, coverage: parsed.coverage };
 }
 
 // Import Kubernetes API-server audit logs (audit.k8s.io). Deterministic (no AI call): each audit

@@ -17,7 +17,12 @@ import { hasScope, type ScopeWindow } from "../scope.js";
 import type { ForensicEvent, InvestigationState } from "../stateTypes.js";
 import { buildBeaconDigest, buildAttackPhaseDigest } from "../synthEvidence.js";
 import { buildSynthesisContext } from "../synthSelect.js";
-import { adversaryHintBlock, knownUnknownsBlock, type PromptBlockContext } from "./promptBlocks.js";
+import {
+  adversaryHintBlock,
+  cloudCoverageBlock,
+  knownUnknownsBlock,
+  type PromptBlockContext,
+} from "./promptBlocks.js";
 
 /**
  * The narrative blocks that surround the synthesis timeline, and the two places they are
@@ -48,6 +53,7 @@ export interface SynthesisBlocks {
   beaconBlock: string;
   attackPhaseBlock: string;
   unknownsBlock: string;
+  cloudCoverageBlock: string;
   adversaryBlock: string;
   notebookBlock: string;
   analystHypothesesBlock: string;
@@ -124,6 +130,9 @@ export async function buildSynthesisBlocks(
     // likely-next techniques) so the model builds on what's MISSING instead of glossing over it.
     // Plus the (env-gated, default OFF) candidate-actor block.
     unknownsBlock: await knownUnknownsBlock(ctx, state, scopedEvents, caseId, aliasIndex),
+    // Per-upload cloud coverage (#1063): what each CloudTrail/GCP/Azure/M365/Workspace upload can
+    // and cannot answer, so a missing category is never read as "nothing happened".
+    cloudCoverageBlock: await cloudCoverageBlock(ctx, caseId),
     adversaryBlock: adversaryHintBlock(state),
     satisfiedBlock: satisfied.block,
     pinnedBlock: buildPinnedBlock(state),
@@ -267,6 +276,7 @@ function leadingBlocks(b: SynthesisBlocks): string {
     b.beaconBlock +
     b.attackPhaseBlock +
     b.unknownsBlock +
+    b.cloudCoverageBlock +
     b.adversaryBlock +
     b.notebookBlock +
     b.analystHypothesesBlock +

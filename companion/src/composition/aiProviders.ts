@@ -43,6 +43,7 @@ import { LearnedPatternStore } from "../analysis/learnedPatternStore.js";
 import { SourceTrustStore } from "../analysis/sourceTrustStore.js";
 import { PlaybookStore } from "../analysis/playbookStore.js";
 import { ImportMetaStore } from "../analysis/importMeta.js";
+import { CloudCoverageStore } from "../analysis/cloudCoverage.js";
 import { AiControlStore } from "../analysis/aiControl.js";
 import { HuntOutcomeStore } from "../analysis/huntOutcomeStore.js";
 import { SuperTimelineStore } from "../analysis/superTimelineStore.js";
@@ -252,6 +253,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     incidentTypeStore: params.incidentTypeStore, // #236 frame synthesis with the case's incident type
     playbookStore: new PlaybookStore(params.store), // #2 feed DONE/SKIPPED task status into synthesis
     importMetaStore: new ImportMetaStore(params.store), // #10 flag a zero-yield AI import as a coverage gap
+    cloudCoverageStore: new CloudCoverageStore(params.store), // #1063 per-upload cloud coverage for synthesis + the panel
     aiControlStore: new AiControlStore(params.store),
     huntOutcomeStore: new HuntOutcomeStore(params.store), // #157 hunting feedback loop
     superTimelineStore: new SuperTimelineStore(

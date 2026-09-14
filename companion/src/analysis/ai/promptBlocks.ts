@@ -3,6 +3,12 @@ import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "../adversar
 import { gapEnvOptions } from "../gapDetect.js";
 import type { HostAliasIndex } from "../hostAlias.js";
 import { classifyImportYield, type ImportMetaStore, type ImportYieldWarning } from "../importMeta.js";
+import {
+  renderCloudCoverage,
+  summarizeCloudCoverage,
+  type CloudCoverageStore,
+  type CloudCoverageSummary,
+} from "../cloudCoverage.js";
 import { buildKnownUnknownItems, renderKnownUnknowns, type KnownUnknownItem } from "../knownUnknowns.js";
 import { loadKnownPlaybooks } from "../knownPlaybooksData.js";
 import { buildPlaybookMatchResult, playbookMatchEnvOptions } from "../playbookMatch.js";
@@ -24,7 +30,10 @@ import { loadScopedEvents, type AiCallContext } from "./aiContext.js";
 
 /** What a block builder needs beyond the shared AI-call seam. */
 export interface PromptBlockContext extends AiCallContext {
-  readonly opts: AiCallContext["opts"] & { importMetaStore?: ImportMetaStore };
+  readonly opts: AiCallContext["opts"] & {
+    importMetaStore?: ImportMetaStore;
+    cloudCoverageStore?: CloudCoverageStore;
+  };
 }
 
 // The STRUCTURED known-unknowns for a case (investigation-guidance #9) — the SINGLE source the
@@ -95,6 +104,41 @@ export async function knownUnknownsForCase(
   const { scoped } = await loadScopedEvents(ctx, caseId, loaded);
   return knownUnknownItems(loaded, scoped, await loadYieldWarning(ctx, caseId));
 }
+
+// Per-upload cloud coverage (#1063): the SINGLE structured source both the synthesis prompt block
+// AND the GET /cases/:id/cloud-coverage panel consume, so the model and the analyst see the same
+// coverage facts and the same absence caveats. Defensive: a store failure must never break synthesis.
+export async function cloudCoverageSummary(
+  ctx: PromptBlockContext,
+  caseId: string,
+): Promise<CloudCoverageSummary> {
+  if (!ctx.opts.cloudCoverageStore) return { items: [], caveats: [] };
+  try {
+    const store = ctx.opts.cloudCoverageStore;
+    const [records, everSeen] = await Promise.all([store.load(caseId), store.loadEverSeen(caseId)]);
+    return summarizeCloudCoverage(records, everSeen);
+  } catch {
+    return { items: [], caveats: [] };
+  }
+}
+
+// Cloud-coverage preamble: what each CloudTrail/GCP/Azure/M365/Workspace upload can and cannot
+// answer, so synthesis never reads a missing category's silence as "nothing happened" or "not
+// configured" when the export simply never carried it.
+export async function cloudCoverageBlock(ctx: PromptBlockContext, caseId: string): Promise<string> {
+  // `Number(x) || 10` would treat the STRING "0" as falsy and silently fall back to the default,
+  // breaking the documented "0 = disable" — parse explicitly instead: only an unset/empty/NaN
+  // value falls back; an explicit 0 is honoured.
+  const raw = process.env.DFIR_SYNTH_CLOUD_COVERAGE_MAX;
+  const parsed = raw === undefined || raw.trim() === "" ? NaN : Number(raw);
+  const max = Number.isFinite(parsed) ? Math.max(0, parsed) : 10;
+  return renderCloudCoverage(await cloudCoverageSummary(ctx, caseId), max);
+}
+
+// Read-only: `cloudCoverageSummary` itself is the structured source the "Cloud Coverage" dashboard
+// panel and the report section read (aliased here so callers do not import a "…Summary"-named
+// function for a read-only case lookup — the same exported function, both names apply).
+export const cloudCoverageForCase = cloudCoverageSummary;
 
 // Candidate-threat-actor preamble (#165), OFF by default (DFIR_SYNTH_ADVERSARY_HINTS). Feeds the
 // technique-overlap hints (already shown in the report) into synthesis as LOW-CONFIDENCE candidates.

@@ -388,6 +388,7 @@
       ["phases", () => loadPhases(caseId)],
       ["timelineGaps", () => loadTimelineGaps(caseId)],
       ["evidenceGaps", () => loadEvidenceGaps(caseId)],
+      ["cloudCoverage", () => loadCloudCoverage(caseId)],
       ["beacons", () => loadBeacons(caseId)],
       ["anomalies", () => loadAnomalies(caseId)],
       ["sessions", () => loadSessions(caseId)],
@@ -536,6 +537,7 @@
         schedulePhasesReload();
         scheduleTimelineGapsReload();
         scheduleEvidenceGapsReload();
+        scheduleCloudCoverageReload();
         scheduleBeaconsReload();
         scheduleAnomaliesReload();
         scheduleSessionsReload();

@@ -20,6 +20,8 @@ import { readAwsIdentity, readCredentialIssuance } from "./awsIdentity.js";
 import { mergeReplicas, type ReplicaCandidate } from "./awsReplicas.js";
 import { awsLineages, AWS_LINEAGE_MAX } from "./awsLineage.js";
 import { awsComputeLifecycles, AWS_COMPUTE_MAX } from "./awsCompute.js";
+import { awsCloudTrailCoverage } from "./cloudCoverageBuilders.js";
+import type { CloudCoverageDraft } from "./cloudCoverage.js";
 import { decodeCloudTrailLogging, renderLoggingDescription } from "./loggingChange.js";
 import {
   extractRecords,
@@ -59,6 +61,8 @@ export interface AwsParseResult {
   /** Derived summary rows appended after the source-row cap (the credential lineages #979, the compute lifecycles #931 item 8) — not in `kept`. */
   summaries: number;
   format: string; // "cloudtrail" | "empty"
+  /** Per-upload coverage drafts (#1063) — never part of the timeline; consumed once by the caller and stored outside InvestigationState. */
+  coverage: CloudCoverageDraft[];
 }
 
 interface ActionDef {
@@ -527,8 +531,23 @@ export function parseCloudTrail(text: string, opts: AwsImportOptions = {}): AwsP
   const { records } = extractRecords(text);
   const total = records.length;
   if (total === 0) {
-    return { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, summaries: 0, format: "empty" };
+    return {
+      events: [],
+      iocs: [],
+      total: 0,
+      kept: 0,
+      dropped: 0,
+      groups: 0,
+      summaries: 0,
+      format: "empty",
+      coverage: [],
+    };
   }
+
+  // Coverage (#1063): every record this upload states about itself, regardless of whether it
+  // mapped to a timeline row — the coverage question is about the export, not the grading.
+  const uploadId = sourceArtifactHash(text);
+  const coverage: CloudCoverageDraft[] = awsCloudTrailCoverage(records).map((d) => ({ ...d, uploadId }));
 
   const iocSink = new Map<string, SiemIoc>();
   const candidates: ReplicaCandidate[] = [];
@@ -540,7 +559,17 @@ export function parseCloudTrail(text: string, opts: AwsImportOptions = {}): AwsP
   // independent of the optional aggregation.
   const mapped = mergeReplicas(candidates);
   if (mapped.length === 0) {
-    return { events: [], iocs: [], total, kept: 0, dropped: total, groups: 0, summaries: 0, format: "empty" };
+    return {
+      events: [],
+      iocs: [],
+      total,
+      kept: 0,
+      dropped: total,
+      groups: 0,
+      summaries: 0,
+      format: "empty",
+      coverage,
+    };
   }
 
   const { events, groups } = aggregateEvents(mapped, {
@@ -559,7 +588,7 @@ export function parseCloudTrail(text: string, opts: AwsImportOptions = {}): AwsP
     }).events,
     // The compute lifecycles (#931 item 8), keyed with this upload's identity so an identical
     // re-import folds and two uploads about one instance stay two rows.
-    ...aggregateEvents(awsComputeLifecycles(records, sourceArtifactHash(text)), {
+    ...aggregateEvents(awsComputeLifecycles(records, uploadId), {
       aggregate: opts.aggregate,
       minSeverity: opts.minSeverity,
       maxEvents: AWS_COMPUTE_MAX + 1,
@@ -582,5 +611,6 @@ export function parseCloudTrail(text: string, opts: AwsImportOptions = {}): AwsP
     groups,
     summaries: summaries.length,
     format: "cloudtrail",
+    coverage,
   };
 }

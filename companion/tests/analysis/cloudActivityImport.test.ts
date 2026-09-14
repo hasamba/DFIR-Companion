@@ -35,6 +35,22 @@ function azure(op: string, over: object = {}): object {
   };
 }
 
+describe("parseCloudActivity — coverage (#1063)", () => {
+  it("GCP coverage reads the CloudAudit log type and the project scope", () => {
+    const r = parseCloudActivity(JSON.stringify([gcp("google.iam.admin.v1.CreateServiceAccountKey")]));
+    const gcpCov = r.coverage.find((c) => c.provider === "gcp")!;
+    expect(gcpCov.scope).toEqual({ kind: "projects", value: "acme" });
+    expect(gcpCov.categories.map((c) => c.name)).toEqual(["activity"]);
+  });
+
+  it("Azure coverage reads the category and the subscription parsed from resourceId", () => {
+    const r = parseCloudActivity(JSON.stringify([azure("Microsoft.Compute/virtualMachines/write")]));
+    const azureCov = r.coverage.find((c) => c.provider === "azure")!;
+    expect(azureCov.scope).toEqual({ kind: "subscription", value: "abc" });
+    expect(azureCov.categories.map((c) => c.name)).toEqual(["Administrative"]);
+  });
+});
+
 describe("parseCloudActivity — GCP", () => {
   it("derives High for CreateServiceAccountKey and extracts principal + caller IP", () => {
     const r = parseCloudActivity(JSON.stringify([gcp("google.iam.admin.v1.CreateServiceAccountKey")]));

@@ -115,6 +115,7 @@ describe("dashboardViews — seed integrity", () => {
       "sec-hostranking",
       "sec-gaps",
       "sec-evidence-gaps",
+      "sec-cloud-coverage",
       "sec-swimlane",
       "sec-assets",
       "sec-login-graph",

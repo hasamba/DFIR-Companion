@@ -33,6 +33,25 @@ function inboxRule(): object {
   });
 }
 
+describe("parseM365Audit — coverage (#1063)", () => {
+  it("reads Workload/Operation as the category and keeps the numeric RecordType as a separate tally", () => {
+    const r = parseM365Audit(JSON.stringify([inboxRule()]));
+    expect(r.coverage).toHaveLength(1);
+    expect(r.coverage[0].scope.kind).toBe("unknown"); // no OrganizationId in this fixture
+    expect(r.coverage[0].categories.map((c) => c.name)).toEqual(["Exchange/New-InboxRule"]);
+    expect(r.coverage[0].categories[0].recordTypeIds).toEqual([1]);
+  });
+
+  it("an OrganizationId present in the record scopes coverage to that tenant", () => {
+    const r = parseM365Audit(
+      JSON.stringify([
+        ualRow({ Operation: "New-InboxRule", Workload: "Exchange" }, { OrganizationId: "tenant-1" }),
+      ]),
+    );
+    expect(r.coverage[0].scope).toEqual({ kind: "tenant", value: "tenant-1" });
+  });
+});
+
 describe("parseM365Audit — Unified Audit Log", () => {
   it("parses the AuditData blob and derives High for an inbox rule (BEC)", () => {
     const r = parseM365Audit(JSON.stringify([inboxRule()]));

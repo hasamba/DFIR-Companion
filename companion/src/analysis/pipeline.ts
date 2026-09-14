@@ -69,6 +69,7 @@ import * as promptBlocks from "./ai/promptBlocks.js";
 import { safeAiErrorKind, safeAiPhase } from "./operationalMetrics.js";
 import { type SecondOpinion } from "./secondOpinion.js";
 import { type AggregateStats } from "./logAggregate.js";
+import { persistCloudCoverage, type CloudCoverageSummary } from "./cloudCoverage.js";
 import { type FloorOption } from "./deepPass.js";
 import { type KevCatalog } from "./kev.js";
 import { type HuntSuggestion } from "./huntSuggest.js";
@@ -169,6 +170,9 @@ export class AnalysisPipeline {
         },
         get importMetaStore() {
           return opts.importMetaStore;
+        },
+        get cloudCoverageStore() {
+          return opts.cloudCoverageStore;
         },
         get provider() {
           return opts.provider;
@@ -547,18 +551,22 @@ export class AnalysisPipeline {
     return ingest.importCybertriage(this.importCtx, ...args);
   }
 
-  importM365(...args: ImporterArgs<typeof ingest.importM365>): Promise<InvestigationState> {
-    return ingest.importM365(this.importCtx, ...args);
+  async importM365(...args: ImporterArgs<typeof ingest.importM365>): Promise<InvestigationState> {
+    const { state, coverage } = await ingest.importM365(this.importCtx, ...args);
+    await persistCloudCoverage(this.opts.cloudCoverageStore, args[0], coverage);
+    return state;
   }
 
   importOkta(...args: ImporterArgs<typeof ingest.importOkta>): Promise<InvestigationState> {
     return ingest.importOkta(this.importCtx, ...args);
   }
 
-  importGoogleWorkspace(
+  async importGoogleWorkspace(
     ...args: ImporterArgs<typeof ingest.importGoogleWorkspace>
   ): Promise<InvestigationState> {
-    return ingest.importGoogleWorkspace(this.importCtx, ...args);
+    const { state, coverage } = await ingest.importGoogleWorkspace(this.importCtx, ...args);
+    await persistCloudCoverage(this.opts.cloudCoverageStore, args[0], coverage);
+    return state;
   }
 
   importHindsight(...args: ImporterArgs<typeof ingest.importHindsight>): Promise<InvestigationState> {
@@ -573,12 +581,18 @@ export class AnalysisPipeline {
     return ingest.importLeapp(this.importCtx, ...args);
   }
 
-  importAws(...args: ImporterArgs<typeof ingest.importAws>): Promise<InvestigationState> {
-    return ingest.importAws(this.importCtx, ...args);
+  async importAws(...args: ImporterArgs<typeof ingest.importAws>): Promise<InvestigationState> {
+    const { state, coverage } = await ingest.importAws(this.importCtx, ...args);
+    await persistCloudCoverage(this.opts.cloudCoverageStore, args[0], coverage);
+    return state;
   }
 
-  importCloudActivity(...args: ImporterArgs<typeof ingest.importCloudActivity>): Promise<InvestigationState> {
-    return ingest.importCloudActivity(this.importCtx, ...args);
+  async importCloudActivity(
+    ...args: ImporterArgs<typeof ingest.importCloudActivity>
+  ): Promise<InvestigationState> {
+    const { state, coverage } = await ingest.importCloudActivity(this.importCtx, ...args);
+    await persistCloudCoverage(this.opts.cloudCoverageStore, args[0], coverage);
+    return state;
   }
 
   importK8sAudit(...args: ImporterArgs<typeof ingest.importK8sAudit>): Promise<InvestigationState> {
@@ -645,6 +659,10 @@ export class AnalysisPipeline {
 
   knownUnknownsForCase(caseId: string): Promise<KnownUnknownItem[]> {
     return promptBlocks.knownUnknownsForCase(this.aiCtx, caseId);
+  }
+
+  cloudCoverageForCase(caseId: string): Promise<CloudCoverageSummary> {
+    return promptBlocks.cloudCoverageForCase(this.aiCtx, caseId);
   }
 
   suggestHunts(caseId: string, opts?: { excludeVql?: string }): Promise<HuntSuggestion[]> {

@@ -198,9 +198,9 @@ export const FEATURES: Feature[] = [
     private: ["HP_STATUS"],
   },
   {
-    // Four server-derived panels in one file — see the module header for why they are not four
+    // Five server-derived panels in one file — see the module header for why they are not five
     // files. The manifest treats it as one module because that is what it is; the publish list is
-    // the union of the four load/schedule pairs the page calls.
+    // the union of the five load/schedule pairs the page calls.
     file: "dashboard-derived-panels.js",
     publish: [
       "loadBeacons",
@@ -212,6 +212,8 @@ export const FEATURES: Feature[] = [
       "loadAttackMitigations",
       "scheduleAttackMitigationsReload",
       "generateRemediation",
+      "loadCloudCoverage",
+      "scheduleCloudCoverageReload",
     ],
     private: [
       "beaconsData",
@@ -222,6 +224,8 @@ export const FEATURES: Feature[] = [
       "playbookMatchTimer",
       "mitigationsData",
       "mitigationsTimer",
+      "cloudCoverageData",
+      "cloudCoverageTimer",
     ],
   },
   {

@@ -1365,6 +1365,7 @@
         <div class="settings-group-head">Case memory / synthesis grounding</div>
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_SYNTH_KNOWN_UNKNOWNS_MAX">Known-unknowns max<span class="sfield-hint">DFIR_SYNTH_KNOWN_UNKNOWNS_MAX — coverage-gap bullets injected into synthesis + hunt prompts (default 10; 0 = disable)</span></label><input id="env-DFIR_SYNTH_KNOWN_UNKNOWNS_MAX" placeholder="10" /></div>
+          <div class="sfield"><label for="env-DFIR_SYNTH_CLOUD_COVERAGE_MAX">Cloud-coverage max<span class="sfield-hint">DFIR_SYNTH_CLOUD_COVERAGE_MAX — per-upload cloud coverage lines injected into the synthesis prompt (default 10; 0 = disable)</span></label><input id="env-DFIR_SYNTH_CLOUD_COVERAGE_MAX" placeholder="10" /></div>
           <div class="sfield"><label for="env-DFIR_SYNTH_ADVERSARY_HINTS">Feed adversary hints to synthesis<span class="sfield-hint">DFIR_SYNTH_ADVERSARY_HINTS — on/off; feeds matched threat actors into the synthesis prompt as hypotheses (default off — can bias the model)</span></label><input id="env-DFIR_SYNTH_ADVERSARY_HINTS" placeholder="off" /></div>
         </div>
         <div class="sfield-row">
@@ -3237,6 +3238,7 @@
     <section id="sec-phases" data-safe-style="grid-column: 1 / -1"><h2>Attack Phases<span class="ev-sub">temporal bursts — activity grouped by time gap, labelled by dominant tactic (derived, no AI)</span></h2><div id="phases">—</div></section>
     <section id="sec-hostranking" data-safe-style="grid-column: 1 / -1"><h2>Host &amp; Account Ranking<span class="ev-sub">which hosts/accounts carry the attack — scored by signal (severity-weighted events + techniques + connective IOCs), not volume (derived, no AI)</span></h2><div id="hostRanking">—</div></section>
     <section id="sec-evidence-gaps" data-safe-style="grid-column: 1 / -1"><h2>Evidence Gaps<span class="ev-sub">what this case is MISSING — uncovered kill-chain phases (with where to collect), silent windows, and lookalike-actor next moves (derived, no AI); a lead, not proof</span></h2><div id="evidenceGaps">—</div></section>
+    <section id="sec-cloud-coverage" data-safe-style="grid-column: 1 / -1"><h2>Cloud Coverage<span class="ev-sub">what each imported CloudTrail/GCP/Azure/M365/Workspace upload can and cannot answer — record counts and categories present, per account/project/subscription/tenant (derived, no AI); a missing category is stated, never assumed to mean nothing happened</span></h2><div id="cloudCoverage">—</div></section>
     <section id="sec-gaps" data-safe-style="grid-column: 1 / -1"><h2>Timeline Gaps<span class="ev-sub">suspicious silent periods — a complete gap (all sources dark) is the classic log-tampering signature (derived, no AI); a lead, not proof</span><button id="hypothesizeGapsBtn" type="button" title="Ask the AI to hypothesise what the attacker did during each silent period (from the surrounding events) and pair each gap with shadow-artifact collections that reconstruct the missing window" data-safe-style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">✨ Hypothesize gaps</button><span id="hypothesizeGapsMsg" data-safe-style="margin-left:8px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted)"></span></h2><div id="timelineGaps">—</div><div id="gapHypotheses"></div></section>
     <section id="sec-swimlane" data-safe-style="grid-column: 1 / -1">
       <h2>Timeline Swimlane<span class="ev-sub" id="swimlaneSub">visual chart — Y-axis: assets · X-axis: time · color: severity (derived, no AI)</span></h2>
@@ -4041,6 +4043,7 @@
       { id: "sec-hostranking",  label: "Host & Account Ranking" },
       { id: "sec-gaps",         label: "Timeline Gaps" },
       { id: "sec-evidence-gaps", label: "Evidence Gaps" },
+      { id: "sec-cloud-coverage", label: "Cloud Coverage" },
       { id: "sec-swimlane",     label: "Timeline Swimlane" },
       { id: "sec-assets",       label: "Compromised Assets & IoC Graph" },
       { id: "sec-login-graph",  label: "Login Graph" },
@@ -4361,7 +4364,6 @@
         panel: `<div id="${uid}" hidden class="ev-details-panel">${parts.map(p => `<div>${p}</div>`).join("")}</div>`,
       };
     }
-
 
     // Login Graph (cytoscape) lives in public/js/dashboard-login-graph.js.
     // Asset↔IoC graph lives in public/js/dashboard-asset-graph.js.

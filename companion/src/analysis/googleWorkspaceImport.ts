@@ -1,6 +1,8 @@
 import type { Severity } from "./stateTypes.js";
 import { boundedAggKey } from "./aggKey.js";
-import { createCanonicalEvent, stampSourceArtifactHash } from "./canonicalEvent.js";
+import { createCanonicalEvent, sourceArtifactHash, stampSourceArtifactHash } from "./canonicalEvent.js";
+import { workspaceCoverage } from "./cloudCoverageBuilders.js";
+import type { CloudCoverageDraft } from "./cloudCoverage.js";
 import { renderAwsDescription } from "./awsDescription.js";
 import { decodeGwsToken, readGwsParams, type GwsTokenReading } from "./gwsOAuth.js";
 import { gwsOAuthLifecycles, GWS_LIFECYCLES_MAX } from "./gwsOAuthLifecycle.js";
@@ -67,6 +69,8 @@ export interface GoogleWorkspaceParseResult {
   /** Derived summary rows appended after the source-row cap (the OAuth lifecycles, #983) — not in `kept`. */
   summaries: number;
   format: string; // "google-workspace" | "empty"
+  /** Per-upload coverage drafts (#1063) — applicationName per tenant. */
+  coverage: CloudCoverageDraft[];
 }
 
 interface EventDef {
@@ -663,6 +667,7 @@ export function parseGoogleWorkspaceReport(
     groups: 0,
     summaries: 0,
     format: "empty",
+    coverage: [],
   };
 
   const trimmed = input.trim();
@@ -672,6 +677,10 @@ export function parseGoogleWorkspaceReport(
   const records = extractRecords(trimmed).records;
   const total = records.length;
   if (total === 0) return empty;
+
+  // Coverage (#1063): applicationName per tenant, over every record this upload states.
+  const uploadId = sourceArtifactHash(input);
+  const coverage: CloudCoverageDraft[] = workspaceCoverage(records).map((d) => ({ ...d, uploadId }));
 
   const iocSink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
@@ -728,5 +737,6 @@ export function parseGoogleWorkspaceReport(
     groups,
     summaries: summaries.length,
     format: mapped.length ? "google-workspace" : "empty",
+    coverage,
   };
 }
