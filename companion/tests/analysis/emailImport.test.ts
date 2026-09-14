@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { createHash } from "node:crypto";
 import { parseEmail, parseMimeEmail, looksLikeMsg } from "../../src/analysis/emailImport.js";
 import type { SiemEvent, SiemIoc } from "../../src/analysis/siemImport.js";
 
@@ -257,5 +258,76 @@ describe("parseEmail — best-effort .msg recovery", () => {
     const r = parseEmail(fakeMsg());
     expect(r.format).toBe("msg");
     expect(only(r.events).severity).toBe("High");
+  });
+});
+
+// #930 item 2 (campaign scope): the attachment's digest is computed from the decoded MIME part —
+// never taken from a hash that happens to appear in the headers or body — and delivery is only
+// ever INDICATED by a header, never established.
+describe("parseMimeEmail — attachment digests and delivery indications (#930 item 2)", () => {
+  const pdf = Buffer.from("%PDF-1.4\n", "utf8");
+  const sha = createHash("sha256").update(pdf).digest("hex");
+  const md5 = createHash("md5").update(pdf).digest("hex");
+  const eml = (extraHeaders: string[] = []) =>
+    [
+      "Received: from relay.example (relay.example [203.0.113.50]) by mx.victim.com for <alias@victim.com>; Tue, 01 Dec 2017 08:00:02 +0000",
+      "Received: from mx.evil.example (mx.evil.example [203.0.113.7]) by relay.example for <other@elsewhere.example>; Tue, 01 Dec 2017 08:00:00 +0000",
+      ...extraHeaders,
+      "From: service@evil.example",
+      "To: victim@victim.com, second@victim.com",
+      "Cc: third@victim.com",
+      "Subject: Invoice",
+      "Date: Tue, 01 Dec 2017 08:00:00 +0000",
+      "Message-ID: <m1@evil.example>",
+      "MIME-Version: 1.0",
+      'Content-Type: multipart/mixed; boundary="BOUND"',
+      "",
+      "--BOUND",
+      "Content-Type: text/plain",
+      "",
+      `see attached ${"b".repeat(64)}`,
+      "--BOUND",
+      'Content-Type: application/pdf; name="invoice.pdf"',
+      'Content-Disposition: attachment; filename="invoice.pdf"',
+      "Content-Transfer-Encoding: base64",
+      "",
+      pdf.toString("base64"),
+      "--BOUND",
+      'Content-Type: application/zip; name="pack.zip"',
+      'Content-Disposition: attachment; filename="pack.zip"',
+      "Content-Transfer-Encoding: base64",
+      "",
+      Buffer.from("PK\\u0003\\u0004zip", "binary").toString("base64"),
+      "--BOUND--",
+    ].join("\n");
+  it("computes each attachment's sha256 / md5 and size from the decoded part; a hash in the body is never an attachment's", () => {
+    const p = parseMimeEmail(eml());
+    expect(p.attachments).toHaveLength(2);
+    expect(p.attachments[0]).toMatchObject({ filename: "invoice.pdf", sha256: sha, md5, size: pdf.length });
+    expect(p.attachments[1].filename).toBe("pack.zip");
+    expect(p.attachments[1].sha256).not.toBe(sha);
+    expect(p.hashes).toContain("b".repeat(64));
+    expect(p.attachments.some((a) => a.sha256 === "b".repeat(64))).toBe(false);
+    const events = parseEmail(eml()).events;
+    const mb = events[0].canonical?.mailbox!;
+    expect(mb.attachments?.map((a) => [a.name, a.sha256])).toEqual([
+      ["invoice.pdf", sha],
+      ["pack.zip", p.attachments[1].sha256],
+    ]);
+    expect(mb.cc).toEqual(["third@victim.com"]);
+    expect(mb.recipients).toEqual(["victim@victim.com", "second@victim.com"]);
+  });
+  it("delivery is INDICATED by Delivered-To (an unauthenticated header) or by the topmost Received 'for' hop — never established, never the To list", () => {
+    const top = parseEmail(eml()).events[0].canonical?.mailbox!;
+    // Received is newest-first: the topmost hop's `for` names the receiving mailbox indication.
+    expect(top.deliveryIndicated).toEqual([{ address: "alias@victim.com", by: "received-for" }]);
+    const dt = parseEmail(eml(["Delivered-To: victim@victim.com"])).events[0].canonical?.mailbox!;
+    expect(dt.deliveryIndicated).toEqual([
+      { address: "victim@victim.com", by: "delivered-to" },
+      { address: "alias@victim.com", by: "received-for" },
+    ]);
+    const none = parseEmail(phishingEml()).events[0].canonical?.mailbox!;
+    expect(none.deliveryIndicated).toBeUndefined();
+    expect(JSON.stringify(dt)).not.toMatch(/"delivered"/);
   });
 });

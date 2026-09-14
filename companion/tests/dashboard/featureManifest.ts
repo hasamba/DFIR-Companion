@@ -119,6 +119,11 @@ export const FEATURES: Feature[] = [
     publish: ["loadRemediation"],
     private: ["boundaries", "facts", "currentCaseId", "loadGen", "verifyGen"],
   },
+  {
+    file: "dashboard-campaign-scope.js",
+    publish: ["loadCampaignScope"],
+    private: ["scope", "currentCaseId", "loadGen"],
+  },
   { file: "dashboard-backup.js", publish: ["loadCaseBackups", "restoreCaseBackup"], private: [] },
   {
     // The load-time-heavy one: everything it does on load is wrapped in initTicketIntegrations(),

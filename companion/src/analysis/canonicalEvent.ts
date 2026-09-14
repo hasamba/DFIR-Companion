@@ -295,7 +295,25 @@ export const canonicalEventEnvelopeSchema = z.object({
       messageId: z.string().optional(),
       sender: z.string().optional(),
       recipients: z.array(z.string()).optional(),
+      cc: z.array(z.string()).optional(),
       subject: z.string().optional(),
+      // What the headers INDICATE about delivery (#930 item 2) — an indication, never a fact.
+      deliveryIndicated: z
+        .array(z.object({ address: z.string(), by: z.enum(["delivered-to", "received-for"]) }))
+        .optional(),
+      // Every attachment with its OWN digest from the decoded part; the campaign scope matches on it.
+      attachments: z
+        .array(
+          z.object({
+            name: z.string(),
+            contentType: z.string().optional(),
+            size: z.number().int().nonnegative().optional(),
+            sha256: z.string().optional(),
+            md5: z.string().optional(),
+            digestUnavailable: z.string().optional(),
+          }),
+        )
+        .optional(),
     })
     .optional(),
   cloud: z
