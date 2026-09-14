@@ -20,6 +20,7 @@ import { readAwsIdentity, readCredentialIssuance } from "./awsIdentity.js";
 import { mergeReplicas, type ReplicaCandidate } from "./awsReplicas.js";
 import { awsLineages, AWS_LINEAGE_MAX } from "./awsLineage.js";
 import { awsComputeLifecycles, AWS_COMPUTE_MAX } from "./awsCompute.js";
+import { decodeCloudTrailLogging, renderLoggingDescription } from "./loggingChange.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -218,6 +219,19 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
     if (iam.severityFloor) severity = worst(severity, iam.severityFloor);
     for (const t of iam.mitre) if (!mitre.includes(t)) mitre.push(t);
   }
+  // A logging-configuration call is read for the STATE its request establishes (#931 item 14):
+  // the reading's grade replaces the table's blanket High — StartLogging is not StopLogging.
+  const logging = decodeCloudTrailLogging(
+    source,
+    name,
+    getCI(rec, "requestParameters"),
+    str(getCI(rec, "errorCode")),
+  );
+  if (logging) {
+    severity = logging.severity;
+    mitre.length = 0;
+    mitre.push(...logging.mitre);
+  }
   // Who called, in the record's words (#931 item 5): the kind, the credential, the session's
   // issuer and attributes, the accounts — and, for an STS call, what it issued.
   const who2 = readAwsIdentity(rec);
@@ -288,6 +302,15 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
         identity: who2.words,
         notice,
       });
+    // A logging-configuration row: the state sentence is the posture, the quoted fields the
+    // object, the "prior configuration not in this record" note a qualifier that never clips.
+    if (logging)
+      return renderLoggingDescription(
+        `${head}${notice ? ` ${notice}` : ""}`,
+        who2.words,
+        logging,
+        `${client ? `[ua: ${oneLine(client).slice(0, 30)}]` : ""}${isRoot ? " [root]" : ""}${errorCode ? ` [${errorCode.slice(0, 30)}]` : ""}`,
+      );
     // An IAM row likewise: reserved budgets, the outcome next to the posture, the qualifiers last
     // but never clipped away (awsDescription.ts).
     if (iam)
@@ -410,6 +433,7 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
     // it there. No canonical host target for the instance — host identity for cloud instances is
     // #931 item 5's lineage work; the instance is in the description, the key and cloud.resource.
     ...(ssm?.commandLine ? { process: { commandLine: ssm.commandLine } } : {}),
+    ...(logging ? { loggingChange: logging.block } : {}),
     cloud: {
       provider: "aws",
       ...(identity.id ? { principalId: identity.id } : {}),
@@ -485,7 +509,7 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
     aggKey: boundedAggKey(
       who2.replicaId
         ? `aws|shared:${who2.replicaId}`.toLowerCase()
-        : `aws|${source}|${name}|${identity.accountId ?? ""}|${identity.id || identity.arn || who}|${failed ? "failed" : "ok"}|${errorCode}|${region}|${ip || rawIp}${ssm?.keySegment ?? ""}${iam?.keySegment ?? ""}${who2.keySegment}${issuance?.keySegment ?? ""}|${client}${objectKey ? `|${resource}` : ""}`.toLowerCase(),
+        : `aws|${source}|${name}|${identity.accountId ?? ""}|${identity.id || identity.arn || who}|${failed ? "failed" : "ok"}|${errorCode}|${region}|${ip || rawIp}${ssm?.keySegment ?? ""}${iam?.keySegment ?? ""}${logging?.keySegment ?? ""}${who2.keySegment}${issuance?.keySegment ?? ""}|${client}${objectKey ? `|${resource}` : ""}`.toLowerCase(),
     ),
     sources: ["AWS CloudTrail"],
   };

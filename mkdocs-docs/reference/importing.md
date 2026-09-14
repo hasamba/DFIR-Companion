@@ -1408,6 +1408,55 @@ Not built yet (stays open on #931 item 12): workload attachment (a versioned met
 GCE / Functions v1–v2 / Run v1–v2 with update-mask handling), and the per-service-account join
 (control granted → credentials minted → calls authenticated as the account → projects touched).
 
+### Cloud logging changes: the state the request establishes
+
+A logging-configuration call used to grade High whatever it did — `StartLogging` like
+`StopLogging`, a `PutEventSelectors` that adds S3 data events like one that drops them, a new
+Azure diagnostic setting like one that unchecks every category. Each call now reads for the
+**state its request establishes after a successful call** — never a direction from a prior
+value the record does not carry, so `reduces` and `extends` are never said:
+
+- **CloudTrail** — `logging stopped for trail …` (High, T1562.008) / `logging started for trail
+  … — enabling a source does not reconstruct its past` (Low); `trail deleted` (High); `trail
+  created: … — recording state not established (StartLogging is a separate call)` (Low, the
+  request's settings quoted). `UpdateTrail` quotes the fields present (`isMultiRegionTrail
+  false; includeGlobalServiceEvents false; …`) — High when the resulting configuration itself
+  excludes coverage (`multi-region off, global service events off, log-file validation off`),
+  else Medium with `the prior configuration is not in this record`. `PutEventSelectors`
+  replaces the whole selector set, so the row states the **resulting** selectors as fact —
+  `management events excluded; data events: none selected` (High), `management WriteOnly
+  (excluding kms.amazonaws.com); data events: none selected` (Medium), `data events:
+  AWS::S3::Object arn:aws:s3:::bucket/`, advanced selectors quoted field by field — with `the
+  prior selectors are not in this record`. Insight selectors, event data stores, VPC flow logs
+  (`flow logs deleted: fl-…` High / `created for vpc-… (ALL)` Low), GuardDuty (`detector d1
+  disabled` High; every `dataSources.*.enable` and `features[].status` read one by one —
+  `s3Logs disabled; EBS_MALWARE_PROTECTION DISABLED` High; `findingPublishingFrequency … —
+  delivery cadence, no coverage change` Low) and S3 bucket access logging (`disabled for bucket
+  b` High / `enabled … → logs/b/` Low). A denied call is `attempted, denied` (Medium).
+- **GCP** — `sink deleted` (High), `sink created: … → destination; filter …` (Low), `sink
+  disabled` / `sink enabled` only when the `updateMask` names `disabled`, `sink reconfigured:
+  filter …` with the prior configuration not in the record (Medium); `exclusion created: …;
+  filter …` (High — an exclusion drops entries), `exclusion deleted` (Low); `log bucket …:
+  retention set to N days; previous retention not in this record` only when the mask names
+  `retentionDays`. The IAM **audit-config deltas** of a `SetIamPolicy` record are each one row,
+  exact: `audit-config exemption added for user:x on DATA_READ (allServices)` (High), `exemption
+  removed` (Low), `log type DATA_WRITE entry removed for storage.googleapis.com` (High), `entry
+  added` (Low) — always with `effective audit logging is the union of configurations — not
+  established by this record`.
+- **Azure** — `diagnostic setting deleted: audit on vaults/kv1` (High); a write reads the request
+  body's logs (`category` or `categoryGroup`), metrics and destinations apart: `every log
+  category disabled in the resulting setting (AuditEvent, allLogs)` (High), otherwise `log
+  categories on: …; off: …; destination workspace …/workspaces/law` with `the prior setting is
+  not in this record` (Medium); metrics never bear T1562.008; no body → `the request body is
+  not in this record` (Medium); `logProfiles/delete` High.
+- Every row carries a `loggingChange` envelope block (provider, target, state, the quoted
+  facts, `priorStateInRecord: false`); every displayed string is neutralised; the
+  "prior configuration" and "denied" notes are reserved from clipping.
+
+Not built (stays open on #931 item 14): per-upload coverage rows (what each cloud upload can
+and cannot answer — deferred until it has a storage model that does not flood the forensic
+timeline), AWS Config recorder calls, and the billing half (dropped by triage).
+
 ### Entra applications: credentials, grants, roles, sign-ins
 
 An application that gains a credential, then a powerful permission, then acts, is the classic

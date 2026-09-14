@@ -116,7 +116,9 @@ function row(
       ? "iam-binding"
       : reading.kind === "credential"
         ? "credential"
-        : "service-account-key"
+        : reading.kind === "logging"
+          ? "logging-change"
+          : "service-account-key"
     : "api-call";
   const actorEmail = base.principal.email ?? "";
   const actorKind =
@@ -217,6 +219,7 @@ function row(
           : {}),
       },
       gcp: block,
+      ...(reading?.loggingChange ? { loggingChange: reading.loggingChange } : {}),
     }),
   };
 }
