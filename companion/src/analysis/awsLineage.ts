@@ -141,8 +141,9 @@ const SHAPE_MITRE: Record<AwsLineageShape["kind"], string> = {
 };
 
 /** The service segment of an eventSource (`ec2.amazonaws.com` → `ec2`). */
-const serviceOf = (source: string): string => lower(source).replace(/\.amazonaws\.com.*$/, "");
-function shapeOf(source: string, name: string): AwsLineageShape["kind"] | null {
+export const serviceOf = (source: string): string => lower(source).replace(/\.amazonaws\.com.*$/, "");
+/** The shape an exact (eventSource, eventName) call is, or null — shared with the compute lifecycle (awsCompute.ts). */
+export function shapeOf(source: string, name: string): AwsLineageShape["kind"] | null {
   const k = `${serviceOf(source)}|${lower(name)}`;
   if (ENUMERATION.has(k)) return "enumeration";
   if (PRIVILEGED_CHANGE.has(k)) return "privileged-change";
@@ -162,7 +163,7 @@ interface Source {
   first: Cited;
   records: number;
 }
-interface ShapeHit {
+export interface ShapeHit {
   kind: AwsLineageShape["kind"];
   time: number;
   locator: string;
@@ -287,15 +288,17 @@ function trackSource(
   else k.untrackedRecords += 1;
 }
 
-/** Insert an enumeration call into the bounded earliest-by-time buffer. */
-function trackEnumeration(k: Key, hit: ShapeHit): void {
-  k.enumerationCount += 1;
-  const buf = k.enumeration;
+/** Insert an enumeration call into a bounded earliest-by-time buffer (shared with awsCompute.ts). */
+export function trackEnumerationInto(buf: ShapeHit[], hit: ShapeHit): void {
   if (buf.length >= ENUMERATION_BUFFER_MAX && hit.time >= buf[buf.length - 1].time) return;
   let i = buf.length;
   while (i > 0 && buf[i - 1].time > hit.time) i -= 1;
   buf.splice(i, 0, hit);
   if (buf.length > ENUMERATION_BUFFER_MAX) buf.pop();
+}
+function trackEnumeration(k: Key, hit: ShapeHit): void {
+  k.enumerationCount += 1;
+  trackEnumerationInto(k.enumeration, hit);
 }
 
 /** Pass 1: counts, bounds, sources, provenance; the shapes wait for the second source's time. */
@@ -345,9 +348,8 @@ function recordShape(k: Key, rec: Row, time: number, locator: string): void {
   if (slot.named.length < SHAPES_NAMED_MAX) slot.named.push(hit);
 }
 
-/** Enumeration is a shape only across ≥ 3 services inside 10 minutes; the first such window is cited. */
-function enumerationShape(k: Key): ShapeHit | null {
-  const calls = k.enumeration;
+/** Enumeration is a shape only across ≥ 3 services inside 10 minutes; the first such window is cited (shared with awsCompute.ts). */
+export function enumerationWindow(calls: readonly ShapeHit[]): ShapeHit | null {
   for (let i = 0; i < calls.length; i += 1) {
     const services = new Set<string>();
     for (let j = i; j < calls.length && calls[j].time - calls[i].time <= ENUMERATION_WINDOW_MS; j += 1) {
@@ -363,6 +365,7 @@ function enumerationShape(k: Key): ShapeHit | null {
   }
   return null;
 }
+const enumerationShape = (k: Key): ShapeHit | null => enumerationWindow(k.enumeration);
 
 // ───────────────────────────── the pass ─────────────────────────────
 

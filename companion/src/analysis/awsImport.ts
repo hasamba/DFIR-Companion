@@ -12,13 +12,14 @@
 // in the description. NOT a detection engine — the same deterministic mapping pattern.
 
 import type { Severity } from "./stateTypes.js";
-import { createCanonicalEvent, stampSourceArtifactHash } from "./canonicalEvent.js";
+import { createCanonicalEvent, sourceArtifactHash, stampSourceArtifactHash } from "./canonicalEvent.js";
 import { boundedAggKey } from "./aggKey.js";
 import { decodeSsmCall, renderSsmDescription } from "./ssmExecution.js";
 import { decodeIamChange, renderAwsDescription } from "./iamChange.js";
 import { readAwsIdentity, readCredentialIssuance } from "./awsIdentity.js";
 import { mergeReplicas, type ReplicaCandidate } from "./awsReplicas.js";
 import { awsLineages, AWS_LINEAGE_MAX } from "./awsLineage.js";
+import { awsComputeLifecycles, AWS_COMPUTE_MAX } from "./awsCompute.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -54,7 +55,7 @@ export interface AwsParseResult {
   kept: number;
   dropped: number;
   groups: number;
-  /** Derived summary rows appended after the source-row cap (the credential lineages, #979) — not in `kept`. */
+  /** Derived summary rows appended after the source-row cap (the credential lineages #979, the compute lifecycles #931 item 8) — not in `kept`. */
   summaries: number;
   format: string; // "cloudtrail" | "empty"
 }
@@ -526,11 +527,20 @@ export function parseCloudTrail(text: string, opts: AwsImportOptions = {}): AwsP
   // The credential lineages (#979): built over every record of this upload, appended AFTER the
   // source-row cap under their own bound — `maxEvents` bounds source rows, a summary never evicts
   // one, and `kept` / `dropped` / `groups` count source rows alone.
-  const summaries = aggregateEvents(awsLineages(records), {
-    aggregate: opts.aggregate,
-    minSeverity: opts.minSeverity,
-    maxEvents: AWS_LINEAGE_MAX + 1,
-  }).events;
+  const summaries = [
+    ...aggregateEvents(awsLineages(records), {
+      aggregate: opts.aggregate,
+      minSeverity: opts.minSeverity,
+      maxEvents: AWS_LINEAGE_MAX + 1,
+    }).events,
+    // The compute lifecycles (#931 item 8), keyed with this upload's identity so an identical
+    // re-import folds and two uploads about one instance stay two rows.
+    ...aggregateEvents(awsComputeLifecycles(records, sourceArtifactHash(text)), {
+      aggregate: opts.aggregate,
+      minSeverity: opts.minSeverity,
+      maxEvents: AWS_COMPUTE_MAX + 1,
+    }).events,
+  ];
   const finalEvents = stampSourceArtifactHash([...events, ...summaries], text);
 
   // A merged cross-account action is ONE event that represents every replica record it carries
