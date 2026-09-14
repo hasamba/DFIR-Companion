@@ -882,3 +882,48 @@ Everything you have marked as a false positive or known-good. Shows findings, ev
 Marking an item asks for a **structured reason** (known-good tool / authorized test / detection misfire / duplicate / other) and offers ranked **"find similar items"** suggestions (shared MITRE technique, process, hash, asset, or IOCs) so the same recurring pattern can be dismissed in one pass — deterministic by default, or AI-assisted for less obvious matches. Marking a single IOC can also **one-click-promote** it to the global IOC whitelist so future imports auto-exclude it.
 
 **Learned patterns** — repeated reasoned dismissals of the same activity pattern accumulate into a per-case ledger. New activity resembling a repeatedly-dismissed pattern is surfaced here with lowered (not zero) confidence unless independently corroborated, and the case's prevalence baseline (how often each normalized activity pattern occurs across the timeline) gives rare events a selection seat over common noise during synthesis.
+
+## Remediation Checks
+
+Declare what was remediated, then check whether the same foothold shows up again — and read how
+much the check could see before you say anything about it.
+
+**Declare a boundary.** Host, the artifact (a path, hash, account, domain, IP, service, scheduled
+task or registry key), when it was remediated, and how long to watch (1–720 hours, default a
+week). A boundary is your statement; it changes nothing in the case.
+
+**Verify now.** The check reads the forensic timeline and the super-timeline for that host inside
+the window and reports facts:
+
+- the host spellings it read (`WS-042`, `ws-042.corp.local` — only spellings the case holds and,
+  for a short name, only when nothing else shares it or a fleet record links them);
+- every row that named the artifact, with the match (`exact`, or `weak` for a basename-only path,
+  an account with no domain on one side, or a mention in the description) and what the row **is**:
+  *activity* (a start, a logon, a flow, a service/task/registry event), a *detection* (a scanner's
+  or sensor's claim — it says the object was seen, not when it arrived), a *presence record*
+  (Amcache, ShimCache, Prefetch — the time is not an execution time), a *listing of an older
+  object* (an MFT row whose file is older than the boundary), or *unclassified* with its shape;
+- per-source coverage and, per telemetry family, whether the case holds enough rows across the
+  window to count as **covered** — one process row in a week is *partial*, and *partial* or
+  *absent* on a family that matters for the artifact leaves the check **under-covered**;
+- whether the read was truncated, the window is still open, undated rows were skipped, the
+  super-timeline is at its retention cap, the stores changed during the read, and whether clock
+  alignment moved a row to the other side of the boundary.
+
+Every check writes a receipt of those facts (never a row's text). A receipt goes stale when either
+store changes afterwards; a status recorded against it then reads "recorded against older data".
+
+**Record the status.** *Recurrence observed*, *checked — not observed*, or *insufficient
+coverage*, with a note, against the check you read. The tool never says "clean": a
+*checked — not observed* against a truncated, still-open or under-covered check needs your own
+override note saying why you still say so. The sentence under every check is the rule: **the check
+lists what was seen and what was covered; only you can say the foothold is gone.**
+
+**Attach evidence.** A hit from the forensic timeline attaches by id; a super-timeline hit is
+promoted into the case first (intent `remediation-check`) and then attached.
+
+What it cannot do: tell a late import of old history from a recurrence (rows carry no import
+time — the check says so); detect that a host was rebuilt; re-check on its own, alert, isolate or
+delete anything. The report section (off in every template until you switch it on) renders your
+status, the receipt it names and the attached rows.
+

@@ -12,6 +12,7 @@ import {
   normalizeSections,
   orderedEnabledSections,
   renderTemplateString,
+  ALWAYS_OPT_IN_SECTION_KEYS,
 } from "../../src/reports/reportTemplate.js";
 import { emptyReportMeta } from "../../src/reports/reportMeta.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
@@ -31,10 +32,23 @@ describe("normalizeHexColor", () => {
 });
 
 describe("normalizeSections", () => {
-  it("fills full canonical coverage when given nothing", () => {
+  it("fills full canonical coverage when given nothing — every section on but the opt-in-everywhere ones", () => {
     const s = normalizeSections(undefined);
     expect(s.map((x) => x.key)).toEqual([...ALL_SECTION_KEYS]);
-    expect(s.every((x) => x.enabled)).toBe(true);
+    const optIn = new Set(ALWAYS_OPT_IN_SECTION_KEYS);
+    expect(s.filter((x) => !optIn.has(x.key)).every((x) => x.enabled)).toBe(true);
+    // #969: the remediation-checks section renders an analyst's recorded residual-risk status and
+    // is off in a fresh template, every built-in, and a saved template that never listed it.
+    expect(ALWAYS_OPT_IN_SECTION_KEYS).toContain("remediationChecks");
+    expect(s.find((x) => x.key === "remediationChecks")!.enabled).toBe(false);
+    for (const t of BUILT_IN_REPORT_TEMPLATES)
+      expect(isReportSectionEnabled(t, "remediationChecks"), t.id).toBe(false);
+    expect(
+      isReportSectionEnabled(
+        normalizeReportTemplate({ sections: [{ key: "timeline", enabled: true }] }),
+        "remediationChecks",
+      ),
+    ).toBe(false);
   });
 
   it("preserves provided order and appends missing keys (enabled) at the end", () => {
@@ -116,7 +130,9 @@ describe("built-in templates", () => {
     expect(std.coverTitle).toBe(DEFAULT_COVER_TITLE);
     expect(std.headerText).toBe("");
     expect(std.footerText).toBe("");
-    expect(orderedEnabledSections(std)).toEqual([...ALL_SECTION_KEYS]); // all on, canonical order
+    expect(orderedEnabledSections(std)).toEqual(
+      ALL_SECTION_KEYS.filter((k) => !ALWAYS_OPT_IN_SECTION_KEYS.includes(k)),
+    ); // all on but the opt-in-everywhere ones, canonical order
   });
 
   it("executive-brief enables cover, summary, BIA, conclusions and compliance impact", () => {
@@ -135,9 +151,10 @@ describe("built-in templates", () => {
 });
 
 describe("isReportSectionEnabled", () => {
-  it("is true for every section of the default template", () => {
+  it("is true for every section of the default template but the opt-in-everywhere ones", () => {
     const std = defaultReportTemplate();
-    for (const key of ALL_SECTION_KEYS) expect(isReportSectionEnabled(std, key)).toBe(true);
+    for (const key of ALL_SECTION_KEYS)
+      expect(isReportSectionEnabled(std, key)).toBe(!ALWAYS_OPT_IN_SECTION_KEYS.includes(key));
   });
 
   it("is false for a section explicitly disabled, true for an unlisted (defaulted) one", () => {

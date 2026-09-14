@@ -69,6 +69,12 @@ interface SuperScanResult {
   nextCursor: SuperScanCursor | null;
 }
 
+export interface SuperTimelineMeta {
+  rows: number;
+  generation: number;
+  hosts: string[];
+}
+
 export class SuperTimelineStore {
   constructor(
     private readonly cases: CaseStore,
@@ -295,6 +301,43 @@ export class SuperTimelineStore {
       eventId,
       max: this.max,
     });
+  }
+
+  /**
+   * The store's row count, mutation generation and distinct host spellings as stored — for a
+   * reader that must say whether the store changed under it and which spellings to query (#969).
+   * Index-only in the worker; never decodes a payload.
+   */
+  /** The retention cap this store enforces. */
+  get cap(): number {
+    return this.max;
+  }
+
+  async meta(caseId: string): Promise<SuperTimelineMeta> {
+    await this.ensureMigrated(caseId);
+    return caseSqliteWorker.request<SuperTimelineMeta>({
+      op: "superMeta",
+      dbPath: this.databasePath(caseId),
+    });
+  }
+
+  /**
+   * Time-bounded raw rows for an analyst-initiated, ephemeral read (ARCHITECTURE.md, the
+   * remediation-check exception, #969): every row in [from, to] in store order, undated rows
+   * included (the caller counts and skips them), stopping after `budget` rows read.
+   */
+  async *scanWindow(
+    caseId: string,
+    time: { from: string; to: string },
+    budget: number,
+  ): AsyncGenerator<ForensicEvent> {
+    await this.ensureMigrated(caseId);
+    let read = 0;
+    for await (const row of this.scan(caseId, time)) {
+      if (read >= budget) return;
+      read += 1;
+      yield row.event;
+    }
   }
 
   async protectedIds(caseId: string): Promise<string[]> {
