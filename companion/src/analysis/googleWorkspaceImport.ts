@@ -11,6 +11,7 @@ import {
   GWS_TAKEOUT_MAX,
   type GwsTakeoutReading,
 } from "./gwsTakeout.js";
+import { gwsDriveExposureRows, GWS_EXPOSURE_MAX } from "./gwsDriveExposure.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -706,6 +707,12 @@ export function parseGoogleWorkspaceReport(
       aggregate: opts.aggregate,
       minSeverity: opts.minSeverity,
       maxEvents: GWS_TAKEOUT_MAX + 1,
+    }).events,
+    // The Drive document-exposure joins (#1064), under their own bound.
+    ...aggregateEvents(gwsDriveExposureRows(records), {
+      aggregate: opts.aggregate,
+      minSeverity: opts.minSeverity,
+      maxEvents: GWS_EXPOSURE_MAX + 1,
     }).events,
   ];
   const events = stampSourceArtifactHash([...aggregated.events, ...summaries], input);

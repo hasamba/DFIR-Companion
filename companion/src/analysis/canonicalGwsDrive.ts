@@ -97,8 +97,48 @@ export const takeoutLifecycleBlockSchema = z.object({
   ),
 });
 
+const citedWords = cited.extend({ words: z.string() });
+
+export const driveExposureWindowSchema = z.object({
+  dimension: z.string(),
+  opened: citedWords,
+  closed: citedWords.optional(),
+});
+
+export const driveExposureAccessSchema = z.object({
+  time: z.string(),
+  locator: z.string(),
+  meaning: z.string(),
+  windowsOpen: z.array(z.string()),
+});
+
+export const driveExposureAccessorSchema = z.object({
+  kind: z.enum(["named", "application", "none"]),
+  identity: z.string().optional(),
+  records: z.array(driveExposureAccessSchema),
+  recordsBeyond: z.number().int().nonnegative(),
+});
+
+export const driveExposureBlockSchema = z.object({
+  docId: z.string(),
+  tenant: z.string(),
+  docTitle: z.string().optional(),
+  windows: z.array(driveExposureWindowSchema),
+  windowsBeyond: z.number().int().nonnegative(),
+  conflicts: z.array(z.object({ dimension: z.string(), time: z.string(), locators: z.array(z.string()) })),
+  accessors: z.array(driveExposureAccessorSchema),
+  accessorsBeyond: z.number().int().nonnegative(),
+  accessRecordsTotal: z.number().int().nonnegative(),
+  timeNotEstablished: z.number().int().nonnegative(),
+  coverage: z.object({ records: z.number().int().nonnegative(), first: z.string(), last: z.string() }),
+  basis: z.literal(
+    "records of this export only; joined through the tenant and doc_id; each dimension's window is independent; an access inside a window is never said to be through it",
+  ),
+});
+
 export type DriveSharingBlock = z.infer<typeof driveSharingBlockSchema>;
 export type DriveAccessBlock = z.infer<typeof driveAccessBlockSchema>;
 export type TakeoutBlock = z.infer<typeof takeoutBlockSchema>;
 export type TakeoutLifecycleBlock = z.infer<typeof takeoutLifecycleBlockSchema>;
+export type DriveExposureBlock = z.infer<typeof driveExposureBlockSchema>;
 export type DriveDirection = (typeof driveDirections)[number];

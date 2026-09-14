@@ -14,6 +14,7 @@ import { gcpBlockSchema } from "./canonicalGcp.js";
 import { loggingChangeBlockSchema } from "./canonicalLogging.js";
 import {
   driveAccessBlockSchema,
+  driveExposureBlockSchema,
   driveSharingBlockSchema,
   takeoutBlockSchema,
   takeoutLifecycleBlockSchema,
@@ -184,6 +185,9 @@ export const canonicalEventEnvelopeSchema = z.object({
   driveAccess: driveAccessBlockSchema.optional(),
   takeout: takeoutBlockSchema.optional(),
   takeoutLifecycle: takeoutLifecycleBlockSchema.optional(),
+  // A Drive document-exposure join row (gwsDriveExposure.ts, #1064): a broadening sharing change
+  // joined to the access records after it, by tenant + doc_id.
+  driveExposure: driveExposureBlockSchema.optional(),
   // A TLS record's own reading (tlsSession.ts, #933 item 6): the client's SNI, the protocol facts
   // the sensor saw, the certificate the server presented, the sensor's chain check, the observer.
   tls: z
