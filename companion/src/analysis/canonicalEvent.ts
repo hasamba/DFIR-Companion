@@ -171,16 +171,11 @@ export const canonicalEventEnvelopeSchema = z.object({
   entra: entraPathBlockSchema.optional(),
   // An AWS credential-lineage summary row (awsLineage.ts, #979); the block lives in canonicalAwsLineage.ts.
   awsLineage: awsLineageBlockSchema.optional(),
-  // An AWS compute-lifecycle summary row (awsCompute.ts, #931 item 8); the block lives in canonicalAwsCompute.ts.
+  // Compute-lifecycle summary rows (#931 item 8; Azure/GCP are the second half, #1066).
   awsCompute: awsComputeBlockSchema.optional(),
-  // An Azure VM compute-lifecycle summary row (azureCompute.ts, #931 item 8 second half, #1066);
-  // the block lives in canonicalAzureCompute.ts.
   azureCompute: azureComputeBlockSchema.optional(),
-  // A GCP instance compute-lifecycle summary row (gcpCompute.ts, #931 item 8 second half, #1066);
-  // the block lives in canonicalGcpCompute.ts.
   gcpCompute: gcpComputeBlockSchema.optional(),
-  // A GCP audit row's identity, binding delta, credential fact, key step or workload attachment
-  // (gcpRow.ts, #931 item 12); the block lives in canonicalGcp.ts.
+  // A GCP audit row's identity, binding delta, credential fact, key step or workload attachment (gcpRow.ts, #931 item 12).
   gcp: gcpBlockSchema.optional(),
   // A GCP per-service-account join row (gcpServiceAccountJoin.ts, #1065): every fact this export
   // states about one service account, joined by unique id when present, else email.
