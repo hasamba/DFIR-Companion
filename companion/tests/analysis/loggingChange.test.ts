@@ -868,4 +868,186 @@ describe("AWS Config recorder calls — the state the request establishes (#1071
     const del = aws([cfg("DeleteDeliveryChannel", { deliveryChannelName: "default" })])[0];
     for (const e of [put1, stop, del]) expect(canonicalConformanceIssues(env(e))).toEqual([]);
   });
+
+  // Regression tests for Codex code-round-1 findings (RECOMMENDATION-1071.md).
+  it("#1/#5 an override's own resourceTypes list beyond LIST_MAX still feeds the aggregation key in full", () => {
+    const manyA = Array.from({ length: 10 }, (_, i) => `AWS::OverrideA${i}::Type`);
+    const manyB = [...manyA.slice(0, 8), "AWS::Different::X", "AWS::Different::Y"];
+    const eA = put({
+      recordingGroup: { allSupported: true, includeGlobalResourceTypes: true },
+      recordingMode: {
+        recordingFrequency: "CONTINUOUS",
+        recordingModeOverrides: [{ resourceTypes: manyA, recordingFrequency: "DAILY" }],
+      },
+    });
+    const eB = put({
+      recordingGroup: { allSupported: true, includeGlobalResourceTypes: true },
+      recordingMode: {
+        recordingFrequency: "CONTINUOUS",
+        recordingModeOverrides: [{ resourceTypes: manyB, recordingFrequency: "DAILY" }],
+      },
+    });
+    expect(eA.aggKey).not.toBe(eB.aggKey);
+    expect(eA.description).toContain("recordingModeOverride: 8 of 10 resource types shown");
+  });
+
+  it("#2 roleARN is captured as a fact and distinguishes otherwise-identical configurations in the aggregation key", () => {
+    const eA = put({
+      roleARN: "arn:aws:iam::111122223333:role/config-role-a",
+      recordingGroup: { allSupported: true, includeGlobalResourceTypes: true },
+    });
+    const eB = put({
+      roleARN: "arn:aws:iam::111122223333:role/config-role-b",
+      recordingGroup: { allSupported: true, includeGlobalResourceTypes: true },
+    });
+    expect(env(eA).loggingChange?.facts).toEqual(
+      expect.arrayContaining([{ name: "roleARN", value: "arn:aws:iam::111122223333:role/config-role-a" }]),
+    );
+    expect(eA.aggKey).not.toBe(eB.aggKey);
+  });
+
+  it("#3 recordingGroup PRESENT but EMPTY is worded distinctly from recordingGroup ABSENT, and from an unrecognized strategy value", () => {
+    const empty = put({ recordingGroup: {}, recordingMode: { recordingFrequency: "CONTINUOUS" } });
+    expect(empty.severity).toBe("Medium");
+    expect(empty.description).toContain(
+      "recordingGroup present but neither recordingStrategy nor allSupported recorded",
+    );
+    const absent = put({ recordingMode: { recordingFrequency: "CONTINUOUS" } });
+    expect(absent.description).toContain(
+      "recordingGroup absent; AWS's documented default records all supported resource types",
+    );
+    expect(absent.description).not.toContain("present but neither");
+  });
+
+  it("#4 two different unrecognized recordingStrategy values are distinguishable in evidence and never aggregate together", () => {
+    const eA = put({
+      recordingGroup: { recordingStrategy: { useOnly: "FUTURE_STRATEGY_A" } },
+      recordingMode: { recordingFrequency: "CONTINUOUS" },
+    });
+    const eB = put({
+      recordingGroup: { recordingStrategy: { useOnly: "FUTURE_STRATEGY_B" } },
+      recordingMode: { recordingFrequency: "CONTINUOUS" },
+    });
+    // Canonical facts carry the raw value uncapped, unlike the length-bounded rendered description.
+    expect(env(eA).loggingChange?.facts).toEqual(
+      expect.arrayContaining([{ name: "recordingStrategy", value: "FUTURE_STRATEGY_A" }]),
+    );
+    expect(env(eB).loggingChange?.facts).toEqual(
+      expect.arrayContaining([{ name: "recordingStrategy", value: "FUTURE_STRATEGY_B" }]),
+    );
+    expect(eA.description).toContain("recording strategy not recognized in this record: FUTURE_STRATEGY_A");
+    expect(eA.aggKey).not.toBe(eB.aggKey);
+  });
+
+  it("#5 an explicit ALL_SUPPORTED_RESOURCE_TYPES strategy is read the same as the legacy allSupported:true shape", () => {
+    const e = put({
+      recordingGroup: {
+        recordingStrategy: { useOnly: "ALL_SUPPORTED_RESOURCE_TYPES" },
+        includeGlobalResourceTypes: true,
+      },
+      recordingMode: { recordingFrequency: "CONTINUOUS" },
+    });
+    expect(e.severity).toBe("Low");
+    expect(e.description).toContain("all supported resource types");
+  });
+
+  it("#5 recordingStrategy.useOnly takes precedence over a conflicting allSupported field", () => {
+    const e = put({
+      recordingGroup: {
+        recordingStrategy: { useOnly: "INCLUSION_BY_RESOURCE_TYPES" },
+        allSupported: true, // contradicts useOnly — the strategy field must win
+        resourceTypes: ["AWS::EC2::Instance"],
+      },
+    });
+    expect(e.severity).toBe("High");
+    expect(e.description).toContain("inclusion list (AWS::EC2::Instance)");
+  });
+
+  it("#5 exclusion-list truncation past LIST_MAX is disclosed and distinguishes the aggregation identity", () => {
+    const manyA = Array.from({ length: 10 }, (_, i) => `AWS::ExclA${i}::Type`);
+    const manyB = [...manyA.slice(0, 8), "AWS::Different::X", "AWS::Different::Y"];
+    const eA = put({
+      recordingGroup: {
+        recordingStrategy: { useOnly: "EXCLUSION_BY_RESOURCE_TYPES" },
+        exclusionByResourceTypes: { resourceTypes: manyA },
+      },
+      recordingMode: { recordingFrequency: "CONTINUOUS" },
+    });
+    const eB = put({
+      recordingGroup: {
+        recordingStrategy: { useOnly: "EXCLUSION_BY_RESOURCE_TYPES" },
+        exclusionByResourceTypes: { resourceTypes: manyB },
+      },
+      recordingMode: { recordingFrequency: "CONTINUOUS" },
+    });
+    expect(eA.description).toContain("8 of 10 resource types shown");
+    expect(eA.aggKey).not.toBe(eB.aggKey);
+  });
+
+  it("#5 a hostile recorder/channel name cannot forge a fake field boundary or hide via bidi override", () => {
+    // Matches this file's own established hostile-string convention (see the CloudTrail
+    // StopLogging test above): "] [" is a field-boundary-injection attempt, ‮ a bidi override.
+    const hostile = "default] [fake: started‮|x";
+    const put1 = put({ name: hostile, recordingGroup: { allSupported: true } });
+    expect(put1.description).not.toContain("] [");
+    expect(put1.description).not.toContain("‮");
+    const stop = aws([cfg("StopConfigurationRecorder", { configurationRecorderName: hostile })])[0];
+    expect(stop.description).not.toContain("] [");
+    expect(stop.description).not.toContain("‮");
+    const del = aws([cfg("DeleteDeliveryChannel", { deliveryChannelName: hostile })])[0];
+    expect(del.description).not.toContain("] [");
+    expect(del.description).not.toContain("‮");
+  });
+
+  it("#5 Stop/Delete readings never carry the prior-configuration note (only Put's prior-state-not-in-record does)", () => {
+    const stop = aws([cfg("StopConfigurationRecorder", { configurationRecorderName: "default" })])[0];
+    expect(stop.description).not.toContain("the prior configuration is not in this record");
+    const del = aws([cfg("DeleteDeliveryChannel", { deliveryChannelName: "default" })])[0];
+    expect(del.description).not.toContain("the prior configuration is not in this record");
+  });
+
+  it("#5 a denied Put/Stop/Delete carries no MITRE technique and stays canonically conformant", () => {
+    const put1 = aws([
+      cfg(
+        "PutConfigurationRecorder",
+        {
+          configurationRecorder: {
+            recordingGroup: { allSupported: false, resourceTypes: ["AWS::EC2::Instance"] },
+          },
+        },
+        { errorCode: "AccessDenied" },
+      ),
+    ])[0];
+    const stop = aws([
+      cfg(
+        "StopConfigurationRecorder",
+        { configurationRecorderName: "default" },
+        { errorCode: "AccessDenied" },
+      ),
+    ])[0];
+    const del = aws([
+      cfg(
+        "DeleteDeliveryChannel",
+        { deliveryChannelName: "default" },
+        { errorCode: "NoSuchDeliveryChannel" },
+      ),
+    ])[0];
+    for (const e of [put1, stop, del]) {
+      expect(e.mitreTechniques).toEqual([]);
+      expect(canonicalConformanceIssues(env(e))).toEqual([]);
+    }
+  });
+
+  it("#5 an empty inclusion list under INCLUSION_BY_RESOURCE_TYPES is graded High and named as none", () => {
+    const e = put({
+      recordingGroup: { recordingStrategy: { useOnly: "INCLUSION_BY_RESOURCE_TYPES" }, resourceTypes: [] },
+    });
+    expect(e.severity).toBe("High");
+    expect(e.description).toContain("inclusion list (none named)");
+  });
+
+  it("#5 a missing recorder name reads as not-recorded, never guessed", () => {
+    const e = put({ recordingGroup: { allSupported: true } });
+    expect(e.description).toContain("Config recorder (name not recorded):");
+  });
 });
