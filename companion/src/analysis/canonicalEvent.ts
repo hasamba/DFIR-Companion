@@ -5,6 +5,7 @@ import { transferBlockSchema, webBlockSchema } from "./canonicalWeb.js";
 import { dnsBlockSchema } from "./canonicalDns.js";
 import { tlsGraphBlockSchema } from "./canonicalTls.js";
 import { quarantineAttributeBlockSchema, quarantineBlockSchema } from "./canonicalQuarantine.js";
+import { defenderBlockSchema } from "./canonicalDefender.js";
 import { entraPathBlockSchema } from "./canonicalEntra.js";
 import { awsLineageBlockSchema } from "./canonicalAwsLineage.js";
 import { mailboxChainBlockSchema } from "./canonicalMailbox.js";
@@ -237,6 +238,9 @@ export const canonicalEventEnvelopeSchema = z.object({
   // attribute row's own block beside it. Both live in canonicalQuarantine.ts.
   quarantine: quarantineBlockSchema.optional(),
   quarantineAttribute: quarantineAttributeBlockSchema.optional(),
+  // A Defender Operational record's own reading (defenderEvents.ts): disposition, threat, every
+  // flagged resource. The block lives in canonicalDefender.ts; defenderEpisodes.ts reads it (#964).
+  defender: defenderBlockSchema.optional(),
   // What the memory image the row came from says about itself (memoryImageFacts.ts, #933 item 12):
   // the kernel SystemTime recovered from the image (never "captured at"), the layer stack, the
   // dump kind for a known layer class, the crash-dump type as rendered, the symbol table. Only

@@ -16,6 +16,7 @@ import { linkArchiveToExfil } from "./exfilCorrelate.js";
 import { markProcessLifetimeSignals } from "./processLifetime.js";
 import { corroborateTimestompsOnTimeline } from "./timestompCorroborate.js";
 import { corroborateDownloadExecution } from "./downloadExecution.js";
+import { corroborateDefenderEpisodes } from "./defenderEpisodes.js";
 import { corroborateInjectionSequences } from "./injectionSequence.js";
 import { markRansomwarePrecursors } from "./ransomwarePrecursor.js";
 import { explainCertutilTransfers } from "./certutilTransfer.js";
@@ -377,11 +378,15 @@ export function mergeDelta(
   // MFT and the Prefetch / Sysmon rows arrive as separate imports. Only ever raises; its notes are
   // recomputed from the current evidence on every merge.
   const withDownloads = corroborateDownloadExecution(withTimestomp);
+  // A Defender action, then a later start of the same file on the same host (#930 item 1 part B).
+  // Here because the Defender record and the process start arrive from different imports. Only
+  // ever raises; its notes are recomputed from the current evidence on every merge.
+  const withDefender = corroborateDefenderEpisodes(withDownloads);
   // A write-capable handle, then a remote thread from the same source into the same target; a
   // process created, its image replaced, then reached into — joined by process GUID (#932 item 9,
   // second half). Here because the records may arrive in separate imports. Only ever raises;
   // recomputed on every merge.
-  const withInjection = corroborateInjectionSequences(withDownloads);
+  const withInjection = corroborateInjectionSequences(withDefender);
   // Several distinct pre-encryption behaviours on one host inside one window (#908 item 3). Runs
   // here, with the other deterministic correlations, because the steps arrive from different
   // importers and no single one of them is remarkable — the combination is the finding. Only ever

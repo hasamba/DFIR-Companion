@@ -28,7 +28,14 @@ describe("parseDefenderPath", () => {
       resources: ["C:\\x\\a.exe"],
       processes: [],
       others: [],
+      resourcesTotal: 1,
     });
+  });
+  it("counts every file resource the record listed, past the bounded list (#964)", () => {
+    const many = Array.from({ length: 12 }, (_, i) => `file:_C:\\x\\f${i}.exe`).join("; ");
+    const r = parseDefenderPath(many);
+    expect(r.resources).toHaveLength(8);
+    expect(r.resourcesTotal).toBe(12);
   });
   it("prefers the archive member as primary and names the container", () => {
     const r = parseDefenderPath("containerfile:_C:\\x\\a.zip; file:_C:\\x\\a.zip->evil.exe");

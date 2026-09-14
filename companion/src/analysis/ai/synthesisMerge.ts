@@ -12,6 +12,7 @@ import { reconsiderKeyQuestions } from "../fpCascade.js";
 import { backfillSilenceGapFindings, gapEnvOptions } from "../gapDetect.js";
 import { backfillActivityWaveFinding, detectGapsWithWaves } from "../activityWaves.js";
 import { backfillHighSeverityFindings } from "../highSeverityFindings.js";
+import { backfillDefenderEpisodeFindings } from "../defenderEpisodeFindings.js";
 import type { HostAliasIndex } from "../hostAlias.js";
 import { shortHost } from "../iocAnchors.js";
 import { extractCveIds, matchKevEntries, type KevCatalog } from "../kev.js";
@@ -369,8 +370,11 @@ function applyBackfills(
   eligibleIds: Set<string>,
   ts: string,
 ): { state: InvestigationState; highSeverityBackfillCount: number } {
-  const backfilled = backfillHighSeverityFindings(linked, eligibleIds, ts);
-  const highSeverityBackfillCount = backfilled.findings.length - linked.findings.length;
+  // The Defender episode finding first (#964): it links the start row it raised to High, so the
+  // generic backfill below does not also mint a confidence-100 finding on it.
+  const withDefender = backfillDefenderEpisodeFindings(linked, eligibleIds, ts);
+  const backfilled = backfillHighSeverityFindings(withDefender, eligibleIds, ts);
+  const highSeverityBackfillCount = backfilled.findings.length - withDefender.findings.length;
   const gapOpts = gapEnvOptions();
   const { gaps, pattern } = detectGapsWithWaves(scopedEvents, gapOpts);
   const withWaves = backfillActivityWaveFinding(backfilled, pattern, ts);

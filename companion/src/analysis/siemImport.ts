@@ -962,7 +962,9 @@ export function mapWindows(
     },
     ...(accountName ? { actor: { kind: "account" as const, name: accountName } } : {}),
     ...(host ? { target: { kind: "host" as const, name: host } } : {}),
-    ...(defender ? { object: defender.object } : (pa?.entities ?? {})),
+    ...(defender
+      ? { object: defender.object, defender: { ...defender.block, ...(sha256 ? { sha256 } : {}) } }
+      : (pa?.entities ?? {})),
     ...(accountName
       ? {
           account: {

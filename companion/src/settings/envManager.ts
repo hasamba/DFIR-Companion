@@ -153,6 +153,8 @@ const WRITABLE_ENV_PREFIXES = [
   "DFIR_DEEP_PASS_",
   "DFIR_ASK_",
   "DFIR_GAP_",
+  // The Defender episode gap (defenderEpisodes.ts, #964) — a merge-time knob, not a secret.
+  "DFIR_DEFENDER_",
   "DFIR_SSH_",
   "DFIR_TIMESTOMP_",
   "DFIR_ANOMALY_",
