@@ -319,7 +319,7 @@ describe("binding, provenance, bounds", () => {
     const withRows = parseMemory(
       bundle([run({ stdout: MALFIND_ROWS }), run({ plugin: "windows.crashinfo", stdout: CRASH_BITMAP })]),
     );
-    expect(withRows.total).toBe(3);
+    expect(withRows.total).toBe(5); // three export rows and two run records
     expect(withRows.injected).toBe(2);
     expect(withRows.events.some((e) => e.description.includes("svchost.exe"))).toBe(true);
     expect(detectImportKind("x.run.json", JSON.stringify(run()))).toBe("memory");
@@ -332,5 +332,151 @@ describe("binding, provenance, bounds", () => {
       parseMemory(JSON.stringify({ command: "npm test", plugin: "jest", exitStatus: 0, stdout: "[]" }))
         .format,
     ).not.toBe("volatility-run-envelope");
+  });
+});
+
+// Code round 1 (Codex): the cases the review named.
+describe("code round 1", () => {
+  it("one bundle-wide budget: two runs with rows under maxEvents:1 emit one row; total counts export rows and run records", () => {
+    const r = parseMemory(bundle([run({ stdout: MALFIND_ROWS }), run({ stdout: MALFIND_ROWS })]), {
+      maxEvents: 1,
+      aggregate: false,
+    });
+    expect(r.events).toHaveLength(1);
+    expect(r.kept).toBe(1);
+    expect(r.total).toBe(6);
+    expect(r.dropped).toBe(5);
+  });
+
+  it("an export labelled with another plugin unbinds the envelope; the export still imports", () => {
+    const r = parseMemory(JSON.stringify(run({ stdout: JSON.stringify({ "windows.pslist.PsList": [] }) })));
+    const row = r.events.find((e) => e.description.startsWith("Memory run envelope"))!;
+    expect(row.description).toContain(
+      "the envelope names windows.malfind; the export is labelled windows.pslist.PsList — applied to nothing",
+    );
+    expect(row.canonical?.memoryRun?.bound).toBe(false);
+    expect(row.description).not.toContain("completed");
+    expect(r.events.some((e) => e.description.startsWith("Memory export holds zero rows"))).toBe(true);
+    // The same plugin under Volatility's full class name binds.
+    const same = runRows(
+      JSON.stringify(run({ stdout: JSON.stringify({ "windows.malfind.Malfind": [] }) })),
+    )[0];
+    expect(same.canonical?.memoryRun?.bound).toBe(true);
+  });
+
+  it("a nested envelope or a bare `{}` is not a readable export: indeterminate, never completed, and never read recursively", () => {
+    const nested = runRows(JSON.stringify(run({ stdout: JSON.stringify(run({ stdout: EMPTY_TEXT })) })));
+    expect(nested).toHaveLength(1);
+    expect(nested[0].description).toContain(
+      "indeterminate: the embedded stdout is not a readable Volatility export",
+    );
+    const bare = runRows(JSON.stringify(run({ stdout: "{}" })))[0];
+    expect(bare.description).toContain("indeterminate");
+    expect(bare.description).not.toContain("completed");
+  });
+
+  it("oversized metadata is refused at the schema; base64 is bounded before decoding", () => {
+    const r = parseMemory(JSON.stringify(run({ stdout: EMPTY_TEXT, command: "x".repeat(5000) })));
+    expect(r.events.filter((e) => e.description.startsWith("Memory run envelope"))).toHaveLength(0);
+    expect(r.note).toContain("not a run envelope");
+  });
+
+  it("an unsupported envelopeVersion reads nothing; a single run object is a bundle of one", () => {
+    const r = parseMemory(
+      JSON.stringify({ type: RUN_ENVELOPE_TYPE, envelopeVersion: 999, runs: [run({ stdout: EMPTY_TEXT })] }),
+    );
+    expect(r.events).toHaveLength(0);
+    expect(r.note).toContain("envelopeVersion is not 1");
+    expect(runRows(JSON.stringify(run({ stdout: EMPTY_TEXT, envelopeVersion: 999 })))).toHaveLength(0);
+    expect(runRows(JSON.stringify(run({ stdout: EMPTY_TEXT })))).toHaveLength(1);
+  });
+
+  it("marker precedence: a page error with a non-zero exit keeps 'after N rows'; a prefixed marker is seen", () => {
+    const both = runRows(
+      JSON.stringify(
+        run({
+          stdout: MALFIND_ROWS,
+          exitStatus: 1,
+          stderr: "Volatility was unable to read a requested page: 0x1\n",
+        }),
+      ),
+    )[0];
+    expect(both.description).toContain(
+      "did not complete after 2 rows; later candidates may never have been searched",
+    );
+    expect(both.description).toContain("exit status 1");
+    const prefixed = runRows(
+      JSON.stringify(
+        run({
+          stdout: EMPTY_TEXT,
+          stderr:
+            "\u001b[31mERROR\u001b[0m volatility3: Volatility was unable to read a requested page: 0x1\n",
+        }),
+      ),
+    )[0];
+    expect(prefixed.description).toContain("did not complete after 0 rows");
+    const validationFirst = runRows(
+      JSON.stringify(
+        run({
+          stdout: EMPTY_TEXT,
+          exitStatus: 1,
+          stderr:
+            "Volatility was unable to read a requested page: 0x1\nUnsatisfied requirement plugins.Malfind.kernel: \n",
+        }),
+      ),
+    )[0];
+    expect(validationFirst.description).toContain("symbol/translation validation failed");
+  });
+
+  it("embedded bytes: a UTF-8 BOM and a UTF-16LE BOM are read; invalid UTF-8 is not guessed at; CRLF text reads", () => {
+    const bom8 = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(EMPTY_TEXT, "utf8")]);
+    const a = runRows(JSON.stringify(run({ stdout: undefined, stdoutBase64: bom8.toString("base64") })))[0];
+    expect(a.canonical?.memoryRun).toMatchObject({
+      bound: true,
+      stdoutCharset: "utf-8 (BOM)",
+      verdict: { kind: "completed-no-rows" },
+    });
+    const u16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(EMPTY_TEXT, "utf16le")]);
+    const b = runRows(JSON.stringify(run({ stdout: undefined, stdoutBase64: u16.toString("base64") })))[0];
+    expect(b.canonical?.memoryRun).toMatchObject({
+      bound: true,
+      stdoutCharset: "utf-16le (BOM)",
+      verdict: { kind: "completed-no-rows" },
+    });
+    const bad = runRows(
+      JSON.stringify(
+        run({ stdout: undefined, stdoutBase64: Buffer.from([0x5b, 0xe9, 0x5d]).toString("base64") }),
+      ),
+    )[0];
+    expect(bad.description).toContain("not UTF-8 and carry no UTF-16 BOM; the charset is not established");
+    expect(bad.canonical?.memoryRun?.bound).toBe(false);
+    const crlf = runRows(JSON.stringify(run({ stdout: EMPTY_TEXT.replace(/\n/g, "\r\n") })))[0];
+    expect(crlf.description).toContain("completed with no rows");
+  });
+
+  it("the crashinfo qualification needs the exact windows.crashinfo plugin", () => {
+    const rows = runRows(
+      bundle([
+        run({
+          plugin: "attacker.crashinfo",
+          command: "vol -r json -f image.raw attacker.crashinfo",
+          stdout: CRASH_BITMAP,
+        }),
+        run({ stdout: EMPTY_TEXT }),
+      ]),
+    );
+    const malfind = rows.find((e) => e.canonical?.memoryRun?.plugin === "windows.malfind")!;
+    expect(malfind.description).not.toContain("user-space");
+    const full = runRows(
+      bundle([
+        run({
+          plugin: "windows.crashinfo.Crashinfo",
+          command: "vol -r json -f image.raw windows.crashinfo",
+          stdout: CRASH_BITMAP,
+        }),
+        run({ stdout: EMPTY_TEXT }),
+      ]),
+    ).find((e) => e.canonical?.memoryRun?.plugin === "windows.malfind")!;
+    expect(full.description).toContain("user-space");
   });
 });

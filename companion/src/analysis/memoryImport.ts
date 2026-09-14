@@ -63,7 +63,7 @@ import { pstreeChildren } from "./pstreeDepth.js";
 import { extractTables, SHORT_PLUGIN } from "./memoryTables.js";
 import { carryImage, imageFactsEvents, isImageInfoTable, readImageFacts } from "./memoryImageFacts.js";
 import { exportShapeEvents, exportShapeNote } from "./memoryExportShape.js";
-import { isRunEnvelopeUpload, parseRunEnvelopes, RUNS_PER_BUNDLE_MAX } from "./memoryRunEnvelope.js";
+import { isRunEnvelopeUpload, parseRunEnvelopes } from "./memoryRunEnvelope.js";
 import { boundedAggKey } from "./aggKey.js";
 import { identityMark, packTags } from "./recordIdentity.js";
 import {
@@ -1405,18 +1405,29 @@ function runEnvelopeRoot(text: string): unknown {
 
 /** Every run's export imports as the export it is; the run rows ride beside, under the same cap. */
 function parseMemoryRunBundle(root: unknown, text: string, opts: MemoryImportOptions): MemoryParseResult {
+  const maxEvents = opts.maxEvents ?? maxEventsDefault();
+  // The PLAIN parser reads each embedded export: an envelope nested in an envelope is not an export.
   const { runRows, exports, note } = parseRunEnvelopes(root, (stdout, filename) =>
-    parseMemory(stdout, { ...opts, filename, maxEvents: opts.maxEvents ?? maxEventsDefault() }),
+    parseMemoryExport(stdout, { ...opts, filename, maxEvents }),
   );
-  // Each export was aggregated and capped on its own; the run rows are aggregated beside them.
+  // One bundle-wide budget: the run rows are aggregated, then every row — run rows and the
+  // exports' already-aggregated rows — is ranked by severity and cut to `maxEvents` once, so a
+  // bundle of N runs never emits N × maxEvents. `total` counts export rows plus one record per
+  // run; `dropped` is what the final cut left unrepresented.
   const runs = aggregateEvents(runRows, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
-    maxEvents: RUNS_PER_BUNDLE_MAX,
+    maxEvents,
   });
   const groups = runs.groups + exports.reduce((n, e) => n + e.groups, 0);
-  const finalEvents = stampSourceArtifactHash([...runs.events, ...exports.flatMap((e) => e.events)], text);
-  const sum = (k: "total" | "dropped" | "tables") => exports.reduce((n, e) => n + e[k], 0);
+  const rank: Record<Severity, number> = { Critical: 4, High: 3, Medium: 2, Low: 1, Info: 0 };
+  const ranked = [...runs.events, ...exports.flatMap((e) => e.events)]
+    .sort((a, b) => rank[b.severity] - rank[a.severity] || (b.count ?? 1) - (a.count ?? 1))
+    .slice(0, maxEvents);
+  const finalEvents = stampSourceArtifactHash(ranked, text);
+  const sum = (k: "total" | "tables") => exports.reduce((n, e) => n + e[k], 0);
+  const total = sum("total") + runRows.length;
+  const represented = finalEvents.reduce((n, e) => n + (e.count ?? 1), 0);
   const notes = [
     ...exports.map((e) => ("note" in e ? (e as MemoryParseResult).note : "")).filter(Boolean),
     note,
@@ -1424,9 +1435,9 @@ function parseMemoryRunBundle(root: unknown, text: string, opts: MemoryImportOpt
   return {
     events: finalEvents,
     iocs: exports.flatMap((e) => e.iocs).slice(0, opts.maxIocs ?? 5000),
-    total: sum("total"),
+    total,
     kept: finalEvents.length,
-    dropped: sum("dropped"),
+    dropped: Math.max(0, total - represented),
     groups,
     tables: sum("tables"),
     injected: exports.reduce((n, e) => n + ((e as MemoryParseResult).injected ?? 0), 0),
@@ -1442,6 +1453,11 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
   // A run envelope (#1016): the runs' embedded exports import as exports, one run row each.
   const envelope = runEnvelopeRoot(text);
   if (envelope !== undefined) return parseMemoryRunBundle(envelope, text, opts);
+  return parseMemoryExport(text, opts);
+}
+
+/** Every memory export format EXCEPT a run envelope — the parser an envelope's embedded stdout goes through. */
+function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParseResult {
   // MemProcFS findevil: a flat finding-report table — check before JSON/text Volatility paths.
   if (looksLikeMemprocfsFindevil(text)) return parseMemoryFindevil(text, opts);
 

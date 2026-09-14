@@ -42,10 +42,13 @@ const LINE_MAX = 200;
 const DESCRIPTION_MAX = 900;
 /** The user-space plugins an empty result of which a bitmap dump cannot clear. */
 const USER_SPACE_PLUGINS = /(?:^|\.)(malfind|cmdline|dlllist|ldrmodules|handles|envars|vadinfo|yarascan)\b/i;
+// The markers are matched within the line (a logger level, a timestamp or an ANSI escape may
+// precede them); validation before a page error, a page error before the generic exit status.
 const VALIDATION_RE =
-  /^(?:Unsatisfied requirement\b|Unable to validate the plugin requirements\b|A symbol table requirement was not fulfilled\b)/;
-const PAGE_ERROR_RE = /^Volatility was unable to read a requested page\b/;
-const TRACEBACK_RE = /^Traceback \(most recent call last\)/;
+  /(?:Unsatisfied requirement\b|Unable to validate the plugin requirements\b|A symbol table requirement was not fulfilled\b)/;
+const PAGE_ERROR_RE = /Volatility was unable to read a requested page\b/;
+const TRACEBACK_RE = /Traceback \(most recent call last\)/;
+const ANSI_RE = /\u001b\[[0-9;]*[A-Za-z]/g;
 const VOL2_RE = /(?:^|[\s/\\])vol(?:atility)?\.py\b|--profile[= ]|(?:^|\s)-{1,2}profile\b/;
 const HEX64 = /^(?:sha256:)?([0-9a-f]{64})$/i;
 const BASIS =
@@ -56,6 +59,7 @@ const show = (v: string, max = LINE_MAX): string => {
   return shown.length > max ? `${shown.slice(0, max - 1)}…` : shown;
 };
 const short = (digest: string): string => digest.replace(/^sha256:/, "").slice(0, 12);
+const lower = (v: string): string => v.trim().toLowerCase();
 const sha256 = (data: string | Buffer): string => `sha256:${createHash("sha256").update(data).digest("hex")}`;
 const normDigest = (v: string): string => {
   const m = HEX64.exec(v.trim());
@@ -64,28 +68,36 @@ const normDigest = (v: string): string => {
 
 // ───────────────────────────── the format ─────────────────────────────
 
+// Every uploader-controlled string is bounded at the schema: nothing past these lengths is read.
 const runSchema = z.object({
   type: z.literal(RUN_ENVELOPE_TYPE).optional(),
-  envelopeVersion: z.number().int().positive().optional(),
-  command: z.string().min(1),
-  plugin: z.string().min(1),
-  renderer: z.string().optional(),
-  volatilityVersion: z.string().optional(),
-  symbols: z.string().optional(),
+  envelopeVersion: z.literal(RUN_ENVELOPE_VERSION).optional(),
+  command: z.string().min(1).max(4096),
+  plugin: z.string().min(1).max(200),
+  renderer: z.string().max(64).optional(),
+  volatilityVersion: z.string().max(64).optional(),
+  symbols: z.string().max(512).optional(),
   exitStatus: z.number().int(),
-  stdout: z.string().optional(),
-  stdoutBase64: z.string().optional(),
-  stdoutSha256: z.string().optional(),
-  stderr: z.string().default(""),
-  imageSha256: z.string().min(1),
-  startedAt: z.string().optional(),
-  endedAt: z.string().optional(),
+  stdout: z.string().max(STDOUT_MAX).optional(),
+  stdoutBase64: z
+    .string()
+    .max(Math.ceil((STDOUT_MAX * 4) / 3) + 4)
+    .optional(),
+  stdoutSha256: z.string().max(80).optional(),
+  // Read past the verdict bound so an oversized stderr is SAID (indeterminate), not silently dropped.
+  stderr: z
+    .string()
+    .max(4 * STDERR_MAX)
+    .default(""),
+  imageSha256: z.string().min(1).max(80),
+  startedAt: z.string().max(64).optional(),
+  endedAt: z.string().max(64).optional(),
 });
 export type RunEnvelope = z.infer<typeof runSchema>;
 
 const bundleSchema = z.object({
   type: z.literal(RUN_ENVELOPE_TYPE).optional(),
-  envelopeVersion: z.number().int().positive().optional(),
+  envelopeVersion: z.literal(RUN_ENVELOPE_VERSION).optional(),
   runs: z.array(z.unknown()),
 });
 
@@ -108,6 +120,8 @@ interface ExportRead {
   readable: boolean;
   rows: number;
   volatility2: boolean;
+  /** An explicit plugin label in the export (a map key, a table's plugin) that names ANOTHER plugin than the envelope. */
+  otherPlugin: string;
 }
 
 /** The stderr lines that decide a verdict, scanned over the WHOLE field. */
@@ -122,7 +136,7 @@ function stderrMarkers(stderr: string): {
   let traceback = false;
   const lines: string[] = [];
   for (const raw of stderr.split(/\r\n|\r|\n/)) {
-    const line = raw.trim();
+    const line = raw.replace(ANSI_RE, "").trim();
     if (!line) continue;
     if (!validation && VALIDATION_RE.test(line)) validation = line;
     if (!pageError && PAGE_ERROR_RE.test(line)) pageError = line;
@@ -162,12 +176,6 @@ export function runVerdict(
       words: `a Volatility 2 run (profile-based); the export is not read; the envelope names the run: ${show(env.command, 120)}`,
     };
   const m = stderrMarkers(env.stderr);
-  if (env.exitStatus !== 0 && !m.validation)
-    return {
-      kind: "did-not-complete-exit",
-      words: `did not complete: exit status ${env.exitStatus}; the absence of rows is not evidence`,
-      rows: read.rows,
-    };
   if (m.validation)
     return {
       kind: "did-not-complete-validation",
@@ -178,7 +186,13 @@ export function runVerdict(
   if (m.pageError)
     return {
       kind: "did-not-complete-page-error",
-      words: `did not complete after ${read.rows} row${read.rows === 1 ? "" : "s"}; later candidates may never have been searched (${show(m.pageError, 120)})`,
+      words: `did not complete after ${read.rows} row${read.rows === 1 ? "" : "s"}; later candidates may never have been searched (${show(m.pageError, 120)})${env.exitStatus !== 0 ? `; exit status ${env.exitStatus}` : ""}`,
+      rows: read.rows,
+    };
+  if (env.exitStatus !== 0)
+    return {
+      kind: "did-not-complete-exit",
+      words: `did not complete: exit status ${env.exitStatus}; the absence of rows is not evidence`,
       rows: read.rows,
     };
   if (!read.readable)
@@ -220,7 +234,18 @@ export interface RunParse {
   format: string;
   tool: string;
 }
+/** The plain export parser — never the envelope dispatch, so an embedded envelope is not an export. */
 export type ExportParser = (text: string, filename: string | undefined) => RunParse;
+/** The formats an embedded stdout may be read as; anything else is not a Volatility export. */
+const EXPORT_FORMATS = new Set([
+  "volatility",
+  "volatility-jsonl",
+  "volatility-map",
+  "volatility-text",
+  "volatility2-text",
+]);
+/** `windows.malfind.Malfind` and `windows.malfind` name one plugin: the first two segments, lower-cased. */
+const pluginKey = (p: string): string => lower(p).split(".").slice(0, 2).join(".");
 
 interface RunRead {
   env: RunEnvelope;
@@ -228,6 +253,7 @@ interface RunRead {
   stdout: string | null;
   digest: string;
   encoding: MemoryRunBlock["stdoutEncoding"];
+  charset: string;
   stated: string;
   bound: boolean;
   stderrOverBound: boolean;
@@ -238,18 +264,60 @@ interface RunRead {
 }
 
 /** Decode one run's embedded stdout; the digest is over bytes when the collector supplied them. */
+/** Decode embedded bytes: a UTF-8 / UTF-16 BOM decides; otherwise strict UTF-8 — invalid bytes are not guessed at. */
+function decodeBytes(bytes: Buffer): { text: string; charset: string } | null {
+  if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf)
+    return { text: bytes.subarray(3).toString("utf8"), charset: "utf-8 (BOM)" };
+  if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe)
+    return { text: bytes.subarray(2).toString("utf16le"), charset: "utf-16le (BOM)" };
+  if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+    const swapped = Buffer.from(bytes.subarray(2));
+    swapped.swap16();
+    return { text: swapped.toString("utf16le"), charset: "utf-16be (BOM)" };
+  }
+  try {
+    return { text: new TextDecoder("utf-8", { fatal: true }).decode(bytes), charset: "utf-8" };
+  } catch {
+    return null;
+  }
+}
+
 function readStdout(env: RunEnvelope): {
   stdout: string | null;
   digest: string;
   encoding: MemoryRunBlock["stdoutEncoding"];
+  charset: string;
+  problem: string;
 } {
   if (env.stdoutBase64 !== undefined) {
     const bytes = Buffer.from(env.stdoutBase64, "base64");
-    return { stdout: bytes.toString("utf8"), digest: sha256(bytes), encoding: "bytes" };
+    const decoded = decodeBytes(bytes);
+    return decoded
+      ? {
+          stdout: decoded.text,
+          digest: sha256(bytes),
+          encoding: "bytes",
+          charset: decoded.charset,
+          problem: "",
+        }
+      : {
+          stdout: null,
+          digest: sha256(bytes),
+          encoding: "bytes",
+          charset: "",
+          problem:
+            "the embedded stdout bytes are not UTF-8 and carry no UTF-16 BOM; the charset is not established",
+        };
   }
   if (env.stdout !== undefined)
-    return { stdout: env.stdout, digest: sha256(Buffer.from(env.stdout, "utf8")), encoding: "text-utf8" };
-  return { stdout: null, digest: "", encoding: "none" };
+    return {
+      stdout: env.stdout.startsWith("\ufeff") ? env.stdout.slice(1) : env.stdout,
+      digest: sha256(Buffer.from(env.stdout, "utf8")),
+      encoding: "text-utf8",
+      charset: "utf-8 (JSON string)",
+      problem: "",
+    };
+  return { stdout: null, digest: "", encoding: "none", charset: "", problem: "" };
 }
 
 function readRun(
@@ -264,12 +332,14 @@ function readRun(
       problem: `run ${index}: not a run envelope (${show(parsed.error.issues[0]?.message ?? "invalid", 80)})`,
     };
   const env = parsed.data;
-  const { stdout, digest, encoding } = readStdout(env);
+  const { stdout, digest, encoding, charset, problem: decodeProblem } = readStdout(env);
   const stated = env.stdoutSha256 ? normDigest(env.stdoutSha256) : "";
   const stderrOverBound = env.stderr.length > STDERR_MAX;
   const imageDigest = normDigest(env.imageSha256);
-  let problem = "";
-  if (!imageDigest) problem = "imageSha256 is not a sha256 digest";
+  let problem = decodeProblem;
+  if (problem) {
+    /* the bytes could not be read as text */
+  } else if (!imageDigest) problem = "imageSha256 is not a sha256 digest";
   else if (env.stdoutSha256 && !stated) problem = "stdoutSha256 is not a sha256 digest";
   else if (stated && digest && stated !== digest)
     problem = `the digest of the embedded stdout (${short(digest)}, over ${encoding === "bytes" ? "the bytes" : "the text, UTF-8"}) differs from the stated stdoutSha256 (${short(stated)}) — line endings, a BOM or the encoding may differ`;
@@ -278,16 +348,28 @@ function readRun(
   const bound = !problem && stdout !== null;
   const exportParse = bound && stdout !== null ? parseExport(stdout, `${env.plugin}.json`) : null;
   const trimmed = stdout?.trim() ?? "";
+  const extracted = bound && stdout !== null ? extractTables(stdout, undefined) : null;
+  // An explicit plugin label in the export (a map key, a JSONL/text table's own name) that names
+  // another plugin than the envelope: the envelope is applied to nothing. A bare array carries
+  // no label and contradicts nothing.
+  const labels = extracted
+    ? [...extracted.tables.map((t) => t.plugin), ...extracted.empty].filter(Boolean)
+    : [];
+  const otherPlugin =
+    labels.find((l) => pluginKey(l) !== pluginKey(env.plugin) && /^[a-z]+\.[a-z]/i.test(l)) ?? "";
   const read: ExportRead | null =
     bound && exportParse
       ? {
-          readable: exportParse.format !== "empty" || trimmed === "[]" || /^\{\s*\}$/.test(trimmed),
+          readable: EXPORT_FORMATS.has(exportParse.format) || trimmed === "[]",
           rows: exportParse.total,
           volatility2: exportParse.format === "volatility2-text",
+          otherPlugin,
         }
       : null;
+  if (read?.otherPlugin)
+    problem = `the envelope names ${show(env.plugin, 60)}; the export is labelled ${show(read.otherPlugin, 60)} — applied to nothing`;
   const imageDump =
-    bound && stdout !== null && /crashinfo/i.test(env.plugin)
+    bound && stdout !== null && pluginKey(env.plugin) === "windows.crashinfo"
       ? (readImageFacts(extractTables(stdout, undefined).tables)?.dumpType ?? "")
       : "";
   return {
@@ -296,8 +378,9 @@ function readRun(
     stdout,
     digest,
     encoding,
+    charset,
     stated,
-    bound,
+    bound: bound && !problem,
     stderrOverBound,
     parsed: exportParse,
     read,
@@ -316,10 +399,15 @@ export function parseRunEnvelopes(
   parseExport: ExportParser,
 ): { runRows: MappedEvent[]; exports: RunParse[]; note: string } {
   const bundle = bundleSchema.safeParse(root);
+  // A single run object is a bundle of one; an unsupported version on the bundle reads nothing.
+  if (!bundle.success && isObject(root) && Array.isArray(root.runs))
+    return {
+      runRows: [],
+      exports: [],
+      note: `the bundle's envelopeVersion is not ${RUN_ENVELOPE_VERSION}; nothing read`,
+    };
   const rawRuns: unknown[] = bundle.success ? bundle.data.runs : [root];
-  const version =
-    (isObject(root) && typeof root.envelopeVersion === "number" ? root.envelopeVersion : 0) ||
-    RUN_ENVELOPE_VERSION;
+  const version = RUN_ENVELOPE_VERSION;
   const reads = rawRuns.slice(0, RUNS_PER_BUNDLE_MAX).map((r, i) => readRun(r, i, parseExport));
   const beyond = Math.max(0, rawRuns.length - RUNS_PER_BUNDLE_MAX);
   // The dump type per image, from a crashinfo run of the SAME image in this bundle.
@@ -379,7 +467,7 @@ function runRow(r: RunRead, version: number, image: string, verdict: MemoryRunVe
       : []),
     env.volatilityVersion ? `Volatility ${show(env.volatilityVersion, 30)}` : "Volatility version not stated",
     env.symbols ? `symbols ${show(env.symbols, 80)}` : "",
-    `stdout ${r.digest ? short(r.digest) : "not embedded"}${r.encoding === "text-utf8" ? " (digest over the embedded text, UTF-8)" : ""}`,
+    `stdout ${r.digest ? short(r.digest) : "not embedded"}${r.encoding === "text-utf8" ? " (digest over the embedded text, UTF-8)" : r.charset ? ` (bytes, ${r.charset})` : ""}`,
     `image ${short(image)}`,
     env.startedAt ? `started ${show(env.startedAt, 30)}` : "",
     markers.length ? `stderr: ${markers.slice(0, 2).join(" | ")}` : "stderr: no diagnostic line",
@@ -413,6 +501,7 @@ function runRow(r: RunRead, version: number, image: string, verdict: MemoryRunVe
     exitStatus: env.exitStatus,
     stdoutSha256: r.digest,
     stdoutEncoding: r.encoding,
+    ...(r.charset ? { stdoutCharset: r.charset } : {}),
     ...(r.stated ? { statedStdoutSha256: r.stated } : {}),
     imageSha256: image,
     ...(env.volatilityVersion ? { volatilityVersion: env.volatilityVersion } : {}),

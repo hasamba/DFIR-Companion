@@ -290,9 +290,13 @@ scope. The whole `stderr` is scanned before anything is shortened (past 1 MB the
 (`stdoutBase64`) or the UTF-8 text (`stdout`), and a stated `stdoutSha256` that disagrees — line
 endings, a BOM, an encoding — leaves the run *applied to nothing* while its export still imports.
 An envelope with no stdout embedded is applied to nothing: two images' empty exports are
-byte-identical, so a digest alone names no run — the envelope must travel with its stdout. The
-row's identity is the whole material envelope, so two runs with the same words stay two rows and
-a re-import folds. 256 runs per bundle are read; the rest are counted.
+byte-identical, so a digest alone names no run — the envelope must travel with its stdout. An
+export whose own label names another plugin than the envelope (`{"windows.pslist.PsList": []}`
+under a malfind envelope) leaves the run applied to nothing too. Embedded bytes are read by their
+BOM (UTF-8, UTF-16) or as strict UTF-8 — invalid bytes are not guessed at. The row's identity is
+the whole material envelope, so two runs with the same words stay two rows and a re-import folds.
+256 runs per bundle are read; the rest are counted; the bundle's rows share one `maxEvents`
+budget.
 
 ### Intact (trimmed VolWeb output)
 

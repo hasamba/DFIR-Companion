@@ -38,6 +38,8 @@ export const memoryRunBlockSchema = z.object({
   /** `sha256:` digests; the stdout digest is computed over the embedded bytes (base64) or text (UTF-8), as `stdoutEncoding` says. */
   stdoutSha256: z.string(),
   stdoutEncoding: z.enum(["bytes", "text-utf8", "none"]),
+  /** How the embedded bytes were read as text (a BOM, or strict UTF-8); absent when nothing was embedded. */
+  stdoutCharset: z.string().optional(),
   /** The digest the envelope STATED, when it stated one; equal to `stdoutSha256` when the run is bound. */
   statedStdoutSha256: z.string().optional(),
   imageSha256: z.string(),
