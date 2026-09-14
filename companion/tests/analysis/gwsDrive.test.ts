@@ -483,21 +483,23 @@ describe("decodeGwsDrive — sharing changes: direction along the documented cha
           visibility_change: "none",
         }),
       );
+    // +1 on each: the #1064 document-exposure join adds one summary row per document with a
+    // broadening change, beside the per-event rows these counts were already pinning.
     const two = parseGoogleWorkspaceReport(
       JSON.stringify([share("bob@corp.example"), share("carol@corp.example")]),
       { aggregate: true },
     );
-    expect(two.events).toHaveLength(2);
+    expect(two.events).toHaveLength(3);
     const flip = parseGoogleWorkspaceReport(
       JSON.stringify([share("bob@corp.example"), share("bob@corp.example", "can_edit", "none")]),
       { aggregate: true },
     );
-    expect(flip.events).toHaveLength(2);
+    expect(flip.events).toHaveLength(3);
     const dup = parseGoogleWorkspaceReport(
       JSON.stringify([share("bob@corp.example"), share("bob@corp.example")]),
       { aggregate: true },
     );
-    expect(dup.events).toHaveLength(1);
+    expect(dup.events).toHaveLength(2);
   });
 });
 

@@ -305,6 +305,7 @@
     "gcpIdentity.ts": "analysis/ingest",
     "gcpRow.ts": "analysis/ingest",
     "gwsDrive.ts": "analysis/ingest",
+    "gwsDriveExposure.ts": "analysis/ingest",
     "gwsOAuth.ts": "analysis/detect",
     "gwsOAuthLifecycle.ts": "analysis/ingest",
     "gwsTakeout.ts": "analysis/ingest",
