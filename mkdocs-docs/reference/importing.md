@@ -1271,6 +1271,68 @@ timeline at import; a lineage across uploads is not built.
   key in that account, before the reads began (`matched by the key id`); rows without a key fall
   back to the role-name-and-time match and say so.
 
+**What one upload joins: the compute lifecycle.** One summary row per EC2 instance the upload's
+records form a lifecycle for — `AWS compute lifecycle: i-0abc… (account 111122223333, us-east-1)
+[launched 2024-05-01T09:00:00.000Z by IAMUser arn:aws:iam::…:user/alice from 203.0.113.5
+aws-cli/2.15 (record:3) — image ami-…, type c5.24xlarge, key pair deploy-key, instance profile
+arn:…:instance-profile/web, groups sg-0a (web), subnet subnet-1 in vpc-9, private address
+10.0.1.5, availability zone us-east-1a, startup configuration supplied (content not shown);
+recorded configuration changes: AuthorizeSecurityGroupIngress recorded on sg-0a: tcp 22 from
+0.0.0.0/0 (any address) at … by IAMUser user/alice (record:5) — after the launch; StopInstances:
+running → stopping at … (record:30); ModifyInstanceAttribute: startup configuration replaced
+(content not shown) at … by IAMUser user/bob (record:31) — after the launch; StartInstances:
+stopped → pending at … (record:32); API calls using instance-role credentials: 12 records … → …;
+sourceIPAddress recorded on these calls: 198.51.100.9 aws-sdk-go/1.44 first … (record:8, 12
+records); remote-access requests (requested; whether anything ran is not in CloudTrail): ssm
+SendCommand [AWS-RunShellScript] at … (record:12); a correlated API sequence: stop, startup
+configuration replaced, start; recorded facts: startup configuration replaced after the launch,
+any-address ingress rule recorded on a group the instance holds (2 kinds); what ran on the
+instance and its network egress are not in CloudTrail; record retention and the trails' selectors
+are not in this evidence; terminated …]`. Built over every record of one upload, like the
+credential lineage; a lifecycle across uploads is not built.
+
+- **Joined through the instance id only**, scoped by the owning account (the launch response's
+  `ownerId`, else the record's recipient account — never the caller's) and the region. An image
+  id joins nothing (one image launches many instances); a security group joins by id, never by
+  name; a session joins only as `AssumedRole` with `ec2RoleDelivery` set, the instance id as the
+  session suffix of both `principalId` and the ARN, and the instance's account — a role session
+  a person named `i-…` never joins.
+- **The launch facts are the response's own.** Image, type, key-pair name, instance profile,
+  groups, subnet, VPC, private address, availability zone. The startup configuration is
+  three-valued — `supplied (content not shown)`, `supplied; CloudTrail removed its content`, `not
+  in this record` (a launch template can carry one the record does not expose, so absence is never
+  "none") — and its content never reaches the row, the aggregation key or the envelope; neither
+  does key material, an SSH public key or a session token. A service launch reads `request made by
+  AWS service autoscaling.amazonaws.com; signing principal …; requesterId …` — literally, never
+  "on behalf of".
+- **A record is what it recorded.** `StopInstances: running → stopping` is the record's own
+  transition; `RebootInstances requested` has none. An ingress rule is `AuthorizeSecurityGroupIngress
+  recorded on sg-…: tcp 22 from 0.0.0.0/0 (any address)` — never the group's state — and is on
+  the row only for a group the instance's own records name (the launch, or a successful
+  `ModifyInstanceAttribute` group set); a group-name-only request is not joined. `Replace…` and
+  `Disassociate…IamInstanceProfile` name the instance only in a successful response and the row
+  keeps the returned state (`association entered associating`). `AssociateAddress` is on the row
+  only when its request names the instance, with the allocation id and the address as separate
+  literals; a disassociation only through an association id the instance's own records returned.
+  "Before" / "after the launch" only on strictly ordered timestamps.
+- **Remote-access requests** name the instance exactly — `SendCommand` by `instanceIds` or
+  `Targets[InstanceIds]`, `StartSession` by its target, `SendSSHPublicKey` by `instanceId` — a tag
+  selector never names one. They read `requested; whether anything ran is not in CloudTrail`. An
+  authorization error reads `denied`, any other error `failed`; neither joins.
+- **The grade counts distinct recorded-fact kinds.** A startup configuration replaced after the
+  launch, an instance profile associated or replaced after the launch, an any-address ingress rule
+  on a group the instance holds, a privileged change / remote execution / enumeration by the
+  instance-role credentials (the lineage's exact call sets), a remote-access request to the
+  instance. Two or more kinds → High, one → Medium, none → Low (still a row, to pivot on). No
+  single CloudTrail record makes a High; cost, instance type, a region or an open port is a fact,
+  never a verdict; "cryptomining", "rogue" and "unauthorized" are never said.
+- **Bounded, never file-ordered.** 256 rows per upload (the rest counted), 4,096 instances
+  tracked, per instance the 24 earliest and 8 latest lifecycle records (8 named in the words, the
+  rest counted), 16 groups with 16 + 16 rule records each, 8 address associations, 8 remote
+  requests, 64 sources of instance-role calls (8 named), 256 records cited. The row's identity is
+  (account, region, instance id, this upload), so an identical re-import folds and two uploads
+  about one instance stay two rows.
+
 ### Entra applications: credentials, grants, roles, sign-ins
 
 An application that gains a credential, then a powerful permission, then acts, is the classic

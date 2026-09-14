@@ -9,6 +9,7 @@ import { defenderBlockSchema } from "./canonicalDefender.js";
 import { mobileBlockSchema } from "./canonicalMobile.js";
 import { entraPathBlockSchema } from "./canonicalEntra.js";
 import { awsLineageBlockSchema } from "./canonicalAwsLineage.js";
+import { awsComputeBlockSchema } from "./canonicalAwsCompute.js";
 import { mailboxChainBlockSchema } from "./canonicalMailbox.js";
 import { memoryRunBlockSchema } from "./canonicalMemoryRun.js";
 import { gwsLifecycleBlockSchema } from "./canonicalGwsLifecycle.js";
@@ -158,6 +159,8 @@ export const canonicalEventEnvelopeSchema = z.object({
   entra: entraPathBlockSchema.optional(),
   // An AWS credential-lineage summary row (awsLineage.ts, #979); the block lives in canonicalAwsLineage.ts.
   awsLineage: awsLineageBlockSchema.optional(),
+  // An AWS compute-lifecycle summary row (awsCompute.ts, #931 item 8); the block lives in canonicalAwsCompute.ts.
+  awsCompute: awsComputeBlockSchema.optional(),
   // A mailbox-chain summary row (mailboxChain.ts, #975); the block lives in canonicalMailbox.ts.
   mailboxChain: mailboxChainBlockSchema.optional(),
   // A memory run-envelope row (memoryRunEnvelope.ts, #1016); the block lives in canonicalMemoryRun.ts.
