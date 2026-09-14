@@ -19,6 +19,9 @@ import { gcpRows } from "./gcpRow.js";
 import { show as neutral } from "./gcpIdentity.js";
 import { matchGcpRule } from "./gcpSeverityRules.js";
 import { gcpServiceAccountJoins, GCP_SA_JOIN_MAX } from "./gcpServiceAccountJoin.js";
+import { azureComputeLifecycles, AZURE_COMPUTE_MAX } from "./azureCompute.js";
+import { AZURE_RUN_COMMAND_RE } from "./azureComputeState.js";
+import { gcpComputeLifecycles, GCP_COMPUTE_MAX } from "./gcpCompute.js";
 import { decodeAzureLogging } from "./loggingChangeCloud.js";
 import { renderLoggingDescription } from "./loggingChange.js";
 import { createCanonicalEvent, sourceArtifactHash } from "./canonicalEvent.js";
@@ -72,7 +75,9 @@ const AZURE_RULES: Rule[] = [
   // Remote execution as a FAMILY (#931 item 7): the action form and the managed form
   // (`runCommands/write`, inline or URI-hosted scripts), on a VM or a scale-set instance. T1651 is
   // the precise technique (Cloud Administration Command); T1059 stays for existing expectations.
-  [/virtualmachines(?:\/[^/]+)?\/runcommands?\/(?:action|write)/, "High", ["T1651", "T1059"]],
+  // AZURE_RUN_COMMAND_RE (#1066) is the ONE shared source of this pattern — azureCompute.ts and
+  // azureRemoteExecutionTarget below both match against it too, so none of the three can drift.
+  [AZURE_RUN_COMMAND_RE, "High", ["T1651", "T1059"]],
   [/(networksecuritygroups|securityrules).*\/write/, "Medium", ["T1562.007"]],
   [/keyvault.*\/(accesspolicies\/write|write|action)/, "High", ["T1552"]],
   [/storageaccounts\/listkeys\/action/, "High", ["T1552.001"]],
@@ -308,7 +313,7 @@ export function azureRemoteExecutionTarget(
   resource: string,
   recordId = "",
 ): { id: string; display: string } | null {
-  if (!/virtualmachines(?:\/[^/]+)?\/runcommands?\/(?:action|write)/i.test(op)) return null;
+  if (!AZURE_RUN_COMMAND_RE.test(op)) return null;
   const vmss = VMSS_RE.exec(resource);
   if (vmss) return { id: vmss[1].toLowerCase(), display: `${vmss[2]}/${vmss[3]}`.slice(0, 160) };
   const vm = VM_RE.exec(resource);
@@ -405,7 +410,28 @@ export function parseCloudActivity(
         maxEvents: GCP_SA_JOIN_MAX + 1,
       }).events
     : [];
-  const events = [...aggregated.events, ...summaries];
+  // The Azure VM / GCP instance compute-lifecycle joins (#931 item 8 second half, #1066): the
+  // same append-after-the-cap pattern as the per-service-account join above, each under its own
+  // bound. Over the FULL original `records` array, never the pre-split azureRecords/gcpRecords —
+  // each join's own scan() already does its own provider-appropriate filtering (mirroring
+  // gcpServiceAccountJoins' own convention), and a `record:${index}` locator must be the index
+  // into the ORIGINAL upload, not into a filtered array, or a mixed-provider upload's two joins
+  // would both cite "record:0" for two different raw records (Codex code review, finding #3).
+  const azureLifecycles = sawAzure
+    ? aggregateEvents(azureComputeLifecycles(records, uploadId), {
+        aggregate: opts.aggregate,
+        minSeverity: opts.minSeverity,
+        maxEvents: AZURE_COMPUTE_MAX + 1,
+      }).events
+    : [];
+  const gcpLifecycles = sawGcp
+    ? aggregateEvents(gcpComputeLifecycles(records, uploadId), {
+        aggregate: opts.aggregate,
+        minSeverity: opts.minSeverity,
+        maxEvents: GCP_COMPUTE_MAX + 1,
+      }).events
+    : [];
+  const events = [...aggregated.events, ...summaries, ...azureLifecycles, ...gcpLifecycles];
   const groups = aggregated.groups;
 
   const represented = aggregated.events.reduce((n, e) => n + (e.count ?? 1), 0);

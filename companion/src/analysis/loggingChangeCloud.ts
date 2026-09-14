@@ -272,9 +272,12 @@ const tail = (id: string): string => {
   return parts.length > 2 ? `…/${parts.slice(-2).join("/")}` : id;
 };
 
-/** An Azure diagnostic-setting / log-profile operation's reading, or null. */
-/** The request body of an Azure write, whatever envelope the export used: a JSON string or an object, under `properties` or flat. */
-function azureBody(requestBody: unknown): Row | null {
+/**
+ * The request body of an Azure write, whatever envelope the export used: a JSON string or an
+ * object. Exported so other Azure joins (e.g. `azureCompute.ts`, #1066) can read a top-level
+ * sibling of `properties` — such as `identity` on a VM write — that `azureBody` below discards.
+ */
+export function parseAzureRequestBody(requestBody: unknown): Row | null {
   let body: unknown = requestBody;
   if (typeof body === "string") {
     try {
@@ -283,7 +286,14 @@ function azureBody(requestBody: unknown): Row | null {
       return null;
     }
   }
-  if (!isObject(body)) return null;
+  return isObject(body) ? body : null;
+}
+
+/** An Azure diagnostic-setting / log-profile operation's reading, or null. */
+/** The request body of an Azure write, whatever envelope the export used: a JSON string or an object, under `properties` or flat. */
+function azureBody(requestBody: unknown): Row | null {
+  const body = parseAzureRequestBody(requestBody);
+  if (!body) return null;
   const props = getCI(body, "properties");
   return isObject(props) ? props : body;
 }
