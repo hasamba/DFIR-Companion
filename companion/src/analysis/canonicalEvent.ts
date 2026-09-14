@@ -9,6 +9,7 @@ import { entraPathBlockSchema } from "./canonicalEntra.js";
 import { awsLineageBlockSchema } from "./canonicalAwsLineage.js";
 import { mailboxChainBlockSchema } from "./canonicalMailbox.js";
 import { memoryRunBlockSchema } from "./canonicalMemoryRun.js";
+import { gwsLifecycleBlockSchema } from "./canonicalGwsLifecycle.js";
 
 export const CANONICAL_EVENT_SCHEMA_VERSION = "1.0.0" as const;
 /** The producer stamped on an envelope DERIVED from legacy flat fields at the read boundary. */
@@ -159,6 +160,8 @@ export const canonicalEventEnvelopeSchema = z.object({
   mailboxChain: mailboxChainBlockSchema.optional(),
   // A memory run-envelope row (memoryRunEnvelope.ts, #1016); the block lives in canonicalMemoryRun.ts.
   memoryRun: memoryRunBlockSchema.optional(),
+  // A Google Workspace OAuth-lifecycle summary row (gwsOAuthLifecycle.ts, #983); the block lives in canonicalGwsLifecycle.ts.
+  gwsLifecycle: gwsLifecycleBlockSchema.optional(),
   // A TLS record's own reading (tlsSession.ts, #933 item 6): the client's SNI, the protocol facts
   // the sensor saw, the certificate the server presented, the sensor's chain check, the observer.
   tls: z

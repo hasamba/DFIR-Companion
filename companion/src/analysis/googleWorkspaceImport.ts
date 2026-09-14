@@ -3,6 +3,7 @@ import { boundedAggKey } from "./aggKey.js";
 import { createCanonicalEvent, stampSourceArtifactHash } from "./canonicalEvent.js";
 import { renderAwsDescription } from "./awsDescription.js";
 import { decodeGwsToken, readGwsParams, type GwsTokenReading } from "./gwsOAuth.js";
+import { gwsOAuthLifecycles, GWS_LIFECYCLES_MAX } from "./gwsOAuthLifecycle.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -55,6 +56,8 @@ export interface GoogleWorkspaceParseResult {
   kept: number;
   dropped: number;
   groups: number;
+  /** Derived summary rows appended after the source-row cap (the OAuth lifecycles, #983) — not in `kept`. */
+  summaries: number;
   format: string; // "google-workspace" | "empty"
 }
 
@@ -506,6 +509,7 @@ export function parseGoogleWorkspaceReport(
     kept: 0,
     dropped: 0,
     groups: 0,
+    summaries: 0,
     format: "empty",
   };
 
@@ -537,17 +541,26 @@ export function parseGoogleWorkspaceReport(
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
-  const events = stampSourceArtifactHash(aggregated.events, input);
+  // The OAuth lifecycles (#983): built over every record of this export, appended AFTER the
+  // source-row cap under their own bound — `maxEvents` bounds source rows, a summary never evicts
+  // one, and `kept` / `dropped` / `groups` count source rows alone.
+  const summaries = aggregateEvents(gwsOAuthLifecycles(records), {
+    aggregate: opts.aggregate,
+    minSeverity: opts.minSeverity,
+    maxEvents: GWS_LIFECYCLES_MAX + 1,
+  }).events;
+  const events = stampSourceArtifactHash([...aggregated.events, ...summaries], input);
   const groups = aggregated.groups;
 
-  const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
+  const represented = aggregated.events.reduce((n, e) => n + (e.count ?? 1), 0);
   return {
     events,
     iocs: [...iocSink.values()].slice(0, maxIocs),
     total,
-    kept: events.length,
+    kept: aggregated.events.length,
     dropped: Math.max(0, mapped.length - represented),
     groups,
+    summaries: summaries.length,
     format: mapped.length ? "google-workspace" : "empty",
   };
 }
