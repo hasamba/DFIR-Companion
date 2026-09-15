@@ -64,7 +64,7 @@ SHA1 checksum: ${sha1Verify} : ${verifiedSha1 ? "verified" : "does not match"}
 `;
 }
 
-const SHA256_A = "3b1e196c00000000000000000000000000000000000000000000000000000a";
+const SHA256_A = "3b1e196c000000000000000000000000000000000000000000000000000000a1";
 
 function dc3ddLog(opts: { outputHash?: string } = {}): string {
   const outputHashLine = opts.outputHash ? `\n   ${opts.outputHash} (sha256)` : "";
@@ -78,6 +78,33 @@ input results for file \`/dev/sda':
 
 output results for file \`/images/disk.img':
    1953525168 sectors + 512 bytes out${outputHashLine}
+
+dc3dd completed at 2026-01-12 12:00:00 -0500
+`;
+}
+
+const MD5_DEVICE = "248c65b1d5d0fb63c8b35dd411cc3ed8";
+const SHA256_DEVICE = "3a015e8c91a982c2629d037431953521b9daad811916436b807e2efd0aaef0fd";
+
+// A real captured physical-device run (securitynik.com, /dev/sdb) — "device", not "file", no "+ M
+// bytes" remainder clause, two hash algorithms, and dc3dd's own "[ok]"/bad-sectors disclosure.
+function dc3ddDeviceLog(opts: { badSectors?: number; secondOutputHash?: string } = {}): string {
+  const { badSectors = 0, secondOutputHash } = opts;
+  const secondOutput = secondOutputHash
+    ? `\n\noutput results for file \`/cases/second-copy.img':\n   62914560 sectors out\n   [${secondOutputHash === MD5_DEVICE ? "ok" : "??"}] ${secondOutputHash} (md5)`
+    : "";
+  return `dc3dd 7.2.646 started at 2026-01-12 10:00:00 -0500
+
+input results for device \`/dev/sdb':
+   62914560 sectors in
+   ${badSectors} bad sectors replaced by zeros
+   ${MD5_DEVICE} (md5)
+   ${SHA256_DEVICE} (sha256)
+
+output results for file \`/cases/nik-usb-sdb.img':
+   62914560 sectors out
+   [ok] ${MD5_DEVICE} (md5)
+   [ok] ${SHA256_DEVICE} (sha256)${secondOutput}
 
 dc3dd completed at 2026-01-12 12:00:00 -0500
 `;
@@ -147,6 +174,27 @@ describe("parseFtkImagerLog", () => {
     expect(parseFtkImagerLog("not an ftk log")).toBeNull();
   });
 
+  it("unrecognized: a verification section present but missing a result for one of the two acquired algorithms", () => {
+    const withoutSha1Verification = ftkLog().replace(`SHA1 checksum: ${SHA1_A} : verified`, "");
+    const result = parseFtkImagerLog(withoutSha1Verification);
+    const block = env(result!.events[0]).diskImageAcquisition!;
+    expect(block.verificationStatus).toBe("unrecognized");
+    expect(block.unrecognizedVerificationText).toMatch(/no matching verification result/);
+    expect(result!.events[0].severity).toBe("Medium");
+  });
+
+  it("unrecognized: an invalid-length digest is never accepted, even if the line says 'verified'", () => {
+    const shortDigest = MD5_A.slice(0, 20);
+    const result = parseFtkImagerLog(
+      ftkLog({ md5Verify: shortDigest }).replace(
+        `MD5 checksum: ${MD5_A}\n`,
+        `MD5 checksum: ${shortDigest}\n`,
+      ),
+    );
+    const block = env(result!.events[0]).diskImageAcquisition!;
+    expect(block.verificationStatus).toBe("unrecognized");
+  });
+
   it("basis sentence is the fixed, never-comparable-to-per-file-hash disclosure", () => {
     const result = parseFtkImagerLog(ftkLog());
     const block = env(result!.events[0]).diskImageAcquisition!;
@@ -177,7 +225,7 @@ describe("parseDc3ddLog", () => {
   });
 
   it("unrecognized: a present but different output hash — never inferred as a match or a real mismatch", () => {
-    const differentHash = "0000000000000000000000000000000000000000000000000000000000000f";
+    const differentHash = "0000000000000000000000000000000000000000000000000000000000000f00";
     const result = parseDc3ddLog(dc3ddLog({ outputHash: differentHash }));
     const block = env(result!.events[0]).diskImageAcquisition!;
     expect(block.verificationStatus).toBe("unrecognized");
@@ -187,6 +235,43 @@ describe("parseDc3ddLog", () => {
 
   it("returns null for text that doesn't match the dc3dd signature", () => {
     expect(parseDc3ddLog("not a dc3dd log")).toBeNull();
+  });
+
+  it("a real physical-device run ('device', not 'file') is detected and verified across two hash algorithms", () => {
+    expect(isDc3ddLog(dc3ddDeviceLog())).toBe(true);
+    const result = parseDc3ddLog(dc3ddDeviceLog());
+    expect(result).not.toBeNull();
+    const block = env(result!.events[0]).diskImageAcquisition!;
+    expect(block.verificationStatus).toBe("verified");
+    expect(block.sourcePath).toBe("/dev/sdb");
+    expect(block.sectorCount).toBe(62914560);
+    expect(block.remainderBytes).toBeUndefined();
+    expect(block.readErrorsDetected).toBe(false);
+    expect(result!.events[0].severity).toBe("Info");
+  });
+
+  it("bad sectors replaced by zeros forces readErrorsDetected + High severity even though hashes still match", () => {
+    const result = parseDc3ddLog(dc3ddDeviceLog({ badSectors: 42 }));
+    const block = env(result!.events[0]).diskImageAcquisition!;
+    expect(block.verificationStatus).toBe("verified");
+    expect(block.readErrorsDetected).toBe(true);
+    expect(result!.events[0].severity).toBe("High");
+  });
+
+  it("multiple outputs: one verified output cannot hide a second, mismatched one", () => {
+    const differentHash = "0000000000000000000000000000000000000000000000000000000000000f00".slice(0, 64);
+    const result = parseDc3ddLog(dc3ddDeviceLog({ secondOutputHash: differentHash }));
+    const block = env(result!.events[0]).diskImageAcquisition!;
+    expect(block.verificationStatus).toBe("unrecognized");
+    expect(result!.events[0].severity).toBe("Medium");
+  });
+
+  it("a truncated/invalid-length digest is never accepted as a valid match, even if present", () => {
+    const result = parseDc3ddLog(dc3ddLog({ outputHash: SHA256_A.slice(0, 40) }));
+    const block = env(result!.events[0]).diskImageAcquisition!;
+    // A present-but-wrong-length "sha256" digest is a malformed line, not "nothing to compare" —
+    // it must never silently downgrade to the unalarming "not-performed" status.
+    expect(block.verificationStatus).toBe("unrecognized");
   });
 });
 

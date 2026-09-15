@@ -48,6 +48,14 @@ const BASIS =
 
 type HashAlgo = "md5" | "sha1" | "sha256" | "sha512";
 
+/** A real hex digest for the named algorithm has exactly this many characters — never trusted as
+ * opaque text (Codex code review finding H4: an arbitrary-length "hex" match let a truncated or
+ * corrupted digest line verify). */
+const DIGEST_LENGTH: Record<HashAlgo, number> = { md5: 32, sha1: 40, sha256: 64, sha512: 128 };
+function validDigestLength(algo: HashAlgo, digest: string): boolean {
+  return digest.length === DIGEST_LENGTH[algo];
+}
+
 const READ_ERROR_MARKERS = ["attention: this image is incomplete!", "could not be read"];
 const READ_ERROR_RANGE = /(\d+)\s+through\s+(\d+)/i;
 
@@ -178,17 +186,29 @@ export function isFtkImagerLog(text: string): boolean {
   return /case information:/i.test(text) && /image verification results:/i.test(text);
 }
 
-function ftkChecksumLines(
-  block: string,
-): { algo: HashAlgo; digest: string; verified: boolean; raw: string }[] {
-  const out: { algo: HashAlgo; digest: string; verified: boolean; raw: string }[] = [];
+interface FtkChecksumLine {
+  algo: HashAlgo;
+  digest: string;
+  verified: boolean;
+  validLength: boolean;
+  raw: string;
+}
+
+function ftkChecksumLines(block: string): FtkChecksumLine[] {
+  const out: FtkChecksumLine[] = [];
   const re = /(md5|sha1|sha256|sha512)\s+checksum:\s*([0-9a-f]+)\s*(:\s*(\S.*))?$/gim;
   let m: RegExpExecArray | null;
   while ((m = re.exec(block))) {
     const algo = m[1].toLowerCase() as HashAlgo;
     const digest = m[2].toLowerCase();
     const tail = (m[4] ?? "").trim();
-    out.push({ algo, digest, verified: /^verified$/i.test(tail), raw: m[0].trim() });
+    out.push({
+      algo,
+      digest,
+      verified: /^verified$/i.test(tail),
+      validLength: validDigestLength(algo, digest),
+      raw: m[0].trim(),
+    });
   }
   return out;
 }
@@ -203,22 +223,31 @@ export function parseFtkImagerLog(text: string, opts: DiskImageLogOptions = {}):
   const verificationLines = ftkChecksumLines(verificationBlock);
 
   const hashes: HashMeasurement[] = [];
-  let status: VerificationStatus = "not-performed";
-  let unrecognizedText: string | undefined;
-  for (const a of acquisitionLines) {
+  for (const a of acquisitionLines)
     hashes.push({ algorithm: a.algo, digest: a.digest, phase: "acquisition" });
-  }
-  for (const v of verificationLines) {
+  for (const v of verificationLines)
     hashes.push({ algorithm: v.algo, digest: v.digest, phase: "verification" });
-    const acq = acquisitionLines.find((a) => a.algo === v.algo);
-    const matches = v.verified && !!acq && acq.digest === v.digest;
-    if (matches) {
-      if (status !== "unrecognized") status = "verified";
-    } else {
-      status = "unrecognized";
-      unrecognizedText = unrecognizedText ? `${unrecognizedText}; ${v.raw}` : v.raw;
+
+  // Every acquisition-phase algorithm must have its OWN matching, exact-length, exact-"verified"
+  // verification counterpart — a single matching algorithm out of several never verifies the
+  // whole log (Codex code review finding H4: a partial/truncated verification section, or one
+  // with zero parseable lines despite the section header being present, previously verified).
+  let status: VerificationStatus;
+  const unrecognizedParts: string[] = [];
+  if (acquisitionLines.length === 0) {
+    status = "not-performed";
+  } else {
+    for (const a of acquisitionLines) {
+      const v = verificationLines.find((x) => x.algo === a.algo);
+      const ok = !!v && v.verified && v.digest === a.digest && a.validLength && v.validLength;
+      if (!ok)
+        unrecognizedParts.push(
+          v ? v.raw : `${a.algo.toUpperCase()} checksum: no matching verification result`,
+        );
     }
+    status = unrecognizedParts.length === 0 ? "verified" : "unrecognized";
   }
+  const unrecognizedText = unrecognizedParts.length ? unrecognizedParts.join("; ") : undefined;
 
   const sectorCountMatch = text.match(/sector count:\s*(\d+)/i);
   const startedMatch = text.match(/acquisition started:\s*(.+)/i);
@@ -243,61 +272,121 @@ export function parseFtkImagerLog(text: string, opts: DiskImageLogOptions = {}):
 
 // ───────────────────────────── dc3dd ─────────────────────────────
 
-/** dc3dd's own real captured output names both an input-results and an output-results block by
- * these two fixed labels (confirmed via its man page + a real captured run — RECOMMENDATION-1102.md). */
+/** dc3dd names its own result blocks "input results for <file|device> `<path>'" and (one or more
+ * of, per its own real man page — "to write to multiple outputs specify more than one of of=,
+ * hof=, ofs=, hofs=, or fhod=, in any combination") "output results for <file|device> `<path>'" —
+ * "device" for a block special file, "file" for a regular one (a real captured `/dev/sdb` run
+ * confirmed "device" verbatim; Codex code review finding H1: the original signature required the
+ * literal word "file" and never matched a physical-device acquisition at all). */
 export function isDc3ddLog(text: string): boolean {
-  return /input results for file/i.test(text) && /output results for file/i.test(text);
+  return (
+    /input results for (?:files?|devices?)/i.test(text) &&
+    /output results for (?:files?|devices?)/i.test(text)
+  );
+}
+
+interface Dc3ddHashLine {
+  algo: HashAlgo;
+  digest: string;
+  validLength: boolean;
+}
+
+function dc3ddHashLines(block: string): Dc3ddHashLine[] {
+  const out: Dc3ddHashLine[] = [];
+  const re = /([0-9a-f]+)\s*\((md5|sha1|sha256|sha512)\)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(block))) {
+    const algo = m[2].toLowerCase() as HashAlgo;
+    const digest = m[1].toLowerCase();
+    out.push({ algo, digest, validLength: validDigestLength(algo, digest) });
+  }
+  return out;
+}
+
+// A real device run reports "<N> sectors in" with no "+ M bytes" remainder clause at all — the
+// clause is only ever present for a REGULAR FILE input where the read stops mid-sector at EOF, so
+// both shapes are real and neither implies the other (confirmed against two independent real
+// captured logs — RECOMMENDATION-1102.md's own dc3dd citation, and a real /dev/sdb run).
+function dc3ddSectors(block: string): { sectorCount?: number; remainderBytes?: number } {
+  const withRemainder = block.match(/(\d+)\s+sectors\s*\+\s*(\d+)\s+bytes\s+(?:in|out)/i);
+  if (withRemainder)
+    return { sectorCount: Number(withRemainder[1]), remainderBytes: Number(withRemainder[2]) };
+  const plain = block.match(/(\d+)\s+sectors\s+(?:in|out)/i);
+  return plain ? { sectorCount: Number(plain[1]) } : {};
+}
+
+// dc3dd's own real, verbatim summary line for sectors it could not read from a device and
+// zero-filled instead (confirmed via a real captured `/dev/sdb` run — RECOMMENDATION-1102.md;
+// Codex code review finding H3: this was previously never checked at all, so a hash that still
+// matched despite substituted sectors reported a clean "verified"/Info result).
+function dc3ddBadSectors(text: string): number | undefined {
+  const m = text.match(/(\d+)\s+bad sectors replaced by zeros/i);
+  return m ? Number(m[1]) : undefined;
 }
 
 interface Dc3ddBlock {
+  kind: "input" | "output";
   path?: string;
   sectorCount?: number;
   remainderBytes?: number;
-  hash?: { algo: HashAlgo; digest: string };
+  hashes: Dc3ddHashLine[];
 }
 
-function parseDc3ddBlock(block: string): Dc3ddBlock {
-  const pathMatch = block.match(/results for file `([^']*)'/i);
-  const countMatch = block.match(/(\d+)\s+sectors\s*\+\s*(\d+)\s+bytes\s+(in|out)/i);
-  const hashMatch = block.match(/([0-9a-f]{32,128})\s*\((md5|sha1|sha256|sha512)\)/i);
-  return {
-    path: pathMatch ? pathMatch[1] : undefined,
-    sectorCount: countMatch ? Number(countMatch[1]) : undefined,
-    remainderBytes: countMatch ? Number(countMatch[2]) : undefined,
-    hash: hashMatch
-      ? { algo: hashMatch[2].toLowerCase() as HashAlgo, digest: hashMatch[1].toLowerCase() }
-      : undefined,
-  };
+function splitDc3ddBlocks(text: string): Dc3ddBlock[] {
+  const headerRe = /(input|output) results for (?:files?|devices?) `([^']*)'/gi;
+  const marks: { index: number; kind: "input" | "output"; path: string }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = headerRe.exec(text))) {
+    marks.push({ index: m.index, kind: m[1].toLowerCase() as "input" | "output", path: m[2] });
+  }
+  return marks.map((mark, i) => {
+    const end = i + 1 < marks.length ? marks[i + 1].index : text.length;
+    const chunk = text.slice(mark.index, end);
+    return { kind: mark.kind, path: mark.path, hashes: dc3ddHashLines(chunk), ...dc3ddSectors(chunk) };
+  });
 }
 
 export function parseDc3ddLog(text: string, opts: DiskImageLogOptions = {}): DiskImageLogResult | null {
   if (!isDc3ddLog(text)) return null;
-  const outIdx = text.search(/output results for file/i);
-  const inputBlock = text.slice(0, outIdx);
-  const outputBlock = text.slice(outIdx);
-
-  const input = parseDc3ddBlock(inputBlock);
-  const output = parseDc3ddBlock(outputBlock);
+  const blocks = splitDc3ddBlocks(text);
+  const inputBlock = blocks.find((b) => b.kind === "input");
+  const outputBlocks = blocks.filter((b) => b.kind === "output");
 
   const hashes: HashMeasurement[] = [];
-  if (input.hash)
-    hashes.push({ algorithm: input.hash.algo, digest: input.hash.digest, phase: "acquisition" });
-  if (output.hash)
-    hashes.push({ algorithm: output.hash.algo, digest: output.hash.digest, phase: "verification" });
-
-  let status: VerificationStatus;
-  let unrecognizedText: string | undefined;
-  if (!output.hash) {
-    status = "not-performed";
-  } else if (input.hash && input.hash.algo === output.hash.algo && input.hash.digest === output.hash.digest) {
-    status = "verified";
-  } else {
-    status = "unrecognized";
-    unrecognizedText = `output hash ${output.hash.digest} (${output.hash.algo})`;
+  const inputByAlgo = new Map<HashAlgo, Dc3ddHashLine>();
+  for (const h of inputBlock?.hashes ?? []) {
+    inputByAlgo.set(h.algo, h);
+    hashes.push({ algorithm: h.algo, digest: h.digest, phase: "acquisition" });
+  }
+  for (const b of outputBlocks) {
+    for (const h of b.hashes) hashes.push({ algorithm: h.algo, digest: h.digest, phase: "verification" });
   }
 
+  // Multiple outputs verify only when EVERY one of them, for every algorithm it reports, matches
+  // the corresponding input digest (Codex code review finding H2: comparing only the first output
+  // hash let one verified destination hide a mismatched second one — dc3dd genuinely supports
+  // writing to several outputs in one run, per its own man page).
+  const hashedOutputs = outputBlocks.filter((b) => b.hashes.length > 0);
+  let status: VerificationStatus;
+  const unrecognizedParts: string[] = [];
+  if (hashedOutputs.length === 0) {
+    status = "not-performed";
+  } else {
+    for (const b of hashedOutputs) {
+      for (const h of b.hashes) {
+        const input = inputByAlgo.get(h.algo);
+        const ok = !!input && input.digest === h.digest && input.validLength && h.validLength;
+        if (!ok) unrecognizedParts.push(`output ${h.digest} (${h.algo}) at ${b.path ?? "unknown path"}`);
+      }
+    }
+    status = unrecognizedParts.length === 0 ? "verified" : "unrecognized";
+  }
+  const unrecognizedText = unrecognizedParts.length ? unrecognizedParts.join("; ") : undefined;
+
   const sectorSizeMatch = text.match(/sector size:\s*(\d+)\s*bytes/i);
+  const badSectors = dc3ddBadSectors(text);
   const readErrors = detectReadErrors(text);
+  if (badSectors !== undefined && badSectors > 0) readErrors.detected = true;
   const id = uploadId(text);
 
   const event = buildEvent({
@@ -307,11 +396,11 @@ export function parseDc3ddLog(text: string, opts: DiskImageLogOptions = {}): Dis
     hashes,
     verificationStatus: status,
     unrecognizedVerificationText: unrecognizedText,
-    sectorCount: input.sectorCount,
+    sectorCount: inputBlock?.sectorCount,
     sectorSize: sectorSizeMatch ? Number(sectorSizeMatch[1]) : undefined,
-    remainderBytes: input.remainderBytes,
-    sourcePath: input.path,
-    outputPath: output.path,
+    remainderBytes: inputBlock?.remainderBytes,
+    sourcePath: inputBlock?.path,
+    outputPath: outputBlocks[0]?.path,
     readErrors,
   });
   return finish(event, "DiskImageDc3ddLog", opts);
