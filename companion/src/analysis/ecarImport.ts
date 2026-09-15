@@ -47,6 +47,7 @@ import {
 import { reconTechniques } from "./reconTechniques.js";
 import { tradecraftSignal } from "./tradecraftRules.js";
 import { secretSpillSignal } from "./secretSpillRules.js";
+import { sprayPatternRows, SPRAY_PATTERNS_MAX, type SprayCandidate } from "./passwordSprayFanout.js";
 
 type Row = Record<string, unknown>;
 
@@ -490,21 +491,61 @@ export function parseEcarJson(text: string, opts: EcarImportOptions = {}): EcarP
     if (m) mapped.push(canonicalizeEcarRecord(r, m, recordIndex));
   }
 
+  // Password-spray fan-out (930.5, #1086, #1100 item 1): built over `mapped` BEFORE
+  // aggregateEvents folds distinct accounts from one source/host into one counted row — the
+  // per-record account and timestamp this needs would not survive that fold. A candidate is
+  // only ever built from a logon record that carries both a real account and a real source IP.
+  const sprayCandidates: SprayCandidate[] = [];
+  for (const m of mapped) {
+    if (m.canonical?.event.type !== "logon") continue;
+    const account = m.canonical.account?.name;
+    const host = m.canonical.target?.name;
+    const outcome = m.canonical.event.outcome;
+    const locator = m.canonical.evidence.rawRecords[0]?.locator;
+    if (!account || !host || !m.srcIp || !m.timestamp || !locator) continue;
+    if (outcome !== "failed" && outcome !== "success") continue;
+    sprayCandidates.push({
+      timestamp: m.timestamp,
+      account,
+      sourceIp: m.srcIp,
+      hostOrTenant: host,
+      outcome,
+      locator,
+    });
+  }
+
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
-  const finalEvents = stampSourceArtifactHash(events, text);
+  // Spray summary rows are appended AFTER the source-row cap, independently bounded by their
+  // own SPRAY_PATTERNS_MAX (Codex review, P2): `maxEvents` bounds SOURCE rows only, so a spray
+  // pattern built from records this export DID carry must never be evicted by unrelated
+  // higher-severity rows filling the cap first — the same rule m365Import.ts's own
+  // mailboxChains/entraPrivilegePaths summaries already follow.
+  const sprayRows = sprayCandidates.length
+    ? aggregateEvents(
+        sprayPatternRows(sprayCandidates, {
+          source: ECAR_SOURCE,
+          importer: "ecar",
+          mappingVersion: "ecar-spray-v1",
+        }),
+        { aggregate: opts.aggregate, minSeverity: opts.minSeverity, maxEvents: SPRAY_PATTERNS_MAX + 1 },
+      ).events
+    : [];
+  const finalEvents = stampSourceArtifactHash([...events, ...sprayRows], text);
 
-  const represented = finalEvents.reduce((n, e) => n + (e.count ?? 1), 0);
+  const represented = events.reduce((n, e) => n + (e.count ?? 1), 0);
   const hostname = [...hostTally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
 
   return {
     events: finalEvents,
     iocs: [...sink.values()].slice(0, maxIocs),
     total: records.length,
-    kept: finalEvents.length,
+    // `kept`/`dropped` count SOURCE rows alone, same as m365Import's summaries — a synthetic
+    // spray-pattern row was never one of the raw records this import read.
+    kept: events.length,
     dropped: Math.max(0, records.length - represented),
     groups,
     format,
