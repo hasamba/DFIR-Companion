@@ -37,9 +37,7 @@ type AiArgs<F> = F extends (ctx: SynthesisContext, ...args: infer R) => unknown 
 // The prompt registry moved to ai/prompts/ (#384). Imported for the pipeline's own use and
 // re-exported below, because 23 modules and the eval harness import these names from here.
 export * from "./ai/prompts/index.js";
-// The AI-backed families extracted in #418. Each method below is a one-line delegation; the result
-// types moved with them and are re-exported here, because routes/reports/tests import them from
-// this module and the extraction is not supposed to be visible to callers.
+// The AI-backed families extracted in #418. Each method below is a one-line delegation; the result types moved with them and are re-exported here, because routes/reports/tests import them from this module and the extraction is not supposed to be visible to callers.
 import type { CaseReportContext } from "./ai/caseReports.js";
 import * as caseReports from "./ai/caseReports.js";
 import type { AnalystQueryContext } from "./ai/analystQueries.js";
@@ -561,6 +559,10 @@ export class AnalysisPipeline {
 
   importAwsFlowLog(...args: ImporterArgs<typeof ingest.importAwsFlowLog>): Promise<InvestigationState> {
     return ingest.importAwsFlowLog(this.importCtx, ...args);
+  }
+
+  importDiskImageLog(...args: ImporterArgs<typeof ingest.importDiskImageLog>): Promise<InvestigationState> {
+    return ingest.importDiskImageLog(this.importCtx, ...args);
   }
 
   async importGoogleWorkspace(

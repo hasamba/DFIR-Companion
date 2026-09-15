@@ -206,6 +206,8 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         return observe(pipeline.importOkta(caseId, text, base));
       case "azurestoragelog":
         return observe(pipeline.importAzureStorageLog(caseId, text, base));
+      case "diskimagelog":
+        return observe(pipeline.importDiskImageLog(caseId, text, base));
       case "awsflowlog":
         return observe(pipeline.importAwsFlowLog(caseId, text, base));
       case "gws":

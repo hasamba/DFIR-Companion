@@ -16,6 +16,7 @@ import { gcpBlockSchema } from "./canonicalGcp.js";
 import { gcpServiceAccountJoinBlockSchema } from "./canonicalGcpServiceAccountJoin.js";
 import { loggingChangeBlockSchema } from "./canonicalLogging.js";
 import { acquisitionCoverageBlockSchema } from "./canonicalAcquisition.js";
+import { diskImageAcquisitionSchema } from "./canonicalDiskImage.js";
 import {
   driveAccessBlockSchema,
   driveExposureBlockSchema,
@@ -184,6 +185,7 @@ export const canonicalEventEnvelopeSchema = z.object({
   // A logging-configuration row's state (loggingChange.ts, #931 item 14); the block lives in canonicalLogging.ts.
   loggingChange: loggingChangeBlockSchema.optional(),
   acquisitionCoverage: acquisitionCoverageBlockSchema.optional(), // kapeAcquisitionLog.ts, #932 item 1; block in canonicalAcquisition.ts
+  diskImageAcquisition: diskImageAcquisitionSchema.optional(), // diskImageAcquisitionLog.ts, #1102; block in canonicalDiskImage.ts
   // A mailbox-chain summary row (mailboxChain.ts, #975); the block lives in canonicalMailbox.ts.
   mailboxChain: mailboxChainBlockSchema.optional(),
   // A memory run-envelope row (memoryRunEnvelope.ts, #1016); the block lives in canonicalMemoryRun.ts.
@@ -277,10 +279,7 @@ export const canonicalEventEnvelopeSchema = z.object({
   // A LEAPP row's origin reading (mobileOriginRegistry.ts, #988): the facets its columns
   // established, the registry coverage, the device / account the row names.
   mobile: mobileBlockSchema.optional(),
-  // What the memory image the row came from says about itself (memoryImageFacts.ts, #933 item 12):
-  // the kernel SystemTime recovered from the image (never "captured at"), the layer stack, the
-  // dump kind for a known layer class, the crash-dump type as rendered, the symbol table. Only
-  // from a windows.info / windows.crashinfo table in the SAME upload.
+  // What the memory image the row came from says about itself (memoryImageFacts.ts, #933 item 12): the kernel SystemTime recovered from the image (never "captured at"), the layer stack, the dump kind for a known layer class, the crash-dump type as rendered, the symbol table. Only from a windows.info / windows.crashinfo table in the SAME upload.
   image: z
     .object({
       systemTime: z.string().optional(),
