@@ -482,3 +482,53 @@ describe("budget and tally", () => {
     expect(mapSmbRows([], [])).toEqual([]);
   });
 });
+
+describe("top-level file identity, promoted for downstream correlation (#1092)", () => {
+  it("a CREATE with a filename sets path at the top level", () => {
+    const r = parse([smb()]);
+    const row = smbEvents(r)[0];
+    expect(row.path).toBe("report.xlsx");
+  });
+
+  it("a matched fileinfo join promotes sha256/md5 to the top level", () => {
+    const r = parse([
+      smb({ smb: { command: "SMB2_COMMAND_WRITE", fuid: "F1", disposition: undefined } }),
+      {
+        timestamp: "2024-01-01T00:00:00.000000+0000",
+        event_type: "fileinfo",
+        app_proto: "smb",
+        src_ip: SERVER,
+        dest_ip: CLIENT,
+        flow_id: "FL1",
+        tx_id: "1",
+        fileinfo: { filename: "report.xlsx", size: 4096, sha256: "d".repeat(64), state: "CLOSED" },
+      },
+    ]);
+    const rows = smbEvents(r);
+    const writeRow = rows.find((e) => e.description.includes("SMB SMB2_COMMAND_WRITE"));
+    expect(writeRow?.sha256).toBe("d".repeat(64));
+  });
+
+  it("a denied operation still names its target path (a fact worth showing either way)", () => {
+    const r = parse([
+      smb({ smb: { status: "STATUS_ACCESS_DENIED", status_code: "0xc0000022", fuid: "F7" } }),
+    ]);
+    const row = smbEvents(r)[0];
+    expect(row.path).toBe("report.xlsx");
+  });
+
+  it("a row with no filename sets no path", () => {
+    const r = parse([
+      smb({
+        smb: {
+          command: "SMB2_COMMAND_TREE_CONNECT",
+          disposition: undefined,
+          fuid: undefined,
+          filename: undefined,
+        },
+      }),
+    ]);
+    const row = smbEvents(r)[0];
+    expect(row.path).toBeUndefined();
+  });
+});
