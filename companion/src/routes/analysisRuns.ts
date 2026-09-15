@@ -27,6 +27,7 @@ const BUILT_IN_IMPORT_KINDS = [
   "cybertriage",
   "m365",
   "aws",
+  "awsflowlog",
   "cloud",
   "azurestoragelog",
   "k8s",

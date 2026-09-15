@@ -95,6 +95,11 @@ describe("detectImportKind — JSON formats", () => {
       ),
     ).toBe("azurestoragelog");
   });
+  it("awsflowlog: default (v2) VPC Flow Log line", () => {
+    const line =
+      "2 123456789010 eni-1235b8ca 172.31.16.139 203.0.113.10 20641 22 6 20 4249 1418530010 1418530070 ACCEPT OK";
+    expect(detectImportKind("flowlogs.txt", line)).toBe("awsflowlog");
+  });
   it("m365: Unified Audit Log JSON", () => {
     expect(
       detectImportKind(
