@@ -16,6 +16,10 @@ export type DecodedStringKind = (typeof decodedStringKinds)[number];
 
 export const MAX_VALUE_LEN = 2000;
 export const RECOVERY_CITATIONS_MAX = 64;
+/** FLOSS's own version string is normally short ("0.1.0", "v2.2.0-0-g783dd8f") — bounded so a
+ * pathological upload can't copy an unbounded string into every emitted event (Codex code review
+ * finding). */
+export const MAX_PRODUCER_VERSION_LEN = 200;
 
 /** Every hash FLOSS itself reported, each validated by hex length/shape before being trusted as
  * an identity component or IOC — reported by the tool, never independently verified: this
@@ -75,7 +79,7 @@ export const decodedStringBlockSchema = z.discriminatedUnion("kind", [
     sampleHash: sampleHashSchema,
     /** sha256 of the uploaded report TEXT (this FLOSS JSON) — never a sample/disk-image hash. */
     reportFingerprint: z.string().length(64),
-    producerVersion: z.string(), // FLOSS's own metadata.version, verbatim
+    producerVersion: z.string().max(MAX_PRODUCER_VERSION_LEN), // FLOSS's own metadata.version, plain-truncated if oversized
     mappingVersion: z.literal("floss-decoded-v1"),
     citations: z.array(decodedCitationSchema).max(RECOVERY_CITATIONS_MAX),
     notCited: z.number().int().nonnegative(),
@@ -89,7 +93,7 @@ export const decodedStringBlockSchema = z.discriminatedUnion("kind", [
     valueTruncated: z.boolean(),
     sampleHash: sampleHashSchema,
     reportFingerprint: z.string().length(64),
-    producerVersion: z.string(),
+    producerVersion: z.string().max(MAX_PRODUCER_VERSION_LEN),
     mappingVersion: z.literal("floss-stack-v1"),
     citations: z.array(stackCitationSchema).max(RECOVERY_CITATIONS_MAX),
     notCited: z.number().int().nonnegative(),

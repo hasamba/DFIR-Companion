@@ -12,6 +12,7 @@ import { boundedAggKey, boundedTextTo } from "./aggKey.js";
 import { createCanonicalEvent } from "./canonicalEvent.js";
 import {
   DECODED_STRING_BASIS,
+  MAX_PRODUCER_VERSION_LEN,
   MAX_VALUE_LEN,
   RECOVERY_CITATIONS_MAX,
   type DecodedCitation,
@@ -50,6 +51,7 @@ export interface FlossResultResult {
   dropped: number;
   groups: number;
   format: string;
+  malformedEntries: number;
   notCitedValues: number;
   entriesTruncated: boolean;
   staticStringsSeen: number;
@@ -71,8 +73,17 @@ export function isFlossResult(root: unknown): boolean {
     .some((key) => Array.isArray((strings as Record<string, unknown>)[key]));
 }
 
-function num(v: unknown): number | undefined {
-  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+// Matches the canonical schema's own constraint for address/pointer fields exactly — a value
+// that fails this (fractional, negative, or outside Number.isSafeInteger) would otherwise reach
+// createCanonicalEvent's own .parse() and throw, aborting the whole import (Codex code review
+// finding). Rejected here means the ENTRY is treated as malformed, never a crash.
+function nonNegSafeInt(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isInteger(v) && Number.isSafeInteger(v) && v >= 0 ? v : undefined;
+}
+
+// offset/frame_offset are FLOSS's own signed fields (a negative stack offset is normal).
+function signedSafeInt(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isInteger(v) && Number.isSafeInteger(v) ? v : undefined;
 }
 
 function str(v: unknown): string | undefined {
@@ -103,59 +114,73 @@ function scanCategory(
   kind: Kind,
   entries: unknown[],
   scannedSoFar: number,
-): { rows: Row[]; scanned: number } {
+): { rows: Row[]; malformed: number; scanned: number; truncated: boolean } {
   const rows: Row[] = [];
+  let malformed = 0;
   let scanned = scannedSoFar;
   for (const raw of entries) {
-    if (scanned >= MAX_ENTRIES_SCANNED) break;
+    // Only true when an entry existed but was never examined — reaching the cap exactly, with
+    // nothing left over, must not read as truncated (Codex code review finding).
+    if (scanned >= MAX_ENTRIES_SCANNED) return { rows, malformed, scanned, truncated: true };
     scanned += 1;
-    if (!isObject(raw)) continue;
+    if (!isObject(raw)) {
+      malformed += 1;
+      continue;
+    }
     const value = str(raw.string);
-    if (!value) continue;
+    if (!value) {
+      malformed += 1;
+      continue;
+    }
     const valueKey = createHash("sha256").update(value).digest("hex");
-    let citation: DecodedCitation | StackCitation;
+    let citation: DecodedCitation | StackCitation | undefined;
     if (kind === "decoded") {
-      const address = num(raw.address);
-      const decodedAt = num(raw.decoded_at);
-      const decodingRoutine = num(raw.decoding_routine);
-      if (address === undefined || decodedAt === undefined || decodingRoutine === undefined) continue;
-      citation = {
-        address,
-        addressType: str(raw.address_type) ?? "unknown",
-        encoding: str(raw.encoding) ?? "unknown",
-        decodedAt,
-        decodingRoutine,
-      };
+      const address = nonNegSafeInt(raw.address);
+      const decodedAt = nonNegSafeInt(raw.decoded_at);
+      const decodingRoutine = nonNegSafeInt(raw.decoding_routine);
+      if (address !== undefined && decodedAt !== undefined && decodingRoutine !== undefined) {
+        citation = {
+          address,
+          addressType: str(raw.address_type) ?? "unknown",
+          encoding: str(raw.encoding) ?? "unknown",
+          decodedAt,
+          decodingRoutine,
+        };
+      }
     } else {
-      const functionAddress = num(raw.function);
-      const programCounter = num(raw.program_counter);
-      const stackPointer = num(raw.stack_pointer);
-      const originalStackPointer = num(raw.original_stack_pointer);
-      const offset = num(raw.offset);
-      const frameOffset = num(raw.frame_offset);
+      const functionAddress = nonNegSafeInt(raw.function);
+      const programCounter = nonNegSafeInt(raw.program_counter);
+      const stackPointer = nonNegSafeInt(raw.stack_pointer);
+      const originalStackPointer = nonNegSafeInt(raw.original_stack_pointer);
+      const offset = signedSafeInt(raw.offset);
+      const frameOffset = signedSafeInt(raw.frame_offset);
       if (
-        functionAddress === undefined ||
-        programCounter === undefined ||
-        stackPointer === undefined ||
-        originalStackPointer === undefined ||
-        offset === undefined ||
-        frameOffset === undefined
-      )
-        continue;
-      citation = {
-        functionAddress,
-        encoding: str(raw.encoding) ?? "unknown",
-        programCounter,
-        stackPointer,
-        originalStackPointer,
-        offset,
-        frameOffset,
-      };
+        functionAddress !== undefined &&
+        programCounter !== undefined &&
+        stackPointer !== undefined &&
+        originalStackPointer !== undefined &&
+        offset !== undefined &&
+        frameOffset !== undefined
+      ) {
+        citation = {
+          functionAddress,
+          encoding: str(raw.encoding) ?? "unknown",
+          programCounter,
+          stackPointer,
+          originalStackPointer,
+          offset,
+          frameOffset,
+        };
+      }
+    }
+    if (!citation) {
+      malformed += 1;
+      continue;
     }
     const citationKey = createHash("sha256").update(JSON.stringify(citation)).digest("hex");
     rows.push({ kind, value, valueKey, citationKey, citation });
   }
-  return { rows, scanned };
+  return { rows, malformed, scanned, truncated: false };
 }
 
 function mapGroup(
@@ -180,6 +205,12 @@ function mapGroup(
   const rawValue = rows[0].value;
   const { text: value, truncated: valueTruncated } = clip(rawValue, MAX_VALUE_LEN);
   const occurrences = rows.length;
+  const producerVersionClipped = clip(producerVersion, MAX_PRODUCER_VERSION_LEN).text;
+  // The schema unifies stack/tight under ONE mapping version (identical citation shape) — the
+  // producer metadata must record the SAME string, never a per-kind template that disagrees with
+  // the canonical block's own literal (Codex code review finding).
+  const mappingVersion: "floss-decoded-v1" | "floss-stack-v1" =
+    kind === "decoded" ? "floss-decoded-v1" : "floss-stack-v1";
 
   const reportTag = `; report ${reportFingerprint.slice(0, 16)}`;
   const kindLabel = kind === "decoded" ? "decoded string" : `${kind} string`;
@@ -213,7 +244,7 @@ function mapGroup(
           valueTruncated,
           sampleHash,
           reportFingerprint,
-          producerVersion,
+          producerVersion: producerVersionClipped,
           mappingVersion: "floss-decoded-v1" as const,
           citations: citations as DecodedCitation[],
           notCited,
@@ -227,7 +258,7 @@ function mapGroup(
           valueTruncated,
           sampleHash,
           reportFingerprint,
-          producerVersion,
+          producerVersion: producerVersionClipped,
           mappingVersion: "floss-stack-v1" as const,
           citations: citations as StackCitation[],
           notCited,
@@ -246,7 +277,7 @@ function mapGroup(
       event: { category: "file", type: "decoded-string", action: "recovered" },
       time: { observed: "", normalized: "" },
       evidence: { rawRecords: [{ source: "floss-result", locator: `value:${valueKey}` }] },
-      producer: { importer: "floss-result", parserVersion: "1", mappingVersion: `floss-${kind}-v1` },
+      producer: { importer: "floss-result", parserVersion: "1", mappingVersion },
       decodedString: recoveredFragmentLike,
     }),
   };
@@ -273,30 +304,40 @@ export function parseFlossResult(text: string, opts: FlossResultOptions = {}): F
   const reportFingerprint = createHash("sha256").update(text).digest("hex");
 
   let scanned = 0;
+  let malformedEntries = 0;
+  let entriesTruncated = false;
   const rowsByKind: Record<Kind, Row[]> = { decoded: [], stack: [], tight: [] };
   for (const kind of KINDS) {
     const entries = strings[`${kind}_strings`];
     if (!Array.isArray(entries)) continue;
-    const { rows, scanned: newScanned } = scanCategory(kind, entries, scanned);
-    rowsByKind[kind] = rows;
-    scanned = newScanned;
+    const result = scanCategory(kind, entries, scanned);
+    rowsByKind[kind] = result.rows;
+    malformedEntries += result.malformed;
+    scanned = result.scanned;
+    if (result.truncated) entriesTruncated = true;
   }
-  const entriesTruncated = scanned >= MAX_ENTRIES_SCANNED;
   const staticArr = strings.static_strings;
   const staticStringsSeen = Array.isArray(staticArr) ? staticArr.length : 0;
 
   const sink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
   let notCitedValues = 0;
-  let total = 0;
+  let total = malformedEntries;
   for (const kind of KINDS) {
     const byValueKey = new Map<string, Row[]>();
+    // Per-category, so a value that overflows the cap is counted exactly once no matter how many
+    // further rows share it (Codex code review finding — the prior version incremented once per
+    // OVERFLOW ROW, not once per distinct omitted value).
+    const overflowedValueKeys = new Set<string>();
     for (const row of rowsByKind[kind]) {
       total += 1;
       let group = byValueKey.get(row.valueKey);
       if (!group) {
         if (byValueKey.size >= MAX_DISTINCT_VALUES) {
-          notCitedValues += 1;
+          if (!overflowedValueKeys.has(row.valueKey)) {
+            overflowedValueKeys.add(row.valueKey);
+            notCitedValues += 1;
+          }
           continue;
         }
         group = [];
@@ -320,9 +361,10 @@ export function parseFlossResult(text: string, opts: FlossResultOptions = {}): F
     iocs: [...sink.values()],
     total,
     kept: events.length,
-    dropped: 0,
+    dropped: malformedEntries,
     groups,
     format: "FlossResultDocument",
+    malformedEntries,
     notCitedValues,
     entriesTruncated,
     staticStringsSeen,

@@ -138,6 +138,14 @@ describe("parseFlossResult — stack/tight strings", () => {
     }
   });
 
+  it("records the SAME mappingVersion on the canonical block and the producer metadata for a tight string (Codex code review finding — these disagreed before the fix)", () => {
+    const r = parseFlossResult(floss({ tight: [STACK_ENTRY] }))!;
+    const e = r.events[0];
+    const block = e.canonical!.decodedString!;
+    expect(block.mappingVersion).toBe("floss-stack-v1");
+    expect(e.canonical!.producer.mappingVersion).toBe(block.mappingVersion);
+  });
+
   it("maps a tight string the same way as a stack string, distinct kind", () => {
     const r = parseFlossResult(floss({ tight: [STACK_ENTRY] }))!;
     expect(r.events[0].canonical!.decodedString!.kind).toBe("tight");
@@ -274,16 +282,34 @@ describe("parseFlossResult — static_strings excluded by design, not a failure"
   });
 });
 
-describe("parseFlossResult — malformed entries are skipped, never crash", () => {
-  it("skips a decoded_strings entry missing a required field", () => {
+describe("parseFlossResult — malformed entries are skipped and truthfully accounted, never crash", () => {
+  it("skips a decoded_strings entry missing a required field, disclosed via malformedEntries/dropped, not silently absorbed into total (Codex code review finding)", () => {
     const malformed = { string: "no address field", encoding: "ASCII", decoded_at: 1, decoding_routine: 2 };
     const r = parseFlossResult(floss({ decoded: [malformed, DECODED_ENTRY] }))!;
     expect(r.events).toHaveLength(1);
-    expect(r.total).toBe(1); // the malformed entry never became a row at all
+    expect(r.malformedEntries).toBe(1);
+    expect(r.dropped).toBe(1);
+    expect(r.total).toBe(2); // both examined entries counted, one malformed and one kept
   });
 
   it("never crashes on a non-object entry in a strings array", () => {
     expect(() => parseFlossResult(floss({ decoded: ["not an object", DECODED_ENTRY] }))).not.toThrow();
+  });
+
+  it("never crashes and counts as malformed when a numeric field is fractional, negative, or unsafe (Codex code review finding — a value that reached the schema would have thrown)", () => {
+    const fractional = { ...DECODED_ENTRY, string: "s1", address: 1.5 };
+    const negative = { ...DECODED_ENTRY, string: "s2", decoded_at: -1 };
+    const unsafe = { ...DECODED_ENTRY, string: "s3", decoding_routine: Number.MAX_SAFE_INTEGER + 1 };
+    expect(() => parseFlossResult(floss({ decoded: [fractional, negative, unsafe] }))).not.toThrow();
+    const r = parseFlossResult(floss({ decoded: [fractional, negative, unsafe] }))!;
+    expect(r.events).toHaveLength(0);
+    expect(r.malformedEntries).toBe(3);
+  });
+
+  it("allows a genuinely negative frame_offset for stack/tight strings (FLOSS's own field can be signed)", () => {
+    const r = parseFlossResult(floss({ stack: [STACK_ENTRY] }))!;
+    expect(r.events).toHaveLength(1);
+    expect(r.malformedEntries).toBe(0);
   });
 });
 
