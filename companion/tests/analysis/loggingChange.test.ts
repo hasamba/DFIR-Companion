@@ -826,6 +826,63 @@ describe("AWS Config recorder calls — the state the request establishes (#1071
     expect(env(e).loggingChange?.state).toBe("deleted");
   });
 
+  // #1075: StartConfigurationRecorder / DeleteConfigurationRecorder — the recorder lifecycle
+  // #1071 doesn't cover.
+  it("StartConfigurationRecorder is enabled/Low, names PAST_NOTE, and carries no MITRE technique", () => {
+    const e = aws([cfg("StartConfigurationRecorder", { configurationRecorderName: "default" })])[0];
+    expect(e.severity).toBe("Low");
+    expect(e.description).toContain("Config recorder started: default");
+    expect(e.description).toContain("enabling a source does not reconstruct its past");
+    expect(e.mitreTechniques).toEqual([]);
+    expect(env(e).loggingChange?.targetKind).toBe("config-recorder");
+    expect(env(e).loggingChange?.state).toBe("enabled");
+  });
+
+  it("DeleteConfigurationRecorder is deleted/High, T1562.008, and states configuration history is not deleted by this operation", () => {
+    const e = aws([cfg("DeleteConfigurationRecorder", { configurationRecorderName: "default" })])[0];
+    expect(e.severity).toBe("High");
+    expect(e.description).toContain("Config recorder deleted: default");
+    expect(e.description).toContain(
+      "previously recorded configuration history is not deleted by this operation",
+    );
+    expect(e.mitreTechniques).toContain("T1562.008");
+    expect(env(e).loggingChange?.targetKind).toBe("config-recorder");
+    expect(env(e).loggingChange?.state).toBe("deleted");
+  });
+
+  it("a denied StartConfigurationRecorder / DeleteConfigurationRecorder is an attempt — never establishes the resulting state, and PAST_NOTE never appears when denied", () => {
+    const start = aws([
+      cfg(
+        "StartConfigurationRecorder",
+        { configurationRecorderName: "default" },
+        { errorCode: "AccessDenied" },
+      ),
+    ])[0];
+    expect(start.severity).toBe("Medium");
+    expect(start.mitreTechniques).toEqual([]);
+    expect(start.description).not.toContain("enabling a source does not reconstruct its past");
+    expect(env(start).loggingChange?.state).toBe("requested");
+    expect(env(start).loggingChange?.requestedState).toBe("enabled");
+
+    const del = aws([
+      cfg(
+        "DeleteConfigurationRecorder",
+        { configurationRecorderName: "default" },
+        { errorCode: "NoSuchConfigurationRecorderException" },
+      ),
+    ])[0];
+    expect(del.severity).toBe("Medium");
+    expect(del.mitreTechniques).toEqual([]);
+    expect(env(del).loggingChange?.state).toBe("requested");
+    expect(env(del).loggingChange?.requestedState).toBe("deleted");
+  });
+
+  it("Start/DeleteConfigurationRecorder calls are canonically conformant", () => {
+    const start = aws([cfg("StartConfigurationRecorder", { configurationRecorderName: "default" })])[0];
+    const del = aws([cfg("DeleteConfigurationRecorder", { configurationRecorderName: "default" })])[0];
+    for (const e of [start, del]) expect(canonicalConformanceIssues(env(e))).toEqual([]);
+  });
+
   it("a denied PutConfigurationRecorder is an attempt — never establishes the resulting state", () => {
     const e = aws([
       cfg(

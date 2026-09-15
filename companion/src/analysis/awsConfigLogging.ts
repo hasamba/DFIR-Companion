@@ -1,16 +1,19 @@
 // AWS Config recorder calls, read for the STATE their request establishes (#1071, surfaced by
 // #931 item 14 / #1063): PutConfigurationRecorder / StopConfigurationRecorder /
-// DeleteDeliveryChannel. Split from loggingChange.ts (which already holds the CloudTrail/ec2/
-// guardduty/s3 branches of this same family) purely to stay under that file's 800-line size
-// ledger cap — the shared `reading()` helper, `Fact`/`LoggingReading` types and small readers all
-// live there and are imported here, the same way loggingChangeCloud.ts (GCP/Azure) already does.
+// DeleteDeliveryChannel / StartConfigurationRecorder / DeleteConfigurationRecorder (#1075). Split
+// from loggingChange.ts (which already holds the CloudTrail/ec2/guardduty/s3 branches of this same
+// family) purely to stay under that file's 800-line size ledger cap — the shared `reading()`
+// helper, `Fact`/`LoggingReading` types and small readers all live there and are imported here,
+// the same way loggingChangeCloud.ts (GCP/Azure) already does.
 //
 // No captured export exists in this repo (the #1065 design doc states the same basis for its own
 // GCP assumptions) — request shapes follow AWS's own documented API reference.
 // `PutConfigurationRecorder`'s response is empty (no created/updated discriminator), so its state
 // is ALWAYS "prior-state-not-in-record" — never "created" or "reconfigured", either of which would
-// claim something this record does not establish. Start/DeleteConfigurationRecorder are out of
-// scope — see #1075.
+// claim something this record does not establish. `Start`/`Stop`/`DeleteConfigurationRecorder`
+// operate on the customer-managed recorder only — a distinct service-linked recorder, which these
+// APIs cannot touch, may coexist under a different name (#1075, Codex design round 1); deleting
+// the recorder does not delete configuration history already recorded before the delete.
 
 import type { Severity } from "./stateTypes.js";
 import {
@@ -299,6 +302,34 @@ export function decodeAwsConfigLogging(
       "disabled",
       "High",
       `Config recorder stopped: ${show(name, 40)}`,
+      [],
+      [],
+      denied,
+    );
+  }
+  if (n === "startconfigurationrecorder") {
+    const name = field(req, "configurationRecorderName") || "(name not recorded)";
+    return reading(
+      "aws",
+      "config-recorder",
+      name,
+      "enabled",
+      "Low",
+      `Config recorder started: ${show(name, 40)}`,
+      [],
+      [],
+      denied,
+    );
+  }
+  if (n === "deleteconfigurationrecorder") {
+    const name = field(req, "configurationRecorderName") || "(name not recorded)";
+    return reading(
+      "aws",
+      "config-recorder",
+      name,
+      "deleted",
+      "High",
+      `Config recorder deleted: ${show(name, 40)} — previously recorded configuration history is not deleted by this operation`,
       [],
       [],
       denied,
