@@ -84,14 +84,49 @@ describe("parseAwsFlowLog — NODATA vs SKIPDATA vs malformed, tracked separatel
     const r = parseAwsFlowLog(bad);
     expect(r.malformed).toBe(1);
   });
+
+  // Codex review (P2): an absurd epoch must not reach Date#toISOString() and throw, aborting
+  // the whole upload — it must count as malformed like any other bad line.
+  it("rejects a timestamp outside JS Date's valid range as malformed, never crashes", () => {
+    const bad = OK_LINE.replace("1418530010 1418530070", "99999999999999 99999999999999");
+    expect(() => parseAwsFlowLog(bad)).not.toThrow();
+    const r = parseAwsFlowLog(bad);
+    expect(r.malformed).toBe(1);
+    expect(r.events).toHaveLength(0);
+  });
+});
+
+describe("parseAwsFlowLog — portless traffic (ICMP etc.)", () => {
+  // Codex review (P1): ICMP and other portless VPC flow records encode ports as 0, and the
+  // canonical port schema requires a positive integer — passing 0 through crashed the whole
+  // import instead of importing the one valid, portless flow.
+  it("never crashes on port 0, and omits the port field rather than passing zero through", () => {
+    const icmp = OK_LINE.replace(" 20641 22 ", " 0 0 ").replace(" 6 20 4249 ", " 1 20 4249 ");
+    expect(() => parseAwsFlowLog(icmp)).not.toThrow();
+    const r = parseAwsFlowLog(icmp);
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].canonical?.network?.source?.port).toBeUndefined();
+    expect(r.events[0].canonical?.network?.destination?.port).toBeUndefined();
+  });
 });
 
 describe("parseAwsFlowLog — aggregation", () => {
-  it("collapses repeated identical 5-tuple flows into one counted row (no time in aggKey)", () => {
-    const later = OK_LINE.replace("1418530010 1418530070", "1418539010 1418539070");
+  it("collapses repeated identical 5-tuple flows WITHIN the same hour into one counted row", () => {
+    const later = OK_LINE.replace("1418530010 1418530070", "1418530910 1418530970"); // +900s
     const r = parseAwsFlowLog([OK_LINE, later].join("\n"));
     expect(r.events).toHaveLength(1);
     expect(r.events[0].count).toBe(2);
+  });
+
+  // Codex review (P1): a private IP can be reassigned to a DIFFERENT instance between two
+  // occurrences of the same 5-tuple. A time-blind aggKey collapsed both into one event and the
+  // shared aggregator keeps only the earliest timestamp — permanently losing the evidence the
+  // attribution correlator needs to attach the later flow to its real (different) owner. The
+  // hourly bucket keeps flows hours apart as separate events.
+  it("does NOT collapse the same 5-tuple across an hour boundary — reassignment evidence survives", () => {
+    const later = OK_LINE.replace("1418530010 1418530070", "1418539010 1418539070"); // +9000s (~2.5h)
+    const r = parseAwsFlowLog([OK_LINE, later].join("\n"));
+    expect(r.events).toHaveLength(2);
   });
 
   it("keeps two different destination ports as two distinct rows", () => {

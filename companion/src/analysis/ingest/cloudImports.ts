@@ -213,8 +213,19 @@ export async function importAwsFlowLog(
 ): Promise<InvestigationState> {
   const parsedRaw = parseAwsFlowLog(text, opts.awsFlowLog);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0)
-    return noteEmptyImport(ctx, caseId, opts, "AWS VPC Flow Logs", parsed.total);
+  if (parsed.events.length === 0) {
+    // Codex review (P2): an all-SKIPDATA/NODATA upload must not silently lose the coverage
+    // disclosure just because it produced zero events — SKIPDATA in particular is a real AWS
+    // collection gap, not "nothing to report."
+    const gapDetail = [
+      parsed.nodata ? `${parsed.nodata} NODATA interval(s)` : "",
+      parsed.skipdata ? `${parsed.skipdata} SKIPDATA interval(s) — a collection gap, not "no traffic"` : "",
+      parsed.malformed ? `${parsed.malformed} malformed line(s)` : "",
+    ]
+      .filter(Boolean)
+      .join(", ");
+    return noteEmptyImport(ctx, caseId, opts, "AWS VPC Flow Logs", parsed.total, gapDetail || undefined);
+  }
 
   const raw = {
     findings: [],

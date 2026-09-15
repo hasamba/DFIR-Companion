@@ -25,7 +25,7 @@ function launch(
       cloud: { provider: "aws", accountId: over.account ?? "111111111111" },
       awsCompute: {
         instanceId: over.instanceId ?? "i-aaa",
-        launch: { privateAddress: over.ip ?? "172.31.16.139" },
+        launch: { privateAddress: over.ip ?? "172.31.16.139", time: at(over.time ?? 0) },
       },
     },
   } as unknown as ForensicEvent;

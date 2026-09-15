@@ -30,6 +30,12 @@ import type { ForensicEvent } from "./stateTypes.js";
 import { appendDerivedNote } from "./derivedNote.js";
 
 export const FLOW_ATTRIBUTION_MARKER = "[flow resource attribution:";
+// Matches exactly this pass's own bracketed note, never another pass's — bracket content never
+// nests, so this is safe to strip in isolation before recomputing (Codex review, P1: a plain
+// "already has the marker, skip" check meant a flow annotated from partial evidence (e.g. only
+// the source endpoint's launch data imported so far) never got the destination endpoint's note,
+// or a later-corrected match, once more evidence arrived on a subsequent merge).
+const FLOW_ATTRIBUTION_NOTE_RE = /\s*\[flow resource attribution:[^\]]*\]/g;
 
 function ms(timestamp: string): number | null {
   const t = Date.parse(timestamp ?? "");
@@ -56,14 +62,19 @@ function isFlowEvent(e: ForensicEvent): boolean {
 
 function isComputeLaunch(
   e: ForensicEvent,
-): { accountId: string; privateAddress: string; instanceId: string } | null {
+): { accountId: string; privateAddress: string; instanceId: string; launchMs: number } | null {
   const c = e.canonical;
   if (!c || c.event.category !== "cloud" || !c.awsCompute) return null;
   const accountId = c.cloud?.accountId ?? "";
   const privateAddress = c.awsCompute.launch?.privateAddress ?? "";
   const instanceId = c.awsCompute.instanceId ?? "";
-  if (!accountId || !privateAddress || !instanceId) return null;
-  return { accountId, privateAddress, instanceId };
+  // Codex review (P2): the summary row's OWN timestamp is its earliest contributing record —
+  // e.g. an ingress-rule change grouped into the same summary can predate the actual launch.
+  // The launch's own `time` is what the index must key on; `launch` is only ever present with
+  // a `time` (required by awsComputeLaunchSchema), so this is safe whenever launch itself is.
+  const launchMs = c.awsCompute.launch ? ms(c.awsCompute.launch.time) : null;
+  if (!accountId || !privateAddress || !instanceId || launchMs === null) return null;
+  return { accountId, privateAddress, instanceId, launchMs };
 }
 
 /** The latest tracked launch at-or-before `atMs` for one (account, IP) key, or "ambiguous", or none. */
@@ -85,12 +96,11 @@ export function correlateAwsFlowResourceAttribution(events: readonly ForensicEve
   for (const e of events) {
     const launch = isComputeLaunch(e);
     if (!launch) continue;
-    const t = ms(e.timestamp);
-    if (t === null) continue;
     const key = `${launch.accountId}|${launch.privateAddress}`;
     const byInstance = index.get(key) ?? new Map<string, number>();
     const existing = byInstance.get(launch.instanceId);
-    if (existing === undefined || t < existing) byInstance.set(launch.instanceId, t);
+    if (existing === undefined || launch.launchMs < existing)
+      byInstance.set(launch.instanceId, launch.launchMs);
     index.set(key, byInstance);
   }
   if (index.size === 0) return events as ForensicEvent[];
@@ -103,7 +113,6 @@ export function correlateAwsFlowResourceAttribution(events: readonly ForensicEve
 
   return events.map((e) => {
     if (!isFlowEvent(e)) return e;
-    if ((e.description ?? "").includes(FLOW_ATTRIBUTION_MARKER)) return e;
     const accountId = e.canonical?.cloud?.accountId ?? "";
     if (!accountId) return e;
     const t = ms(e.timestamp);
@@ -120,8 +129,15 @@ export function correlateAwsFlowResourceAttribution(events: readonly ForensicEve
       if ("ambiguous" in result) notes.push(`${label} ${ip}: ambiguous — multiple candidate instances`);
       else notes.push(`${label} ${ip} = ${result.instanceId}`);
     }
-    if (notes.length === 0) return e;
-
-    return { ...e, description: appendDerivedNote(e.description, FLOW_ATTRIBUTION_MARKER, notes.join("; ")) };
+    // Strip THIS pass's own prior note (if any) before deciding what to do next — every other
+    // registered note stays untouched, since the marker names never nest and never collide.
+    const strippedDescription = (e.description ?? "").replace(FLOW_ATTRIBUTION_NOTE_RE, "");
+    if (notes.length === 0) {
+      return strippedDescription === e.description ? e : { ...e, description: strippedDescription };
+    }
+    return {
+      ...e,
+      description: appendDerivedNote(strippedDescription, FLOW_ATTRIBUTION_MARKER, notes.join("; ")),
+    };
   });
 }

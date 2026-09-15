@@ -122,6 +122,12 @@ function parseLine(line: string): { record: FlowRecord | null; logStatus: string
   const startSec = Number(start);
   const endSec = Number(end);
   if (endSec < startSec) return { record: null, logStatus: null };
+  // Codex review (P2): a malformed line with an absurd epoch must not reach toISOString() and
+  // throw — JS Date's own valid range is ±8,640,000,000,000 ms (~year 275760); check it in
+  // seconds here so a bad line increments `malformed` instead of aborting the whole upload.
+  if (Math.abs(startSec) > 8_640_000_000 || Math.abs(endSec) > 8_640_000_000) {
+    return { record: null, logStatus: null };
+  }
   const src = cleanIp(srcaddr === "-" ? "" : srcaddr);
   const dst = cleanIp(dstaddr === "-" ? "" : dstaddr);
   if (!src || !dst) return { record: null, logStatus: null };
@@ -159,25 +165,39 @@ function mapFlowRecord(r: FlowRecord, sink: Map<string, SiemIoc>, recordIndex: n
     600,
   );
 
+  // Codex review (P1): an aggKey with NO time component at all let a private-IP reassignment's
+  // before/after flows on the SAME 5-tuple collapse into one event, and the shared aggregator
+  // keeps only the EARLIEST timestamp — permanently losing the evidence the attribution
+  // correlator needs to attach the later flow to its real (different) owner. An hourly bucket
+  // keeps the volume-reduction property (repeated flows within the hour still collapse) while
+  // keeping flows on either side of a same-day reassignment in separate groups. Not perfect (a
+  // reassignment inside one hour still collapses) — a disclosed, bounded tradeoff, not a fix
+  // for exact per-occurrence tracking, which would defeat aggregation's whole purpose here.
+  const hourBucket = Math.floor(r.startSec / 3600);
+  // Codex review (P1): VPC Flow Logs record ICMP and other portless traffic as srcport/dstport
+  // 0 — the canonical port schema requires a positive integer, so passing 0 through crashed
+  // createCanonicalEvent and aborted the whole upload. Omitted, not coerced, on both the flat
+  // `port` field and the canonical network block.
+  const srcPortField = r.srcport > 0 ? r.srcport : undefined;
+  const dstPortField = r.dstport > 0 ? r.dstport : undefined;
+
   return {
     timestamp: observed,
     description,
     severity: "Low",
     mitre: [],
-    // Deliberately excludes time — repeated identical 5-tuple flows collapse into one counted
-    // row via the shared aggregator's `count`, same shape as ecarImport.ts's own FLOW/CONNECT.
     aggKey: boundedAggKey(
-      `aws-flow|${r.accountId}|${r.srcaddr}|${r.dstaddr}|${r.srcport}|${r.dstport}|${r.protocol}|${r.action}`.toLowerCase(),
+      `aws-flow|${r.accountId}|${r.srcaddr}|${r.dstaddr}|${r.srcport}|${r.dstport}|${r.protocol}|${r.action}|${hourBucket}`.toLowerCase(),
     ),
     sources: ["AWS VPC Flow Logs"],
     srcIp: r.srcaddr,
     dstIp: r.dstaddr,
-    port: r.dstport,
+    ...(dstPortField ? { port: dstPortField } : {}),
     canonical: createCanonicalEvent({
       event: { category: "network", type: "flow", action: r.action.toLowerCase() },
       network: {
-        source: { address: r.srcaddr, port: r.srcport },
-        destination: { address: r.dstaddr, port: r.dstport },
+        source: { address: r.srcaddr, ...(srcPortField ? { port: srcPortField } : {}) },
+        destination: { address: r.dstaddr, ...(dstPortField ? { port: dstPortField } : {}) },
         protocol: protoName,
       },
       cloud: { provider: "aws", ...(r.accountId ? { accountId: r.accountId } : {}) },
