@@ -15,6 +15,7 @@ import { gcpComputeBlockSchema } from "./canonicalGcpCompute.js";
 import { gcpBlockSchema } from "./canonicalGcp.js";
 import { gcpServiceAccountJoinBlockSchema } from "./canonicalGcpServiceAccountJoin.js";
 import { loggingChangeBlockSchema } from "./canonicalLogging.js";
+import { acquisitionCoverageBlockSchema } from "./canonicalAcquisition.js";
 import {
   driveAccessBlockSchema,
   driveExposureBlockSchema,
@@ -182,6 +183,7 @@ export const canonicalEventEnvelopeSchema = z.object({
   gcpServiceAccountJoin: gcpServiceAccountJoinBlockSchema.optional(),
   // A logging-configuration row's state (loggingChange.ts, #931 item 14); the block lives in canonicalLogging.ts.
   loggingChange: loggingChangeBlockSchema.optional(),
+  acquisitionCoverage: acquisitionCoverageBlockSchema.optional(), // kapeAcquisitionLog.ts, #932 item 1; block in canonicalAcquisition.ts
   // A mailbox-chain summary row (mailboxChain.ts, #975); the block lives in canonicalMailbox.ts.
   mailboxChain: mailboxChainBlockSchema.optional(),
   // A memory run-envelope row (memoryRunEnvelope.ts, #1016); the block lives in canonicalMemoryRun.ts.
@@ -193,8 +195,7 @@ export const canonicalEventEnvelopeSchema = z.object({
   driveAccess: driveAccessBlockSchema.optional(),
   takeout: takeoutBlockSchema.optional(),
   takeoutLifecycle: takeoutLifecycleBlockSchema.optional(),
-  // A Drive document-exposure join row (gwsDriveExposure.ts, #1064): a broadening sharing change
-  // joined to the access records after it, by tenant + doc_id.
+  // A Drive document-exposure join row (gwsDriveExposure.ts, #1064): a broadening sharing change joined to the access records after it, by tenant + doc_id.
   driveExposure: driveExposureBlockSchema.optional(),
   // A TLS record's own reading (tlsSession.ts, #933 item 6): the client's SNI, the protocol facts
   // the sensor saw, the certificate the server presented, the sensor's chain check, the observer.
@@ -267,8 +268,7 @@ export const canonicalEventEnvelopeSchema = z.object({
     })
     .optional(),
   // A macOS quarantine record's own reading (quarantineRecord.ts, #933 item 7) and what the same
-  // upload's file-attribute records establish about its local file (quarantineJoin.ts, #1037); the
-  // attribute row's own block beside it. Both live in canonicalQuarantine.ts.
+  // upload's file-attribute records establish about its local file (quarantineJoin.ts, #1037); the attribute row's own block beside it. Both live in canonicalQuarantine.ts.
   quarantine: quarantineBlockSchema.optional(),
   quarantineAttribute: quarantineAttributeBlockSchema.optional(),
   // A Defender Operational record's own reading (defenderEvents.ts): disposition, threat, every

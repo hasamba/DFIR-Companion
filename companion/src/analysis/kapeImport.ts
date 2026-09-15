@@ -15,6 +15,7 @@
 
 import { worstSeverity, type Severity } from "./stateTypes.js";
 import { parseCsv } from "./csvImport.js";
+import { parseKapeAcquisitionRows } from "./kapeAcquisitionLog.js";
 import {
   aggregateEvents,
   addIoc,
@@ -518,6 +519,17 @@ function detectProfile(headers: string[]): Profile | null {
 export function parseKapeCsv(text: string, opts: KapeImportOptions = {}): KapeParseResult {
   const maxIocs = opts.maxIocs ?? 5000;
   const { headers, rows } = parseCsv(text);
+  // The acquisition log shape (_copylog.csv / _skiplog.csv, #932 item 1) is checked FIRST — it
+  // describes ACQUISITION of a file, not artifact content, so it never enters the PROFILES
+  // dispatch below. Parsed in its own sibling module (kapeAcquisitionLog.ts), never added here.
+  // Reuses THIS function's own single `parseCsv` call — a large existing MFT/UsnJrnl export can
+  // run to millions of rows, and parsing it a second time just to learn it is not an acquisition
+  // log was a real perf regression (Codex code review finding #5).
+  const acquisition = parseKapeAcquisitionRows(headers, rows, {
+    aggregate: opts.aggregate,
+    maxEvents: opts.maxEvents,
+  });
+  if (acquisition) return acquisition;
   const profile = headers.length ? detectProfile(headers) : null;
   if (!profile) {
     return {
