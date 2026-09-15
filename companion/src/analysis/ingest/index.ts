@@ -9,4 +9,5 @@ export * from "./endpointImports.js";
 export * from "./logImports.js";
 export * from "./networkImports.js";
 export * from "./platformImports.js";
+export * from "./recoveryImports.js";
 export * from "./timelineImports.js";

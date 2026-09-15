@@ -26,6 +26,7 @@ import {
 import { mailboxChainBlockSchema } from "./canonicalMailbox.js";
 import { memoryRunBlockSchema } from "./canonicalMemoryRun.js";
 import { gwsLifecycleBlockSchema } from "./canonicalGwsLifecycle.js";
+import { recoveredFragmentBlockSchema } from "./canonicalRecoveredFragment.js";
 
 export const CANONICAL_EVENT_SCHEMA_VERSION = "1.0.0" as const;
 /** The producer stamped on an envelope DERIVED from legacy flat fields at the read boundary. */
@@ -184,6 +185,7 @@ export const canonicalEventEnvelopeSchema = z.object({
   // A logging-configuration row's state (loggingChange.ts, #931 item 14); the block lives in canonicalLogging.ts.
   loggingChange: loggingChangeBlockSchema.optional(),
   acquisitionCoverage: acquisitionCoverageBlockSchema.optional(), // kapeAcquisitionLog.ts, #932 item 1; block in canonicalAcquisition.ts
+  recoveredFragment: recoveredFragmentBlockSchema.optional(), // bulkExtractorUrlImport.ts, #932 item 4; block in canonicalRecoveredFragment.ts
   // A mailbox-chain summary row (mailboxChain.ts, #975); the block lives in canonicalMailbox.ts.
   mailboxChain: mailboxChainBlockSchema.optional(),
   // A memory run-envelope row (memoryRunEnvelope.ts, #1016); the block lives in canonicalMemoryRun.ts.
@@ -267,8 +269,7 @@ export const canonicalEventEnvelopeSchema = z.object({
       records: z.number().int().positive(),
     })
     .optional(),
-  // A macOS quarantine record's own reading (quarantineRecord.ts, #933 item 7) and what the same
-  // upload's file-attribute records establish about its local file (quarantineJoin.ts, #1037); the attribute row's own block beside it. Both live in canonicalQuarantine.ts.
+  // A macOS quarantine record (quarantineRecord.ts, #933 item 7) and its file-attribute join (quarantineJoin.ts, #1037); both blocks live in canonicalQuarantine.ts.
   quarantine: quarantineBlockSchema.optional(),
   quarantineAttribute: quarantineAttributeBlockSchema.optional(),
   // A Defender Operational record's own reading (defenderEvents.ts): disposition, threat, every
@@ -277,10 +278,9 @@ export const canonicalEventEnvelopeSchema = z.object({
   // A LEAPP row's origin reading (mobileOriginRegistry.ts, #988): the facets its columns
   // established, the registry coverage, the device / account the row names.
   mobile: mobileBlockSchema.optional(),
-  // What the memory image the row came from says about itself (memoryImageFacts.ts, #933 item 12):
-  // the kernel SystemTime recovered from the image (never "captured at"), the layer stack, the
-  // dump kind for a known layer class, the crash-dump type as rendered, the symbol table. Only
-  // from a windows.info / windows.crashinfo table in the SAME upload.
+  // What the memory image says about itself (memoryImageFacts.ts, #933 item 12): kernel SystemTime
+  // (never "captured at"), layer stack, dump kind/type, symbol table — from windows.info /
+  // windows.crashinfo in the SAME upload only.
   image: z
     .object({
       systemTime: z.string().optional(),

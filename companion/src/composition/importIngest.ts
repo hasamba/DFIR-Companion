@@ -208,6 +208,8 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         return observe(pipeline.importAzureStorageLog(caseId, text, base));
       case "awsflowlog":
         return observe(pipeline.importAwsFlowLog(caseId, text, base));
+      case "bulkextractorurl":
+        return observe(pipeline.importBulkExtractorUrl(caseId, text, base));
       case "gws":
         return observe(pipeline.importGoogleWorkspace(caseId, text, base));
       case "hindsight":
