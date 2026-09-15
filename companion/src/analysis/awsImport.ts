@@ -229,8 +229,13 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
   // AWS Config recorder calls (#1071) are a second, disjoint decoder in their own file — no
   // record can match both, so this is a simple `??` fallback, never a merge.
   const logging =
-    decodeCloudTrailLogging(source, name, getCI(rec, "requestParameters"), str(getCI(rec, "errorCode"))) ??
-    decodeAwsConfigLogging(source, name, getCI(rec, "requestParameters"), str(getCI(rec, "errorCode")));
+    decodeCloudTrailLogging(
+      source,
+      name,
+      getCI(rec, "requestParameters"),
+      str(getCI(rec, "errorCode")),
+      getCI(rec, "responseElements"),
+    ) ?? decodeAwsConfigLogging(source, name, getCI(rec, "requestParameters"), str(getCI(rec, "errorCode")));
   if (logging) {
     severity = logging.severity;
     mitre.length = 0;

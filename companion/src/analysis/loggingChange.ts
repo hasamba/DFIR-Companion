@@ -386,12 +386,34 @@ function flowLogIds(v: unknown, out: string[] = [], depth = 0, underKey = false)
   return [...new Set(out)];
 }
 
+/** One id AWS's own `responseElements.unsuccessful` named, with its own error classified the SAME
+ * way a whole-call `errorCode` is (#1095, surfaced by #1081's design review). */
+interface FlowLogFailure {
+  id: string;
+  failure: LoggingFailureKind;
+}
+
+/** `DeleteFlowLogs` returns per-item failures in `responseElements.unsuccessful` — an id in that
+ * list was NOT deleted, even when the call itself carries no top-level `errorCode` at all (#1095).
+ * `resourceId` is AWS's own documented field name; `flowLogId` is read too, defensively, in case
+ * an export normalizes it differently — neither is invented, both are the same id this record's
+ * own request already names. */
+function flowLogUnsuccessful(responseElements: unknown): FlowLogFailure[] {
+  const resp: Row = isObject(responseElements) ? responseElements : {};
+  return objects(getCI(resp, "unsuccessful"), 32).map((item) => {
+    const id = field(item, "resourceId") || field(item, "flowLogId") || "(id not recorded)";
+    const code = field(item, "error", "code");
+    return { id, failure: code ? classifyAwsFailure(code) : "failed" };
+  });
+}
+
 /** A CloudTrail record's logging-configuration reading, or null when the call is not one. */
 export function decodeCloudTrailLogging(
   source: string,
   name: string,
   request: unknown,
   errorCode: string,
+  responseElements: unknown = null,
 ): LoggingReading | null {
   const svc = lower(source).replace(/\.amazonaws\.com$/, "");
   const n = lower(name);
@@ -513,17 +535,65 @@ export function decodeCloudTrailLogging(
   // awsImport.ts — never delegated to from here, since that file imports this one's `reading()`
   // and shared helpers, and importing it back here would create a cycle.
   if (svc === "ec2" && n === "deleteflowlogs") {
-    const ids = flowLogIds(req);
+    const requested = flowLogIds(req);
+    // A per-item failure exists even when the WHOLE call carries no top-level errorCode at all
+    // (#1095) — only an id NEVER named in `unsuccessful` was actually deleted.
+    const unsuccessful = failure ? [] : flowLogUnsuccessful(responseElements);
+    const unsuccessfulIds = new Set(unsuccessful.map((u) => u.id));
+    // A whole-call failure means nothing succeeded, regardless of any per-item data — the call
+    // itself was rejected before any id-level outcome could occur.
+    const succeeded = failure ? [] : requested.filter((id) => !unsuccessfulIds.has(id));
+    const unsuccessfulWords = unsuccessful
+      .map((u) => `${show(u.id, 30)} (${FAILURE_WORD[u.failure]})`)
+      .join(", ");
+    const unsuccessfulQualifier = unsuccessful.length
+      ? [
+          `${unsuccessful.length} of ${requested.length || unsuccessful.length} id(s) not deleted: ${unsuccessfulWords}`,
+        ]
+      : [];
+    // No failure evidence at all (no top-level errorCode, no responseElements.unsuccessful item)
+    // — every named id is reported deleted, matching this branch's own behavior before #1095.
+    if (!failure && !unsuccessful.length)
+      return reading(
+        "aws",
+        "flow-logs",
+        requested.join(",") || "(ids not recorded)",
+        "deleted",
+        "High",
+        `flow logs deleted: ${requested.map((i) => show(i, 30)).join(", ") || "(ids not recorded)"}`,
+        requested.map((i) => ({ name: "flowLogId", value: i })),
+        [],
+        null,
+      );
+    if (succeeded.length)
+      return reading(
+        "aws",
+        "flow-logs",
+        succeeded.join(","),
+        "deleted",
+        "High",
+        `flow logs deleted: ${succeeded.map((i) => show(i, 30)).join(", ")}`,
+        succeeded.map((i) => ({ name: "flowLogId", value: i })),
+        unsuccessfulQualifier,
+        null,
+      );
+    // Nothing succeeded — the whole call failed, or every named id individually failed. The row
+    // is an ATTEMPT only, never "deleted" (#1095). A whole-call `failure` wins when present;
+    // otherwise, if every unsuccessful id shares ONE classification, state that — a MIXED set of
+    // reasons is never collapsed into one specific claim it does not support.
+    const kinds = new Set(unsuccessful.map((u) => u.failure));
+    const overall: LoggingFailureKind = failure ?? (kinds.size === 1 ? [...kinds][0] : "failed");
+    const ids = requested.length ? requested : unsuccessful.map((u) => u.id);
     return reading(
       "aws",
       "flow-logs",
       ids.join(",") || "(ids not recorded)",
       "deleted",
       "High",
-      `flow logs deleted: ${ids.map((i) => show(i, 30)).join(", ") || "(ids not recorded)"}`,
+      `flow logs deletion requested: ${ids.map((i) => show(i, 30)).join(", ") || "(ids not recorded)"}`,
       ids.map((i) => ({ name: "flowLogId", value: i })),
-      [],
-      failure,
+      unsuccessfulQualifier,
+      overall,
     );
   }
   if (svc === "ec2" && n === "createflowlogs") {
