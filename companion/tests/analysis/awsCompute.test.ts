@@ -403,6 +403,39 @@ describe("awsComputeLifecycles — recorded configuration changes", () => {
     expect(added.severity).toBe("Medium");
   });
 
+  it("#1084 regression: a same-timestamp rule is joined against the group in force at ITS OWN scan position, never the group a same-instant later replacement sets", () => {
+    // record:0 launch (groups=[SG]); record:1 ingress on SG at t=70s; record:2 a same-instant
+    // (t=70s) ModifyInstanceAttribute replacing groups to SG2. The ingress's own scan position
+    // (record:1) precedes the replacement's (record:2), so groupsAt must still resolve to [SG]
+    // for the ingress — never [SG2], which a bare `g.time <= time` (ignoring scan position)
+    // would incorrectly pick since both groupSets satisfy `time <= 70s`.
+    const [row] = rows([
+      launch(),
+      ingress(SG, "0.0.0.0/0", { eventTime: at(70) }),
+      rec({
+        eventName: "ModifyInstanceAttribute",
+        eventTime: at(70),
+        requestParameters: { instanceId: INST, groupSet: { items: [{ groupId: SG2 }] } },
+        responseElements: { _return: true },
+      }),
+    ]);
+    expect(row.description).toContain(`AuthorizeSecurityGroupIngress recorded on ${SG}`);
+    expect(row.severity).toBe("Medium");
+  });
+
+  it("#1084 regression: same-timestamp lifecycle and rule changes are ordered by scan position, never by which list they came from", () => {
+    const [row] = rows([
+      launch(),
+      ingress(SG, "0.0.0.0/0", { eventTime: at(70) }),
+      state("StopInstances", "running", "stopped", { eventTime: at(70) }),
+    ]);
+    const ingressPos = row.description.indexOf("AuthorizeSecurityGroupIngress recorded on");
+    const stopPos = row.description.indexOf("StopInstances:");
+    expect(ingressPos).toBeGreaterThan(-1);
+    expect(stopPos).toBeGreaterThan(-1);
+    expect(ingressPos).toBeLessThan(stopPos);
+  });
+
   it("an instance-profile association after the launch is Medium with the returned state; Replace names the instance only in a successful response; the profile is never a role", () => {
     const [assoc] = rows([
       launch(),
