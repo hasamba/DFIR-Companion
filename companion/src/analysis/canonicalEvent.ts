@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { ForensicEvent } from "./stateTypes.js";
-import { transferBlockSchema, webBlockSchema } from "./canonicalWeb.js";
+import { smbBlockSchema, transferBlockSchema, webBlockSchema } from "./canonicalWeb.js";
 import { dnsBlockSchema } from "./canonicalDns.js";
 import { tlsGraphBlockSchema } from "./canonicalTls.js";
 import { quarantineAttributeBlockSchema, quarantineBlockSchema } from "./canonicalQuarantine.js";
@@ -313,10 +313,10 @@ export const canonicalEventEnvelopeSchema = z.object({
         .optional(),
     })
     .optional(),
-  // A web request row and a transfer row as the sensor logged them, with the hops one upload
-  // establishes through shared identifiers (canonicalWeb.ts, #993).
+  // A web/transfer/SMB row as the sensor logged it (canonicalWeb.ts #993, canonicalSmb.ts #1085).
   web: webBlockSchema.optional(),
   transfer: transferBlockSchema.optional(),
+  smb: smbBlockSchema.optional(),
   registry: z
     .object({
       key: z.string().optional(),

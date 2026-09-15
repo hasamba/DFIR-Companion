@@ -10,8 +10,10 @@
 // JA3 relationship rows one upload establishes (tlsGraph*.ts, #997), and `http`/`files`/`fileinfo` per
 // request and per transfer with the hops one upload establishes (webChainRows.ts, #993), and
 // `dns` per exchange with what the same upload's `conn` / `flow` records establish about the
-// client contacting a returned address (dnsWireRows.ts, #996). The rest contribute OBSERVED IOCs
-// only (domains, URLs, file hashes, the alert/notice IPs).
+// client contacting a returned address (dnsWireRows.ts, #996), and `smb` per operation, joined by
+// file identity (fuid) — never by share context alone — and to a matching `fileinfo` transfer
+// where one exists (smbChainRows.ts, #1085, importer half of #933 item 4). The rest contribute
+// OBSERVED IOCs only (domains, URLs, file hashes, the alert/notice IPs).
 //
 // Inputs: NDJSON (the native `eve.json` / Zeek JSON form), a JSON array, or an Elastic-style
 // wrapper. Rows are routed per-record: Suricata (has `event_type`) vs Zeek (has `_path`).
@@ -31,6 +33,9 @@ import {
 } from "./webChainRead.js";
 import { addRequest, addTransfer, emptyWebObservations, joinWebChain } from "./webChainJoin.js";
 import { mapWebRows, tallyWebChains } from "./webChainRows.js";
+import { readSuricataSmb } from "./smbChainRead.js";
+import { addSmb, emptySmbOperations, joinSmbChains } from "./smbChainJoin.js";
+import { mapSmbRows, tallySmbChains } from "./smbChainRows.js";
 import { addConn, addDns, emptyDnsObservations, joinDnsLeads } from "./dnsConnJoin.js";
 import {
   isSuricataDnsAnswer,
@@ -639,6 +644,7 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
   const tlsObs = emptyTlsObservations();
   const webObs = emptyWebObservations();
   const dnsObs = emptyDnsObservations();
+  const smbOps = emptySmbOperations();
   let flowHost = "";
   let alerts = 0;
   let sawSuricata = false,
@@ -684,6 +690,7 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
           const c = readSuricataFlow(row, etype, recordIndex);
           if (c) addConn(dnsObs, c);
         }
+        if (etype === "smb") addSmb(smbOps, readSuricataSmb(row, recordIndex));
         mergeRowIocs(iocSink, rowSink);
       }
     } else {
@@ -753,6 +760,9 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
         mapWebRows(tallyWebChains(webObs, joinWebChain(webObs), iocSink), flowBudget),
         // DNS exchange rows with the leads the upload's connection records establish (#996).
         mapDnsRows(tallyDnsChains(dnsObs, joinDnsLeads(dnsObs), iocSink), flowBudget),
+        // SMB operation rows, joined by file identity (not share context) and to a matching
+        // fileinfo transfer where one exists (#1085, importer half of #933 item 4).
+        mapSmbRows(tallySmbChains(joinSmbChains(smbOps), flowBudget), webObs.transfers, smbOps.overflow),
       ],
       telemetryBudget,
     ),
