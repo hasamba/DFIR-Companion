@@ -23,7 +23,7 @@ import { breakHashRuns, identityMark, keyDigest, showToken } from "./recordIdent
 import type { SmbChain, SmbJoinState } from "./smbChainJoin.js";
 import type { SmbObservation } from "./smbChainRead.js";
 import type { TransferObservation } from "./webChainRead.js";
-import type { SmbBlock, SmbFileinfoJoin, SmbOutcome } from "./canonicalSmb.js";
+import type { SmbBlock, SmbFileinfoJoin, SmbOutcome } from "./canonicalWeb.js";
 
 const DESCRIPTION_MAX = 600;
 

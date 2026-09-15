@@ -199,7 +199,6 @@
     "canonicalLogging.ts": "shared",
     "canonicalGwsLifecycle.ts": "shared",
     "canonicalObjectAccess.ts": "shared",
-    "canonicalSmb.ts": "shared",
     "canonicalMerge.ts": "analysis/timeline",
     "caseArchive.ts": "analysis/case",
     "caseArchiveManifest.ts": "analysis/case",
