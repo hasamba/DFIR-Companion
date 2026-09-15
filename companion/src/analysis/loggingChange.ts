@@ -386,12 +386,65 @@ function flowLogIds(v: unknown, out: string[] = [], depth = 0, underKey = false)
   return [...new Set(out)];
 }
 
+/** One id AWS's own `responseElements.unsuccessful` named, with its own error classified the SAME
+ * way a whole-call `errorCode` is (#1095, surfaced by #1081's design review). */
+interface FlowLogFailure {
+  id: string;
+  failure: LoggingFailureKind;
+}
+
+/** The items of an `unsuccessful` value, whatever container the export used — a direct array, or
+ * a query-protocol `{ items: [...] }` / `{ item: [...] }` / `{ content: [...] }` wrapper — mirroring
+ * `flowLogIds`'s own multi-shape reading immediately below (#1095, Codex code review finding #1). */
+function unsuccessfulItems(v: unknown, depth = 0): Row[] {
+  if (depth > 6) return [];
+  if (Array.isArray(v)) return v.filter(isObject);
+  if (isObject(v)) {
+    const wrapped = getCI(v, "items") ?? getCI(v, "item") ?? getCI(v, "content");
+    if (wrapped !== undefined) return unsuccessfulItems(wrapped, depth + 1);
+  }
+  return [];
+}
+
+/** `DeleteFlowLogs` returns per-item failures in `responseElements.unsuccessful` — an id in that
+ * list was NOT deleted, even when the call itself carries no top-level `errorCode` at all (#1095).
+ * The key holding the list is found at ANY depth in the response (a raw `DeleteFlowLogs` export
+ * and a query-protocol `DeleteFlowLogsResponse` wrapper both occur in real exports — #1095, Codex
+ * code review finding #1), never assumed to sit at the top level. `resourceId` is AWS's own
+ * documented field name; `flowLogId` is read too, defensively, in case an export normalizes it
+ * differently — neither is invented, both are the same id this record's own request already
+ * names. An item with NEITHER field present is kept, with an unidentifiable id, rather than
+ * silently dropped — see its caller: an unidentified failure blocks claiming ANY id succeeded,
+ * since it cannot be ruled out among them (Codex code review finding #2).
+ *
+ * CloudTrail can omit `responseElements` entirely once a record exceeds its own size limit — a
+ * pre-existing gap common to EVERY decoder in this codebase that reads `responseElements`, not
+ * introduced here, and not soundly fixable from this record alone: nothing in a truncated record
+ * distinguishes "nothing failed" from "the failures were the truncated part." */
+function flowLogUnsuccessful(responseElements: unknown, depth = 0): FlowLogFailure[] {
+  if (depth > 6 || !isObject(responseElements)) return [];
+  for (const [k, v] of Object.entries(responseElements)) {
+    if (/^unsuccessful/i.test(k))
+      return unsuccessfulItems(v)
+        .slice(0, 32)
+        .map((item) => {
+          const id = field(item, "resourceId") || field(item, "flowLogId") || "(id not recorded)";
+          const code = field(item, "error", "code");
+          return { id, failure: code ? classifyAwsFailure(code) : "failed" };
+        });
+    const nested = flowLogUnsuccessful(v, depth + 1);
+    if (nested.length) return nested;
+  }
+  return [];
+}
+
 /** A CloudTrail record's logging-configuration reading, or null when the call is not one. */
 export function decodeCloudTrailLogging(
   source: string,
   name: string,
   request: unknown,
   errorCode: string,
+  responseElements: unknown = null,
 ): LoggingReading | null {
   const svc = lower(source).replace(/\.amazonaws\.com$/, "");
   const n = lower(name);
@@ -513,17 +566,79 @@ export function decodeCloudTrailLogging(
   // awsImport.ts — never delegated to from here, since that file imports this one's `reading()`
   // and shared helpers, and importing it back here would create a cycle.
   if (svc === "ec2" && n === "deleteflowlogs") {
-    const ids = flowLogIds(req);
+    const requested = flowLogIds(req);
+    // A per-item failure exists even when the WHOLE call carries no top-level errorCode at all
+    // (#1095) — only an id NEVER named in `unsuccessful` was actually deleted.
+    const unsuccessful = failure ? [] : flowLogUnsuccessful(responseElements);
+    const unsuccessfulIds = new Set(unsuccessful.map((u) => u.id));
+    // An unsuccessful item AWS did not name an id for cannot be matched against `requested` — it
+    // could be ANY of them, so no id may be claimed successful while one is unidentified (#1095,
+    // Codex code review finding #2b: a missing id previously matched nothing and was silently
+    // dropped, letting that failed id count as deleted).
+    const unidentified = unsuccessful.some((u) => u.id === "(id not recorded)");
+    // A whole-call failure means nothing succeeded, regardless of any per-item data — the call
+    // itself was rejected before any id-level outcome could occur.
+    const succeeded = failure || unidentified ? [] : requested.filter((id) => !unsuccessfulIds.has(id));
+    const unsuccessfulWords = unsuccessful
+      .map((u) => `${show(u.id, 30)} (${FAILURE_WORD[u.failure]})`)
+      .join(", ");
+    const unsuccessfulQualifier = unsuccessful.length
+      ? [
+          `${unsuccessful.length} of ${requested.length || unsuccessful.length} id(s) not deleted: ${unsuccessfulWords}`,
+        ]
+      : [];
+    // No failure evidence at all (no top-level errorCode, no responseElements.unsuccessful item)
+    // — every named id is reported deleted, matching this branch's own behavior before #1095.
+    if (!failure && !unsuccessful.length)
+      return reading(
+        "aws",
+        "flow-logs",
+        requested.join(",") || "(ids not recorded)",
+        "deleted",
+        "High",
+        `flow logs deleted: ${requested.map((i) => show(i, 30)).join(", ") || "(ids not recorded)"}`,
+        requested.map((i) => ({ name: "flowLogId", value: i })),
+        [],
+        null,
+      );
+    if (succeeded.length)
+      return reading(
+        "aws",
+        "flow-logs",
+        succeeded.join(","),
+        "deleted",
+        "High",
+        `flow logs deleted: ${succeeded.map((i) => show(i, 30)).join(", ")}`,
+        succeeded.map((i) => ({ name: "flowLogId", value: i })),
+        unsuccessfulQualifier,
+        null,
+      );
+    // Nothing succeeded — the whole call failed, or every named id individually failed. The row
+    // is an ATTEMPT only, never "deleted" (#1095). A whole-call `failure` wins when present;
+    // otherwise, if every unsuccessful id shares ONE classification, state that — a MIXED set of
+    // reasons is never collapsed into one specific claim it does not support.
+    const kinds = new Set(unsuccessful.map((u) => u.failure));
+    const overall: LoggingFailureKind = failure ?? (kinds.size === 1 ? [...kinds][0] : "failed");
+    const ids = requested.length ? requested : unsuccessful.map((u) => u.id);
+    const byId = new Map(unsuccessful.map((u) => [u.id, u.failure]));
     return reading(
       "aws",
       "flow-logs",
       ids.join(",") || "(ids not recorded)",
       "deleted",
       "High",
-      `flow logs deleted: ${ids.map((i) => show(i, 30)).join(", ") || "(ids not recorded)"}`,
-      ids.map((i) => ({ name: "flowLogId", value: i })),
-      [],
-      failure,
+      `flow logs deletion requested: ${ids.map((i) => show(i, 30)).join(", ") || "(ids not recorded)"}`,
+      // A MIXED set of per-id reasons is never collapsed into one row-level claim (`overall` above
+      // is "failed" when they disagree) — but each id's OWN reason still reaches structured output
+      // here, not only the prose qualifier, so a downstream reader filtering on facts never loses
+      // a confirmed denial to an "unclassified" row-level label (#1095, Codex code review finding
+      // #4).
+      ids.map((i) => ({
+        name: "flowLogId",
+        value: byId.has(i) ? `${i} (${FAILURE_WORD[byId.get(i)!]})` : i,
+      })),
+      unsuccessfulQualifier,
+      overall,
     );
   }
   if (svc === "ec2" && n === "createflowlogs") {
