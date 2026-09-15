@@ -16,6 +16,7 @@ import { gcpBlockSchema } from "./canonicalGcp.js";
 import { gcpServiceAccountJoinBlockSchema } from "./canonicalGcpServiceAccountJoin.js";
 import { loggingChangeBlockSchema } from "./canonicalLogging.js";
 import { acquisitionCoverageBlockSchema } from "./canonicalAcquisition.js";
+import { diskImageAcquisitionSchema } from "./canonicalDiskImage.js";
 import {
   driveAccessBlockSchema,
   driveExposureBlockSchema,
@@ -186,6 +187,7 @@ export const canonicalEventEnvelopeSchema = z.object({
   // A logging-configuration row's state (loggingChange.ts, #931 item 14); the block lives in canonicalLogging.ts.
   loggingChange: loggingChangeBlockSchema.optional(),
   acquisitionCoverage: acquisitionCoverageBlockSchema.optional(), // kapeAcquisitionLog.ts, #932 item 1; block in canonicalAcquisition.ts
+  diskImageAcquisition: diskImageAcquisitionSchema.optional(), // diskImageAcquisitionLog.ts, #1102; block in canonicalDiskImage.ts
   recoveredFragment: recoveredFragmentBlockSchema.optional(), // bulkExtractorUrlImport.ts, #932 item 4; block in canonicalRecoveredFragment.ts
   decodedString: decodedStringBlockSchema.optional(), // flossResultImport.ts, #932 item 5; block in canonicalDecodedString.ts
   mailboxChain: mailboxChainBlockSchema.optional(), // mailboxChain.ts, #975; block in canonicalMailbox.ts
@@ -419,10 +421,7 @@ export type CreateCanonicalEventInput = Omit<CanonicalNormalizedFields, "time"> 
   rawFieldMap?: Record<string, string[]>;
   confidenceMap?: Record<string, CanonicalFieldProvenance["confidence"]>;
   derivationMap?: Record<string, string>;
-  // Which raw record a field came from when the envelope joins several (#993): a path prefix
-  // (`web.bodies.0`, `transfer.requests.1`) → that record's locator, which must be one of
-  // `evidence.rawRecords`. Every field under the prefix is attributed to it; the longest matching
-  // prefix wins; fields under no prefix keep the first record.
+  // Which raw record a field came from when the envelope joins several (#993): a path prefix (`web.bodies.0`, `transfer.requests.1`) → that record's locator, which must be one of `evidence.rawRecords`. Every field under the prefix is attributed to it; the longest matching prefix wins; fields under no prefix keep the first record.
   locatorMap?: Record<string, string>;
 };
 

@@ -6,6 +6,7 @@ import {
   parseCombinedLog,
   type CombinedLogImportOptions,
 } from "../combinedLogImport.js";
+import { parseDiskImageLog } from "../diskImageAcquisitionLog.js";
 import { parseJournald, type JournaldImportOptions } from "../journaldImport.js";
 import { deltaSchema } from "../responseSchema.js";
 import { applySeverityFloor } from "../severityFloor.js";
@@ -425,6 +426,57 @@ export async function importSysdig(
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       `, ${parsed.iocs.length} IOC(s)` +
       (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
+    summary: "",
+  };
+  const delta = deltaSchema.parse(raw);
+
+  return ctx.withStateLock(caseId, async () => {
+    let state = await ctx.opts.stateStore.load(caseId);
+    state = await ctx.mergeWithAliases(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await ctx.opts.stateStore.save(state);
+    ctx.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  });
+}
+
+// Import a full-disk-imaging tool's own acquisition/verification log (FTK Imager's `.txt`
+// sidecar, or dc3dd's own `log=`/`hlog=` output, #1102). Deterministic (no AI call): one Info/
+// Medium/High summary event per log, disclosing the tool's own hash-verification outcome and any
+// detected read errors — never wired into refutationGate.ts (canonicalDiskImage.ts's own basis).
+export async function importDiskImageLog(
+  ctx: ImportContext,
+  caseId: string,
+  text: string,
+  opts: {
+    label: string;
+    idPrefix: string;
+    importedAt: string;
+    minSeverity?: Severity;
+    onProgress?: (done: number, total: number) => void;
+  },
+): Promise<InvestigationState> {
+  const parsedRaw = parseDiskImageLog(text);
+  if (!parsedRaw) return noteEmptyImport(ctx, caseId, opts, "disk-image-log", 0);
+  const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, parsed.artifact, parsed.total);
+
+  const raw = {
+    findings: [],
+    iocs: [],
+    mitreTechniques: [],
+    forensicEvents: parsed.events.map((e, i) => ({
+      ...e,
+      id: `${opts.idPrefix}e${i + 1}`,
+      sources: e.sources?.length ? e.sources : [parsed.artifact],
+    })),
+    threadsOpened: [],
+    threadsClosed: [],
+    timelineNote: `${parsed.artifact} import: ${parsed.kept} event(s) from ${parsed.total} log(s)`,
     summary: "",
   };
   const delta = deltaSchema.parse(raw);

@@ -30,6 +30,7 @@ const BUILT_IN_IMPORT_KINDS = [
   "awsflowlog",
   "cloud",
   "azurestoragelog",
+  "diskimagelog",
   "k8s",
   "osquery",
   "plaso",
