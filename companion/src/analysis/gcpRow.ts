@@ -34,6 +34,12 @@ export interface GcpRowInput {
   resource: string;
   statusCode: number;
   head: string;
+  /** mapGcp's own " [DENIED: …]" for a non-zero status code — kept SEPARATE from `head` so it can
+   * be omitted for a logging reading (below) rather than baked into `head` before either is
+   * bounded (#1081, Codex code review — appending, then truncating an already-appended bracket,
+   * could split it mid-string on a long head, stranding a mangled fragment). "" when the call
+   * succeeded. */
+  statusBracket: string;
   severity: Severity;
   mitre: string[];
   baseKey: string;
@@ -41,16 +47,6 @@ export interface GcpRowInput {
 }
 
 const clip = (s: string, max: number): string => (s.length <= max ? s : `${s.slice(0, max - 1)}…`);
-
-// mapGcp (cloudActivityImport.ts) always appends " [DENIED: …]" to `head` for ANY non-zero status
-// code, independent of what a LOGGING reading concludes below — after #1081, a not-found or an
-// unclassified-failure logging reading's own posture ("requested (target not found): …") could
-// then sit right after a head that still says "[DENIED: …]", contradicting itself (Codex design
-// review finding #2). Stripped ONLY when this row IS a logging reading — the posture text already
-// states the outcome precisely for that row; every OTHER GCP row type's own head bracket is left
-// exactly as mapGcp built it, since those rows' own body wording (gcpIamRecord.ts's own
-// `deniedWords`) is unchanged and would otherwise newly disagree with a reclassified head.
-const GCP_HEAD_DENIED_RE = / \[DENIED(?::[^\]]*)?\]$/;
 
 /** Every row of one GCP record: one per action reading, or the one generic row with the identity facts appended. */
 export function gcpRows(input: GcpRowInput): MappedEvent[] {
@@ -89,8 +85,12 @@ function row(
   // The head, the posture and the qualifiers (a condition, a denial, a differing copy) are
   // reserved; the object and the identity facts share what is left, the object first.
   // The head keeps a digest of what its clip removed (#940): two object reads never fold by text.
+  // A LOGGING reading's own posture already states denied/not-found/failed precisely (#1081), so
+  // mapGcp's own status bracket is never appended for one — every OTHER GCP row type gets it
+  // appended here, then the COMBINED string is bounded ONCE, never bounded once in mapGcp and
+  // again here (which could split the bracket mid-string on a long head).
   const head = boundedTextTo(
-    reading?.kind === "logging" ? input.head.replace(GCP_HEAD_DENIED_RE, "") : input.head,
+    reading?.kind === "logging" ? input.head : `${input.head}${input.statusBracket}`,
     HEAD_MAX,
   );
   const posture = reading ? clip(reading.posture, POSTURE_MAX) : "";

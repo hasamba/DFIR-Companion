@@ -139,6 +139,24 @@ describe("parseCloudActivity — GCP", () => {
       );
       expect(r.events[0].description).toContain("[DENIED");
     });
+
+    it("a long resource name (head > 300 chars pre-bracket) never leaves a mangled '[DENIED: …' fragment beside a not-found posture (#1081, Codex code review) — the bracket is decided BEFORE any truncation, never baked into a head that gets truncated separately", () => {
+      const longResource = "r".repeat(340);
+      const r = parseCloudActivity(
+        JSON.stringify([
+          gcp("google.logging.v2.ConfigServiceV2.DeleteSink", {
+            serviceName: "logging.googleapis.com",
+            resourceName: longResource,
+            status: { code: 5, message: "NOT_FOUND" },
+            request: { sinkName: "my-sink" },
+          }),
+        ]),
+      );
+      const e = r.events[0];
+      expect(e.description).not.toMatch(/\[DENIED/);
+      expect(e.description).toContain("requested (target not found):");
+      expect(e.canonical?.loggingChange?.failure).toBe("not-found");
+    });
   });
 });
 
