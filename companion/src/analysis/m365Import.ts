@@ -24,7 +24,9 @@ import { boundedAggKey, boundedTextTo } from "./aggKey.js";
 import { isExchangeRecord, mapExchangeRow } from "./exchangeAuditImport.js";
 import { entraPrivilegePaths, PRIVILEGE_PATHS_MAX } from "./entraPrivilegePath.js";
 import { mailboxChains, MAILBOX_CHAINS_MAX } from "./mailboxChain.js";
-import { sourceArtifactHash } from "./canonicalEvent.js";
+import { isEntraSignIn, readEntraSignIn } from "./ualLogon.js";
+import { sprayPatternRows, SPRAY_PATTERNS_MAX, type SprayCandidate } from "./passwordSprayFanout.js";
+import { createCanonicalEvent, sourceArtifactHash } from "./canonicalEvent.js";
 import { m365Coverage } from "./cloudCoverageBuilders.js";
 import type { CloudCoverageDraft } from "./cloudCoverage.js";
 import {
@@ -287,7 +289,7 @@ function signInOutcome(raw: unknown, failureReason: string): { outcome: SignInOu
   return { outcome: credential ? "credential-failure" : "other-failure", code };
 }
 
-function mapSignIn(rec: Row, sink: Map<string, SiemIoc>): MappedEvent {
+function mapSignIn(rec: Row, sink: Map<string, SiemIoc>, index: number): MappedEvent {
   const upn = pickStr(rec, ["userPrincipalName", "userDisplayName"]);
   const app = pickStr(rec, ["appDisplayName", "resourceDisplayName"]);
   const ip = extractIp(pickStr(rec, ["ipAddress"]));
@@ -348,6 +350,28 @@ function mapSignIn(rec: Row, sink: Map<string, SiemIoc>): MappedEvent {
       `entra-signin|${upn}|${ip}|${app}|${outcome}|${code ?? "?"}|${risk}|${isRopc ? "ropc" : ""}`.toLowerCase(),
     ),
     sources: ["Entra ID"],
+    // Minimal canonical envelope (931.3, #1086, #1100 item 1): just enough structure for a
+    // correlator to group on `account.name` / `event.outcome` without parsing `description`.
+    // `event.outcome` carries the raw outcome string verbatim (no enum in the schema, so nothing
+    // is collapsed the way a binary failed/success mapping would). No isRopc/riskLevel fields —
+    // neither exists in canonicalEventEnvelopeSchema's `authentication` block, and correlation
+    // above needs neither; ROPC and risk stay exactly where they already were, in `description`.
+    ...(upn
+      ? {
+          canonical: createCanonicalEvent({
+            event: { category: "authentication", type: "signin", outcome },
+            actor: { kind: "account", name: upn },
+            account: { name: upn },
+            ...(ip ? { network: { source: { address: ip } } } : {}),
+            time: {
+              observed: pickStr(rec, ["createdDateTime"]),
+              normalized: normalizeTime(pickStr(rec, ["createdDateTime"])),
+            },
+            evidence: { rawRecords: [{ source: "m365-signin", locator: `record:${index}` }] },
+            producer: { importer: "m365", parserVersion: "1", mappingVersion: "m365-signin-v1" },
+          }),
+        }
+      : {}),
   };
 }
 
@@ -398,6 +422,12 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
   // inside the raw record's `AuditData` envelope until normalizeRecord unwraps it.
   const uploadId = sourceArtifactHash(text);
   const coverage: CloudCoverageDraft[] = m365Coverage(normalized).map((d) => ({ ...d, uploadId }));
+  // Password-spray fan-out candidates (931.3 password-spray half, #1086, #1100 item 1): built
+  // from `readEntraSignIn` — the same reader mailboxChain.ts's own sign-in join already trusts —
+  // over every normalized sign-in record, BEFORE aggregateEvents folds one source's distinct
+  // accounts into a single counted row. A candidate needs a real IP and a real tenant; a record
+  // missing either is excluded from counting entirely, never merged into a shared bucket.
+  const sprayCandidates: SprayCandidate[] = [];
   normalized.forEach((rec, index) => {
     const kind = classify(rec);
     if (kind === "ual" && isEntraUalRecord(rec)) {
@@ -411,8 +441,34 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
       mapped.push(exchange ?? mapUal(rec, iocSink));
       sawUal = true;
     } else if (kind === "signin") {
-      mapped.push(mapSignIn(rec, iocSink));
+      mapped.push(mapSignIn(rec, iocSink, index));
       sawSignin = true;
+      if (isEntraSignIn(rec)) {
+        const s = readEntraSignIn(rec);
+        const hostOrTenant = s.resourceTenant || s.homeTenant;
+        // Only a genuine credential failure counts as a spray attempt — an MFA interruption,
+        // a Conditional Access block, an expired password, or an unreadable status is a
+        // failure for OTHER reasons and must never inflate a spray count (Codex review, P1).
+        // Reuses the same `signInOutcome` classification `mapSignIn` uses, so the two never
+        // disagree about what "failed" means for the same record.
+        const failureReason = pickStr(rec, ["status.failureReason", "status.additionalDetails"]);
+        const { outcome } = signInOutcome(
+          getPath(rec, "status.errorCode") ?? getCI(rec, "errorCode"),
+          failureReason,
+        );
+        const sprayOutcome =
+          outcome === "credential-failure" ? "failed" : outcome === "success" ? "success" : null;
+        if (s.user && s.ip && hostOrTenant && s.observed && sprayOutcome) {
+          sprayCandidates.push({
+            timestamp: normalizeTime(s.observed),
+            account: s.user,
+            sourceIp: s.ip,
+            hostOrTenant,
+            outcome: sprayOutcome,
+            locator: `record:${index}`,
+          });
+        }
+      }
     } else if (kind === "spsignin") {
       mapped.push(mapSpSignIn(rec, iocSink, index));
       sawSignin = true;
@@ -434,13 +490,24 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
   const derived = (rows: MappedEvent[], bound: number): SiemEvent[] =>
     aggregateEvents(rows, { aggregate: opts.aggregate, minSeverity: opts.minSeverity, maxEvents: bound })
       .events;
-  const summaries =
-    sawAudit || sawUal
+  const summaries = [
+    ...(sawAudit || sawUal
       ? [
           ...derived(entraPrivilegePaths(normalized, resolve), PRIVILEGE_PATHS_MAX + 1),
           ...(sawUal ? derived(mailboxChains(normalized), MAILBOX_CHAINS_MAX + 1) : []),
         ]
-      : [];
+      : []),
+    ...(sprayCandidates.length
+      ? derived(
+          sprayPatternRows(sprayCandidates, {
+            source: "Microsoft 365",
+            importer: "m365",
+            mappingVersion: "m365-spray-v1",
+          }),
+          SPRAY_PATTERNS_MAX + 1,
+        )
+      : []),
+  ];
   const events = [...capped.events, ...summaries];
   const groups = capped.groups;
 
