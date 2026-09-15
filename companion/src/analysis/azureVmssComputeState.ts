@@ -15,7 +15,6 @@ import {
   EdgeBuffer,
   byTime,
   field,
-  isAzureNicResourceId,
   lower,
   plural,
   show,
@@ -43,10 +42,10 @@ export const NAME_MAX = 80;
 export const DESCRIPTION_MAX = 1400;
 export const RANK: Record<Severity, number> = { Critical: 4, High: 3, Medium: 2, Low: 1, Info: 0 };
 export const LIMIT_NOTE =
-  "what ran on the member and its network egress are not in this case's Azure Activity Log exports; Flexible-orchestration members are out of scope — only Uniform-mode members are tracked; per-member operations coverage is opportunistic, and an absent member row is never evidence that no scale-set activity occurred; each row is one OBSERVED lifecycle epoch, bounded at a successful delete, never a claim of one proven distinct physical machine — see #1078";
+  "what ran on the member and its network egress are not in this case's Azure Activity Log exports; Flexible-orchestration members (any record naming this member's own resource id that carries virtualMachineResourceId) are out of scope entirely, not merely under-covered — but that field is only exposed from Azure API version 2025-11-01 onward, so a member with no such record in this upload is treated as Uniform-mode WITHOUT proof against older Flexible-mode bodies; per-member operations coverage is opportunistic, and an absent member row is never evidence that no scale-set activity occurred; each row is one OBSERVED lifecycle epoch, bounded at a successful delete, never a claim of one proven distinct physical machine — see #1078";
 export const COVERAGE_NOTE = "record retention and export filtering are not in this evidence";
 export const BASIS =
-  "records of this upload only; joined through the VMSS member's resource id (subscription, resource group, scale-set name, instance id); what ran on the member and its network egress are not in this case's Azure Activity Log exports; Flexible-orchestration members (identified by their own record's virtualMachineResourceId field) are out of scope — only Uniform-mode members are tracked; per-member operations coverage is opportunistic, and an absent member row is never evidence that no scale-set activity occurred; each row is one OBSERVED lifecycle epoch, bounded at a successful delete, never a claim of one proven distinct physical machine — see #1078";
+  "records of this upload only; joined through the VMSS member's resource id (subscription, resource group, scale-set name, instance id); what ran on the member and its network egress are not in this case's Azure Activity Log exports; a member is excluded ENTIRELY, from its first record, once ANY of its records (in this upload, in any order) carries properties.virtualMachineResourceId — but that field is only exposed from Azure API version 2025-11-01 onward, so absence in this upload is not proof of Uniform mode for older bodies; per-member operations coverage is opportunistic, and an absent member row is never evidence that no scale-set activity occurred; each row is one OBSERVED lifecycle epoch, bounded at a successful delete, never a claim of one proven distinct physical machine — see #1078";
 
 /**
  * A VMSS member's own resourceId shape — a 4-tuple, captured so both this file's own scan and
@@ -66,6 +65,30 @@ export function parseAzureVmssMemberResourceId(
   const m = VMSS_MEMBER_RESOURCE_ID.exec(resourceId);
   if (!m) return null;
   return { subscriptionId: m[1], resourceGroup: m[2], setName: m[3], instanceId: m[4] };
+}
+
+/**
+ * A VMSS member's own child NIC resource, tied to that member's identity (#1078, Codex code
+ * review finding M4 — the documented Uniform-mode NIC shape from Microsoft's VMSS VM Update
+ * example, `.../virtualMachineScaleSets/<set>/virtualMachines/<id>/networkInterfaces/<name>`, was
+ * being rejected by the standalone-only `isAzureNicResourceId`). Identity-tied so a NIC id that
+ * merely LOOKS like the child shape but names a DIFFERENT member is never accepted.
+ */
+const VMSS_MEMBER_NIC_RESOURCE_ID =
+  /^\/subscriptions\/([^/]+)\/resourcegroups\/([^/]+)\/providers\/microsoft\.compute\/virtualmachinescalesets\/([^/]+)\/virtualmachines\/([^/]+)\/networkinterfaces\/[^/]+$/i;
+
+export function isVmssMemberNicResourceId(
+  id: string,
+  member: { subscriptionId: string; resourceGroup: string; setName: string; instanceId: string },
+): boolean {
+  const m = VMSS_MEMBER_NIC_RESOURCE_ID.exec(id);
+  if (!m) return false;
+  return (
+    lower(m[1]) === lower(member.subscriptionId) &&
+    lower(m[2]) === lower(member.resourceGroup) &&
+    lower(m[3]) === lower(member.setName) &&
+    lower(m[4]) === lower(member.instanceId)
+  );
 }
 
 export const vmssMemberKey = (
@@ -109,13 +132,16 @@ export interface VmssMember {
   setName: string;
   instanceId: string;
   epochs: VmssEpoch[];
-  /** Post-closure/post-global-cap activity for this member — counted, never mutating the last
-   * retained epoch (#1078, Codex code review, finding H2). */
+  /** Distinct rejected epoch-openers for this member — counted ONCE per overflow epoch, never
+   * once per record within it (#1078, Codex code review, finding H2). */
   epochsBeyond: number;
-  /** Set once a record's own body reveals `virtualMachineResourceId` — a Flexible-orchestration
-   * alias of a standalone VM (#1066) this join does not attempt to reconcile. Once set, every
-   * later record for this member is skipped too (design-round-1 finding M3). */
-  flexible: boolean;
+  /** True while an unretained ("overflow") epoch is in progress for this member — a cap-rejected
+   * epoch-opener that has not yet been closed by a successful delete. While true, NO record may
+   * attach to the last RETAINED epoch; only a successful delete resolves it, and resolving it
+   * retains nothing (#1078, Codex code review, finding H2 — previously a rejected opener left no
+   * marker, so a later delete for that same rejected epoch was mis-attached to the last retained
+   * one, corrupting its timeline). */
+  overflowOpen: boolean;
 }
 
 export interface Tracked {
@@ -124,6 +150,11 @@ export interface Tracked {
   /** The running total of epochs retained across ALL members, checked against
    * `VMSS_EPOCHS_TRACKED_MAX` before a new one is opened. */
   epochsTracked: number;
+  /** Records that named a tracked member but joined no epoch — a post-closure attempt against a
+   * retained epoch, or any attempt (other than the resolving delete) against an unretained
+   * overflow epoch. Previously discarded with no disclosed counter (#1078, Codex code review,
+   * finding H2). */
+  attemptsNotJoined: number;
 }
 
 function newEpoch(index: number): VmssEpoch {
@@ -162,15 +193,31 @@ export function memberFor(
     instanceId,
     epochs: [],
     epochsBeyond: 0,
-    flexible: false,
+    overflowOpen: false,
   };
   t.members.set(key, member);
   return member;
 }
 
+const overCap = (t: Tracked, member: VmssMember): boolean =>
+  member.epochs.length >= VMSS_EPOCHS_PER_MEMBER_MAX || t.epochsTracked >= VMSS_EPOCHS_TRACKED_MAX;
+
+/** A cap-rejected epoch-opener marks the member as `overflowOpen`, counted ONCE here — never once
+ * per record within that unretained epoch (#1078, Codex code review, finding H2). */
+function openOverflow(member: VmssMember): null {
+  member.overflowOpen = true;
+  member.epochsBeyond += 1;
+  return null;
+}
+
 /**
  * The epoch a record for `member` at `time` belongs to, per the rule (#1078, design-round-1,
- * finding H1, reworked after Codex's code review):
+ * finding H1, reworked after Codex's code review; overflow handling added after Codex's code
+ * review finding H2):
+ * - while `member.overflowOpen` (a cap-rejected epoch-opener has not yet been resolved), NO
+ *   record attaches to the last RETAINED epoch — only a successful delete resolves the overflow
+ *   (closing it, retaining nothing); every other record here is an attempt against the untracked
+ *   epoch;
  * - a successful delete with NO open epoch creates one that is IMMEDIATELY closed (the boundary
  *   is retained even with no predecessor);
  * - a successful delete while ALREADY closed stays on the closed epoch (repeated deletes are
@@ -180,8 +227,9 @@ export function memberFor(
  *   post-closure attempt, never an epoch opener;
  * - once open, ANY record (success or not) continues that SAME open epoch, so `notSucceeded` is
  *   still tracked per-epoch for attempts against an in-progress member.
- * Returns `null` when the record does not open or continue any epoch (a post-closure attempt, or
- * every bound already exhausted) — the caller must then only count it, never track it.
+ * Returns `null` when the record does not open or continue any epoch (a post-closure attempt, an
+ * overflow attempt, or every bound already exhausted) — the caller must then only count it, never
+ * track it. Every such discard is disclosed via `t.attemptsNotJoined` or `member.epochsBeyond`.
  */
 export function epochFor(
   t: Tracked,
@@ -189,20 +237,25 @@ export function epochFor(
   isDelete: boolean,
   succeeded: boolean,
 ): VmssEpoch | null {
+  if (member.overflowOpen) {
+    if (isDelete && succeeded) member.overflowOpen = false;
+    else t.attemptsNotJoined += 1;
+    return null;
+  }
   const last = member.epochs[member.epochs.length - 1];
   if (last && !last.closed) {
     if (isDelete && succeeded) last.closed = true;
     return last;
   }
-  // No epoch yet, or the last one is closed.
+  // No epoch yet, or the last retained one is closed.
   if (isDelete) {
-    if (!succeeded) return null; // a failed delete after closure is a post-closure attempt only
+    if (!succeeded) {
+      if (last) t.attemptsNotJoined += 1; // a failed delete after closure is a post-closure attempt
+      return null;
+    }
     if (!last) {
       // Delete-first: retain the boundary as an immediately-closed placeholder epoch.
-      if (member.epochs.length >= VMSS_EPOCHS_PER_MEMBER_MAX || t.epochsTracked >= VMSS_EPOCHS_TRACKED_MAX) {
-        member.epochsBeyond += 1;
-        return null;
-      }
+      if (overCap(t, member)) return openOverflow(member);
       const epoch = newEpoch(member.epochs.length + 1);
       epoch.closed = true;
       member.epochs.push(epoch);
@@ -212,11 +265,11 @@ export function epochFor(
     // Already closed — a repeated delete stays on the closed epoch, never opens a new one.
     return last;
   }
-  if (!succeeded) return null; // a failed/non-terminal record after closure opens nothing
-  if (member.epochs.length >= VMSS_EPOCHS_PER_MEMBER_MAX || t.epochsTracked >= VMSS_EPOCHS_TRACKED_MAX) {
-    member.epochsBeyond += 1;
+  if (!succeeded) {
+    if (last) t.attemptsNotJoined += 1; // a failed/non-terminal record after closure opens nothing
     return null;
   }
+  if (overCap(t, member)) return openOverflow(member);
   const epoch = newEpoch(member.epochs.length + 1);
   member.epochs.push(epoch);
   t.epochsTracked += 1;
@@ -249,4 +302,4 @@ export const firstTime = (epoch: VmssEpoch): number =>
     Number.MAX_SAFE_INTEGER,
   );
 
-export { byTime, field, isAzureNicResourceId, plural, show };
+export { byTime, field, plural, show };

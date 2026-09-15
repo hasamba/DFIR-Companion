@@ -129,7 +129,7 @@ export const azureVmssComputeBlockSchema = z.object({
   notCited: z.number().int().nonnegative(),
   coverage: z.object({ records: z.number().int().nonnegative(), first: z.string(), last: z.string() }),
   basis: z.literal(
-    "records of this upload only; joined through the VMSS member's resource id (subscription, resource group, scale-set name, instance id); what ran on the member and its network egress are not in this case's Azure Activity Log exports; Flexible-orchestration members (identified by their own record's virtualMachineResourceId field) are out of scope — only Uniform-mode members are tracked; per-member operations coverage is opportunistic, and an absent member row is never evidence that no scale-set activity occurred; each row is one OBSERVED lifecycle epoch, bounded at a successful delete, never a claim of one proven distinct physical machine — see #1078",
+    "records of this upload only; joined through the VMSS member's resource id (subscription, resource group, scale-set name, instance id); what ran on the member and its network egress are not in this case's Azure Activity Log exports; a member is excluded ENTIRELY, from its first record, once ANY of its records (in this upload, in any order) carries properties.virtualMachineResourceId — but that field is only exposed from Azure API version 2025-11-01 onward, so absence in this upload is not proof of Uniform mode for older bodies; per-member operations coverage is opportunistic, and an absent member row is never evidence that no scale-set activity occurred; each row is one OBSERVED lifecycle epoch, bounded at a successful delete, never a claim of one proven distinct physical machine — see #1078",
   ),
 });
 

@@ -222,6 +222,28 @@ describe("azureVmssComputeLifecycles", () => {
       });
       expect(azureVmssComputeLifecycles([flexWrite, laterRun], "u1")).toHaveLength(0);
     });
+
+    it("epochs opened by earlier operations are purged once a LATER write reveals Flexible mode (#1078, Codex code review finding H1)", () => {
+      const start = azure("Microsoft.Compute/virtualMachineScaleSets/virtualMachines/start/action", {
+        eventTimestamp: at(0),
+      });
+      const dealloc = azure("Microsoft.Compute/virtualMachineScaleSets/virtualMachines/deallocate/action", {
+        eventTimestamp: at(5),
+      });
+      const flexWrite = azure("Microsoft.Compute/virtualMachineScaleSets/virtualMachines/write", {
+        eventTimestamp: at(10),
+        properties: {
+          requestbody: {
+            properties: {
+              virtualMachineResourceId: `/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.Compute/virtualMachines/${SET}${INST}`,
+            },
+          },
+        },
+      });
+      // Without the fix, start+deallocate would already have opened and populated epoch 1 (2
+      // operations, satisfying the row filter) before the write at t=10 revealed Flexible mode.
+      expect(azureVmssComputeLifecycles([start, dealloc, flexWrite], "u1")).toHaveLength(0);
+    });
   });
 
   describe("epoch rule — observed lifecycle epochs, never proven physical machines (#1078, design round 1, finding H1)", () => {
@@ -294,9 +316,14 @@ describe("azureVmssComputeLifecycles", () => {
         status: { value: "Failed" },
       });
       const rows = azureVmssComputeLifecycles([write, del, failedRun], "u1");
-      // Only epoch 1 (write + delete) is reported; the failed run never opened epoch 2.
-      expect(rows).toHaveLength(1);
-      expect(rows[0].canonical?.azureVmssCompute?.epoch).toBe(1);
+      // Only epoch 1 (write + delete) is reported; the failed run never opened epoch 2 — but IS
+      // disclosed via the omitted row's own attemptsNotJoined count (#1078, Codex code review
+      // finding H2: previously a post-closure attempt was silently discarded with no counter).
+      const perEpoch = rows.filter((r) => r.description.startsWith("Azure VMSS compute lifecycle:"));
+      expect(perEpoch).toHaveLength(1);
+      expect(perEpoch[0].canonical?.azureVmssCompute?.epoch).toBe(1);
+      const omitted = rows.find((r) => r.description.startsWith("Azure VMSS compute lifecycle —"));
+      expect(omitted?.description).toContain("not joined");
     });
 
     it("VMSS_EPOCHS_PER_MEMBER_MAX bounds epochs retained per member — further ones counted, never tracked", () => {
@@ -324,6 +351,48 @@ describe("azureVmssComputeLifecycles", () => {
       const omitted = rows.find((r) => r.description.startsWith("Azure VMSS compute lifecycle —"));
       expect(omitted?.description).toContain("epoch");
     });
+
+    it("a cap-rejected epoch-opener's later delete never mutates the last RETAINED epoch (#1078, Codex code review finding H2)", () => {
+      const records: Record<string, unknown>[] = [];
+      // Fill exactly VMSS_EPOCHS_PER_MEMBER_MAX retained epochs (write+delete pairs).
+      for (let i = 0; i < VMSS_EPOCHS_PER_MEMBER_MAX; i++) {
+        records.push(
+          azure("Microsoft.Compute/virtualMachineScaleSets/virtualMachines/write", {
+            eventTimestamp: at(i * 10),
+          }),
+        );
+        records.push(
+          azure("Microsoft.Compute/virtualMachineScaleSets/virtualMachines/delete", {
+            eventTimestamp: at(i * 10 + 5),
+          }),
+        );
+      }
+      // One more write — rejected by the per-member cap, opening an unretained overflow epoch —
+      // followed by a successful delete that must resolve the OVERFLOW, never attach to epoch 8.
+      const n = VMSS_EPOCHS_PER_MEMBER_MAX;
+      records.push(
+        azure("Microsoft.Compute/virtualMachineScaleSets/virtualMachines/write", {
+          eventTimestamp: at(n * 10),
+        }),
+      );
+      records.push(
+        azure("Microsoft.Compute/virtualMachineScaleSets/virtualMachines/delete", {
+          eventTimestamp: at(n * 10 + 5),
+        }),
+      );
+      const rows = azureVmssComputeLifecycles(records, "u1");
+      const perEpoch = rows.filter((r) => r.description.startsWith("Azure VMSS compute lifecycle:"));
+      const lastRetained = perEpoch.find(
+        (r) => r.canonical?.azureVmssCompute?.epoch === VMSS_EPOCHS_PER_MEMBER_MAX,
+      );
+      // The last retained epoch's own operations list holds only ITS OWN delete — never the
+      // overflow epoch's own delete too (the bug: it would have reached 2).
+      expect(lastRetained?.canonical?.azureVmssCompute?.operations).toHaveLength(1);
+      const omitted = rows.find((r) => r.description.startsWith("Azure VMSS compute lifecycle —"));
+      // Exactly ONE overflow epoch was rejected (the 9th write), not double-counted by its own
+      // resolving delete.
+      expect(omitted?.description).toContain("1 epoch");
+    });
   });
 
   it("grades two distinct fact kinds High, one Medium, none Low (write-only)", () => {
@@ -350,6 +419,72 @@ describe("azureVmssComputeLifecycles", () => {
     const rows = azureVmssComputeLifecycles([w1, w2], "u1");
     expect(rows).toHaveLength(2);
     expect(new Set(rows.map((r) => r.canonical?.azureVmssCompute?.instanceId))).toEqual(new Set(["0", "1"]));
+  });
+
+  describe("operation redelivery is coalesced by operation identity (#1078, Codex code review finding M3)", () => {
+    it("a redelivered SUCCESSFUL operation with the same eventDataId is counted once", () => {
+      const write = azure("Microsoft.Compute/virtualMachineScaleSets/virtualMachines/write", {
+        eventTimestamp: at(0),
+      });
+      const start1 = azure("Microsoft.Compute/virtualMachineScaleSets/virtualMachines/start/action", {
+        eventTimestamp: at(10),
+        eventDataId: "op-1",
+      });
+      const start2 = azure("Microsoft.Compute/virtualMachineScaleSets/virtualMachines/start/action", {
+        eventTimestamp: at(15),
+        eventDataId: "op-1",
+      });
+      const [row] = azureVmssComputeLifecycles([write, start1, start2], "u1");
+      expect(row.canonical?.azureVmssCompute?.operations).toHaveLength(1);
+    });
+
+    it("an Accepted status superseded by a later Succeeded for the SAME operationId is never counted as a separate not-succeeded attempt", () => {
+      const write = azure("Microsoft.Compute/virtualMachineScaleSets/virtualMachines/write", {
+        eventTimestamp: at(0),
+      });
+      const accepted = azure("Microsoft.Compute/virtualMachineScaleSets/virtualMachines/start/action", {
+        eventTimestamp: at(10),
+        eventDataId: "op-2",
+        status: { value: "Accepted" },
+      });
+      const succeeded = azure("Microsoft.Compute/virtualMachineScaleSets/virtualMachines/start/action", {
+        eventTimestamp: at(15),
+        eventDataId: "op-2",
+      });
+      const [row] = azureVmssComputeLifecycles([write, accepted, succeeded], "u1");
+      expect(row.canonical?.azureVmssCompute?.operations).toHaveLength(1);
+      expect(row.canonical?.azureVmssCompute?.attempts.notSucceeded).toBe(0);
+    });
+
+    it("distinct operationIds are never coalesced together", () => {
+      const write = azure("Microsoft.Compute/virtualMachineScaleSets/virtualMachines/write", {
+        eventTimestamp: at(0),
+      });
+      const start = azure("Microsoft.Compute/virtualMachineScaleSets/virtualMachines/start/action", {
+        eventTimestamp: at(10),
+        eventDataId: "op-3",
+      });
+      const dealloc = azure("Microsoft.Compute/virtualMachineScaleSets/virtualMachines/deallocate/action", {
+        eventTimestamp: at(15),
+        eventDataId: "op-4",
+      });
+      const [row] = azureVmssComputeLifecycles([write, start, dealloc], "u1");
+      expect(row.canonical?.azureVmssCompute?.operations).toHaveLength(2);
+    });
+  });
+
+  it("#M4 the documented VMSS-member child NIC resource id is accepted, tied to THIS member's own identity", () => {
+    const ownNic = `${MEMBER_ID}/networkInterfaces/nic0`;
+    const otherMemberNic = `${MEMBER_ID.replace(/virtualMachines\/0$/, "virtualMachines/1")}/networkInterfaces/nic0`;
+    const write = azure("Microsoft.Compute/virtualMachineScaleSets/virtualMachines/write", {
+      properties: {
+        requestbody: {
+          properties: { networkProfile: { networkInterfaces: [{ id: ownNic }, { id: otherMemberNic }] } },
+        },
+      },
+    });
+    const [row] = azureVmssComputeLifecycles([write], "u1");
+    expect(row.canonical?.azureVmssCompute?.launch?.networkInterfaces).toEqual([ownNic]);
   });
 
   it("caps rows at VMSS_COMPUTE_MAX and reports an omitted row for the rest", () => {

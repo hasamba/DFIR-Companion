@@ -26,10 +26,11 @@ import {
   epochFor,
   field,
   firstTime,
-  isAzureNicResourceId,
+  isVmssMemberNicResourceId,
   memberFor,
   noteFact,
   parseAzureVmssMemberResourceId,
+  vmssMemberKey,
   type Operation,
   type Row,
   type Tracked,
@@ -38,17 +39,25 @@ import { omittedRow, summaryRow } from "./azureVmssComputeRow.js";
 
 export { VMSS_COMPUTE_MAX, VMSS_MEMBERS_TRACKED_MAX } from "./azureVmssComputeState.js";
 
+type MemberId = { subscriptionId: string; resourceGroup: string; setName: string; instanceId: string };
+type OperationKind = "start" | "deallocate" | "delete" | "remote";
+
 interface Scanned {
   rec: Row;
   index: number;
   time: number;
   op: string;
   resourceId: string;
-  memberId: { subscriptionId: string; resourceGroup: string; setName: string; instanceId: string } | null;
+  memberId: MemberId | null;
   status: string;
   by: string;
   locator: string;
   requestBody: unknown;
+  /** eventDataId/correlationId/operationId — the SAME field-priority list `cloudActivityImport.ts`
+   * already reads for remote-execution correlation, reused here to coalesce redelivered or
+   * Accepted-then-Succeeded records of the SAME operation (#1078, Codex code review finding M3).
+   * Empty when the feed carries none of these fields — such records are never coalesced. */
+  opId: string;
 }
 
 function pickStr(row: Row, keys: string[]): string {
@@ -97,6 +106,15 @@ function scan(
         getPath(rec, "properties.requestBody") ??
         getPath(rec, "Properties.requestbody") ??
         getPath(rec, "Properties.requestBody"),
+      // Same field-priority list as cloudActivityImport.ts's own remote-execution correlation id.
+      opId: pickStr(rec, [
+        "eventDataId",
+        "EventDataId",
+        "correlationId",
+        "CorrelationId",
+        "operationId",
+        "OperationId",
+      ]),
     });
   });
   return out.sort((a, b) => a.time - b.time || a.index - b.index);
@@ -105,11 +123,77 @@ function scan(
 /** A Flexible-orchestration member's own body carries `properties.virtualMachineResourceId`,
  * aliasing the same physical machine under the standalone `Microsoft.Compute/virtualMachines`
  * resource type #1066 already tracks (#1078, design-round-1, finding M3). This join is Uniform-only
- * — a record carrying that field is never tracked, and once seen, the whole member is marked
- * `flexible` so later records for the SAME member (which may lack a body to re-check) are skipped
- * too, on the reasonable assumption that a member's own orchestration mode does not change mid-upload. */
+ * — a member with ANY record carrying that field is excluded entirely. */
 function isFlexibleModeBody(body: Row | null): boolean {
   return !!(body && field(body, "properties", "virtualMachineResourceId"));
+}
+
+function operationKind(op: string): OperationKind | null {
+  const entry = Object.entries(OPERATION_RE).find(([, re]) => re.test(op));
+  if (entry) return entry[0] as OperationKind;
+  return AZURE_RUN_COMMAND_RE.test(op) ? "remote" : null;
+}
+
+/**
+ * Two passes over the whole upload's own scanned records, BEFORE any epoch is created, fixing two
+ * defects Codex's code review found in the original single streaming pass (#1078):
+ *
+ * - `flexibleKeys` (finding H1): the original code only inspected a member's WRITE bodies, and
+ *   only marked the member Flexible from that point forward — an epoch an earlier operation or
+ *   remote-access record had already opened for the SAME member was never purged, so a Flexible
+ *   member could still be emitted. Pre-scanning EVERY record (write, operation, remote-access —
+ *   any of them may carry a request body) for the SAME member's resource id, before the dispatch
+ *   loop creates a single member or epoch, makes exclusion order-independent: a member flagged
+ *   Flexible by ANY of its own records, in ANY order, is never tracked at all.
+ * - `terminalKeys` (finding M3): the original code pushed a new `Operation` on every SUCCESSFUL
+ *   matching record unconditionally, with no operation-identity dedup — a redelivered status
+ *   doubled the operation count, and an Accepted-then-Succeeded pair for the SAME operation
+ *   inflated `notSucceeded` before also recording the success. Pre-scanning which
+ *   (member, kind, operationId) triples EVER reach a successful status lets the dispatch loop
+ *   coalesce: a non-terminal record superseded by a later success is skipped entirely (never
+ *   counted as an attempt), and any record beyond the FIRST one reaching a key's own final
+ *   outcome is treated as a redelivery and skipped.
+ */
+function prescan(scanned: readonly Scanned[]): {
+  flexibleKeys: Set<string>;
+  terminalKeys: Set<string>;
+} {
+  const flexibleKeys = new Set<string>();
+  const terminalKeys = new Set<string>();
+  for (const s of scanned) {
+    if (!s.memberId) continue;
+    const key = vmssMemberKey(
+      s.memberId.subscriptionId,
+      s.memberId.resourceGroup,
+      s.memberId.setName,
+      s.memberId.instanceId,
+    );
+    if (isFlexibleModeBody(parseAzureRequestBody(s.requestBody))) flexibleKeys.add(key);
+    if (s.opId && azureAttemptOutcome(s.status) === "success") {
+      const kind = operationKind(s.op);
+      if (kind) terminalKeys.add(`${key}|${kind}|${s.opId}`);
+    }
+  }
+  return { flexibleKeys, terminalKeys };
+}
+
+/** Returns `true` when this record must be skipped as a redelivery or a non-terminal status
+ * superseded by a later success for the SAME (member, kind, operationId) — see `prescan`. Has no
+ * effect (never dedups) when the record carries no operation identity. */
+function isCoalescedAway(
+  s: Scanned,
+  memberKey: string,
+  kind: OperationKind,
+  succeeded: boolean,
+  terminalKeys: ReadonlySet<string>,
+  processedOps: Set<string>,
+): boolean {
+  if (!s.opId) return false;
+  const key = `${memberKey}|${kind}|${s.opId}`;
+  if (terminalKeys.has(key) && !succeeded) return true; // superseded by a later success
+  if (processedOps.has(key)) return true; // redelivery of an already-processed outcome
+  processedOps.add(key);
+  return false;
 }
 
 function launchFacts(
@@ -125,15 +209,18 @@ function launchFacts(
   // M2: reading an `id` from a template would misreport a template name as a NIC id).
   const nicList = getCI(networkProfile, "networkInterfaces");
   const nics: string[] = [];
-  if (Array.isArray(nicList)) {
+  if (Array.isArray(nicList) && s.memberId) {
     // Bounded by INDEX POSITION EXAMINED, never filter-then-slice over an untrusted full array
-    // (mirrors #1077's own code-round fix for the exact same class of bug).
+    // (mirrors #1077's own code-round fix for the exact same class of bug). Validated against
+    // Microsoft's documented Uniform-mode child-resource shape, tied to THIS member's own
+    // identity — never the standalone shape (#1078, Codex code review finding M4: the standalone
+    // validator rejected the documented VMSS shape entirely).
     const examined = Math.min(nicList.length, NICS_MAX);
     for (let i = 0; i < examined; i += 1) {
       const entry = nicList[i];
       if (!isObject(entry)) continue;
       const id = field(entry, "id");
-      if (id && isAzureNicResourceId(id)) nics.push(id);
+      if (id && isVmssMemberNicResourceId(id, s.memberId)) nics.push(id);
     }
   }
   const identity = body && isObject(getCI(body, "identity")) ? (getCI(body, "identity") as Row) : null;
@@ -168,6 +255,8 @@ const WRITE_RE = /microsoft\.compute\/virtualmachinescalesets\/virtualmachines\/
 
 function recordWrite(t: Tracked, s: Scanned): void {
   if (!s.memberId || !WRITE_RE.test(s.op)) return;
+  const success = azureAttemptOutcome(s.status) === "success";
+  if (!success) return;
   const member = memberFor(
     t,
     s.memberId.subscriptionId,
@@ -175,17 +264,10 @@ function recordWrite(t: Tracked, s: Scanned): void {
     s.memberId.setName,
     s.memberId.instanceId,
   );
-  if (!member || member.flexible) return;
-  const success = azureAttemptOutcome(s.status) === "success";
-  const body = parseAzureRequestBody(s.requestBody);
-  if (isFlexibleModeBody(body)) {
-    member.flexible = true;
-    return;
-  }
-  if (!success) return;
+  if (!member) return;
   const epoch = epochFor(t, member, false, true);
   if (!epoch) return;
-  const { launch, identityAssigned } = launchFacts(s, body);
+  const { launch, identityAssigned } = launchFacts(s, parseAzureRequestBody(s.requestBody));
   if (!epoch.launch) epoch.launch = { ...launch, time: s.time };
   if (identityAssigned) noteFact(epoch, "identity-assigned", s.time, s.locator);
   cite(epoch, s.locator);
@@ -197,11 +279,24 @@ const OPERATION_RE: Record<"start" | "deallocate" | "delete", RegExp> = {
   delete: /microsoft\.compute\/virtualmachinescalesets\/virtualmachines\/delete$/i,
 };
 
-function recordOperation(t: Tracked, s: Scanned): void {
+function recordOperation(
+  t: Tracked,
+  s: Scanned,
+  terminalKeys: ReadonlySet<string>,
+  processedOps: Set<string>,
+): void {
   if (!s.memberId) return;
   const entry = Object.entries(OPERATION_RE).find(([, re]) => re.test(s.op));
   if (!entry) return;
   const kind = entry[0] as "start" | "deallocate" | "delete";
+  const memberKey = vmssMemberKey(
+    s.memberId.subscriptionId,
+    s.memberId.resourceGroup,
+    s.memberId.setName,
+    s.memberId.instanceId,
+  );
+  const success = azureAttemptOutcome(s.status) === "success";
+  if (isCoalescedAway(s, memberKey, kind, success, terminalKeys, processedOps)) return;
   const member = memberFor(
     t,
     s.memberId.subscriptionId,
@@ -209,8 +304,7 @@ function recordOperation(t: Tracked, s: Scanned): void {
     s.memberId.setName,
     s.memberId.instanceId,
   );
-  if (!member || member.flexible) return;
-  const success = azureAttemptOutcome(s.status) === "success";
+  if (!member) return;
   const epoch = epochFor(t, member, kind === "delete", success);
   if (!epoch) return;
   if (!success) {
@@ -224,8 +318,21 @@ function recordOperation(t: Tracked, s: Scanned): void {
 
 // Reuses the SAME AZURE_RUN_COMMAND_RE the standalone pass and cloudActivityImport.ts already
 // share (#1066's own finding #8 discipline, extended here rather than duplicated).
-function recordRemote(t: Tracked, s: Scanned): void {
+function recordRemote(
+  t: Tracked,
+  s: Scanned,
+  terminalKeys: ReadonlySet<string>,
+  processedOps: Set<string>,
+): void {
   if (!s.memberId || !AZURE_RUN_COMMAND_RE.test(s.op)) return;
+  const memberKey = vmssMemberKey(
+    s.memberId.subscriptionId,
+    s.memberId.resourceGroup,
+    s.memberId.setName,
+    s.memberId.instanceId,
+  );
+  const success = azureAttemptOutcome(s.status) === "success";
+  if (isCoalescedAway(s, memberKey, "remote", success, terminalKeys, processedOps)) return;
   const member = memberFor(
     t,
     s.memberId.subscriptionId,
@@ -233,8 +340,7 @@ function recordRemote(t: Tracked, s: Scanned): void {
     s.memberId.setName,
     s.memberId.instanceId,
   );
-  if (!member || member.flexible) return;
-  const success = azureAttemptOutcome(s.status) === "success";
+  if (!member) return;
   const epoch = epochFor(t, member, false, success);
   if (!epoch) return;
   if (!success) {
@@ -254,13 +360,27 @@ const gradeOf = (facts: readonly AzureVmssComputeFact[]): Severity =>
 
 /** One summary row per Uniform-mode VMSS member EPOCH the upload's records form a lifecycle for. */
 export function azureVmssComputeLifecycles(records: readonly Row[], uploadId: string): MappedEvent[] {
-  const t: Tracked = { members: new Map(), untrackedRecords: 0, epochsTracked: 0 };
+  const t: Tracked = { members: new Map(), untrackedRecords: 0, epochsTracked: 0, attemptsNotJoined: 0 };
   const coverage = { records: 0, first: "", last: "" };
   const scanned = scan(records, coverage);
+  const { flexibleKeys, terminalKeys } = prescan(scanned);
+  const processedOps = new Set<string>();
   for (const s of scanned) {
+    if (s.memberId) {
+      const key = vmssMemberKey(
+        s.memberId.subscriptionId,
+        s.memberId.resourceGroup,
+        s.memberId.setName,
+        s.memberId.instanceId,
+      );
+      // A Flexible member is excluded from its FIRST record, whichever record in this upload
+      // first revealed it — never given a chance to open an epoch (#1078, Codex code review
+      // finding H1).
+      if (flexibleKeys.has(key)) continue;
+    }
     recordWrite(t, s);
-    recordOperation(t, s);
-    recordRemote(t, s);
+    recordOperation(t, s, terminalKeys, processedOps);
+    recordRemote(t, s, terminalKeys, processedOps);
   }
   const findings = [...t.members.values()]
     .flatMap((member) =>
@@ -285,7 +405,7 @@ export function azureVmssComputeLifecycles(records: readonly Row[], uploadId: st
     .map((f) => summaryRow(f.member, f.epoch, f.facts, f.grade, coverage, uploadId));
   const omitted = Math.max(0, findings.length - VMSS_COMPUTE_MAX);
   const epochsBeyond = [...t.members.values()].reduce((n, m) => n + m.epochsBeyond, 0);
-  if (omitted > 0 || t.untrackedRecords > 0 || epochsBeyond > 0)
+  if (omitted > 0 || t.untrackedRecords > 0 || epochsBeyond > 0 || t.attemptsNotJoined > 0)
     rows.push(
       omittedRow(
         omitted,
@@ -293,6 +413,7 @@ export function azureVmssComputeLifecycles(records: readonly Row[], uploadId: st
         t.untrackedRecords,
         uploadId,
         epochsBeyond,
+        t.attemptsNotJoined,
       ),
     );
   return rows;

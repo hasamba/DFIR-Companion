@@ -173,16 +173,19 @@ export function summaryRow(
   };
 }
 
-/** The members beyond the reported bound, the records past a tracked-entity bound, and the
- * epochs past their own examined bound (#1078) — counts, never claims. */
+/** The members beyond the reported bound, the records past a tracked-entity bound, the epochs
+ * past their own examined bound, and the records that named a tracked member but joined no
+ * epoch — a post-closure or overflow attempt (#1078, Codex code review finding H2) — counts,
+ * never claims. */
 export function omittedRow(
   count: number,
   severity: Severity,
   untrackedRecords: number,
   uploadId: string,
   epochsBeyond = 0,
+  attemptsNotJoined = 0,
 ): MappedEvent {
-  const description = `Azure VMSS compute lifecycle — ${count ? `${count} further epoch${count === 1 ? "" : "s"} with a lifecycle in this upload beyond the ${VMSS_COMPUTE_MAX} reported — not shown` : "no further epoch beyond the reported"}${untrackedRecords ? `; ${plural(untrackedRecords, "record")} naming members past the tracked bound — not read` : ""}${epochsBeyond ? `; ${plural(epochsBeyond, "epoch")} past its own examined bound (up to ${VMSS_EPOCHS_PER_MEMBER_MAX} per member, or the global cap) — not read` : ""}`;
+  const description = `Azure VMSS compute lifecycle — ${count ? `${count} further epoch${count === 1 ? "" : "s"} with a lifecycle in this upload beyond the ${VMSS_COMPUTE_MAX} reported — not shown` : "no further epoch beyond the reported"}${untrackedRecords ? `; ${plural(untrackedRecords, "record")} naming members past the tracked bound — not read` : ""}${epochsBeyond ? `; ${plural(epochsBeyond, "epoch")} past its own examined bound (up to ${VMSS_EPOCHS_PER_MEMBER_MAX} per member, or the global cap) — not read` : ""}${attemptsNotJoined ? `; ${plural(attemptsNotJoined, "record")} seen after a member's epoch closed, or against an epoch past its own tracked bound — not joined` : ""}`;
   return {
     timestamp: "",
     description,
