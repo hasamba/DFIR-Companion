@@ -273,6 +273,51 @@ export function decodeGcpAuditConfigDelta(delta: Row, failure: LoggingFailureKin
 
 // ───────────────────────────── Azure ─────────────────────────────
 
+/** Microsoft's own documented common values for `subStatus` (activity-log-schema): the field is
+ * "usually the HTTP status code of the corresponding REST call." Matched ONLY as the field's own
+ * WHOLE value — never a substring — since Microsoft also documents it can "include other strings"
+ * (#1096, Codex design review findings #2/#3: a loose substring search risked misfiring on an
+ * unrelated provider-specific string that happens to contain a status-like token). */
+const HTTP_STATUS_WORDS: Record<string, number> = {
+  ok: 200,
+  created: 201,
+  accepted: 202,
+  "no content": 204,
+  "bad request": 400,
+  unauthorized: 401,
+  forbidden: 403,
+  "not found": 404,
+  conflict: 409,
+  "internal server error": 500,
+  "service unavailable": 503,
+  "gateway timeout": 504,
+};
+/** Microsoft's own documented structured form is `"<Word...> (HTTP Status Code: <N>)"`. */
+const AZURE_HTTP_STATUS_RE = /\(http status code:\s*(\d{3})\)\s*$/i;
+
+function azureHttpStatus(subStatus: string): number | null {
+  const s = subStatus.trim();
+  if (!s) return null;
+  const structured = AZURE_HTTP_STATUS_RE.exec(s);
+  if (structured) return Number(structured[1]);
+  if (/^\d{3}$/.test(s)) return Number(s);
+  return HTTP_STATUS_WORDS[s.toLowerCase()] ?? null;
+}
+
+/** Classifies Azure's `subStatus` field (#1096) — "usually the HTTP status code of the
+ * corresponding REST call" per Microsoft's own schema reference, present across all three
+ * documented Azure export shapes this codebase already reads `status` from (REST/portal
+ * `subStatus.value`; Log Analytics `ActivitySubstatusValue`; storage/event-hub
+ * `resultSignature`). 404 = not-found; 401/403 = denied. Everything else — absent, a non-HTTP
+ * value, 400/409/5xx, or anything not matching one of Microsoft's own documented shapes exactly —
+ * is `"failed"`: the same conservative default #1081 established for AWS/GCP, never guessed. */
+export function classifyAzureFailure(subStatus: string): LoggingFailureKind {
+  const code = azureHttpStatus(subStatus);
+  if (code === 404) return "not-found";
+  if (code === 401 || code === 403) return "denied";
+  return "failed";
+}
+
 const DESTINATIONS: Record<string, string> = {
   workspaceId: "workspace",
   storageAccountId: "storage account",
@@ -314,12 +359,8 @@ export function decodeAzureLogging(
   operation: string,
   resourceId: string,
   requestBody: unknown,
-  failed: boolean,
+  failure: LoggingFailureKind | null,
 ): LoggingReading | null {
-  // Azure has no per-call error code threaded to this reading (#1081) — every failure becomes the
-  // neutral "failed" outcome, never "denied": that would claim evidence this record does not
-  // carry. See #1096 for Azure's own not-found detection, filed separately (needs fixtures).
-  const failure: LoggingFailureKind | null = failed ? "failed" : null;
   const op = lower(operation);
   const settingName = resourceId.slice(resourceId.lastIndexOf("/") + 1) || "(setting not recorded)";
   const parent = resourceId.replace(/\/providers\/microsoft\.insights\/diagnosticsettings\/[^/]+$/i, "");

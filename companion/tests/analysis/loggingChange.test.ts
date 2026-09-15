@@ -626,6 +626,148 @@ describe("Azure diagnostic settings — logs, metrics and destinations read apar
   });
 });
 
+// #1096: Azure now classifies a failed logging call the same three ways AWS/GCP do (#1081),
+// reading the documented `subStatus` field (REST/portal `subStatus.value`; Log Analytics
+// `ActivitySubstatusValue`; storage/event-hub `resultSignature`) — never a captured export, built
+// against Microsoft's own schema reference.
+describe("Azure logging-change failures classify denied / not-found / failed from subStatus (#1096)", () => {
+  const azure = (op: string, over: Row = {}): Row => ({
+    eventTimestamp: "2023-07-01T11:00:00Z",
+    operationName: { value: op, localizedValue: op },
+    category: { value: "Administrative" },
+    status: { value: "Failed" },
+    caller: "admin@acme.com",
+    resourceId:
+      "/subscriptions/abc/resourceGroups/rg/providers/Microsoft.KeyVault/vaults/kv1/providers/Microsoft.Insights/diagnosticSettings/audit",
+    httpRequest: { clientIpAddress: "203.0.113.22" },
+    ...over,
+  });
+  const rows = (records: Row[]) => parseCloudActivity(JSON.stringify(records), { aggregate: false }).events;
+
+  it("subStatus in Microsoft's own documented structured form ('Not Found (HTTP Status Code: 404)') is not-found: Low", () => {
+    const e = rows([
+      azure("Microsoft.Insights/diagnosticSettings/delete", {
+        subStatus: { value: "Not Found (HTTP Status Code: 404)" },
+      }),
+    ])[0];
+    expect(e.severity).toBe("Low");
+    expect(e.description).toContain("requested (target not found):");
+    expect(env(e).loggingChange?.failure).toBe("not-found");
+    expect(env(e).loggingChange?.denied).toBe(false);
+  });
+
+  it("a bare 3-digit code (404) as the WHOLE subStatus field is also not-found", () => {
+    const e = rows([
+      azure("Microsoft.Insights/diagnosticSettings/delete", { subStatus: { value: "404" } }),
+    ])[0];
+    expect(env(e).loggingChange?.failure).toBe("not-found");
+  });
+
+  it("a bare well-known status word ('Forbidden') as the WHOLE field is denied: Medium", () => {
+    const e = rows([
+      azure("Microsoft.Insights/diagnosticSettings/delete", { subStatus: { value: "Forbidden" } }),
+    ])[0];
+    expect(e.severity).toBe("Medium");
+    expect(e.description).toContain("requested (denied):");
+    expect(env(e).loggingChange?.failure).toBe("denied");
+    expect(env(e).loggingChange?.denied).toBe(true);
+  });
+
+  it("Microsoft's own structured form for 401 (Unauthorized) is also denied", () => {
+    const e = rows([
+      azure("Microsoft.Insights/diagnosticSettings/delete", {
+        subStatus: { value: "Unauthorized (HTTP Status Code: 401)" },
+      }),
+    ])[0];
+    expect(env(e).loggingChange?.failure).toBe("denied");
+  });
+
+  it("empty/missing subStatus on a failed call is the neutral 'failed' — no positive evidence either way", () => {
+    const e = rows([azure("Microsoft.Insights/diagnosticSettings/delete", { subStatus: { value: "" } })])[0];
+    expect(e.severity).toBe("Medium");
+    expect(e.description).toContain("requested (failed):");
+    expect(env(e).loggingChange?.failure).toBe("failed");
+  });
+
+  it("an unrecognized compound string that superficially contains a status-like substring is NEVER misclassified — strict whole-field matching only (#1096, Codex design review finding #3)", () => {
+    const e = rows([
+      azure("Microsoft.Insights/diagnosticSettings/delete", {
+        subStatus: { value: "ProviderValidation/403/Retryable" },
+      }),
+    ])[0];
+    expect(env(e).loggingChange?.failure).toBe("failed");
+    expect(env(e).loggingChange?.denied).toBe(false);
+  });
+
+  it("a Bad Request (400) or a 5xx code is the neutral 'failed', never denied or not-found — only 401/403/404 are classified", () => {
+    const badRequest = rows([
+      azure("Microsoft.Insights/diagnosticSettings/delete", {
+        subStatus: { value: "Bad Request (HTTP Status Code: 400)" },
+      }),
+    ])[0];
+    expect(env(badRequest).loggingChange?.failure).toBe("failed");
+    const serverError = rows([
+      azure("Microsoft.Insights/diagnosticSettings/delete", {
+        subStatus: { value: "Internal Server Error (HTTP Status Code: 500)" },
+      }),
+    ])[0];
+    expect(env(serverError).loggingChange?.failure).toBe("failed");
+  });
+
+  it("a SUCCEEDED call is never classified at all, even with a subStatus present", () => {
+    const e = rows([
+      azure("Microsoft.Insights/diagnosticSettings/delete", {
+        status: { value: "Succeeded" },
+        subStatus: { value: "OK (HTTP Status Code: 200)" },
+      }),
+    ])[0];
+    expect(env(e).loggingChange?.failure).toBeUndefined();
+    expect(env(e).loggingChange?.denied).toBe(false);
+  });
+
+  it("subStatus is read across all three documented Azure export shapes: REST/portal subStatus.value, Log Analytics ActivitySubstatusValue, storage/event-hub resultSignature", () => {
+    const restForm = rows([
+      azure("Microsoft.Insights/diagnosticSettings/delete", {
+        subStatus: { value: "Not Found (HTTP Status Code: 404)" },
+      }),
+    ])[0];
+    expect(env(restForm).loggingChange?.failure).toBe("not-found");
+    const logAnalyticsForm = rows([
+      azure("Microsoft.Insights/diagnosticSettings/delete", {
+        ActivitySubstatusValue: "Not Found (HTTP Status Code: 404)",
+      }),
+    ])[0];
+    expect(env(logAnalyticsForm).loggingChange?.failure).toBe("not-found");
+    const storageExportForm = rows([
+      azure("Microsoft.Insights/diagnosticSettings/delete", {
+        resultSignature: "Not Found (HTTP Status Code: 404)",
+      }),
+    ])[0];
+    expect(env(storageExportForm).loggingChange?.failure).toBe("not-found");
+  });
+
+  it("two different failure kinds against the SAME target never collapse into one aggregated row (#1096, Codex design review finding #1)", () => {
+    const forbidden = rows([
+      azure("Microsoft.Insights/diagnosticSettings/delete", { subStatus: { value: "Forbidden" } }),
+    ])[0];
+    const notFound = rows([
+      azure("Microsoft.Insights/diagnosticSettings/delete", {
+        subStatus: { value: "Not Found (HTTP Status Code: 404)" },
+      }),
+    ])[0];
+    expect(forbidden.aggKey).not.toBe(notFound.aggKey);
+  });
+
+  it("stays canonically conformant across every classified outcome", () => {
+    for (const subStatus of ["Not Found (HTTP Status Code: 404)", "Forbidden", "", "garbage/403/x"]) {
+      const e = rows([
+        azure("Microsoft.Insights/diagnosticSettings/delete", { subStatus: { value: subStatus } }),
+      ])[0];
+      expect(canonicalConformanceIssues(env(e))).toEqual([]);
+    }
+  });
+});
+
 // #1071: AWS Config recorder calls, read for the state they establish. A separate `cfg()` fixture
 // builder (not `ct()`) since the CloudTrail default injects a `requestParameters.name: TRAIL`
 // field that would misleadingly stand in for `configurationRecorder.name` (Codex design round 1,
