@@ -467,20 +467,14 @@ describe("gcpComputeLifecycles — firewall join (#1073)", () => {
 
   it("an ::/0 source range also fires the fact", () => {
     const insert = insertWithNetwork();
-    const rule = firewall(
-      "v1.compute.firewalls.update",
-      anySourceAllow({ sourceRanges: ["::/0"] }),
-    );
+    const rule = firewall("v1.compute.firewalls.update", anySourceAllow({ sourceRanges: ["::/0"] }));
     const [row] = gcpComputeLifecycles([insert, rule], "u1");
     expect(row.canonical?.gcpCompute?.facts).toContain("any-address-firewall-rule");
   });
 
   it("a source range that is not 0.0.0.0/0 or ::/0 does not fire the fact", () => {
     const insert = insertWithNetwork();
-    const rule = firewall(
-      "v1.compute.firewalls.insert",
-      anySourceAllow({ sourceRanges: ["10.0.0.0/8"] }),
-    );
+    const rule = firewall("v1.compute.firewalls.insert", anySourceAllow({ sourceRanges: ["10.0.0.0/8"] }));
     const [row] = gcpComputeLifecycles([insert, rule], "u1");
     expect(row.canonical?.gcpCompute?.facts).not.toContain("any-address-firewall-rule");
   });
