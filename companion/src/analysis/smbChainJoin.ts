@@ -70,6 +70,32 @@ function fileKey(o: SmbObservation): string | undefined {
   return o.flowId && o.fuid ? `${o.flowId}|${o.fuid}` : undefined;
 }
 
+// Suricata's own documented TREE_CONNECT example carries `share` as a full UNC value
+// (`\\admin-pc\c$`) and `share_type`; the CREATE/WRITE/READ/CLOSE operations on that tree carry
+// NEITHER field at all — share context exists only on the TREE_CONNECT record, keyed by
+// `flowId + treeId` (a tree id is only unique within one flow, same reasoning as `fileKey`).
+// Every other operation on that tree inherits it here so a downstream reader never has to know
+// which record originally said it.
+function treeKey(o: SmbObservation): string | undefined {
+  return o.flowId && o.treeId ? `${o.flowId}|${o.treeId}` : undefined;
+}
+
+const isTreeConnect = (o: SmbObservation): boolean =>
+  o.command === "SMB2_COMMAND_TREE_CONNECT" || o.command === "TREE_CONNECT";
+
+/** The last `\`-separated segment of a UNC share value: `\\admin-pc\c$` → `c$`. */
+export function shareLeaf(raw: string): string {
+  const parts = raw.split(/\\+/).filter(Boolean);
+  return parts.at(-1) ?? raw;
+}
+
+function withTreeContext(o: SmbObservation, treeShare: Map<string, SmbObservation>): SmbObservation {
+  if (o.share || !treeKey(o)) return o;
+  const connect = treeShare.get(treeKey(o)!);
+  if (!connect?.share) return o;
+  return { ...o, share: shareLeaf(connect.share), shareType: o.shareType ?? connect.shareType };
+}
+
 interface ChainBuild {
   key: string;
   create?: SmbObservation;
@@ -84,10 +110,17 @@ interface ChainBuild {
  * observation is seen, so a late denial is never hidden behind an early run of successes.
  */
 export function joinSmbChains(ops: SmbOperations): SmbChain[] {
+  const treeShare = new Map<string, SmbObservation>();
+  for (const o of ops.observations) {
+    const tk = treeKey(o);
+    if (tk && isTreeConnect(o) && o.share) treeShare.set(tk, o);
+  }
+
   const byKey = new Map<string, ChainBuild>();
   const unkeyed: SmbChain[] = [];
 
-  for (const o of ops.observations) {
+  for (const raw of ops.observations) {
+    const o = withTreeContext(raw, treeShare);
     const key = fileKey(o);
     if (!key) {
       unkeyed.push({

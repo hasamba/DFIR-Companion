@@ -126,7 +126,7 @@ export function filePath(raw: string): FilePath | null {
 }
 
 /** Whether two records name one file's location: the same relative path, and no disagreeing volume. */
-function sameLocation(a: FilePath, b: FilePath): { same: boolean; volumeNote?: string } {
+export function sameLocation(a: FilePath, b: FilePath): { same: boolean; volumeNote?: string } {
   if (a.relative !== b.relative) return { same: false };
   if (a.volumeKind === "none" || b.volumeKind === "none")
     return { same: true, volumeNote: "volume not compared (one record names none)" };
@@ -213,12 +213,12 @@ function classify<T extends TimelineEventShape>(e: T): Indexed<T> | null {
 }
 
 /** A digest disagreement between two rows that both carry one kind — SHA-256 decides over MD5. */
-function hashVeto(a: TimelineEventShape, b: TimelineEventShape): boolean {
+export function hashVeto(a: TimelineEventShape, b: TimelineEventShape): boolean {
   if (a.sha256 && b.sha256) return a.sha256.toLowerCase() !== b.sha256.toLowerCase();
   if (a.md5 && b.md5) return a.md5.toLowerCase() !== b.md5.toLowerCase();
   return false;
 }
-const sameHash = (a: TimelineEventShape, b: TimelineEventShape): boolean =>
+export const sameHash = (a: TimelineEventShape, b: TimelineEventShape): boolean =>
   (!!a.sha256 && !!b.sha256 && a.sha256.toLowerCase() === b.sha256.toLowerCase()) ||
   (!!a.md5 && !!b.md5 && a.md5.toLowerCase() === b.md5.toLowerCase());
 

@@ -34,6 +34,10 @@ export const DERIVED_NOTE_NAMES: readonly string[] = [
   "hollowing sequence",
   "after Defender",
   "infection window",
+  "smb-staged file executed",
+  "ran a share-staged file",
+  "service/task creation after a pipe call",
+  "preceded by a service-control pipe call",
 ];
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

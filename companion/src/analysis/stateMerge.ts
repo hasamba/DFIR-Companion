@@ -16,6 +16,7 @@ import { linkArchiveToExfil } from "./exfilCorrelate.js";
 import { markProcessLifetimeSignals } from "./processLifetime.js";
 import { corroborateTimestompsOnTimeline } from "./timestompCorroborate.js";
 import { corroborateDownloadExecution } from "./downloadExecution.js";
+import { corroborateSmbExecution } from "./smbExecution.js";
 import { corroborateDefenderEpisodes } from "./defenderEpisodes.js";
 import { markInfectionWindow } from "./mobileInfectionWindow.js";
 import { corroborateInjectionSequences } from "./injectionSequence.js";
@@ -379,10 +380,14 @@ export function mergeDelta(
   // MFT and the Prefetch / Sysmon rows arrive as separate imports. Only ever raises; its notes are
   // recomputed from the current evidence on every merge.
   const withDownloads = corroborateDownloadExecution(withTimestomp);
+  // A share write of an executable-shaped file, then the evidence it ran; a service-control or
+  // task-scheduling pipe call, then the service/task it may have created — host+time joins across
+  // separate imports (#933 item 4, correlation half — #1092). Only ever raises.
+  const withSmbExecution = corroborateSmbExecution(withDownloads);
   // A Defender action, then a later start of the same file on the same host (#930 item 1 part B).
   // Here because the Defender record and the process start arrive from different imports. Only
   // ever raises; its notes are recomputed from the current evidence on every merge.
-  const withDefender = corroborateDefenderEpisodes(withDownloads);
+  const withDefender = corroborateDefenderEpisodes(withSmbExecution);
   // A mobile extraction's infection window (#932 item 18): rows of a subject device before or
   // after its earliest malicious app-inventory sign. Here because the verdict that makes a sign
   // arrives with enrichment, after the import; recomputed on every merge, notes only.
