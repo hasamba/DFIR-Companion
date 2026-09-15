@@ -307,10 +307,20 @@ export const noteFact = (inst: Inst, fact: AwsComputeFact, time: number, locator
   if (!cur || time < cur.time) inst.facts.set(fact, { time, locator });
 };
 
-/** The groups the instance's own records say it held at `time`: the statement in force, else the launch's for a record before it. */
-export function groupsAt(inst: Inst, time: number): readonly string[] | null {
+/**
+ * The groups the instance's own records say it held as of the QUERYING record `(time, locator)`:
+ * the statement in force, else the launch's for a record before it. Compares by the same
+ * `(time, scan position)` order `byTime` uses — a bare `g.time <= time` (the original form) can
+ * pick the WRONG same-timestamp statement when a rule record and a group-replacing record share
+ * one timestamp, since it always keeps the LAST array entry with `g.time <= time` regardless of
+ * whether that entry's own scan position was before or after the querying record (#1084, Codex
+ * code review: a same-timestamp rule authorized on the PRIOR group could otherwise be silently
+ * evaluated against the REPLACEMENT group instead, suppressing an any-address-rule fact).
+ */
+export function groupsAt(inst: Inst, time: number, locator: string): readonly string[] | null {
   let inForce: GroupSet | null = null;
-  for (const g of inst.groupSets) if (g.time <= time) inForce = g;
+  const query = { time, locator } as Timed;
+  for (const g of inst.groupSets) if (byTime(g, query) <= 0) inForce = g;
   if (inForce) return inForce.groups;
   return inst.launch ? inst.launch.groups.map((g) => lower(g.id)) : null;
 }

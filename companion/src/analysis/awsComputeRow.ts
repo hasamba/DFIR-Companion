@@ -167,9 +167,12 @@ export function summaryRow(
   const sess = inst.session;
   const rules = [...inst.rules.values()].flatMap((b) => b.all()).sort(byTime);
   const rulesBeyond = [...inst.rules.values()].reduce((n, b) => n + b.beyond, 0);
+  // `locator` is kept on each entry through the sort (not just `time`/`words`) — byTime's
+  // equal-timestamp tie-break needs it; stripping it earlier made every lifecycle/rule tie
+  // resolve to array-concatenation order instead of true scan position (#1084, Codex code review).
   const changes = [
-    ...lifecycle.map((e) => ({ time: e.time, words: lifecycleWords(inst, e) })),
-    ...rules.map((r) => ({ time: r.time, words: ruleWords(inst, r) })),
+    ...lifecycle.map((e) => ({ time: e.time, locator: e.locator, words: lifecycleWords(inst, e) })),
+    ...rules.map((r) => ({ time: r.time, locator: r.locator, words: ruleWords(inst, r) })),
   ].sort(byTime);
   const changesBeyond = Math.max(0, changes.length - CHANGES_NAMED_MAX) + inst.lifecycle.beyond + rulesBeyond;
   const parts = [
