@@ -10,7 +10,7 @@ import { mobileBlockSchema } from "./canonicalMobile.js";
 import { entraPathBlockSchema } from "./canonicalEntra.js";
 import { awsLineageBlockSchema } from "./canonicalAwsLineage.js";
 import { awsComputeBlockSchema } from "./canonicalAwsCompute.js";
-import { azureComputeBlockSchema } from "./canonicalAzureCompute.js";
+import { azureComputeBlockSchema, azureVmssComputeBlockSchema } from "./canonicalAzureCompute.js";
 import { gcpComputeBlockSchema } from "./canonicalGcpCompute.js";
 import { gcpBlockSchema } from "./canonicalGcp.js";
 import { gcpServiceAccountJoinBlockSchema } from "./canonicalGcpServiceAccountJoin.js";
@@ -164,8 +164,7 @@ export const canonicalEventEnvelopeSchema = z.object({
     })
     .optional(),
   process: canonicalProcessSchema.optional(),
-  // A TLS relationship row (tlsGraphRows.ts, #997): a certificate, name, client-certificate or
-  // JA3 node with what one sensor's records in one upload showed beside it.
+  // A TLS relationship row (tlsGraphRows.ts, #997): cert/name/client-cert/JA3 node one sensor's upload showed.
   tlsGraph: tlsGraphBlockSchema.optional(),
   // An Entra privilege-path summary row (entraPrivilegePath.ts, #973); the block lives in canonicalEntra.ts.
   entra: entraPathBlockSchema.optional(),
@@ -174,6 +173,7 @@ export const canonicalEventEnvelopeSchema = z.object({
   // Compute-lifecycle summary rows (#931 item 8; Azure/GCP are the second half, #1066).
   awsCompute: awsComputeBlockSchema.optional(),
   azureCompute: azureComputeBlockSchema.optional(),
+  azureVmssCompute: azureVmssComputeBlockSchema.optional(),
   gcpCompute: gcpComputeBlockSchema.optional(),
   // A GCP audit row's identity, binding delta, credential fact, key step or workload attachment (gcpRow.ts, #931 item 12).
   gcp: gcpBlockSchema.optional(),
