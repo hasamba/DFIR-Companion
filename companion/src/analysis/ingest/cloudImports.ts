@@ -1,5 +1,6 @@
 import { parseCloudTrail, type AwsImportOptions } from "../awsImport.js";
 import { parseCloudActivity, type CloudActivityImportOptions } from "../cloudActivityImport.js";
+import { parseAzureStorageLog, type AzureStorageLogImportOptions } from "../azureStorageLogImport.js";
 import { parseK8sAudit, type K8sAuditImportOptions } from "../k8sAuditImport.js";
 import { parseM365Audit, type M365ImportOptions } from "../m365Import.js";
 import { parseOktaSystemLog, type OktaImportOptions } from "../oktaImport.js";
@@ -122,6 +123,59 @@ export async function importOkta(
     threadsClosed: [],
     timelineNote:
       `Okta import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+      (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
+      `, ${parsed.iocs.length} IOC(s)`,
+    summary: "",
+  };
+  const delta = deltaSchema.parse(raw);
+
+  return ctx.withStateLock(caseId, async () => {
+    let state = await ctx.opts.stateStore.load(caseId);
+    state = await ctx.mergeWithAliases(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await ctx.opts.stateStore.save(state);
+    ctx.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  });
+}
+
+// Import Azure Storage resource diagnostic logs (#931 item 4) — the data-plane half of the
+// storage key→read correlation. Deterministic (no AI call).
+export async function importAzureStorageLog(
+  ctx: ImportContext,
+  caseId: string,
+  text: string,
+  opts: {
+    label: string;
+    idPrefix: string;
+    importedAt: string;
+    azureStorageLog?: AzureStorageLogImportOptions;
+    minSeverity?: Severity;
+    onProgress?: (done: number, total: number) => void;
+  },
+): Promise<InvestigationState> {
+  const parsedRaw = parseAzureStorageLog(text, opts.azureStorageLog);
+  const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  if (parsed.events.length === 0)
+    return noteEmptyImport(ctx, caseId, opts, "Azure Storage Logs", parsed.total);
+
+  const raw = {
+    findings: [],
+    iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+    mitreTechniques: [],
+    forensicEvents: parsed.events.map((e, i) => ({
+      ...e,
+      id: `${opts.idPrefix}e${i + 1}`,
+      sources: e.sources?.length ? e.sources : ["Azure Storage Logs"],
+    })),
+    threadsOpened: [],
+    threadsClosed: [],
+    timelineNote:
+      `Azure Storage log import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       `, ${parsed.iocs.length} IOC(s)`,
     summary: "",

@@ -114,7 +114,13 @@ export function readCloudRecord(e: ForensicEvent): ReadRecord | null {
   if (!Number.isFinite(time)) return null;
 
   const principal = c?.actor?.name ?? principalFromDescription(e.description ?? "");
-  if (!principal) return null;
+  const credentialId = (c?.authentication?.credentialId ?? "").trim();
+  // A credential-only identity (Account Key / SAS auth carries no human/app actor — #931 item 4)
+  // is still a real, distinguishable reader: groupKey() already keys on credentialId alongside
+  // principal. Requiring a principal unconditionally made every credential-authenticated read
+  // invisible to this pass, including the exact reads a key-listing correlation needs to join
+  // against.
+  if (!principal && !credentialId) return null;
 
   const resource = c?.cloud?.resource ?? c?.target?.name ?? resourceFromDescription(e.description ?? "");
   const { container, object } = splitResource(resource);
@@ -122,8 +128,8 @@ export function readCloudRecord(e: ForensicEvent): ReadRecord | null {
   return {
     id: e.id,
     time,
-    principal: principal.trim(),
-    credentialId: (c?.authentication?.credentialId ?? "").trim(),
+    principal: (principal ?? "").trim(),
+    credentialId,
     provider: (c?.cloud?.provider ?? "").trim(),
     account: (c?.cloud?.accountId ?? c?.cloud?.tenant ?? "").trim(),
     sourceIp: (c?.network?.source?.address ?? e.srcIp ?? sourceFromDescription(e.description ?? "")).trim(),
@@ -673,7 +679,9 @@ export function summarizeBulkReads(
       // summary cleaned to the same four words and two sessions that started in the same second
       // deduplicated into one. A data-theft finding disappeared from the record with no trace.
       description:
-        `Cloud bulk read by ${group.principal}${group.sourceIp ? ` from ${group.sourceIp}` : ""}` +
+        // A credential-only group (#931 item 4 — Account Key/SAS auth) has no principal; name
+        // the credential fingerprint instead of rendering a blank.
+        `Cloud bulk read by ${group.principal || (group.credentialId ? `credential ${group.credentialId.slice(0, 12)}…` : "an unidentified caller")}${group.sourceIp ? ` from ${group.sourceIp}` : ""}` +
         ` ${BULK_READ_MARKER} ${verdict.reason}]`,
       severity: verdict.severity,
       mitreTechniques: ["T1530", "T1213"],

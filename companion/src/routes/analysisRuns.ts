@@ -28,6 +28,7 @@ const BUILT_IN_IMPORT_KINDS = [
   "m365",
   "aws",
   "cloud",
+  "azurestoragelog",
   "k8s",
   "osquery",
   "plaso",

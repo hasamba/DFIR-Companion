@@ -90,17 +90,15 @@ export class AnalysisPipeline {
   /**
    * The ONLY thing src/analysis/ingest/ ever receives (#384).
    *
-   * The first cut of the ingest extraction passed `this` and let AnalysisPipeline satisfy
-   * ImportContext structurally, which meant `opts` and four methods had to become public. That
-   * bought the importers a narrow interface at the cost of handing every OTHER consumer of the
-   * pipeline the entire options bag -- the AI providers, every store, every tuning knob. A boundary
-   * that has to widen the class to exist is not much of a boundary.
+   * The first cut passed `this` and let AnalysisPipeline satisfy ImportContext structurally,
+   * which meant `opts` and four methods had to become public — a narrow interface for importers
+   * bought at the cost of exposing the entire options bag to every OTHER consumer of the
+   * pipeline. A boundary that has to widen the class to exist is not much of a boundary.
    *
-   * This adapter closes over the permitted operations instead, so the class members stay private
-   * and the importers still see nothing beyond what ImportContext declares. `opts` is exposed
-   * through getters rather than a snapshot because the settings-reload path rebuilds live options
-   * in place; a copy taken at construction would go stale the first time an operator saved a
-   * setting.
+   * This adapter closes over the permitted operations instead, so class members stay private and
+   * importers see nothing beyond what ImportContext declares. `opts` is exposed through getters
+   * rather than a snapshot because the settings-reload path rebuilds live options in place; a
+   * copy taken at construction would go stale the first time an operator saved a setting.
    *
    * Down to three operations since #418 moved the two shared import tails — `noteEmptyImport` and
    * `persistPlasoParsed` — into `ingest/importState.ts`, where their only callers already live.
@@ -559,6 +557,12 @@ export class AnalysisPipeline {
 
   importOkta(...args: ImporterArgs<typeof ingest.importOkta>): Promise<InvestigationState> {
     return ingest.importOkta(this.importCtx, ...args);
+  }
+
+  importAzureStorageLog(
+    ...args: ImporterArgs<typeof ingest.importAzureStorageLog>
+  ): Promise<InvestigationState> {
+    return ingest.importAzureStorageLog(this.importCtx, ...args);
   }
 
   async importGoogleWorkspace(

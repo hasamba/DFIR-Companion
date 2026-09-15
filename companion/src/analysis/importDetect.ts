@@ -1,12 +1,11 @@
 // Auto-detect which importer an uploaded file should route to, so the dashboard can offer a
-// single "Import" button and the server picks the right deterministic/AI importer. Detection
-// is a cheap sniff: structural (JSON object/array/NDJSON vs CSV vs plain log), then key/header
-// signatures mirroring each importer's own classifier — ordered most-specific → most-generic.
-//
-// Returns a kind that maps 1:1 to a pipeline import method (see server `/cases/:id/import`).
-// The detected kind is shown back to the analyst, so a mis-route is visible, not silent.
+// single "Import" button. A cheap sniff: structural (JSON object/array/NDJSON vs CSV vs plain
+// log), then key/header signatures mirroring each importer's own classifier — most-specific
+// first. Returns a kind mapping 1:1 to a pipeline import method, shown to the analyst so a
+// mis-route is visible, not silent.
 
 import { isObject, getCI, getPath, str, parseConcatenatedJson } from "./siemImport.js";
+import { isAzureStorageLog } from "./azureStorageLogImport.js";
 import { isWerReport } from "./werImport.js";
 import { isRekallCommandList, looksLikeVolatilityText, looksLikeMemprocfsFindevil } from "./memoryImport.js";
 import { isRunEnvelopeUpload } from "./memoryRunEnvelope.js";
@@ -416,6 +415,7 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (isSandbox(sample)) return "sandbox";
   if (isAws(sample)) return "aws";
   if (isGcp(sample)) return "cloud";
+  if (isAzureStorageLog(sample)) return "azurestoragelog";
   if (isAzure(sample)) return "cloud";
   if (isOkta(sample)) return "okta";
   if (isGoogleWorkspace(sample, root)) return "gws";
