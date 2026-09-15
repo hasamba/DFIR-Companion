@@ -594,6 +594,21 @@ describe("detectImportKind — CSV formats", () => {
     expect(detectImportKind("shim.csv", "Path,LastModifiedTimeUTC,executed\nx,t,true")).toBe("kape");
     expect(detectImportKind("shim2.csv", "Path,LastModifiedTimeUTC,cacheentryposition\nx,t,0")).toBe("kape");
   });
+  it("kape: acquisition copylog (#932 item 1) — the full documented header", () => {
+    const header =
+      "CopiedTimestamp,SourceFile,DestinationFile,FileSize,SourceFileSha1,DeferredCopy,CreatedOnUtc,ModifiedOnUtc,LastAccessedOnUtc,CopyDuration";
+    expect(
+      detectImportKind("20240501_copylog.csv", `${header}\nt,c:/a,d:/a,1,abc,false,t,t,t,00:00:01`),
+    ).toBe("kape");
+  });
+  it("kape: acquisition skiplog (#932 item 1) — requires the Reason vocabulary, not just the header", () => {
+    expect(
+      detectImportKind("20240501_skiplog.csv", "SourceFile,SourceFileSha1,Reason\nc:/a,abc,Excluded"),
+    ).toBe("kape");
+    expect(
+      detectImportKind("inventory.csv", "SourceFile,SourceFileSha1,Reason\nc:/a,abc,Manual review"),
+    ).not.toBe("kape");
+  });
   it("#28: a generic CSV with only path + lastmodifiedtimeutc (no ShimCache discriminator) falls through to the AI CSV importer, not kape", () => {
     // Previously kapeSig's loose ShimCache branch claimed it as kape; parseKapeCsv found no
     // matching profile and returned 0 events — silently dropping every row. It must reach the AI
