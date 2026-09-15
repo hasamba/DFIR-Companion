@@ -2,14 +2,16 @@ import { describe, it, expect } from "vitest";
 import {
   requiredEvidenceClasses,
   collectedEvidenceClasses,
+  collectedEvidenceClassesByHost,
   gateRefutedSeeds,
   EVIDENCE_CLASS_SOURCES,
   type EvidenceClass,
 } from "../../src/analysis/refutationGate.js";
-import type { HypothesisSeed } from "../../src/analysis/hypothesis.js";
+import { buildHostAliasIndex } from "../../src/analysis/hostAlias.js";
+import type { HypothesisSeed, ResolvedSubjectScope } from "../../src/analysis/hypothesis.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
-function ev(id: string, sources: string[], artifactName?: string): ForensicEvent {
+function ev(id: string, sources: string[], artifactName?: string, asset?: string): ForensicEvent {
   return {
     id,
     timestamp: "2026-08-26T13:00:00.000Z",
@@ -20,10 +22,15 @@ function ev(id: string, sources: string[], artifactName?: string): ForensicEvent
     sourceScreenshots: [],
     sources,
     ...(artifactName ? { artifactName } : {}),
+    ...(asset ? { asset } : {}),
   };
 }
 
-function seed(title: string, status: HypothesisSeed["status"] = "refuted"): HypothesisSeed {
+function seed(
+  title: string,
+  status: HypothesisSeed["status"] = "refuted",
+  subjectScope?: ResolvedSubjectScope,
+): HypothesisSeed {
   return {
     sourceKey: title.toLowerCase().replace(/\W+/g, "-"),
     title,
@@ -35,6 +42,7 @@ function seed(title: string, status: HypothesisSeed["status"] = "refuted"): Hypo
     relatedIocIds: [],
     contradictingEventIds: [],
     discriminator: "",
+    ...(subjectScope ? { subjectScope } : {}),
   };
 }
 
@@ -110,12 +118,10 @@ describe("collectedEvidenceClasses", () => {
 
   // They are still perfectly good POSITIVE evidence — this is only about what an ABSENCE proves.
   it("still downgrades a refutation when only ShimCache was collected", () => {
-    const collected = collectedEvidenceClasses([
-      ev("a", ["Velociraptor"], "Windows.Registry.AppCompatCache"),
-    ]);
+    const collection = [ev("a", ["Velociraptor"], "Windows.Registry.AppCompatCache")];
     const { seeds: out, downgraded } = gateRefutedSeeds(
       [seed("the dropped binary never executed")],
-      collected,
+      collection,
     );
     expect(out[0].status).toBe("unknown");
     expect(downgraded[0].missing).toContain("execution");
@@ -194,7 +200,7 @@ describe("gateRefutedSeeds", () => {
   it("downgrades a refutation the collection cannot support", () => {
     const { seeds, downgraded } = gateRefutedSeeds(
       [seed("Ransomware encryption was executed on the host")],
-      collectedEvidenceClasses(collection),
+      collection,
     );
     expect(seeds[0].status).toBe("unknown");
     expect(downgraded).toHaveLength(1);
@@ -202,10 +208,7 @@ describe("gateRefutedSeeds", () => {
   });
 
   it("names the missing evidence class in the rationale so the analyst can collect it", () => {
-    const { seeds } = gateRefutedSeeds(
-      [seed("Ransomware encryption was executed on the host")],
-      collectedEvidenceClasses(collection),
-    );
+    const { seeds } = gateRefutedSeeds([seed("Ransomware encryption was executed on the host")], collection);
     expect(seeds[0].description).toContain("execution");
     expect(seeds[0].description).toContain("no source of that kind was collected");
   });
@@ -213,7 +216,7 @@ describe("gateRefutedSeeds", () => {
   it("leaves a refutation the collection CAN support alone", () => {
     const { seeds, downgraded } = gateRefutedSeeds(
       [seed("The actor installed a service for persistence")],
-      collectedEvidenceClasses(collection),
+      collection,
     );
     expect(seeds[0].status).toBe("refuted");
     expect(downgraded).toHaveLength(0);
@@ -226,21 +229,122 @@ describe("gateRefutedSeeds", () => {
       seed("Data was exfiltrated via OneDrive", "supported"),
       seed("Something happened", "open"),
     ];
-    const { seeds, downgraded } = gateRefutedSeeds(input, collectedEvidenceClasses(collection));
+    const { seeds, downgraded } = gateRefutedSeeds(input, collection);
     expect(seeds.map((s) => s.status)).toEqual(["supported", "open"]);
     expect(downgraded).toHaveLength(0);
   });
 
   it("leaves a refutation with no recognisable evidence class alone", () => {
-    const { seeds } = gateRefutedSeeds(
-      [seed("The operator was an authorized red teamer")],
-      collectedEvidenceClasses(collection),
-    );
+    const { seeds } = gateRefutedSeeds([seed("The operator was an authorized red teamer")], collection);
     expect(seeds[0].status).toBe("refuted");
   });
 
   it("returns the input unchanged when nothing is gated", () => {
     const input = [seed("Something happened", "open")];
-    expect(gateRefutedSeeds(input, collectedEvidenceClasses(collection)).seeds).toEqual(input);
+    expect(gateRefutedSeeds(input, collection).seeds).toEqual(input);
+  });
+});
+
+// #1110: refutationGate.ts scoped to a hypothesis's own declared subject host(s), fixing the
+// case-wide-and-unscoped finding from #932.1's design review (a single matching source anywhere in
+// the case used to grant coverage for every host).
+describe("gateRefutedSeeds — per-host scoping (#1110)", () => {
+  it("collectedEvidenceClassesByHost partitions by asset, ignoring hostless events", () => {
+    const alias = buildHostAliasIndex([], {});
+    const byHost = collectedEvidenceClassesByHost(
+      [
+        ev("a", ["Velociraptor"], "Windows.Forensics.Prefetch", "ws-01"),
+        ev("b", ["Velociraptor"], "Windows.NTFS.MFT", "ws-02"),
+        ev("c", ["Velociraptor"], "Windows.Forensics.PersistenceSniper"), // no asset
+      ],
+      alias,
+    );
+    expect(byHost.get("ws-01")?.has("execution")).toBe(true);
+    expect(byHost.get("ws-01")?.has("file-activity")).toBe(false);
+    expect(byHost.get("ws-02")?.has("file-activity")).toBe(true);
+    expect(byHost.has("")).toBe(false);
+  });
+
+  it("a 'hosts' scope requires coverage on EVERY named host — a claim about two hosts is not settled by one", () => {
+    const events = [
+      ev("a", ["Velociraptor"], "Windows.Forensics.Prefetch", "ws-01"), // execution on ws-01 only
+    ];
+    const { seeds } = gateRefutedSeeds(
+      [seed("No execution on ws-01 or ws-02", "refuted", { kind: "hosts", hosts: ["ws-01", "ws-02"] })],
+      events,
+    );
+    // ws-02 has NO coverage at all, so the intersection is empty — the refutation is withheld even
+    // though ws-01 alone would have supported it.
+    expect(seeds[0].status).toBe("unknown");
+  });
+
+  it("a 'hosts' scope stands when EVERY named host has the required coverage", () => {
+    const events = [
+      ev("a", ["Velociraptor"], "Windows.Forensics.Prefetch", "ws-01"),
+      ev("b", ["Velociraptor"], "Windows.Forensics.Prefetch", "ws-02"),
+    ];
+    const { seeds } = gateRefutedSeeds(
+      [seed("No execution on ws-01 or ws-02", "refuted", { kind: "hosts", hosts: ["ws-01", "ws-02"] })],
+      events,
+    );
+    expect(seeds[0].status).toBe("refuted");
+  });
+
+  it("a genuinely 'caseWide' claim needs coverage on EVERY known host, not the old union", () => {
+    const events = [
+      ev("a", ["Velociraptor"], "Windows.Forensics.Prefetch", "ws-01"), // execution, ws-01 only
+      ev("b", ["Velociraptor"], "Windows.NTFS.MFT", "ws-02"), // file-activity, ws-02 only
+    ];
+    // The old union-based collectedEvidenceClasses(events) would contain "execution" (from ws-01),
+    // which would have wrongly left this refutation standing for a claim about the WHOLE case.
+    const { seeds } = gateRefutedSeeds(
+      [seed("No execution anywhere in the case", "refuted", { kind: "caseWide" })],
+      events,
+    );
+    expect(seeds[0].status).toBe("unknown");
+  });
+
+  it("a 'caseWide' claim falls back to the legacy union when the case has NO host-attributed events at all", () => {
+    // Several importers (e.g. KAPE's MFT/Recycle Bin mappers) do not stamp `asset` today — this is
+    // not a regression from #1110, it is today's exact behavior preserved for that gap.
+    const events = [ev("a", ["Velociraptor"], "Windows.Forensics.Prefetch")]; // no asset anywhere
+    const { seeds } = gateRefutedSeeds(
+      [seed("No execution anywhere in the case", "refuted", { kind: "caseWide" })],
+      events,
+    );
+    expect(seeds[0].status).toBe("refuted");
+  });
+
+  it("an 'unknown' scope always downgrades — fail-closed when the claim's own subject could not be established", () => {
+    // Even though the case has full execution coverage on every host, an unknown scope can never
+    // rely on it: the model's own claim-subject attribution failed, so nothing is assumed collected.
+    const events = [
+      ev("a", ["Velociraptor"], "Windows.Forensics.Prefetch", "ws-01"),
+      ev("b", ["Velociraptor"], "Windows.Forensics.Prefetch", "ws-02"),
+    ];
+    const { seeds } = gateRefutedSeeds(
+      [seed("No execution anywhere", "refuted", { kind: "unknown" })],
+      events,
+    );
+    expect(seeds[0].status).toBe("unknown");
+  });
+
+  it("a seed with no subjectScope at all behaves exactly like today's case-wide check (backward compatible)", () => {
+    const events = [ev("a", ["Velociraptor"], "Windows.Forensics.PersistenceSniper", "ws-01")];
+    const { seeds } = gateRefutedSeeds([seed("The actor installed a service for persistence")], events);
+    expect(seeds[0].status).toBe("refuted");
+  });
+
+  it("resolves differently-spelled host names through the SAME alias index on both sides", () => {
+    const alias = buildHostAliasIndex([{ hostname: "ws-01", fqdn: "ws-01.corp.local" }], {});
+    const events = [ev("a", ["Velociraptor"], "Windows.Forensics.Prefetch", "WS-01.corp.local")];
+    const { seeds } = gateRefutedSeeds(
+      [seed("No execution on ws-01", "refuted", { kind: "hosts", hosts: ["ws-01"] })],
+      events,
+      alias,
+    );
+    // Without shared alias resolution, "ws-01" (the seed's own scope) and "WS-01.corp.local" (the
+    // event's own asset) would land in different buckets and this would wrongly downgrade.
+    expect(seeds[0].status).toBe("refuted");
   });
 });
