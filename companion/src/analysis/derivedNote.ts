@@ -38,6 +38,7 @@ export const DERIVED_NOTE_NAMES: readonly string[] = [
   "ran a share-staged file",
   "service/task creation after a pipe call",
   "preceded by a service-control pipe call",
+  "flow resource attribution",
 ];
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

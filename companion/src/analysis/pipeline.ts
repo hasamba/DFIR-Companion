@@ -96,9 +96,8 @@ export class AnalysisPipeline {
    * pipeline. A boundary that has to widen the class to exist is not much of a boundary.
    *
    * This adapter closes over the permitted operations instead, so class members stay private and
-   * importers see nothing beyond what ImportContext declares. `opts` is exposed through getters
-   * rather than a snapshot because the settings-reload path rebuilds live options in place; a
-   * copy taken at construction would go stale the first time an operator saved a setting.
+   * importers see nothing beyond what ImportContext declares. `opts` is exposed through getters,
+   * not a snapshot — a copy taken at construction would go stale the first settings save.
    *
    * Down to three operations since #418 moved the two shared import tails — `noteEmptyImport` and
    * `persistPlasoParsed` — into `ingest/importState.ts`, where their only callers already live.
@@ -106,13 +105,10 @@ export class AnalysisPipeline {
   private readonly importCtx: ImportContext;
 
   /**
-   * The same adapter idea, for the AI-backed families extracted in #418.
-   *
-   * One object, several narrower views of it: `ai/caseReports.ts` takes a CaseReportContext,
-   * `ai/analystQueries.ts` an AnalystQueryContext, and so on. Each interface declares only the
-   * members that family may touch, so a report cannot reach the hypothesis store simply because
-   * hypothesisReview needs it. Live getters rather than a snapshot for the reason importCtx gives:
-   * the settings-reload path rebuilds these options in place.
+   * The same adapter idea, for the AI-backed families extracted in #418: one object, several
+   * narrower views (`ai/caseReports.ts` takes a CaseReportContext, `ai/analystQueries.ts` an
+   * AnalystQueryContext, …), each declaring only the members that family may touch. Live getters
+   * rather than a snapshot for the reason importCtx gives: settings-reload rebuilds in place.
    */
   private readonly aiCtx: CaseReportContext &
     AnalystQueryContext &
@@ -566,6 +562,10 @@ export class AnalysisPipeline {
     ...args: ImporterArgs<typeof ingest.importAzureStorageLog>
   ): Promise<InvestigationState> {
     return ingest.importAzureStorageLog(this.importCtx, ...args);
+  }
+
+  importAwsFlowLog(...args: ImporterArgs<typeof ingest.importAwsFlowLog>): Promise<InvestigationState> {
+    return ingest.importAwsFlowLog(this.importCtx, ...args);
   }
 
   async importGoogleWorkspace(

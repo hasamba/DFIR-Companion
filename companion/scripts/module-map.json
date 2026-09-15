@@ -175,6 +175,8 @@
     "azureVmssCompute.ts": "analysis/ingest",
     "azureVmssComputeRow.ts": "analysis/ingest",
     "azureVmssComputeState.ts": "analysis/ingest",
+    "awsFlowLogImport.ts": "analysis/ingest",
+    "awsFlowResourceAttribution.ts": "analysis/timeline",
     "awsIdentity.ts": "analysis/detect",
     "awsImport.ts": "analysis/ingest",
     "awsLineage.ts": "analysis/ingest",

@@ -6,6 +6,7 @@
 
 import { isObject, getCI, getPath, str, parseConcatenatedJson } from "./siemImport.js";
 import { isAzureStorageLog } from "./azureStorageLogImport.js";
+import { isAwsFlowLogLine } from "./awsFlowLogImport.js";
 import { isWerReport } from "./werImport.js";
 import { isRekallCommandList, looksLikeVolatilityText, looksLikeMemprocfsFindevil } from "./memoryImport.js";
 import { isRunEnvelopeUpload } from "./memoryRunEnvelope.js";
@@ -662,17 +663,16 @@ export function detectImportKind(filename: string, text: string): ImportKind {
     if (sample) return vrHint(detectJson(root, sample));
   }
 
-  // Linux auditd records (line-oriented `type=… msg=audit(…)`) — checked before the email/CSV/log
-  // fallback; the audit-record shape is unique enough to claim directly.
+  // Linux auditd records (`type=… msg=audit(…)`) — shape is unique enough to claim directly.
   if (isAuditd(t)) return "auditd";
 
-  // Linux/Unix shell history (.bash_history / .zsh_history / …). Recognized by the history
-  // filename or the bash `#<epoch>` / zsh extended-history content signature — checked before the
-  // generic log fallback, which an un-timestamped command list would otherwise land in.
+  // AWS VPC Flow Log default (v2) format — 14 fields, specific enough not to collide below.
+  if (isAwsFlowLogLine(t.split(/\r\n|\r|\n/, 1)[0] ?? "")) return "awsflowlog";
+
+  // Linux/Unix shell history — by filename, or the bash `#<epoch>`/zsh extended-history signature.
   if (looksLikeBashHistory(filename, t)) return "bashhistory";
 
-  // Email artifact (.eml RFC 822 header block, or a best-effort .msg) — checked before the
-  // CSV/log fallback so a header-block email isn't mistaken for a line-oriented log.
+  // Email artifact (.eml RFC 822 header, or a best-effort .msg) — before the CSV/log fallback.
   if (isEmail(filename, t)) return "email";
 
   // MemProcFS `findevil` report — a space-separated finding table (# PID Process Type Address Desc).
