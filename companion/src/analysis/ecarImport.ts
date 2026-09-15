@@ -47,6 +47,7 @@ import {
 import { reconTechniques } from "./reconTechniques.js";
 import { tradecraftSignal } from "./tradecraftRules.js";
 import { secretSpillSignal } from "./secretSpillRules.js";
+import { sprayPatternRows, type SprayCandidate } from "./passwordSprayFanout.js";
 
 type Row = Record<string, unknown>;
 
@@ -488,6 +489,38 @@ export function parseEcarJson(text: string, opts: EcarImportOptions = {}): EcarP
     if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
     const m = mapEcarRecord(r, sink);
     if (m) mapped.push(canonicalizeEcarRecord(r, m, recordIndex));
+  }
+
+  // Password-spray fan-out (930.5, #1086, #1100 item 1): built over `mapped` BEFORE
+  // aggregateEvents folds distinct accounts from one source/host into one counted row — the
+  // per-record account and timestamp this needs would not survive that fold. A candidate is
+  // only ever built from a logon record that carries both a real account and a real source IP.
+  const sprayCandidates: SprayCandidate[] = [];
+  for (const m of mapped) {
+    if (m.canonical?.event.type !== "logon") continue;
+    const account = m.canonical.account?.name;
+    const host = m.canonical.target?.name;
+    const outcome = m.canonical.event.outcome;
+    const locator = m.canonical.evidence.rawRecords[0]?.locator;
+    if (!account || !host || !m.srcIp || !m.timestamp || !locator) continue;
+    if (outcome !== "failed" && outcome !== "success") continue;
+    sprayCandidates.push({
+      timestamp: m.timestamp,
+      account,
+      sourceIp: m.srcIp,
+      hostOrTenant: host,
+      outcome,
+      locator,
+    });
+  }
+  if (sprayCandidates.length) {
+    mapped.push(
+      ...sprayPatternRows(sprayCandidates, {
+        source: ECAR_SOURCE,
+        importer: "ecar",
+        mappingVersion: "ecar-spray-v1",
+      }),
+    );
   }
 
   const { events, groups } = aggregateEvents(mapped, {

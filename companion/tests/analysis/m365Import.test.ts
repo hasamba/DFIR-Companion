@@ -951,3 +951,41 @@ describe("parseM365Audit — Exchange mailbox records (#931 item 2)", () => {
     expect(d).toContain("effective conditions and actions not in this record");
   });
 });
+
+describe("parseM365Audit — password-spray fan-out (931.3, #1086)", () => {
+  function failedSignin(upn: string, offsetMinutes: number) {
+    return signinRec({
+      userPrincipalName: upn,
+      createdDateTime: `2023-05-02T08:${String(10 + offsetMinutes).padStart(2, "0")}:00Z`,
+      status: { errorCode: 50126 },
+      resourceTenantId: "tenant-a",
+    });
+  }
+
+  it("emits a spray-pattern row when one IP fails against 5+ distinct UPNs", () => {
+    const accounts = [
+      "alice@victim.com",
+      "bob@victim.com",
+      "carol@victim.com",
+      "dave@victim.com",
+      "erin@victim.com",
+    ];
+    const records = accounts.map((upn, i) => failedSignin(upn, i));
+    const r = parseM365Audit(JSON.stringify(records));
+    const spray = r.events.find((e) => e.mitreTechniques.includes("T1110.003"));
+    expect(spray).toBeDefined();
+    expect(spray!.description).toContain("Password-spray pattern");
+  });
+
+  it("does not emit a spray row for one account repeatedly failing sign-in", () => {
+    const records = Array.from({ length: 5 }, (_, i) => failedSignin("alice@victim.com", i));
+    const r = parseM365Audit(JSON.stringify(records));
+    expect(r.events.some((e) => e.mitreTechniques.includes("T1110.003"))).toBe(false);
+  });
+
+  it("mapSignIn's own row still carries a canonical envelope with account.name = upn", () => {
+    const r = parseM365Audit(JSON.stringify([signinRec({ status: { errorCode: 0 } })]));
+    expect(r.events[0].canonical?.account?.name).toBe("v@victim.com");
+    expect(r.events[0].canonical?.event.category).toBe("authentication");
+  });
+});

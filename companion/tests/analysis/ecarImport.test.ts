@@ -182,3 +182,32 @@ describe("parseEcarJson — aggregation collapses repetitive flows", () => {
     expect(r.events[0].count).toBe(3);
   });
 });
+
+describe("parseEcarJson — password-spray fan-out (930.5, #1086)", () => {
+  function loginRec(principal: string, offsetMs: number, srcIp = "10.44.30.10") {
+    return {
+      timestamp_ms: 1715688049745 + offsetMs,
+      id: "00000000-0000-0000-0000-000000000000",
+      hostname: "WEB-BO-01",
+      object: "USER_SESSION",
+      action: "LOGIN",
+      principal,
+      properties: { src_ip: srcIp, outcome: "failure", logon_type: "3", failure_reason: "bad password" },
+    };
+  }
+
+  it("emits a spray-pattern row when one source fails 5+ distinct accounts", () => {
+    const logins = ["alice", "bob", "carol", "dave", "erin"].map((a, i) => loginRec(a, i * 1000));
+    const r = parseEcarJson(ndjson(...logins));
+    const spray = r.events.find((e) => e.mitreTechniques.includes("T1110.003"));
+    expect(spray).toBeDefined();
+    expect(spray!.description).toContain("Password-spray pattern");
+    expect(spray!.sources).toEqual([ECAR_SOURCE]);
+  });
+
+  it("does not emit a spray row for one account repeatedly failing", () => {
+    const logins = Array.from({ length: 5 }, (_, i) => loginRec("alice", i * 1000));
+    const r = parseEcarJson(ndjson(...logins));
+    expect(r.events.some((e) => e.mitreTechniques.includes("T1110.003"))).toBe(false);
+  });
+});
