@@ -4,6 +4,14 @@ import {
   isBulkExtractorUrlFeatureFile,
   MAX_ROWS_SCANNED,
 } from "../../src/analysis/bulkExtractorUrlImport.js";
+import type { RecoveryCitation } from "../../src/analysis/canonicalRecoveredFragment.js";
+
+// Narrows the `parsed` discriminated union so `.rootOffset`/`.path` are legal to read below —
+// asserts at runtime too, so a citation that silently stopped parsing fails loudly, not with a
+// confusing "property does not exist" at some unrelated line.
+function assertParsed(c: RecoveryCitation): asserts c is Extract<RecoveryCitation, { parsed: true }> {
+  expect(c.parsed).toBe(true);
+}
 
 // A real header block from a public bulk_extractor 2.0.0 url.txt output (frankwxu/digital-
 // forensics-lab on GitHub, fetched live), with fake-but-plausible rows.
@@ -86,7 +94,7 @@ describe("parseBulkExtractorUrl — a direct (zero-hop) row", () => {
   it("records a direct read (no decode hops) as parsed with an empty path", () => {
     const r = parseBulkExtractorUrl(makeFile([DIRECT_ROW]))!;
     const c = r.events[0].canonical!.recoveredFragment!.citations[0];
-    expect(c.parsed).toBe(true);
+    assertParsed(c);
     expect(c.rootOffset).toBe(48198832);
     expect(c.path).toEqual([]);
   });
@@ -103,7 +111,7 @@ describe("parseBulkExtractorUrl — recursive forensic-path parsing", () => {
   it("parses a single GZIP hop", () => {
     const r = parseBulkExtractorUrl(makeFile([GZIP_ROW]))!;
     const c = r.events[0].canonical!.recoveredFragment!.citations[0];
-    expect(c.parsed).toBe(true);
+    assertParsed(c);
     expect(c.rootOffset).toBe(33114112);
     expect(c.path).toEqual([{ method: "GZIP", offset: 1296869 }]);
   });
@@ -111,7 +119,7 @@ describe("parseBulkExtractorUrl — recursive forensic-path parsing", () => {
   it("parses an alphanumeric method (BASE64) — regression for Codex design review finding #5", () => {
     const r = parseBulkExtractorUrl(makeFile([BASE64_ROW]))!;
     const c = r.events[0].canonical!.recoveredFragment!.citations[0];
-    expect(c.parsed).toBe(true);
+    assertParsed(c);
     expect(c.path).toEqual([{ method: "BASE64", offset: 42 }]);
   });
 
@@ -119,7 +127,7 @@ describe("parseBulkExtractorUrl — recursive forensic-path parsing", () => {
     const chained = "16-GZIP-32-BASE64-64\thttps://chain.example.com/x\tctx";
     const r = parseBulkExtractorUrl(makeFile([chained]))!;
     const c = r.events[0].canonical!.recoveredFragment!.citations[0];
-    expect(c.parsed).toBe(true);
+    assertParsed(c);
     expect(c.path).toEqual([
       { method: "GZIP", offset: 32 },
       { method: "BASE64", offset: 64 },
@@ -132,7 +140,6 @@ describe("parseBulkExtractorUrl — recursive forensic-path parsing", () => {
     const c = r.events[0].canonical!.recoveredFragment!.citations[0];
     expect(c.parsed).toBe(false);
     expect(c.rawOffset).toBe("16-GZIP");
-    expect(c.rootOffset).toBeUndefined();
   });
 
   it("does not structurally parse a chain deeper than the hop cap, but keeps the raw string", () => {
