@@ -7,12 +7,19 @@
 // and the upload's own coverage the absence lines rest on. Kept beside canonicalEvent.ts so the
 // envelope schema stays within its size bound.
 //
-// Narrower than the AWS envelope by design (#1066's own design-round-1 review): no firewall/tag
-// join (a firewall with no target tags applies network-wide, and instance tags are mutable after
-// launch — see #1073) and no attribution stronger than "recorded from the attached email" for the
-// service-account session (a GCP service-account email is not bound to one instance the way an
-// AWS instance-role session ARN is; the same email may be attached elsewhere this upload cannot
-// see).
+// Narrower than the AWS envelope by design. No attribution stronger than "recorded from the
+// attached email" for the service-account session (#1066's own design-round-1 review — a GCP
+// service-account email is not bound to one instance the way an AWS instance-role session ARN is;
+// the same email may be attached elsewhere this upload cannot see). The firewall join (#1073) is
+// deliberately narrow: only an insert/update rule naming NEITHER target tags NOR target service
+// accounts (GCP's own documented "applies to every instance on the network" default) joins, by
+// EXACT literal network-string match — never a `firewalls.patch` (a partial update whose absent
+// fields this stateless decoder cannot read as "confirmed absent"), never a tag- or
+// service-account-targeted rule (that correlation needs an instance-identity match this join does
+// not attempt), and never a cross-project Shared-VPC match (a mismatched project token in the two
+// records' own network strings simply does not join). The instance side only ever considers its
+// FIRST network interface (#1066's own launch capture); a second interface on a different network
+// is not covered.
 
 import { z } from "zod";
 
@@ -65,6 +72,7 @@ export const gcpComputeFactKinds = [
   "metadata-replaced",
   "service-account-attached",
   "session-privileged-change",
+  "any-address-firewall-rule",
 ] as const;
 
 export const gcpComputeBlockSchema = z.object({
@@ -85,7 +93,7 @@ export const gcpComputeBlockSchema = z.object({
   notCited: z.number().int().nonnegative(),
   coverage: z.object({ records: z.number().int().nonnegative(), first: z.string(), last: z.string() }),
   basis: z.literal(
-    "records of this upload only; joined through the instance's resource name; what ran on the instance and its network egress are not in this case's GCP Cloud Audit Log exports; no firewall/tag join is made and an attached email is never claimed unique to this instance — see #1073",
+    "records of this upload only; joined through the instance's resource name; what ran on the instance and its network egress are not in this case's GCP Cloud Audit Log exports; the firewall join covers only the network-wide (no target tags or service accounts) case, by exact network-string match on the instance's first network interface, and an attached email is never claimed unique to this instance — see #1073, #1077, #1078",
   ),
 });
 

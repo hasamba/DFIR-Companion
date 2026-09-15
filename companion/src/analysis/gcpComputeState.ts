@@ -25,10 +25,10 @@ export const NAME_MAX = 80;
 export const DESCRIPTION_MAX = 1400;
 export const RANK: Record<Severity, number> = { Critical: 4, High: 3, Medium: 2, Low: 1, Info: 0 };
 export const LIMIT_NOTE =
-  "what ran on the instance and its network egress are not in this case's GCP Cloud Audit Log exports; no firewall/tag join is made and an attached email is never claimed unique to this instance — see #1073";
+  "what ran on the instance and its network egress are not in this case's GCP Cloud Audit Log exports; the firewall join covers only the network-wide (no target tags or service accounts) case, by exact network-string match on the instance's first network interface, and an attached email is never claimed unique to this instance — see #1073, #1077, #1078";
 export const COVERAGE_NOTE = "record retention and export filtering are not in this evidence";
 export const BASIS =
-  "records of this upload only; joined through the instance's resource name; what ran on the instance and its network egress are not in this case's GCP Cloud Audit Log exports; no firewall/tag join is made and an attached email is never claimed unique to this instance — see #1073";
+  "records of this upload only; joined through the instance's resource name; what ran on the instance and its network egress are not in this case's GCP Cloud Audit Log exports; the firewall join covers only the network-wide (no target tags or service accounts) case, by exact network-string match on the instance's first network interface, and an attached email is never claimed unique to this instance — see #1073, #1077, #1078";
 /** The full documented GCE resourceName shape — `projectRefOf` (gcpIdentity.ts) parses only the leading scope, not this tail. */
 const INSTANCE_RESOURCE_NAME = /^projects\/([^/]+)\/zones\/([^/]+)\/instances\/([^/]+)$/i;
 export const FACT_WORDS: Record<GcpComputeFact, string> = {
@@ -36,11 +36,14 @@ export const FACT_WORDS: Record<GcpComputeFact, string> = {
   "service-account-attached": "service account recorded as attached to the instance",
   "session-privileged-change":
     "a call from the attached service account matched a High entry in the shared GCP_RULES table (not necessarily the record's own final imported severity)",
+  "any-address-firewall-rule":
+    "a firewall rule matching this instance's network, with no target restriction, was recorded allowing all sources (competing deny rules, hierarchical firewall policies, and protocol/port scoping are not evaluated by this join)",
 };
 export const FACT_MITRE: Record<GcpComputeFact, string> = {
   "metadata-replaced": "T1578.005",
   "service-account-attached": "T1098.001",
   "session-privileged-change": "T1098",
+  "any-address-firewall-rule": "T1562.007",
 };
 
 const FORMAT_CHARS = /[\u200b-\u200f\u2028-\u202e\u2060-\u2064\ufeff]/g;
