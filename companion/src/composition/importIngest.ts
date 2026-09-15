@@ -204,6 +204,8 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         return observe(pipeline.importM365(caseId, text, base));
       case "okta":
         return observe(pipeline.importOkta(caseId, text, base));
+      case "azurestoragelog":
+        return observe(pipeline.importAzureStorageLog(caseId, text, base));
       case "gws":
         return observe(pipeline.importGoogleWorkspace(caseId, text, base));
       case "hindsight":

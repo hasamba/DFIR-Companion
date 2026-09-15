@@ -170,6 +170,8 @@
     "azureCompute.ts": "analysis/ingest",
     "azureComputeRow.ts": "analysis/ingest",
     "azureComputeState.ts": "analysis/ingest",
+    "azureStorageKeyToRead.ts": "analysis/timeline",
+    "azureStorageLogImport.ts": "analysis/ingest",
     "azureVmssCompute.ts": "analysis/ingest",
     "azureVmssComputeRow.ts": "analysis/ingest",
     "azureVmssComputeState.ts": "analysis/ingest",

@@ -75,6 +75,35 @@ describe("readCloudRecord", () => {
     expect(readCloudRecord(e)).toBeNull();
   });
 
+  it("ignores a read with neither a principal nor a credential", () => {
+    const e = {
+      ...read({}),
+      description: "",
+      canonical: { event: { action: "GetObject" }, cloud: {} },
+    };
+    expect(readCloudRecord(e as unknown as ForensicEvent)).toBeNull();
+  });
+
+  // #931 item 4: Account Key / SAS-authenticated reads carry no actor at all. credentialId is
+  // already a first-class dimension of groupKey() — a credential-only identity must still be
+  // read, not dropped.
+  it("reads a credential-only record (Account Key / SAS auth, no actor) by its credentialId", () => {
+    const e = {
+      ...read({}),
+      description: "",
+      canonical: {
+        event: { action: "get blob" },
+        cloud: { resource: "acct1/cont1/obj1" },
+        authentication: { credentialId: "key1(deadbeef...)" },
+      },
+    };
+    const r = readCloudRecord(e as unknown as ForensicEvent);
+    expect(r?.principal).toBe("");
+    expect(r?.credentialId).toBe("key1(deadbeef...)");
+    expect(r?.container).toBe("acct1");
+    expect(r?.object).toBe("cont1/obj1");
+  });
+
   it("falls back to the importer's description format when there is no envelope", () => {
     const e = {
       id: "x1",
