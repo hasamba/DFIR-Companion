@@ -12,8 +12,16 @@ export type AcquisitionTool = (typeof acquisitionTools)[number];
 export const acquisitionLogKinds = ["copied", "skipped"] as const;
 export type AcquisitionLogKind = (typeof acquisitionLogKinds)[number];
 
+/** KAPE's own documented, closed vocabulary for why it did not copy a file — a row whose own
+ * `Reason` value is anything else is counted as malformed, never trusted (#932 item 1, Codex code
+ * review finding #6). */
+export const acquisitionSkipReasons = ["Excluded", "Deduped"] as const;
+export type AcquisitionSkipReason = (typeof acquisitionSkipReasons)[number];
+
 export const acquisitionFactSchema = z.object({
-  /** The source path this log named — never the destination, which is this case's own storage. */
+  /** The source path this log named — never the destination, which is this case's own storage.
+   * Kept in FULL, never clipped: this is stored evidence, not display text (#932 item 1, Codex
+   * code review finding #4). */
   sourceFile: z.string(),
   /** The source file's own hash, as the tool recorded it — never verified against a destination
    * re-hash by this block (the tool's own log does not record one). */
@@ -21,8 +29,8 @@ export const acquisitionFactSchema = z.object({
   fileSize: z.number().int().nonnegative().optional(),
   /** copylog only: the tool fell back to a raw-disk read because the source was locked. */
   deferredCopy: z.boolean().optional(),
-  /** skiplog only: why the tool did not copy this file, in the tool's own vocabulary. */
-  reason: z.string().optional(),
+  /** skiplog only: why the tool did not copy this file, in the tool's own closed vocabulary. */
+  reason: z.enum(acquisitionSkipReasons).optional(),
 });
 export type AcquisitionFact = z.infer<typeof acquisitionFactSchema>;
 
@@ -37,10 +45,11 @@ export const acquisitionCoverageBlockSchema = z.object({
   malformedRows: z.number().int().nonnegative(),
   /** copylog only: the earliest/latest CopiedTimestamp across this log's own rows. */
   coverage: z.object({ first: z.string(), last: z.string() }).optional(),
-  /** Always this exact sentence: the hash this block carries is the SOURCE file's own hash, not
-   * a container/disk-image hash, and this log does not verify a destination copy against it. */
+  /** Always this exact sentence: the hash this block carries, when recorded, is the SOURCE
+   * file's own hash — never a container/disk-image hash, and this log does not verify a
+   * destination copy against it. */
   basis: z.literal(
-    "each file's own SHA-1, recorded at the source by the acquisition tool; not a container or disk-image hash, and this log does not verify the destination copy against it",
+    "each file's own SHA-1, when recorded at the source by the acquisition tool; not a container or disk-image hash, and this log does not verify the destination copy against it",
   ),
 });
 export type AcquisitionCoverageBlock = z.infer<typeof acquisitionCoverageBlockSchema>;

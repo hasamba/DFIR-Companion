@@ -601,13 +601,14 @@ describe("detectImportKind — CSV formats", () => {
       detectImportKind("20240501_copylog.csv", `${header}\nt,c:/a,d:/a,1,abc,false,t,t,t,00:00:01`),
     ).toBe("kape");
   });
-  it("kape: acquisition skiplog (#932 item 1) — requires the Reason vocabulary, not just the header", () => {
+  it("kape: acquisition skiplog (#932 item 1) — the full documented header, header-only detection matching copylog's own convention", () => {
     expect(
       detectImportKind("20240501_skiplog.csv", "SourceFile,SourceFileSha1,Reason\nc:/a,abc,Excluded"),
     ).toBe("kape");
-    expect(
-      detectImportKind("inventory.csv", "SourceFile,SourceFileSha1,Reason\nc:/a,abc,Manual review"),
-    ).not.toBe("kape");
+    // An empty (header-only) skiplog is a valid match too — the Reason vocabulary is validated
+    // during the actual scan (kapeAcquisitionLog.test.ts), never at detection time (Codex code
+    // review finding #6: sampling rows at detection time rejected a genuinely empty skiplog).
+    expect(detectImportKind("20240501_skiplog.csv", "SourceFile,SourceFileSha1,Reason")).toBe("kape");
   });
   it("#28: a generic CSV with only path + lastmodifiedtimeutc (no ShimCache discriminator) falls through to the AI CSV importer, not kape", () => {
     // Previously kapeSig's loose ShimCache branch claimed it as kape; parseKapeCsv found no

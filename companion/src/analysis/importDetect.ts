@@ -535,7 +535,7 @@ function detectCsv(text: string, filename: string): ImportKind {
   if (cybertriageCsvSig(h)) return "cybertriage";
   if (plasoSig(h)) return "plaso";
   if (hayabusaCsvSig(h)) return "hayabusa";
-  if (kapeSig(h) || isKapeCopyLog(headers) || isKapeSkipLog(headers, rows)) return "kape";
+  if (kapeSig(h) || isKapeCopyLog(headers) || isKapeSkipLog(headers)) return "kape";
   if (memprocfsTimelineCsvSig(h)) return "memory";
   if (memprocfsYaraCsvSig(h)) return "memory";
   if (memprocfsFindevilCsvSig(h)) return "memory";

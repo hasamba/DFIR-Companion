@@ -1,5 +1,7 @@
 // #932 item 1: KAPE's own acquisition provenance (_copylog.csv / _skiplog.csv), read as facts —
 // never wired into refutation reasoning (see #1101 for that separate, larger follow-on).
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, it, expect } from "vitest";
 import { parseKapeCsv } from "../../src/analysis/kapeImport.js";
 import {
@@ -39,10 +41,9 @@ describe("isKapeCopyLog / isKapeSkipLog — strict, full-header signatures", () 
     expect(isKapeCopyLog(["SourceFile", "SourceFileSha1", "DestinationFile"])).toBe(false);
   });
 
-  it("requires all skiplog columns AND a Reason vocabulary sample — an unrelated 3-column inventory is never claimed", () => {
-    const rows = [["C:\\a", "abc", "Excluded"]];
-    expect(isKapeSkipLog(SKIPLOG_HEADER, rows)).toBe(true);
-    expect(isKapeSkipLog(SKIPLOG_HEADER, [["C:\\a", "abc", "Manual review"]])).toBe(false);
+  it("requires all documented skiplog columns — header-only, matching copylog's own detection convention (#932 item 1, Codex code review finding #6: a row-value sample rejected a valid EMPTY skiplog, inconsistent with copylog)", () => {
+    expect(isKapeSkipLog(SKIPLOG_HEADER)).toBe(true);
+    expect(isKapeSkipLog(["SourceFile", "SourceFileSha1"])).toBe(false);
   });
 });
 
@@ -139,6 +140,85 @@ describe("parseKapeAcquisitionLog — skiplog", () => {
     const r = parseKapeCsv(text);
     expect(r.events[0].description).not.toContain("copied");
     expect(r.events[0].description).toContain("skipped");
+  });
+});
+
+describe("Codex code round 1 fixes", () => {
+  it("an unrecognized Reason value is counted as malformed, never silently trusted (finding #6)", () => {
+    const text = csv(SKIPLOG_HEADER, [
+      ["C:\\a.pf", "aaa", "Excluded"],
+      ["C:\\b.pf", "bbb", "Manual review"],
+    ]);
+    const r = parseKapeCsv(text);
+    const e = r.events[0];
+    expect(e.description).toContain("KAPE acquisition: 1 file(s) skipped");
+    expect(e.description).toContain("1 row(s) in this log named no source file or no recognized reason");
+    const block = env(e).acquisitionCoverage;
+    expect(block?.malformedRows).toBe(1);
+    expect(block?.facts).toHaveLength(1);
+  });
+
+  it("two distinct skiplogs with IDENTICAL resulting counts never produce colliding (timestamp, description) pairs — correlate.ts's own exact-duplicate merge would otherwise fold one's facts into the other's (finding #2)", () => {
+    const a = csv(SKIPLOG_HEADER, [["C:\\a.pf", "aaa", "Excluded"]]);
+    const b = csv(SKIPLOG_HEADER, [["C:\\b.pf", "bbb", "Excluded"]]);
+    const ra = parseKapeCsv(a).events[0];
+    const rb = parseKapeCsv(b).events[0];
+    // Same shape of description (same count, same reason breakdown) — the content fingerprint is
+    // what must differ, since both logs otherwise render identically.
+    expect(ra.description).not.toBe(rb.description);
+    expect(ra.aggKey).not.toBe(rb.aggKey);
+  });
+
+  it("deferred/reason counts are accurate beyond the 256-fact citation cap — accumulated over EVERY valid row, not just the cited sample (finding #3)", () => {
+    const rows = Array.from({ length: 257 }, (_, i) => [
+      `C:\\f${i}.pf`,
+      "h",
+      i === 256 ? "Deduped" : "Excluded",
+    ]);
+    const text = csv(SKIPLOG_HEADER, rows);
+    const r = parseKapeCsv(text);
+    const e = r.events[0];
+    expect(e.description).toContain("256 Excluded");
+    expect(e.description).toContain("1 Deduped");
+    const block = env(e).acquisitionCoverage;
+    expect(block?.facts).toHaveLength(256);
+    expect(block?.notCited).toBe(1);
+  });
+
+  it("a source path is never truncated in canonical evidence, however long", () => {
+    const longPath = `C:\\${"a".repeat(300)}\\file.pf`;
+    const text = csv(COPYLOG_HEADER, [
+      ["2024-05-01T09:00:00Z", longPath, "d:/out", "1", "abc", "false", "", "", "", "00:00:01"],
+    ]);
+    const r = parseKapeCsv(text);
+    const block = env(r.events[0]).acquisitionCoverage;
+    expect(block?.facts[0].sourceFile).toBe(longPath);
+  });
+
+  it("a log with rows but zero valid facts extracted is 'unknown' outcome, never claimed as a successful acquisition (finding #7)", () => {
+    const text = csv(COPYLOG_HEADER, [["", "", "", "", "", "", "", "", "", ""]]);
+    const r = parseKapeCsv(text);
+    const e = r.events[0];
+    expect(env(e).event.outcome).toBe("unknown");
+  });
+
+  it("parsing a large existing artifact CSV never double-parses via the acquisition-log check (finding #5) — Prefetch routing still works and returns the same result as calling parseCsv once", () => {
+    const text = csv(
+      ["SourceFilename", "ExecutableName", "Hash", "Size", "RunCount", "LastRun", "PreviousRun0"],
+      [["C:\\Windows\\Prefetch\\A.EXE-1.pf", "A.EXE", "AAAA", "1", "1", "2023-04-01 10:00:00", ""]],
+    );
+    const r = parseKapeCsv(text);
+    expect(r.artifact).toBe("Prefetch");
+    expect(r.events).toHaveLength(1);
+  });
+
+  it("no DEFAULT tag rule matches this row's own source/description, so it never gets promoted out of Info by the standard tagger without an analyst-authored rule (finding #1 — a shared, pre-existing property of every Info-severity importer, not unique to this one)", () => {
+    const text = csv(SKIPLOG_HEADER, [["C:\\a.pf", "aaa", "Excluded"]]);
+    const e = parseKapeCsv(text).events[0];
+    const tagsYaml = readFileSync(join(process.cwd(), "data", "tags.yaml"), "utf8").toLowerCase();
+    expect(tagsYaml).not.toContain("kape");
+    expect(tagsYaml).not.toContain("acquisition");
+    void e;
   });
 });
 
