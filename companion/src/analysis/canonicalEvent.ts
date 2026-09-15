@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { ForensicEvent } from "./stateTypes.js";
 import { transferBlockSchema, webBlockSchema } from "./canonicalWeb.js";
+import { smbBlockSchema } from "./canonicalSmb.js";
 import { dnsBlockSchema } from "./canonicalDns.js";
 import { tlsGraphBlockSchema } from "./canonicalTls.js";
 import { quarantineAttributeBlockSchema, quarantineBlockSchema } from "./canonicalQuarantine.js";
@@ -317,6 +318,8 @@ export const canonicalEventEnvelopeSchema = z.object({
   // establishes through shared identifiers (canonicalWeb.ts, #993).
   web: webBlockSchema.optional(),
   transfer: transferBlockSchema.optional(),
+  // One SMB operation as Suricata's `smb` event logged it (canonicalSmb.ts, #1085 / #933 item 4).
+  smb: smbBlockSchema.optional(),
   registry: z
     .object({
       key: z.string().optional(),
