@@ -239,30 +239,61 @@ export function collectedEvidenceClasses(events: readonly ForensicEvent[]): Set<
   return found;
 }
 
-// Apply the gate. A `refuted` seed whose claim needs an evidence class the collection does not cover
-// becomes `unknown`, with the missing class named in its description so the analyst knows exactly
-// what to collect to settle it. Everything else passes through untouched.
+// One analyst attestation, as gateRefutedSeeds needs it to write an honest disclosure (#1111) —
+// deliberately NOT importing EvidenceAttestationStore's own richer type here: this file stays a
+// pure function of plain data, with no store dependency, matching every other input it takes.
+export interface AttestedEvidenceClass {
+  confirmedBy: string;
+  confirmedAt: string;
+  reason: string;
+}
+
+// Apply the gate. A `refuted` seed whose claim needs an evidence class neither the collection nor
+// an analyst's own attestation covers becomes `unknown`, with the missing class named so the
+// analyst knows exactly what to collect or attest to settle it. Everything else passes through
+// untouched — EXCEPT a refutation that stands ONLY because of an attestation (not automatic
+// detection), which gets an honest disclosure appended rather than looking identically "clean" to
+// one resting on hard evidence (#1111's own guardrail: a refutation must never hide that a human's
+// own say-so, not an importer, is what kept it standing).
 export function gateRefutedSeeds(
   seeds: readonly HypothesisSeed[],
   collected: ReadonlySet<EvidenceClass>,
+  attested: ReadonlyMap<EvidenceClass, AttestedEvidenceClass> = new Map(),
 ): GateRefutedResult {
   const downgraded: GatedRefutation[] = [];
   const out = seeds.map((seed) => {
     if (seed.status !== "refuted") return seed;
     const required = requiredEvidenceClasses(`${seed.title} ${seed.description}`);
-    const missing = required.filter((c) => !collected.has(c));
-    if (missing.length === 0) return seed;
-    downgraded.push({ sourceKey: seed.sourceKey, title: seed.title, missing });
-    const list = missing.join(" and ");
+    // Attestation can only ADD coverage on top of automatic detection, never remove it — it can
+    // only let a refutation stand that automatic detection alone would have withheld, and only
+    // for a class an identified analyst explicitly vouched for.
+    const effectivelyCollected = (c: EvidenceClass): boolean => collected.has(c) || attested.has(c);
+    const missing = required.filter((c) => !effectivelyCollected(c));
+    if (missing.length > 0) {
+      downgraded.push({ sourceKey: seed.sourceKey, title: seed.title, missing });
+      const list = missing.join(" and ");
+      const note =
+        `Refutation withheld: settling this claim needs ${list} evidence, and no source of that kind was ` +
+        `collected — so the absence of supporting artifacts is a fact about the collection, not about the ` +
+        `host. Collect ${list} coverage for the relevant window, then re-assess.`;
+      return {
+        ...seed,
+        status: "unknown" as const,
+        description: seed.description ? `${seed.description} ${note}` : note,
+      };
+    }
+    // Standing, but check whether an ATTESTATION (not automatic detection) is load-bearing for any
+    // required class — that must be disclosed even though the refutation itself is not downgraded.
+    const attestedOnly = required.filter((c) => !collected.has(c) && attested.has(c));
+    if (attestedOnly.length === 0) return seed;
+    const disclosures = attestedOnly.map((c) => {
+      const a = attested.get(c)!;
+      return `${c} (attested by ${a.confirmedBy} on ${a.confirmedAt}: ${a.reason})`;
+    });
     const note =
-      `Refutation withheld: settling this claim needs ${list} evidence, and no source of that kind was ` +
-      `collected — so the absence of supporting artifacts is a fact about the collection, not about the ` +
-      `host. Collect ${list} coverage for the relevant window, then re-assess.`;
-    return {
-      ...seed,
-      status: "unknown" as const,
-      description: seed.description ? `${seed.description} ${note}` : note,
-    };
+      `This refutation relies on analyst-attested coverage, not automatically observed evidence, ` +
+      `for: ${disclosures.join("; ")}.`;
+    return { ...seed, description: seed.description ? `${seed.description} ${note}` : note };
   });
   return { seeds: out, downgraded };
 }

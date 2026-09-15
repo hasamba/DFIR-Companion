@@ -29,6 +29,7 @@ import { contextTokens as resolveContextTokens } from "../analysis/promptBudget.
 import { FalsePositiveStore } from "../analysis/falsePositive.js";
 import { AssetOverridesStore } from "../analysis/assetOverrides.js";
 import { HostDuplicateDismissalStore } from "../analysis/hostDuplicateDismissals.js";
+import { EvidenceAttestationStore } from "../analysis/evidenceAttestationStore.js";
 import { ScopeStore } from "../analysis/scope.js";
 import { AnonControlStore } from "../analysis/anonControl.js";
 import { CustomEntitiesStore } from "../analysis/anonEntities.js";
@@ -215,6 +216,9 @@ export interface RuntimePipelineParams {
   hostDuplicateDismissalStore?: ConstructorParameters<
     typeof AnalysisPipelineImpl
   >[0]["hostDuplicateDismissalStore"];
+  evidenceAttestationStore?: ConstructorParameters<
+    typeof AnalysisPipelineImpl
+  >[0]["evidenceAttestationStore"];
 }
 
 export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPipelineImpl {
@@ -234,6 +238,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     velociraptorClientStore: params.velociraptorClientStore,
     hostDuplicateDismissalStore:
       params.hostDuplicateDismissalStore ?? new HostDuplicateDismissalStore(params.store),
+    evidenceAttestationStore: params.evidenceAttestationStore ?? new EvidenceAttestationStore(params.store),
     imageLoader: params.imageLoader ?? makeImageLoader(params.store),
     onState: params.onState,
     onSynth: params.onSynth,

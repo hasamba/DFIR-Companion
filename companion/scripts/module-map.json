@@ -295,6 +295,7 @@
     "eventAggregate.ts": "analysis/ingest",
     "eventRelevance.ts": "analysis/findings",
     "eventTechniques.ts": "analysis/timeline",
+    "evidenceAttestationStore.ts": "analysis/ai",
     "evidenceGraph.ts": "analysis/detect",
     "evtxRecordId.ts": "analysis/ingest",
     "evtxXmlImport.ts": "analysis/ingest",

@@ -81,6 +81,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-backup.js": "application/javascript; charset=utf-8",
   "/js/dashboard-collection-plan.js": "application/javascript; charset=utf-8",
   "/js/dashboard-host-scope.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-evidence-attestation.js": "application/javascript; charset=utf-8",
   "/js/dashboard-tickets.js": "application/javascript; charset=utf-8",
   // The first whole FEATURE module of #415 tier 3, as opposed to the pure-helper modules above.
   "/js/dashboard-tagger.js": "application/javascript; charset=utf-8",
