@@ -199,10 +199,14 @@ describe("parseCloudActivity — Azure remote execution", () => {
     const r = parseCloudActivity(
       JSON.stringify([vmss, other, azure("Microsoft.Compute/virtualMachines/runCommand/action")]),
     );
-    // 3 per-record rows + 2 compute-lifecycle summary rows (#1066: vm1 and vm2 each have a
-    // remote-access-request fact; the VMSS member is out of scope, #1073, so it adds none).
-    expect(r.events).toHaveLength(5);
+    // 3 per-record rows + 2 standalone compute-lifecycle summary rows (#1066: vm1 and vm2 each
+    // have a remote-access-request fact) + 1 VMSS compute-lifecycle summary row (#1078: the
+    // Uniform-mode member web/0 has a remote-access-request fact too, now that #1078 tracks it).
+    expect(r.events).toHaveLength(6);
     expect(r.events.some((e) => e.description.includes("→ web/0 —"))).toBe(true);
+    expect(
+      r.events.some((e) => e.description.startsWith("Azure VMSS compute lifecycle: 0 (scale set web")),
+    ).toBe(true);
   });
   it("two executions with no resource id stay two rows, keyed on their record ids", () => {
     const a = azure("Microsoft.Compute/virtualMachines/runCommand/action", {

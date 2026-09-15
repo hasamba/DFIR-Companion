@@ -7,12 +7,18 @@
 // recorded facts the grade counts, and the upload's own coverage the absence lines rest on. Kept
 // beside canonicalEvent.ts so the envelope schema stays within its size bound.
 //
-// Narrower than the AWS envelope by design. No VM-scale-set support: a VMSS member can be
-// platform-created with no per-member write record, and needs its own discriminated identity
-// model — see #1078. The network-security-group join (#1077) covers only a direct NIC attachment
-// or its subnet's own attachment, resolved AS OF the rule-write's own time (never the VM's launch
-// time or the record's own present) — see canonicalAzureCompute's own basis sentence and
-// RECOMMENDATION-1077.md for the full design.
+// Narrower than the AWS envelope by design. The network-security-group join (#1077) covers only a
+// direct NIC attachment or its subnet's own attachment, resolved AS OF the rule-write's own time
+// (never the VM's launch time or the record's own present) — see this file's own basis sentence
+// and RECOMMENDATION-1077.md for the full design.
+//
+// VM-scale-set (VMSS) members (#1078) get their OWN block, `azureVmssComputeBlockSchema` — a
+// member's identity is a 4-tuple (subscription, resource group, set name, instance id), never the
+// standalone 3-tuple above, and each row is one OBSERVED LIFECYCLE EPOCH (bounded at a successful
+// delete), never a claim of one proven distinct physical machine — Uniform-mode instance ids are
+// reused after deletion. Flexible-orchestration members (their own record carries
+// `virtualMachineResourceId`, aliasing the same machine under the STANDALONE resource type above)
+// are out of scope entirely — see RECOMMENDATION-1078.md's design-round-1 section.
 
 import { z } from "zod";
 
@@ -100,3 +106,32 @@ export type AzureComputeOperation = z.infer<typeof azureComputeOperationSchema>;
 export type AzureComputeRemote = z.infer<typeof azureComputeRemoteSchema>;
 export type AzureComputeFact = (typeof azureComputeFactKinds)[number];
 export type AzureNsgObservation = z.infer<typeof azureNsgObservationSchema>;
+
+// ───────────────────────────── #1078: VM scale-set (VMSS) members ─────────────────────────────
+
+export const azureVmssComputeFactKinds = ["identity-assigned", "remote-access-request"] as const;
+
+export const azureVmssComputeBlockSchema = z.object({
+  instanceId: z.string(),
+  subscriptionId: z.string(),
+  resourceGroup: z.string(),
+  setName: z.string(),
+  /** 1-based — which OBSERVED lifecycle epoch this row is, never a claim of a proven physical
+   * generation count (#1078, design-round-1 finding H1). */
+  epoch: z.number().int().positive(),
+  launch: azureComputeLaunchSchema.optional(),
+  operations: z.array(azureComputeOperationSchema).max(32),
+  operationsBeyond: z.number().int().nonnegative(),
+  remote: z.array(azureComputeRemoteSchema).max(8),
+  remoteBeyond: z.number().int().nonnegative(),
+  attempts: z.object({ notSucceeded: z.number().int().nonnegative() }),
+  facts: z.array(z.enum(azureVmssComputeFactKinds)),
+  notCited: z.number().int().nonnegative(),
+  coverage: z.object({ records: z.number().int().nonnegative(), first: z.string(), last: z.string() }),
+  basis: z.literal(
+    "records of this upload only; joined through the VMSS member's resource id (subscription, resource group, scale-set name, instance id); what ran on the member and its network egress are not in this case's Azure Activity Log exports; a member is excluded ENTIRELY, from its first record, once ANY of its records (in this upload, in any order) carries properties.virtualMachineResourceId — but that field is only exposed from Azure API version 2025-11-01 onward, so absence in this upload is not proof of Uniform mode for older bodies; per-member operations coverage is opportunistic, and an absent member row is never evidence that no scale-set activity occurred; each row is one OBSERVED lifecycle epoch, bounded at a successful delete, never a claim of one proven distinct physical machine — see #1078",
+  ),
+});
+
+export type AzureVmssComputeBlock = z.infer<typeof azureVmssComputeBlockSchema>;
+export type AzureVmssComputeFact = (typeof azureVmssComputeFactKinds)[number];
