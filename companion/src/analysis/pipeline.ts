@@ -88,27 +88,17 @@ export class AnalysisPipeline {
   private kevCatalogCache: KevCatalog | undefined;
 
   /**
-   * The ONLY thing src/analysis/ingest/ ever receives (#384).
-   *
-   * The first cut passed `this` and let AnalysisPipeline satisfy ImportContext structurally,
-   * which meant `opts` and four methods had to become public — a narrow interface for importers
-   * bought at the cost of exposing the entire options bag to every OTHER consumer of the
-   * pipeline. A boundary that has to widen the class to exist is not much of a boundary.
-   *
-   * This adapter closes over the permitted operations instead, so class members stay private and
-   * importers see nothing beyond what ImportContext declares. `opts` is exposed through getters,
-   * not a snapshot — a copy taken at construction would go stale the first settings save.
-   *
-   * Down to three operations since #418 moved the two shared import tails — `noteEmptyImport` and
-   * `persistPlasoParsed` — into `ingest/importState.ts`, where their only callers already live.
+   * The ONLY thing src/analysis/ingest/ ever receives (#384). Passing `this` would have made
+   * `opts` and four methods public just for importers; this adapter closes over the permitted
+   * operations instead, so class members stay private. `opts` is exposed through getters, not a
+   * snapshot — a copy at construction would go stale the first settings save. Down to three
+   * operations since #418 moved `noteEmptyImport`/`persistPlasoParsed` into `ingest/importState.ts`.
    */
   private readonly importCtx: ImportContext;
 
   /**
-   * The same adapter idea, for the AI-backed families extracted in #418: one object, several
-   * narrower views (`ai/caseReports.ts` takes a CaseReportContext, `ai/analystQueries.ts` an
-   * AnalystQueryContext, …), each declaring only the members that family may touch. Live getters
-   * rather than a snapshot for the reason importCtx gives: settings-reload rebuilds in place.
+   * The same adapter idea for the AI-backed families extracted in #418 — narrower views per
+   * family, live getters rather than a snapshot for the reason importCtx gives above.
    */
   private readonly aiCtx: CaseReportContext &
     AnalystQueryContext &
@@ -563,6 +553,12 @@ export class AnalysisPipeline {
 
   importAwsFlowLog(...args: ImporterArgs<typeof ingest.importAwsFlowLog>): Promise<InvestigationState> {
     return ingest.importAwsFlowLog(this.importCtx, ...args);
+  }
+
+  importBulkExtractorUrl(
+    ...args: ImporterArgs<typeof ingest.importBulkExtractorUrl>
+  ): Promise<InvestigationState> {
+    return ingest.importBulkExtractorUrl(this.importCtx, ...args);
   }
 
   async importGoogleWorkspace(

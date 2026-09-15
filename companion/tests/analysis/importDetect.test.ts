@@ -100,6 +100,14 @@ describe("detectImportKind — JSON formats", () => {
       "2 123456789010 eni-1235b8ca 172.31.16.139 203.0.113.10 20641 22 6 20 4249 1418530010 1418530070 ACCEPT OK";
     expect(detectImportKind("flowlogs.txt", line)).toBe("awsflowlog");
   });
+  it("bulkextractorurl: a bulk_extractor url.txt feature file", () => {
+    const text = [
+      "# BULK_EXTRACTOR-Version: 2.0.0",
+      "# Feature-Recorder: url",
+      "48198832\thttps://example.com/path\tcontext here",
+    ].join("\n");
+    expect(detectImportKind("url.txt", text)).toBe("bulkextractorurl");
+  });
   it("m365: Unified Audit Log JSON", () => {
     expect(
       detectImportKind(
