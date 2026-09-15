@@ -7,6 +7,7 @@
 import { isObject, getCI, getPath, str, parseConcatenatedJson } from "./siemImport.js";
 import { isAzureStorageLog } from "./azureStorageLogImport.js";
 import { isAwsFlowLogLine } from "./awsFlowLogImport.js";
+import { isDiskImageLog } from "./diskImageAcquisitionLog.js";
 import { isBulkExtractorUrlFeatureFile } from "./bulkExtractorUrlImport.js";
 import { isWerReport } from "./werImport.js";
 import { isRekallCommandList, looksLikeVolatilityText, looksLikeMemprocfsFindevil } from "./memoryImport.js";
@@ -694,17 +695,10 @@ export function detectImportKind(filename: string, text: string): ImportKind {
   // detection feed, but a well-known deterministic grammar; parsed without an AI call or year-guessing.
   if (looksLikeCiscoAsa(t)) return "asa";
 
-  // Apache/Nginx/Squid combined access log (web server or forward-proxy access log) — checked
-  // before the generic log fallback so it's parsed deterministically instead of relying on AI
-  // line-triage, which silently drops rare/high-signal lines on a large, mostly-benign real log
-  // (see logAggregate.ts's truncation-bias fix for the general case; this importer sidesteps it
-  // entirely for the two most common web/proxy formats).
+  // Apache/Nginx/Squid combined access log (web server or forward-proxy access log) — checked before the generic log fallback so it's parsed deterministically instead of relying on AI line-triage, which silently drops rare/high-signal lines on a large, mostly-benign real log (see logAggregate.ts's truncation-bias fix for the general case; this importer sidesteps it entirely for the two most common web/proxy formats).
   if (looksLikeCombinedLog(filename, t)) return "combinedlog";
 
-  // Plain Linux/Unix syslog (RFC 5424 / RFC 3164) — telemetry, parsed deterministically instead of
-  // sent to the AI line-triage, which silently drops the rare high-signal line (e.g. a secret spilled
-  // into a one-off syslog message) on a large, mostly-benign host log. Checked after ASA (also
-  // syslog-framed but claimed by its `%ASA` tag) and combined-log, before the generic log fallback.
+  // Plain Linux/Unix syslog (RFC 5424 / RFC 3164) — telemetry, parsed deterministically instead of sent to the AI line-triage, which silently drops the rare high-signal line (e.g. a secret spilled into a one-off syslog message) on a large, mostly-benign host log. Checked after ASA (also syslog-framed but claimed by its `%ASA` tag) and combined-log, before the generic log fallback.
   if (looksLikeSyslog(t)) return "syslog";
 
   // YARA CLI scan output (`<Rule> [tags] [meta] <file>` + `-s` `0xOFF:$id:` lines) — a real detector
@@ -713,6 +707,11 @@ export function detectImportKind(filename: string, text: string): ImportKind {
   // above (e.g. a BSD syslog line), so those claim first. (The external-tools run path sets the kind
   // directly and never relies on this.)
   if (looksLikeYara(t)) return "yara";
+
+  // A full-disk-imaging tool's own acquisition/verification log (FTK Imager's `.txt` sidecar, or
+  // dc3dd's own `log=`/`hlog=` output, #1102) — structured free text, checked before the generic
+  // log fallback so it's parsed deterministically instead of via AI log-triage.
+  if (isDiskImageLog(t)) return "diskimagelog";
 
   // Tabular (CSV / EZ / Plaso / Hayabusa-csv / M365-csv) vs a line-oriented log.
   const csvKind = detectCsv(t, filename);
