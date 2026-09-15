@@ -51,6 +51,7 @@ const BUILT_IN_IMPORT_KINDS = [
   "csv",
   "log",
   "bulkextractorurl",
+  "flossresult",
 ] as const;
 
 const CURRENT_SCHEMAS = [

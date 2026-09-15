@@ -108,6 +108,13 @@ describe("detectImportKind — JSON formats", () => {
     ].join("\n");
     expect(detectImportKind("url.txt", text)).toBe("bulkextractorurl");
   });
+  it("flossresult: a FLOSS -j results document", () => {
+    const text = JSON.stringify({
+      metadata: { file_path: "/samples/m.exe", version: "2.2.0" },
+      strings: { decoded_strings: [{ string: "x", address: 1, decoded_at: 1, decoding_routine: 1 }] },
+    });
+    expect(detectImportKind("floss.json", text)).toBe("flossresult");
+  });
   it("m365: Unified Audit Log JSON", () => {
     expect(
       detectImportKind(

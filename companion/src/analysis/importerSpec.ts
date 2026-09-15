@@ -58,6 +58,7 @@ export const IMPORT_KINDS = [
   "csv",
   "log",
   "bulkextractorurl",
+  "flossresult",
   "unknown",
 ] as const;
 

@@ -559,6 +559,10 @@ export class AnalysisPipeline {
     return ingest.importBulkExtractorUrl(this.importCtx, ...args);
   }
 
+  importFlossResult(...args: ImporterArgs<typeof ingest.importFlossResult>): Promise<InvestigationState> {
+    return ingest.importFlossResult(this.importCtx, ...args);
+  }
+
   async importGoogleWorkspace(
     ...args: ImporterArgs<typeof ingest.importGoogleWorkspace>
   ): Promise<InvestigationState> {
