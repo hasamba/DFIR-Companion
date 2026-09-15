@@ -23,6 +23,7 @@ import { awsComputeLifecycles, AWS_COMPUTE_MAX } from "./awsCompute.js";
 import { awsCloudTrailCoverage } from "./cloudCoverageBuilders.js";
 import type { CloudCoverageDraft } from "./cloudCoverage.js";
 import { decodeCloudTrailLogging, renderLoggingDescription } from "./loggingChange.js";
+import { decodeAwsConfigLogging } from "./awsConfigLogging.js";
 import {
   extractRecords,
   aggregateEvents,
@@ -225,12 +226,11 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
   }
   // A logging-configuration call is read for the STATE its request establishes (#931 item 14):
   // the reading's grade replaces the table's blanket High — StartLogging is not StopLogging.
-  const logging = decodeCloudTrailLogging(
-    source,
-    name,
-    getCI(rec, "requestParameters"),
-    str(getCI(rec, "errorCode")),
-  );
+  // AWS Config recorder calls (#1071) are a second, disjoint decoder in their own file — no
+  // record can match both, so this is a simple `??` fallback, never a merge.
+  const logging =
+    decodeCloudTrailLogging(source, name, getCI(rec, "requestParameters"), str(getCI(rec, "errorCode"))) ??
+    decodeAwsConfigLogging(source, name, getCI(rec, "requestParameters"), str(getCI(rec, "errorCode")));
   if (logging) {
     severity = logging.severity;
     mitre.length = 0;
