@@ -292,14 +292,23 @@ const HTTP_STATUS_WORDS: Record<string, number> = {
   "service unavailable": 503,
   "gateway timeout": 504,
 };
-/** Microsoft's own documented structured form is `"<Word...> (HTTP Status Code: <N>)"`. */
-const AZURE_HTTP_STATUS_RE = /\(http status code:\s*(\d{3})\)\s*$/i;
+/** Microsoft's own documented structured form is `"<Word...> (HTTP Status Code: <N>)"` — anchored
+ * at BOTH ends (#1096, Codex code review finding #2: a suffix-only match accepted arbitrary
+ * prefix text before a well-formed suffix). */
+const AZURE_HTTP_STATUS_RE = /^([a-z][a-z ]*[a-z]|[a-z])\s*\(http status code:\s*(\d{3})\)$/i;
 
 function azureHttpStatus(subStatus: string): number | null {
   const s = subStatus.trim();
   if (!s) return null;
   const structured = AZURE_HTTP_STATUS_RE.exec(s);
-  if (structured) return Number(structured[1]);
+  if (structured) {
+    const label = structured[1].trim().toLowerCase();
+    const code = Number(structured[2]);
+    // The label and the code must AGREE — a mismatched pair (e.g. "Forbidden (HTTP Status Code:
+    // 404)") is conflicting evidence, never trusted either way (#1096, Codex code review finding
+    // #2: the original regex classified purely from the number, ignoring a contradicting label).
+    return HTTP_STATUS_WORDS[label] === code ? code : null;
+  }
   if (/^\d{3}$/.test(s)) return Number(s);
   return HTTP_STATUS_WORDS[s.toLowerCase()] ?? null;
 }

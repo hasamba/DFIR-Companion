@@ -271,12 +271,16 @@ function mapAzure(rec: Row, sink: Map<string, SiemIoc>, recordIndex: number): Ma
     // bulk-read detection (#908 item 8) was structurally blind to this provider. Only data-plane
     // reads carry it: a hundred management calls by one principal genuinely are one thing, and
     // adding the resource everywhere would undo the aggregation this importer exists to do.
-    // `subStatus` is part of the key too (#1096): unlike AWS's errorCode / GCP's statusCode,
-    // which already ride in THEIR OWN outer keys, Azure's own key only ever carried the coarse
-    // `status` word — two different failure kinds (403 vs 404) against the same target would
-    // otherwise collapse into one aggregated row (Codex design review finding #1).
+    // `subStatus` joins the key too, but ONLY for a LOGGING row (#1096, Codex code review finding
+    // #1: adding it unconditionally fragmented the broader Azure row family's own aggregation —
+    // two otherwise-identical non-logging management calls can legitimately carry different
+    // common substatuses, like 200 vs 201, and must still aggregate as one). Unlike AWS's
+    // errorCode / GCP's statusCode, which already ride in THEIR OWN outer keys, Azure's own key
+    // only ever carried the coarse `status` word — two different LOGGING failure kinds (403 vs
+    // 404) against the same target would otherwise collapse into one aggregated row (Codex design
+    // review finding #1).
     aggKey: boundedAggKey(
-      `azure|${op}|${caller}|${ip}|${status}|${subStatus}${exec ? `|${exec.id}` : isObjectRead(op) && shortRes ? `|${shortRes}` : ""}${logging?.keySegment ?? ""}`.toLowerCase(),
+      `azure|${op}|${caller}|${ip}|${status}${logging ? `|${subStatus}` : ""}${exec ? `|${exec.id}` : isObjectRead(op) && shortRes ? `|${shortRes}` : ""}${logging?.keySegment ?? ""}`.toLowerCase(),
     ),
     sources: ["Azure Activity"],
     ...(logging

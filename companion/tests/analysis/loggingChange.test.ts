@@ -758,6 +758,40 @@ describe("Azure logging-change failures classify denied / not-found / failed fro
     expect(forbidden.aggKey).not.toBe(notFound.aggKey);
   });
 
+  it("a NON-logging Azure row's own aggKey is UNCHANGED by subStatus — two otherwise-identical management calls with different common substatuses (200 vs 201) still aggregate as one (#1096, Codex code review finding #1)", () => {
+    const ok = rows([
+      azure("Microsoft.Compute/virtualMachines/write", {
+        status: { value: "Succeeded" },
+        subStatus: { value: "OK (HTTP Status Code: 200)" },
+      }),
+    ])[0];
+    const created = rows([
+      azure("Microsoft.Compute/virtualMachines/write", {
+        status: { value: "Succeeded" },
+        subStatus: { value: "Created (HTTP Status Code: 201)" },
+      }),
+    ])[0];
+    expect(ok.aggKey).toBe(created.aggKey);
+  });
+
+  it("a mismatched label/code pair ('Forbidden (HTTP Status Code: 404)') is conflicting evidence, never trusted either way — stays the neutral 'failed' (#1096, Codex code review finding #2)", () => {
+    const e = rows([
+      azure("Microsoft.Insights/diagnosticSettings/delete", {
+        subStatus: { value: "Forbidden (HTTP Status Code: 404)" },
+      }),
+    ])[0];
+    expect(env(e).loggingChange?.failure).toBe("failed");
+  });
+
+  it("arbitrary prefix text before a well-formed suffix is rejected — the label must be exactly one of the recognized words, not merely end with the right suffix (#1096, Codex code review finding #2)", () => {
+    const e = rows([
+      azure("Microsoft.Insights/diagnosticSettings/delete", {
+        subStatus: { value: "SomeProviderSpecificText (HTTP Status Code: 404)" },
+      }),
+    ])[0];
+    expect(env(e).loggingChange?.failure).toBe("failed");
+  });
+
   it("stays canonically conformant across every classified outcome", () => {
     for (const subStatus of ["Not Found (HTTP Status Code: 404)", "Forbidden", "", "garbage/403/x"]) {
       const e = rows([
