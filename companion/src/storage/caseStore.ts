@@ -106,13 +106,17 @@ export class CaseStore {
   private reserveSequence(
     kind: "capture" | "import" | "custody",
     caseId: string,
-    countOnDisk: () => Promise<number>,
+    maxOnDisk: () => Promise<number>,
   ): Promise<number> {
     const key = `${kind}:${caseId}`;
     return this.seqLock.runExclusive(key, async () => {
       // Disk is authoritative across restarts (the map starts empty); the map is authoritative
       // for numbers already handed out but not yet appended. The later of the two is correct.
-      const next = Math.max((await countOnDisk()) + 1, (this.seqHighWater.get(key) ?? 0) + 1);
+      // `maxOnDisk` must return the HIGHEST recorded sequence number, never a line count (#1119):
+      // a reservation burned by a failed append (no line written) still consumed a number, so a
+      // line count under-reports how many numbers were actually issued once the process restarts
+      // and `seqHighWater` resets — max(sequenceNumber) is correct regardless of any such gaps.
+      const next = Math.max((await maxOnDisk()) + 1, (this.seqHighWater.get(key) ?? 0) + 1);
       this.seqHighWater.set(key, next);
       return next;
     });
@@ -355,17 +359,54 @@ export class CaseStore {
   }
 
   async nextSequenceNumber(caseId: string): Promise<number> {
-    return this.reserveSequence("capture", caseId, () => this.countLogLines(this.capturesLogPath(caseId)));
+    return this.reserveSequence("capture", caseId, () =>
+      this.maxSequenceInLog(this.capturesLogPath(caseId), "sequenceNumber"),
+    );
   }
 
-  /** Number of records in an append-only .jsonl audit log; 0 when it does not exist yet. */
-  private async countLogLines(path: string): Promise<number> {
+  /**
+   * The next-safe recovery number for an append-only .jsonl audit log; 0 when the log does not
+   * exist yet. `Math.max(nonEmptyLineCount, highest value of `field` seen)`, never just a line
+   * count (#1119, Codex code-review finding H1/M1) and never just the field's own max in
+   * isolation:
+   *   - A reservation burned by a failed append never produced a line at all, so a line count alone
+   *     under-reports how many numbers were issued once a restart forgets the in-memory high-water
+   *     mark — the field's own max recovers past that gap.
+   *   - Some historical custody rows predate the `seq` field entirely (#231) and would count as 0
+   *     toward the max if only the field were read — the line count still recovers the correct
+   *     floor for those, exactly matching the pre-#1119 behavior for a fully legacy log.
+   * A NON-EMPTY line that fails to parse as JSON is a truncated/corrupted write, never silently
+   * skipped: it throws, because silently recovering past it risks reissuing that very row's own
+   * number (Codex's H1 finding — a burned reservation and a genuinely corrupted append are
+   * indistinguishable from a line count alone, so this fails closed and asks for repair instead of
+   * guessing). A row that parses but simply lacks `field` (the legacy-custody case above) is not an
+   * error — it still counts toward the line-count floor, just not toward the field's own max.
+   */
+  private async maxSequenceInLog(path: string, field: "sequenceNumber" | "seq"): Promise<number> {
+    let raw: string;
     try {
-      return (await readFile(path, "utf8")).split("\n").filter((l) => l.trim().length > 0).length;
+      raw = await readFile(path, "utf8");
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return 0;
       throw err;
     }
+    let count = 0;
+    let maxField = 0;
+    for (const line of raw.split("\n")) {
+      if (!line.trim()) continue;
+      count += 1;
+      let row: Record<string, unknown>;
+      try {
+        row = JSON.parse(line) as Record<string, unknown>;
+      } catch (err) {
+        throw new Error(
+          `${path} has a corrupted/truncated line at record ${count} — refusing to allocate a sequence number past it until it is repaired: ${(err as Error).message}`,
+        );
+      }
+      const value = row[field];
+      if (typeof value === "number" && Number.isFinite(value) && value > maxField) maxField = value;
+    }
+    return Math.max(count, maxField);
   }
 
   // Persist an uploaded CSV verbatim as evidence (mkdirs for cases created before
@@ -443,11 +484,15 @@ export class CaseStore {
   // custody record that fails to append burns its number rather than letting the next one reuse it —
   // gaps are the safe direction for provenance, reuse is not.
   async nextCustodySeq(caseId: string): Promise<number> {
-    return this.reserveSequence("custody", caseId, () => this.countLogLines(this.custodyLogPath(caseId)));
+    return this.reserveSequence("custody", caseId, () =>
+      this.maxSequenceInLog(this.custodyLogPath(caseId), "seq"),
+    );
   }
 
   async nextImportSeq(caseId: string): Promise<number> {
-    return this.reserveSequence("import", caseId, () => this.countLogLines(this.importsLogPath(caseId)));
+    return this.reserveSequence("import", caseId, () =>
+      this.maxSequenceInLog(this.importsLogPath(caseId), "sequenceNumber"),
+    );
   }
 
   // Load the case's OCR search index (#176), or {} when it doesn't exist yet / is unreadable.
