@@ -149,11 +149,27 @@ export class EdgeBuffer<T extends Timed> {
     return this.count - this.early.length - this.late.length;
   }
 }
-/** Time order with the record position as the tie-breaker — equal timestamps never depend on file order. */
-export const byTime = (a: Timed, b: Timed): number =>
-  a.time - b.time ||
-  (a as { locator?: string }).locator?.localeCompare((b as { locator?: string }).locator ?? "") ||
-  0;
+/** The trailing integer of a `record:<index>` locator, or null when it does not end in one. */
+const locatorIndex = (locator: string | undefined): number | null => {
+  const m = /(\d+)$/.exec(locator ?? "");
+  return m ? Number(m[1]) : null;
+};
+/**
+ * Time order with the record's own scan position as the tie-breaker — equal timestamps never
+ * depend on file order. Ties by the locator's own trailing integer, not by comparing the locator
+ * STRING: `"record:10".localeCompare("record:2")` sorts `record:10` first, ordering a numerically
+ * later record before an earlier one (#1084, surfaced by #1077's design review). Falls back to
+ * the string compare only when either side's locator does not end in a digit run.
+ */
+export const byTime = (a: Timed, b: Timed): number => {
+  if (a.time !== b.time) return a.time - b.time;
+  const aLocator = (a as { locator?: string }).locator;
+  const bLocator = (b as { locator?: string }).locator;
+  const ai = locatorIndex(aLocator);
+  const bi = locatorIndex(bLocator);
+  if (ai !== null && bi !== null) return ai - bi;
+  return aLocator?.localeCompare(bLocator ?? "") ?? 0;
+};
 export function insertSorted<T extends Timed>(buf: T[], v: T): void {
   let i = buf.length;
   while (i > 0 && byTime(buf[i - 1], v) > 0) i -= 1;
@@ -291,10 +307,20 @@ export const noteFact = (inst: Inst, fact: AwsComputeFact, time: number, locator
   if (!cur || time < cur.time) inst.facts.set(fact, { time, locator });
 };
 
-/** The groups the instance's own records say it held at `time`: the statement in force, else the launch's for a record before it. */
-export function groupsAt(inst: Inst, time: number): readonly string[] | null {
+/**
+ * The groups the instance's own records say it held as of the QUERYING record `(time, locator)`:
+ * the statement in force, else the launch's for a record before it. Compares by the same
+ * `(time, scan position)` order `byTime` uses — a bare `g.time <= time` (the original form) can
+ * pick the WRONG same-timestamp statement when a rule record and a group-replacing record share
+ * one timestamp, since it always keeps the LAST array entry with `g.time <= time` regardless of
+ * whether that entry's own scan position was before or after the querying record (#1084, Codex
+ * code review: a same-timestamp rule authorized on the PRIOR group could otherwise be silently
+ * evaluated against the REPLACEMENT group instead, suppressing an any-address-rule fact).
+ */
+export function groupsAt(inst: Inst, time: number, locator: string): readonly string[] | null {
   let inForce: GroupSet | null = null;
-  for (const g of inst.groupSets) if (g.time <= time) inForce = g;
+  const query = { time, locator } as Timed;
+  for (const g of inst.groupSets) if (byTime(g, query) <= 0) inForce = g;
   if (inForce) return inForce.groups;
   return inst.launch ? inst.launch.groups.map((g) => lower(g.id)) : null;
 }

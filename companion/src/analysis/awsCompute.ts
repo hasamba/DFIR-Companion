@@ -467,7 +467,7 @@ function recordRule(byGroup: Map<string, Inst[]>, s: Scanned): void {
   const perms = permissions(s.request);
   for (const inst of holders) {
     // Joined only against the membership statement in force at the rule's time.
-    if (!groupsAt(inst, s.time)?.includes(lower(groupId))) continue;
+    if (!groupsAt(inst, s.time, s.locator)?.includes(lower(groupId))) continue;
     const buf = inst.rules.get(lower(groupId)) ?? new EdgeBuffer<Rule>(RULES_EARLY_MAX, RULES_LATE_MAX);
     inst.rules.set(lower(groupId), buf);
     for (const p of perms.retained)
