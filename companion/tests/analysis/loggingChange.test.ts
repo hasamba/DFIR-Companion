@@ -868,7 +868,7 @@ describe("AWS Config recorder calls — the state the request establishes (#1071
       cfg(
         "DeleteConfigurationRecorder",
         { configurationRecorderName: "default" },
-        { errorCode: "NoSuchConfigurationRecorderException" },
+        { errorCode: "AccessDenied" },
       ),
     ])[0];
     expect(del.severity).toBe("Medium");
