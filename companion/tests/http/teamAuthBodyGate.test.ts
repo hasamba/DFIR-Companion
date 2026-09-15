@@ -3,7 +3,7 @@ import { type AddressInfo, connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import request from "supertest";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ActivityLogStore } from "../../src/analysis/activityLog.js";
 import { CommentsStore } from "../../src/analysis/comments.js";
 import { SlashCommandChannelStore } from "../../src/analysis/slashCommandStore.js";
@@ -59,14 +59,22 @@ type Refusal =
   | { kind: "reset"; code: string; sentBytes: number };
 
 /**
- * One unauthenticated caller that announces a large upload and then does not send it: request
- * headers declaring DECLARED_BODY_BYTES, a PREFIX_BYTES prefix, and nothing more. Resolves once the
- * server has answered in full, or once the socket dies.
+ * One unauthenticated caller that announces a large request on `path` and then does not send it:
+ * request headers declaring DECLARED_BODY_BYTES, a PREFIX_BYTES prefix, and nothing more. Resolves
+ * once the server has answered in full, or once the socket dies.
  *
  * Raw sockets rather than supertest, because supertest always sends the whole body and the body
- * that never arrives is the entire point.
+ * that never arrives is the entire point — this is also why the two single-request oversized-body
+ * tests below use this helper instead of `request(app).send()`: a full 2.5 MB eager write can race
+ * the pre-auth gate's own answer, and on Windows CI that surfaced as a client-side ECONNRESET
+ * during the write rather than the request settling at all (#1090, recurred twice). Sending only a
+ * bounded prefix removes the race instead of tolerating its symptom.
  */
-function announceAnUploadWithoutSendingIt(port: number): Promise<Refusal> {
+function announceALargeBodyWithoutSendingIt(
+  port: number,
+  path: string,
+  contentType: string,
+): Promise<Refusal> {
   return new Promise((resolve) => {
     let received = "";
     let sentBytes = 0;
@@ -79,9 +87,9 @@ function announceAnUploadWithoutSendingIt(port: number): Promise<Refusal> {
     };
     const socket = connect(port, "127.0.0.1", () => {
       socket.write(
-        "POST /cases/c1/import-siem HTTP/1.1\r\n" +
+        `POST ${path} HTTP/1.1\r\n` +
           "Host: 127.0.0.1\r\n" +
-          "Content-Type: application/json\r\n" +
+          `Content-Type: ${contentType}\r\n` +
           `Content-Length: ${DECLARED_BODY_BYTES}\r\n\r\n`,
       );
       socket.write(Buffer.alloc(PREFIX_BYTES, 0x78));
@@ -105,10 +113,26 @@ function announceAnUploadWithoutSendingIt(port: number): Promise<Refusal> {
     socket.on("close", () => settle({ kind: "reset", code: "CLOSED WITHOUT ANSWERING", sentBytes }));
   });
 }
+const announceAnUploadWithoutSendingIt = (port: number): Promise<Refusal> =>
+  announceALargeBodyWithoutSendingIt(port, "/cases/c1/import-siem", "application/json");
+
+/** Starts `app` listening on an ephemeral port and returns it once ready — used by the raw-socket
+ * tests, which need a real listening server (unlike supertest's own ephemeral one per call). */
+async function listening(
+  app: ReturnType<typeof createApp>,
+): Promise<{ server: ReturnType<typeof app.listen>; port: number }> {
+  const server = app.listen(0);
+  await new Promise<void>((resolve, reject) => {
+    server.once("listening", resolve);
+    server.once("error", reject);
+  });
+  return { server, port: (server.address() as AddressInfo).port };
+}
 
 describe("team mode authenticates before it parses a body", () => {
   let cases: CaseStore;
   let authStore: AuthStore;
+  let teamAuth: TeamAuth;
   let app: ReturnType<typeof createApp>;
   const previous: Record<string, string | undefined> = {};
 
@@ -130,13 +154,14 @@ describe("team mode authenticates before it parses a body", () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-body-gate-"));
     cases = new CaseStore(join(root, "cases"));
     authStore = new AuthStore(join(root, "auth.sqlite"));
+    teamAuth = new TeamAuth({
+      store: authStore,
+      bootstrapToken: BOOTSTRAP_TOKEN,
+      cookieSecure: false,
+      sessionTtlMs: 60 * 60_000,
+    });
     app = createApp(cases, {
-      teamAuth: new TeamAuth({
-        store: authStore,
-        bootstrapToken: BOOTSTRAP_TOKEN,
-        cookieSecure: false,
-        sessionTtlMs: 60 * 60_000,
-      }),
+      teamAuth,
       stateLock: new StateLock(),
       stateStore: new StateStore(cases),
       activityLogStore: new ActivityLogStore(cases),
@@ -160,22 +185,34 @@ describe("team mode authenticates before it parses a body", () => {
   }
 
   it("answers 401 to an oversized body on a protected route, instead of reading it", async () => {
-    // supertest writes the full 2.5 MB body eagerly; the pre-auth gate can answer and close the
-    // connection before that write finishes, and some platforms (Windows CI, #1090 — observed
-    // twice, unrelated diffs both times) surface that as a client-side ECONNRESET/EPIPE instead of
-    // a completed response. Either outcome proves the same thing the concurrency test below already
-    // establishes for the identical race: the body was never fully read. A reset is accepted as
-    // that same proof, not a failure.
+    // supertest writes a body this large eagerly, which can race the pre-auth gate's own answer —
+    // on Windows CI that surfaced as a client-side ECONNRESET during the write rather than the
+    // request settling at all (#1090, recurred twice on unrelated diffs). The raw-socket
+    // partial-body technique below (shared with the concurrency test further down) removes the
+    // race instead of tolerating its symptom: the client only ever writes a bounded prefix, so a
+    // full oversized body is never in flight to lose a race with. The `rejectUnauthenticated` spy
+    // proves the refusal came from the intended gate, not an unrelated crash producing the same
+    // client-visible reset (Codex code review).
+    const rejectSpy = vi.spyOn(teamAuth, "rejectUnauthenticated");
+    const { server, port } = await listening(app);
     try {
-      const res = await request(app)
-        .post("/cases/c1/import-siem")
-        .send({ filename: "big.json", json: OVER_EVERY_CAP });
-      // 413 would mean the parser ran to the limit and then gave up — the very work being refused.
-      expect(res.status).toBe(401);
-      expect(res.body.error).toBe("authentication required");
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException)?.code;
-      if (code !== "ECONNRESET" && code !== "EPIPE") throw err;
+      const outcome = await announceALargeBodyWithoutSendingIt(
+        port,
+        "/cases/c1/import-siem",
+        "application/json",
+      );
+      expect(outcome.sentBytes).toBe(PREFIX_BYTES);
+      if (outcome.kind === "answered") {
+        // 413 would mean the parser ran to the limit and then gave up — the very work being refused.
+        expect(outcome.status).toBe(401);
+        expect(JSON.parse(outcome.body)).toEqual({ error: "authentication required" });
+      } else {
+        expect(["ECONNRESET", "EPIPE"]).toContain(outcome.code);
+      }
+      expect(rejectSpy).toHaveBeenCalled();
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
 
@@ -190,16 +227,18 @@ describe("team mode authenticates before it parses a body", () => {
   });
 
   it("answers 401 to an oversized text body too, not only JSON", async () => {
-    // Same platform race as the JSON case above (#1090) — a reset proves the same refusal.
+    // Same platform race as the JSON case above (#1090), fixed the same way.
+    const rejectSpy = vi.spyOn(teamAuth, "rejectUnauthenticated");
+    const { server, port } = await listening(app);
     try {
-      const res = await request(app)
-        .post("/cases/c1/push")
-        .set("Content-Type", "text/plain")
-        .send(OVER_EVERY_CAP);
-      expect(res.status).toBe(401);
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException)?.code;
-      if (code !== "ECONNRESET" && code !== "EPIPE") throw err;
+      const outcome = await announceALargeBodyWithoutSendingIt(port, "/cases/c1/push", "text/plain");
+      expect(outcome.sentBytes).toBe(PREFIX_BYTES);
+      if (outcome.kind === "answered") expect(outcome.status).toBe(401);
+      else expect(["ECONNRESET", "EPIPE"]).toContain(outcome.code);
+      expect(rejectSpy).toHaveBeenCalled();
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
 
