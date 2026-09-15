@@ -14,7 +14,7 @@ const NOW = "2026-06-01T00:00:00.000Z";
 const base = { host: "h", urlPrefix: "/", localRoot: "/var/www" };
 
 function accepted(over: Record<string, unknown>) {
-  const v = validateServedLocation({ ...base, ...over } as never, NOW);
+  const v = validateServedLocation({ ...base, ...over }, NOW);
   expect(v.ok).toBe(true);
   if (!v.ok) throw new Error("unreachable");
   return v.location;
