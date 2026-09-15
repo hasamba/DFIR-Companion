@@ -24,7 +24,7 @@ import { azureVmssComputeLifecycles, VMSS_COMPUTE_MAX } from "./azureVmssCompute
 import { VMSS_MEMBER_RESOURCE_ID } from "./azureVmssComputeState.js";
 import { AZURE_RUN_COMMAND_RE } from "./azureComputeState.js";
 import { gcpComputeLifecycles, GCP_COMPUTE_MAX } from "./gcpCompute.js";
-import { decodeAzureLogging } from "./loggingChangeCloud.js";
+import { classifyAzureFailure, decodeAzureLogging } from "./loggingChangeCloud.js";
 import { renderLoggingDescription } from "./loggingChange.js";
 import { createCanonicalEvent, sourceArtifactHash } from "./canonicalEvent.js";
 import { gcpCoverage, azureCoverage } from "./cloudCoverageBuilders.js";
@@ -194,8 +194,19 @@ function mapAzure(rec: Row, sink: Map<string, SiemIoc>, recordIndex: number): Ma
     pickStr(rec, ["httpRequest.clientIpAddress", "claims.ipaddr", "CallerIpAddress", "callerIpAddress"]),
   );
   const status = pickStr(rec, ["status.value", "status", "ActivityStatusValue", "resultType", "ResultType"]);
+  // Microsoft's own schema reference documents subStatus as "usually the HTTP status code of the
+  // corresponding REST call" — present, under this same three-shape convention, across all three
+  // Azure export shapes this codebase already reads `status` from (#1096).
+  const subStatus = pickStr(rec, [
+    "subStatus.value",
+    "subStatus",
+    "ActivitySubstatusValue",
+    "resultSignature",
+    "ResultSignature",
+  ]);
   const resource = pickStr(rec, ["resourceId", "ResourceId", "resourceGroupName", "ResourceGroup"]);
   const failed = /fail/i.test(status);
+  const azureFailure = failed ? classifyAzureFailure(subStatus) : null;
 
   const def = matchRule(AZURE_RULES, op);
   let severity: Severity = def?.severity ?? "Low";
@@ -231,7 +242,7 @@ function mapAzure(rec: Row, sink: Map<string, SiemIoc>, recordIndex: number): Ma
       getPath(rec, "Properties.requestbody") ??
       getPath(rec, "Properties.requestBody") ??
       getPath(rec, "properties"),
-    failed,
+    azureFailure,
   );
   if (logging) {
     severity = logging.severity;
@@ -260,8 +271,16 @@ function mapAzure(rec: Row, sink: Map<string, SiemIoc>, recordIndex: number): Ma
     // bulk-read detection (#908 item 8) was structurally blind to this provider. Only data-plane
     // reads carry it: a hundred management calls by one principal genuinely are one thing, and
     // adding the resource everywhere would undo the aggregation this importer exists to do.
+    // `subStatus` joins the key too, but ONLY for a LOGGING row (#1096, Codex code review finding
+    // #1: adding it unconditionally fragmented the broader Azure row family's own aggregation —
+    // two otherwise-identical non-logging management calls can legitimately carry different
+    // common substatuses, like 200 vs 201, and must still aggregate as one). Unlike AWS's
+    // errorCode / GCP's statusCode, which already ride in THEIR OWN outer keys, Azure's own key
+    // only ever carried the coarse `status` word — two different LOGGING failure kinds (403 vs
+    // 404) against the same target would otherwise collapse into one aggregated row (Codex design
+    // review finding #1).
     aggKey: boundedAggKey(
-      `azure|${op}|${caller}|${ip}|${status}${exec ? `|${exec.id}` : isObjectRead(op) && shortRes ? `|${shortRes}` : ""}${logging?.keySegment ?? ""}`.toLowerCase(),
+      `azure|${op}|${caller}|${ip}|${status}${logging ? `|${subStatus}` : ""}${exec ? `|${exec.id}` : isObjectRead(op) && shortRes ? `|${shortRes}` : ""}${logging?.keySegment ?? ""}`.toLowerCase(),
     ),
     sources: ["Azure Activity"],
     ...(logging
@@ -281,8 +300,10 @@ function mapAzure(rec: Row, sink: Map<string, SiemIoc>, recordIndex: number): Ma
             producer: {
               importer: "azure-activity",
               parserVersion: "1",
-              mappingVersion: "azure-logging-v1",
-              ruleVersions: ["azure-logging-v1"],
+              // v2 (#1096): reads a genuinely new source field, subStatus, that v1 never read —
+              // re-running the same stored raw record now produces a different classification.
+              mappingVersion: "azure-logging-v2",
+              ruleVersions: ["azure-logging-v2"],
             },
             rawFieldMap: {
               "event.action": ["operationName.value", "operationName", "OperationNameValue", "OperationName"],
