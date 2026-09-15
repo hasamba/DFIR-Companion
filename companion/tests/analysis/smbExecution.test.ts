@@ -10,6 +10,7 @@ import {
   PIPE_CALL_CORROBORATED_MARKER,
   SERVICE_TASK_FROM_PIPE_MARKER,
   STAGING_EXT as SMB_STAGING_EXT,
+  BUCKET_MAX,
 } from "../../src/analysis/smbExecution.js";
 import { DERIVED_NOTE_NAMES } from "../../src/analysis/derivedNote.js";
 import { STAGING_EXT } from "../../src/analysis/stagingPaths.js";
@@ -32,7 +33,14 @@ interface Ev {
   sources?: string[];
   canonical?: {
     event?: { category?: string; type?: string };
-    smb?: { command?: string; status?: string; outcome?: string; shareType?: string; share?: string };
+    smb?: {
+      command?: string;
+      status?: string;
+      outcome?: string;
+      shareType?: string;
+      share?: string;
+      filename?: string;
+    };
   };
 }
 
@@ -95,20 +103,17 @@ const taskCreated = (over: Partial<Ev> = {}): Ev => ({
   ...over,
 });
 
+// Suricata's own documented pipe-open shape: the pipe name is `smb.filename`, and the record
+// carries no `share`/`share_type` at all (docs.suricata.io eve-json-format).
 const pipeCall = (over: Partial<Ev> = {}): Ev => ({
   id: "pipe1",
   timestamp: T,
-  description: "SMB SMB2_COMMAND_CREATE share \\PIPE\\svcctl (PIPE)",
+  description: "SMB SMB2_COMMAND_CREATE svcctl",
   severity: "Info",
   mitreTechniques: [],
   canonical: {
     event: { category: "network", type: "smb" },
-    smb: {
-      command: "SMB2_COMMAND_CREATE",
-      status: "STATUS_SUCCESS",
-      shareType: "PIPE",
-      share: "\\pipe\\svcctl",
-    },
+    smb: { command: "SMB2_COMMAND_CREATE", status: "STATUS_SUCCESS", filename: "svcctl" },
   },
   ...over,
 });
@@ -300,12 +305,7 @@ describe("isRpcPipeCall", () => {
         pipeCall({
           canonical: {
             event: { category: "network", type: "smb" },
-            smb: {
-              command: "SMB2_COMMAND_CREATE",
-              status: "STATUS_SUCCESS",
-              shareType: "PIPE",
-              share: "\\pipe\\atsvc",
-            },
+            smb: { command: "SMB2_COMMAND_CREATE", status: "STATUS_SUCCESS", filename: "atsvc" },
           },
         }),
       ),
@@ -317,12 +317,7 @@ describe("isRpcPipeCall", () => {
         pipeCall({
           canonical: {
             event: { category: "network", type: "smb" },
-            smb: {
-              command: "SMB2_COMMAND_CREATE",
-              status: "STATUS_ACCESS_DENIED",
-              shareType: "PIPE",
-              share: "\\pipe\\svcctl",
-            },
+            smb: { command: "SMB2_COMMAND_CREATE", status: "STATUS_ACCESS_DENIED", filename: "svcctl" },
           },
         }),
       ),
@@ -334,12 +329,7 @@ describe("isRpcPipeCall", () => {
         pipeCall({
           canonical: {
             event: { category: "network", type: "smb" },
-            smb: {
-              command: "SMB2_COMMAND_CREATE",
-              status: "STATUS_SUCCESS",
-              shareType: "PIPE",
-              share: "\\pipe\\spoolss",
-            },
+            smb: { command: "SMB2_COMMAND_CREATE", status: "STATUS_SUCCESS", filename: "spoolss" },
           },
         }),
       ),
@@ -348,9 +338,11 @@ describe("isRpcPipeCall", () => {
 });
 
 describe("join A: staged write → execution", () => {
-  it("an admin-share write with a matching later execution is corroborated and raised, T1021.002", () => {
+  it("a match with no established host identity is noted but never raised (Info stays Info)", () => {
     // SMB rows carry no `asset` today (#1085 never sets one), so host identity is not established
-    // by default — this is the realistic case, capped at Medium (see the next test for why).
+    // by default — this is the realistic case. Promoting an unconfirmed cross-host coincidence
+    // into the forensic timeline would risk a false chain between two unrelated hosts, so this
+    // stays Info (note only, super-timeline-visible, promotable by the analyst) until confirmed.
     const out = run([
       smbWrite({
         canonical: {
@@ -369,11 +361,12 @@ describe("join A: staged write → execution", () => {
     ]);
     const w = find(out, "w1");
     expect(w.description).toContain("smb-staged file executed");
-    expect(w.severity).toBe("Medium");
-    expect(w.mitreTechniques).toContain("T1021.002");
+    expect(w.description).toContain("host identity not established");
+    expect(w.severity).toBe("Info");
+    expect(w.mitreTechniques).toEqual([]);
   });
 
-  it("raises to High once both sides independently name the same host", () => {
+  it("an admin-share write with a matching later execution on the same host is raised, T1021.002", () => {
     const out = run([
       smbWrite({
         canonical: {
@@ -392,8 +385,9 @@ describe("join A: staged write → execution", () => {
       execProcess(),
     ]);
     const w = find(out, "w1");
+    expect(w.description).toContain("smb-staged file executed");
     expect(w.severity).toBe("High");
-    expect(w.description).not.toContain("host identity not established");
+    expect(w.mitreTechniques).toContain("T1021.002");
   });
 
   it("a custom (non-admin) share write with no hash match cannot be path-matched at all", () => {
@@ -430,6 +424,7 @@ describe("join A: staged write → execution", () => {
           },
         },
         sha256: "e".repeat(64),
+        asset: "WS-01",
       }),
       { ...execProcess(), sha256: "e".repeat(64) },
     ]);
@@ -439,7 +434,7 @@ describe("join A: staged write → execution", () => {
     expect(w.mitreTechniques).not.toContain("T1021.002");
   });
 
-  it("an admin share (C$) write matched by path raises T1021.002", () => {
+  it("the corroborating execution row is raised to Medium (never higher) and names the write", () => {
     const out = run([
       smbWrite({
         canonical: {
@@ -453,12 +448,10 @@ describe("join A: staged write → execution", () => {
           },
         },
         path: "windows\\report.exe",
+        asset: "WS-01",
       }),
       execProcess(),
     ]);
-    const w = find(out, "w1");
-    expect(w.description).toContain("smb-staged file executed");
-    expect(w.mitreTechniques).toContain("T1021.002");
     const p = find(out, "p1");
     expect(p.description).toContain("ran a share-staged file");
     expect(p.severity).toBe("Medium");
@@ -529,28 +522,6 @@ describe("join A: staged write → execution", () => {
     expect(w.severity).toBe("Info");
   });
 
-  it("host identity not established caps the raise at Medium, never High", () => {
-    const out = run([
-      smbWrite({
-        canonical: {
-          event: { category: "network", type: "smb" },
-          smb: {
-            command: "SMB2_COMMAND_CREATE",
-            status: "STATUS_SUCCESS",
-            outcome: "created-new",
-            shareType: "FILE",
-            share: "C$",
-          },
-        },
-        path: "windows\\report.exe",
-      }),
-      { ...execProcess(), asset: undefined },
-    ]);
-    const w = find(out, "w1");
-    expect(w.description).toContain("host identity not established");
-    expect(w.severity).toBe("Medium");
-  });
-
   it("a service-creation event (4697) whose own path matches is Join A evidence too", () => {
     const out = run([
       smbWrite({
@@ -574,13 +545,15 @@ describe("join A: staged write → execution", () => {
 });
 
 describe("join B: pipe call → service/task creation", () => {
-  it("a svcctl pipe call then a service install within the window is corroborated (host not established → Medium)", () => {
+  it("a svcctl pipe call then a service install with no established host is noted but never raised", () => {
     const out = run([pipeCall(), serviceCreated()]);
     const pipe = find(out, "pipe1");
     expect(pipe.description).toContain("service/task creation after a pipe call");
-    expect(pipe.severity).toBe("Medium");
+    expect(pipe.description).toContain("host identity not established");
+    expect(pipe.severity).toBe("Info");
     const svc = find(out, "svc1");
     expect(svc.description).toContain("preceded by a service-control pipe call");
+    expect(svc.severity).toBe("Medium"); // svc1's own base severity in this fixture
   });
 
   it("raises the pipe call to High once both sides name the same host", () => {
@@ -593,12 +566,7 @@ describe("join B: pipe call → service/task creation", () => {
       id: "pipeT",
       canonical: {
         event: { category: "network", type: "smb" },
-        smb: {
-          command: "SMB2_COMMAND_CREATE",
-          status: "STATUS_SUCCESS",
-          shareType: "PIPE",
-          share: "\\pipe\\atsvc",
-        },
+        smb: { command: "SMB2_COMMAND_CREATE", status: "STATUS_SUCCESS", filename: "atsvc" },
       },
     });
     const out = run([atsvc, taskCreated()]);
@@ -631,6 +599,35 @@ describe("join B: pipe call → service/task creation", () => {
     };
     const out = run([pipeCall(), driverLoad]);
     expect(find(out, "pipe1").description).not.toContain("service/task creation after a pipe call");
+  });
+});
+
+describe("bucket overflow is disclosed, never silently dropped (#1092)", () => {
+  it("execution records at the same path beyond BUCKET_MAX are counted, never silently missing", () => {
+    const write = smbWrite({
+      canonical: {
+        event: { category: "network", type: "smb" },
+        smb: {
+          command: "SMB2_COMMAND_CREATE",
+          status: "STATUS_SUCCESS",
+          outcome: "created-new",
+          shareType: "FILE",
+          share: "C$",
+        },
+      },
+      path: "windows\\report.exe",
+      asset: "WS-01",
+    });
+    // Every record shares the SAME path, so they all land in one bucket; the first BUCKET_MAX
+    // are read, the rest are counted as beyond the index — never silently dropped.
+    const flood = Array.from({ length: BUCKET_MAX + 5 }, (_, i) => ({
+      ...execProcess(),
+      id: `flood${i}`,
+    }));
+    const out = run([write, ...flood]);
+    const w = find(out, "w1");
+    expect(w.description).toContain("smb-staged file executed");
+    expect(w.description).toContain("beyond the index, not read");
   });
 });
 

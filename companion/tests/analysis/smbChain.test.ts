@@ -7,6 +7,7 @@ import {
   addSmb,
   emptySmbOperations,
   joinSmbChains,
+  shareLeaf,
   SMB_BUCKET_MAX,
 } from "../../src/analysis/smbChainJoin.js";
 import { mapSmbRows, tallySmbChains } from "../../src/analysis/smbChainRows.js";
@@ -253,6 +254,85 @@ describe("file-identity join — never share context alone", () => {
     const row = smbEvents(r)[0];
     expect(row.canonical?.smb?.createJoinState).toBe("no flow id on this record");
     expect(row.description).toContain("[create: no flow id on this record]");
+  });
+});
+
+describe("TREE_CONNECT share context propagates to operations on its tree (#1092)", () => {
+  it("shareLeaf takes the last UNC segment", () => {
+    expect(shareLeaf("\\\\admin-pc\\c$")).toBe("c$");
+    expect(shareLeaf("C$")).toBe("C$");
+  });
+
+  it("a CREATE with no share of its own inherits its tree's TREE_CONNECT share, as a bare leaf", () => {
+    const ops = emptySmbOperations();
+    addSmb(
+      ops,
+      readSuricataSmb(
+        smb({
+          smb: {
+            command: "SMB2_COMMAND_TREE_CONNECT",
+            disposition: undefined,
+            fuid: undefined,
+            share: "\\\\admin-pc\\c$",
+            share_type: "FILE",
+            filename: undefined,
+          },
+        }),
+        0,
+      ),
+    );
+    addSmb(ops, readSuricataSmb(smb({ smb: { fuid: "F1", share: undefined } }), 1));
+    const chains = joinSmbChains(ops);
+    const fileChain = chains.find((c) => c.create?.fuid === "F1");
+    expect(fileChain?.create?.share).toBe("c$");
+    expect(fileChain?.create?.shareType).toBe("FILE");
+  });
+
+  it("an operation's own share, when present, is never overridden by the tree's", () => {
+    const ops = emptySmbOperations();
+    addSmb(
+      ops,
+      readSuricataSmb(
+        smb({
+          smb: {
+            command: "SMB2_COMMAND_TREE_CONNECT",
+            disposition: undefined,
+            fuid: undefined,
+            share: "\\\\admin-pc\\c$",
+            filename: undefined,
+          },
+        }),
+        0,
+      ),
+    );
+    addSmb(ops, readSuricataSmb(smb({ smb: { fuid: "F1", share: "Finance$" } }), 1));
+    const chains = joinSmbChains(ops);
+    const fileChain = chains.find((c) => c.create?.fuid === "F1");
+    expect(fileChain?.create?.share).toBe("Finance$");
+  });
+
+  it("a different tree_id (or flow) never inherits an unrelated tree's share", () => {
+    const ops = emptySmbOperations();
+    addSmb(
+      ops,
+      readSuricataSmb(
+        smb({
+          smb: {
+            command: "SMB2_COMMAND_TREE_CONNECT",
+            disposition: undefined,
+            fuid: undefined,
+            tree_id: "T1",
+            share: "\\\\admin-pc\\c$",
+            filename: undefined,
+          },
+        }),
+        0,
+      ),
+    );
+    addSmb(ops, readSuricataSmb(smb({ smb: { fuid: "F1", tree_id: "T2", share: undefined } }), 1));
+    const chains = joinSmbChains(ops);
+    const fileChain = chains.find((c) => c.create?.fuid === "F1");
+    expect(fileChain?.create?.share).toBeUndefined();
   });
 });
 

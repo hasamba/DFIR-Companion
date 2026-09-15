@@ -41,6 +41,7 @@ interface SmbCanonical {
   outcome?: string;
   shareType?: string;
   share?: string;
+  filename?: string;
 }
 
 interface TimelineEventShape {
@@ -67,7 +68,7 @@ const ms = (iso: string | undefined): number | null => {
 /** A match inside this window of the anchor has no established order — same tolerance as #985. */
 export const ORDER_TOLERANCE_MS = 2000;
 /** Records indexed per path/hash bucket; the rest are counted, never read. */
-const BUCKET_MAX = 64;
+export const BUCKET_MAX = 64;
 /** Matches named on one row's note; the rest are counted as "+N more". */
 const NAMED_MAX = 8;
 const NOTE_MAX = 900;
@@ -201,12 +202,15 @@ function candidatesForWrite(
   writeFile: FilePath | null,
   byPath: Map<string, Bucket>,
   byHash: Map<string, Bucket>,
-): { matches: WriteMatch[]; reused: number } {
+): { matches: WriteMatch[]; reused: number; beyondIndex: number } {
   let reused = 0;
   const eligible: Omit<WriteMatch, "hostEstablished">[] = [];
   const seen = new Set<TimelineEventShape>();
+  let beyondIndex = 0;
   if (writeFile) {
-    for (const r of byPath.get(writeFile.relative)?.records ?? []) {
+    const pathBucket = byPath.get(writeFile.relative);
+    beyondIndex += pathBucket?.beyond ?? 0;
+    for (const r of pathBucket?.records ?? []) {
       if (seen.has(r)) continue;
       const loc = sameLocation(writeFile, filePath(r.path ?? "") ?? writeFile);
       if (!loc.same) continue;
@@ -219,7 +223,9 @@ function candidatesForWrite(
     }
   }
   for (const h of [write.sha256, write.md5].filter((x): x is string => !!x)) {
-    for (const r of byHash.get(h.toLowerCase())?.records ?? []) {
+    const hashBucket = byHash.get(h.toLowerCase());
+    beyondIndex += hashBucket?.beyond ?? 0;
+    for (const r of hashBucket?.records ?? []) {
       if (seen.has(r) || hashVeto(write, r) || !sameHash(write, r)) continue;
       seen.add(r);
       eligible.push({ record: r, by: "hash" });
@@ -233,31 +239,30 @@ function candidatesForWrite(
     matches.push({ ...m, hostEstablished: !!writeHost && !!rHost && writeHost === rHost });
   }
   matches.sort((a, b) => (a.record.timestamp ?? "").localeCompare(b.record.timestamp ?? ""));
-  return { matches, reused };
+  return { matches, reused, beyondIndex };
 }
 
 // ───────────────────────────── join B: pipe call → service/task creation ─────────────────────────
 
-const SERVICE_PIPES = /\\pipe\\svcctl$/i;
-const TASK_PIPES = /\\pipe\\atsvc$/i;
+// Suricata's own documented named-pipe CREATE example (docs.suricata.io eve-json-format) carries
+// the bare pipe name in `smb.filename` ("atsvc") — NOT in `share`, and the record has no
+// `share_type` at all (that field lives only on the separate TREE_CONNECT record, which a pipe
+// open may not even have one of in the capture). Matching the bare name exactly, case-insensitive
+// — an ordinary file share is vanishingly unlikely to hold a same-named, extension-less file.
+const SERVICE_PIPE = /^svcctl$/i;
+const TASK_PIPE = /^atsvc$/i;
 /** No claim beyond this window — a routine pipe open hours before an unrelated install never matches. */
 const PIPE_WINDOW_MS = 15 * 60 * 1000;
-
-function pipeName(e: TimelineEventShape): string | undefined {
-  const smb = e.canonical?.smb;
-  return smb?.share; // #1085 reads a pipe's name into `share`; verify against a real sample (PLAN-1092 open question 1)
-}
 
 export function isRpcPipeCall(e: TimelineEventShape): "service" | "task" | null {
   const smb = e.canonical?.smb;
   if (!smb || e.canonical?.event?.category !== "network" || e.canonical.event.type !== "smb") return null;
-  if ((smb.shareType ?? "").toUpperCase() !== "PIPE") return null;
   if ((smb.command ?? "").toUpperCase() !== "SMB2_COMMAND_CREATE" && (smb.command ?? "") !== "CREATE")
     return null;
   if (smb.status && smb.status.toUpperCase() !== "STATUS_SUCCESS") return null;
-  const name = pipeName(e) ?? "";
-  if (SERVICE_PIPES.test(name)) return "service";
-  if (TASK_PIPES.test(name)) return "task";
+  const name = smb.filename ?? "";
+  if (SERVICE_PIPE.test(name)) return "service";
+  if (TASK_PIPE.test(name)) return "task";
   return null;
 }
 
@@ -329,11 +334,11 @@ export function corroborateSmbExecution<T extends TimelineEventShape>(events: re
 
   const writeNotes = new Map<T, string>();
   const writeSeverity = new Map<T, Severity>();
-  const executionNotes = new Map<T, { rows: string[]; more: number }>();
+  const executionNotes = new Map<T, { rows: string[]; more: number; anyHostEstablished: boolean }>();
   for (const w of writes) {
     const smb = w.canonical?.smb;
     const writeFile = resolveShareToLocal(smb?.share, w.path ?? "");
-    const { matches, reused } = candidatesForWrite(w, writeFile, byPath, byHash);
+    const { matches, reused, beyondIndex } = candidatesForWrite(w, writeFile, byPath, byHash);
     const anchor = ms(w.timestamp);
     const after = (m: WriteMatch) => {
       const t = ms(m.record.timestamp);
@@ -360,19 +365,22 @@ export function corroborateSmbExecution<T extends TimelineEventShape>(events: re
     const tail: string[] = [];
     if (matches.length > named.length) tail.push(`+${matches.length - named.length} more`);
     if (reused) tail.push(`path reused: ${reused} record(s)' hash differs — not the same file`);
+    if (beyondIndex) tail.push(`${beyondIndex} record(s) beyond the index, not read`);
     writeNotes.set(w, clipNote([...named, ...tail].join("; ")));
     const confirmed = matches.filter(after);
-    if (confirmed.length) {
-      // High only when at least one confirmed match's host identity is established; a
-      // network(IP)-to-host(collected-asset) join with no established identity is genuinely less
-      // certain than two host-collected artifacts agreeing on a name, so it's capped at Medium.
-      writeSeverity.set(w, confirmed.some((m) => m.hostEstablished) ? "High" : "Medium");
-    }
+    // Raised ONLY when a confirmed match's host identity is established. An SMB row's identity is
+    // a destination IP, not a collection-host name — a match with no established agreement is real
+    // evidence worth showing, but promoting it into the forensic timeline on path/hash coincidence
+    // alone, across hosts that were never confirmed to be the same, risks manufacturing a false
+    // chain between two genuinely unrelated hosts. It stays Info (note only) until confirmed.
+    const hostConfirmed = confirmed.filter((m) => m.hostEstablished);
+    if (hostConfirmed.length) writeSeverity.set(w, "High");
     for (const m of confirmed) {
-      const c = executionNotes.get(m.record as T) ?? { rows: [], more: 0 };
+      const c = executionNotes.get(m.record as T) ?? { rows: [], more: 0, anyHostEstablished: false };
       if (c.rows.length < NAMED_MAX)
         c.rows.push(`${excerpt(w.path ?? "")}${m.hostEstablished ? "" : " (host not established)"}`);
       else c.more += 1;
+      if (m.hostEstablished) c.anyHostEstablished = true;
       executionNotes.set(m.record as T, c);
     }
   }
@@ -381,7 +389,7 @@ export function corroborateSmbExecution<T extends TimelineEventShape>(events: re
   // targetNotes keys the service/task row's note ("preceded by a pipe call").
   const pipeNotes = new Map<T, string>();
   const pipeSeverity = new Map<T, Severity>();
-  const targetNotes = new Map<T, { rows: string[]; more: number }>();
+  const targetNotes = new Map<T, { rows: string[]; more: number; anyHostEstablished: boolean }>();
   for (const p of pipes) {
     const kind = isRpcPipeCall(p);
     if (!kind) continue;
@@ -393,11 +401,13 @@ export function corroborateSmbExecution<T extends TimelineEventShape>(events: re
     });
     const more = matches.length > NAMED_MAX ? [`+${matches.length - NAMED_MAX} more`] : [];
     pipeNotes.set(p, clipNote([...named, ...more].join("; ")));
-    pipeSeverity.set(p, matches.some((m) => m.hostEstablished) ? "High" : "Medium");
+    // Same host-established gate as join A: never raised on a bare host-unconfirmed coincidence.
+    if (matches.some((m) => m.hostEstablished)) pipeSeverity.set(p, "High");
     for (const m of matches) {
-      const c = targetNotes.get(m.record as T) ?? { rows: [], more: 0 };
+      const c = targetNotes.get(m.record as T) ?? { rows: [], more: 0, anyHostEstablished: false };
       if (c.rows.length < NAMED_MAX) c.rows.push(excerpt(p.description ?? ""));
       else c.more += 1;
+      if (m.hostEstablished) c.anyHostEstablished = true;
       targetNotes.set(m.record as T, c);
     }
   }
@@ -417,7 +427,7 @@ export function corroborateSmbExecution<T extends TimelineEventShape>(events: re
     if (eNote) {
       const words = [...eNote.rows, ...(eNote.more ? [`+${eNote.more} more`] : [])].join("; ");
       description = appendDerivedNote(description, RAN_SMB_STAGED_MARKER, clipNote(words));
-      severity = worstSeverity(severity, "Medium");
+      if (eNote.anyHostEstablished) severity = worstSeverity(severity, "Medium");
     }
     const pNote = pipeNotes.get(e);
     if (pNote !== undefined) {
@@ -429,7 +439,7 @@ export function corroborateSmbExecution<T extends TimelineEventShape>(events: re
     if (tNote) {
       const words = [...tNote.rows, ...(tNote.more ? [`+${tNote.more} more`] : [])].join("; ");
       description = appendDerivedNote(description, SERVICE_TASK_FROM_PIPE_MARKER, clipNote(words));
-      severity = worstSeverity(severity, "Medium");
+      if (tNote.anyHostEstablished) severity = worstSeverity(severity, "Medium");
     }
 
     if (description === (e.description ?? "") && severity === (e.severity ?? "Info")) return e;
