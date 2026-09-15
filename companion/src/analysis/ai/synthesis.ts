@@ -6,6 +6,7 @@ import { toAnonPolicy, type AnonControlStore } from "../anonControl.js";
 import type { AssetOverridesStore } from "../assetOverrides.js";
 import type { VelociraptorClientStore } from "../velociraptorClientStore.js";
 import type { HostDuplicateDismissalStore } from "../hostDuplicateDismissals.js";
+import type { EvidenceAttestationStore } from "../evidenceAttestationStore.js";
 import { alignedEpoch, detectClockSkew, detectHostTimeGaps, effectiveOffsets } from "../clockSkew.js";
 import type { ClockSkewStore } from "../clockSkewStore.js";
 import { correlateEvents, correlationGroups, type CorrelateOptions } from "../correlate.js";
@@ -103,6 +104,7 @@ export interface SynthesisContext
       assetOverridesStore?: AssetOverridesStore;
       velociraptorClientStore?: VelociraptorClientStore;
       hostDuplicateDismissalStore?: HostDuplicateDismissalStore;
+      evidenceAttestationStore?: EvidenceAttestationStore;
     };
   /** mergeDelta plus the case's analyst IOC-merge aliases (#82). */
   mergeWithAliases(

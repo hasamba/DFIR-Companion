@@ -106,6 +106,20 @@
   #sec-host-scope .hs-act{padding:2px 9px;border:1px solid var(--border-color);border-radius:5px;background:var(--badge-bg-neutral);color:var(--text-primary);font-size:11px;font-weight:400;text-transform:none;letter-spacing:0}
   #sec-host-scope .hs-act:hover{border-color:var(--accent);color:var(--text-bright)}
 
+  /* #1111: analyst-attested evidence-class coverage, a compact addition inside the Hypotheses
+     panel rather than its own top-level section — same visual language as .hs-* above. */
+  #sec-hypotheses .ea-details{margin-top:12px;border-top:1px solid var(--border-subtle);padding-top:8px}
+  #sec-hypotheses .ea-details summary{cursor:pointer;font-size:12px;font-weight:600;color:var(--text-muted)}
+  #sec-hypotheses .ea-help{font-size:11px;color:var(--text-muted);margin:8px 0}
+  #sec-hypotheses .ea-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:6px 0;border-bottom:1px solid var(--border-subtle)}
+  #sec-hypotheses .ea-row:last-child{border-bottom:none}
+  #sec-hypotheses .ea-label{flex:0 0 100px;font-size:12px;font-weight:600;color:var(--text-primary)}
+  #sec-hypotheses .ea-status{flex:1 1 auto;font-size:11px;color:var(--text-muted)}
+  #sec-hypotheses .ea-status.ea-none{font-style:italic}
+  #sec-hypotheses .ea-active .ea-status{color:var(--badge-success-text)}
+  #sec-hypotheses .ea-act{padding:2px 9px;border:1px solid var(--border-color);border-radius:5px;background:var(--badge-bg-neutral);color:var(--text-primary);font-size:11px;font-weight:400;text-transform:none;letter-spacing:0}
+  #sec-hypotheses .ea-act:hover{border-color:var(--accent);color:var(--text-bright)}
+
 
   #sec-mem-nextsteps .mns-empty{color:var(--text-muted);font-size:12px;margin-top:10px}
   #sec-mem-nextsteps .mns-caveat{color:var(--badge-warning-text);font-size:12px;margin:10px 0 8px}
