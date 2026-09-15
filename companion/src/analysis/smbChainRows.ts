@@ -270,6 +270,12 @@ function mapOperation(
     origin: "wire",
     aggKey: `smb|${op.command}|${factDigest}`,
     sources: ["Suricata"],
+    // Promoted to the top level (not just canonical.smb) so a later merge-time
+    // correlation pass can find this row by the same path/sha256/md5 fields every
+    // other importer uses (downloadExecution.ts's TimelineEventShape convention, #1092).
+    ...(op.filename ? { path: op.filename } : {}),
+    ...(fileinfo.transfer?.sha256 ? { sha256: fileinfo.transfer.sha256 } : {}),
+    ...(fileinfo.transfer?.md5 ? { md5: fileinfo.transfer.md5 } : {}),
     ...(op.src ? { srcIp: op.src } : {}),
     ...(op.dst ? { dstIp: op.dst } : {}),
     ...(op.port ? { port: op.port } : {}),
