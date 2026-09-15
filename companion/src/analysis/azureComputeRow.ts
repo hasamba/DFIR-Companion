@@ -213,15 +213,16 @@ export function summaryRow(
 }
 
 /** The VMs beyond the reported bound, the records past a tracked-entity bound, and the NSG-rule
- * records past NSG_RULE_RECORDS_MAX (#1077) — counts, never claims. */
+ * records/VNet-invalidations/rules-per-record past their own examined bound (#1077) — counts,
+ * never claims. */
 export function omittedRow(
   count: number,
   severity: Severity,
   untrackedRecords: number,
   uploadId: string,
-  nsgRuleRecordsBeyond = 0,
+  nsgWorkBeyond = 0,
 ): MappedEvent {
-  const description = `Azure compute lifecycle — ${count ? `${count} further VM${count === 1 ? "" : "s"} with a lifecycle in this upload beyond the ${AZURE_COMPUTE_MAX} reported — not shown` : "no further VM beyond the reported"}${untrackedRecords ? `; ${plural(untrackedRecords, "record")} naming VMs/NICs/subnets past their own tracked bound — not read` : ""}${nsgRuleRecordsBeyond ? `; ${plural(nsgRuleRecordsBeyond, "NSG-rule record")} past the ${NSG_RULE_RECORDS_MAX} examined — not read` : ""}`;
+  const description = `Azure compute lifecycle — ${count ? `${count} further VM${count === 1 ? "" : "s"} with a lifecycle in this upload beyond the ${AZURE_COMPUTE_MAX} reported — not shown` : "no further VM beyond the reported"}${untrackedRecords ? `; ${plural(untrackedRecords, "record")} naming VMs/NICs/subnets past their own tracked bound — not read` : ""}${nsgWorkBeyond ? `; ${plural(nsgWorkBeyond, "NSG-rule record/rule/VNet-invalidation")} past its own examined bound (up to ${NSG_RULE_RECORDS_MAX}) — not read` : ""}`;
   return {
     timestamp: "",
     description,

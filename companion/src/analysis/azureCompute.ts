@@ -23,6 +23,7 @@ import {
   AZURE_RUN_COMMAND_RE,
   NICS_MAX,
   NSG_PARENT_RULES_MAX,
+  NSG_PREFIXES_PER_RULE_MAX,
   NSG_RULE_RECORDS_MAX,
   RANK,
   REMOTE_MAX,
@@ -40,6 +41,7 @@ import {
   parseAzureVmResourceId,
   resolveAt,
   subnetFor,
+  VNET_INVALIDATION_RECORDS_MAX,
   vmFor,
   type Nic,
   type NicState,
@@ -171,7 +173,10 @@ function launchFacts(
 
 /** The NIC ids a write's own body names, or `null` when the field is genuinely absent — never
  * guessed into an empty set (#1077, Codex design round 1, finding H1: an unrelated VM PATCH can
- * omit `networkProfile` entirely without detaching anything). */
+ * omit `networkProfile` entirely without detaching anything). Also never guessed from a
+ * MALFORMED value once present — a non-array value, or an array whose entries all fail to decode
+ * to a valid NIC resourceId, is NOT the same as a genuinely empty `[]` Azure sent, and must not
+ * silently supersede a real prior attachment (#1077, Codex code review, finding M2). */
 function nicSetFromBody(body: Row | null): string[] | null {
   const props = body && isObject(getCI(body, "properties")) ? (getCI(body, "properties") as Row) : null;
   const networkProfile =
@@ -179,11 +184,15 @@ function nicSetFromBody(body: Row | null): string[] | null {
   if (!networkProfile) return null;
   const nicList = getCI(networkProfile, "networkInterfaces");
   if (nicList === undefined) return null;
-  return (Array.isArray(nicList) ? nicList : [])
+  if (!Array.isArray(nicList)) return null;
+  const ids = nicList
     .filter(isObject)
-    .map((n) => lower(field(n, "id")))
-    .filter(Boolean)
+    .map((n) => field(n, "id"))
+    .filter((id) => id && isAzureNicResourceId(id))
+    .map(lower)
     .slice(0, NICS_MAX);
+  if (ids.length === 0 && nicList.length > 0) return null;
+  return ids;
 }
 
 function recordWrite(t: Tracked, s: Scanned): void {
@@ -271,6 +280,7 @@ const NIC_DELETE_RE = /microsoft\.network\/networkinterfaces\/delete$/i;
 const SUBNET_WRITE_RE = /microsoft\.network\/virtualnetworks\/subnets\/write$/i;
 const SUBNET_DELETE_RE = /microsoft\.network\/virtualnetworks\/subnets\/delete$/i;
 const VNET_WRITE_RE = /microsoft\.network\/virtualnetworks\/write$/i;
+const VNET_DELETE_RE = /microsoft\.network\/virtualnetworks\/delete$/i;
 /** The PARENT NSG form — its own inline `properties.securityRules[]`, never `defaultSecurityRules[]`. */
 const NSG_WRITE_RE = /microsoft\.network\/networksecuritygroups\/write$/i;
 /** The CHILD named-rule form — one rule, read as a FULL rule object (Azure's control-plane PUT for
@@ -321,11 +331,12 @@ function recordNicDelete(t: Tracked, s: Scanned): void {
 /** A successful CHILD subnet write records its own NSG (#1077). */
 function recordSubnet(t: Tracked, s: Scanned): void {
   if (!SUBNET_WRITE_RE.test(s.op)) return;
-  if (!azureSubnetParentVnet(s.resourceId)) return;
+  const parentVnet = azureSubnetParentVnet(s.resourceId);
+  if (!parentVnet) return;
   if (azureAttemptOutcome(s.status) !== "success") return;
   const props = requestProps(s.requestBody);
   if (!props) return;
-  const subnet = subnetFor(t, lower(s.resourceId));
+  const subnet = subnetFor(t, lower(s.resourceId), parentVnet);
   if (!subnet) return;
   const nsgIdRaw = field(props, "networkSecurityGroup", "id");
   const state: SubnetState = { time: s.time, locator: s.locator, nsgId: nsgIdRaw ? lower(nsgIdRaw) : null };
@@ -335,11 +346,28 @@ function recordSubnet(t: Tracked, s: Scanned): void {
 /** A successful CHILD subnet delete closes its own chain (#1077, finding H2). */
 function recordSubnetDelete(t: Tracked, s: Scanned): void {
   if (!SUBNET_DELETE_RE.test(s.op)) return;
-  if (!azureSubnetParentVnet(s.resourceId)) return;
+  const parentVnet = azureSubnetParentVnet(s.resourceId);
+  if (!parentVnet) return;
   if (azureAttemptOutcome(s.status) !== "success") return;
-  const subnet = subnetFor(t, lower(s.resourceId));
+  const subnet = subnetFor(t, lower(s.resourceId), parentVnet);
   if (!subnet) return;
   subnet.states.push({ time: s.time, locator: s.locator, deleted: true });
+}
+
+/**
+ * Invalidates (write) or tombstones (delete) ONLY the given VNet's own tracked children, via
+ * `subnetsByVnet`'s index — never a full scan of every tracked subnet (#1077, Codex code review,
+ * finding H3: an attacker-controlled number of VNet writes against a large tracked subnet map is
+ * otherwise an O(writes × subnets) cost). Bounded by `VNET_INVALIDATION_RECORDS_MAX` at the call
+ * site in `azureComputeLifecycles()`, same discipline as the NSG-rule-record bound.
+ */
+function invalidateVnetChildren(t: Tracked, vnetId: string, time: number, locator: string): void {
+  const children = t.subnetsByVnet.get(vnetId);
+  if (!children) return;
+  for (const id of children) {
+    const subnet = t.subnets.get(id);
+    if (subnet) subnet.states.push({ time, locator, deleted: true });
+  }
 }
 
 /**
@@ -347,16 +375,22 @@ function recordSubnetDelete(t: Tracked, s: Scanned): void {
  * finding H2) rather than being silently ignored. Decoding the parent's own inline
  * `properties.subnets[]` is out of scope (#1077's Files section) — but ignoring the write
  * entirely would let a later child-subnet state look current when the parent write may have
- * changed the same subnet's NSG in between. A prefix match on the subnet's own resourceId is
- * sound: VNet and subnet resourceIds are hierarchical (`<vnet>/subnets/<name>`).
+ * changed the same subnet's NSG in between.
  */
 function recordVnetWrite(t: Tracked, s: Scanned): void {
   if (!VNET_WRITE_RE.test(s.op)) return;
   if (!isAzureVnetResourceId(s.resourceId)) return;
   if (azureAttemptOutcome(s.status) !== "success") return;
-  const prefix = `${lower(s.resourceId)}/subnets/`;
-  for (const [id, subnet] of t.subnets)
-    if (id.startsWith(prefix)) subnet.states.push({ time: s.time, locator: s.locator, deleted: true });
+  invalidateVnetChildren(t, lower(s.resourceId), s.time, s.locator);
+}
+
+/** A successful PARENT VNet delete tombstones every one of its own tracked children (#1077,
+ * Codex code review, finding H2) — a subnet cannot outlive the VNet that deleted it. */
+function recordVnetDelete(t: Tracked, s: Scanned): void {
+  if (!VNET_DELETE_RE.test(s.op)) return;
+  if (!isAzureVnetResourceId(s.resourceId)) return;
+  if (azureAttemptOutcome(s.status) !== "success") return;
+  invalidateVnetChildren(t, lower(s.resourceId), s.time, s.locator);
 }
 
 type AnySourceToken = "*" | "0.0.0.0/0" | "::/0" | "internet";
@@ -364,11 +398,20 @@ type AnySourceToken = "*" | "0.0.0.0/0" | "::/0" | "internet";
 /** The rule objects a rule-write record's own body carries: the parent form's bounded
  * `properties.securityRules[]` (never `defaultSecurityRules[]`), or the child form's own body
  * (the ONE rule it wrote, in full — #1077). */
-function ruleObjects(op: string, props: Row | null): Row[] {
+/** Bounds by INDEX POSITION EXAMINED, never by filtering the full array first — an untrusted
+ * `securityRules[]` of any length costs at most `NSG_PARENT_RULES_MAX` object checks (#1077,
+ * Codex code review, finding M1: `.filter(isObject)` over the complete array before slicing did
+ * not actually bound traversal). Rules beyond the bound are counted, never read. */
+function ruleObjects(t: Tracked, op: string, props: Row | null): Row[] {
   if (!props) return [];
   if (NSG_WRITE_RE.test(op)) {
     const rules = getCI(props, "securityRules");
-    return (Array.isArray(rules) ? rules : []).filter(isObject).slice(0, NSG_PARENT_RULES_MAX);
+    if (!Array.isArray(rules)) return [];
+    const examined = Math.min(rules.length, NSG_PARENT_RULES_MAX);
+    const out: Row[] = [];
+    for (let i = 0; i < examined; i += 1) if (isObject(rules[i])) out.push(rules[i] as Row);
+    if (rules.length > NSG_PARENT_RULES_MAX) t.nsgRulesBeyond += rules.length - NSG_PARENT_RULES_MAX;
+    return out;
   }
   if (NSG_RULE_WRITE_RE.test(op)) return [props];
   return [];
@@ -376,15 +419,21 @@ function ruleObjects(op: string, props: Row | null): Row[] {
 
 /** The EXACT source category a rule names, kept distinct — never collapsed into one "any source"
  * phrase (#1077, Codex design round 1, finding H3). `null` for anything not inbound-allow, or
- * whose source is a specific range rather than one of Azure's own documented wildcards. */
-function anySourceToken(rule: Row): AnySourceToken | null {
+ * whose source is a specific range rather than one of Azure's own documented wildcards. A rule's
+ * own `sourceAddressPrefixes` is bounded too — further entries counted, never read (#1077, Codex
+ * code review, finding M1). */
+function anySourceToken(t: Tracked, rule: Row): AnySourceToken | null {
   if (lower(field(rule, "direction")) !== "inbound") return null;
   if (lower(field(rule, "access")) !== "allow") return null;
   const prefixes: string[] = [];
   const single = field(rule, "sourceAddressPrefix");
   if (single) prefixes.push(single);
   const many = getCI(rule, "sourceAddressPrefixes");
-  if (Array.isArray(many)) for (const p of many) prefixes.push(str(p).trim());
+  if (Array.isArray(many)) {
+    const examined = Math.min(many.length, NSG_PREFIXES_PER_RULE_MAX);
+    for (let i = 0; i < examined; i += 1) prefixes.push(str(many[i]).trim());
+    if (many.length > NSG_PREFIXES_PER_RULE_MAX) t.nsgRulesBeyond += many.length - NSG_PREFIXES_PER_RULE_MAX;
+  }
   for (const raw of prefixes) {
     const p = raw.trim();
     if (p === "*") return "*";
@@ -450,8 +499,8 @@ function recordNsgJoin(t: Tracked, s: Scanned): void {
   if (!nsgId) return;
   const props = requestProps(s.requestBody);
   let token: AnySourceToken | null = null;
-  for (const rule of ruleObjects(s.op, props)) {
-    token = anySourceToken(rule);
+  for (const rule of ruleObjects(t, s.op, props)) {
+    token = anySourceToken(t, rule);
     if (token) break;
   }
   if (!token) return;
@@ -478,14 +527,18 @@ export function azureComputeLifecycles(records: readonly Row[], uploadId: string
     vms: new Map(),
     nics: new Map(),
     subnets: new Map(),
+    subnetsByVnet: new Map(),
     untrackedRecords: 0,
     untrackedNics: 0,
     untrackedSubnets: 0,
     nsgRuleRecordsBeyond: 0,
+    vnetInvalidationsBeyond: 0,
+    nsgRulesBeyond: 0,
   };
   const coverage = { records: 0, first: "", last: "" };
   const scanned = scan(records, coverage);
   let nsgRuleRecordsExamined = 0;
+  let vnetInvalidationsExamined = 0;
   for (const s of scanned) {
     recordWrite(t, s);
     recordVmDelete(t, s);
@@ -495,7 +548,13 @@ export function azureComputeLifecycles(records: readonly Row[], uploadId: string
     recordNicDelete(t, s);
     recordSubnet(t, s);
     recordSubnetDelete(t, s);
-    recordVnetWrite(t, s);
+    if (VNET_WRITE_RE.test(s.op) || VNET_DELETE_RE.test(s.op)) {
+      if (vnetInvalidationsExamined < VNET_INVALIDATION_RECORDS_MAX) {
+        vnetInvalidationsExamined += 1;
+        recordVnetWrite(t, s);
+        recordVnetDelete(t, s);
+      } else t.vnetInvalidationsBeyond += 1;
+    }
     if (NSG_WRITE_RE.test(s.op) || NSG_RULE_WRITE_RE.test(s.op)) {
       if (nsgRuleRecordsExamined < NSG_RULE_RECORDS_MAX) {
         nsgRuleRecordsExamined += 1;
@@ -520,14 +579,15 @@ export function azureComputeLifecycles(records: readonly Row[], uploadId: string
     .map((f) => summaryRow(f.vm, f.facts, f.grade, coverage, uploadId));
   const omitted = Math.max(0, findings.length - AZURE_COMPUTE_MAX);
   const untrackedRecords = t.untrackedRecords + t.untrackedNics + t.untrackedSubnets;
-  if (omitted > 0 || untrackedRecords > 0 || t.nsgRuleRecordsBeyond > 0)
+  const nsgWorkBeyond = t.nsgRuleRecordsBeyond + t.vnetInvalidationsBeyond + t.nsgRulesBeyond;
+  if (omitted > 0 || untrackedRecords > 0 || nsgWorkBeyond > 0)
     rows.push(
       omittedRow(
         omitted,
         findings[AZURE_COMPUTE_MAX]?.grade ?? "Low",
         untrackedRecords,
         uploadId,
-        t.nsgRuleRecordsBeyond,
+        nsgWorkBeyond,
       ),
     );
   return rows;

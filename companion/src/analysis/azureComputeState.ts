@@ -44,9 +44,16 @@ export const SUBNET_STATE_EARLY_MAX = 24;
 export const SUBNET_STATE_LATE_MAX = 8;
 export const VM_NIC_SETS_EARLY_MAX = 24;
 export const VM_NIC_SETS_LATE_MAX = 8;
-/** The NSG join's own attacker-controlled-work bounds (#1077, Codex design round 1, finding H5). */
+/** The NSG join's own attacker-controlled-work bounds (#1077, Codex design round 1, finding H5,
+ * and code round 1, findings H3/M1). */
 export const NSG_RULE_RECORDS_MAX = 256;
 export const NSG_PARENT_RULES_MAX = 64;
+/** Prefixes examined per rule — a single rule's own `sourceAddressPrefixes` is bounded too. */
+export const NSG_PREFIXES_PER_RULE_MAX = 16;
+/** Parent VNet write/delete records that trigger a child-subnet invalidation walk — further
+ * records are counted, never processed, even though each walk is itself O(that VNet's own
+ * children) thanks to `subnetsByVnet`'s indexing. */
+export const VNET_INVALIDATION_RECORDS_MAX = 256;
 export const LIMIT_NOTE =
   "what ran on the VM and its network egress are not in this case's Azure Activity Log exports; the network-security-group join covers only a direct NIC attachment or its subnet's own attachment, resolved as of the rule-write's own time, matched by exact resourceId — a match on one of the two NSGs Azure evaluates never by itself establishes that traffic reaches the VM — see #1077, #1078";
 export const COVERAGE_NOTE = "record retention and export filtering are not in this evidence";
@@ -148,8 +155,15 @@ export function azureNsgIdForRuleRecord(resourceId: string): string | null {
  * never a joined fact (Codex design round 1, finding #13: Azure Activity Log can record an
  * operation's acceptance separately from its completion).
  */
+/**
+ * Both terminal-success spellings Microsoft documents across Azure's own Activity Log export
+ * shapes are accepted: `status.value`/`ActivityStatusValue` reads "Succeeded", while the
+ * streamed (storage/Event Hub) export's `resultType` reads "Success" — #1077's code review found
+ * every handler silently produced no state at all against a genuine streamed-format export,
+ * since only "succeeded" was recognized. Pre-existing #1066 handlers share this same fix.
+ */
 export const azureAttemptOutcome = (status: string): "success" | "not-succeeded" =>
-  lower(status) === "succeeded" ? "success" : "not-succeeded";
+  ["succeeded", "success"].includes(lower(status)) ? "success" : "not-succeeded";
 
 export interface Timed {
   time: number;
@@ -324,12 +338,23 @@ export interface Tracked {
   /** NIC/Subnet resourceId → tracked entity (#1077). Keys are already lowercased. */
   nics: Map<string, Nic>;
   subnets: Map<string, Subnet>;
+  /** Parent VNet resourceId → its own tracked child subnet ids (#1077) — lets a VNet write/delete
+   * invalidate only ITS OWN children in O(children), never a full scan of every tracked subnet
+   * (Codex code review: an unbounded number of VNet writes against a large tracked subnet map is
+   * an O(writes × subnets) attacker-controlled cost otherwise). */
+  subnetsByVnet: Map<string, Set<string>>;
   untrackedRecords: number;
   /** NIC/Subnet ids named past their own tracked bound — counted, never read (#1077). */
   untrackedNics: number;
   untrackedSubnets: number;
   /** NSG-rule-write records past `NSG_RULE_RECORDS_MAX` — counted, never examined (#1077). */
   nsgRuleRecordsBeyond: number;
+  /** VNet write/delete invalidation records past `VNET_INVALIDATION_RECORDS_MAX` — counted, never
+   * processed (#1077, Codex code review). */
+  vnetInvalidationsBeyond: number;
+  /** Rules or source-prefixes past their own examined bound within one NSG-rule record — counted,
+   * never read (#1077, Codex code review). */
+  nsgRulesBeyond: number;
 }
 
 export function vmFor(t: Tracked, subscriptionId: string, resourceGroup: string, vmName: string): Vm | null {
@@ -374,7 +399,9 @@ export function nicFor(t: Tracked, id: string): Nic | null {
 }
 
 /** `id` must already be lowercased — every caller derives it from a parser that already lowers. */
-export function subnetFor(t: Tracked, id: string): Subnet | null {
+/** `id` and `parentVnetId` must already be lowercased. `parentVnetId` indexes the subnet under its
+ * own parent so a later VNet write/delete can invalidate ONLY that VNet's own children (#1077). */
+export function subnetFor(t: Tracked, id: string, parentVnetId: string): Subnet | null {
   const cur = t.subnets.get(id);
   if (cur) return cur;
   if (t.subnets.size >= SUBNETS_TRACKED_MAX) {
@@ -383,6 +410,9 @@ export function subnetFor(t: Tracked, id: string): Subnet | null {
   }
   const subnet: Subnet = { states: new EdgeBuffer(SUBNET_STATE_EARLY_MAX, SUBNET_STATE_LATE_MAX) };
   t.subnets.set(id, subnet);
+  const siblings = t.subnetsByVnet.get(parentVnetId) ?? new Set<string>();
+  siblings.add(id);
+  t.subnetsByVnet.set(parentVnetId, siblings);
   return subnet;
 }
 

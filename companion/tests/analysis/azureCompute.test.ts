@@ -549,4 +549,141 @@ describe("azureComputeLifecycles — the NSG join (#1077)", () => {
     const omitted = rows.find((r) => r.description.startsWith("Azure compute lifecycle —"));
     expect(omitted?.description).toContain("NSG-rule record");
   });
+
+  // Regression tests for Codex code-round-1 findings (RECOMMENDATION-1077.md).
+  it("#H1code the streamed Activity Log export's resultType: Success is recognized, not only status.value: Succeeded", () => {
+    const streamedWrite = azure("Microsoft.Compute/virtualMachines/write", {
+      status: undefined,
+      resultType: "Success",
+      eventTimestamp: at(0),
+      properties: {
+        requestbody: { properties: { networkProfile: { networkInterfaces: [{ id: NIC_ID }] } } },
+      },
+    });
+    const streamedNic = azure("Microsoft.Network/networkInterfaces/write", {
+      resourceId: NIC_ID,
+      status: undefined,
+      resultType: "Success",
+      eventTimestamp: at(5),
+      properties: { requestbody: { properties: { networkSecurityGroup: { id: NSG_ID } } } },
+    });
+    const streamedRule = azure("Microsoft.Network/networkSecurityGroups/write", {
+      resourceId: NSG_ID,
+      status: undefined,
+      resultType: "Success",
+      eventTimestamp: at(10),
+      properties: { requestbody: { properties: { securityRules: [allowAnyRule()] } } },
+    });
+    const rows = azureComputeLifecycles([streamedWrite, streamedNic, streamedRule], "u1");
+    expect(rows[0].canonical?.azureCompute?.facts).toContain("any-address-nsg-rule");
+  });
+
+  it("#H2code a VNet delete tombstones its own tracked child subnets — no false positive survives it", () => {
+    const vnetDelete = azure("Microsoft.Network/virtualNetworks/delete", {
+      resourceId: VNET_ID,
+      eventTimestamp: at(6),
+    });
+    const rows = azureComputeLifecycles(
+      [
+        vmWriteWithNic(NIC_ID),
+        nicWrite({ subnetId: SUBNET_ID }),
+        subnetWrite(NSG_ID),
+        vnetDelete,
+        nsgChildRuleWrite(allowAnyRule(), at(20)),
+      ],
+      "u1",
+    );
+    expect(rows[0].canonical?.azureCompute?.facts).not.toContain("any-address-nsg-rule");
+  });
+
+  it("#H3code a VNet write invalidates only ITS OWN tracked children, never a full scan of every tracked subnet (a sibling VNet's own subnet survives untouched)", () => {
+    const otherVnet = lowerId(
+      `/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.Network/virtualNetworks/vnet2`,
+    );
+    const otherSubnet = `${otherVnet}/subnets/subnet2`;
+    const otherNic = lowerId(
+      `/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.Network/networkInterfaces/nic2`,
+    );
+    const vmWithBothNics = azure("Microsoft.Compute/virtualMachines/write", {
+      eventTimestamp: at(0),
+      properties: {
+        requestbody: {
+          properties: { networkProfile: { networkInterfaces: [{ id: NIC_ID }, { id: otherNic }] } },
+        },
+      },
+    });
+    const otherSubnetWrite = azure("Microsoft.Network/virtualNetworks/subnets/write", {
+      resourceId: otherSubnet,
+      eventTimestamp: at(5),
+      properties: { requestbody: { properties: { networkSecurityGroup: { id: NSG_ID } } } },
+    });
+    const otherNicWrite = nicWrite({ subnetId: otherSubnet }, at(5), otherNic);
+    // Write to vnet1 (unrelated to otherVnet) must never invalidate otherVnet's own subnet.
+    const vnet1Write = azure("Microsoft.Network/virtualNetworks/write", {
+      resourceId: VNET_ID,
+      eventTimestamp: at(7),
+      properties: { requestbody: { properties: {} } },
+    });
+    const rows = azureComputeLifecycles(
+      [
+        vmWithBothNics,
+        nicWrite({ subnetId: SUBNET_ID }),
+        subnetWrite(NSG_ID),
+        otherNicWrite,
+        otherSubnetWrite,
+        vnet1Write,
+        nsgChildRuleWrite(allowAnyRule(), at(20)),
+      ],
+      "u1",
+    );
+    // The via-subnet-2 path (unrelated to vnet1's invalidation) still resolves and fires.
+    expect(rows[0].canonical?.azureCompute?.facts).toContain("any-address-nsg-rule");
+    expect(rows[0].canonical?.azureCompute?.nsgObservation?.subnetId).toBe(otherSubnet);
+  });
+
+  it("#M1code a rule beyond NSG_PARENT_RULES_MAX is counted, never silently matched or crashed on", () => {
+    const manyRules = Array.from({ length: 70 }, () => ({
+      direction: "Inbound",
+      access: "Allow",
+      sourceAddressPrefix: "10.0.0.0/8",
+    }));
+    manyRules.push(allowAnyRule()); // the 71st rule — beyond NSG_PARENT_RULES_MAX (64)
+    const rows = azureComputeLifecycles(
+      [
+        vmWriteWithNic(NIC_ID),
+        nicWrite({ nsgId: NSG_ID }),
+        azure("Microsoft.Network/networkSecurityGroups/write", {
+          resourceId: NSG_ID,
+          eventTimestamp: at(10),
+          properties: { requestbody: { properties: { securityRules: manyRules } } },
+        }),
+      ],
+      "u1",
+    );
+    expect(rows[0].canonical?.azureCompute?.facts).not.toContain("any-address-nsg-rule");
+  });
+
+  it("#M2code a malformed networkInterfaces value (non-array, or all-invalid entries) never overwrites a valid prior NIC-set observation", () => {
+    const malformedWrite = azure("Microsoft.Compute/virtualMachines/write", {
+      eventTimestamp: at(6),
+      properties: { requestbody: { properties: { networkProfile: { networkInterfaces: "not-an-array" } } } },
+    });
+    const allInvalidWrite = azure("Microsoft.Compute/virtualMachines/write", {
+      eventTimestamp: at(7),
+      properties: {
+        requestbody: { properties: { networkProfile: { networkInterfaces: [{ id: "not-a-nic-id" }] } } },
+      },
+    });
+    const rows = azureComputeLifecycles(
+      [
+        vmWriteWithNic(NIC_ID),
+        malformedWrite,
+        allInvalidWrite,
+        nicWrite({ nsgId: NSG_ID }),
+        nsgParentWrite([allowAnyRule()], at(20)),
+      ],
+      "u1",
+    );
+    expect(rows[0].canonical?.azureCompute?.facts).toContain("any-address-nsg-rule");
+  });
 });
