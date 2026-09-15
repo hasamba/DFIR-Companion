@@ -11,18 +11,30 @@
 // offset / feature / context rows.
 
 import { createHash } from "node:crypto";
-import { boundedAggKey, boundedTextTo } from "./aggKey.js";
+import { boundedAggKey } from "./aggKey.js";
 import { createCanonicalEvent } from "./canonicalEvent.js";
-import type { RecoveryCitation, RecoveryPathHop } from "./canonicalRecoveredFragment.js";
-import { addIoc, type MappedEvent, type SiemEvent, type SiemIoc } from "./siemImport.js";
+import {
+  MAX_CONTEXT_LEN,
+  MAX_HOPS,
+  MAX_RAW_OFFSET_PARSE_LEN,
+  MAX_VALUE_LEN,
+  RECOVERY_CITATIONS_MAX,
+  type RecoveryCitation,
+  type RecoveryPathHop,
+} from "./canonicalRecoveredFragment.js";
+import { addIoc, mergeRowIocs, type MappedEvent, type SiemEvent, type SiemIoc } from "./siemImport.js";
 import { aggregateEvents } from "./eventAggregate.js";
 
-export const MAX_VALUE_LEN = 2000;
-export const MAX_CONTEXT_LEN = 600;
-export const RECOVERY_CITATIONS_MAX = 64;
+export { MAX_VALUE_LEN, MAX_CONTEXT_LEN, RECOVERY_CITATIONS_MAX };
 export const MAX_DISTINCT_VALUES = 2000;
 export const MAX_ROWS_SCANNED = 500_000;
-const MAX_HOPS = 8;
+const HEADER_MAX_LINES = 200;
+const HEADER_MAX_BYTES = 4096;
+// A sanity ceiling on the RAW offset field's own length, applied at scan time — rawOffset is
+// otherwise kept unbounded/verbatim (canonicalRecoveredFragment.ts), so a pathological field
+// (megabytes before the first tab) is rejected outright as malformed rather than silently
+// truncated, which would corrupt rather than preserve the evidence.
+const MAX_RAW_OFFSET_STORAGE_LEN = 10_000;
 const URL_SHAPE_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
 
 export interface BulkExtractorUrlOptions {
@@ -43,38 +55,44 @@ export interface BulkExtractorUrlResult {
   truncatedScan: boolean;
 }
 
-/** Both anchors required inside the header block — a loose single-line signature risks
- * misclaiming an unrelated 3-column TSV (same lesson as KAPE's own Codex finding #9). */
+/** Both anchors required inside the header block, and the version anchor must carry a real
+ * value — a loose single-line signature risks misclaiming an unrelated 3-column TSV (same lesson
+ * as KAPE's own Codex finding #9). */
 export function isBulkExtractorUrlFeatureFile(text: string): boolean {
   const header = headerBlock(text);
   if (header === null) return false;
-  const hasVersion = header.some((l) => /^#\s*BULK_EXTRACTOR-Version:/.test(l));
+  const hasVersion = header.some((l) => /^#\s*BULK_EXTRACTOR-Version:\s*\S+/.test(l));
   const hasRecorder = header.some((l) => /^#\s*Feature-Recorder:\s*url\s*$/.test(l));
   return hasVersion && hasRecorder;
 }
 
 /** Every leading line starting with `#` (CRLF/BOM normalized first), bounded so a hostile huge
- * banner can't force an unbounded scan (Codex design review finding #6). Returns null when the
- * file has no header at all (the first line isn't a comment) — not a match. */
+ * banner can't force an unbounded scan (Codex design review finding #6). The `split` limit bounds
+ * the work `split` itself does, not just the loop over its result (Codex code review finding:
+ * splitting the WHOLE text first still scanned it all). Returns null when the file has no header
+ * at all (the first line isn't a comment) — not a match. */
 function headerBlock(text: string): string[] | null {
   const stripped = text.startsWith("﻿") ? text.slice(1) : text;
-  const lines = stripped.split(/\r\n|\r|\n/);
-  if (!lines[0]?.startsWith("#")) return null;
+  if (!stripped.startsWith("#")) return null;
+  const lines = stripped.split(/\r\n|\r|\n/, HEADER_MAX_LINES + 10);
   const header: string[] = [];
   let bytes = 0;
   for (const line of lines) {
     if (!line.startsWith("#")) break;
     header.push(line);
     bytes += line.length + 1;
-    if (header.length >= 200 || bytes >= 4096) break;
+    if (header.length >= HEADER_MAX_LINES || bytes >= HEADER_MAX_BYTES) break;
   }
   return header;
 }
 
 /** Parses one offset field. The raw string is always kept verbatim regardless of outcome — a
  * structured breakdown is a display convenience layered on top, never a replacement (Codex
- * design review finding #5: rejecting/rounding would corrupt real evidence offsets). */
+ * design review finding #5: rejecting/rounding would corrupt real evidence offsets). Bounded
+ * BEFORE splitting so a pathological offset field (thousands of hyphens) can't force an
+ * oversized intermediate array (Codex code review finding). */
 function parseOffset(raw: string): { parsed: boolean; rootOffset?: number; path?: RecoveryPathHop[] } {
+  if (raw.length > MAX_RAW_OFFSET_PARSE_LEN) return { parsed: false };
   const tokens = raw.split("-");
   const root = tokens[0];
   if (!root || !/^\d+$/.test(root) || !Number.isSafeInteger(Number(root))) return { parsed: false };
@@ -94,9 +112,22 @@ function parseOffset(raw: string): { parsed: boolean; rootOffset?: number; path?
   return { parsed: true, rootOffset: Number(root), path };
 }
 
+/** Plain truncation, never a digest splice — `boundedTextTo` is for discriminator keys/aggKeys,
+ * and splicing a hex digest into evidence text (e.g. a URL) can read as a fabricated fragment
+ * (Codex code review finding). */
+function clip(text: string, max: number): { text: string; truncated: boolean } {
+  if (text.length <= max) return { text, truncated: false };
+  return { text: text.slice(0, max), truncated: true };
+}
+
 interface Row {
   rawOffset: string;
+  /** sha256 of the FULL (unclipped) recovered value — the grouping/dedup identity, so two
+   * distinct long values that merely share a clipped prefix never collapse into one group even
+   * though only the clipped text is retained for display (Codex code review finding). */
+  valueKey: string;
   value: string;
+  valueTruncated: boolean;
   context: string;
 }
 
@@ -106,66 +137,107 @@ function scanRows(lines: readonly string[]): { rows: Row[]; malformedRows: numbe
   let scanned = 0;
   let truncatedScan = false;
   for (const line of lines) {
-    if (!line || line.startsWith("#")) continue;
+    // Every examined line counts toward the budget, including blank/comment ones — otherwise a
+    // hostile file could pad past the cap with lines that are cheap to skip but still force the
+    // loop to run unbounded (Codex code review finding).
     if (scanned >= MAX_ROWS_SCANNED) {
       truncatedScan = true;
       break;
     }
     scanned += 1;
+    if (!line || line.startsWith("#")) continue;
     const fields = line.split("\t");
-    const [rawOffset, value, context] = fields;
-    if (fields.length !== 3 || !rawOffset || !value) {
+    const [rawOffset, rawValue, rawContext] = fields;
+    if (fields.length !== 3 || !rawOffset || !rawValue) {
       malformedRows += 1;
       continue;
     }
-    rows.push({ rawOffset, value, context: context ?? "" });
+    // rawOffset is otherwise kept unbounded/verbatim — a pathological field is rejected outright
+    // rather than silently truncated, which would corrupt rather than preserve the evidence.
+    if (rawOffset.length > MAX_RAW_OFFSET_STORAGE_LEN) {
+      malformedRows += 1;
+      continue;
+    }
+    const valueKey = createHash("sha256").update(rawValue).digest("hex");
+    const { text: value, truncated: valueTruncated } = clip(rawValue, MAX_VALUE_LEN);
+    const { text: context } = clip(rawContext ?? "", MAX_CONTEXT_LEN);
+    rows.push({ rawOffset, valueKey, value, valueTruncated, context });
   }
   return { rows, malformedRows, truncatedScan };
 }
 
 function mapGroup(
+  valueKey: string,
   value: string,
+  valueTruncated: boolean,
   citationRows: readonly Row[],
   occurrences: number,
   reportFingerprint: string,
   sourceMedia: string | undefined,
   sink: Map<string, SiemIoc>,
 ): MappedEvent {
-  const citations: RecoveryCitation[] = citationRows.slice(0, RECOVERY_CITATIONS_MAX).map((r) => {
+  // Distinct (rawOffset, context) pairs, first-seen order, capped — duplicates must not consume
+  // citation capacity that belongs to genuinely different provenance (Codex code review finding).
+  const seen = new Map<string, RecoveryCitation>();
+  for (const r of citationRows) {
+    const dedupKey = createHash("sha256").update(r.rawOffset).update("\n").update(r.context).digest("hex");
+    if (seen.has(dedupKey)) continue;
+    if (seen.size >= RECOVERY_CITATIONS_MAX) continue;
     const p = parseOffset(r.rawOffset);
-    return {
-      rawOffset: r.rawOffset,
-      parsed: p.parsed,
-      ...(p.parsed ? { rootOffset: p.rootOffset, path: p.path } : {}),
-      context: boundedTextTo(r.context, MAX_CONTEXT_LEN),
-    };
-  });
-  const notCited = Math.max(0, citationRows.length - citations.length);
+    seen.set(
+      dedupKey,
+      p.parsed
+        ? {
+            rawOffset: r.rawOffset,
+            parsed: true,
+            rootOffset: p.rootOffset!,
+            path: p.path!,
+            context: r.context,
+          }
+        : { rawOffset: r.rawOffset, parsed: false, context: r.context },
+    );
+  }
+  const citations = [...seen.values()];
+  // notCited counts DISTINCT citations beyond the cap, not raw duplicate rows.
+  const distinctTotal = new Set(
+    citationRows.map((r) =>
+      createHash("sha256").update(r.rawOffset).update("\n").update(r.context).digest("hex"),
+    ),
+  ).size;
+  const notCited = Math.max(0, distinctTotal - citations.length);
+
   const first = citations[0];
   const hopSummary =
-    first?.parsed && first.path && first.path.length > 0
+    first?.parsed && first.path.length > 0
       ? `via ${first.path.map((h) => h.method).join("→")} decode at offset ${first.rootOffset}`
       : first?.parsed
         ? `directly in the image at offset ${first.rootOffset}`
         : `at recorded offset ${first?.rawOffset ?? "unknown"}`;
-  const clippedValue = boundedTextTo(value, 300);
-  const description = boundedTextTo(
-    `Recovered URL fragment (bulk_extractor): ${clippedValue} — found ${hopSummary}; ` +
-      `${occurrences} occurrence(s) in this upload; a recovered fragment, not a visited-site record`,
-    600,
-  );
-  const aggKey = boundedAggKey(
-    `bulk-extractor-url|${reportFingerprint}|${createHash("sha256").update(value).digest("hex")}`,
-  );
-  // A value with a recognizable URL shape becomes a case indicator, authoritatively linked to
-  // THIS event via sourceAggKeys so resolveExtractedFrom (the ingest wrapper) can stamp
-  // extractedFrom — a damaged/garbage recovered string still gets its fragment event, just never
-  // promoted into a typed indicator (Codex design review finding #9).
-  if (URL_SHAPE_RE.test(value)) {
-    addIoc(sink, "url", boundedTextTo(value, MAX_VALUE_LEN));
-    const key = `url:${value.trim().toLowerCase()}`;
-    const ioc = sink.get(key);
-    if (ioc) sink.set(key, { ...ioc, sourceAggKeys: [aggKey] });
+  const truncNote = valueTruncated ? " [value truncated — recovered string exceeded the storage bound]" : "";
+  // The report tag is a FIXED-LENGTH suffix, reserved and appended after clipping the rest, so it
+  // always survives truncation — this is the identity that keeps two SEPARATE uploads recovering
+  // the identical URL from reading as one exact-duplicate row once aggKey is stripped at
+  // persistence (correlate.ts's exact-duplicate pass keys on timestamp + description + host;
+  // Codex code review finding #1).
+  const reportTag = `; report ${reportFingerprint.slice(0, 16)}`;
+  const body = clip(
+    `Recovered URL fragment (bulk_extractor): ${value}${truncNote} — found ${hopSummary}; ` +
+      `${occurrences} occurrence(s) in this upload; a recovered fragment, not a visited-site record; ` +
+      `[undated: bulk_extractor's feature file carries no event time]`,
+    600 - reportTag.length,
+  ).text;
+  const description = `${body}${reportTag}`;
+
+  const aggKey = boundedAggKey(`bulk-extractor-url|${reportFingerprint}|${valueKey}`);
+  // A non-truncated value with a recognizable URL shape becomes a case indicator, authoritatively
+  // linked to THIS event via mergeRowIocs (which UNIONS sourceAggKeys rather than overwriting —
+  // two case-variant groups sharing one lowercased IOC key must not erase each other's linkage,
+  // Codex code review finding). A truncated value is never promoted — a clipped string is not a
+  // trustworthy correlation key.
+  if (!valueTruncated && URL_SHAPE_RE.test(value)) {
+    const rowSink = new Map<string, SiemIoc>();
+    addIoc(rowSink, "url", value);
+    mergeRowIocs(sink, rowSink, aggKey);
   }
 
   return {
@@ -187,7 +259,8 @@ function mapGroup(
       recoveredFragment: {
         tool: "bulk_extractor",
         kind: "url",
-        value: boundedTextTo(value, MAX_VALUE_LEN),
+        value,
+        valueTruncated,
         artifactClass: "string-fragment",
         completeness:
           "not applicable — a recovered string fragment, not a reconstructed file; no completeness state exists for it",
@@ -213,34 +286,52 @@ export function parseBulkExtractorUrl(
 ): BulkExtractorUrlResult | null {
   if (!isBulkExtractorUrlFeatureFile(text)) return null;
 
-  const lines = text.split(/\r\n|\r|\n/);
-  const filenameLine = lines.find((l) => /^#\s*Filename:/.test(l));
+  const header = headerBlock(text) ?? [];
+  // Read strictly from the validated leading header block — never from a later line, which could
+  // otherwise let a data row smuggle a fabricated `# Filename:` value (Codex code review finding).
+  const filenameLine = header.find((l) => /^#\s*Filename:/.test(l));
   const sourceMedia = filenameLine
     ? filenameLine.replace(/^#\s*Filename:\s*/, "").trim() || undefined
     : undefined;
   const reportFingerprint = createHash("sha256").update(text).digest("hex");
 
+  const lines = text.split(/\r\n|\r|\n/);
   const { rows, malformedRows, truncatedScan } = scanRows(lines);
 
-  const byValue = new Map<string, Row[]>();
+  const byValueKey = new Map<string, { value: string; valueTruncated: boolean; rows: Row[] }>();
+  const overflowedValueKeys = new Set<string>();
   let notCitedValues = 0;
   for (const row of rows) {
-    let group = byValue.get(row.value);
+    let group = byValueKey.get(row.valueKey);
     if (!group) {
-      if (byValue.size >= MAX_DISTINCT_VALUES) {
-        notCitedValues += 1;
+      if (byValueKey.size >= MAX_DISTINCT_VALUES) {
+        if (!overflowedValueKeys.has(row.valueKey)) {
+          overflowedValueKeys.add(row.valueKey);
+          notCitedValues += 1;
+        }
         continue;
       }
-      group = [];
-      byValue.set(row.value, group);
+      group = { value: row.value, valueTruncated: row.valueTruncated, rows: [] };
+      byValueKey.set(row.valueKey, group);
     }
-    group.push(row);
+    group.rows.push(row);
   }
 
   const sink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
-  for (const [value, groupRows] of byValue) {
-    mapped.push(mapGroup(value, groupRows, groupRows.length, reportFingerprint, sourceMedia, sink));
+  for (const [valueKey, group] of byValueKey) {
+    mapped.push(
+      mapGroup(
+        valueKey,
+        group.value,
+        group.valueTruncated,
+        group.rows,
+        group.rows.length,
+        reportFingerprint,
+        sourceMedia,
+        sink,
+      ),
+    );
   }
 
   const { events, groups } = aggregateEvents(mapped, {

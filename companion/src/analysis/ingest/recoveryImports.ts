@@ -33,7 +33,7 @@ export async function importBulkExtractorUrl(
   if (parsed.events.length === 0) {
     const gapDetail = [
       parsed.malformedRows ? `${parsed.malformedRows} malformed row(s)` : "",
-      parsed.notCitedValues ? `${parsed.notCitedValues} distinct value(s) beyond the per-upload cap` : "",
+      parsed.notCitedValues ? `${parsed.notCitedValues} distinct value(s) over the per-upload cap` : "",
       parsed.truncatedScan ? "row scan stopped at the upload size cap" : "",
     ]
       .filter(Boolean)
@@ -63,8 +63,11 @@ export async function importBulkExtractorUrl(
     threadsClosed: [],
     timelineNote:
       `bulk_extractor url.txt import: ${parsed.kept} recovered URL fragment(s) from ${parsed.total} row(s)` +
+      (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       (parsed.malformedRows ? `, ${parsed.malformedRows} malformed row(s)` : "") +
-      (parsed.notCitedValues ? `, ${parsed.notCitedValues} value(s) beyond the per-upload cap` : "") +
+      (parsed.notCitedValues
+        ? `, ${parsed.notCitedValues} distinct value(s) beyond the per-upload cap`
+        : "") +
       (parsed.truncatedScan ? ", row scan stopped at the upload size cap" : "") +
       `, ${parsed.iocs.length} IOC(s)`,
     summary: "",

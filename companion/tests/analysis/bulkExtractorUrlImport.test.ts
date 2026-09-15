@@ -144,6 +144,24 @@ describe("parseBulkExtractorUrl — recursive forensic-path parsing", () => {
     expect(c.rawOffset).toBe(tooDeep.split("\t")[0]);
   });
 
+  it("rejects an oversized-but-plausible offset field without attempting to split it, yet still stores it verbatim (bounded before split, Codex code review finding)", () => {
+    const hugeOffset = Array.from({ length: 200 }, (_, i) => `M${i}-${i}`).join("-");
+    const row = `${hugeOffset}\thttps://oversized-offset.example.com/x\tctx`;
+    expect(() => parseBulkExtractorUrl(makeFile([row]))).not.toThrow();
+    const r = parseBulkExtractorUrl(makeFile([row]))!;
+    const c = r.events[0].canonical!.recoveredFragment!.citations[0];
+    expect(c.parsed).toBe(false);
+    expect(c.rawOffset).toBe(hugeOffset); // kept verbatim, not truncated, despite failing to parse
+  });
+
+  it("rejects a PATHOLOGICALLY long offset field as a malformed row (never stored at all)", () => {
+    const pathological = "9".repeat(20_000);
+    const row = `${pathological}\thttps://pathological.example.com/x\tctx`;
+    const r = parseBulkExtractorUrl(makeFile([row, DIRECT_ROW]))!;
+    expect(r.malformedRows).toBe(1);
+    expect(r.events).toHaveLength(1); // only DIRECT_ROW survives
+  });
+
   it("never crashes on a garbage offset field (absent provenance)", () => {
     const garbage = "not-an-offset-at-all\thttps://garbage.example.com/x\tctx";
     expect(() => parseBulkExtractorUrl(makeFile([garbage]))).not.toThrow();
@@ -175,14 +193,31 @@ describe("parseBulkExtractorUrl — duplicate/overlapping fragments do not multi
     expect(frag.occurrences).toBe(70);
   });
 
-  it("distinguishes two SEPARATE uploads recovering the same URL — never collapsed via aggKey alone", () => {
+  it("distinguishes two SEPARATE uploads recovering the same URL, in BOTH aggKey and the persisted description (Codex code review finding #1 — aggKey alone doesn't survive to the merged event)", () => {
     const r1 = parseBulkExtractorUrl(makeFile([DIRECT_ROW]))!;
     const r2 = parseBulkExtractorUrl(
       makeFile([DIRECT_ROW, "# different upload marker line is still a comment"]),
     )!;
-    // Different report text -> different reportFingerprint -> different aggKey, even though the
-    // recovered value is identical.
     expect(r1.events[0].aggKey).not.toBe(r2.events[0].aggKey);
+    // The report-identity tag in the description is what keeps two persisted events apart after
+    // aggKey is stripped at the ingest boundary (a real, disclosed report fingerprint, not a
+    // digest spliced into evidence text).
+    expect(r1.events[0].description).not.toBe(r2.events[0].description);
+  });
+
+  it("dedupes identical (rawOffset, context) citations so a later DISTINCT one is never crowded out by the cap", () => {
+    const duplicates = Array.from(
+      { length: 80 },
+      () => "9999\thttps://dupes.example.com/x\tsame context every time",
+    );
+    const distinctLast = "424242\thttps://dupes.example.com/x\ta genuinely different context";
+    const r = parseBulkExtractorUrl(makeFile([...duplicates, distinctLast]))!;
+    const frag = r.events[0].canonical!.recoveredFragment!;
+    expect(frag.occurrences).toBe(81);
+    // Only 2 DISTINCT (rawOffset, context) pairs exist — the 80 duplicates collapse to one.
+    expect(frag.citations).toHaveLength(2);
+    expect(frag.citations.some((c) => c.rawOffset === "424242")).toBe(true);
+    expect(frag.notCited).toBe(0);
   });
 });
 
@@ -239,14 +274,63 @@ describe("parseBulkExtractorUrl — parent evidence and undated-evidence discipl
     const r = parseBulkExtractorUrl(makeFile([DIRECT_ROW, GZIP_ROW]))!;
     for (const e of r.events) expect(e.timestamp).toBe("");
   });
+
+  it("discloses the undated marker in every description", () => {
+    const r = parseBulkExtractorUrl(makeFile([DIRECT_ROW]))!;
+    expect(r.events[0].description).toContain(
+      "[undated: bulk_extractor's feature file carries no event time]",
+    );
+  });
+
+  it("never reads # Filename: from a line AFTER the header block — a data row can't fabricate parent evidence (Codex code review finding)", () => {
+    const injected = makeFile([DIRECT_ROW, "# Filename: /attacker/controlled/path.bin"]);
+    const r = parseBulkExtractorUrl(injected)!;
+    expect(r.events[0].canonical!.recoveredFragment!.sourceMedia).toBe(
+      "/media/sf_Test-Image/EMMC_8GTF4R_ROM1_000000000000_0001D2000000.bin",
+    );
+  });
 });
 
-describe("parseBulkExtractorUrl — IOC eligibility is not automatic", () => {
+describe("parseBulkExtractorUrl — oversized value is truncated, never digest-spliced into a fabricated URL", () => {
+  it("plain-truncates a value over MAX_VALUE_LEN, discloses valueTruncated, and never promotes it to an IOC", () => {
+    const hugeValue = "https://huge.example.com/" + "a".repeat(3000);
+    const row = `12345\t${hugeValue}\tctx`;
+    const r = parseBulkExtractorUrl(makeFile([row]))!;
+    expect(r.events).toHaveLength(1);
+    const frag = r.events[0].canonical!.recoveredFragment!;
+    expect(frag.valueTruncated).toBe(true);
+    expect(frag.value.length).toBeLessThanOrEqual(2000);
+    // The stored value is a plain prefix of the real string — never a digest spliced in with "#".
+    expect(hugeValue.startsWith(frag.value)).toBe(true);
+    expect(frag.value.includes("#")).toBe(false);
+    expect(r.iocs).toHaveLength(0);
+  });
+
+  it("groups two DIFFERENT huge values (identical only in their first 2000 chars) as two distinct fragments", () => {
+    const prefix = "https://huge.example.com/" + "a".repeat(3000);
+    const rowA = `1\t${prefix}AAA\tctx`;
+    const rowB = `2\t${prefix}BBB\tctx`;
+    const r = parseBulkExtractorUrl(makeFile([rowA, rowB]))!;
+    expect(r.events).toHaveLength(2);
+  });
+});
+
+describe("parseBulkExtractorUrl — IOC eligibility and authoritative linkage", () => {
   it("still emits the fragment event for a non-URL-shaped recovered string, but skips the IOC", () => {
     const notAUrl = "555\tnot actually a url at all\tctx";
     const r = parseBulkExtractorUrl(makeFile([notAUrl]))!;
     expect(r.events).toHaveLength(1);
     expect(r.iocs).toHaveLength(0);
+  });
+
+  it("unions sourceAggKeys across case-variant values sharing one lowercased IOC key, never overwrites (Codex code review finding)", () => {
+    const lower = "1\thttps://case-test.example.com/x\tctx";
+    const upper = "2\tHTTPS://CASE-TEST.EXAMPLE.COM/x\tctx";
+    const r = parseBulkExtractorUrl(makeFile([lower, upper]))!;
+    expect(r.events).toHaveLength(2); // distinct exact strings -> distinct fragment events
+    const ioc = r.iocs.find((i) => i.type === "url");
+    expect(ioc?.sourceAggKeys).toHaveLength(2);
+    expect(new Set(ioc?.sourceAggKeys)).toEqual(new Set(r.events.map((e) => e.aggKey)));
   });
 });
 
