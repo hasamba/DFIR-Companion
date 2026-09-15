@@ -9,7 +9,7 @@ import type { GcpAttachment, GcpBinding, GcpCredential, GcpKey } from "./canonic
 import { field, lower, seg, show, showId, strings } from "./gcpIdentity.js";
 import { decodeGcpWorkloadAttachment } from "./gcpWorkloadAttachment.js";
 import { getCI, isObject, str } from "./siemImport.js";
-import { decodeGcpAuditConfigDelta, decodeGcpLogging } from "./loggingChangeCloud.js";
+import { classifyGcpFailure, decodeGcpAuditConfigDelta, decodeGcpLogging } from "./loggingChangeCloud.js";
 import type { LoggingReading } from "./loggingChange.js";
 import type { LoggingChangeBlock } from "./canonicalLogging.js";
 
@@ -494,12 +494,16 @@ function keyReading(pp: Row, method: string): GcpActionReading | null {
 /** The action readings of one GCP record: one per binding delta, or one credential / key fact, or none. */
 export function decodeGcpAction(pp: Row, rec: Row, method: string, service: string): GcpActionReading[] {
   const den = denied(pp);
+  // Classified ONLY at these two logging-family call sites (#1081) — `den.denied` itself, and the
+  // broader IAM-binding/storage/token/key rows below that read it directly, are unchanged: they
+  // are not part of the shared `reading()` family this item's own scope names.
+  const failure = den.denied ? classifyGcpFailure(den.code) : null;
   if (isSetIamPolicy(method)) {
     const { deltas, copiesDiffer } = policyDeltas(pp);
     // The audit-config deltas ride beside the binding deltas (#931 item 14): each is its own row.
     const auditRead = auditConfigDeltas(pp);
     const audit = auditRead.deltas.slice(0, DELTAS_PER_RECORD_MAX).map((d) => {
-      const r = asAction(decodeGcpAuditConfigDelta(d, den.denied));
+      const r = asAction(decodeGcpAuditConfigDelta(d, failure));
       return auditRead.copiesDiffer
         ? { ...r, qualifiers: [...r.qualifiers, "the two delta copies in this record differ"] }
         : r;
@@ -518,7 +522,7 @@ export function decodeGcpAction(pp: Row, rec: Row, method: string, service: stri
       ...audit,
     ];
   }
-  const logging = decodeGcpLogging(service, method, getCI(pp, "request"), den.denied);
+  const logging = decodeGcpLogging(service, method, getCI(pp, "request"), failure);
   if (logging) return [asAction(logging)];
   const credential = /iamcredentials/i.test(service) ? credentialReading(pp, rec, method) : null;
   if (credential) return [credential];

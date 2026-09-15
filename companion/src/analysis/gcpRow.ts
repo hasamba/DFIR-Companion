@@ -34,6 +34,12 @@ export interface GcpRowInput {
   resource: string;
   statusCode: number;
   head: string;
+  /** mapGcp's own " [DENIED: …]" for a non-zero status code — kept SEPARATE from `head` so it can
+   * be omitted for a logging reading (below) rather than baked into `head` before either is
+   * bounded (#1081, Codex code review — appending, then truncating an already-appended bracket,
+   * could split it mid-string on a long head, stranding a mangled fragment). "" when the call
+   * succeeded. */
+  statusBracket: string;
   severity: Severity;
   mitre: string[];
   baseKey: string;
@@ -79,7 +85,14 @@ function row(
   // The head, the posture and the qualifiers (a condition, a denial, a differing copy) are
   // reserved; the object and the identity facts share what is left, the object first.
   // The head keeps a digest of what its clip removed (#940): two object reads never fold by text.
-  const head = boundedTextTo(input.head, HEAD_MAX);
+  // A LOGGING reading's own posture already states denied/not-found/failed precisely (#1081), so
+  // mapGcp's own status bracket is never appended for one — every OTHER GCP row type gets it
+  // appended here, then the COMBINED string is bounded ONCE, never bounded once in mapGcp and
+  // again here (which could split the bracket mid-string on a long head).
+  const head = boundedTextTo(
+    reading?.kind === "logging" ? input.head : `${input.head}${input.statusBracket}`,
+    HEAD_MAX,
+  );
   const posture = reading ? clip(reading.posture, POSTURE_MAX) : "";
   const qualifiers = clip((reading?.qualifiers ?? []).filter(Boolean).join("; "), QUALIFIERS_MAX);
   const reserved =

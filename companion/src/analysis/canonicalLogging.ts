@@ -16,6 +16,14 @@ export const loggingStates = [
   "requested",
 ] as const;
 
+/** Why a call did not establish the state it asked for (#1081): `denied` — a true authorization
+ * failure; `not-found` — the target did not exist, positively identified from the error code;
+ * `failed` — the call failed for a reason this evidence does not distinguish from the other two,
+ * so it is asserted as neither. `denied: boolean` below is the older, narrower field — still
+ * accurate, still derived from this same value — kept for callers that only read it. */
+export const loggingFailureKinds = ["denied", "not-found", "failed"] as const;
+export type LoggingFailureKind = (typeof loggingFailureKinds)[number];
+
 export const loggingChangeBlockSchema = z.object({
   provider: z.enum(["aws", "gcp", "azure"]),
   /** The trail / detector / bucket / sink / exclusion / log bucket / audit config / diagnostic setting, as recorded. */
@@ -32,7 +40,12 @@ export const loggingChangeBlockSchema = z.object({
     .optional(),
   /** The effective outcome depends on configurations outside this record (a GCP audit-config union). */
   effectiveNotEstablished: z.boolean(),
+  /** True only when `failure === "denied"` — kept for older consumers; unchanged meaning (#1081). */
   denied: z.boolean(),
+  /** Undefined when the call succeeded. Optional so an envelope from before this field existed
+   * still parses (#1081, Codex design review finding #5 — a required field here would break every
+   * already-persisted logging-change envelope on the same schema version). */
+  failure: z.enum(loggingFailureKinds).optional(),
 });
 
 export type LoggingChangeBlock = z.infer<typeof loggingChangeBlockSchema>;

@@ -154,7 +154,14 @@ function mapGcp(rec: Row, sink: Map<string, SiemIoc>, locator: string): MappedEv
   if (ip) head += ` from ${ip}`;
   // The object name is kept whole here: the row's digest-preserving clip (#940) is what bounds it.
   if (shortRes) head += ` on ${neutral(shortRes, 800)}`;
-  if (statusCode !== 0) head += ` [DENIED${statusMsg ? `: ${neutral(oneLine(statusMsg), 60)}` : ""}]`;
+  // The failure bracket is passed SEPARATELY, never baked into `head` here (#1081, Codex code
+  // review): gcpRow.ts's row() appends it — or, for a LOGGING reading, omits it entirely, since
+  // that reading's own posture already states the outcome — and bounds the COMBINED string in one
+  // pass. Appending-then-bounding twice (once here, once there) let a long head's own truncation
+  // split the bracket mid-string, stranding a mangled "[DENIED: NOT_FOUN#…" fragment beside a
+  // posture that said "target not found".
+  const statusBracket =
+    statusCode !== 0 ? ` [DENIED${statusMsg ? `: ${neutral(oneLine(statusMsg), 60)}` : ""}]` : "";
   // The identity facts, the binding delta, the credential fact and the key step are read by
   // gcpRow.ts (#931 item 12); one record with N binding deltas is N rows. The RESOURCE is part of
   // the key for an object read only — a hundred management calls by one principal are one thing.
@@ -167,7 +174,8 @@ function mapGcp(rec: Row, sink: Map<string, SiemIoc>, locator: string): MappedEv
     ip,
     resource,
     statusCode,
-    head: boundedTextTo(head, 300),
+    head,
+    statusBracket,
     severity,
     mitre,
     baseKey: `gcp|${method}|${principal}|${ip}|${statusCode}${isObjectRead(method) && shortRes ? `|${shortRes}` : ""}`,

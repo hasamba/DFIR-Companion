@@ -13,15 +13,40 @@
 //   - a GCP audit-config delta is exact and "effective audit logging is the union of
 //     configurations — not established by this record";
 //   - metrics never bear T1562.008; a publishing frequency is delivery cadence, not coverage;
-//   - a denied call is an attempt.
+//   - a denied call is an attempt; a call that failed for a reason this evidence does not
+//     distinguish from denial or absence (#1081) is ALSO only an attempt, never guessed either way.
 
 import { createHash } from "node:crypto";
 import type { Severity } from "./stateTypes.js";
-import type { LoggingChangeBlock, LoggingState } from "./canonicalLogging.js";
+import type { LoggingChangeBlock, LoggingFailureKind, LoggingState } from "./canonicalLogging.js";
 import { breakHashRuns, showToken } from "./recordIdentity.js";
 import { getCI, isObject, str } from "./siemImport.js";
 
 type Row = Record<string, unknown>;
+
+// A small, documented AWS naming convention for "the resource does not exist" — never for "you
+// are not allowed." Checked before the denied pattern (the two families do not overlap in AWS's
+// own naming, but not-found first keeps the intent explicit). Matches
+// NoSuchConfigurationRecorderException, NoSuchDeliveryChannel(Exception), TrailNotFoundException,
+// EventDataStoreNotFoundException, InvalidFlowLogId.NotFound, InvalidVpcID.NotFound.
+const AWS_NOT_FOUND_RE = /notfound|^nosuch/i;
+// A small, documented AWS naming convention for "you are not allowed" — AccessDenied(Exception),
+// UnauthorizedOperation, Client.UnauthorizedOperation, NotAuthorized,
+// InsufficientPermissionsException, InsufficientDependencyServiceAccessPermissionException,
+// OperationNotPermittedException, Forbidden.
+const AWS_DENIED_RE = /denied|unauthorized|notauthorized|insufficientpermission|notpermitted|forbidden/i;
+
+/** Classifies a non-empty AWS `errorCode` (#1081): `not-found` and `denied` are positively
+ * identified from AWS's own documented naming conventions; everything else — GuardDuty's generic
+ * `BadRequestException`, `ConflictException`, `ThrottlingException`, S3's ambiguous
+ * `InvalidTargetBucketForLogging`, and anything unrecognized — is `"failed"`: an honest "the
+ * reason is not established from this code," never guessed as either outcome. */
+export function classifyAwsFailure(errorCode: string): LoggingFailureKind {
+  const c = errorCode.trim();
+  if (AWS_NOT_FOUND_RE.test(c)) return "not-found";
+  if (AWS_DENIED_RE.test(c)) return "denied";
+  return "failed";
+}
 
 export const NAME_MAX = 120;
 const FACTS_MAX = 12;
@@ -78,6 +103,21 @@ export const factWords = (facts: readonly Fact[]): string =>
 const digest = (parts: readonly string[]): string =>
   createHash("sha256").update(parts.map(seg).join("|")).digest("hex").slice(0, 16);
 
+const FAILURE_WORD: Record<LoggingFailureKind, string> = {
+  denied: "denied",
+  "not-found": "target not found",
+  failed: "failed",
+};
+/** The qualifier for each failure kind — evidence-bounded: `not-found` states only that nothing
+ * was established, never an inference about intent (#1081, Codex design review finding #7). */
+const FAILURE_QUALIFIER: Record<LoggingFailureKind, string> = {
+  denied: "attempted, denied — the resulting state is not established",
+  "not-found":
+    "the request failed because a referenced resource was not found; no configuration state was established",
+  failed:
+    "attempted; the reason for the failure is not established from the recorded error — never asserted as authorization denial or an absent target",
+};
+
 export function reading(
   provider: LoggingChangeBlock["provider"],
   targetKind: string,
@@ -87,38 +127,47 @@ export function reading(
   posture: string,
   facts: Fact[],
   qualifiers: string[],
-  denied: boolean,
+  failure: LoggingFailureKind | null,
   opts: { effectiveNotEstablished?: boolean; mitre?: string[]; key?: string; detail?: string } = {},
 ): LoggingReading {
   const bounded = facts.slice(0, FACTS_MAX);
   const detail = opts.detail ?? "";
-  const grade: Severity = denied ? "Medium" : severity;
+  // not-found is the one positively-evidenced-benign outcome (Low); denied and an unclassified
+  // failure both keep today's conservative Medium — neither is downgraded without evidence
+  // (#1081, Codex design review finding #1).
+  const grade: Severity = failure === "not-found" ? "Low" : failure ? "Medium" : severity;
   const technique = opts.mitre ?? (grade === "High" ? [TECHNIQUE] : []);
-  // A denied call establishes nothing: the state is "requested" and the words say so.
-  const words = denied ? `requested (denied): ${posture}` : posture;
+  // A call that did not establish state says so; the words name WHY, never guessing beyond it.
+  const words = failure ? `requested (${FAILURE_WORD[failure]}): ${posture}` : posture;
   return {
     severity: grade,
-    mitre: denied ? [] : technique,
+    mitre: failure ? [] : technique,
     posture: words,
     detail,
     qualifiers: [
-      ...(!denied && (state === "enabled" || state === "created") ? [PAST_NOTE] : []),
-      ...(!denied && (state === "reconfigured" || state === "prior-state-not-in-record") ? [PRIOR_NOTE] : []),
+      ...(!failure && (state === "enabled" || state === "created") ? [PAST_NOTE] : []),
+      ...(!failure && (state === "reconfigured" || state === "prior-state-not-in-record")
+        ? [PRIOR_NOTE]
+        : []),
       ...(opts.effectiveNotEstablished ? [UNION_NOTE] : []),
       ...qualifiers,
-      ...(denied ? ["attempted, denied — the resulting state is not established"] : []),
+      ...(failure ? [FAILURE_QUALIFIER[failure]] : []),
     ],
-    keySegment: `|logging|${[provider, targetKind, target, denied ? "requested" : state].map(seg).join("|")}|${digest([opts.key ?? "", ...bounded.map((f) => `${f.name}=${f.value}`)])}`,
+    // The state-slot stays a single bare "requested" for every failure kind (#1081, Codex design
+    // review Low finding #8 — AWS's/GCP's own OUTER aggregation keys already include the raw
+    // error code / status code, so splitting this slot by failure kind would only be churn).
+    keySegment: `|logging|${[provider, targetKind, target, failure ? "requested" : state].map(seg).join("|")}|${digest([opts.key ?? "", ...bounded.map((f) => `${f.name}=${f.value}`)])}`,
     block: {
       provider,
       target,
       targetKind,
-      state: denied ? "requested" : state,
-      ...(denied ? { requestedState: state } : {}),
+      state: failure ? "requested" : state,
+      ...(failure ? { requestedState: state } : {}),
       facts: bounded,
       priorStateInRecord: false,
       effectiveNotEstablished: opts.effectiveNotEstablished ?? false,
-      denied,
+      denied: failure === "denied",
+      ...(failure ? { failure } : {}),
     },
   };
 }
@@ -222,7 +271,7 @@ function selectorWords(request: Row): Selectors {
   return { words: `resulting selectors: ${parts.join(" | ")}`, excludesCoverage, facts, none: false };
 }
 
-function guardDuty(request: Row, denied: boolean): LoggingReading {
+function guardDuty(request: Row, failure: LoggingFailureKind | null): LoggingReading {
   const id = field(request, "detectorId") || "(detector id not recorded)";
   const enable = bool(getCI(request, "enable"));
   const parts: string[] = [];
@@ -270,7 +319,7 @@ function guardDuty(request: Row, denied: boolean): LoggingReading {
       `detector ${show(id, 40)} disabled`,
       facts,
       cadenceWords,
-      denied,
+      failure,
     );
   if (enable === true && parts.length === 1)
     return reading(
@@ -282,7 +331,7 @@ function guardDuty(request: Row, denied: boolean): LoggingReading {
       `detector ${show(id, 40)} enabled`,
       facts,
       cadenceWords,
-      denied,
+      failure,
     );
   if (parts.length)
     return reading(
@@ -294,7 +343,7 @@ function guardDuty(request: Row, denied: boolean): LoggingReading {
       `detector ${show(id, 40)} reconfigured: ${parts.join("; ")}`,
       facts,
       cadenceWords,
-      denied,
+      failure,
     );
   if (cadence)
     return reading(
@@ -306,7 +355,7 @@ function guardDuty(request: Row, denied: boolean): LoggingReading {
       `detector ${show(id, 40)}: ${cadenceWords[0]}`,
       facts,
       [],
-      denied,
+      failure,
       { mitre: [] },
     );
   return reading(
@@ -318,7 +367,7 @@ function guardDuty(request: Row, denied: boolean): LoggingReading {
     `detector ${show(id, 40)} updated; no coverage field in the request`,
     [],
     [],
-    denied,
+    failure,
   );
 }
 
@@ -347,7 +396,7 @@ export function decodeCloudTrailLogging(
   const svc = lower(source).replace(/\.amazonaws\.com$/, "");
   const n = lower(name);
   const req: Row = isObject(request) ? request : {};
-  const denied = !!errorCode.trim();
+  const failure = errorCode.trim() ? classifyAwsFailure(errorCode) : null;
   if (svc === "cloudtrail") {
     const trail = trailName(req);
     const t = trail || "(trail not recorded)";
@@ -361,7 +410,7 @@ export function decodeCloudTrailLogging(
         `logging stopped for trail ${show(t)}`,
         [],
         [],
-        denied,
+        failure,
       );
     if (n === "startlogging")
       return reading(
@@ -373,10 +422,10 @@ export function decodeCloudTrailLogging(
         `logging started for trail ${show(t)}`,
         [],
         [],
-        denied,
+        failure,
       );
     if (n === "deletetrail")
-      return reading("aws", "trail", t, "deleted", "High", `trail deleted: ${show(t)}`, [], [], denied);
+      return reading("aws", "trail", t, "deleted", "High", `trail deleted: ${show(t)}`, [], [], failure);
     if (n === "createtrail") {
       const facts = trailFacts(req);
       return reading(
@@ -388,7 +437,7 @@ export function decodeCloudTrailLogging(
         `trail created: ${show(shortTrail(t), 60)} — recording state not established (StartLogging is a separate call)`,
         facts,
         [],
-        denied,
+        failure,
         { detail: factWords(facts) },
       );
     }
@@ -407,7 +456,7 @@ export function decodeCloudTrailLogging(
         `trail reconfigured: ${factWords(facts) || "(no fields in the request)"}`,
         facts,
         narrowed.length ? [`resulting configuration excludes coverage (${narrowed.join(", ")})`] : [],
-        denied,
+        failure,
         { key: facts.map((f) => `${f.name}=${f.value}`).join(",") },
       );
     }
@@ -422,7 +471,7 @@ export function decodeCloudTrailLogging(
         sel.words,
         sel.facts,
         ["the prior selectors are not in this record"],
-        denied,
+        failure,
         { key: sel.words },
       );
     }
@@ -440,7 +489,7 @@ export function decodeCloudTrailLogging(
         `resulting insight selectors: ${!present ? "not in the request" : kinds.length ? kinds.map((k) => show(k, 30)).join(", ") : "none"}`,
         kinds.map((k) => ({ name: "insightType", value: k })),
         ["the prior selectors are not in this record"],
-        denied,
+        failure,
         { key: present ? kinds.join(",") : "absent" },
       );
     }
@@ -455,7 +504,7 @@ export function decodeCloudTrailLogging(
         `event data store deleted: ${show(store)}`,
         [],
         [],
-        denied,
+        failure,
       );
     }
     return null;
@@ -474,7 +523,7 @@ export function decodeCloudTrailLogging(
       `flow logs deleted: ${ids.map((i) => show(i, 30)).join(", ") || "(ids not recorded)"}`,
       ids.map((i) => ({ name: "flowLogId", value: i })),
       [],
-      denied,
+      failure,
     );
   }
   if (svc === "ec2" && n === "createflowlogs") {
@@ -489,10 +538,10 @@ export function decodeCloudTrailLogging(
       `flow logs created for ${ids.map((i) => show(i, 30)).join(", ") || "(resources not recorded)"}${traffic ? ` (${show(traffic, 10)})` : ""}`,
       [],
       [],
-      denied,
+      failure,
     );
   }
-  if (svc === "guardduty" && n === "updatedetector") return guardDuty(req, denied);
+  if (svc === "guardduty" && n === "updatedetector") return guardDuty(req, failure);
   if (svc === "guardduty" && n === "deletedetector") {
     const id = field(req, "detectorId") || "(detector id not recorded)";
     return reading(
@@ -504,7 +553,7 @@ export function decodeCloudTrailLogging(
       `detector deleted: ${show(id, 40)}`,
       [],
       [],
-      denied,
+      failure,
     );
   }
   if (svc === "s3" && n === "putbucketlogging") {
@@ -527,7 +576,7 @@ export function decodeCloudTrailLogging(
           { name: "TargetPrefix", value: field(enabled, "TargetPrefix") },
         ],
         [],
-        denied,
+        failure,
       );
     }
     return reading(
@@ -539,7 +588,7 @@ export function decodeCloudTrailLogging(
       `bucket access logging disabled for bucket ${show(bucket, 60)}`,
       [],
       [],
-      denied,
+      failure,
     );
   }
   return null;

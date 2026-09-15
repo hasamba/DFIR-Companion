@@ -268,8 +268,12 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
     }
     if (isRoot) severity = worst(severity, "High");
   }
-  // A denied/failed mutating call is a probe / privilege test.
-  if (errorCode) severity = worst(severity, "Medium");
+  // A denied/failed mutating call is a probe / privilege test — but a logging row already owns
+  // its OWN severity from `logging.severity` above (Low for a positively-identified not-found,
+  // #1081), and this blanket bump would otherwise silently re-elevate it back to Medium, since a
+  // not-found logging call necessarily has a non-empty errorCode (self-found during #1081's own
+  // implementation, same class of bug as Codex's design-review finding #2 for GCP's head text).
+  if (errorCode && !logging) severity = worst(severity, "Medium");
   // Root doing anything mutating is worth a look.
   if (isRoot && !readOnly) severity = worst(severity, "Medium");
 
