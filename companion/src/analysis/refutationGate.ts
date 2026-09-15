@@ -291,16 +291,24 @@ function intersectAcrossHosts(
 // A seed's own effective coverage, from its resolved subject scope (#1110):
 //   - "hosts": the intersection across every EXPLICITLY named host — never inferred.
 //   - "caseWide": intersection across EVERY known host in the case — a true case-wide absence claim
-//     needs coverage on all of them, not a union of whatever any one host happened to have. Falls
-//     back to the legacy case-wide union only when the case has NO host-attributed events at all
-//     (several importers, e.g. KAPE's MFT/Recycle Bin, do not stamp `asset` today) — there is no
-//     more granular answer available in that case, so this is not a regression from today.
+//     needs coverage on all of them, not a union of whatever any one host happened to have. When
+//     NO host is known at all (every event in the case is hostless — several importers, e.g. KAPE's
+//     MFT/Recycle Bin, do not stamp `asset` today), this is the EMPTY set, not the old case-wide
+//     union: a single hostless Prefetch row proves Prefetch was collected SOMEWHERE, but not that it
+//     covers every host a case-wide claim concerns, and the gate's own invariant is to weaken a
+//     claim rather than assume coverage it cannot confirm (Codex code review finding #1110-H1 — a
+//     union fallback here was found to reintroduce exactly the unscoped-coverage problem #1101's own
+//     review first identified). A case built entirely from asset-less importers will see every
+//     case-wide refutation downgrade after this change; the real fix is those importers stamping
+//     `asset`, a separate, already-known gap, not something this PR is positioned to paper over.
 //   - "unknown" (omitted, malformed, or a scope with any unresolved host): the EMPTY set. This is
 //     the fail-closed default — a claim whose own subject could not be established forces every
 //     evidence-class-dependent refutation on it to downgrade, rather than assuming the old,
 //     unscoped case-wide coverage applied.
-//   - no scope at all (a seed built before this field existed): treated the same as "caseWide", so
-//     an older seed never regresses to fully-blocked coverage it never had before this shipped.
+//   - no scope at all (a seed built before this field existed): treated the same as "caseWide" —
+//     genuine intersection across every known host, same as an explicit "caseWide" claim, not a
+//     free pass. A pre-#1110 case with events on multiple hosts never had its refutations checked
+//     per-host at all; this is a strictly SAFER read of that old data, never a regression.
 //
 // A seed's own `scope.hosts` is re-resolved through `aliasIndex` here rather than trusted as
 // already canonical: `sanitizeHypotheses` resolves it at generation time against WHATEVER alias
@@ -311,7 +319,6 @@ function collectedForScope(
   scope: ResolvedSubjectScope | undefined,
   byHost: ReadonlyMap<string, Set<EvidenceClass>>,
   knownHosts: ReadonlySet<string>,
-  caseWideFallback: ReadonlySet<EvidenceClass>,
   aliasIndex: HostAliasIndex,
 ): ReadonlySet<EvidenceClass> {
   const kind = scope?.kind ?? "caseWide";
@@ -320,7 +327,7 @@ function collectedForScope(
     const resolved = scope.hosts.map((h) => resolveHost(aliasIndex, h));
     return intersectAcrossHosts(resolved, byHost);
   }
-  return knownHosts.size === 0 ? new Set(caseWideFallback) : intersectAcrossHosts(knownHosts, byHost);
+  return intersectAcrossHosts(knownHosts, byHost);
 }
 
 const EMPTY_ALIAS_INDEX: HostAliasIndex = { canonicalOf: new Map(), aliasesOf: new Map() };
@@ -337,13 +344,12 @@ export function gateRefutedSeeds(
 ): GateRefutedResult {
   const byHost = collectedEvidenceClassesByHost(events, aliasIndex);
   const knownHosts = new Set(byHost.keys());
-  const caseWideFallback = collectedEvidenceClasses(events);
   const downgraded: GatedRefutation[] = [];
   const out = seeds.map((seed) => {
     if (seed.status !== "refuted") return seed;
     const required = requiredEvidenceClasses(`${seed.title} ${seed.description}`);
     if (required.length === 0) return seed;
-    const collected = collectedForScope(seed.subjectScope, byHost, knownHosts, caseWideFallback, aliasIndex);
+    const collected = collectedForScope(seed.subjectScope, byHost, knownHosts, aliasIndex);
     const missing = required.filter((c) => !collected.has(c));
     if (missing.length === 0) return seed;
     downgraded.push({ sourceKey: seed.sourceKey, title: seed.title, missing });

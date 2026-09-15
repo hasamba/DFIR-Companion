@@ -8,7 +8,12 @@ import {
   type EvidenceClass,
 } from "../../src/analysis/refutationGate.js";
 import { buildHostAliasIndex } from "../../src/analysis/hostAlias.js";
-import type { HypothesisSeed, ResolvedSubjectScope } from "../../src/analysis/hypothesis.js";
+import {
+  hypothesesSchema,
+  sanitizeHypotheses,
+  type HypothesisSeed,
+  type ResolvedSubjectScope,
+} from "../../src/analysis/hypothesis.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 function ev(id: string, sources: string[], artifactName?: string, asset?: string): ForensicEvent {
@@ -190,11 +195,14 @@ describe("collectedEvidenceClasses", () => {
 });
 
 describe("gateRefutedSeeds", () => {
-  // The INC-2026-003 collection: file-system and persistence coverage, no execution history.
+  // The INC-2026-003 collection: file-system and persistence coverage, no execution history, all on
+  // one host — host-attributed (#1110) so a caseWide claim's own intersection-across-known-hosts has
+  // something real to check against; a hostless collection can no longer support ANY caseWide claim
+  // (see the dedicated per-host-scoping describe block below for that case).
   const collection = [
-    ev("a", ["Velociraptor"], "Windows.NTFS.MFT"),
-    ev("b", ["Velociraptor"], "Windows.Forensics.PersistenceSniper"),
-    ev("c", ["Velociraptor"], "Generic.System.Pstree"),
+    ev("a", ["Velociraptor"], "Windows.NTFS.MFT", "host-1"),
+    ev("b", ["Velociraptor"], "Windows.Forensics.PersistenceSniper", "host-1"),
+    ev("c", ["Velociraptor"], "Generic.System.Pstree", "host-1"),
   ];
 
   it("downgrades a refutation the collection cannot support", () => {
@@ -304,15 +312,18 @@ describe("gateRefutedSeeds — per-host scoping (#1110)", () => {
     expect(seeds[0].status).toBe("unknown");
   });
 
-  it("a 'caseWide' claim falls back to the legacy union when the case has NO host-attributed events at all", () => {
-    // Several importers (e.g. KAPE's MFT/Recycle Bin mappers) do not stamp `asset` today — this is
-    // not a regression from #1110, it is today's exact behavior preserved for that gap.
+  it("a 'caseWide' claim downgrades when NO host-attributed events exist at all — never the old union (Codex code review finding #1110-H1)", () => {
+    // Several importers (e.g. KAPE's MFT/Recycle Bin mappers) do not stamp `asset` today. A single
+    // hostless Prefetch row proves Prefetch was collected SOMEWHERE, but not that it covers every
+    // host a case-wide claim concerns — falling back to the old union here was found to reintroduce
+    // the exact unscoped-coverage problem #1101's own review first identified, so this is a real,
+    // accepted behavior change from before #1110, not a preserved compatibility floor.
     const events = [ev("a", ["Velociraptor"], "Windows.Forensics.Prefetch")]; // no asset anywhere
     const { seeds } = gateRefutedSeeds(
       [seed("No execution anywhere in the case", "refuted", { kind: "caseWide" })],
       events,
     );
-    expect(seeds[0].status).toBe("refuted");
+    expect(seeds[0].status).toBe("unknown");
   });
 
   it("an 'unknown' scope always downgrades — fail-closed when the claim's own subject could not be established", () => {
@@ -346,5 +357,50 @@ describe("gateRefutedSeeds — per-host scoping (#1110)", () => {
     // Without shared alias resolution, "ws-01" (the seed's own scope) and "WS-01.corp.local" (the
     // event's own asset) would land in different buckets and this would wrongly downgrade.
     expect(seeds[0].status).toBe("refuted");
+  });
+});
+
+// Codex code-review findings against the first implementation (H2, L1) — fixed, not just designed.
+describe("hypothesis.ts / gateRefutedSeeds — code-review fixes (#1110)", () => {
+  it("a malformed stored subjectScope does not erase the rest of the stored hypotheses array", () => {
+    const good = {
+      id: "h1",
+      title: "A",
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+    };
+    const badScope = {
+      id: "h2",
+      title: "B",
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      subjectScope: { kind: "bogus" },
+    };
+    const out = hypothesesSchema.parse([good, badScope]);
+    // Before the fix, one malformed item's own parse failure bubbled up through the ARRAY schema's
+    // own .catch([]), silently discarding every other analyst's hypothesis in the same file.
+    expect(out).toHaveLength(2);
+    expect(out[1].subjectScope).toEqual({ kind: "unknown" });
+  });
+
+  it("a wrong-typed subjectHosts (not an array) resolves to unknown scope instead of throwing", () => {
+    const hostCtx = { resolve: (h: string) => h, knownHosts: new Set(["ws-01"]) };
+    expect(() =>
+      sanitizeHypotheses(
+        [{ title: "Something", subjectScope: "hosts", subjectHosts: "ws-01" }],
+        new Set(),
+        new Set(),
+        undefined,
+        hostCtx,
+      ),
+    ).not.toThrow();
+    const out = sanitizeHypotheses(
+      [{ title: "Something", subjectScope: "hosts", subjectHosts: "ws-01" }],
+      new Set(),
+      new Set(),
+      undefined,
+      hostCtx,
+    );
+    expect(out[0].subjectScope).toEqual({ kind: "unknown" });
   });
 });

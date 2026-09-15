@@ -86,14 +86,22 @@ export const hypothesisSchema = z.object({
   // synthesis block; `exhaustedReason` is the human one-liner.
   contradictingEventIds: z.array(z.string()).default([]).catch([]),
   discriminator: z.string().default("").catch(""),
-  // The claim's own host scope (#1110). Genuinely optional (no default/catch, unlike every other
-  // field here) so a hypotheses.json written before this field existed — or any other Hypothesis
+  // The claim's own host scope (#1110). Genuinely optional (unlike every other field here, which
+  // has a default) so a hypotheses.json written before this field existed — or any other Hypothesis
   // built without one — reads as `undefined`, which refutationGate.ts treats identically to
   // "caseWide": EXACTLY today's behavior, never a silent regression to fully-blocked coverage for
   // pre-existing data. A FRESH seed's own omitted/invalid scope is handled separately, in
   // sanitizeHypotheses, where "unknown" (fail-closed) is the correct response to non-compliance
   // rather than a migration default.
-  subjectScope: resolvedSubjectScopeSchema.optional(),
+  //
+  // `.catch()` sits OUTSIDE `.optional()` deliberately: a genuinely ABSENT field still parses to
+  // `undefined` (optional succeeds, catch never fires), but a MALFORMED one (wrong shape, an
+  // unrecognized `kind`) degrades to "unknown" for just this one record. Without this, one bad
+  // stored value fails this object's own parse, which bubbles up through hypothesesSchema's own
+  // `.catch([])` at the ARRAY level — silently discarding every OTHER analyst's hypothesis in the
+  // same file (Codex code review finding #1110-H2, reproduced: one malformed record turned a
+  // two-item stored array into `[]`).
+  subjectScope: resolvedSubjectScopeSchema.optional().catch(UNKNOWN_SCOPE),
   exhausted: z.boolean().default(false).catch(false),
   exhaustedReason: z.string().default("").catch(""),
   assignee: z.string().default("").catch(""),
@@ -261,6 +269,11 @@ function resolveSubjectScope(raw: Record<string, unknown>, hostCtx?: HostContext
   const scope = String(raw.subjectScope ?? "").trim();
   if (scope === "caseWide") return CASE_WIDE_SCOPE;
   if (scope !== "hosts" || !hostCtx) return UNKNOWN_SCOPE;
+  // Fail closed on a wrong-shaped subjectHosts too — a raw AI response is untrusted input, and this
+  // function is called directly (not only through the zod-validated responseSchema.ts path) in
+  // tests and any other future caller, so it must not assume the caller already normalized this to
+  // an array (dedupeStrings itself would throw calling .map on a non-array value).
+  if (!Array.isArray(raw.subjectHosts)) return UNKNOWN_SCOPE;
   const declared = dedupeStrings(raw.subjectHosts as string[]);
   if (!declared.length) return UNKNOWN_SCOPE;
   const resolved = declared.map((h) => hostCtx.resolve(h));
