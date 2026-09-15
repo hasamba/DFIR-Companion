@@ -472,6 +472,7 @@
     "operationalImport.ts": "analysis/case",
     "operationalMetrics.ts": "storage",
     "osqueryImport.ts": "analysis/ingest",
+    "passwordSprayFanout.ts": "analysis/ingest",
     "persistenceSniperImport.ts": "analysis/ingest",
     "prefetchExecution.ts": "analysis/ingest",
     "processAccess.ts": "analysis/ingest",
