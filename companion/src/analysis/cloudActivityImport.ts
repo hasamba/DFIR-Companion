@@ -20,6 +20,8 @@ import { show as neutral } from "./gcpIdentity.js";
 import { matchGcpRule } from "./gcpSeverityRules.js";
 import { gcpServiceAccountJoins, GCP_SA_JOIN_MAX } from "./gcpServiceAccountJoin.js";
 import { azureComputeLifecycles, AZURE_COMPUTE_MAX } from "./azureCompute.js";
+import { azureVmssComputeLifecycles, VMSS_COMPUTE_MAX } from "./azureVmssCompute.js";
+import { VMSS_MEMBER_RESOURCE_ID } from "./azureVmssComputeState.js";
 import { AZURE_RUN_COMMAND_RE } from "./azureComputeState.js";
 import { gcpComputeLifecycles, GCP_COMPUTE_MAX } from "./gcpCompute.js";
 import { decodeAzureLogging } from "./loggingChangeCloud.js";
@@ -306,16 +308,16 @@ function mapAzure(rec: Row, sink: Map<string, SiemIoc>, recordIndex: number): Ma
 // `display` is the VM name or `<set>/<instanceId>`.
 const VM_RE =
   /(\/subscriptions\/[^/]+\/resourcegroups\/[^/]+\/providers\/microsoft\.compute\/virtualmachines\/([^/]+))/i;
-const VMSS_RE =
-  /(\/subscriptions\/[^/]+\/resourcegroups\/[^/]+\/providers\/microsoft\.compute\/virtualmachinescalesets\/([^/]+)\/virtualmachines\/([^/]+))/i;
+// VMSS matching reuses the SAME shared regex #1078's own azureVmssComputeState.ts exports —
+// never a second, independently-drifting copy (Codex design round 1, finding M1).
 export function azureRemoteExecutionTarget(
   op: string,
   resource: string,
   recordId = "",
 ): { id: string; display: string } | null {
   if (!AZURE_RUN_COMMAND_RE.test(op)) return null;
-  const vmss = VMSS_RE.exec(resource);
-  if (vmss) return { id: vmss[1].toLowerCase(), display: `${vmss[2]}/${vmss[3]}`.slice(0, 160) };
+  const vmss = VMSS_MEMBER_RESOURCE_ID.exec(resource);
+  if (vmss) return { id: vmss[0].toLowerCase(), display: `${vmss[3]}/${vmss[4]}`.slice(0, 160) };
   const vm = VM_RE.exec(resource);
   if (vm) return { id: vm[1].toLowerCase(), display: vm[2].slice(0, 120) };
   // No parseable machine: the row must stay its own — a per-record identifier keeps it from
@@ -424,6 +426,16 @@ export function parseCloudActivity(
         maxEvents: AZURE_COMPUTE_MAX + 1,
       }).events
     : [];
+  // The VMSS-member half (#1078) — its own scan() self-filters to the VMSS resourceId shape
+  // (never colliding with the standalone parser above), so it is safe to run unconditionally
+  // alongside it over the SAME full records array, for the same mixed-provider-locator reason.
+  const azureVmssLifecycles = sawAzure
+    ? aggregateEvents(azureVmssComputeLifecycles(records, uploadId), {
+        aggregate: opts.aggregate,
+        minSeverity: opts.minSeverity,
+        maxEvents: VMSS_COMPUTE_MAX + 1,
+      }).events
+    : [];
   const gcpLifecycles = sawGcp
     ? aggregateEvents(gcpComputeLifecycles(records, uploadId), {
         aggregate: opts.aggregate,
@@ -431,7 +443,13 @@ export function parseCloudActivity(
         maxEvents: GCP_COMPUTE_MAX + 1,
       }).events
     : [];
-  const events = [...aggregated.events, ...summaries, ...azureLifecycles, ...gcpLifecycles];
+  const events = [
+    ...aggregated.events,
+    ...summaries,
+    ...azureLifecycles,
+    ...azureVmssLifecycles,
+    ...gcpLifecycles,
+  ];
   const groups = aggregated.groups;
 
   const represented = aggregated.events.reduce((n, e) => n + (e.count ?? 1), 0);
