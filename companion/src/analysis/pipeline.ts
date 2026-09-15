@@ -265,6 +265,9 @@ export class AnalysisPipeline {
         get hostDuplicateDismissalStore() {
           return opts.hostDuplicateDismissalStore;
         },
+        get evidenceAttestationStore() {
+          return opts.evidenceAttestationStore;
+        },
         get retries() {
           return opts.retries;
         },

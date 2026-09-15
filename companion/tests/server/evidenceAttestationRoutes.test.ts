@@ -6,6 +6,8 @@ import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { EvidenceAttestationStore } from "../../src/analysis/evidenceAttestationStore.js";
+import { humanIdentityFor } from "../../src/routes/evidenceAttestation.js";
+import type { RequestAuthentication, AuthIdentity } from "../../src/auth/types.js";
 import { createApp } from "../../src/server.js";
 
 let app: ReturnType<typeof createApp>;
@@ -72,5 +74,93 @@ describe("/cases/:id/evidence-attestations", () => {
   it("rejects an unknown evidence class on revoke too", async () => {
     const res = await request(app).delete("/cases/c1/evidence-attestations/not-a-real-class");
     expect(res.status).toBe(400);
+  });
+});
+
+// #1111 code review (Codex): a service token must never be able to create a "human-confirmed"
+// attestation — this store's whole trust model rests on "an IDENTIFIED ANALYST confirms".
+function identity(over: Partial<AuthIdentity> = {}): AuthIdentity {
+  return {
+    id: "u1",
+    kind: "local",
+    displayName: "a.analyst",
+    globalRole: "member",
+    disabled: false,
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+    ...over,
+  };
+}
+
+describe("humanIdentityFor (#1111)", () => {
+  it("is always 'local' when team-auth is off, regardless of any auth result", () => {
+    expect(humanIdentityFor(undefined, false)).toBe("local");
+    const serviceAuth: RequestAuthentication = {
+      kind: "service-token",
+      identity: identity({ kind: "service" }),
+      token: {
+        id: "t1",
+        identityId: "u1",
+        name: "ci-bot",
+        caseId: "c1",
+        permissions: ["write"],
+        createdAt: "2026-01-01T00:00:00Z",
+      },
+    };
+    expect(humanIdentityFor(serviceAuth, false)).toBe("local");
+  });
+
+  it("returns the display name for a real human session when team-auth is on", () => {
+    const sessionAuth: RequestAuthentication = {
+      kind: "session",
+      identity: identity({ displayName: "b.reviewer" }),
+      session: {
+        id: "s1",
+        identityId: "u1",
+        csrfToken: "x",
+        createdAt: "2026-01-01T00:00:00Z",
+        expiresAt: "2026-01-02T00:00:00Z",
+        lastSeenAt: "2026-01-01T00:00:00Z",
+      },
+    };
+    expect(humanIdentityFor(sessionAuth, true)).toBe("b.reviewer");
+  });
+
+  it("rejects a service-token auth when team-auth is on", () => {
+    const serviceAuth: RequestAuthentication = {
+      kind: "service-token",
+      identity: identity({ kind: "service" }),
+      token: {
+        id: "t1",
+        identityId: "u1",
+        name: "ci-bot",
+        caseId: "c1",
+        permissions: ["write"],
+        createdAt: "2026-01-01T00:00:00Z",
+      },
+    };
+    expect(humanIdentityFor(serviceAuth, true)).toBeNull();
+  });
+
+  it("rejects a service-KIND identity even under a session auth", () => {
+    // A session whose underlying identity is itself flagged "service" — the same double-check
+    // routes/reportVersions.ts's own requestActor applies.
+    const sessionAuth: RequestAuthentication = {
+      kind: "session",
+      identity: identity({ kind: "service" }),
+      session: {
+        id: "s1",
+        identityId: "u1",
+        csrfToken: "x",
+        createdAt: "2026-01-01T00:00:00Z",
+        expiresAt: "2026-01-02T00:00:00Z",
+        lastSeenAt: "2026-01-01T00:00:00Z",
+      },
+    };
+    expect(humanIdentityFor(sessionAuth, true)).toBeNull();
+  });
+
+  it("rejects a missing auth entirely when team-auth is on", () => {
+    expect(humanIdentityFor(undefined, true)).toBeNull();
   });
 });
