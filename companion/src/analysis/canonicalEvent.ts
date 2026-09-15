@@ -28,6 +28,7 @@ import { mailboxChainBlockSchema } from "./canonicalMailbox.js";
 import { memoryRunBlockSchema } from "./canonicalMemoryRun.js";
 import { gwsLifecycleBlockSchema } from "./canonicalGwsLifecycle.js";
 import { recoveredFragmentBlockSchema } from "./canonicalRecoveredFragment.js";
+import { decodedStringBlockSchema } from "./canonicalDecodedString.js";
 
 export const CANONICAL_EVENT_SCHEMA_VERSION = "1.0.0" as const;
 /** The producer stamped on an envelope DERIVED from legacy flat fields at the read boundary. */
@@ -188,10 +189,9 @@ export const canonicalEventEnvelopeSchema = z.object({
   acquisitionCoverage: acquisitionCoverageBlockSchema.optional(), // kapeAcquisitionLog.ts, #932 item 1; block in canonicalAcquisition.ts
   diskImageAcquisition: diskImageAcquisitionSchema.optional(), // diskImageAcquisitionLog.ts, #1102; block in canonicalDiskImage.ts
   recoveredFragment: recoveredFragmentBlockSchema.optional(), // bulkExtractorUrlImport.ts, #932 item 4; block in canonicalRecoveredFragment.ts
-  // A mailbox-chain summary row (mailboxChain.ts, #975); the block lives in canonicalMailbox.ts.
-  mailboxChain: mailboxChainBlockSchema.optional(),
-  // A memory run-envelope row (memoryRunEnvelope.ts, #1016); the block lives in canonicalMemoryRun.ts.
-  memoryRun: memoryRunBlockSchema.optional(),
+  decodedString: decodedStringBlockSchema.optional(), // flossResultImport.ts, #932 item 5; block in canonicalDecodedString.ts
+  mailboxChain: mailboxChainBlockSchema.optional(), // mailboxChain.ts, #975; block in canonicalMailbox.ts
+  memoryRun: memoryRunBlockSchema.optional(), // memoryRunEnvelope.ts, #1016; block in canonicalMemoryRun.ts
   // A Google Workspace OAuth-lifecycle summary row (gwsOAuthLifecycle.ts, #983); the block lives in canonicalGwsLifecycle.ts.
   gwsLifecycle: gwsLifecycleBlockSchema.optional(),
   // Google Drive sharing / access rows and Takeout rows (#931 item 11); the blocks live in canonicalGwsDrive.ts.

@@ -9,6 +9,7 @@ import { isAzureStorageLog } from "./azureStorageLogImport.js";
 import { isAwsFlowLogLine } from "./awsFlowLogImport.js";
 import { isDiskImageLog } from "./diskImageAcquisitionLog.js";
 import { isBulkExtractorUrlFeatureFile } from "./bulkExtractorUrlImport.js";
+import { isFlossResult } from "./flossResultImport.js";
 import { isWerReport } from "./werImport.js";
 import { isRekallCommandList, looksLikeVolatilityText, looksLikeMemprocfsFindevil } from "./memoryImport.js";
 import { isRunEnvelopeUpload } from "./memoryRunEnvelope.js";
@@ -409,12 +410,12 @@ function looksLikeTheHive(s: Row, root: unknown): boolean {
 }
 
 function detectJson(root: unknown, sample: Row): ImportKind {
-  // Intact (trimmed VolWeb) — FIRST: its `{plugins:{…},yara:[…]}` wrapper would fall through to the
-  // event-shaped SIEM catch-all, and its YARA rows carry no field any other signature claims (#776).
+  // Intact (trimmed VolWeb) — FIRST: its `{plugins:{…},yara:[…]}` wrapper would fall through to the SIEM catch-all, and its YARA rows carry no field any other signature claims (#776).
   if (isIntactMemoryFile(root, sample)) return "memory";
   // A Volatility run envelope or a bundle of them (#1016): the discriminator decides, never the shape.
   if (isRunEnvelopeUpload(root)) return "memory";
   if (isVolatilityMap(root)) return "memory";
+  if (isFlossResult(root)) return "flossresult";
   if (isSandbox(sample)) return "sandbox";
   if (isAws(sample)) return "aws";
   if (isGcp(sample)) return "cloud";
@@ -427,8 +428,7 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (isM365(sample)) return "m365";
   if (isK8sAudit(sample)) return "k8s";
   if (isOsquery(sample)) return "osquery";
-  // ECAR EDR telemetry — the (timestamp_ms + object + action) triple is distinctive and absent from
-  // every other feed; checked early so the generic SIEM/network catch-alls can't claim it.
+  // ECAR EDR telemetry — the (timestamp_ms + object + action) triple is distinctive; checked early so the generic SIEM/network catch-alls can't claim it.
   if (isEcarRecord(sample)) return "ecar";
   if (isChainsaw(sample)) return "chainsaw";
   if (isSecurityOnion(sample)) return "securityonion";
