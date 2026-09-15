@@ -421,10 +421,7 @@ export type CreateCanonicalEventInput = Omit<CanonicalNormalizedFields, "time"> 
   rawFieldMap?: Record<string, string[]>;
   confidenceMap?: Record<string, CanonicalFieldProvenance["confidence"]>;
   derivationMap?: Record<string, string>;
-  // Which raw record a field came from when the envelope joins several (#993): a path prefix
-  // (`web.bodies.0`, `transfer.requests.1`) → that record's locator, which must be one of
-  // `evidence.rawRecords`. Every field under the prefix is attributed to it; the longest matching
-  // prefix wins; fields under no prefix keep the first record.
+  // Which raw record a field came from when the envelope joins several (#993): a path prefix (`web.bodies.0`, `transfer.requests.1`) → that record's locator, which must be one of `evidence.rawRecords`. Every field under the prefix is attributed to it; the longest matching prefix wins; fields under no prefix keep the first record.
   locatorMap?: Record<string, string>;
 };
 
