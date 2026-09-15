@@ -74,6 +74,19 @@ export function parseGcpInstanceResourceName(
   return { project: m[1], zone: m[2], instanceName: m[3] };
 }
 
+const FIREWALL_RESOURCE_NAME = /^projects\/([^/]+)\/global\/firewalls\/([^/]+)$/i;
+/**
+ * A firewall record's own project, parsed from its `resourceName` — the firewall join (#1073)
+ * needs this to resolve a bare `global/networks/<n>` network reference to the project it is
+ * actually relative to (Codex code review, finding H2). A record whose `resourceName` does not
+ * parse to this exact shape is never read by the join, not guessed at.
+ */
+export function parseGcpFirewallResourceName(resourceName: string): { project: string } | null {
+  const m = FIREWALL_RESOURCE_NAME.exec(resourceName.trim());
+  if (!m) return null;
+  return { project: m[1] };
+}
+
 export const instanceKey = (project: string, zone: string, instanceName: string): string =>
   `${lower(project)}|${lower(zone)}|${lower(instanceName)}`;
 

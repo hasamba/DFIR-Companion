@@ -45,6 +45,7 @@ import {
   lower,
   noteFact,
   openAttachment,
+  parseGcpFirewallResourceName,
   parseGcpInstanceResourceName,
   tallySession,
   type Instance,
@@ -119,10 +120,18 @@ const FIREWALL_INSERT_RE = /(^|\.)firewalls\.insert$/;
 const FIREWALL_UPDATE_RE = /(^|\.)firewalls\.update$/;
 const GOOGLE_API_PREFIX = "https://www.googleapis.com/compute/v1/";
 
-/** Strips only the known API-URL prefix, if present — no other normalization (#1073, finding M1). */
-function normalizeNetwork(raw: string): string {
+/**
+ * Resolves a network reference to a project-qualified identity. GCP treats a bare
+ * `global/networks/<n>` reference as relative to the RECORD'S OWN project — two different
+ * projects' identically-named networks (e.g. both named "default") must never collide just
+ * because both requests happened to use the short form (Codex code review, finding H2). A
+ * reference already qualified with a `projects/<p>/...` prefix (or the full API-URL form) is
+ * left as its own project, never overridden by `project`.
+ */
+function resolveNetworkIdentity(raw: string, project: string): string {
   const trimmed = raw.trim();
-  return trimmed.startsWith(GOOGLE_API_PREFIX) ? trimmed.slice(GOOGLE_API_PREFIX.length) : trimmed;
+  const stripped = trimmed.startsWith(GOOGLE_API_PREFIX) ? trimmed.slice(GOOGLE_API_PREFIX.length) : trimmed;
+  return stripped.startsWith("projects/") ? stripped : `projects/${lower(project)}/${stripped}`;
 }
 
 /** True only when NEITHER target mechanism is present — GCP's documented network-wide default (finding H1). */
@@ -134,15 +143,29 @@ function firewallAppliesNetworkWide(request: Row): boolean {
   return !hasTags && !hasAccounts;
 }
 
+/**
+ * Reads an array field under either of two possible spellings — no fixture of a real captured
+ * GCP Cloud Audit Log firewall record exists to confirm which one is used (Codex code review,
+ * finding H1: the REST resource itself is documented as singular `allowed`/`denied`, but a
+ * sourced third-party audit-log field mapping documents the audit record itself as pluralized
+ * `alloweds`/`denieds`). Checking both costs nothing and can only avoid a false negative — it
+ * never manufactures a fact that isn't there, since the semantics checked are identical either way.
+ */
+function arrayField(o: Row, primary: string, alt: string): unknown[] {
+  const p = getCI(o, primary);
+  if (Array.isArray(p)) return p;
+  const a = getCI(o, alt);
+  return Array.isArray(a) ? a : [];
+}
+
 /** Enabled, ingress, allow (never deny) for a matching source admitting 0.0.0.0/0 or ::/0. */
 function firewallAllowsAnySource(request: Row): boolean {
   if (str(getCI(request, "disabled")).trim().toLowerCase() === "true") return false;
   const direction = field(request, "direction") || "INGRESS";
   if (direction.toUpperCase() !== "INGRESS") return false;
-  const denied = getCI(request, "denied");
-  if (Array.isArray(denied) && denied.length > 0) return false;
-  const allowed = getCI(request, "allowed");
-  if (!Array.isArray(allowed) || allowed.length === 0) return false;
+  if (arrayField(request, "denied", "denieds").length > 0) return false;
+  const allowed = arrayField(request, "allowed", "alloweds");
+  if (allowed.length === 0) return false;
   const ranges = getCI(request, "sourceRanges");
   if (!Array.isArray(ranges)) return false;
   return ranges.some((r) => {
@@ -284,7 +307,7 @@ export function gcpComputeLifecycles(records: readonly Row[], uploadId: string):
   for (const inst of t.instances.values()) {
     const network = inst.launch?.network;
     if (!network) continue;
-    const key = normalizeNetwork(network);
+    const key = resolveNetworkIdentity(network, inst.project);
     (byNetwork.get(key) ?? byNetwork.set(key, []).get(key)!).push(inst);
   }
   if (byNetwork.size > 0) {
@@ -292,12 +315,14 @@ export function gcpComputeLifecycles(records: readonly Row[], uploadId: string):
       if (!isCompute(s)) continue;
       if (!tail(FIREWALL_INSERT_RE, s.method) && !tail(FIREWALL_UPDATE_RE, s.method)) continue;
       if (gcpAttemptOutcome(s.pp) !== "success") continue;
+      const firewallId = parseGcpFirewallResourceName(field(s.pp, "resourceName"));
+      if (!firewallId) continue;
       const request = isObject(getCI(s.pp, "request")) ? (getCI(s.pp, "request") as Row) : {};
       if (!firewallAppliesNetworkWide(request)) continue;
       if (!firewallAllowsAnySource(request)) continue;
       const network = field(request, "network");
       if (!network) continue;
-      const matches = byNetwork.get(normalizeNetwork(network));
+      const matches = byNetwork.get(resolveNetworkIdentity(network, firewallId.project));
       if (!matches) continue;
       for (const inst of matches) {
         noteFact(inst, "any-address-firewall-rule", s.time, s.locator);
