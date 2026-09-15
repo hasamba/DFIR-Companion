@@ -1568,6 +1568,21 @@ export const FEATURES: Feature[] = [
     private: ["hostScopeLedger", "hostScopeFilter", "STATUS_LABEL", "STATUS_ORDER", "PRESENCE_LABEL"],
   },
   {
+    // Analyst-attested evidence-class coverage (#1111). Owns two pieces of view state (the loaded
+    // attestations and the load-generation token), the same reason dashboard-host-scope.js is an
+    // IIFE. A compact mini-panel LIVING INSIDE the Hypotheses section rather than its own
+    // top-level one — loadHypotheses() (dashboard-hypotheses.js) calls loadEvidenceAttestations()
+    // directly, so there is no separate case-connect entry point to register.
+    file: "dashboard-evidence-attestation.js",
+    publish: [
+      "renderEvidenceAttestations",
+      "loadEvidenceAttestations",
+      "attestEvidenceClass",
+      "revokeEvidenceClass",
+    ],
+    private: ["attestations", "loadSeq", "loadCase", "EVIDENCE_CLASSES", "CLASS_LABEL"],
+  },
+  {
     // Cross-case IOC pivot (#679). One piece of view state (the last fetched list), so it is an
     // IIFE for the same reason dashboard-host-duplicates.js is. No initializer: the panel binds no
     // listeners of its own — every link in it is a plain anchor — so the case-connect loader

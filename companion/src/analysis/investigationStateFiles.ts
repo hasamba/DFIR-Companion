@@ -26,6 +26,7 @@ export const SNAPSHOT_STATE_FILES = [
   "pinned-findings.json", // #220 analyst-pinned key findings (ordered shortlist) — analyst decision, travels with the case
   "cockpit.json", // #375 per-investigator review timestamps + audited cockpit decisions
   "host-scope.json", // host scope ledger decisions (clearances, out-of-scope) — signed analyst assertions, travel with the case
+  "evidence-attestations.json", // #1111 analyst-attested EvidenceClass coverage — signed assertions, same reason as host-scope.json
 ] as const;
 
 // Binary state is copied beside the JSON backup manifest rather than base64-encoded into it. A

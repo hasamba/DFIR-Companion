@@ -9,6 +9,7 @@ import type { CustomEntitiesStore } from "../anonEntities.js";
 import type { AssetOverridesStore } from "../assetOverrides.js";
 import type { VelociraptorClientStore } from "../velociraptorClientStore.js";
 import type { HostDuplicateDismissalStore } from "../hostDuplicateDismissals.js";
+import type { EvidenceAttestationStore } from "../evidenceAttestationStore.js";
 import type { ClockSkewStore } from "../clockSkewStore.js";
 import { CorrelationProfileStore } from "../correlationProfile.js";
 import type { FalsePositiveStore } from "../falsePositive.js";
@@ -189,4 +190,7 @@ export interface PipelineOptions {
   // the pre-synthesis merge gate: absent → the gate never runs, so CLI scripts and older tests are
   // unaffected. See analysis/hostDuplicateGate.ts.
   hostDuplicateDismissalStore?: HostDuplicateDismissalStore;
+  // Analyst-attested EvidenceClass coverage (#1111): gateRefutedSeeds' third input, alongside
+  // automatic detection. Absent → the gate behaves exactly as before this feature existed.
+  evidenceAttestationStore?: EvidenceAttestationStore;
 }

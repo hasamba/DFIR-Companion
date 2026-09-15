@@ -27,6 +27,9 @@
         renderHypotheses();
       })
       .catch(() => {});
+    // #1111: the coverage-attestation mini-panel lives inside this same section, so it refreshes
+    // on every existing loadHypotheses() call site rather than needing its own callers threaded in.
+    if (typeof loadEvidenceAttestations === "function") loadEvidenceAttestations(caseId);
   }
 
   function renderHypotheses() {

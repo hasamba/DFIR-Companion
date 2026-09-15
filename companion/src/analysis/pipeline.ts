@@ -261,6 +261,9 @@ export class AnalysisPipeline {
         get hostDuplicateDismissalStore() {
           return opts.hostDuplicateDismissalStore;
         },
+        get evidenceAttestationStore() {
+          return opts.evidenceAttestationStore;
+        },
         get retries() {
           return opts.retries;
         },
@@ -287,9 +290,7 @@ export class AnalysisPipeline {
     };
   }
 
-  // Wraps mergeDelta with the case's analyst IOC-merge aliases (#82), if any store is configured.
-  // Every import/synthesis call site uses this instead of calling mergeDelta directly, so a merged
-  // duplicate value stays folded onto its canonical IOC across every future window/re-synthesis.
+  // Wraps mergeDelta with the case's analyst IOC-merge aliases (#82), if any store is configured — every import/synthesis call site uses this instead of calling mergeDelta directly, so a merged duplicate value stays folded onto its canonical IOC across every future window/re-synthesis.
   private async mergeWithAliases(
     state: InvestigationState,
     delta: Parameters<typeof mergeDelta>[1],
@@ -300,10 +301,7 @@ export class AnalysisPipeline {
     return mergeDelta(state, delta, { ...ctx, iocAliases: aliases });
   }
 
-  // Serializes the load->merge->save critical section of every import/analyze method per
-  // caseId, so two concurrent imports for the same case can't race (second save clobbering
-  // the first's merged delta). See src/analysis/stateLock.ts. Falls back to running fn
-  // immediately when no lock is configured (e.g. some script/test call sites).
+  // Serializes the load->merge->save critical section of every import/analyze method per caseId, so two concurrent imports for the same case can't race (second save clobbering the first's merged delta). See src/analysis/stateLock.ts. Falls back to running fn immediately when no lock is configured (e.g. some script/test call sites).
   // CAUTION: never call this from inside another withStateLock/runExclusive callback for the
   // SAME caseId — that nests onto the outer call's own unresolved promise and deadlocks.
   private withStateLock<T>(caseId: string, fn: () => Promise<T>): Promise<T> {
