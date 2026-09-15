@@ -3,9 +3,19 @@
 // the words shared by the pass (azureCompute.ts) and the row (azureComputeRow.ts). Mirrors
 // awsComputeState.ts's shape; kept as its own file rather than shared with AWS's, since AWS's
 // types are specific to CloudTrail's own Row/Outcome conventions.
+//
+// #1077 adds the NIC/Subnet attachment chain and `resolveAt()` — see that function's own comment
+// and RECOMMENDATION-1077.md for the full design (why the RULE side needs no ongoing state, only
+// the ATTACHMENT chain does; how a bound overflow becomes "not established" rather than a stale
+// guess).
 
 import type { Severity } from "./stateTypes.js";
-import type { AzureComputeFact, AzureComputeLaunch, AzureComputeOperation } from "./canonicalAzureCompute.js";
+import type {
+  AzureComputeFact,
+  AzureComputeLaunch,
+  AzureComputeOperation,
+  AzureNsgObservation,
+} from "./canonicalAzureCompute.js";
 import { breakHashRuns, showToken } from "./recordIdentity.js";
 import { getCI, isObject, str } from "./siemImport.js";
 
@@ -24,14 +34,47 @@ export const RAW_RECORDS_MAX = 256;
 export const NAME_MAX = 80;
 export const DESCRIPTION_MAX = 1400;
 export const RANK: Record<Severity, number> = { Critical: 4, High: 3, Medium: 2, Low: 1, Info: 0 };
+/** NICs/Subnets tracked per upload; further ids are counted, never tracked (#1077). */
+export const NICS_TRACKED_MAX = 4096;
+export const SUBNETS_TRACKED_MAX = 4096;
+/** Per-entity attachment-history bounds — the earliest and the latest, the rest counted (#1077). */
+export const NIC_STATE_EARLY_MAX = 24;
+export const NIC_STATE_LATE_MAX = 8;
+export const SUBNET_STATE_EARLY_MAX = 24;
+export const SUBNET_STATE_LATE_MAX = 8;
+export const VM_NIC_SETS_EARLY_MAX = 24;
+export const VM_NIC_SETS_LATE_MAX = 8;
+/** The NSG join's own attacker-controlled-work bounds (#1077, Codex design round 1, finding H5,
+ * and code round 1, findings H3/M1). */
+export const NSG_RULE_RECORDS_MAX = 256;
+export const NSG_PARENT_RULES_MAX = 64;
+/** Prefixes examined per rule — a single rule's own `sourceAddressPrefixes` is bounded too. */
+export const NSG_PREFIXES_PER_RULE_MAX = 16;
+/** Parent VNet write/delete records that trigger a child-subnet invalidation walk — further
+ * records are counted, never processed, even though each walk is itself O(that VNet's own
+ * children) thanks to `subnetsByVnet`'s indexing. */
+export const VNET_INVALIDATION_RECORDS_MAX = 256;
 export const LIMIT_NOTE =
-  "what ran on the VM and its network egress are not in this case's Azure Activity Log exports; no network-security-group join is made — see #1073";
+  "what ran on the VM and its network egress are not in this case's Azure Activity Log exports; the network-security-group join covers only a direct NIC attachment or its subnet's own attachment, resolved as of the rule-write's own time, matched by exact resourceId — a match on one of the two NSGs Azure evaluates never by itself establishes that traffic reaches the VM — see #1077, #1078";
 export const COVERAGE_NOTE = "record retention and export filtering are not in this evidence";
 export const BASIS =
-  "records of this upload only; joined through the VM's resource id; what ran on the VM and its network egress are not in this case's Azure Activity Log exports; no network-security-group join is made — see #1073";
-/** A standalone VM's resource id — VM scale sets are out of scope (#1073). */
+  "records of this upload only; joined through the VM's resource id; what ran on the VM and its network egress are not in this case's Azure Activity Log exports; the network-security-group join covers only a direct NIC attachment or its subnet's own attachment, resolved as of the rule-write's own time, matched by exact resourceId — a match on one of the two NSGs Azure evaluates never by itself establishes that traffic reaches the VM — see #1077, #1078";
+/** A standalone VM's resource id — VM scale sets are out of scope (#1078). */
 const VM_RESOURCE_ID =
   /\/subscriptions\/([^/]+)\/resourcegroups\/([^/]+)\/providers\/microsoft\.compute\/virtualmachines\/([^/]+)/i;
+/** A NIC's own resource id (#1077). */
+const NIC_RESOURCE_ID =
+  /^\/subscriptions\/[^/]+\/resourcegroups\/[^/]+\/providers\/microsoft\.network\/networkinterfaces\/[^/]+$/i;
+/** A subnet's own resource id, capturing its parent VNet's resource id (#1077). */
+const SUBNET_RESOURCE_ID =
+  /^(\/subscriptions\/[^/]+\/resourcegroups\/[^/]+\/providers\/microsoft\.network\/virtualnetworks\/[^/]+)\/subnets\/[^/]+$/i;
+/** A VNet's own (parent) resource id — no `/subnets/...` suffix (#1077). */
+const VNET_RESOURCE_ID =
+  /^\/subscriptions\/[^/]+\/resourcegroups\/[^/]+\/providers\/microsoft\.network\/virtualnetworks\/[^/]+$/i;
+/** An NSG's own resource id, whether named directly (parent rule form) or as a named child rule's parent (#1077). */
+const NSG_RESOURCE_ID =
+  /^\/subscriptions\/[^/]+\/resourcegroups\/[^/]+\/providers\/microsoft\.network\/networksecuritygroups\/[^/]+$/i;
+const NSG_RULE_RESOURCE_ID = /^(.+\/networksecuritygroups\/[^/]+)\/securityrules\/[^/]+$/i;
 /**
  * The Run Command operation family (the action form and the managed form) — the ONE shared
  * source of this pattern. `cloudActivityImport.ts`'s `AZURE_RULES` severity table and its
@@ -42,10 +85,13 @@ export const AZURE_RUN_COMMAND_RE = /virtualmachines(?:\/[^/]+)?\/runcommands?\/
 export const FACT_WORDS: Record<AzureComputeFact, string> = {
   "identity-assigned": "managed identity recorded on the VM's write",
   "remote-access-request": "remote-access request to the VM",
+  "any-address-nsg-rule":
+    "a network-security-group rule matching this VM's attached NSG was recorded allowing inbound access from a broad source (see the observation below for which NSG and which source category)",
 };
 export const FACT_MITRE: Record<AzureComputeFact, string> = {
   "identity-assigned": "T1098.003",
   "remote-access-request": "T1651",
+  "any-address-nsg-rule": "T1562.007",
 };
 
 const FORMAT_CHARS = /[\u200b-\u200f\u2028-\u202e\u2060-\u2064\ufeff]/g;
@@ -78,14 +124,46 @@ export function parseAzureVmResourceId(
 export const vmKey = (subscriptionId: string, resourceGroup: string, vmName: string): string =>
   `${lower(subscriptionId)}|${lower(resourceGroup)}|${lower(vmName)}`;
 
+/** True only for the documented full standalone-NIC resourceId shape (#1077). Never guessed. */
+export const isAzureNicResourceId = (id: string): boolean => NIC_RESOURCE_ID.test(id.trim());
+
+/** The subnet's parent VNet resourceId, or `null` for a non-subnet / unparseable id (#1077). */
+export function azureSubnetParentVnet(id: string): string | null {
+  const m = SUBNET_RESOURCE_ID.exec(id.trim());
+  return m ? lower(m[1]) : null;
+}
+
+/** True only for the documented full VNet (parent) resourceId shape — no `/subnets/...` suffix (#1077). */
+export const isAzureVnetResourceId = (id: string): boolean => VNET_RESOURCE_ID.test(id.trim());
+
+/**
+ * The NSG's own resourceId a rule-write record names, whichever of the two forms it is: the
+ * parent form's own resourceId IS the NSG; the child form's resourceId is the NSG's own id with a
+ * trailing `/securityRules/<name>` segment, stripped here. `null` for anything else — never
+ * guessed (#1077).
+ */
+export function azureNsgIdForRuleRecord(resourceId: string): string | null {
+  const trimmed = resourceId.trim();
+  const child = NSG_RULE_RESOURCE_ID.exec(trimmed);
+  if (child) return lower(child[1]);
+  return NSG_RESOURCE_ID.test(trimmed) ? lower(trimmed) : null;
+}
+
 /**
  * Success only on the record's own status field reading exactly "succeeded" (case-insensitive) —
  * "started"/"accepted"/anything else is a non-terminal or unrecognised record and is an ATTEMPT,
  * never a joined fact (Codex design round 1, finding #13: Azure Activity Log can record an
  * operation's acceptance separately from its completion).
  */
+/**
+ * Both terminal-success spellings Microsoft documents across Azure's own Activity Log export
+ * shapes are accepted: `status.value`/`ActivityStatusValue` reads "Succeeded", while the
+ * streamed (storage/Event Hub) export's `resultType` reads "Success" — #1077's code review found
+ * every handler silently produced no state at all against a genuine streamed-format export,
+ * since only "succeeded" was recognized. Pre-existing #1066 handlers share this same fix.
+ */
 export const azureAttemptOutcome = (status: string): "success" | "not-succeeded" =>
-  lower(status) === "succeeded" ? "success" : "not-succeeded";
+  ["succeeded", "success"].includes(lower(status)) ? "success" : "not-succeeded";
 
 export interface Timed {
   time: number;
@@ -141,12 +219,96 @@ export function insertSorted<T extends Timed>(buf: T[], v: T): void {
   buf.splice(i, 0, v);
 }
 
+/** A recorded delete (VM/NIC/subnet) or a parent-write invalidation (subnet) — never a positive
+ * statement (#1077). Shares its entity's own `EdgeBuffer`, ordered by `byTime` like any statement. */
+export interface Tombstone extends Timed {
+  locator: string;
+  deleted: true;
+}
+export type WithTombstone<T> = T | Tombstone;
+const isTombstone = (v: unknown): v is Tombstone =>
+  isObject(v) && (v as { deleted?: unknown }).deleted === true;
+
+/**
+ * Resolves the statement in force for entity `buf` as of the QUERYING record's own `(time,
+ * locator)` position — the helper that actually fixes `groupsAt()`'s (`awsComputeState.ts`)
+ * unsoundness (#1077, RECOMMENDATION-1077.md's design-round-1 section, finding M1).
+ *
+ * `EdgeBuffer` guarantees `early` holds the TRUE earliest-N statements ever pushed (a bounded
+ * "keep the N smallest" set) and, once any overflow has happened, `late` holds the TRUE latest-M
+ * among what spilled out of `early` (a bounded "keep the M largest of the rest" set) — so `late`,
+ * from its own first entry forward, is provably complete: nothing between `late[0]` and any later
+ * query was ever discarded. Only the OPEN interval strictly between `early`'s last entry and
+ * `late`'s first entry can contain a discarded (uncounted-by-position, but counted in `beyond`)
+ * statement — a query landing there cannot honestly resolve to anything, since the true in-force
+ * statement might be one of the discarded ones. Returns:
+ * - `null` — no statement at or before the query exists at all (the query predates every
+ *   statement ever seen — `early` holds the true global earliest, so this is never a guess).
+ * - the statement itself — found within `early`'s own gap-free interior, or at/after `late`'s own
+ *   first entry (both provably exact), or anywhere at all when nothing was ever discarded
+ *   (`beyond === 0`).
+ * - `"gap"` — the query falls strictly after `early`'s own last entry with a discard beyond it
+ *   (`beyond > 0`) and before `late` starts. A query landing EXACTLY on `early`'s own last entry's
+ *   own position still resolves to it, never a gap (Codex code review: the gap starts strictly
+ *   AFTER the last retained early entry, not at-or-after).
+ * A resolved tombstone (a recorded delete, or a parent-write invalidation) is reported as `"gap"`
+ * too — from the caller's perspective nothing trustworthy is established, never a positive result.
+ */
+export function resolveAt<T extends Timed>(
+  buf: EdgeBuffer<WithTombstone<T>>,
+  at: Timed & { locator: string },
+): T | "gap" | null {
+  const query: Timed = at;
+  const latest = (list: readonly WithTombstone<T>[]): { entry: WithTombstone<T>; index: number } | null => {
+    let hit: { entry: WithTombstone<T>; index: number } | null = null;
+    for (let i = 0; i < list.length; i += 1) {
+      if (byTime(list[i], query) > 0) break;
+      hit = { entry: list[i], index: i };
+    }
+    return hit;
+  };
+  const lateHit = latest(buf.late);
+  if (lateHit) return isTombstone(lateHit.entry) ? "gap" : lateHit.entry;
+  const earlyHit = latest(buf.early);
+  if (!earlyHit) return null;
+  const isLastInEarly = earlyHit.index === buf.early.length - 1;
+  if (!isLastInEarly) return isTombstone(earlyHit.entry) ? "gap" : earlyHit.entry;
+  if (buf.beyond === 0) return isTombstone(earlyHit.entry) ? "gap" : earlyHit.entry;
+  if (byTime(earlyHit.entry, query) === 0) return isTombstone(earlyHit.entry) ? "gap" : earlyHit.entry;
+  return "gap";
+}
+
 export interface Cited {
   time: number;
   locator: string;
 }
 export type Operation = Omit<AzureComputeOperation, "time"> & Timed;
 export type Remote = { call: string; by: string } & Timed & { locator: string };
+
+/** One "this VM's write named these NICs" statement (#1077) — a sibling of `vm.launch`, pushed on
+ * EVERY successful write that demonstrably carries `networkProfile.networkInterfaces`, never only
+ * the first (Codex design round 1, finding H1). */
+export interface NicSetStatement extends Timed {
+  locator: string;
+  nicIds: string[];
+}
+/** One "this NIC's direct NSG and subnet reference" statement (#1077). */
+export interface NicState extends Timed {
+  locator: string;
+  nsgId: string | null;
+  subnetId: string | null;
+}
+/** One "this subnet's own NSG" statement (#1077). */
+export interface SubnetState extends Timed {
+  locator: string;
+  nsgId: string | null;
+}
+export interface Nic {
+  states: EdgeBuffer<WithTombstone<NicState>>;
+}
+export interface Subnet {
+  states: EdgeBuffer<WithTombstone<SubnetState>>;
+}
 
 export interface Vm {
   subscriptionId: string;
@@ -156,16 +318,43 @@ export interface Vm {
   operations: EdgeBuffer<Operation>;
   remote: Remote[];
   remoteBeyond: number;
+  /** The temporal source of truth for the NSG join (#1077) — `vm.launch.networkInterfaces` stays
+   * an untouched, first-write-only snapshot; this is updated on every qualifying write. */
+  nicSets: EdgeBuffer<WithTombstone<NicSetStatement>>;
+  /** The earliest qualifying NSG match only (#1077) — mirrors `noteFact`'s own "earliest wins". */
+  nsgObservation: (Omit<AzureNsgObservation, "time"> & Timed) | null;
   notSucceeded: number;
   /** Every fact kind seen while scanning, with its earliest record. */
   facts: Map<AzureComputeFact, Cited>;
+  /** Locators already counted toward `contributing` — idempotent per locator, since the NSG join's
+   * resolution chain can cite the same NIC/Subnet write from more than one VM/rule match. */
+  citedSet: Set<string>;
   locators: string[];
   contributing: number;
 }
 
 export interface Tracked {
   vms: Map<string, Vm>;
+  /** NIC/Subnet resourceId → tracked entity (#1077). Keys are already lowercased. */
+  nics: Map<string, Nic>;
+  subnets: Map<string, Subnet>;
+  /** Parent VNet resourceId → its own tracked child subnet ids (#1077) — lets a VNet write/delete
+   * invalidate only ITS OWN children in O(children), never a full scan of every tracked subnet
+   * (Codex code review: an unbounded number of VNet writes against a large tracked subnet map is
+   * an O(writes × subnets) attacker-controlled cost otherwise). */
+  subnetsByVnet: Map<string, Set<string>>;
   untrackedRecords: number;
+  /** NIC/Subnet ids named past their own tracked bound — counted, never read (#1077). */
+  untrackedNics: number;
+  untrackedSubnets: number;
+  /** NSG-rule-write records past `NSG_RULE_RECORDS_MAX` — counted, never examined (#1077). */
+  nsgRuleRecordsBeyond: number;
+  /** VNet write/delete invalidation records past `VNET_INVALIDATION_RECORDS_MAX` — counted, never
+   * processed (#1077, Codex code review). */
+  vnetInvalidationsBeyond: number;
+  /** Rules or source-prefixes past their own examined bound within one NSG-rule record — counted,
+   * never read (#1077, Codex code review). */
+  nsgRulesBeyond: number;
 }
 
 export function vmFor(t: Tracked, subscriptionId: string, resourceGroup: string, vmName: string): Vm | null {
@@ -184,8 +373,11 @@ export function vmFor(t: Tracked, subscriptionId: string, resourceGroup: string,
     operations: new EdgeBuffer(OPERATIONS_EARLY_MAX, OPERATIONS_LATE_MAX),
     remote: [],
     remoteBeyond: 0,
+    nicSets: new EdgeBuffer(VM_NIC_SETS_EARLY_MAX, VM_NIC_SETS_LATE_MAX),
+    nsgObservation: null,
     notSucceeded: 0,
     facts: new Map(),
+    citedSet: new Set(),
     locators: [],
     contributing: 0,
   };
@@ -193,7 +385,43 @@ export function vmFor(t: Tracked, subscriptionId: string, resourceGroup: string,
   return vm;
 }
 
+/** `id` must already be lowercased — every caller derives it from a parser that already lowers. */
+export function nicFor(t: Tracked, id: string): Nic | null {
+  const cur = t.nics.get(id);
+  if (cur) return cur;
+  if (t.nics.size >= NICS_TRACKED_MAX) {
+    t.untrackedNics += 1;
+    return null;
+  }
+  const nic: Nic = { states: new EdgeBuffer(NIC_STATE_EARLY_MAX, NIC_STATE_LATE_MAX) };
+  t.nics.set(id, nic);
+  return nic;
+}
+
+/** `id` must already be lowercased — every caller derives it from a parser that already lowers. */
+/** `id` and `parentVnetId` must already be lowercased. `parentVnetId` indexes the subnet under its
+ * own parent so a later VNet write/delete can invalidate ONLY that VNet's own children (#1077). */
+export function subnetFor(t: Tracked, id: string, parentVnetId: string): Subnet | null {
+  const cur = t.subnets.get(id);
+  if (cur) return cur;
+  if (t.subnets.size >= SUBNETS_TRACKED_MAX) {
+    t.untrackedSubnets += 1;
+    return null;
+  }
+  const subnet: Subnet = { states: new EdgeBuffer(SUBNET_STATE_EARLY_MAX, SUBNET_STATE_LATE_MAX) };
+  t.subnets.set(id, subnet);
+  const siblings = t.subnetsByVnet.get(parentVnetId) ?? new Set<string>();
+  siblings.add(id);
+  t.subnetsByVnet.set(parentVnetId, siblings);
+  return subnet;
+}
+
+/** Idempotent per locator — the NSG join's resolution chain can cite the same NIC/Subnet write
+ * record from more than one VM/rule match; it must count once (mirrors #1066 code-round's own
+ * GCP fix). */
 export const cite = (vm: Vm, locator: string): void => {
+  if (vm.citedSet.has(locator)) return;
+  vm.citedSet.add(locator);
   vm.contributing += 1;
   if (vm.locators.length < RAW_RECORDS_MAX) vm.locators.push(locator);
 };

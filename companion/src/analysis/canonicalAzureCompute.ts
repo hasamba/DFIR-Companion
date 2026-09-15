@@ -3,14 +3,16 @@
 // launch/update facts as the `virtualMachines/write` request body states them, every later
 // recorded operation that names it (typed kinds and allow-listed scalars only — never a request
 // body, never a startup script's content), the managed-identity assignment if one is recorded,
-// the remote-access requests to it, the recorded facts the grade counts, and the upload's own
-// coverage the absence lines rest on. Kept beside canonicalEvent.ts so the envelope schema stays
-// within its size bound.
+// the remote-access requests to it, an optional network-security-group observation (#1077), the
+// recorded facts the grade counts, and the upload's own coverage the absence lines rest on. Kept
+// beside canonicalEvent.ts so the envelope schema stays within its size bound.
 //
-// Narrower than the AWS envelope by design (#1066's own design-round-1 review): no network-rule
-// join (Azure associates an NSG with a NIC/subnet, never directly with a VM, and this codebase
-// does not track NIC/subnet resources — see #1073) and no VM-scale-set support (a VMSS member can
-// be platform-created with no per-member write record — also #1073).
+// Narrower than the AWS envelope by design. No VM-scale-set support: a VMSS member can be
+// platform-created with no per-member write record, and needs its own discriminated identity
+// model — see #1078. The network-security-group join (#1077) covers only a direct NIC attachment
+// or its subnet's own attachment, resolved AS OF the rule-write's own time (never the VM's launch
+// time or the record's own present) — see canonicalAzureCompute's own basis sentence and
+// RECOMMENDATION-1077.md for the full design.
 
 import { z } from "zod";
 
@@ -47,7 +49,30 @@ export const azureComputeRemoteSchema = z.object({
   by: z.string(),
 });
 
-export const azureComputeFactKinds = ["identity-assigned", "remote-access-request"] as const;
+export const azureComputeFactKinds = [
+  "identity-assigned",
+  "remote-access-request",
+  "any-address-nsg-rule",
+] as const;
+
+/**
+ * One network-security-group observation (#1077) — the earliest qualifying match only, per VM.
+ * `path` states which of the two NSGs Azure evaluates for inbound traffic matched (never both at
+ * once, and a match on one is never itself a reachability claim — the row's own wording says so).
+ * `token` is the EXACT source category the rule named — kept distinct, never collapsed into one
+ * generic "any source" phrase (Azure's `*`/`0.0.0.0/0`/`::/0`/`Internet` are four different things).
+ */
+export const azureNsgObservationSchema = z.object({
+  time: z.string(),
+  path: z.enum(["direct", "via-subnet"]),
+  token: z.enum(["*", "0.0.0.0/0", "::/0", "internet"]),
+  nsgId: z.string(),
+  ruleLocator: z.string(),
+  nicId: z.string(),
+  nicLocator: z.string(),
+  subnetId: z.string().optional(),
+  subnetLocator: z.string().optional(),
+});
 
 export const azureComputeBlockSchema = z.object({
   vmName: z.string(),
@@ -58,13 +83,14 @@ export const azureComputeBlockSchema = z.object({
   operationsBeyond: z.number().int().nonnegative(),
   remote: z.array(azureComputeRemoteSchema).max(8),
   remoteBeyond: z.number().int().nonnegative(),
+  nsgObservation: azureNsgObservationSchema.optional(),
   attempts: z.object({ notSucceeded: z.number().int().nonnegative() }),
   /** The distinct recorded-fact kinds the grade counts: two or more → High, one → Medium, none → Low. */
   facts: z.array(z.enum(azureComputeFactKinds)),
   notCited: z.number().int().nonnegative(),
   coverage: z.object({ records: z.number().int().nonnegative(), first: z.string(), last: z.string() }),
   basis: z.literal(
-    "records of this upload only; joined through the VM's resource id; what ran on the VM and its network egress are not in this case's Azure Activity Log exports; no network-security-group join is made — see #1073",
+    "records of this upload only; joined through the VM's resource id; what ran on the VM and its network egress are not in this case's Azure Activity Log exports; the network-security-group join covers only a direct NIC attachment or its subnet's own attachment, resolved as of the rule-write's own time, matched by exact resourceId — a match on one of the two NSGs Azure evaluates never by itself establishes that traffic reaches the VM — see #1077, #1078",
   ),
 });
 
@@ -73,3 +99,4 @@ export type AzureComputeLaunch = z.infer<typeof azureComputeLaunchSchema>;
 export type AzureComputeOperation = z.infer<typeof azureComputeOperationSchema>;
 export type AzureComputeRemote = z.infer<typeof azureComputeRemoteSchema>;
 export type AzureComputeFact = (typeof azureComputeFactKinds)[number];
+export type AzureNsgObservation = z.infer<typeof azureNsgObservationSchema>;

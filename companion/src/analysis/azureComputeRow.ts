@@ -8,7 +8,12 @@ import { createHash } from "node:crypto";
 import type { Severity } from "./stateTypes.js";
 import { boundedAggKey } from "./aggKey.js";
 import { createCanonicalEvent } from "./canonicalEvent.js";
-import type { AzureComputeBlock, AzureComputeFact, AzureComputeLaunch } from "./canonicalAzureCompute.js";
+import type {
+  AzureComputeBlock,
+  AzureComputeFact,
+  AzureComputeLaunch,
+  AzureNsgObservation,
+} from "./canonicalAzureCompute.js";
 import { normalizeTime, type MappedEvent } from "./siemImport.js";
 import {
   AZURE_COMPUTE_MAX,
@@ -18,9 +23,9 @@ import {
   FACT_MITRE,
   FACT_WORDS,
   LIMIT_NOTE,
+  NSG_RULE_RECORDS_MAX,
   OPERATIONS_NAMED_MAX,
   RAW_RECORDS_MAX,
-  VMS_TRACKED_MAX,
   byTime,
   firstTime,
   plural,
@@ -30,6 +35,28 @@ import {
   type Timed,
   type Vm,
 } from "./azureComputeState.js";
+
+const TOKEN_WORDS: Record<AzureNsgObservation["token"], string> = {
+  "*": "Azure's all-source wildcard (*)",
+  "0.0.0.0/0": "all IPv4 addresses (0.0.0.0/0)",
+  "::/0": "all IPv6 addresses (::/0)",
+  internet:
+    "Azure's Internet service tag (public-internet address space, not literally every possible source)",
+};
+
+function nsgObservationWords(obs: Omit<AzureNsgObservation, "time"> & Timed): string {
+  const pathWords =
+    obs.path === "direct"
+      ? `directly attached to NIC ${show(obs.nicId, 80)} (${obs.nicLocator})`
+      : `attached to the subnet ${show(obs.subnetId ?? "", 80)} of NIC ${show(obs.nicId, 80)} (${obs.subnetLocator})`;
+  return (
+    `a network-security-group rule recorded on NSG ${show(obs.nsgId, 80)} (${obs.ruleLocator}), ` +
+    `${pathWords}, allowed inbound access from ${TOKEN_WORDS[obs.token]} ` +
+    `at ${new Date(obs.time).toISOString()} — a higher-priority rule in the same NSG, the OTHER ` +
+    `NSG in the pair (Azure evaluates both a NIC's own NSG and its subnet's), and protocol/port ` +
+    `scoping are not evaluated by this join, so this is not itself a claim that traffic reaches the VM`
+  );
+}
 
 const whoAt = (time: number, by: string, locator: string): string =>
   `at ${new Date(time).toISOString()} by ${show(by, 60)} (${locator})`;
@@ -86,6 +113,7 @@ export function summaryRow(
             .join("; ")}${vm.remoteBeyond ? `; +${plural(vm.remoteBeyond, "more request")}` : ""}`,
         ]
       : []),
+    ...(vm.nsgObservation ? [nsgObservationWords(vm.nsgObservation)] : []),
     ...(vm.notSucceeded
       ? [`${plural(vm.notSucceeded, "record")} without a recorded success — not joined`]
       : []),
@@ -98,7 +126,17 @@ export function summaryRow(
         })
         .join(", ")} (${plural(facts.length, "kind")})`
     : "recorded facts: none";
-  const reserved = [...(vm.launch?.locators ?? []), ...[...vm.facts.values()].map((c) => c.locator)];
+  const reserved = [
+    ...(vm.launch?.locators ?? []),
+    ...[...vm.facts.values()].map((c) => c.locator),
+    ...(vm.nsgObservation
+      ? [
+          vm.nsgObservation.ruleLocator,
+          vm.nsgObservation.nicLocator,
+          ...(vm.nsgObservation.subnetLocator ? [vm.nsgObservation.subnetLocator] : []),
+        ]
+      : []),
+  ];
   const cited = [...new Set([...reserved, ...vm.locators])].slice(0, RAW_RECORDS_MAX);
   const notCited = Math.max(0, vm.contributing - cited.length);
   const tail = [
@@ -128,6 +166,13 @@ export function summaryRow(
     operationsBeyond,
     remote: vm.remote.map(({ time, ...r }) => ({ ...r, time: new Date(time).toISOString() })),
     remoteBeyond: vm.remoteBeyond,
+    ...(vm.nsgObservation
+      ? {
+          nsgObservation: (({ time, ...rest }) => ({ ...rest, time: new Date(time).toISOString() }))(
+            vm.nsgObservation,
+          ),
+        }
+      : {}),
     attempts: { notSucceeded: vm.notSucceeded },
     facts: [...facts],
     notCited,
@@ -167,14 +212,17 @@ export function summaryRow(
   };
 }
 
-/** The VMs beyond the reported bound, and the records past the tracked bound — counts, never claims. */
+/** The VMs beyond the reported bound, the records past a tracked-entity bound, and the NSG-rule
+ * records/VNet-invalidations/rules-per-record past their own examined bound (#1077) — counts,
+ * never claims. */
 export function omittedRow(
   count: number,
   severity: Severity,
   untrackedRecords: number,
   uploadId: string,
+  nsgWorkBeyond = 0,
 ): MappedEvent {
-  const description = `Azure compute lifecycle — ${count ? `${count} further VM${count === 1 ? "" : "s"} with a lifecycle in this upload beyond the ${AZURE_COMPUTE_MAX} reported — not shown` : "no further VM beyond the reported"}${untrackedRecords ? `; ${plural(untrackedRecords, "record")} naming VMs past the ${VMS_TRACKED_MAX} tracked — not read` : ""}`;
+  const description = `Azure compute lifecycle — ${count ? `${count} further VM${count === 1 ? "" : "s"} with a lifecycle in this upload beyond the ${AZURE_COMPUTE_MAX} reported — not shown` : "no further VM beyond the reported"}${untrackedRecords ? `; ${plural(untrackedRecords, "record")} naming VMs/NICs/subnets past their own tracked bound — not read` : ""}${nsgWorkBeyond ? `; ${plural(nsgWorkBeyond, "NSG-rule record/rule/VNet-invalidation")} past its own examined bound (up to ${NSG_RULE_RECORDS_MAX}) — not read` : ""}`;
   return {
     timestamp: "",
     description,
