@@ -36,6 +36,17 @@ export const smbBlockSchema = z.object({
   outcome: smbOutcomeSchema.optional(),
   fileinfoJoin: smbFileinfoJoinSchema,
   requestedSize: z.number().int().nonnegative().optional(),
+  clientGuid: z.string().optional(),
+  ntlmDomain: z.string().optional(),
+  ntlmUser: z.string().optional(),
+  krbRealm: z.string().optional(),
+  krbService: z.string().optional(),
+  /** Which chain-level fact backs this row's file identity — absent means "joined" (the default). */
+  createJoinState: z
+    .enum(["no fuid on this record", "no flow id on this record", "no matching file record in this upload"])
+    .optional(),
+  /** Operations on this file beyond SMB_BUCKET_MAX, kept but not individually shown. */
+  operationsOmitted: z.number().int().nonnegative().optional(),
 });
 
 export type SmbBlock = z.infer<typeof smbBlockSchema>;

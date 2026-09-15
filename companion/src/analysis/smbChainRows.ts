@@ -20,7 +20,7 @@
 import { createCanonicalEvent, type CanonicalEventEnvelope } from "./canonicalEvent.js";
 import type { MappedEvent } from "./siemImport.js";
 import { breakHashRuns, identityMark, keyDigest, showToken } from "./recordIdentity.js";
-import type { SmbChain } from "./smbChainJoin.js";
+import type { SmbChain, SmbJoinState } from "./smbChainJoin.js";
 import type { SmbObservation } from "./smbChainRead.js";
 import type { TransferObservation } from "./webChainRead.js";
 import type { SmbBlock, SmbFileinfoJoin, SmbOutcome } from "./canonicalSmb.js";
@@ -69,25 +69,52 @@ function classifyOutcome(op: SmbObservation): SmbOutcome {
   return "unknown";
 }
 
+// Two address sets agree when every address one side names is named by the other — order-free,
+// since a fileinfo record states flow endpoints, not sender/receiver (webChainRead.ts's own note).
+function endpointsAgree(op: SmbObservation, t: TransferObservation): boolean {
+  const opAddrs = [op.src, op.dst].filter((a): a is string => !!a);
+  if (opAddrs.length === 0) return true; // nothing to disagree with
+  const tAddrs = [t.flowSrc, t.flowDst].filter((a): a is string => !!a);
+  if (tAddrs.length === 0) return true;
+  return opAddrs.every((a) => tAddrs.includes(a));
+}
+
 /**
  * The fileinfo record over SMB (`app_proto: "smb"`) matching this operation's `flowId + txId` —
- * Suricata's own identifier pair for the transaction. More than one candidate is a stated conflict,
- * never a first-wins pick (webChainJoin.ts's own rule for a shared identifier).
+ * Suricata's own identifier pair for the transaction. `flow_id` is a per-sensor correlation id,
+ * not a global one: two independent sensors (or two unrelated captures merged into one upload)
+ * can emit the same small flow_id/tx_id pair, so a candidate whose sensor or endpoints contradict
+ * this operation is excluded before matching — never joined just because the ids happen to agree.
+ * More than one remaining candidate is a stated conflict, never a first-wins pick (webChainJoin.ts's
+ * own rule for a shared identifier).
  */
 function matchFileinfo(
   op: SmbObservation,
   transfers: readonly TransferObservation[],
 ): { join: SmbFileinfoJoin; transfer?: TransferObservation } {
   if (!op.flowId || !op.txId) return { join: "not applicable" };
-  const candidates = transfers.filter(
-    (t) => t.source === "suricata-fileinfo" && t.flowId === op.flowId && t.txId === op.txId,
-  );
+  const candidates = transfers.filter((t) => {
+    if (t.source !== "suricata-fileinfo" || t.flowId !== op.flowId || t.txId !== op.txId) return false;
+    if (op.observer?.name && t.observer?.name && op.observer.name !== t.observer.name) return false;
+    return endpointsAgree(op, t);
+  });
   if (candidates.length === 0) return { join: "no match" };
   if (candidates.length > 1) return { join: "conflict" };
   return { join: "matched", transfer: candidates[0] };
 }
 
-function smbBlock(op: SmbObservation, join: SmbFileinfoJoin): SmbBlock {
+// SmbJoinState's "joined" case carries no fact onto the row (it is the ordinary, expected case);
+// only a non-"joined" state is worth an analyst's attention, so createJoinState omits it.
+function createJoinFact(joinState: SmbJoinState): SmbBlock["createJoinState"] {
+  return joinState === "joined" ? undefined : joinState;
+}
+
+function smbBlock(
+  op: SmbObservation,
+  join: SmbFileinfoJoin,
+  joinState: SmbJoinState,
+  operationsOmitted: number,
+): SmbBlock {
   return {
     command: op.command,
     ...(op.status ? { status: op.status } : {}),
@@ -101,9 +128,16 @@ function smbBlock(op: SmbObservation, join: SmbFileinfoJoin): SmbBlock {
     ...(op.fuid ? { fuid: op.fuid } : {}),
     ...(op.sessionId ? { sessionId: op.sessionId } : {}),
     ...(op.treeId ? { treeId: op.treeId } : {}),
+    ...(op.clientGuid ? { clientGuid: op.clientGuid } : {}),
+    ...(op.ntlmDomain ? { ntlmDomain: op.ntlmDomain } : {}),
+    ...(op.ntlmUser ? { ntlmUser: op.ntlmUser } : {}),
+    ...(op.krbRealm ? { krbRealm: op.krbRealm } : {}),
+    ...(op.krbService ? { krbService: op.krbService } : {}),
     ...(KNOWN_CREATE.has(op.command) ? { outcome: classifyOutcome(op) } : {}),
     fileinfoJoin: join,
     ...(op.size !== undefined ? { requestedSize: op.size } : {}),
+    ...(createJoinFact(joinState) ? { createJoinState: createJoinFact(joinState) } : {}),
+    ...(operationsOmitted > 0 ? { operationsOmitted } : {}),
   };
 }
 
@@ -133,6 +167,19 @@ function targetOf(op: SmbObservation): string {
   return breakHashRuns(path);
 }
 
+function authWords(op: SmbObservation): string | undefined {
+  const isStr = (v: string | undefined): v is string => !!v;
+  if (op.ntlmDomain || op.ntlmUser) {
+    const user = [op.ntlmDomain, op.ntlmUser].filter(isStr).map(showToken).join("\\");
+    return `ntlm: ${user}`;
+  }
+  if (op.krbRealm || op.krbService) {
+    const who = [op.krbService, op.krbRealm].filter(isStr).map(showToken).join("@");
+    return `kerberos: ${who}`;
+  }
+  return undefined;
+}
+
 function describeOperation(op: SmbObservation, block: SmbBlock, fileinfo?: TransferObservation): string {
   const parts: string[] = [`SMB ${op.command}`, targetOf(op)];
   if (block.outcome) parts.push(`— ${outcomeWords(block.outcome)}`);
@@ -140,6 +187,8 @@ function describeOperation(op: SmbObservation, block: SmbBlock, fileinfo?: Trans
   if (op.status) parts.push(`(${op.status}${op.statusCode ? ` ${op.statusCode}` : ""})`);
   if (op.shareType) parts.push(`[share type: ${op.shareType}]`);
   if (op.src && op.dst) parts.push(`[from ${op.src} to ${op.dst}]`);
+  const auth = authWords(op);
+  if (auth) parts.push(`[${auth}]`);
   if (fileinfo) {
     const bytes =
       fileinfo.seenBytes !== undefined ? `${fileinfo.seenBytes} bytes observed` : "size unrecorded";
@@ -149,6 +198,9 @@ function describeOperation(op: SmbObservation, block: SmbBlock, fileinfo?: Trans
   } else if (block.fileinfoJoin === "conflict") {
     parts.push("[transfer: conflicting fileinfo records — not joined]");
   }
+  if (block.createJoinState) parts.push(`[create: ${block.createJoinState}]`);
+  if (block.operationsOmitted)
+    parts.push(`[+${block.operationsOmitted} earlier operations on this file not shown]`);
   const identity = identityMark(keyDigest(stableJson(stripLocators(block))));
   return `${parts.join(" ")}${identity}`.slice(0, DESCRIPTION_MAX);
 }
@@ -203,8 +255,10 @@ function canonicalOf(
 function mapOperation(
   op: SmbObservation,
   fileinfo: { join: SmbFileinfoJoin; transfer?: TransferObservation },
+  joinState: SmbJoinState,
+  operationsOmitted: number,
 ): MappedEvent {
-  const block = smbBlock(op, fileinfo.join);
+  const block = smbBlock(op, fileinfo.join, joinState, operationsOmitted);
   const canonical = canonicalOf(op, block, fileinfo.transfer);
   const factDigest = keyDigest(stableJson(stripLocators(block)));
   return {
@@ -227,21 +281,41 @@ export function tallySmbChains(chains: readonly SmbChain[], budget: number): Smb
   return chains.slice(0, budget);
 }
 
+/** One Info row disclosing SMB records the importer never read — the global SMB_OBSERVATIONS_MAX bound. */
+function overflowRow(count: number): MappedEvent {
+  return {
+    timestamp: "",
+    description: `SMB: ${count} record${count === 1 ? "" : "s"} not read — the upload's SMB record bound was reached`,
+    severity: "Info",
+    mitre: [],
+    origin: "wire",
+    aggKey: "smb|overflow",
+    sources: ["Suricata"],
+  };
+}
+
 /**
  * One row per operation: the CREATE (when present) plus every READ/WRITE/CLOSE/etc. in the chain.
  * `fileinfoTransfers` is the upload's already-collected `app_proto: "smb"` fileinfo rows
  * (webObs.transfers, filtered by the caller or here) — READ/WRITE bytes are matched to them by
  * flowId + txId rather than re-derived from `smb.size` (the requested size, not observed bytes).
+ * `overflow` is the count of records the global SMB_OBSERVATIONS_MAX bound never let the importer
+ * read at all — surfaced as its own row, never silently folded into the generic import-drop count.
  */
 export function mapSmbRows(
   chains: readonly SmbChain[],
   fileinfoTransfers: readonly TransferObservation[],
+  overflow = 0,
 ): MappedEvent[] {
   const smbFileinfo = fileinfoTransfers.filter((t) => (t.over ?? "").toUpperCase() === "SMB");
   const rows: MappedEvent[] = [];
   for (const chain of chains) {
-    if (chain.create) rows.push(mapOperation(chain.create, matchFileinfo(chain.create, smbFileinfo)));
-    for (const op of chain.operations) rows.push(mapOperation(op, matchFileinfo(op, smbFileinfo)));
+    if (chain.create)
+      rows.push(mapOperation(chain.create, matchFileinfo(chain.create, smbFileinfo), chain.joinState, 0));
+    const omitted = chain.operationsTotal - chain.operations.length;
+    for (const op of chain.operations)
+      rows.push(mapOperation(op, matchFileinfo(op, smbFileinfo), chain.joinState, omitted));
   }
+  if (overflow > 0) rows.push(overflowRow(overflow));
   return rows;
 }

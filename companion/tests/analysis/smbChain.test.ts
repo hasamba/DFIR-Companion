@@ -228,6 +228,146 @@ describe("file-identity join — never share context alone", () => {
     expect(chain.operations[0].filename).toBe(`op-${total - SMB_BUCKET_MAX}.bin`);
     expect(chain.operations.at(-1)?.filename).toBe(`op-${total - 1}.bin`);
   });
+
+  it("a fuid with no flow id never joins another record sharing that fuid, even from what looks like the same flow", () => {
+    const ops = emptySmbOperations();
+    addSmb(ops, readSuricataSmb(smb({ flow_id: undefined, smb: { fuid: "NOFLOW" } }), 0));
+    addSmb(
+      ops,
+      readSuricataSmb(
+        smb({
+          flow_id: undefined,
+          smb: { command: "SMB2_COMMAND_WRITE", fuid: "NOFLOW", disposition: undefined },
+        }),
+        1,
+      ),
+    );
+    const chains = joinSmbChains(ops);
+    expect(chains.every((c) => c.joinState !== "joined")).toBe(true);
+    expect(chains).toHaveLength(2);
+    expect(chains.every((c) => c.operations.length === 1)).toBe(true);
+  });
+
+  it("the row for a fuid-but-no-flow-id record discloses that it could not be joined", () => {
+    const r = parse([smb({ flow_id: undefined, smb: { fuid: "NOFLOW" } })]);
+    const row = smbEvents(r)[0];
+    expect(row.canonical?.smb?.createJoinState).toBe("no flow id on this record");
+    expect(row.description).toContain("[create: no flow id on this record]");
+  });
+});
+
+describe("truncation and join-state disclosure on the row itself", () => {
+  it("an operation with no matching CREATE in the upload discloses it in its own description", () => {
+    const r = parse([smb({ smb: { command: "SMB2_COMMAND_READ", fuid: "ORPHAN", disposition: undefined } })]);
+    const row = smbEvents(r)[0];
+    expect(row.description).toContain("[create: no matching file record in this upload]");
+    expect(row.canonical?.smb?.createJoinState).toBe("no matching file record in this upload");
+  });
+
+  it("a truncated chain's operation rows state how many earlier operations are not shown", () => {
+    const ops = emptySmbOperations();
+    addSmb(ops, readSuricataSmb(smb({ smb: { fuid: "BUSY" } }), 0));
+    const total = SMB_BUCKET_MAX + 5;
+    for (let i = 0; i < total; i++) {
+      addSmb(
+        ops,
+        readSuricataSmb(
+          smb({ smb: { command: "SMB2_COMMAND_WRITE", fuid: "BUSY", disposition: undefined } }),
+          i + 1,
+        ),
+      );
+    }
+    const chains = joinSmbChains(ops);
+    const rows = mapSmbRows(chains, []);
+    const writeRow = rows.find((e) => e.description.includes("SMB2_COMMAND_WRITE"));
+    expect(writeRow?.description).toContain(`[+5 earlier operations on this file not shown]`);
+  });
+});
+
+describe("global observation overflow", () => {
+  it("is disclosed as its own row, never silently absorbed into the generic drop count", () => {
+    const rows = mapSmbRows([], [], 42);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].description).toContain("42 records not read");
+  });
+
+  it("emits nothing when there is no overflow", () => {
+    expect(mapSmbRows([], [], 0)).toEqual([]);
+  });
+});
+
+describe("authentication context is not discarded", () => {
+  it("shows an NTLM domain/user on the row that carries it", () => {
+    const r = parse([
+      smb({
+        smb: {
+          command: "SMB2_COMMAND_SESSION_SETUP",
+          disposition: undefined,
+          fuid: undefined,
+          ntlmssp: { domain: "CORP", user: "alice" },
+        },
+      }),
+    ]);
+    const row = smbEvents(r)[0];
+    expect(row.description).toContain("[ntlm: CORP\\alice]");
+    expect(row.canonical?.smb?.ntlmDomain).toBe("CORP");
+    expect(row.canonical?.smb?.ntlmUser).toBe("alice");
+  });
+
+  it("hostile characters in an NTLM user never read as a trusted tag", () => {
+    const r = parse([
+      smb({
+        smb: {
+          command: "SMB2_COMMAND_SESSION_SETUP",
+          disposition: undefined,
+          fuid: undefined,
+          ntlmssp: { domain: "CORP", user: "alice[admin]" },
+        },
+      }),
+    ]);
+    const row = smbEvents(r)[0];
+    expect(row.description).not.toMatch(/\[admin\]/);
+    expect(row.description).toContain("(admin)");
+  });
+});
+
+describe("fileinfo join rejects a mismatched sensor or endpoint", () => {
+  function fileinfo(over: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      timestamp: "2024-01-01T00:00:00.000000+0000",
+      event_type: "fileinfo",
+      app_proto: "smb",
+      src_ip: SERVER,
+      dest_ip: CLIENT,
+      flow_id: "FL1",
+      tx_id: "1",
+      fileinfo: { filename: "report.xlsx", size: 4096, sha256: "c".repeat(64), state: "CLOSED" },
+      ...over,
+    };
+  }
+
+  it("a candidate from a different sensor is not matched, even with identical flow_id + tx_id", () => {
+    const r = parse([
+      smb({
+        smb: { command: "SMB2_COMMAND_READ", fuid: "F1", disposition: undefined },
+        "observer.name": "sensor-a",
+      }),
+      { ...fileinfo(), "observer.name": "sensor-b" },
+    ]);
+    const rows = smbEvents(r);
+    const readRow = rows.find((e) => e.description.includes("SMB SMB2_COMMAND_READ"));
+    expect(readRow?.canonical?.smb?.fileinfoJoin).toBe("no match");
+  });
+
+  it("a candidate whose endpoints contradict this operation's is not matched", () => {
+    const r = parse([
+      smb({ smb: { command: "SMB2_COMMAND_READ", fuid: "F1", disposition: undefined } }),
+      { ...fileinfo(), src_ip: "203.0.113.200", dest_ip: "198.51.100.200" },
+    ]);
+    const rows = smbEvents(r);
+    const readRow = rows.find((e) => e.description.includes("SMB SMB2_COMMAND_READ"));
+    expect(readRow?.canonical?.smb?.fileinfoJoin).toBe("no match");
+  });
 });
 
 describe("success and a later denial never silently collapse", () => {

@@ -46,6 +46,8 @@ export type SmbJoinState =
   | "joined"
   /** No `fuid` on this record at all — a TREE_CONNECT, negotiate, or session-setup row. */
   | "no fuid on this record"
+  /** A `fuid` is present but no `flowId` — cannot be safely joined to any other record. */
+  | "no flow id on this record"
   /** A `fuid` is present but no CREATE for it was read in this upload. */
   | "no matching file record in this upload";
 
@@ -61,8 +63,11 @@ export interface SmbChain {
   joinState: SmbJoinState;
 }
 
+// BOTH flowId and fuid are required: a record with a fuid but no flowId (some Suricata configs
+// omit flow_id) must never share a bucket with another flowId-less record that happens to reuse
+// the same fuid — treating "flow unknown" as "same flow" would falsely merge unrelated files.
 function fileKey(o: SmbObservation): string | undefined {
-  return o.fuid ? `${o.flowId ?? ""}|${o.fuid}` : undefined;
+  return o.flowId && o.fuid ? `${o.flowId}|${o.fuid}` : undefined;
 }
 
 interface ChainBuild {
@@ -89,7 +94,7 @@ export function joinSmbChains(ops: SmbOperations): SmbChain[] {
         key: o.locator,
         operations: [o],
         operationsTotal: 1,
-        joinState: "no fuid on this record",
+        joinState: o.fuid ? "no flow id on this record" : "no fuid on this record",
       });
       continue;
     }

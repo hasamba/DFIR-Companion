@@ -762,7 +762,7 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
         mapDnsRows(tallyDnsChains(dnsObs, joinDnsLeads(dnsObs), iocSink), flowBudget),
         // SMB operation rows, joined by file identity (not share context) and to a matching
         // fileinfo transfer where one exists (#1085, importer half of #933 item 4).
-        mapSmbRows(tallySmbChains(joinSmbChains(smbOps), flowBudget), webObs.transfers),
+        mapSmbRows(tallySmbChains(joinSmbChains(smbOps), flowBudget), webObs.transfers, smbOps.overflow),
       ],
       telemetryBudget,
     ),
