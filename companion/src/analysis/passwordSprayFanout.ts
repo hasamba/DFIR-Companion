@@ -52,7 +52,21 @@ export interface PasswordSprayPattern {
   accountsShown: string[];
   accountsTruncated: boolean;
   locators: string[];
-  followedBySuccess?: { account: string; timestamp: string };
+  followedBySuccess?: { account: string; timestamp: string; locator: string };
+}
+
+// First index in a timestamp-ascending array whose ms value is strictly greater than `afterMs`.
+// Binary search so a group with many successes does not cost a full scan per episode (Codex
+// review, P2 — was O(episodes × group size), quadratic on a large export from one source).
+function firstIndexAfter(sortedMs: number[], afterMs: number): number {
+  let lo = 0;
+  let hi = sortedMs.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (sortedMs[mid] > afterMs) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo;
 }
 
 function envInt(name: string, fallback: number): number {
@@ -177,6 +191,13 @@ export function passwordSprayPatterns(candidates: SprayCandidate[]): PasswordSpr
     if (failed.length === 0) continue;
     const { sourceIp, hostOrTenant } = failed[0];
 
+    // Sorted once per group, reused by every episode's followedBySuccess lookup below via
+    // binary search instead of a fresh filter+sort per episode (Codex review, P2).
+    const successesSorted = groupCandidates
+      .filter((c) => c.outcome === "success")
+      .sort((a, b) => toMs(a.timestamp) - toMs(b.timestamp));
+    const successMsSorted = successesSorted.map((c) => toMs(c.timestamp));
+
     for (const [windowKind, windowMs] of [
       ["burst", burstMs],
       ["slow", slowMs],
@@ -189,16 +210,19 @@ export function passwordSprayPatterns(candidates: SprayCandidate[]): PasswordSpr
         const accountsTruncated = accountNames.length > ACCOUNTS_PER_ROW_MAX;
 
         // followedBySuccess: earliest success in the SAME group, for one of the episode's
-        // accounts, strictly after episode close, within the bounded grace window.
-        const successes = groupCandidates
-          .filter(
-            (c) =>
-              c.outcome === "success" &&
-              ep.accounts.has(normalizeAccount(c.account)) &&
-              toMs(c.timestamp) > ep.endMs &&
-              toMs(c.timestamp) <= ep.endMs + graceMs,
-          )
-          .sort((a, b) => toMs(a.timestamp) - toMs(b.timestamp));
+        // accounts, strictly after episode close, within the bounded grace window. The window
+        // slice is found by binary search; only that narrow slice is scanned for an account
+        // match, not the whole group.
+        let followedBySuccess: PasswordSprayPattern["followedBySuccess"];
+        const graceEndMs = ep.endMs + graceMs;
+        for (let i = firstIndexAfter(successMsSorted, ep.endMs); i < successesSorted.length; i++) {
+          if (successMsSorted[i] > graceEndMs) break;
+          const c = successesSorted[i];
+          if (ep.accounts.has(normalizeAccount(c.account))) {
+            followedBySuccess = { account: c.account, timestamp: c.timestamp, locator: c.locator };
+            break;
+          }
+        }
 
         patterns.push({
           sourceIp,
@@ -209,10 +233,13 @@ export function passwordSprayPatterns(candidates: SprayCandidate[]): PasswordSpr
           accountsTotal: accountNames.length,
           accountsShown,
           accountsTruncated,
-          locators: ep.locators.slice(0, ACCOUNTS_PER_ROW_MAX),
-          ...(successes[0]
-            ? { followedBySuccess: { account: successes[0].account, timestamp: successes[0].timestamp } }
-            : {}),
+          // The success's own locator rides along in `locators` too (Codex review, P2), so the
+          // canonical evidence envelope can lead an analyst to the record backing the claim —
+          // not just the failure rows the fan-out count rests on.
+          locators: followedBySuccess
+            ? [...ep.locators.slice(0, ACCOUNTS_PER_ROW_MAX - 1), followedBySuccess.locator]
+            : ep.locators.slice(0, ACCOUNTS_PER_ROW_MAX),
+          ...(followedBySuccess ? { followedBySuccess } : {}),
         });
       }
     }

@@ -983,6 +983,30 @@ describe("parseM365Audit — password-spray fan-out (931.3, #1086)", () => {
     expect(r.events.some((e) => e.mitreTechniques.includes("T1110.003"))).toBe(false);
   });
 
+  // Codex review (P1): MFA interruptions, Conditional Access blocks and unreadable statuses are
+  // real failures but NOT credential failures — counting them toward the fan-out would flag
+  // ordinary policy friction (e.g. an MFA rollout) as a password spray.
+  it("does not count non-credential failures (MFA/Conditional Access/unreadable status) as spray attempts", () => {
+    const accounts = [
+      "alice@victim.com",
+      "bob@victim.com",
+      "carol@victim.com",
+      "dave@victim.com",
+      "erin@victim.com",
+    ];
+    const codes = [50074, 53003, 50097, 53000, 530032]; // MFA / CA / device / CA / non-credential
+    const records = accounts.map((upn, i) =>
+      signinRec({
+        userPrincipalName: upn,
+        createdDateTime: `2023-05-02T08:${String(10 + i).padStart(2, "0")}:00Z`,
+        status: { errorCode: codes[i] },
+        resourceTenantId: "tenant-a",
+      }),
+    );
+    const r = parseM365Audit(JSON.stringify(records));
+    expect(r.events.some((e) => e.mitreTechniques.includes("T1110.003"))).toBe(false);
+  });
+
   it("mapSignIn's own row still carries a canonical envelope with account.name = upn", () => {
     const r = parseM365Audit(JSON.stringify([signinRec({ status: { errorCode: 0 } })]));
     expect(r.events[0].canonical?.account?.name).toBe("v@victim.com");

@@ -210,4 +210,23 @@ describe("parseEcarJson — password-spray fan-out (930.5, #1086)", () => {
     const r = parseEcarJson(ndjson(...logins));
     expect(r.events.some((e) => e.mitreTechniques.includes("T1110.003"))).toBe(false);
   });
+
+  // Codex review (P2): the spray row must survive a tight `maxEvents` cap that a set of
+  // higher-severity, unrelated source rows would otherwise fill first — it is appended AFTER
+  // the source-row cap, independently bounded, not folded into the same `mapped[]` cap.
+  it("survives a tight maxEvents cap that unrelated source rows fill first", () => {
+    const logins = ["alice", "bob", "carol", "dave", "erin"].map((a, i) => loginRec(a, i * 1000));
+    const flows = Array.from({ length: 3 }, (_, i) =>
+      rec("FLOW", "CONNECT", {
+        src_ip: "10.44.30.10",
+        dst_ip: `45.83.221.${30 + i}`,
+        dst_port: "443",
+        protocol: "tcp",
+        direction: "OUTBOUND",
+      }),
+    );
+    const r = parseEcarJson(ndjson(...logins, ...flows), { maxEvents: 1 });
+    const spray = r.events.find((e) => e.mitreTechniques.includes("T1110.003"));
+    expect(spray).toBeDefined();
+  });
 });

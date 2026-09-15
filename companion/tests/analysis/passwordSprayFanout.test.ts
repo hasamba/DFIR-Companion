@@ -118,7 +118,11 @@ describe("passwordSprayPatterns — followedBySuccess", () => {
     });
     const patterns = passwordSprayPatterns([...spray(), success]).filter((p) => p.windowKind === "burst");
     expect(patterns).toHaveLength(1);
-    expect(patterns[0].followedBySuccess).toEqual({ account: "bob", timestamp: success.timestamp });
+    expect(patterns[0].followedBySuccess).toEqual({
+      account: "bob",
+      timestamp: success.timestamp,
+      locator: success.locator,
+    });
   });
 
   it("does NOT fire for a success recorded DURING the episode, before close", () => {

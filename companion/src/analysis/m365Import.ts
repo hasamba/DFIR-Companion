@@ -446,13 +446,25 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
       if (isEntraSignIn(rec)) {
         const s = readEntraSignIn(rec);
         const hostOrTenant = s.resourceTenant || s.homeTenant;
-        if (s.user && s.ip && hostOrTenant && s.observed) {
+        // Only a genuine credential failure counts as a spray attempt — an MFA interruption,
+        // a Conditional Access block, an expired password, or an unreadable status is a
+        // failure for OTHER reasons and must never inflate a spray count (Codex review, P1).
+        // Reuses the same `signInOutcome` classification `mapSignIn` uses, so the two never
+        // disagree about what "failed" means for the same record.
+        const failureReason = pickStr(rec, ["status.failureReason", "status.additionalDetails"]);
+        const { outcome } = signInOutcome(
+          getPath(rec, "status.errorCode") ?? getCI(rec, "errorCode"),
+          failureReason,
+        );
+        const sprayOutcome =
+          outcome === "credential-failure" ? "failed" : outcome === "success" ? "success" : null;
+        if (s.user && s.ip && hostOrTenant && s.observed && sprayOutcome) {
           sprayCandidates.push({
             timestamp: normalizeTime(s.observed),
             account: s.user,
             sourceIp: s.ip,
             hostOrTenant,
-            outcome: s.success ? "success" : "failed",
+            outcome: sprayOutcome,
             locator: `record:${index}`,
           });
         }
