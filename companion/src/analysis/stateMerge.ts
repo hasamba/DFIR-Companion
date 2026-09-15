@@ -28,6 +28,7 @@ import {
   metadataCoverageEvent,
 } from "./cloudMetadataAccess.js";
 import { summarizeBulkReads } from "./cloudBulkRead.js";
+import { correlateStorageKeyToRead } from "./azureStorageKeyToRead.js";
 import { attributionCoverageEvent, markServiceAccountBrowsing } from "./serviceAccountBrowsing.js";
 import { markContainerEscape } from "./containerEscape.js";
 import { toUtcIso } from "./timeUtc.js";
@@ -421,10 +422,15 @@ export function mergeDelta(
   // timeline and put the whole export in front of the AI, which is what the forensic/super-timeline
   // boundary exists to prevent. A re-merge replaces a group's summary rather than adding a second.
   const withBulkReads = summarizeBulkReads(withMetadata);
+  // A storage-account key listing joined to a later account-key-authenticated read on the same
+  // account (#931 item 4). Here because the listing (Activity Log) and the read (Storage
+  // diagnostic log) arrive from two separate uploads. Only ever adds a bounded join row; never
+  // claims the same actor did both — SAS/key use leaves no reliable attribution trail.
+  const withStorageKeyJoins = correlateStorageKeyToRead(withBulkReads);
   // Browsing by an account that cannot be interactive (#908 item 10). Here because the shellbag,
   // the logon that made a desktop session possible, and any archiving beside it arrive from three
   // different importers. Only raises, and only for an account something SAYS is noninteractive.
-  const browsingMarked = markServiceAccountBrowsing(withBulkReads);
+  const browsingMarked = markServiceAccountBrowsing(withStorageKeyJoins);
   // Browsing evidence that carries no account cannot be judged, and "no service-account browsing
   // found" would report a collection gap as a result. The gap goes ON the timeline, replaceable.
   const attributionGap = attributionCoverageEvent(browsingMarked);

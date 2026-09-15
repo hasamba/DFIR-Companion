@@ -76,6 +76,25 @@ describe("detectImportKind — JSON formats", () => {
       detectImportKind("az.json", j([{ operationName: { value: "Microsoft.X/write" }, caller: "a@b.com" }])),
     ).toBe("cloud");
   });
+  // #931 item 4: a Storage diagnostic-log record also satisfies the Activity Log check
+  // (operationName + resourceId) — it MUST detect as the more specific kind, not "cloud", or it
+  // silently mis-routes to the generic Activity Log importer.
+  it("azurestoragelog: Storage diagnostic log record, not the generic Activity Log", () => {
+    expect(
+      detectImportKind(
+        "storage.json",
+        j([
+          {
+            time: "2024-01-01T00:00:00Z",
+            resourceId: "/subscriptions/x/storageAccounts/a1/blobServices/default",
+            category: "StorageRead",
+            operationName: "GetBlob",
+            identity: { type: "OAuth" },
+          },
+        ]),
+      ),
+    ).toBe("azurestoragelog");
+  });
   it("m365: Unified Audit Log JSON", () => {
     expect(
       detectImportKind(

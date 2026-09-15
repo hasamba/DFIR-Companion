@@ -32,6 +32,7 @@ export const IMPORT_KINDS = [
   "leapp",
   "aws",
   "cloud",
+  "azurestoragelog",
   "k8s",
   "osquery",
   "plaso",

@@ -219,6 +219,43 @@ describe("parseCloudActivity — Azure", () => {
     expect(r.events[0].severity).toBe("High");
     expect(r.events[0].mitreTechniques).toContain("T1552.001");
   });
+
+  // #931 item 4: the key→read correlator needs a structured canonical envelope on the listKeys
+  // row, not just prose — this row carried none before.
+  it("stamps a canonical envelope on a storage key listing", () => {
+    const r = parseCloudActivity(
+      JSON.stringify([
+        azure("Microsoft.Storage/storageAccounts/listKeys/action", {
+          resourceId: "/subscriptions/abc/resourceGroups/rg1/providers/Microsoft.Storage/storageAccounts/sa1",
+        }),
+      ]),
+    );
+    const e = r.events[0];
+    expect(e.canonical?.event.category).toBe("cloud");
+    expect(e.canonical?.event.type).toBe("storage-key-list");
+    expect(e.canonical?.event.outcome).toBe("success");
+    expect(e.canonical?.cloud?.resource).toContain("storageAccounts/sa1");
+  });
+
+  // Codex review (P1, #931 item 2): without the resource in the aggKey, listings of two DIFFERENT
+  // accounts by the same caller/IP collapsed into one row and the key→read correlator could only
+  // ever see the first account.
+  it("keeps listKeys on two different storage accounts as two distinct events", () => {
+    const r = parseCloudActivity(
+      JSON.stringify([
+        azure("Microsoft.Storage/storageAccounts/listKeys/action", {
+          resourceId: "/subscriptions/abc/resourceGroups/rg1/providers/Microsoft.Storage/storageAccounts/sa1",
+        }),
+        azure("Microsoft.Storage/storageAccounts/listKeys/action", {
+          resourceId: "/subscriptions/abc/resourceGroups/rg1/providers/Microsoft.Storage/storageAccounts/sa2",
+        }),
+      ]),
+    );
+    expect(r.events).toHaveLength(2);
+    const resources = r.events.map((e) => e.canonical?.cloud?.resource);
+    expect(resources.some((r) => r?.includes("sa1"))).toBe(true);
+    expect(resources.some((r) => r?.includes("sa2"))).toBe(true);
+  });
 });
 
 describe("parseCloudActivity — inputs, floor & edges", () => {

@@ -101,6 +101,11 @@ function isObjectRead(action: string): boolean {
   );
 }
 
+/** A storage-account shared-key listing — the control-plane half of #931 item 4's key→read join. */
+function isListKeys(action: string): boolean {
+  return /storageaccounts\/listkeys\/action/i.test((action ?? "").trim());
+}
+
 function matchRule(rules: Rule[], key: string): { severity: Severity; mitre: string[] } | null {
   const k = key.toLowerCase();
   for (const [re, severity, mitre] of rules) if (re.test(k)) return { severity, mitre };
@@ -279,8 +284,11 @@ function mapAzure(rec: Row, sink: Map<string, SiemIoc>, recordIndex: number): Ma
     // only ever carried the coarse `status` word — two different LOGGING failure kinds (403 vs
     // 404) against the same target would otherwise collapse into one aggregated row (Codex design
     // review finding #1).
+    // Codex review (P1, #931 item 4): a listKeys row needs the resource in its key too — without
+    // it, listings of DIFFERENT storage accounts by the same caller/IP collapse into one row, and
+    // the key→read correlator can only ever see the first account.
     aggKey: boundedAggKey(
-      `azure|${op}|${caller}|${ip}|${status}${logging ? `|${subStatus}` : ""}${exec ? `|${exec.id}` : isObjectRead(op) && shortRes ? `|${shortRes}` : ""}${logging?.keySegment ?? ""}`.toLowerCase(),
+      `azure|${op}|${caller}|${ip}|${status}${logging ? `|${subStatus}` : ""}${exec ? `|${exec.id}` : (isObjectRead(op) || isListKeys(op)) && shortRes ? `|${shortRes}` : ""}${logging?.keySegment ?? ""}`.toLowerCase(),
     ),
     sources: ["Azure Activity"],
     ...(logging
@@ -328,7 +336,32 @@ function mapAzure(rec: Row, sink: Map<string, SiemIoc>, recordIndex: number): Ma
             loggingChange: logging.block,
           }),
         }
-      : {}),
+      : isListKeys(op)
+        ? {
+            // #931 item 4: the control-plane half of the storage key→read join. No new schema
+            // block — same minimal shape the `logging` branch above already establishes for one
+            // more Azure row kind.
+            canonical: createCanonicalEvent({
+              event: {
+                category: "cloud",
+                type: "storage-key-list",
+                action: op,
+                outcome: failed ? "failure" : "success",
+              },
+              ...(caller ? { actor: { kind: "account", name: caller } } : {}),
+              ...(ip ? { network: { source: { address: ip } } } : {}),
+              cloud: { provider: "azure", ...(resource ? { resource } : {}) },
+              time: { observed, normalized: normalizeTime(observed) },
+              evidence: { rawRecords: [{ source: "azure-activity", locator: `record:${recordIndex}` }] },
+              producer: {
+                importer: "azure-activity",
+                parserVersion: "1",
+                mappingVersion: "azure-listkeys-v1",
+                ruleVersions: ["azure-listkeys-v1"],
+              },
+            }),
+          }
+        : {}),
   };
 }
 
