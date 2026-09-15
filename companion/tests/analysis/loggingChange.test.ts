@@ -1306,4 +1306,76 @@ describe("DeleteFlowLogs reads responseElements.unsuccessful — only the ids th
     expect(env(flow).loggingChange?.state).toBe("requested");
     expect(env(flow).loggingChange?.failure).toBe("denied");
   });
+
+  it("event.outcome is 'failed' when every id fails with NO top-level errorCode — the envelope never contradicts its own loggingChange.state (#1095, Codex code review finding #3)", () => {
+    const flow = aws([
+      ct(
+        "DeleteFlowLogs",
+        { flowLogIds: ["fl-0a"] },
+        {
+          eventSource: "ec2.amazonaws.com",
+          responseElements: { unsuccessful: [{ resourceId: "fl-0a", error: { code: "AccessDenied" } }] },
+        },
+      ),
+    ])[0];
+    const e = env(flow);
+    expect(e.loggingChange?.state).toBe("requested");
+    expect(e.event.outcome).toBe("failed");
+  });
+
+  it("the unsuccessful array wrapped in a query-protocol container (DeleteFlowLogsResponse.unsuccessful.item) is still read (#1095, Codex code review finding #1)", () => {
+    const flow = aws([
+      ct(
+        "DeleteFlowLogs",
+        { flowLogIds: ["fl-0a", "fl-0b"] },
+        {
+          eventSource: "ec2.amazonaws.com",
+          responseElements: {
+            DeleteFlowLogsResponse: {
+              unsuccessful: { item: [{ resourceId: "fl-0b", error: { code: "AccessDenied" } }] },
+            },
+          },
+        },
+      ),
+    ])[0];
+    expect(flow.description).toContain("flow logs deleted: fl-0a");
+    expect(flow.description).not.toContain("flow logs deleted: fl-0a, fl-0b");
+    expect(env(flow).loggingChange?.state).toBe("deleted");
+  });
+
+  it("an unsuccessful item with NO identifiable id blocks claiming ANY id succeeded, never silently dropped (#1095, Codex code review finding #2)", () => {
+    const flow = aws([
+      ct(
+        "DeleteFlowLogs",
+        { flowLogIds: ["fl-0a", "fl-0b"] },
+        {
+          eventSource: "ec2.amazonaws.com",
+          responseElements: { unsuccessful: [{ error: { code: "AccessDenied" } }] },
+        },
+      ),
+    ])[0];
+    expect(flow.description).not.toContain("flow logs deleted:");
+    expect(env(flow).loggingChange?.state).toBe("requested");
+  });
+
+  it("mixed per-id reasons still reach structured facts, not only the prose qualifier (#1095, Codex code review finding #4)", () => {
+    const flow = aws([
+      ct(
+        "DeleteFlowLogs",
+        { flowLogIds: ["fl-0a", "fl-0b"] },
+        {
+          eventSource: "ec2.amazonaws.com",
+          responseElements: {
+            unsuccessful: [
+              { resourceId: "fl-0a", error: { code: "AccessDenied" } },
+              { resourceId: "fl-0b", error: { code: "InvalidFlowLogId.NotFound" } },
+            ],
+          },
+        },
+      ),
+    ])[0];
+    const facts = env(flow).loggingChange?.facts ?? [];
+    expect(facts).toContainEqual({ name: "flowLogId", value: "fl-0a (denied)" });
+    expect(facts).toContainEqual({ name: "flowLogId", value: "fl-0b (target not found)" });
+  });
 });

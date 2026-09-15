@@ -386,14 +386,18 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
       type: "api",
       action: name,
       // An STS issuance whose response is unavailable establishes only a request: its outcome is
-      // unknown in the envelope too, not a success by absence of an error.
+      // unknown in the envelope too, not a success by absence of an error. A logging row can
+      // conclude a failure with NO top-level errorCode at all (DeleteFlowLogs' own per-item
+      // responseElements.unsuccessful, #1095) — `logging.block.failure` is checked too, so the
+      // envelope's own event.outcome never says "success" while loggingChange.state says
+      // "requested" (Codex code review finding #3).
       outcome: issuance
         ? issuance.result === "issued"
           ? "success"
           : issuance.result === "denied"
             ? "failed"
             : "unknown"
-        : failed
+        : failed || logging?.block.failure
           ? "failed"
           : "success",
     },
