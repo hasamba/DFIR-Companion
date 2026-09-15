@@ -8,13 +8,23 @@
 // What one row rests on, and what it never says: see canonicalGcpCompute.ts's basis sentence and
 // RECOMMENDATION-1066.md's design-round-1 section. In short — identity requires the FULL
 // documented `projects/<p>/zones/<z>/instances/<n>` resourceName shape, never guessed from
-// `request.name` alone; a recorded operation is never a fabricated before/after transition; no
-// firewall/tag join is made (#1073); an unsuccessful call is an attempt, never a joined fact; an
-// attached email's calls are never claimed unique to this instance — the same account may be
-// attached elsewhere this upload cannot see; the "privileged call" fact names ONE specific check
-// (a High entry in the shared GCP_RULES table), never the record's own final imported severity;
-// the grade counts distinct recorded-fact kinds (2+ → High, 1 → Medium, 0 → Low), and no single
-// record makes a High.
+// `request.name` alone; a recorded operation is never a fabricated before/after transition; an
+// unsuccessful call is an attempt, never a joined fact; an attached email's calls are never
+// claimed unique to this instance — the same account may be attached elsewhere this upload cannot
+// see; the "privileged call" fact names ONE specific check (a High entry in the shared GCP_RULES
+// table), never the record's own final imported severity; the grade counts distinct recorded-fact
+// kinds (2+ → High, 1 → Medium, 0 → Low), and no single record makes a High.
+//
+// The firewall join (#1073, RECOMMENDATION-1073.md's design-round-1 section) is deliberately
+// narrow: only `firewalls.insert`/`.update` (never `.patch` — a partial update whose absent
+// fields this stateless decoder cannot read as "confirmed absent") naming NEITHER target tags NOR
+// target service accounts (GCP's own documented "applies to every instance on the network"
+// default) joins, by EXACT literal network-string match against the instance's own FIRST network
+// interface (#1066's own launch capture) — no cross-project Shared-VPC resolution is attempted; a
+// mismatched project token in the two records' own network strings simply does not join. The
+// wording never claims traffic is reaching the instance: a higher-priority deny rule or a
+// hierarchical firewall policy are not evaluated. Azure's NSG join and VM-scale-set support were
+// both dropped from this item as unsound on the available evidence — see #1077, #1078.
 
 import type { Severity } from "./stateTypes.js";
 import type { GcpComputeFact, GcpComputeLaunch } from "./canonicalGcpCompute.js";
@@ -35,6 +45,7 @@ import {
   lower,
   noteFact,
   openAttachment,
+  parseGcpFirewallResourceName,
   parseGcpInstanceResourceName,
   tallySession,
   type Instance,
@@ -103,6 +114,65 @@ const STOP_RE = /(^|\.)instances\.stop$/;
 const DELETE_RE = /(^|\.)instances\.delete$/;
 const SET_METADATA_RE = /(^|\.)instances\.setmetadata$/;
 const SET_SA_RE = /(^|\.)instances\.setserviceaccount$/;
+// Deliberately no regex for `firewalls.patch` — a partial update whose absent fields this
+// stateless decoder cannot read as "confirmed absent" (RECOMMENDATION-1073.md, finding H2).
+const FIREWALL_INSERT_RE = /(^|\.)firewalls\.insert$/;
+const FIREWALL_UPDATE_RE = /(^|\.)firewalls\.update$/;
+const GOOGLE_API_PREFIX = "https://www.googleapis.com/compute/v1/";
+
+/**
+ * Resolves a network reference to a project-qualified identity. GCP treats a bare
+ * `global/networks/<n>` reference as relative to the RECORD'S OWN project — two different
+ * projects' identically-named networks (e.g. both named "default") must never collide just
+ * because both requests happened to use the short form (Codex code review, finding H2). A
+ * reference already qualified with a `projects/<p>/...` prefix (or the full API-URL form) is
+ * left as its own project, never overridden by `project`.
+ */
+function resolveNetworkIdentity(raw: string, project: string): string {
+  const trimmed = raw.trim();
+  const stripped = trimmed.startsWith(GOOGLE_API_PREFIX) ? trimmed.slice(GOOGLE_API_PREFIX.length) : trimmed;
+  return stripped.startsWith("projects/") ? stripped : `projects/${lower(project)}/${stripped}`;
+}
+
+/** True only when NEITHER target mechanism is present — GCP's documented network-wide default (finding H1). */
+function firewallAppliesNetworkWide(request: Row): boolean {
+  const tags = getCI(request, "targetTags");
+  const accounts = getCI(request, "targetServiceAccounts");
+  const hasTags = Array.isArray(tags) && tags.length > 0;
+  const hasAccounts = Array.isArray(accounts) && accounts.length > 0;
+  return !hasTags && !hasAccounts;
+}
+
+/**
+ * Reads an array field under either of two possible spellings — no fixture of a real captured
+ * GCP Cloud Audit Log firewall record exists to confirm which one is used (Codex code review,
+ * finding H1: the REST resource itself is documented as singular `allowed`/`denied`, but a
+ * sourced third-party audit-log field mapping documents the audit record itself as pluralized
+ * `alloweds`/`denieds`). Checking both costs nothing and can only avoid a false negative — it
+ * never manufactures a fact that isn't there, since the semantics checked are identical either way.
+ */
+function arrayField(o: Row, primary: string, alt: string): unknown[] {
+  const p = getCI(o, primary);
+  if (Array.isArray(p)) return p;
+  const a = getCI(o, alt);
+  return Array.isArray(a) ? a : [];
+}
+
+/** Enabled, ingress, allow (never deny) for a matching source admitting 0.0.0.0/0 or ::/0. */
+function firewallAllowsAnySource(request: Row): boolean {
+  if (str(getCI(request, "disabled")).trim().toLowerCase() === "true") return false;
+  const direction = field(request, "direction") || "INGRESS";
+  if (direction.toUpperCase() !== "INGRESS") return false;
+  if (arrayField(request, "denied", "denieds").length > 0) return false;
+  const allowed = arrayField(request, "allowed", "alloweds");
+  if (allowed.length === 0) return false;
+  const ranges = getCI(request, "sourceRanges");
+  if (!Array.isArray(ranges)) return false;
+  return ranges.some((r) => {
+    const v = str(r).trim();
+    return v === "0.0.0.0/0" || v === "::/0";
+  });
+}
 
 function launchFacts(request: Row, locator: string, by: string): Omit<GcpComputeLaunch, "time"> {
   const disks = getCI(request, "disks");
@@ -228,6 +298,36 @@ export function gcpComputeLifecycles(records: readonly Row[], uploadId: string):
       if (matchGcpRule(s.method)?.severity === "High")
         noteFact(inst, "session-privileged-change", s.time, s.locator);
       cite(inst, s.locator);
+    }
+  }
+
+  // Pass 3: the firewall join (#1073) — a network-wide, allow-any-source insert/update rule joins
+  // by EXACT literal network-string match against the instance's own first network interface.
+  const byNetwork = new Map<string, Instance[]>();
+  for (const inst of t.instances.values()) {
+    const network = inst.launch?.network;
+    if (!network) continue;
+    const key = resolveNetworkIdentity(network, inst.project);
+    (byNetwork.get(key) ?? byNetwork.set(key, []).get(key)!).push(inst);
+  }
+  if (byNetwork.size > 0) {
+    for (const s of scanned) {
+      if (!isCompute(s)) continue;
+      if (!tail(FIREWALL_INSERT_RE, s.method) && !tail(FIREWALL_UPDATE_RE, s.method)) continue;
+      if (gcpAttemptOutcome(s.pp) !== "success") continue;
+      const firewallId = parseGcpFirewallResourceName(field(s.pp, "resourceName"));
+      if (!firewallId) continue;
+      const request = isObject(getCI(s.pp, "request")) ? (getCI(s.pp, "request") as Row) : {};
+      if (!firewallAppliesNetworkWide(request)) continue;
+      if (!firewallAllowsAnySource(request)) continue;
+      const network = field(request, "network");
+      if (!network) continue;
+      const matches = byNetwork.get(resolveNetworkIdentity(network, firewallId.project));
+      if (!matches) continue;
+      for (const inst of matches) {
+        noteFact(inst, "any-address-firewall-rule", s.time, s.locator);
+        cite(inst, s.locator);
+      }
     }
   }
 

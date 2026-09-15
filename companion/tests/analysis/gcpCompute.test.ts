@@ -1,8 +1,9 @@
 // #1066 (931.8 second half, GCP half): the instance compute lifecycle built over one Cloud Audit
 // Log upload — the launch facts as the insert's request states them, every later recorded
 // operation, a service-account-attachment fact reusing #1065's own decode, calls recorded from
-// the attached email while it was recorded as attached, and nothing the records do not say. No
-// firewall/tag join is made and an attached email is never claimed unique to this instance (#1073).
+// the attached email while it was recorded as attached, and nothing the records do not say. An
+// attached email is never claimed unique to this instance. #1073 adds a narrow firewall join —
+// see the "firewall join" describe block below for its own test matrix.
 import { describe, expect, it } from "vitest";
 import { gcpComputeLifecycles, GCP_COMPUTE_MAX } from "../../src/analysis/gcpCompute.js";
 import { parseGcpInstanceResourceName } from "../../src/analysis/gcpComputeState.js";
@@ -362,5 +363,186 @@ describe("gcpComputeLifecycles", () => {
     const [row] = gcpComputeLifecycles(records, "u1");
     expect(row.canonical?.gcpCompute?.sessions.length).toBeLessThanOrEqual(8);
     expect(row.canonical?.gcpCompute?.sessionsBeyond).toBeGreaterThan(0);
+  });
+});
+
+describe("gcpComputeLifecycles — firewall join (#1073)", () => {
+  const NETWORK = "global/networks/default";
+  const insertWithNetwork = (over: Record<string, unknown> = {}): Record<string, unknown> =>
+    gcp("v1.compute.instances.insert", {
+      timestamp: at(0),
+      request: { networkInterfaces: [{ network: NETWORK }] },
+      ...over,
+    });
+  const firewall = (method: string, request: Record<string, unknown>, over: Record<string, unknown> = {}) =>
+    ({
+      protoPayload: {
+        methodName: method,
+        serviceName: "compute.googleapis.com",
+        resourceName: `projects/${PROJECT}/global/firewalls/f1`,
+        timestamp: at(5),
+        authenticationInfo: { principalEmail: "alice@example.com" },
+        request,
+        ...over,
+      },
+    }) as Record<string, unknown>;
+  const anySourceAllow = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    network: NETWORK,
+    allowed: [{ IPProtocol: "tcp", ports: ["22"] }],
+    sourceRanges: ["0.0.0.0/0"],
+    ...over,
+  });
+
+  it("a matching network-wide insert (no target tags/accounts) allowing 0.0.0.0/0 fires the fact", () => {
+    const insert = insertWithNetwork();
+    const rule = firewall("v1.compute.firewalls.insert", anySourceAllow());
+    const [row] = gcpComputeLifecycles([insert, rule], "u1");
+    expect(row.canonical?.gcpCompute?.facts).toContain("any-address-firewall-rule");
+  });
+
+  it("a rule naming targetTags is targeted, never network-wide — no fact", () => {
+    const insert = insertWithNetwork();
+    const rule = firewall("v1.compute.firewalls.insert", anySourceAllow({ targetTags: ["web"] }));
+    const [row] = gcpComputeLifecycles([insert, rule], "u1");
+    expect(row.canonical?.gcpCompute?.facts).not.toContain("any-address-firewall-rule");
+  });
+
+  it("H1 regression: targetServiceAccounts alone (no targetTags) is still targeted — no fact", () => {
+    const insert = insertWithNetwork();
+    const rule = firewall(
+      "v1.compute.firewalls.insert",
+      anySourceAllow({ targetServiceAccounts: ["sa1@proj-1.iam.gserviceaccount.com"] }),
+    );
+    const [row] = gcpComputeLifecycles([insert, rule], "u1");
+    expect(row.canonical?.gcpCompute?.facts).not.toContain("any-address-firewall-rule");
+  });
+
+  it("firewalls.patch is never read at all, even when it would otherwise match", () => {
+    const insert = insertWithNetwork();
+    const rule = firewall("v1.compute.firewalls.patch", anySourceAllow());
+    const [row] = gcpComputeLifecycles([insert, rule], "u1");
+    expect(row.canonical?.gcpCompute?.facts).not.toContain("any-address-firewall-rule");
+  });
+
+  it("a rule that denies a matching source is never an allow — no fact", () => {
+    const insert = insertWithNetwork();
+    const rule = firewall(
+      "v1.compute.firewalls.insert",
+      anySourceAllow({ allowed: undefined, denied: [{ IPProtocol: "all" }] }),
+    );
+    const [row] = gcpComputeLifecycles([insert, rule], "u1");
+    expect(row.canonical?.gcpCompute?.facts).not.toContain("any-address-firewall-rule");
+  });
+
+  it("a disabled rule is never a fact", () => {
+    const insert = insertWithNetwork();
+    const rule = firewall("v1.compute.firewalls.insert", anySourceAllow({ disabled: true }));
+    const [row] = gcpComputeLifecycles([insert, rule], "u1");
+    expect(row.canonical?.gcpCompute?.facts).not.toContain("any-address-firewall-rule");
+  });
+
+  it("a rule on a different network never joins", () => {
+    const insert = insertWithNetwork();
+    const rule = firewall(
+      "v1.compute.firewalls.insert",
+      anySourceAllow({ network: "global/networks/other" }),
+    );
+    const [row] = gcpComputeLifecycles([insert, rule], "u1");
+    expect(row.canonical?.gcpCompute?.facts).not.toContain("any-address-firewall-rule");
+  });
+
+  it("a Shared-VPC-shaped project-token mismatch does not join — a stated limitation, not a resolved case", () => {
+    const insert = insertWithNetwork({
+      request: {
+        networkInterfaces: [{ network: "projects/service-proj/global/networks/shared" }],
+      },
+    });
+    const rule = firewall(
+      "v1.compute.firewalls.insert",
+      anySourceAllow({ network: "projects/host-proj/global/networks/shared" }),
+    );
+    const [row] = gcpComputeLifecycles([insert, rule], "u1");
+    expect(row.canonical?.gcpCompute?.facts).not.toContain("any-address-firewall-rule");
+  });
+
+  it("an ::/0 source range also fires the fact", () => {
+    const insert = insertWithNetwork();
+    const rule = firewall("v1.compute.firewalls.update", anySourceAllow({ sourceRanges: ["::/0"] }));
+    const [row] = gcpComputeLifecycles([insert, rule], "u1");
+    expect(row.canonical?.gcpCompute?.facts).toContain("any-address-firewall-rule");
+  });
+
+  it("a source range that is not 0.0.0.0/0 or ::/0 does not fire the fact", () => {
+    const insert = insertWithNetwork();
+    const rule = firewall("v1.compute.firewalls.insert", anySourceAllow({ sourceRanges: ["10.0.0.0/8"] }));
+    const [row] = gcpComputeLifecycles([insert, rule], "u1");
+    expect(row.canonical?.gcpCompute?.facts).not.toContain("any-address-firewall-rule");
+  });
+
+  it("the API-URL prefix is stripped from both sides before the literal comparison", () => {
+    const insert = insertWithNetwork({
+      request: {
+        networkInterfaces: [
+          { network: "https://www.googleapis.com/compute/v1/projects/proj-1/global/networks/default" },
+        ],
+      },
+    });
+    const rule = firewall("v1.compute.firewalls.insert", anySourceAllow({ network: NETWORK }));
+    const [row] = gcpComputeLifecycles([insert, rule], "u1");
+    expect(row.canonical?.gcpCompute?.facts).toContain("any-address-firewall-rule");
+  });
+
+  it("H2 regression: a bare network reference is resolved against the RECORD'S OWN project — two projects' identically-named networks never collide", () => {
+    const insert = insertWithNetwork(); // instance's own project is proj-1, network "global/networks/default"
+    const otherProjectRule = {
+      protoPayload: {
+        methodName: "v1.compute.firewalls.insert",
+        serviceName: "compute.googleapis.com",
+        resourceName: "projects/proj-2/global/firewalls/f1",
+        timestamp: at(5),
+        authenticationInfo: { principalEmail: "alice@example.com" },
+        request: anySourceAllow(), // network: "global/networks/default", relative to proj-2
+      },
+    };
+    const [row] = gcpComputeLifecycles([insert, otherProjectRule], "u1");
+    expect(row.canonical?.gcpCompute?.facts).not.toContain("any-address-firewall-rule");
+  });
+
+  it("H2: a bare network reference DOES join a rule recorded in the instance's OWN project", () => {
+    const insert = insertWithNetwork();
+    const sameProjectRule = firewall("v1.compute.firewalls.insert", anySourceAllow());
+    const [row] = gcpComputeLifecycles([insert, sameProjectRule], "u1");
+    expect(row.canonical?.gcpCompute?.facts).toContain("any-address-firewall-rule");
+  });
+
+  it("firewalls.insert with a resourceName that does not parse to the documented firewall shape is never read", () => {
+    const insert = insertWithNetwork();
+    const rule = firewall("v1.compute.firewalls.insert", anySourceAllow(), {
+      resourceName: "not-a-firewall-resource-name",
+    });
+    const [row] = gcpComputeLifecycles([insert, rule], "u1");
+    expect(row.canonical?.gcpCompute?.facts).not.toContain("any-address-firewall-rule");
+  });
+
+  it("H1: the allow/deny arrays are read under either the singular or pluralized field spelling", () => {
+    const insert = insertWithNetwork();
+    const rule = firewall("v1.compute.firewalls.insert", {
+      network: NETWORK,
+      alloweds: [{ IPProtocol: "tcp", ports: ["22"] }],
+      sourceRanges: ["0.0.0.0/0"],
+    });
+    const [row] = gcpComputeLifecycles([insert, rule], "u1");
+    expect(row.canonical?.gcpCompute?.facts).toContain("any-address-firewall-rule");
+  });
+
+  it("H1: a pluralized denieds array still blocks the fact", () => {
+    const insert = insertWithNetwork();
+    const rule = firewall("v1.compute.firewalls.insert", {
+      network: NETWORK,
+      denieds: [{ IPProtocol: "all" }],
+      sourceRanges: ["0.0.0.0/0"],
+    });
+    const [row] = gcpComputeLifecycles([insert, rule], "u1");
+    expect(row.canonical?.gcpCompute?.facts).not.toContain("any-address-firewall-rule");
   });
 });
