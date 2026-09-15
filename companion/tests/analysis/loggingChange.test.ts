@@ -1108,3 +1108,103 @@ describe("AWS Config recorder calls — the state the request establishes (#1071
     expect(e.description).toContain("Config recorder (name not recorded):");
   });
 });
+
+// #1081: the shared "denied" flag conflated authorization denial with any API failure. A failed
+// call is now one of three outcomes — denied, not-found, or an honest unclassified "failed" — and
+// only the positively-identified not-found case is graded Low; an unclassified failure keeps
+// today's conservative Medium, same as denied.
+describe("classifyAwsFailure — AWS error-code taxonomy (#1081)", () => {
+  it("a NoSuch*/*NotFound* code is not-found, never denied", async () => {
+    const { classifyAwsFailure } = await import("../../src/analysis/loggingChange.js");
+    expect(classifyAwsFailure("NoSuchDeliveryChannel")).toBe("not-found");
+    expect(classifyAwsFailure("NoSuchConfigurationRecorderException")).toBe("not-found");
+    expect(classifyAwsFailure("TrailNotFoundException")).toBe("not-found");
+    expect(classifyAwsFailure("InvalidFlowLogId.NotFound")).toBe("not-found");
+  });
+  it("an access/authorization code is denied", async () => {
+    const { classifyAwsFailure } = await import("../../src/analysis/loggingChange.js");
+    expect(classifyAwsFailure("AccessDenied")).toBe("denied");
+    expect(classifyAwsFailure("AccessDeniedException")).toBe("denied");
+    expect(classifyAwsFailure("Client.UnauthorizedOperation")).toBe("denied");
+    expect(classifyAwsFailure("InsufficientPermissionsException")).toBe("denied");
+  });
+  it("an ambiguous or unrecognized code is the neutral 'failed' — never guessed as either outcome", async () => {
+    const { classifyAwsFailure } = await import("../../src/analysis/loggingChange.js");
+    // GuardDuty's real DeleteDetector/UpdateDetector failure code (Codex design review finding #4).
+    expect(classifyAwsFailure("BadRequestException")).toBe("failed");
+    expect(classifyAwsFailure("ConflictException")).toBe("failed");
+    expect(classifyAwsFailure("ThrottlingException")).toBe("failed");
+    // S3's ambiguous code (Codex design review finding #4): could mean absent, foreign-owned, or
+    // ungranted — none positively provable from the code alone.
+    expect(classifyAwsFailure("InvalidTargetBucketForLogging")).toBe("failed");
+  });
+});
+
+describe("a not-found / failed AWS logging call — three distinct outcomes, never collapsed to one, and the not-found severity is never re-elevated back to Medium by the generic errorCode bump (#1081; the re-elevation risk was self-found during implementation, same class of bug as Codex's GCP head-text finding)", () => {
+  const cfg = (name: string, requestParameters: Row = {}, over: Row = {}): Row => ({
+    eventVersion: "1.08",
+    eventTime: "2024-05-01T09:00:00Z",
+    eventSource: "config.amazonaws.com",
+    eventName: name,
+    awsRegion: "us-east-1",
+    sourceIPAddress: "203.0.113.5",
+    userAgent: "aws-cli/2.15",
+    recipientAccountId: ACCT,
+    userIdentity: {
+      type: "IAMUser",
+      principalId: "AIDAEXAMPLE",
+      arn: `arn:aws:iam::${ACCT}:user/alice`,
+      accountId: ACCT,
+      userName: "alice",
+    },
+    requestParameters,
+    responseElements: null,
+    ...over,
+  });
+  const delChannel = (over: Row) =>
+    aws([cfg("DeleteDeliveryChannel", { deliveryChannelName: "default" }, over)])[0];
+
+  it("NoSuchDeliveryChannel is not-found: Low, 'requested (target not found)', denied is false", () => {
+    const e = delChannel({ errorCode: "NoSuchDeliveryChannel" });
+    expect(e.severity).toBe("Low");
+    expect(e.description).toContain("requested (target not found):");
+    const block = env(e).loggingChange;
+    expect(block?.denied).toBe(false);
+    expect(block?.failure).toBe("not-found");
+    expect(block?.state).toBe("requested");
+    expect(canonicalConformanceIssues(env(e))).toEqual([]);
+  });
+  it("AccessDenied stays denied: Medium, 'requested (denied)', denied is true — unchanged from before #1081", () => {
+    const e = delChannel({ errorCode: "AccessDenied" });
+    expect(e.severity).toBe("Medium");
+    expect(e.description).toContain("requested (denied):");
+    const block = env(e).loggingChange;
+    expect(block?.denied).toBe(true);
+    expect(block?.failure).toBe("denied");
+  });
+  it("a generic/unrecognized code is the neutral 'failed': Medium (unchanged), 'requested (failed)', denied is false", () => {
+    const e = delChannel({ errorCode: "InternalFailure" });
+    expect(e.severity).toBe("Medium");
+    expect(e.description).toContain("requested (failed):");
+    const block = env(e).loggingChange;
+    expect(block?.denied).toBe(false);
+    expect(block?.failure).toBe("failed");
+  });
+  it("a successful call carries no failure field at all", () => {
+    const e = delChannel({});
+    const block = env(e).loggingChange;
+    expect(block?.denied).toBe(false);
+    expect(block?.failure).toBeUndefined();
+  });
+  it("DeleteConfigurationRecorder against an already-gone recorder is Low, not Medium — the generic errorCode bump never re-elevates a logging row's own severity", () => {
+    const e = aws([
+      cfg(
+        "DeleteConfigurationRecorder",
+        { configurationRecorderName: "default" },
+        { errorCode: "NoSuchConfigurationRecorderException" },
+      ),
+    ])[0];
+    expect(e.severity).toBe("Low");
+    expect(env(e).loggingChange?.failure).toBe("not-found");
+  });
+});

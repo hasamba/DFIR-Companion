@@ -3,7 +3,7 @@
 // buckets and the IAM audit-config deltas; diagnostic settings and log profiles. The shared
 // helpers, the CloudTrail reader and the row renderer live in loggingChange.ts.
 
-import type { LoggingState } from "./canonicalLogging.js";
+import type { LoggingFailureKind, LoggingState } from "./canonicalLogging.js";
 import {
   TECHNIQUE,
   bool,
@@ -22,6 +22,18 @@ import { getCI, isObject } from "./siemImport.js";
 type Row = Record<string, unknown>;
 
 // ───────────────────────────── GCP ─────────────────────────────
+
+/** Classifies a GCP `status.code` (#1081): `google.rpc.Code` is a small, stable, DOCUMENTED
+ * integer enum — an exact match, never a heuristic. 5 = NOT_FOUND; 7 = PERMISSION_DENIED; 16 =
+ * UNAUTHENTICATED. Everything else (3 INVALID_ARGUMENT, 6 ALREADY_EXISTS, 8 RESOURCE_EXHAUSTED, 9
+ * FAILED_PRECONDITION, 10 ABORTED, 13 INTERNAL, 14 UNAVAILABLE, and anything unrecognized) is
+ * `"failed"` — this evidence does not distinguish it from either other outcome. */
+export function classifyGcpFailure(code: string): LoggingFailureKind {
+  const c = code.trim();
+  if (c === "5") return "not-found";
+  if (c === "7" || c === "16") return "denied";
+  return "failed";
+}
 
 /** The update mask's paths, whatever shape the export used: a comma string, `{ paths: [] }`, snake_case, qualified, or `*`. */
 function maskPaths(request: Row): string[] {
@@ -52,7 +64,7 @@ export function decodeGcpLogging(
   service: string,
   method: string,
   request: unknown,
-  denied: boolean,
+  failure: LoggingFailureKind | null,
 ): LoggingReading | null {
   if (!/^logging\.googleapis\.com$/i.test(service.trim())) return null;
   const m = lower(method).replace(/^.*\./, "");
@@ -65,10 +77,10 @@ export function decodeGcpLogging(
       name,
       "deleted",
       "High",
-      `sink ${denied ? "deletion requested" : "deleted"}: ${show(name)}`,
+      `sink ${failure ? "deletion requested" : "deleted"}: ${show(name)}`,
       [],
       [],
-      denied,
+      failure,
     );
   }
   if (m === "createsink") {
@@ -84,7 +96,7 @@ export function decodeGcpLogging(
       `sink created: ${show(name, 60)} → ${show(field(sink, "destination"), 80) || "(destination not recorded)"}${filter ? `; filter ${show(filter, 100)}` : ""}`,
       [],
       [],
-      denied,
+      failure,
     );
   }
   if (m === "updatesink") {
@@ -102,10 +114,10 @@ export function decodeGcpLogging(
           `sink disabled: ${show(name)}`,
           [],
           [],
-          denied,
+          failure,
         );
       if (off === false)
-        return reading("gcp", "sink", name, "enabled", "Low", `sink enabled: ${show(name)}`, [], [], denied);
+        return reading("gcp", "sink", name, "enabled", "Low", `sink enabled: ${show(name)}`, [], [], failure);
     }
     const facts = ["filter", "destination", "description"]
       .filter((f) => maskHas(req, f) && has(sink, f))
@@ -119,7 +131,7 @@ export function decodeGcpLogging(
       `sink reconfigured: ${factWords(facts) || `(mask ${show(field(req, "updateMask"), 60) || "not recorded"})`}`,
       [],
       [],
-      denied,
+      failure,
       { key: facts.map((f) => f.value).join(",") },
     );
   }
@@ -135,7 +147,7 @@ export function decodeGcpLogging(
       `exclusion created: ${show(name, 60)}; filter ${show(field(ex, "filter"), 120) || "(not recorded)"}`,
       [],
       [],
-      denied,
+      failure,
       { mitre: [TECHNIQUE] },
     );
   }
@@ -150,7 +162,7 @@ export function decodeGcpLogging(
       `exclusion deleted: ${show(name)}`,
       [],
       [],
-      denied,
+      failure,
       { mitre: [] },
     );
   }
@@ -168,7 +180,7 @@ export function decodeGcpLogging(
         `exclusion disabled: ${show(name)}`,
         [],
         [],
-        denied,
+        failure,
         { mitre: [] },
       );
     if (off === false)
@@ -181,7 +193,7 @@ export function decodeGcpLogging(
         `exclusion enabled: ${show(name)}`,
         [],
         [],
-        denied,
+        failure,
         { mitre: [TECHNIQUE] },
       );
     const facts = ["filter"]
@@ -196,7 +208,7 @@ export function decodeGcpLogging(
       `exclusion reconfigured: ${factWords(facts) || "(no read field in the mask)"}`,
       [],
       [],
-      denied,
+      failure,
     );
   }
   if (m === "updatebucket" || m === "updatebucketasync") {
@@ -212,7 +224,7 @@ export function decodeGcpLogging(
         `log bucket ${show(name, 80)}: retention set to ${show(field(bucket, "retentionDays"), 10)} days; previous retention not in this record`,
         [{ name: "retentionDays", value: field(bucket, "retentionDays") }],
         [],
-        denied,
+        failure,
       );
     return null;
   }
@@ -220,7 +232,7 @@ export function decodeGcpLogging(
 }
 
 /** One reading per IAM audit-config delta of a SetIamPolicy record — exact, effective outcome never established. */
-export function decodeGcpAuditConfigDelta(delta: Row, denied: boolean): LoggingReading {
+export function decodeGcpAuditConfigDelta(delta: Row, failure: LoggingFailureKind | null): LoggingReading {
   const action = lower(field(delta, "action"));
   const service = field(delta, "service") || "(service not recorded)";
   const logType = field(delta, "logType") || "(log type not recorded)";
@@ -250,7 +262,7 @@ export function decodeGcpAuditConfigDelta(delta: Row, denied: boolean): LoggingR
     posture,
     facts,
     [],
-    denied,
+    failure,
     {
       effectiveNotEstablished: true,
       key: `${action}|${member}`,
@@ -304,6 +316,10 @@ export function decodeAzureLogging(
   requestBody: unknown,
   failed: boolean,
 ): LoggingReading | null {
+  // Azure has no per-call error code threaded to this reading (#1081) — every failure becomes the
+  // neutral "failed" outcome, never "denied": that would claim evidence this record does not
+  // carry. See #1096 for Azure's own not-found detection, filed separately (needs fixtures).
+  const failure: LoggingFailureKind | null = failed ? "failed" : null;
   const op = lower(operation);
   const settingName = resourceId.slice(resourceId.lastIndexOf("/") + 1) || "(setting not recorded)";
   const parent = resourceId.replace(/\/providers\/microsoft\.insights\/diagnosticsettings\/[^/]+$/i, "");
@@ -318,7 +334,7 @@ export function decodeAzureLogging(
       `log profile deleted: ${show(settingName, 60)}`,
       [],
       [],
-      failed,
+      failure,
     );
   if (/microsoft\.insights\/diagnosticsettings\/delete$/.test(op))
     return reading(
@@ -330,7 +346,7 @@ export function decodeAzureLogging(
       `diagnostic setting deleted: ${show(settingName, 60)} on ${show(scope, 80)}`,
       [],
       [],
-      failed,
+      failure,
     );
   if (!/microsoft\.insights\/diagnosticsettings\/write$/.test(op)) return null;
   const props = azureBody(requestBody);
@@ -344,7 +360,7 @@ export function decodeAzureLogging(
       `diagnostic setting written: ${show(settingName, 60)} on ${show(scope, 80)} — the request body is not in this record`,
       [],
       [],
-      failed,
+      failure,
     );
   // `enabled` is read only when the entry states it: a missing or malformed flag is "not stated", never "off".
   const entries = (v: unknown, max: number) =>
@@ -396,7 +412,7 @@ export function decodeAzureLogging(
     `diagnostic setting written: ${show(settingName, 60)} on ${show(scope, 80)} — ${parts.join("; ")}`,
     facts,
     logs.length && !allOff ? ["the prior setting is not in this record"] : [],
-    failed,
+    failure,
     { key: parts.join(";"), mitre: allOff ? [TECHNIQUE] : [] },
   );
 }

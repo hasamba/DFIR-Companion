@@ -42,6 +42,16 @@ export interface GcpRowInput {
 
 const clip = (s: string, max: number): string => (s.length <= max ? s : `${s.slice(0, max - 1)}…`);
 
+// mapGcp (cloudActivityImport.ts) always appends " [DENIED: …]" to `head` for ANY non-zero status
+// code, independent of what a LOGGING reading concludes below — after #1081, a not-found or an
+// unclassified-failure logging reading's own posture ("requested (target not found): …") could
+// then sit right after a head that still says "[DENIED: …]", contradicting itself (Codex design
+// review finding #2). Stripped ONLY when this row IS a logging reading — the posture text already
+// states the outcome precisely for that row; every OTHER GCP row type's own head bracket is left
+// exactly as mapGcp built it, since those rows' own body wording (gcpIamRecord.ts's own
+// `deniedWords`) is unchanged and would otherwise newly disagree with a reclassified head.
+const GCP_HEAD_DENIED_RE = / \[DENIED(?::[^\]]*)?\]$/;
+
 /** Every row of one GCP record: one per action reading, or the one generic row with the identity facts appended. */
 export function gcpRows(input: GcpRowInput): MappedEvent[] {
   const { rec, pp, method, service } = input;
@@ -79,7 +89,10 @@ function row(
   // The head, the posture and the qualifiers (a condition, a denial, a differing copy) are
   // reserved; the object and the identity facts share what is left, the object first.
   // The head keeps a digest of what its clip removed (#940): two object reads never fold by text.
-  const head = boundedTextTo(input.head, HEAD_MAX);
+  const head = boundedTextTo(
+    reading?.kind === "logging" ? input.head.replace(GCP_HEAD_DENIED_RE, "") : input.head,
+    HEAD_MAX,
+  );
   const posture = reading ? clip(reading.posture, POSTURE_MAX) : "";
   const qualifiers = clip((reading?.qualifiers ?? []).filter(Boolean).join("; "), QUALIFIERS_MAX);
   const reserved =

@@ -18,6 +18,7 @@
 import type { Severity } from "./stateTypes.js";
 import {
   bool,
+  classifyAwsFailure,
   field,
   LIST_MAX,
   list,
@@ -198,7 +199,7 @@ export function decodeAwsConfigLogging(
   if (lower(source).replace(/\.amazonaws\.com$/, "") !== "config") return null;
   const n = lower(eventName);
   const req: Row = isObject(request) ? request : {};
-  const denied = !!errorCode.trim();
+  const failure = errorCode.trim() ? classifyAwsFailure(errorCode) : null;
 
   if (n === "putconfigurationrecorder") {
     const recorder = isObject(getCI(req, "configurationRecorder"))
@@ -289,7 +290,7 @@ export function decodeAwsConfigLogging(
       posture,
       facts,
       qualifiers,
-      denied,
+      failure,
       { key },
     );
   }
@@ -304,7 +305,7 @@ export function decodeAwsConfigLogging(
       `Config recorder stopped: ${show(name, 40)}`,
       [],
       [],
-      denied,
+      failure,
     );
   }
   if (n === "startconfigurationrecorder") {
@@ -318,7 +319,7 @@ export function decodeAwsConfigLogging(
       `Config recorder started: ${show(name, 40)}`,
       [],
       [],
-      denied,
+      failure,
     );
   }
   if (n === "deleteconfigurationrecorder") {
@@ -332,7 +333,7 @@ export function decodeAwsConfigLogging(
       `Config recorder deleted: ${show(name, 40)} — previously recorded configuration history is not deleted by this operation`,
       [],
       [],
-      denied,
+      failure,
     );
   }
   if (n === "deletedeliverychannel") {
@@ -346,7 +347,7 @@ export function decodeAwsConfigLogging(
       `Config delivery channel deleted: ${show(name, 40)} — the customer-managed recorder had to be stopped first and cannot restart until a delivery channel exists again`,
       [],
       [],
-      denied,
+      failure,
     );
   }
   return null;

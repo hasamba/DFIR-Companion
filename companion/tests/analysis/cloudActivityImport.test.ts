@@ -85,6 +85,61 @@ describe("parseCloudActivity — GCP", () => {
     expect(r.events[0].severity).toBe("Medium");
     expect(r.events[0].description).toContain("[DENIED");
   });
+
+  // #1081: a GCP logging-configuration call is classified denied / not-found / an honest
+  // unclassified "failed", never collapsed to one outcome — and the head text (built before the
+  // inner reading runs) must never contradict what the inner reading concludes.
+  describe("a GCP logging-configuration call — three distinct outcomes, head text never contradicts the reading (#1081)", () => {
+    const sinkDelete = (status: object) =>
+      gcp("google.logging.v2.ConfigServiceV2.DeleteSink", {
+        serviceName: "logging.googleapis.com",
+        status,
+        request: { sinkName: "my-sink" },
+      });
+
+    it("code 5 (NOT_FOUND) is not-found: Low, head has no stale [DENIED] bracket, posture says target not found", () => {
+      const r = parseCloudActivity(JSON.stringify([sinkDelete({ code: 5, message: "NOT_FOUND" })]));
+      const e = r.events[0];
+      expect(e.severity).toBe("Low");
+      expect(e.description).not.toContain("[DENIED");
+      expect(e.description).toContain("requested (target not found):");
+      expect(e.canonical?.loggingChange?.failure).toBe("not-found");
+      expect(e.canonical?.loggingChange?.denied).toBe(false);
+    });
+
+    it("code 7 (PERMISSION_DENIED) stays denied: Medium, posture says denied — the head's own redundant bracket is stripped for EVERY logging outcome, not only when it would disagree", () => {
+      const r = parseCloudActivity(JSON.stringify([sinkDelete({ code: 7, message: "PERMISSION_DENIED" })]));
+      const e = r.events[0];
+      expect(e.severity).toBe("Medium");
+      expect(e.description).not.toContain("[DENIED");
+      expect(e.description).toContain("requested (denied):");
+      expect(e.canonical?.loggingChange?.failure).toBe("denied");
+      expect(e.canonical?.loggingChange?.denied).toBe(true);
+    });
+
+    it("code 3 (INVALID_ARGUMENT) is the neutral 'failed': Medium, head has no stale [DENIED] bracket, posture says failed", () => {
+      const r = parseCloudActivity(JSON.stringify([sinkDelete({ code: 3, message: "INVALID_ARGUMENT" })]));
+      const e = r.events[0];
+      expect(e.severity).toBe("Medium");
+      expect(e.description).not.toContain("[DENIED");
+      expect(e.description).toContain("requested (failed):");
+      expect(e.canonical?.loggingChange?.failure).toBe("failed");
+      expect(e.canonical?.loggingChange?.denied).toBe(false);
+    });
+
+    it("a NON-logging GCP row's own head bracket is unaffected — still says [DENIED] for any non-zero code", () => {
+      // Regression guard: the head-bracket strip in gcpRow.ts is scoped to logging readings only.
+      const r = parseCloudActivity(
+        JSON.stringify([
+          gcp("storage.objects.get", {
+            serviceName: "storage.googleapis.com",
+            status: { code: 5, message: "NOT_FOUND" },
+          }),
+        ]),
+      );
+      expect(r.events[0].description).toContain("[DENIED");
+    });
+  });
 });
 
 describe("parseCloudActivity — Azure", () => {
@@ -104,6 +159,23 @@ describe("parseCloudActivity — Azure", () => {
     const r = parseCloudActivity(JSON.stringify([azure("Microsoft.Insights/diagnosticSettings/delete")]));
     expect(r.events[0].severity).toBe("High");
     expect(r.events[0].mitreTechniques).toContain("T1562.008");
+  });
+
+  // #1081: Azure has no per-call error code threaded to the reading — a failed diagnostic-setting
+  // call is the neutral "failed" outcome, never "denied" (that would claim evidence this record
+  // does not carry). Azure's own not-found detection stays out of scope (#1096).
+  it("a failed diagnostic-setting delete is the neutral 'failed', never 'denied'", () => {
+    const r = parseCloudActivity(
+      JSON.stringify([
+        azure("Microsoft.Insights/diagnosticSettings/delete", { status: { value: "Failed" } }),
+      ]),
+    );
+    const e = r.events[0];
+    expect(e.severity).toBe("Medium");
+    expect(e.description).toContain("requested (failed):");
+    expect(e.description).not.toContain("requested (denied)");
+    expect(e.canonical?.loggingChange?.failure).toBe("failed");
+    expect(e.canonical?.loggingChange?.denied).toBe(false);
   });
 
   it("a Failed status bumps severity to Medium", () => {
