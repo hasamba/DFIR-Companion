@@ -1,4 +1,5 @@
 import { parseCloudTrail, type AwsImportOptions } from "../awsImport.js";
+import { parseAwsFlowLog, type AwsFlowLogImportOptions } from "../awsFlowLogImport.js";
 import { parseCloudActivity, type CloudActivityImportOptions } from "../cloudActivityImport.js";
 import { parseAzureStorageLog, type AzureStorageLogImportOptions } from "../azureStorageLogImport.js";
 import { parseK8sAudit, type K8sAuditImportOptions } from "../k8sAuditImport.js";
@@ -177,6 +178,65 @@ export async function importAzureStorageLog(
     timelineNote:
       `Azure Storage log import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
+      `, ${parsed.iocs.length} IOC(s)`,
+    summary: "",
+  };
+  const delta = deltaSchema.parse(raw);
+
+  return ctx.withStateLock(caseId, async () => {
+    let state = await ctx.opts.stateStore.load(caseId);
+    state = await ctx.mergeWithAliases(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await ctx.opts.stateStore.save(state);
+    ctx.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  });
+}
+
+// Import AWS VPC Flow Logs, default (v2) format (#931 item 13). Deterministic (no AI call).
+export async function importAwsFlowLog(
+  ctx: ImportContext,
+  caseId: string,
+  text: string,
+  opts: {
+    label: string;
+    idPrefix: string;
+    importedAt: string;
+    awsFlowLog?: AwsFlowLogImportOptions;
+    minSeverity?: Severity;
+    onProgress?: (done: number, total: number) => void;
+  },
+): Promise<InvestigationState> {
+  const parsedRaw = parseAwsFlowLog(text, opts.awsFlowLog);
+  const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  if (parsed.events.length === 0)
+    return noteEmptyImport(ctx, caseId, opts, "AWS VPC Flow Logs", parsed.total);
+
+  const raw = {
+    findings: [],
+    iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+    mitreTechniques: [],
+    forensicEvents: parsed.events.map((e, i) => ({
+      ...e,
+      id: `${opts.idPrefix}e${i + 1}`,
+      sources: e.sources?.length ? e.sources : ["AWS VPC Flow Logs"],
+    })),
+    threadsOpened: [],
+    threadsClosed: [],
+    // NODATA/SKIPDATA are disclosed by name (#931 item 13 — Codex review) — not lumped into one
+    // generic "dropped": SKIPDATA is a real AWS-side collection gap, NODATA is not.
+    timelineNote:
+      `AWS VPC Flow Log import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+      (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
+      (parsed.nodata ? `, ${parsed.nodata} NODATA interval(s)` : "") +
+      (parsed.skipdata
+        ? `, ${parsed.skipdata} SKIPDATA interval(s) — a collection gap, not "no traffic"`
+        : "") +
+      (parsed.malformed ? `, ${parsed.malformed} malformed line(s)` : "") +
       `, ${parsed.iocs.length} IOC(s)`,
     summary: "",
   };

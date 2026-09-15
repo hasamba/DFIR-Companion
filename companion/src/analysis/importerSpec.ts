@@ -31,6 +31,7 @@ export const IMPORT_KINDS = [
   "macos",
   "leapp",
   "aws",
+  "awsflowlog",
   "cloud",
   "azurestoragelog",
   "k8s",
