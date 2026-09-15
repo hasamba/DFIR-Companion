@@ -23,6 +23,8 @@ export const INDEX_FILES_MAX = 10;
 const HOST_MAX = 200;
 const PATH_MAX = 1024;
 const NOTE_MAX = 2000;
+const VHOST_MAX = 253;
+const INDEX_FILE_MAX = 255;
 
 export const servedLocationSchema = z.object({
   id: z.string().min(1),
@@ -79,17 +81,23 @@ export function validateServedLocation(
   if (host.length > HOST_MAX) return { ok: false, error: `host is longer than ${HOST_MAX}` };
   const urlPrefix = normalisePrefix(String(input.urlPrefix ?? ""));
   if (urlPrefix === null) return { ok: false, error: "urlPrefix must start with '/' and carry no query" };
+  if (urlPrefix.length > PATH_MAX) return { ok: false, error: `urlPrefix is longer than ${PATH_MAX}` };
   const localRoot = String(input.localRoot ?? "")
     .trim()
     .replace(/[\\/]+$/, "");
   if (!ABS_ROOT.test(localRoot + "/")) return { ok: false, error: "localRoot must be an absolute path" };
   if (localRoot.length > PATH_MAX) return { ok: false, error: `localRoot is longer than ${PATH_MAX}` };
   const vhost = input.vhost ? String(input.vhost).trim().toLowerCase() : "";
+  if (vhost.length > VHOST_MAX) return { ok: false, error: `vhost is longer than ${VHOST_MAX}` };
+  if (input.caseInsensitive !== undefined && typeof input.caseInsensitive !== "boolean")
+    return { ok: false, error: "caseInsensitive must be a boolean" };
   const indexFiles = (input.indexFiles ?? []).map((f) => String(f).trim()).filter(Boolean);
   if (indexFiles.length > INDEX_FILES_MAX)
     return { ok: false, error: `at most ${INDEX_FILES_MAX} index files` };
   if (indexFiles.some((f) => /[\\/]/.test(f)))
     return { ok: false, error: "an index file is a bare filename" };
+  if (indexFiles.some((f) => f.length > INDEX_FILE_MAX))
+    return { ok: false, error: `an index file name is longer than ${INDEX_FILE_MAX}` };
   const sensitive = [
     ...new Set(
       (input.sensitive ?? [])
@@ -104,6 +112,8 @@ export function validateServedLocation(
   ];
   if (sensitive.length > SENSITIVE_PER_LOCATION_MAX)
     return { ok: false, error: `at most ${SENSITIVE_PER_LOCATION_MAX} sensitive paths` };
+  if (sensitive.some((p) => p.length > PATH_MAX))
+    return { ok: false, error: `a sensitive path is longer than ${PATH_MAX}` };
   const sensitiveDigests = [
     ...new Set((input.sensitiveDigests ?? []).map((d) => String(d).trim().toLowerCase())),
   ];
@@ -122,7 +132,8 @@ export function validateServedLocation(
       ...(vhost ? { vhost } : {}),
       urlPrefix,
       localRoot,
-      caseInsensitive: input.caseInsensitive ?? DRIVE_ROOT.test(localRoot + "/"),
+      caseInsensitive:
+        typeof input.caseInsensitive === "boolean" ? input.caseInsensitive : DRIVE_ROOT.test(localRoot + "/"),
       indexFiles,
       public: input.public === true,
       sensitive,
