@@ -51,6 +51,7 @@ const BUILT_IN_IMPORT_KINDS = [
   "syslog",
   "csv",
   "log",
+  "bulkextractorurl",
 ] as const;
 
 const CURRENT_SCHEMAS = [

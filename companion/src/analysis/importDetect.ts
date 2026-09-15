@@ -8,6 +8,7 @@ import { isObject, getCI, getPath, str, parseConcatenatedJson } from "./siemImpo
 import { isAzureStorageLog } from "./azureStorageLogImport.js";
 import { isAwsFlowLogLine } from "./awsFlowLogImport.js";
 import { isDiskImageLog } from "./diskImageAcquisitionLog.js";
+import { isBulkExtractorUrlFeatureFile } from "./bulkExtractorUrlImport.js";
 import { isWerReport } from "./werImport.js";
 import { isRekallCommandList, looksLikeVolatilityText, looksLikeMemprocfsFindevil } from "./memoryImport.js";
 import { isRunEnvelopeUpload } from "./memoryRunEnvelope.js";
@@ -666,6 +667,7 @@ export function detectImportKind(filename: string, text: string): ImportKind {
 
   // Linux auditd records (`type=… msg=audit(…)`) — shape is unique enough to claim directly.
   if (isAuditd(t)) return "auditd";
+  if (isBulkExtractorUrlFeatureFile(t)) return "bulkextractorurl"; // both header anchors required
 
   // AWS VPC Flow Log default (v2) format — 14 fields, specific enough not to collide below.
   if (isAwsFlowLogLine(t.split(/\r\n|\r|\n/, 1)[0] ?? "")) return "awsflowlog";
@@ -681,8 +683,7 @@ export function detectImportKind(filename: string, text: string): ImportKind {
   if (looksLikeMemprocfsFindevil(t)) return "memory";
 
   // Volatility 3 TEXT/grid renderer (the default `vol <plugin>` output, no -r json) — a banner +
-  // TAB-separated table. Checked before the CSV/log fallback (it's tab-, not comma-separated, and
-  // the interleaved hexdump/disasm would otherwise be mistaken for a generic log).
+  // TAB-separated table; checked before the CSV/log fallback so the hexdump/disasm isn't mistaken for a generic log.
   if (looksLikeVolatilityText(t)) return "memory";
 
   // Snort / Suricata "fast" alert log (`MM/DD-HH:MM:SS [**] [gid:sid:rev] … [Priority: N]`) — a real
@@ -691,8 +692,7 @@ export function detectImportKind(filename: string, text: string): ImportKind {
   if (looksLikeSnort(t)) return "snort";
 
   // Cisco ASA firewall syslog (`%ASA-#-######: Built/Teardown/Deny …`) — telemetry, not a
-  // detection feed, but a well-known deterministic grammar; checked before the generic log
-  // fallback so it's parsed without an AI call and without the year-less-timestamp guessing risk.
+  // detection feed, but a well-known deterministic grammar; parsed without an AI call or year-guessing.
   if (looksLikeCiscoAsa(t)) return "asa";
 
   // Apache/Nginx/Squid combined access log (web server or forward-proxy access log) — checked before the generic log fallback so it's parsed deterministically instead of relying on AI line-triage, which silently drops rare/high-signal lines on a large, mostly-benign real log (see logAggregate.ts's truncation-bias fix for the general case; this importer sidesteps it entirely for the two most common web/proxy formats).

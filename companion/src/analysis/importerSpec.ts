@@ -58,6 +58,7 @@ export const IMPORT_KINDS = [
   "syslog",
   "csv",
   "log",
+  "bulkextractorurl",
   "unknown",
 ] as const;
 
