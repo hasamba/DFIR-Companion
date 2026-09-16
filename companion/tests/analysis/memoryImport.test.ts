@@ -978,3 +978,40 @@ describe("parseMemory — MemProcFS timeline_all.csv", () => {
     expect(r.total).toBe(3);
   });
 });
+
+describe("handle-table wiring (#933 item 13)", () => {
+  function handleRows(n: number): object[] {
+    return Array.from({ length: n }, () => ({
+      PID: 100,
+      Process: "chrome.exe",
+      Offset: "0x1",
+      Type: "File",
+      GrantedAccess: "0x1",
+      Name: "\\Device\\HarddiskVolume2\\file.txt",
+    }));
+  }
+
+  // Codex code-review finding H2: `handleRows.push(...t.rows)` passed every row as function
+  // arguments and threw a RangeError once the table exceeded the engine's own argument-count
+  // limit, well before handleOwnershipFacts()'s own caps ever ran.
+  it("does not throw on a handle table too large to spread as call arguments", () => {
+    const json = JSON.stringify({ "windows.handles.Handles": handleRows(150_000) });
+    expect(() => parseMemory(json, { filename: "windows.handles.json" })).not.toThrow();
+  });
+
+  it("emits an Info-severity event with no IOC for a plain handle row", () => {
+    const json = JSON.stringify({
+      "windows.handles.Handles": [
+        { PID: "100", Process: "evil.exe", Offset: "0x1", Type: "Process", Name: "lsass.exe Pid 200" },
+      ],
+      "windows.pslist.PsList": [
+        { PID: 100, ImageFileName: "evil.exe" },
+        { PID: 200, ImageFileName: "lsass.exe" },
+      ],
+    });
+    const r = parseMemory(json, { filename: "windows.handles.json" });
+    const handleEvents = r.events.filter((e) => e.description.includes("holds an open handle"));
+    expect(handleEvents).toHaveLength(1);
+    expect(handleEvents[0].severity).toBe("Info");
+  });
+});

@@ -80,6 +80,7 @@ import {
   tupleShape,
   type ProcessIndex,
 } from "./memoryNetObjects.js";
+import { handleOwnershipFacts } from "./memoryHandleOwnership.js";
 export { isRekallCommandList, looksLikeVolatilityText } from "./memoryTables.js";
 import { parseCsv } from "./csvImport.js";
 import { tradecraftSignal } from "./tradecraftRules.js";
@@ -94,8 +95,7 @@ export interface MemoryImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
-  // Include `dlllist` / `ldrmodules` loaded-DLL rows as Info evidence events (default: false — they
-  // are high-volume telemetry, so by default only their DLL paths are harvested as file IOCs).
+  // Include `dlllist`/`ldrmodules` rows as Info events (default: false — only their paths are IOCs).
   dllTelemetry?: boolean;
   // The export filename — a weak plugin hint for a bare Volatility array that carries no plugin name.
   filename?: string;
@@ -114,8 +114,7 @@ export interface MemoryParseResult {
   connections: number; // network-connection rows seen
   format: string; // "volatility" | "volatility-jsonl" | "volatility-map" | "volatility-text" | "volatility2-text" | "rekall" | "empty"
   tool: string; // "Volatility" | "Rekall" | ""
-  // What the export's SHAPE says (memoryExportShape.ts): zero-row labels, an unread Volatility 2
-  // layout, diagnostic-looking text — for the import note. Never a completion claim.
+  // What the export's SHAPE says (memoryExportShape.ts) — for the import note, never a completion claim.
   note?: string;
 }
 
@@ -1410,10 +1409,7 @@ function parseMemoryRunBundle(root: unknown, text: string, opts: MemoryImportOpt
   const { runRows, exports, note } = parseRunEnvelopes(root, (stdout, filename) =>
     parseMemoryExport(stdout, { ...opts, filename, maxEvents }),
   );
-  // One bundle-wide budget: the run rows are aggregated, then every row — run rows and the
-  // exports' already-aggregated rows — is ranked by severity and cut to `maxEvents` once, so a
-  // bundle of N runs never emits N × maxEvents. `total` counts export rows plus one record per
-  // run; `dropped` is what the final cut left unrepresented.
+  // One bundle-wide budget: every row is ranked by severity and cut to `maxEvents` once (never N ×).
   const runs = aggregateEvents(runRows, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
@@ -1461,9 +1457,8 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
   // MemProcFS findevil: a flat finding-report table — check before JSON/text Volatility paths.
   if (looksLikeMemprocfsFindevil(text)) return parseMemoryFindevil(text, opts);
 
-  // MemProcFS CSV variants — identified by distinctive column sets in the first header line.
+  // MemProcFS CSV variants, by distinctive header columns — timeline_all.csv's value32/value64 are unique.
   const cols = csvCols(text);
-  // timeline_all.csv: Time,Type,Action,PID,Value32,Value64,Text,Pad — value32/value64 are unique.
   if (cols.has("value32") && cols.has("value64") && cols.has("action")) {
     return parseMemoryMemprocfsTimeline(text, opts);
   }
@@ -1477,8 +1472,7 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
   const maxIocs = opts.maxIocs ?? 5000;
   const { tables, format, tool, empty } = extractTables(text, opts.filename);
   const total = tables.reduce((n, t) => n + t.rows.length, 0);
-  // What the export's shape says — a zero-row export or an unread layout is one Low row, never a
-  // 400 and never a completion claim (#933 item 12).
+  // What the export's shape says — a zero-row/unread export is one Low row, never 400 (#933 item 12).
   const shapeRows = exportShapeEvents(format, empty, tool);
   const note = exportShapeNote(text, format, empty, tables.length);
   if (total === 0 && shapeRows.length === 0) {
@@ -1505,14 +1499,7 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
     processes = 0,
     connections = 0;
 
-  // Evidence about the SAME process from OTHER tables in the SAME image, gathered before the
-  // dispatch loop so malfind can be weighed against it (#909 item 4). The issue asks for confidence
-  // to be strengthened by process context, network behaviour and independent detections; without
-  // this the note could only ever tell the analyst to go and check those themselves. Confined to one
-  // image and one PID, per the issue.
-  // The process rows the upload submitted, by PID — what a socket's owner is compared with. Built
-  // before the socket pass, because a socket counts as corroboration only when exactly one
-  // submitted process row is consistent with its owner (#933 item 14).
+  // Process rows the upload submitted, by PID — malfind/socket/handle owner checks (#909 item 4, #933 items 13-14).
   const processIndex = indexProcessRows(
     tables.filter((t) => classify(t.plugin, colSet(t.rows)) === "process"),
   );
@@ -1543,11 +1530,11 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
     }
   }
 
-  // Process records with BOTH a start and an exit, which is the only place in the product that has
-  // them: a memory image records CreateTime and ExitTime on the same row (#909 item 6). The
-  // repeated-short-lifetime rule cannot run anywhere else, because every other importer sees a
-  // process creation and never its end.
+  // Process records with BOTH a start and an exit — only a memory image records both (#909 item 6).
   const lifetimeRecords: ProcessRecord[] = [];
+
+  // Handle-table rows (#933 item 13), resolved once against the processIndex built above.
+  const handleRows: Record<string, unknown>[] = [];
 
   for (const t of tables) {
     const cols = colSet(t.rows);
@@ -1599,7 +1586,8 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
         mapped.push(...mapDll(label, tool, t.rows, sink, !!opts.dllTelemetry));
         break;
       case "handle":
-        break; // handle tables are pure telemetry — neither events nor IOCs
+        for (const r of t.rows) handleRows.push(r); // never spread — a large table exceeds arg limits
+        break;
       case "imageinfo":
         mapped.push(...imageFactsEvents(tool, t.rows, t.plugin)); // one row, no IOCs
         break;
@@ -1608,9 +1596,7 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
     }
   }
 
-  // Repeated short-lived executions of one image (#909 item 6). Emitted as ONE event per image
-  // rather than one per execution: the pattern is the finding, and twenty rows saying "it ran
-  // again" is the noise the pattern was meant to replace.
+  // Repeated short-lived executions of one image (#909 item 6): ONE event per image, not per run.
   for (const cluster of repeatedShortLifetimes(lifetimeRecords)) {
     mapped.push({
       timestamp: "",
@@ -1623,6 +1609,19 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
     });
   }
 
+  const handleResult = handleOwnershipFacts(handleRows, processIndex); // #933 item 13, Info severity
+  for (const fact of handleResult.facts) {
+    mapped.push({
+      timestamp: "",
+      description: `${tool}: ${fact.note}`.slice(0, 600),
+      severity: "Info",
+      mitre: [],
+      aggKey: boundedAggKey(`mem|handle|${fact.kind}|${fact.pid}|${fact.type}|${fact.name}`),
+      sources: [tool],
+      processName: fact.holderProcess || undefined,
+    });
+  }
+
   // The upload's image facts ride on every row (envelope; text from Medium up). One upload only.
   const { events, groups } = aggregateEvents(carryImage(mapped, readImageFacts(tables)), {
     aggregate: opts.aggregate,
@@ -1632,6 +1631,11 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
   const finalEvents = stampSourceArtifactHash(events, text);
 
   const represented = finalEvents.reduce((n, e) => n + (e.count ?? 1), 0);
+  // A capped fact family is a sample, not the full set — disclose it, don't just track it internally.
+  const handleNote = handleResult.truncated
+    ? "handle-ownership analysis reached its own evidence cap — some facts were not reported."
+    : "";
+  const finalNote = [note, handleNote].filter(Boolean).join(" ");
   return {
     events: finalEvents,
     iocs: [...sink.values()].slice(0, maxIocs),
@@ -1645,6 +1649,6 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
     connections,
     format,
     tool,
-    ...(note ? { note } : {}),
+    ...(finalNote ? { note: finalNote } : {}),
   };
 }
