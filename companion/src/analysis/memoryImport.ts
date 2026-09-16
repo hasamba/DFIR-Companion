@@ -81,6 +81,8 @@ import {
   type ProcessIndex,
 } from "./memoryNetObjects.js";
 import { handleOwnershipFacts } from "./memoryHandleOwnership.js";
+import { yaraMappingContext } from "./memoryYaraMappingContext.js";
+import { severityFromMeta, mitreFromYara } from "./yaraImport.js";
 export { isRekallCommandList, looksLikeVolatilityText } from "./memoryTables.js";
 import { parseCsv } from "./csvImport.js";
 import { tradecraftSignal } from "./tradecraftRules.js";
@@ -205,8 +207,7 @@ function classify(plugin: string, cols: Set<string>): Category {
   return "generic";
 }
 
-// A short, human label for the plugin: the Rekall/known plugin name, the os.module from a
-// Volatility dotted id, or a filename/category fallback.
+// A short, human label for the plugin: Rekall/known name, Volatility dotted-id module, or a fallback.
 function displayLabel(plugin: string, category: Category, rows: Row[]): string {
   const p = plugin.toLowerCase();
   const dotted = /\b(windows|linux|mac)\.(\w+)/.exec(p);
@@ -543,10 +544,7 @@ function mapMalfind(
     const region = malfindRegion(r); // its token and its phrase must agree — see malfindRegion
     const name = proc ? baseName(proc) : "";
     if (name) addIoc(sink, "process", name);
-    // malfind reports a region that is private and executable. That is the shape of injection AND
-    // of every JIT, .NET and several AV engines, so the row needs its observed characteristics
-    // stated alongside it (#909 item 4). Severity policy is unchanged — this adds interpretation,
-    // and never says a region is clean.
+    // malfind's region shape also matches every JIT/.NET/AV engine, so state its own observed characteristics (#909 item 4).
     const ctx = malfindContext(r, {
       networkPid: corroborating.network.has(pid),
       suspiciousCommandLine: corroborating.suspiciousCmd.has(pid),
@@ -655,8 +653,7 @@ function mapModule(label: string, tool: string, rows: Row[], sink: Map<string, S
   return out;
 }
 
-// dlllist / ldrmodules: high-volume. By default harvest the DLL path → file IOC only; opt-in to
-// keep one Info event per loaded module.
+// dlllist/ldrmodules: high-volume — by default harvest the DLL path as a file IOC only, opt-in to keep events.
 function mapDll(
   label: string,
   tool: string,
@@ -671,10 +668,7 @@ function mapDll(
     const proc = procName(r);
     const pid = pickPid(r);
     addIoc(sink, "file", filePathIoc(path));
-    // ldrmodules reports membership in the three PEB loader lists, and a module mapped in memory
-    // while absent from them was not loaded through the loader. That row is the whole reason to
-    // run the plugin, so it becomes an event even though DLL rows are otherwise pure telemetry
-    // (#909 item 3).
+    // A module mapped but absent from the PEB loader lists becomes an event despite DLL rows being telemetry (#909 item 3).
     const cross = hasLdrColumns(r) ? ldrModulesSignal(r) : null;
     if (!telemetry && !cross) continue;
     // A flagged row with NO path is the strongest case this table produces — executable memory that
@@ -812,8 +806,7 @@ function findevilSeverity(type: string, desc: string): { severity: Severity; mit
   }
 }
 
-// For bulk types group by process+type (many pages → one event with count).
-// For signal-rich types keep each finding individual (include rule/detail in key).
+// Bulk types group by process+type (many pages → one event); signal-rich types stay individual.
 function findevilAggKey(type: string, pid: string, proc: string, desc: string): string {
   const t = type.toUpperCase();
   if (t === "PRIVATE_RWX" || t === "PRIVATE_RX") {
@@ -986,17 +979,12 @@ function parseMemoryFindevil(text: string, opts: MemoryImportOptions): MemoryPar
 // ───────────────────────────── MemProcFS CSV variants ─────────────────────────────
 //
 // MemProcFS exports its data in two CSV flavours that complement the text `findevil` report:
-//
-//   findevil.csv  — PID,ProcessName,Type,Address,Description
-//     The same finding set as findevil.txt but as a clean CSV (no fixed-width padding). We
-//     parse rows into FindevilRow and reuse the same mapFindevil / severity / aggKey logic.
-//
-//   yara.csv  — MatchIndex,Tags,Description,RuleAuthor,RuleVersion,MemoryType,MemoryTag,
-//               MemoryBaseAddress,ObjectAddress,PID,ProcessName,ProcessPath,CommandLine,
-//               User,Created,AddressCount,String0,Address0,…
-//     YARA scan results with process context + match timestamps. Every row is a YARA hit →
-//     Critical / T1055 (code found in memory). Aggregated by process + base-address so all
-//     matches in the same heap/VAD region collapse into one event with a count.
+// findevil.csv (PID,ProcessName,Type,Address,Description — the same findevil.txt finding set as
+// clean CSV, parsed into FindevilRow and reusing mapFindevil/severity/aggKey) and yara.csv
+// (MatchIndex,Tags,Description,RuleAuthor,RuleVersion,MemoryType,MemoryTag,MemoryBaseAddress,
+// ObjectAddress,PID,ProcessName,ProcessPath,CommandLine,User,Created,AddressCount,String0,
+// Address0,… — YARA scan results with process + mapping context; severity/MITRE come from the
+// matched rule's own Tags, mapping validity from MemoryType/MemoryTag, see memoryYaraMappingContext.ts, #1148).
 
 // Lightweight first-line check (no full CSV parse): split on comma, normalise header names.
 function csvCols(text: string): Set<string> {
@@ -1085,6 +1073,7 @@ function parseMemoryYaraCsv(text: string, opts: MemoryImportOptions): MemoryPars
   if (!headers.length || !rows.length) return empty;
 
   const col = (name: string): number => headers.findIndex((h) => h.toLowerCase() === name.toLowerCase());
+  const tagsI = col("Tags");
   const pidI = col("PID");
   const procI = col("ProcessName");
   const procPathI = col("ProcessPath");
@@ -1098,7 +1087,9 @@ function parseMemoryYaraCsv(text: string, opts: MemoryImportOptions): MemoryPars
   const sink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
 
-  for (const row of rows) {
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+    const row = rows[rowIndex];
+    const rawTags = row[tagsI] ?? "";
     const pid = row[pidI] ?? "";
     const proc = row[procI] ?? "";
     const procPath = row[procPathI] ?? "";
@@ -1114,22 +1105,31 @@ function parseMemoryYaraCsv(text: string, opts: MemoryImportOptions): MemoryPars
     addIoc(sink, "file", filePathIoc(procPath));
 
     const timestamp = normalizeTime(created) ?? "";
-    const memNote = [memType, memTag].filter(Boolean).join(" / ");
+    const mapping = yaraMappingContext(memType, memTag);
+    // No PID/ProcessName lead when there's no process context — MemProcFS leaves them empty (#1148).
+    const lead =
+      mapping.mappingClass === "process-user-mode" || mapping.mappingClass === "process-kernel-mode"
+        ? `MemProcFS YARA: ${proc} (PID ${pid})`
+        : "MemProcFS YARA match";
     const addrNote = baseAddr ? ` @ base 0x${baseAddr}` : "";
     const objNote = objAddr ? ` (obj 0x${objAddr})` : "";
     const cmdNote = cmd ? ` — cmd: ${oneLine(cmd).slice(0, 120)}` : "";
-    const description =
-      `MemProcFS YARA: ${proc} (PID ${pid})${memNote ? ` — match in ${memNote}` : " — YARA match"}${addrNote}${objNote}${cmdNote}`.slice(
-        0,
-        600,
-      );
+    const description = `${lead} — ${mapping.note}${addrNote}${objNote}${cmdNote}`.slice(0, 600);
 
+    const tags = rawTags ? [rawTags] : []; // severity/MITRE come from the RULE, not location (#1148)
+    // No real address on these rows; CSV MatchIndex resets per scan context, so use our own row position.
+    const identity =
+      mapping.mappingClass === "no-process-context" || mapping.mappingClass === "unrecognized"
+        ? rowIndex
+        : baseAddr || objAddr;
     mapped.push({
       timestamp,
       description,
-      severity: "Critical",
-      mitre: ["T1055"],
-      aggKey: `memprocfs|yara|${pid}|${proc.toLowerCase()}|${baseAddr}`.slice(0, 400),
+      severity: severityFromMeta({}),
+      mitre: mitreFromYara(tags, {}),
+      aggKey: boundedAggKey(
+        `memprocfs|yara|${pid}|${proc.toLowerCase()}|${mapping.mappingClass}|${identity}`,
+      ),
       sources: ["MemProcFS"],
       ...(pName ? { processName: pName } : {}),
     });

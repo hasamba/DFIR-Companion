@@ -131,7 +131,10 @@ export function looksLikeYara(text: string): boolean {
   return headers >= 1 && headers + strings >= lines.length * 0.5;
 }
 
-function severityFromMeta(meta: Record<string, string>): Severity {
+// Exported for memoryYaraMappingContext.ts (#1148): MemProcFS's own yara.csv export has no
+// score/threat_level meta fields, so severityFromMeta({}) is a deterministic Medium — the same
+// honest default this generic path already uses, not a MemProcFS-specific invention.
+export function severityFromMeta(meta: Record<string, string>): Severity {
   const score = Number(meta.score ?? meta.severity_score ?? "");
   const level = (meta.threat_level ?? meta.threatlevel ?? meta.severity ?? "").toLowerCase();
   if ((Number.isFinite(score) && score >= 90) || level === "critical") return "Critical";
@@ -139,7 +142,7 @@ function severityFromMeta(meta: Record<string, string>): Severity {
   return "Medium";
 }
 
-function mitreFromYara(tags: string[], meta: Record<string, string>): string[] {
+export function mitreFromYara(tags: string[], meta: Record<string, string>): string[] {
   const hay = [...tags, ...Object.values(meta)].join(" ");
   const out = new Set<string>();
   for (const m of hay.matchAll(MITRE_RE)) out.add(m[0].toUpperCase());
