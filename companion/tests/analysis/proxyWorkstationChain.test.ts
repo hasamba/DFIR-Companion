@@ -3,7 +3,7 @@
 // zero, one, or an explicitly ambiguous set of candidate hosts, never picked down to one by any
 // heuristic. Never claims "the workstation" unconditionally -- see the module's own header.
 import { describe, it, expect } from "vitest";
-import { createCanonicalEvent } from "../../src/analysis/canonicalEvent.js";
+import { createCanonicalEvent, type CanonicalEventCategory } from "../../src/analysis/canonicalEvent.js";
 import { buildHostAliasIndex } from "../../src/analysis/hostAlias.js";
 import { resolveProxyHostIdentity } from "../../src/analysis/proxyWorkstationChain.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
@@ -17,7 +17,7 @@ function logonEvent(o: {
   ip?: string;
   ts: string;
   outcome?: "success" | "failed";
-  category?: string;
+  category?: CanonicalEventCategory;
 }): ForensicEvent {
   seq += 1;
   return {
