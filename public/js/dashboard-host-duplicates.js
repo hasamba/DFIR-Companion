@@ -10,26 +10,59 @@
 
   let pending = [];
 
+  // Two actions, same buttons, same delegated handler, regardless of reason — merging an IP into
+  // a host name is exactly the same "treat this spelling as that host" operation as a name-
+  // spelling merge. Only the surrounding wording differs by reason, because the two are different
+  // strengths of evidence: a name-spelling pair blocks analysis (hard gate, see
+  // pendingNearDuplicates); a network-identity pair never does (see pendingNetworkIdentityDuplicates)
+  // — the banner below must never claim analysis is held when only the latter is pending.
+  function actionButtons(d) {
+    return (
+      `<button data-hd-merge="1" data-hd-canonical="${escAttr(d.canonical)}" data-hd-other="${escAttr(d.other)}" ` +
+      `title="${d.reason === "network-identity" ? "Fold this address into the named host." : "Treat these as one host. Analysis re-runs once every pair is resolved."}">Same host — merge</button> ` +
+      `<button data-hd-dismiss="1" data-hd-canonical="${escAttr(d.canonical)}" data-hd-other="${escAttr(d.other)}" ` +
+      `title="${d.reason === "network-identity" ? "Not the same machine. You won't be asked again." : "Two different machines. You won't be asked about this pair again."}">Different hosts</button>`
+    );
+  }
+
   function renderHostDuplicates(list) {
     if (!list || !list.length) return "";
-    const rows = list
+    const blocking = list.filter((d) => d.reason !== "network-identity");
+    const networkIdentity = list.filter((d) => d.reason === "network-identity");
+
+    const blockingRows = blocking
       .map(
         (d) =>
           `<div class="hd-row">` +
           `<code>${esc(d.other)}</code> and <code>${esc(d.canonical)}</code> may be the same machine. ` +
-          `<button data-hd-merge="1" data-hd-canonical="${escAttr(d.canonical)}" data-hd-other="${escAttr(d.other)}" ` +
-          `title="Treat these as one host. Analysis re-runs once every pair is resolved.">Same host — merge</button> ` +
-          `<button data-hd-dismiss="1" data-hd-canonical="${escAttr(d.canonical)}" data-hd-other="${escAttr(d.other)}" ` +
-          `title="Two different machines. You won't be asked about this pair again.">Different hosts</button>` +
+          `${actionButtons(d)}` +
           `</div>`,
       )
       .join("");
-    return (
-      `<div class="hd-warn"><strong>Analysis is on hold.</strong> ` +
-      `${list.length} host${list.length === 1 ? " appears" : "s appear"} under more than one name. ` +
-      `Until you decide, the AI would treat one machine as two — splitting its evidence and its ` +
-      `timeline. Resolve each pair and analysis restarts automatically.</div>${rows}`
-    );
+    const blockingBlock = blocking.length
+      ? `<div class="hd-warn"><strong>Analysis is on hold.</strong> ` +
+        `${blocking.length} host${blocking.length === 1 ? " appears" : "s appear"} under more than one name. ` +
+        `Until you decide, the AI would treat one machine as two — splitting its evidence and its ` +
+        `timeline. Resolve each pair and analysis restarts automatically.</div>${blockingRows}`
+      : "";
+
+    const networkIdentityRows = networkIdentity
+      .map(
+        (d) =>
+          `<div class="hd-row">` +
+          `<code>${esc(d.other)}</code> may belong to the same machine as <code>${esc(d.canonical)}</code> — ` +
+          `last seen using this address ${esc(d.sampleTime ? fmtTime(d.sampleTime) : "recently")}. ` +
+          `${actionButtons(d)}` +
+          `</div>`,
+      )
+      .join("");
+    const networkIdentityBlock = networkIdentity.length
+      ? `<div class="hd-suggest"><strong>Possible network identity match${networkIdentity.length === 1 ? "" : "es"}.</strong> ` +
+        `${networkIdentity.length} address${networkIdentity.length === 1 ? "" : "es"} may belong to a named host ` +
+        `already in this case.</div>${networkIdentityRows}`
+      : "";
+
+    return blockingBlock + networkIdentityBlock;
   }
 
   // The section is DATA-GATED: hidden while nothing is pending, shown the moment something is.

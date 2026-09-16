@@ -6,8 +6,13 @@ import {
   type HostAliasIndex,
   type NearDuplicate,
 } from "./hostAlias.js";
+import { buildHostBindingIndex } from "./hostBinding.js";
 import type { HostDuplicateDismissal } from "./hostDuplicateDismissals.js";
-import { hostNamesFromState, pendingNearDuplicates } from "./hostDuplicateGate.js";
+import {
+  hostNamesFromState,
+  pendingNearDuplicates,
+  pendingNetworkIdentityDuplicates,
+} from "./hostDuplicateGate.js";
 import { aggregateHostEvidence, overlayFindingLinks } from "./hostScopeAggregate.js";
 import { buildHostScopeLedger, type HostScopeLedger } from "./hostScope.js";
 import type { HostScopeStore } from "./hostScopeStore.js";
@@ -76,6 +81,31 @@ export async function loadPendingHostDuplicates(
     sources.dismissals.load(caseId),
   ]);
   return pendingNearDuplicates(hostNamesFromState(state), index, dismissals);
+}
+
+/**
+ * PANEL DISPLAY ONLY — the union of blocking (shortname-fqdn) and non-blocking (network-identity)
+ * candidates. NOT used by the AI-synthesis gate, the cockpit blocker card, or the AI status pill:
+ * those keep calling loadPendingHostDuplicates() above, unchanged, so this ships with zero
+ * behavior change to the existing hard gate (#1163).
+ */
+export async function loadHostDuplicatePanelCandidates(
+  sources: Pick<HostScopeSources, "state" | "assetOverrides" | "fleet"> & {
+    dismissals: { load(caseId: string): Promise<readonly HostDuplicateDismissal[]> };
+  },
+  caseId: string,
+): Promise<NearDuplicate[]> {
+  const [state, index, dismissals] = await Promise.all([
+    sources.state.load(caseId),
+    loadHostAliasIndex(sources, caseId),
+    sources.dismissals.load(caseId),
+  ]);
+  const hostNames = hostNamesFromState(state);
+  const bindingIndex = buildHostBindingIndex(state.forensicTimeline ?? [], index);
+  return [
+    ...pendingNearDuplicates(hostNames, index, dismissals),
+    ...pendingNetworkIdentityDuplicates(hostNames, index, bindingIndex, dismissals),
+  ];
 }
 
 export async function loadHostScopeLedger(

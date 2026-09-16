@@ -23,7 +23,10 @@ export interface HostAliasIndex {
 export interface NearDuplicate {
   canonical: string;
   other: string;
-  reason: "shortname-fqdn";
+  reason: "shortname-fqdn" | "network-identity";
+  // ISO timestamp of the binding evidence. Only set for "network-identity" — raw data, not prose;
+  // the dashboard formats it (public/js/dashboard-host-duplicates.js).
+  sampleTime?: string;
 }
 
 // Lowercase, trim, drop a trailing FQDN dot. Never strips the domain — "ws-042" and

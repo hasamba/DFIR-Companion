@@ -6,9 +6,18 @@ interface Api {
   renderHostDuplicates(pending: unknown[]): string;
 }
 
-const panel = loadDashboardModule<Api>("dashboard-host-duplicates.js", ["dashboard-escape.js"]);
+const panel = loadDashboardModule<Api>("dashboard-host-duplicates.js", [
+  "dashboard-escape.js",
+  "dashboard-time.js",
+]);
 
 const pair = { canonical: "win11.windomain.local", other: "win11", reason: "shortname-fqdn" };
+const netIdPair = {
+  canonical: "ws-042",
+  other: "10.0.0.5",
+  reason: "network-identity",
+  sampleTime: "2026-06-10T12:00:00Z",
+};
 
 describe("host duplicates panel", () => {
   it("renders nothing when there is no pending pair", () => {
@@ -47,6 +56,42 @@ describe("host duplicates panel", () => {
     expect(html).toContain(
       'data-hd-other="&lt;img src=x onerror=alert(1)&gt;&quot; onmouseover=&quot;alert(2)&#39;"',
     );
+  });
+});
+
+describe("host duplicates panel — network-identity rows (#1163)", () => {
+  it("does not say analysis is on hold when only a network-identity suggestion is pending", () => {
+    const html = panel.renderHostDuplicates([netIdPair]);
+    expect(html.toLowerCase()).not.toContain("analysis is on hold");
+  });
+
+  it("still names both sides and offers both actions for a network-identity row", () => {
+    const html = panel.renderHostDuplicates([netIdPair]);
+    expect(html).toContain("10.0.0.5");
+    expect(html).toContain("ws-042");
+    expect(html).toContain("data-hd-merge");
+    expect(html).toContain("data-hd-dismiss");
+  });
+
+  it("shows the blocking banner sized to the blocking subset only, in a mixed list", () => {
+    const html = panel.renderHostDuplicates([pair, netIdPair]);
+    expect(html.toLowerCase()).toContain("analysis is on hold");
+    expect(html).toContain("1 host appears");
+  });
+
+  it("shows a separate, non-blocking intro line for network-identity suggestions", () => {
+    const html = panel.renderHostDuplicates([netIdPair]);
+    expect(html.toLowerCase()).toContain("possible network identity match");
+  });
+
+  it("renders no network-identity intro line when there are no such candidates", () => {
+    const html = panel.renderHostDuplicates([pair]);
+    expect(html.toLowerCase()).not.toContain("network identity");
+  });
+
+  it("formats the sample time with the shared fmtTime helper rather than a raw ISO string", () => {
+    const html = panel.renderHostDuplicates([netIdPair]);
+    expect(html).not.toContain("2026-06-10T12:00:00Z");
   });
 });
 
