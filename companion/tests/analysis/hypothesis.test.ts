@@ -9,6 +9,7 @@ import {
   applyHypothesisPatch,
   type Hypothesis,
   type HypothesisSeed,
+  type HostContext,
 } from "../../src/analysis/hypothesis.js";
 
 const NOW = "2026-06-22T00:00:00.000Z";
@@ -77,6 +78,85 @@ describe("sanitizeHypotheses", () => {
     const out = sanitizeHypotheses(raw, events, iocs, 3);
     expect(out).toHaveLength(3);
     expect(out.every((h) => h.status === "open")).toBe(true);
+  });
+
+  // #1110: the claim's own host scope, resolved and validated against real case hosts — never
+  // trusted verbatim from the model, matching relatedEventIds/relatedIocIds's own discipline above.
+  describe("subjectScope (#1110)", () => {
+    const hostCtx: HostContext = {
+      resolve: (raw) => raw.trim().toLowerCase(),
+      knownHosts: new Set(["ws-01", "ws-02"]),
+    };
+
+    it("resolves an explicit 'caseWide' claim without touching subjectHosts", () => {
+      const out = sanitizeHypotheses(
+        [{ title: "No lateral movement anywhere", subjectScope: "caseWide" }],
+        events,
+        iocs,
+        undefined,
+        hostCtx,
+      );
+      expect(out[0].subjectScope).toEqual({ kind: "caseWide" });
+    });
+
+    it("resolves a 'hosts' claim, canonicalizing every named host", () => {
+      const out = sanitizeHypotheses(
+        [{ title: "No execution on WS-01", subjectScope: "hosts", subjectHosts: ["WS-01"] }],
+        events,
+        iocs,
+        undefined,
+        hostCtx,
+      );
+      expect(out[0].subjectScope).toEqual({ kind: "hosts", hosts: ["ws-01"] });
+    });
+
+    it("taints the WHOLE scope to unknown when even ONE named host fails to resolve — never a partial drop", () => {
+      const out = sanitizeHypotheses(
+        [
+          {
+            title: "No execution on WS-01 or the typo host",
+            subjectScope: "hosts",
+            subjectHosts: ["WS-01", "ws-99-typo"],
+          },
+        ],
+        events,
+        iocs,
+        undefined,
+        hostCtx,
+      );
+      // NOT { kind: "hosts", hosts: ["ws-01"] } — a partial drop would shrink the required-coverage
+      // set and let a refutation survive on a host it was never actually validated against.
+      expect(out[0].subjectScope).toEqual({ kind: "unknown" });
+    });
+
+    it("treats an omitted subjectScope as unknown — never silently caseWide (fail-closed)", () => {
+      const out = sanitizeHypotheses([{ title: "Something" }], events, iocs, undefined, hostCtx);
+      expect(out[0].subjectScope).toEqual({ kind: "unknown" });
+    });
+
+    it("treats 'hosts' with an empty subjectHosts array as unknown, not caseWide", () => {
+      const out = sanitizeHypotheses(
+        [{ title: "Something", subjectScope: "hosts", subjectHosts: [] }],
+        events,
+        iocs,
+        undefined,
+        hostCtx,
+      );
+      expect(out[0].subjectScope).toEqual({ kind: "unknown" });
+    });
+
+    it("resolves to unknown when no hostCtx is supplied at all, except an explicit caseWide", () => {
+      const out = sanitizeHypotheses(
+        [
+          { title: "Case-wide claim", subjectScope: "caseWide" },
+          { title: "Host claim", subjectScope: "hosts", subjectHosts: ["ws-01"] },
+        ],
+        events,
+        iocs,
+      );
+      expect(out[0].subjectScope).toEqual({ kind: "caseWide" });
+      expect(out[1].subjectScope).toEqual({ kind: "unknown" });
+    });
   });
 });
 
