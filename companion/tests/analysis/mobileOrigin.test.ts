@@ -25,11 +25,19 @@ function tsv(name: string, rows: Record<string, string>[]): { text: string; file
   return { text: lines.join("\n"), filename: `${name}.tsv` };
 }
 
+/** readOrigin's positional `cells` array, built from an entry's header order and a row keyed by
+ * header name — for many-column entries (App Data's 12), a name-keyed row is much less
+ * error-prone than counting positions by hand. */
+function cellsFor(entryName: string, row: Record<string, string>): string[] {
+  const entry = registryEntry(entryName)!;
+  return entry.headers.map((h) => row[h] ?? "");
+}
+
 describe("the registry pin", () => {
   it("names both upstream commits and every entry's exact header tuple", () => {
-    expect(REGISTRY_PINS.iLEAPP.commit).toBe("925f3d71e2e0");
+    expect(REGISTRY_PINS.iLEAPP.commit).toBe("6dc251d857c0");
     expect(REGISTRY_PINS.ALEAPP.commit).toBe("498491475597");
-    expect(REGISTRY_VERSION).toBe("leapp-origin-2026-09-13");
+    expect(REGISTRY_VERSION).toBe("leapp-origin-2026-09-16");
     for (const e of REGISTRY) expect(e.headers.length, e.name).toBeGreaterThan(0);
     const safari = registryEntry("Safari Browser - History")!;
     expect(headersMatch(safari, safari.headers)).toBe(true);
@@ -59,12 +67,12 @@ describe("the registry pin", () => {
     expect(r.block.registry).toEqual({
       version: REGISTRY_VERSION,
       coverage: "schema-matches",
-      pinned: "iLEAPP@925f3d71e2e0",
+      pinned: "iLEAPP@6dc251d857c0",
     });
     expect(r.words).not.toContain("producer-verified");
     const differ = readOrigin("ios", "Safari Browser - History", ["Visit Timestamp", "URL"], ["", ""]);
     expect(differ.block.registry.coverage).toBe("headers-differ");
-    expect(differ.words).toContain("headers differ from the pinned release (iLEAPP@925f3d71e2e0)");
+    expect(differ.words).toContain("headers differ from the pinned release (iLEAPP@6dc251d857c0)");
     expect(differ.block.facets).toMatchObject({
       acquisition: "not-established",
       locality: "not-established",
@@ -374,5 +382,133 @@ describe("the tag on every row and the identity bound", () => {
       description: legacy.description.replace(/^iLEAPP/, "Other tool"),
     };
     expect(correlateEvents([foreign, ev(fresh[0], "new1")])).toHaveLength(2);
+  });
+});
+
+// #932 item 16: four iOS entries (usage, power, permission, network) added to the registry so an
+// app-identity corroboration pass can join across them; Notification Duet gains an `app` field so
+// notifications join too.
+describe("item 16 — usage/power/permission/network entries, and Notification Duet's app field", () => {
+  it("knowledgeC App Usage reads an app identity, no acquisition claim (no establishing column)", () => {
+    const r = readOrigin(
+      "ios",
+      "knowledgeC - App Usage",
+      registryEntry("knowledgeC - App Usage")!.headers,
+      cellsFor("knowledgeC - App Usage", {
+        "Start Time": "2026-01-01 00:00:00",
+        "End Time": "2026-01-01 00:05:00",
+        "Time Added": "2026-01-01 00:05:00",
+        Application: "com.example.app",
+      }),
+    );
+    expect(r.block.registry.coverage).toBe("schema-matches");
+    expect(r.block.facets).toMatchObject({ record: "usage", acquisition: "not-established" });
+    expect(r.block.app).toEqual({ package: "com.example.app" });
+  });
+
+  it("PowerLog Application Runtime reads app identity; the seconds columns are never interpreted", () => {
+    const r = readOrigin(
+      "ios",
+      "PowerLog - Application Runtime",
+      registryEntry("PowerLog - Application Runtime")!.headers,
+      cellsFor("PowerLog - Application Runtime", {
+        Timestamp: "2026-01-01 00:00:00",
+        "Bundle ID": "com.example.app",
+        "Background Time (seconds)": "9999",
+        "Screen-on Time (seconds)": "0",
+      }),
+    );
+    expect(r.block.facets.record).toBe("power");
+    expect(r.block.app).toEqual({ package: "com.example.app" });
+    // Presence, not magnitude: nothing in the block or the words carries the seconds value.
+    expect(r.words).not.toMatch(/9999/);
+    expect(JSON.stringify(r.block)).not.toMatch(/9999/);
+  });
+
+  it("Application Permissions (modern TCC schema) carries Access via evidence and words, never dropped", () => {
+    const r = readOrigin(
+      "ios",
+      "Application Permissions",
+      registryEntry("Application Permissions")!.headers,
+      cellsFor("Application Permissions", {
+        "Last Modified Timestamp": "2026-01-01 00:00:00",
+        "Bundle ID": "com.example.app",
+        Service: "Camera",
+        Access: "Not allowed",
+      }),
+    );
+    expect(r.block.facets.record).toBe("permission");
+    expect(r.block.app).toEqual({ package: "com.example.app" });
+    expect(r.block.evidence).toContainEqual({ facet: "access", column: "Access", value: "Not allowed" });
+    expect(r.words).toContain("access Not allowed");
+  });
+
+  it("the legacy TCC schema (no Last Modified column) reads headers-differ, not permission", () => {
+    const r = readOrigin(
+      "ios",
+      "Application Permissions",
+      ["Bundle ID", "Service", "Access", "Prompt Count"],
+      ["com.example.app", "Camera", "Allowed", "2"],
+    );
+    expect(r.block.registry.coverage).toBe("headers-differ");
+    expect(r.block.facets.record).not.toBe("permission");
+  });
+
+  it("App Data (netusage) identifies by Bundle Name, never Process Name; ZKIND is read as stored", () => {
+    const r = readOrigin(
+      "ios",
+      "App Data",
+      registryEntry("App Data")!.headers,
+      cellsFor("App Data", {
+        "Live Usage Timestamp": "2026-01-01 00:00:00",
+        "Process First Usage Timestamp": "2026-01-01 00:00:00",
+        "Process Timestamp": "2026-01-01 00:00:00",
+        "Bundle Name": "com.example.app",
+        "Process Name": "com.example.app-daemon",
+        "ZKIND (as stored)": "7",
+        "Wifi In (Bytes)": "12345",
+      }),
+    );
+    expect(r.block.facets.record).toBe("network");
+    expect(r.block.app).toEqual({ package: "com.example.app" });
+    expect(r.block.app?.package).not.toContain("daemon");
+  });
+
+  it("Notification Duet now reads app.package from Bundle ID (never Bundle ID 2), unaffected words/tag", () => {
+    const e = registryEntry("Notification Duet")!;
+    const r = readOrigin(
+      "ios",
+      e.name,
+      e.headers,
+      cellsFor(e.name, {
+        "SEGB Timestamp": "2026-01-01 00:00:00",
+        "Bundle ID": "com.example.app",
+        "Bundle ID 2": "com.example.other",
+      }),
+    );
+    expect(r.block.app).toEqual({ package: "com.example.app" });
+    // The tag/words builder never renders `app` — adding the field changes no existing behavior.
+    expect(r.words).not.toContain("com.example.app");
+  });
+
+  it("the six pre-existing iOS entries still read schema-matches after the pin move to 6dc251d857c0", () => {
+    for (const name of [
+      "Safari Browser - History",
+      "Safari Browser - iCloud Tabs",
+      "Safari Browser - Tabs (BrowserState)",
+      "Safari Browser - Tabs (SafariTabs)",
+      "Notification Duet",
+      "Account Data",
+      "Apple Account - Device List",
+    ]) {
+      const e = registryEntry(name)!;
+      const r = readOrigin(
+        "ios",
+        name,
+        e.headers,
+        e.headers.map(() => "x"),
+      );
+      expect(r.block.registry.coverage, name).toBe("schema-matches");
+    }
   });
 });

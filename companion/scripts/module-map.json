@@ -494,6 +494,7 @@
     "mitreTactics.ts": "analysis/intel",
     "mobileLeappImport.ts": "analysis/ingest",
     "mobsfPermissionImport.ts": "analysis/ingest",
+    "mobileBackgroundActivity.ts": "analysis/timeline",
     "mobileInfectionWindow.ts": "analysis/timeline",
     "mobileOriginRegistry.ts": "analysis/ingest",
     "mobileSummary.ts": "analysis/workflow",
