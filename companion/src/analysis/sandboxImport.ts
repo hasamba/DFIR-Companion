@@ -12,8 +12,11 @@
 // auto-detected: CAPEv2 (`info` + `signatures`/`target`) vs Falcon Sandbox (`verdict` +
 // `sha256`/`threat_score`).
 
+import { createHash } from "node:crypto";
 import type { LabIntelRecord, Severity } from "./stateTypes.js";
 import { SANDBOX_PREFIX } from "./labIntel.js";
+import { createCanonicalEvent } from "./canonicalEvent.js";
+import type { SampleAssociationFact, ReportMembership } from "./canonicalSampleLineage.js";
 import {
   aggregateEvents,
   cleanIp,
@@ -31,6 +34,32 @@ import {
 } from "./siemImport.js";
 
 type Row = Record<string, unknown>;
+
+const MAX_LINEAGE_FACTS = 256;
+const HASH_LENGTHS = { sha256: 64, sha1: 40, md5: 32 } as const;
+
+// CAPE's own `name` field is a deduplicated LIST of basenames, not a scalar string — this
+// codebase's own `str()` returns "" for an array, so reading it as a plain string silently drops
+// every dropped-file name (#932 item 8 design review, M2).
+function strList(v: unknown): string[] {
+  const raw = Array.isArray(v) ? v : v === undefined || v === null ? [] : [v];
+  return raw.map((x) => str(x).trim()).filter(Boolean);
+}
+
+// Truncates to the sampleLineage schema's own field length caps — untrusted report content is
+// clipped, never rejected, matching every other importer's "bound, don't throw" convention.
+function clip(s: string | undefined, max: number): string | undefined {
+  return s ? s.slice(0, max) : undefined;
+}
+
+function hashSetFrom(row: Row): { sha256?: string; sha1?: string; md5?: string } | undefined {
+  const out: { sha256?: string; sha1?: string; md5?: string } = {};
+  for (const algo of Object.keys(HASH_LENGTHS) as (keyof typeof HASH_LENGTHS)[]) {
+    const v = str(getCI(row, algo)).trim().toLowerCase();
+    if (v.length === HASH_LENGTHS[algo] && /^[0-9a-f]+$/.test(v)) out[algo] = v;
+  }
+  return out.sha256 || out.sha1 || out.md5 ? out : undefined;
+}
 
 export interface SandboxImportOptions {
   aggregate?: boolean;
@@ -230,12 +259,133 @@ function mapCape(
     });
   }
 
-  // Dropped files + extracted CAPE payloads → file/hash IOCs.
-  for (const d of [...asArray(getCI(report, "dropped")), ...asArray(getPath(report, "CAPE.payloads"))]) {
+  // Dropped files + extracted CAPE payloads → file/hash IOCs, and (#932 item 8) a report-scoped
+  // association fact per object: "this report listed object X while analyzing target Y" — never
+  // a parent/child descent claim, since CAPE's own report structure has no field identifying which
+  // process or object actually produced a dropped/payload entry (RECOMMENDATION-932.8.md).
+  const byObjectHash = new Map<string, SampleAssociationFact>();
+  let lineageNotCited = 0;
+  let lineageMalformed = 0;
+  const targetHashes = hashSetFrom(tfile);
+  const targetName = clip(strList(getCI(tfile, "name"))[0], 300);
+
+  function collectLineage(d: Row, membership: ReportMembership): void {
+    const objectHashes = hashSetFrom(d);
+    if (!objectHashes) {
+      lineageMalformed += 1;
+      return;
+    }
+    const key = objectHashes.sha256 || objectHashes.sha1 || objectHashes.md5!;
+    const existing = byObjectHash.get(key);
+    if (existing) {
+      if (!existing.reportedIn.includes(membership)) existing.reportedIn.push(membership);
+      // Backfill fields the FIRST-seen occurrence lacked — real CAPE reports typically carry
+      // cape_type only on the CAPE.payloads entry for an object also listed in dropped, so
+      // whichever array is processed first must not silently discard the other's own detail.
+      if (!existing.objectNames?.length) {
+        const names = strList(getCI(d, "name"))
+          .slice(0, 20)
+          .map((n) => clip(n, 300)!);
+        if (names.length) existing.objectNames = names;
+      }
+      if (!existing.objectGuestPaths?.length) {
+        const paths = strList(getCI(d, "guest_paths"))
+          .slice(0, 20)
+          .map((p) => clip(p, 500)!);
+        if (paths.length) existing.objectGuestPaths = paths;
+      }
+      if (!existing.capeType) {
+        const capeType = clip(str(getCI(d, "cape_type")).trim(), 200);
+        if (capeType) existing.capeType = capeType;
+      }
+      if (existing.capeTypeCode === undefined) {
+        const raw = getCI(d, "cape_type_code");
+        if (typeof raw === "number") existing.capeTypeCode = raw;
+      }
+      return;
+    }
+    if (byObjectHash.size >= MAX_LINEAGE_FACTS) {
+      lineageNotCited += 1;
+      return;
+    }
+    const objectNames = strList(getCI(d, "name"))
+      .slice(0, 20)
+      .map((n) => clip(n, 300)!);
+    const objectGuestPaths = strList(getCI(d, "guest_paths"))
+      .slice(0, 20)
+      .map((p) => clip(p, 500)!);
+    const capeType = clip(str(getCI(d, "cape_type")).trim(), 200);
+    const capeTypeCodeRaw = getCI(d, "cape_type_code");
+    const capeTypeCode = typeof capeTypeCodeRaw === "number" ? capeTypeCodeRaw : undefined;
+    byObjectHash.set(key, {
+      ...(targetHashes ? { targetHashes } : {}),
+      ...(targetName ? { targetName } : {}),
+      objectHashes,
+      ...(objectNames.length ? { objectNames } : {}),
+      ...(objectGuestPaths.length ? { objectGuestPaths } : {}),
+      reportedIn: [membership],
+      ...(capeType ? { capeType } : {}),
+      ...(capeTypeCode !== undefined ? { capeTypeCode } : {}),
+      relationship: "listed-during-analysis-of",
+    });
+  }
+
+  for (const d of asArray(getCI(report, "dropped"))) {
     if (!isObject(d)) continue;
     addHash(sink, getCI(d, "sha256"));
     addHash(sink, getCI(d, "md5"));
-    addFile(sink, getCI(d, "name"));
+    for (const n of strList(getCI(d, "name"))) addFile(sink, n);
+    collectLineage(d, "dropped");
+  }
+  for (const d of asArray(getPath(report, "CAPE.payloads"))) {
+    if (!isObject(d)) continue;
+    addHash(sink, getCI(d, "sha256"));
+    addHash(sink, getCI(d, "md5"));
+    for (const n of strList(getCI(d, "name"))) addFile(sink, n);
+    collectLineage(d, "cape-payloads");
+  }
+
+  if (byObjectHash.size > 0) {
+    // A dedicated event, NEVER attached to the verdict/signature events above: those sort by the
+    // sample's own malscore-derived severity and can be capped out of a large batch import,
+    // silently losing the only copy of a retained evidence relationship (design review H5). Fixed
+    // at Medium regardless of the sample's own score — a one-off escalation matching #1102's own
+    // readErrorsDetected precedent, so this disclosure survives the shared event cap.
+    const reportLocator = createHash("sha256").update(JSON.stringify(report)).digest("hex").slice(0, 16);
+    const facts = [...byObjectHash.values()];
+    out.push({
+      timestamp: time,
+      description:
+        `${SANDBOX_PREFIX.capeLineage}${runTag} ${facts.length} object(s) listed in this report's own dropped/payload data${lineageMalformed ? `, ${lineageMalformed} with no valid hash` : ""}${lineageNotCited ? `, ${lineageNotCited} further object(s) not individually cited` : ""}`.slice(
+          0,
+          600,
+        ),
+      severity: "Medium",
+      mitre: [],
+      origin: "lab",
+      aggKey: `sandbox|cape|lineage|${reportLocator}`,
+      sources: ["CAPEv2"],
+      ...(sha256 ? { sha256 } : {}),
+      canonical: createCanonicalEvent({
+        event: { category: "file", type: "sandbox-lineage", action: "list", outcome: "success" },
+        time: { observed: time, normalized: time },
+        evidence: { rawRecords: [{ source: "sandbox-cape-lineage", locator: reportLocator }] },
+        producer: {
+          importer: "sandbox-cape-lineage",
+          parserVersion: "1",
+          mappingVersion: "sandbox-cape-lineage-v1",
+        },
+        sampleLineage: {
+          reportLocator,
+          ...(runId ? { runId } : {}),
+          facts,
+          notCited: lineageNotCited,
+          malformed: lineageMalformed,
+          basis:
+            "objects this SAME sandbox report listed together during one analysis — never a claim of direct production or descent, never inferred across separate reports, and never a claim about an incident endpoint",
+        },
+      }),
+    });
   }
   // Network indicators.
   const net = getCI(report, "network");

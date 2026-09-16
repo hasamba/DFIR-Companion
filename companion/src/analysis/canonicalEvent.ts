@@ -17,6 +17,7 @@ import { gcpServiceAccountJoinBlockSchema } from "./canonicalGcpServiceAccountJo
 import { loggingChangeBlockSchema } from "./canonicalLogging.js";
 import { acquisitionCoverageBlockSchema } from "./canonicalAcquisition.js";
 import { diskImageAcquisitionSchema } from "./canonicalDiskImage.js";
+import { sampleLineageBlockSchema } from "./canonicalSampleLineage.js";
 import {
   driveAccessBlockSchema,
   driveExposureBlockSchema,
@@ -189,6 +190,7 @@ export const canonicalEventEnvelopeSchema = z.object({
   loggingChange: loggingChangeBlockSchema.optional(),
   acquisitionCoverage: acquisitionCoverageBlockSchema.optional(), // kapeAcquisitionLog.ts, #932 item 1; block in canonicalAcquisition.ts
   diskImageAcquisition: diskImageAcquisitionSchema.optional(), // diskImageAcquisitionLog.ts, #1102; block in canonicalDiskImage.ts
+  sampleLineage: sampleLineageBlockSchema.optional(), // sandboxImport.ts, #932 item 8; block in canonicalSampleLineage.ts
   recoveredFragment: recoveredFragmentBlockSchema.optional(), // bulkExtractorUrlImport.ts, #932 item 4; block in canonicalRecoveredFragment.ts
   decodedString: decodedStringBlockSchema.optional(), // flossResultImport.ts, #932 item 5; block in canonicalDecodedString.ts
   capaMatch: capaMatchBlockSchema.optional(), // capaResultImport.ts, #932 item 6; block in canonicalCapaMatch.ts
@@ -202,8 +204,7 @@ export const canonicalEventEnvelopeSchema = z.object({
   takeoutLifecycle: takeoutLifecycleBlockSchema.optional(),
   // A Drive document-exposure join row (gwsDriveExposure.ts, #1064): a broadening sharing change joined to the access records after it, by tenant + doc_id.
   driveExposure: driveExposureBlockSchema.optional(),
-  // A TLS record's own reading (tlsSession.ts, #933 item 6): the client's SNI, the protocol facts
-  // the sensor saw, the certificate the server presented, the sensor's chain check, the observer.
+  // A TLS record's own reading (tlsSession.ts, #933 item 6): the client's SNI, the protocol facts the sensor saw, the certificate the server presented, the sensor's chain check, the observer.
   tls: z
     .object({
       sni: z.string().optional(),
@@ -275,8 +276,7 @@ export const canonicalEventEnvelopeSchema = z.object({
   // A macOS quarantine record (quarantineRecord.ts, #933 item 7) and its file-attribute join (quarantineJoin.ts, #1037); both blocks live in canonicalQuarantine.ts.
   quarantine: quarantineBlockSchema.optional(),
   quarantineAttribute: quarantineAttributeBlockSchema.optional(),
-  // A Defender Operational record's own reading (defenderEvents.ts): disposition, threat, every
-  // flagged resource. The block lives in canonicalDefender.ts; defenderEpisodes.ts reads it (#964).
+  // A Defender Operational record's own reading (defenderEvents.ts): disposition, threat, every flagged resource. The block lives in canonicalDefender.ts; defenderEpisodes.ts reads it (#964).
   defender: defenderBlockSchema.optional(),
   // A LEAPP row's origin reading (mobileOriginRegistry.ts, #988): the facets its columns
   // established, the registry coverage, the device / account the row names.
