@@ -21,6 +21,10 @@ export const RECORD_TYPES = [
   "account",
   "device",
   "app-inventory",
+  "usage",
+  "power",
+  "permission",
+  "network",
   "other",
 ] as const;
 export const COVERAGES = [

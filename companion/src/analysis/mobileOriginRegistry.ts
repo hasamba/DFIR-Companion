@@ -23,9 +23,14 @@
 // is not an opened link. A notification is a message received, not read. An account or device a
 // row names is an association ("the row names account X"), never an actor or a source.
 
-export const REGISTRY_VERSION = "leapp-origin-2026-09-13";
+// 2026-09-16: four iOS entries added for #932 item 16 (usage/power/permission/network app-identity
+// corroboration) from a fresh check of iLEAPP main @ 6dc251d857c0 (2026-09-14). Moving the shared
+// iLEAPP pin re-verifies every EXISTING iOS entry too, since headersMatch is exact-and-ordered —
+// all six were re-diffed against the new commit before this change; every header tuple is
+// unchanged. ALEAPP is untouched (nothing Android added or re-verified here).
+export const REGISTRY_VERSION = "leapp-origin-2026-09-16";
 export const REGISTRY_PINS = {
-  iLEAPP: { ref: "main", commit: "925f3d71e2e0", date: "2026-09-13" },
+  iLEAPP: { ref: "main", commit: "6dc251d857c0", date: "2026-09-14" },
   ALEAPP: { ref: "main", commit: "498491475597", date: "2026-09-13" },
 } as const;
 
@@ -47,9 +52,15 @@ interface RegistryEntry {
   /** Column-driven acquisition: the column and the readings it establishes. */
   acquisitionFrom?: { column: string; values: Record<string, (typeof ACQUISITIONS)[number]> };
   transitionColumn?: string;
+  /** A second named column read into evidence/words, same shape as transitionColumn (#932 item
+   * 16 — TCC's grant/deny outcome). Kept separate from transitionColumn's own name: the two read
+   * different kinds of fact and a shared field would blur which artifact wrote which value. */
+  accessColumn?: string;
   device?: { name: string; id?: string };
   account?: { name: string; type?: string };
-  /** App-inventory identity columns: the typed values the infection window compares. */
+  /** App identity columns: the typed values the infection window and the app-corroboration pass
+   * compare. Named `app-inventory` originally (#988); now also populated on usage/power/permission/
+   * network/notification rows (#932 item 16) so those join by the same identity. */
   app?: { package?: string; sha256?: string };
 }
 
@@ -162,6 +173,86 @@ export const REGISTRY: readonly RegistryEntry[] = [
     // establishes neither delivery from outside nor that anyone read it.
     record: "notification",
     locality: "device-local",
+    // "Bundle ID 2" is a second, upstream-undocumented bundle field — never read as identity.
+    app: { package: "Bundle ID" },
+  },
+  {
+    platform: "ios",
+    name: "knowledgeC - App Usage",
+    lastUpdate: "2025-09-13",
+    headers: ["Start Time", "End Time", "Time Added", "Application"],
+    // A usage session's start/end (#932 item 16); "Application" is the row's bundle id, read as
+    // stored. Neither foreground nor background is distinguished by this table — see PowerLog for
+    // the artifact that actually splits background from screen-on time.
+    record: "usage",
+    locality: "device-local",
+    app: { package: "Application" },
+  },
+  {
+    platform: "ios",
+    name: "PowerLog - Application Runtime",
+    lastUpdate: "2026-09-01",
+    headers: [
+      "Timestamp",
+      "Bundle ID",
+      "Background Time (seconds)",
+      "Screen-on Time (seconds)",
+      "In-Call Background Time (seconds)",
+      "In-Call Screen-on Time (seconds)",
+      "Time Offset (seconds)",
+      "Source File",
+    ],
+    // The direct background-activity artifact (#932 item 16): PLAppTimeService_Aggregate_AppRunTime
+    // splits background time from screen-on time per app, per sampling window. The seconds
+    // themselves are read as stored and never interpreted here — an app-corroboration pass reads
+    // presence of this row, not its duration; "energy use is not execution of a particular
+    // malicious function" per the item's own guardrail.
+    record: "power",
+    locality: "device-local",
+    app: { package: "Bundle ID" },
+  },
+  {
+    platform: "ios",
+    name: "Application Permissions",
+    lastUpdate: "2026-07-31",
+    // The modern TCC.db schema (a `last_modified` column present, roughly iOS 13+). TCC.db has an
+    // older schema too (no `last_modified`, a trailing `Prompt Count` column instead) that this
+    // entry does not cover — a legacy-schema export reads headers-differ, same as any other
+    // unregistered variant; not guessed at.
+    headers: ["Last Modified Timestamp", "Bundle ID", "Service", "Access"],
+    record: "permission",
+    locality: "device-local",
+    app: { package: "Bundle ID" },
+    // Access is Allowed / Not allowed / Limited, per the module's own SQL CASE — carried into
+    // evidence/words so a denied prompt never reads the same as a granted one.
+    accessColumn: "Access",
+  },
+  {
+    platform: "ios",
+    name: "App Data",
+    lastUpdate: "2026-07-31",
+    headers: [
+      "Live Usage Timestamp",
+      "Process First Usage Timestamp",
+      "Process Timestamp",
+      "Bundle Name",
+      "Process Name",
+      "ZKIND (as stored)",
+      "Wifi In (Bytes)",
+      "Wifi Out (Bytes)",
+      "Mobile/WWAN In (Bytes)",
+      "Mobile/WWAN Out (Bytes)",
+      "Wired In (Bytes)",
+      "Wired Out (Bytes)",
+    ],
+    // netusage.sqlite's per-process network usage (#932 item 16) — the "matching network evidence"
+    // half. Identity is "Bundle Name", never "Process Name" (daemons and system processes populate
+    // that column too). "ZKIND (as stored)" is upstream-undocumented ("its values are not
+    // documented" per the module's own note) and is read as stored, never interpreted; presence of
+    // this row (a populated Bundle Name) is the corroborating fact, not a byte total.
+    record: "network",
+    locality: "device-local",
+    app: { package: "Bundle Name" },
   },
   {
     platform: "ios",
@@ -421,6 +512,9 @@ export function readOrigin(
       column: entry.transitionColumn!,
       value: transition.slice(0, NAME_MAX),
     });
+  const access = entry.accessColumn ? col(entry.accessColumn) : "";
+  if (access)
+    evidence.push({ facet: "access", column: entry.accessColumn!, value: access.slice(0, NAME_MAX) });
   const deviceName = entry.device ? col(entry.device.name) : "";
   const deviceId = entry.device?.id ? col(entry.device.id) : "";
   const accountName = entry.account ? col(entry.account.name) : "";
@@ -469,6 +563,7 @@ export function readOrigin(
     ...(deviceName ? [`row names device "${tagSafe(deviceName.slice(0, NAME_MAX))}"`] : []),
     ...(accountName ? [`row names account "${tagSafe(accountName.slice(0, NAME_MAX))}"`] : []),
     ...(transition ? [`transition ${tagSafe(transition.slice(0, NAME_MAX))}`] : []),
+    ...(access ? [`access ${tagSafe(access.slice(0, NAME_MAX))}`] : []),
   ];
   const words = `${parts.join(", ")}${names.length ? ` (${names.join("; ")})` : ""}${conflicts.length ? "; conflict: " + conflicts.map(tagSafe).join("; ") : ""} — ${REGISTRY_VERSION}`;
   return { block, words };

@@ -34,6 +34,7 @@ export const DERIVED_NOTE_NAMES: readonly string[] = [
   "hollowing sequence",
   "after Defender",
   "infection window",
+  "app corroboration",
   "smb-staged file executed",
   "ran a share-staged file",
   "service/task creation after a pipe call",

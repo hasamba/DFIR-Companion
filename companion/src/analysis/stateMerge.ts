@@ -19,6 +19,7 @@ import { corroborateDownloadExecution } from "./downloadExecution.js";
 import { corroborateSmbExecution } from "./smbExecution.js";
 import { corroborateDefenderEpisodes } from "./defenderEpisodes.js";
 import { markInfectionWindow } from "./mobileInfectionWindow.js";
+import { markAppCorroboration } from "./mobileBackgroundActivity.js";
 import { corroborateInjectionSequences } from "./injectionSequence.js";
 import { markRansomwarePrecursors } from "./ransomwarePrecursor.js";
 import { explainCertutilTransfers } from "./certutilTransfer.js";
@@ -394,11 +395,15 @@ export function mergeDelta(
   // after its earliest malicious app-inventory sign. Here because the verdict that makes a sign
   // arrives with enrichment, after the import; recomputed on every merge, notes only.
   const withWindow = markInfectionWindow(withDefender, iocs, ctx.timestamp);
+  // An iOS app named by two or more independent artifacts — usage, power, permission, network,
+  // notification (#932 item 16). Here for the same reason as the infection window: rows arrive from
+  // separate LEAPP imports. Presence only, never a magnitude; recomputed on every merge, notes only.
+  const withAppCorroboration = markAppCorroboration(withWindow);
   // A write-capable handle, then a remote thread from the same source into the same target; a
   // process created, its image replaced, then reached into — joined by process GUID (#932 item 9,
   // second half). Here because the records may arrive in separate imports. Only ever raises;
   // recomputed on every merge.
-  const withInjection = corroborateInjectionSequences(withWindow);
+  const withInjection = corroborateInjectionSequences(withAppCorroboration);
   // Several distinct pre-encryption behaviours on one host inside one window (#908 item 3). Runs
   // here, with the other deterministic correlations, because the steps arrive from different
   // importers and no single one of them is remarkable — the combination is the finding. Only ever
