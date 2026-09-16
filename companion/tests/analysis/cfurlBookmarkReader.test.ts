@@ -57,6 +57,28 @@ describe("parseBookmark — real mac_alias-encoded fixture", () => {
     const bm = parseBookmark(data);
     expect(bookmarkGet(bm, 0xdead)).toBeUndefined();
   });
+
+  it("discloses tocChainTruncated: false for a real, cleanly-terminated single-TOC bookmark", () => {
+    const bm = parseBookmark(data);
+    expect(bm.tocChainTruncated).toBe(false);
+  });
+});
+
+describe("parseBookmark — TOC-chain truncation disclosure", () => {
+  it("discloses tocChainTruncated: true when a real TOC's own nextToc points at a bad-magic offset", () => {
+    // The real fixture's own TOC header, with its nextToc field (offset +12 within the 20-byte TOC
+    // header) overwritten from 0 (clean end) to 4 -- a nonzero offset that lands mid-header, whose
+    // own bytes do not carry the real 0xFFFFFFFE TOC magic. Real mac_alias treats this the same as
+    // a clean end (a `break`, never an error), but this codebase discloses it rather than folding
+    // it silently into "decoded" (Ollama code review finding).
+    const crafted = buf(
+      "626f6f6ba4010000000004103000000000000000000000000000000000000000000000000000000000000000000000000c01000010000000010600001c0000002c0000003c0000004c000000050000000101000055736572730000000700000001010000616e616c7973740007000000010100004465736b746f70000b000000010100007061796c6f61642e6578650010000000010600007800000084000000900000009c0000000400000003030000020000000400000003030000640000000400000003030000c800000004000000030300002c0100000c000000010100004d6163696e746f7368204844240000000101000031323334353637382d313233342d313233342d313233342d31323334353637383941424300000000010500000b000000010100007061796c6f61642e6578650000000000010500004c000000feffffff01000000040000000700000004100000040000000000000005100000600000000000000010200000a80000000000000011200000bc0000000000000030200000e80000000000000001d00000040100000000000017f00000f000000000000000",
+    );
+    const bm = parseBookmark(crafted);
+    expect(bm.tocChainTruncated).toBe(true);
+    // The first (only readable) TOC still decodes -- truncation is disclosed, not fatal.
+    expect(bm.tocs.size).toBe(1);
+  });
 });
 
 describe("parseBookmark — malformed/hostile input", () => {

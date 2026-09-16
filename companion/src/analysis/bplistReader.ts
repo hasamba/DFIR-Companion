@@ -123,7 +123,12 @@ function decodeObject(
     return readMultibyteInt(buf, offset + 1, len);
   }
   if ((typeByte & 0xf0) === 0x20) {
-    const len = 2 ** (typeByte & 0x0f);
+    // The real format defines exactly two float widths — nibble 2 (32-bit) and nibble 3 (64-bit).
+    // Any other nibble is not a valid float record and must be rejected, never read as an
+    // arbitrarily-sized region (Ollama code review finding).
+    const nibble = typeByte & 0x0f;
+    if (nibble !== 2 && nibble !== 3) throw new BplistError(`invalid float nibble ${nibble}`);
+    const len = nibble === 2 ? 4 : 8;
     if (offset + 1 + len > buf.length) throw new BplistError("float out of range");
     return len === 4 ? buf.readFloatBE(offset + 1) : buf.readDoubleBE(offset + 1);
   }
@@ -189,7 +194,12 @@ function decodeObject(
   if ((typeByte & 0xf0) === 0x80) {
     const len = (typeByte & 0x0f) + 1;
     const uid = readMultibyteUint(buf, offset + 1, len);
-    return new BplistUid(checkedOffset(uid, Number.MAX_SAFE_INTEGER, "uid"));
+    // A UID is meaningful only as an index into the object table -- reject one that can't
+    // possibly resolve, at this layer, rather than deferring the check to a caller that may not
+    // apply it uniformly (Ollama code review finding).
+    const idx = checkedOffset(uid, offsetTable.length, "uid");
+    if (idx >= offsetTable.length) throw new BplistError(`uid ${idx} out of range`);
+    return new BplistUid(idx);
   }
   if ((typeByte & 0xf0) === 0xa0 || (typeByte & 0xf0) === 0xc0) {
     let count: bigint;
@@ -293,6 +303,11 @@ export function parseBplist(buf: Buffer): BplistValue {
       buf.length,
       "offset table entry",
     );
+    // Every real object lives strictly BEFORE the offset table itself (the table and the 32-byte
+    // trailer both follow the object stream) -- an entry that doesn't is either corrupt or crafted
+    // to make an object decode from the trailer/table's own structural bytes instead of real
+    // object data (Ollama code review finding).
+    if (off >= tableOffset) throw new BplistError("offset table entry points outside the object stream");
     offsetTable.push(off);
   }
 

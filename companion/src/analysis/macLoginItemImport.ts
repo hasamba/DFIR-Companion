@@ -51,6 +51,9 @@ export interface MacLoginItemResult {
   groups: number;
   format: string;
   malformedItems: number;
+  /** Items kept (never dropped -- see mapItem) whose own bookmark data failed to decode; disclosed
+   * separately from malformedItems/dropped, which stay 0 because no item is ever discarded here. */
+  malformedBookmarks: number;
   sourceFormat: "btm-legacy" | "btm-modern";
 }
 
@@ -97,6 +100,7 @@ interface BookmarkFacts {
   wasFileReference?: boolean;
   displayName?: string;
   decodeStatus: "decoded" | "malformed" | "absent";
+  tocTruncated?: boolean;
 }
 
 function decodeBookmark(bytes: Buffer | undefined): BookmarkFacts {
@@ -135,6 +139,7 @@ function decodeBookmark(bytes: Buffer | undefined): BookmarkFacts {
         : {}),
       ...(typeof displayNameRaw === "string" ? { displayName: clip(displayNameRaw, MAX_FIELD_LEN) } : {}),
       decodeStatus: "decoded" as const,
+      ...(bm.tocChainTruncated ? { tocTruncated: true } : {}),
     };
   } catch {
     return { decodeStatus: "malformed" };
@@ -218,10 +223,16 @@ function collectModernItems(root: ResolvedValue[]): RawItem[] {
   return items;
 }
 
-function mapItem(item: RawItem, reportFingerprint: string): MappedEvent {
+function mapItem(
+  item: RawItem,
+  reportFingerprint: string,
+): { event: MappedEvent; bookmarkMalformed: boolean } {
   const facts = decodeBookmark(item.bookmarkBytes);
+  // The FULL digest, never a clipped slice — a clipped digest fed into an identity hash risks
+  // colliding two content-distinct bookmarks that happen to share the same short prefix (the
+  // standing "hash unclipped raw values" lesson from item 11, per Ollama code review finding).
   const bookmarkDigest = item.bookmarkBytes
-    ? createHash("sha256").update(item.bookmarkBytes).digest("hex").slice(0, 16)
+    ? createHash("sha256").update(item.bookmarkBytes).digest("hex")
     : "none";
   const findingId = createHash("sha256")
     .update(
@@ -250,7 +261,7 @@ function mapItem(item: RawItem, reportFingerprint: string): MappedEvent {
   );
   const description = `${body}${reportTag}`;
 
-  return {
+  const event: MappedEvent = {
     timestamp: "",
     description,
     severity: "Info",
@@ -286,6 +297,7 @@ function mapItem(item: RawItem, reportFingerprint: string): MappedEvent {
         ...(facts.wasFileReference !== undefined ? { wasFileReference: facts.wasFileReference } : {}),
         ...(facts.displayName ? { displayName: facts.displayName } : {}),
         bookmarkDecodeStatus: facts.decodeStatus,
+        ...(facts.tocTruncated ? { bookmarkTocTruncated: true } : {}),
         targetEvidence: "stored-bookmark-metadata",
         reportFingerprint,
         mappingVersion: "mac-login-item-target-v1",
@@ -293,22 +305,27 @@ function mapItem(item: RawItem, reportFingerprint: string): MappedEvent {
       },
     }),
   };
+  return { event, bookmarkMalformed: facts.decodeStatus === "malformed" };
 }
 
 export function parseMacLoginItemBtm(
   bytes: Buffer,
   opts: MacLoginItemOptions = {},
 ): MacLoginItemResult | null {
-  let root: ResolvedValue;
-  try {
-    const parsed = resolveKeyedArchive(parseBplist(bytes));
-    if (!parsed) return null;
-    const r = parsed.roots.get("root");
-    if (r === undefined) return null;
-    root = r;
-  } catch {
-    return null;
-  }
+  // Cheap, exception-free check first: if the bytes don't even carry the real bplist00 magic,
+  // this is simply the wrong format -- return null the same way every other importer's "not this
+  // format" path does. Anything that fails PAST this point is a genuine parse/structural/budget
+  // problem with what IS a real bplist, and must propagate as a real error rather than being
+  // silently folded into the same "not recognized" signal (Ollama code review finding: budget-
+  // exceeded and bounds errors were previously indistinguishable from "wrong format" and surfaced
+  // as a misleading 400 rather than the real failure).
+  if (bytes.length < 8 || bytes.toString("ascii", 0, 8) !== "bplist00") return null;
+
+  const parsed = resolveKeyedArchive(parseBplist(bytes));
+  if (!parsed) return null;
+  const r = parsed.roots.get("root");
+  if (r === undefined) return null;
+  const root: ResolvedValue = r;
 
   let items: RawItem[] = [];
   let sourceFormat: "btm-legacy" | "btm-modern";
@@ -330,11 +347,14 @@ export function parseMacLoginItemBtm(
   const reportFingerprint = createHash("sha256").update(bytes).digest("hex");
   const mapped: MappedEvent[] = [];
   let total = 0;
-  const malformedItems = 0;
+  const malformedItems = 0; // no item is ever discarded here -- see malformedBookmarks instead
+  let malformedBookmarks = 0;
   for (const item of items) {
     if (total >= MAX_ITEMS_SCANNED) break;
     total += 1;
-    mapped.push(mapItem(item, reportFingerprint));
+    const { event, bookmarkMalformed } = mapItem(item, reportFingerprint);
+    if (bookmarkMalformed) malformedBookmarks += 1;
+    mapped.push(event);
   }
 
   const { events, groups } = aggregateEvents(mapped, {
@@ -352,6 +372,7 @@ export function parseMacLoginItemBtm(
     groups,
     format: sourceFormat === "btm-legacy" ? "MacBtmLegacy" : "MacBtmModern",
     malformedItems,
+    malformedBookmarks,
     sourceFormat,
   };
 }

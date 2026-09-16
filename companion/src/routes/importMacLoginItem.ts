@@ -6,6 +6,7 @@ import type { SettleDeps } from "./importSettle.js";
 import { commitDedicatedImport } from "./importCommit.js";
 import { parseMacLoginItemBtm } from "../analysis/macLoginItemImport.js";
 import { detectBinaryImportKind } from "../analysis/macBinaryDetect.js";
+import { MAX_INPUT_BYTES } from "../analysis/bplistReader.js";
 import { FileTooLargeError, readHandleBounded } from "../storage/boundedRead.js";
 import { maxImportFileBytes } from "./importFileHead.js";
 
@@ -19,8 +20,11 @@ import { maxImportFileBytes } from "./importFileHead.js";
  * accepts raw bytes from the browser upload path today, so this landing is path-based only — the
  * same "operator names a server-local file" mechanism `/cases/:id/import-file` already uses for
  * files the browser can't handle, gated the same way (see auth/policy.ts's
- * CASE_GLOBAL_ADMIN_SEGMENTS). A drag-and-drop / browser-upload path is deferred; filed as a
- * follow-up on landing. See RECOMMENDATION-12.md for the full research trail.
+ * CASE_GLOBAL_ADMIN_SEGMENTS). Two paths are deliberately NOT wired to this yet, filed as a
+ * follow-up on landing: a drag-and-drop / browser-upload path, and the evidence drop-folder's own
+ * auto-import sweep (a BTM file placed there is still classified `raw-tool-input` by
+ * dropScan.ts's generic NUL-byte check, exactly as before this route existed). See
+ * RECOMMENDATION-12.md for the full research trail.
  */
 export function registerMacLoginItemImportRoute(
   app: Express,
@@ -38,11 +42,16 @@ export function registerMacLoginItemImportRoute(
       return res.status(400).json({ error: "path is required (absolute path to a file on the server)" });
     const originalName = basename(filePath);
 
+    // Capped at the PARSER's own bound (32 MiB), never the codebase-wide text-import ceiling
+    // (256 MiB by default) — reading up to that much into memory only to have the parser reject it
+    // immediately would let a trusted-but-mistaken caller force a large, wasted allocation for
+    // every oversized file (Ollama code review finding).
+    const readCap = Math.min(maxImportFileBytes(), MAX_INPUT_BYTES);
     let bytes: Buffer;
     try {
       const fh = await open(filePath, "r");
       try {
-        bytes = await readHandleBounded(fh, maxImportFileBytes());
+        bytes = await readHandleBounded(fh, readCap);
       } finally {
         await fh.close();
       }

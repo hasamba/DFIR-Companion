@@ -45,6 +45,10 @@ export const macLoginItemBlockSchema = z.object({
   wasFileReference: z.boolean().optional(),
   displayName: z.string().max(MAX_FIELD_LEN).optional(),
   bookmarkDecodeStatus: z.enum(["decoded", "malformed", "absent"]),
+  // True when the TOC chain ended on a magic mismatch rather than a clean nextToc of 0 — at least
+  // as consistent with truncation/corruption as with a deliberate terminator, disclosed rather
+  // than folded silently into "decoded" (Ollama code review finding).
+  bookmarkTocTruncated: z.boolean().optional(),
   targetEvidence: z.literal("stored-bookmark-metadata"),
   reportFingerprint: z.string().length(64),
   mappingVersion: z.literal("mac-login-item-target-v1"),

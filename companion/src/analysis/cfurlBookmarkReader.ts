@@ -165,6 +165,12 @@ function getItem(data: Buffer, hdrsize: number, offset: number, budget: Budget, 
 export interface Bookmark {
   tocs: Map<number, Map<number | string, BookmarkItem>>;
   resolvedFromFormat: "book" | "alis";
+  /** True when the TOC chain ended because a non-zero `nextToc` pointed at a block whose own magic
+   * did not match 0xFFFFFFFE — real `mac_alias` treats this the same as a clean end of chain (a
+   * `nextToc` of 0), but a mismatch after at least one real TOC was already read is at least as
+   * consistent with truncation/corruption as with a deliberate terminator, so it is disclosed here
+   * rather than silently folded into the same "clean" case (Ollama code review finding). */
+  tocChainTruncated: boolean;
 }
 
 export function parseBookmark(data: Buffer): Bookmark {
@@ -182,6 +188,7 @@ export function parseBookmark(data: Buffer): Bookmark {
   const tocs = new Map<number, Map<number | string, BookmarkItem>>();
   const visitedTocOffsets = new Set<number>();
   let tocOffset = u32le(data, hdrsize);
+  let tocChainTruncated = false;
 
   while (tocOffset !== 0) {
     if (visitedTocOffsets.has(tocOffset)) throw new CfurlBookmarkError("TOC chain cycle");
@@ -192,7 +199,13 @@ export function parseBookmark(data: Buffer): Bookmark {
     if (tocOffset > size - hdrsize || size - tocBase < 20)
       throw new CfurlBookmarkError("TOC offset out of range");
     const tocMagic = u32le(data, tocBase + 4);
-    if (tocMagic !== 0xfffffffe) break; // matches mac_alias: a mismatched magic ends the chain, not an error
+    if (tocMagic !== 0xfffffffe) {
+      // Matches real mac_alias behavior: a mismatched magic ends the chain rather than throwing.
+      // Disclosed, not silently folded into a clean end (a non-zero nextToc that fails this check
+      // is at least as consistent with truncation/corruption as with a deliberate terminator).
+      tocChainTruncated = true;
+      break;
+    }
     const tocId = u32le(data, tocBase + 8);
     const nextToc = u32le(data, tocBase + 12);
     const tocCount = u32le(data, tocBase + 16);
@@ -215,7 +228,7 @@ export function parseBookmark(data: Buffer): Bookmark {
     tocOffset = nextToc;
   }
 
-  return { tocs, resolvedFromFormat: magicBytes };
+  return { tocs, resolvedFromFormat: magicBytes, tocChainTruncated };
 }
 
 export function bookmarkGet(bookmark: Bookmark, key: number | string): BookmarkItem | undefined {

@@ -71,6 +71,34 @@ describe("parseBplist — malformed/hostile input", () => {
     const crafted = Buffer.concat([real.subarray(0, real.length - 32), trailer]);
     expect(() => parseBplist(crafted)).toThrow(BplistError);
   });
+
+  it("rejects a float type byte whose nibble is not exactly 2 or 3, never reads an arbitrary-length region", () => {
+    // Hand-crafted: a single object at offset 8, type byte 0x25 (float, nibble 5 -- invalid; only
+    // 2 and 3 are real). Ollama code review finding: the un-fixed code computed len = 2**5 = 32 and
+    // happily read 32 bytes as if it were a valid float record.
+    const crafted = buf(
+      "62706c6973743030250000000000000000000000000000000000000000000000000000000000000000080000000000000101000000000000000100000000000000000000000000000029",
+    );
+    expect(() => parseBplist(crafted)).toThrow(/invalid float nibble/);
+  });
+
+  it("rejects a UID pointing past the real object table (validated at the bplist layer itself)", () => {
+    // Hand-crafted: a single object at offset 8, a UID (type 0x81) whose value is 99, but the file
+    // declares only 1 real object.
+    const crafted = buf(
+      "62706c697374303081006308000000000000010100000000000000010000000000000000000000000000000b",
+    );
+    expect(() => parseBplist(crafted)).toThrow(/uid.*out of range/i);
+  });
+
+  it("rejects an offset-table entry that points at the offset table itself rather than real object data", () => {
+    // Hand-crafted: a single valid null object at offset 8, but the offset-table entry is crafted
+    // to point at the table's own offset (9) instead of the real object (8).
+    const crafted = buf(
+      "62706c697374303000090000000000000101000000000000000100000000000000000000000000000009",
+    );
+    expect(() => parseBplist(crafted)).toThrow(/offset table entry points outside/);
+  });
 });
 
 describe("BplistUid", () => {

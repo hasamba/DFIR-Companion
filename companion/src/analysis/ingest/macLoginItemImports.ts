@@ -56,7 +56,8 @@ export async function importMacLoginItem(
     threadsClosed: [],
     timelineNote:
       `macOS login item import (${parsed.sourceFormat}): ${parsed.kept} item(s) from ${parsed.total} scanned` +
-      (parsed.malformedItems ? `, ${parsed.malformedItems} malformed item(s)` : ""),
+      (parsed.malformedItems ? `, ${parsed.malformedItems} malformed item(s)` : "") +
+      (parsed.malformedBookmarks ? `, ${parsed.malformedBookmarks} malformed bookmark(s)` : ""),
     summary: "",
   };
   const delta = deltaSchema.parse(raw);
