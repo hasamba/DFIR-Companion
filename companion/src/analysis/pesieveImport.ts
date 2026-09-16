@@ -63,7 +63,9 @@ interface PeSieveReport {
 export function isPeSieveReport(root: unknown): boolean {
   if (typeof root !== "object" || root === null || Array.isArray(root)) return false;
   const r = root as Record<string, unknown>;
-  if (r.pid === undefined || r.pid === null) return false;
+  // "Scalar pid" means exactly that — an object/array/boolean pid is not this shape (Ollama
+  // code-review finding: the doc comment claimed this but the check didn't enforce it).
+  if (typeof r.pid !== "number" && typeof r.pid !== "string") return false;
   const scanned = r.scanned;
   if (typeof scanned !== "object" || scanned === null || Array.isArray(scanned)) return false;
   return Array.isArray(r.scans);
@@ -144,6 +146,26 @@ function gradeIatScan(moduleFile: string): Graded {
   };
 }
 
+// PE-sieve's own real documentation (re-verified, not the design's first-draft guess): implanted
+// PE / implanted shellcode are reported via workingset_scan's own has_pe/has_shellcode flags —
+// there is no separate "mem_code_scan"-style key. A manually-mapped PE or raw shellcode in the
+// working set is as strong and specific a signal as findevil's own PEB_MASQ/PE_PATCHED.
+function gradeWorkingsetScan(detail: Record<string, unknown>, moduleFile: string): Graded {
+  if (num(detail.has_pe) === 1 || num(detail.has_shellcode) === 1) {
+    const what = num(detail.has_pe) === 1 ? "an implanted PE" : "implanted shellcode";
+    return {
+      severity: "High",
+      mitre: ["T1055"],
+      note: `workingset_scan found ${what} in ${moduleFile || "this region"}'s own working set.`,
+    };
+  }
+  return {
+    severity: "Medium",
+    mitre: ["T1055"],
+    note: `workingset_scan flagged ${moduleFile || "this module"}.`,
+  };
+}
+
 function gradeUnrecognized(scanType: string, moduleFile: string): Graded {
   return {
     severity: "Low",
@@ -162,6 +184,8 @@ function grade(scanType: string, detail: Record<string, unknown>, moduleFile: st
       return gradeMappingScan(detail, moduleFile);
     case "iat_scan":
       return gradeIatScan(moduleFile);
+    case "workingset_scan":
+      return gradeWorkingsetScan(detail, moduleFile);
     default:
       return gradeUnrecognized(scanType, moduleFile);
   }
@@ -220,20 +244,15 @@ export function parseMemoryPeSieve(text: string, opts: MemoryImportOptions): Mem
   const sink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
 
-  const modifiedTotal = num(scanned.modified?.total);
-  mapped.push({
-    timestamp: "",
-    description: `PE-sieve: ${summaryNote(pid, scanned)}`.slice(0, 600),
-    severity: modifiedTotal > 0 ? "Medium" : "Info",
-    mitre: [],
-    aggKey: boundedAggKey(`pe-sieve|summary|${pid}`),
-    sources: ["PE-sieve"],
-  });
-
   let flaggedCount = 0;
-  for (const entry of scans) {
+  for (let i = 0; i < scans.length; i++) {
+    const entry = scans[i];
+    // A scans[] entry is untrusted input — a malformed report can carry null/non-object elements
+    // here, and Object.entries(null) throws rather than returning [], which would otherwise crash
+    // the whole parse over one bad entry.
+    if (typeof entry !== "object" || entry === null) continue;
     const [scanType, detail] = Object.entries(entry)[0] ?? [];
-    if (!scanType || !detail || typeof detail !== "object") continue;
+    if (!scanType || !detail || typeof detail !== "object" || detail === null) continue;
     if (num(detail.status) !== 1) continue;
     flaggedCount++;
 
@@ -243,15 +262,33 @@ export function parseMemoryPeSieve(text: string, opts: MemoryImportOptions): Mem
 
     if (moduleFile) addIoc(sink, "file", filePathIoc(moduleFile));
 
+    // module (a hex address) is often absent on some scan types — module_file, and finally this
+    // entry's own array position, keep distinct module-less findings from silently collapsing
+    // into one aggregated event (Ollama code-review finding).
+    const identity = module || moduleFile || String(i);
+
     mapped.push({
       timestamp: "",
       description: `PE-sieve: ${note}`.slice(0, 600),
       severity,
       mitre,
-      aggKey: boundedAggKey(`pe-sieve|${pid}|${scanType}|${module}`),
+      aggKey: boundedAggKey(`pe-sieve|${pid}|${scanType}|${identity}`),
       sources: ["PE-sieve"],
     });
   }
+
+  // Severity trusts whichever of the report's own claimed count or this parse's own tally is
+  // higher — a malformed report whose modified.total disagrees with its own scans[] entries must
+  // never grade Info when a real finding was actually parsed out of it (Ollama code-review finding).
+  const modifiedTotal = num(scanned.modified?.total);
+  mapped.unshift({
+    timestamp: "",
+    description: `PE-sieve: ${summaryNote(pid, scanned)}`.slice(0, 600),
+    severity: Math.max(modifiedTotal, flaggedCount) > 0 ? "Medium" : "Info",
+    mitre: [],
+    aggKey: boundedAggKey(`pe-sieve|summary|${pid}`),
+    sources: ["PE-sieve"],
+  });
 
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,

@@ -65,7 +65,7 @@ describe("isPeSieveReport", () => {
 describe("parseMemoryPeSieve — summary event", () => {
   it("grades Info when nothing was flagged", () => {
     const r = parseMemoryPeSieve(JSON.stringify(report()), {});
-    const summary = r.events.find((e) => e.description.includes("scanned"));
+    const summary = r.events.find((e) => e.description.includes("PE-sieve report for PID"));
     expect(summary?.severity).toBe("Info");
   });
 
@@ -93,11 +93,27 @@ describe("parseMemoryPeSieve — summary event", () => {
       ),
       {},
     );
-    const summary = r.events.find((e) => e.description.includes("scanned"));
+    const summary = r.events.find((e) => e.description.includes("PE-sieve report for PID"));
     expect(summary?.severity).toBe("Medium");
     expect(summary?.description).toContain("1 skipped");
     expect(summary?.description).toContain("1 error");
     expect(summary?.description).toContain("patched");
+  });
+
+  // Regression: the summary must never grade Info when a real per-entry finding was parsed out,
+  // even if the report's own modified.total disagrees (a malformed/inconsistent report).
+  it("grades Medium when scans[] has a flagged entry even if modified.total claims 0", () => {
+    const r = parseMemoryPeSieve(
+      JSON.stringify(
+        report({
+          scanned: { total: 1, skipped: 0, errors: 0, modified: { total: 0 } },
+          scans: [scan({ code_scan: { module: "1", module_file: "x.dll", status: 1, patches: 1 } })],
+        }),
+      ),
+      {},
+    );
+    const summary = r.events.find((e) => e.description.includes("PE-sieve report for PID"));
+    expect(summary?.severity).toBe("Medium");
   });
 });
 
@@ -106,7 +122,17 @@ describe("parseMemoryPeSieve — code_scan", () => {
     const r = parseMemoryPeSieve(
       JSON.stringify(
         report({
-          scans: [scan({ code_scan: { module: "75660000", module_file: "user32.dll", status: 1, patches: 2, scanned_sections: 1 } })],
+          scans: [
+            scan({
+              code_scan: {
+                module: "75660000",
+                module_file: "user32.dll",
+                status: 1,
+                patches: 2,
+                scanned_sections: 1,
+              },
+            }),
+          ],
         }),
       ),
       {},
@@ -135,7 +161,9 @@ describe("parseMemoryPeSieve — code_scan", () => {
     const r = parseMemoryPeSieve(
       JSON.stringify(
         report({
-          scans: [scan({ code_scan: { module: "75660000", module_file: "user32.dll", status: 0, patches: 0 } })],
+          scans: [
+            scan({ code_scan: { module: "75660000", module_file: "user32.dll", status: 0, patches: 0 } }),
+          ],
         }),
       ),
       {},
@@ -202,7 +230,11 @@ describe("parseMemoryPeSieve — mapping_scan", () => {
     const r = parseMemoryPeSieve(
       JSON.stringify(
         report({
-          scans: [scan({ mapping_scan: { module: "1", module_file: "svc.exe", mapped_file: "C:\\svc.exe", status: 1 } })],
+          scans: [
+            scan({
+              mapping_scan: { module: "1", module_file: "svc.exe", mapped_file: "C:\\svc.exe", status: 1 },
+            }),
+          ],
         }),
       ),
       {},
@@ -217,7 +249,9 @@ describe("parseMemoryPeSieve — mapping_scan", () => {
     const r = parseMemoryPeSieve(
       JSON.stringify(
         report({
-          scans: [scan({ mapping_scan: { module: "1", module_file: "svc.exe", mapped_file: "", status: 1 } })],
+          scans: [
+            scan({ mapping_scan: { module: "1", module_file: "svc.exe", mapped_file: "", status: 1 } }),
+          ],
         }),
       ),
       {},
@@ -244,17 +278,62 @@ describe("parseMemoryPeSieve — iat_scan", () => {
   });
 });
 
-describe("parseMemoryPeSieve — unrecognized scan type", () => {
-  it("grades Low/no-MITRE, never crashes, never fabricates detail fields", () => {
+describe("parseMemoryPeSieve — workingset_scan (has_pe/has_shellcode)", () => {
+  it("grades High/T1055 for an implanted PE", () => {
     const r = parseMemoryPeSieve(
       JSON.stringify(
         report({
-          scans: [scan({ workingset_scan: { module: "1", module_file: "x.dll", status: 1 } })],
+          scans: [scan({ workingset_scan: { module: "1", module_file: "x.dll", status: 1, has_pe: 1 } })],
         }),
       ),
       {},
     );
     const e = r.events.find((ev) => ev.description.includes("workingset_scan"));
+    expect(e?.severity).toBe("High");
+    expect(e?.mitreTechniques).toContain("T1055");
+    expect(e?.description).toContain("implanted PE");
+  });
+
+  it("grades High/T1055 for implanted shellcode", () => {
+    const r = parseMemoryPeSieve(
+      JSON.stringify(
+        report({
+          scans: [
+            scan({ workingset_scan: { module: "1", module_file: "x.dll", status: 1, has_shellcode: 1 } }),
+          ],
+        }),
+      ),
+      {},
+    );
+    const e = r.events.find((ev) => ev.description.includes("workingset_scan"));
+    expect(e?.severity).toBe("High");
+    expect(e?.description).toContain("shellcode");
+  });
+
+  it("grades Medium/T1055 when flagged without has_pe/has_shellcode", () => {
+    const r = parseMemoryPeSieve(
+      JSON.stringify(
+        report({ scans: [scan({ workingset_scan: { module: "1", module_file: "x.dll", status: 1 } })] }),
+      ),
+      {},
+    );
+    const e = r.events.find((ev) => ev.description.includes("workingset_scan"));
+    expect(e?.severity).toBe("Medium");
+    expect(e?.mitreTechniques).toContain("T1055");
+  });
+});
+
+describe("parseMemoryPeSieve — unrecognized scan type", () => {
+  it("grades Low/no-MITRE, never crashes, never fabricates detail fields", () => {
+    const r = parseMemoryPeSieve(
+      JSON.stringify(
+        report({
+          scans: [scan({ some_future_scan: { module: "1", module_file: "x.dll", status: 1 } })],
+        }),
+      ),
+      {},
+    );
+    const e = r.events.find((ev) => ev.description.includes("some_future_scan"));
     expect(e?.severity).toBe("Low");
     expect(e?.mitreTechniques ?? []).toHaveLength(0);
   });
@@ -276,6 +355,23 @@ describe("parseMemoryPeSieve — multiple scan types on the same module", () => 
     expect(r.events.some((e) => e.description.includes("code_scan"))).toBe(true);
     expect(r.events.some((e) => e.description.includes("headers_scan"))).toBe(true);
   });
+
+  // Regression: module (a hex address) is often absent — two distinct module-less findings of the
+  // SAME scan type must not collapse into one aggregated event (Ollama code-review finding).
+  it("does not collapse two module-less findings of the same scan type into one event", () => {
+    const r = parseMemoryPeSieve(
+      JSON.stringify(
+        report({
+          scans: [
+            scan({ headers_scan: { module_file: "", status: 1, dos_hdr_modified: 1 } }),
+            scan({ headers_scan: { module_file: "", status: 1, nt_hdr_modified: 1 } }),
+          ],
+        }),
+      ),
+      {},
+    );
+    expect(r.events.filter((e) => e.description.includes("headers_scan"))).toHaveLength(2);
+  });
 });
 
 describe("parseMemoryPeSieve — IOC promotion", () => {
@@ -283,11 +379,47 @@ describe("parseMemoryPeSieve — IOC promotion", () => {
     const r = parseMemoryPeSieve(
       JSON.stringify(
         report({
-          scans: [scan({ headers_scan: { module: "1", module_file: "C:\\Windows\\ntdll.dll", status: 1, dos_hdr_modified: 1 } })],
+          scans: [
+            scan({
+              headers_scan: {
+                module: "1",
+                module_file: "C:\\Windows\\ntdll.dll",
+                status: 1,
+                dos_hdr_modified: 1,
+              },
+            }),
+          ],
         }),
       ),
       {},
     );
     expect(r.iocs.some((i) => i.type === "file" && /ntdll\.dll/i.test(i.value))).toBe(true);
+  });
+});
+
+// Regression: a malformed scans[] entry (null, a bare scalar, or a detail object that is itself
+// null) must never crash the whole parse — Object.entries(null) throws rather than returning [].
+describe("parseMemoryPeSieve — malformed scans[] entries never crash the parse", () => {
+  it("skips a null entry", () => {
+    const r = parseMemoryPeSieve(
+      JSON.stringify(
+        report({
+          scans: [null, scan({ code_scan: { module: "1", module_file: "x.dll", status: 1, patches: 1 } })],
+        }),
+      ),
+      {},
+    );
+    expect(r.events.some((e) => e.description.includes("code_scan"))).toBe(true);
+  });
+
+  it("skips a bare-scalar entry", () => {
+    const r = parseMemoryPeSieve(JSON.stringify(report({ scans: [5, "not-an-object"] })), {});
+    expect(() => r).not.toThrow();
+    expect(r.events.filter((e) => e.description.includes("PE-sieve:"))).toHaveLength(1); // summary only
+  });
+
+  it("skips an entry whose scan-type detail is null", () => {
+    const r = parseMemoryPeSieve(JSON.stringify(report({ scans: [{ code_scan: null }] })), {});
+    expect(r.events.filter((e) => e.description.includes("PE-sieve:"))).toHaveLength(1); // summary only
   });
 });
