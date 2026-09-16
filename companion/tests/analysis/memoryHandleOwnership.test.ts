@@ -61,6 +61,81 @@ describe("handleOwnershipFacts — unconfirmed-process, per PID not per row", ()
   });
 });
 
+describe("handleOwnershipFacts — PID-reuse identity conflict (regression, Codex finding H1)", () => {
+  it("never resolves a PID whose sole process candidate disagrees with the handle row's own holder name", () => {
+    const processIndex = processIndexFrom([{ PID: "100", ImageFileName: "chrome.exe" }]);
+    const rows = [handleRow({ PID: "100", Process: "evil.exe" })];
+    const result = handleOwnershipFacts(rows, processIndex);
+    expect(result.facts.filter((f) => f.kind === "residual-handle")).toHaveLength(0);
+    const facts = result.facts.filter((f) => f.kind === "unconfirmed-process");
+    expect(facts).toHaveLength(1);
+    expect(facts[0].note).toContain("conflict");
+    expect(facts[0].note).toContain("chrome.exe");
+    expect(facts[0].note).toContain("evil.exe");
+  });
+
+  it("still resolves normally when the names agree", () => {
+    const processIndex = processIndexFrom([{ PID: "100", ImageFileName: "chrome.exe" }]);
+    const rows = [handleRow({ PID: "100", Process: "chrome.exe" })];
+    const result = handleOwnershipFacts(rows, processIndex);
+    expect(result.facts.filter((f) => f.kind === "unconfirmed-process")).toHaveLength(0);
+  });
+});
+
+describe("handleOwnershipFacts — bounded PID length (regression, Codex finding M1)", () => {
+  it("rejects a PID longer than a real 32-bit Windows PID can be", () => {
+    const processIndex = processIndexFrom([{ PID: "100", ImageFileName: "chrome.exe" }]);
+    const rows = [handleRow({ PID: "99999999999999999999" })];
+    const result = handleOwnershipFacts(rows, processIndex);
+    expect(result.facts).toHaveLength(0); // the row is dropped, not treated as an unconfirmed PID
+  });
+
+  it("rejects an over-long target PID in a Type=Process handle's own Name suffix", () => {
+    const processIndex = processIndexFrom([{ PID: "100", ImageFileName: "evil.exe" }]);
+    const rows = [handleRow({ PID: "100", Type: "Process", Name: "lsass.exe Pid 99999999999999999999" })];
+    const result = handleOwnershipFacts(rows, processIndex);
+    expect(result.facts.filter((f) => f.kind === "cross-process-access")).toHaveLength(0);
+  });
+});
+
+describe("handleOwnershipFacts — offset-join safety (regression, Codex finding M2/M3)", () => {
+  it("never correlates two rows whose offset failed to parse into pure hex", () => {
+    const processIndex = processIndexFrom([
+      { PID: "100", ImageFileName: "a.exe" },
+      { PID: "101", ImageFileName: "b.exe" },
+    ]);
+    const rows = [
+      handleRow({ PID: "100", Offset: "garbled-not-an-address" }),
+      handleRow({ PID: "101", Offset: "garbled-not-an-address" }),
+    ];
+    const result = handleOwnershipFacts(rows, processIndex);
+    expect(result.facts.filter((f) => f.kind === "shared-object")).toHaveLength(0);
+  });
+
+  it("never lets a delimiter-built key collide type+offset across two distinct rows", () => {
+    const processIndex = processIndexFrom([
+      { PID: "100", ImageFileName: "a.exe" },
+      { PID: "101", ImageFileName: "b.exe" },
+    ]);
+    // "a|b" + offset "c" would collide with type "a" + offset "b|c" under naive delimiter joins.
+    const rows = [
+      handleRow({ PID: "100", Type: "a|b", Offset: "0xc" }),
+      handleRow({ PID: "101", Type: "a", Offset: "0xb7c" }), // hex "b7c" — distinct from "c" and "b|c"
+    ];
+    const result = handleOwnershipFacts(rows, processIndex);
+    expect(result.facts.filter((f) => f.kind === "shared-object")).toHaveLength(0);
+  });
+});
+
+describe("handleOwnershipFacts — truncation is reported (regression, Codex finding M4)", () => {
+  it("sets truncated when the unconfirmed-process family hits its cap, even with process tables submitted", () => {
+    const processIndex = processIndexFrom([{ PID: "0", ImageFileName: "known.exe" }]);
+    const rows = Array.from({ length: 60 }, (_, i) => handleRow({ PID: String(i + 1) }));
+    const result = handleOwnershipFacts(rows, processIndex);
+    expect(result.truncated).toBe(true);
+  });
+});
+
 describe("handleOwnershipFacts — residual-handle", () => {
   it("fires only when exactly one candidate resolves and it shows an exit", () => {
     const processIndex = processIndexFrom([
@@ -130,7 +205,12 @@ describe("handleOwnershipFacts — cross-process-access", () => {
 describe("handleOwnershipFacts — shared-object", () => {
   it("groups by (type, canonical offset) across processes, capping the sharedWith list", () => {
     const rows = Array.from({ length: 15 }, (_, i) =>
-      handleRow({ PID: String(100 + i), Type: "Mutant", Offset: "0xdeadbeef", Name: "\\Sessions\\1\\BaseNamedObjects\\Global\\mtx" }),
+      handleRow({
+        PID: String(100 + i),
+        Type: "Mutant",
+        Offset: "0xdeadbeef",
+        Name: "\\Sessions\\1\\BaseNamedObjects\\Global\\mtx",
+      }),
     );
     const processIndex = processIndexFrom(rows.map((r) => ({ PID: r.PID, ImageFileName: "svchost.exe" })));
     const result = handleOwnershipFacts(rows, processIndex);
@@ -153,10 +233,7 @@ describe("handleOwnershipFacts — shared-object", () => {
       { PID: "100", ImageFileName: "a.exe" },
       { PID: "101", ImageFileName: "b.exe" },
     ]);
-    const rows = [
-      handleRow({ PID: "100", Offset: "-" }),
-      handleRow({ PID: "101", Offset: "-" }),
-    ];
+    const rows = [handleRow({ PID: "100", Offset: "-" }), handleRow({ PID: "101", Offset: "-" })];
     const result = handleOwnershipFacts(rows, processIndex);
     expect(result.facts.filter((f) => f.kind === "shared-object")).toHaveLength(0);
   });
@@ -169,10 +246,17 @@ describe("handleOwnershipFacts — GrantedAccess is always raw", () => {
       { PID: "200", ImageFileName: "lsass.exe" },
     ]);
     const rows = [
-      handleRow({ PID: "100", Type: "Process", Name: "lsass.exe Pid 200", GrantedAccess: "0x001410" }),
+      handleRow({
+        PID: "100",
+        Process: "evil.exe",
+        Type: "Process",
+        Name: "lsass.exe Pid 200",
+        GrantedAccess: "0x001410",
+      }),
     ];
     const result = handleOwnershipFacts(rows, processIndex);
-    expect(result.facts[0].grantedAccess).toBe("0x001410");
+    const facts = result.facts.filter((f) => f.kind === "cross-process-access");
+    expect(facts[0].grantedAccess).toBe("0x001410");
   });
 });
 

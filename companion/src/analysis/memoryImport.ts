@@ -1409,8 +1409,7 @@ function parseMemoryRunBundle(root: unknown, text: string, opts: MemoryImportOpt
   const { runRows, exports, note } = parseRunEnvelopes(root, (stdout, filename) =>
     parseMemoryExport(stdout, { ...opts, filename, maxEvents }),
   );
-  // One bundle-wide budget: every row (run rows plus the exports' already-aggregated rows) is
-  // ranked by severity and cut to `maxEvents` once, so N runs never emit N × maxEvents.
+  // One bundle-wide budget: every row is ranked by severity and cut to `maxEvents` once (never N ×).
   const runs = aggregateEvents(runRows, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
@@ -1473,8 +1472,7 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
   const maxIocs = opts.maxIocs ?? 5000;
   const { tables, format, tool, empty } = extractTables(text, opts.filename);
   const total = tables.reduce((n, t) => n + t.rows.length, 0);
-  // What the export's shape says — a zero-row export or an unread layout is one Low row, never a
-  // 400 and never a completion claim (#933 item 12).
+  // What the export's shape says — a zero-row/unread export is one Low row, never 400 (#933 item 12).
   const shapeRows = exportShapeEvents(format, empty, tool);
   const note = exportShapeNote(text, format, empty, tables.length);
   if (total === 0 && shapeRows.length === 0) {
@@ -1501,8 +1499,7 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
     processes = 0,
     connections = 0;
 
-  // Process rows the upload submitted, by PID — evidence malfind weighs against (#909 item 4) and
-  // what a socket's/handle's owner is checked for consistency against (#933 items 13, 14).
+  // Process rows the upload submitted, by PID — malfind/socket/handle owner checks (#909 item 4, #933 items 13-14).
   const processIndex = indexProcessRows(
     tables.filter((t) => classify(t.plugin, colSet(t.rows)) === "process"),
   );
@@ -1533,8 +1530,7 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
     }
   }
 
-  // Process records with BOTH a start and an exit — only a memory image records both on one row
-  // (#909 item 6); no other importer can run the repeated-short-lifetime rule.
+  // Process records with BOTH a start and an exit — only a memory image records both (#909 item 6).
   const lifetimeRecords: ProcessRecord[] = [];
 
   // Handle-table rows (#933 item 13), resolved once against the processIndex built above.
@@ -1590,7 +1586,7 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
         mapped.push(...mapDll(label, tool, t.rows, sink, !!opts.dllTelemetry));
         break;
       case "handle":
-        handleRows.push(...t.rows); // resolved once, after the loop — see handleOwnershipFacts()
+        for (const r of t.rows) handleRows.push(r); // never spread — a large table exceeds arg limits
         break;
       case "imageinfo":
         mapped.push(...imageFactsEvents(tool, t.rows, t.plugin)); // one row, no IOCs
@@ -1600,8 +1596,7 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
     }
   }
 
-  // Repeated short-lived executions of one image (#909 item 6): ONE event per image, not one per
-  // execution — twenty rows saying "it ran again" is the noise the pattern was meant to replace.
+  // Repeated short-lived executions of one image (#909 item 6): ONE event per image, not per run.
   for (const cluster of repeatedShortLifetimes(lifetimeRecords)) {
     mapped.push({
       timestamp: "",
@@ -1614,14 +1609,14 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
     });
   }
 
-  // Handle-table facts (#933 item 13) — Info severity, see memoryHandleOwnership.ts's own header.
-  for (const fact of handleOwnershipFacts(handleRows, processIndex).facts) {
+  const handleResult = handleOwnershipFacts(handleRows, processIndex); // #933 item 13, Info severity
+  for (const fact of handleResult.facts) {
     mapped.push({
       timestamp: "",
       description: `${tool}: ${fact.note}`.slice(0, 600),
       severity: "Info",
       mitre: [],
-      aggKey: `mem|handle|${fact.kind}|${fact.pid}|${fact.type}|${fact.name}`,
+      aggKey: boundedAggKey(`mem|handle|${fact.kind}|${fact.pid}|${fact.type}|${fact.name}`),
       sources: [tool],
       processName: fact.holderProcess || undefined,
     });
@@ -1636,6 +1631,11 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
   const finalEvents = stampSourceArtifactHash(events, text);
 
   const represented = finalEvents.reduce((n, e) => n + (e.count ?? 1), 0);
+  // A capped fact family is a sample, not the full set — disclose it, don't just track it internally.
+  const handleNote = handleResult.truncated
+    ? "handle-ownership analysis reached its own evidence cap — some facts were not reported."
+    : "";
+  const finalNote = [note, handleNote].filter(Boolean).join(" ");
   return {
     events: finalEvents,
     iocs: [...sink.values()].slice(0, maxIocs),
@@ -1649,6 +1649,6 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
     connections,
     format,
     tool,
-    ...(note ? { note } : {}),
+    ...(finalNote ? { note: finalNote } : {}),
   };
 }

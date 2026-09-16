@@ -37,10 +37,7 @@ import { shown, canonicalOffset, type ProcessIndex } from "./memoryNetObjects.js
 type Row = Record<string, unknown>;
 
 export type HandleFactKind =
-  | "cross-process-access"
-  | "shared-object"
-  | "residual-handle"
-  | "unconfirmed-process";
+  "cross-process-access" | "shared-object" | "residual-handle" | "unconfirmed-process";
 
 export interface HandleOwnershipFact {
   kind: HandleFactKind;
@@ -75,11 +72,14 @@ const MAX_SHARED_WITH_SHOWN = 10;
 // (confirmed against Volatility 3's own real source, windows/handles.py, 2026-09-16). Anchored to
 // the END of the string — an unanchored `Pid (\d+)` could otherwise match an attacker-chosen
 // substring earlier in a crafted image name (Codex code-review finding M1 on the design review).
-const TARGET_PID_RE = /\sPid\s+([0-9]+)\s*$/;
+const TARGET_PID_RE = /\sPid\s+([0-9]{1,10})\s*$/;
 
+// A real Windows PID never exceeds a 32-bit value (10 decimal digits) — a longer digit string is
+// not a PID this module can trust, and bounding it here keeps every downstream field (and the
+// aggregation key built from it) bounded too (Codex code-review finding M1).
 function pidOf(row: Row): string {
   const s = cellStr(getCI(row, "PID") ?? getCI(row, "Pid") ?? getCI(row, "pid")).trim();
-  return /^\d+$/.test(s) ? s : "";
+  return /^\d{1,10}$/.test(s) ? s : "";
 }
 
 function cell(row: Row, keys: readonly string[]): string {
@@ -174,7 +174,10 @@ export function handleOwnershipFacts(
   let truncated = false;
 
   for (const [pid, handles] of byPid) {
-    if (facts.filter((f) => f.kind === "residual-handle" || f.kind === "unconfirmed-process").length >= MAX_FACTS_PER_KIND) {
+    if (
+      facts.filter((f) => f.kind === "residual-handle" || f.kind === "unconfirmed-process").length >=
+      MAX_FACTS_PER_KIND
+    ) {
       truncated = true;
       break;
     }
@@ -205,6 +208,24 @@ export function handleOwnershipFacts(
       continue;
     }
     const [candidate] = candidates;
+    // A resolved PID whose OWN name disagrees with the handle row's own holder name is not
+    // resolved at all — it is the PID-reuse case the ambiguity check above cannot see when the
+    // upload happens to submit only one (stale) process row for a PID a later process reused
+    // (Codex code-review finding H1).
+    const candidateName = candidate.name.trim();
+    const holderName = baseName(head.holderProcess).trim();
+    if (candidateName && holderName && candidateName.toLowerCase() !== holderName.toLowerCase()) {
+      facts.push({
+        kind: "unconfirmed-process",
+        pid,
+        holderProcess: shown(head.holderProcess),
+        type: "",
+        name: "",
+        grantedAccess: "",
+        note: `conflict: this upload's own submitted process row for PID ${pid} names it ${shown(candidateName)}, but its own handle-table row(s) for PID ${pid} name the holder ${shown(holderName)} — likely PID reuse, so neither identity is trusted for this PID.`,
+      });
+      continue;
+    }
     if (candidate.exited.status === "ok") {
       facts.push({
         kind: "residual-handle",
@@ -226,7 +247,10 @@ export function handleOwnershipFacts(
   return { facts, noProcessTablesSubmitted: false, truncated };
 }
 
-function buildCrossProcessFacts(parsed: readonly ParsedHandle[]): { facts: HandleOwnershipFact[]; truncated: boolean } {
+function buildCrossProcessFacts(parsed: readonly ParsedHandle[]): {
+  facts: HandleOwnershipFact[];
+  truncated: boolean;
+} {
   const facts: HandleOwnershipFact[] = [];
   const seen = new Set<string>();
   let truncated = false;
@@ -243,7 +267,7 @@ function buildCrossProcessFacts(parsed: readonly ParsedHandle[]): { facts: Handl
       kind: "cross-process-access",
       pid: h.pid,
       holderProcess: shown(h.holderProcess),
-      type: h.type,
+      type: shown(h.type),
       name: shown(h.name),
       grantedAccess: shown(h.grantedAccess),
       targetPid: h.targetPid,
@@ -254,12 +278,32 @@ function buildCrossProcessFacts(parsed: readonly ParsedHandle[]): { facts: Handl
   return { facts, truncated };
 }
 
-function buildSharedObjectFacts(parsed: readonly ParsedHandle[]): { facts: HandleOwnershipFact[]; truncated: boolean } {
-  const byObject = new Map<string, { type: string; name: string; grantedAccess: string; pids: Set<string> }>();
+// canonicalOffset() falls back to returning malformed, non-hex text verbatim (lowercased) when a
+// row's own Offset cell fails every recognized shape — that fallback is fine for DISPLAY but not
+// for identity: two rows both carrying the same unparsed garbage (or two different plugins'
+// distinct malformed strings that happen to collide once type is joined onto them with a plain
+// delimiter) would otherwise correlate as "the same object" (Codex code-review finding M2/M3).
+// Only a canonicalOffset() result that is PURE lowercase hex — the shape every successful branch
+// of that function actually produces — is trusted as a join key here.
+const VALID_CANONICAL_OFFSET_RE = /^[0-9a-f]+$/;
+
+function buildSharedObjectFacts(parsed: readonly ParsedHandle[]): {
+  facts: HandleOwnershipFact[];
+  truncated: boolean;
+} {
+  const byObject = new Map<
+    string,
+    { type: string; name: string; grantedAccess: string; pids: Set<string> }
+  >();
   for (const h of parsed) {
-    if (!h.offset) continue; // a missing/placeholder offset is never joined on (Codex finding M2)
-    const key = `${h.type.toLowerCase()}|${h.offset}`;
-    const entry = byObject.get(key) ?? { type: h.type, name: h.name, grantedAccess: h.grantedAccess, pids: new Set() };
+    if (!VALID_CANONICAL_OFFSET_RE.test(h.offset)) continue;
+    const key = JSON.stringify([h.type.toLowerCase(), h.offset]); // structured — never delimiter-collision-prone
+    const entry = byObject.get(key) ?? {
+      type: h.type,
+      name: h.name,
+      grantedAccess: h.grantedAccess,
+      pids: new Set(),
+    };
     entry.pids.add(h.pid);
     byObject.set(key, entry);
   }
@@ -278,7 +322,7 @@ function buildSharedObjectFacts(parsed: readonly ParsedHandle[]): { facts: Handl
       kind: "shared-object",
       pid: shownPids[0],
       holderProcess: "",
-      type: entry.type,
+      type: shown(entry.type),
       name: shown(entry.name),
       grantedAccess: shown(entry.grantedAccess),
       sharedWith: more > 0 ? [...shownPids, `+${more} more`] : shownPids,
