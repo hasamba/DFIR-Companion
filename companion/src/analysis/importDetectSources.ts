@@ -146,6 +146,42 @@ export function sqliteRowStateCsvSig(h: Set<string>): boolean {
     h.has("row id")
   );
 }
+// FSEventsParser's (dlcowen/G-C Partners) real All_FSEVENTS.tsv header — the reduced R_COLUMNS
+// set the tool's own print_columns() writes, tab-joined (#933 item 9). Full-length and ordered:
+// a shorter or reordered match risks claiming an unrelated 9-column TSV export.
+const FSEVENTS_TSV_HEADER = [
+  "id",
+  "node_id",
+  "fs_uid",
+  "fullpath",
+  "type",
+  "flags",
+  "approx_dates_plus_minus_one_day",
+  "source",
+  "source_modified_time",
+];
+export function fsEventsTsvSig(text: string): boolean {
+  const firstLine = (text.split(/\r?\n/, 1)[0] ?? "").trim();
+  if (!firstLine.includes("\t")) return false;
+  const cols = firstLine.split("\t").map((c) => c.trim().toLowerCase());
+  return cols.length === FSEVENTS_TSV_HEADER.length && cols.every((c, i) => c === FSEVENTS_TSV_HEADER[i]);
+}
+
+// mac_apt's (ydkhatri) Spotlight store-item export: `ID` + `Date_Updated` (every row, per
+// ProcessStoreItem()) plus at least one real kMDItem* usage/download attribute column — the sparse
+// full column set varies by store version, so only the usage-bearing subset is required (#933 item
+// 10). Comma-delimited, goes through the same header set every other CSV detector here uses.
+export function spotlightStoreCsvSig(h: Set<string>): boolean {
+  if (!h.has("id") || !h.has("date_updated")) return false;
+  return (
+    h.has("kmditemusecount") ||
+    h.has("kmditemlastuseddate") ||
+    h.has("kmditemuseddates") ||
+    h.has("kmditemdownloadeddate") ||
+    h.has("kmditemwherefroms")
+  );
+}
+
 // ───────────────────────────── auditd (line-oriented) ─────────────────────────────
 //
 // Moved here from importDetect.ts, which sits at the 800-line limit: the dispatch ORDER is the

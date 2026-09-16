@@ -161,6 +161,17 @@ describe("detectImportKind — JSON formats", () => {
       '"DATABASE","0","0","B-Tree","3","0","Added","4096","1","hello"';
     expect(detectImportKind("history_message.csv", text)).toBe("sqliterowstate");
   });
+  it("macfsevent: FSEventsParser's real All_FSEVENTS.tsv header", () => {
+    const text =
+      "id\tnode_id\tfs_uid\tfullpath\ttype\tflags\tapprox_dates_plus_minus_one_day\tsource\tsource_modified_time\n" +
+      "1\t2\t3\tUsers/a/b.txt\tFileEvent;\tCreated;\t2024.03.15\t/src/0000\t2024-03-15T00:00:00Z";
+    expect(detectImportKind("All_FSEVENTS.tsv", text)).toBe("macfsevent");
+  });
+  it("macspotlightusage: a mac_apt Spotlight store-item CSV", () => {
+    const text =
+      "ID,Date_Updated,kMDItemUseCount,kMDItemLastUsedDate\n1001,2024-03-01T00:00:00Z,3,2024-03-10T00:00:00Z";
+    expect(detectImportKind("Spotlight.csv", text)).toBe("macspotlightusage");
+  });
   it("m365: Unified Audit Log JSON", () => {
     expect(
       detectImportKind(

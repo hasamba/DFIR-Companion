@@ -22,13 +22,7 @@ export type { PipelineOptions } from "./ai/pipelineOptions.js";
 import { withRetry } from "./ai/retry.js";
 import type { ImportContext } from "./ingest/importContext.js";
 
-/**
- * The argument list of an importer, minus the ImportContext it takes first (#384).
- *
- * Every import method below is a one-line delegation to src/analysis/ingest/. Deriving the
- * parameters rather than restating them means the two cannot drift: change an importer's signature
- * and the delegation stops compiling, which is the property a hand-copied signature would not have.
- */
+/** The argument list of an importer, minus the ImportContext it takes first (#384). Every import method below is a one-line delegation to src/analysis/ingest/ — deriving the parameters rather than restating them means the two cannot drift: change an importer's signature and the delegation stops compiling, which a hand-copied signature would not have. */
 type ImporterArgs<F> = F extends (ctx: ImportContext, ...args: infer R) => unknown ? R : never;
 /** The same trick for the AI extraction calls, which take an ExtractionContext first (#418). */
 type AiExtractionArgs<F> = F extends (ctx: ExtractionContext, ...args: infer R) => unknown ? R : never;
@@ -84,19 +78,10 @@ export class AnalysisPipeline {
   // Lazily loaded from opts.kevStore so we don't block the constructor on disk I/O.
   private kevCatalogCache: KevCatalog | undefined;
 
-  /**
-   * The ONLY thing src/analysis/ingest/ ever receives (#384). Passing `this` would have made
-   * `opts` and four methods public just for importers; this adapter closes over the permitted
-   * operations instead, so class members stay private. `opts` is exposed through getters, not a
-   * snapshot — a copy at construction would go stale the first settings save. Down to three
-   * operations since #418 moved `noteEmptyImport`/`persistPlasoParsed` into `ingest/importState.ts`.
-   */
+  /** The ONLY thing src/analysis/ingest/ ever receives (#384). Passing `this` would have made `opts` and four methods public just for importers; this adapter closes over the permitted operations instead, so class members stay private. `opts` is exposed through getters, not a snapshot — a copy at construction would go stale the first settings save. Down to three operations since #418 moved `noteEmptyImport`/`persistPlasoParsed` into `ingest/importState.ts`. */
   private readonly importCtx: ImportContext;
 
-  /**
-   * The same adapter idea for the AI-backed families extracted in #418 — narrower views per
-   * family, live getters rather than a snapshot for the reason importCtx gives above.
-   */
+  /** The same adapter idea for the AI-backed families extracted in #418 — narrower views per family, live getters rather than a snapshot for the reason importCtx gives above. */
   private readonly aiCtx: CaseReportContext &
     AnalystQueryContext &
     ViewReportContext &
@@ -566,6 +551,16 @@ export class AnalysisPipeline {
 
   importExporterFlow(...args: ImporterArgs<typeof ingest.importExporterFlow>): Promise<InvestigationState> {
     return ingest.importExporterFlow(this.importCtx, ...args);
+  }
+
+  importMacFsEvent(...args: ImporterArgs<typeof ingest.importMacFsEvent>): Promise<InvestigationState> {
+    return ingest.importMacFsEvent(this.importCtx, ...args);
+  }
+
+  importMacSpotlightUsage(
+    ...args: ImporterArgs<typeof ingest.importMacSpotlightUsage>
+  ): Promise<InvestigationState> {
+    return ingest.importMacSpotlightUsage(this.importCtx, ...args);
   }
 
   async importGoogleWorkspace(

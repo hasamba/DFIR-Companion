@@ -39,6 +39,8 @@ import {
 import { sqliteRowStateBlockSchema } from "./canonicalSqliteRowState.js";
 import { mobileRequestedPermissionBlockSchema } from "./canonicalMobileRequestedPermission.js";
 import { exporterFlowBlockSchema, exporterFlowBeaconLeadBlockSchema } from "./canonicalExporterFlow.js";
+import { macFsEventBlockSchema } from "./canonicalMacFsEvent.js";
+import { spotlightUsageBlockSchema } from "./canonicalSpotlightUsage.js";
 
 export const CANONICAL_EVENT_SCHEMA_VERSION = "1.0.0" as const;
 /** The producer stamped on an envelope DERIVED from legacy flat fields at the read boundary. */
@@ -144,9 +146,7 @@ export const canonicalEventEnvelopeSchema = z.object({
       logonType: z.number().int().nonnegative().optional(),
       protocol: z.string().optional(),
       mechanism: z.string().optional(),
-      // The credential the call was signed with (an AWS access key id, an Identity Center
-      // credentialId) — a credential, not a session; and the identity that issued the session
-      // (an AWS session issuer ARN). Both from #931 item 5.
+      // The credential the call was signed with (an AWS access key id/Identity Center credentialId), not a session; and the identity that issued the session (an AWS session issuer ARN). Both from #931 item 5.
       credentialId: z.string().optional(),
       issuer: z.string().optional(),
     })
@@ -200,6 +200,8 @@ export const canonicalEventEnvelopeSchema = z.object({
   mobileRequestedPermission: mobileRequestedPermissionBlockSchema.optional(), // mobsfPermissionImport.ts, #932 item 9
   exporterFlow: exporterFlowBlockSchema.optional(), // exporterFlowImport.ts, #932 item 10
   exporterFlowBeaconLead: exporterFlowBeaconLeadBlockSchema.optional(), // exporterFlowImport.ts, #932 item 10
+  macFsEvent: macFsEventBlockSchema.optional(), // macFsEventImport.ts, #933 item 9
+  spotlightUsage: spotlightUsageBlockSchema.optional(), // macSpotlightUsageImport.ts, #933 item 10
   olevbaStompingLead: olevbaStompingLeadBlockSchema.optional(), // olevbaResultImport.ts, #932 item 7
   olevbaCompoundLead: olevbaCompoundLeadBlockSchema.optional(), // olevbaResultImport.ts, #932 item 7
   mailboxChain: mailboxChainBlockSchema.optional(), // mailboxChain.ts, #975; block in canonicalMailbox.ts
@@ -468,9 +470,7 @@ function normalizedPart(envelope: CanonicalEventEnvelope): CanonicalNormalizedFi
   return normalized;
 }
 
-// The records a normalized path is attributed to. An ANCESTOR entry (the longest `locatorMap`
-// prefix naming the path, matched on whole segments) replaces the first record; a DESCENDANT entry
-// (a prefix under the path) is added to it — the leaf then rests on every record that fed it.
+// The records a normalized path is attributed to. An ANCESTOR entry (the longest `locatorMap` prefix naming the path, matched on whole segments) replaces the first record; a DESCENDANT entry (a prefix under the path) is added to it — the leaf then rests on every record that fed it.
 function locatorsFor(path: string, locatorMap: Record<string, string>, first: string): string[] {
   let best = "";
   const under: string[] = [];
