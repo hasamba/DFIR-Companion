@@ -547,6 +547,7 @@
     "processLifetime.ts": "analysis/timeline",
     "promptBudget.ts": "analysis/ai",
     "promptCapabilities.ts": "analysis/ai",
+    "proxyWorkstationChain.ts": "analysis/timeline",
     "pstreeDepth.ts": "analysis/ingest",
     "publicAddress.ts": "shared",
     "pushAuth.ts": "analysis/notify",
