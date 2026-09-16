@@ -1577,7 +1577,13 @@ export const FEATURES: Feature[] = [
     file: "dashboard-collection-generation-diff.js",
     // #1132 extends this SAME panel with a second, independent mobile-app-presence section
     // (rather than a new top-level dashboard section) — see its own file header comment.
-    publish: ["renderCollectionGenerationDiff", "loadCollectionGenerationDiff"],
+    publish: [
+      "renderCollectionGenerationDiff",
+      "loadCollectionGenerationDiff",
+      "openRecordForm",
+      "closeRecordForm",
+      "submitRecordForm",
+    ],
     private: [
       "pCohorts",
       "pTruncatedCohorts",
@@ -1589,6 +1595,8 @@ export const FEATURES: Feature[] = [
       "mLoadSeq",
       "mCandidates",
       "mFormOpen",
+      "mCandidateSeq",
+      "mCandidatesCaseId",
       "DIRECTION_LABEL",
       "EXCLUSION_LABEL",
     ],

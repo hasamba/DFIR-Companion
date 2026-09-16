@@ -235,6 +235,16 @@ describe("/cases/:id/mobile-backup-generations", () => {
     expect(res.body.candidates[0].looksLike).toBeNull();
   });
 
+  // #1138 code-review fix: a file past the size bound is never read/parsed at all.
+  it("candidate-imports never fully reads/parses a file past the size bound", async () => {
+    const huge = "Property\tProperty Value\n" + "Serial Number\tX\n".repeat(400_000); // > 5MB
+    await seedImport("c1", "0001_huge.tsv", huge);
+    const res = await request(app).get("/cases/c1/mobile-backup-generations/candidate-imports");
+    expect(res.status).toBe(200);
+    expect(res.body.candidates[0].looksLike).toBeNull();
+    expect(res.body.candidates[0].preview).toBeNull();
+  });
+
   it("candidate-imports returns an empty list for a fresh case, never a 500", async () => {
     const res = await request(app).get("/cases/c1/mobile-backup-generations/candidate-imports");
     expect(res.status).toBe(200);

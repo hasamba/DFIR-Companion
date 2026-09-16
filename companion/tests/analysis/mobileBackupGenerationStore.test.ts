@@ -102,7 +102,11 @@ describe("parseBackupInfo", () => {
   it("extracts device identity (Serial Number preferred) and Last Backup Date", () => {
     const r = parseBackupInfo(BACKUP_INFO_TSV);
     expect(r.deviceIdentity).toEqual({ kind: "serial-number", value: "F2LN12ABCDEF" });
-    expect(r.capturedAt).toBe(new Date("2026-01-12 09:00:00").toISOString());
+    // #1138 code-review fix: iLEAPP's own bare "YYYY-MM-DD HH:mm:ss" is UTC (Apple's plist date
+    // type has no timezone concept), never the test-runner's local time — asserted against the
+    // explicit UTC instant, not `new Date(raw).toISOString()` (which is itself timezone-dependent
+    // and would silently pass in whatever TZ happens to run the suite).
+    expect(r.capturedAt).toBe("2026-01-12T09:00:00.000Z");
   });
 
   it("falls back to Unique Identifier when Serial Number is absent", () => {
@@ -112,6 +116,37 @@ describe("parseBackupInfo", () => {
 
   it("returns an empty capturedAt when Last Backup Date is absent", () => {
     expect(parseBackupInfo(BACKUP_INFO_NO_DATE_TSV).capturedAt).toBe("");
+  });
+
+  it("parses the bare datetime as UTC regardless of the host's own local timezone (#1138)", () => {
+    // Directly proves the fix independent of whatever TZ this suite happens to run under:
+    // `new Date("2026-01-01 00:00:00").toISOString()` (the OLD, buggy behavior) is NEVER
+    // "2026-01-01T00:00:00.000Z" in any timezone east of UTC — a positive offset always rolls it
+    // BACK into 2025. The fixed parser must still return exactly midnight UTC.
+    const tsv = [
+      "Property\tProperty Value",
+      "Serial Number\tX",
+      "Last Backup Date\t2026-01-01 00:00:00",
+    ].join("\n");
+    expect(parseBackupInfo(tsv).capturedAt).toBe("2026-01-01T00:00:00.000Z");
+  });
+
+  it("rejects an impossible calendar date rather than rolling it over", () => {
+    const tsv = [
+      "Property\tProperty Value",
+      "Serial Number\tX",
+      "Last Backup Date\t2026-02-30 10:00:00",
+    ].join("\n");
+    expect(parseBackupInfo(tsv).capturedAt).toBe("");
+  });
+
+  it("returns an empty capturedAt for a shape it does not recognize (an offset, a different format)", () => {
+    const tsv = [
+      "Property\tProperty Value",
+      "Serial Number\tX",
+      "Last Backup Date\t2026-01-12T09:00:00+02:00",
+    ].join("\n");
+    expect(parseBackupInfo(tsv).capturedAt).toBe("");
   });
 
   it("throws on the wrong header shape", () => {
@@ -155,7 +190,7 @@ describe("MobileBackupGenerationStore.record", () => {
     });
 
     expect(g.deviceIdentity).toEqual({ kind: "serial-number", value: "F2LN12ABCDEF" });
-    expect(g.order).toEqual({ kind: "captured", capturedAt: new Date("2026-01-12 09:00:00").toISOString() });
+    expect(g.order).toEqual({ kind: "captured", capturedAt: "2026-01-12T09:00:00.000Z" });
     expect(g.inventory).toHaveLength(2);
     expect(g.backupInfoRef.importSeq).toBe(1);
     expect(g.installedAppsRef.importSeq).toBe(2);

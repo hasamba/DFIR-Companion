@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { requestAuthentication } from "../auth/types.js";
@@ -30,6 +30,12 @@ import type { RouteContext } from "./context.js";
  */
 
 const MAX_CANDIDATE_IMPORTS = 200;
+// Both real artifact types are small metadata exports (a device's own Info.plist properties, or
+// one row per installed app) — well under a megabyte even for a large app inventory. A file past
+// this size is classified `looksLike: null` WITHOUT being read at all (Codex code-review finding:
+// this endpoint could otherwise be pointed at an unrelated multi-hundred-MB import and made to
+// fully read+parse it on every request, exhausting memory / blocking the event loop).
+const MAX_CANDIDATE_FILE_BYTES = 5 * 1024 * 1024;
 
 const compareQuerySchema = z.object({
   device: z.string().trim().min(1).optional(),
@@ -105,17 +111,30 @@ export function registerMobileBackupGenerationRoutes(app: Express, ctx: RouteCon
       const recent = rows.slice(-MAX_CANDIDATE_IMPORTS).reverse();
       const candidates: CandidateImport[] = [];
       for (const row of recent) {
+        const path = join(store.importsDir(req.params.id), row.filename);
+        const skip = {
+          importSeq: row.sequenceNumber,
+          originalName: row.originalName,
+          importedAt: row.importedAt,
+          looksLike: null,
+          preview: null,
+        } as const;
+        let size: number;
+        try {
+          size = (await stat(path)).size;
+        } catch {
+          candidates.push(skip);
+          continue;
+        }
+        if (size > MAX_CANDIDATE_FILE_BYTES) {
+          candidates.push(skip);
+          continue;
+        }
         let text: string;
         try {
-          text = await readFile(join(store.importsDir(req.params.id), row.filename), "utf8");
+          text = await readFile(path, "utf8");
         } catch {
-          candidates.push({
-            importSeq: row.sequenceNumber,
-            originalName: row.originalName,
-            importedAt: row.importedAt,
-            looksLike: null,
-            preview: null,
-          });
+          candidates.push(skip);
           continue;
         }
         try {
@@ -148,13 +167,7 @@ export function registerMobileBackupGenerationRoutes(app: Express, ctx: RouteCon
         } catch {
           /* not an installed-apps export either */
         }
-        candidates.push({
-          importSeq: row.sequenceNumber,
-          originalName: row.originalName,
-          importedAt: row.importedAt,
-          looksLike: null,
-          preview: null,
-        });
+        candidates.push(skip);
       }
       return res.status(200).json({ candidates });
     } catch (err) {

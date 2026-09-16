@@ -77,6 +77,36 @@ export interface InstalledAppsPreview {
   appCount: number;
 }
 
+// iLEAPP's own real source (`scripts/ilapfuncs.py`, re-verified 2026-09-16) formats a plist
+// datetime as `plist_date.strftime("%Y-%m-%d %H:%M:%S")` — no offset, because Apple's own plist
+// date type is already UTC and the exporter never re-attaches one. `Date.parse()` on a bare
+// "YYYY-MM-DD HH:mm:ss" string is NOT UTC — it is the HOST MACHINE'S OWN LOCAL TIMEZONE (a Codex
+// code-review High finding: the same evidence would parse to a different real instant on a server
+// in Jerusalem vs. one in UTC vs. one in New York, corrupting forensic chronology and making a
+// stored generation's own order depend on where the companion happens to be deployed). Only this
+// one exact, unambiguous shape is treated as UTC; anything else is left unparsed rather than
+// guessed.
+const LEAPP_BARE_DATETIME_RE = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/;
+
+function parseLeappUtcDate(raw: string): string {
+  const m = LEAPP_BARE_DATETIME_RE.exec(raw);
+  if (!m) return "";
+  const [, y, mo, d, h, mi, s] = m;
+  const ms = Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s));
+  if (!Number.isFinite(ms)) return "";
+  const asDate = new Date(ms);
+  // Date.UTC rolls an impossible calendar date over (e.g. "2026-02-30" becomes March 2) rather
+  // than failing — the round-trip check here rejects that instead of silently accepting it.
+  if (
+    asDate.getUTCFullYear() !== Number(y) ||
+    asDate.getUTCMonth() !== Number(mo) - 1 ||
+    asDate.getUTCDate() !== Number(d)
+  ) {
+    return "";
+  }
+  return asDate.toISOString();
+}
+
 /** Re-parses a "Backup Information" export's own raw TSV text — never trusts the generic prose
  * importer, which renders every column as `Header: value` prose and extracts nothing structured.
  * Throws if the header does not exactly match iLEAPP's own real, current shape. */
@@ -104,11 +134,7 @@ export function parseBackupInfo(text: string): BackupInfoPreview {
     throw new Error("no Serial Number or Unique Identifier property found in this Backup Information export");
   }
   const rawDate = (props.get("Last Backup Date") ?? "").trim();
-  const parsed = rawDate ? Date.parse(rawDate) : NaN;
-  // iLEAPP's own plist datetime serialization carries no explicit UTC offset; Apple's own plist
-  // date type is itself always UTC, so a bare parseable instant is stamped with a "Z" suffix
-  // rather than left offset-less (the shared schema requires an offset).
-  const capturedAt = Number.isFinite(parsed) ? new Date(parsed).toISOString() : "";
+  const capturedAt = parseLeappUtcDate(rawDate);
   return { deviceIdentity, capturedAt };
 }
 
@@ -234,8 +260,12 @@ export class MobileBackupGenerationStore {
     ref: { importSeq: number; artifactHash: string; originalName: string; importedAt: string };
   }> {
     const importRow = await this.importRow(caseId, importSeq);
-    const text = await readFile(join(this.cases.importsDir(caseId), importRow.filename), "utf8");
-    const artifactHash = createHash("sha256").update(Buffer.from(text, "utf8")).digest("hex");
+    // Hash the RAW bytes, never a decoded-then-re-encoded string (#1138): reading as utf8 first
+    // and hashing Buffer.from(text, "utf8") silently replaces invalid byte sequences with U+FFFD,
+    // so two artifacts differing only in their invalid bytes could hash identically.
+    const bytes = await readFile(join(this.cases.importsDir(caseId), importRow.filename));
+    const artifactHash = createHash("sha256").update(bytes).digest("hex");
+    const text = bytes.toString("utf8");
     return {
       text,
       ref: {
@@ -379,13 +409,13 @@ export class MobileBackupGenerationStore {
       } catch (err) {
         return { ok: false, reason: (err as Error).message };
       }
-      let text: string;
+      let bytes: Buffer;
       try {
-        text = await readFile(join(this.cases.importsDir(caseId), importRow.filename), "utf8");
+        bytes = await readFile(join(this.cases.importsDir(caseId), importRow.filename));
       } catch (err) {
         return { ok: false, reason: `stored artifact is missing or unreadable: ${(err as Error).message}` };
       }
-      const currentHash = createHash("sha256").update(Buffer.from(text, "utf8")).digest("hex");
+      const currentHash = createHash("sha256").update(bytes).digest("hex");
       if (currentHash !== ref.artifactHash) {
         return { ok: false, reason: "stored artifact has changed since this generation was recorded" };
       }

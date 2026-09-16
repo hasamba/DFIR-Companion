@@ -238,6 +238,10 @@
       `<label>Completeness: <select data-cgd-field="completenessState">` +
       `<option value="complete">Complete</option><option value="partial">Partial</option><option value="unknown">Unknown</option>` +
       `</select></label>` +
+      `<div class="cgd-help">If the selected Backup Information import's own preview shows "no date", both fields ` +
+      `below are required — the server cannot order this generation without one or the other.</div>` +
+      `<label>Declared sequence (only if no date): <input type="number" min="1" data-cgd-field="declaredSequence"></label>` +
+      `<label>Reason no date is available: <input type="text" data-cgd-field="dateUnavailableReason"></label>` +
       `<button type="button" class="cgd-act" data-cgd-action="submit-record-form">Record pairing</button> ` +
       `<button type="button" class="cgd-act" data-cgd-action="close-record-form">Cancel</button>` +
       `</div>`
@@ -294,30 +298,69 @@
     }
   }
 
+  // Own token, separate from mLoadSeq — a candidate-imports fetch outlives a case switch just
+  // like the compare fetches do (Codex code-review finding: opening the form for case A, then
+  // switching to case B before A's request resolves, could otherwise paint A's own candidates
+  // into B's form, and a submit would attest B's case against A's import sequence numbers, which
+  // can collide since sequence numbers are per-case). Also records WHICH case the candidates were
+  // loaded for, so a submit can refuse to fire against a case that no longer matches.
+  let mCandidateSeq = 0;
+  let mCandidatesCaseId = null;
+
   async function openRecordForm(caseId) {
+    const seq = ++mCandidateSeq;
     mFormOpen = true;
     mCandidates = null;
+    mCandidatesCaseId = null;
     paintCollectionGenerationDiff();
     try {
       const r = await fetch(`/cases/${encodeURIComponent(caseId)}/mobile-backup-generations/candidate-imports`);
+      if (seq !== mCandidateSeq) return; // superseded by a case switch or a form close
       const body = r.ok ? await r.json() : { candidates: [] };
+      if (seq !== mCandidateSeq) return;
       mCandidates = Array.isArray(body.candidates) ? body.candidates : [];
+      mCandidatesCaseId = caseId;
     } catch {
+      if (seq !== mCandidateSeq) return;
       mCandidates = [];
+      mCandidatesCaseId = caseId;
     }
     paintCollectionGenerationDiff();
   }
 
   function closeRecordForm() {
+    ++mCandidateSeq; // invalidates any in-flight candidate fetch
     mFormOpen = false;
     mCandidates = null;
+    mCandidatesCaseId = null;
     paintCollectionGenerationDiff();
   }
 
   async function submitRecordForm(caseId, el) {
+    if (caseId !== mCandidatesCaseId) {
+      alert("The active case changed since these candidates were loaded — reopen the form and try again.");
+      closeRecordForm();
+      return;
+    }
     const backupInfoImportSeq = Number(el.querySelector('[data-cgd-field="backupInfoImportSeq"]').value);
     const installedAppsImportSeq = Number(el.querySelector('[data-cgd-field="installedAppsImportSeq"]').value);
     const completenessState = el.querySelector('[data-cgd-field="completenessState"]').value;
+    const declaredSequenceRaw = el.querySelector('[data-cgd-field="declaredSequence"]').value.trim();
+    const dateUnavailableReason = el.querySelector('[data-cgd-field="dateUnavailableReason"]').value.trim();
+    const declaredSequence = declaredSequenceRaw ? Number(declaredSequenceRaw) : undefined;
+
+    // The selected Backup Information candidate's own preview says whether the server will find a
+    // usable date on re-parse — if it will not, both extra fields are required client-side too,
+    // so the analyst gets a clear message instead of a guaranteed 400 (Codex code-review finding).
+    const backupCandidate = (mCandidates || []).find((c) => c.importSeq === backupInfoImportSeq);
+    const hasDate = !!(backupCandidate && backupCandidate.preview && backupCandidate.preview.capturedAt);
+    if (!hasDate && (!declaredSequence || !dateUnavailableReason)) {
+      alert(
+        "The selected Backup Information import has no recorded date — a declared sequence number and a reason are both required.",
+      );
+      return;
+    }
+
     const confirmed = confirm(
       `Attest that import #${backupInfoImportSeq} (Backup Information) and import #${installedAppsImportSeq} ` +
         `(Installed Applications) come from the SAME physical backup? This is an examiner attestation, ` +
@@ -334,6 +377,8 @@
           domain: "mobile-app-presence",
           completenessState,
           attestedSameBackup: true,
+          ...(declaredSequence ? { declaredSequence } : {}),
+          ...(dateUnavailableReason ? { dateUnavailableReason } : {}),
         }),
       });
       if (!r.ok) {
@@ -384,8 +429,10 @@
 
   async function loadCollectionGenerationDiff(caseId) {
     if (!caseId) return;
+    ++mCandidateSeq; // invalidates any in-flight candidate fetch from the PRIOR case
     mFormOpen = false;
     mCandidates = null;
+    mCandidatesCaseId = null;
     // Independent — a failure in one must never hide a valid result from the other. Settled with
     // Promise.all so a caller (a test, or a future progress-reporting caller) can await BOTH
     // finishing; runPanelLoaders itself tracks completion by intercepting fetch() directly and
@@ -395,4 +442,10 @@
 
   globalThis.renderCollectionGenerationDiff = renderCollectionGenerationDiff;
   globalThis.loadCollectionGenerationDiff = loadCollectionGenerationDiff;
+  // Published so the recording flow is directly testable without simulating a real click event
+  // (mirrors dashboard-evidence-attestation.js's own attestEvidenceClass/revokeEvidenceClass
+  // precedent) — onPanelClick itself stays private, it is only the dispatch, never the behavior.
+  globalThis.openRecordForm = openRecordForm;
+  globalThis.closeRecordForm = closeRecordForm;
+  globalThis.submitRecordForm = submitRecordForm;
 })();
