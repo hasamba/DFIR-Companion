@@ -21,7 +21,7 @@
 // everything), so severity is DERIVED from the event type (WIN_EVENTS / SYSMON_EVENTS),
 // with a conservative bump for LOLBin / suspicious command lines and LSASS access.
 
-import { worstSeverity as worst, type ForensicEvent, type Severity } from "./stateTypes.js";
+import { worstSeverity as worst, type ForensicEvent, type Severity, type TlpMarking } from "./stateTypes.js";
 import { MONTHS, parseBsdTime } from "./bsdTime.js";
 import { isInternalIpv4 } from "./internalIp.js";
 import { winRoleBlocks } from "./winAccountRoles.js";
@@ -55,8 +55,7 @@ export { MONTHS, parseBsdTime, isInternalIpv4, hasPlausibleTld };
 export interface SiemImportOptions {
   // Collapse repetitive identical events into one counted row. Default true.
   aggregate?: boolean;
-  // Drop events below this severity floor (e.g. "Low" drops Info noise like logoffs /
-  // process-terminated). Default undefined = keep everything.
+  // Drop events below this severity floor (e.g. "Low" drops Info noise like logoffs / process-terminated). Default undefined = keep everything.
   minSeverity?: Severity;
   // Safety cap on emitted events. Default 2000 (overridable via DFIR_MAX_EVENTS).
   maxEvents?: number;
@@ -93,8 +92,8 @@ export interface SiemEvent extends Pick<ForensicEvent, "origin"> {
   // Identity of the ONE underlying log record this event was mapped from, when the parser reported
   // it — `evtx:<channel>:<EventRecordID>` for a Windows event log. Two different parsers reading the
   // same EVTX file mint the same value, which is what lets correlate.ts recognise a Hayabusa row and
-  // a Chainsaw row as one observation instead of two (#688). Never set on an AGGREGATED event: a
-  // collapsed group represents many records, so one record's id would misidentify it.
+  // a Chainsaw row as one observation instead of two (#688). Never set on an AGGREGATED event —
+  // a collapsed group represents many records, so one record's id would misidentify it.
   sourceRecordId?: string;
   // Full, untruncated event message/detail (beyond the truncated `description`) when the mapper had it.
   message?: string;
@@ -107,6 +106,7 @@ export interface SiemEvent extends Pick<ForensicEvent, "origin"> {
   // so IOC provenance linkage (mergeRowIocs/resolveExtractedFrom) always has a stable key to
   // resolve against — not persisted on ForensicEvent, stripped before it reaches case state.
   aggKey?: string;
+  sharingMarking?: TlpMarking; // See ForensicEvent.sharingMarking (#933 item 21).
 }
 
 export interface SiemIoc {
@@ -627,14 +627,14 @@ export interface MappedEvent extends Pick<ForensicEvent, "origin"> {
   port?: number;
   // The source artifact/rule that produced this event (carried through aggregation to SiemEvent).
   artifactName?: string;
-  // Identity of the single log record behind this row (see SiemEvent.sourceRecordId). Stripped
-  // again by the aggregator whenever rows collapse into a group.
+  // Identity of the single log record behind this row (see SiemEvent.sourceRecordId); stripped again by the aggregator whenever rows collapse into a group.
   sourceRecordId?: string;
   // Full, untruncated event message/detail (beyond the truncated `description`) when available.
   message?: string;
   // See SiemEvent.yearInferred. Set per PARSED LINE, so one export may carry both dated (RFC 5424)
   // and year-less (RFC 3164) rows and only the latter become clamp-eligible.
   yearInferred?: boolean;
+  sharingMarking?: TlpMarking; // See ForensicEvent.sharingMarking (#933 item 21).
 }
 
 // Parse a Windows pid that may be decimal ("5292") or hex ("0x14ac", as 4688 renders it). Returns a

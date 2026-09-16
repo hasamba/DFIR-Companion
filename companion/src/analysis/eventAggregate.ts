@@ -1,5 +1,6 @@
 import { SEVERITY_RANK, type Severity } from "./stateTypes.js";
 import type { MappedEvent, SiemEvent } from "./siemImport.js";
+import { combineMarkings } from "./tlp.js";
 
 /**
  * The aggregation half of the shared import path: collapse mapped rows into counted events, apply
@@ -112,6 +113,14 @@ export function createEventAggregator(
             existing.sources ??= [];
             if (!existing.sources.includes(s)) existing.sources.push(s);
           }
+        // Combined unconditionally, unlike the severity-gated identity fields below (#933 item
+        // 21): a marking is a fact about the underlying intelligence, not "whichever row is
+        // currently shown" — every incoming row's own marking must be folded in, including a
+        // LESS severe one, or a stricter marking on a less-severe row would be silently dropped.
+        {
+          const combined = combineMarkings(existing.sharingMarking, m.sharingMarking);
+          if (combined) existing.sharingMarking = combined;
+        }
         // Two rows can share an aggKey while differing meaningfully in risk (e.g. the same
         // PersistenceSniper startup-item name across two user SIDs, one signed and ordinary, one
         // an unsigned LOLBin — the digit-stripped key folds them together). worst()-ing only the
@@ -135,6 +144,7 @@ export function createEventAggregator(
           ...(m.sources?.length ? { sources: [...m.sources] } : {}),
           ...(m.fileModified ? { fileModified: m.fileModified } : {}),
           ...(m.yearInferred ? { yearInferred: true } : {}),
+          ...(m.sharingMarking ? { sharingMarking: m.sharingMarking } : {}),
           // Sandbox rows must stay recognisable as lab evidence through aggregation — the origin is
           // what keeps them out of host correlation. Rows sharing a key share an origin by construction.
           ...(m.origin ? { origin: m.origin } : {}),

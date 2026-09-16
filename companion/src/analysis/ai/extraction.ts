@@ -124,16 +124,19 @@ function buildScreenshotPrompt(state: InvestigationState, analyzable: CaptureMet
  * Tag each event's source for correlation/corroboration: detect the real tool from the captured tab
  * titles (e.g. "Velociraptor", "CrowdStrike Falcon"), else the generic "screenshot".
  */
-function tagScreenshotSources<D extends { forensicEvents?: { sources?: string[] }[] }>(
-  delta: D,
-  analyzable: CaptureMetadata[],
-): D {
+function tagScreenshotSources<
+  D extends { forensicEvents?: { sources?: string[]; sharingMarking?: unknown }[] },
+>(delta: D, analyzable: CaptureMetadata[]): D {
   const winSource = detectTool(analyzable.map((c) => c.tabTitle).join(" ")) ?? "screenshot";
   return {
     ...delta,
     forensicEvents: (delta.forensicEvents ?? []).map((e) => ({
       ...e,
       sources: e.sources?.length ? e.sources : [winSource],
+      // Never emitted by the model — see the CSV/log extraction path's own identical comment
+      // (#933 item 21): a fabricated GREEN/CLEAR here would silently clear the analyst-
+      // confirmation requirement an unmarked/unrecognized screenshot event already carries.
+      sharingMarking: undefined,
     })),
   };
 }
@@ -302,6 +305,13 @@ async function runBatchedImport<T>(
           // whole file would let the merge's year-clamp rewrite a real minority year — the #739
           // defect itself. Only a year the source never mentions was invented here (#739).
           ...(sourceYears.has(yearStringOf(e.timestamp)) ? {} : { yearInferred: true }),
+          // Never emitted by the model, same posture as yearInferred (#933 item 21): the model has
+          // no way to know a real external TLP marking, and this is the one field class where a
+          // fabricated value REMOVES a safety gate (an unmarked/unrecognized event already
+          // requires analyst confirmation before sharing; a fabricated GREEN/CLEAR would silently
+          // clear that requirement) — exactly the prompt-injection risk this importer's own
+          // untrusted log/CSV content already has to guard against elsewhere.
+          sharingMarking: undefined,
         })),
       };
 

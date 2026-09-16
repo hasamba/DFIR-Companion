@@ -668,6 +668,7 @@
     "smbExecution.ts": "analysis/timeline",
     "injectionSequence.ts": "analysis/timeline",
     "timestompDetect.ts": "analysis/detect",
+    "tlp.ts": "shared",
     "tlsSession.ts": "analysis/ingest",
     "tlsSessionWords.ts": "analysis/ingest",
     "tlsGraphJoin.ts": "analysis/ingest",

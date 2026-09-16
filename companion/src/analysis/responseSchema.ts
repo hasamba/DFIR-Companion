@@ -5,6 +5,15 @@ import { tagNaiveAsUtc } from "./naiveTimestamp.js";
 // Enums use .catch(fallback) so ONE unexpected value (e.g. an IOC type of "malware")
 // maps to the fallback instead of rejecting the ENTIRE synthesis response.
 const severity = z.enum(["Critical", "High", "Medium", "Low", "Info"]);
+// See ForensicEvent.sharingMarking / tlp.ts (#933 item 21). Declared locally, same convention as
+// `severity` above, rather than importing stateTypes.ts's own TLP_LABELS — this schema validates
+// external input, tlp.ts's own type is the internal contract, and the two are kept in sync by
+// hand the same way `severity` already is.
+const tlpLabel = z.enum(["RED", "AMBER_STRICT", "AMBER", "GREEN", "CLEAR"]);
+const tlpMarking = z.union([
+  z.object({ label: tlpLabel }),
+  z.object({ label: z.literal("unrecognized"), raw: z.union([z.string(), z.number()]) }),
+]);
 const iocType = z.enum(["ip", "domain", "hash", "file", "process", "url", "sid", "other"]);
 
 // A structured collection directive (investigation-guidance #8) — where/what to collect. Every field is
@@ -175,6 +184,16 @@ export const deltaSchema = z.object({
         // that is not in this schema is stripped at the merge, so it would never reach the timeline.
         fileModified: z.string().optional(),
         chainSignature: z.string().optional(), // time-independent process-creation identity (#68)
+        // Set only by a deterministic importer whose source genuinely carries a distribution
+        // marking (currently theHiveImport.ts). A model has no way to know an external system's
+        // real TLP marking, and this is the one field class where a fabricated value REMOVES a
+        // safety gate (a synthesized GREEN/CLEAR would silently clear the analyst-confirmation
+        // requirement an unmarked event already carries) — ai/extraction.ts's own screenshot and
+        // CSV/log paths explicitly strip any model-asserted value before it reaches a delta
+        // (#933 item 21, same posture as `yearInferred`'s own "never emitted by the model"
+        // contract). `.catch(undefined)` here so a malformed value degrades to unmarked
+        // (confirmation-required) rather than rejecting the whole delta.
+        sharingMarking: tlpMarking.optional().catch(undefined),
         // Phase 2 evidence-chain fields.
         action: z.enum(["write", "execute", "network_send", "network_receive"]).optional(),
         srcIp: z.string().optional(),

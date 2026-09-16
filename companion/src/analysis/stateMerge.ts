@@ -1,4 +1,5 @@
 import { renameForgedFindingIds, type AnalysisDelta } from "./responseSchema.js";
+import { combineMarkings } from "./tlp.js";
 import type {
   InvestigationState,
   Finding,
@@ -310,6 +311,12 @@ export function mergeDelta(
       if (incoming.srcIp) existing.srcIp = incoming.srcIp;
       if (incoming.dstIp) existing.dstIp = incoming.dstIp;
       if (incoming.port !== undefined) existing.port = incoming.port;
+      // Combined, not overwritten (#933 item 21): a plain "if present, overwrite" here would let a
+      // re-import missing the marking silently downgrade an already-recorded restrictive one.
+      {
+        const combined = combineMarkings(existing.sharingMarking, incoming.sharingMarking);
+        if (combined) existing.sharingMarking = combined;
+      }
     } else {
       const created: ForensicEvent = {
         id: incoming.id,
@@ -343,6 +350,7 @@ export function mergeDelta(
         ...(incoming.dstIp ? { dstIp: incoming.dstIp } : {}),
         ...(incoming.port !== undefined ? { port: incoming.port } : {}),
         ...(incoming.origin ? { origin: incoming.origin } : {}),
+        ...(incoming.sharingMarking ? { sharingMarking: incoming.sharingMarking } : {}),
       };
       forensicTimeline.push(created);
       byId.set(incoming.id, created);
