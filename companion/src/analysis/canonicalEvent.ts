@@ -37,6 +37,7 @@ import {
   olevbaCompoundLeadBlockSchema,
 } from "./canonicalOlevbaFinding.js";
 import { sqliteRowStateBlockSchema } from "./canonicalSqliteRowState.js";
+import { mobileRequestedPermissionBlockSchema } from "./canonicalMobileRequestedPermission.js";
 
 export const CANONICAL_EVENT_SCHEMA_VERSION = "1.0.0" as const;
 /** The producer stamped on an envelope DERIVED from legacy flat fields at the read boundary. */
@@ -196,6 +197,7 @@ export const canonicalEventEnvelopeSchema = z.object({
   capaCompositeLead: capaCompositeLeadBlockSchema.optional(), // capaResultImport.ts, #932 item 6
   olevbaFinding: olevbaFindingBlockSchema.optional(), // olevbaResultImport.ts, #932 item 7
   sqliteRowState: sqliteRowStateBlockSchema.optional(), // sqliteRowStateImport.ts, #932 item 8
+  mobileRequestedPermission: mobileRequestedPermissionBlockSchema.optional(), // mobsfPermissionImport.ts, #932 item 9
   olevbaStompingLead: olevbaStompingLeadBlockSchema.optional(), // olevbaResultImport.ts, #932 item 7
   olevbaCompoundLead: olevbaCompoundLeadBlockSchema.optional(), // olevbaResultImport.ts, #932 item 7
   mailboxChain: mailboxChainBlockSchema.optional(), // mailboxChain.ts, #975; block in canonicalMailbox.ts
@@ -294,8 +296,7 @@ export const canonicalEventEnvelopeSchema = z.object({
       layers: z.array(z.string()),
     })
     .optional(),
-  // A DNS record's reading — the endpoint's own records (dnsRecord.ts) or a sensor's view with
-  // the leads one upload establishes (dnsWireRows.ts, #996); the block lives in canonicalDns.ts.
+  // A DNS record's reading — the endpoint's own records (dnsRecord.ts) or a sensor's view with the leads one upload establishes (dnsWireRows.ts, #996); the block lives in canonicalDns.ts.
   dns: dnsBlockSchema.optional(),
   file: z
     .object({
@@ -760,8 +761,7 @@ function legacyCanonical(event: ForensicEvent): CanonicalEventEnvelope {
 
 export function upgradeForensicEvent(event: ForensicEvent): ForensicEvent {
   if (event.canonical?.schemaVersion === CANONICAL_EVENT_SCHEMA_VERSION) return event;
-  // A future major/minor version may contain meaning this build does not understand. Preserve it
-  // verbatim instead of silently downgrading it; explicit version migrations are registered here.
+  // A future major/minor version may contain meaning this build does not understand. Preserve it verbatim instead of silently downgrading it; explicit version migrations are registered here.
   if (event.canonical) return event;
   return { ...event, canonical: legacyCanonical(event) };
 }
