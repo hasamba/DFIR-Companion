@@ -33,6 +33,7 @@ import { aggregateEvents } from "./eventAggregate.js";
 import type { ForensicEvent } from "./stateTypes.js";
 
 export const MAX_RECORDS_SCANNED = 20_000; // report-wide
+export const MAX_DUPLICATE_CHECK_BUCKET = 500; // pairwise-comparison bound per same-tuple bucket
 export const MERGE_GAP_SECONDS = 5;
 
 const TCP = 6;
@@ -164,6 +165,18 @@ function tupleKey(r: RawRecord, includeExporter: boolean): string {
   return includeExporter ? `${r.exporterSysId}|${r.observationPointId ?? ""}|${base}` : base;
 }
 
+/** Positional union of two nfdump FlagsString values (fixed-width, one character per flag —
+ * e.g. ".AP.SF") — Codex code review finding: a merge previously kept only the FIRST record's own
+ * flags, so a later interim record's own flags (e.g. a final FIN/RST) were silently lost. Any
+ * non-"." character at a position wins. */
+function mergeTcpFlags(a: string | undefined, b: string | undefined): string | undefined {
+  if (!a) return b;
+  if (!b || a.length !== b.length) return a;
+  let out = "";
+  for (let i = 0; i < a.length; i++) out += a[i] !== "." ? a[i] : b[i];
+  return out;
+}
+
 /** Merge interim active-timeout re-exports of the SAME ongoing connection by temporal adjacency —
  * a heuristic, never a certainty (see RECOMMENDATION-10.md's own disclosed limitations). */
 function mergeGroup(records: RawRecord[]): MergedFlow[] {
@@ -176,6 +189,7 @@ function mergeGroup(records: RawRecord[]): MergedFlow[] {
       prev.inBytes += r.inBytes;
       prev.inPackets += r.inPackets;
       prev.sampled = prev.sampled || r.sampled;
+      prev.tcpFlags = mergeTcpFlags(prev.tcpFlags, r.tcpFlags);
       prev.mergedRecordCount += 1;
       continue;
     }
@@ -184,22 +198,18 @@ function mergeGroup(records: RawRecord[]): MergedFlow[] {
   return merged;
 }
 
-/** TCP SYN presence marks the connection-initiating direction (this record's srcAddr is the
- * caller); a TCP record without SYN is treated as the reply direction and excluded from beacon
- * analysis via the SAME inbound-exclusion signal beaconDetect.ts already uses. UDP/ICMP carry no
- * such signal — defaults to outbound, matching every other importer's own existing behavior for
- * direction-ambiguous traffic (Codex design review finding: nfdump's own `direction` field is
- * ingress/egress-at-the-observation-point, not an initiator flag). */
-function isInboundReply(flow: MergedFlow): boolean {
-  return flow.proto === TCP && !!flow.tcpFlags && !flow.tcpFlags.includes("S");
-}
-
-/** Disclosure for the canonical block — see canonicalExporterFlow.ts's own comment on why this
- * exists separately from `ForensicEvent.action` (which cannot round-trip through this importer's
- * aggregation path). */
-function initiatingDirectionOf(flow: MergedFlow): "outbound" | "reply" | "unknown" {
+// A completed TCP handshake typically leaves BOTH directions' own aggregate (OR-of-the-whole-flow)
+// tcp_flags carrying SYN — the initiator's flow from its own opening SYN packet, and the
+// responder's flow from its own SYN-ACK reply — so "contains S" alone cannot reliably tell
+// initiator from responder (Codex code review finding: a SYN-ACK reply flow was being
+// misclassified as outbound/initiating). The only UNAMBIGUOUS signal available from an aggregate
+// flag set is a bare SYN with no ACK ever recorded alongside it — the very first packet of a
+// handshake that received no reply captured in this flow. Everything else (SYN+ACK together,
+// ACK-only, no flags at all) is honestly "unknown", never guessed as "reply" — a claim this
+// importer can no longer make reliably. UDP/ICMP carry no flag signal at all — always "unknown".
+function initiatingDirectionOf(flow: MergedFlow): "outbound" | "unknown" {
   if (flow.proto !== TCP || !flow.tcpFlags) return "unknown";
-  return flow.tcpFlags.includes("S") ? "outbound" : "reply";
+  return flow.tcpFlags.includes("S") && !flow.tcpFlags.includes("A") ? "outbound" : "unknown";
 }
 
 function flowAggKey(reportFingerprint: string, flow: MergedFlow): string {
@@ -410,12 +420,21 @@ export function parseExporterFlowNdjson(
   }
   for (const bucket of byTupleOnly.values()) {
     if (bucket.length < 2) continue;
+    // A pairwise check is O(n^2) in the bucket size — safe for the realistic case (a handful of
+    // exporters ever see the same conversation), but a crafted upload naming the same tuple under
+    // thousands of distinct exporter ids would otherwise defeat MAX_RECORDS_SCANNED as a CPU bound
+    // (Codex code review finding). Bounded: skip the disclosure for a pathologically large bucket
+    // rather than compute it — every record is still imported and counted, only this one
+    // cross-check is foregone, and this is an extreme edge case no real nfdump capture produces.
+    if (bucket.length > MAX_DUPLICATE_CHECK_BUCKET) continue;
     for (const f of bucket) {
       const others = bucket.filter(
         (o) =>
           o !== f && o.exporterSysId !== f.exporterSysId && o.firstMs <= f.lastMs && o.lastMs >= f.firstMs,
       );
-      f.possibleDuplicateExporterCount = others.length;
+      // Distinct EXPORTERS, not overlapping-flow count (Codex code review finding: several
+      // non-adjacent overlapping windows from the SAME other exporter must count once).
+      f.possibleDuplicateExporterCount = new Set(others.map((o) => o.exporterSysId)).size;
     }
   }
 
@@ -427,6 +446,10 @@ export function parseExporterFlowNdjson(
   // unmodified detectBeacons() function, never re-implemented (Codex design review's own
   // architecture fix: raw Info-severity flow events alone never reach the default forensic
   // timeline, so any periodicity signal must be lifted into its own bounded, visible lead here).
+  // No direction-based exclusion here (Codex code review finding: a SYN+ACK reply flow cannot be
+  // reliably told apart from an initiating one via aggregate tcp_flags alone — see
+  // initiatingDirectionOf's own comment) — every normalized flow participates in the sweep,
+  // matching this importer's own established default-outbound-when-ambiguous convention.
   const syntheticEvents: ForensicEvent[] = flows.map((f, i) => ({
     id: `exporter-flow-synthetic-${i}`,
     timestamp: new Date(f.firstMs).toISOString(),
@@ -438,7 +461,6 @@ export function parseExporterFlowNdjson(
     srcIp: f.srcAddr,
     dstIp: f.dstAddr,
     ...(f.dstPort !== undefined ? { port: f.dstPort } : {}),
-    ...(isInboundReply(f) ? { action: "network_receive" as const } : {}),
   }));
   const beaconCandidates = detectBeacons(syntheticEvents);
   const beaconLeads = beaconCandidates.map((c) => mapBeaconLead(c, reportFingerprint));
