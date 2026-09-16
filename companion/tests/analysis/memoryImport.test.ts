@@ -1129,12 +1129,26 @@ describe("kernel callback/hook wiring (#933 item 16)", () => {
   it("routes a callbacks table through classify() and grades an unresolved row Low, no MITRE", () => {
     const json = JSON.stringify({
       "windows.callbacks.Callbacks": [
-        { Type: "CreateProcessNotifyRoutine", Callback: "0xfffff801`aaaaaaaa", Module: "N/A", Symbol: "N/A", Detail: "" },
-        { Type: "LoadImageNotifyRoutine", Callback: "0xfffff801`bbbbbbbb", Module: "ntoskrnl.exe", Symbol: "PspLoadImageNotifyRoutine", Detail: "" },
+        {
+          Type: "CreateProcessNotifyRoutine",
+          Callback: "0xfffff801`aaaaaaaa",
+          Module: "N/A",
+          Symbol: "N/A",
+          Detail: "",
+        },
+        {
+          Type: "LoadImageNotifyRoutine",
+          Callback: "0xfffff801`bbbbbbbb",
+          Module: "ntoskrnl.exe",
+          Symbol: "PspLoadImageNotifyRoutine",
+          Detail: "",
+        },
       ],
     });
     const r = parseMemory(json, { filename: "windows.callbacks.json" });
-    const unresolved = r.events.find((e) => e.description.includes("unresolved") || e.description.includes("could not place"));
+    const unresolved = r.events.find(
+      (e) => e.description.includes("unresolved") || e.description.includes("could not place"),
+    );
     expect(unresolved?.severity).toBe("Low");
     expect(unresolved?.mitreTechniques ?? []).toHaveLength(0);
     const summary = r.events.find((e) => e.description.includes("resolved to a known module"));
