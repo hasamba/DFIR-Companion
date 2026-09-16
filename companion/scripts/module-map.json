@@ -468,6 +468,7 @@
     "memoryCrossView.ts": "analysis/ingest",
     "memoryFields.ts": "analysis/ingest",
     "memoryExportShape.ts": "analysis/ingest",
+    "memoryHandleOwnership.ts": "analysis/ingest",
     "memoryImageFacts.ts": "analysis/ingest",
     "memoryImport.ts": "analysis/ingest",
     "memoryRunEnvelope.ts": "analysis/ingest",
