@@ -54,6 +54,7 @@ const BUILT_IN_IMPORT_KINDS = [
   "bulkextractorurl",
   "flossresult",
   "caparesult",
+  "olevbaresult",
 ] as const;
 
 const CURRENT_SCHEMAS = [
