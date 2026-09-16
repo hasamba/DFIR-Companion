@@ -80,6 +80,14 @@ export const collectionGenerationSchema = z.object({
 });
 export type CollectionGeneration = z.infer<typeof collectionGenerationSchema>;
 
+/** One generation's own eligibility for ANY comparison, independent of what it might be paired
+ * with — exported (#1128) so an N-wise cohort filter and `generationsComparable`'s own pairwise
+ * check share exactly one definition and can never drift apart (Codex code-review finding M3 on
+ * #1128's own design: the two were at risk of being redefined separately). */
+export function generationEligible(g: CollectionGeneration): boolean {
+  return g.completenessState === "complete" && g.filtersApplied.length === 0;
+}
+
 /** Two generations of the SAME resolved host + domain are eligible for a "removed"/"changed"
  * comparison only when both satisfy this — the comparator (932.2's own follow-on) is the intended
  * caller, but the rule lives here so it is defined exactly once. Default is "not comparable": a
@@ -88,7 +96,5 @@ export type CollectionGeneration = z.infer<typeof collectionGenerationSchema>;
 export function generationsComparable(a: CollectionGeneration, b: CollectionGeneration): boolean {
   if (a.domain !== b.domain) return false;
   if (a.order.kind !== b.order.kind) return false;
-  const complete = (g: CollectionGeneration) =>
-    g.completenessState === "complete" && g.filtersApplied.length === 0;
-  return complete(a) && complete(b);
+  return generationEligible(a) && generationEligible(b);
 }

@@ -3,6 +3,7 @@ import { describe, it, expect } from "vitest";
 import {
   collectionGenerationSchema,
   generationsComparable,
+  generationEligible,
   type CollectionGeneration,
 } from "../../src/analysis/canonicalCollectionGeneration.js";
 
@@ -59,6 +60,24 @@ describe("collectionGenerationSchema", () => {
     const { filtersApplied: _drop, ...rest } = generation();
     const parsed = collectionGenerationSchema.parse(rest);
     expect(parsed.filtersApplied).toEqual([]);
+  });
+});
+
+describe("generationEligible", () => {
+  it("a complete, unfiltered generation is eligible", () => {
+    expect(generationEligible(generation())).toBe(true);
+  });
+
+  it("a partial generation is not eligible", () => {
+    expect(generationEligible(generation({ completenessState: "partial" }))).toBe(false);
+  });
+
+  it("an unknown-completeness generation is not eligible", () => {
+    expect(generationEligible(generation({ completenessState: "unknown" }))).toBe(false);
+  });
+
+  it("a generation with any filter applied is not eligible", () => {
+    expect(generationEligible(generation({ filtersApplied: ["severity-floor"] }))).toBe(false);
   });
 });
 

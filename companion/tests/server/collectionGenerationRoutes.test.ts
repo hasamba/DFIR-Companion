@@ -132,6 +132,68 @@ describe("/cases/:id/collection-generations", () => {
     expect(res.body.generations[0].revokedAt).toBeTruthy();
   });
 
+  it("compares generations across an adjacent pair (#1128)", async () => {
+    const seq1 = await seedImport("c1");
+    await request(app)
+      .post("/cases/c1/collection-generations")
+      .send({
+        rawHost: "WS-01",
+        domain: "persistence",
+        order: { kind: "captured", capturedAt: "2026-01-12T10:00:00Z" },
+        importSeq: seq1,
+        completenessState: "complete",
+      });
+    const seq2 = await seedImport("c1");
+    await request(app)
+      .post("/cases/c1/collection-generations")
+      .send({
+        rawHost: "WS-01",
+        domain: "persistence",
+        order: { kind: "captured", capturedAt: "2026-01-13T10:00:00Z" },
+        importSeq: seq2,
+        completenessState: "complete",
+      });
+    const res = await request(app).get("/cases/c1/collection-generations/compare");
+    expect(res.status).toBe(200);
+    expect(res.body.cohorts).toHaveLength(1);
+    expect(res.body.cohorts[0].resolvedHost).toBe("ws-01");
+    expect(res.body.cohorts[0].pairs).toHaveLength(1);
+  });
+
+  it("compare filters by host, resolved through the current alias index", async () => {
+    const seq1 = await seedImport("c1");
+    await request(app)
+      .post("/cases/c1/collection-generations")
+      .send({
+        rawHost: "WS-01",
+        domain: "persistence",
+        order: { kind: "captured", capturedAt: "2026-01-12T10:00:00Z" },
+        importSeq: seq1,
+        completenessState: "complete",
+      });
+    const match = await request(app).get("/cases/c1/collection-generations/compare?host=WS-01");
+    expect(match.body.cohorts).toHaveLength(1);
+    const noMatch = await request(app).get("/cases/c1/collection-generations/compare?host=WS-99");
+    expect(noMatch.body.cohorts).toHaveLength(0);
+  });
+
+  it("compare 400s on an unknown domain rather than silently returning nothing", async () => {
+    const res = await request(app).get("/cases/c1/collection-generations/compare?domain=bogus");
+    expect(res.status).toBe(400);
+  });
+
+  it("compare returns an empty cohort list for a fresh case, never a 500", async () => {
+    const res = await request(app).get("/cases/c1/collection-generations/compare");
+    expect(res.status).toBe(200);
+    expect(res.body.cohorts).toEqual([]);
+  });
+
+  it("compare returns 501 when the store is not configured", async () => {
+    const bareApp = createApp(store, { stateStore: new StateStore(store) });
+    const res = await request(bareApp).get("/cases/c1/collection-generations/compare");
+    expect(res.status).toBe(501);
+  });
+
   it("returns 501 when the store is not configured", async () => {
     const bareApp = createApp(store, { stateStore: new StateStore(store) });
     const res = await request(bareApp).get("/cases/c1/collection-generations");
