@@ -45,6 +45,11 @@ describe("correlateEvents", () => {
   });
 
   it("carries a marking on a non-primary member through the merge, not just primary's own (#933 item 21)", () => {
+    // The marking is on `velo` (High), NOT on `thor` (Critical, which wins primary — see the
+    // first test's own `out[0].severity` assertion). Putting it on the LOSING side is what
+    // actually pins "combined across every member" — an Ollama code review found an earlier
+    // version of this test put the marking on the winning side, where a plain `...primary`
+    // spread would have passed it through even with no combine logic at all.
     const HASH = "4813e753f6f9bfa5c5de0edbb8dd3cc7f1fa51714097d3144d44e5e89dbd33ef";
     const velo = ev({
       id: "m1e1",
@@ -52,6 +57,7 @@ describe("correlateEvents", () => {
       severity: "High",
       sources: ["CSV import"],
       timestamp: "2026-05-26T08:35:23Z",
+      sharingMarking: { label: "RED" },
     });
     const thor = ev({
       id: "t2e5",
@@ -60,12 +66,10 @@ describe("correlateEvents", () => {
       sha256: HASH,
       sources: ["THOR"],
       timestamp: "2026-05-26T08:35:23Z",
-      sharingMarking: { label: "RED" },
     });
 
-    // thor is primary (higher severity), but the marking must survive regardless of which side
-    // carries it — same reasoning as `sources` above.
     const out = correlateEvents([velo, thor]);
+    expect(out[0].severity).toBe("Critical"); // thor is primary
     expect(out[0].sharingMarking).toEqual({ label: "RED" });
   });
 

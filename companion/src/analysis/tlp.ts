@@ -29,7 +29,20 @@ export function normalizeLegacyTlp(raw: unknown): TlpMarking | undefined {
     const label = LEGACY_NUMERIC[raw];
     return label ? { label } : { label: "unrecognized", raw };
   }
-  if (typeof raw !== "string") return { label: "unrecognized", raw: String(raw) };
+  // JSON.stringify, not String(): String(["TLP:RED"]) is the misleading "TLP:RED" (arrays
+  // stringify as their joined elements) — an Ollama code review caught this as a real
+  // "verbatim" claim violated for a value that would visually look like a valid marking.
+  // JSON.stringify itself can throw (a BigInt) or return undefined (a function/symbol) for a
+  // handful of exotic, non-JSON-serializable types — String() is a safe universal fallback there.
+  if (typeof raw !== "string") {
+    let rawStr: string;
+    try {
+      rawStr = JSON.stringify(raw) ?? String(raw);
+    } catch {
+      rawStr = String(raw);
+    }
+    return { label: "unrecognized", raw: rawStr };
+  }
   const trimmed = raw.trim();
   if (!trimmed) return undefined;
   const label = STRING_FORMS[trimmed.toUpperCase()];
@@ -49,7 +62,11 @@ const RANK: Record<TlpLabel, number> = Object.fromEntries(TLP_LABELS.map((label,
 export function mostRestrictive(markings: readonly (TlpMarking | undefined)[]): TlpLabel | undefined {
   let best: TlpLabel | undefined;
   for (const m of markings) {
-    if (!m || m.label === "unrecognized") continue;
+    // A label surviving from persisted state can predate this schema (or be hand-edited) and
+    // carry a value RANK has no entry for — `RANK[bogus]` is `undefined`, and `best === undefined`
+    // would otherwise let it win purely by being first regardless of its real rank. Treat exactly
+    // like "unrecognized": it does not participate in the ranking.
+    if (!m || m.label === "unrecognized" || !(m.label in RANK)) continue;
     if (best === undefined || RANK[m.label] < RANK[best]) best = m.label;
   }
   return best;
@@ -60,6 +77,15 @@ export function mostRestrictive(markings: readonly (TlpMarking | undefined)[]): 
 // mostRestrictive() alone — that function ignores exactly the entries this one reports on.
 export function hasUnmarkedOrUnrecognized(markings: readonly (TlpMarking | undefined)[]): boolean {
   return markings.some((m) => !m || m.label === "unrecognized");
+}
+
+// Whichever of `label` and `floor` is MORE restrictive — never looser than `floor`, but keeps
+// `label` unchanged when it is already at least as restrictive. An Ollama code review found an
+// earlier version of irisMap.ts's own "floor at amber" fix implemented as an unconditional
+// override instead of a floor — it replaced a real RED marking with amber (a LOOSENING) whenever
+// any OTHER linked event was simply unmarked. A floor is a minimum, not a replacement.
+export function atLeastAsRestrictive(label: TlpLabel, floor: TlpLabel): TlpLabel {
+  return RANK[label] <= RANK[floor] ? label : floor;
 }
 
 // "Missing labels do not mean permission to publish": true for RED, AMBER_STRICT, AMBER, an
@@ -81,11 +107,20 @@ export function blocksSharing(marking: TlpMarking | undefined): boolean {
 // eventAggregate.ts's own within-import row collapsing): a real marking always survives a merge
 // with an unmarked or unrecognized one, and the tighter of two real markings wins. Never
 // last-write-wins — an Ollama design review found that risk directly.
+//
+// An unrecognized marking is treated with AMBER-level caution everywhere else in this module
+// (requiresAnalystConfirmation, irisMap.ts's own amber floor), so a real winner LOOSER than amber
+// (GREEN/CLEAR) must still defer to a present unrecognized marking — an Ollama code review found
+// an earlier version of this function let GREEN/CLEAR silently discard an unrecognized marking's
+// own caution AND its preserved raw value. A real winner already at least as restrictive as amber
+// (RED/AMBER_STRICT/AMBER) needs no such deference — it is already the more cautious answer.
 export function combineMarkings(
   a: TlpMarking | undefined,
   b: TlpMarking | undefined,
 ): TlpMarking | undefined {
   const winner = mostRestrictive([a, b]);
-  if (winner) return { label: winner };
-  return a?.label === "unrecognized" ? a : b?.label === "unrecognized" ? b : undefined;
+  const unrecognized = a?.label === "unrecognized" ? a : b?.label === "unrecognized" ? b : undefined;
+  if (winner && RANK[winner] <= RANK.AMBER) return { label: winner };
+  if (unrecognized) return unrecognized;
+  return winner ? { label: winner } : undefined;
 }

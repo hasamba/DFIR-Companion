@@ -6,6 +6,7 @@ import {
   requiresAnalystConfirmation,
   blocksSharing,
   combineMarkings,
+  atLeastAsRestrictive,
 } from "../../src/analysis/tlp.js";
 import type { TlpMarking } from "../../src/analysis/stateTypes.js";
 
@@ -49,8 +50,14 @@ describe("normalizeLegacyTlp", () => {
   });
 
   it("treats a value of the wrong JS type (untrusted import data) as unrecognized, never a throw", () => {
-    expect(normalizeLegacyTlp({ nested: true })).toEqual({ label: "unrecognized", raw: "[object Object]" });
+    expect(normalizeLegacyTlp({ nested: true })).toEqual({ label: "unrecognized", raw: '{"nested":true}' });
     expect(normalizeLegacyTlp(true)).toEqual({ label: "unrecognized", raw: "true" });
+  });
+
+  it("never mis-stringifies an array as if it were a plausible-looking string value", () => {
+    // String(["TLP:RED"]) would be the misleading "TLP:RED" (JS arrays stringify as their
+    // joined elements) — a real bug an Ollama code review caught.
+    expect(normalizeLegacyTlp(["TLP:RED"])).toEqual({ label: "unrecognized", raw: '["TLP:RED"]' });
   });
 
   it("returns undefined for an empty or whitespace-only string", () => {
@@ -150,8 +157,8 @@ describe("combineMarkings", () => {
     expect(combineMarkings(real("GREEN"), real("RED"))).toEqual({ label: "RED" });
   });
 
-  it("a real marking survives a merge with an unrecognized one", () => {
-    expect(combineMarkings(real("GREEN"), { label: "unrecognized", raw: "x" })).toEqual({ label: "GREEN" });
+  it("a real marking at least as restrictive as amber survives a merge with an unrecognized one", () => {
+    expect(combineMarkings(real("AMBER"), { label: "unrecognized", raw: "x" })).toEqual({ label: "AMBER" });
   });
 
   it("preserves an unrecognized marking when the other side has no marking at all", () => {
@@ -163,5 +170,38 @@ describe("combineMarkings", () => {
 
   it("returns undefined only when neither side ever had a marking", () => {
     expect(combineMarkings(undefined, undefined)).toBeUndefined();
+  });
+
+  it("a real marking that is already at least as restrictive as amber does not lose to unrecognized", () => {
+    expect(combineMarkings(real("RED"), { label: "unrecognized", raw: "x" })).toEqual({ label: "RED" });
+  });
+
+  it("an unrecognized marking wins over a real GREEN/CLEAR — both are looser than amber", () => {
+    // A real design-review-caught bug: unrecognized is treated with amber-level caution, so it
+    // must not be discarded in favor of a genuinely looser real label.
+    expect(combineMarkings(real("GREEN"), { label: "unrecognized", raw: "x" })).toEqual({
+      label: "unrecognized",
+      raw: "x",
+    });
+    expect(combineMarkings({ label: "unrecognized", raw: "y" }, real("CLEAR"))).toEqual({
+      label: "unrecognized",
+      raw: "y",
+    });
+  });
+});
+
+describe("atLeastAsRestrictive", () => {
+  it("keeps the label unchanged when it is already at least as restrictive as the floor", () => {
+    expect(atLeastAsRestrictive("RED", "AMBER")).toBe("RED");
+    expect(atLeastAsRestrictive("AMBER", "AMBER")).toBe("AMBER");
+  });
+
+  it("returns the floor when the label is looser than the floor", () => {
+    expect(atLeastAsRestrictive("GREEN", "AMBER")).toBe("AMBER");
+    expect(atLeastAsRestrictive("CLEAR", "AMBER")).toBe("AMBER");
+  });
+
+  it("never turns a floor into a loosening — AMBER_STRICT is stricter than AMBER, not looser", () => {
+    expect(atLeastAsRestrictive("AMBER_STRICT", "AMBER")).toBe("AMBER_STRICT");
   });
 });

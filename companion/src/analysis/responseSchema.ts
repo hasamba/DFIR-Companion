@@ -186,10 +186,14 @@ export const deltaSchema = z.object({
         chainSignature: z.string().optional(), // time-independent process-creation identity (#68)
         // Set only by a deterministic importer whose source genuinely carries a distribution
         // marking (currently theHiveImport.ts). A model has no way to know an external system's
-        // real TLP marking, so a synthesized value here is no more trustworthy than any other
-        // model-guessed field — never treated as authoritative beyond what tlp.ts's own
-        // requiresAnalystConfirmation() already requires for anything but GREEN/CLEAR.
-        sharingMarking: tlpMarking.optional(),
+        // real TLP marking, and this is the one field class where a fabricated value REMOVES a
+        // safety gate (a synthesized GREEN/CLEAR would silently clear the analyst-confirmation
+        // requirement an unmarked event already carries) — ai/extraction.ts's own screenshot and
+        // CSV/log paths explicitly strip any model-asserted value before it reaches a delta
+        // (#933 item 21, same posture as `yearInferred`'s own "never emitted by the model"
+        // contract). `.catch(undefined)` here so a malformed value degrades to unmarked
+        // (confirmation-required) rather than rejecting the whole delta.
+        sharingMarking: tlpMarking.optional().catch(undefined),
         // Phase 2 evidence-chain fields.
         action: z.enum(["write", "execute", "network_send", "network_receive"]).optional(),
         srcIp: z.string().optional(),

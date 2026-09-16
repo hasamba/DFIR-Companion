@@ -21,7 +21,7 @@ import type { IrisAssetBody, IrisIocBody, IrisEventBody, IrisTaskBody } from "./
 import type { PlaybookTask, PlaybookStatus } from "../../analysis/playbook.js";
 import { tacticForTechniques } from "../../analysis/mitreTactics.js";
 import { attackTechniqueMd, attackTechniqueUrl } from "../../analysis/attack.js";
-import { mostRestrictive, hasUnmarkedOrUnrecognized } from "../../analysis/tlp.js";
+import { mostRestrictive, hasUnmarkedOrUnrecognized, atLeastAsRestrictive } from "../../analysis/tlp.js";
 import type { TlpLabel } from "../../analysis/stateTypes.js";
 
 const TAG = "dfir-companion";
@@ -95,16 +95,20 @@ const IRIS_DEFAULT_TLP_ID = 2; // amber
 // The real tlp_id for an IOC, computed from its own linked events' sharingMarking (via
 // IOC.extractedFrom — the same authoritative link iocProvenanceChain.ts already uses; the
 // approximate value-match fallback that function also has is deliberately NOT used here, since a
-// guessed link is the wrong foundation for a sharing-restriction decision). Floors at the
-// existing amber default whenever some linked evidence carries no marking at all or an
-// unrecognized one — never loosens to green/clear just because SOME evidence happened to be
-// marked less restrictively (a real regression an Ollama design review caught in an earlier
-// version of this fix).
+// guessed link is the wrong foundation for a sharing-restriction decision).
+//
+// Floors at amber whenever some linked evidence carries no marking at all or an unrecognized
+// one — but a floor is a MINIMUM, not a replacement: an Ollama code review caught an earlier
+// version of this function that unconditionally returned the amber default in that case, which
+// silently LOOSENED a genuinely RED- or AMBER_STRICT-marked IOC down to amber the moment any
+// OTHER linked event happened to be unmarked. `atLeastAsRestrictive` keeps whichever of the real
+// strictest label and amber is more restrictive.
 export function resolveIocTlpId(ioc: IOC, eventById: ReadonlyMap<string, ForensicEvent>): number {
   const markings = (ioc.extractedFrom ?? []).map((id) => eventById.get(id)?.sharingMarking);
-  if (hasUnmarkedOrUnrecognized(markings)) return IRIS_DEFAULT_TLP_ID;
-  const label = mostRestrictive(markings);
-  return label ? IRIS_TLP_ID[label] : IRIS_DEFAULT_TLP_ID;
+  const strictest = mostRestrictive(markings);
+  if (!strictest) return IRIS_DEFAULT_TLP_ID; // nothing rankable at all — unchanged default
+  const label = hasUnmarkedOrUnrecognized(markings) ? atLeastAsRestrictive(strictest, "AMBER") : strictest;
+  return IRIS_TLP_ID[label];
 }
 
 // Build an IRIS add-ioc body, or null when no IRIS type matches (caller records it as skipped).
