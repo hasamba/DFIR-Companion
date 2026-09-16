@@ -2,7 +2,10 @@
 import { describe, it, expect } from "vitest";
 import { diffEnvelopes, type SnapshotEnvelope } from "../../src/analysis/snapshotComparisonKernel.js";
 
-function envelope(entries: Record<string, string>, overrides: Partial<SnapshotEnvelope<string>> = {}): SnapshotEnvelope<string> {
+function envelope(
+  entries: Record<string, string>,
+  overrides: Partial<SnapshotEnvelope<string>> = {},
+): SnapshotEnvelope<string> {
   return {
     version: 1,
     snapshotId: "g1",
@@ -27,19 +30,25 @@ describe("diffEnvelopes", () => {
   it("reports a key present only in the earlier envelope", () => {
     const a = envelope({ k1: "v1" });
     const b = envelope({});
-    expect(diffEnvelopes(a, b, eq)).toEqual([{ direction: "present-only-in-earlier", key: "k1", earlierValue: "v1" }]);
+    expect(diffEnvelopes(a, b, eq)).toEqual([
+      { direction: "present-only-in-earlier", key: "k1", earlierValue: "v1" },
+    ]);
   });
 
   it("reports a key present only in the later envelope", () => {
     const a = envelope({});
     const b = envelope({ k1: "v1" });
-    expect(diffEnvelopes(a, b, eq)).toEqual([{ direction: "present-only-in-later", key: "k1", laterValue: "v1" }]);
+    expect(diffEnvelopes(a, b, eq)).toEqual([
+      { direction: "present-only-in-later", key: "k1", laterValue: "v1" },
+    ]);
   });
 
   it("reports a changed value for a key present in both", () => {
     const a = envelope({ k1: "old" });
     const b = envelope({ k1: "new" });
-    expect(diffEnvelopes(a, b, eq)).toEqual([{ direction: "changed", key: "k1", earlierValue: "old", laterValue: "new" }]);
+    expect(diffEnvelopes(a, b, eq)).toEqual([
+      { direction: "changed", key: "k1", earlierValue: "old", laterValue: "new" },
+    ]);
   });
 
   it("never labels a change 'added'/'removed'/'deleted' — direction values are the neutral literals only", () => {
@@ -62,6 +71,8 @@ describe("diffEnvelopes", () => {
     const b = envelope({ k1: "v1" });
     const caseInsensitiveEq = (x: string, y: string) => x.toLowerCase() === y.toLowerCase();
     expect(diffEnvelopes(a, b, caseInsensitiveEq)).toEqual([]);
-    expect(diffEnvelopes(a, b, eq)).toEqual([{ direction: "changed", key: "k1", earlierValue: "V1", laterValue: "v1" }]);
+    expect(diffEnvelopes(a, b, eq)).toEqual([
+      { direction: "changed", key: "k1", earlierValue: "V1", laterValue: "v1" },
+    ]);
   });
 });

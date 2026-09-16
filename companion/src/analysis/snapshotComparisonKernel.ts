@@ -49,6 +49,8 @@ export function diffEnvelopes<TValue>(
     if (!earlier.entries.has(key)) changes.push({ direction: "present-only-in-later", key, laterValue });
   }
   const directionRank = { "present-only-in-earlier": 0, changed: 1, "present-only-in-later": 2 } as const;
-  changes.sort((a, b) => a.key.localeCompare(b.key) || directionRank[a.direction] - directionRank[b.direction]);
+  changes.sort(
+    (a, b) => a.key.localeCompare(b.key) || directionRank[a.direction] - directionRank[b.direction],
+  );
   return changes;
 }

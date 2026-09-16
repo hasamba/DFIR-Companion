@@ -1568,6 +1568,17 @@ export const FEATURES: Feature[] = [
     private: ["hostScopeLedger", "hostScopeFilter", "STATUS_LABEL", "STATUS_ORDER", "PRESENCE_LABEL"],
   },
   {
+    // Collection generation diff (#1128) — a genuine top-level section (not a mini-panel) over
+    // #1108's own collection-generation ledger. One piece of view state (the loaded cohorts) plus
+    // a load-generation token, the same reason dashboard-host-scope.js is an IIFE. No initializer:
+    // every expand/collapse is a plain <details> element, so there is no delegated listener to
+    // bind — the case-connect loader calling loadCollectionGenerationDiff(caseId) is the whole
+    // entry point.
+    file: "dashboard-collection-generation-diff.js",
+    publish: ["renderCollectionGenerationDiff", "loadCollectionGenerationDiff"],
+    private: ["cohorts", "loadSeq", "DIRECTION_LABEL", "EXCLUSION_LABEL"],
+  },
+  {
     // Analyst-attested evidence-class coverage (#1111). Owns two pieces of view state (the loaded
     // attestations and the load-generation token), the same reason dashboard-host-scope.js is an
     // IIFE. A compact mini-panel LIVING INSIDE the Hypotheses section rather than its own

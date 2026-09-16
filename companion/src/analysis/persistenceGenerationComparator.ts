@@ -26,8 +26,7 @@ function keyFor(technique: string, path: string): string {
 }
 
 type EnvelopeResult =
-  | { ok: true; envelope: SnapshotEnvelope<string> }
-  | { ok: false; reason: "ambiguous-identity" };
+  { ok: true; envelope: SnapshotEnvelope<string> } | { ok: false; reason: "ambiguous-identity" };
 
 /** Builds this one generation's own envelope, or reports it as ambiguous when its inventory holds
  * two rows sharing an identity (technique, path) but disagreeing on value — quarantined rather
@@ -63,8 +62,16 @@ function orderKey(order: GenerationOrder): string | number {
 export type ExclusionReason = "partial" | "filtered" | "ambiguous-identity";
 
 export interface PersistencePairResult {
-  earlier: { generationId: string; order: GenerationOrder; artifactRef: { importSeq: number; artifactHash: string } };
-  later: { generationId: string; order: GenerationOrder; artifactRef: { importSeq: number; artifactHash: string } };
+  earlier: {
+    generationId: string;
+    order: GenerationOrder;
+    artifactRef: { importSeq: number; artifactHash: string };
+  };
+  later: {
+    generationId: string;
+    order: GenerationOrder;
+    artifactRef: { importSeq: number; artifactHash: string };
+  };
   interveningExcludedCount: number;
   changes: EntryChange<string>[];
   truncated: boolean;

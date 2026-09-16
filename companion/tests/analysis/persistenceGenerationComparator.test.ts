@@ -152,7 +152,10 @@ describe("comparePersistenceGenerations", () => {
 
   it("counts an excluded generation strictly between a pair's own two endpoints", () => {
     const g1 = generation({ order: { kind: "declared", sequence: 1 } });
-    const excludedMid = generation({ order: { kind: "declared", sequence: 2 }, completenessState: "partial" });
+    const excludedMid = generation({
+      order: { kind: "declared", sequence: 2 },
+      completenessState: "partial",
+    });
     const g3 = generation({ order: { kind: "declared", sequence: 3 } });
     const [cohort] = comparePersistenceGenerations([g1, excludedMid, g3], EMPTY_INDEX);
     expect(cohort.pairs).toHaveLength(1);
