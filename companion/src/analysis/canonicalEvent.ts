@@ -38,6 +38,7 @@ import {
 } from "./canonicalOlevbaFinding.js";
 import { sqliteRowStateBlockSchema } from "./canonicalSqliteRowState.js";
 import { mobileRequestedPermissionBlockSchema } from "./canonicalMobileRequestedPermission.js";
+import { exporterFlowBlockSchema, exporterFlowBeaconLeadBlockSchema } from "./canonicalExporterFlow.js";
 
 export const CANONICAL_EVENT_SCHEMA_VERSION = "1.0.0" as const;
 /** The producer stamped on an envelope DERIVED from legacy flat fields at the read boundary. */
@@ -180,8 +181,7 @@ export const canonicalEventEnvelopeSchema = z.object({
   tlsGraph: tlsGraphBlockSchema.optional(), // tlsGraphRows.ts, #997: cert/name/client-cert/JA3 node one sensor's upload showed
   entra: entraPathBlockSchema.optional(), // entraPrivilegePath.ts, #973; block in canonicalEntra.ts
   awsLineage: awsLineageBlockSchema.optional(), // awsLineage.ts, #979; block in canonicalAwsLineage.ts
-  // Compute-lifecycle summary rows (#931 item 8; Azure/GCP are the second half, #1066).
-  awsCompute: awsComputeBlockSchema.optional(),
+  awsCompute: awsComputeBlockSchema.optional(), // compute-lifecycle summary rows (#931 item 8; Azure/GCP are the second half, #1066)
   azureCompute: azureComputeBlockSchema.optional(),
   azureVmssCompute: azureVmssComputeBlockSchema.optional(),
   gcpCompute: gcpComputeBlockSchema.optional(),
@@ -198,6 +198,8 @@ export const canonicalEventEnvelopeSchema = z.object({
   olevbaFinding: olevbaFindingBlockSchema.optional(), // olevbaResultImport.ts, #932 item 7
   sqliteRowState: sqliteRowStateBlockSchema.optional(), // sqliteRowStateImport.ts, #932 item 8
   mobileRequestedPermission: mobileRequestedPermissionBlockSchema.optional(), // mobsfPermissionImport.ts, #932 item 9
+  exporterFlow: exporterFlowBlockSchema.optional(), // exporterFlowImport.ts, #932 item 10
+  exporterFlowBeaconLead: exporterFlowBeaconLeadBlockSchema.optional(), // exporterFlowImport.ts, #932 item 10
   olevbaStompingLead: olevbaStompingLeadBlockSchema.optional(), // olevbaResultImport.ts, #932 item 7
   olevbaCompoundLead: olevbaCompoundLeadBlockSchema.optional(), // olevbaResultImport.ts, #932 item 7
   mailboxChain: mailboxChainBlockSchema.optional(), // mailboxChain.ts, #975; block in canonicalMailbox.ts
@@ -284,8 +286,7 @@ export const canonicalEventEnvelopeSchema = z.object({
   defender: defenderBlockSchema.optional(),
   // A LEAPP row's origin reading (mobileOriginRegistry.ts, #988): the facets its columns established, the registry coverage, the device / account the row names.
   mobile: mobileBlockSchema.optional(),
-  // What the memory image says about itself (memoryImageFacts.ts, #933 item 12): kernel SystemTime
-  // (never "captured at"), layer stack, dump kind/type, symbol table — from windows.info/crashinfo in the SAME upload only.
+  // What the memory image says about itself (memoryImageFacts.ts, #933 item 12): kernel SystemTime (never "captured at"), layer stack, dump kind/type, symbol table — from windows.info/crashinfo in the SAME upload only.
   image: z
     .object({
       systemTime: z.string().optional(),
@@ -468,9 +469,8 @@ function normalizedPart(envelope: CanonicalEventEnvelope): CanonicalNormalizedFi
 }
 
 // The records a normalized path is attributed to. An ANCESTOR entry (the longest `locatorMap`
-// prefix naming the path, matched on whole segments) replaces the first record; a DESCENDANT
-// entry (a prefix under the path — an array is one leaf, so `web.bodies.0.transfer` sits under
-// the leaf `web.bodies`) is added to it: the leaf then rests on every record that fed it.
+// prefix naming the path, matched on whole segments) replaces the first record; a DESCENDANT entry
+// (a prefix under the path) is added to it — the leaf then rests on every record that fed it.
 function locatorsFor(path: string, locatorMap: Record<string, string>, first: string): string[] {
   let best = "";
   const under: string[] = [];
