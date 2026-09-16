@@ -1,8 +1,7 @@
 // Auto-detect which importer an uploaded file should route to, so the dashboard can offer a
 // single "Import" button. A cheap sniff: structural (JSON object/array/NDJSON vs CSV vs plain
 // log), then key/header signatures mirroring each importer's own classifier — most-specific
-// first. Returns a kind mapping 1:1 to a pipeline import method, shown to the analyst so a
-// mis-route is visible, not silent.
+// first. Returns a kind mapping 1:1 to a pipeline import method, shown to the analyst so a mis-route is visible, not silent.
 
 import { isObject, getCI, getPath, str, parseConcatenatedJson } from "./siemImport.js";
 import { isAzureStorageLog } from "./azureStorageLogImport.js";
@@ -10,6 +9,7 @@ import { isAwsFlowLogLine } from "./awsFlowLogImport.js";
 import { isDiskImageLog } from "./diskImageAcquisitionLog.js";
 import { isBulkExtractorUrlFeatureFile } from "./bulkExtractorUrlImport.js";
 import { isFlossResult } from "./flossResultImport.js";
+import { isCapaResult } from "./capaResultImport.js";
 import { isWerReport } from "./werImport.js";
 import { isRekallCommandList, looksLikeVolatilityText, looksLikeMemprocfsFindevil } from "./memoryImport.js";
 import { isRunEnvelopeUpload } from "./memoryRunEnvelope.js";
@@ -416,6 +416,7 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (isRunEnvelopeUpload(root)) return "memory";
   if (isVolatilityMap(root)) return "memory";
   if (isFlossResult(root)) return "flossresult";
+  if (isCapaResult(root)) return "caparesult";
   if (isSandbox(sample)) return "sandbox";
   if (isAws(sample)) return "aws";
   if (isGcp(sample)) return "cloud";

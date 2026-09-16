@@ -214,6 +214,8 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         return observe(pipeline.importBulkExtractorUrl(caseId, text, base));
       case "flossresult":
         return observe(pipeline.importFlossResult(caseId, text, base));
+      case "caparesult":
+        return observe(pipeline.importCapaResult(caseId, text, base));
       case "gws":
         return observe(pipeline.importGoogleWorkspace(caseId, text, base));
       case "hindsight":

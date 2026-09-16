@@ -60,6 +60,7 @@ export const IMPORT_KINDS = [
   "log",
   "bulkextractorurl",
   "flossresult",
+  "caparesult",
   "unknown",
 ] as const;
 
