@@ -7,56 +7,23 @@ import { hashManifestValue } from "../analysis/analysisRunHash.js";
 import { checkReplayAvailability, type ReplayEnvironment } from "../analysis/analysisRunReplay.js";
 import { investigationOutput } from "../analysis/analysisRunSnapshot.js";
 import type { AnalysisRunManifest } from "../analysis/analysisRunTypes.js";
+import { IMPORT_KINDS } from "../analysis/importerSpec.js";
 import { getCsvPrompt, getLogPrompt, getObservePrompt, getSynthesisPrompt } from "../analysis/pipeline.js";
 import { selectScopedEvents } from "../analysis/tagger.js";
 import { runAndApplyTagger, type TaggerScope } from "../analysis/taggerRun.js";
 import { defaultReportTemplate } from "../reports/reportTemplate.js";
 import type { RouteContext } from "./context.js";
 
-const BUILT_IN_IMPORT_KINDS = [
-  "thor",
-  "siem",
-  "evtxxml",
-  "chainsaw",
-  "hayabusa",
-  "velociraptor",
-  "securityonion",
-  "socrates",
-  "network",
-  "kape",
-  "cybertriage",
-  "m365",
-  "aws",
-  "awsflowlog",
-  "cloud",
-  "azurestoragelog",
-  "diskimagelog",
-  "k8s",
-  "osquery",
-  "plaso",
-  "sandbox",
-  "memory",
-  "email",
-  "thehive",
-  "auditd",
-  "journald",
-  "sysdig",
-  "wazuh",
-  "bashhistory",
-  "ecar",
-  "snort",
-  "yara",
-  "combinedlog",
-  "asa",
-  "syslog",
-  "csv",
-  "log",
-  "bulkextractorurl",
-  "flossresult",
-  "caparesult",
-  "olevbaresult",
-  "sqliterowstate",
-] as const;
+// The replay-preflight inventory of every builtin importer's own pinned version. Derived from
+// `IMPORT_KINDS` — the SAME single source of truth `importDetect.ts`'s own `ImportKind` union and
+// `BUILTIN_KINDS`'s shadow guard already derive from (importerSpec.ts's own file header explains
+// why: two hand-maintained copies of this list drifted once already, silently letting a custom
+// importer shadow a builtin one). This list drifted the identical way: `okta`/`gws` (and, it turns
+// out, `hindsight`/`macos`/`leapp`/`wer`/`linuxpersist`/`macospersist`/`rclone`) were missing here,
+// which made replay-preflight report every import of those kinds as permanently unavailable
+// (#1107). `"unknown"` is excluded — it is the detector's own no-match fallback, never an importer
+// a manifest actually pins a version to.
+export const BUILT_IN_IMPORT_KINDS = IMPORT_KINDS.filter((kind) => kind !== "unknown");
 
 const CURRENT_SCHEMAS = [
   "investigation-state/v1",
