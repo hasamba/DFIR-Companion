@@ -77,6 +77,7 @@ import {
   type ProcessIndex,
 } from "./memoryNetObjects.js";
 import { handleOwnershipFacts } from "./memoryHandleOwnership.js";
+import { kernelHookEvents, kernelHookPluginType, type PluginType } from "./memoryCallbackOwnership.js";
 import { yaraMappingContext } from "./memoryYaraMappingContext.js";
 import { severityFromMeta, mitreFromYara } from "./yaraImport.js";
 import { isPeSieveReport, parseMemoryPeSieve } from "./pesieveImport.js";
@@ -94,8 +95,7 @@ export interface MemoryImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
-  // Include `dlllist`/`ldrmodules` rows as Info events (default: false — only their paths are IOCs).
-  dllTelemetry?: boolean;
+  dllTelemetry?: boolean; // include dlllist/ldrmodules rows as Info events (default false — paths only)
   filename?: string; // weak plugin hint for a bare Volatility array carrying no plugin name
 }
 
@@ -112,8 +112,7 @@ export interface MemoryParseResult {
   connections: number; // network-connection rows seen
   format: string; // "volatility" | "volatility-jsonl" | "volatility-map" | "volatility-text" | "volatility2-text" | "rekall" | "empty"
   tool: string; // "Volatility" | "Rekall" | ""
-  // What the export's SHAPE says (memoryExportShape.ts) — for the import note, never a completion claim.
-  note?: string;
+  note?: string; // the export's SHAPE (memoryExportShape.ts) — for the import note, never a completion claim
 }
 
 type Category =
@@ -125,6 +124,7 @@ type Category =
   | "module"
   | "dll"
   | "handle"
+  | "kernelhook"
   | "imageinfo"
   | "generic";
 
@@ -186,6 +186,11 @@ function classify(plugin: string, cols: Set<string>): Category {
   if (has("pid") && any("base", "dllbase") && any("path", "loadtime", "mappedpath") && has("size"))
     return "dll";
 
+  if (/driverirp|callback|ssdt/.test(p)) return "kernelhook"; // before /driver/ below — driverirp contains "driver"
+  if (has("irp") && any("driver name", "drivername") && has("module")) return "kernelhook";
+  if (has("index") && has("address") && has("module") && has("symbol")) return "kernelhook";
+  if (has("callback") && has("module") && has("symbol")) return "kernelhook";
+
   if (/driver|modscan|modules|modlist|lsmod|kernel_module/.test(p)) return "module";
   if (any("base", "dllbase") && has("size") && any("name", "path", "driver name") && !has("pid"))
     return "module";
@@ -227,6 +232,7 @@ function displayLabel(plugin: string, category: Category, rows: Row[]): string {
     module: "modules",
     dll: "dlllist",
     handle: "handles",
+    kernelhook: "kernelhook",
     imageinfo: "info",
     generic: "memory",
   };
@@ -246,8 +252,7 @@ function mapProcess(label: string, tool: string, rows: Row[], sink: Map<string, 
   const psscan = /psscan|psxview/.test(label);
   let recordIndex = 0;
 
-  // Index PID → name (across the whole tree) so a flat table resolves PPID → parent name.
-  const pidIndex = new Map<string, string>();
+  const pidIndex = new Map<string, string>(); // PID → name (whole tree) so a flat table resolves PPID → parent
   const index = (list: Row[], depth: number): void => {
     for (const r of list) {
       const pid = pickPid(r);
@@ -1396,13 +1401,11 @@ function runEnvelopeRoot(text: string): unknown {
 /** Every run's export imports as the export it is; the run rows ride beside, under the same cap. */
 function parseMemoryRunBundle(root: unknown, text: string, opts: MemoryImportOptions): MemoryParseResult {
   const maxEvents = opts.maxEvents ?? maxEventsDefault();
-  // The PLAIN parser reads each embedded export: an envelope nested in an envelope is not an export.
   const { runRows, exports, note } = parseRunEnvelopes(root, (stdout, filename) =>
     parseMemoryExport(stdout, { ...opts, filename, maxEvents }),
   );
-  // One bundle-wide budget: every row is ranked by severity and cut to `maxEvents` once (never N ×).
   const runs = aggregateEvents(runRows, {
-    aggregate: opts.aggregate,
+    aggregate: opts.aggregate, // one bundle-wide budget: every row cut to maxEvents once (never N ×)
     minSeverity: opts.minSeverity,
     maxEvents,
   });
@@ -1437,16 +1440,15 @@ function parseMemoryRunBundle(root: unknown, text: string, opts: MemoryImportOpt
 }
 
 export function parseMemory(text: string, opts: MemoryImportOptions = {}): MemoryParseResult {
-  // A run envelope (#1016): the runs' embedded exports import as exports, one run row each.
-  const envelope = runEnvelopeRoot(text);
+  const envelope = runEnvelopeRoot(text); // a run envelope (#1016): embedded exports import as exports, one run row each
   if (envelope !== undefined) return parseMemoryRunBundle(envelope, text, opts);
   return parseMemoryExport(text, opts);
 }
 
 /** Every memory export format EXCEPT a run envelope — the parser an envelope's embedded stdout goes through. */
 function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParseResult {
-  // PE-sieve's own JSON report (#933 item 15); any parse/shape mismatch falls through below.
   if (text.trimStart().startsWith("{") && text.includes('"scans"')) {
+    // PE-sieve's own report (#933-15)
     try {
       if (isPeSieveReport(JSON.parse(text))) return parseMemoryPeSieve(text, opts);
     } catch {
@@ -1454,11 +1456,9 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
     }
   }
 
-  // MemProcFS findevil: a flat finding-report table — check before JSON/text Volatility paths.
-  if (looksLikeMemprocfsFindevil(text)) return parseMemoryFindevil(text, opts);
+  if (looksLikeMemprocfsFindevil(text)) return parseMemoryFindevil(text, opts); // check before JSON/text Volatility
 
-  // MemProcFS CSV variants, by distinctive header columns — timeline_all.csv's value32/value64 are unique.
-  const cols = csvCols(text);
+  const cols = csvCols(text); // MemProcFS CSV variants, by distinctive header columns
   if (cols.has("value32") && cols.has("value64") && cols.has("action")) {
     return parseMemoryMemprocfsTimeline(text, opts);
   }
@@ -1472,8 +1472,7 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
   const maxIocs = opts.maxIocs ?? 5000;
   const { tables, format, tool, empty } = extractTables(text, opts.filename);
   const total = tables.reduce((n, t) => n + t.rows.length, 0);
-  // What the export's shape says — a zero-row/unread export is one Low row, never 400 (#933 item 12).
-  const shapeRows = exportShapeEvents(format, empty, tool);
+  const shapeRows = exportShapeEvents(format, empty, tool); // a zero-row/unread export is one Low row, never 400 (#933-12)
   const note = exportShapeNote(text, format, empty, tables.length);
   if (total === 0 && shapeRows.length === 0) {
     return {
@@ -1499,7 +1498,7 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
     processes = 0,
     connections = 0;
 
-  // Process rows the upload submitted, by PID — malfind/socket/handle owner checks (#909 item 4, #933 items 13-14).
+  // submitted process rows by PID — malfind/socket/handle owner checks (#909-4, #933-13/14)
   const processIndex = indexProcessRows(
     tables.filter((t) => classify(t.plugin, colSet(t.rows)) === "process"),
   );
@@ -1530,11 +1529,9 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
     }
   }
 
-  // Process records with BOTH a start and an exit — only a memory image records both (#909 item 6).
-  const lifetimeRecords: ProcessRecord[] = [];
-
-  // Handle-table rows (#933 item 13), resolved once against the processIndex built above.
-  const handleRows: Record<string, unknown>[] = [];
+  const lifetimeRecords: ProcessRecord[] = []; // start+exit pairs — only a memory image has both (#909 item 6)
+  const handleRows: Record<string, unknown>[] = []; // #933 item 13, resolved against processIndex above
+  const kernelhookTables: { pluginType: PluginType; rows: Record<string, unknown>[] }[] = []; // #933 item 16
 
   for (const t of tables) {
     const cols = colSet(t.rows);
@@ -1588,6 +1585,9 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
       case "handle":
         for (const r of t.rows) handleRows.push(r); // never spread — a large table exceeds arg limits
         break;
+      case "kernelhook":
+        kernelhookTables.push({ pluginType: kernelHookPluginType(t.plugin, cols), rows: t.rows });
+        break;
       case "imageinfo":
         mapped.push(...imageFactsEvents(tool, t.rows, t.plugin)); // one row, no IOCs
         break;
@@ -1596,7 +1596,7 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
     }
   }
 
-  // Repeated short-lived executions of one image (#909 item 6): ONE event per image, not per run.
+  // #909-6: ONE event per image, not per run
   for (const cluster of repeatedShortLifetimes(lifetimeRecords)) {
     mapped.push({
       timestamp: "",
@@ -1622,7 +1622,8 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
     });
   }
 
-  // The upload's image facts ride on every row (envelope; text from Medium up). One upload only.
+  mapped.push(...kernelHookEvents(kernelhookTables, tool, sink)); // #933 item 16
+
   const { events, groups } = aggregateEvents(carryImage(mapped, readImageFacts(tables)), {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
@@ -1631,8 +1632,7 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
   const finalEvents = stampSourceArtifactHash(events, text);
 
   const represented = finalEvents.reduce((n, e) => n + (e.count ?? 1), 0);
-  // A capped fact family is a sample, not the full set — disclose it, don't just track it internally.
-  const handleNote = handleResult.truncated
+  const handleNote = handleResult.truncated // a capped fact family is a sample — disclose it, don't just track it
     ? "handle-ownership analysis reached its own evidence cap — some facts were not reported."
     : "";
   const finalNote = [note, handleNote].filter(Boolean).join(" ");
