@@ -52,6 +52,16 @@ describe("isMobsfReport", () => {
   it("rejects a plain unrelated JSON object", () => {
     expect(isMobsfReport({ hello: "world" })).toBe(false);
   });
+
+  it("rejects a report whose only anchor is a primitive value, not an object/array (Codex code review finding)", () => {
+    const bad = report({ apkid: true, sbom: "n/a" });
+    delete bad.niap_analysis;
+    expect(isMobsfReport(bad)).toBe(false);
+  });
+
+  it("still accepts a report whose anchor is an empty object or array", () => {
+    expect(isMobsfReport(report({ apkid: {}, sbom: [] }))).toBe(true);
+  });
 });
 
 describe("parseMobsfPermissions — malformed input", () => {
@@ -157,6 +167,19 @@ describe("parseMobsfPermissions — report identity", () => {
     const r = parseMobsfPermissions(JSON.stringify(rpt))!;
     expect(r.events).toHaveLength(2);
     expect(r.events[0].aggKey).not.toBe(r.events[1].aggKey);
+  });
+
+  it("disambiguates two long permission names sharing the same clipped prefix in the persisted description, not only the aggKey (Codex code review finding)", () => {
+    const longPrefix = "android.permission." + "A".repeat(300);
+    const rpt = report({
+      permissions: {
+        [`${longPrefix}_ONE`]: { status: "normal", info: "i1", description: "d1" },
+        [`${longPrefix}_TWO`]: { status: "normal", info: "i2", description: "d2" },
+      },
+    });
+    const r = parseMobsfPermissions(JSON.stringify(rpt))!;
+    expect(r.events).toHaveLength(2);
+    expect(r.events[0].description).not.toBe(r.events[1].description);
   });
 });
 

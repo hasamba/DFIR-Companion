@@ -79,12 +79,15 @@ function parseSampleHash(root: Record<string, unknown>): SampleHash {
 /** Both anchors required: `permissions` (an object, possibly `{}`) plus `sha256`/`package_name`
  * (may be `""`), AND at least one of the MobSF-specific top-level keys no other tool in this
  * codebase's vocabulary emits — the same "two anchors, never one" rule every prior detector in
- * this loop used. */
+ * this loop used. Codex code review finding: a bare `"key" in root` check would pass for ANY
+ * value including `null`/a primitive; every anchor's own real shape (object) is checked too, not
+ * merely its presence. */
 export function isMobsfReport(root: unknown): boolean {
   if (!isObject(root)) return false;
   if (!isObject(root.permissions)) return false;
   if (typeof root.sha256 !== "string" || typeof root.package_name !== "string") return false;
-  return "niap_analysis" in root || "sbom" in root || "apkid" in root;
+  const isStructured = (v: unknown): boolean => isObject(v) || Array.isArray(v);
+  return isStructured(root.niap_analysis) || isStructured(root.sbom) || isStructured(root.apkid);
 }
 
 function mapPermission(
@@ -103,9 +106,10 @@ function mapPermission(
   const descriptionRaw = str(entry.description);
   if (statusRaw === undefined || infoRaw === undefined || descriptionRaw === undefined) return null;
 
-  // An unrecognized status (a future MobSF release) normalizes to "unknown" rather than
-  // dropping the whole entry — the raw string still survives in `rawStatus` (Codex design
-  // review finding).
+  // An unrecognized status (a future MobSF release) normalizes to "unknown" rather than dropping
+  // the whole entry — the raw string still survives in the canonical `rawStatus` field, itself
+  // bounded at MAX_FIELD_LEN like every other display field (a real permission status name is
+  // always short; the bound is unreachable in practice, never a claim of unlimited length).
   const status: MobilePermissionStatus = (mobilePermissionStatuses as readonly string[]).includes(statusRaw)
     ? (statusRaw as MobilePermissionStatus)
     : "unknown";
@@ -120,6 +124,12 @@ function mapPermission(
   const permissionClip = clip(name, MAX_FIELD_LEN);
   const infoClip = clip(infoRaw, MAX_FIELD_LEN);
   const descriptionClip = clip(descriptionRaw, MAX_DESCRIPTION_LEN);
+  // Once aggKey is stripped at persistence, the description text is the only surviving identity
+  // (item 8's own lesson) — two distinct permission names sharing the same clipped 300-char
+  // prefix would otherwise read as identical text. A short permission-hash tag disambiguates
+  // them, mirroring the existing report-fingerprint tag pattern (never spliced into the VALUE
+  // itself, only appended alongside it).
+  const permissionTag = permissionClip.truncated ? `; permission ${permissionHash.slice(0, 12)}` : "";
   const reportTag = `; report ${reportFingerprint.slice(0, 16)}`;
   // "MobSF's own reference text (never a claim about this specific app)" framing — Codex code
   // review finding: MobSF's own knowledge-base description text can contain phrases like "this
@@ -130,9 +140,9 @@ function mapPermission(
       `${packageName || "(unknown)"}; MobSF's own reference text (never a claim about this specific ` +
       `app): "${infoClip.text}: ${descriptionClip.text}"; a manifest declaration, never proof of ` +
       `grant or use; [undated: MobSF's report carries no event time]`,
-    600 - reportTag.length,
+    600 - reportTag.length - permissionTag.length,
   ).text;
-  const description = `${body}${reportTag}`;
+  const description = `${body}${permissionTag}${reportTag}`;
 
   return {
     timestamp: "",
