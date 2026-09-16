@@ -129,6 +129,23 @@ export function hindsightCsvSig(h: Set<string>): boolean {
     has("interpretation") || has("profile folder") || has("profile_folder") || (has("type") && has("profile"))
   );
 }
+
+// sqlite-dissect's (DC3) per-table commit-history CSV export (#932 item 8) — its fixed 9-header
+// prefix (verified live against csv_export.py's own column-header construction) is not shared by
+// any other exporter; "row id" alone would false-positive too broadly, so the full set is required.
+export function sqliteRowStateCsvSig(h: Set<string>): boolean {
+  return (
+    h.has("file source") &&
+    h.has("version") &&
+    h.has("page version") &&
+    h.has("cell source") &&
+    h.has("page number") &&
+    h.has("location") &&
+    h.has("operation") &&
+    h.has("file offset") &&
+    h.has("row id")
+  );
+}
 // ───────────────────────────── auditd (line-oriented) ─────────────────────────────
 //
 // Moved here from importDetect.ts, which sits at the 800-line limit: the dispatch ORDER is the

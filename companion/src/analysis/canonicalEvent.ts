@@ -35,6 +35,7 @@ import {
   olevbaStompingLeadBlockSchema,
   olevbaCompoundLeadBlockSchema,
 } from "./canonicalOlevbaFinding.js";
+import { sqliteRowStateBlockSchema } from "./canonicalSqliteRowState.js";
 
 export const CANONICAL_EVENT_SCHEMA_VERSION = "1.0.0" as const;
 /** The producer stamped on an envelope DERIVED from legacy flat fields at the read boundary. */
@@ -192,6 +193,7 @@ export const canonicalEventEnvelopeSchema = z.object({
   capaMatch: capaMatchBlockSchema.optional(), // capaResultImport.ts, #932 item 6; block in canonicalCapaMatch.ts
   capaCompositeLead: capaCompositeLeadBlockSchema.optional(), // capaResultImport.ts, #932 item 6
   olevbaFinding: olevbaFindingBlockSchema.optional(), // olevbaResultImport.ts, #932 item 7
+  sqliteRowState: sqliteRowStateBlockSchema.optional(), // sqliteRowStateImport.ts, #932 item 8
   olevbaStompingLead: olevbaStompingLeadBlockSchema.optional(), // olevbaResultImport.ts, #932 item 7
   olevbaCompoundLead: olevbaCompoundLeadBlockSchema.optional(), // olevbaResultImport.ts, #932 item 7
   mailboxChain: mailboxChainBlockSchema.optional(), // mailboxChain.ts, #975; block in canonicalMailbox.ts
@@ -277,8 +279,7 @@ export const canonicalEventEnvelopeSchema = z.object({
   // A Defender Operational record's own reading (defenderEvents.ts): disposition, threat, every
   // flagged resource. The block lives in canonicalDefender.ts; defenderEpisodes.ts reads it (#964).
   defender: defenderBlockSchema.optional(),
-  // A LEAPP row's origin reading (mobileOriginRegistry.ts, #988): the facets its columns
-  // established, the registry coverage, the device / account the row names.
+  // A LEAPP row's origin reading (mobileOriginRegistry.ts, #988): the facets its columns established, the registry coverage, the device / account the row names.
   mobile: mobileBlockSchema.optional(),
   // What the memory image says about itself (memoryImageFacts.ts, #933 item 12): kernel SystemTime
   // (never "captured at"), layer stack, dump kind/type, symbol table — from windows.info /
