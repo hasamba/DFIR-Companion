@@ -61,6 +61,7 @@ export const IMPORT_KINDS = [
   "bulkextractorurl",
   "flossresult",
   "caparesult",
+  "olevbaresult",
   "unknown",
 ] as const;
 

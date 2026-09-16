@@ -10,6 +10,7 @@ import { isDiskImageLog } from "./diskImageAcquisitionLog.js";
 import { isBulkExtractorUrlFeatureFile } from "./bulkExtractorUrlImport.js";
 import { isFlossResult } from "./flossResultImport.js";
 import { isCapaResult } from "./capaResultImport.js";
+import { isOlevbaResult } from "./olevbaResultImport.js";
 import { isWerReport } from "./werImport.js";
 import { isRekallCommandList, looksLikeVolatilityText, looksLikeMemprocfsFindevil } from "./memoryImport.js";
 import { isRunEnvelopeUpload } from "./memoryRunEnvelope.js";
@@ -175,9 +176,8 @@ function isChainsaw(s: Row): boolean {
     (isObject(getCI(s, "Event")) && isObject(getPath(s, "Event.System")))
   )
     return true;
-  // Chainsaw's flattened Sigma-mapping JSON (e.g. a Velociraptor artifact that shells out to
-  // Chainsaw): verdict at the top level (Detection/Severity) instead of a nested rule{}
-  // object, alongside an already-flat EventID/Channel/SystemData instead of Event.System.
+  // Chainsaw's flattened Sigma-mapping JSON (a VR artifact shelling out to Chainsaw): verdict at
+  // top level (Detection/Severity), flat EventID/Channel/SystemData instead of Event.System.
   return (
     typeof getCI(s, "Detection") === "string" &&
     typeof getCI(s, "Severity") === "string" &&
@@ -317,8 +317,7 @@ function isCybertriage(s: Row): boolean {
   );
 }
 function isWazuh(s: Row, root: unknown): boolean {
-  // Wazuh alert: requires rule.level + rule.description + agent.name.
-  // Also matches the API export envelope { data: { affected_items: [alert, ...] } }.
+  // Wazuh alert: requires rule.level + rule.description + agent.name (also matches the API export envelope).
   const checkRecord = (r: Row): boolean => {
     const rule = getCI(r, "rule");
     if (!isObject(rule)) return false;
@@ -417,6 +416,7 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (isVolatilityMap(root)) return "memory";
   if (isFlossResult(root)) return "flossresult";
   if (isCapaResult(root)) return "caparesult";
+  if (isOlevbaResult(root)) return "olevbaresult";
   if (isSandbox(sample)) return "sandbox";
   if (isAws(sample)) return "aws";
   if (isGcp(sample)) return "cloud";
