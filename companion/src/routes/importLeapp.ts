@@ -68,6 +68,9 @@ export function registerLeappImportRoute(
       res.status(202).json({
         accepted: true,
         file: storedName,
+        // The import's own sequence number (#1132) — without it, a caller wanting to bind this
+        // upload into a mobile-backup-generation attestation had no clean way to discover it.
+        importSeq: seq,
         events: preview.kept,
         records: preview.total,
         groups: preview.groups,

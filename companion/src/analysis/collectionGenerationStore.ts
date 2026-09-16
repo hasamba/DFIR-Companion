@@ -146,8 +146,12 @@ export class CollectionGenerationStore {
       const targetHost = resolveHost(aliasIndex, input.rawHost);
 
       const importRow = await this.importRow(caseId, input.importSeq);
-      const rawFile = await readFile(join(this.cases.importsDir(caseId), importRow.filename), "utf8");
-      const artifactHash = createHash("sha256").update(Buffer.from(rawFile, "utf8")).digest("hex");
+      // Hash the RAW bytes, never a decoded-then-re-encoded string (#1138): reading as utf8 first
+      // and hashing Buffer.from(text, "utf8") silently replaces invalid byte sequences with
+      // U+FFFD, so two artifacts differing only in their invalid bytes could hash identically.
+      const rawBytes = await readFile(join(this.cases.importsDir(caseId), importRow.filename));
+      const artifactHash = createHash("sha256").update(rawBytes).digest("hex");
+      const rawFile = rawBytes.toString("utf8");
 
       // The SAME normalization the live import path runs before row classification (Codex H2: a
       // Line-wrapped or Elasticsearch-shaped row that live import recognizes fine would otherwise
@@ -240,13 +244,13 @@ export class CollectionGenerationStore {
     } catch (err) {
       return { ok: false, reason: (err as Error).message };
     }
-    let rawFile: string;
+    let rawBytes: Buffer;
     try {
-      rawFile = await readFile(join(this.cases.importsDir(caseId), importRow.filename), "utf8");
+      rawBytes = await readFile(join(this.cases.importsDir(caseId), importRow.filename));
     } catch (err) {
       return { ok: false, reason: `stored artifact is missing or unreadable: ${(err as Error).message}` };
     }
-    const currentHash = createHash("sha256").update(Buffer.from(rawFile, "utf8")).digest("hex");
+    const currentHash = createHash("sha256").update(rawBytes).digest("hex");
     if (currentHash !== generation.artifactRef.artifactHash) {
       return { ok: false, reason: "stored artifact has changed since this generation was recorded" };
     }

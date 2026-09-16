@@ -4,7 +4,9 @@
 // first draft (no envelope/kernel/adapter separation, tied-order fabrication, an unsafe
 // concatenated map key) and how each was fixed, plus a second Codex code-review round's own
 // findings (captured-time ordering by string representation instead of instant, resource caps
-// applied too late to bound work) and how each was fixed.
+// applied too late to bound work) and how each was fixed, plus a third round's own findings
+// (#1138, surfaced by #1132's own design review: truncatedEntries was computed and discarded
+// instead of disclosed) fixed the same way.
 //
 // This module knows about persistence's own technique/path/value shape; snapshotComparisonKernel.ts
 // does not. Building the envelope (resolving identity, choosing keys, detecting duplicates) is
@@ -107,6 +109,10 @@ export interface PersistencePairResult {
   interveningExcludedCount: number;
   changes: EntryChange<string>[];
   truncated: boolean;
+  /** True when either side's own inventory exceeded MAX_ENTRIES_PER_ENVELOPE and was built from a
+   * prefix of it (#1138) — this comparison may miss real differences past that prefix on the
+   * truncated side, and must never be reported as if it saw the whole inventory. */
+  inventoryTruncated: boolean;
 }
 
 export interface PersistenceCohortResult {
@@ -213,7 +219,11 @@ function buildCohort(resolvedHost: string, cohort: CollectionGeneration[]): Pers
     if (ordered.length > capacity) truncatedPairs = true;
     const withinCap = ordered.slice(0, capacity);
 
-    const envelopes: { generation: CollectionGeneration; envelope: SnapshotEnvelope<string> }[] = [];
+    const envelopes: {
+      generation: CollectionGeneration;
+      envelope: SnapshotEnvelope<string>;
+      truncatedEntries: boolean;
+    }[] = [];
     for (const g of withinCap) {
       const built = generationToEnvelope(g, resolvedHost);
       if (!built.ok) {
@@ -222,7 +232,7 @@ function buildCohort(resolvedHost: string, cohort: CollectionGeneration[]): Pers
         eligibleCount -= 1;
         continue;
       }
-      envelopes.push({ generation: g, envelope: built.envelope });
+      envelopes.push({ generation: g, envelope: built.envelope, truncatedEntries: built.truncatedEntries });
     }
 
     for (let i = 1; i < envelopes.length; i++) {
@@ -251,6 +261,7 @@ function buildCohort(resolvedHost: string, cohort: CollectionGeneration[]): Pers
         interveningExcludedCount,
         changes: truncated ? changes.slice(0, MAX_CHANGES_PER_PAIR) : changes,
         truncated,
+        inventoryTruncated: earlier.truncatedEntries || later.truncatedEntries,
       });
     }
   }

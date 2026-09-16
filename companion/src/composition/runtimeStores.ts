@@ -31,6 +31,7 @@ import { CollectionPlanStore } from "../analysis/collectionPlanStore.js";
 import { HostScopeStore } from "../analysis/hostScopeStore.js";
 import { EvidenceAttestationStore } from "../analysis/evidenceAttestationStore.js";
 import { CollectionGenerationStore } from "../analysis/collectionGenerationStore.js";
+import { MobileBackupGenerationStore } from "../analysis/mobileBackupGenerationStore.js";
 import { ArtifactBundleStore } from "../analysis/artifactBundleStore.js";
 import { ReportTemplateStore } from "../reports/reportTemplateStore.js";
 import { ReportTemplateControlStore } from "../reports/reportTemplateControl.js";
@@ -165,6 +166,8 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
   const evidenceAttestationStore = new EvidenceAttestationStore(store);
   // Durable collection-generation ledger (#1108): per-case only, same shape again.
   const collectionGenerationStore = new CollectionGenerationStore(store);
+  // Examiner-attested mobile-backup-pairing ledger (#1132): per-case only, same shape again.
+  const mobileBackupGenerationStore = new MobileBackupGenerationStore(store);
   const artifactBundleStore = new ArtifactBundleStore(join(dirname(casesRoot), "bundles"));
   // Report templates are GLOBAL like case templates/bundles — a dedicated subdir beside cases/.
   const reportTemplateStore = new ReportTemplateStore(join(dirname(casesRoot), "report-templates"));
@@ -425,6 +428,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
     hostScopeStore,
     evidenceAttestationStore,
     collectionGenerationStore,
+    mobileBackupGenerationStore,
     artifactBundleStore,
     reportTemplateStore,
     dashboardViewStore,

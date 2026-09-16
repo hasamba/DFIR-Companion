@@ -99,6 +99,7 @@ import type { CollectionPlanStore } from "../analysis/collectionPlanStore.js";
 import type { HostScopeStore } from "../analysis/hostScopeStore.js";
 import type { EvidenceAttestationStore } from "../analysis/evidenceAttestationStore.js";
 import type { CollectionGenerationStore } from "../analysis/collectionGenerationStore.js";
+import type { MobileBackupGenerationStore } from "../analysis/mobileBackupGenerationStore.js";
 import type { MispPushClientLike } from "../integrations/misp/mispPushClient.js";
 import type { MispPushOptions } from "../integrations/misp/mispPush.js";
 import type { NotionClient } from "../integrations/notion/notionClient.js";
@@ -225,8 +226,11 @@ export interface AppOptions {
   // alongside automatically-detected coverage, distinct from the coarser collectionPlanStore.ts.
   evidenceAttestationStore?: EvidenceAttestationStore;
   // Durable, coverage-tracked collection-generation ledger (#1108) — route-only, never wired into
-  // synthesis/refutationGate.ts (932.2's own follow-on comparator is the intended future consumer).
+  // synthesis/refutationGate.ts; #1128's own persistenceGenerationComparator.ts is its consumer.
   collectionGenerationStore?: CollectionGenerationStore;
+  // Examiner-attested mobile-backup-pairing ledger (#1132) — same shape/scope as
+  // collectionGenerationStore above; mobileAppPresenceComparator.ts is its own consumer.
+  mobileBackupGenerationStore?: MobileBackupGenerationStore;
   // Learned dismissal patterns (issue #65): recurring reasoned dismissals accumulated per case, fed to
   // synthesis as a confidence-lowering block. onLearnedPatterns pings dashboard clients to re-fetch.
   learnedPatternStore?: LearnedPatternStore;

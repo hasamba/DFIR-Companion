@@ -114,12 +114,14 @@ export function registerCollectionGenerationRoutes(app: Express, ctx: RouteConte
     try {
       const active = await options.collectionGenerationStore!.active(req.params.id);
       const index = await aliasIndexFor(req.params.id);
-      const { cohorts: all, truncatedCohorts } = comparePersistenceGenerations(active, index);
-      let cohorts = all;
-      if (parsed.data.host) {
-        const target = resolveHost(index, parsed.data.host);
-        cohorts = cohorts.filter((c) => c.resolvedHost === target);
-      }
+      // Filter the INPUT by host before the comparator's own MAX_COHORTS cap runs, never its
+      // output after (#1138) — filtering post-cap could drop the one requested host's cohort in a
+      // case with more than MAX_COHORTS distinct hosts, even though the filtered input would have
+      // been cheap and complete.
+      const scoped = parsed.data.host
+        ? active.filter((g) => resolveHost(index, g.rawHost) === resolveHost(index, parsed.data.host!))
+        : active;
+      const { cohorts, truncatedCohorts } = comparePersistenceGenerations(scoped, index);
       return res.status(200).json({ cohorts, truncatedCohorts });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });

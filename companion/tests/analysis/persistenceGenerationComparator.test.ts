@@ -304,6 +304,30 @@ describe("comparePersistenceGenerations", () => {
       expect(cohort.pairs[0].truncated).toBe(true);
     });
 
+    // #1138: truncatedEntries was computed by generationToEnvelope() and silently discarded by
+    // its own caller — never reaching the API response.
+    it("discloses inventoryTruncated on a pair when either side's own envelope was capped (#1138)", () => {
+      const bigInventory = Array.from({ length: 10_010 }, (_, i) => ({
+        technique: "Run Key",
+        path: `HKCU\\Run\\Item${i}`,
+        value: "v",
+      }));
+      const earlier = generation({ inventory: bigInventory });
+      const later = generation({
+        order: { kind: "captured", capturedAt: "2026-01-13T10:00:00Z" },
+        inventory: [{ technique: "Run Key", path: "HKCU\\Run\\Item0", value: "v" }],
+      });
+      const [cohort] = cohortsOf([earlier, later]);
+      expect(cohort.pairs[0].inventoryTruncated).toBe(true);
+    });
+
+    it("inventoryTruncated is false when neither side's envelope was capped", () => {
+      const earlier = generation();
+      const later = generation({ order: { kind: "captured", capturedAt: "2026-01-13T10:00:00Z" } });
+      const [cohort] = cohortsOf([earlier, later]);
+      expect(cohort.pairs[0].inventoryTruncated).toBe(false);
+    });
+
     it("discloses truncatedCohorts when more than MAX_COHORTS resolved hosts exist", () => {
       const many = Array.from({ length: 205 }, (_, i) => generation({ rawHost: `WS-${i}` }));
       const result = comparePersistenceGenerations(many, EMPTY_INDEX);
