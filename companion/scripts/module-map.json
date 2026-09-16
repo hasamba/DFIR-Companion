@@ -478,6 +478,7 @@
     "memoryRunEnvelope.ts": "analysis/ingest",
     "memoryTables.ts": "analysis/ingest",
     "memoryNetObjects.ts": "analysis/ingest",
+    "memoryYaraMappingContext.ts": "analysis/ingest",
     "memoryNextStep.ts": "analysis/ai",
     "mitreTactics.ts": "analysis/intel",
     "mobileLeappImport.ts": "analysis/ingest",

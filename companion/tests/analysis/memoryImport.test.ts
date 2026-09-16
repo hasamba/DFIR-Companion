@@ -739,13 +739,18 @@ describe("parseMemory — MemProcFS yara.csv", () => {
     expect(r.total).toBe(2);
   });
 
-  it("maps every row to Critical/T1055 with process and memory context in the description", () => {
+  // #1148: severity/MITRE come from the matched rule's own content, never from where it was
+  // found — MemProcFS's yara.csv has no score/threat_level metadata, so severityFromMeta({})
+  // is a deterministic Medium; this fixture's own Tags column is empty, so mitre is []. This
+  // REPLACES the old blanket-Critical/T1055 assertion, which was itself the overclaim #1148
+  // exists to fix (a location-based injection claim with no rule-content signal).
+  it("grades every row Medium with no invented MITRE technique, and includes process/memory context", () => {
     const r = parseMemory(YARA_CSV);
     expect(r.events.length).toBeGreaterThan(0);
-    expect(r.events.every((e) => e.severity === "Critical")).toBe(true);
-    expect(r.events.every((e) => e.mitreTechniques?.includes("T1055"))).toBe(true);
+    expect(r.events.every((e) => e.severity === "Medium")).toBe(true);
+    expect(r.events.every((e) => (e.mitreTechniques ?? []).length === 0)).toBe(true);
     expect(r.events.some((e) => e.description.includes("svchost.exe"))).toBe(true);
-    expect(r.events.some((e) => e.description.includes("Virtual Memory (VAD)"))).toBe(true);
+    expect(r.events.some((e) => e.description.includes("private allocation"))).toBe(true);
   });
 
   it("aggregates matches from the same process+base-address into one event with count", () => {
@@ -770,6 +775,62 @@ describe("parseMemory — MemProcFS yara.csv", () => {
   it("reports injected = total rows (all are YARA hits)", () => {
     const r = parseMemory(YARA_CSV);
     expect(r.injected).toBe(2);
+  });
+
+  it("extracts a MITRE technique only when the row's own Tags column carries one", () => {
+    const csv = [
+      "MatchIndex,Tags,Description,RuleAuthor,RuleVersion,MemoryType,MemoryTag,MemoryBaseAddress,ObjectAddress,PID,ProcessName,ProcessPath,CommandLine,User,Created,AddressCount,String0,Address0",
+      '0,"T1055.001 injection","","","","Virtual Memory (VAD)","HEAP-00",1,"",100,evil.exe,C:\\evil.exe,"",SYSTEM,"2026-06-03 08:31:44",1,x,1',
+    ].join("\n");
+    const r = parseMemory(csv);
+    expect(r.events[0].mitreTechniques).toContain("T1055.001");
+  });
+
+  it("never claims a process lead for a Physical Memory match with no PID/ProcessName", () => {
+    const csv = [
+      "MatchIndex,Tags,Description,RuleAuthor,RuleVersion,MemoryType,MemoryTag,MemoryBaseAddress,ObjectAddress,PID,ProcessName,ProcessPath,CommandLine,User,Created,AddressCount,String0,Address0",
+      '0,"","","","","Physical Memory","","","",,,,"","","2026-06-03 08:31:44",1,x,1',
+    ].join("\n");
+    const r = parseMemory(csv);
+    expect(r.events[0].description).not.toMatch(/\(PID\s*\)/);
+    expect(r.events[0].description).toContain("No process or address-space context");
+  });
+
+  it("does not collapse two distinct Physical Memory rows with identical/absent tags into one event", () => {
+    const csv = [
+      "MatchIndex,Tags,Description,RuleAuthor,RuleVersion,MemoryType,MemoryTag,MemoryBaseAddress,ObjectAddress,PID,ProcessName,ProcessPath,CommandLine,User,Created,AddressCount,String0,Address0",
+      '0,"","","","","Physical Memory","","","",,,,"","","2026-06-03 08:31:44",1,x,1',
+      '1,"","","","","Physical Memory","","","",,,,"","","2026-06-03 08:31:44",1,y,2',
+    ].join("\n");
+    const r = parseMemory(csv);
+    expect(r.events).toHaveLength(2);
+  });
+
+  it("still aggregates two Virtual Memory (VAD) rows at the same process+base-address into one event", () => {
+    // Regression: the aggKey fix for Physical Memory must not touch this already-working, already
+    // -tested behavior for classes that DO have a real base address.
+    const r = parseMemory(YARA_CSV);
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].count ?? 1).toBe(2);
+  });
+
+  it("says 'typically a file object' for an Object Memory match, never a process lead", () => {
+    const csv = [
+      "MatchIndex,Tags,Description,RuleAuthor,RuleVersion,MemoryType,MemoryTag,MemoryBaseAddress,ObjectAddress,PID,ProcessName,ProcessPath,CommandLine,User,Created,AddressCount,String0,Address0",
+      '0,"","","","","Object Memory","\\some\\file.dat","","dead",,,,"","","2026-06-03 08:31:44",1,x,1',
+    ].join("\n");
+    const r = parseMemory(csv);
+    expect(r.events[0].description).toContain("file object");
+    expect(r.events[0].description).not.toMatch(/\(PID\s*\)/);
+  });
+
+  it("discloses the kernel-mode disclaimer for a Virtual Memory (PTE) match without claiming exclusivity", () => {
+    const csv = [
+      "MatchIndex,Tags,Description,RuleAuthor,RuleVersion,MemoryType,MemoryTag,MemoryBaseAddress,ObjectAddress,PID,ProcessName,ProcessPath,CommandLine,User,Created,AddressCount,String0,Address0",
+      '0,"","","","","Virtual Memory (PTE)","","1",,100,driver.sys,C:\\driver.sys,"",SYSTEM,"2026-06-03 08:31:44",1,x,1',
+    ].join("\n");
+    const r = parseMemory(csv);
+    expect(r.events[0].description).toContain("does not establish exclusive process ownership");
   });
 });
 
