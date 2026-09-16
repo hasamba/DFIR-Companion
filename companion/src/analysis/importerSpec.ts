@@ -67,6 +67,7 @@ export const IMPORT_KINDS = [
   "exporterflow",
   "macfsevent",
   "macspotlightusage",
+  "macloginitem",
   "unknown",
 ] as const;
 

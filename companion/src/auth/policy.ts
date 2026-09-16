@@ -61,7 +61,7 @@ const CASE_ADMIN_SEGMENTS = [
 // Case-scoped routes that nonetheless read the SERVER's own filesystem at an operator-named path.
 // Holding "write" on one case must not let a user name a path outside that case and have its bytes
 // copied in as evidence. Same trust as /nsrl and /kev import-file, already global-admin prefixes.
-const CASE_GLOBAL_ADMIN_SEGMENTS = ["/import-file"];
+const CASE_GLOBAL_ADMIN_SEGMENTS = ["/import-file", "/import-mac-login-item"];
 // The only /cases/* paths that are NOT a case: the encrypted-bundle import and the demo seeder.
 // "import" and "seed-demo" are themselves valid case ids (isValidCaseId accepts both) and any
 // authenticated user can create a case so named, so the exemption has to be these exact paths.

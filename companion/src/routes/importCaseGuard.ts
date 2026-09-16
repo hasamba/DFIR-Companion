@@ -23,6 +23,7 @@ export const EVIDENCE_IMPORT_ROUTES = [
   "import-cybertriage",
   "import-m365",
   "import-leapp",
+  "import-mac-login-item",
   "import-aws",
   "import-cloud-activity",
   "import-plaso",
