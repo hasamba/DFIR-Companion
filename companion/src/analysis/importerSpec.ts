@@ -63,6 +63,7 @@ export const IMPORT_KINDS = [
   "caparesult",
   "olevbaresult",
   "sqliterowstate",
+  "mobsfpermission",
   "unknown",
 ] as const;
 

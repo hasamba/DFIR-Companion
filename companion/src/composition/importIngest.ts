@@ -220,6 +220,8 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         return observe(pipeline.importOlevbaResult(caseId, text, base));
       case "sqliterowstate":
         return observe(pipeline.importSqliteRowState(caseId, text, base));
+      case "mobsfpermission":
+        return observe(pipeline.importMobsfPermissions(caseId, text, base));
       case "gws":
         return observe(pipeline.importGoogleWorkspace(caseId, text, base));
       case "hindsight":

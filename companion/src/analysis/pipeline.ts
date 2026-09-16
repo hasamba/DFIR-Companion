@@ -297,9 +297,7 @@ export class AnalysisPipeline {
   // Wraps the module-level withRetry() with server-log visibility: every AI call site in this class
   // routes through here instead of calling withRetry() directly. Previously a failed/retried AI call
   // was silent everywhere except the dashboard's error badge and the case Activity Log — the server
-  // console/session log showed only the DEBUG "AI call [label] ..." line for each attempt's START,
-  // never why an attempt failed. Each failed attempt now logs a WARN with the case id, call label,
-  // provider error kind (when available), and whether it's retrying or giving up.
+  // console/session log now also logs a WARN per failed attempt with the case id, call label, provider error kind (when available), and whether it's retrying or giving up.
   private withRetry<T>(
     caseId: string,
     label: string,
@@ -381,19 +379,17 @@ export class AnalysisPipeline {
   // Hash of the last successfully-synthesized inputs per case, to skip the (expensive) AI call when
   // nothing changed since the last run. In-memory: a fresh process (or `force`) always synthesizes.
   private readonly lastSynthHash = new Map<string, string>();
-  // Per-case log-aggregation truncation (investigation-guidance #10, trigger b): set by analyzeLog when
-  // the distinct-template cap dropped patterns the AI never saw; consumed once by the import route to
-  // stamp a cap-hit coverage warning onto import-meta. A side channel because import methods return only
-  // the state, not metadata.
+  // Per-case log-aggregation truncation (investigation-guidance #10, trigger b): set by analyzeLog
+  // when the distinct-template cap dropped patterns the AI never saw; consumed once by the import
+  // route to stamp a cap-hit coverage warning onto import-meta — a side channel since import methods return only the state, not metadata.
   private readonly importTruncation = new Map<string, AggregateStats>();
   consumeImportTruncation(caseId: string): AggregateStats | undefined {
     const v = this.importTruncation.get(caseId);
     this.importTruncation.delete(caseId);
     return v;
   }
-  // Warn ONCE per process when a configured synthesis-prompt override is missing shipped capabilities
-  // (investigation-guidance #1). Preflight surfaces the same drift in the UI; this covers a post-boot
-  // edit to the override file, and keeps the warning from spamming every synthesis run.
+  // Warn ONCE per process when a configured synthesis-prompt override is missing shipped
+  // capabilities (investigation-guidance #1) — covers a post-boot override edit and keeps this from spamming every synthesis run; preflight surfaces the same drift in the UI.
   private warnedPromptDrift = false;
 
   private warnOnPromptDrift(): void {
@@ -565,6 +561,12 @@ export class AnalysisPipeline {
     return ingest.importSqliteRowState(this.importCtx, ...args);
   }
 
+  importMobsfPermissions(
+    ...args: ImporterArgs<typeof ingest.importMobsfPermissions>
+  ): Promise<InvestigationState> {
+    return ingest.importMobsfPermissions(this.importCtx, ...args);
+  }
+
   async importGoogleWorkspace(
     ...args: ImporterArgs<typeof ingest.importGoogleWorkspace>
   ): Promise<InvestigationState> {
@@ -651,8 +653,7 @@ export class AnalysisPipeline {
     return ingest.importIris(this.importCtx, ...args);
   }
 
-  // Everything below is a one-line delegation into src/analysis/ai/ (#418). Each method's
-  // documentation lives with its implementation there, so there is only ever one copy to keep true.
+  // Everything below is a one-line delegation into src/analysis/ai/ (#418) — each method's documentation lives with its implementation there, so there is only ever one copy to keep true.
   ask(caseId: string, question: string): Promise<AskAnswer> {
     return analystQueries.ask(this.aiCtx, caseId, question);
   }
@@ -775,8 +776,7 @@ export class AnalysisPipeline {
 
   // Accept or reject ONE second-opinion delta. The analyst's decision is recorded on the delta, and
   // ALL currently-accepted deltas are (re-)applied onto the live case state (idempotent) — so an
-  // accept adds/edits the finding/severity/technique now and survives the next synthesis (the same
-  // re-apply runs in synthesize()). A reject just records the decision; state is unchanged.
+  // accept adds/edits the finding/severity/technique now and survives the next synthesis (the same re-apply runs in synthesize()). A reject just records the decision; state is unchanged.
   applySecondOpinion(
     caseId: string,
     deltaId: string,

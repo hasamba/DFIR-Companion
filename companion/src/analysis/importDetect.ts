@@ -11,6 +11,7 @@ import { isBulkExtractorUrlFeatureFile } from "./bulkExtractorUrlImport.js";
 import { isFlossResult } from "./flossResultImport.js";
 import { isCapaResult } from "./capaResultImport.js";
 import { isOlevbaResult } from "./olevbaResultImport.js";
+import { isMobsfReport } from "./mobsfPermissionImport.js";
 import { isWerReport } from "./werImport.js";
 import { isRekallCommandList, looksLikeVolatilityText, looksLikeMemprocfsFindevil } from "./memoryImport.js";
 import { isRunEnvelopeUpload } from "./memoryRunEnvelope.js";
@@ -177,8 +178,7 @@ function isChainsaw(s: Row): boolean {
     (isObject(getCI(s, "Event")) && isObject(getPath(s, "Event.System")))
   )
     return true;
-  // Chainsaw's flattened Sigma-mapping JSON (a VR artifact shelling out to Chainsaw): verdict at
-  // top level (Detection/Severity), flat EventID/Channel/SystemData instead of Event.System.
+  // Chainsaw's flattened Sigma-mapping JSON (a VR artifact shelling out to Chainsaw): verdict at top level (Detection/Severity), flat EventID/Channel/SystemData instead of Event.System.
   return (
     typeof getCI(s, "Detection") === "string" &&
     typeof getCI(s, "Severity") === "string" &&
@@ -247,8 +247,7 @@ function isSecurityOnion(s: Row): boolean {
   ) {
     return true;
   }
-  // (3) Raw SOC API export / Kibana doc on a Security Onion data-stream index
-  // (.ds-logs-<module>-so-<date>, optionally cross-cluster-prefixed "so:").
+  // (3) Raw SOC API export / Kibana doc on a Security Onion data-stream index (.ds-logs-<module>-so-<date>, optionally cross-cluster-prefixed "so:").
   const idx = str(getCI(s, "_index") ?? getCI(s, "source"));
   const soIndex = /^so:/i.test(idx) || /(?:^|[.\-_])logs-[a-z0-9_]+-so[.\-]/i.test(idx);
   if (!soIndex) return false;
@@ -416,6 +415,7 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (isFlossResult(root)) return "flossresult";
   if (isCapaResult(root)) return "caparesult";
   if (isOlevbaResult(root)) return "olevbaresult";
+  if (isMobsfReport(root)) return "mobsfpermission";
   if (isSandbox(sample)) return "sandbox";
   if (isAws(sample)) return "aws";
   if (isGcp(sample)) return "cloud";
