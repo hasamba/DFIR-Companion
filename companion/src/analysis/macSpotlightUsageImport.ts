@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import { boundedAggKey } from "./aggKey.js";
 import { parseCsvRecords } from "./csvImport.js";
 import { createCanonicalEvent } from "./canonicalEvent.js";
-import { MAX_FIELD_LEN, SPOTLIGHT_USAGE_BASIS } from "./canonicalSpotlightUsage.js";
+import { MAX_FIELD_LEN, MAX_RAW_TEXT_LEN, SPOTLIGHT_USAGE_BASIS } from "./canonicalSpotlightUsage.js";
 import type { MappedEvent, SiemEvent } from "./siemImport.js";
 import { aggregateEvents } from "./eventAggregate.js";
 
@@ -46,6 +46,13 @@ function clip(text: string, max: number): string {
 function col(header: string[], row: string[], name: string): string {
   const i = header.findIndex((h) => h.trim().toLowerCase() === name.toLowerCase());
   return i === -1 ? "" : (row[i] ?? "").trim();
+}
+
+// Requires at minimum an ISO-shaped YYYY-MM-DD prefix — mac_apt's own date columns are ISO
+// strings, never free text. A malformed or crafted value (Codex code review finding: e.g. the
+// literal text "nonsense") is rejected rather than promoted to an "inferred" timestamp.
+function looksLikeDate(s: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}/.test(s) && !Number.isNaN(Date.parse(s));
 }
 
 function isValidHeader(header: string[]): boolean {
@@ -92,14 +99,22 @@ function mapRow(
       : "unavailable";
   const pathRaw = col(header, row, "FullPath"); // present only on a consolidated export that already resolved it
   const useCountRaw = col(header, row, "kMDItemUseCount");
-  const lastUsedDate = col(header, row, "kMDItemLastUsedDate");
+  const lastUsedDateRaw = col(header, row, "kMDItemLastUsedDate");
   const usedDatesRaw = col(header, row, "kMDItemUsedDates");
   const downloadedDateRaw = col(header, row, "kMDItemDownloadedDate");
   const whereFromsRaw = col(header, row, "kMDItemWhereFroms");
 
   // Explicit `0` is a real reported value, never conflated with "absent" — checked by presence of
-  // a digits-only string, never truthiness (the design's own corrected lesson).
-  const useCount = /^\d+$/.test(useCountRaw) ? Number(useCountRaw) : undefined;
+  // a digits-only string, never truthiness (the design's own corrected lesson). A NON-EMPTY value
+  // that fails the digits-only/safe-integer check (garbage text, a negative number, a value past
+  // Number.MAX_SAFE_INTEGER) rejects the whole row as malformed rather than silently reading as
+  // "no signal" — the row's own report is unreliable, not merely uninformative (Codex code review
+  // finding: a garbled useCount was previously miscounted as filteredNoSignalRows).
+  if (useCountRaw && (!/^\d+$/.test(useCountRaw) || !Number.isSafeInteger(Number(useCountRaw)))) {
+    return null;
+  }
+  const useCount = useCountRaw ? Number(useCountRaw) : undefined;
+  const lastUsedDate = looksLikeDate(lastUsedDateRaw) ? lastUsedDateRaw : "";
   const hasSignal =
     useCount !== undefined || !!lastUsedDate || !!usedDatesRaw || !!downloadedDateRaw || !!whereFromsRaw;
   if (!hasSignal) return "no-signal";
@@ -113,7 +128,7 @@ function mapRow(
         displayNameRaw,
         pathRaw,
         useCountRaw,
-        lastUsedDate,
+        lastUsedDateRaw,
         usedDatesRaw,
         downloadedDateRaw,
         whereFromsRaw,
@@ -123,7 +138,11 @@ function mapRow(
     .digest("hex");
   const aggKey = boundedAggKey(`mac-spotlight-usage|${reportFingerprint}|${findingId}`);
 
-  const reportTag = `; report ${reportFingerprint.slice(0, 16)}`;
+  // The fingerprint fragment guarantees the description text is never byte-identical between two
+  // content-distinct rows sharing the same displayed summary bits — the super-timeline's own dedup
+  // pass keys on timestamp+description+host, not this importer's aggKey, once an event demotes
+  // past the forensic timeline (Codex code review finding).
+  const reportTag = `; report ${reportFingerprint.slice(0, 16)}, item ${findingId.slice(0, 12)}`;
   const nameLabel = displayNameRaw || `item ${itemId}`;
   const signalBits = [
     useCount !== undefined ? `useCount=${useCount}` : "",
@@ -173,9 +192,9 @@ function mapRow(
         ...(pathRaw ? { path: clip(pathRaw, MAX_FIELD_LEN) } : {}),
         ...(useCount !== undefined ? { useCount } : {}),
         ...(lastUsedDate ? { lastUsedDate } : {}),
-        ...(usedDatesRaw ? { usedDatesRaw: clip(usedDatesRaw, MAX_FIELD_LEN) } : {}),
-        ...(downloadedDateRaw ? { downloadedDateRaw: clip(downloadedDateRaw, MAX_FIELD_LEN) } : {}),
-        ...(whereFromsRaw ? { whereFromsRaw: clip(whereFromsRaw, MAX_FIELD_LEN) } : {}),
+        ...(usedDatesRaw ? { usedDatesRaw: clip(usedDatesRaw, MAX_RAW_TEXT_LEN) } : {}),
+        ...(downloadedDateRaw ? { downloadedDateRaw: clip(downloadedDateRaw, MAX_RAW_TEXT_LEN) } : {}),
+        ...(whereFromsRaw ? { whereFromsRaw: clip(whereFromsRaw, MAX_RAW_TEXT_LEN) } : {}),
         ...(dateUpdated ? { dateUpdated } : {}),
         storeIdentity,
         storeIdentitySource,

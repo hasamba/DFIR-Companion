@@ -97,6 +97,31 @@ describe("parseMacSpotlightUsageCsv — usage-signal filtering", () => {
     expect(r.kept).toBe(1);
     expect(r.events[0].canonical!.spotlightUsage?.useCount).toBe(0);
   });
+
+  it("rejects a garbled useCount as malformed, never miscounts it as no-signal", () => {
+    const r = parseMacSpotlightUsageCsv(
+      csv([
+        csvRow({
+          ...BASE_ROW,
+          kMDItemUseCount: "-1",
+          kMDItemLastUsedDate: "",
+          kMDItemUsedDates: "",
+          kMDItemDownloadedDate: "",
+          kMDItemWhereFroms: "",
+        }),
+      ]),
+    )!;
+    expect(r.kept).toBe(0);
+    expect(r.malformedRows).toBe(1);
+    expect(r.filteredNoSignalRows).toBe(0);
+  });
+
+  it("rejects a useCount past Number.MAX_SAFE_INTEGER as malformed rather than losing precision", () => {
+    const r = parseMacSpotlightUsageCsv(
+      csv([csvRow({ ...BASE_ROW, kMDItemUseCount: "99999999999999999999" })]),
+    )!;
+    expect(r.malformedRows).toBe(1);
+  });
 });
 
 describe("parseMacSpotlightUsageCsv — flattened text preserved, never re-split", () => {
@@ -117,6 +142,13 @@ describe("parseMacSpotlightUsageCsv — timestamp epistemics", () => {
     expect(r.events[0].timestamp).toBe("");
     expect(r.events[0].canonical!.time.clockConfidence).toBe("unknown");
     expect(r.events[0].canonical!.spotlightUsage?.dateUpdated).toBe(BASE_ROW.Date_Updated);
+  });
+
+  it("never promotes a garbled, non-date-shaped lastUsedDate to an inferred timestamp", () => {
+    const r = parseMacSpotlightUsageCsv(csv([csvRow({ ...BASE_ROW, kMDItemLastUsedDate: "nonsense" })]))!;
+    expect(r.events[0].timestamp).toBe("");
+    expect(r.events[0].canonical!.time.clockConfidence).toBe("unknown");
+    expect(r.events[0].canonical!.spotlightUsage?.lastUsedDate).toBeUndefined();
   });
 
   it("never expands useCount into multiple synthetic events", () => {
@@ -147,6 +179,17 @@ describe("parseMacSpotlightUsageCsv — identity, never silently collapsed acros
   it("collapses two byte-identical rows under aggregation", () => {
     const r = parseMacSpotlightUsageCsv(csv([csvRow(BASE_ROW), csvRow(BASE_ROW)]))!;
     expect(r.kept).toBe(1);
+  });
+
+  it("gives two content-distinct rows different description text, even sharing the same displayed summary", () => {
+    const r = parseMacSpotlightUsageCsv(
+      csv([
+        csvRow({ ...BASE_ROW, kMDItemUsedDates: "2024-03-08" }),
+        csvRow({ ...BASE_ROW, kMDItemUsedDates: "2024-03-09" }),
+      ]),
+    )!;
+    expect(r.kept).toBe(2);
+    expect(r.events[0].description).not.toBe(r.events[1].description);
   });
 });
 

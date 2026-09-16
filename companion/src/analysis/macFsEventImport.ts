@@ -9,7 +9,13 @@ import { createHash } from "node:crypto";
 import { boundedAggKey } from "./aggKey.js";
 import { parseCsvRecords } from "./csvImport.js";
 import { createCanonicalEvent } from "./canonicalEvent.js";
-import { MAC_FSEVENT_BASIS, MAX_FIELD_LEN, MAX_FLAGS, MAX_RECORD_TYPES } from "./canonicalMacFsEvent.js";
+import {
+  MAC_FSEVENT_BASIS,
+  MAX_FIELD_LEN,
+  MAX_FLAGS,
+  MAX_RECORD_TYPES,
+  MAX_TOKEN_LEN,
+} from "./canonicalMacFsEvent.js";
 import type { MappedEvent, SiemEvent } from "./siemImport.js";
 import { aggregateEvents } from "./eventAggregate.js";
 
@@ -53,16 +59,21 @@ function isValidHeader(header: string[]): boolean {
   return header.every((h, i) => h.trim().toLowerCase() === HEADER[i]);
 }
 
+const DOTTED_DATE = /^\d{4}\.\d{2}\.\d{2}$/;
+
 // FSEventsParser's own dotted date form ("2024.03.15" or "2024.03.15 - 2024.03.17") normalized to
 // dashes so downstream sort/filter treats it as an ordinary date string; the untouched original is
 // kept separately as approxDateRaw. "Unknown" (the parser's own literal for "nothing bracketed at
-// all") normalizes to two empty strings, never a fabricated date.
+// all") and anything that doesn't match the tool's own dotted-date shape both normalize to two
+// empty strings — never a fabricated or guessed date (Codex code review finding: an unrecognized
+// string was previously promoted straight to an "inferred" timestamp).
 function parseApproxDate(raw: string): { start: string; end: string } {
   const trimmed = raw.trim();
   if (!trimmed || trimmed.toLowerCase() === "unknown") return { start: "", end: "" };
-  const parts = trimmed.split(" - ").map((p) => p.trim().replace(/\./g, "-"));
-  const start = parts[0] ?? "";
-  const end = parts[1] ?? start;
+  const parts = trimmed.split(" - ").map((p) => p.trim());
+  if (parts.length > 2 || !parts.every((p) => DOTTED_DATE.test(p))) return { start: "", end: "" };
+  const start = (parts[0] ?? "").replace(/\./g, "-");
+  const end = (parts[1] ?? parts[0] ?? "").replace(/\./g, "-");
   return { start, end };
 }
 
@@ -71,34 +82,58 @@ function mapRow(header: string[], row: string[], reportFingerprint: string): Map
   if (!/^\d+$/.test(recordIdRaw)) return null; // real uint64 wd — digits-only, never Number()
   const nodeIdRaw = (row[1] ?? "").trim();
   const fsUidRaw = (row[2] ?? "").trim();
-  const fullPath = clip((row[3] ?? "").trim(), MAX_FIELD_LEN);
+  const fullPathRaw = (row[3] ?? "").trim();
+  const fullPath = clip(fullPathRaw, MAX_FIELD_LEN);
   const typeRaw = (row[4] ?? "").trim();
   const flagsRaw = (row[5] ?? "").trim();
   const approxDateRaw = (row[6] ?? "").trim();
-  const sourceLocation = clip((row[7] ?? "").trim(), MAX_FIELD_LEN);
+  const sourceLocationRaw = (row[7] ?? "").trim();
+  const sourceLocation = clip(sourceLocationRaw, MAX_FIELD_LEN);
   const sourceModifiedTime = (row[8] ?? "").trim();
 
   // Coalescing preserved verbatim — never reduced to one value or rejected for an "impossible"
   // combination (the design's own corrected lesson: FSEventsParser's check_record() gate applies
-  // only to carved gzip input, which this exported TSV can't distinguish after the fact).
+  // only to carved gzip input, which this exported TSV can't distinguish after the fact). Each
+  // token clipped to the schema's own per-token bound so one oversized token can't throw a
+  // ZodError out of createCanonicalEvent and abort the whole import (Codex code review finding).
   const recordTypes = typeRaw
     .split(";")
-    .map((s) => s.trim())
+    .map((s) => clip(s.trim(), MAX_TOKEN_LEN))
     .filter(Boolean)
     .slice(0, MAX_RECORD_TYPES);
   const flags = flagsRaw
     .split(";")
-    .map((s) => s.trim())
+    .map((s) => clip(s.trim(), MAX_TOKEN_LEN))
     .filter(Boolean)
     .slice(0, MAX_FLAGS);
   const { start: approxDateStart, end: approxDateEnd } = parseApproxDate(approxDateRaw);
 
+  // Hashed on the UNCLIPPED raw values and every identity-bearing field the schema carries — not
+  // just the clipped display strings — so two records differing only past the 300-char clip point,
+  // or only in nodeId/fsUid/sourceModifiedTime, never collide under aggregation (Codex code review
+  // finding: the hash previously omitted those fields and hashed the already-clipped path/source).
   const findingId = createHash("sha256")
-    .update(JSON.stringify([sourceLocation, recordIdRaw, fullPath, typeRaw, flagsRaw, approxDateRaw]))
+    .update(
+      JSON.stringify([
+        sourceLocationRaw,
+        recordIdRaw,
+        fullPathRaw,
+        typeRaw,
+        flagsRaw,
+        approxDateRaw,
+        nodeIdRaw,
+        fsUidRaw,
+        sourceModifiedTime,
+      ]),
+    )
     .digest("hex");
   const aggKey = boundedAggKey(`mac-fsevent|${reportFingerprint}|${findingId}`);
 
-  const reportTag = `; report ${reportFingerprint.slice(0, 16)}`;
+  // The fingerprint fragment guarantees the description text itself is never byte-identical
+  // between two content-distinct records, independent of which fields happen to differ — the
+  // super-timeline's own dedup pass keys on timestamp+description+host, not on this importer's
+  // aggKey, once an event demotes past the forensic timeline (Codex code review finding).
+  const reportTag = `; report ${reportFingerprint.slice(0, 16)}, rec ${findingId.slice(0, 12)}`;
   const pathLabel = fullPath || "(path not recorded)";
   const dateLabel = approxDateStart
     ? approxDateStart === approxDateEnd

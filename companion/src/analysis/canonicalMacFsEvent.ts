@@ -16,6 +16,7 @@ export type MacFsEventTool = (typeof macFsEventTools)[number];
 export const MAX_FIELD_LEN = 300;
 export const MAX_RECORD_TYPES = 4;
 export const MAX_FLAGS = 16;
+export const MAX_TOKEN_LEN = 40;
 
 export const MAC_FSEVENT_BASIS =
   "sourceLocation is the parser's own path/label for the fsevents log that produced this record, " +
@@ -32,8 +33,8 @@ export const macFsEventBlockSchema = z.object({
   // since JS numbers silently lose precision above 2^53.
   recordId: z.string().regex(/^\d+$/),
   fullPath: z.string().max(MAX_FIELD_LEN),
-  recordTypes: z.array(z.string().max(40)).max(MAX_RECORD_TYPES),
-  flags: z.array(z.string().max(40)).max(MAX_FLAGS),
+  recordTypes: z.array(z.string().max(MAX_TOKEN_LEN)).max(MAX_RECORD_TYPES),
+  flags: z.array(z.string().max(MAX_TOKEN_LEN)).max(MAX_FLAGS),
   approxDateRaw: z.string(),
   approxDateStart: z.string(),
   approxDateEnd: z.string(),

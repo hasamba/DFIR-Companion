@@ -14,6 +14,10 @@ export const spotlightUsageTools = ["mac_apt-spotlight"] as const;
 export type SpotlightUsageTool = (typeof spotlightUsageTools)[number];
 
 export const MAX_FIELD_LEN = 300;
+// The three mac_apt flattens multiple values into (comma-joined dates/URLs) run noticeably longer
+// than an identifier or a single path in real data — a wide real-world download history should not
+// be silently cut to 300 characters (Codex code review finding).
+export const MAX_RAW_TEXT_LEN = 2000;
 
 export const SPOTLIGHT_USAGE_BASIS =
   "useCount is a pure aggregate integer with no time-of-use information and is never expanded " +
@@ -34,9 +38,9 @@ export const spotlightUsageBlockSchema = z.object({
   path: z.string().max(MAX_FIELD_LEN).optional(),
   useCount: z.number().int().nonnegative().optional(),
   lastUsedDate: z.string().optional(),
-  usedDatesRaw: z.string().max(MAX_FIELD_LEN).optional(),
-  downloadedDateRaw: z.string().max(MAX_FIELD_LEN).optional(),
-  whereFromsRaw: z.string().max(MAX_FIELD_LEN).optional(),
+  usedDatesRaw: z.string().max(MAX_RAW_TEXT_LEN).optional(),
+  downloadedDateRaw: z.string().max(MAX_RAW_TEXT_LEN).optional(),
+  whereFromsRaw: z.string().max(MAX_RAW_TEXT_LEN).optional(),
   dateUpdated: z.string().optional(),
   storeIdentity: z.string().max(MAX_FIELD_LEN),
   storeIdentitySource: z.enum(["upload-label", "unavailable"]),

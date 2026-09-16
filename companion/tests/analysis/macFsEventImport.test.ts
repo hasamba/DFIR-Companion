@@ -92,6 +92,13 @@ describe("parseMacFsEventTsv — coalesced type/flags preserved, never rejected"
     expect(r.kept).toBe(1);
     expect(r.events[0].canonical!.macFsEvent?.recordTypes).toEqual(["FolderEvent", "FileEvent"]);
   });
+
+  it("clips an oversized flag token instead of letting it abort the whole import", () => {
+    const oversized = "X".repeat(41);
+    const r = parseMacFsEventTsv(tsv([row({ flags: `${oversized};` })]))!;
+    expect(r.kept).toBe(1);
+    expect(r.events[0].canonical!.macFsEvent?.flags[0]?.length).toBe(40);
+  });
 });
 
 describe("parseMacFsEventTsv — approximate date epistemics", () => {
@@ -122,6 +129,13 @@ describe("parseMacFsEventTsv — approximate date epistemics", () => {
     expect(r.events[0].canonical!.time.clockConfidence).toBe("inferred");
     expect(r.events[0].canonical!.time.precision).toBe("date");
   });
+
+  it("never promotes a garbled, non-date-shaped value to an inferred timestamp", () => {
+    const r = parseMacFsEventTsv(tsv([row({ approx_dates_plus_minus_one_day: "nonsense" })]))!;
+    expect(r.events[0].timestamp).toBe("");
+    expect(r.events[0].canonical!.macFsEvent?.approxDateStart).toBe("");
+    expect(r.events[0].canonical!.time.clockConfidence).toBe("unknown");
+  });
 });
 
 describe("parseMacFsEventTsv — node_id / fs_uid disclosure", () => {
@@ -151,6 +165,24 @@ describe("parseMacFsEventTsv — identity and aggregation", () => {
   it("collapses two byte-identical rows under aggregation", () => {
     const r = parseMacFsEventTsv(tsv([row(), row()]))!;
     expect(r.kept).toBe(1);
+  });
+
+  it("keeps two rows differing only in nodeId as distinct events, never collapsed under one count", () => {
+    const r = parseMacFsEventTsv(tsv([row({ node_id: "1" }), row({ node_id: "2" })]))!;
+    expect(r.kept).toBe(2);
+  });
+
+  it("keeps two rows differing only past the 300-char path clip point as distinct events", () => {
+    const longBase = "Users/analyst/".padEnd(310, "a");
+    const r = parseMacFsEventTsv(
+      tsv([row({ fullpath: `${longBase}/one.txt` }), row({ fullpath: `${longBase}/two.txt` })]),
+    )!;
+    expect(r.kept).toBe(2);
+  });
+
+  it("gives two content-distinct rows different description text, even with the same displayed fields", () => {
+    const r = parseMacFsEventTsv(tsv([row({ node_id: "1" }), row({ node_id: "2" })]))!;
+    expect(r.events[0].description).not.toBe(r.events[1].description);
   });
 });
 
