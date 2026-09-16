@@ -62,6 +62,7 @@ export const IMPORT_KINDS = [
   "flossresult",
   "caparesult",
   "olevbaresult",
+  "sqliterowstate",
   "unknown",
 ] as const;
 

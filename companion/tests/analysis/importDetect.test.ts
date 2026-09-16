@@ -132,6 +132,12 @@ describe("detectImportKind — JSON formats", () => {
     ]);
     expect(detectImportKind("olevba.json", text)).toBe("olevbaresult");
   });
+  it("sqliterowstate: a sqlite-dissect per-table commit-history CSV", () => {
+    const text =
+      '"File Source","Version","Page Version","Cell Source","Page Number","Location","Operation","File Offset","Row ID","body"\n' +
+      '"DATABASE","0","0","B-Tree","3","0","Added","4096","1","hello"';
+    expect(detectImportKind("history_message.csv", text)).toBe("sqliterowstate");
+  });
   it("m365: Unified Audit Log JSON", () => {
     expect(
       detectImportKind(
