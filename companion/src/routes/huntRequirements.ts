@@ -4,6 +4,7 @@ import { requestAuthentication } from "../auth/types.js";
 import { resolvedSubjectScopeSchema } from "../analysis/hypothesis.js";
 import { loadHostAliasIndex } from "../analysis/hostScopeLoad.js";
 import { buildHuntChecklist } from "../analysis/huntRequirementChecklist.js";
+import { InvalidSupersedesIdError } from "../analysis/huntRequirementStore.js";
 import { humanIdentityFor } from "./evidenceAttestation.js";
 import type { RouteContext } from "./context.js";
 
@@ -28,10 +29,13 @@ import type { RouteContext } from "./context.js";
 const createRequestSchema = z.object({
   decision: z.string().trim().min(1).max(2000),
   audience: z.string().trim().min(1).max(500),
-  deadline: z.string().trim().min(1),
+  // Kept in exact sync with huntRequirementSchema's own deadline field (both reject an
+  // unparseable deadline at write time — see that schema's own comment) so a mismatch can never
+  // turn a 400-class rejection into a store-level 500.
+  deadline: z.string().datetime({ offset: true }),
   subjectScope: resolvedSubjectScopeSchema,
   expectedObservableEvidence: z.string().trim().min(1).max(2000),
-  supersedesId: z.string().trim().min(1).optional(),
+  supersedesId: z.string().trim().min(1).max(200).optional(),
 });
 
 export function registerHuntRequirementRoutes(app: Express, ctx: RouteContext): void {
@@ -87,6 +91,9 @@ export function registerHuntRequirementRoutes(app: Express, ctx: RouteContext): 
       });
       return res.status(200).json({ requirement });
     } catch (err) {
+      if (err instanceof InvalidSupersedesIdError) {
+        return res.status(400).json({ error: err.message });
+      }
       return res.status(500).json({ error: (err as Error).message });
     }
   });

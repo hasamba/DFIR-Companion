@@ -8,6 +8,8 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { HypothesisStore } from "../../src/analysis/hypothesisStore.js";
 import { EvidenceAttestationStore } from "../../src/analysis/evidenceAttestationStore.js";
 import { HuntRequirementStore } from "../../src/analysis/huntRequirementStore.js";
+import { TeamAuth } from "../../src/auth/teamAuth.js";
+import { AuthStore } from "../../src/auth/authStore.js";
 import { createApp } from "../../src/server.js";
 
 let app: ReturnType<typeof createApp>;
@@ -16,7 +18,9 @@ function requirementBody(over: Record<string, unknown> = {}) {
   return {
     decision: "recommend containment vs. monitor",
     audience: "IR lead",
-    deadline: "2026-09-20T00:00:00Z",
+    // Always relative to "now", never a hardcoded literal — Ollama code review finding D3: a
+    // fixed future date is a time bomb that silently flips `expired` once that date passes.
+    deadline: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
     subjectScope: { kind: "hosts", hosts: ["ws-01"] },
     expectedObservableEvidence: "the binary executed and wrote files to disk",
     ...over,
@@ -104,5 +108,84 @@ describe("/cases/:id/hunt-requirements", () => {
     const bareApp = createApp(cases, {});
     const res = await request(bareApp).get("/cases/c1/hunt-requirements");
     expect(res.status).toBe(501);
+  });
+
+  it("records supersedesId on the new record when a changed-question requirement supersedes a revoked one", async () => {
+    const old = await request(app).post("/cases/c1/hunt-requirements").send(requirementBody());
+    await request(app).delete(`/cases/c1/hunt-requirements/${old.body.requirement.id}`);
+    const next = await request(app)
+      .post("/cases/c1/hunt-requirements")
+      .send(requirementBody({ decision: "new question", supersedesId: old.body.requirement.id }));
+    expect(next.status).toBe(200);
+    expect(next.body.requirement.supersedesId).toBe(old.body.requirement.id);
+  });
+
+  it("rejects a supersedesId pointing at a requirement that is still active, with 400 not 500", async () => {
+    const old = await request(app).post("/cases/c1/hunt-requirements").send(requirementBody());
+    const res = await request(app)
+      .post("/cases/c1/hunt-requirements")
+      .send(requirementBody({ decision: "new question", supersedesId: old.body.requirement.id }));
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a supersedesId that does not exist, with 400 not 500", async () => {
+    const res = await request(app)
+      .post("/cases/c1/hunt-requirements")
+      .send(requirementBody({ supersedesId: "does-not-exist" }));
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects a deadline that is not a real ISO datetime", async () => {
+    const res = await request(app)
+      .post("/cases/c1/hunt-requirements")
+      .send(requirementBody({ deadline: "EOD Friday" }));
+    expect(res.status).toBe(400);
+  });
+});
+
+// #933 item 17 code review (Ollama): the human-identity write gate (humanIdentityFor, imported
+// unmodified from routes/evidenceAttestation.ts and already covered by ITS OWN unit tests there —
+// including the service-token/service-identity rejection cases) had no test proving THIS route is
+// actually reachable only by an authenticated caller under team-auth. These build a real
+// TeamAuth-backed app (no session established) and confirm an entirely unauthenticated write is
+// refused (401, from the upstream session gate, before humanIdentityFor's own 403 branch would
+// ever run) — combined with humanIdentityFor's own existing unit tests, this closes the gap: an
+// unauthenticated caller never reaches the store, and an authenticated-but-non-human caller is
+// rejected by the exact, already-proven logic this route imports unmodified.
+describe("/cases/:id/hunt-requirements with team-auth on", () => {
+  it("rejects POST with no session identity", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-hunt-requirements-teamauth-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const teamAuth = new TeamAuth({
+      store: new AuthStore(join(root, "auth.sqlite")),
+      bootstrapToken: "test-bootstrap-token",
+      cookieSecure: false,
+      sessionTtlMs: 60 * 60_000,
+    });
+    const teamApp = createApp(cases, {
+      teamAuth,
+      huntRequirementStore: new HuntRequirementStore(cases),
+    });
+    const res = await request(teamApp).post("/cases/c1/hunt-requirements").send(requirementBody());
+    expect(res.status).toBe(401);
+  });
+
+  it("rejects DELETE with no session identity", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-hunt-requirements-teamauth-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const teamAuth = new TeamAuth({
+      store: new AuthStore(join(root, "auth.sqlite")),
+      bootstrapToken: "test-bootstrap-token",
+      cookieSecure: false,
+      sessionTtlMs: 60 * 60_000,
+    });
+    const teamApp = createApp(cases, {
+      teamAuth,
+      huntRequirementStore: new HuntRequirementStore(cases),
+    });
+    const res = await request(teamApp).delete("/cases/c1/hunt-requirements/anything");
+    expect(res.status).toBe(401);
   });
 });

@@ -24,12 +24,16 @@ const huntRequirementSchema = z.object({
   id: z.string(),
   decision: z.string().min(1),
   audience: z.string().min(1),
-  deadline: z.string().min(1),
+  // A real ISO datetime, not free text — Ollama code review finding A1: a free-text deadline
+  // ("EOD Friday") makes new Date(deadline).getTime() come back NaN, so `NaN < now` is silently
+  // `false` forever and the requirement never expires. Rejecting an unparseable deadline at write
+  // time is the fix, not a runtime fallback.
+  deadline: z.string().datetime({ offset: true }),
   subjectScope: resolvedSubjectScopeSchema,
   expectedObservableEvidence: z.string().min(1),
   createdBy: z.string().min(1),
-  createdAt: z.string(),
-  supersedesId: z.string().optional(),
+  createdAt: z.string().datetime({ offset: true }),
+  supersedesId: z.string().min(1).max(200).optional(),
   revokedBy: z.string().optional(),
   revokedAt: z.string().optional(),
   revokedReason: z.string().optional(),
@@ -41,6 +45,11 @@ const fileSchema = z.object({
 });
 
 export type HuntRequirement = z.infer<typeof huntRequirementSchema>;
+
+// A client-correctable rejection (bad supersedesId), distinct from a genuine server fault — lets
+// the route return 400 instead of 500 for what is really a validation failure that just cannot be
+// checked by zod alone (it needs the case's own existing records).
+export class InvalidSupersedesIdError extends Error {}
 
 export class HuntRequirementStore {
   constructor(private readonly cases: Pick<CaseStore, "stateDir">) {}
@@ -91,7 +100,9 @@ export class HuntRequirementStore {
     return parsed.data.requirements;
   }
 
-  // The non-revoked requirements — what the checklist route actually reads.
+  // The non-revoked requirements. NOT what the checklist route reads for one specific requirement
+  // (that reads load() — a revoked requirement's own checklist stays viewable for the audit
+  // trail, deliberately) — this is for a future "only show active requirements" list view.
   async active(caseId: string): Promise<HuntRequirement[]> {
     return (await this.load(caseId)).filter((r) => !r.revokedAt);
   }
@@ -112,7 +123,24 @@ export class HuntRequirementStore {
   ): Promise<HuntRequirement> {
     const validated = huntRequirementSchema.parse({ ...input, id: randomUUID() });
     return this.enqueue(caseId, async () => {
-      const requirements = [...(await this.load(caseId)), validated];
+      const all = await this.load(caseId);
+      // supersedesId must point at a REAL, REVOKED requirement in this case — a dangling or
+      // still-active target would let two "current" requirements silently coexist for the same
+      // question (Ollama code review finding B3).
+      if (validated.supersedesId) {
+        const target = all.find((r) => r.id === validated.supersedesId);
+        if (!target) {
+          throw new InvalidSupersedesIdError(
+            `supersedesId ${validated.supersedesId} does not exist in case ${caseId}`,
+          );
+        }
+        if (!target.revokedAt) {
+          throw new InvalidSupersedesIdError(
+            `supersedesId ${validated.supersedesId} must be revoked before it can be superseded`,
+          );
+        }
+      }
+      const requirements = [...all, validated];
       await atomicWrite(this.path(caseId), JSON.stringify({ version: 1, requirements }, null, 2));
       return validated;
     });

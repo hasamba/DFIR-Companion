@@ -2,7 +2,11 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HuntRequirementStore, type HuntRequirement } from "../../src/analysis/huntRequirementStore.js";
+import {
+  HuntRequirementStore,
+  InvalidSupersedesIdError,
+  type HuntRequirement,
+} from "../../src/analysis/huntRequirementStore.js";
 
 let dir = "";
 const cases = { stateDir: () => dir } as unknown as ConstructorParameters<typeof HuntRequirementStore>[0];
@@ -136,6 +140,31 @@ describe("HuntRequirementStore", () => {
     ).rejects.toBeTruthy();
   });
 
+  it("rejects a hosts scope with no hosts array", async () => {
+    const store = new HuntRequirementStore(cases);
+    await expect(
+      store.create("c1", {
+        ...requirement(),
+        subjectScope: { kind: "hosts" } as unknown as HuntRequirement["subjectScope"],
+      }),
+    ).rejects.toBeTruthy();
+  });
+
+  it("rejects an unrecognized scope kind", async () => {
+    const store = new HuntRequirementStore(cases);
+    await expect(
+      store.create("c1", {
+        ...requirement(),
+        subjectScope: { kind: "bogus" } as unknown as HuntRequirement["subjectScope"],
+      }),
+    ).rejects.toBeTruthy();
+  });
+
+  it("rejects a deadline that is not a real ISO datetime", async () => {
+    const store = new HuntRequirementStore(cases);
+    await expect(store.create("c1", requirement({ deadline: "EOD Friday" }))).rejects.toBeTruthy();
+  });
+
   it("keeps every requirement when two analysts create concurrently", async () => {
     const store = new HuntRequirementStore(cases);
     await Promise.all([
@@ -151,6 +180,38 @@ describe("HuntRequirementStore", () => {
     await expect(store.create("c1", requirement({ createdBy: "" }))).rejects.toBeTruthy();
     await store.create("c1", requirement());
     expect(await store.load("c1")).toHaveLength(1);
+  });
+
+  it("does not let a create that fails INSIDE the queued job (a corrupt file) poison the queue for the next writer", async () => {
+    // Ollama code review finding D2: the earlier version of this test only exercised a create
+    // rejected by zod validation BEFORE the job was ever enqueued — the actual queue recovery
+    // machinery (prior.then(job, job), run.catch(() => undefined)) was never touched by any test.
+    // This one fails inside the enqueued job itself (at load()), which is the real case.
+    await writeFile(join(dir, "hunt-requirements.json"), "{ not json", "utf8");
+    const store = new HuntRequirementStore(cases);
+    await expect(store.create("c1", requirement())).rejects.toThrow(/hunt-requirements\.json/);
+    await writeFile(
+      join(dir, "hunt-requirements.json"),
+      JSON.stringify({ version: 1, requirements: [] }),
+      "utf8",
+    );
+    await store.create("c1", requirement());
+    expect(await store.load("c1")).toHaveLength(1);
+  });
+
+  it("rejects create when supersedesId does not exist in this case, with a typed error", async () => {
+    const store = new HuntRequirementStore(cases);
+    await expect(store.create("c1", requirement({ supersedesId: "does-not-exist" }))).rejects.toBeInstanceOf(
+      InvalidSupersedesIdError,
+    );
+  });
+
+  it("rejects create when supersedesId points at a requirement that is still active (not revoked), with a typed error", async () => {
+    const store = new HuntRequirementStore(cases);
+    const old = await store.create("c1", requirement({ decision: "old question" }));
+    await expect(
+      store.create("c1", requirement({ decision: "new question", supersedesId: old.id })),
+    ).rejects.toBeInstanceOf(InvalidSupersedesIdError);
   });
 
   it("throws on a corrupt file and leaves it untouched", async () => {

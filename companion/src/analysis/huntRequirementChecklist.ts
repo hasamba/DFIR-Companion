@@ -44,6 +44,12 @@ export interface HuntChecklist {
   expired: boolean;
 }
 
+// Deliberately ASYMMETRIC between "caseWide" and "unknown": a caseWide scope overlaps everything,
+// including "unknown", because a case-wide claim genuinely concerns every host, unresolved ones
+// included. An "unknown" scope overlaps ONLY another "unknown" scope — never a named-hosts scope —
+// because "unknown" means the subject could not be established at all, and assuming it might be
+// one specific named host would be a guess this checklist must not make (same fail-closed posture
+// refutationGate.ts's own collectedForScope applies to "unknown").
 function scopesOverlap(
   a: ResolvedSubjectScope,
   b: ResolvedSubjectScope,

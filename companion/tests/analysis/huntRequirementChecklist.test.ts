@@ -152,7 +152,11 @@ describe("buildHuntChecklist", () => {
     expect(netGap.cost).toBe("high");
   });
 
-  it("emits no cost label at all when the requirement's own scope is unknown", () => {
+  it("emits no cost label at all when the requirement's own scope is unknown, and gaps every required class", () => {
+    // Ollama code review finding D1: the original version of this test asserted only
+    // `gap.cost === undefined` over an empty `gaps` array, which would pass even if unknown
+    // scope silently reported NO gaps at all (the opposite of the fail-closed behavior it claims
+    // to test). Assert the actual gap set first.
     const out = buildHuntChecklist({
       requirement: req({ subjectScope: { kind: "unknown" } }),
       events: [],
@@ -161,8 +165,21 @@ describe("buildHuntChecklist", () => {
       aliasIndex: EMPTY_ALIAS,
       now: NOW,
     });
+    expect(out.gaps.map((g) => g.evidenceClass).sort()).toEqual(["execution", "file-activity"]);
     for (const gap of out.gaps) expect(gap.cost).toBeUndefined();
     expect(out.scopeUnresolved).toBe(true);
+  });
+
+  it("gaps every required class for an unknown scope even when a host in the case has full coverage — never assume which host", () => {
+    const out = buildHuntChecklist({
+      requirement: req({ subjectScope: { kind: "unknown" } }),
+      events: [ev("e1", ["sysmon"], undefined, "ws-01"), ev("e2", ["mft"], undefined, "ws-01")],
+      hypotheses: [],
+      attested: new Map(),
+      aliasIndex: EMPTY_ALIAS,
+      now: NOW,
+    });
+    expect(out.gaps.map((g) => g.evidenceClass).sort()).toEqual(["execution", "file-activity"]);
   });
 
   it("suggests a matching open hypothesis's own discriminator, verbatim", () => {
@@ -301,6 +318,48 @@ describe("buildHuntChecklist", () => {
       now: NOW,
     });
     expect(out.discriminator).toBe("case-wide Prefetch sweep");
+  });
+
+  it("an unknown-scoped requirement gets no discriminator from a host-scoped hypothesis", () => {
+    const out = buildHuntChecklist({
+      requirement: req({ subjectScope: { kind: "unknown" } }),
+      events: [],
+      hypotheses: [
+        h({
+          id: "hyp-1",
+          title: "malware executed somewhere",
+          expectedOutcome: "the binary executed and wrote files to disk",
+          status: "open",
+          subjectScope: { kind: "hosts", hosts: ["ws-01"] },
+          discriminator: "should never surface — requirement scope is unresolved",
+        }),
+      ],
+      attested: new Map(),
+      aliasIndex: EMPTY_ALIAS,
+      now: NOW,
+    });
+    expect(out.discriminator).toBeNull();
+  });
+
+  it("a host-scoped requirement gets no discriminator from an explicitly unknown-scoped hypothesis", () => {
+    const out = buildHuntChecklist({
+      requirement: req({ subjectScope: { kind: "hosts", hosts: ["ws-01"] } }),
+      events: [],
+      hypotheses: [
+        h({
+          id: "hyp-1",
+          title: "malware executed somewhere",
+          expectedOutcome: "the binary executed and wrote files to disk",
+          status: "open",
+          subjectScope: { kind: "unknown" },
+          discriminator: "should never surface — hypothesis subject is unresolved",
+        }),
+      ],
+      attested: new Map(),
+      aliasIndex: EMPTY_ALIAS,
+      now: NOW,
+    });
+    expect(out.discriminator).toBeNull();
   });
 
   it("marks a requirement expired when its deadline is in the past, using a hardcoded now", () => {
