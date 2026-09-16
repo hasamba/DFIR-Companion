@@ -12,6 +12,7 @@ import { createApp } from "../../src/server.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 import { registerHostDuplicateRoutes } from "../../src/routes/hostDuplicates.js";
 import type { RouteContext } from "../../src/routes/context.js";
+import { createCanonicalEvent } from "../../src/analysis/canonicalEvent.js";
 
 let app: ReturnType<typeof createApp>;
 let assetOverridesStore: AssetOverridesStore;
@@ -98,6 +99,72 @@ describe("/cases/:id/host-duplicates", () => {
       .post("/cases/c1/host-duplicates/merge")
       .send({ canonical: "win11", other: "win11" });
     expect(res.status).toBe(400);
+  });
+});
+
+function logonEvent(id: string, sessionHost: string, clientName: string, ip: string): ForensicEvent {
+  return {
+    id,
+    timestamp: "2026-06-10T12:00:00Z",
+    description: `Windows Security logon @ ${sessionHost}`,
+    severity: "Low",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    asset: sessionHost,
+    canonical: createCanonicalEvent({
+      event: { category: "authentication", type: "logon", outcome: "success" },
+      target: { kind: "host", name: sessionHost },
+      authentication: { logonType: 3 },
+      session: { terminal: clientName },
+      network: { source: { address: ip } },
+      time: { observed: "2026-06-10T12:00:00Z", normalized: "2026-06-10T12:00:00Z" },
+      evidence: { rawRecords: [{ source: "test", locator: `row:${id}` }] },
+      producer: { importer: "test", parserVersion: "1", mappingVersion: "1" },
+    }),
+  };
+}
+
+describe("/cases/:id/host-duplicates — network-identity candidates (#1163)", () => {
+  it("lists an IP-named host alongside a name-spelling pair, and merge/dismiss both work", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-hostdup-netid-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const stateStore = new StateStore(cases);
+    const s = emptyState("c1");
+    s.forensicTimeline.push(
+      ev("a", "WIN11"),
+      ev("b", "WIN11.windomain.local"),
+      ev("c", "10.0.0.5"),
+      logonEvent("d", "fs-01", "ws-042", "10.0.0.5"),
+    );
+    await stateStore.save(s);
+    const netIdApp = createApp(cases, {
+      stateStore,
+      assetOverridesStore: new AssetOverridesStore(cases),
+      hostDuplicateDismissalStore: new HostDuplicateDismissalStore(cases),
+    });
+
+    const list = await request(netIdApp).get("/cases/c1/host-duplicates");
+    expect(list.status).toBe(200);
+    const reasons = list.body.pending.map((p: { reason: string }) => p.reason).sort();
+    expect(reasons).toEqual(["network-identity", "shortname-fqdn"]);
+    const netId = list.body.pending.find((p: { reason: string }) => p.reason === "network-identity");
+    expect(netId).toMatchObject({ canonical: "ws-042", other: "10.0.0.5" });
+    expect(netId.sampleTime).toBe("2026-06-10T12:00:00Z");
+
+    const merge = await request(netIdApp)
+      .post("/cases/c1/host-duplicates/merge")
+      .send({ canonical: "ws-042", other: "10.0.0.5" });
+    expect(merge.status).toBe(200);
+    expect(merge.body.pending).toHaveLength(1); // the unrelated shortname-fqdn pair remains
+    expect(merge.body.pending[0].reason).toBe("shortname-fqdn");
+
+    const dismiss = await request(netIdApp)
+      .post("/cases/c1/host-duplicates/dismiss")
+      .send({ canonical: "win11.windomain.local", other: "win11" });
+    expect(dismiss.status).toBe(200);
+    expect(dismiss.body.pending).toEqual([]);
   });
 });
 
