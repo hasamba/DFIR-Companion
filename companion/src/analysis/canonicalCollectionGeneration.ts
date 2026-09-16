@@ -40,7 +40,10 @@ export const persistenceEntryFactSchema = z.object({
 });
 export type PersistenceEntryFact = z.infer<typeof persistenceEntryFactSchema>;
 
-const actorSchema = z.object({ id: z.string().min(1), displayName: z.string().min(1) });
+// Exported (#1132) so a sibling generation-ledger schema (mobile backup pairing) can reuse the
+// SAME actor shape rather than redefining it — this shape is genuinely domain-blind already.
+export const actorSchema = z.object({ id: z.string().min(1), displayName: z.string().min(1) });
+export type GenerationActor = z.infer<typeof actorSchema>;
 
 export const collectionGenerationSchema = z.object({
   generationId: z.string().uuid(),

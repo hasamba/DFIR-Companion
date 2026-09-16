@@ -54,6 +54,32 @@ async function seedImport(caseId: string): Promise<number> {
   return seq;
 }
 
+// One import row per host, so a single seeded import can back a generation for EACH of many
+// distinct hosts (#1138's own regression needs many cohorts cheaply).
+async function seedImportWithHosts(caseId: string, hostnames: readonly string[]): Promise<number> {
+  const rows = hostnames.map((h) => ({
+    Hostname: h,
+    Technique: "Run Key",
+    Classification: "Suspicious",
+    Path: "HKCU\\Run\\Updater",
+    Value: "C:\\Temp\\updater.exe",
+    "Access Gained": "User",
+  }));
+  const seq = await store.nextImportSeq(caseId);
+  const filename = `000${seq}_persistencesniper.json`;
+  await store.saveImport(caseId, filename, JSON.stringify(rows));
+  await store.appendImport(caseId, {
+    caseId,
+    sequenceNumber: seq,
+    importedAt: new Date().toISOString(),
+    filename,
+    originalName: filename,
+    rows: rows.length,
+    bytes: JSON.stringify(rows).length,
+  });
+  return seq;
+}
+
 describe("/cases/:id/collection-generations", () => {
   it("returns an empty list for a fresh case", async () => {
     const res = await request(app).get("/cases/c1/collection-generations");
@@ -177,6 +203,30 @@ describe("/cases/:id/collection-generations", () => {
     const noMatch = await request(app).get("/cases/c1/collection-generations/compare?host=WS-99");
     expect(noMatch.body.cohorts).toHaveLength(0);
   });
+
+  // #1138: the compare route used to cap cohorts to MAX_COHORTS BEFORE applying ?host=, so a host
+  // sorting past the cap was dropped even though filtering first would have found it cheaply.
+  it("finds a host past MAX_COHORTS (200) when filtered, because filtering runs before the cap", async () => {
+    const hosts = Array.from({ length: 201 }, (_, i) => `WS-${String(i).padStart(3, "0")}`);
+    const seq = await seedImportWithHosts("c1", hosts);
+    for (const host of hosts) {
+      const res = await request(app)
+        .post("/cases/c1/collection-generations")
+        .send({
+          rawHost: host,
+          domain: "persistence",
+          order: { kind: "captured", capturedAt: "2026-01-12T10:00:00Z" },
+          importSeq: seq,
+          completenessState: "complete",
+        });
+      expect(res.status).toBe(201);
+    }
+    // "WS-200" sorts LAST alphabetically among 201 hosts — past the 200-cohort cap were the route
+    // to compare-then-filter instead of filter-then-compare.
+    const res = await request(app).get("/cases/c1/collection-generations/compare?host=WS-200");
+    expect(res.body.cohorts).toHaveLength(1);
+    expect(res.body.cohorts[0].resolvedHost).toBe("ws-200");
+  }, 20000);
 
   it("compare 400s on an unknown domain rather than silently returning nothing", async () => {
     const res = await request(app).get("/cases/c1/collection-generations/compare?domain=bogus");
