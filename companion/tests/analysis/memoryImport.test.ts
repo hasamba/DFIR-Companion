@@ -778,12 +778,14 @@ describe("parseMemory — MemProcFS yara.csv", () => {
   });
 
   it("extracts a MITRE technique only when the row's own Tags column carries one", () => {
+    // A YARA tag is a legal identifier (letters/digits/underscore only, no dot, no space) — this
+    // fixture uses a real, syntactically valid single tag, not a synthetic "T1055.001 injection".
     const csv = [
       "MatchIndex,Tags,Description,RuleAuthor,RuleVersion,MemoryType,MemoryTag,MemoryBaseAddress,ObjectAddress,PID,ProcessName,ProcessPath,CommandLine,User,Created,AddressCount,String0,Address0",
-      '0,"T1055.001 injection","","","","Virtual Memory (VAD)","HEAP-00",1,"",100,evil.exe,C:\\evil.exe,"",SYSTEM,"2026-06-03 08:31:44",1,x,1',
+      '0,"T1055","","","","Virtual Memory (VAD)","HEAP-00",1,"",100,evil.exe,C:\\evil.exe,"",SYSTEM,"2026-06-03 08:31:44",1,x,1',
     ].join("\n");
     const r = parseMemory(csv);
-    expect(r.events[0].mitreTechniques).toContain("T1055.001");
+    expect(r.events[0].mitreTechniques).toContain("T1055");
   });
 
   it("never claims a process lead for a Physical Memory match with no PID/ProcessName", () => {
@@ -801,6 +803,19 @@ describe("parseMemory — MemProcFS yara.csv", () => {
       "MatchIndex,Tags,Description,RuleAuthor,RuleVersion,MemoryType,MemoryTag,MemoryBaseAddress,ObjectAddress,PID,ProcessName,ProcessPath,CommandLine,User,Created,AddressCount,String0,Address0",
       '0,"","","","","Physical Memory","","","",,,,"","","2026-06-03 08:31:44",1,x,1',
       '1,"","","","","Physical Memory","","","",,,,"","","2026-06-03 08:31:44",1,y,2',
+    ].join("\n");
+    const r = parseMemory(csv);
+    expect(r.events).toHaveLength(2);
+  });
+
+  // Codex code-review finding: MemProcFS's own MatchIndex resets per YARA scan context, so two
+  // DISTINCT physical matches from different contexts within the SAME export can carry the same
+  // index — the discriminator must be this parse's own row position, never the CSV's own field.
+  it("does not collapse two Physical Memory rows sharing the same MatchIndex value", () => {
+    const csv = [
+      "MatchIndex,Tags,Description,RuleAuthor,RuleVersion,MemoryType,MemoryTag,MemoryBaseAddress,ObjectAddress,PID,ProcessName,ProcessPath,CommandLine,User,Created,AddressCount,String0,Address0",
+      '0,"","","","","Physical Memory","","","",,,,"","","2026-06-03 08:31:44",1,x,1',
+      '0,"","","","","Physical Memory","","","",,,,"","","2026-06-03 08:31:44",1,y,2',
     ].join("\n");
     const r = parseMemory(csv);
     expect(r.events).toHaveLength(2);

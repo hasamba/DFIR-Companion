@@ -52,7 +52,9 @@ export interface YaraMappingContext {
   note: string;
 }
 
-const NOTE_MAX = 260; // generous for the longest branch below, small next to the 600-char description cap
+// The longest real branch (PTE with a maximally bounded tag) measures 323 chars; 350 leaves
+// margin without ever truncating a complete sentence mid-word (Codex code-review finding).
+const NOTE_MAX = 350;
 const FIELD_MAX = 60; // an interpolated pid/tag is bounded before insertion, never the note's own text
 
 // A narrow PE/image-extension or path-separator match — NOT memoryFields.ts's own IMAGE_EXT, which
@@ -104,8 +106,11 @@ export function yaraMappingContext(memoryType: string, memoryTag: string): YaraM
 
   if (memoryType === "Virtual Memory (PTE)") {
     const tagBacking = tagBackingOf(tag);
-    const note =
+    const base =
       "MemProcFS classified this as a kernel-mode address reached through this process's own context (not an ordinary user-only process). This row does not establish exclusive process ownership or identify which other contexts reach the same address.";
+    // The disclaimer is always the LEAD; the recovered tag, if any, is appended after it — never
+    // the reverse (Codex round-2 design finding on truncation order applies here too).
+    const note = tag ? `${base} Recovered label: "${tag}".` : base;
     return { mappingClass: "process-kernel-mode", tagBacking, note: note.slice(0, NOTE_MAX) };
   }
 

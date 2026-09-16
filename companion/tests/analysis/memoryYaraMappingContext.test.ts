@@ -22,9 +22,10 @@ describe("yaraMappingContext — tagBacking, three-plus-one states", () => {
   });
 
   it("is 'file-backed-likely' for a path or narrow PE-extension tag", () => {
-    expect(yaraMappingContext("Virtual Memory (VAD)", "\\Device\\HarddiskVolume2\\Windows\\System32\\ntdll.dll").tagBacking).toBe(
-      "file-backed-likely",
-    );
+    expect(
+      yaraMappingContext("Virtual Memory (VAD)", "\\Device\\HarddiskVolume2\\Windows\\System32\\ntdll.dll")
+        .tagBacking,
+    ).toBe("file-backed-likely");
     expect(yaraMappingContext("Virtual Memory (VAD)", "C:\\evil.exe").tagBacking).toBe("file-backed-likely");
   });
 
@@ -33,7 +34,9 @@ describe("yaraMappingContext — tagBacking, three-plus-one states", () => {
     expect(yaraMappingContext("Virtual Memory (VAD)", "HEAP-00 [SegSegment]").tagBacking).toBe(
       "private-allocation-likely",
     );
-    expect(yaraMappingContext("Virtual Memory (VAD)", "STACK-01").tagBacking).toBe("private-allocation-likely");
+    expect(yaraMappingContext("Virtual Memory (VAD)", "STACK-01").tagBacking).toBe(
+      "private-allocation-likely",
+    );
   });
 
   it("is 'unclassified' for a non-empty tag matching neither shape — text WAS recovered", () => {
@@ -110,5 +113,38 @@ describe("yaraMappingContext — bounded interpolation", () => {
     const tagIdx = note.indexOf("evil.dll");
     expect(qualIdx).toBeGreaterThanOrEqual(0);
     expect(tagIdx).toBeGreaterThan(qualIdx);
+  });
+});
+
+// Codex code-review finding: the "Physical Memory" and "unrecognized" notes exceeded the old
+// 260-char cap and were truncated mid-sentence, silently dropping the pagefile-provenance
+// qualification the earlier tests only checked the START of.
+describe("yaraMappingContext — no note is ever truncated mid-sentence (regression)", () => {
+  it("the Physical Memory note ends on its own terminal punctuation, never mid-word", () => {
+    const note = yaraMappingContext("Physical Memory", "").note;
+    expect(note.endsWith(".")).toBe(true);
+    expect(note).toContain(
+      "cannot identify pagefile-only provenance, so a pagefile-backed string, if one exists, is not distinguishable from this.",
+    );
+  });
+
+  it("the unrecognized-type note ends on its own terminal punctuation, never mid-word, even at a maximal memoryType length", () => {
+    const note = yaraMappingContext("x".repeat(200), "").note;
+    expect(note.endsWith(".")).toBe(true);
+    expect(note).toContain("pagefile-backed string, if one exists, is not distinguishable from this.");
+  });
+});
+
+// Codex code-review finding: the PTE branch discarded its own recovered MemoryTag entirely,
+// dropping analyst-visible evidence (e.g. a driver/module name) that survived for every other class.
+describe("yaraMappingContext — process-kernel-mode preserves its own recovered tag", () => {
+  it("includes the tag text when one was recovered", () => {
+    const note = yaraMappingContext("Virtual Memory (PTE)", "ntoskrnl.exe").note;
+    expect(note).toContain("ntoskrnl.exe");
+  });
+
+  it("says nothing extra when no tag was recovered", () => {
+    const note = yaraMappingContext("Virtual Memory (PTE)", "").note;
+    expect(note).not.toContain("Recovered label");
   });
 });

@@ -1073,7 +1073,6 @@ function parseMemoryYaraCsv(text: string, opts: MemoryImportOptions): MemoryPars
   if (!headers.length || !rows.length) return empty;
 
   const col = (name: string): number => headers.findIndex((h) => h.toLowerCase() === name.toLowerCase());
-  const matchIndexI = col("MatchIndex");
   const tagsI = col("Tags");
   const pidI = col("PID");
   const procI = col("ProcessName");
@@ -1088,8 +1087,8 @@ function parseMemoryYaraCsv(text: string, opts: MemoryImportOptions): MemoryPars
   const sink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
 
-  for (const row of rows) {
-    const matchIndex = row[matchIndexI] ?? "";
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+    const row = rows[rowIndex];
     const rawTags = row[tagsI] ?? "";
     const pid = row[pidI] ?? "";
     const proc = row[procI] ?? "";
@@ -1117,19 +1116,20 @@ function parseMemoryYaraCsv(text: string, opts: MemoryImportOptions): MemoryPars
     const cmdNote = cmd ? ` — cmd: ${oneLine(cmd).slice(0, 120)}` : "";
     const description = `${lead} — ${mapping.note}${addrNote}${objNote}${cmdNote}`.slice(0, 600);
 
-    // Severity/MITRE come from the matched RULE, never from where it was found (#1148, reuses yaraImport.ts).
-    const tags = rawTags ? [rawTags] : [];
-    // Physical/Object rows have no real address — MatchIndex is the only discriminator left.
+    const tags = rawTags ? [rawTags] : []; // severity/MITRE come from the RULE, not location (#1148)
+    // No real address on these rows; CSV MatchIndex resets per scan context, so use our own row position.
     const identity =
       mapping.mappingClass === "no-process-context" || mapping.mappingClass === "unrecognized"
-        ? matchIndex
+        ? rowIndex
         : baseAddr || objAddr;
     mapped.push({
       timestamp,
       description,
       severity: severityFromMeta({}),
       mitre: mitreFromYara(tags, {}),
-      aggKey: boundedAggKey(`memprocfs|yara|${pid}|${proc.toLowerCase()}|${mapping.mappingClass}|${identity}`),
+      aggKey: boundedAggKey(
+        `memprocfs|yara|${pid}|${proc.toLowerCase()}|${mapping.mappingClass}|${identity}`,
+      ),
       sources: ["MemProcFS"],
       ...(pName ? { processName: pName } : {}),
     });
