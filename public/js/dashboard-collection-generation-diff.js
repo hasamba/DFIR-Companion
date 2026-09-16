@@ -5,6 +5,11 @@
 // collection-generation ledger, persistence domain only in v1.
 (function () {
   let cohorts = [];
+  let truncatedCohorts = false;
+  // "loading" | "ready" | "unconfigured" | "error" — a code-review fix (Medium): collapsing every
+  // outcome into an empty `cohorts` array made a genuine server failure indistinguishable from an
+  // honestly empty case, and left the PRIOR case's cohorts on screen until the new fetch resolved.
+  let status = "loading";
   let loadSeq = 0; // generation token: only the latest load may mutate state (case-switch races)
 
   // esc/escAttr are the GLOBAL, canonical copies from dashboard-escape.js (loaded well before this
@@ -96,10 +101,17 @@
 
   // Pure: the whole section body as a string, testable without a DOM.
   function renderCollectionGenerationDiff() {
-    if (!cohorts.length) {
+    if (status === "loading") return `<div class="cgd-none">Loading…</div>`;
+    if (status === "error") {
+      return `<div class="cgd-error">Could not load the collection generation comparison — try again shortly.</div>`;
+    }
+    if (status === "unconfigured" || !cohorts.length) {
       return `<div class="cgd-none">No host has two or more eligible, comparable persistence-collection generations yet.</div>`;
     }
-    return cohorts.map(cohortBlock).join("");
+    const truncNote = truncatedCohorts
+      ? `<div class="cgd-truncated">Some hosts were omitted — this case has more compared hosts than fit in one response.</div>`
+      : "";
+    return cohorts.map(cohortBlock).join("") + truncNote;
   }
 
   function paintCollectionGenerationDiff() {
@@ -111,22 +123,37 @@
   async function loadCollectionGenerationDiff(caseId) {
     if (!caseId) return;
     const seq = ++loadSeq;
+    // Clear the PRIOR case's cohorts the moment a new load starts, before the request resolves —
+    // otherwise the previous case's comparison stays on screen (through the case-switch overlay)
+    // until this fetch completes, which can read as the wrong case's own data (Codex code-review
+    // finding, Medium).
+    status = "loading";
+    paintCollectionGenerationDiff();
     try {
       const r = await fetch(`/cases/${encodeURIComponent(caseId)}/collection-generations/compare`);
-      if (!r.ok) {
-        if (seq !== loadSeq) return; // superseded by a newer load — ignore entirely
+      if (seq !== loadSeq) return; // superseded by a newer load — ignore entirely
+      if (r.status === 501) {
+        // The store is not configured — an honestly empty section, not an error.
         cohorts = [];
-        // 501 means the store is not configured — an empty section is the honest rendering.
+        truncatedCohorts = false;
+        status = "unconfigured";
+        paintCollectionGenerationDiff();
+        return;
+      }
+      if (!r.ok) {
+        status = "error";
         paintCollectionGenerationDiff();
         return;
       }
       const body = await r.json();
       if (seq !== loadSeq) return; // a stale success must not overwrite the newer case
       cohorts = Array.isArray(body.cohorts) ? body.cohorts : [];
+      truncatedCohorts = Boolean(body.truncatedCohorts);
+      status = "ready";
       paintCollectionGenerationDiff();
     } catch {
       if (seq !== loadSeq) return;
-      cohorts = [];
+      status = "error";
       paintCollectionGenerationDiff();
     }
   }

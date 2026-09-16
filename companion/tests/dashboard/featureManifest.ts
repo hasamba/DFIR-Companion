@@ -1576,7 +1576,7 @@ export const FEATURES: Feature[] = [
     // entry point.
     file: "dashboard-collection-generation-diff.js",
     publish: ["renderCollectionGenerationDiff", "loadCollectionGenerationDiff"],
-    private: ["cohorts", "loadSeq", "DIRECTION_LABEL", "EXCLUSION_LABEL"],
+    private: ["cohorts", "truncatedCohorts", "status", "loadSeq", "DIRECTION_LABEL", "EXCLUSION_LABEL"],
   },
   {
     // Analyst-attested evidence-class coverage (#1111). Owns two pieces of view state (the loaded

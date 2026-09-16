@@ -158,6 +158,7 @@ describe("/cases/:id/collection-generations", () => {
     expect(res.body.cohorts).toHaveLength(1);
     expect(res.body.cohorts[0].resolvedHost).toBe("ws-01");
     expect(res.body.cohorts[0].pairs).toHaveLength(1);
+    expect(res.body.truncatedCohorts).toBe(false);
   });
 
   it("compare filters by host, resolved through the current alias index", async () => {

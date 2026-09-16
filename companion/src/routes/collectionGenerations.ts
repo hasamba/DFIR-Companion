@@ -114,12 +114,13 @@ export function registerCollectionGenerationRoutes(app: Express, ctx: RouteConte
     try {
       const active = await options.collectionGenerationStore!.active(req.params.id);
       const index = await aliasIndexFor(req.params.id);
-      let cohorts = comparePersistenceGenerations(active, index);
+      const { cohorts: all, truncatedCohorts } = comparePersistenceGenerations(active, index);
+      let cohorts = all;
       if (parsed.data.host) {
         const target = resolveHost(index, parsed.data.host);
         cohorts = cohorts.filter((c) => c.resolvedHost === target);
       }
-      return res.status(200).json({ cohorts });
+      return res.status(200).json({ cohorts, truncatedCohorts });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
