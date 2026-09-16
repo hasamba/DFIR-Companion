@@ -66,6 +66,9 @@ export const SAMPLE_SIZE = 10;
  */
 export const MAX_RECORDS_PER_GROUP = 20_000;
 
+/** A recorded outcome meaning the call did NOT return data (#1106) — AWS spells it "failed", Azure Storage "failure"; an absent/unrecognized outcome is NOT a failure (fail open — most sources carry none). */
+const FAILED_OUTCOME_RE = /^(?:failed|failure)$/;
+
 /** Actions that READ object content or enumerate it. */
 const READ_ACTION_RE =
   /^(?:getobject(?:acl|tagging|torrent)?|headobject|selectobjectcontent|listobjects(?:v2)?|listbucket|getbucket(?:acl|policy|location)?|copyobject|storage\.objects\.(?:get|list)|filedownloaded|filesyncdownloadedfull|fileaccessed|filepreviewed|download|view|blob\.(?:read|download)|get blob|list blobs)$/i;
@@ -94,6 +97,8 @@ export interface ReadRecord {
   container: string;
   /** The object, when object-level logging recorded one. */
   object: string;
+  /** `canonical.event.outcome`, trimmed/lowercased, "" if absent (#1106) — see FAILED_OUTCOME_RE. */
+  outcome: string;
 }
 
 const lower = (s: string): string => (s ?? "").trim().toLowerCase();
@@ -137,6 +142,7 @@ export function readCloudRecord(e: ForensicEvent): ReadRecord | null {
     action: action.trim(),
     container,
     object,
+    outcome: (c?.event?.outcome ?? "").trim().toLowerCase(),
   };
 }
 
@@ -169,15 +175,7 @@ function actionFromDescription(d: string): string {
   return one;
 }
 
-/**
- * The caller address a non-AWS importer named, read back from its description.
- *
- * GCP, Azure and the M365 UAL put the address in prose and set neither the canonical field nor
- * `srcIp` (Entra audit and application sign-in rows stamp `network.source.address` since #931), so
- * every source collapsed to "" and fifty different callers were grouped as one. That is the
- * opposite of what the source dimension is for: it made a distributed read look like a single
- * session, and it merged sessions that should never have been compared.
- */
+/** The caller address a non-AWS importer named, read back from its description — GCP, Azure and the M365 UAL put the address in prose and set neither the canonical field nor `srcIp`, so without this every source collapsed to "" and fifty different callers were grouped as one. */
 function sourceFromDescription(d: string): string {
   return /\sfrom\s([A-Za-z0-9.:]+)(?=\s|$)/.exec(d ?? "")?.[1] ?? "";
 }
@@ -205,16 +203,7 @@ function principalFromDescription(d: string): string {
   return /\bby\s+([^\s][^\n]*?)(?:\s+from\s|\s+in\s|\s+on\s|\s+→\s|\s*\[|$)/.exec(d ?? "")?.[1]?.trim() ?? "";
 }
 
-/**
- * The client that made the call.
- *
- * NO IMPORTER RETAINS CloudTrail's `userAgent` FIELD TODAY. The issue names the user agent as one of
- * the five dimensions to aggregate on, and it is genuinely not in the evidence this codebase
- * produces — so this reads what IS there (an explicit `[ua: …]` annotation, or a client name the
- * description happens to carry, which the identity and collaboration importers do include) and
- * returns "" otherwise. gradeGroup then SAYS the client was not recorded rather than grouping every
- * caller together and implying they were one client.
- */
+/** The client that made the call. NO IMPORTER RETAINS CloudTrail's `userAgent` FIELD TODAY, so this reads what IS there (an explicit `[ua: …]` annotation, or a client name the description happens to carry) and returns "" otherwise — gradeGroup then SAYS the client was not recorded rather than grouping every caller together and implying they were one client. */
 export function clientFromDescription(d: string): string {
   const tagged = /\[ua:\s*([^\]]{1,120})\]/i.exec(d ?? "")?.[1];
   if (tagged) return tagged.trim();
@@ -241,6 +230,8 @@ export interface BulkGroup {
   listOnly: boolean;
   /** true when the group held more records than the cap and was measured on a prefix of them. */
   truncated: boolean;
+  /** Denied/failed calls this identity made — excluded from objectCount/containerCount, disclosed here rather than silently dropped (#1106). */
+  failedCount: number;
 }
 
 // A group is ONE credential in ONE account of ONE provider: two keys under one role name, address
@@ -265,6 +256,8 @@ export function groupBulkReads(
   const minContainers = opts.minContainers ?? MIN_CONTAINERS;
 
   const byKey = new Map<string, ReadRecord[]>();
+  // Denied/failed calls, tallied by the SAME key but never entered into the sliding window — a call that returned no data must not inflate objectCount/containerCount (#1106).
+  const failedByKey = new Map<string, number>();
   let bestCounts: { objects: number; containers: number } | null = null;
   // The cap bounds COLLECTION, not just the scan. Materialising every record and sorting every full
   // group before slicing meant a million-read export allocated and sorted a million objects while
@@ -274,6 +267,10 @@ export function groupBulkReads(
     const r = readCloudRecord(e);
     if (!r) continue;
     const key = groupKey(r);
+    if (FAILED_OUTCOME_RE.test(r.outcome)) {
+      failedByKey.set(key, (failedByKey.get(key) ?? 0) + 1);
+      continue;
+    }
     const list = byKey.get(key) ?? [];
     if (list.length >= MAX_RECORDS_PER_GROUP) {
       dropped++;
@@ -284,7 +281,7 @@ export function groupBulkReads(
   }
 
   const out: BulkGroup[] = [];
-  for (const records of byKey.values()) {
+  for (const [key, records] of byKey.entries()) {
     records.sort((a, b) => a.time - b.time);
     const list = records;
 
@@ -374,6 +371,7 @@ export function groupBulkReads(
       // enumeration-only but which holds one object read elsewhere is not enumeration-only.
       listOnly: bestCounts.objects === 0 && window.every((r) => LIST_ONLY_RE.test(r.action)),
       truncated: dropped > 0,
+      failedCount: failedByKey.get(key) ?? 0,
     });
     bestCounts = null;
   }
@@ -588,6 +586,9 @@ export function gradeGroup(group: BulkGroup, ctx: BulkContext = {}): BulkVerdict
       : " The client that made these calls was not retained by the import, so calls from different tools under one identity are grouped together here.") +
     (group.listOnly
       ? " This group holds enumeration calls only and no object reads, which is what an account with S3 data events disabled looks like: the listing is logged and the downloads are not. Absence of reads here is not evidence that none happened."
+      : "") +
+    (group.failedCount
+      ? ` This identity also made ${group.failedCount} denied/failed call(s) (not limited to this window), excluded from the counts above because they returned no data.`
       : "");
 
   const sample = group.sampleObjects.length
