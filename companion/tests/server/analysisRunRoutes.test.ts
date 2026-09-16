@@ -8,6 +8,8 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { AnalysisRunStore } from "../../src/analysis/analysisRunStore.js";
 import { hashManifestValue } from "../../src/analysis/analysisRunHash.js";
 import { getSynthesisPrompt } from "../../src/analysis/pipeline.js";
+import { IMPORT_KINDS } from "../../src/analysis/importerSpec.js";
+import { BUILT_IN_IMPORT_KINDS } from "../../src/routes/analysisRuns.js";
 import { defaultReportTemplate } from "../../src/reports/reportTemplate.js";
 import { ReportWriter } from "../../src/reports/reportWriter.js";
 import { ReportVersionStore } from "../../src/reports/reportVersionStore.js";
@@ -173,5 +175,59 @@ describe("analysis-run routes", () => {
     expect((await request(app).get("/cases/c2/analysis-runs/foreign-run")).status).toBe(404);
     expect((await request(app).post("/cases/c2/analysis-runs/foreign-run/replay")).status).toBe(404);
     expect((await request(app).get("/cases/c1/analysis-runs/foreign-run")).status).toBe(200);
+  });
+
+  // #1107: BUILT_IN_IMPORT_KINDS (the replay-preflight inventory) was a THIRD hand-maintained copy
+  // of the same kind list IMPORT_KINDS already is — and it drifted, missing okta/gws and (found
+  // while fixing this) hindsight/macos/leapp/wer/linuxpersist/macospersist/rclone too. Every one of
+  // those is a real, wired importer, so replay of any import of those kinds was permanently
+  // blocked with "importer version unavailable" no matter what the analyst did.
+  it("BUILT_IN_IMPORT_KINDS never drifts from IMPORT_KINDS again — it is derived, not hand-copied", () => {
+    expect(BUILT_IN_IMPORT_KINDS).toEqual(IMPORT_KINDS.filter((k) => k !== "unknown"));
+  });
+
+  it("BUILT_IN_IMPORT_KINDS includes every real importer #1107 found missing", () => {
+    for (const kind of [
+      "okta",
+      "gws",
+      "hindsight",
+      "macos",
+      "leapp",
+      "wer",
+      "linuxpersist",
+      "macospersist",
+      "rclone",
+    ]) {
+      expect(BUILT_IN_IMPORT_KINDS, `${kind} is a real, wired importer`).toContain(kind);
+    }
+  });
+
+  it("BUILT_IN_IMPORT_KINDS excludes 'unknown' — a detection fallback, never a pinned importer version", () => {
+    expect(BUILT_IN_IMPORT_KINDS).not.toContain("unknown");
+  });
+
+  it("replay no longer blocks an okta import on 'importer version unavailable' (#1107)", async () => {
+    const { app, analysisRunStore } = await harness();
+    await analysisRunStore.record("c1", {
+      id: "okta-import",
+      kind: "import",
+      startedAt: "2026-07-31T10:00:00.000Z",
+      finishedAt: "2026-07-31T10:00:01.000Z",
+      versions: { importer: "okta/builtin-v1", schema: "investigation-state/v1" },
+      input: {
+        artifacts: [{ path: "imports/0001_okta.json", sha256: "a".repeat(64) }],
+        eventIds: [],
+        entityIds: [],
+      },
+      configuration: {},
+      output: { entityIds: [], hashes: [], claims: [] },
+    });
+
+    const replay = await request(app).post("/cases/c1/analysis-runs/okta-import/replay");
+    // The artifact file itself does not exist on disk, so this cannot fully succeed — but the
+    // failure must NOT be the importer-version preflight blocker #1107 is about.
+    if (replay.status === 409) {
+      expect(replay.body.blockers).not.toContain("importer version unavailable: okta/builtin-v1");
+    }
   });
 });

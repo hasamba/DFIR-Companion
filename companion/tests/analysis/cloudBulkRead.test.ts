@@ -35,6 +35,7 @@ const read = (over: {
   resource?: string;
   min?: number;
   description?: string;
+  outcome?: string;
 }): ForensicEvent =>
   ({
     id: `e${++seq}`,
@@ -45,7 +46,7 @@ const read = (over: {
     relatedFindingIds: [],
     sourceScreenshots: [],
     canonical: {
-      event: { action: over.action ?? "GetObject" },
+      event: { action: over.action ?? "GetObject", outcome: over.outcome },
       actor: { name: over.principal ?? ROLE_PRINCIPAL },
       cloud: { resource: over.resource ?? "corp-data/report.pdf" },
       network: { source: { address: over.ip ?? "10.0.1.5" } },
@@ -132,6 +133,17 @@ describe("readCloudRecord", () => {
     expect(clientFromDescription("M365 FileDownloaded by x using MegaSync")).toBe("MegaSync");
     expect(clientFromDescription("AWS GetObject (s3) by app-role from 10.0.1.5")).toBe("");
   });
+
+  // #1106: the outcome is carried through so a denied/failed call can be told apart from one that
+  // actually returned data.
+  it("reads canonical.event.outcome, trimmed and lowercased", () => {
+    expect(readCloudRecord(read({ outcome: "Failed" }))?.outcome).toBe("failed");
+    expect(readCloudRecord(read({ outcome: " Success " }))?.outcome).toBe("success");
+  });
+
+  it("is '' when the source carries no outcome at all", () => {
+    expect(readCloudRecord(read({}))?.outcome).toBe("");
+  });
 });
 
 describe("groupBulkReads", () => {
@@ -189,6 +201,41 @@ describe("groupBulkReads", () => {
       read({ resource: `bucket-${i}`, action: "ListBucket", min: i }),
     );
     expect(groupBulkReads(lists)[0].listOnly).toBe(true);
+  });
+
+  // #1106: a denied/failed call never returned data and must not inflate the breadth count.
+  describe("denied/failed reads (#1106)", () => {
+    it("excludes a failed read from objectCount and reports it in failedCount", () => {
+      const good = manyReads(MIN_OBJECTS + 1);
+      const failed = manyReads(3, { min: 200, outcome: "failed" });
+      const g = groupBulkReads([...good, ...failed]);
+      expect(g).toHaveLength(1);
+      expect(g[0].objectCount).toBe(MIN_OBJECTS + 1);
+      expect(g[0].failedCount).toBe(3);
+    });
+
+    it("also recognizes 'failure' (Azure Storage's own spelling), case-insensitively", () => {
+      const good = manyReads(MIN_OBJECTS + 1);
+      const failed = manyReads(2, { min: 200, outcome: "FAILURE" });
+      const g = groupBulkReads([...good, ...failed]);
+      expect(g[0].failedCount).toBe(2);
+    });
+
+    it("never lets enough failed reads alone cross the breadth threshold", () => {
+      const failedOnly = manyReads(MIN_OBJECTS + 5, { outcome: "failed" });
+      expect(groupBulkReads(failedOnly)).toEqual([]);
+    });
+
+    it("does not exclude an unrecognized or absent outcome — fails open (#1106's own scoping)", () => {
+      const unknownOutcome = manyReads(MIN_OBJECTS + 1, { outcome: "unknown" });
+      const g = groupBulkReads(unknownOutcome);
+      expect(g[0].objectCount).toBe(MIN_OBJECTS + 1);
+      expect(g[0].failedCount).toBe(0);
+    });
+
+    it("failedCount is 0 by default", () => {
+      expect(groupBulkReads(manyReads(MIN_OBJECTS + 1))[0].failedCount).toBe(0);
+    });
   });
 });
 
@@ -250,6 +297,7 @@ describe("gradeGroup — breadth is a question, not an answer", () => {
     last: at(30),
     listOnly: false,
     truncated: false,
+    failedCount: 0,
     ...over,
   });
 
@@ -296,6 +344,17 @@ describe("gradeGroup — breadth is a question, not an answer", () => {
 
   it("says when the client was not retained by the import", () => {
     expect(gradeGroup(group())?.reason).toContain("client that made these calls was not retained");
+  });
+
+  // #1106: a denied/failed call is disclosed, never silently dropped.
+  it("discloses denied/failed calls excluded from the counts", () => {
+    const v = gradeGroup(group({ failedCount: 7 }));
+    expect(v?.reason).toContain("7 denied/failed call(s)");
+    expect(v?.reason).toContain("excluded from the counts above because they returned no data");
+  });
+
+  it("says nothing about failures when there were none", () => {
+    expect(gradeGroup(group({ failedCount: 0 }))?.reason).not.toContain("denied/failed");
   });
 
   it("carries a bounded sample and the contributing event ids", () => {
