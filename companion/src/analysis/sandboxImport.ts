@@ -12,8 +12,11 @@
 // auto-detected: CAPEv2 (`info` + `signatures`/`target`) vs Falcon Sandbox (`verdict` +
 // `sha256`/`threat_score`).
 
+import { createHash } from "node:crypto";
 import type { LabIntelRecord, Severity } from "./stateTypes.js";
 import { SANDBOX_PREFIX } from "./labIntel.js";
+import { createCanonicalEvent } from "./canonicalEvent.js";
+import type { SampleAssociationFact, ReportMembership } from "./canonicalSampleLineage.js";
 import {
   aggregateEvents,
   cleanIp,
@@ -31,6 +34,36 @@ import {
 } from "./siemImport.js";
 
 type Row = Record<string, unknown>;
+
+const MAX_LINEAGE_FACTS = 256;
+const HASH_LENGTHS = { sha256: 64, sha1: 40, md5: 32 } as const;
+// A stable, greppable aggKey prefix so parseSandboxReport can route lineage carriers through
+// their OWN aggregation pool, separate from verdict/signature events — see the cap-survival
+// comment at the lineage event's own construction below (design review H1).
+const LINEAGE_AGGKEY_PREFIX = "sandbox|cape|lineage|";
+
+// CAPE's own `name` field is a deduplicated LIST of basenames, not a scalar string — this
+// codebase's own `str()` returns "" for an array, so reading it as a plain string silently drops
+// every dropped-file name (#932 item 8 design review, M2).
+function strList(v: unknown): string[] {
+  const raw = Array.isArray(v) ? v : v === undefined || v === null ? [] : [v];
+  return raw.map((x) => str(x).trim()).filter(Boolean);
+}
+
+// Truncates to the sampleLineage schema's own field length caps — untrusted report content is
+// clipped, never rejected, matching every other importer's "bound, don't throw" convention.
+function clip(s: string | undefined, max: number): string | undefined {
+  return s ? s.slice(0, max) : undefined;
+}
+
+function hashSetFrom(row: Row): { sha256?: string; sha1?: string; md5?: string } | undefined {
+  const out: { sha256?: string; sha1?: string; md5?: string } = {};
+  for (const algo of Object.keys(HASH_LENGTHS) as (keyof typeof HASH_LENGTHS)[]) {
+    const v = str(getCI(row, algo)).trim().toLowerCase();
+    if (v.length === HASH_LENGTHS[algo] && /^[0-9a-f]+$/.test(v)) out[algo] = v;
+  }
+  return out.sha256 || out.sha1 || out.md5 ? out : undefined;
+}
 
 export interface SandboxImportOptions {
   aggregate?: boolean;
@@ -230,12 +263,144 @@ function mapCape(
     });
   }
 
-  // Dropped files + extracted CAPE payloads → file/hash IOCs.
-  for (const d of [...asArray(getCI(report, "dropped")), ...asArray(getPath(report, "CAPE.payloads"))]) {
+  // Dropped files + extracted CAPE payloads → file/hash IOCs, and (#932 item 8) a report-scoped
+  // association fact per object: "this report listed object X while analyzing target Y" — never
+  // a parent/child descent claim, since CAPE's own report structure has no field identifying which
+  // process or object actually produced a dropped/payload entry (RECOMMENDATION-932.8.md).
+  const facts: SampleAssociationFact[] = [];
+  // Every validated digest an already-recorded fact carries maps back to that SAME fact — a
+  // dropped entry with sha256+md5 and its own incomplete CAPE.payloads copy carrying only that
+  // SAME md5 must still merge into one fact (design review M2: keying on one "preferred" algorithm
+  // let a partial-hash duplicate silently become a second, disconnected fact).
+  const factByDigest = new Map<string, SampleAssociationFact>();
+  let lineageNotCited = 0;
+  let lineageMalformed = 0;
+  const targetHashes = hashSetFrom(tfile);
+  const targetName = clip(strList(getCI(tfile, "name"))[0], 300);
+
+  function union(existing: string[] | undefined, added: string[]): string[] | undefined {
+    if (!added.length) return existing;
+    const merged = [...new Set([...(existing ?? []), ...added])].slice(0, 20);
+    return merged.length ? merged : undefined;
+  }
+
+  function collectLineage(d: Row, membership: ReportMembership): void {
+    const objectHashes = hashSetFrom(d);
+    if (!objectHashes) {
+      lineageMalformed += 1;
+      return;
+    }
+    const digestKeys = Object.values(objectHashes);
+    const existing = digestKeys.map((h) => factByDigest.get(h)).find(Boolean);
+    const objectNames = strList(getCI(d, "name"))
+      .slice(0, 20)
+      .map((n) => clip(n, 300)!);
+    const objectGuestPaths = strList(getCI(d, "guest_paths"))
+      .slice(0, 20)
+      .map((p) => clip(p, 500)!);
+    const capeType = clip(str(getCI(d, "cape_type")).trim(), 200);
+    const capeTypeCodeRaw = getCI(d, "cape_type_code");
+    const capeTypeCode = typeof capeTypeCodeRaw === "number" ? capeTypeCodeRaw : undefined;
+
+    if (existing) {
+      if (!existing.reportedIn.includes(membership)) existing.reportedIn.push(membership);
+      // Widen the recorded identity with any digest this occurrence adds (e.g. the first
+      // occurrence had only md5, this one also carries sha256) — never lose an algorithm.
+      existing.objectHashes = { ...objectHashes, ...existing.objectHashes };
+      existing.objectNames = union(existing.objectNames, objectNames);
+      existing.objectGuestPaths = union(existing.objectGuestPaths, objectGuestPaths);
+      if (!existing.capeType && capeType) existing.capeType = capeType;
+      if (existing.capeTypeCode === undefined && capeTypeCode !== undefined)
+        existing.capeTypeCode = capeTypeCode;
+      for (const h of digestKeys) factByDigest.set(h, existing);
+      return;
+    }
+    if (facts.length >= MAX_LINEAGE_FACTS) {
+      lineageNotCited += 1;
+      return;
+    }
+    const fact: SampleAssociationFact = {
+      ...(targetHashes ? { targetHashes } : {}),
+      ...(targetName ? { targetName } : {}),
+      objectHashes,
+      ...(objectNames.length ? { objectNames } : {}),
+      ...(objectGuestPaths.length ? { objectGuestPaths } : {}),
+      reportedIn: [membership],
+      ...(capeType ? { capeType } : {}),
+      ...(capeTypeCode !== undefined ? { capeTypeCode } : {}),
+      relationship: "listed-during-analysis-of",
+    };
+    facts.push(fact);
+    for (const h of digestKeys) factByDigest.set(h, fact);
+  }
+
+  for (const d of asArray(getCI(report, "dropped"))) {
     if (!isObject(d)) continue;
     addHash(sink, getCI(d, "sha256"));
     addHash(sink, getCI(d, "md5"));
-    addFile(sink, getCI(d, "name"));
+    for (const n of strList(getCI(d, "name"))) addFile(sink, n);
+    collectLineage(d, "dropped");
+  }
+  for (const d of asArray(getPath(report, "CAPE.payloads"))) {
+    if (!isObject(d)) continue;
+    addHash(sink, getCI(d, "sha256"));
+    addHash(sink, getCI(d, "md5"));
+    for (const n of strList(getCI(d, "name"))) addFile(sink, n);
+    collectLineage(d, "cape-payloads");
+  }
+
+  // Emitted whenever at least one dropped/payload entry was actually examined — even when EVERY
+  // one of them turned out malformed, so that count is disclosed rather than silently lost
+  // (design review M3: a report whose entries were all schema-drifted or hash-less previously
+  // produced no sampleLineage block at all).
+  if (facts.length > 0 || lineageMalformed > 0) {
+    // A dedicated event, NEVER attached to the verdict/signature events above and carried through
+    // its OWN separate aggregation pool by parseSandboxReport (see the `LINEAGE_AGGKEY_PREFIX`
+    // split below) — the verdict/signature events sort by the sample's own malscore-derived
+    // severity and can be capped out of a large batch import, silently losing the only copy of a
+    // retained evidence relationship (design review H5). The FULL sha256 digest (never truncated —
+    // design review H2: a truncated locator is a real aggregator-collision risk, not just a
+    // cosmetic disambiguator, since it decides whether two reports' evidence gets merged) is the
+    // report's own content fingerprint, reused as both the aggKey suffix and the canonical
+    // evidence locator.
+    const reportLocator = createHash("sha256").update(JSON.stringify(report)).digest("hex");
+    out.push({
+      timestamp: time,
+      description:
+        `${SANDBOX_PREFIX.capeLineage}${runTag} ${facts.length} object(s) listed in this report's own dropped/payload data${lineageMalformed ? `, ${lineageMalformed} with no valid hash` : ""}${lineageNotCited ? `, ${lineageNotCited} further object(s) not individually cited` : ""}`.slice(
+          0,
+          600,
+        ),
+      severity: "Medium",
+      mitre: [],
+      origin: "lab",
+      aggKey: `${LINEAGE_AGGKEY_PREFIX}${reportLocator}`,
+      sources: ["CAPEv2"],
+      // Never the outer, loosely-validated `sha256`/`md5` variables (design review M1) — only the
+      // regex-validated targetHashes, so a malformed target token can never masquerade as this
+      // event's own hash identity for downstream correlation.
+      ...(targetHashes?.sha256 ? { sha256: targetHashes.sha256 } : {}),
+      ...(targetHashes?.md5 && !targetHashes.sha256 ? { md5: targetHashes.md5 } : {}),
+      canonical: createCanonicalEvent({
+        event: { category: "file", type: "sandbox-lineage", action: "list", outcome: "success" },
+        time: { observed: time, normalized: time },
+        evidence: { rawRecords: [{ source: "sandbox-cape-lineage", locator: reportLocator }] },
+        producer: {
+          importer: "sandbox-cape-lineage",
+          parserVersion: "1",
+          mappingVersion: "sandbox-cape-lineage-v1",
+        },
+        sampleLineage: {
+          reportLocator,
+          ...(runId ? { runId } : {}),
+          facts,
+          notCited: lineageNotCited,
+          malformed: lineageMalformed,
+          basis:
+            "objects this SAME sandbox report listed together during one analysis — never a claim of direct production or descent, never inferred across separate reports, and never a claim about an incident endpoint",
+        },
+      }),
+    });
   }
   // Network indicators.
   const net = getCI(report, "network");
@@ -453,11 +618,27 @@ export function parseSandboxReport(text: string, opts: SandboxImportOptions = {}
   }
 
   const signatures = mapped.filter((e) => /signature:/.test(e.description)).length;
-  const { events, groups } = aggregateEvents(mapped, {
+
+  // Lineage carriers are aggregated through their OWN separate pool (design review H1): the
+  // verdict/signature pool sorts by the sample's own malscore/signature-derived severity and caps
+  // at `maxEvents`, so a batch with enough higher-severity rows can push a fixed-Medium lineage
+  // carrier out entirely. One report produces at most one lineage carrier, and its own aggKey
+  // already carries the FULL report-content digest (never truncated, per H2), so this pool never
+  // needs its own severity floor or a cap smaller than the report count.
+  const lineageMapped = mapped.filter((e) => e.aggKey.startsWith(LINEAGE_AGGKEY_PREFIX));
+  const otherMapped = mapped.filter((e) => !e.aggKey.startsWith(LINEAGE_AGGKEY_PREFIX));
+
+  const { events: otherEvents, groups: otherGroups } = aggregateEvents(otherMapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
   });
+  const { events: lineageEvents, groups: lineageGroups } = aggregateEvents(lineageMapped, {
+    aggregate: opts.aggregate,
+    maxEvents: Math.max(total, 1),
+  });
+  const events = [...otherEvents, ...lineageEvents];
+  const groups = otherGroups + lineageGroups;
 
   const format = sawCape && sawFalcon ? "mixed" : sawCape ? "capev2" : sawFalcon ? "falcon" : "empty";
   return {

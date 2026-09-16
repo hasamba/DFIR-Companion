@@ -17,6 +17,7 @@ export const SANDBOX_SOURCES: ReadonlySet<string> = new Set(["CAPEv2", "Falcon S
 export const SANDBOX_PREFIX = {
   capeVerdict: "CAPE sandbox:",
   capeSignature: "CAPE signature:",
+  capeLineage: "CAPE sandbox lineage:",
   falconVerdict: "Falcon Sandbox:",
   falconSignature: "Falcon signature:",
 } as const;

@@ -208,6 +208,7 @@
     "canonicalAcquisition.ts": "shared",
     "canonicalDiskImage.ts": "shared",
     "canonicalCollectionGeneration.ts": "shared",
+    "canonicalSampleLineage.ts": "shared",
     "canonicalGwsLifecycle.ts": "shared",
     "canonicalRecoveredFragment.ts": "shared",
     "canonicalDecodedString.ts": "shared",
