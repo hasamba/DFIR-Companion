@@ -141,6 +141,20 @@ describe("detectImportKind — JSON formats", () => {
     });
     expect(detectImportKind("mobsf.json", text)).toBe("mobsfpermission");
   });
+  it("exporterflow: an nfdump -o ndjson exporter flow record", () => {
+    const text = JSON.stringify({
+      first: "2026-01-01T00:00:00.000",
+      last: "2026-01-01T00:00:05.000",
+      received: "2026-01-01T00:05:00.000",
+      proto: 6,
+      src4_addr: "10.0.0.5",
+      dst4_addr: "203.0.113.9",
+      in_bytes: 1000,
+      in_packets: 10,
+      export_sysid: 1,
+    });
+    expect(detectImportKind("flows.ndjson", text)).toBe("exporterflow");
+  });
   it("sqliterowstate: a sqlite-dissect per-table commit-history CSV", () => {
     const text =
       '"File Source","Version","Page Version","Cell Source","Page Number","Location","Operation","File Offset","Row ID","body"\n' +

@@ -295,9 +295,8 @@ export class AnalysisPipeline {
   }
 
   // Wraps the module-level withRetry() with server-log visibility: every AI call site in this class
-  // routes through here instead of calling withRetry() directly. Previously a failed/retried AI call
-  // was silent everywhere except the dashboard's error badge and the case Activity Log — the server
-  // console/session log now also logs a WARN per failed attempt with the case id, call label, provider error kind (when available), and whether it's retrying or giving up.
+  // routes through here instead of calling withRetry() directly — a failed/retried AI call now also
+  // logs a WARN per attempt with the case id, call label, provider error kind, and retry/give-up state.
   private withRetry<T>(
     caseId: string,
     label: string,
@@ -380,16 +379,14 @@ export class AnalysisPipeline {
   // nothing changed since the last run. In-memory: a fresh process (or `force`) always synthesizes.
   private readonly lastSynthHash = new Map<string, string>();
   // Per-case log-aggregation truncation (investigation-guidance #10, trigger b): set by analyzeLog
-  // when the distinct-template cap dropped patterns the AI never saw; consumed once by the import
-  // route to stamp a cap-hit coverage warning onto import-meta — a side channel since import methods return only the state, not metadata.
+  // when the distinct-template cap dropped patterns the AI never saw; consumed once to stamp a cap-hit warning onto import-meta — a side channel since import methods return only the state.
   private readonly importTruncation = new Map<string, AggregateStats>();
   consumeImportTruncation(caseId: string): AggregateStats | undefined {
     const v = this.importTruncation.get(caseId);
     this.importTruncation.delete(caseId);
     return v;
   }
-  // Warn ONCE per process when a configured synthesis-prompt override is missing shipped
-  // capabilities (investigation-guidance #1) — covers a post-boot override edit and keeps this from spamming every synthesis run; preflight surfaces the same drift in the UI.
+  // Warn ONCE per process when a synthesis-prompt override is missing shipped capabilities (investigation-guidance #1) — preflight surfaces the same drift in the UI.
   private warnedPromptDrift = false;
 
   private warnOnPromptDrift(): void {
@@ -565,6 +562,10 @@ export class AnalysisPipeline {
     ...args: ImporterArgs<typeof ingest.importMobsfPermissions>
   ): Promise<InvestigationState> {
     return ingest.importMobsfPermissions(this.importCtx, ...args);
+  }
+
+  importExporterFlow(...args: ImporterArgs<typeof ingest.importExporterFlow>): Promise<InvestigationState> {
+    return ingest.importExporterFlow(this.importCtx, ...args);
   }
 
   async importGoogleWorkspace(
@@ -794,6 +795,5 @@ export class AnalysisPipeline {
     return secondOpinionRun.applyAllSecondOpinion(this.aiCtx, caseId, accept);
   }
 
-  // Save the (re)decided record, then re-apply ALL accepted deltas onto the live state (idempotent).
-  // Shared by the single + bulk apply methods so both persist and broadcast identically.
+  // Save the (re)decided record, then re-apply ALL accepted deltas onto the live state (idempotent) — shared by the single + bulk apply methods so both persist and broadcast identically.
 }

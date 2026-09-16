@@ -12,6 +12,7 @@ import { isFlossResult } from "./flossResultImport.js";
 import { isCapaResult } from "./capaResultImport.js";
 import { isOlevbaResult } from "./olevbaResultImport.js";
 import { isMobsfReport } from "./mobsfPermissionImport.js";
+import { isNfdumpFlowRecord } from "./exporterFlowImport.js";
 import { isWerReport } from "./werImport.js";
 import { isRekallCommandList, looksLikeVolatilityText, looksLikeMemprocfsFindevil } from "./memoryImport.js";
 import { isRunEnvelopeUpload } from "./memoryRunEnvelope.js";
@@ -193,16 +194,14 @@ function isVelociraptor(s: Row, root: unknown): boolean {
   if (typeof getCI(s, "_Source") === "string" && !!getCI(s, "_Source")) return true;
   if (!!getCI(s, "Artifact") || !!getCI(s, "_Artifact")) return true;
   // Velociraptor data indexed into Elasticsearch (pushed from Kibana): the upload artifact names the
-  // index `artifact_<name>`, and nested VQL columns are flattened to dotted keys with `.keyword`
-  // multi-fields (Artifact.keyword, Detection.StringHit, EventData.ScriptBlockText, …).
+  // index `artifact_<name>`, and nested VQL columns are flattened to dotted keys with `.keyword` multi-fields (Artifact.keyword, Detection.StringHit, EventData.ScriptBlockText, …).
   if (/^artifact[_-]/i.test(str(getCI(s, "_index")))) return true;
   if (Object.keys(s).some((k) => k === "Artifact" || /^(?:Artifact|Detection|_Event)\./.test(k))) return true;
   const rule = getCI(s, "Rule");
   if (typeof rule === "string" && (!!getCI(s, "Strings") || !!getCI(s, "Meta") || !!getCI(s, "Namespace")))
     return true;
   if (isObject(getCI(s, "System")) && !!getCI(s, "EventData")) return true; // VR parsed-evtx (no Event wrapper)
-  // Velociraptor pslist/pstree: CallChain (process-ancestor string) is specific to VR's pslist
-  // artifact family and absent from Windows event logs / SIEM exports.
+  // Velociraptor pslist/pstree: CallChain (process-ancestor string) is specific to VR's pslist artifact family and absent from Windows event logs / SIEM exports.
   if (!!getCI(s, "CallChain") && (getCI(s, "Pid") != null || getCI(s, "Ppid") != null)) return true;
   // Velociraptor Windows.Network.Netstat: Laddr/Lport/Status combination is specific to VR's netstat
   if (getCI(s, "Laddr") != null && getCI(s, "Lport") != null && getCI(s, "Status") != null) return true;
@@ -416,6 +415,7 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (isCapaResult(root)) return "caparesult";
   if (isOlevbaResult(root)) return "olevbaresult";
   if (isMobsfReport(root)) return "mobsfpermission";
+  if (isNfdumpFlowRecord(sample)) return "exporterflow";
   if (isSandbox(sample)) return "sandbox";
   if (isAws(sample)) return "aws";
   if (isGcp(sample)) return "cloud";

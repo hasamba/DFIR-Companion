@@ -57,6 +57,7 @@ const BUILT_IN_IMPORT_KINDS = [
   "olevbaresult",
   "sqliterowstate",
   "mobsfpermission",
+  "exporterflow",
 ] as const;
 
 const CURRENT_SCHEMAS = [

@@ -1,3 +1,4 @@
+import { parseExporterFlowNdjson, type ExporterFlowOptions } from "../exporterFlowImport.js";
 import { parseNetworkLogs, type NetworkImportOptions } from "../networkImport.js";
 import { deltaSchema } from "../responseSchema.js";
 import { parseSecurityOnion, type SecurityOnionImportOptions } from "../securityOnionImport.js";
@@ -196,6 +197,80 @@ export async function importSecurityOnion(
       `Security Onion import: ${parsed.kept} event(s) from ${parsed.total} record(s)` +
       `, ${parsed.iocs.length} IOC(s)` +
       (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
+    summary: "",
+  };
+  const delta = deltaSchema.parse(raw);
+
+  return ctx.withStateLock(caseId, async () => {
+    let state = await ctx.opts.stateStore.load(caseId);
+    state = await ctx.mergeWithAliases(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await ctx.opts.stateStore.save(state);
+    ctx.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  });
+}
+
+// Import nfdump's -o ndjson exporter flow records: interim/duplicate normalization, then an
+// in-memory beaconDetect.ts call over the normalized set (see exporterFlowImport.ts's own header
+// for why raw flow events alone can never reach the default forensic timeline). Deterministic (no
+// AI call).
+export async function importExporterFlow(
+  ctx: ImportContext,
+  caseId: string,
+  text: string,
+  opts: {
+    label: string;
+    idPrefix: string;
+    importedAt: string;
+    exporterFlow?: ExporterFlowOptions;
+    minSeverity?: Severity;
+    onProgress?: (done: number, total: number) => void;
+  },
+): Promise<InvestigationState> {
+  const parsedRaw = parseExporterFlowNdjson(text, opts.exporterFlow);
+  if (!parsedRaw) throw new Error("not an nfdump exporter flow ndjson document");
+  const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  if (parsed.events.length === 0) {
+    const gapDetail = [
+      parsed.malformedRecords ? `${parsed.malformedRecords} malformed record(s)` : "",
+      parsed.recordsTruncated ? "record scan stopped at the upload size cap" : "",
+    ]
+      .filter(Boolean)
+      .join(", ");
+    return noteEmptyImport(ctx, caseId, opts, "nfdump exporter flow", parsed.total, gapDetail || undefined);
+  }
+
+  const eventIdByAggKey = new Map<string, string>();
+  const forensicEvents = parsed.events.map((e, i) => {
+    const { aggKey, ...rest } = e;
+    const id = `${opts.idPrefix}e${i + 1}`;
+    if (aggKey) eventIdByAggKey.set(aggKey, id);
+    return { ...rest, id, sources: rest.sources?.length ? rest.sources : ["nfdump"] };
+  });
+
+  const raw = {
+    findings: [],
+    iocs: resolveExtractedFrom(parsed.iocs, eventIdByAggKey).map((c, i) => ({
+      id: `${opts.idPrefix}i${i + 1}`,
+      type: c.type,
+      value: c.value,
+      ...(c.extractedFrom ? { extractedFrom: c.extractedFrom } : {}),
+    })),
+    mitreTechniques: [],
+    forensicEvents,
+    threadsOpened: [],
+    threadsClosed: [],
+    timelineNote:
+      `nfdump exporter flow import: ${parsed.flowCount} normalized flow(s) from ${parsed.total} record(s)` +
+      (parsed.beaconLeadCount ? `, ${parsed.beaconLeadCount} periodicity lead(s)` : "") +
+      (parsed.malformedRecords ? `, ${parsed.malformedRecords} malformed record(s)` : "") +
+      (parsed.recordsTruncated ? ", record scan stopped at the upload size cap" : "") +
+      `, ${parsed.iocs.length} IOC(s)`,
     summary: "",
   };
   const delta = deltaSchema.parse(raw);
