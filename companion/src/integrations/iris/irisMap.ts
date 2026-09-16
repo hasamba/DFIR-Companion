@@ -21,6 +21,8 @@ import type { IrisAssetBody, IrisIocBody, IrisEventBody, IrisTaskBody } from "./
 import type { PlaybookTask, PlaybookStatus } from "../../analysis/playbook.js";
 import { tacticForTechniques } from "../../analysis/mitreTactics.js";
 import { attackTechniqueMd, attackTechniqueUrl } from "../../analysis/attack.js";
+import { mostRestrictive, hasUnmarkedOrUnrecognized } from "../../analysis/tlp.js";
+import type { TlpLabel } from "../../analysis/stateTypes.js";
 
 const TAG = "dfir-companion";
 
@@ -82,8 +84,35 @@ function worstVerdict(enrichments: readonly IocEnrichment[]): string | undefined
   return best;
 }
 
+// IRIS's own real tlp_id scale (#933 item 21), verified against IRIS's own public source
+// (dfir-iris/iris-web's post_init.py, create_safe_tlp() insertion order) — 1-indexed by
+// insertion, not guessed. `2` (amber) is this codebase's own existing default for an IOC whose
+// evidence never carried any real marking — unchanged behavior, not something this item asks to
+// revisit.
+const IRIS_TLP_ID: Record<TlpLabel, number> = { RED: 1, AMBER: 2, GREEN: 3, CLEAR: 4, AMBER_STRICT: 5 };
+const IRIS_DEFAULT_TLP_ID = 2; // amber
+
+// The real tlp_id for an IOC, computed from its own linked events' sharingMarking (via
+// IOC.extractedFrom — the same authoritative link iocProvenanceChain.ts already uses; the
+// approximate value-match fallback that function also has is deliberately NOT used here, since a
+// guessed link is the wrong foundation for a sharing-restriction decision). Floors at the
+// existing amber default whenever some linked evidence carries no marking at all or an
+// unrecognized one — never loosens to green/clear just because SOME evidence happened to be
+// marked less restrictively (a real regression an Ollama design review caught in an earlier
+// version of this fix).
+export function resolveIocTlpId(ioc: IOC, eventById: ReadonlyMap<string, ForensicEvent>): number {
+  const markings = (ioc.extractedFrom ?? []).map((id) => eventById.get(id)?.sharingMarking);
+  if (hasUnmarkedOrUnrecognized(markings)) return IRIS_DEFAULT_TLP_ID;
+  const label = mostRestrictive(markings);
+  return label ? IRIS_TLP_ID[label] : IRIS_DEFAULT_TLP_ID;
+}
+
 // Build an IRIS add-ioc body, or null when no IRIS type matches (caller records it as skipped).
-export function mapIoc(ioc: IOC, typeMap: ReadonlyMap<string, number>): IrisIocBody | null {
+export function mapIoc(
+  ioc: IOC,
+  typeMap: ReadonlyMap<string, number>,
+  eventById: ReadonlyMap<string, ForensicEvent>,
+): IrisIocBody | null {
   const typeId = resolveIocTypeId(ioc, typeMap);
   if (typeId === undefined) return null;
 
@@ -101,7 +130,7 @@ export function mapIoc(ioc: IOC, typeMap: ReadonlyMap<string, number>): IrisIocB
   return {
     ioc_value: ioc.value,
     ioc_type_id: typeId,
-    ioc_tlp_id: 2, // amber (default)
+    ioc_tlp_id: resolveIocTlpId(ioc, eventById),
     ioc_description: description,
     ioc_tags: [...new Set(tags)].join(","),
   };

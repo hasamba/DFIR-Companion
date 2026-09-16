@@ -13,7 +13,14 @@
 // undated one never merge on either (#957): the survivor would carry a time the undated evidence
 // never had.
 
-import { SEVERITY_RANK, worstSeverity, type ForensicEvent, type Severity } from "./stateTypes.js";
+import {
+  SEVERITY_RANK,
+  worstSeverity,
+  type ForensicEvent,
+  type Severity,
+  type TlpMarking,
+} from "./stateTypes.js";
+import { combineMarkings } from "./tlp.js";
 import { trustForSources, type SourceTrustMap } from "./sourceTrust.js";
 import { computeChainSignature } from "./chainSignature.js";
 import { isLabProduced } from "./labIntel.js";
@@ -293,6 +300,13 @@ function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): Forensi
     events.flatMap((e) => Array.from(e.description.matchAll(DERIVED_NOTE_ALL), (m) => m[0].trim())),
   );
   const fileModified = primary.fileModified ?? events.find((e) => e.fileModified)?.fileModified;
+  // Combined across every correlated member, not just `primary` (#933 item 21) — same reasoning
+  // as `sources`/`provenance` below: a marking on a non-primary member must not disappear just
+  // because that row didn't win the description/severity vote.
+  const sharingMarking = events.reduce<TlpMarking | undefined>(
+    (acc, e) => combineMarkings(acc, e.sharingMarking),
+    undefined,
+  );
 
   const merged: ForensicEvent = {
     ...primary,
@@ -306,6 +320,7 @@ function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): Forensi
     relatedFindingIds: uniq(events.flatMap((e) => e.relatedFindingIds)),
     sourceScreenshots: uniq(events.flatMap((e) => e.sourceScreenshots)),
     sources: sources.length ? sources : undefined,
+    ...(sharingMarking ? { sharingMarking } : {}),
     // Provenance markers are a UNION, not the primary's: an analyst's "[promoted]" on a lab row must
     // survive a merge with an incidental (explain / starred-report) copy of the same sample whose
     // longer description wins primary, or second-look would treat their choice as pending again

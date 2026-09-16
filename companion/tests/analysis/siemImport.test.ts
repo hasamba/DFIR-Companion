@@ -1374,6 +1374,25 @@ describe("aggregateEvents — severity/description consistency across a merge", 
     ]);
     expect(events[0].sha256).toBeUndefined();
   });
+
+  it("combines sharingMarking across a merge — a real marking survives even on the LESS severe row (#933 item 21)", () => {
+    // The severity-promoted row carries NO marking; unlike sha256/path above (identity fields
+    // that reset on promotion), a marking must still be honored — it is a fact about the
+    // underlying intelligence, not about which row's text is currently displayed.
+    const { events } = aggregateEvents([
+      m({ severity: "Info", description: "benign twin", sharingMarking: { label: "RED" } }),
+      m({ severity: "High", description: "actual LOLBin" }),
+    ]);
+    expect(events[0].sharingMarking).toEqual({ label: "RED" });
+  });
+
+  it("keeps the tighter of two real markings when both rows carry one", () => {
+    const { events } = aggregateEvents([
+      m({ severity: "Info", description: "a", sharingMarking: { label: "GREEN" } }),
+      m({ severity: "High", description: "b", sharingMarking: { label: "AMBER" } }),
+    ]);
+    expect(events[0].sharingMarking).toEqual({ label: "AMBER" });
+  });
 });
 
 // A System-log 7045 record names the binary in ImagePath, not the Security-log 4697 spelling

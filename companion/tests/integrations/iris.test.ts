@@ -92,6 +92,8 @@ describe("irisMap", () => {
     expect(irisEventDate("not a date")).toBeNull();
   });
 
+  const NO_EVENTS = new Map<string, ForensicEvent>();
+
   it("maps a hash IOC to the right type by length, with intel description + tags", () => {
     const body = mapIoc(
       ioc({
@@ -102,6 +104,7 @@ describe("irisMap", () => {
         ],
       }),
       IOC_TYPES,
+      NO_EVENTS,
     )!;
     expect(body.ioc_type_id).toBe(20); // md5 (32 hex)
     expect(body.ioc_tlp_id).toBe(2);
@@ -111,14 +114,36 @@ describe("irisMap", () => {
   });
 
   it("maps ip/domain/url/sha256 IOC types and returns null for an unmappable kind", () => {
-    expect(mapIoc(ioc({ value: "8.8.8.8", type: "ip" }), IOC_TYPES)!.ioc_type_id).toBe(5);
-    expect(mapIoc(ioc({ value: "evil.com", type: "domain" }), IOC_TYPES)!.ioc_type_id).toBe(9);
-    expect(mapIoc(ioc({ value: "http://x", type: "url" }), IOC_TYPES)!.ioc_type_id).toBe(30);
-    expect(mapIoc(ioc({ value: "a".repeat(64), type: "hash" }), IOC_TYPES)!.ioc_type_id).toBe(22);
+    expect(mapIoc(ioc({ value: "8.8.8.8", type: "ip" }), IOC_TYPES, NO_EVENTS)!.ioc_type_id).toBe(5);
+    expect(mapIoc(ioc({ value: "evil.com", type: "domain" }), IOC_TYPES, NO_EVENTS)!.ioc_type_id).toBe(9);
+    expect(mapIoc(ioc({ value: "http://x", type: "url" }), IOC_TYPES, NO_EVENTS)!.ioc_type_id).toBe(30);
+    expect(mapIoc(ioc({ value: "a".repeat(64), type: "hash" }), IOC_TYPES, NO_EVENTS)!.ioc_type_id).toBe(22);
     // "process" has no candidate in this map (only filename present → it DOES map to filename)
-    expect(mapIoc(ioc({ value: "evil.exe", type: "process" }), IOC_TYPES)!.ioc_type_id).toBe(40);
+    expect(mapIoc(ioc({ value: "evil.exe", type: "process" }), IOC_TYPES, NO_EVENTS)!.ioc_type_id).toBe(40);
     // "other" has no candidate in this map → null (skipped)
-    expect(mapIoc(ioc({ value: "weird", type: "other" }), IOC_TYPES)).toBeNull();
+    expect(mapIoc(ioc({ value: "weird", type: "other" }), IOC_TYPES, NO_EVENTS)).toBeNull();
+  });
+
+  it("computes the real TLP id from an IOC's own linked events (#933 item 21), never the old hardcoded amber", () => {
+    const events = new Map<string, ForensicEvent>([
+      ["e1", event({ id: "e1", timestamp: "t1", description: "d", sharingMarking: { label: "RED" } })],
+    ]);
+    const iocWithLink = { ...ioc({ value: "evil.com", type: "domain" }), extractedFrom: ["e1"] };
+    expect(mapIoc(iocWithLink, IOC_TYPES, events)!.ioc_tlp_id).toBe(1); // red
+  });
+
+  it("floors at the existing amber default when a linked event has no marking at all — never loosens", () => {
+    const events = new Map<string, ForensicEvent>([
+      ["e1", event({ id: "e1", timestamp: "t1", description: "d", sharingMarking: { label: "GREEN" } })],
+      ["e2", event({ id: "e2", timestamp: "t2", description: "d" })], // no marking
+    ]);
+    const iocWithLink = { ...ioc({ value: "evil.com", type: "domain" }), extractedFrom: ["e1", "e2"] };
+    expect(mapIoc(iocWithLink, IOC_TYPES, events)!.ioc_tlp_id).toBe(2); // amber, not green
+  });
+
+  it("keeps the existing amber default for an IOC with no linked events at all", () => {
+    const iocNoLink = ioc({ value: "evil.com", type: "domain" });
+    expect(mapIoc(iocNoLink, IOC_TYPES, NO_EVENTS)!.ioc_tlp_id).toBe(2);
   });
 
   it("maps a host asset (with IP / FQDN detection) and a compromise status", () => {

@@ -157,6 +157,17 @@ export interface IocEnrichmentTemporal {
   truncated?: boolean; // the provider's result set was cut by its own limit; the facts above cover what was returned
 }
 
+// FIRST TLP 2.0's real five labels, most to least restrictive (#933 item 21). The pure
+// normalize/rank/gate functions over this type live in tlp.ts (a domain-layer file); the type
+// itself lives here, alongside it, because ForensicEvent (Shared layer) needs to reference it and
+// Shared may only import Shared — same reasoning as IntelAssertionStatus below.
+export const TLP_LABELS = ["RED", "AMBER_STRICT", "AMBER", "GREEN", "CLEAR"] as const;
+export type TlpLabel = (typeof TLP_LABELS)[number];
+// A marking is either a real, recognized label, or an explicit record that a marking value WAS
+// present in the source but could not be mapped to one — preserved verbatim, never silently
+// dropped or defaulted to a guess (tlp.ts's own normalizeLegacyTlp()).
+export type TlpMarking = { label: TlpLabel } | { label: "unrecognized"; raw: string | number };
+
 // The state of one intel assertion at its last check (#1024). `live` is the only actionable state;
 // the rest are kept as history and labelled wherever they are shown.
 export type IntelAssertionStatus =
@@ -453,6 +464,11 @@ export interface ForensicEvent {
   // Deep-link back to the originating Velociraptor hunt/flow in the Velociraptor GUI. Built at
   // import time from the client's gui-url config; every event from one flow/hunt shares it. Optional.
   veloUrl?: string;
+  // A real TLP marking this event's own source carried (#933 item 21) — set only by an import
+  // path that genuinely has a distribution-marking concept (currently theHiveImport.ts). Absent
+  // means no such concept was ever applied to this event; see tlp.ts's own
+  // requiresAnalystConfirmation() for why absence is never treated as permission to share.
+  sharingMarking?: TlpMarking;
   // Process-chain fields (for RockyRaccoon parent→child validation). processName/parentName
   // are filled by importers that know them (e.g. THOR ProcessCheck); chainCheck is set by
   // the validation pass when enrichment is on.
