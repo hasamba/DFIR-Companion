@@ -1,5 +1,4 @@
-// Deterministic importer for memory-forensics tool output — Volatility 3, Rekall, and MemProcFS.
-// The fifteenth deterministic ingest path; no AI call.
+// Deterministic importer for memory-forensics tool output — Volatility 3, Rekall, MemProcFS, PE-sieve. No AI call.
 //
 // Memory forensics tools detonate nothing and score nothing — they ENUMERATE the live state of a
 // RAM image: the process tree, network connections, injected/executable private memory, loaded
@@ -10,19 +9,16 @@
 // parent→child links); `cmdline` exposes LOLBin / encoded-PowerShell tradecraft.
 //
 // Inputs accepted:
-//   • Volatility 3 JSON renderer (`vol -r json …`): a JSON ARRAY of row objects, each mapping a
-//     column name → value. The TreeGrid renderer tags every node with a `__children` key (the
-//     `pstree` plugin nests children under it). Also a JSON-Lines variant, and a combined
-//     `{ "<plugin>": [rows] }` map some orchestration emits.
+//   • Volatility 3 JSON renderer (`vol -r json …`): a JSON ARRAY of row objects, column name →
+//     value. TreeGrid tags every node with `__children` (`pstree` nests under it). Also a
+//     JSON-Lines variant, and a combined `{ "<plugin>": [rows] }` map some orchestration emits.
 //   • Volatility 3 TEXT/grid renderer (the DEFAULT `vol <plugin>`, no `-r json`): a banner, a
-//     TAB-separated column header, then TAB-separated data rows (malfind/pstree interleave a
-//     hexdump + disassembly block per row, which is skipped). Parsed into the same header-keyed
-//     rows as the JSON path, so the column-fingerprint classification + mappers are reused.
-//   • Rekall JSON renderer (`rekall … --format json`): a list of `[directive, payload]` statements
-//     ("m" metadata / "t" table header / "r" row / "s" section). We walk it, grouping each "r"
-//     row under the most recent "t" table and taking the plugin name from the "m"/"s" context.
-//     Rekall's cells are object-laden (a `_EPROCESS` renders to a dict) — BEST-EFFORT: we resolve
-//     each cell to its name/value, classify by columns, and harvest IOCs.
+//     TAB-separated header then TAB-separated rows (malfind/pstree's hexdump+disasm block is
+//     skipped), parsed into the same header-keyed rows as JSON so mappers are reused.
+//   • Rekall JSON renderer (`rekall … --format json`): `[directive, payload]` statements ("m"
+//     metadata/"t" table header/"r" row/"s" section), walked to group each "r" under the most
+//     recent "t", plugin name from "m"/"s". Cells are object-laden — BEST-EFFORT name/value.
+//   • PE-sieve's own JSON report (#933 item 15) — see pesieveImport.ts.
 //
 // The plugin is identified by its COLUMNS (a case-insensitive fingerprint), refined by the Rekall
 // plugin name / the export filename, then mapped per category. Severity is conservative: a process
@@ -83,6 +79,7 @@ import {
 import { handleOwnershipFacts } from "./memoryHandleOwnership.js";
 import { yaraMappingContext } from "./memoryYaraMappingContext.js";
 import { severityFromMeta, mitreFromYara } from "./yaraImport.js";
+import { isPeSieveReport, parseMemoryPeSieve } from "./pesieveImport.js";
 export { isRekallCommandList, looksLikeVolatilityText } from "./memoryTables.js";
 import { parseCsv } from "./csvImport.js";
 import { tradecraftSignal } from "./tradecraftRules.js";
@@ -99,8 +96,7 @@ export interface MemoryImportOptions {
   maxIocs?: number;
   // Include `dlllist`/`ldrmodules` rows as Info events (default: false — only their paths are IOCs).
   dllTelemetry?: boolean;
-  // The export filename — a weak plugin hint for a bare Volatility array that carries no plugin name.
-  filename?: string;
+  filename?: string; // weak plugin hint for a bare Volatility array carrying no plugin name
 }
 
 export interface MemoryParseResult {
@@ -671,9 +667,7 @@ function mapDll(
     // A module mapped but absent from the PEB loader lists becomes an event despite DLL rows being telemetry (#909 item 3).
     const cross = hasLdrColumns(r) ? ldrModulesSignal(r) : null;
     if (!telemetry && !cross) continue;
-    // A flagged row with NO path is the strongest case this table produces — executable memory that
-    // no file explains. Dropping it for lacking a name discarded exactly the finding worth keeping,
-    // so a cross-view signal is described by its base address instead.
+    // A pathless flagged row is the strongest case here (executable memory no file explains) — described by base address instead of dropped.
     if (!path && !dllName && !cross) continue;
     const base = pick(r, ["Base", "base", "DllBase"]);
     const what = path || dllName || `region at ${base || "?"}`;
@@ -979,12 +973,9 @@ function parseMemoryFindevil(text: string, opts: MemoryImportOptions): MemoryPar
 // ───────────────────────────── MemProcFS CSV variants ─────────────────────────────
 //
 // MemProcFS exports its data in two CSV flavours that complement the text `findevil` report:
-// findevil.csv (PID,ProcessName,Type,Address,Description — the same findevil.txt finding set as
-// clean CSV, parsed into FindevilRow and reusing mapFindevil/severity/aggKey) and yara.csv
-// (MatchIndex,Tags,Description,RuleAuthor,RuleVersion,MemoryType,MemoryTag,MemoryBaseAddress,
-// ObjectAddress,PID,ProcessName,ProcessPath,CommandLine,User,Created,AddressCount,String0,
-// Address0,… — YARA scan results with process + mapping context; severity/MITRE come from the
-// matched rule's own Tags, mapping validity from MemoryType/MemoryTag, see memoryYaraMappingContext.ts, #1148).
+// findevil.csv (the same findevil.txt finding set as clean CSV, reusing mapFindevil/severity/
+// aggKey) and yara.csv (YARA hits with process + mapping context; severity/MITRE come from the
+// matched rule's own Tags, mapping validity from MemoryType/MemoryTag — memoryYaraMappingContext.ts, #1148).
 
 // Lightweight first-line check (no full CSV parse): split on comma, normalise header names.
 function csvCols(text: string): Set<string> {
@@ -1454,6 +1445,15 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
 
 /** Every memory export format EXCEPT a run envelope — the parser an envelope's embedded stdout goes through. */
 function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParseResult {
+  // PE-sieve's own JSON report (#933 item 15); any parse/shape mismatch falls through below.
+  if (text.trimStart().startsWith("{") && text.includes('"scans"')) {
+    try {
+      if (isPeSieveReport(JSON.parse(text))) return parseMemoryPeSieve(text, opts);
+    } catch {
+      /* fall through */
+    }
+  }
+
   // MemProcFS findevil: a flat finding-report table — check before JSON/text Volatility paths.
   if (looksLikeMemprocfsFindevil(text)) return parseMemoryFindevil(text, opts);
 

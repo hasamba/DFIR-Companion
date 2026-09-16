@@ -15,6 +15,7 @@ import { isMobsfReport } from "./mobsfPermissionImport.js";
 import { isNfdumpFlowRecord } from "./exporterFlowImport.js";
 import { isWerReport } from "./werImport.js";
 import { isRekallCommandList, looksLikeVolatilityText, looksLikeMemprocfsFindevil } from "./memoryImport.js";
+import { isPeSieveReport } from "./pesieveImport.js";
 import { isRunEnvelopeUpload } from "./memoryRunEnvelope.js";
 import { isIntactMemoryFile, looksLikeIntactPrefix } from "./intactImport.js";
 import { parseCsv } from "./csvImport.js";
@@ -405,6 +406,7 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   // A Volatility run envelope or a bundle of them (#1016): the discriminator decides, never the shape.
   if (isRunEnvelopeUpload(root)) return "memory";
   if (isVolatilityMap(root)) return "memory";
+  if (isPeSieveReport(root)) return "memory"; // #933 item 15 — verified against every check below for no field collision
   if (isFlossResult(root)) return "flossresult";
   if (isCapaResult(root)) return "caparesult";
   if (isOlevbaResult(root)) return "olevbaresult";
