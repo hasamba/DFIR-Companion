@@ -17,9 +17,13 @@ import type { RouteContext } from "./context.js";
  */
 
 const DEFAULT_TOLERANCE_MS = 21_600_000; // 6 hours — no existing precedent value in this codebase
+// A ceiling, not a recommendation: past this, "same IP" stops being a meaningful proxy for "same
+// lease/machine" at all (DHCP churn, VPN pools) and a `matched` outcome would overclaim more than
+// this feature's own disclosure can carry. 30 days.
+const MAX_TOLERANCE_MS = 2_592_000_000;
 
 const querySchema = z.object({
-  toleranceMs: z.coerce.number().int().positive().optional(),
+  toleranceMs: z.coerce.number().int().positive().max(MAX_TOLERANCE_MS).optional(),
 });
 
 export function registerProxyHostIdentityRoutes(app: Express, ctx: RouteContext): void {

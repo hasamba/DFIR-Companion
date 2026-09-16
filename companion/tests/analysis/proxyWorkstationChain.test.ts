@@ -11,7 +11,14 @@ import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 const EMPTY_ALIAS = buildHostAliasIndex([], {});
 let seq = 0;
 
-function logonEvent(o: { sessionHost: string; clientName?: string; ip?: string; ts: string }): ForensicEvent {
+function logonEvent(o: {
+  sessionHost: string;
+  clientName?: string;
+  ip?: string;
+  ts: string;
+  outcome?: "success" | "failed";
+  category?: string;
+}): ForensicEvent {
   seq += 1;
   return {
     id: `logon-${seq}`,
@@ -23,7 +30,7 @@ function logonEvent(o: { sessionHost: string; clientName?: string; ip?: string; 
     sourceScreenshots: [],
     asset: o.sessionHost,
     canonical: createCanonicalEvent({
-      event: { category: "authentication", type: "logon", outcome: "success" },
+      event: { category: o.category ?? "authentication", type: "logon", outcome: o.outcome ?? "success" },
       target: { kind: "host", name: o.sessionHost },
       authentication: { logonType: 3 },
       ...(o.clientName ? { session: { terminal: o.clientName } } : {}),
@@ -96,7 +103,10 @@ describe("resolveProxyHostIdentity", () => {
       outcome: "matched",
       toleranceMs: 21_600_000,
     });
-    expect(results[0].hosts).toEqual([{ host: "ws-042", evidenceEventIds: [logon.id] }]);
+    expect(results[0].hosts).toEqual([
+      { host: "ws-042", sampleTime: "2026-06-10T12:00:00Z", evidenceEventIds: [logon.id] },
+    ]);
+    expect(results[0].caveats.length).toBeGreaterThan(0);
   });
 
   it("also matches a combined-access-log (Squid) row -- eligibility is network.source.address, never canonical.web", () => {
@@ -110,7 +120,9 @@ describe("resolveProxyHostIdentity", () => {
     const results = resolveProxyHostIdentity([logon, combined], EMPTY_ALIAS, 21_600_000);
     expect(results).toHaveLength(1);
     expect(results[0].outcome).toBe("matched");
-    expect(results[0].hosts).toEqual([{ host: "ws-042", evidenceEventIds: [logon.id] }]);
+    expect(results[0].hosts).toEqual([
+      { host: "ws-042", sampleTime: "2026-06-10T12:00:00Z", evidenceEventIds: [logon.id] },
+    ]);
   });
 
   it("reports no-match explicitly when no host-binding evidence exists in the window", () => {
@@ -171,8 +183,33 @@ describe("resolveProxyHostIdentity", () => {
     expect(resolveProxyHostIdentity(events, EMPTY_ALIAS, 21_600_000)).toEqual([]);
   });
 
+  it("mirrors hostBinding.ts's OWN exclusion set exactly (type===logon && outcome===success), not category", () => {
+    // A FAILED logon (never indexed by buildHostBindingIndex) is real, eligible evidence -- an
+    // attacker's own source IP on a rejected auth attempt must not be silently dropped.
+    const failedLogon = logonEvent({
+      sessionHost: "fs-01",
+      ip: "10.0.0.9",
+      ts: "2026-06-10T12:00:00Z",
+      outcome: "failed",
+    });
+    const results = resolveProxyHostIdentity([failedLogon], EMPTY_ALIAS, 21_600_000);
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ eventId: failedLogon.id, outcome: "no-match" });
+
+    // A successful type:"logon" event under a DIFFERENT category is still indexed by
+    // buildHostBindingIndex (which never reads category) -- it must still be excluded here, or it
+    // would trivially self-match.
+    const oddCategoryLogon = logonEvent({
+      sessionHost: "fs-01",
+      clientName: "ws-042",
+      ip: "10.0.0.5",
+      ts: "2026-06-10T12:00:00Z",
+      category: "other",
+    });
+    expect(resolveProxyHostIdentity([oddCategoryLogon], EMPTY_ALIAS, 21_600_000)).toEqual([]);
+  });
+
   it("surfaces every rawRecords locator on an aggregated web-chain row, not just one", () => {
-    seq += 100; // avoid id collision with other tests' sequential ids
     const event: ForensicEvent = {
       id: "agg-1",
       timestamp: "2026-06-10T12:00:00Z",
@@ -203,7 +240,10 @@ describe("resolveProxyHostIdentity", () => {
     });
     const results = resolveProxyHostIdentity([logon, event], EMPTY_ALIAS, 21_600_000);
     expect(results).toHaveLength(1);
-    expect(results[0].locators).toEqual(["row:1", "row:2"]);
+    expect(results[0].locators).toEqual([
+      { source: "zeek-http", locator: "row:1" },
+      { source: "zeek-http", locator: "row:2" },
+    ]);
   });
 
   it("ignores an event with no network.source.address at all", () => {
@@ -218,5 +258,35 @@ describe("resolveProxyHostIdentity", () => {
       sourceScreenshots: [],
     };
     expect(resolveProxyHostIdentity([noAddress], EMPTY_ALIAS, 21_600_000)).toEqual([]);
+  });
+
+  it("folds two spellings of the same real host (short name vs FQDN) to ONE match, never ambiguous", () => {
+    // A logon's own session.terminal ("ws-042") is one spelling; the case's own fleet inventory
+    // also knows this same machine's FQDN. Both must resolve to the same canonical host.
+    const alias = buildHostAliasIndex([{ hostname: "ws-042", fqdn: "ws-042.corp.local" }], {});
+    const logon = logonEvent({
+      sessionHost: "fs-01",
+      clientName: "ws-042",
+      ip: "10.0.0.5",
+      ts: "2026-06-10T12:00:00Z",
+    });
+    const web = webChainEvent({ ip: "10.0.0.5", ts: "2026-06-10T12:05:00Z" });
+    const results = resolveProxyHostIdentity([logon, web], alias, 21_600_000);
+    expect(results).toHaveLength(1);
+    expect(results[0].outcome).toBe("matched");
+    expect(results[0].hosts).toHaveLength(1);
+    expect(results[0].hosts[0].host).toBe("ws-042.corp.local");
+  });
+
+  it("matches exactly at the tolerance boundary (inclusive)", () => {
+    const logon = logonEvent({
+      sessionHost: "fs-01",
+      clientName: "ws-042",
+      ip: "10.0.0.5",
+      ts: "2026-06-10T06:00:00Z",
+    });
+    const web = webChainEvent({ ip: "10.0.0.5", ts: "2026-06-10T12:00:00Z" }); // exactly 6h later
+    const results = resolveProxyHostIdentity([logon, web], EMPTY_ALIAS, 21_600_000);
+    expect(results[0].outcome).toBe("matched");
   });
 });

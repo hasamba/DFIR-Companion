@@ -91,7 +91,9 @@ describe("GET /cases/:id/proxy-host-identity-matches", () => {
     expect(res.status).toBe(200);
     expect(res.body.matches).toHaveLength(1);
     expect(res.body.matches[0]).toMatchObject({ eventId: "w1", outcome: "matched" });
-    expect(res.body.matches[0].hosts).toEqual([{ host: "ws-042", evidenceEventIds: ["l1"] }]);
+    expect(res.body.matches[0].hosts).toEqual([
+      { host: "ws-042", sampleTime: "2026-06-10T12:00:00Z", evidenceEventIds: ["l1"] },
+    ]);
   });
 
   it("uses the default 6-hour tolerance when none is given, and rejects a match outside it", async () => {
@@ -129,5 +131,19 @@ describe("GET /cases/:id/proxy-host-identity-matches", () => {
     expect(res.status).toBe(400);
     const res2 = await request(app).get("/cases/c1/proxy-host-identity-matches?toleranceMs=notanumber");
     expect(res2.status).toBe(400);
+  });
+
+  it("400s a toleranceMs past the documented ceiling instead of silently accepting it", async () => {
+    const { app, stateStore } = await makeApp();
+    await stateStore.save(stateWith([]));
+    const res = await request(app).get("/cases/c1/proxy-host-identity-matches?toleranceMs=9999999999999");
+    expect(res.status).toBe(400);
+  });
+
+  it("returns an empty match list for a well-formed but nonexistent case, never a 500 (StateStore.load's own real behavior)", async () => {
+    const { app } = await makeApp();
+    const res = await request(app).get("/cases/nonexistent-case/proxy-host-identity-matches");
+    expect(res.status).toBe(200);
+    expect(res.body.matches).toEqual([]);
   });
 });
