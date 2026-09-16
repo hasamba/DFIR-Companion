@@ -325,15 +325,6 @@ export class AnalysisPipeline {
     });
   }
 
-  /**
-   * Measure per-host clock skew (#228) from the PRE-merge timeline and persist it, then return the
-   * time function correlation should compare at — skew-corrected when the analyst has alignment on,
-   * `undefined` (recorded times) otherwise.
-   *
-   * Detection is best-effort: a case with no clock-skew store, or one whose evidence yields no
-   * anchors, simply correlates on recorded times exactly as before.
-   */
-
   private async getKevCatalog(): Promise<KevCatalog | undefined> {
     if (!this.opts.kevStore) return undefined;
     if (!this.kevCatalogCache) this.kevCatalogCache = await this.opts.kevStore.loadCatalog();
@@ -563,6 +554,10 @@ export class AnalysisPipeline {
 
   importFlossResult(...args: ImporterArgs<typeof ingest.importFlossResult>): Promise<InvestigationState> {
     return ingest.importFlossResult(this.importCtx, ...args);
+  }
+
+  importCapaResult(...args: ImporterArgs<typeof ingest.importCapaResult>): Promise<InvestigationState> {
+    return ingest.importCapaResult(this.importCtx, ...args);
   }
 
   async importGoogleWorkspace(
