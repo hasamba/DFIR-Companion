@@ -6,6 +6,7 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CollectionGenerationStore } from "../../src/analysis/collectionGenerationStore.js";
+import { buildHostAliasIndex } from "../../src/analysis/hostAlias.js";
 
 let dir = "";
 const cases = {
@@ -18,6 +19,7 @@ const ACTOR = { id: "u1", displayName: "J. Analyst" };
 
 const PERSISTENCE_ROWS = [
   {
+    Hostname: "WS-01",
     Technique: "Run Key",
     Classification: "Suspicious",
     Path: "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\Updater",
@@ -25,11 +27,26 @@ const PERSISTENCE_ROWS = [
     "Access Gained": "User",
   },
   {
+    Hostname: "WS-01",
     Technique: "Scheduled Task",
     Classification: "Clean",
     Path: "\\Microsoft\\Windows\\UpdateOrchestrator\\Reboot",
     Value: "C:\\Windows\\System32\\UsoClient.exe",
     "Access Gained": "System",
+  },
+];
+
+// A fleet-hunt upload can combine several machines' rows in one artifact (Codex code-review
+// finding H1) — this fixture pairs a WS-01 row with a WS-02 row in the SAME stored file.
+const MULTI_HOST_ROWS = [
+  PERSISTENCE_ROWS[0],
+  {
+    Hostname: "WS-02",
+    Technique: "Run Key",
+    Classification: "Suspicious",
+    Path: "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\Other",
+    Value: "C:\\Temp\\other.exe",
+    "Access Gained": "User",
   },
 ];
 
@@ -164,7 +181,11 @@ describe("CollectionGenerationStore.record", () => {
 
   it("allows the same declared sequence for a DIFFERENT host — cohorts are per-host", async () => {
     await seedImport(1, "0001_a.json", PERSISTENCE_ROWS);
-    await seedImport(2, "0002_b.json", PERSISTENCE_ROWS);
+    await seedImport(
+      2,
+      "0002_b.json",
+      PERSISTENCE_ROWS.map((r) => ({ ...r, Hostname: "WS-02" })),
+    );
     const store = new CollectionGenerationStore(cases);
     await store.record("c1", {
       rawHost: "WS-01",
@@ -184,6 +205,114 @@ describe("CollectionGenerationStore.record", () => {
         recordedBy: ACTOR,
       }),
     ).resolves.toBeTruthy();
+  });
+
+  it("freezes only the rows belonging to the requested host — a fleet-hunt upload never contaminates another host's generation", async () => {
+    await seedImport(1, "0001_hunt.json", MULTI_HOST_ROWS);
+    const store = new CollectionGenerationStore(cases);
+    const generation = await store.record("c1", {
+      rawHost: "WS-01",
+      domain: "persistence",
+      order: { kind: "captured", capturedAt: "2026-01-12T10:00:00Z" },
+      importSeq: 1,
+      completenessState: "complete",
+      recordedBy: ACTOR,
+    });
+    expect(generation.inventory).toHaveLength(1);
+    expect(generation.inventory[0].path).toBe(PERSISTENCE_ROWS[0].Path);
+  });
+
+  it("resolves both sides through the CURRENT alias index — a differently-spelled duplicate collides", async () => {
+    await seedImport(1, "0001_a.json", PERSISTENCE_ROWS);
+    await seedImport(2, "0002_b.json", PERSISTENCE_ROWS);
+    const aliasIndex = buildHostAliasIndex([{ hostname: "ws-01", fqdn: "WS-01" }], {});
+    const store = new CollectionGenerationStore(cases);
+    await store.record("c1", {
+      rawHost: "WS-01",
+      domain: "persistence",
+      order: { kind: "declared", sequence: 1 },
+      importSeq: 1,
+      completenessState: "complete",
+      recordedBy: ACTOR,
+      aliasIndex,
+    });
+    await expect(
+      store.record("c1", {
+        rawHost: "ws-01",
+        domain: "persistence",
+        order: { kind: "declared", sequence: 1 },
+        importSeq: 2,
+        completenessState: "complete",
+        recordedBy: ACTOR,
+        aliasIndex,
+      }),
+    ).rejects.toThrow(/already exists/);
+  });
+
+  it("a revoked generation's own declared sequence no longer blocks its correction", async () => {
+    await seedImport(1, "0001_a.json", PERSISTENCE_ROWS);
+    await seedImport(2, "0002_b.json", PERSISTENCE_ROWS);
+    const store = new CollectionGenerationStore(cases);
+    const first = await store.record("c1", {
+      rawHost: "WS-01",
+      domain: "persistence",
+      order: { kind: "declared", sequence: 1 },
+      importSeq: 1,
+      completenessState: "complete",
+      recordedBy: ACTOR,
+    });
+    await store.revoke("c1", first.generationId, ACTOR, "2026-01-13T00:00:00Z");
+    await expect(
+      store.record("c1", {
+        rawHost: "WS-01",
+        domain: "persistence",
+        order: { kind: "declared", sequence: 1 },
+        importSeq: 2,
+        completenessState: "complete",
+        recordedBy: ACTOR,
+      }),
+    ).resolves.toBeTruthy();
+  });
+});
+
+describe("CollectionGenerationStore.verifyArtifact", () => {
+  it("ok when the stored artifact is unchanged", async () => {
+    await seedImport(1, "0001_a.json", PERSISTENCE_ROWS);
+    const store = new CollectionGenerationStore(cases);
+    const generation = await store.record("c1", {
+      rawHost: "WS-01",
+      domain: "persistence",
+      order: { kind: "captured", capturedAt: "2026-01-12T10:00:00Z" },
+      importSeq: 1,
+      completenessState: "complete",
+      recordedBy: ACTOR,
+    });
+    expect(await store.verifyArtifact("c1", generation.generationId)).toEqual({ ok: true });
+  });
+
+  it("detects a changed artifact — the frozen hash no longer matches", async () => {
+    await seedImport(1, "0001_a.json", PERSISTENCE_ROWS);
+    const store = new CollectionGenerationStore(cases);
+    const generation = await store.record("c1", {
+      rawHost: "WS-01",
+      domain: "persistence",
+      order: { kind: "captured", capturedAt: "2026-01-12T10:00:00Z" },
+      importSeq: 1,
+      completenessState: "complete",
+      recordedBy: ACTOR,
+    });
+    await writeFile(join(dir, "imports", "0001_a.json"), JSON.stringify([{ tampered: true }]), "utf8");
+    const result = await store.verifyArtifact("c1", generation.generationId);
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/changed/);
+  });
+
+  it("reports not-found for an unknown generation id", async () => {
+    const store = new CollectionGenerationStore(cases);
+    expect(await store.verifyArtifact("c1", "nonexistent")).toEqual({
+      ok: false,
+      reason: "generation not found",
+    });
   });
 });
 

@@ -16,6 +16,7 @@ import { createApp } from "../../src/server.js";
 
 const PERSISTENCE_ROWS = [
   {
+    Hostname: "WS-01",
     Technique: "Run Key",
     Classification: "Suspicious",
     Path: "HKCU\\Run\\Updater",
@@ -135,6 +136,22 @@ describe("/cases/:id/collection-generations", () => {
     const bareApp = createApp(store, { stateStore: new StateStore(store) });
     const res = await request(bareApp).get("/cases/c1/collection-generations");
     expect(res.status).toBe(501);
+  });
+
+  it("verifies an unchanged artifact ok, and detects one that changed since recording", async () => {
+    const importSeq = await seedImport("c1");
+    const created = await request(app)
+      .post("/cases/c1/collection-generations")
+      .send({
+        rawHost: "WS-01",
+        domain: "persistence",
+        order: { kind: "captured", capturedAt: "2026-01-12T10:00:00Z" },
+        importSeq,
+        completenessState: "complete",
+      });
+    const generationId = created.body.generation.generationId as string;
+    const ok = await request(app).get(`/cases/c1/collection-generations/${generationId}/verify`);
+    expect(ok.body).toEqual({ ok: true });
   });
 });
 

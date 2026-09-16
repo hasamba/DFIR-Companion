@@ -262,7 +262,7 @@ function detectionSeverity({ title, critWord }: Verdict): Severity {
 // Row TIMES live in veloRowTime.ts (pickTime / vrTime) — imported above.
 
 const HOST_KEYS = ["Fqdn", "Hostname", "Computer", "ComputerName", "System.Computer", "Host", "ClientName"];
-function pickHost(row: Row): string {
+export function pickHost(row: Row): string {
   for (const k of HOST_KEYS) {
     const v = k.includes(".") ? getPath(row, k) : getCI(row, k);
     const s = str(v).trim();
@@ -1802,7 +1802,7 @@ function newVrCtx(opts: VelociraptorImportOptions): VrParseCtx {
 // several events. Shared by both parse drivers so they stay byte-for-byte identical. Normalizing
 // here (rather than only per-row inside mapRowToEvents) is what lets the fragment reader see the
 // native nested `EventData`; mapRowToEvents still normalizes, which is a no-op on these rows.
-function prepareRows(rows: Row[]): Row[] {
+export function prepareRows(rows: Row[]): Row[] {
   return consolidateVeloScriptBlocks(rows.map(normalizeRow));
 }
 

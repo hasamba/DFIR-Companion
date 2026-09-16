@@ -5,8 +5,9 @@ import { z } from "zod";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import type { ImportMetadata } from "../types.js";
-import { extractRows } from "./velociraptorImport.js";
+import { extractRows, prepareRows, pickHost } from "./velociraptorImport.js";
 import { isPersistenceSniperRow, persistenceEntryFact } from "./persistenceSniperImport.js";
+import { resolveHost, buildHostAliasIndex, type HostAliasIndex } from "./hostAlias.js";
 import {
   collectionGenerationSchema,
   type CollectionGeneration,
@@ -40,7 +41,14 @@ export interface RecordGenerationInput {
   checked?: string;
   gaps?: string;
   recordedBy: { id: string; displayName: string };
+  /** The CURRENT host-alias index, so a spelling mismatch ("WS-01" vs "ws-01") never creates two
+   * cohorts, and so a fleet-hunt upload spanning several machines is filtered down to only the
+   * rows belonging to THIS host (Codex code-review findings H1/H3). Defaults to an empty index
+   * (plain case/whitespace normalization only) for callers with no fleet data available. */
+  aliasIndex?: HostAliasIndex;
 }
+
+const EMPTY_ALIAS_INDEX = buildHostAliasIndex([], {});
 
 export class CollectionGenerationStore {
   constructor(private readonly cases: Pick<CaseStore, "stateDir" | "importsLogPath" | "importsDir">) {}
@@ -134,24 +142,40 @@ export class CollectionGenerationStore {
    */
   async record(caseId: string, input: RecordGenerationInput): Promise<CollectionGeneration> {
     return this.enqueue(caseId, async () => {
+      const aliasIndex = input.aliasIndex ?? EMPTY_ALIAS_INDEX;
+      const targetHost = resolveHost(aliasIndex, input.rawHost);
+
       const importRow = await this.importRow(caseId, input.importSeq);
       const rawFile = await readFile(join(this.cases.importsDir(caseId), importRow.filename), "utf8");
       const artifactHash = createHash("sha256").update(Buffer.from(rawFile, "utf8")).digest("hex");
 
+      // The SAME normalization the live import path runs before row classification (Codex H2: a
+      // Line-wrapped or Elasticsearch-shaped row that live import recognizes fine would otherwise
+      // fail this store's own field checks on the raw, unnormalized row). Then bound to THIS host
+      // only — a Velociraptor hunt export can carry several machines' rows in one upload, and
+      // freezing all of them under one host's generation would corrupt a later comparison
+      // (Codex H1).
       const { rows } = extractRows(rawFile);
-      const inventory = rows.filter(isPersistenceSniperRow).map(persistenceEntryFact);
+      const normalized = prepareRows(rows);
+      const inventory = normalized
+        .filter((row) => isPersistenceSniperRow(row) && resolveHost(aliasIndex, pickHost(row)) === targetHost)
+        .map(persistenceEntryFact);
       if (inventory.length === 0) {
         throw new Error(
-          `import sequence ${input.importSeq} in case ${caseId} has no rows matching domain "${input.domain}" — cannot record this generation`,
+          `import sequence ${input.importSeq} in case ${caseId} has no rows matching domain "${input.domain}" for host "${input.rawHost}" — cannot record this generation`,
         );
       }
 
-      const existing = await this.load(caseId);
+      const allExisting = await this.load(caseId);
+      // Active (never revoked) rows only, and both sides resolved through the SAME current alias
+      // index — a differently-spelled duplicate ("WS-01" vs "ws-01") must collide, and a revoked
+      // mistake must never block its own correction (Codex H3).
+      const activeExisting = allExisting.filter((g) => !g.revokedAt);
       if (input.order.kind === "declared") {
         const cohortSequence = input.order.sequence;
-        const collision = existing.some(
+        const collision = activeExisting.some(
           (g) =>
-            g.rawHost === input.rawHost &&
+            resolveHost(aliasIndex, g.rawHost) === targetHost &&
             g.domain === input.domain &&
             g.order.kind === "declared" &&
             g.order.sequence === cohortSequence,
@@ -178,7 +202,7 @@ export class CollectionGenerationStore {
         recordedAt: new Date().toISOString(),
       });
 
-      const generations = [...existing, generation];
+      const generations = [...allExisting, generation];
       await atomicWrite(this.path(caseId), JSON.stringify({ version: 1, generations }, null, 2));
       return generation;
     });
@@ -201,5 +225,31 @@ export class CollectionGenerationStore {
       await atomicWrite(this.path(caseId), JSON.stringify({ version: 1, generations: next }, null, 2));
       return next;
     });
+  }
+
+  /** Re-reads the generation's own referenced artifact and compares its CURRENT sha256 against
+   * the one frozen at record time — the stored hash was write-only until this (Codex code-review
+   * finding M2): nothing previously re-checked it, so a deleted, replaced, or corrupted raw file
+   * left an apparently valid generation with no way to notice. */
+  async verifyArtifact(caseId: string, generationId: string): Promise<{ ok: boolean; reason?: string }> {
+    const generation = (await this.load(caseId)).find((g) => g.generationId === generationId);
+    if (!generation) return { ok: false, reason: "generation not found" };
+    let importRow;
+    try {
+      importRow = await this.importRow(caseId, generation.artifactRef.importSeq);
+    } catch (err) {
+      return { ok: false, reason: (err as Error).message };
+    }
+    let rawFile: string;
+    try {
+      rawFile = await readFile(join(this.cases.importsDir(caseId), importRow.filename), "utf8");
+    } catch (err) {
+      return { ok: false, reason: `stored artifact is missing or unreadable: ${(err as Error).message}` };
+    }
+    const currentHash = createHash("sha256").update(Buffer.from(rawFile, "utf8")).digest("hex");
+    if (currentHash !== generation.artifactRef.artifactHash) {
+      return { ok: false, reason: "stored artifact has changed since this generation was recorded" };
+    }
+    return { ok: true };
   }
 }

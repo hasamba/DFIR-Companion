@@ -496,6 +496,7 @@
     "ROUTE POST /cases/:id/evidence-attestations/:class",
     "ROUTE DELETE /cases/:id/evidence-attestations/:class",
     "ROUTE GET /cases/:id/collection-generations",
+    "ROUTE GET /cases/:id/collection-generations/:generationId/verify",
     "ROUTE POST /cases/:id/collection-generations",
     "ROUTE DELETE /cases/:id/collection-generations/:generationId",
     "ROUTE GET /cases/:id/host-duplicates",

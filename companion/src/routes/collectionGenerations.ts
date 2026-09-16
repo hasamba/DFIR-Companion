@@ -71,22 +71,39 @@ export function registerCollectionGenerationRoutes(app: Express, ctx: RouteConte
     return actorFrom(requestAuthentication(req), Boolean(options.teamAuth));
   }
 
+  function aliasIndexFor(caseId: string) {
+    return loadHostAliasIndex(
+      {
+        ...(options.assetOverridesStore ? { assetOverrides: options.assetOverridesStore } : {}),
+        ...(options.velociraptorClientStore ? { fleet: options.velociraptorClientStore } : {}),
+      },
+      caseId,
+    );
+  }
+
   app.get("/cases/:id/collection-generations", async (req: Request, res: Response) => {
     if (!configured(res)) return;
     try {
       const all = await options.collectionGenerationStore!.all(req.params.id);
       const hostFilter = typeof req.query.host === "string" ? req.query.host : undefined;
       if (!hostFilter) return res.status(200).json({ generations: all });
-      const index = await loadHostAliasIndex(
-        {
-          ...(options.assetOverridesStore ? { assetOverrides: options.assetOverridesStore } : {}),
-          ...(options.velociraptorClientStore ? { fleet: options.velociraptorClientStore } : {}),
-        },
-        req.params.id,
-      );
+      const index = await aliasIndexFor(req.params.id);
       const target = resolveHost(index, hostFilter);
       const filtered = all.filter((g) => resolveHost(index, g.rawHost) === target);
       return res.status(200).json({ generations: filtered });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get("/cases/:id/collection-generations/:generationId/verify", async (req: Request, res: Response) => {
+    if (!configured(res)) return;
+    try {
+      const result = await options.collectionGenerationStore!.verifyArtifact(
+        req.params.id,
+        req.params.generationId,
+      );
+      return res.status(200).json(result);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -105,9 +122,11 @@ export function registerCollectionGenerationRoutes(app: Express, ctx: RouteConte
       return res.status(400).json({ error: parsed.error.message });
     }
     try {
+      const aliasIndex = await aliasIndexFor(req.params.id);
       const generation = await options.collectionGenerationStore!.record(req.params.id, {
         ...parsed.data,
         recordedBy: actor,
+        aliasIndex,
       });
       return res.status(201).json({ generation });
     } catch (err) {
