@@ -560,6 +560,10 @@ export class AnalysisPipeline {
     return ingest.importCapaResult(this.importCtx, ...args);
   }
 
+  importOlevbaResult(...args: ImporterArgs<typeof ingest.importOlevbaResult>): Promise<InvestigationState> {
+    return ingest.importOlevbaResult(this.importCtx, ...args);
+  }
+
   async importGoogleWorkspace(
     ...args: ImporterArgs<typeof ingest.importGoogleWorkspace>
   ): Promise<InvestigationState> {

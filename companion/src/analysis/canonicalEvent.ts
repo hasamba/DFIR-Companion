@@ -31,6 +31,11 @@ import { gwsLifecycleBlockSchema } from "./canonicalGwsLifecycle.js";
 import { recoveredFragmentBlockSchema } from "./canonicalRecoveredFragment.js";
 import { decodedStringBlockSchema } from "./canonicalDecodedString.js";
 import { capaMatchBlockSchema, capaCompositeLeadBlockSchema } from "./canonicalCapaMatch.js";
+import {
+  olevbaFindingBlockSchema,
+  olevbaStompingLeadBlockSchema,
+  olevbaCompoundLeadBlockSchema,
+} from "./canonicalOlevbaFinding.js";
 
 export const CANONICAL_EVENT_SCHEMA_VERSION = "1.0.0" as const;
 /** The producer stamped on an envelope DERIVED from legacy flat fields at the read boundary. */
@@ -170,24 +175,17 @@ export const canonicalEventEnvelopeSchema = z.object({
     })
     .optional(),
   process: canonicalProcessSchema.optional(),
-  // A TLS relationship row (tlsGraphRows.ts, #997): cert/name/client-cert/JA3 node one sensor's upload showed.
-  tlsGraph: tlsGraphBlockSchema.optional(),
-  // An Entra privilege-path summary row (entraPrivilegePath.ts, #973); the block lives in canonicalEntra.ts.
-  entra: entraPathBlockSchema.optional(),
-  // An AWS credential-lineage summary row (awsLineage.ts, #979); the block lives in canonicalAwsLineage.ts.
-  awsLineage: awsLineageBlockSchema.optional(),
+  tlsGraph: tlsGraphBlockSchema.optional(), // tlsGraphRows.ts, #997: cert/name/client-cert/JA3 node one sensor's upload showed
+  entra: entraPathBlockSchema.optional(), // entraPrivilegePath.ts, #973; block in canonicalEntra.ts
+  awsLineage: awsLineageBlockSchema.optional(), // awsLineage.ts, #979; block in canonicalAwsLineage.ts
   // Compute-lifecycle summary rows (#931 item 8; Azure/GCP are the second half, #1066).
   awsCompute: awsComputeBlockSchema.optional(),
   azureCompute: azureComputeBlockSchema.optional(),
   azureVmssCompute: azureVmssComputeBlockSchema.optional(),
   gcpCompute: gcpComputeBlockSchema.optional(),
-  // A GCP audit row's identity, binding delta, credential fact, key step or workload attachment (gcpRow.ts, #931 item 12).
-  gcp: gcpBlockSchema.optional(),
-  // A GCP per-service-account join row (gcpServiceAccountJoin.ts, #1065): every fact this export
-  // states about one service account, joined by unique id when present, else email.
-  gcpServiceAccountJoin: gcpServiceAccountJoinBlockSchema.optional(),
-  // A logging-configuration row's state (loggingChange.ts, #931 item 14); the block lives in canonicalLogging.ts.
-  loggingChange: loggingChangeBlockSchema.optional(),
+  gcp: gcpBlockSchema.optional(), // gcpRow.ts, #931 item 12: identity, binding delta, credential fact, key step, workload attachment
+  gcpServiceAccountJoin: gcpServiceAccountJoinBlockSchema.optional(), // gcpServiceAccountJoin.ts, #1065: per-service-account facts joined by id or email
+  loggingChange: loggingChangeBlockSchema.optional(), // loggingChange.ts, #931 item 14; block in canonicalLogging.ts
   acquisitionCoverage: acquisitionCoverageBlockSchema.optional(), // kapeAcquisitionLog.ts, #932 item 1; block in canonicalAcquisition.ts
   diskImageAcquisition: diskImageAcquisitionSchema.optional(), // diskImageAcquisitionLog.ts, #1102; block in canonicalDiskImage.ts
   sampleLineage: sampleLineageBlockSchema.optional(), // sandboxImport.ts, #932 item 8; block in canonicalSampleLineage.ts
@@ -195,6 +193,9 @@ export const canonicalEventEnvelopeSchema = z.object({
   decodedString: decodedStringBlockSchema.optional(), // flossResultImport.ts, #932 item 5; block in canonicalDecodedString.ts
   capaMatch: capaMatchBlockSchema.optional(), // capaResultImport.ts, #932 item 6; block in canonicalCapaMatch.ts
   capaCompositeLead: capaCompositeLeadBlockSchema.optional(), // capaResultImport.ts, #932 item 6
+  olevbaFinding: olevbaFindingBlockSchema.optional(), // olevbaResultImport.ts, #932 item 7
+  olevbaStompingLead: olevbaStompingLeadBlockSchema.optional(), // olevbaResultImport.ts, #932 item 7
+  olevbaCompoundLead: olevbaCompoundLeadBlockSchema.optional(), // olevbaResultImport.ts, #932 item 7
   mailboxChain: mailboxChainBlockSchema.optional(), // mailboxChain.ts, #975; block in canonicalMailbox.ts
   memoryRun: memoryRunBlockSchema.optional(), // memoryRunEnvelope.ts, #1016; block in canonicalMemoryRun.ts
   gwsLifecycle: gwsLifecycleBlockSchema.optional(), // gwsOAuthLifecycle.ts, #983; block in canonicalGwsLifecycle.ts
@@ -202,9 +203,8 @@ export const canonicalEventEnvelopeSchema = z.object({
   driveAccess: driveAccessBlockSchema.optional(),
   takeout: takeoutBlockSchema.optional(),
   takeoutLifecycle: takeoutLifecycleBlockSchema.optional(),
-  // A Drive document-exposure join row (gwsDriveExposure.ts, #1064): a broadening sharing change joined to the access records after it, by tenant + doc_id.
-  driveExposure: driveExposureBlockSchema.optional(),
-  // A TLS record's own reading (tlsSession.ts, #933 item 6): the client's SNI, the protocol facts the sensor saw, the certificate the server presented, the sensor's chain check, the observer.
+  driveExposure: driveExposureBlockSchema.optional(), // gwsDriveExposure.ts, #1064: sharing change joined to later access, by tenant + doc_id
+  // A TLS record's own reading (tlsSession.ts, #933 item 6): SNI, protocol facts, cert, chain check, observer.
   tls: z
     .object({
       sni: z.string().optional(),

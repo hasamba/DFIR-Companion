@@ -125,6 +125,13 @@ describe("detectImportKind — JSON formats", () => {
     });
     expect(detectImportKind("capa.json", text)).toBe("caparesult");
   });
+  it("olevbaresult: an olevba -j VBA/OLE macro static-analysis results document", () => {
+    const text = JSON.stringify([
+      { type: "MetaInformation", script_name: "olevba", version: "0.60.2" },
+      { type: "OLE", file: "sample.doc", json_conversion_successful: true, macros: [], analysis: [] },
+    ]);
+    expect(detectImportKind("olevba.json", text)).toBe("olevbaresult");
+  });
   it("m365: Unified Audit Log JSON", () => {
     expect(
       detectImportKind(
