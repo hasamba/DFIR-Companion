@@ -28,6 +28,22 @@ export type HypothesisStatus = (typeof HYPOTHESIS_STATUSES)[number];
 export const HYPOTHESIS_SOURCES = ["analyst", "synthesis"] as const;
 export type HypothesisSource = (typeof HYPOTHESIS_SOURCES)[number];
 
+// The host(s) a hypothesis's own claim concerns (#1110, surfaced by #1101's design review, which
+// found that INFERRING this from relatedEventIds — a hypothesis's SUPPORTING evidence, a different
+// concept — is unsound). The model states this directly: "hosts" names specific hosts (validated
+// against real case hosts at sanitize time), "caseWide" says the claim spans every host, and
+// "unknown" is the FAIL-CLOSED default for anything omitted, malformed, or only partly resolved —
+// never silently treated as either of the other two. Only refutationGate.ts reads this; it is never
+// exposed to the analyst-authored NewHypothesis/HypothesisPatch path, which never runs the gate.
+export const resolvedSubjectScopeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("hosts"), hosts: z.array(z.string()) }),
+  z.object({ kind: z.literal("caseWide") }),
+  z.object({ kind: z.literal("unknown") }),
+]);
+export type ResolvedSubjectScope = z.infer<typeof resolvedSubjectScopeSchema>;
+const UNKNOWN_SCOPE: ResolvedSubjectScope = { kind: "unknown" };
+const CASE_WIDE_SCOPE: ResolvedSubjectScope = { kind: "caseWide" };
+
 // One entry in a hypothesis's dated status-change audit trail (issue #95). Appended whenever the
 // STATUS actually changes value — not on every patch/refresh — so it reads as a clean history of
 // open → supported / refuted / unknown transitions, not a log of every edit.
@@ -70,6 +86,22 @@ export const hypothesisSchema = z.object({
   // synthesis block; `exhaustedReason` is the human one-liner.
   contradictingEventIds: z.array(z.string()).default([]).catch([]),
   discriminator: z.string().default("").catch(""),
+  // The claim's own host scope (#1110). Genuinely optional (unlike every other field here, which
+  // has a default) so a hypotheses.json written before this field existed — or any other Hypothesis
+  // built without one — reads as `undefined`, which refutationGate.ts treats identically to
+  // "caseWide": EXACTLY today's behavior, never a silent regression to fully-blocked coverage for
+  // pre-existing data. A FRESH seed's own omitted/invalid scope is handled separately, in
+  // sanitizeHypotheses, where "unknown" (fail-closed) is the correct response to non-compliance
+  // rather than a migration default.
+  //
+  // `.catch()` sits OUTSIDE `.optional()` deliberately: a genuinely ABSENT field still parses to
+  // `undefined` (optional succeeds, catch never fires), but a MALFORMED one (wrong shape, an
+  // unrecognized `kind`) degrades to "unknown" for just this one record. Without this, one bad
+  // stored value fails this object's own parse, which bubbles up through hypothesesSchema's own
+  // `.catch([])` at the ARRAY level — silently discarding every OTHER analyst's hypothesis in the
+  // same file (Codex code review finding #1110-H2, reproduced: one malformed record turned a
+  // two-item stored array into `[]`).
+  subjectScope: resolvedSubjectScopeSchema.optional().catch(UNKNOWN_SCOPE),
   exhausted: z.boolean().default(false).catch(false),
   exhaustedReason: z.string().default("").catch(""),
   assignee: z.string().default("").catch(""),
@@ -120,6 +152,11 @@ export interface HypothesisSeed {
   relatedIocIds: string[];
   contradictingEventIds: string[]; // ACH (#14): events inconsistent with this explanation
   discriminator: string; // ACH (#14): the artifact (host + artifact) that best separates it
+  // #1110: the claim's own host scope, for refutationGate.ts. Optional — matching this codebase's
+  // convention for a field with a well-defined fallback everywhere it is read (missing = treated as
+  // "caseWide", the exact pre-#1110 behavior) — rather than force every existing Hypothesis/
+  // HypothesisSeed literal across the test suite to name a field their own test never cares about.
+  subjectScope?: ResolvedSubjectScope;
 }
 
 // Fields an analyst may set when creating a hypothesis by hand (or promoting a notebook entry).
@@ -210,15 +247,52 @@ export function hypothesisAutoKey(title: string): string {
 
 const VALID_STATUS = new Set<string>(HYPOTHESIS_STATUSES);
 
+// The case's own real host identity, for validating a fresh seed's own declared subjectHosts
+// (#1110). `resolve` maps a raw spelling to its canonical form (mirrors hostAlias.ts's own
+// resolveHost, injected rather than imported directly so this module never depends on the
+// concrete HostAliasIndex shape — only on the one operation it needs).
+export interface HostContext {
+  resolve(raw: string): string;
+  knownHosts: ReadonlySet<string>; // already-canonical host names actually present in the case
+}
+
+// A fresh seed's own declared scope, resolved against real case hosts. `scope` is "hosts" or
+// "caseWide" (anything else — omitted, misspelled, absent) becomes "unknown", the fail-closed
+// default: the review that shaped this design found that overloading an empty array to mean BOTH
+// "explicitly case-wide" and "could not attribute" left the gate unable to tell them apart, and
+// that a "caseWide" claim's own fallback must not silently reuse the old case-wide UNION either
+// (that is refutationGate.ts's own job — this function only resolves what the model SAID).
+// ANY unresolved host in a multi-host list taints the WHOLE scope to "unknown" — a partial drop
+// (keeping the hosts that DID resolve) would shrink the required-coverage set and let a refutation
+// survive on a host it was never actually validated against.
+function resolveSubjectScope(raw: Record<string, unknown>, hostCtx?: HostContext): ResolvedSubjectScope {
+  const scope = String(raw.subjectScope ?? "").trim();
+  if (scope === "caseWide") return CASE_WIDE_SCOPE;
+  if (scope !== "hosts" || !hostCtx) return UNKNOWN_SCOPE;
+  // Fail closed on a wrong-shaped subjectHosts too — a raw AI response is untrusted input, and this
+  // function is called directly (not only through the zod-validated responseSchema.ts path) in
+  // tests and any other future caller, so it must not assume the caller already normalized this to
+  // an array (dedupeStrings itself would throw calling .map on a non-array value).
+  if (!Array.isArray(raw.subjectHosts)) return UNKNOWN_SCOPE;
+  const declared = dedupeStrings(raw.subjectHosts as string[]);
+  if (!declared.length) return UNKNOWN_SCOPE;
+  const resolved = declared.map((h) => hostCtx.resolve(h));
+  if (!resolved.every((h) => hostCtx.knownHosts.has(h))) return UNKNOWN_SCOPE;
+  return { kind: "hosts", hosts: resolved };
+}
+
 // Turn raw synthesis hypotheses into clean, deterministic seeds: require a title (skip blanks),
 // trim/cap prose, coerce status to the enum (default open), dedupe techniques, filter evidence links
 // to ids that actually exist in the case (so the model can't invent dangling references), dedupe by
-// sourceKey, and cap the count. Pure — no I/O, no clock.
+// sourceKey, and cap the count. `hostCtx` is optional so every existing caller (and every EXISTING
+// test) keeps working unchanged; omitting it resolves every seed's own subjectScope to "unknown"
+// EXCEPT an explicit "caseWide", which needs no host validation at all. Pure — no I/O, no clock.
 export function sanitizeHypotheses(
   raw: readonly unknown[] | undefined,
   validEventIds: ReadonlySet<string>,
   validIocIds: ReadonlySet<string>,
   max: number = HYPOTHESIS_MAX_DEFAULT,
+  hostCtx?: HostContext,
 ): HypothesisSeed[] {
   const cap = Number.isFinite(max) && max > 0 ? Math.floor(max) : HYPOTHESIS_MAX_DEFAULT;
   const seen = new Set<string>();
@@ -259,6 +333,7 @@ export function sanitizeHypotheses(
       discriminator: String(h.discriminator ?? "")
         .trim()
         .slice(0, MAX_TEXT_LEN),
+      subjectScope: resolveSubjectScope(h, hostCtx),
     });
     if (out.length >= cap) break;
   }
@@ -276,6 +351,14 @@ function isPristineSynthesis(h: Hypothesis): boolean {
   return h.source === "synthesis" && !h.analystTouched;
 }
 
+// Missing keys as "caseWide" — the SAME fallback used everywhere else an absent scope is read
+// (refutationGate.ts's collectedForScope, the stored schema's own reader) — so a stored hypothesis
+// that never had this field and a freshly-built one that defaults it to caseWide compare equal.
+function subjectScopeKey(scope: ResolvedSubjectScope | undefined): string {
+  if (!scope) return "caseWide";
+  return scope.kind === "hosts" ? `hosts:${[...scope.hosts].sort().join(",")}` : scope.kind;
+}
+
 function seedDiffersFrom(h: Hypothesis, seed: HypothesisSeed): boolean {
   return (
     h.title !== seed.title ||
@@ -286,7 +369,8 @@ function seedDiffersFrom(h: Hypothesis, seed: HypothesisSeed): boolean {
     h.relatedEventIds.join(" ") !== seed.relatedEventIds.join(" ") ||
     h.relatedIocIds.join(" ") !== seed.relatedIocIds.join(" ") ||
     h.contradictingEventIds.join(" ") !== (seed.contradictingEventIds ?? []).join(" ") ||
-    h.discriminator !== (seed.discriminator ?? "")
+    h.discriminator !== (seed.discriminator ?? "") ||
+    subjectScopeKey(h.subjectScope) !== subjectScopeKey(seed.subjectScope)
   );
 }
 
@@ -322,6 +406,7 @@ export function mergeHypotheses(
           relatedIocIds: [...seed.relatedIocIds],
           contradictingEventIds: [...(seed.contradictingEventIds ?? [])], // ACH (#14)
           discriminator: seed.discriminator ?? "",
+          subjectScope: seed.subjectScope ?? CASE_WIDE_SCOPE,
           needsReview: false, // authoritative refresh clears any interim FP-cascade flag (#12)
           reviewReason: "",
           statusHistory: appendStatusChange(cur.statusHistory, seed.status, now),
@@ -341,6 +426,7 @@ export function mergeHypotheses(
         relatedIocIds: [...seed.relatedIocIds],
         contradictingEventIds: [...(seed.contradictingEventIds ?? [])], // ACH (#14)
         discriminator: seed.discriminator ?? "",
+        subjectScope: seed.subjectScope ?? CASE_WIDE_SCOPE,
         exhausted: false,
         exhaustedReason: "",
         assignee: "",
@@ -412,6 +498,10 @@ export function buildAnalystHypothesis(input: NewHypothesis, id: string, now: st
     relatedIocIds: dedupeStrings(input.relatedIocIds).slice(0, MAX_LINKS),
     contradictingEventIds: [],
     discriminator: "",
+    // Analyst-authored hypotheses never pass through gateRefutedSeeds — this is an inert default
+    // for schema completeness only (#1110), matching the same "absent = caseWide" fallback used
+    // everywhere else an unset scope is read.
+    subjectScope: CASE_WIDE_SCOPE,
     exhausted: false,
     exhaustedReason: "",
     assignee: String(input.assignee ?? "").trim(),

@@ -1,5 +1,6 @@
 import type { ForensicEvent } from "./stateTypes.js";
-import type { HypothesisSeed } from "./hypothesis.js";
+import type { HypothesisSeed, ResolvedSubjectScope } from "./hypothesis.js";
+import { resolveHost, type HostAliasIndex } from "./hostAlias.js";
 
 // The refutation gate — you cannot disprove what you never looked for.
 //
@@ -248,22 +249,121 @@ export interface AttestedEvidenceClass {
   reason: string;
 }
 
-// Apply the gate. A `refuted` seed whose claim needs an evidence class neither the collection nor
-// an analyst's own attestation covers becomes `unknown`, with the missing class named so the
-// analyst knows exactly what to collect or attest to settle it. Everything else passes through
-// untouched — EXCEPT a refutation that stands ONLY because of an attestation (not automatic
-// detection), which gets an honest disclosure appended rather than looking identically "clean" to
-// one resting on hard evidence (#1111's own guardrail: a refutation must never hide that a human's
-// own say-so, not an importer, is what kept it standing).
+// Same classification as collectedEvidenceClasses, partitioned per host (#1110). An event with no
+// `asset` cannot vouch for any specific host's coverage, so it contributes to NEITHER bucket — it
+// still counts toward the case-wide union collectedEvidenceClasses itself computes, which stays the
+// caller's fallback for a case with no host attribution at all. `asset` and every scope's own host
+// spellings are resolved through the SAME aliasIndex, so "ws-01" and "ws-01.corp.local" collapse to
+// one bucket instead of silently missing each other.
+export function collectedEvidenceClassesByHost(
+  events: readonly ForensicEvent[],
+  aliasIndex: HostAliasIndex,
+): Map<string, Set<EvidenceClass>> {
+  const byHost = new Map<string, ForensicEvent[]>();
+  for (const e of events) {
+    const raw = (e.asset ?? "").trim();
+    if (!raw) continue;
+    const host = resolveHost(aliasIndex, raw);
+    if (!byHost.has(host)) byHost.set(host, []);
+    byHost.get(host)!.push(e);
+  }
+  const out = new Map<string, Set<EvidenceClass>>();
+  for (const [host, hostEvents] of byHost) out.set(host, collectedEvidenceClasses(hostEvents));
+  return out;
+}
+
+// Evidence classes collected on EVERY one of the given hosts — never "any one of them". A
+// refutation claiming an absence across several hosts is only sound when none of those hosts could
+// have shown it, so a class counts only when it is missing from ALL of them; a class that appears
+// in the intersection is provably present in every named host's own coverage. Always a subset of
+// the union collectedEvidenceClasses(events) would compute over the same events, so scoping to an
+// explicit host set can only ever downgrade MORE refutations than the old case-wide behavior, never
+// fewer.
+function intersectAcrossHosts(
+  hosts: Iterable<string>,
+  byHost: ReadonlyMap<string, Set<EvidenceClass>>,
+): Set<EvidenceClass> {
+  let result: Set<EvidenceClass> | null = null;
+  for (const host of hosts) {
+    const classes: ReadonlySet<EvidenceClass> = byHost.get(host) ?? new Set<EvidenceClass>();
+    if (result === null) {
+      result = new Set(classes);
+    } else {
+      const kept: EvidenceClass[] = [...result].filter((c) => classes.has(c));
+      result = new Set(kept);
+    }
+    if (result.size === 0) break; // nothing left to learn
+  }
+  return result ?? new Set<EvidenceClass>();
+}
+
+// A seed's own effective coverage, from its resolved subject scope (#1110):
+//   - "hosts": the intersection across every EXPLICITLY named host — never inferred.
+//   - "caseWide": intersection across EVERY known host in the case — a true case-wide absence claim
+//     needs coverage on all of them, not a union of whatever any one host happened to have. When
+//     NO host is known at all (every event in the case is hostless — several importers, e.g. KAPE's
+//     MFT/Recycle Bin, do not stamp `asset` today), this is the EMPTY set, not the old case-wide
+//     union: a single hostless Prefetch row proves Prefetch was collected SOMEWHERE, but not that it
+//     covers every host a case-wide claim concerns, and the gate's own invariant is to weaken a
+//     claim rather than assume coverage it cannot confirm (Codex code review finding #1110-H1 — a
+//     union fallback here was found to reintroduce exactly the unscoped-coverage problem #1101's own
+//     review first identified). A case built entirely from asset-less importers will see every
+//     case-wide refutation downgrade after this change; the real fix is those importers stamping
+//     `asset`, a separate, already-known gap, not something this PR is positioned to paper over.
+//   - "unknown" (omitted, malformed, or a scope with any unresolved host): the EMPTY set. This is
+//     the fail-closed default — a claim whose own subject could not be established forces every
+//     evidence-class-dependent refutation on it to downgrade, rather than assuming the old,
+//     unscoped case-wide coverage applied.
+//   - no scope at all (a seed built before this field existed): treated the same as "caseWide" —
+//     genuine intersection across every known host, same as an explicit "caseWide" claim, not a
+//     free pass. A pre-#1110 case with events on multiple hosts never had its refutations checked
+//     per-host at all; this is a strictly SAFER read of that old data, never a regression.
+//
+// A seed's own `scope.hosts` is re-resolved through `aliasIndex` here rather than trusted as
+// already canonical: `sanitizeHypotheses` resolves it at generation time against WHATEVER alias
+// index existed then, but a STORED hypothesis can outlive that index — an analyst merging two host
+// spellings afterward must not leave an old seed's scope silently mismatched against `byHost`'s own
+// (freshly resolved) keys.
+function collectedForScope(
+  scope: ResolvedSubjectScope | undefined,
+  byHost: ReadonlyMap<string, Set<EvidenceClass>>,
+  knownHosts: ReadonlySet<string>,
+  aliasIndex: HostAliasIndex,
+): ReadonlySet<EvidenceClass> {
+  const kind = scope?.kind ?? "caseWide";
+  if (kind === "unknown") return new Set<EvidenceClass>();
+  if (kind === "hosts" && scope?.kind === "hosts") {
+    const resolved = scope.hosts.map((h) => resolveHost(aliasIndex, h));
+    return intersectAcrossHosts(resolved, byHost);
+  }
+  return intersectAcrossHosts(knownHosts, byHost);
+}
+
+const EMPTY_ALIAS_INDEX: HostAliasIndex = { canonicalOf: new Map(), aliasesOf: new Map() };
+
+// Apply the gate. A `refuted` seed whose claim needs an evidence class its own scope does not cover
+// AND neither the collection nor an analyst's own attestation makes up for becomes `unknown`, with
+// the missing class named in its description so the analyst knows exactly what to collect or attest
+// to settle it. Everything else passes through untouched — EXCEPT a refutation that stands ONLY
+// because of an attestation (not automatic detection), which gets an honest disclosure appended
+// rather than looking identically "clean" to one resting on hard evidence (#1111's own guardrail: a
+// refutation must never hide that a human's own say-so, not an importer, is what kept it standing).
+// `aliasIndex` defaults to an empty index (host names compared as given, trimmed/lowercased) so
+// every existing caller keeps working without building one.
 export function gateRefutedSeeds(
   seeds: readonly HypothesisSeed[],
-  collected: ReadonlySet<EvidenceClass>,
+  events: readonly ForensicEvent[],
+  aliasIndex: HostAliasIndex = EMPTY_ALIAS_INDEX,
   attested: ReadonlyMap<EvidenceClass, AttestedEvidenceClass> = new Map(),
 ): GateRefutedResult {
+  const byHost = collectedEvidenceClassesByHost(events, aliasIndex);
+  const knownHosts = new Set(byHost.keys());
   const downgraded: GatedRefutation[] = [];
   const out = seeds.map((seed) => {
     if (seed.status !== "refuted") return seed;
     const required = requiredEvidenceClasses(`${seed.title} ${seed.description}`);
+    if (required.length === 0) return seed;
+    const collected = collectedForScope(seed.subjectScope, byHost, knownHosts, aliasIndex);
     // Attestation can only ADD coverage on top of automatic detection, never remove it — it can
     // only let a refutation stand that automatic detection alone would have withheld, and only
     // for a class an identified analyst explicitly vouched for.

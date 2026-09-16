@@ -235,6 +235,11 @@ export const deltaSchema = z.object({
         // the single artifact (host + artifact) that would best separate it from the leading alternative.
         contradictingEventIds: z.array(z.string()).default([]).catch([]),
         discriminator: z.string().default("").catch(""),
+        // The claim's own host scope (#1110) — "hosts" (then also give subjectHosts) or "caseWide".
+        // Raw and unvalidated here; sanitizeHypotheses resolves/validates against real case hosts and
+        // treats anything else (including this field simply being omitted) as unknown scope.
+        subjectScope: z.string().default("").catch(""),
+        subjectHosts: z.array(z.string()).default([]).catch([]),
       }),
     )
     .optional(),

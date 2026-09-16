@@ -589,7 +589,7 @@ export async function synthesize(
   // write, because `next` was derived from the snapshot taken before the call.
   next = await persistSynthesis(ctx, caseId, { loaded, next, findingsDiff });
 
-  await autoGenerateHypotheses(ctx, caseId, delta.hypotheses, next, markers);
+  await autoGenerateHypotheses(ctx, caseId, delta.hypotheses, next, markers, aliasIndex);
 
   ctx.lastSynthHash.set(caseId, synthHash); // remember these inputs so an identical re-run skips the AI call
   await recordSynthesisOutcome(ctx, caseId, {
