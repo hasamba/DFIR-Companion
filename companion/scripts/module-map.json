@@ -317,6 +317,8 @@
     "evidenceAttestationStore.ts": "analysis/ai",
     "huntRequirementStore.ts": "analysis/ai",
     "huntRequirementChecklist.ts": "analysis/ai",
+    "attributionAssertionStore.ts": "analysis/ai",
+    "attributionGroupMatch.ts": "analysis/ai",
     "evidenceGraph.ts": "analysis/detect",
     "evtxRecordId.ts": "analysis/ingest",
     "evtxXmlImport.ts": "analysis/ingest",
