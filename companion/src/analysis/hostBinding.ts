@@ -7,7 +7,28 @@ import { resolveHost, type HostAliasIndex } from "./hostAlias.js";
 // resolve it. A proxy or SMB server log names its client this way; an endpoint's own logs (Sysmon,
 // Security event log) name the same machine by hostname. This module bridges that gap with the
 // only evidence this codebase actually has for it today: a successful Windows logon (Security
-// 4624), which carries the source IP/account AND the target host on one record.
+// 4624), read carefully for WHICH host each field actually names.
+//
+// DIRECTIONALITY. A 4624 is recorded ON the host receiving the logon (`canonical.target.name` /
+// `event.asset` — call it the SESSION host). Its `network.source.address` is the REMOTE peer that
+// initiated the logon — for a network logon (e.g. an SMB client authenticating to a file server)
+// that is the CLIENT's IP, not the session host's. The session host can never appear as its own
+// source IP (a self-sourced logon has no routable address — see NON_IDENTIFYING_IPS below), so
+// pairing `source.address` with the session host would name every IP binding after the wrong
+// machine (the server, not the client at that IP) — every single time. The one field that actually
+// names the CLIENT machine is `session.terminal` (Workstation Name): populated by the client on a
+// network/remote-interactive logon, this is standard DFIR tradecraft for pairing an IP with the
+// machine that used it (lateral-movement hunting over 4624 does exactly this). So:
+//   - IP -> host binds `network.source.address` to `session.terminal` (the CLIENT name) — NEVER to
+//     target/asset. An event with a meaningful source IP but no Workstation Name contributes no IP
+//     binding; falling back to target/asset would silently mislabel the client as the server.
+//   - account -> host binds the logged-on account to the SESSION host (target/asset) — that
+//     reading is correct only when the logon means "the account is present at/using this host,"
+//     which holds for the interactive-family logon types (Interactive, Unlock, RemoteInteractive/
+//     RDP, CachedInteractive) and not for a network logon (LogonType 3), NetworkCleartext,
+//     NewCredentials, Batch or Service, where the account merely authenticated ACROSS the network
+//     TO the session host without ever "using" it. Mirrors `siemImport.ts`'s own `LOGON_TYPES`
+//     table (2/7/10/11) rather than redefining it.
 //
 // Every binding here comes from a single record that itself states both sides of the pairing —
 // never inferred from two records merely being close in time or shape (#993, #1156's own
@@ -33,6 +54,11 @@ export interface HostBindingIndex {
   byAccount: Map<string, HostBinding[]>; // key: canonicalAccount(); each list sorted by sampleTime
 }
 
+// Interactive-family LogonType codes where the account is actually present at/using the session
+// host, not merely authenticating to it across the network. Mirrors siemImport.ts's LOGON_TYPES:
+// 2 Interactive, 7 Unlock, 10 RemoteInteractive/RDP, 11 CachedInteractive.
+const ACCOUNT_PRESENCE_LOGON_TYPES = new Set([2, 7, 10, 11]);
+
 // A logon whose IP is empty, a placeholder, or loopback is not a real network-identity source —
 // every host on the fleet logs these the same way, so admitting them would make an IP "match"
 // every host in the case.
@@ -46,18 +72,29 @@ function isLoopbackV4(ip: string): boolean {
   return /^127\./.test(ip);
 }
 
+// IPv4-mapped IPv6 ("::ffff:10.0.0.5") folds to the dotted-quad form so a source that logs one
+// form and a source that logs the other still collide on the same key. Matched on the ORIGINAL
+// textual form: the generic IPv6 normalization below rewrites the trailing dotted-quad into hex
+// groups ("::ffff:a00:5"), which would need un-parsing to recover "10.0.0.5" — matching before
+// that rewrite is simpler and exact.
+const IPV4_MAPPED_RE = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/;
+
 export function canonicalIp(raw: string): string {
   const trimmed = raw.trim().toLowerCase();
-  if (isIPv6(trimmed)) {
-    // Fold to a stable form so "::1" and "0:0:0:0:0:0:0:1" collide: expand every group, then
-    // re-compress via the URL host-parsing normalization node already implements internally.
+  // A zone-scoped link-local address ("fe80::1%eth0") is only unique per-link, and node's IPv6
+  // parser rejects the "%zone" suffix outright — treat it as non-identifying rather than let it
+  // silently bypass normalization and fragment across differently-zoned spellings.
+  const withoutZone = trimmed.split("%")[0];
+  const mappedV4 = IPV4_MAPPED_RE.exec(withoutZone);
+  if (mappedV4) return mappedV4[1];
+  if (isIPv6(withoutZone)) {
     try {
-      return new URL(`http://[${trimmed}]`).hostname.replace(/^\[|\]$/g, "");
+      return new URL(`http://[${withoutZone}]`).hostname.replace(/^\[|\]$/g, "");
     } catch {
-      return trimmed;
+      return withoutZone;
     }
   }
-  return trimmed;
+  return withoutZone;
 }
 
 export function canonicalAccount(domain: string | undefined, name: string): string {
@@ -96,14 +133,15 @@ export function buildHostBindingIndex(
   for (const event of events) {
     const c = event.canonical;
     if (!c || c.event.type !== "logon" || c.event.outcome !== "success") continue;
-    const rawHost = c.target?.name ?? event.asset;
-    if (!rawHost) continue;
-    const host = aliasIndex ? resolveHost(aliasIndex, rawHost) : rawHost;
     const sampleTime = event.timestamp;
     if (!sampleTime) continue;
 
+    // IP -> host: the CLIENT's own name (Workstation Name), never the session host that recorded
+    // the logon — see the DIRECTIONALITY note at the top of this file.
     const ip = c.network?.source?.address;
-    if (ip && isIdentifyingIp(ip)) {
+    const clientName = c.session?.terminal;
+    if (ip && isIdentifyingIp(ip) && clientName) {
+      const host = aliasIndex ? resolveHost(aliasIndex, clientName) : clientName;
       push(index.byIp, canonicalIp(ip), {
         host,
         sampleTime,
@@ -112,8 +150,19 @@ export function buildHostBindingIndex(
       });
     }
 
+    // account -> host: the SESSION host, only for logon types where the account is actually
+    // present at/using that host (not a network logon merely authenticating across to it).
     const accountName = c.account?.name;
-    if (accountName && isHumanAccount(accountName)) {
+    const logonType = c.authentication?.logonType;
+    if (
+      accountName &&
+      isHumanAccount(accountName) &&
+      logonType !== undefined &&
+      ACCOUNT_PRESENCE_LOGON_TYPES.has(logonType) &&
+      c.target?.kind === "host" &&
+      c.target.name
+    ) {
+      const host = aliasIndex ? resolveHost(aliasIndex, c.target.name) : c.target.name;
       push(index.byAccount, canonicalAccount(c.account?.domain, accountName), {
         host,
         sampleTime,
