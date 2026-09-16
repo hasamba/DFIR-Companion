@@ -110,6 +110,7 @@ function isResultEntry(entry: unknown): entry is Record<string, unknown> {
   return (
     isObject(entry) &&
     typeof entry.file === "string" &&
+    entry.file.length > 0 &&
     Array.isArray(entry.macros) &&
     typeof entry.json_conversion_successful === "boolean"
   );
@@ -123,6 +124,13 @@ export function isOlevbaResult(root: unknown): boolean {
   const hasMeta = root.some((e) => isObject(e) && e.type === "MetaInformation" && e.script_name === "olevba");
   const hasResult = root.some(isResultEntry);
   return hasMeta && hasResult;
+}
+
+// Report-wide, threaded by reference into every mapResult() call so one oversized result entry
+// cannot exhaust the whole cap in one shot before the budget is ever consulted again.
+interface ScanBudget {
+  scanned: number;
+  truncated: boolean;
 }
 
 interface FindingGroup {
@@ -165,22 +173,29 @@ function mapResult(
   reportFingerprint: string,
   producerVersion: string,
   sink: Map<string, SiemIoc>,
-): { mapped: MappedEvent[]; malformedFindings: number; notCitedFindings: number; scanned: number } {
+  budget: ScanBudget,
+): { mapped: MappedEvent[]; malformedFindings: number; notCitedFindings: number } {
   const analysis = entry.analysis;
   const mapped: MappedEvent[] = [];
   let malformedFindings = 0;
   let notCitedFindings = 0;
-  let scanned = 0;
 
   if (!Array.isArray(analysis)) {
-    return { mapped, malformedFindings, notCitedFindings, scanned };
+    return { mapped, malformedFindings, notCitedFindings };
   }
 
   const resultType = str(entry.type) ?? "unknown";
   const resultId = resultIdentity(containerPath, documentPath, resultType, index);
   const groups = new Map<string, FindingGroup>();
   for (const raw of analysis) {
-    scanned += 1;
+    // Report-wide bound checked HERE, inside the innermost loop, via a shared-by-reference
+    // counter — checking it only between result entries (as a first pass did) let one oversized
+    // entry's own `analysis` array bypass the cap entirely (Codex code review finding).
+    if (budget.scanned >= MAX_ANALYSIS_ENTRIES_SCANNED) {
+      budget.truncated = true;
+      break;
+    }
+    budget.scanned += 1;
     if (!isObject(raw)) {
       malformedFindings += 1;
       continue;
@@ -235,9 +250,13 @@ function mapResult(
     let rowSink: Map<string, SiemIoc> | undefined;
     if (group.findingType === "IOC") {
       rowSink = new Map<string, SiemIoc>();
-      const mappedType = IOC_CATEGORY_MAP[group.descriptions[0] ?? ""];
-      if (mappedType) addIoc(rowSink, mappedType, group.keyword);
-      else for (const raw of extractIocsFromText(group.keyword)) addIoc(rowSink, raw.type, raw.value);
+      // Check every citation, not just the first — a controlled category variant seen later
+      // must still be found (Codex code review finding: descriptions[0] was order-dependent).
+      const mappedDescription = group.descriptions.find((d) => IOC_CATEGORY_MAP[d]);
+      const mappedType = mappedDescription ? IOC_CATEGORY_MAP[mappedDescription] : undefined;
+      const boundedKeyword = clip(group.keyword, MAX_FIELD_LEN).text;
+      if (mappedType) addIoc(rowSink, mappedType, boundedKeyword);
+      else for (const raw of extractIocsFromText(boundedKeyword)) addIoc(rowSink, raw.type, raw.value);
     }
     mapped.push(
       mapFinding(
@@ -271,7 +290,7 @@ function mapResult(
     mapped.push(mapStompingLead(containerPath, documentPath, resultId, reportFingerprint, producerVersion));
   }
 
-  return { mapped, malformedFindings, notCitedFindings, scanned };
+  return { mapped, malformedFindings, notCitedFindings };
 }
 
 function mapFinding(
@@ -290,8 +309,9 @@ function mapFinding(
 
   const reportTag = `; report ${reportFingerprint.slice(0, 16)}`;
   const body = boundedTextTo(
-    `olevba ${group.findingType} finding: ${group.keyword} — ${group.occurrences} occurrence(s) in this ` +
-      `document; a structural fact, never a claim the macro ran; [undated: olevba's report carries no event time]`,
+    `olevba ${group.findingType} finding: ${group.keyword} — ${group.occurrences} analysis entry(ies) reporting ` +
+      `this pattern in this document; a structural fact, never a claim the macro ran; [undated: olevba's report ` +
+      `carries no event time]`,
     600 - reportTag.length,
   );
   const description = `${body}${reportTag}`;
@@ -378,9 +398,9 @@ function mapCompoundLead(
   capabilityKeywords: readonly string[],
   capabilityClasses: readonly OlevbaCapabilityClass[],
 ): MappedEvent {
-  const boundedAutoExec = autoExecKeywords.slice(0, MAX_MAPPINGS);
+  const boundedAutoExec = autoExecKeywords.slice(0, MAX_MAPPINGS).map((k) => clip(k, MAX_FIELD_LEN).text);
   const notCitedAutoExecKeywords = Math.max(0, autoExecKeywords.length - boundedAutoExec.length);
-  const boundedCapability = capabilityKeywords.slice(0, MAX_MAPPINGS);
+  const boundedCapability = capabilityKeywords.slice(0, MAX_MAPPINGS).map((k) => clip(k, MAX_FIELD_LEN).text);
   const notCitedCapabilityKeywords = Math.max(0, capabilityKeywords.length - boundedCapability.length);
 
   const aggKey = boundedAggKey(`olevba|${reportFingerprint}|${resultId}|lead|compound`);
@@ -459,15 +479,10 @@ export function parseOlevbaResult(text: string, opts: OlevbaResultOptions = {}):
   const mapped: MappedEvent[] = [];
   let malformedFindings = 0;
   let notCitedFindings = 0;
-  let scanned = 0;
-  let analysisTruncated = false;
+  const budget: ScanBudget = { scanned: 0, truncated: false };
   let total = 0;
   boundedResults.forEach((entry, index) => {
     total += 1;
-    if (scanned >= MAX_ANALYSIS_ENTRIES_SCANNED) {
-      analysisTruncated = true;
-      return;
-    }
     const documentPath = str(entry.file) ?? "";
     const containerPath = str(entry.container);
     const result = mapResult(
@@ -478,11 +493,11 @@ export function parseOlevbaResult(text: string, opts: OlevbaResultOptions = {}):
       reportFingerprint,
       producerVersion,
       sink,
+      budget,
     );
     mapped.push(...result.mapped);
     malformedFindings += result.malformedFindings;
     notCitedFindings += result.notCitedFindings;
-    scanned += result.scanned;
   });
 
   const { events, groups } = aggregateEvents(mapped, {
@@ -502,7 +517,7 @@ export function parseOlevbaResult(text: string, opts: OlevbaResultOptions = {}):
     malformedFindings,
     notCitedFindings,
     errorEntries,
-    analysisTruncated,
+    analysisTruncated: budget.truncated,
     resultsTruncated,
     toolWarnings,
   };

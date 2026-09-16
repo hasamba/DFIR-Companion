@@ -51,7 +51,7 @@ export const olevbaFindingBlockSchema = z.object({
   documentPath: z.string().min(1).max(MAX_FIELD_LEN),
   containerPath: z.string().max(MAX_FIELD_LEN).optional(),
   reportFingerprint: z.string().length(64),
-  producerVersion: z.string().min(1).max(MAX_PRODUCER_VERSION_LEN),
+  producerVersion: z.string().max(MAX_PRODUCER_VERSION_LEN), // may be empty if olevba omitted its own version
   mappingVersion: z.literal("olevba-finding-v1"),
   /** Analysis entries olevba's own output represented for this (type, keyword) pair — NOT a claim
    * about how many times the pattern appears in the underlying macro code (olevba already
@@ -71,7 +71,7 @@ export const olevbaStompingLeadBlockSchema = z.object({
   reportFingerprint: z.string().length(64),
   documentPath: z.string().min(1).max(MAX_FIELD_LEN),
   containerPath: z.string().max(MAX_FIELD_LEN).optional(),
-  producerVersion: z.string().min(1).max(MAX_PRODUCER_VERSION_LEN),
+  producerVersion: z.string().max(MAX_PRODUCER_VERSION_LEN),
   mappingVersion: z.literal("olevba-finding-v1"),
   basis: z.literal(OLEVBA_STOMPING_LEAD_BASIS),
 });
@@ -92,7 +92,7 @@ export const olevbaCompoundLeadBlockSchema = z.object({
   reportFingerprint: z.string().length(64),
   documentPath: z.string().min(1).max(MAX_FIELD_LEN),
   containerPath: z.string().max(MAX_FIELD_LEN).optional(),
-  producerVersion: z.string().min(1).max(MAX_PRODUCER_VERSION_LEN),
+  producerVersion: z.string().max(MAX_PRODUCER_VERSION_LEN),
   mappingVersion: z.literal("olevba-finding-v1"),
   autoExecKeywords: z.array(z.string().max(MAX_FIELD_LEN)).min(1).max(MAX_MAPPINGS),
   notCitedAutoExecKeywords: z.number().int().nonnegative(),

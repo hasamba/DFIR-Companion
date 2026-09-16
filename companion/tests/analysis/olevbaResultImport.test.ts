@@ -286,3 +286,75 @@ describe("parseOlevbaResult — result-entry volume bound", () => {
     expect(r.total).toBe(500);
   });
 });
+
+describe("parseOlevbaResult — report-wide analysis-entry scan bound (Codex code review finding)", () => {
+  it("stops scanning WITHIN a single oversized result entry's own analysis array, not only between entries", () => {
+    const oversized = Array.from({ length: 50_100 }, (_, i) => ({
+      type: "Base64 String",
+      keyword: `k${i}`,
+      description: "d",
+    }));
+    const entries = [resultEntry({ analysis: oversized })];
+    const r = parseOlevbaResult(doc(entries))!;
+    expect(r.analysisTruncated).toBe(true);
+    // Distinct keywords stop appearing once the shared, report-wide budget is exhausted.
+    expect(r.events.length).toBeLessThan(50_100);
+  });
+});
+
+describe("parseOlevbaResult — malformed metadata never crashes the import (Codex code review finding)", () => {
+  it("accepts a MetaInformation entry with no version field, leaving producerVersion empty rather than throwing", () => {
+    const noVersionMeta = { type: "MetaInformation", script_name: "olevba" };
+    const text = JSON.stringify([noVersionMeta, resultEntry({ analysis: [AUTOEXEC] })]);
+    expect(() => parseOlevbaResult(text)).not.toThrow();
+    const r = parseOlevbaResult(text)!;
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].canonical!.olevbaFinding!.producerVersion).toBe("");
+  });
+
+  it("excludes a result entry with an empty file path rather than crashing on an empty documentPath", () => {
+    const entries = [resultEntry({ file: "", analysis: [AUTOEXEC] }), resultEntry({ analysis: [AUTOEXEC] })];
+    expect(() => parseOlevbaResult(doc(entries))).not.toThrow();
+    const r = parseOlevbaResult(doc(entries))!;
+    expect(r.total).toBe(1);
+    expect(r.events).toHaveLength(1);
+  });
+});
+
+describe("parseOlevbaResult — compound lead keyword length bound (Codex code review finding)", () => {
+  it("clips an oversized AutoExec keyword instead of letting the canonical schema throw", () => {
+    const longKeyword = "A".repeat(400);
+    const entries = [
+      resultEntry({
+        analysis: [{ type: "AutoExec", keyword: longKeyword, description: "" }, DOWNLOAD_SUSPICIOUS],
+      }),
+    ];
+    expect(() => parseOlevbaResult(doc(entries))).not.toThrow();
+    const r = parseOlevbaResult(doc(entries))!;
+    const lead = r.events.find((e) => e.canonical?.olevbaCompoundLead)!;
+    expect(lead.canonical!.olevbaCompoundLead!.autoExecKeywords[0].length).toBeLessThanOrEqual(300);
+  });
+});
+
+describe("parseOlevbaResult — IOC mapping robustness (Codex code review finding)", () => {
+  it("finds a controlled category among several description citations, not only the first one seen", () => {
+    const entries = [
+      resultEntry({
+        analysis: [
+          { type: "IOC", keyword: "http://evil.example/payload.exe", description: "some other citation" },
+          { type: "IOC", keyword: "http://evil.example/payload.exe", description: "URL" },
+        ],
+      }),
+    ];
+    const r = parseOlevbaResult(doc(entries))!;
+    expect(r.iocs).toHaveLength(1);
+    expect(r.iocs[0].type).toBe("url");
+  });
+
+  it("bounds a directly-mapped IOC value at the same field length every other olevba field respects", () => {
+    const longUrl = `http://evil.example/${"a".repeat(400)}`;
+    const entries = [resultEntry({ analysis: [{ type: "IOC", keyword: longUrl, description: "URL" }] })];
+    const r = parseOlevbaResult(doc(entries))!;
+    expect(r.iocs[0].value.length).toBeLessThanOrEqual(300);
+  });
+});
