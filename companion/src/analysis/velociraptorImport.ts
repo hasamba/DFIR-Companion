@@ -1,5 +1,4 @@
-// Deterministic importer for Velociraptor native JSON output — the fifth deterministic
-// ingest path (THOR, SIEM, Chainsaw, Hayabusa, Velociraptor); no AI call.
+// Deterministic importer for Velociraptor native JSON output — the fifth deterministic ingest path (THOR, SIEM, Chainsaw, Hayabusa, Velociraptor); no AI call.
 //
 // Velociraptor is a collection + detection platform: VQL artifacts emit JSON rows whose
 // columns vary completely by artifact. Per the Companion's post-detection principle we
@@ -61,7 +60,7 @@ import {
 // as a generic detection() row, which would read no severity from a sibling field and silently
 // downgrade a real Critical (e.g. "Security Audit Logs Cleared") to a keyword-guessed Medium.
 import { isFlatChainsawRow, mapFlatChainsawRow } from "./chainsawImport.js";
-import { mapPersistenceSniper } from "./persistenceSniperImport.js";
+import { mapPersistenceSniper, isPersistenceSniperRow } from "./persistenceSniperImport.js";
 import { mapBinaryRename } from "./binaryRenameImport.js";
 import { overlayFlatWindowsEid } from "./flatWindowsEvent.js";
 import { detectTimestomp } from "./timestompDetect.js";
@@ -473,15 +472,9 @@ function classify(row: Row, artifact: string): Kind {
   // Windows.Forensics.SAM — the local account database. Checked before the generic fallthrough so
   // the account (and its RID) leads, instead of the decoded ParsedV hash blob the flattener emits.
   if (isSamAccountRow(row)) return "samAccount";
-  // Windows.Forensics.PersistenceSniper wraps the PersistenceSniper PowerShell module verbatim —
-  // Technique + Classification + "Access Gained" is that module's own column set and isn't reused
-  // by any other artifact, so it's a safe signature even without a recognisable _Source.
-  if (
-    getCI(row, "Technique") != null &&
-    getCI(row, "Classification") != null &&
-    getCI(row, "Access Gained") != null
-  )
-    return "persistenceSniper";
+  // Windows.Forensics.PersistenceSniper — signature shared with collectionGenerationStore.ts's own
+  // record-time validator (#1108) via isPersistenceSniperRow, so the two can never drift apart.
+  if (isPersistenceSniperRow(row)) return "persistenceSniper";
   // DetectRaptor.Windows.Detection.BinaryRename — a file stat plus its version resource, with no
   // Detection column of its own. `OriginalFilename` under VersionInformation alongside an OSPath is
   // that artifact's signature; no other artifact pairs the two.
@@ -1528,7 +1521,8 @@ function csvToRows(text: string): { rows: Row[]; format: string } | null {
   return { rows: out, format: "csv" };
 }
 
-function extractRows(text: string): { rows: Row[]; format: string } {
+// Exported for collectionGenerationStore.ts (#1108): the SAME raw rows the live import path uses, without re-deriving the full mapped/dispatched event output.
+export function extractRows(text: string): { rows: Row[]; format: string } {
   const trimmed = text.trim();
   if (!trimmed) return { rows: [], format: "empty" };
 
