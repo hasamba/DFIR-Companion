@@ -283,8 +283,7 @@ export const canonicalEventEnvelopeSchema = z.object({
   // A LEAPP row's origin reading (mobileOriginRegistry.ts, #988): the facets its columns established, the registry coverage, the device / account the row names.
   mobile: mobileBlockSchema.optional(),
   // What the memory image says about itself (memoryImageFacts.ts, #933 item 12): kernel SystemTime
-  // (never "captured at"), layer stack, dump kind/type, symbol table — from windows.info /
-  // windows.crashinfo in the SAME upload only.
+  // (never "captured at"), layer stack, dump kind/type, symbol table — from windows.info/crashinfo in the SAME upload only.
   image: z
     .object({
       systemTime: z.string().optional(),
