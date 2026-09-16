@@ -7,6 +7,7 @@
 export * from "./cloudImports.js";
 export * from "./endpointImports.js";
 export * from "./logImports.js";
+export * from "./macFileActivityImports.js";
 export * from "./malwareReportImports.js";
 export * from "./networkImports.js";
 export * from "./platformImports.js";

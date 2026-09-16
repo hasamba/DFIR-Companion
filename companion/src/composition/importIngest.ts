@@ -224,6 +224,10 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         return observe(pipeline.importMobsfPermissions(caseId, text, base));
       case "exporterflow":
         return observe(pipeline.importExporterFlow(caseId, text, base));
+      case "macfsevent":
+        return observe(pipeline.importMacFsEvent(caseId, text, base));
+      case "macspotlightusage":
+        return observe(pipeline.importMacSpotlightUsage(caseId, text, base));
       case "gws":
         return observe(pipeline.importGoogleWorkspace(caseId, text, base));
       case "hindsight":

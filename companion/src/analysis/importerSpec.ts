@@ -65,6 +65,8 @@ export const IMPORT_KINDS = [
   "sqliterowstate",
   "mobsfpermission",
   "exporterflow",
+  "macfsevent",
+  "macspotlightusage",
   "unknown",
 ] as const;
 

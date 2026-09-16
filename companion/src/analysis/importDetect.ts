@@ -39,6 +39,8 @@ import {
   isMacosFamily,
   macosQuarantineCsvSig,
   hindsightCsvSig,
+  fsEventsTsvSig,
+  spotlightStoreCsvSig,
   isAuditd,
   looksLikeLinuxPersist,
   looksLikeMacosPersist,
@@ -230,10 +232,7 @@ function isArtifactMap(root: unknown): boolean {
     entries.some(([, v]) => (v as unknown[]).some(isObject))
   );
 }
-// Security Onion Console events (Alerts / Hunt), as the browser extension pushes them or as a raw
-// SOC API export. Claimed BEFORE isVelociraptor: the extension stamps `_Source` on every row, and
-// isVelociraptor treats any `_Source` as its own — so SO rows would otherwise mis-route there and
-// lose their `event.severity_label` verdict. Specific enough to claim ahead of the SIEM catch-all.
+// Security Onion Console events (Alerts / Hunt), as the browser extension pushes them or as a raw SOC API export. Claimed BEFORE isVelociraptor: the extension stamps `_Source` on every row, and isVelociraptor treats any `_Source` as its own — so SO rows would otherwise mis-route there and lose their `event.severity_label` verdict. Specific enough to claim ahead of the SIEM catch-all.
 function isSecurityOnion(s: Row): boolean {
   // (1) Extension push from the SOC native UI: every row is stamped _Source "Security Onion <view>".
   if (/^security onion\b/i.test(str(getCI(s, "_Source")))) return true;
@@ -258,12 +257,7 @@ function isSecurityOnion(s: Row): boolean {
     getCI(s, "event.dataset") != null
   );
 }
-// SO-CRATES (dougburks/so-crates) data, as the browser extension pushes it or as a raw export.
-// Claimed BEFORE isVelociraptor: the extension stamps `_Source: "SO-CRATES"` on every row, and
-// isVelociraptor treats any `_Source` as its own. Three shapes: an extension push (any _Source
-// "SO-CRATES"), a YARA filealert (the SO-CRATES-specific synthetic eve.json `event_type`), or a
-// Sigma alert (rule_title + rule_id). A plain Suricata eve.json with no SO-CRATES marker is left
-// to isNetwork on purpose.
+// SO-CRATES (dougburks/so-crates) data, as the browser extension pushes it or as a raw export. Claimed BEFORE isVelociraptor: the extension stamps `_Source: "SO-CRATES"` on every row, and isVelociraptor treats any `_Source` as its own. Three shapes: an extension push (any _Source "SO-CRATES"), a YARA filealert (the SO-CRATES-specific synthetic eve.json `event_type`), or a Sigma alert (rule_title + rule_id). A plain Suricata eve.json with no SO-CRATES marker is left to isNetwork on purpose.
 function isSocrates(s: Row): boolean {
   if (/^so-crates\b/i.test(str(getCI(s, "_Source")))) return true;
   if (str(getCI(s, "event_type")).toLowerCase() === "filealerts" || isObject(getCI(s, "filealerts")))
@@ -529,11 +523,15 @@ function kapeSig(h: Set<string>): boolean {
 }
 
 function detectCsv(text: string, filename: string): ImportKind {
+  // Tab-delimited, checked against the raw text before the comma-based header parse below (which
+  // would otherwise read the whole TSV header line as one garbled field).
+  if (fsEventsTsvSig(text)) return "macfsevent";
   const { headers, rows } = parseCsv(text);
   if (headers.length === 0) return "unknown";
   const h = new Set(headers.map((x) => x.trim().toLowerCase()));
   if (macosQuarantineCsvSig(h)) return "macos";
   if (sqliteRowStateCsvSig(h)) return "sqliterowstate";
+  if (spotlightStoreCsvSig(h)) return "macspotlightusage";
   if (hindsightCsvSig(h)) return "hindsight";
   if (m365CsvSig(h)) return "m365";
   if (cybertriageCsvSig(h)) return "cybertriage";
