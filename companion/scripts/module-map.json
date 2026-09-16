@@ -361,6 +361,7 @@
     "hijackLibImport.ts": "analysis/ingest",
     "hindsightImport.ts": "analysis/ingest",
     "hostAlias.ts": "analysis/timeline",
+    "hostBinding.ts": "analysis/timeline",
     "hostDuplicateDismissals.ts": "analysis/timeline",
     "hostDuplicateGate.ts": "analysis/timeline",
     "hostRanking.ts": "analysis/detect",
