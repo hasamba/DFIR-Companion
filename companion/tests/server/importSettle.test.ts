@@ -28,7 +28,7 @@ describe("settleForensicImport", () => {
     const merged = state([ev("old", "High"), ev("info", "Info"), ev("high", "High")]);
     const afterDemote = state([ev("old", "High"), ev("high", "High")]);
     const deps = {
-      stateStore: { load: vi.fn(async () => merged) },
+      stateStore: { load: vi.fn(async () => merged), save: vi.fn(async () => {}) },
       superTimelineStore: {
         append: vi.fn(async (_c: string, events: ForensicEvent[]) => {
           calls.push(`append:${events.map((e) => e.id).join(",")}`);
@@ -56,7 +56,7 @@ describe("settleForensicImport", () => {
     const before = state([]);
     const merged = state([ev("a", "Info"), ev("b", "Info")]);
     const deps = {
-      stateStore: { load: async () => merged },
+      stateStore: { load: async () => merged, save: async () => {} },
       superTimelineStore: { append: async () => 1 }, // the cap kept one
       autoTagImported: async () => {},
       demoteForensicForCase: async () => state([]),
@@ -69,7 +69,7 @@ describe("settleForensicImport", () => {
     const merged = state([ev("a", "Info")]);
     const tagged: string[] = [];
     const deps = {
-      stateStore: { load: async () => merged },
+      stateStore: { load: async () => merged, save: async () => {} },
       superTimelineStore: {
         append: async () => {
           throw new Error("disk");
@@ -90,7 +90,7 @@ describe("settleForensicImport", () => {
     const demote = vi.fn(async () => state([]));
     const r = await settleForensicImport(
       {
-        stateStore: { load: async () => state([ev("a", "Info")]) },
+        stateStore: { load: async () => state([ev("a", "Info")]), save: async () => {} },
         autoTagImported: async () => {},
         demoteForensicForCase: demote,
       },
@@ -99,5 +99,131 @@ describe("settleForensicImport", () => {
     );
     expect(demote).toHaveBeenCalledOnce();
     expect(r.superTimelineAddedCount).toBe(0);
+  });
+});
+
+// ── #1157: per-event importedAt / importBatchId ─────────────────────────────────────────────────
+describe("settleForensicImport — importedAt / importBatchId (#1157)", () => {
+  it("stamps importedAt and importBatchId on rows genuinely new to this case, and saves them", async () => {
+    const before = state([ev("old", "High")]);
+    const merged = state([ev("old", "High"), ev("new1", "High"), ev("new2", "High")]);
+    let saved: InvestigationState | undefined;
+    const deps = {
+      stateStore: {
+        load: async () => merged,
+        save: vi.fn(async (s: InvestigationState) => {
+          saved = s;
+        }),
+      },
+      autoTagImported: async () => {},
+      demoteForensicForCase: async () => saved ?? merged,
+    };
+    await settleForensicImport(deps, "c1", before);
+    expect(deps.stateStore.save).toHaveBeenCalledOnce();
+    const byId = new Map(saved!.forensicTimeline.map((e) => [e.id, e]));
+    expect(byId.get("old")!.importedAt).toBeUndefined();
+    expect(byId.get("old")!.importBatchId).toBeUndefined();
+    expect(byId.get("new1")!.importedAt).toEqual(expect.any(String));
+    expect(byId.get("new2")!.importedAt).toBe(byId.get("new1")!.importedAt);
+    expect(byId.get("new1")!.importBatchId).toEqual(expect.any(String));
+    expect(byId.get("new2")!.importBatchId).toBe(byId.get("new1")!.importBatchId);
+  });
+
+  it("does not re-stamp a row that already existed before this import", async () => {
+    const before = state([ev("old", "High")]);
+    const merged = state([ev("old", "High")]); // nothing new — a no-op import
+    const save = vi.fn(async () => {});
+    const deps = {
+      stateStore: { load: async () => merged, save },
+      autoTagImported: async () => {},
+      demoteForensicForCase: async () => merged,
+    };
+    await settleForensicImport(deps, "c1", before);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("stamps new rows even when no super-timeline store is configured", async () => {
+    const before = state([]);
+    const merged = state([ev("new1", "Info")]);
+    let saved: InvestigationState | undefined;
+    const deps = {
+      stateStore: {
+        load: async () => merged,
+        save: async (s: InvestigationState) => {
+          saved = s;
+        },
+      },
+      autoTagImported: async () => {},
+      demoteForensicForCase: async () => saved ?? merged,
+    };
+    await settleForensicImport(deps, "c1", before);
+    expect(saved!.forensicTimeline[0].importedAt).toEqual(expect.any(String));
+  });
+
+  it("persists the stamp through demoteForensicForCase's own independent reload", async () => {
+    // demoteForensicForCase in production reloads from the store itself — this fixture models
+    // that by returning exactly what was saved, proving the stamp survived a save/reload round
+    // trip rather than only existing on an in-memory object this function happens to return.
+    const before = state([]);
+    const merged = state([ev("new1", "High")]);
+    let saved: InvestigationState = merged;
+    const deps = {
+      stateStore: {
+        load: async () => merged,
+        save: async (s: InvestigationState) => {
+          saved = s;
+        },
+      },
+      autoTagImported: async () => {},
+      demoteForensicForCase: async () => saved,
+    };
+    const r = await settleForensicImport(deps, "c1", before);
+    expect(r.state.forensicTimeline[0].importedAt).toEqual(expect.any(String));
+  });
+
+  it("gives two separate imports different importedAt and importBatchId values", async () => {
+    const before = state([]);
+    let saved: InvestigationState | undefined;
+    const deps = (mergedState: InvestigationState) => ({
+      stateStore: {
+        load: async () => mergedState,
+        save: async (s: InvestigationState) => {
+          saved = s;
+        },
+      },
+      autoTagImported: async () => {},
+      demoteForensicForCase: async () => saved ?? mergedState,
+    });
+    await settleForensicImport(deps(state([ev("a", "High")])), "c1", before);
+    const first = saved!.forensicTimeline[0];
+    saved = undefined;
+    await new Promise((r) => setTimeout(r, 2));
+    await settleForensicImport(deps(state([ev("b", "High")])), "c1", before);
+    const second = saved!.forensicTimeline[0];
+    expect(second.importBatchId).not.toBe(first.importBatchId);
+    expect(second.importedAt).not.toBe(first.importedAt);
+  });
+
+  it("stamps the rows dual-written to the super-timeline and offered to the tagger too", async () => {
+    const before = state([]);
+    const merged = state([ev("new1", "Info")]);
+    let taggedEvents: ForensicEvent[] = [];
+    let appendedEvents: ForensicEvent[] = [];
+    const deps = {
+      stateStore: { load: async () => merged, save: async () => {} },
+      superTimelineStore: {
+        append: async (_c: string, events: ForensicEvent[]) => {
+          appendedEvents = events;
+          return events.length;
+        },
+      },
+      autoTagImported: async (_c: string, events: ForensicEvent[]) => {
+        taggedEvents = events;
+      },
+      demoteForensicForCase: async () => state([]),
+    };
+    await settleForensicImport(deps, "c1", before);
+    expect(appendedEvents[0].importedAt).toEqual(expect.any(String));
+    expect(taggedEvents[0].importedAt).toEqual(expect.any(String));
   });
 });

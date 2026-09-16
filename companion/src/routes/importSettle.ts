@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { ForensicEvent, InvestigationState } from "../analysis/stateTypes.js";
 import { diffTimeline, type TimelineDiff } from "../analysis/timelineDiff.js";
 import { diffIocs, type IocsDiff } from "../analysis/iocsDiff.js";
@@ -23,7 +24,10 @@ import { diffIocs, type IocsDiff } from "../analysis/iocsDiff.js";
  * (routes/importSection.ts) — the diff is only honest against that snapshot.
  */
 export interface SettleDeps {
-  stateStore: { load(caseId: string): Promise<InvestigationState> };
+  stateStore: {
+    load(caseId: string): Promise<InvestigationState>;
+    save(state: InvestigationState): Promise<void>;
+  };
   superTimelineStore?: { append(caseId: string, events: ForensicEvent[]): Promise<number> };
   onSuperTimeline?: (caseId: string) => void;
   autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<void>;
@@ -45,29 +49,47 @@ export async function settleForensicImport(
   caseId: string,
   stateBefore: InvestigationState,
 ): Promise<SettledImport> {
-  const imported = await deps.stateStore.load(caseId);
-  // Dual-write FIRST, from the pre-demote state, and select the added rows BY ID — exact. The
-  // time+description diff below is case-folded, so two rows that differ only by case (two paths on
-  // a case-sensitive filesystem) counted as one there, and the second was neither dual-written nor
-  // offered to the tagger. Ids are exact: a re-import of the same evidence is absorbed by
-  // correlation's exact-duplicate pass into the existing row's id before this runs, so a new id is
-  // a genuinely new row.
+  let imported = await deps.stateStore.load(caseId);
+  // Select the added rows BY ID — exact. The time+description diff below is case-folded, so two
+  // rows that differ only by case (two paths on a case-sensitive filesystem) counted as one there,
+  // and the second was neither dual-written nor offered to the tagger. Ids are exact: a re-import
+  // of the same evidence is absorbed by correlation's exact-duplicate pass into the existing row's
+  // id before this runs, so a new id is a genuinely new row.
+  const beforeIds = new Set(stateBefore.forensicTimeline.map((e) => e.id));
+  let added = imported.forensicTimeline.filter((e) => !beforeIds.has(e.id));
+
+  // #1157: stamp rows genuinely new to this case with WHEN the case received them and WHICH import
+  // action did it — distinct from `timestamp`, the artifact's own recorded time. One instant, one
+  // batch id, shared by every row this import added. Persisted BEFORE dual-write/tag/demote below:
+  // both `autoTagImported` and `demoteForensicForCase` independently reload state from the store,
+  // so an in-memory-only stamp would be silently discarded by their own reload/save cycles.
+  if (added.length) {
+    const importedAt = new Date().toISOString();
+    const importBatchId = randomUUID();
+    const addedIds = new Set(added.map((e) => e.id));
+    imported = {
+      ...imported,
+      forensicTimeline: imported.forensicTimeline.map((e) =>
+        addedIds.has(e.id) ? { ...e, importedAt, importBatchId } : e,
+      ),
+    };
+    added = imported.forensicTimeline.filter((e) => addedIds.has(e.id));
+    await deps.stateStore.save(imported);
+  }
+
+  // Dual-write FIRST, from the pre-demote (now stamped) state.
   let superTimelineAddedCount = 0;
-  if (deps.superTimelineStore) {
-    const beforeIds = new Set(stateBefore.forensicTimeline.map((e) => e.id));
-    const added = imported.forensicTimeline.filter((e) => !beforeIds.has(e.id));
-    if (added.length) {
-      try {
-        superTimelineAddedCount = await deps.superTimelineStore.append(caseId, added);
-        deps.onSuperTimeline?.(caseId);
-      } catch {
-        // Non-fatal by design: demote captures every row it removes into the super-timeline in
-        // its own critical section and KEEPS the row in the forensic timeline when that capture
-        // fails (composition/importIngest.ts demoteForensicForCase) — a row is never in neither
-        // record. What this failure costs is the count above, which stays 0.
-      }
-      await deps.autoTagImported(caseId, added);
+  if (deps.superTimelineStore && added.length) {
+    try {
+      superTimelineAddedCount = await deps.superTimelineStore.append(caseId, added);
+      deps.onSuperTimeline?.(caseId);
+    } catch {
+      // Non-fatal by design: demote captures every row it removes into the super-timeline in
+      // its own critical section and KEEPS the row in the forensic timeline when that capture
+      // fails (composition/importIngest.ts demoteForensicForCase) — a row is never in neither
+      // record. What this failure costs is the count above, which stays 0.
     }
+    await deps.autoTagImported(caseId, added);
   }
   const state = await deps.demoteForensicForCase(caseId);
   return {
