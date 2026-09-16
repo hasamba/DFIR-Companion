@@ -55,6 +55,7 @@ const BUILT_IN_IMPORT_KINDS = [
   "flossresult",
   "caparesult",
   "olevbaresult",
+  "sqliterowstate",
 ] as const;
 
 const CURRENT_SCHEMAS = [

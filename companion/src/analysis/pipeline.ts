@@ -34,8 +34,7 @@ type ImporterArgs<F> = F extends (ctx: ImportContext, ...args: infer R) => unkno
 type AiExtractionArgs<F> = F extends (ctx: ExtractionContext, ...args: infer R) => unknown ? R : never;
 /** Ditto for the calls that take the widest context of all — synthesis and its two consumers. */
 type AiArgs<F> = F extends (ctx: SynthesisContext, ...args: infer R) => unknown ? R : never;
-// The prompt registry moved to ai/prompts/ (#384). Imported for the pipeline's own use and
-// re-exported below, because 23 modules and the eval harness import these names from here.
+// The prompt registry moved to ai/prompts/ (#384). Imported for the pipeline's own use and re-exported below, because 23 modules and the eval harness import these names from here.
 export * from "./ai/prompts/index.js";
 // The AI-backed families extracted in #418. Each method below is a one-line delegation; the result types moved with them and are re-exported here, because routes/reports/tests import them from this module and the extraction is not supposed to be visible to callers.
 import type { CaseReportContext } from "./ai/caseReports.js";
@@ -290,8 +289,7 @@ export class AnalysisPipeline {
   }
 
   // Serializes the load->merge->save critical section of every import/analyze method per caseId, so two concurrent imports for the same case can't race (second save clobbering the first's merged delta). See src/analysis/stateLock.ts. Falls back to running fn immediately when no lock is configured (e.g. some script/test call sites).
-  // CAUTION: never call this from inside another withStateLock/runExclusive callback for the
-  // SAME caseId — that nests onto the outer call's own unresolved promise and deadlocks.
+  // CAUTION: never call this from inside another withStateLock/runExclusive callback for the SAME caseId — that nests onto the outer call's own unresolved promise and deadlocks.
   private withStateLock<T>(caseId: string, fn: () => Promise<T>): Promise<T> {
     return this.opts.stateLock ? this.opts.stateLock.runExclusive(caseId, fn) : fn();
   }
@@ -340,8 +338,7 @@ export class AnalysisPipeline {
     return Boolean(this.opts.provider);
   }
 
-  // Text features resolve `synthesisProvider ?? provider`, so this preserves OCR-less installs.
-  // Do not gate them on hasAiProvider(), which reflects only screenshot/vision capability.
+  // Text features resolve `synthesisProvider ?? provider`, so this preserves OCR-less installs. Do not gate them on hasAiProvider(), which reflects only screenshot/vision capability.
   hasSynthesisProvider(): boolean {
     return Boolean(this.opts.synthesisProvider ?? this.opts.provider);
   }
@@ -381,10 +378,8 @@ export class AnalysisPipeline {
    * `!policy.enabled`) — with anonymization off there is no masked text for Presidio to see.
    */
 
-  // Hash of the last successfully-synthesized inputs per case. The live, debounced
-  // synthesis fires after every capture window; this lets us skip the (expensive) AI call
-  // when nothing that affects the output has changed since the last run. In-memory: a
-  // fresh process (or an explicit `force`) always synthesizes.
+  // Hash of the last successfully-synthesized inputs per case, to skip the (expensive) AI call when
+  // nothing changed since the last run. In-memory: a fresh process (or `force`) always synthesizes.
   private readonly lastSynthHash = new Map<string, string>();
   // Per-case log-aggregation truncation (investigation-guidance #10, trigger b): set by analyzeLog when
   // the distinct-template cap dropped patterns the AI never saw; consumed once by the import route to
@@ -562,6 +557,12 @@ export class AnalysisPipeline {
 
   importOlevbaResult(...args: ImporterArgs<typeof ingest.importOlevbaResult>): Promise<InvestigationState> {
     return ingest.importOlevbaResult(this.importCtx, ...args);
+  }
+
+  importSqliteRowState(
+    ...args: ImporterArgs<typeof ingest.importSqliteRowState>
+  ): Promise<InvestigationState> {
+    return ingest.importSqliteRowState(this.importCtx, ...args);
   }
 
   async importGoogleWorkspace(

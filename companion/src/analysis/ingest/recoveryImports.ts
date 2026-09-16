@@ -1,4 +1,5 @@
 import { parseBulkExtractorUrl, type BulkExtractorUrlOptions } from "../bulkExtractorUrlImport.js";
+import { parseSqliteRowStateCsv, type SqliteRowStateOptions } from "../sqliteRowStateImport.js";
 import { deltaSchema } from "../responseSchema.js";
 import { applySeverityFloor } from "../severityFloor.js";
 import { resolveExtractedFrom } from "../siemImport.js";
@@ -7,10 +8,10 @@ import { noteEmptyImport } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 
 /**
- * External carving/recovery-tool reports (#932 item 4): what a tool that already ran against an
- * image says it found, never a re-implementation of carving itself. `bulk_extractor`'s url.txt
- * feature file is the only format read so far; see RECOMMENDATION-4.md for the deliberately
- * deferred formats (email/domain/ip feature files, and any intact-file carving report).
+ * External carving/recovery-tool reports (#932 items 4, 8): what a tool that already ran against
+ * an image says it found, never a re-implementation of carving itself. `bulk_extractor`'s url.txt
+ * feature file and sqlite-dissect's per-table commit-history CSV are the formats read so far; see
+ * RECOMMENDATION-4.md / RECOMMENDATION-8.md for the deliberately deferred formats.
  */
 
 // Import a bulk_extractor url.txt feature file. Deterministic (no AI call).
@@ -70,6 +71,85 @@ export async function importBulkExtractorUrl(
         : "") +
       (parsed.truncatedScan ? ", row scan stopped at the upload size cap" : "") +
       `, ${parsed.iocs.length} IOC(s)`,
+    summary: "",
+  };
+  const delta = deltaSchema.parse(raw);
+
+  return ctx.withStateLock(caseId, async () => {
+    let state = await ctx.opts.stateStore.load(caseId);
+    state = await ctx.mergeWithAliases(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await ctx.opts.stateStore.save(state);
+    ctx.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  });
+}
+
+// Import sqlite-dissect's per-table commit-history CSV (Added/Updated/Deleted/Carved row
+// operations). Deterministic (no AI call).
+export async function importSqliteRowState(
+  ctx: ImportContext,
+  caseId: string,
+  text: string,
+  opts: {
+    label: string;
+    idPrefix: string;
+    importedAt: string;
+    sqliteRowState?: SqliteRowStateOptions;
+    minSeverity?: Severity;
+    onProgress?: (done: number, total: number) => void;
+  },
+): Promise<InvestigationState> {
+  const parsedRaw = parseSqliteRowStateCsv(text, { ...opts.sqliteRowState, sourceLabel: opts.label });
+  if (!parsedRaw) throw new Error("not a sqlite-dissect commit-history CSV");
+  const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  if (parsed.events.length === 0) {
+    const gapDetail = [
+      parsed.malformedRows ? `${parsed.malformedRows} malformed row(s)` : "",
+      parsed.rowsTruncated ? "row scan stopped at the upload size cap" : "",
+      parsed.tableNameSource === "unavailable" ? "table name could not be derived from the filename" : "",
+    ]
+      .filter(Boolean)
+      .join(", ");
+    return noteEmptyImport(
+      ctx,
+      caseId,
+      opts,
+      "sqlite-dissect row state",
+      parsed.total,
+      gapDetail || undefined,
+    );
+  }
+
+  const eventIdByAggKey = new Map<string, string>();
+  const forensicEvents = parsed.events.map((e, i) => {
+    const { aggKey, ...rest } = e;
+    const id = `${opts.idPrefix}e${i + 1}`;
+    if (aggKey) eventIdByAggKey.set(aggKey, id);
+    return { ...rest, id, sources: rest.sources?.length ? rest.sources : ["sqlite-dissect"] };
+  });
+
+  const raw = {
+    findings: [],
+    iocs: resolveExtractedFrom(parsed.iocs, eventIdByAggKey).map((c, i) => ({
+      id: `${opts.idPrefix}i${i + 1}`,
+      type: c.type,
+      value: c.value,
+      ...(c.extractedFrom ? { extractedFrom: c.extractedFrom } : {}),
+    })),
+    mitreTechniques: [],
+    forensicEvents,
+    threadsOpened: [],
+    threadsClosed: [],
+    timelineNote:
+      `sqlite-dissect row-state import: ${parsed.kept} row(s) from ${parsed.total} scanned` +
+      (parsed.malformedRows ? `, ${parsed.malformedRows} malformed row(s)` : "") +
+      (parsed.rowsTruncated ? ", row scan stopped at the upload size cap" : "") +
+      (parsed.tableNameSource === "unavailable" ? ", table name could not be derived from the filename" : ""),
     summary: "",
   };
   const delta = deltaSchema.parse(raw);

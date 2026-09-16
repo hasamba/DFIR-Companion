@@ -42,6 +42,7 @@ import {
   looksLikeMacosPersist,
   looksLikeRcloneEvidence,
   looksLikeVelociraptorFile,
+  sqliteRowStateCsvSig,
 } from "./importDetectSources.js";
 
 // The kind list itself lives in importerSpec.ts, which is where a custom importer id is checked
@@ -188,8 +189,7 @@ function isChainsaw(s: Row): boolean {
 function isVelociraptor(s: Row, root: unknown): boolean {
   // `_Source` is Velociraptor's stamp: a STRING naming the artifact. Elasticsearch's `_source` is the
   // hit wrapper: an OBJECT holding the document. The case-insensitive lookup cannot tell the keys
-  // apart, so the value's type does — an object here is an ES hit and belongs to the SIEM importer,
-  // which checks `_source` itself (#1022).
+  // apart, so the value's type does — an object here is an ES hit and belongs to the SIEM importer, which checks `_source` itself (#1022).
   if (typeof getCI(s, "_Source") === "string" && !!getCI(s, "_Source")) return true;
   if (!!getCI(s, "Artifact") || !!getCI(s, "_Artifact")) return true;
   // Velociraptor data indexed into Elasticsearch (pushed from Kibana): the upload artifact names the
@@ -240,8 +240,7 @@ function isSecurityOnion(s: Row): boolean {
   if (/^security onion\b/i.test(str(getCI(s, "_Source")))) return true;
   // (2) SO ECS alert doc (e.g. pushed from SO's bundled Kibana via the elastic adapter):
   // `event.severity_label` is a Security Onion convention — standard ECS carries only the numeric
-  // `event.severity`, and Elastic Security alerts use `kibana.alert.severity`. Paired with a
-  // rule/module/dataset, it's an SO alert. Claimed here so its label-severity isn't lost to SIEM.
+  // `event.severity`, and Elastic Security alerts use `kibana.alert.severity`. Paired with a rule/module/dataset, it's an SO alert. Claimed here so its label-severity isn't lost to SIEM.
   if (
     getCI(s, "event.severity_label") != null &&
     (getCI(s, "rule.name") != null || getCI(s, "event.module") != null || getCI(s, "event.dataset") != null)
@@ -534,6 +533,7 @@ function detectCsv(text: string, filename: string): ImportKind {
   if (headers.length === 0) return "unknown";
   const h = new Set(headers.map((x) => x.trim().toLowerCase()));
   if (macosQuarantineCsvSig(h)) return "macos";
+  if (sqliteRowStateCsvSig(h)) return "sqliterowstate";
   if (hindsightCsvSig(h)) return "hindsight";
   if (m365CsvSig(h)) return "m365";
   if (cybertriageCsvSig(h)) return "cybertriage";
