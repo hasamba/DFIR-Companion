@@ -16,6 +16,7 @@
 // object — skipped so we don't false-positive on Elasticsearch exports.
 
 import type { Severity } from "./stateTypes.js";
+import { normalizeLegacyTlp } from "./tlp.js";
 import {
   addIoc,
   aggregateEvents,
@@ -158,6 +159,10 @@ function mapRecord(rec: Row): MappedEvent {
     .join(" — ");
 
   const fullDesc = (`${label}: ${body}` + (assignee ? ` (assignee: ${assignee})` : "")).slice(0, 600);
+  // The real, structured marking (#933 item 21) — kept ALONGSIDE the existing decorative prefix
+  // above, never replacing it: an analyst reading the timeline still sees "[TLP:AMBER] ...", and
+  // now the marking also survives as data any later export/preview logic can read.
+  const sharingMarking = normalizeLegacyTlp(getCI(rec, "tlp"));
 
   return {
     timestamp: recordTime(rec),
@@ -167,6 +172,7 @@ function mapRecord(rec: Row): MappedEvent {
     aggKey: `thehive|${type}|${severity}|${title.toLowerCase().slice(0, 120)}`,
     sources: ["TheHive"],
     ...(assignee ? { asset: assignee } : {}),
+    ...(sharingMarking ? { sharingMarking } : {}),
   };
 }
 

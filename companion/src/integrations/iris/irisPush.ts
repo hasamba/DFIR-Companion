@@ -174,13 +174,15 @@ export async function pushCaseToIris(
   // 6. IOCs (dedupe by value) — build value→IRIS-id map for event linking.
   const iocByValue = new Map<string, number>();
   for (const i of await client.listIocs(cid)) iocByValue.set(i.value.trim().toLowerCase(), i.id);
+  // For mapIoc's own real TLP computation (#933 item 21) — IOC.extractedFrom links by event id.
+  const eventById = new Map(input.state.forensicTimeline.map((e) => [e.id, e]));
   for (const ioc of input.state.iocs) {
     const key = ioc.value.trim().toLowerCase();
     if (iocByValue.has(key)) {
       iocs.existing += 1;
       continue;
     }
-    const body = mapIoc(ioc, iocTypes);
+    const body = mapIoc(ioc, iocTypes, eventById);
     if (!body) {
       iocs.skipped += 1;
       warnings.push(`ioc skipped (no IRIS type for "${ioc.type}"): ${ioc.value}`);

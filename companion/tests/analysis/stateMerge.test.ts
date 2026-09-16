@@ -710,6 +710,69 @@ describe("mergeDelta", () => {
     expect(e1.sourceScreenshots).toEqual(["s1.webp", "s3.webp"]);
   });
 
+  it("carries sharingMarking through the create branch (#933 item 21)", () => {
+    const state = mergeDelta(
+      emptyState("c1"),
+      {
+        ...baseDelta,
+        forensicEvents: [
+          {
+            id: "e1",
+            timestamp: "2026-05-20T09:00:00Z",
+            description: "TheHive alert",
+            severity: "High",
+            mitreTechniques: [],
+            relatedFindingIds: [],
+            sharingMarking: { label: "AMBER" },
+          },
+        ],
+      },
+      { windowSequence: 1, timestamp: "2026-05-28T10:00:00.000Z", sourceScreenshots: [] },
+    );
+    expect(state.forensicTimeline[0].sharingMarking).toEqual({ label: "AMBER" });
+  });
+
+  it("combines sharingMarking on re-import — a real marking never downgrades to a re-import that omits it", () => {
+    let state = mergeDelta(
+      emptyState("c1"),
+      {
+        ...baseDelta,
+        forensicEvents: [
+          {
+            id: "e1",
+            timestamp: "2026-05-20T09:00:00Z",
+            description: "TheHive alert",
+            severity: "High",
+            mitreTechniques: [],
+            relatedFindingIds: [],
+            sharingMarking: { label: "RED" },
+          },
+        ],
+      },
+      { windowSequence: 1, timestamp: "2026-05-28T10:00:00.000Z", sourceScreenshots: [] },
+    );
+    // Re-import of the same event with NO marking (e.g. a re-parse that lost the field) must not
+    // silently clear the previously-recorded RED.
+    state = mergeDelta(
+      state,
+      {
+        ...baseDelta,
+        forensicEvents: [
+          {
+            id: "e1",
+            timestamp: "2026-05-20T09:00:00Z",
+            description: "TheHive alert (updated)",
+            severity: "High",
+            mitreTechniques: [],
+            relatedFindingIds: [],
+          },
+        ],
+      },
+      { windowSequence: 2, timestamp: "2026-05-28T10:05:00.000Z", sourceScreenshots: [] },
+    );
+    expect(state.forensicTimeline[0].sharingMarking).toEqual({ label: "RED" });
+  });
+
   it("carries message + veloUrl through both the push and update forensic-event branches (#8/#9)", () => {
     let state = emptyState("c1");
     // Push branch: a NEW event with message + veloUrl.

@@ -79,6 +79,27 @@ describe("parseTheHive — case mapping", () => {
     expect(r.events[0].description).toContain("PAP:GREEN");
   });
 
+  it("also preserves the TLP marking as structured data, not just the decorative prefix (#933 item 21)", () => {
+    const r = parseTheHive(j(caseRecord({ tlp: 2 })));
+    expect(r.events[0].sharingMarking).toEqual({ label: "AMBER" });
+  });
+
+  it("maps every real TheHive TLP number to its current-scheme label, including the WHITE->CLEAR rename", () => {
+    expect(parseTheHive(j(caseRecord({ tlp: 0 }))).events[0].sharingMarking).toEqual({ label: "CLEAR" });
+    expect(parseTheHive(j(caseRecord({ tlp: 1 }))).events[0].sharingMarking).toEqual({ label: "GREEN" });
+    expect(parseTheHive(j(caseRecord({ tlp: 3 }))).events[0].sharingMarking).toEqual({ label: "RED" });
+  });
+
+  it("leaves sharingMarking absent when the record carries no tlp field at all", () => {
+    const r = parseTheHive(j(caseRecord({ tlp: undefined })));
+    expect(r.events[0].sharingMarking).toBeUndefined();
+  });
+
+  it("preserves an unrecognized tlp value rather than silently dropping it", () => {
+    const r = parseTheHive(j(caseRecord({ tlp: 99 })));
+    expect(r.events[0].sharingMarking).toEqual({ label: "unrecognized", raw: 99 });
+  });
+
   it("extracts MITRE technique IDs from tags", () => {
     const r = parseTheHive(j(caseRecord()));
     expect(r.events[0].mitreTechniques).toContain("T1486");
