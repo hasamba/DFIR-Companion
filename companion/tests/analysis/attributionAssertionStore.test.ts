@@ -158,6 +158,59 @@ describe("AttributionAssertionStore", () => {
         InvalidBuildsOnError,
       );
     });
+
+    it("allows a full weakest-to-strongest chain, and each hop still strictly decreases rank", async () => {
+      const store = new AttributionAssertionStore(cases);
+      const cluster = await store.create("c1", assertion({ tier: "cluster", label: "UNC1234" }));
+      const campaign = await store.create(
+        "c1",
+        assertion({ tier: "campaign", label: "Operation Foobar", buildsOn: [cluster.id] }),
+      );
+      const operator = await store.create(
+        "c1",
+        assertion({ tier: "operator", label: "APT29", buildsOn: [campaign.id] }),
+      );
+      const sponsor = await store.create(
+        "c1",
+        assertion({ tier: "sponsor", label: "State X", buildsOn: [operator.id] }),
+      );
+      expect(sponsor.buildsOn).toEqual([operator.id]);
+      // A cycle can never form: every buildsOn edge points to a strictly weaker tier, and no
+      // update path exists to change an assertion's own tier after creation.
+      await expect(
+        store.create("c1", { ...assertion({ tier: "cluster" }), buildsOn: [sponsor.id] }),
+      ).rejects.toBeInstanceOf(InvalidBuildsOnError);
+    });
+
+    it("allows buildsOn to reference a retracted (weaker-tier) assertion — a retraction never cascades", async () => {
+      const store = new AttributionAssertionStore(cases);
+      const cluster = await store.create("c1", assertion({ tier: "cluster", label: "UNC1234" }));
+      await store.retract("c1", cluster.id, "a.analyst@example.invalid", "2026-09-17T00:00:00Z");
+      const campaign = await store.create(
+        "c1",
+        assertion({ tier: "campaign", label: "Operation Foobar", buildsOn: [cluster.id] }),
+      );
+      expect(campaign.buildsOn).toEqual([cluster.id]);
+    });
+  });
+
+  it("rejects a periodEnd before periodStart", async () => {
+    const store = new AttributionAssertionStore(cases);
+    await expect(
+      store.create(
+        "c1",
+        assertion({ periodStart: "2026-06-01T00:00:00Z", periodEnd: "2026-01-01T00:00:00Z" }),
+      ),
+    ).rejects.toBeTruthy();
+  });
+
+  it("allows a periodEnd equal to periodStart", async () => {
+    const store = new AttributionAssertionStore(cases);
+    const created = await store.create(
+      "c1",
+      assertion({ periodStart: "2026-01-01T00:00:00Z", periodEnd: "2026-01-01T00:00:00Z" }),
+    );
+    expect(created.periodEnd).toBe("2026-01-01T00:00:00Z");
   });
 
   it("rejects a supersedesId pointing at an assertion that is not retracted", async () => {

@@ -28,20 +28,30 @@ import type { RouteContext } from "./context.js";
  * exactly — same trust model as every other analyst-attested store in this codebase.
  */
 
-const createRequestSchema = z.object({
-  tier: z.enum(ATTRIBUTION_TIERS),
-  label: z.string().trim().min(1).max(200),
-  sources: z.string().trim().min(1).max(2000),
-  periodStart: z.string().datetime({ offset: true }).optional(),
-  periodEnd: z.string().datetime({ offset: true }).optional(),
-  alternatives: z.string().trim().min(1).max(2000),
-  analystAssessment: z.string().trim().min(1).max(2000),
-  relatedTechniqueIds: z.array(z.string()).optional(),
-  relatedEventIds: z.array(z.string()).optional(),
-  relatedIocIds: z.array(z.string()).optional(),
-  buildsOn: z.array(z.string()).optional(),
-  supersedesId: z.string().trim().min(1).max(200).optional(),
-});
+// Bounds and the periodStart/periodEnd ordering check are kept in exact sync with
+// attributionAssertionSchema (attributionAssertionStore.ts) — same reasoning as
+// huntRequirements.ts's own deadline-schema sync: a mismatch could turn a 400-class rejection
+// into a store-level 500.
+const createRequestSchema = z
+  .object({
+    tier: z.enum(ATTRIBUTION_TIERS),
+    label: z.string().trim().min(1).max(200),
+    sources: z.string().trim().min(1).max(2000),
+    periodStart: z.string().datetime({ offset: true }).optional(),
+    periodEnd: z.string().datetime({ offset: true }).optional(),
+    alternatives: z.string().trim().min(1).max(2000),
+    analystAssessment: z.string().trim().min(1).max(2000),
+    relatedTechniqueIds: z.array(z.string()).max(200).optional(),
+    relatedEventIds: z.array(z.string()).max(500).optional(),
+    relatedIocIds: z.array(z.string()).max(500).optional(),
+    buildsOn: z.array(z.string()).max(50).optional(),
+    supersedesId: z.string().trim().min(1).max(200).optional(),
+  })
+  .refine(
+    (a) =>
+      !a.periodStart || !a.periodEnd || new Date(a.periodEnd).getTime() >= new Date(a.periodStart).getTime(),
+    { message: "periodEnd must not be before periodStart", path: ["periodEnd"] },
+  );
 
 export function registerAttributionAssertionRoutes(app: Express, ctx: RouteContext): void {
   const { options } = ctx;
@@ -62,10 +72,20 @@ export function registerAttributionAssertionRoutes(app: Express, ctx: RouteConte
     if (!configured(res)) return;
     try {
       const all = await options.attributionAssertionStore!.load(req.params.id);
-      const groups = loadAdversaryGroupsDataset().groups;
+      // The AdversaryGroup cross-reference is optional and informational — a failure loading the
+      // bundled dataset must never break the primary audit-trail read.
+      let groups: ReturnType<typeof loadAdversaryGroupsDataset>["groups"] = [];
+      try {
+        groups = loadAdversaryGroupsDataset().groups;
+      } catch {
+        groups = [];
+      }
+      const byId = new Map(all.map((a) => [a.id, a]));
       const annotated = all.map((a) => ({
         ...a,
         matchedAdversaryGroupId: matchAdversaryGroupId(a.label, groups),
+        // Retraction never cascades silently (design doc's own guardrail): flag it instead.
+        buildsOnRetracted: a.buildsOn.some((id) => byId.get(id)?.status === "retracted"),
       }));
       return res.status(200).json({ assertions: annotated });
     } catch (err) {
@@ -75,6 +95,11 @@ export function registerAttributionAssertionRoutes(app: Express, ctx: RouteConte
 
   app.post("/cases/:id/attribution-assertions", async (req: Request, res: Response) => {
     if (!configured(res)) return;
+    // 403 here is reachable only for an AUTHENTICATED but non-human caller (a service token) —
+    // an entirely unauthenticated request under real team-auth is already stopped upstream with
+    // 401 before this handler runs; in local mode (no team-auth) humanIdentity() always returns
+    // "local", so this branch never fires at all. Same posture as every sibling route reusing
+    // humanIdentityFor (evidenceAttestation.ts, huntRequirements.ts).
     const createdBy = humanIdentity(req);
     if (!createdBy) {
       return res

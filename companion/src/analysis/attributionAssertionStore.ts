@@ -33,27 +33,36 @@ const TIER_RANK: Record<AttributionTier, number> = {
   sponsor: 3,
 };
 
-const attributionAssertionSchema = z.object({
-  id: z.string(),
-  tier: z.enum(ATTRIBUTION_TIERS),
-  label: z.string().min(1),
-  sources: z.string().min(1),
-  periodStart: z.string().datetime({ offset: true }).optional(),
-  periodEnd: z.string().datetime({ offset: true }).optional(),
-  alternatives: z.string().min(1),
-  analystAssessment: z.string().min(1),
-  relatedTechniqueIds: z.array(z.string()).default([]),
-  relatedEventIds: z.array(z.string()).default([]),
-  relatedIocIds: z.array(z.string()).default([]),
-  buildsOn: z.array(z.string()).default([]),
-  status: z.enum(["open", "retracted"]).default("open"),
-  retractedBy: z.string().optional(),
-  retractedAt: z.string().optional(),
-  retractedReason: z.string().optional(),
-  supersedesId: z.string().min(1).max(200).optional(),
-  createdBy: z.string().min(1),
-  createdAt: z.string().datetime({ offset: true }),
-});
+const attributionAssertionSchema = z
+  .object({
+    id: z.string(),
+    tier: z.enum(ATTRIBUTION_TIERS),
+    label: z.string().min(1),
+    sources: z.string().min(1),
+    periodStart: z.string().datetime({ offset: true }).optional(),
+    periodEnd: z.string().datetime({ offset: true }).optional(),
+    alternatives: z.string().min(1),
+    analystAssessment: z.string().min(1),
+    relatedTechniqueIds: z.array(z.string()).max(200).default([]),
+    relatedEventIds: z.array(z.string()).max(500).default([]),
+    relatedIocIds: z.array(z.string()).max(500).default([]),
+    buildsOn: z.array(z.string()).max(50).default([]),
+    status: z.enum(["open", "retracted"]).default("open"),
+    retractedBy: z.string().optional(),
+    retractedAt: z.string().optional(),
+    retractedReason: z.string().optional(),
+    supersedesId: z.string().min(1).max(200).optional(),
+    createdBy: z.string().min(1),
+    createdAt: z.string().datetime({ offset: true }),
+  })
+  // Ollama code review finding: an unordered period would let periodEnd predate periodStart and
+  // persist that way into a forensic record. Only checked when BOTH are present — either alone
+  // is already a valid, deliberately open-ended statement.
+  .refine(
+    (a) =>
+      !a.periodStart || !a.periodEnd || new Date(a.periodEnd).getTime() >= new Date(a.periodStart).getTime(),
+    { message: "periodEnd must not be before periodStart", path: ["periodEnd"] },
+  );
 
 const fileSchema = z.object({
   version: z.literal(1),

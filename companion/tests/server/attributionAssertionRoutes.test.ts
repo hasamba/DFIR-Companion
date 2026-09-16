@@ -50,11 +50,59 @@ describe("/cases/:id/attribution-assertions", () => {
   });
 
   it("annotates a matching label with matchedAdversaryGroupId, read-time only", async () => {
-    await request(app)
+    const created = await request(app)
       .post("/cases/c1/attribution-assertions")
       .send(assertionBody({ tier: "operator", label: "APT29" }));
+    // Pins "read-time only, never written": the POST response and the persisted record itself
+    // must never carry the annotation — only GET computes it live.
+    expect(created.body.assertion.matchedAdversaryGroupId).toBeUndefined();
     const res = await request(app).get("/cases/c1/attribution-assertions");
     expect(res.body.assertions[0].matchedAdversaryGroupId).toBeTruthy();
+  });
+
+  it("never breaks the primary read when the AdversaryGroup dataset annotation itself is dropped", async () => {
+    // The annotation is optional/informational — the audit trail (tier/label/sources/etc.) must
+    // still come back even if group-matching finds nothing (a real dataset lookup, exercised
+    // with a label that cannot match, standing in for "the dataset step contributes nothing").
+    await request(app)
+      .post("/cases/c1/attribution-assertions")
+      .send(assertionBody({ label: "UNC-not-a-group" }));
+    const res = await request(app).get("/cases/c1/attribution-assertions");
+    expect(res.status).toBe(200);
+    expect(res.body.assertions[0].tier).toBe("cluster");
+    expect(res.body.assertions[0].matchedAdversaryGroupId).toBeNull();
+  });
+
+  it("flags buildsOnRetracted when a cited weaker-tier assertion has since been retracted", async () => {
+    const cluster = await request(app).post("/cases/c1/attribution-assertions").send(assertionBody());
+    await request(app).delete(`/cases/c1/attribution-assertions/${cluster.body.assertion.id}`);
+    await request(app)
+      .post("/cases/c1/attribution-assertions")
+      .send(
+        assertionBody({ tier: "campaign", label: "Operation Foobar", buildsOn: [cluster.body.assertion.id] }),
+      );
+    const res = await request(app).get("/cases/c1/attribution-assertions");
+    const campaign = res.body.assertions.find((a: { tier: string }) => a.tier === "campaign");
+    expect(campaign.buildsOnRetracted).toBe(true);
+  });
+
+  it("does not flag buildsOnRetracted when the cited assertion is still open", async () => {
+    const cluster = await request(app).post("/cases/c1/attribution-assertions").send(assertionBody());
+    await request(app)
+      .post("/cases/c1/attribution-assertions")
+      .send(
+        assertionBody({ tier: "campaign", label: "Operation Foobar", buildsOn: [cluster.body.assertion.id] }),
+      );
+    const res = await request(app).get("/cases/c1/attribution-assertions");
+    const campaign = res.body.assertions.find((a: { tier: string }) => a.tier === "campaign");
+    expect(campaign.buildsOnRetracted).toBe(false);
+  });
+
+  it("rejects a periodEnd before periodStart, with 400 not 500", async () => {
+    const res = await request(app)
+      .post("/cases/c1/attribution-assertions")
+      .send(assertionBody({ periodStart: "2026-06-01T00:00:00Z", periodEnd: "2026-01-01T00:00:00Z" }));
+    expect(res.status).toBe(400);
   });
 
   it("does not annotate a label that matches nothing", async () => {
