@@ -115,7 +115,11 @@ describe("parseSandboxReport — Falcon Sandbox", () => {
 describe("parseSandboxReport — options & edges", () => {
   it("applies a severity floor (keeps the High verdict + High signature, drops Low/Info)", () => {
     const r = parseSandboxReport(JSON.stringify(capeReport()), { minSeverity: "High" });
-    expect(r.events.every((e) => e.severity === "High")).toBe(true);
+    // The sample-lineage carrier (#932.8) is deliberately exempt from the severity floor — it is
+    // a fixed-Medium evidence disclosure, not a detection, so a floor set for detections must
+    // never silently discard it (design review H1/M3).
+    const nonLineage = r.events.filter((e) => !e.description.startsWith("CAPE sandbox lineage:"));
+    expect(nonLineage.every((e) => e.severity === "High")).toBe(true);
     expect(r.events.some((e) => e.description.includes("antidbg_devices"))).toBe(false);
   });
 

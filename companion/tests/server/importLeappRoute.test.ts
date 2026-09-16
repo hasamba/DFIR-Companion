@@ -78,6 +78,9 @@ describe("POST /cases/:id/import-leapp", () => {
       .send({ text: INSTALLED_APPS, filename: "Installed Apps.tsv", platform: "ios" });
     expect(res.status).toBe(202);
     expect(res.body).toMatchObject({ accepted: true, events: 2, records: 2, undated: 2 });
+    // #1132: the import's own sequence number, so a caller can bind this upload into a
+    // mobile-backup-generation attestation without a separate lookup.
+    expect(res.body.importSeq).toBe(1);
 
     await waitForImportRecord(app, res.body.file as string);
     // Every row is Info: demoted out of the forensic timeline, present in the super-timeline.

@@ -29,6 +29,7 @@ import {
 } from "./cloudMetadataAccess.js";
 import { summarizeBulkReads } from "./cloudBulkRead.js";
 import { correlateStorageKeyToRead } from "./azureStorageKeyToRead.js";
+import { correlateAwsFlowResourceAttribution } from "./awsFlowResourceAttribution.js";
 import { attributionCoverageEvent, markServiceAccountBrowsing } from "./serviceAccountBrowsing.js";
 import { markContainerEscape } from "./containerEscape.js";
 import { toUtcIso } from "./timeUtc.js";
@@ -427,10 +428,17 @@ export function mergeDelta(
   // diagnostic log) arrive from two separate uploads. Only ever adds a bounded join row; never
   // claims the same actor did both — SAS/key use leaves no reliable attribution trail.
   const withStorageKeyJoins = correlateStorageKeyToRead(withBulkReads);
+  // An AWS VPC flow's private-IP endpoint attributed to the EC2 instance that held it at the
+  // flow's own timestamp (#931 item 13). Here because the flow log (Storage/S3 export) and the
+  // CloudTrail-derived compute-lifecycle summary (#931 item 8) arrive from two separate uploads.
+  // No termination time is required or assumed — a later launch on the same (account, IP) simply
+  // supersedes an earlier one. Only ever adds a note; never guesses through NAT/load-balancer
+  // hops or an ambiguous tie.
+  const withFlowAttribution = correlateAwsFlowResourceAttribution(withStorageKeyJoins);
   // Browsing by an account that cannot be interactive (#908 item 10). Here because the shellbag,
   // the logon that made a desktop session possible, and any archiving beside it arrive from three
   // different importers. Only raises, and only for an account something SAYS is noninteractive.
-  const browsingMarked = markServiceAccountBrowsing(withStorageKeyJoins);
+  const browsingMarked = markServiceAccountBrowsing(withFlowAttribution);
   // Browsing evidence that carries no account cannot be judged, and "no service-account browsing
   // found" would report a collection gap as a result. The gap goes ON the timeline, replaceable.
   const attributionGap = attributionCoverageEvent(browsingMarked);

@@ -206,6 +206,38 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         return observe(pipeline.importOkta(caseId, text, base));
       case "azurestoragelog":
         return observe(pipeline.importAzureStorageLog(caseId, text, base));
+      case "diskimagelog":
+        return observe(pipeline.importDiskImageLog(caseId, text, base));
+      case "awsflowlog":
+        return observe(pipeline.importAwsFlowLog(caseId, text, base));
+      case "bulkextractorurl":
+        return observe(pipeline.importBulkExtractorUrl(caseId, text, base));
+      case "flossresult":
+        return observe(pipeline.importFlossResult(caseId, text, base));
+      case "caparesult":
+        return observe(pipeline.importCapaResult(caseId, text, base));
+      case "olevbaresult":
+        return observe(pipeline.importOlevbaResult(caseId, text, base));
+      case "sqliterowstate":
+        return observe(pipeline.importSqliteRowState(caseId, text, base));
+      case "mobsfpermission":
+        return observe(pipeline.importMobsfPermissions(caseId, text, base));
+      case "exporterflow":
+        return observe(pipeline.importExporterFlow(caseId, text, base));
+      case "macfsevent":
+        return observe(pipeline.importMacFsEvent(caseId, text, base));
+      case "macspotlightusage":
+        return observe(pipeline.importMacSpotlightUsage(caseId, text, base));
+      // Byte-native (a binary keyed-archive bplist) -- dispatched directly by
+      // POST /cases/:id/import-mac-login-item, never through this text-based path, which would
+      // corrupt the bytes. An explicit rejection here, never the generic "unhandled import kind"
+      // fallback, so a caller that somehow reaches this case gets a clear reason (#1013).
+      case "macloginitem":
+        return Promise.reject(
+          new Error(
+            "macloginitem is byte-native; use POST /cases/:id/import-mac-login-item, not dispatchImport",
+          ),
+        );
       case "gws":
         return observe(pipeline.importGoogleWorkspace(caseId, text, base));
       case "hindsight":

@@ -45,6 +45,15 @@ describe("detectImportKind — JSON formats", () => {
     expect(detectImportKind("snort_alert.log", log)).toBe("snort");
   });
 
+  it("memory: PE-sieve JSON report (#933 item 15)", () => {
+    expect(
+      detectImportKind(
+        "pe-sieve-report.json",
+        j({ pid: 1234, scanned: { total: 1, modified: { total: 0 } }, scans: [] }),
+      ),
+    ).toBe("memory");
+  });
+
   it("sandbox: CAPE report.json", () => {
     expect(
       detectImportKind("report.json", j({ info: { id: 1 }, target: { file: {} }, signatures: [] })),
@@ -94,6 +103,83 @@ describe("detectImportKind — JSON formats", () => {
         ]),
       ),
     ).toBe("azurestoragelog");
+  });
+  it("awsflowlog: default (v2) VPC Flow Log line", () => {
+    const line =
+      "2 123456789010 eni-1235b8ca 172.31.16.139 203.0.113.10 20641 22 6 20 4249 1418530010 1418530070 ACCEPT OK";
+    expect(detectImportKind("flowlogs.txt", line)).toBe("awsflowlog");
+  });
+  it("bulkextractorurl: a bulk_extractor url.txt feature file", () => {
+    const text = [
+      "# BULK_EXTRACTOR-Version: 2.0.0",
+      "# Feature-Recorder: url",
+      "48198832\thttps://example.com/path\tcontext here",
+    ].join("\n");
+    expect(detectImportKind("url.txt", text)).toBe("bulkextractorurl");
+  });
+  it("flossresult: a FLOSS -j results document", () => {
+    const text = JSON.stringify({
+      metadata: { file_path: "/samples/m.exe", version: "2.2.0" },
+      strings: { decoded_strings: [{ string: "x", address: 1, decoded_at: 1, decoding_routine: 1 }] },
+    });
+    expect(detectImportKind("floss.json", text)).toBe("flossresult");
+  });
+  it("caparesult: a capa -j static results document", () => {
+    const text = JSON.stringify({
+      meta: {
+        flavor: "static",
+        sample: { md5: "a", sha1: "b", sha256: "c", path: "/samples/m.exe" },
+      },
+      rules: {},
+    });
+    expect(detectImportKind("capa.json", text)).toBe("caparesult");
+  });
+  it("olevbaresult: an olevba -j VBA/OLE macro static-analysis results document", () => {
+    const text = JSON.stringify([
+      { type: "MetaInformation", script_name: "olevba", version: "0.60.2" },
+      { type: "OLE", file: "sample.doc", json_conversion_successful: true, macros: [], analysis: [] },
+    ]);
+    expect(detectImportKind("olevba.json", text)).toBe("olevbaresult");
+  });
+  it("mobsfpermission: a MobSF Android static-analysis report", () => {
+    const text = JSON.stringify({
+      sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      package_name: "com.example.sample",
+      apkid: {},
+      permissions: { "android.permission.CAMERA": { status: "dangerous", info: "i", description: "d" } },
+    });
+    expect(detectImportKind("mobsf.json", text)).toBe("mobsfpermission");
+  });
+  it("exporterflow: an nfdump -o ndjson exporter flow record", () => {
+    const text = JSON.stringify({
+      first: "2026-01-01T00:00:00.000",
+      last: "2026-01-01T00:00:05.000",
+      received: "2026-01-01T00:05:00.000",
+      proto: 6,
+      src4_addr: "10.0.0.5",
+      dst4_addr: "203.0.113.9",
+      in_bytes: 1000,
+      in_packets: 10,
+      export_sysid: 1,
+    });
+    expect(detectImportKind("flows.ndjson", text)).toBe("exporterflow");
+  });
+  it("sqliterowstate: a sqlite-dissect per-table commit-history CSV", () => {
+    const text =
+      '"File Source","Version","Page Version","Cell Source","Page Number","Location","Operation","File Offset","Row ID","body"\n' +
+      '"DATABASE","0","0","B-Tree","3","0","Added","4096","1","hello"';
+    expect(detectImportKind("history_message.csv", text)).toBe("sqliterowstate");
+  });
+  it("macfsevent: FSEventsParser's real All_FSEVENTS.tsv header", () => {
+    const text =
+      "id\tnode_id\tfs_uid\tfullpath\ttype\tflags\tapprox_dates_plus_minus_one_day\tsource\tsource_modified_time\n" +
+      "1\t2\t3\tUsers/a/b.txt\tFileEvent;\tCreated;\t2024.03.15\t/src/0000\t2024-03-15T00:00:00Z";
+    expect(detectImportKind("All_FSEVENTS.tsv", text)).toBe("macfsevent");
+  });
+  it("macspotlightusage: a mac_apt Spotlight store-item CSV", () => {
+    const text =
+      "ID,Date_Updated,kMDItemUseCount,kMDItemLastUsedDate\n1001,2024-03-01T00:00:00Z,3,2024-03-10T00:00:00Z";
+    expect(detectImportKind("Spotlight.csv", text)).toBe("macspotlightusage");
   });
   it("m365: Unified Audit Log JSON", () => {
     expect(

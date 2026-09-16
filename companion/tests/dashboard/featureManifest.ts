@@ -1568,6 +1568,55 @@ export const FEATURES: Feature[] = [
     private: ["hostScopeLedger", "hostScopeFilter", "STATUS_LABEL", "STATUS_ORDER", "PRESENCE_LABEL"],
   },
   {
+    // Collection generation diff (#1128) — a genuine top-level section (not a mini-panel) over
+    // #1108's own collection-generation ledger. One piece of view state (the loaded cohorts) plus
+    // a load-generation token, the same reason dashboard-host-scope.js is an IIFE. No initializer:
+    // every expand/collapse is a plain <details> element, so there is no delegated listener to
+    // bind — the case-connect loader calling loadCollectionGenerationDiff(caseId) is the whole
+    // entry point.
+    file: "dashboard-collection-generation-diff.js",
+    // #1132 extends this SAME panel with a second, independent mobile-app-presence section
+    // (rather than a new top-level dashboard section) — see its own file header comment.
+    publish: [
+      "renderCollectionGenerationDiff",
+      "loadCollectionGenerationDiff",
+      "openRecordForm",
+      "closeRecordForm",
+      "submitRecordForm",
+    ],
+    private: [
+      "pCohorts",
+      "pTruncatedCohorts",
+      "pStatus",
+      "pLoadSeq",
+      "mCohorts",
+      "mTruncatedCohorts",
+      "mStatus",
+      "mLoadSeq",
+      "mCandidates",
+      "mFormOpen",
+      "mCandidateSeq",
+      "mCandidatesCaseId",
+      "DIRECTION_LABEL",
+      "EXCLUSION_LABEL",
+    ],
+  },
+  {
+    // Analyst-attested evidence-class coverage (#1111). Owns two pieces of view state (the loaded
+    // attestations and the load-generation token), the same reason dashboard-host-scope.js is an
+    // IIFE. A compact mini-panel LIVING INSIDE the Hypotheses section rather than its own
+    // top-level one — loadHypotheses() (dashboard-hypotheses.js) calls loadEvidenceAttestations()
+    // directly, so there is no separate case-connect entry point to register.
+    file: "dashboard-evidence-attestation.js",
+    publish: [
+      "renderEvidenceAttestations",
+      "loadEvidenceAttestations",
+      "attestEvidenceClass",
+      "revokeEvidenceClass",
+    ],
+    private: ["attestations", "loadSeq", "loadCase", "EVIDENCE_CLASSES", "CLASS_LABEL"],
+  },
+  {
     // Cross-case IOC pivot (#679). One piece of view state (the last fetched list), so it is an
     // IIFE for the same reason dashboard-host-duplicates.js is. No initializer: the panel binds no
     // listeners of its own — every link in it is a plain anchor — so the case-connect loader

@@ -1,13 +1,21 @@
 // Auto-detect which importer an uploaded file should route to, so the dashboard can offer a
 // single "Import" button. A cheap sniff: structural (JSON object/array/NDJSON vs CSV vs plain
 // log), then key/header signatures mirroring each importer's own classifier — most-specific
-// first. Returns a kind mapping 1:1 to a pipeline import method, shown to the analyst so a
-// mis-route is visible, not silent.
+// first. Returns a kind mapping 1:1 to a pipeline import method, shown to the analyst so a mis-route is visible, not silent.
 
 import { isObject, getCI, getPath, str, parseConcatenatedJson } from "./siemImport.js";
 import { isAzureStorageLog } from "./azureStorageLogImport.js";
+import { isAwsFlowLogLine } from "./awsFlowLogImport.js";
+import { isDiskImageLog } from "./diskImageAcquisitionLog.js";
+import { isBulkExtractorUrlFeatureFile } from "./bulkExtractorUrlImport.js";
+import { isFlossResult } from "./flossResultImport.js";
+import { isCapaResult } from "./capaResultImport.js";
+import { isOlevbaResult } from "./olevbaResultImport.js";
+import { isMobsfReport } from "./mobsfPermissionImport.js";
+import { isNfdumpFlowRecord } from "./exporterFlowImport.js";
 import { isWerReport } from "./werImport.js";
 import { isRekallCommandList, looksLikeVolatilityText, looksLikeMemprocfsFindevil } from "./memoryImport.js";
+import { isPeSieveReport } from "./pesieveImport.js";
 import { isRunEnvelopeUpload } from "./memoryRunEnvelope.js";
 import { isIntactMemoryFile, looksLikeIntactPrefix } from "./intactImport.js";
 import { parseCsv } from "./csvImport.js";
@@ -32,11 +40,14 @@ import {
   isMacosFamily,
   macosQuarantineCsvSig,
   hindsightCsvSig,
+  fsEventsTsvSig,
+  spotlightStoreCsvSig,
   isAuditd,
   looksLikeLinuxPersist,
   looksLikeMacosPersist,
   looksLikeRcloneEvidence,
   looksLikeVelociraptorFile,
+  sqliteRowStateCsvSig,
 } from "./importDetectSources.js";
 
 // The kind list itself lives in importerSpec.ts, which is where a custom importer id is checked
@@ -171,9 +182,7 @@ function isChainsaw(s: Row): boolean {
     (isObject(getCI(s, "Event")) && isObject(getPath(s, "Event.System")))
   )
     return true;
-  // Chainsaw's flattened Sigma-mapping JSON (e.g. a Velociraptor artifact that shells out to
-  // Chainsaw): verdict at the top level (Detection/Severity) instead of a nested rule{}
-  // object, alongside an already-flat EventID/Channel/SystemData instead of Event.System.
+  // Chainsaw's flattened Sigma-mapping JSON (a VR artifact shelling out to Chainsaw): verdict at top level (Detection/Severity), flat EventID/Channel/SystemData instead of Event.System.
   return (
     typeof getCI(s, "Detection") === "string" &&
     typeof getCI(s, "Severity") === "string" &&
@@ -184,21 +193,18 @@ function isChainsaw(s: Row): boolean {
 function isVelociraptor(s: Row, root: unknown): boolean {
   // `_Source` is Velociraptor's stamp: a STRING naming the artifact. Elasticsearch's `_source` is the
   // hit wrapper: an OBJECT holding the document. The case-insensitive lookup cannot tell the keys
-  // apart, so the value's type does — an object here is an ES hit and belongs to the SIEM importer,
-  // which checks `_source` itself (#1022).
+  // apart, so the value's type does — an object here is an ES hit and belongs to the SIEM importer, which checks `_source` itself (#1022).
   if (typeof getCI(s, "_Source") === "string" && !!getCI(s, "_Source")) return true;
   if (!!getCI(s, "Artifact") || !!getCI(s, "_Artifact")) return true;
   // Velociraptor data indexed into Elasticsearch (pushed from Kibana): the upload artifact names the
-  // index `artifact_<name>`, and nested VQL columns are flattened to dotted keys with `.keyword`
-  // multi-fields (Artifact.keyword, Detection.StringHit, EventData.ScriptBlockText, …).
+  // index `artifact_<name>`, and nested VQL columns are flattened to dotted keys with `.keyword` multi-fields (Artifact.keyword, Detection.StringHit, EventData.ScriptBlockText, …).
   if (/^artifact[_-]/i.test(str(getCI(s, "_index")))) return true;
   if (Object.keys(s).some((k) => k === "Artifact" || /^(?:Artifact|Detection|_Event)\./.test(k))) return true;
   const rule = getCI(s, "Rule");
   if (typeof rule === "string" && (!!getCI(s, "Strings") || !!getCI(s, "Meta") || !!getCI(s, "Namespace")))
     return true;
   if (isObject(getCI(s, "System")) && !!getCI(s, "EventData")) return true; // VR parsed-evtx (no Event wrapper)
-  // Velociraptor pslist/pstree: CallChain (process-ancestor string) is specific to VR's pslist
-  // artifact family and absent from Windows event logs / SIEM exports.
+  // Velociraptor pslist/pstree: CallChain (process-ancestor string) is specific to VR's pslist artifact family and absent from Windows event logs / SIEM exports.
   if (!!getCI(s, "CallChain") && (getCI(s, "Pid") != null || getCI(s, "Ppid") != null)) return true;
   // Velociraptor Windows.Network.Netstat: Laddr/Lport/Status combination is specific to VR's netstat
   if (getCI(s, "Laddr") != null && getCI(s, "Lport") != null && getCI(s, "Status") != null) return true;
@@ -227,25 +233,20 @@ function isArtifactMap(root: unknown): boolean {
     entries.some(([, v]) => (v as unknown[]).some(isObject))
   );
 }
-// Security Onion Console events (Alerts / Hunt), as the browser extension pushes them or as a raw
-// SOC API export. Claimed BEFORE isVelociraptor: the extension stamps `_Source` on every row, and
-// isVelociraptor treats any `_Source` as its own — so SO rows would otherwise mis-route there and
-// lose their `event.severity_label` verdict. Specific enough to claim ahead of the SIEM catch-all.
+// Security Onion Console events (Alerts / Hunt), as the browser extension pushes them or as a raw SOC API export. Claimed BEFORE isVelociraptor: the extension stamps `_Source` on every row, and isVelociraptor treats any `_Source` as its own — so SO rows would otherwise mis-route there and lose their `event.severity_label` verdict. Specific enough to claim ahead of the SIEM catch-all.
 function isSecurityOnion(s: Row): boolean {
   // (1) Extension push from the SOC native UI: every row is stamped _Source "Security Onion <view>".
   if (/^security onion\b/i.test(str(getCI(s, "_Source")))) return true;
   // (2) SO ECS alert doc (e.g. pushed from SO's bundled Kibana via the elastic adapter):
   // `event.severity_label` is a Security Onion convention — standard ECS carries only the numeric
-  // `event.severity`, and Elastic Security alerts use `kibana.alert.severity`. Paired with a
-  // rule/module/dataset, it's an SO alert. Claimed here so its label-severity isn't lost to SIEM.
+  // `event.severity`, and Elastic Security alerts use `kibana.alert.severity`. Paired with a rule/module/dataset, it's an SO alert. Claimed here so its label-severity isn't lost to SIEM.
   if (
     getCI(s, "event.severity_label") != null &&
     (getCI(s, "rule.name") != null || getCI(s, "event.module") != null || getCI(s, "event.dataset") != null)
   ) {
     return true;
   }
-  // (3) Raw SOC API export / Kibana doc on a Security Onion data-stream index
-  // (.ds-logs-<module>-so-<date>, optionally cross-cluster-prefixed "so:").
+  // (3) Raw SOC API export / Kibana doc on a Security Onion data-stream index (.ds-logs-<module>-so-<date>, optionally cross-cluster-prefixed "so:").
   const idx = str(getCI(s, "_index") ?? getCI(s, "source"));
   const soIndex = /^so:/i.test(idx) || /(?:^|[.\-_])logs-[a-z0-9_]+-so[.\-]/i.test(idx);
   if (!soIndex) return false;
@@ -257,12 +258,7 @@ function isSecurityOnion(s: Row): boolean {
     getCI(s, "event.dataset") != null
   );
 }
-// SO-CRATES (dougburks/so-crates) data, as the browser extension pushes it or as a raw export.
-// Claimed BEFORE isVelociraptor: the extension stamps `_Source: "SO-CRATES"` on every row, and
-// isVelociraptor treats any `_Source` as its own. Three shapes: an extension push (any _Source
-// "SO-CRATES"), a YARA filealert (the SO-CRATES-specific synthetic eve.json `event_type`), or a
-// Sigma alert (rule_title + rule_id). A plain Suricata eve.json with no SO-CRATES marker is left
-// to isNetwork on purpose.
+// SO-CRATES (dougburks/so-crates) data, as the browser extension pushes it or as a raw export. Claimed BEFORE isVelociraptor: the extension stamps `_Source: "SO-CRATES"` on every row, and isVelociraptor treats any `_Source` as its own. Three shapes: an extension push (any _Source "SO-CRATES"), a YARA filealert (the SO-CRATES-specific synthetic eve.json `event_type`), or a Sigma alert (rule_title + rule_id). A plain Suricata eve.json with no SO-CRATES marker is left to isNetwork on purpose.
 function isSocrates(s: Row): boolean {
   if (/^so-crates\b/i.test(str(getCI(s, "_Source")))) return true;
   if (str(getCI(s, "event_type")).toLowerCase() === "filealerts" || isObject(getCI(s, "filealerts")))
@@ -313,8 +309,7 @@ function isCybertriage(s: Row): boolean {
   );
 }
 function isWazuh(s: Row, root: unknown): boolean {
-  // Wazuh alert: requires rule.level + rule.description + agent.name.
-  // Also matches the API export envelope { data: { affected_items: [alert, ...] } }.
+  // Wazuh alert: requires rule.level + rule.description + agent.name (also matches the API export envelope).
   const checkRecord = (r: Row): boolean => {
     const rule = getCI(r, "rule");
     if (!isObject(rule)) return false;
@@ -406,12 +401,17 @@ function looksLikeTheHive(s: Row, root: unknown): boolean {
 }
 
 function detectJson(root: unknown, sample: Row): ImportKind {
-  // Intact (trimmed VolWeb) — FIRST: its `{plugins:{…},yara:[…]}` wrapper would fall through to the
-  // event-shaped SIEM catch-all, and its YARA rows carry no field any other signature claims (#776).
+  // Intact (trimmed VolWeb) — FIRST: its `{plugins:{…},yara:[…]}` wrapper would fall through to the SIEM catch-all, and its YARA rows carry no field any other signature claims (#776).
   if (isIntactMemoryFile(root, sample)) return "memory";
   // A Volatility run envelope or a bundle of them (#1016): the discriminator decides, never the shape.
   if (isRunEnvelopeUpload(root)) return "memory";
   if (isVolatilityMap(root)) return "memory";
+  if (isPeSieveReport(root)) return "memory"; // #933 item 15 — verified against every check below for no field collision
+  if (isFlossResult(root)) return "flossresult";
+  if (isCapaResult(root)) return "caparesult";
+  if (isOlevbaResult(root)) return "olevbaresult";
+  if (isMobsfReport(root)) return "mobsfpermission";
+  if (isNfdumpFlowRecord(sample)) return "exporterflow";
   if (isSandbox(sample)) return "sandbox";
   if (isAws(sample)) return "aws";
   if (isGcp(sample)) return "cloud";
@@ -424,8 +424,7 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (isM365(sample)) return "m365";
   if (isK8sAudit(sample)) return "k8s";
   if (isOsquery(sample)) return "osquery";
-  // ECAR EDR telemetry — the (timestamp_ms + object + action) triple is distinctive and absent from
-  // every other feed; checked early so the generic SIEM/network catch-alls can't claim it.
+  // ECAR EDR telemetry — the (timestamp_ms + object + action) triple is distinctive; checked early so the generic SIEM/network catch-alls can't claim it.
   if (isEcarRecord(sample)) return "ecar";
   if (isChainsaw(sample)) return "chainsaw";
   if (isSecurityOnion(sample)) return "securityonion";
@@ -526,10 +525,15 @@ function kapeSig(h: Set<string>): boolean {
 }
 
 function detectCsv(text: string, filename: string): ImportKind {
+  // Tab-delimited, checked against the raw text before the comma-based header parse below (which
+  // would otherwise read the whole TSV header line as one garbled field).
+  if (fsEventsTsvSig(text)) return "macfsevent";
   const { headers, rows } = parseCsv(text);
   if (headers.length === 0) return "unknown";
   const h = new Set(headers.map((x) => x.trim().toLowerCase()));
   if (macosQuarantineCsvSig(h)) return "macos";
+  if (sqliteRowStateCsvSig(h)) return "sqliterowstate";
+  if (spotlightStoreCsvSig(h)) return "macspotlightusage";
   if (hindsightCsvSig(h)) return "hindsight";
   if (m365CsvSig(h)) return "m365";
   if (cybertriageCsvSig(h)) return "cybertriage";
@@ -662,17 +666,17 @@ export function detectImportKind(filename: string, text: string): ImportKind {
     if (sample) return vrHint(detectJson(root, sample));
   }
 
-  // Linux auditd records (line-oriented `type=… msg=audit(…)`) — checked before the email/CSV/log
-  // fallback; the audit-record shape is unique enough to claim directly.
+  // Linux auditd records (`type=… msg=audit(…)`) — shape is unique enough to claim directly.
   if (isAuditd(t)) return "auditd";
+  if (isBulkExtractorUrlFeatureFile(t)) return "bulkextractorurl"; // both header anchors required
 
-  // Linux/Unix shell history (.bash_history / .zsh_history / …). Recognized by the history
-  // filename or the bash `#<epoch>` / zsh extended-history content signature — checked before the
-  // generic log fallback, which an un-timestamped command list would otherwise land in.
+  // AWS VPC Flow Log default (v2) format — 14 fields, specific enough not to collide below.
+  if (isAwsFlowLogLine(t.split(/\r\n|\r|\n/, 1)[0] ?? "")) return "awsflowlog";
+
+  // Linux/Unix shell history — by filename, or the bash `#<epoch>`/zsh extended-history signature.
   if (looksLikeBashHistory(filename, t)) return "bashhistory";
 
-  // Email artifact (.eml RFC 822 header block, or a best-effort .msg) — checked before the
-  // CSV/log fallback so a header-block email isn't mistaken for a line-oriented log.
+  // Email artifact (.eml RFC 822 header, or a best-effort .msg) — before the CSV/log fallback.
   if (isEmail(filename, t)) return "email";
 
   // MemProcFS `findevil` report — a space-separated finding table (# PID Process Type Address Desc).
@@ -680,8 +684,7 @@ export function detectImportKind(filename: string, text: string): ImportKind {
   if (looksLikeMemprocfsFindevil(t)) return "memory";
 
   // Volatility 3 TEXT/grid renderer (the default `vol <plugin>` output, no -r json) — a banner +
-  // TAB-separated table. Checked before the CSV/log fallback (it's tab-, not comma-separated, and
-  // the interleaved hexdump/disasm would otherwise be mistaken for a generic log).
+  // TAB-separated table; checked before the CSV/log fallback so the hexdump/disasm isn't mistaken for a generic log.
   if (looksLikeVolatilityText(t)) return "memory";
 
   // Snort / Suricata "fast" alert log (`MM/DD-HH:MM:SS [**] [gid:sid:rev] … [Priority: N]`) — a real
@@ -690,21 +693,13 @@ export function detectImportKind(filename: string, text: string): ImportKind {
   if (looksLikeSnort(t)) return "snort";
 
   // Cisco ASA firewall syslog (`%ASA-#-######: Built/Teardown/Deny …`) — telemetry, not a
-  // detection feed, but a well-known deterministic grammar; checked before the generic log
-  // fallback so it's parsed without an AI call and without the year-less-timestamp guessing risk.
+  // detection feed, but a well-known deterministic grammar; parsed without an AI call or year-guessing.
   if (looksLikeCiscoAsa(t)) return "asa";
 
-  // Apache/Nginx/Squid combined access log (web server or forward-proxy access log) — checked
-  // before the generic log fallback so it's parsed deterministically instead of relying on AI
-  // line-triage, which silently drops rare/high-signal lines on a large, mostly-benign real log
-  // (see logAggregate.ts's truncation-bias fix for the general case; this importer sidesteps it
-  // entirely for the two most common web/proxy formats).
+  // Apache/Nginx/Squid combined access log (web server or forward-proxy access log) — checked before the generic log fallback so it's parsed deterministically instead of relying on AI line-triage, which silently drops rare/high-signal lines on a large, mostly-benign real log (see logAggregate.ts's truncation-bias fix for the general case; this importer sidesteps it entirely for the two most common web/proxy formats).
   if (looksLikeCombinedLog(filename, t)) return "combinedlog";
 
-  // Plain Linux/Unix syslog (RFC 5424 / RFC 3164) — telemetry, parsed deterministically instead of
-  // sent to the AI line-triage, which silently drops the rare high-signal line (e.g. a secret spilled
-  // into a one-off syslog message) on a large, mostly-benign host log. Checked after ASA (also
-  // syslog-framed but claimed by its `%ASA` tag) and combined-log, before the generic log fallback.
+  // Plain Linux/Unix syslog (RFC 5424 / RFC 3164) — telemetry, parsed deterministically instead of sent to the AI line-triage, which silently drops the rare high-signal line (e.g. a secret spilled into a one-off syslog message) on a large, mostly-benign host log. Checked after ASA (also syslog-framed but claimed by its `%ASA` tag) and combined-log, before the generic log fallback.
   if (looksLikeSyslog(t)) return "syslog";
 
   // YARA CLI scan output (`<Rule> [tags] [meta] <file>` + `-s` `0xOFF:$id:` lines) — a real detector
@@ -713,6 +708,11 @@ export function detectImportKind(filename: string, text: string): ImportKind {
   // above (e.g. a BSD syslog line), so those claim first. (The external-tools run path sets the kind
   // directly and never relies on this.)
   if (looksLikeYara(t)) return "yara";
+
+  // A full-disk-imaging tool's own acquisition/verification log (FTK Imager's `.txt` sidecar, or
+  // dc3dd's own `log=`/`hlog=` output, #1102) — structured free text, checked before the generic
+  // log fallback so it's parsed deterministically instead of via AI log-triage.
+  if (isDiskImageLog(t)) return "diskimagelog";
 
   // Tabular (CSV / EZ / Plaso / Hayabusa-csv / M365-csv) vs a line-oriented log.
   const csvKind = detectCsv(t, filename);

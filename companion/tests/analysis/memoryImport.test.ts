@@ -739,13 +739,18 @@ describe("parseMemory — MemProcFS yara.csv", () => {
     expect(r.total).toBe(2);
   });
 
-  it("maps every row to Critical/T1055 with process and memory context in the description", () => {
+  // #1148: severity/MITRE come from the matched rule's own content, never from where it was
+  // found — MemProcFS's yara.csv has no score/threat_level metadata, so severityFromMeta({})
+  // is a deterministic Medium; this fixture's own Tags column is empty, so mitre is []. This
+  // REPLACES the old blanket-Critical/T1055 assertion, which was itself the overclaim #1148
+  // exists to fix (a location-based injection claim with no rule-content signal).
+  it("grades every row Medium with no invented MITRE technique, and includes process/memory context", () => {
     const r = parseMemory(YARA_CSV);
     expect(r.events.length).toBeGreaterThan(0);
-    expect(r.events.every((e) => e.severity === "Critical")).toBe(true);
-    expect(r.events.every((e) => e.mitreTechniques?.includes("T1055"))).toBe(true);
+    expect(r.events.every((e) => e.severity === "Medium")).toBe(true);
+    expect(r.events.every((e) => (e.mitreTechniques ?? []).length === 0)).toBe(true);
     expect(r.events.some((e) => e.description.includes("svchost.exe"))).toBe(true);
-    expect(r.events.some((e) => e.description.includes("Virtual Memory (VAD)"))).toBe(true);
+    expect(r.events.some((e) => e.description.includes("private allocation"))).toBe(true);
   });
 
   it("aggregates matches from the same process+base-address into one event with count", () => {
@@ -770,6 +775,77 @@ describe("parseMemory — MemProcFS yara.csv", () => {
   it("reports injected = total rows (all are YARA hits)", () => {
     const r = parseMemory(YARA_CSV);
     expect(r.injected).toBe(2);
+  });
+
+  it("extracts a MITRE technique only when the row's own Tags column carries one", () => {
+    // A YARA tag is a legal identifier (letters/digits/underscore only, no dot, no space) — this
+    // fixture uses a real, syntactically valid single tag, not a synthetic "T1055.001 injection".
+    const csv = [
+      "MatchIndex,Tags,Description,RuleAuthor,RuleVersion,MemoryType,MemoryTag,MemoryBaseAddress,ObjectAddress,PID,ProcessName,ProcessPath,CommandLine,User,Created,AddressCount,String0,Address0",
+      '0,"T1055","","","","Virtual Memory (VAD)","HEAP-00",1,"",100,evil.exe,C:\\evil.exe,"",SYSTEM,"2026-06-03 08:31:44",1,x,1',
+    ].join("\n");
+    const r = parseMemory(csv);
+    expect(r.events[0].mitreTechniques).toContain("T1055");
+  });
+
+  it("never claims a process lead for a Physical Memory match with no PID/ProcessName", () => {
+    const csv = [
+      "MatchIndex,Tags,Description,RuleAuthor,RuleVersion,MemoryType,MemoryTag,MemoryBaseAddress,ObjectAddress,PID,ProcessName,ProcessPath,CommandLine,User,Created,AddressCount,String0,Address0",
+      '0,"","","","","Physical Memory","","","",,,,"","","2026-06-03 08:31:44",1,x,1',
+    ].join("\n");
+    const r = parseMemory(csv);
+    expect(r.events[0].description).not.toMatch(/\(PID\s*\)/);
+    expect(r.events[0].description).toContain("No process or address-space context");
+  });
+
+  it("does not collapse two distinct Physical Memory rows with identical/absent tags into one event", () => {
+    const csv = [
+      "MatchIndex,Tags,Description,RuleAuthor,RuleVersion,MemoryType,MemoryTag,MemoryBaseAddress,ObjectAddress,PID,ProcessName,ProcessPath,CommandLine,User,Created,AddressCount,String0,Address0",
+      '0,"","","","","Physical Memory","","","",,,,"","","2026-06-03 08:31:44",1,x,1',
+      '1,"","","","","Physical Memory","","","",,,,"","","2026-06-03 08:31:44",1,y,2',
+    ].join("\n");
+    const r = parseMemory(csv);
+    expect(r.events).toHaveLength(2);
+  });
+
+  // Codex code-review finding: MemProcFS's own MatchIndex resets per YARA scan context, so two
+  // DISTINCT physical matches from different contexts within the SAME export can carry the same
+  // index — the discriminator must be this parse's own row position, never the CSV's own field.
+  it("does not collapse two Physical Memory rows sharing the same MatchIndex value", () => {
+    const csv = [
+      "MatchIndex,Tags,Description,RuleAuthor,RuleVersion,MemoryType,MemoryTag,MemoryBaseAddress,ObjectAddress,PID,ProcessName,ProcessPath,CommandLine,User,Created,AddressCount,String0,Address0",
+      '0,"","","","","Physical Memory","","","",,,,"","","2026-06-03 08:31:44",1,x,1',
+      '0,"","","","","Physical Memory","","","",,,,"","","2026-06-03 08:31:44",1,y,2',
+    ].join("\n");
+    const r = parseMemory(csv);
+    expect(r.events).toHaveLength(2);
+  });
+
+  it("still aggregates two Virtual Memory (VAD) rows at the same process+base-address into one event", () => {
+    // Regression: the aggKey fix for Physical Memory must not touch this already-working, already
+    // -tested behavior for classes that DO have a real base address.
+    const r = parseMemory(YARA_CSV);
+    expect(r.events).toHaveLength(1);
+    expect(r.events[0].count ?? 1).toBe(2);
+  });
+
+  it("says 'typically a file object' for an Object Memory match, never a process lead", () => {
+    const csv = [
+      "MatchIndex,Tags,Description,RuleAuthor,RuleVersion,MemoryType,MemoryTag,MemoryBaseAddress,ObjectAddress,PID,ProcessName,ProcessPath,CommandLine,User,Created,AddressCount,String0,Address0",
+      '0,"","","","","Object Memory","\\some\\file.dat","","dead",,,,"","","2026-06-03 08:31:44",1,x,1',
+    ].join("\n");
+    const r = parseMemory(csv);
+    expect(r.events[0].description).toContain("file object");
+    expect(r.events[0].description).not.toMatch(/\(PID\s*\)/);
+  });
+
+  it("discloses the kernel-mode disclaimer for a Virtual Memory (PTE) match without claiming exclusivity", () => {
+    const csv = [
+      "MatchIndex,Tags,Description,RuleAuthor,RuleVersion,MemoryType,MemoryTag,MemoryBaseAddress,ObjectAddress,PID,ProcessName,ProcessPath,CommandLine,User,Created,AddressCount,String0,Address0",
+      '0,"","","","","Virtual Memory (PTE)","","1",,100,driver.sys,C:\\driver.sys,"",SYSTEM,"2026-06-03 08:31:44",1,x,1',
+    ].join("\n");
+    const r = parseMemory(csv);
+    expect(r.events[0].description).toContain("does not establish exclusive process ownership");
   });
 });
 
@@ -976,5 +1052,75 @@ describe("parseMemory — MemProcFS timeline_all.csv", () => {
     ].join("\n");
     const r = parseMemory(csv);
     expect(r.total).toBe(3);
+  });
+});
+
+describe("handle-table wiring (#933 item 13)", () => {
+  function handleRows(n: number): object[] {
+    return Array.from({ length: n }, () => ({
+      PID: 100,
+      Process: "chrome.exe",
+      Offset: "0x1",
+      Type: "File",
+      GrantedAccess: "0x1",
+      Name: "\\Device\\HarddiskVolume2\\file.txt",
+    }));
+  }
+
+  // Codex code-review finding H2: `handleRows.push(...t.rows)` passed every row as function
+  // arguments and threw a RangeError once the table exceeded the engine's own argument-count
+  // limit, well before handleOwnershipFacts()'s own caps ever ran.
+  it("does not throw on a handle table too large to spread as call arguments", () => {
+    const json = JSON.stringify({ "windows.handles.Handles": handleRows(150_000) });
+    expect(() => parseMemory(json, { filename: "windows.handles.json" })).not.toThrow();
+  });
+
+  it("emits an Info-severity event with no IOC for a plain handle row", () => {
+    const json = JSON.stringify({
+      "windows.handles.Handles": [
+        { PID: "100", Process: "evil.exe", Offset: "0x1", Type: "Process", Name: "lsass.exe Pid 200" },
+      ],
+      "windows.pslist.PsList": [
+        { PID: 100, ImageFileName: "evil.exe" },
+        { PID: 200, ImageFileName: "lsass.exe" },
+      ],
+    });
+    const r = parseMemory(json, { filename: "windows.handles.json" });
+    const handleEvents = r.events.filter((e) => e.description.includes("holds an open handle"));
+    expect(handleEvents).toHaveLength(1);
+    expect(handleEvents[0].severity).toBe("Info");
+  });
+});
+
+describe("PE-sieve JSON report wiring (#933 item 15)", () => {
+  it("parseMemory() routes a PE-sieve report to the PE-sieve parser end to end", () => {
+    const json = JSON.stringify({
+      pid: 42,
+      scanned: {
+        total: 1,
+        skipped: 0,
+        errors: 0,
+        modified: {
+          total: 1,
+          patched: 1,
+          iat_hooked: 0,
+          replaced: 0,
+          hdr_modified: 0,
+          implanted_pe: 0,
+          implanted_shc: 0,
+          unreachable_file: 0,
+          other: 0,
+        },
+      },
+      scans: [
+        { code_scan: { module: "1", module_file: "evil.dll", status: 1, patches: 3, scanned_sections: 1 } },
+      ],
+    });
+    const r = parseMemory(json, { filename: "pe-sieve-report.json" });
+    expect(r.format).toBe("pe-sieve");
+    expect(r.tool).toBe("PE-sieve");
+    const flagged = r.events.find((e) => e.description.includes("code_scan"));
+    expect(flagged?.severity).toBe("High");
+    expect(flagged?.mitreTechniques).toContain("T1055");
   });
 });

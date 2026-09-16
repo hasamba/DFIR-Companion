@@ -16,6 +16,8 @@ import { gcpBlockSchema } from "./canonicalGcp.js";
 import { gcpServiceAccountJoinBlockSchema } from "./canonicalGcpServiceAccountJoin.js";
 import { loggingChangeBlockSchema } from "./canonicalLogging.js";
 import { acquisitionCoverageBlockSchema } from "./canonicalAcquisition.js";
+import { diskImageAcquisitionSchema } from "./canonicalDiskImage.js";
+import { sampleLineageBlockSchema } from "./canonicalSampleLineage.js";
 import {
   driveAccessBlockSchema,
   driveExposureBlockSchema,
@@ -26,6 +28,20 @@ import {
 import { mailboxChainBlockSchema } from "./canonicalMailbox.js";
 import { memoryRunBlockSchema } from "./canonicalMemoryRun.js";
 import { gwsLifecycleBlockSchema } from "./canonicalGwsLifecycle.js";
+import { recoveredFragmentBlockSchema } from "./canonicalRecoveredFragment.js";
+import { decodedStringBlockSchema } from "./canonicalDecodedString.js";
+import { capaMatchBlockSchema, capaCompositeLeadBlockSchema } from "./canonicalCapaMatch.js";
+import {
+  olevbaFindingBlockSchema,
+  olevbaStompingLeadBlockSchema,
+  olevbaCompoundLeadBlockSchema,
+} from "./canonicalOlevbaFinding.js";
+import { sqliteRowStateBlockSchema } from "./canonicalSqliteRowState.js";
+import { mobileRequestedPermissionBlockSchema } from "./canonicalMobileRequestedPermission.js";
+import { exporterFlowBlockSchema, exporterFlowBeaconLeadBlockSchema } from "./canonicalExporterFlow.js";
+import { macFsEventBlockSchema } from "./canonicalMacFsEvent.js";
+import { spotlightUsageBlockSchema } from "./canonicalSpotlightUsage.js";
+import { macLoginItemBlockSchema } from "./canonicalMacLoginItemTarget.js";
 
 export const CANONICAL_EVENT_SCHEMA_VERSION = "1.0.0" as const;
 /** The producer stamped on an envelope DERIVED from legacy flat fields at the read boundary. */
@@ -131,9 +147,7 @@ export const canonicalEventEnvelopeSchema = z.object({
       logonType: z.number().int().nonnegative().optional(),
       protocol: z.string().optional(),
       mechanism: z.string().optional(),
-      // The credential the call was signed with (an AWS access key id, an Identity Center
-      // credentialId) — a credential, not a session; and the identity that issued the session
-      // (an AWS session issuer ARN). Both from #931 item 5.
+      // The credential the call was signed with (an AWS access key id/Identity Center credentialId), not a session; and the identity that issued the session (an AWS session issuer ARN). Both from #931 item 5.
       credentialId: z.string().optional(),
       issuer: z.string().optional(),
     })
@@ -165,40 +179,42 @@ export const canonicalEventEnvelopeSchema = z.object({
     })
     .optional(),
   process: canonicalProcessSchema.optional(),
-  // A TLS relationship row (tlsGraphRows.ts, #997): cert/name/client-cert/JA3 node one sensor's upload showed.
-  tlsGraph: tlsGraphBlockSchema.optional(),
-  // An Entra privilege-path summary row (entraPrivilegePath.ts, #973); the block lives in canonicalEntra.ts.
-  entra: entraPathBlockSchema.optional(),
-  // An AWS credential-lineage summary row (awsLineage.ts, #979); the block lives in canonicalAwsLineage.ts.
-  awsLineage: awsLineageBlockSchema.optional(),
-  // Compute-lifecycle summary rows (#931 item 8; Azure/GCP are the second half, #1066).
-  awsCompute: awsComputeBlockSchema.optional(),
+  tlsGraph: tlsGraphBlockSchema.optional(), // tlsGraphRows.ts, #997: cert/name/client-cert/JA3 node one sensor's upload showed
+  entra: entraPathBlockSchema.optional(), // entraPrivilegePath.ts, #973; block in canonicalEntra.ts
+  awsLineage: awsLineageBlockSchema.optional(), // awsLineage.ts, #979; block in canonicalAwsLineage.ts
+  awsCompute: awsComputeBlockSchema.optional(), // compute-lifecycle summary rows (#931 item 8; Azure/GCP are the second half, #1066)
   azureCompute: azureComputeBlockSchema.optional(),
   azureVmssCompute: azureVmssComputeBlockSchema.optional(),
   gcpCompute: gcpComputeBlockSchema.optional(),
-  // A GCP audit row's identity, binding delta, credential fact, key step or workload attachment (gcpRow.ts, #931 item 12).
-  gcp: gcpBlockSchema.optional(),
-  // A GCP per-service-account join row (gcpServiceAccountJoin.ts, #1065): every fact this export
-  // states about one service account, joined by unique id when present, else email.
-  gcpServiceAccountJoin: gcpServiceAccountJoinBlockSchema.optional(),
-  // A logging-configuration row's state (loggingChange.ts, #931 item 14); the block lives in canonicalLogging.ts.
-  loggingChange: loggingChangeBlockSchema.optional(),
+  gcp: gcpBlockSchema.optional(), // gcpRow.ts, #931 item 12: identity, binding delta, credential fact, key step, workload attachment
+  gcpServiceAccountJoin: gcpServiceAccountJoinBlockSchema.optional(), // gcpServiceAccountJoin.ts, #1065: per-service-account facts joined by id or email
+  loggingChange: loggingChangeBlockSchema.optional(), // loggingChange.ts, #931 item 14; block in canonicalLogging.ts
   acquisitionCoverage: acquisitionCoverageBlockSchema.optional(), // kapeAcquisitionLog.ts, #932 item 1; block in canonicalAcquisition.ts
-  // A mailbox-chain summary row (mailboxChain.ts, #975); the block lives in canonicalMailbox.ts.
-  mailboxChain: mailboxChainBlockSchema.optional(),
-  // A memory run-envelope row (memoryRunEnvelope.ts, #1016); the block lives in canonicalMemoryRun.ts.
-  memoryRun: memoryRunBlockSchema.optional(),
-  // A Google Workspace OAuth-lifecycle summary row (gwsOAuthLifecycle.ts, #983); the block lives in canonicalGwsLifecycle.ts.
-  gwsLifecycle: gwsLifecycleBlockSchema.optional(),
-  // Google Drive sharing / access rows and Takeout rows (#931 item 11); the blocks live in canonicalGwsDrive.ts.
-  driveSharing: driveSharingBlockSchema.optional(),
+  diskImageAcquisition: diskImageAcquisitionSchema.optional(), // diskImageAcquisitionLog.ts, #1102; block in canonicalDiskImage.ts
+  sampleLineage: sampleLineageBlockSchema.optional(), // sandboxImport.ts, #932 item 8; block in canonicalSampleLineage.ts
+  recoveredFragment: recoveredFragmentBlockSchema.optional(), // bulkExtractorUrlImport.ts, #932 item 4; block in canonicalRecoveredFragment.ts
+  decodedString: decodedStringBlockSchema.optional(), // flossResultImport.ts, #932 item 5; block in canonicalDecodedString.ts
+  capaMatch: capaMatchBlockSchema.optional(), // capaResultImport.ts, #932 item 6; block in canonicalCapaMatch.ts
+  capaCompositeLead: capaCompositeLeadBlockSchema.optional(), // capaResultImport.ts, #932 item 6
+  olevbaFinding: olevbaFindingBlockSchema.optional(), // olevbaResultImport.ts, #932 item 7
+  sqliteRowState: sqliteRowStateBlockSchema.optional(), // sqliteRowStateImport.ts, #932 item 8
+  mobileRequestedPermission: mobileRequestedPermissionBlockSchema.optional(), // mobsfPermissionImport.ts, #932 item 9
+  exporterFlow: exporterFlowBlockSchema.optional(), // exporterFlowImport.ts, #932 item 10
+  exporterFlowBeaconLead: exporterFlowBeaconLeadBlockSchema.optional(), // exporterFlowImport.ts, #932 item 10
+  macFsEvent: macFsEventBlockSchema.optional(), // macFsEventImport.ts, #933 item 9
+  spotlightUsage: spotlightUsageBlockSchema.optional(), // macSpotlightUsageImport.ts, #933 item 10
+  macLoginItem: macLoginItemBlockSchema.optional(), // macLoginItemImport.ts, #1013
+  olevbaStompingLead: olevbaStompingLeadBlockSchema.optional(), // olevbaResultImport.ts, #932 item 7
+  olevbaCompoundLead: olevbaCompoundLeadBlockSchema.optional(), // olevbaResultImport.ts, #932 item 7
+  mailboxChain: mailboxChainBlockSchema.optional(), // mailboxChain.ts, #975; block in canonicalMailbox.ts
+  memoryRun: memoryRunBlockSchema.optional(), // memoryRunEnvelope.ts, #1016; block in canonicalMemoryRun.ts
+  gwsLifecycle: gwsLifecycleBlockSchema.optional(), // gwsOAuthLifecycle.ts, #983; block in canonicalGwsLifecycle.ts
+  driveSharing: driveSharingBlockSchema.optional(), // Drive sharing/access + Takeout (#931 item 11); blocks in canonicalGwsDrive.ts
   driveAccess: driveAccessBlockSchema.optional(),
   takeout: takeoutBlockSchema.optional(),
   takeoutLifecycle: takeoutLifecycleBlockSchema.optional(),
-  // A Drive document-exposure join row (gwsDriveExposure.ts, #1064): a broadening sharing change joined to the access records after it, by tenant + doc_id.
-  driveExposure: driveExposureBlockSchema.optional(),
-  // A TLS record's own reading (tlsSession.ts, #933 item 6): the client's SNI, the protocol facts
-  // the sensor saw, the certificate the server presented, the sensor's chain check, the observer.
+  driveExposure: driveExposureBlockSchema.optional(), // gwsDriveExposure.ts, #1064: sharing change joined to later access, by tenant + doc_id
+  // A TLS record's own reading (tlsSession.ts, #933 item 6): SNI, protocol facts, cert, chain check, observer.
   tls: z
     .object({
       sni: z.string().optional(),
@@ -228,8 +244,7 @@ export const canonicalEventEnvelopeSchema = z.object({
           notBefore: z.string().optional(),
           notAfter: z.string().optional(),
           ca: z.boolean().optional(),
-          // The identity was filled from the upload's x509 record by FUID (tlsGraphJoin.ts, #997),
-          // or why that join was not made.
+          // The identity was filled from the upload's x509 record by FUID (tlsGraphJoin.ts, #997), or why that join was not made.
           identityFrom: z.literal("x509 record").optional(),
           x509Join: tlsJoinNoteSchema.optional(),
         })
@@ -267,20 +282,14 @@ export const canonicalEventEnvelopeSchema = z.object({
       records: z.number().int().positive(),
     })
     .optional(),
-  // A macOS quarantine record's own reading (quarantineRecord.ts, #933 item 7) and what the same
-  // upload's file-attribute records establish about its local file (quarantineJoin.ts, #1037); the attribute row's own block beside it. Both live in canonicalQuarantine.ts.
+  // A macOS quarantine record (quarantineRecord.ts, #933 item 7) and its file-attribute join (quarantineJoin.ts, #1037); both blocks live in canonicalQuarantine.ts.
   quarantine: quarantineBlockSchema.optional(),
   quarantineAttribute: quarantineAttributeBlockSchema.optional(),
-  // A Defender Operational record's own reading (defenderEvents.ts): disposition, threat, every
-  // flagged resource. The block lives in canonicalDefender.ts; defenderEpisodes.ts reads it (#964).
+  // A Defender Operational record's own reading (defenderEvents.ts): disposition, threat, every flagged resource. The block lives in canonicalDefender.ts; defenderEpisodes.ts reads it (#964).
   defender: defenderBlockSchema.optional(),
-  // A LEAPP row's origin reading (mobileOriginRegistry.ts, #988): the facets its columns
-  // established, the registry coverage, the device / account the row names.
+  // A LEAPP row's origin reading (mobileOriginRegistry.ts, #988): the facets its columns established, the registry coverage, the device / account the row names.
   mobile: mobileBlockSchema.optional(),
-  // What the memory image the row came from says about itself (memoryImageFacts.ts, #933 item 12):
-  // the kernel SystemTime recovered from the image (never "captured at"), the layer stack, the
-  // dump kind for a known layer class, the crash-dump type as rendered, the symbol table. Only
-  // from a windows.info / windows.crashinfo table in the SAME upload.
+  // What the memory image says about itself (memoryImageFacts.ts, #933 item 12): kernel SystemTime (never "captured at"), layer stack, dump kind/type, symbol table — from windows.info/crashinfo in the SAME upload only.
   image: z
     .object({
       systemTime: z.string().optional(),
@@ -291,8 +300,7 @@ export const canonicalEventEnvelopeSchema = z.object({
       layers: z.array(z.string()),
     })
     .optional(),
-  // A DNS record's reading — the endpoint's own records (dnsRecord.ts) or a sensor's view with
-  // the leads one upload establishes (dnsWireRows.ts, #996); the block lives in canonicalDns.ts.
+  // A DNS record's reading — the endpoint's own records (dnsRecord.ts) or a sensor's view with the leads one upload establishes (dnsWireRows.ts, #996); the block lives in canonicalDns.ts.
   dns: dnsBlockSchema.optional(),
   file: z
     .object({
@@ -300,8 +308,7 @@ export const canonicalEventEnvelopeSchema = z.object({
       name: z.string().optional(),
       sha256: z.string().optional(),
       md5: z.string().optional(),
-      // The rights a Security object-access record carries (objectAccess.ts, #930 item 7): the
-      // mask as logged, the rights by bit, their classes, the object type and the handle.
+      // The rights a Security object-access record carries (objectAccess.ts, #930 item 7): the mask as logged, the rights by bit, their classes, the object type and the handle.
       access: z
         .object({
           mask: z.string().optional(),
@@ -419,10 +426,7 @@ export type CreateCanonicalEventInput = Omit<CanonicalNormalizedFields, "time"> 
   rawFieldMap?: Record<string, string[]>;
   confidenceMap?: Record<string, CanonicalFieldProvenance["confidence"]>;
   derivationMap?: Record<string, string>;
-  // Which raw record a field came from when the envelope joins several (#993): a path prefix
-  // (`web.bodies.0`, `transfer.requests.1`) → that record's locator, which must be one of
-  // `evidence.rawRecords`. Every field under the prefix is attributed to it; the longest matching
-  // prefix wins; fields under no prefix keep the first record.
+  // Which raw record a field came from when the envelope joins several (#993): a path prefix (`web.bodies.0`, `transfer.requests.1`) → that record's locator, which must be one of `evidence.rawRecords`. Every field under the prefix is attributed to it; the longest matching prefix wins; fields under no prefix keep the first record.
   locatorMap?: Record<string, string>;
 };
 
@@ -466,10 +470,7 @@ function normalizedPart(envelope: CanonicalEventEnvelope): CanonicalNormalizedFi
   return normalized;
 }
 
-// The records a normalized path is attributed to. An ANCESTOR entry (the longest `locatorMap`
-// prefix naming the path, matched on whole segments) replaces the first record; a DESCENDANT
-// entry (a prefix under the path — an array is one leaf, so `web.bodies.0.transfer` sits under
-// the leaf `web.bodies`) is added to it: the leaf then rests on every record that fed it.
+// The records a normalized path is attributed to. An ANCESTOR entry (the longest `locatorMap` prefix naming the path, matched on whole segments) replaces the first record; a DESCENDANT entry (a prefix under the path) is added to it — the leaf then rests on every record that fed it.
 function locatorsFor(path: string, locatorMap: Record<string, string>, first: string): string[] {
   let best = "";
   const under: string[] = [];
@@ -760,8 +761,7 @@ function legacyCanonical(event: ForensicEvent): CanonicalEventEnvelope {
 
 export function upgradeForensicEvent(event: ForensicEvent): ForensicEvent {
   if (event.canonical?.schemaVersion === CANONICAL_EVENT_SCHEMA_VERSION) return event;
-  // A future major/minor version may contain meaning this build does not understand. Preserve it
-  // verbatim instead of silently downgrading it; explicit version migrations are registered here.
+  // A future major/minor version may contain meaning this build does not understand. Preserve it verbatim instead of silently downgrading it; explicit version migrations are registered here.
   if (event.canonical) return event;
   return { ...event, canonical: legacyCanonical(event) };
 }

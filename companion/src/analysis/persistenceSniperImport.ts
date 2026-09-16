@@ -65,6 +65,30 @@ type Row = Record<string, unknown>;
 // actually wrong (another dot, or a continuing word character from a longer/unlisted extension) and
 // accepts everything else, with no allow-list to keep enumerating.
 
+// The same 3-column signature velociraptorImport.ts's own row classifier uses (Technique +
+// Classification + "Access Gained" is this module's own fixed column set, not reused by any other
+// artifact) — extracted so collectionGenerationStore.ts (#1108) can pick out exactly the
+// PersistenceSniper rows inside a possibly-mixed upload, using the SAME definition rather than a
+// second copy that could drift from the live-dispatch classifier.
+export function isPersistenceSniperRow(row: Row): boolean {
+  return (
+    getCI(row, "Technique") != null &&
+    getCI(row, "Classification") != null &&
+    getCI(row, "Access Gained") != null
+  );
+}
+
+/** The bare {technique, path, value} fact a collection-generation record freezes (#1108) — the
+ * same three field reads mapPersistenceSniper uses below, with no MITRE/IOC/severity synthesis:
+ * the generation ledger wants the raw fact, not a derived event. */
+export function persistenceEntryFact(row: Row): { technique: string; path: string; value: string } {
+  return {
+    technique: str(getCI(row, "Technique")).trim(),
+    path: str(getCI(row, "Path")).trim(),
+    value: str(getCI(row, "Value")).trim(),
+  };
+}
+
 export function mapPersistenceSniper(
   row: Row,
   host: string,

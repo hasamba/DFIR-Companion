@@ -14,6 +14,7 @@ import { parseKapeCsv, type KapeImportOptions } from "../analysis/kapeImport.js"
 import { parseCybertriage, type CybertriageImportOptions } from "../analysis/cybertriageImport.js";
 import { parseM365Audit, type M365ImportOptions } from "../analysis/m365Import.js";
 import { registerLeappImportRoute } from "./importLeapp.js";
+import { registerMacLoginItemImportRoute } from "./importMacLoginItem.js";
 import { parseCloudTrail, type AwsImportOptions } from "../analysis/awsImport.js";
 import { parseCloudActivity, type CloudActivityImportOptions } from "../analysis/cloudActivityImport.js";
 import { parsePlasoCsv, type PlasoImportOptions } from "../analysis/plasoImport.js";
@@ -54,15 +55,9 @@ import { beginImportSection, type ImportSection } from "./importSection.js";
 import { sniffImportFileHead, readImportFileBounded } from "./importFileHead.js";
 
 /**
- * Evidence import domain: unified and per-format imports, import metadata, undo/redo, and evidence
- * drop-folder routes.
+ * Evidence import domain: unified and per-format imports, import metadata, undo/redo, and evidence drop-folder routes.
  *
- * The drop-folder poller and Velociraptor collector reuse createApp's dispatch/synthesis machinery,
- * exposed here through RouteContext:
- *   dispatchImport, demoteForensicForCase, resynthesizeInBackground, pushImportCheckpoint,
- *   applyWhitelistToCase, applyNsrlToCase, applyDeobfuscationToCase, moveDropFile (stable methods),
- * plus live watcher maps and importer/tool configuration. CSV/log gate on the synthesis provider,
- * preserving text analysis on OCR-less installations.
+ * The drop-folder poller and Velociraptor collector reuse createApp's dispatch/synthesis machinery, exposed here through RouteContext: dispatchImport, demoteForensicForCase, resynthesizeInBackground, pushImportCheckpoint, applyWhitelistToCase, applyNsrlToCase, applyDeobfuscationToCase, moveDropFile (stable methods), plus live watcher maps and importer/tool configuration. CSV/log gate on the synthesis provider, preserving text analysis on OCR-less installations.
  */
 export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   const {
@@ -1736,6 +1731,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   // POST /cases/:id/import-leapp lives in routes/importLeapp.ts (#932 item 12); registered here so
   // its stack position is unchanged (route-inventory.json is order-sensitive).
   registerLeappImportRoute(app, ctx, settleDeps);
+  registerMacLoginItemImportRoute(app, ctx, settleDeps);
 
   app.post("/cases/:id/import-m365", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });

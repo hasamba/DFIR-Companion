@@ -6,6 +6,7 @@ import {
   gateRefutedSeeds,
   EVIDENCE_CLASS_SOURCES,
   type EvidenceClass,
+  type AttestedEvidenceClass,
 } from "../../src/analysis/refutationGate.js";
 import { buildHostAliasIndex } from "../../src/analysis/hostAlias.js";
 import {
@@ -402,5 +403,80 @@ describe("hypothesis.ts / gateRefutedSeeds — code-review fixes (#1110)", () =>
       hostCtx,
     );
     expect(out[0].subjectScope).toEqual({ kind: "unknown" });
+  });
+});
+
+// #1111: an analyst-attested EvidenceClass can stand in for automatic detection, with a mandatory
+// disclosure when it is the one actually keeping a refutation standing.
+describe("gateRefutedSeeds — analyst attestation (#1111)", () => {
+  // File-system and persistence coverage, no execution history — same shape as the INC-2026-003
+  // fixture above, redeclared here since that one is scoped to its own describe block. Host-stamped
+  // (#1110) so a caseWide claim's own intersection-across-known-hosts has something to check against.
+  const collection = [
+    ev("a", ["Velociraptor"], "Windows.NTFS.MFT", "host-1"),
+    ev("b", ["Velociraptor"], "Windows.Forensics.PersistenceSniper", "host-1"),
+    ev("c", ["Velociraptor"], "Generic.System.Pstree", "host-1"),
+  ];
+
+  const attestation = (over: Partial<AttestedEvidenceClass> = {}): AttestedEvidenceClass => ({
+    confirmedBy: "a.analyst@example.invalid",
+    confirmedAt: "2026-08-13T09:41:00Z",
+    reason: "Reviewed the full Prefetch and Sysmon export against the incident window",
+    ...over,
+  });
+
+  it("an attestation lets a refutation stand that automatic detection alone would have withheld", () => {
+    const attested = new Map([["execution", attestation()] as const]);
+    const { seeds, downgraded } = gateRefutedSeeds(
+      [seed("The payload never ran on the host")],
+      [], // no automatic detection at all
+      undefined,
+      attested,
+    );
+    expect(seeds[0].status).toBe("refuted");
+    expect(downgraded).toHaveLength(0);
+  });
+
+  it("discloses that an attestation, not automatic detection, is what kept the refutation standing", () => {
+    const attested = new Map([
+      ["execution", attestation({ confirmedBy: "b.reviewer@example.invalid" })] as const,
+    ]);
+    const { seeds } = gateRefutedSeeds(
+      [seed("The payload never ran on the host")],
+      [],
+      undefined,
+      attested,
+    );
+    expect(seeds[0].description).toContain("analyst-attested coverage");
+    expect(seeds[0].description).toContain("b.reviewer@example.invalid");
+    expect(seeds[0].description).toContain("execution");
+  });
+
+  it("does NOT disclose anything when automatic detection alone already covers the claim", () => {
+    const attested = new Map([["execution", attestation()] as const]);
+    const { seeds } = gateRefutedSeeds(
+      [seed("The actor installed a service for persistence")],
+      collection, // covers persistence, not execution
+      undefined,
+      attested, // execution is attested but not required by THIS claim
+    );
+    expect(seeds[0].description).toBe("");
+  });
+
+  it("still downgrades when neither automatic detection nor attestation covers the required class", () => {
+    const attested = new Map([["network", attestation()] as const]); // wrong class attested
+    const { seeds, downgraded } = gateRefutedSeeds(
+      [seed("The payload never ran on the host")],
+      [],
+      undefined,
+      attested,
+    );
+    expect(seeds[0].status).toBe("unknown");
+    expect(downgraded).toHaveLength(1);
+  });
+
+  it("defaults to no attestations when the fourth argument is omitted (backward compatible)", () => {
+    const { seeds } = gateRefutedSeeds([seed("The payload never ran on the host")], collection);
+    expect(seeds[0].status).toBe("unknown");
   });
 });

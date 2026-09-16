@@ -22,24 +22,15 @@ export type { PipelineOptions } from "./ai/pipelineOptions.js";
 import { withRetry } from "./ai/retry.js";
 import type { ImportContext } from "./ingest/importContext.js";
 
-/**
- * The argument list of an importer, minus the ImportContext it takes first (#384).
- *
- * Every import method below is a one-line delegation to src/analysis/ingest/. Deriving the
- * parameters rather than restating them means the two cannot drift: change an importer's signature
- * and the delegation stops compiling, which is the property a hand-copied signature would not have.
- */
+/** The argument list of an importer, minus the ImportContext it takes first (#384). Every import method below is a one-line delegation to src/analysis/ingest/ — deriving the parameters rather than restating them means the two cannot drift: change an importer's signature and the delegation stops compiling, which a hand-copied signature would not have. */
 type ImporterArgs<F> = F extends (ctx: ImportContext, ...args: infer R) => unknown ? R : never;
 /** The same trick for the AI extraction calls, which take an ExtractionContext first (#418). */
 type AiExtractionArgs<F> = F extends (ctx: ExtractionContext, ...args: infer R) => unknown ? R : never;
 /** Ditto for the calls that take the widest context of all — synthesis and its two consumers. */
 type AiArgs<F> = F extends (ctx: SynthesisContext, ...args: infer R) => unknown ? R : never;
-// The prompt registry moved to ai/prompts/ (#384). Imported for the pipeline's own use and
-// re-exported below, because 23 modules and the eval harness import these names from here.
+// The prompt registry moved to ai/prompts/ (#384). Imported for the pipeline's own use and re-exported below, because 23 modules and the eval harness import these names from here.
 export * from "./ai/prompts/index.js";
-// The AI-backed families extracted in #418. Each method below is a one-line delegation; the result
-// types moved with them and are re-exported here, because routes/reports/tests import them from
-// this module and the extraction is not supposed to be visible to callers.
+// The AI-backed families extracted in #418. Each method below is a one-line delegation; the result types moved with them and are re-exported here, because routes/reports/tests import them from this module and the extraction is not supposed to be visible to callers.
 import type { CaseReportContext } from "./ai/caseReports.js";
 import * as caseReports from "./ai/caseReports.js";
 import type { AnalystQueryContext } from "./ai/analystQueries.js";
@@ -87,33 +78,10 @@ export class AnalysisPipeline {
   // Lazily loaded from opts.kevStore so we don't block the constructor on disk I/O.
   private kevCatalogCache: KevCatalog | undefined;
 
-  /**
-   * The ONLY thing src/analysis/ingest/ ever receives (#384).
-   *
-   * The first cut passed `this` and let AnalysisPipeline satisfy ImportContext structurally,
-   * which meant `opts` and four methods had to become public — a narrow interface for importers
-   * bought at the cost of exposing the entire options bag to every OTHER consumer of the
-   * pipeline. A boundary that has to widen the class to exist is not much of a boundary.
-   *
-   * This adapter closes over the permitted operations instead, so class members stay private and
-   * importers see nothing beyond what ImportContext declares. `opts` is exposed through getters
-   * rather than a snapshot because the settings-reload path rebuilds live options in place; a
-   * copy taken at construction would go stale the first time an operator saved a setting.
-   *
-   * Down to three operations since #418 moved the two shared import tails — `noteEmptyImport` and
-   * `persistPlasoParsed` — into `ingest/importState.ts`, where their only callers already live.
-   */
+  /** The ONLY thing src/analysis/ingest/ ever receives (#384). Passing `this` would have made `opts` and four methods public just for importers; this adapter closes over the permitted operations instead, so class members stay private. `opts` is exposed through getters, not a snapshot — a copy at construction would go stale the first settings save. Down to three operations since #418 moved `noteEmptyImport`/`persistPlasoParsed` into `ingest/importState.ts`. */
   private readonly importCtx: ImportContext;
 
-  /**
-   * The same adapter idea, for the AI-backed families extracted in #418.
-   *
-   * One object, several narrower views of it: `ai/caseReports.ts` takes a CaseReportContext,
-   * `ai/analystQueries.ts` an AnalystQueryContext, and so on. Each interface declares only the
-   * members that family may touch, so a report cannot reach the hypothesis store simply because
-   * hypothesisReview needs it. Live getters rather than a snapshot for the reason importCtx gives:
-   * the settings-reload path rebuilds these options in place.
-   */
+  /** The same adapter idea for the AI-backed families extracted in #418 — narrower views per family, live getters rather than a snapshot for the reason importCtx gives above. */
   private readonly aiCtx: CaseReportContext &
     AnalystQueryContext &
     ViewReportContext &
@@ -265,6 +233,9 @@ export class AnalysisPipeline {
         get hostDuplicateDismissalStore() {
           return opts.hostDuplicateDismissalStore;
         },
+        get evidenceAttestationStore() {
+          return opts.evidenceAttestationStore;
+        },
         get retries() {
           return opts.retries;
         },
@@ -291,9 +262,7 @@ export class AnalysisPipeline {
     };
   }
 
-  // Wraps mergeDelta with the case's analyst IOC-merge aliases (#82), if any store is configured.
-  // Every import/synthesis call site uses this instead of calling mergeDelta directly, so a merged
-  // duplicate value stays folded onto its canonical IOC across every future window/re-synthesis.
+  // Wraps mergeDelta with the case's analyst IOC-merge aliases (#82), if any store is configured — every import/synthesis call site uses this instead of calling mergeDelta directly, so a merged duplicate value stays folded onto its canonical IOC across every future window/re-synthesis.
   private async mergeWithAliases(
     state: InvestigationState,
     delta: Parameters<typeof mergeDelta>[1],
@@ -304,22 +273,15 @@ export class AnalysisPipeline {
     return mergeDelta(state, delta, { ...ctx, iocAliases: aliases });
   }
 
-  // Serializes the load->merge->save critical section of every import/analyze method per
-  // caseId, so two concurrent imports for the same case can't race (second save clobbering
-  // the first's merged delta). See src/analysis/stateLock.ts. Falls back to running fn
-  // immediately when no lock is configured (e.g. some script/test call sites).
-  // CAUTION: never call this from inside another withStateLock/runExclusive callback for the
-  // SAME caseId — that nests onto the outer call's own unresolved promise and deadlocks.
+  // Serializes the load->merge->save critical section of every import/analyze method per caseId, so two concurrent imports for the same case can't race (second save clobbering the first's merged delta). See src/analysis/stateLock.ts. Falls back to running fn immediately when no lock is configured (e.g. some script/test call sites).
+  // CAUTION: never call this from inside another withStateLock/runExclusive callback for the SAME caseId — that nests onto the outer call's own unresolved promise and deadlocks.
   private withStateLock<T>(caseId: string, fn: () => Promise<T>): Promise<T> {
     return this.opts.stateLock ? this.opts.stateLock.runExclusive(caseId, fn) : fn();
   }
 
   // Wraps the module-level withRetry() with server-log visibility: every AI call site in this class
-  // routes through here instead of calling withRetry() directly. Previously a failed/retried AI call
-  // was silent everywhere except the dashboard's error badge and the case Activity Log — the server
-  // console/session log showed only the DEBUG "AI call [label] ..." line for each attempt's START,
-  // never why an attempt failed. Each failed attempt now logs a WARN with the case id, call label,
-  // provider error kind (when available), and whether it's retrying or giving up.
+  // routes through here instead of calling withRetry() directly — a failed/retried AI call now also
+  // logs a WARN per attempt with the case id, call label, provider error kind, and retry/give-up state.
   private withRetry<T>(
     caseId: string,
     label: string,
@@ -343,15 +305,6 @@ export class AnalysisPipeline {
     });
   }
 
-  /**
-   * Measure per-host clock skew (#228) from the PRE-merge timeline and persist it, then return the
-   * time function correlation should compare at — skew-corrected when the analyst has alignment on,
-   * `undefined` (recorded times) otherwise.
-   *
-   * Detection is best-effort: a case with no clock-skew store, or one whose evidence yields no
-   * anchors, simply correlates on recorded times exactly as before.
-   */
-
   private async getKevCatalog(): Promise<KevCatalog | undefined> {
     if (!this.opts.kevStore) return undefined;
     if (!this.kevCatalogCache) this.kevCatalogCache = await this.opts.kevStore.loadCatalog();
@@ -367,8 +320,7 @@ export class AnalysisPipeline {
     return Boolean(this.opts.provider);
   }
 
-  // Text features resolve `synthesisProvider ?? provider`, so this preserves OCR-less installs.
-  // Do not gate them on hasAiProvider(), which reflects only screenshot/vision capability.
+  // Text features resolve `synthesisProvider ?? provider`, so this preserves OCR-less installs. Do not gate them on hasAiProvider(), which reflects only screenshot/vision capability.
   hasSynthesisProvider(): boolean {
     return Boolean(this.opts.synthesisProvider ?? this.opts.provider);
   }
@@ -408,24 +360,18 @@ export class AnalysisPipeline {
    * `!policy.enabled`) — with anonymization off there is no masked text for Presidio to see.
    */
 
-  // Hash of the last successfully-synthesized inputs per case. The live, debounced
-  // synthesis fires after every capture window; this lets us skip the (expensive) AI call
-  // when nothing that affects the output has changed since the last run. In-memory: a
-  // fresh process (or an explicit `force`) always synthesizes.
+  // Hash of the last successfully-synthesized inputs per case, to skip the (expensive) AI call when
+  // nothing changed since the last run. In-memory: a fresh process (or `force`) always synthesizes.
   private readonly lastSynthHash = new Map<string, string>();
-  // Per-case log-aggregation truncation (investigation-guidance #10, trigger b): set by analyzeLog when
-  // the distinct-template cap dropped patterns the AI never saw; consumed once by the import route to
-  // stamp a cap-hit coverage warning onto import-meta. A side channel because import methods return only
-  // the state, not metadata.
+  // Per-case log-aggregation truncation (investigation-guidance #10, trigger b): set by analyzeLog
+  // when the distinct-template cap dropped patterns the AI never saw; consumed once to stamp a cap-hit warning onto import-meta — a side channel since import methods return only the state.
   private readonly importTruncation = new Map<string, AggregateStats>();
   consumeImportTruncation(caseId: string): AggregateStats | undefined {
     const v = this.importTruncation.get(caseId);
     this.importTruncation.delete(caseId);
     return v;
   }
-  // Warn ONCE per process when a configured synthesis-prompt override is missing shipped capabilities
-  // (investigation-guidance #1). Preflight surfaces the same drift in the UI; this covers a post-boot
-  // edit to the override file, and keeps the warning from spamming every synthesis run.
+  // Warn ONCE per process when a synthesis-prompt override is missing shipped capabilities (investigation-guidance #1) — preflight surfaces the same drift in the UI.
   private warnedPromptDrift = false;
 
   private warnOnPromptDrift(): void {
@@ -565,6 +511,62 @@ export class AnalysisPipeline {
     return ingest.importAzureStorageLog(this.importCtx, ...args);
   }
 
+  importAwsFlowLog(...args: ImporterArgs<typeof ingest.importAwsFlowLog>): Promise<InvestigationState> {
+    return ingest.importAwsFlowLog(this.importCtx, ...args);
+  }
+
+  importDiskImageLog(...args: ImporterArgs<typeof ingest.importDiskImageLog>): Promise<InvestigationState> {
+    return ingest.importDiskImageLog(this.importCtx, ...args);
+  }
+
+  importBulkExtractorUrl(
+    ...args: ImporterArgs<typeof ingest.importBulkExtractorUrl>
+  ): Promise<InvestigationState> {
+    return ingest.importBulkExtractorUrl(this.importCtx, ...args);
+  }
+
+  importFlossResult(...args: ImporterArgs<typeof ingest.importFlossResult>): Promise<InvestigationState> {
+    return ingest.importFlossResult(this.importCtx, ...args);
+  }
+
+  importCapaResult(...args: ImporterArgs<typeof ingest.importCapaResult>): Promise<InvestigationState> {
+    return ingest.importCapaResult(this.importCtx, ...args);
+  }
+
+  importOlevbaResult(...args: ImporterArgs<typeof ingest.importOlevbaResult>): Promise<InvestigationState> {
+    return ingest.importOlevbaResult(this.importCtx, ...args);
+  }
+
+  importSqliteRowState(
+    ...args: ImporterArgs<typeof ingest.importSqliteRowState>
+  ): Promise<InvestigationState> {
+    return ingest.importSqliteRowState(this.importCtx, ...args);
+  }
+
+  importMobsfPermissions(
+    ...args: ImporterArgs<typeof ingest.importMobsfPermissions>
+  ): Promise<InvestigationState> {
+    return ingest.importMobsfPermissions(this.importCtx, ...args);
+  }
+
+  importExporterFlow(...args: ImporterArgs<typeof ingest.importExporterFlow>): Promise<InvestigationState> {
+    return ingest.importExporterFlow(this.importCtx, ...args);
+  }
+
+  importMacFsEvent(...args: ImporterArgs<typeof ingest.importMacFsEvent>): Promise<InvestigationState> {
+    return ingest.importMacFsEvent(this.importCtx, ...args);
+  }
+
+  importMacSpotlightUsage(
+    ...args: ImporterArgs<typeof ingest.importMacSpotlightUsage>
+  ): Promise<InvestigationState> {
+    return ingest.importMacSpotlightUsage(this.importCtx, ...args);
+  }
+
+  importMacLoginItem(...args: ImporterArgs<typeof ingest.importMacLoginItem>): Promise<InvestigationState> {
+    return ingest.importMacLoginItem(this.importCtx, ...args);
+  }
+
   async importGoogleWorkspace(
     ...args: ImporterArgs<typeof ingest.importGoogleWorkspace>
   ): Promise<InvestigationState> {
@@ -651,8 +653,7 @@ export class AnalysisPipeline {
     return ingest.importIris(this.importCtx, ...args);
   }
 
-  // Everything below is a one-line delegation into src/analysis/ai/ (#418). Each method's
-  // documentation lives with its implementation there, so there is only ever one copy to keep true.
+  // Everything below is a one-line delegation into src/analysis/ai/ (#418) — each method's documentation lives with its implementation there, so there is only ever one copy to keep true.
   ask(caseId: string, question: string): Promise<AskAnswer> {
     return analystQueries.ask(this.aiCtx, caseId, question);
   }
@@ -775,8 +776,7 @@ export class AnalysisPipeline {
 
   // Accept or reject ONE second-opinion delta. The analyst's decision is recorded on the delta, and
   // ALL currently-accepted deltas are (re-)applied onto the live case state (idempotent) — so an
-  // accept adds/edits the finding/severity/technique now and survives the next synthesis (the same
-  // re-apply runs in synthesize()). A reject just records the decision; state is unchanged.
+  // accept adds/edits the finding/severity/technique now and survives the next synthesis (the same re-apply runs in synthesize()). A reject just records the decision; state is unchanged.
   applySecondOpinion(
     caseId: string,
     deltaId: string,
@@ -794,6 +794,5 @@ export class AnalysisPipeline {
     return secondOpinionRun.applyAllSecondOpinion(this.aiCtx, caseId, accept);
   }
 
-  // Save the (re)decided record, then re-apply ALL accepted deltas onto the live state (idempotent).
-  // Shared by the single + bulk apply methods so both persist and broadcast identically.
+  // Save the (re)decided record, then re-apply ALL accepted deltas onto the live state (idempotent) — shared by the single + bulk apply methods so both persist and broadcast identically.
 }

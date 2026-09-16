@@ -351,6 +351,56 @@ describe("CaseStore.nextImportSeq", () => {
     // A fresh store (server restart) must pick up where the log left off, not restart at 1.
     expect(await new CaseStore(root).nextImportSeq("seq-2")).toBe(2);
   });
+
+  it("never reissues a sequence number after a burned reservation followed by a restart (#1119)", async () => {
+    // Reservation 1 was handed out but never appended (the import failed before appendImport ran);
+    // reservation 2 succeeded and IS in the log. A fresh store must not re-derive "next" from the
+    // LOG'S OWN LINE COUNT (1 line -> 2), which collides with the sequenceNumber already recorded —
+    // it must read the actual recorded numbers and resume from their max.
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "seq-3", name: "n", investigator: "i", aiProvider: null });
+    await store.appendImport("seq-3", {
+      caseId: "seq-3",
+      sequenceNumber: 2,
+      importedAt: new Date().toISOString(),
+      filename: "0002_a.log",
+      originalName: "a.log",
+      rows: 0,
+      bytes: 1,
+    });
+    expect(await new CaseStore(root).nextImportSeq("seq-3")).toBe(3);
+  });
+
+  it("throws rather than silently allocating past a corrupted/truncated log line (#1119 code review)", async () => {
+    // A truncated append (a crash mid-write) is indistinguishable from a burned reservation using
+    // only the parsed field values — skipping it silently risks reissuing that very row's own
+    // number. Recovery must fail closed and ask for repair instead of guessing.
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "seq-4", name: "n", investigator: "i", aiProvider: null });
+    await mkdir(store.metadataDir("seq-4"), { recursive: true });
+    await writeFile(store.importsLogPath("seq-4"), '{"caseId":"seq-4","sequenceNum\n', "utf8");
+    await expect(new CaseStore(root).nextImportSeq("seq-4")).rejects.toThrow(/corrupted\/truncated/);
+  });
+
+  it("still recovers the correct floor for a case with only legacy custody rows predating `seq` (#1119 code review)", async () => {
+    // Custody rows recorded before #231 added `seq` have no such field. Reading only the field's own
+    // max would return 0 for an all-legacy log, reissuing seq 1 and colliding with real history — the
+    // line count must still act as a floor, exactly like the pre-#1119 behavior for these rows.
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "seq-5", name: "n", investigator: "i", aiProvider: null });
+    await mkdir(store.metadataDir("seq-5"), { recursive: true });
+    const legacyRows = [
+      { caseId: "seq-5", artifactPath: "a", sha256: "x", collectedAt: "t" },
+      { caseId: "seq-5", artifactPath: "b", sha256: "y", collectedAt: "t" },
+      { caseId: "seq-5", artifactPath: "c", sha256: "z", collectedAt: "t" },
+    ];
+    await writeFile(
+      store.custodyLogPath("seq-5"),
+      legacyRows.map((r) => JSON.stringify(r)).join("\n") + "\n",
+      "utf8",
+    );
+    expect(await new CaseStore(root).nextCustodySeq("seq-5")).toBe(4);
+  });
 });
 
 // A deleted incident number must never be handed out again: reports, ZIP archives and .dfircase

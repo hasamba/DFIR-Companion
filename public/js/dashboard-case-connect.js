@@ -373,6 +373,7 @@
       ["scope", () => loadScope(caseId)],
       ["hostScope", () => loadHostScope(caseId)],
       ["hostDuplicates", () => loadHostDuplicates(caseId)],
+      ["collectionGenerationDiff", () => loadCollectionGenerationDiff(caseId)],
       // Alongside the two gate chips, and for the same reason they are here: the pill has to be
       // told what this case is doing, because a freshly-loaded page has no event history at all.
       ["aiState", () => refreshAiState(caseId)],

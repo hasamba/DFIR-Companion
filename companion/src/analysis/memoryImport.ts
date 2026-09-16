@@ -1,5 +1,4 @@
-// Deterministic importer for memory-forensics tool output — Volatility 3, Rekall, and MemProcFS.
-// The fifteenth deterministic ingest path; no AI call.
+// Deterministic importer for memory-forensics tool output — Volatility 3, Rekall, MemProcFS, PE-sieve. No AI call.
 //
 // Memory forensics tools detonate nothing and score nothing — they ENUMERATE the live state of a
 // RAM image: the process tree, network connections, injected/executable private memory, loaded
@@ -10,19 +9,16 @@
 // parent→child links); `cmdline` exposes LOLBin / encoded-PowerShell tradecraft.
 //
 // Inputs accepted:
-//   • Volatility 3 JSON renderer (`vol -r json …`): a JSON ARRAY of row objects, each mapping a
-//     column name → value. The TreeGrid renderer tags every node with a `__children` key (the
-//     `pstree` plugin nests children under it). Also a JSON-Lines variant, and a combined
-//     `{ "<plugin>": [rows] }` map some orchestration emits.
+//   • Volatility 3 JSON renderer (`vol -r json …`): a JSON ARRAY of row objects, column name →
+//     value. TreeGrid tags every node with `__children` (`pstree` nests under it). Also a
+//     JSON-Lines variant, and a combined `{ "<plugin>": [rows] }` map some orchestration emits.
 //   • Volatility 3 TEXT/grid renderer (the DEFAULT `vol <plugin>`, no `-r json`): a banner, a
-//     TAB-separated column header, then TAB-separated data rows (malfind/pstree interleave a
-//     hexdump + disassembly block per row, which is skipped). Parsed into the same header-keyed
-//     rows as the JSON path, so the column-fingerprint classification + mappers are reused.
-//   • Rekall JSON renderer (`rekall … --format json`): a list of `[directive, payload]` statements
-//     ("m" metadata / "t" table header / "r" row / "s" section). We walk it, grouping each "r"
-//     row under the most recent "t" table and taking the plugin name from the "m"/"s" context.
-//     Rekall's cells are object-laden (a `_EPROCESS` renders to a dict) — BEST-EFFORT: we resolve
-//     each cell to its name/value, classify by columns, and harvest IOCs.
+//     TAB-separated header then TAB-separated rows (malfind/pstree's hexdump+disasm block is
+//     skipped), parsed into the same header-keyed rows as JSON so mappers are reused.
+//   • Rekall JSON renderer (`rekall … --format json`): `[directive, payload]` statements ("m"
+//     metadata/"t" table header/"r" row/"s" section), walked to group each "r" under the most
+//     recent "t", plugin name from "m"/"s". Cells are object-laden — BEST-EFFORT name/value.
+//   • PE-sieve's own JSON report (#933 item 15) — see pesieveImport.ts.
 //
 // The plugin is identified by its COLUMNS (a case-insensitive fingerprint), refined by the Rekall
 // plugin name / the export filename, then mapped per category. Severity is conservative: a process
@@ -80,6 +76,10 @@ import {
   tupleShape,
   type ProcessIndex,
 } from "./memoryNetObjects.js";
+import { handleOwnershipFacts } from "./memoryHandleOwnership.js";
+import { yaraMappingContext } from "./memoryYaraMappingContext.js";
+import { severityFromMeta, mitreFromYara } from "./yaraImport.js";
+import { isPeSieveReport, parseMemoryPeSieve } from "./pesieveImport.js";
 export { isRekallCommandList, looksLikeVolatilityText } from "./memoryTables.js";
 import { parseCsv } from "./csvImport.js";
 import { tradecraftSignal } from "./tradecraftRules.js";
@@ -94,11 +94,9 @@ export interface MemoryImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
-  // Include `dlllist` / `ldrmodules` loaded-DLL rows as Info evidence events (default: false — they
-  // are high-volume telemetry, so by default only their DLL paths are harvested as file IOCs).
+  // Include `dlllist`/`ldrmodules` rows as Info events (default: false — only their paths are IOCs).
   dllTelemetry?: boolean;
-  // The export filename — a weak plugin hint for a bare Volatility array that carries no plugin name.
-  filename?: string;
+  filename?: string; // weak plugin hint for a bare Volatility array carrying no plugin name
 }
 
 export interface MemoryParseResult {
@@ -114,8 +112,7 @@ export interface MemoryParseResult {
   connections: number; // network-connection rows seen
   format: string; // "volatility" | "volatility-jsonl" | "volatility-map" | "volatility-text" | "volatility2-text" | "rekall" | "empty"
   tool: string; // "Volatility" | "Rekall" | ""
-  // What the export's SHAPE says (memoryExportShape.ts): zero-row labels, an unread Volatility 2
-  // layout, diagnostic-looking text — for the import note. Never a completion claim.
+  // What the export's SHAPE says (memoryExportShape.ts) — for the import note, never a completion claim.
   note?: string;
 }
 
@@ -206,8 +203,7 @@ function classify(plugin: string, cols: Set<string>): Category {
   return "generic";
 }
 
-// A short, human label for the plugin: the Rekall/known plugin name, the os.module from a
-// Volatility dotted id, or a filename/category fallback.
+// A short, human label for the plugin: Rekall/known name, Volatility dotted-id module, or a fallback.
 function displayLabel(plugin: string, category: Category, rows: Row[]): string {
   const p = plugin.toLowerCase();
   const dotted = /\b(windows|linux|mac)\.(\w+)/.exec(p);
@@ -544,10 +540,7 @@ function mapMalfind(
     const region = malfindRegion(r); // its token and its phrase must agree — see malfindRegion
     const name = proc ? baseName(proc) : "";
     if (name) addIoc(sink, "process", name);
-    // malfind reports a region that is private and executable. That is the shape of injection AND
-    // of every JIT, .NET and several AV engines, so the row needs its observed characteristics
-    // stated alongside it (#909 item 4). Severity policy is unchanged — this adds interpretation,
-    // and never says a region is clean.
+    // malfind's region shape also matches every JIT/.NET/AV engine, so state its own observed characteristics (#909 item 4).
     const ctx = malfindContext(r, {
       networkPid: corroborating.network.has(pid),
       suspiciousCommandLine: corroborating.suspiciousCmd.has(pid),
@@ -656,8 +649,7 @@ function mapModule(label: string, tool: string, rows: Row[], sink: Map<string, S
   return out;
 }
 
-// dlllist / ldrmodules: high-volume. By default harvest the DLL path → file IOC only; opt-in to
-// keep one Info event per loaded module.
+// dlllist/ldrmodules: high-volume — by default harvest the DLL path as a file IOC only, opt-in to keep events.
 function mapDll(
   label: string,
   tool: string,
@@ -672,15 +664,10 @@ function mapDll(
     const proc = procName(r);
     const pid = pickPid(r);
     addIoc(sink, "file", filePathIoc(path));
-    // ldrmodules reports membership in the three PEB loader lists, and a module mapped in memory
-    // while absent from them was not loaded through the loader. That row is the whole reason to
-    // run the plugin, so it becomes an event even though DLL rows are otherwise pure telemetry
-    // (#909 item 3).
+    // A module mapped but absent from the PEB loader lists becomes an event despite DLL rows being telemetry (#909 item 3).
     const cross = hasLdrColumns(r) ? ldrModulesSignal(r) : null;
     if (!telemetry && !cross) continue;
-    // A flagged row with NO path is the strongest case this table produces — executable memory that
-    // no file explains. Dropping it for lacking a name discarded exactly the finding worth keeping,
-    // so a cross-view signal is described by its base address instead.
+    // A pathless flagged row is the strongest case here (executable memory no file explains) — described by base address instead of dropped.
     if (!path && !dllName && !cross) continue;
     const base = pick(r, ["Base", "base", "DllBase"]);
     const what = path || dllName || `region at ${base || "?"}`;
@@ -813,8 +800,7 @@ function findevilSeverity(type: string, desc: string): { severity: Severity; mit
   }
 }
 
-// For bulk types group by process+type (many pages → one event with count).
-// For signal-rich types keep each finding individual (include rule/detail in key).
+// Bulk types group by process+type (many pages → one event); signal-rich types stay individual.
 function findevilAggKey(type: string, pid: string, proc: string, desc: string): string {
   const t = type.toUpperCase();
   if (t === "PRIVATE_RWX" || t === "PRIVATE_RX") {
@@ -987,17 +973,9 @@ function parseMemoryFindevil(text: string, opts: MemoryImportOptions): MemoryPar
 // ───────────────────────────── MemProcFS CSV variants ─────────────────────────────
 //
 // MemProcFS exports its data in two CSV flavours that complement the text `findevil` report:
-//
-//   findevil.csv  — PID,ProcessName,Type,Address,Description
-//     The same finding set as findevil.txt but as a clean CSV (no fixed-width padding). We
-//     parse rows into FindevilRow and reuse the same mapFindevil / severity / aggKey logic.
-//
-//   yara.csv  — MatchIndex,Tags,Description,RuleAuthor,RuleVersion,MemoryType,MemoryTag,
-//               MemoryBaseAddress,ObjectAddress,PID,ProcessName,ProcessPath,CommandLine,
-//               User,Created,AddressCount,String0,Address0,…
-//     YARA scan results with process context + match timestamps. Every row is a YARA hit →
-//     Critical / T1055 (code found in memory). Aggregated by process + base-address so all
-//     matches in the same heap/VAD region collapse into one event with a count.
+// findevil.csv (the same findevil.txt finding set as clean CSV, reusing mapFindevil/severity/
+// aggKey) and yara.csv (YARA hits with process + mapping context; severity/MITRE come from the
+// matched rule's own Tags, mapping validity from MemoryType/MemoryTag — memoryYaraMappingContext.ts, #1148).
 
 // Lightweight first-line check (no full CSV parse): split on comma, normalise header names.
 function csvCols(text: string): Set<string> {
@@ -1086,6 +1064,7 @@ function parseMemoryYaraCsv(text: string, opts: MemoryImportOptions): MemoryPars
   if (!headers.length || !rows.length) return empty;
 
   const col = (name: string): number => headers.findIndex((h) => h.toLowerCase() === name.toLowerCase());
+  const tagsI = col("Tags");
   const pidI = col("PID");
   const procI = col("ProcessName");
   const procPathI = col("ProcessPath");
@@ -1099,7 +1078,9 @@ function parseMemoryYaraCsv(text: string, opts: MemoryImportOptions): MemoryPars
   const sink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
 
-  for (const row of rows) {
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+    const row = rows[rowIndex];
+    const rawTags = row[tagsI] ?? "";
     const pid = row[pidI] ?? "";
     const proc = row[procI] ?? "";
     const procPath = row[procPathI] ?? "";
@@ -1115,22 +1096,31 @@ function parseMemoryYaraCsv(text: string, opts: MemoryImportOptions): MemoryPars
     addIoc(sink, "file", filePathIoc(procPath));
 
     const timestamp = normalizeTime(created) ?? "";
-    const memNote = [memType, memTag].filter(Boolean).join(" / ");
+    const mapping = yaraMappingContext(memType, memTag);
+    // No PID/ProcessName lead when there's no process context — MemProcFS leaves them empty (#1148).
+    const lead =
+      mapping.mappingClass === "process-user-mode" || mapping.mappingClass === "process-kernel-mode"
+        ? `MemProcFS YARA: ${proc} (PID ${pid})`
+        : "MemProcFS YARA match";
     const addrNote = baseAddr ? ` @ base 0x${baseAddr}` : "";
     const objNote = objAddr ? ` (obj 0x${objAddr})` : "";
     const cmdNote = cmd ? ` — cmd: ${oneLine(cmd).slice(0, 120)}` : "";
-    const description =
-      `MemProcFS YARA: ${proc} (PID ${pid})${memNote ? ` — match in ${memNote}` : " — YARA match"}${addrNote}${objNote}${cmdNote}`.slice(
-        0,
-        600,
-      );
+    const description = `${lead} — ${mapping.note}${addrNote}${objNote}${cmdNote}`.slice(0, 600);
 
+    const tags = rawTags ? [rawTags] : []; // severity/MITRE come from the RULE, not location (#1148)
+    // No real address on these rows; CSV MatchIndex resets per scan context, so use our own row position.
+    const identity =
+      mapping.mappingClass === "no-process-context" || mapping.mappingClass === "unrecognized"
+        ? rowIndex
+        : baseAddr || objAddr;
     mapped.push({
       timestamp,
       description,
-      severity: "Critical",
-      mitre: ["T1055"],
-      aggKey: `memprocfs|yara|${pid}|${proc.toLowerCase()}|${baseAddr}`.slice(0, 400),
+      severity: severityFromMeta({}),
+      mitre: mitreFromYara(tags, {}),
+      aggKey: boundedAggKey(
+        `memprocfs|yara|${pid}|${proc.toLowerCase()}|${mapping.mappingClass}|${identity}`,
+      ),
       sources: ["MemProcFS"],
       ...(pName ? { processName: pName } : {}),
     });
@@ -1410,10 +1400,7 @@ function parseMemoryRunBundle(root: unknown, text: string, opts: MemoryImportOpt
   const { runRows, exports, note } = parseRunEnvelopes(root, (stdout, filename) =>
     parseMemoryExport(stdout, { ...opts, filename, maxEvents }),
   );
-  // One bundle-wide budget: the run rows are aggregated, then every row — run rows and the
-  // exports' already-aggregated rows — is ranked by severity and cut to `maxEvents` once, so a
-  // bundle of N runs never emits N × maxEvents. `total` counts export rows plus one record per
-  // run; `dropped` is what the final cut left unrepresented.
+  // One bundle-wide budget: every row is ranked by severity and cut to `maxEvents` once (never N ×).
   const runs = aggregateEvents(runRows, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
@@ -1458,12 +1445,20 @@ export function parseMemory(text: string, opts: MemoryImportOptions = {}): Memor
 
 /** Every memory export format EXCEPT a run envelope — the parser an envelope's embedded stdout goes through. */
 function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParseResult {
+  // PE-sieve's own JSON report (#933 item 15); any parse/shape mismatch falls through below.
+  if (text.trimStart().startsWith("{") && text.includes('"scans"')) {
+    try {
+      if (isPeSieveReport(JSON.parse(text))) return parseMemoryPeSieve(text, opts);
+    } catch {
+      /* fall through */
+    }
+  }
+
   // MemProcFS findevil: a flat finding-report table — check before JSON/text Volatility paths.
   if (looksLikeMemprocfsFindevil(text)) return parseMemoryFindevil(text, opts);
 
-  // MemProcFS CSV variants — identified by distinctive column sets in the first header line.
+  // MemProcFS CSV variants, by distinctive header columns — timeline_all.csv's value32/value64 are unique.
   const cols = csvCols(text);
-  // timeline_all.csv: Time,Type,Action,PID,Value32,Value64,Text,Pad — value32/value64 are unique.
   if (cols.has("value32") && cols.has("value64") && cols.has("action")) {
     return parseMemoryMemprocfsTimeline(text, opts);
   }
@@ -1477,8 +1472,7 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
   const maxIocs = opts.maxIocs ?? 5000;
   const { tables, format, tool, empty } = extractTables(text, opts.filename);
   const total = tables.reduce((n, t) => n + t.rows.length, 0);
-  // What the export's shape says — a zero-row export or an unread layout is one Low row, never a
-  // 400 and never a completion claim (#933 item 12).
+  // What the export's shape says — a zero-row/unread export is one Low row, never 400 (#933 item 12).
   const shapeRows = exportShapeEvents(format, empty, tool);
   const note = exportShapeNote(text, format, empty, tables.length);
   if (total === 0 && shapeRows.length === 0) {
@@ -1505,14 +1499,7 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
     processes = 0,
     connections = 0;
 
-  // Evidence about the SAME process from OTHER tables in the SAME image, gathered before the
-  // dispatch loop so malfind can be weighed against it (#909 item 4). The issue asks for confidence
-  // to be strengthened by process context, network behaviour and independent detections; without
-  // this the note could only ever tell the analyst to go and check those themselves. Confined to one
-  // image and one PID, per the issue.
-  // The process rows the upload submitted, by PID — what a socket's owner is compared with. Built
-  // before the socket pass, because a socket counts as corroboration only when exactly one
-  // submitted process row is consistent with its owner (#933 item 14).
+  // Process rows the upload submitted, by PID — malfind/socket/handle owner checks (#909 item 4, #933 items 13-14).
   const processIndex = indexProcessRows(
     tables.filter((t) => classify(t.plugin, colSet(t.rows)) === "process"),
   );
@@ -1543,11 +1530,11 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
     }
   }
 
-  // Process records with BOTH a start and an exit, which is the only place in the product that has
-  // them: a memory image records CreateTime and ExitTime on the same row (#909 item 6). The
-  // repeated-short-lifetime rule cannot run anywhere else, because every other importer sees a
-  // process creation and never its end.
+  // Process records with BOTH a start and an exit — only a memory image records both (#909 item 6).
   const lifetimeRecords: ProcessRecord[] = [];
+
+  // Handle-table rows (#933 item 13), resolved once against the processIndex built above.
+  const handleRows: Record<string, unknown>[] = [];
 
   for (const t of tables) {
     const cols = colSet(t.rows);
@@ -1599,7 +1586,8 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
         mapped.push(...mapDll(label, tool, t.rows, sink, !!opts.dllTelemetry));
         break;
       case "handle":
-        break; // handle tables are pure telemetry — neither events nor IOCs
+        for (const r of t.rows) handleRows.push(r); // never spread — a large table exceeds arg limits
+        break;
       case "imageinfo":
         mapped.push(...imageFactsEvents(tool, t.rows, t.plugin)); // one row, no IOCs
         break;
@@ -1608,9 +1596,7 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
     }
   }
 
-  // Repeated short-lived executions of one image (#909 item 6). Emitted as ONE event per image
-  // rather than one per execution: the pattern is the finding, and twenty rows saying "it ran
-  // again" is the noise the pattern was meant to replace.
+  // Repeated short-lived executions of one image (#909 item 6): ONE event per image, not per run.
   for (const cluster of repeatedShortLifetimes(lifetimeRecords)) {
     mapped.push({
       timestamp: "",
@@ -1623,6 +1609,19 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
     });
   }
 
+  const handleResult = handleOwnershipFacts(handleRows, processIndex); // #933 item 13, Info severity
+  for (const fact of handleResult.facts) {
+    mapped.push({
+      timestamp: "",
+      description: `${tool}: ${fact.note}`.slice(0, 600),
+      severity: "Info",
+      mitre: [],
+      aggKey: boundedAggKey(`mem|handle|${fact.kind}|${fact.pid}|${fact.type}|${fact.name}`),
+      sources: [tool],
+      processName: fact.holderProcess || undefined,
+    });
+  }
+
   // The upload's image facts ride on every row (envelope; text from Medium up). One upload only.
   const { events, groups } = aggregateEvents(carryImage(mapped, readImageFacts(tables)), {
     aggregate: opts.aggregate,
@@ -1632,6 +1631,11 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
   const finalEvents = stampSourceArtifactHash(events, text);
 
   const represented = finalEvents.reduce((n, e) => n + (e.count ?? 1), 0);
+  // A capped fact family is a sample, not the full set — disclose it, don't just track it internally.
+  const handleNote = handleResult.truncated
+    ? "handle-ownership analysis reached its own evidence cap — some facts were not reported."
+    : "";
+  const finalNote = [note, handleNote].filter(Boolean).join(" ");
   return {
     events: finalEvents,
     iocs: [...sink.values()].slice(0, maxIocs),
@@ -1645,6 +1649,6 @@ function parseMemoryExport(text: string, opts: MemoryImportOptions): MemoryParse
     connections,
     format,
     tool,
-    ...(note ? { note } : {}),
+    ...(finalNote ? { note: finalNote } : {}),
   };
 }
