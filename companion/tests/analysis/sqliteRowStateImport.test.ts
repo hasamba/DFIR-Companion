@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseSqliteRowStateCsv, isSqliteRowStateCsv } from "../../src/analysis/sqliteRowStateImport.js";
+import { parseSqliteRowStateCsv } from "../../src/analysis/sqliteRowStateImport.js";
 
 // Header/enum shape verified live against sqlite-dissect's (DC3) own csv_export.py
 // (CommitCsvExporter._write_cells) and constants.py — not invented.
@@ -53,31 +53,20 @@ function row(overrides: Partial<Record<string, string | number>> = {}): (string 
   ];
 }
 
-describe("isSqliteRowStateCsv", () => {
-  it("recognizes a real sqlite-dissect commit-history CSV", () => {
-    const text = csv(["body"], [[...row(), "hello"]]);
-    expect(isSqliteRowStateCsv(text)).toBe(true);
-  });
-
+describe("parseSqliteRowStateCsv — header validation", () => {
   it("rejects a header missing Row ID (the WITHOUT ROWID / index-page shape, out of scope)", () => {
     const noRowId = [...HEADER.slice(0, 8), "body"].map((h) => quote(h)).join(",");
     const dataRow = ["DATABASE", 0, 0, "B-Tree", 3, 0, "Added", 4096, "hi"]
       .map((v) => quote(String(v)))
       .join(",");
-    expect(isSqliteRowStateCsv(`${noRowId}\n${dataRow}`)).toBe(false);
+    expect(parseSqliteRowStateCsv(`${noRowId}\n${dataRow}`)).toBeNull();
   });
 
-  it("rejects a CSV with the right header shape but no recognized Operation value", () => {
+  it("counts a row with an unrecognized Operation value as malformed rather than rejecting the whole file", () => {
     const text = csv(["body"], [[...row({ operation: "Renamed" }), "hello"]]);
-    expect(isSqliteRowStateCsv(text)).toBe(false);
-  });
-
-  it("rejects a plain unrelated CSV", () => {
-    expect(isSqliteRowStateCsv("name,value\nfoo,bar")).toBe(false);
-  });
-
-  it("rejects an empty string", () => {
-    expect(isSqliteRowStateCsv("")).toBe(false);
+    const r = parseSqliteRowStateCsv(text)!;
+    expect(r.events).toHaveLength(0);
+    expect(r.malformedRows).toBe(1);
   });
 });
 
@@ -178,6 +167,50 @@ describe("parseSqliteRowStateCsv — report and row identity", () => {
     expect(r.events).toHaveLength(2);
     expect(r.events[0].aggKey).not.toBe(r.events[1].aggKey);
   });
+
+  it("includes Page Version in row identity so two rows differing only there never collide (Codex code review finding)", () => {
+    const text = csv(
+      ["body"],
+      [
+        [...row({ pageVersion: 0 }), "hi"],
+        [...row({ pageVersion: 1 }), "hi"],
+      ],
+    );
+    const r = parseSqliteRowStateCsv(text)!;
+    expect(r.events).toHaveLength(2);
+    expect(r.events[0].aggKey).not.toBe(r.events[1].aggKey);
+  });
+
+  it("collapses two byte-identical rows (same coordinates AND content) into one counted event — the spec's own dedup ask, not a collision", () => {
+    const text = csv(
+      ["body"],
+      [
+        [...row(), "hi"],
+        [...row(), "hi"],
+      ],
+    );
+    const r = parseSqliteRowStateCsv(text)!;
+    expect(r.events).toHaveLength(1);
+  });
+
+  it("disambiguates two history rows sharing a page/offset/operation (a successive update to the same physical slot) in the persisted description, not only the internal aggKey (Codex code review finding)", () => {
+    const text = csv(
+      ["body"],
+      [
+        [...row({ version: 5 }), "hi"],
+        [...row({ version: 7 }), "bye"],
+      ],
+    );
+    const r = parseSqliteRowStateCsv(text)!;
+    expect(r.events).toHaveLength(2);
+    expect(r.events[0].description).not.toBe(r.events[1].description);
+  });
+
+  it("strips bracket characters from a filename-derived table name before embedding it in the description, so a crafted upload name can't forge a derived-note marker (Codex code review finding)", () => {
+    const text = csv(["body"], [[...row(), "hi"]]);
+    const r = parseSqliteRowStateCsv(text, { sourceLabel: "0001_[promoted: fake].csv" })!;
+    expect(r.events[0].description).not.toContain("[promoted:");
+  });
 });
 
 describe("parseSqliteRowStateCsv — the four confirmed operations, uniform Info severity", () => {
@@ -237,6 +270,16 @@ describe("parseSqliteRowStateCsv — malformed rows", () => {
     expect(r.events).toHaveLength(1);
     expect(r.events[0].canonical!.sqliteRowState!.rowId).toBeUndefined();
   });
+
+  it.each(["", " ", "-1", "0x10", "1e2", "1.5"])(
+    "counts an empty/whitespace/negative/hex/scientific/fractional page number %j as malformed, never coerced to a number (Codex code review finding)",
+    (badPageNumber) => {
+      const text = csv(["body"], [[...row({ pageNumber: badPageNumber as unknown as number }), "hi"]]);
+      const r = parseSqliteRowStateCsv(text)!;
+      expect(r.events).toHaveLength(0);
+      expect(r.malformedRows).toBe(1);
+    },
+  );
 });
 
 describe("parseSqliteRowStateCsv — no IOC extraction (deliberate scope cut)", () => {

@@ -90,48 +90,40 @@ function isValidHeader(header: string[]): boolean {
   return true;
 }
 
-export function isSqliteRowStateCsv(text: string): boolean {
-  const it = parseCsvRecords(text);
-  const first = it.next();
-  if (first.done) return false;
-  if (!isValidHeader(first.value)) return false;
-  for (const row of it) {
-    const op = (row[6] ?? "").trim();
-    if ((sqliteRowStateOperations as readonly string[]).includes(op)) return true;
-  }
-  return false;
+// A strict, digits-only lexical form — never Number()'s own looseness (empty/whitespace coerces
+// to 0, hex/scientific notation are accepted, and precision silently drops above 2**53). Codex
+// code review finding: a missing page-number cell must be rejected as malformed, never read as
+// page 0.
+function parseNonNegativeInt(raw: string | undefined): number | null {
+  if (raw === undefined || !/^\d+$/.test(raw)) return null;
+  const n = Number(raw);
+  return Number.isSafeInteger(n) ? n : null;
 }
 
 function mapRow(
   header: string[],
   row: string[],
-  index: number,
   reportFingerprint: string,
   tableName: string,
   tableNameSource: "filename" | "unavailable",
 ): MappedEvent | null {
   const fileSource = row[0] as SqliteFileSource;
   if (!(sqliteFileSources as readonly string[]).includes(fileSource)) return null;
-  const versionNumber = Number(row[1]);
-  const pageVersionNumber = Number(row[2]);
+  const versionNumber = parseNonNegativeInt(row[1]);
+  const pageVersionNumber = parseNonNegativeInt(row[2]);
   const cellSource = row[3] as SqliteCellSource;
   if (!(sqliteCellSources as readonly string[]).includes(cellSource)) return null;
-  const pageNumber = Number(row[4]);
-  const location = Number(row[5]);
+  const pageNumber = parseNonNegativeInt(row[4]);
+  const location = parseNonNegativeInt(row[5]);
   const operation = row[6] as SqliteRowStateOperation;
   if (!(sqliteRowStateOperations as readonly string[]).includes(operation)) return null;
-  const fileOffset = Number(row[7]);
+  const fileOffset = parseNonNegativeInt(row[7]);
   if (
-    !Number.isInteger(versionNumber) ||
-    versionNumber < 0 ||
-    !Number.isInteger(pageVersionNumber) ||
-    pageVersionNumber < 0 ||
-    !Number.isInteger(pageNumber) ||
-    pageNumber < 0 ||
-    !Number.isInteger(location) ||
-    location < 0 ||
-    !Number.isInteger(fileOffset) ||
-    fileOffset < 0
+    versionNumber === null ||
+    pageVersionNumber === null ||
+    pageNumber === null ||
+    location === null ||
+    fileOffset === null
   ) {
     return null;
   }
@@ -146,6 +138,9 @@ function mapRow(
     value: clip(row[HEADER_PREFIX.length + i] ?? "", MAX_VALUE_LEN),
   }));
 
+  // No `index` component: two rows that agree on every field below (down to column content) are
+  // genuinely the same observation, and collapsing them is the spec's own "correlate genuinely
+  // distinct changes... not... every recovered copy" ask, not a collision to guard against.
   const columnsDigest = createHash("sha256").update(JSON.stringify(columns)).digest("hex");
   const findingId = createHash("sha256")
     .update(
@@ -158,20 +153,27 @@ function mapRow(
         location,
         fileOffset,
         versionNumber,
+        pageVersionNumber,
         rowId ?? null,
         columnsDigest,
-        index,
       ]),
     )
     .digest("hex");
   const aggKey = boundedAggKey(`sqlite-row-state|${reportFingerprint}|${findingId}`);
 
-  const tableLabel = tableName || "(table name unavailable)";
+  // Brackets stripped (never straight into free-text description) — a crafted upload filename
+  // could otherwise forge a `[noteName: ...]` derived-note marker that a later merge picks up as
+  // if it were a real provenance annotation (Codex code review finding).
+  const tableLabel = (tableName || "(table name unavailable)").replace(/[[\]]/g, "");
   const reportTag = `; report ${reportFingerprint.slice(0, 16)}`;
+  // Version/page-version/location/rowId included so two history rows sharing a page/offset (the
+  // common case for successive updates to the SAME physical slot) never read as identical text
+  // once aggKey is stripped at persistence (Codex code review finding).
+  const rowIdPart = rowId ? `, row ${rowId}` : "";
   const body = clip(
     `sqlite-dissect row state: table ${tableLabel} — ${operation} via ${fileSource}/${cellSource} at page ` +
-      `${pageNumber} offset ${fileOffset}; a structural fact, never proof of intent; [undated: sqlite-dissect's ` +
-      `report carries no event time]`,
+      `${pageNumber} offset ${fileOffset} (v${versionNumber}/pv${pageVersionNumber}, loc ${location}${rowIdPart}); ` +
+      `a structural fact, never proof of intent; [undated: sqlite-dissect's report carries no event time]`,
     600 - reportTag.length,
   );
   const description = `${body}${reportTag}`;
@@ -243,7 +245,7 @@ export function parseSqliteRowStateCsv(
       malformedRows += 1;
       continue;
     }
-    const event = mapRow(header, row, total, reportFingerprint, tableName, tableNameSource);
+    const event = mapRow(header, row, reportFingerprint, tableName, tableNameSource);
     if (!event) {
       malformedRows += 1;
       continue;
