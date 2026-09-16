@@ -53,6 +53,7 @@ const BUILT_IN_IMPORT_KINDS = [
   "log",
   "bulkextractorurl",
   "flossresult",
+  "caparesult",
 ] as const;
 
 const CURRENT_SCHEMAS = [

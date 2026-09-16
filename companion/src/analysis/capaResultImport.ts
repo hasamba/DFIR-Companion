@@ -1,0 +1,544 @@
+// capa (Mandiant/FLARE capability-detection tool) `-j` static-analysis results document (#932
+// item 6, "932.7"): named capabilities capa's rule-matching statically found present in a
+// sample. Never a claim any capability ran, never a verdict from any single match — see
+// RECOMMENDATION-6.md for the guardrails this enforces (legitimate/commercial software packs
+// and uses the same APIs too) and why "unusual sections" and dynamic-flavor reports are
+// deliberately out of scope.
+//
+// Schema verified live against a REAL serialized capa 9.4.0 static report
+// (DefectDojo/django-DefectDojo's own test fixture), not just source-read dataclasses.
+
+import { createHash } from "node:crypto";
+import { boundedAggKey, boundedTextTo } from "./aggKey.js";
+import { createCanonicalEvent } from "./canonicalEvent.js";
+import {
+  CAPA_COMPOSITE_LEAD_BASIS,
+  CAPA_MATCH_BASIS,
+  MAX_FEATURE_DETAIL_LEN,
+  MAX_FIELD_LEN,
+  MAX_MAPPINGS,
+  RECOVERY_CITATIONS_MAX,
+  capaNamespaceFamilies,
+  type AttackMapping,
+  type CapaAddress,
+  type CapaFeatureEvidence,
+  type MbcMapping,
+} from "./canonicalCapaMatch.js";
+import { MAX_PRODUCER_VERSION_LEN, type SampleHash } from "./canonicalMalwareSample.js";
+import {
+  addIoc,
+  isObject,
+  mergeRowIocs,
+  type MappedEvent,
+  type SiemEvent,
+  type SiemIoc,
+} from "./siemImport.js";
+import { aggregateEvents } from "./eventAggregate.js";
+
+export const MAX_DISTINCT_RULES = 2000;
+export const MAX_MATCHES_SCANNED = 50_000; // total match tuples across all rules
+
+const HASH_RE = { md5: /^[a-f0-9]{32}$/i, sha1: /^[a-f0-9]{40}$/i, sha256: /^[a-f0-9]{64}$/i };
+const MAX_TREE_DEPTH = 32;
+const MAX_TREE_NODES = 2000; // per match tuple
+
+export interface CapaResultOptions {
+  aggregate?: boolean;
+  maxEvents?: number;
+}
+
+export interface CapaResultResult {
+  events: SiemEvent[];
+  iocs: SiemIoc[];
+  total: number;
+  kept: number;
+  dropped: number;
+  groups: number;
+  format: string;
+  malformedRules: number;
+  notCitedRules: number;
+  matchesTruncated: boolean;
+}
+
+/** `flavor === "static"` is capa's own real discriminator (confirmed against a real serialized
+ * report — a StaticAnalysis-vs-DynamicAnalysis field-set diff was NOT trustworthy on its own,
+ * Codex design review finding). `meta.sample` must carry all four identity fields as strings —
+ * capa's own schema makes them non-optional — and `rules` must be an object (zero matches is a
+ * real, valid result). */
+export function isCapaResult(root: unknown): boolean {
+  if (!isObject(root)) return false;
+  const meta = root.meta;
+  if (!isObject(meta) || meta.flavor !== "static") return false;
+  const sample = meta.sample;
+  if (!isObject(sample)) return false;
+  if (
+    typeof sample.md5 !== "string" ||
+    typeof sample.sha1 !== "string" ||
+    typeof sample.sha256 !== "string" ||
+    typeof sample.path !== "string"
+  )
+    return false;
+  return isObject(root.rules);
+}
+
+function nonNegSafeInt(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isInteger(v) && Number.isSafeInteger(v) && v >= 0 ? v : undefined;
+}
+
+function str(v: unknown): string | undefined {
+  return typeof v === "string" ? v : undefined;
+}
+
+function clip(text: string, max: number): { text: string; truncated: boolean } {
+  if (text.length <= max) return { text, truncated: false };
+  return { text: text.slice(0, max), truncated: true };
+}
+
+function parseSampleHash(sample: Record<string, unknown>): SampleHash {
+  const md5 = str(sample.md5);
+  const sha1 = str(sample.sha1);
+  const sha256 = str(sample.sha256);
+  const out: SampleHash = { hashUnavailable: false };
+  if (md5 && HASH_RE.md5.test(md5)) out.md5 = md5.toLowerCase();
+  if (sha1 && HASH_RE.sha1.test(sha1)) out.sha1 = sha1.toLowerCase();
+  if (sha256 && HASH_RE.sha256.test(sha256)) out.sha256 = sha256.toLowerCase();
+  out.hashUnavailable = !out.md5 && !out.sha1 && !out.sha256;
+  return out;
+}
+
+/** Static-only: "process"/"thread"/"call" are dynamic-analysis-only address kinds by capa's own
+ * model — a static report naming one is itself malformed, never silently accepted. */
+function parseAddress(raw: unknown): CapaAddress | undefined {
+  if (!isObject(raw)) return undefined;
+  const type = raw.type;
+  if (type === "absolute" || type === "relative" || type === "file") {
+    const value = nonNegSafeInt(raw.value);
+    return value === undefined ? undefined : { type, value };
+  }
+  if (type === "dn token") {
+    const value = nonNegSafeInt(raw.value);
+    return value === undefined ? undefined : { type, value };
+  }
+  if (type === "dn token offset") {
+    const tuple = raw.value;
+    if (!Array.isArray(tuple) || tuple.length !== 2) return undefined;
+    const a = nonNegSafeInt(tuple[0]);
+    const b = nonNegSafeInt(tuple[1]);
+    return a === undefined || b === undefined ? undefined : { type, value: [a, b] };
+  }
+  // capa's own JSON serializer omits `value` entirely for a null field (Pydantic's
+  // exclude_none=True) — a real "no address" is `{"type": "no address"}` with NO `value` key at
+  // all, confirmed against a real serialized report, not just `value: null`.
+  if (type === "no address")
+    return raw.value === null || raw.value === undefined ? { type, value: null } : undefined;
+  return undefined; // process/thread/call, or an unrecognized type — rejected, not coerced
+}
+
+function parseAddressList(raw: unknown): CapaAddress[] {
+  if (!Array.isArray(raw)) return [];
+  const out: CapaAddress[] = [];
+  for (const a of raw) {
+    const parsed = parseAddress(a);
+    if (parsed) out.push(parsed);
+  }
+  return out;
+}
+
+interface MatchNode {
+  success?: unknown;
+  node?: unknown;
+  children?: unknown;
+  locations?: unknown;
+}
+
+/** Bounded (depth AND total-node-count) walk collecting SUCCESSFUL leaf `feature` nodes anywhere
+ * in the match tree — a rule's outer match address is often uninformative (many rules are
+ * file-scope, `{"type":"no address"}`); the genuinely supporting evidence lives on these leaves
+ * (Codex design review finding). Every node in the tree is visited regardless of its OWN
+ * success, since a successful AND/OR/NOT node's successful children are what matters, not the
+ * node's own success flag. */
+function collectFeatureEvidence(root: unknown): { evidence: CapaFeatureEvidence[]; nodesVisited: number } {
+  const evidence: CapaFeatureEvidence[] = [];
+  let nodesVisited = 0;
+  const stack: { node: unknown; depth: number }[] = [{ node: root, depth: 0 }];
+  while (stack.length > 0) {
+    if (nodesVisited >= MAX_TREE_NODES) break;
+    const { node, depth } = stack.pop()!;
+    nodesVisited += 1;
+    if (!isObject(node) || depth > MAX_TREE_DEPTH) continue;
+    const m = node as MatchNode;
+    const inner = m.node;
+    if (m.success === true && isObject(inner) && inner.type === "feature" && isObject(inner.feature)) {
+      const feature = inner.feature as Record<string, unknown>;
+      const featureType = str(feature.type) ?? "unknown";
+      const rest = { ...feature };
+      delete rest.type;
+      evidence.push({
+        featureType: clip(featureType, MAX_FIELD_LEN).text,
+        detail: clip(JSON.stringify(rest), MAX_FEATURE_DETAIL_LEN).text,
+        locations: parseAddressList(m.locations).slice(0, RECOVERY_CITATIONS_MAX),
+      });
+    }
+    const children = m.children;
+    if (Array.isArray(children)) {
+      for (const c of children) stack.push({ node: c, depth: depth + 1 });
+    }
+  }
+  return { evidence, nodesVisited };
+}
+
+function dedupeEvidence(list: readonly CapaFeatureEvidence[]): {
+  kept: CapaFeatureEvidence[];
+  notCited: number;
+} {
+  const seen = new Map<string, CapaFeatureEvidence>();
+  for (const e of list) {
+    const key = createHash("sha256")
+      .update(e.featureType)
+      .update("\n")
+      .update(e.detail)
+      .update("\n")
+      .update(JSON.stringify(e.locations))
+      .digest("hex");
+    if (seen.has(key)) continue;
+    if (seen.size >= RECOVERY_CITATIONS_MAX) continue;
+    seen.set(key, e);
+  }
+  const distinctTotal = new Set(
+    list.map((e) =>
+      createHash("sha256")
+        .update(e.featureType)
+        .update("\n")
+        .update(e.detail)
+        .update("\n")
+        .update(JSON.stringify(e.locations))
+        .digest("hex"),
+    ),
+  ).size;
+  const kept = [...seen.values()];
+  return { kept, notCited: Math.max(0, distinctTotal - kept.length) };
+}
+
+function dedupeAddresses(list: readonly CapaAddress[]): { kept: CapaAddress[]; notCited: number } {
+  const seen = new Map<string, CapaAddress>();
+  for (const a of list) {
+    const key = JSON.stringify(a);
+    if (seen.has(key)) continue;
+    if (seen.size >= RECOVERY_CITATIONS_MAX) continue;
+    seen.set(key, a);
+  }
+  const distinctTotal = new Set(list.map((a) => JSON.stringify(a))).size;
+  const kept = [...seen.values()];
+  return { kept, notCited: Math.max(0, distinctTotal - kept.length) };
+}
+
+function parseMapping<T extends { id: string }>(
+  raw: unknown,
+  build: (parts: Record<string, unknown>) => T | undefined,
+): T[] {
+  if (!Array.isArray(raw)) return [];
+  const out: T[] = [];
+  for (const r of raw) {
+    if (!isObject(r)) continue;
+    const built = build(r);
+    if (built) out.push(built);
+  }
+  return out.slice(0, MAX_MAPPINGS);
+}
+
+function parseAttack(raw: unknown): AttackMapping[] {
+  return parseMapping<AttackMapping>(raw, (r) => {
+    const tactic = str(r.tactic);
+    const technique = str(r.technique);
+    const id = str(r.id);
+    if (!tactic || !technique || !id) return undefined;
+    const subtechnique = str(r.subtechnique);
+    return {
+      tactic: clip(tactic, MAX_FIELD_LEN).text,
+      technique: clip(technique, MAX_FIELD_LEN).text,
+      ...(subtechnique ? { subtechnique: clip(subtechnique, MAX_FIELD_LEN).text } : {}),
+      id: clip(id, 64).text,
+    };
+  });
+}
+
+function parseMbc(raw: unknown): MbcMapping[] {
+  return parseMapping<MbcMapping>(raw, (r) => {
+    const objective = str(r.objective);
+    const behavior = str(r.behavior);
+    const id = str(r.id);
+    if (!objective || !behavior || !id) return undefined;
+    const method = str(r.method);
+    return {
+      objective: clip(objective, MAX_FIELD_LEN).text,
+      behavior: clip(behavior, MAX_FIELD_LEN).text,
+      ...(method ? { method: clip(method, MAX_FIELD_LEN).text } : {}),
+      id: clip(id, 64).text,
+    };
+  });
+}
+
+interface RuleResult {
+  ruleName: string;
+  ruleNamespace: string | undefined;
+  ruleSourceFingerprint: string;
+  attack: AttackMapping[];
+  mbc: MbcMapping[];
+  outerLocations: CapaAddress[];
+  notCitedOuterLocations: number;
+  evidence: CapaFeatureEvidence[];
+  notCitedEvidence: number;
+  occurrences: number;
+}
+
+/** Returns null when the rule entry itself is too malformed to use at all (no name, or `matches`
+ * isn't an array) — counted as a malformed rule, never a crash. `scanned`/`truncated` mirror item
+ * 5's own now-fixed discipline: every match tuple examined counts toward the budget, and
+ * truncation is only ever true when a tuple was genuinely left unscanned. */
+function parseRule(
+  name: string,
+  entry: unknown,
+  scannedSoFar: number,
+): { rule: RuleResult | null; scanned: number; truncated: boolean } {
+  if (!isObject(entry)) return { rule: null, scanned: scannedSoFar, truncated: false };
+  const meta = entry.meta;
+  const source = entry.source;
+  const matches = entry.matches;
+  if (!isObject(meta) || typeof source !== "string" || !Array.isArray(matches)) {
+    return { rule: null, scanned: scannedSoFar, truncated: false };
+  }
+  const ruleNamespace = str(meta.namespace);
+  const ruleSourceFingerprint = createHash("sha256").update(source).digest("hex");
+  const attack = parseAttack(meta.attack);
+  const mbc = parseMbc(meta.mbc);
+
+  const outerAddrs: CapaAddress[] = [];
+  const allEvidence: CapaFeatureEvidence[] = [];
+  let scanned = scannedSoFar;
+  let truncated = false;
+  let occurrences = 0;
+  for (const tuple of matches) {
+    if (scanned >= MAX_MATCHES_SCANNED) {
+      truncated = true;
+      break;
+    }
+    scanned += 1;
+    if (!Array.isArray(tuple) || tuple.length !== 2) continue;
+    const [rawAddr, rawMatch] = tuple;
+    const addr = parseAddress(rawAddr);
+    if (addr) outerAddrs.push(addr);
+    occurrences += 1;
+    const { evidence } = collectFeatureEvidence(rawMatch);
+    allEvidence.push(...evidence);
+  }
+  const { kept: outerLocations, notCited: notCitedOuterLocations } = dedupeAddresses(outerAddrs);
+  const { kept: evidence, notCited: notCitedEvidence } = dedupeEvidence(allEvidence);
+
+  if (occurrences === 0) return { rule: null, scanned, truncated };
+
+  return {
+    rule: {
+      ruleName: clip(name, MAX_FIELD_LEN).text,
+      ruleNamespace: ruleNamespace ? clip(ruleNamespace, MAX_FIELD_LEN).text : undefined,
+      ruleSourceFingerprint,
+      attack,
+      mbc,
+      outerLocations,
+      notCitedOuterLocations,
+      evidence,
+      notCitedEvidence,
+      occurrences,
+    },
+    scanned,
+    truncated,
+  };
+}
+
+function namespaceFamily(namespace: string | undefined): string | undefined {
+  if (!namespace) return undefined;
+  const first = namespace.split("/")[0];
+  return (capaNamespaceFamilies as readonly string[]).includes(first) ? first : undefined;
+}
+
+function mapRuleEvent(
+  rule: RuleResult,
+  reportFingerprint: string,
+  sampleHash: SampleHash,
+  producerVersion: string,
+  sink: Map<string, SiemIoc>,
+): MappedEvent {
+  const reportTag = `; report ${reportFingerprint.slice(0, 16)}`;
+  const body = boundedTextTo(
+    `capa capability match: ${rule.ruleName}${rule.ruleNamespace ? ` (${rule.ruleNamespace})` : ""} — ` +
+      `${rule.occurrences} occurrence(s) in this upload; not proof this capability ran, not a verdict; ` +
+      `[undated: capa's results document carries no event time]`,
+    600 - reportTag.length,
+  );
+  const description = `${body}${reportTag}`;
+
+  const aggKey = boundedAggKey(`capa|${reportFingerprint}|${rule.ruleName}`);
+
+  const hashSink = new Map<string, SiemIoc>();
+  for (const h of [sampleHash.sha256, sampleHash.sha1, sampleHash.md5]) if (h) addIoc(hashSink, "hash", h);
+  mergeRowIocs(sink, hashSink, aggKey);
+
+  const producerVersionClipped = clip(producerVersion, MAX_PRODUCER_VERSION_LEN).text;
+  const mitre = [...new Set(rule.attack.map((a) => a.id))];
+
+  return {
+    timestamp: "",
+    description,
+    severity: "Info",
+    mitre,
+    aggKey,
+    sources: ["capa"],
+    canonical: createCanonicalEvent({
+      event: { category: "file", type: "capability-match", action: "matched" },
+      time: { observed: "", normalized: "" },
+      evidence: { rawRecords: [{ source: "capa-result", locator: `rule:${rule.ruleSourceFingerprint}` }] },
+      producer: { importer: "capa-result", parserVersion: "1", mappingVersion: "capa-rule-match-v1" },
+      capaMatch: {
+        tool: "capa",
+        ruleName: rule.ruleName,
+        ruleNamespace: rule.ruleNamespace,
+        ruleSourceFingerprint: rule.ruleSourceFingerprint,
+        attack: rule.attack,
+        mbc: rule.mbc,
+        sampleHash,
+        reportFingerprint,
+        producerVersion: producerVersionClipped,
+        mappingVersion: "capa-rule-match-v1",
+        outerLocations: rule.outerLocations,
+        notCitedOuterLocations: rule.notCitedOuterLocations,
+        evidence: rule.evidence,
+        notCitedEvidence: rule.notCitedEvidence,
+        occurrences: rule.occurrences,
+        basis: CAPA_MATCH_BASIS,
+      },
+    }),
+  };
+}
+
+function mapCompositeLead(
+  families: readonly string[],
+  ruleNames: readonly string[],
+  reportFingerprint: string,
+  sampleHash: SampleHash,
+  sink: Map<string, SiemIoc>,
+): MappedEvent {
+  const bounded = ruleNames.slice(0, MAX_MAPPINGS);
+  const notCitedRules = Math.max(0, ruleNames.length - bounded.length);
+  const reportTag = `; report ${reportFingerprint.slice(0, 16)}`;
+  const body = boundedTextTo(
+    `capa composite inspection lead: ${families.join(" + ")} — ${bounded.join(", ")}; ` +
+      `an inspection lead, not a verdict; [undated: capa's results document carries no event time]`,
+    600 - reportTag.length,
+  );
+  const description = `${body}${reportTag}`;
+  const aggKey = boundedAggKey(`capa|${reportFingerprint}|composite-lead`);
+
+  const hashSink = new Map<string, SiemIoc>();
+  for (const h of [sampleHash.sha256, sampleHash.sha1, sampleHash.md5]) if (h) addIoc(hashSink, "hash", h);
+  mergeRowIocs(sink, hashSink, aggKey);
+
+  return {
+    timestamp: "",
+    description,
+    severity: "Low",
+    mitre: [],
+    aggKey,
+    sources: ["capa"],
+    canonical: createCanonicalEvent({
+      event: { category: "file", type: "composite-inspection-lead", action: "flagged" },
+      time: { observed: "", normalized: "" },
+      evidence: {
+        rawRecords: [{ source: "capa-result", locator: `composite:${reportFingerprint.slice(0, 16)}` }],
+      },
+      producer: { importer: "capa-result", parserVersion: "1", mappingVersion: "capa-rule-match-v1" },
+      capaCompositeLead: {
+        tool: "capa",
+        reportFingerprint,
+        sampleHash,
+        contributingFamilies: [...families],
+        contributingRules: bounded,
+        notCitedRules,
+        basis: CAPA_COMPOSITE_LEAD_BASIS,
+      },
+    }),
+  };
+}
+
+export function parseCapaResult(text: string, opts: CapaResultOptions = {}): CapaResultResult | null {
+  let root: unknown;
+  try {
+    root = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!isCapaResult(root)) return null;
+  const r = root as Record<string, unknown>;
+  const meta = r.meta as Record<string, unknown>;
+  const sample = meta.sample as Record<string, unknown>;
+  const producerVersion = str(meta.version) ?? "";
+  const sampleHash = parseSampleHash(sample);
+  const reportFingerprint = createHash("sha256").update(text).digest("hex");
+  const rulesObj = r.rules as Record<string, unknown>;
+
+  let scanned = 0;
+  let matchesTruncated = false;
+  let malformedRules = 0;
+  let notCitedRules = 0;
+  const rules: RuleResult[] = [];
+  let total = 0;
+  for (const [name, entry] of Object.entries(rulesObj)) {
+    total += 1;
+    if (rules.length >= MAX_DISTINCT_RULES) {
+      notCitedRules += 1;
+      continue;
+    }
+    const result = parseRule(name, entry, scanned);
+    scanned = result.scanned;
+    if (result.truncated) matchesTruncated = true;
+    if (result.rule) rules.push(result.rule);
+    else malformedRules += 1;
+  }
+
+  const sink = new Map<string, SiemIoc>();
+  const mapped: MappedEvent[] = rules.map((rule) =>
+    mapRuleEvent(rule, reportFingerprint, sampleHash, producerVersion, sink),
+  );
+
+  const families = new Set<string>();
+  const familyRules = new Map<string, string[]>();
+  for (const rule of rules) {
+    const family = namespaceFamily(rule.ruleNamespace);
+    if (!family) continue;
+    families.add(family);
+    const list = familyRules.get(family) ?? [];
+    list.push(rule.ruleName);
+    familyRules.set(family, list);
+  }
+  if (families.has("anti-analysis") && families.size >= 2) {
+    const contributingRuleNames = [...families].flatMap((f) => familyRules.get(f) ?? []);
+    mapped.push(mapCompositeLead([...families], contributingRuleNames, reportFingerprint, sampleHash, sink));
+  }
+
+  const { events, groups } = aggregateEvents(mapped, {
+    aggregate: opts.aggregate,
+    minSeverity: "Info",
+    maxEvents: opts.maxEvents ?? MAX_DISTINCT_RULES + 1,
+  });
+
+  return {
+    events,
+    iocs: [...sink.values()],
+    total,
+    kept: events.length,
+    dropped: malformedRules,
+    groups,
+    format: "CapaResultDocument",
+    malformedRules,
+    notCitedRules,
+    matchesTruncated,
+  };
+}

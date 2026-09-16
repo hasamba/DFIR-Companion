@@ -29,6 +29,7 @@ import { memoryRunBlockSchema } from "./canonicalMemoryRun.js";
 import { gwsLifecycleBlockSchema } from "./canonicalGwsLifecycle.js";
 import { recoveredFragmentBlockSchema } from "./canonicalRecoveredFragment.js";
 import { decodedStringBlockSchema } from "./canonicalDecodedString.js";
+import { capaMatchBlockSchema, capaCompositeLeadBlockSchema } from "./canonicalCapaMatch.js";
 
 export const CANONICAL_EVENT_SCHEMA_VERSION = "1.0.0" as const;
 /** The producer stamped on an envelope DERIVED from legacy flat fields at the read boundary. */
@@ -190,12 +191,12 @@ export const canonicalEventEnvelopeSchema = z.object({
   diskImageAcquisition: diskImageAcquisitionSchema.optional(), // diskImageAcquisitionLog.ts, #1102; block in canonicalDiskImage.ts
   recoveredFragment: recoveredFragmentBlockSchema.optional(), // bulkExtractorUrlImport.ts, #932 item 4; block in canonicalRecoveredFragment.ts
   decodedString: decodedStringBlockSchema.optional(), // flossResultImport.ts, #932 item 5; block in canonicalDecodedString.ts
+  capaMatch: capaMatchBlockSchema.optional(), // capaResultImport.ts, #932 item 6; block in canonicalCapaMatch.ts
+  capaCompositeLead: capaCompositeLeadBlockSchema.optional(), // capaResultImport.ts, #932 item 6
   mailboxChain: mailboxChainBlockSchema.optional(), // mailboxChain.ts, #975; block in canonicalMailbox.ts
   memoryRun: memoryRunBlockSchema.optional(), // memoryRunEnvelope.ts, #1016; block in canonicalMemoryRun.ts
-  // A Google Workspace OAuth-lifecycle summary row (gwsOAuthLifecycle.ts, #983); the block lives in canonicalGwsLifecycle.ts.
-  gwsLifecycle: gwsLifecycleBlockSchema.optional(),
-  // Google Drive sharing / access rows and Takeout rows (#931 item 11); the blocks live in canonicalGwsDrive.ts.
-  driveSharing: driveSharingBlockSchema.optional(),
+  gwsLifecycle: gwsLifecycleBlockSchema.optional(), // gwsOAuthLifecycle.ts, #983; block in canonicalGwsLifecycle.ts
+  driveSharing: driveSharingBlockSchema.optional(), // Drive sharing/access + Takeout (#931 item 11); blocks in canonicalGwsDrive.ts
   driveAccess: driveAccessBlockSchema.optional(),
   takeout: takeoutBlockSchema.optional(),
   takeoutLifecycle: takeoutLifecycleBlockSchema.optional(),

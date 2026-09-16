@@ -5,6 +5,10 @@
 // canonicalRecoveredFragment.ts's own sibling-file pattern, #932 item 4).
 
 import { z } from "zod";
+import { MAX_PRODUCER_VERSION_LEN, sampleHashSchema } from "./canonicalMalwareSample.js";
+
+export { MAX_PRODUCER_VERSION_LEN, sampleHashSchema };
+export type { SampleHash } from "./canonicalMalwareSample.js";
 
 export const decodedStringTools = ["floss"] as const;
 export type DecodedStringTool = (typeof decodedStringTools)[number];
@@ -16,32 +20,6 @@ export type DecodedStringKind = (typeof decodedStringKinds)[number];
 
 export const MAX_VALUE_LEN = 2000;
 export const RECOVERY_CITATIONS_MAX = 64;
-/** FLOSS's own version string is normally short ("0.1.0", "v2.2.0-0-g783dd8f") — bounded so a
- * pathological upload can't copy an unbounded string into every emitted event (Codex code review
- * finding). */
-export const MAX_PRODUCER_VERSION_LEN = 200;
-
-/** Every hash FLOSS itself reported, each validated by hex length/shape before being trusted as
- * an identity component or IOC — reported by the tool, never independently verified: this
- * importer has no access to the original binary, only FLOSS's own text results. */
-export const sampleHashSchema = z.object({
-  md5: z
-    .string()
-    .regex(/^[a-f0-9]{32}$/i)
-    .optional(),
-  sha1: z
-    .string()
-    .regex(/^[a-f0-9]{40}$/i)
-    .optional(),
-  sha256: z
-    .string()
-    .regex(/^[a-f0-9]{64}$/i)
-    .optional(),
-  /** Explicit, not inferred from three absent fields — true only when none of the three above
-   * validated; the event is still importable, keyed by report fingerprint alone. */
-  hashUnavailable: z.boolean(),
-});
-export type SampleHash = z.infer<typeof sampleHashSchema>;
 
 const decodedCitationSchema = z.object({
   address: z.number().int().nonnegative().safe(),

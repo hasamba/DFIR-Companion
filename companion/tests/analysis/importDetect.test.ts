@@ -115,6 +115,16 @@ describe("detectImportKind — JSON formats", () => {
     });
     expect(detectImportKind("floss.json", text)).toBe("flossresult");
   });
+  it("caparesult: a capa -j static results document", () => {
+    const text = JSON.stringify({
+      meta: {
+        flavor: "static",
+        sample: { md5: "a", sha1: "b", sha256: "c", path: "/samples/m.exe" },
+      },
+      rules: {},
+    });
+    expect(detectImportKind("capa.json", text)).toBe("caparesult");
+  });
   it("m365: Unified Audit Log JSON", () => {
     expect(
       detectImportKind(
