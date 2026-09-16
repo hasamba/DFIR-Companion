@@ -1,7 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { requestAuthentication } from "../auth/types.js";
 import { canonicalHostName, type NearDuplicate } from "../analysis/hostAlias.js";
-import { loadPendingHostDuplicates } from "../analysis/hostScopeLoad.js";
+import { loadHostDuplicatePanelCandidates } from "../analysis/hostScopeLoad.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -28,7 +28,7 @@ export function registerHostDuplicateRoutes(app: Express, ctx: RouteContext): vo
   }
 
   async function pending(caseId: string): Promise<NearDuplicate[]> {
-    return loadPendingHostDuplicates(
+    return loadHostDuplicatePanelCandidates(
       {
         state: options.stateStore!,
         assetOverrides: options.assetOverridesStore!,

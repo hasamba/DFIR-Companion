@@ -1,10 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { buildHostAliasIndex } from "../../src/analysis/hostAlias.js";
+import { buildHostBindingIndex, type HostBindingIndex } from "../../src/analysis/hostBinding.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { createCanonicalEvent } from "../../src/analysis/canonicalEvent.js";
 import {
   HostMergeDecisionRequired,
   hostNamesFromState,
   pendingNearDuplicates,
+  pendingNetworkIdentityDuplicates,
 } from "../../src/analysis/hostDuplicateGate.js";
 
 function ev(id: string, asset: string): ForensicEvent {
@@ -76,6 +79,152 @@ describe("pendingNearDuplicates", () => {
 
   it("returns nothing when there is only one spelling", () => {
     expect(pendingNearDuplicates(["WIN11", "DC01"], EMPTY_INDEX, [])).toEqual([]);
+  });
+});
+
+// Windows 4624 fixture matching hostBinding.ts's own directionality: recorded ON the file server
+// (`sessionHost`), the CLIENT's own name is Workstation Name, never the session host.
+let seq = 0;
+function logonEvent(o: { sessionHost: string; clientName: string; ip: string; ts: string }): ForensicEvent {
+  seq += 1;
+  return {
+    id: `id-${seq}`,
+    timestamp: o.ts,
+    description: `Windows Security logon @ ${o.sessionHost}`,
+    severity: "Low",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    asset: o.sessionHost,
+    canonical: createCanonicalEvent({
+      event: { category: "authentication", type: "logon", outcome: "success" },
+      target: { kind: "host", name: o.sessionHost },
+      authentication: { logonType: 3 },
+      session: { terminal: o.clientName },
+      network: { source: { address: o.ip } },
+      time: { observed: o.ts, normalized: o.ts },
+      evidence: { rawRecords: [{ source: "test", locator: `row:${seq}` }] },
+      producer: { importer: "test", parserVersion: "1", mappingVersion: "1" },
+    }),
+  };
+}
+
+function bindingIndexFor(events: readonly ForensicEvent[]): HostBindingIndex {
+  return buildHostBindingIndex(events);
+}
+
+describe("pendingNetworkIdentityDuplicates", () => {
+  it("flags an IP-shaped host name that resolves unambiguously to a real machine", () => {
+    const events = [
+      logonEvent({ sessionHost: "fs-01", clientName: "ws-042", ip: "10.0.0.5", ts: "2026-06-10T12:00:00Z" }),
+    ];
+    const pending = pendingNetworkIdentityDuplicates(
+      ["10.0.0.5"],
+      buildHostAliasIndex([], {}),
+      bindingIndexFor(events),
+      [],
+    );
+    expect(pending).toHaveLength(1);
+    expect(pending[0]).toMatchObject({ canonical: "ws-042", other: "10.0.0.5", reason: "network-identity" });
+    expect(pending[0].sampleTime).toBe("2026-06-10T12:00:00Z");
+  });
+
+  it("does not flag an IP bound to two different hosts (ambiguous)", () => {
+    const events = [
+      logonEvent({ sessionHost: "fs-01", clientName: "ws-001", ip: "10.0.0.9", ts: "2026-06-10T08:00:00Z" }),
+      logonEvent({ sessionHost: "fs-01", clientName: "ws-002", ip: "10.0.0.9", ts: "2026-06-10T20:00:00Z" }),
+    ];
+    const pending = pendingNetworkIdentityDuplicates(
+      ["10.0.0.9"],
+      buildHostAliasIndex([], {}),
+      bindingIndexFor(events),
+      [],
+    );
+    expect(pending).toEqual([]);
+  });
+
+  it("does not flag an IP with no binding evidence at all", () => {
+    const pending = pendingNetworkIdentityDuplicates(
+      ["10.0.0.9"],
+      buildHostAliasIndex([], {}),
+      bindingIndexFor([]),
+      [],
+    );
+    expect(pending).toEqual([]);
+  });
+
+  it("does not flag an IP already aliased to a real name", () => {
+    const events = [
+      logonEvent({ sessionHost: "fs-01", clientName: "ws-042", ip: "10.0.0.5", ts: "2026-06-10T12:00:00Z" }),
+    ];
+    const index = buildHostAliasIndex([], { "10.0.0.5": "ws-042" });
+    const pending = pendingNetworkIdentityDuplicates(["10.0.0.5"], index, bindingIndexFor(events), []);
+    expect(pending).toEqual([]);
+  });
+
+  it("does not resurface a dismissed pair", () => {
+    const events = [
+      logonEvent({ sessionHost: "fs-01", clientName: "ws-042", ip: "10.0.0.5", ts: "2026-06-10T12:00:00Z" }),
+    ];
+    const dismissals = [{ canonical: "ws-042", other: "10.0.0.5", dismissedAt: "t", dismissedBy: "a" }];
+    const pending = pendingNetworkIdentityDuplicates(
+      ["10.0.0.5"],
+      buildHostAliasIndex([], {}),
+      bindingIndexFor(events),
+      dismissals,
+    );
+    expect(pending).toEqual([]);
+  });
+
+  it("never flags an IPv6-shaped host name, even with matching binding evidence", () => {
+    const events = [
+      logonEvent({
+        sessionHost: "fs-01",
+        clientName: "fe80::1",
+        ip: "10.0.0.5",
+        ts: "2026-06-10T12:00:00Z",
+      }),
+    ];
+    // fe80::1 itself as the host name under review — must never be flagged regardless of any
+    // binding evidence, since IPv6 is out of scope for this feature (see PLAN-1163.md).
+    const pending = pendingNetworkIdentityDuplicates(
+      ["fe80::1"],
+      buildHostAliasIndex([], {}),
+      bindingIndexFor(events),
+      [],
+    );
+    expect(pending).toEqual([]);
+  });
+
+  it("does not flag a binding that resolves to the IP itself (self-referential)", () => {
+    const events = [
+      logonEvent({
+        sessionHost: "fs-01",
+        clientName: "10.0.0.5",
+        ip: "10.0.0.5",
+        ts: "2026-06-10T12:00:00Z",
+      }),
+    ];
+    const pending = pendingNetworkIdentityDuplicates(
+      ["10.0.0.5"],
+      buildHostAliasIndex([], {}),
+      bindingIndexFor(events),
+      [],
+    );
+    expect(pending).toEqual([]);
+  });
+
+  it("does not flag a non-IP host name at all", () => {
+    const events = [
+      logonEvent({ sessionHost: "fs-01", clientName: "ws-042", ip: "10.0.0.5", ts: "2026-06-10T12:00:00Z" }),
+    ];
+    const pending = pendingNetworkIdentityDuplicates(
+      ["ws-042", "WIN11"],
+      buildHostAliasIndex([], {}),
+      bindingIndexFor(events),
+      [],
+    );
+    expect(pending).toEqual([]);
   });
 });
 
