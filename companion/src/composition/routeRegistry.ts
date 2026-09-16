@@ -66,6 +66,7 @@ import { registerAttributionAssertionRoutes } from "../routes/attributionAsserti
 import { registerCollectionGenerationRoutes } from "../routes/collectionGenerations.js";
 import { registerMobileBackupGenerationRoutes } from "../routes/mobileBackupGenerations.js";
 import { registerHostDuplicateRoutes } from "../routes/hostDuplicates.js";
+import { registerProxyHostIdentityRoutes } from "../routes/proxyHostIdentity.js";
 import { registerAiStateRoutes } from "../routes/aiState.js";
 import { registerClockSkewRoutes } from "../routes/clockSkew.js";
 import {
@@ -191,6 +192,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerHuntRequirementRoutes(app, ctx);
   registerAttributionAssertionRoutes(app, ctx);
   registerHostDuplicateRoutes(app, ctx);
+  registerProxyHostIdentityRoutes(app, ctx);
   registerAiStateRoutes(app, ctx);
   registerClockSkewRoutes(app, ctx);
   registerCoachRoutes(app, ctx);

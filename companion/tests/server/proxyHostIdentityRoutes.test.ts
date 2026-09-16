@@ -1,0 +1,133 @@
+// #993 (proxy -> workstation half): GET /cases/:id/proxy-host-identity-matches. Real
+// StateStore-backed events, real hostBinding.ts resolution end-to-end.
+import { describe, it, expect } from "vitest";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import request from "supertest";
+import { CaseStore } from "../../src/storage/caseStore.js";
+import { StateStore } from "../../src/analysis/stateStore.js";
+import { createApp } from "../../src/server.js";
+import { createCanonicalEvent } from "../../src/analysis/canonicalEvent.js";
+import { emptyState } from "../../src/analysis/stateTypes.js";
+import type { InvestigationState, ForensicEvent } from "../../src/analysis/stateTypes.js";
+
+async function makeApp() {
+  const root = await mkdtemp(join(tmpdir(), "dfir-proxy-host-identity-"));
+  const store = new CaseStore(root);
+  const stateStore = new StateStore(store);
+  const app = createApp(store, { stateStore });
+  await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+  return { app, stateStore };
+}
+
+function logonEvent(id: string, host: string, client: string, ip: string, ts: string): ForensicEvent {
+  return {
+    id,
+    timestamp: ts,
+    description: `logon @ ${host}`,
+    severity: "Low",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    asset: host,
+    canonical: createCanonicalEvent({
+      event: { category: "authentication", type: "logon", outcome: "success" },
+      target: { kind: "host", name: host },
+      authentication: { logonType: 3 },
+      session: { terminal: client },
+      network: { source: { address: ip } },
+      time: { observed: ts, normalized: ts },
+      evidence: { rawRecords: [{ source: "test", locator: `row:${id}` }] },
+      producer: { importer: "test", parserVersion: "1", mappingVersion: "1" },
+    }),
+  };
+}
+
+function webEvent(id: string, ip: string, ts: string): ForensicEvent {
+  return {
+    id,
+    timestamp: ts,
+    description: `GET / from ${ip}`,
+    severity: "Info",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
+    canonical: createCanonicalEvent({
+      event: { category: "network", type: "web-request" },
+      network: { source: { address: ip } },
+      time: { observed: ts, normalized: ts },
+      evidence: { rawRecords: [{ source: "zeek-http", locator: `row:${id}` }] },
+      producer: { importer: "zeek", parserVersion: "1", mappingVersion: "1" },
+    }),
+  };
+}
+
+function stateWith(events: ForensicEvent[]): InvestigationState {
+  return { ...emptyState("c1"), forensicTimeline: events, updatedAt: new Date().toISOString() };
+}
+
+describe("GET /cases/:id/proxy-host-identity-matches", () => {
+  it("returns 501 when the state store is not configured", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-proxy-host-identity-bare-"));
+    const store = new CaseStore(root);
+    const bareApp = createApp(store, {});
+    await request(bareApp)
+      .post("/cases")
+      .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const res = await request(bareApp).get("/cases/c1/proxy-host-identity-matches");
+    expect(res.status).toBe(501);
+  });
+
+  it("resolves a proxy request's own source IP to the client host a 4624 logon names", async () => {
+    const { app, stateStore } = await makeApp();
+    await stateStore.save(
+      stateWith([
+        logonEvent("l1", "fs-01", "ws-042", "10.0.0.5", "2026-06-10T12:00:00Z"),
+        webEvent("w1", "10.0.0.5", "2026-06-10T12:05:00Z"),
+      ]),
+    );
+    const res = await request(app).get("/cases/c1/proxy-host-identity-matches");
+    expect(res.status).toBe(200);
+    expect(res.body.matches).toHaveLength(1);
+    expect(res.body.matches[0]).toMatchObject({ eventId: "w1", outcome: "matched" });
+    expect(res.body.matches[0].hosts).toEqual([{ host: "ws-042", evidenceEventIds: ["l1"] }]);
+  });
+
+  it("uses the default 6-hour tolerance when none is given, and rejects a match outside it", async () => {
+    const { app, stateStore } = await makeApp();
+    await stateStore.save(
+      stateWith([
+        logonEvent("l1", "fs-01", "ws-042", "10.0.0.5", "2026-06-10T00:00:00Z"),
+        webEvent("w1", "10.0.0.5", "2026-06-10T12:00:00Z"), // 12h later, outside the 6h default
+      ]),
+    );
+    const res = await request(app).get("/cases/c1/proxy-host-identity-matches");
+    expect(res.status).toBe(200);
+    expect(res.body.matches[0].outcome).toBe("no-match");
+    expect(res.body.matches[0].toleranceMs).toBe(21_600_000);
+  });
+
+  it("accepts an overriding ?toleranceMs= query param", async () => {
+    const { app, stateStore } = await makeApp();
+    await stateStore.save(
+      stateWith([
+        logonEvent("l1", "fs-01", "ws-042", "10.0.0.5", "2026-06-10T00:00:00Z"),
+        webEvent("w1", "10.0.0.5", "2026-06-10T12:00:00Z"),
+      ]),
+    );
+    const res = await request(app).get("/cases/c1/proxy-host-identity-matches?toleranceMs=43200000");
+    expect(res.status).toBe(200);
+    expect(res.body.matches[0].outcome).toBe("matched");
+    expect(res.body.matches[0].toleranceMs).toBe(43_200_000);
+  });
+
+  it("400s a malformed toleranceMs instead of silently clamping it", async () => {
+    const { app, stateStore } = await makeApp();
+    await stateStore.save(stateWith([]));
+    const res = await request(app).get("/cases/c1/proxy-host-identity-matches?toleranceMs=-5");
+    expect(res.status).toBe(400);
+    const res2 = await request(app).get("/cases/c1/proxy-host-identity-matches?toleranceMs=notanumber");
+    expect(res2.status).toBe(400);
+  });
+});
