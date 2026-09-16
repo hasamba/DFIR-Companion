@@ -9,6 +9,7 @@ import {
   persistenceFilters,
   generationOrderSchema,
 } from "../analysis/canonicalCollectionGeneration.js";
+import { comparePersistenceGenerations } from "../analysis/persistenceGenerationComparator.js";
 import { humanIdentityFor } from "./evidenceAttestation.js";
 import type { RouteContext } from "./context.js";
 
@@ -44,6 +45,11 @@ export function actorFrom(
  * exactly (never re-implemented) — the same trust model: an automated credential recording what a
  * collection covered would let something other than a person vouch for it.
  */
+
+const compareQuerySchema = z.object({
+  host: z.string().trim().min(1).optional(),
+  domain: z.enum(collectionDomains).optional(),
+});
 
 const recordRequestSchema = z.object({
   rawHost: z.string().trim().min(1).max(200),
@@ -91,6 +97,30 @@ export function registerCollectionGenerationRoutes(app: Express, ctx: RouteConte
       const target = resolveHost(index, hostFilter);
       const filtered = all.filter((g) => resolveHost(index, g.rawHost) === target);
       return res.status(200).json({ generations: filtered });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  // #1128: read-only over already-stored data — no auth beyond the existing case-scoped access,
+  // since this derives a view rather than writing (Codex design-review finding L1: `humanIdentityFor`
+  // would wrongly exclude a legitimate case-scoped service-token reader).
+  app.get("/cases/:id/collection-generations/compare", async (req: Request, res: Response) => {
+    if (!configured(res)) return;
+    const parsed = compareQuerySchema.safeParse(req.query);
+    if (!parsed.success) {
+      return res.status(400).json({ error: parsed.error.message });
+    }
+    try {
+      const active = await options.collectionGenerationStore!.active(req.params.id);
+      const index = await aliasIndexFor(req.params.id);
+      const { cohorts: all, truncatedCohorts } = comparePersistenceGenerations(active, index);
+      let cohorts = all;
+      if (parsed.data.host) {
+        const target = resolveHost(index, parsed.data.host);
+        cohorts = cohorts.filter((c) => c.resolvedHost === target);
+      }
+      return res.status(200).json({ cohorts, truncatedCohorts });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

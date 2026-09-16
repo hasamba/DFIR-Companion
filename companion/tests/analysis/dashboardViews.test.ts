@@ -112,6 +112,7 @@ describe("dashboardViews — seed integrity", () => {
       "sec-phases",
       "sec-host-scope",
       "sec-host-duplicates",
+      "sec-collection-generation-diff",
       "sec-hostranking",
       "sec-gaps",
       "sec-evidence-gaps",
@@ -273,6 +274,23 @@ describe("sec-host-duplicates registration", () => {
     for (const id of ["analyst", "lead", "deep-dive", "report"]) {
       const view = BUILT_IN_DASHBOARD_VIEWS.find((v) => v.id === id)!;
       expect(view.sections, `${id} is missing sec-host-duplicates`).toContain("sec-host-duplicates");
+    }
+  });
+});
+
+describe("sec-collection-generation-diff registration (#1128)", () => {
+  it("is a registered dashboard section", () => {
+    expect(DASHBOARD_SECTION_IDS).toContain("sec-collection-generation-diff");
+  });
+
+  // Same convention as sec-host-scope (#553): registering the id is only half of it, and a
+  // section in no view is unreachable from every built-in profile.
+  it("appears in the Analyst, Lead and Deep-Dive profiles", () => {
+    for (const id of ["analyst", "lead", "deep-dive"]) {
+      const view = BUILT_IN_DASHBOARD_VIEWS.find((v) => v.id === id)!;
+      expect(view.sections, `${id} is missing sec-collection-generation-diff`).toContain(
+        "sec-collection-generation-diff",
+      );
     }
   });
 });
