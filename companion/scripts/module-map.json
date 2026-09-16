@@ -315,6 +315,8 @@
     "eventTechniques.ts": "analysis/timeline",
     "flossResultImport.ts": "analysis/ingest",
     "evidenceAttestationStore.ts": "analysis/ai",
+    "huntRequirementStore.ts": "analysis/ai",
+    "huntRequirementChecklist.ts": "analysis/ai",
     "evidenceGraph.ts": "analysis/detect",
     "evtxRecordId.ts": "analysis/ingest",
     "evtxXmlImport.ts": "analysis/ingest",

@@ -61,6 +61,7 @@ import { registerIncidentTypeRoutes } from "../routes/incidentTypes.js";
 import { registerCollectionPlanRoutes } from "../routes/collectionPlan.js";
 import { registerHostScopeRoutes } from "../routes/hostScope.js";
 import { registerEvidenceAttestationRoutes } from "../routes/evidenceAttestation.js";
+import { registerHuntRequirementRoutes } from "../routes/huntRequirements.js";
 import { registerCollectionGenerationRoutes } from "../routes/collectionGenerations.js";
 import { registerMobileBackupGenerationRoutes } from "../routes/mobileBackupGenerations.js";
 import { registerHostDuplicateRoutes } from "../routes/hostDuplicates.js";
@@ -186,6 +187,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerEvidenceAttestationRoutes(app, ctx);
   registerCollectionGenerationRoutes(app, ctx);
   registerMobileBackupGenerationRoutes(app, ctx);
+  registerHuntRequirementRoutes(app, ctx);
   registerHostDuplicateRoutes(app, ctx);
   registerAiStateRoutes(app, ctx);
   registerClockSkewRoutes(app, ctx);
