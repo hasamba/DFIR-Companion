@@ -132,6 +132,15 @@ describe("detectImportKind — JSON formats", () => {
     ]);
     expect(detectImportKind("olevba.json", text)).toBe("olevbaresult");
   });
+  it("mobsfpermission: a MobSF Android static-analysis report", () => {
+    const text = JSON.stringify({
+      sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      package_name: "com.example.sample",
+      apkid: {},
+      permissions: { "android.permission.CAMERA": { status: "dangerous", info: "i", description: "d" } },
+    });
+    expect(detectImportKind("mobsf.json", text)).toBe("mobsfpermission");
+  });
   it("sqliterowstate: a sqlite-dissect per-table commit-history CSV", () => {
     const text =
       '"File Source","Version","Page Version","Cell Source","Page Number","Location","Operation","File Offset","Row ID","body"\n' +
