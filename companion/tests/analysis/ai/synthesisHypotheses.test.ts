@@ -6,8 +6,13 @@ import { CaseStore } from "../../../src/storage/caseStore.js";
 import { HypothesisStore } from "../../../src/analysis/hypothesisStore.js";
 import { EvidenceAttestationStore } from "../../../src/analysis/evidenceAttestationStore.js";
 import { autoGenerateHypotheses } from "../../../src/analysis/ai/synthesisHypotheses.js";
+import { buildHostAliasIndex } from "../../../src/analysis/hostAlias.js";
 import type { SynthesisContext } from "../../../src/analysis/ai/synthesis.js";
 import type { InvestigationState } from "../../../src/analysis/stateTypes.js";
+
+// No hosts in play here (#1111's wiring test only): an empty alias index behaves exactly like the
+// pre-#1110 unscoped case-wide check, which this test's fixtures rely on.
+const NO_HOSTS = buildHostAliasIndex([], {});
 
 // Thin-wiring test for #1111: autoGenerateHypotheses must load the case's own ACTIVE attestations
 // and pass them into gateRefutedSeeds. The gate's own coverage/disclosure logic is exhaustively
@@ -46,6 +51,8 @@ function rawHypothesis(title: string) {
     relatedIocIds: [],
     contradictingEventIds: [],
     discriminator: "",
+    subjectScope: "",
+    subjectHosts: [],
   };
 }
 
@@ -59,7 +66,14 @@ describe("autoGenerateHypotheses — evidence attestation wiring (#1111)", () =>
       reason: "Reviewed the full Prefetch and Sysmon export against the incident window",
     });
     const ctx = ctxWith(attestationStore);
-    await autoGenerateHypotheses(ctx, "c1", [rawHypothesis("The payload never ran on the host")], STATE, []);
+    await autoGenerateHypotheses(
+      ctx,
+      "c1",
+      [rawHypothesis("The payload never ran on the host")],
+      STATE,
+      [],
+      NO_HOSTS,
+    );
     const stored = await new HypothesisStore(cases).load("c1");
     expect(stored[0].status).toBe("refuted");
     expect(stored[0].description).toContain("analyst-attested coverage");
@@ -67,7 +81,14 @@ describe("autoGenerateHypotheses — evidence attestation wiring (#1111)", () =>
 
   it("without an evidenceAttestationStore wired, behaves exactly as before (backward compatible)", async () => {
     const ctx = ctxWith(undefined);
-    await autoGenerateHypotheses(ctx, "c1", [rawHypothesis("The payload never ran on the host")], STATE, []);
+    await autoGenerateHypotheses(
+      ctx,
+      "c1",
+      [rawHypothesis("The payload never ran on the host")],
+      STATE,
+      [],
+      NO_HOSTS,
+    );
     const stored = await new HypothesisStore(cases).load("c1");
     expect(stored[0].status).toBe("unknown");
   });
