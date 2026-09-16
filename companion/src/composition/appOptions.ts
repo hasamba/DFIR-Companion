@@ -98,6 +98,7 @@ import type { IncidentTypeStore } from "../analysis/incidentTypeStore.js";
 import type { CollectionPlanStore } from "../analysis/collectionPlanStore.js";
 import type { HostScopeStore } from "../analysis/hostScopeStore.js";
 import type { EvidenceAttestationStore } from "../analysis/evidenceAttestationStore.js";
+import type { HuntRequirementStore } from "../analysis/huntRequirementStore.js";
 import type { CollectionGenerationStore } from "../analysis/collectionGenerationStore.js";
 import type { MobileBackupGenerationStore } from "../analysis/mobileBackupGenerationStore.js";
 import type { MispPushClientLike } from "../integrations/misp/mispPushClient.js";
@@ -225,6 +226,10 @@ export interface AppOptions {
   // Analyst-attested EvidenceClass coverage (#1111): a signed assertion refutationGate.ts consumes
   // alongside automatically-detected coverage, distinct from the coarser collectionPlanStore.ts.
   evidenceAttestationStore?: EvidenceAttestationStore;
+  // Analyst-authored decision-linked hunt/collection requirements (#933 item 17): decision,
+  // audience, deadline, scope, expected observable evidence — turned into a checklist by
+  // huntRequirementChecklist.ts, reusing this same evidenceAttestationStore for attested coverage.
+  huntRequirementStore?: HuntRequirementStore;
   // Durable, coverage-tracked collection-generation ledger (#1108) — route-only, never wired into
   // synthesis/refutationGate.ts; #1128's own persistenceGenerationComparator.ts is its consumer.
   collectionGenerationStore?: CollectionGenerationStore;

@@ -324,7 +324,7 @@ function intersectAcrossHosts(
 // index existed then, but a STORED hypothesis can outlive that index — an analyst merging two host
 // spellings afterward must not leave an old seed's scope silently mismatched against `byHost`'s own
 // (freshly resolved) keys.
-function collectedForScope(
+export function collectedForScope(
   scope: ResolvedSubjectScope | undefined,
   byHost: ReadonlyMap<string, Set<EvidenceClass>>,
   knownHosts: ReadonlySet<string>,
