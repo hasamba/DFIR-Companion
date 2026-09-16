@@ -1091,3 +1091,34 @@ describe("handle-table wiring (#933 item 13)", () => {
     expect(handleEvents[0].severity).toBe("Info");
   });
 });
+
+describe("PE-sieve JSON report wiring (#933 item 15)", () => {
+  it("parseMemory() routes a PE-sieve report to the PE-sieve parser end to end", () => {
+    const json = JSON.stringify({
+      pid: 42,
+      scanned: {
+        total: 1,
+        skipped: 0,
+        errors: 0,
+        modified: {
+          total: 1,
+          patched: 1,
+          iat_hooked: 0,
+          replaced: 0,
+          hdr_modified: 0,
+          implanted_pe: 0,
+          implanted_shc: 0,
+          unreachable_file: 0,
+          other: 0,
+        },
+      },
+      scans: [{ code_scan: { module: "1", module_file: "evil.dll", status: 1, patches: 3, scanned_sections: 1 } }],
+    });
+    const r = parseMemory(json, { filename: "pe-sieve-report.json" });
+    expect(r.format).toBe("pe-sieve");
+    expect(r.tool).toBe("PE-sieve");
+    const flagged = r.events.find((e) => e.description.includes("code_scan"));
+    expect(flagged?.severity).toBe("High");
+    expect(flagged?.mitreTechniques).toContain("T1055");
+  });
+});

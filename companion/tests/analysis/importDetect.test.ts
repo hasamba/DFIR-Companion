@@ -45,6 +45,15 @@ describe("detectImportKind — JSON formats", () => {
     expect(detectImportKind("snort_alert.log", log)).toBe("snort");
   });
 
+  it("memory: PE-sieve JSON report (#933 item 15)", () => {
+    expect(
+      detectImportKind(
+        "pe-sieve-report.json",
+        j({ pid: 1234, scanned: { total: 1, modified: { total: 0 } }, scans: [] }),
+      ),
+    ).toBe("memory");
+  });
+
   it("sandbox: CAPE report.json", () => {
     expect(
       detectImportKind("report.json", j({ info: { id: 1 }, target: { file: {} }, signatures: [] })),
