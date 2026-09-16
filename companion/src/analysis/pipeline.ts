@@ -563,6 +563,10 @@ export class AnalysisPipeline {
     return ingest.importMacSpotlightUsage(this.importCtx, ...args);
   }
 
+  importMacLoginItem(...args: ImporterArgs<typeof ingest.importMacLoginItem>): Promise<InvestigationState> {
+    return ingest.importMacLoginItem(this.importCtx, ...args);
+  }
+
   async importGoogleWorkspace(
     ...args: ImporterArgs<typeof ingest.importGoogleWorkspace>
   ): Promise<InvestigationState> {

@@ -41,6 +41,7 @@ import { mobileRequestedPermissionBlockSchema } from "./canonicalMobileRequested
 import { exporterFlowBlockSchema, exporterFlowBeaconLeadBlockSchema } from "./canonicalExporterFlow.js";
 import { macFsEventBlockSchema } from "./canonicalMacFsEvent.js";
 import { spotlightUsageBlockSchema } from "./canonicalSpotlightUsage.js";
+import { macLoginItemBlockSchema } from "./canonicalMacLoginItemTarget.js";
 
 export const CANONICAL_EVENT_SCHEMA_VERSION = "1.0.0" as const;
 /** The producer stamped on an envelope DERIVED from legacy flat fields at the read boundary. */
@@ -202,6 +203,7 @@ export const canonicalEventEnvelopeSchema = z.object({
   exporterFlowBeaconLead: exporterFlowBeaconLeadBlockSchema.optional(), // exporterFlowImport.ts, #932 item 10
   macFsEvent: macFsEventBlockSchema.optional(), // macFsEventImport.ts, #933 item 9
   spotlightUsage: spotlightUsageBlockSchema.optional(), // macSpotlightUsageImport.ts, #933 item 10
+  macLoginItem: macLoginItemBlockSchema.optional(), // macLoginItemImport.ts, #1013
   olevbaStompingLead: olevbaStompingLeadBlockSchema.optional(), // olevbaResultImport.ts, #932 item 7
   olevbaCompoundLead: olevbaCompoundLeadBlockSchema.optional(), // olevbaResultImport.ts, #932 item 7
   mailboxChain: mailboxChainBlockSchema.optional(), // mailboxChain.ts, #975; block in canonicalMailbox.ts
@@ -242,8 +244,7 @@ export const canonicalEventEnvelopeSchema = z.object({
           notBefore: z.string().optional(),
           notAfter: z.string().optional(),
           ca: z.boolean().optional(),
-          // The identity was filled from the upload's x509 record by FUID (tlsGraphJoin.ts, #997),
-          // or why that join was not made.
+          // The identity was filled from the upload's x509 record by FUID (tlsGraphJoin.ts, #997), or why that join was not made.
           identityFrom: z.literal("x509 record").optional(),
           x509Join: tlsJoinNoteSchema.optional(),
         })
@@ -307,8 +308,7 @@ export const canonicalEventEnvelopeSchema = z.object({
       name: z.string().optional(),
       sha256: z.string().optional(),
       md5: z.string().optional(),
-      // The rights a Security object-access record carries (objectAccess.ts, #930 item 7): the
-      // mask as logged, the rights by bit, their classes, the object type and the handle.
+      // The rights a Security object-access record carries (objectAccess.ts, #930 item 7): the mask as logged, the rights by bit, their classes, the object type and the handle.
       access: z
         .object({
           mask: z.string().optional(),
