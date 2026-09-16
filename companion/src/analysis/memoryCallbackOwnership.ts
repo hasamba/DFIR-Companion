@@ -36,7 +36,7 @@
 
 import type { Severity } from "./stateTypes.js";
 import { getCI, baseName, addIoc, type MappedEvent, type SiemIoc } from "./siemImport.js";
-import { cellStr, isPlaceholderCell, filePathIoc } from "./memoryFields.js";
+import { cellStr, isPlaceholderCell } from "./memoryFields.js";
 import { boundedAggKey } from "./aggKey.js";
 
 type Row = Record<string, unknown>;
@@ -63,7 +63,11 @@ export interface CallbackOwnershipResult {
    * event per row; a flat count avoids flooding the timeline (driverirp alone can produce
    * thousands of rows per image). */
   resolvedCount: number;
+  /** True when `facts` hit `MAX_FACTS` — a sample, not the full set. */
+  truncated: boolean;
 }
+
+const MAX_FACTS = 200; // defensive cap — a real image is not expected to reach this
 
 /** The kernel's own real unimplemented-IRP-dispatch stub, inside ntoskrnl.exe — driverirp's own
  * Symbol reading this means "this driver simply didn't implement this IRP major," not a name
@@ -83,20 +87,12 @@ export function kernelHookPluginType(plugin: string, cols: Set<string>): PluginT
   return "callbacks";
 }
 
+/** An empty string counts as absent the same as a placeholder — Volatility's own text renderer
+ * can print either for a NotAvailableValue(). */
 function str(row: Row, keys: readonly string[]): string {
   for (const k of keys) {
     const s = cellStr(getCI(row, k)).trim();
     if (s && !isPlaceholderCell(s)) return s;
-  }
-  return "";
-}
-
-/** A cell read for presence/absence ONLY — an empty string counts as absent the same as a
- * placeholder, since Volatility's own text renderer can print either for a NotAvailableValue(). */
-function present(row: Row, keys: readonly string[]): string {
-  for (const k of keys) {
-    const raw = cellStr(getCI(row, k)).trim();
-    if (raw && !isPlaceholderCell(raw)) return raw;
   }
   return "";
 }
@@ -122,11 +118,14 @@ function rowFact(row: Row, pluginType: PluginType): CallbackOwnershipFact | null
   const identity = str(row, identityKeys);
   if (!identity) return undefined;
 
-  const module = present(row, ["Module"]);
-  const symbol = present(row, ["Symbol"]);
-  const driverName = pluginType === "driverirp" ? present(row, ["Driver Name", "DriverName"]) : "";
+  const module = str(row, ["Module"]);
+  const symbol = str(row, ["Symbol"]);
+  const driverName = pluginType === "driverirp" ? str(row, ["Driver Name", "DriverName"]) : "";
 
-  if (!module || !symbol) {
+  // Module absent is the item's own "outside known module regions" case. Symbol absent WITH
+  // Module present is a different, ordinary condition (no PDB loaded for a known module) — never
+  // framed as "could not place this address," which would be false; Volatility DID place it.
+  if (!module) {
     return {
       kind: "unresolved",
       pluginType,
@@ -137,17 +136,25 @@ function rowFact(row: Row, pluginType: PluginType): CallbackOwnershipFact | null
       severity: "Low",
       mitre: [],
       note:
-        "Volatility's own module/symbol table could not place this address in a known module. " +
-        "This can mean an incomplete module listing, an unavailable page, an unsupported symbol " +
-        "table, or a legitimate security-software callback into unlisted/pool memory — it does " +
-        "not by itself establish a hidden or malicious hook.",
+        "Volatility's own module table could not place this address in a known module. This can " +
+        "mean an incomplete module listing, an unavailable page, or a legitimate security-software " +
+        "callback into unlisted/pool memory — it does not by itself establish a hidden or " +
+        "malicious hook.",
     };
   }
 
   if (pluginType === "driverirp" && driverName && symbol !== KERNEL_UNIMPLEMENTED_IRP_SYMBOL) {
     const normalizedDriver = normalizeDriverName(driverName);
     const normalizedModule = normalizeModuleName(module);
-    if (normalizedDriver && normalizedModule && !normalizedModule.includes(normalizedDriver) && !normalizedDriver.includes(normalizedModule)) {
+    // Exact equality only (not a substring check) — a substring comparison silently misses real
+    // mismatches (e.g. "tcpip" driver vs an unrelated "tcpip6.sys" module), which is a worse
+    // failure than the false-positive risk this whole check exists to weigh (Ollama code-review
+    // finding). The remaining false-positive risk (KMDF/class-driver/minifilter framework
+    // dispatch, e.g. wdf01000.sys/classpnp.sys/fltmgr.sys) is not filtered out programmatically —
+    // no verified, exhaustive list of legitimate redirection modules exists to check against — so
+    // it is named explicitly in the note instead, the same "state the benign cause, don't guess
+    // at excluding it" choice already made for `unresolved`.
+    if (normalizedDriver && normalizedModule && normalizedDriver !== normalizedModule) {
       return {
         kind: "driver-name-mismatch",
         pluginType,
@@ -157,7 +164,7 @@ function rowFact(row: Row, pluginType: PluginType): CallbackOwnershipFact | null
         driverName,
         severity: "Low",
         mitre: [],
-        note: `This driver object's own name ("${driverName}") does not match its resolved module ("${module}"). This could be a legitimate multi-purpose driver object, a renamed service pointing at shared driver code, or a stale name — it does not by itself establish a misleading or malicious driver.`,
+        note: `This driver object's own name ("${driverName}") does not match its resolved module ("${module}"). This could be a legitimate multi-purpose driver object, a framework redirecting dispatch to shared code (e.g. a KMDF, class, or minifilter driver), a renamed service, or a stale name — it does not by itself establish a misleading or malicious driver.`,
       };
     }
   }
@@ -167,18 +174,29 @@ function rowFact(row: Row, pluginType: PluginType): CallbackOwnershipFact | null
 
 /** Read one plugin table's own rows into bounded, hedged ownership facts. Never re-derives
  * module-boundary resolution — Volatility already did it; this only reports what it found. */
-export function callbackOwnershipFacts(rows: readonly Row[], pluginType: PluginType): CallbackOwnershipResult {
+export function callbackOwnershipFacts(
+  rows: readonly Row[],
+  pluginType: PluginType,
+): CallbackOwnershipResult {
   const facts: CallbackOwnershipFact[] = [];
   let resolvedCount = 0;
+  let truncated = false;
 
   for (const row of rows) {
     const fact = rowFact(row, pluginType);
     if (fact === undefined) continue; // no address/offset at all — not even a resolved row
-    if (fact) facts.push(fact);
-    else resolvedCount++;
+    if (!fact) {
+      resolvedCount++;
+      continue;
+    }
+    if (facts.length >= MAX_FACTS) {
+      truncated = true;
+      continue;
+    }
+    facts.push(fact);
   }
 
-  return { facts, resolvedCount };
+  return { facts, resolvedCount, truncated };
 }
 
 /** Turn every kernelhook table's own facts into timeline events: one Info summary count per
@@ -189,21 +207,31 @@ export function kernelHookEvents(
   sink: Map<string, SiemIoc>,
 ): MappedEvent[] {
   const mapped: MappedEvent[] = [];
-  for (const { pluginType, rows } of tables) {
-    const { facts, resolvedCount } = callbackOwnershipFacts(rows, pluginType);
+  tables.forEach(({ pluginType, rows }, tableIndex) => {
+    const { facts, resolvedCount, truncated } = callbackOwnershipFacts(rows, pluginType);
     if (resolvedCount > 0) {
+      const cap = truncated
+        ? " Some noteworthy facts reached this analysis's own cap and were not reported."
+        : "";
       mapped.push({
         timestamp: "",
-        description: `${tool}: ${pluginType} — ${resolvedCount} row(s) resolved to a known module.`.slice(0, 600),
+        description:
+          `${tool}: ${pluginType} — ${resolvedCount} row(s) resolved to a known module.${cap}`.slice(0, 600),
         severity: "Info",
         mitre: [],
-        aggKey: boundedAggKey(`mem|kernelhook|${pluginType}|summary`),
+        // tableIndex: two tables of the SAME plugin type in one export must not share a key
+        // (Ollama code-review finding) — never a real collision within one table's own summary.
+        aggKey: boundedAggKey(`mem|kernelhook|${pluginType}|summary|${tableIndex}`),
         sources: [tool],
       });
     }
     for (const fact of facts) {
-      const iocName = fact.module || fact.driverName;
-      if (iocName) addIoc(sink, "file", filePathIoc(iocName));
+      // The driver OBJECT's own name (e.g. "\Driver\disk") is an NT object-namespace path, never
+      // a file — only the resolved MODULE name is ever promoted, as a bare "process"-style name
+      // (a kernel module name like "disk.sys" has no directory, so filePathIoc's own path-
+      // separator requirement would silently drop it — matching how every other bare executable
+      // name in this file is already promoted).
+      if (fact.module) addIoc(sink, "process", baseName(fact.module));
       mapped.push({
         timestamp: "",
         description: `${tool}: ${pluginType} ${fact.type}: ${fact.note}`.slice(0, 600),
@@ -213,6 +241,6 @@ export function kernelHookEvents(
         sources: [tool],
       });
     }
-  }
+  });
   return mapped;
 }
