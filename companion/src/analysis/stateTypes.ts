@@ -415,6 +415,24 @@ export interface ForensicEvent {
   // only the former is evidence.
   originalTimestamp?: string;
   skewOffsetMs?: number; // correction applied: recorded − aligned
+  // #1157: when this CASE actually received this record — distinct from `timestamp`, the
+  // artifact's own recorded time. ISO string, matching `timestamp`'s own format. Set once, at
+  // import (routes/importSettle.ts), on rows genuinely new to this case — never on a re-import of
+  // an already-known row. Lets a consumer tell "fresh evidence observed since a check started"
+  // apart from "old evidence that simply wasn't imported until now," and flags rows whose
+  // `timestamp` itself may be an import-time fallback (some importers, e.g.
+  // linuxPersistImport.ts, stamp `timestamp` with import time when the source has no time of its
+  // own) rather than a genuine artifact time. ABSENT means "not tracked" — a row that predates
+  // this field, or one never created through the import seam (a correlation-synthesized or
+  // analysis-derived row) — never "oldest." A correlation merge (correlate.ts's `mergeGroup`)
+  // keeps whichever member was chosen primary's `importedAt` and silently drops the others' — the
+  // same already-accepted behavior `originalTimestamp`/`skewOffsetMs` above already have.
+  importedAt?: string;
+  // Which import action produced this row — an opaque id, one per settle call, shared by every
+  // row that import added. Not for human display, and not a join key into `importMeta.ts` (which
+  // only ever holds the LAST import's summary) — just the grouping key a future feature could use
+  // to attach human-readable provenance without re-touching every event.
+  importBatchId?: string;
   // TRUE when the YEAR in `timestamp` was GUESSED by the importer rather than read out of the
   // record. An RFC 3164 syslog / Cisco ASA / Snort line carries no year at all, and the AI log/CSV
   // imports infer one from context; every other importer reads an explicit year (EVTX, RFC 3339,
