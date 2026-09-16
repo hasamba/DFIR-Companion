@@ -1575,8 +1575,31 @@ export const FEATURES: Feature[] = [
     // bind — the case-connect loader calling loadCollectionGenerationDiff(caseId) is the whole
     // entry point.
     file: "dashboard-collection-generation-diff.js",
-    publish: ["renderCollectionGenerationDiff", "loadCollectionGenerationDiff"],
-    private: ["cohorts", "truncatedCohorts", "status", "loadSeq", "DIRECTION_LABEL", "EXCLUSION_LABEL"],
+    // #1132 extends this SAME panel with a second, independent mobile-app-presence section
+    // (rather than a new top-level dashboard section) — see its own file header comment.
+    publish: [
+      "renderCollectionGenerationDiff",
+      "loadCollectionGenerationDiff",
+      "openRecordForm",
+      "closeRecordForm",
+      "submitRecordForm",
+    ],
+    private: [
+      "pCohorts",
+      "pTruncatedCohorts",
+      "pStatus",
+      "pLoadSeq",
+      "mCohorts",
+      "mTruncatedCohorts",
+      "mStatus",
+      "mLoadSeq",
+      "mCandidates",
+      "mFormOpen",
+      "mCandidateSeq",
+      "mCandidatesCaseId",
+      "DIRECTION_LABEL",
+      "EXCLUSION_LABEL",
+    ],
   },
   {
     // Analyst-attested evidence-class coverage (#1111). Owns two pieces of view state (the loaded
