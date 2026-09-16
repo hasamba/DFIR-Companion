@@ -40,7 +40,7 @@ export const MAX_MATCHES_SCANNED = 50_000; // total match tuples across all rule
 
 const HASH_RE = { md5: /^[a-f0-9]{32}$/i, sha1: /^[a-f0-9]{40}$/i, sha256: /^[a-f0-9]{64}$/i };
 const MAX_TREE_DEPTH = 32;
-const MAX_TREE_NODES = 2000; // per match tuple
+const MAX_TREE_NODES = 200_000; // REPORT-WIDE, across every match tuple in every rule
 
 export interface CapaResultOptions {
   aggregate?: boolean;
@@ -56,8 +56,10 @@ export interface CapaResultResult {
   groups: number;
   format: string;
   malformedRules: number;
+  malformedMatches: number;
   notCitedRules: number;
   matchesTruncated: boolean;
+  nodesTruncated: boolean;
 }
 
 /** `flavor === "static"` is capa's own real discriminator (confirmed against a real serialized
@@ -151,40 +153,82 @@ interface MatchNode {
   locations?: unknown;
 }
 
-/** Bounded (depth AND total-node-count) walk collecting SUCCESSFUL leaf `feature` nodes anywhere
- * in the match tree — a rule's outer match address is often uninformative (many rules are
- * file-scope, `{"type":"no address"}`); the genuinely supporting evidence lives on these leaves
- * (Codex design review finding). Every node in the tree is visited regardless of its OWN
- * success, since a successful AND/OR/NOT node's successful children are what matters, not the
- * node's own success flag. */
-function collectFeatureEvidence(root: unknown): { evidence: CapaFeatureEvidence[]; nodesVisited: number } {
+/** A report-WIDE budget, threaded (by reference) through every match tuple's tree walk across
+ * every rule — Codex code review finding: a per-tuple-only counter reset for each of up to
+ * 50,000 tuples let the aggregate workload reach into the tens of millions of nodes regardless of
+ * the per-tuple cap. */
+interface NodeBudget {
+  visited: number;
+  truncated: boolean;
+}
+
+/** Bounded (depth AND a REPORT-WIDE total node count, checked at ENQUEUE time, not just before a
+ * pop) walk collecting evidence from successful nodes anywhere in the match tree that carry their
+ * OWN non-empty `locations` — covers both an ordinary successful feature leaf (api/string/...,
+ * locations on the feature match) AND a successful `range` statement (locations live on the
+ * STATEMENT match itself, not on a nested feature) — capa's `statement | feature` node dichotomy
+ * is exhaustive, and either kind can be the thing worth citing (Codex code review finding: the
+ * prior feature-only check silently produced zero evidence for a valid range match). Every node
+ * in the tree is visited regardless of its OWN success, since a successful AND/OR node's
+ * successful children are what matters, not the node's own success flag; a "match" feature
+ * (referencing another rule) is captured the same generic way, and its own children — the
+ * referenced rule's match — are still walked for their own leaves. */
+function collectFeatureEvidence(root: unknown, budget: NodeBudget): CapaFeatureEvidence[] {
   const evidence: CapaFeatureEvidence[] = [];
-  let nodesVisited = 0;
+  if (budget.visited >= MAX_TREE_NODES) {
+    budget.truncated = true;
+    return evidence;
+  }
+  budget.visited += 1;
   const stack: { node: unknown; depth: number }[] = [{ node: root, depth: 0 }];
   while (stack.length > 0) {
-    if (nodesVisited >= MAX_TREE_NODES) break;
     const { node, depth } = stack.pop()!;
-    nodesVisited += 1;
     if (!isObject(node) || depth > MAX_TREE_DEPTH) continue;
     const m = node as MatchNode;
     const inner = m.node;
-    if (m.success === true && isObject(inner) && inner.type === "feature" && isObject(inner.feature)) {
-      const feature = inner.feature as Record<string, unknown>;
-      const featureType = str(feature.type) ?? "unknown";
-      const rest = { ...feature };
-      delete rest.type;
-      evidence.push({
-        featureType: clip(featureType, MAX_FIELD_LEN).text,
-        detail: clip(JSON.stringify(rest), MAX_FEATURE_DETAIL_LEN).text,
-        locations: parseAddressList(m.locations).slice(0, RECOVERY_CITATIONS_MAX),
-      });
+    const hasOwnLocations = Array.isArray(m.locations) && m.locations.length > 0;
+    if (m.success === true && hasOwnLocations && isObject(inner)) {
+      const isFeature = inner.type === "feature" && isObject(inner.feature);
+      const isStatement = inner.type === "statement" && isObject(inner.statement);
+      if (isFeature || isStatement) {
+        const src = (isFeature ? inner.feature : inner.statement) as Record<string, unknown>;
+        const kindType = str(src.type) ?? "unknown";
+        const featureType = isFeature ? kindType : `statement:${kindType}`;
+        const rest = { ...src };
+        delete rest.type;
+        evidence.push({
+          featureType: clip(featureType, MAX_FIELD_LEN).text,
+          detail: clip(JSON.stringify(rest), MAX_FEATURE_DETAIL_LEN).text,
+          // Kept FULL here (not capped) — capping before dedup would collapse two evidence items
+          // that differ only past the cap (Codex code review finding); capped only once, after
+          // dedup, when the kept item is finalized for storage.
+          locations: parseAddressList(m.locations),
+        });
+      }
     }
     const children = m.children;
     if (Array.isArray(children)) {
-      for (const c of children) stack.push({ node: c, depth: depth + 1 });
+      for (const c of children) {
+        if (budget.visited >= MAX_TREE_NODES) {
+          budget.truncated = true;
+          break;
+        }
+        budget.visited += 1;
+        stack.push({ node: c, depth: depth + 1 });
+      }
     }
   }
-  return { evidence, nodesVisited };
+  return evidence;
+}
+
+function evidenceKey(e: CapaFeatureEvidence): string {
+  return createHash("sha256")
+    .update(e.featureType)
+    .update("\n")
+    .update(e.detail)
+    .update("\n")
+    .update(JSON.stringify(e.locations))
+    .digest("hex");
 }
 
 function dedupeEvidence(list: readonly CapaFeatureEvidence[]): {
@@ -193,29 +237,17 @@ function dedupeEvidence(list: readonly CapaFeatureEvidence[]): {
 } {
   const seen = new Map<string, CapaFeatureEvidence>();
   for (const e of list) {
-    const key = createHash("sha256")
-      .update(e.featureType)
-      .update("\n")
-      .update(e.detail)
-      .update("\n")
-      .update(JSON.stringify(e.locations))
-      .digest("hex");
+    const key = evidenceKey(e);
     if (seen.has(key)) continue;
     if (seen.size >= RECOVERY_CITATIONS_MAX) continue;
     seen.set(key, e);
   }
-  const distinctTotal = new Set(
-    list.map((e) =>
-      createHash("sha256")
-        .update(e.featureType)
-        .update("\n")
-        .update(e.detail)
-        .update("\n")
-        .update(JSON.stringify(e.locations))
-        .digest("hex"),
-    ),
-  ).size;
-  const kept = [...seen.values()];
+  const distinctTotal = new Set(list.map(evidenceKey)).size;
+  // Locations are capped here, AFTER dedup decided what to keep by its FULL identity.
+  const kept = [...seen.values()].map((e) => ({
+    ...e,
+    locations: e.locations.slice(0, RECOVERY_CITATIONS_MAX),
+  }));
   return { kept, notCited: Math.max(0, distinctTotal - kept.length) };
 }
 
@@ -280,6 +312,7 @@ function parseMbc(raw: unknown): MbcMapping[] {
 
 interface RuleResult {
   ruleName: string;
+  ruleNameHash: string; // sha256 of the FULL, unclipped name — the aggKey identity component
   ruleNamespace: string | undefined;
   ruleSourceFingerprint: string;
   attack: AttackMapping[];
@@ -291,21 +324,30 @@ interface RuleResult {
   occurrences: number;
 }
 
-/** Returns null when the rule entry itself is too malformed to use at all (no name, or `matches`
- * isn't an array) — counted as a malformed rule, never a crash. `scanned`/`truncated` mirror item
- * 5's own now-fixed discipline: every match tuple examined counts toward the budget, and
- * truncation is only ever true when a tuple was genuinely left unscanned. */
+/** Returns null when the rule entry itself is too malformed to use at all (no name, no source, or
+ * `matches` isn't an array) — counted as a malformed rule, never a crash. `scanned`/`truncated`
+ * mirror item 5's own now-fixed discipline: every match tuple examined counts toward the budget,
+ * and truncation is only ever true when a tuple was genuinely left unscanned.
+ *
+ * A match tuple is only counted as a real occurrence when ALL of: it's a 2-element array, its
+ * root Match itself has `success: true` (a failed root is not a match at all — Codex code review
+ * finding), AND its outer Address validates against the static-only schema. An address capa's
+ * own model marks dynamic-only (process/thread/call) — or any other malformed shape — makes the
+ * WHOLE TUPLE malformed, never silently accepted with the address just dropped (the design's own
+ * "not silently accepted" promise, which the prior version didn't actually keep). */
 function parseRule(
   name: string,
   entry: unknown,
   scannedSoFar: number,
-): { rule: RuleResult | null; scanned: number; truncated: boolean } {
-  if (!isObject(entry)) return { rule: null, scanned: scannedSoFar, truncated: false };
+  budget: NodeBudget,
+): { rule: RuleResult | null; scanned: number; truncated: boolean; malformedMatches: number } {
+  if (!name.trim()) return { rule: null, scanned: scannedSoFar, truncated: false, malformedMatches: 0 };
+  if (!isObject(entry)) return { rule: null, scanned: scannedSoFar, truncated: false, malformedMatches: 0 };
   const meta = entry.meta;
   const source = entry.source;
   const matches = entry.matches;
   if (!isObject(meta) || typeof source !== "string" || !Array.isArray(matches)) {
-    return { rule: null, scanned: scannedSoFar, truncated: false };
+    return { rule: null, scanned: scannedSoFar, truncated: false, malformedMatches: 0 };
   }
   const ruleNamespace = str(meta.namespace);
   const ruleSourceFingerprint = createHash("sha256").update(source).digest("hex");
@@ -317,28 +359,37 @@ function parseRule(
   let scanned = scannedSoFar;
   let truncated = false;
   let occurrences = 0;
+  let malformedMatches = 0;
   for (const tuple of matches) {
     if (scanned >= MAX_MATCHES_SCANNED) {
       truncated = true;
       break;
     }
     scanned += 1;
-    if (!Array.isArray(tuple) || tuple.length !== 2) continue;
+    if (!Array.isArray(tuple) || tuple.length !== 2) {
+      malformedMatches += 1;
+      continue;
+    }
     const [rawAddr, rawMatch] = tuple;
     const addr = parseAddress(rawAddr);
-    if (addr) outerAddrs.push(addr);
+    const rootSucceeded = isObject(rawMatch) && (rawMatch as MatchNode).success === true;
+    if (!addr || !rootSucceeded) {
+      malformedMatches += 1;
+      continue;
+    }
+    outerAddrs.push(addr);
     occurrences += 1;
-    const { evidence } = collectFeatureEvidence(rawMatch);
-    allEvidence.push(...evidence);
+    allEvidence.push(...collectFeatureEvidence(rawMatch, budget));
   }
   const { kept: outerLocations, notCited: notCitedOuterLocations } = dedupeAddresses(outerAddrs);
   const { kept: evidence, notCited: notCitedEvidence } = dedupeEvidence(allEvidence);
 
-  if (occurrences === 0) return { rule: null, scanned, truncated };
+  if (occurrences === 0) return { rule: null, scanned, truncated, malformedMatches };
 
   return {
     rule: {
       ruleName: clip(name, MAX_FIELD_LEN).text,
+      ruleNameHash: createHash("sha256").update(name).digest("hex"),
       ruleNamespace: ruleNamespace ? clip(ruleNamespace, MAX_FIELD_LEN).text : undefined,
       ruleSourceFingerprint,
       attack,
@@ -351,6 +402,7 @@ function parseRule(
     },
     scanned,
     truncated,
+    malformedMatches,
   };
 }
 
@@ -376,7 +428,10 @@ function mapRuleEvent(
   );
   const description = `${body}${reportTag}`;
 
-  const aggKey = boundedAggKey(`capa|${reportFingerprint}|${rule.ruleName}`);
+  // A "rule|" type segment (Codex code review finding) so a rule literally NAMED "composite-lead"
+  // can never collide with the report's own composite-lead aggKey; keyed on a hash of the FULL,
+  // unclipped rule name so two overlong names sharing the same clipped prefix don't collide either.
+  const aggKey = boundedAggKey(`capa|${reportFingerprint}|rule|${rule.ruleNameHash}`);
 
   const hashSink = new Map<string, SiemIoc>();
   for (const h of [sampleHash.sha256, sampleHash.sha1, sampleHash.md5]) if (h) addIoc(hashSink, "hash", h);
@@ -435,7 +490,7 @@ function mapCompositeLead(
     600 - reportTag.length,
   );
   const description = `${body}${reportTag}`;
-  const aggKey = boundedAggKey(`capa|${reportFingerprint}|composite-lead`);
+  const aggKey = boundedAggKey(`capa|${reportFingerprint}|lead|composite`);
 
   const hashSink = new Map<string, SiemIoc>();
   for (const h of [sampleHash.sha256, sampleHash.sha1, sampleHash.md5]) if (h) addIoc(hashSink, "hash", h);
@@ -487,7 +542,9 @@ export function parseCapaResult(text: string, opts: CapaResultOptions = {}): Cap
   let scanned = 0;
   let matchesTruncated = false;
   let malformedRules = 0;
+  let malformedMatches = 0;
   let notCitedRules = 0;
+  const budget: NodeBudget = { visited: 0, truncated: false };
   const rules: RuleResult[] = [];
   let total = 0;
   for (const [name, entry] of Object.entries(rulesObj)) {
@@ -496,8 +553,9 @@ export function parseCapaResult(text: string, opts: CapaResultOptions = {}): Cap
       notCitedRules += 1;
       continue;
     }
-    const result = parseRule(name, entry, scanned);
+    const result = parseRule(name, entry, scanned, budget);
     scanned = result.scanned;
+    malformedMatches += result.malformedMatches;
     if (result.truncated) matchesTruncated = true;
     if (result.rule) rules.push(result.rule);
     else malformedRules += 1;
@@ -538,7 +596,9 @@ export function parseCapaResult(text: string, opts: CapaResultOptions = {}): Cap
     groups,
     format: "CapaResultDocument",
     malformedRules,
+    malformedMatches,
     notCitedRules,
     matchesTruncated,
+    nodesTruncated: budget.truncated,
   };
 }

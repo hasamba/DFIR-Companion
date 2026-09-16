@@ -23,6 +23,8 @@ export const capaNamespaceFamilies = [
   "exploitation",
   "host-interaction",
   "impact",
+  "linking",
+  "load-code",
   "persistence",
   "runtime",
 ] as const;

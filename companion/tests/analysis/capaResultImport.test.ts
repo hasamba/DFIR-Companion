@@ -158,6 +158,36 @@ describe("isCapaResult", () => {
   });
 });
 
+describe("parseCapaResult — extracting evidence from a range statement (Codex code review finding)", () => {
+  it("cites a successful range statement, whose location lives on the STATEMENT match, not a nested feature", () => {
+    const rangeMatch: unknown[] = [
+      { type: "no address" },
+      {
+        success: true,
+        node: { type: "statement", statement: { type: "range", min: 2, max: 10 } },
+        children: [
+          {
+            success: true,
+            node: { type: "feature", feature: { type: "string", string: "cmd.exe" } },
+            children: [],
+            locations: [],
+            captures: {},
+          },
+        ],
+        locations: [{ type: "absolute", value: 4096 }],
+        captures: {},
+      },
+    ];
+    const r = parseCapaResult(floss({ "accept command line arguments": cliRule([rangeMatch]) }))!;
+    expect(r.events).toHaveLength(1);
+    const block = r.events[0].canonical!.capaMatch!;
+    expect(block.evidence.length).toBeGreaterThanOrEqual(1);
+    const rangeEvidence = block.evidence.find((e) => e.featureType === "statement:range");
+    expect(rangeEvidence).toBeDefined();
+    expect(rangeEvidence?.locations).toEqual([{ type: "absolute", value: 4096 }]);
+  });
+});
+
 describe("parseCapaResult — a single rule match", () => {
   it("maps to an Info-severity, undated capability-match event with bounded evidence from the match tree, not just the outer address", () => {
     const r = parseCapaResult(floss({ "accept command line arguments": cliRule() }));
@@ -272,26 +302,60 @@ describe("parseCapaResult — the composite inspection lead", () => {
     const lead = r.events.find((e) => e.canonical?.capaCompositeLead)!;
     expect(lead.description).toContain("not a verdict");
   });
+
+  it("a rule literally named 'composite-lead' never collides with the report's own composite-lead aggKey (Codex code review finding)", () => {
+    const collidingRule = cliRule();
+    const r = parseCapaResult(
+      floss({
+        "packed with UPX": packerRule(),
+        "composite-lead": collidingRule,
+      }),
+    )!;
+    // The real rule (namespace host-interaction/cli) plus the packer rule (anti-analysis) still
+    // triggers exactly one composite lead, and BOTH per-rule rows survive alongside it.
+    expect(r.events).toHaveLength(3);
+    expect(r.events.filter((e) => e.canonical?.capaCompositeLead)).toHaveLength(1);
+    expect(r.events.filter((e) => e.canonical?.capaMatch)).toHaveLength(2);
+    const aggKeys = r.events.map((e) => e.aggKey);
+    expect(new Set(aggKeys).size).toBe(3); // no collision
+  });
 });
 
 describe("parseCapaResult — address validation (static-only)", () => {
-  it("rejects a process/thread/call address (dynamic-analysis-only) rather than accepting it", () => {
-    const matches = [
-      [
-        { type: "process", value: [1, 2] },
-        {
-          success: true,
-          node: { type: "feature", feature: { type: "os", os: "windows" } },
-          children: [],
-          locations: [],
-          captures: {},
-        },
-      ],
+  it("rejects a process/thread/call address (dynamic-analysis-only) — the WHOLE tuple is malformed, never silently accepted with just the address dropped", () => {
+    const badMatch: unknown[] = [
+      { type: "process", value: [1, 2] },
+      {
+        success: true,
+        node: { type: "feature", feature: { type: "os", os: "windows" } },
+        children: [],
+        locations: [{ type: "absolute", value: 1 }],
+        captures: {},
+      },
     ];
-    const r = parseCapaResult(floss({ "accept command line arguments": cliRule(matches) }))!;
+    const r = parseCapaResult(
+      floss({ "accept command line arguments": cliRule([badMatch, cliMatch(100663300)]) }),
+    )!;
     expect(r.events).toHaveLength(1);
     const block = r.events[0].canonical!.capaMatch!;
-    expect(block.outerLocations).toHaveLength(0); // the malformed-for-static address was dropped, not accepted
+    expect(block.occurrences).toBe(1); // only the good tuple counted, the bad one is malformed
+    expect(block.outerLocations).toEqual([{ type: "dn token", value: 100663300 }]);
+  });
+
+  it("rejects a match tuple whose root itself did not succeed, even with an otherwise-valid address", () => {
+    const failedMatch: unknown[] = [
+      { type: "absolute", value: 1 },
+      {
+        success: false,
+        node: { type: "feature", feature: { type: "os", os: "windows" } },
+        children: [],
+        locations: [],
+        captures: {},
+      },
+    ];
+    const r = parseCapaResult(floss({ "accept command line arguments": cliRule([failedMatch]) }))!;
+    expect(r.events).toHaveLength(0);
+    expect(r.malformedMatches).toBe(1);
   });
 
   it("accepts a file-scope rule whose outer address is literally 'no address'", () => {
