@@ -1112,7 +1112,9 @@ describe("PE-sieve JSON report wiring (#933 item 15)", () => {
           other: 0,
         },
       },
-      scans: [{ code_scan: { module: "1", module_file: "evil.dll", status: 1, patches: 3, scanned_sections: 1 } }],
+      scans: [
+        { code_scan: { module: "1", module_file: "evil.dll", status: 1, patches: 3, scanned_sections: 1 } },
+      ],
     });
     const r = parseMemory(json, { filename: "pe-sieve-report.json" });
     expect(r.format).toBe("pe-sieve");
