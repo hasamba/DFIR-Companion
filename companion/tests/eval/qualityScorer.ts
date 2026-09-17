@@ -177,11 +177,26 @@ function scoreClaims(golden: readonly GoldenClaim[], produced: readonly QualityC
       .map((index) => ({ index, ids: produced[index].evidenceEventIds }))
       .filter((c) => c.ids.some((id) => expected.evidenceEventIds.includes(id)));
     const cover = greedyMinimalCover(expected.evidenceEventIds, candidates);
-    const combinedText = cover?.length
-      ? cover.map((index) => claimText(produced[index])).join("\n\n")
-      : "";
-    if (cover && containsTerms(combinedText, expected.requiredTerms)) {
-      for (const index of cover) used.add(index);
+    let matchedIndices: number[] | null = null;
+    if (cover) {
+      const coverText = cover.map((index) => claimText(produced[index])).join("\n\n");
+      if (containsTerms(coverText, expected.requiredTerms)) {
+        matchedIndices = cover;
+      } else {
+        // The minimal ID-cover's own text doesn't carry the required term — e.g. it greedily
+        // picked one aggregate finding that covers every id but not the specific phrasing. Retry
+        // against the FULL candidate pool (still guaranteed to cover the required ids, since it's
+        // a superset of `cover`): its union may carry the term via a claim the minimal cover
+        // didn't need for id coverage alone. Without this, a term-blind aggregate finding can
+        // shadow the atomic findings that DO carry the required language and reintroduce the
+        // exact miss this fallback exists to fix (#1217).
+        const allIndices = candidates.map((c) => c.index);
+        const fullText = allIndices.map((index) => claimText(produced[index])).join("\n\n");
+        if (containsTerms(fullText, expected.requiredTerms)) matchedIndices = allIndices;
+      }
+    }
+    if (matchedIndices) {
+      for (const index of matchedIndices) used.add(index);
     } else {
       missed.push(expected.id);
     }
@@ -301,18 +316,22 @@ export function scoreCaseQuality(golden: CaseGolden, output: QualityOutput): Cas
 }
 
 export interface PassesCaseQualityOptions {
-  // A real (non-deterministic) model run does not gate on claim/IOC PRECISION — a thorough model
+  // A real (non-deterministic) model run does not gate on CLAIM precision — a thorough model
   // correctly surfacing an extra, legitimate finding is not a regression (mirrors scorer.ts's
-  // REAL_THRESHOLDS reasoning for the sibling extraction evaluator). RECALL still must be 1: missing
-  // a required fact is a real regression, real run or not. Hallucination/forbidden-conclusion/
-  // confidence-rubric checks are never relaxed — those catch invention, not phrasing variance.
+  // REAL_THRESHOLDS reasoning for the sibling extraction evaluator). IOC precision stays gated
+  // even on a real run: `iocs.unexpected` is a hallucination signal (an invented hash/domain), not
+  // benign-noise-from-thoroughness like an extra event/finding can be — the scorer has no other
+  // way to catch a fabricated indicator. RECALL still must be 1 for both: missing a required fact
+  // is a real regression either way. Hallucination/forbidden-conclusion/confidence-rubric checks
+  // are never relaxed — those catch invention, not phrasing variance.
   real?: boolean;
 }
 
 export function passesCaseQuality(score: CaseQualityScore, options: PassesCaseQualityOptions = {}): boolean {
-  const precisionOk = options.real ? true : score.claims.precision === 1 && score.iocs.precision === 1;
+  const claimsPrecisionOk = options.real ? true : score.claims.precision === 1;
   return (
-    precisionOk &&
+    claimsPrecisionOk &&
+    score.iocs.precision === 1 &&
     score.claims.recall === 1 &&
     score.iocs.recall === 1 &&
     score.danglingEvidenceRefs.length === 0 &&

@@ -213,6 +213,22 @@ describe("scoreClaims union matching (#1217)", () => {
     expect(score.claims.falseConclusions).toEqual(["f4"]);
   });
 
+  it("does not let a term-blind aggregate finding shadow atomic findings that DO carry the term", () => {
+    // A model that emits one summary/"campaign" finding (covers every id, greedy picks it first
+    // for minimal id-coverage) ALONGSIDE the correct atomic findings must still match — the greedy
+    // cover's own text lacking the term must not shadow the atomics that carry it (#1217).
+    const output = atomicOutput();
+    output.claims.unshift({
+      id: "f0",
+      title: "Ransomware attack chain",
+      description: "The attacker executed a full ransomware attack chain against fs-01 and ws-01.",
+      evidenceEventIds: ["rw-e1", "rw-e2", "rw-e3"],
+    });
+    const score = scoreCaseQuality(MULTI_GOLDEN, output);
+    expect(score.claims.missed).toEqual([]);
+    expect(score.claims.falseConclusions).toEqual([]);
+  });
+
   it("does not fuse text across a union boundary into a false term match", () => {
     const output = atomicOutput();
     // f2's text ends with a trailing space + "files", f3's starts directly with "encrypted" (no
@@ -228,7 +244,7 @@ describe("scoreClaims union matching (#1217)", () => {
 describe("passesCaseQuality real-run tolerance (#1217)", () => {
   const baseScore: CaseQualityScore = {
     claims: { total: 1, matched: 1, precision: 0.5, recall: 1, missed: [], falseConclusions: ["extra"] },
-    iocs: { total: 1, matched: 1, precision: 0.5, recall: 1, missed: [], unexpected: ["extra-ioc"] },
+    iocs: { total: 1, matched: 1, precision: 1, recall: 1, missed: [], unexpected: [] },
     danglingEvidenceRefs: [],
     forbiddenConclusions: [],
     confidenceIssues: [],
@@ -237,12 +253,20 @@ describe("passesCaseQuality real-run tolerance (#1217)", () => {
     abstentionPassed: true,
   };
 
-  it("fails imperfect precision on a mock/deterministic run (default, unchanged)", () => {
+  it("fails imperfect claims precision on a mock/deterministic run (default, unchanged)", () => {
     expect(passesCaseQuality(baseScore)).toBe(false);
   });
 
-  it("does not gate on precision for a real run — a thorough model's extra correct findings are not a failure", () => {
+  it("does not gate on CLAIMS precision for a real run — a thorough model's extra correct findings are not a failure", () => {
     expect(passesCaseQuality(baseScore, { real: true })).toBe(true);
+  });
+
+  it("still gates IOC precision on a real run — an unexpected IOC is a hallucination signal, not benign noise", () => {
+    const hallucinatedIoc: CaseQualityScore = {
+      ...baseScore,
+      iocs: { ...baseScore.iocs, precision: 0.5, unexpected: ["invented-hash"] },
+    };
+    expect(passesCaseQuality(hallucinatedIoc, { real: true })).toBe(false);
   });
 
   it("still gates recall, hallucination, forbidden conclusions, and the confidence rubric on a real run", () => {
