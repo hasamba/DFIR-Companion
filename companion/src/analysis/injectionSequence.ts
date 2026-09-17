@@ -13,6 +13,11 @@
 // The structured facts it reads are the envelope's — `event.action` (the rights, the thread
 // start, the tamper type, the source's path-anchored trust) and the subject / object identities —
 // never the prose; a row that predates those fields says so.
+//
+// Two gaps from the original design round, closed here: a pid-fallback join crosses feeds that do
+// not share a clock (Sysmon vs eCAR/Velociraptor), so its order claim now says so; and a malfind
+// finding for the same target pid is pointed to, never treated as a memory write — malfind rows
+// carry no capture timestamp, so no time correlation is claimed for them either (#987).
 
 import type { Severity } from "./stateTypes.js";
 import { appendDerivedNote, splitDerivedNotes } from "./derivedNote.js";
@@ -346,6 +351,27 @@ export function corroborateInjectionSequences<T extends TimelineEventShape>(even
   const injection = new Map<T, Note>();
   const hollowing = new Map<T, Note>();
 
+  // Memory-observation corroboration (#987): malfind rows carry no canonical process envelope and
+  // no timestamp of their own (a memory image is one snapshot, not a log), so they are recognised
+  // the same way processLifetime.ts's sacrificial-process rule already recognises them — by their
+  // own description text, which memoryFields.ts's malfindDescription composes with a fixed
+  // "(PID <n>)" clause every mapper reuses; read back here rather than duplicated as a structured
+  // field. This only ever ADDS a pointer to the malfind row; it never raises severity (the sequence
+  // is already at its ceiling once it fires) and it never claims a memory write, which Sysmon still
+  // never records.
+  const MALFIND_RE = /executable memory region flagged/i;
+  const MALFIND_PID_RE = /\(pid (\d+)\)/i;
+  const malfindTargets = new Set<string>();
+  for (const e of events) {
+    const description = e.description ?? "";
+    if (!MALFIND_RE.test(description)) continue;
+    const m = MALFIND_PID_RE.exec(description);
+    if (!m) continue;
+    malfindTargets.add(`${shortHost(e.asset)}|${Number(m[1])}`);
+  }
+  const malfindHit = (host: string, target: Identity): boolean =>
+    target.pid !== undefined && malfindTargets.has(`${host}|${target.pid}`);
+
   // Sequence A: a write- or thread-capable handle, then a remote thread from the same source
   // into the same target — the pair keyed on both endpoints.
   const accessByPair = bucketed(
@@ -394,16 +420,19 @@ export function corroborateInjectionSequences<T extends TimelineEventShape>(even
             : rights.writeCapable
               ? `write-capable handle ${rights.words}`
               : `thread-capable handle ${rights.words}`;
-        const caveat = byPid ? "; by pid — PID reuse not excluded" : "";
+        const caveat = byPid
+          ? "; by pid — PID reuse not excluded, order by each record's own sensor clock — cross-sensor skew not excluded"
+          : "";
         const benign =
           access.systemSource &&
           thread.systemSource &&
           RANK[access.event.severity ?? "Info"] <= RANK.Low &&
           RANK[thread.event.severity ?? "Info"] <= RANK.Low;
         const raise = inSequence && rights.state === "structured" && !benign;
+        const memoryHit = inSequence && malfindHit(thread.host, thread.target);
         const label = inSequence
           ? rights.state === "structured"
-            ? `injection-shaped: ${shape} from ${procWords(thread.source!)} into ${procWords(thread.target)}, then ${order} ${startWords(thread.action)} — access, then execution transfer; no memory write was recorded${benign ? "; source is a path-anchored system image — shape kept, grade not raised" : ""}`
+            ? `injection-shaped: ${shape} from ${procWords(thread.source!)} into ${procWords(thread.target)}, then ${order} ${startWords(thread.action)} — access, then execution transfer; no memory write was recorded${memoryHit ? "; a malfind finding for the target process (matched by pid; malfind carries no capture time, so no time correlation is claimed) is on this case's own timeline" : ""}${benign ? "; source is a path-anchored system image — shape kept, grade not raised" : ""}`
             : `${shape} from ${procWords(thread.source!)} into ${procWords(thread.target)}, then ${order} ${startWords(thread.action)}`
           : `${shape} from ${procWords(thread.source!)} into ${procWords(thread.target)}; ${order}`;
         const mitre = raise ? ["T1055"] : [];
@@ -424,7 +453,9 @@ export function corroborateInjectionSequences<T extends TimelineEventShape>(even
   );
   for (const tamper of recs.filter((r) => r.kind === "tamper" && isReplaced(r.action))) {
     for (const { key, byPid } of targetKeys(tamper.host, tamper.target)) {
-      const caveat = byPid ? "; by pid — PID reuse not excluded" : "";
+      const caveat = byPid
+        ? "; by pid — PID reuse not excluded, order by each record's own sensor clock — cross-sensor skew not excluded"
+        : "";
       const before = windowBefore(
         startsByTarget.get(key),
         tamper.time,
