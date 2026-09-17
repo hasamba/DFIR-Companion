@@ -88,8 +88,8 @@ export const ORDER_TOLERANCE_MS = 2000;
 const COMMAND_LINE_SCAN_MAX = 4096;
 /** Records indexed per path or hash bucket; the rest are counted, never read. */
 const BUCKET_MAX = 64;
-/** Marks named on one corroborating execution row; the rest are counted. */
-const MARKS_PER_EXECUTION_MAX = 4;
+/** Marks named on one corroborating execution or browser-visit row; the rest are counted. */
+const MARKS_PER_CORROBORATOR_MAX = 4;
 /** Command lines named on one stream row; the rest are counted. */
 const COMMANDS_PER_STREAM_MAX = 4;
 const REFERENCES_PER_COMMAND_MAX = 4;
@@ -623,7 +623,7 @@ export function corroborateDownloadExecution<T extends TimelineEventShape>(event
       const c =
         corroborating.get(m.record.event) ??
         corroborating.set(m.record.event, { marks: [], more: 0 }).get(m.record.event)!;
-      if (c.marks.length < MARKS_PER_EXECUTION_MAX)
+      if (c.marks.length < MARKS_PER_CORROBORATOR_MAX)
         c.marks.push(`${excerpt(r.event.path ?? "")}${r.host ? ` on ${neutral(r.host).slice(0, 80)}` : ""}`);
       else c.more += 1;
     }
@@ -717,7 +717,7 @@ export function corroborateDownloadExecution<T extends TimelineEventShape>(event
       for (const v of [...own, ...ref]) {
         const c =
           precededNotes.get(v.event) ?? precededNotes.set(v.event, { marks: [], more: 0 }).get(v.event)!;
-        if (c.marks.length < MARKS_PER_EXECUTION_MAX)
+        if (c.marks.length < MARKS_PER_CORROBORATOR_MAX)
           c.marks.push(
             `${excerpt(r.event.path ?? "")}${r.host ? ` on ${neutral(r.host).slice(0, 80)}` : ""}`,
           );
