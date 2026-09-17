@@ -198,7 +198,9 @@ describe("sequence A — access, then execution transfer", () => {
       pidRow(thread({ severity: "Medium", mitreTechniques: [] })),
     ]);
     expect(find(out, "t1").severity).toBe("High");
-    expect(find(out, "t1").description).toContain("; by pid — PID reuse not excluded]");
+    expect(find(out, "t1").description).toContain(
+      "; by pid — PID reuse not excluded, order by each record's own sensor clock — cross-sensor skew not excluded]",
+    );
     const otherSource = run([
       pidRow(access()),
       {
@@ -319,6 +321,32 @@ describe("recompute, bounds, safety", () => {
     expect(merged).toHaveLength(1);
     expect(merged[0].description).toContain("[timestomp corroboration: one]");
     expect(merged[0].description).toContain(`${INJECTION_SEQUENCE_MARKER} two]`);
+  });
+
+  it("a malfind row for the same target pid is pointed to, never treated as a memory write, and never on its own raises the grade further (#987)", () => {
+    const malfind = (pid: number, over: Partial<Ev> = {}): Ev => ({
+      id: "m1",
+      timestamp: "",
+      description: `Volatility3 malfind: executable memory region flagged in notepad.exe (PID ${pid}) at 0x1000`,
+      severity: "High",
+      mitreTechniques: ["T1055"],
+      asset: "WS-01",
+      ...over,
+    });
+    const out = run([access(), thread(), malfind(200)]);
+    expect(find(out, "t1").description).toContain(
+      "a malfind finding for the target process (matched by pid; malfind carries no capture time, so no time correlation is claimed) is on this case's own timeline",
+    );
+    expect(find(out, "t1").description).not.toContain("memory was written");
+    expect(find(out, "t1").severity).toBe("High"); // unchanged: already at ceiling without the malfind row
+
+    // A malfind row for a DIFFERENT pid must never be quoted as corroboration for this target.
+    const wrongPid = run([access(), thread(), malfind(999)]);
+    expect(find(wrongPid, "t1").description).not.toContain("a malfind finding for the target process");
+
+    // A malfind row on a different host must never cross-corroborate either.
+    const wrongHost = run([access(), thread(), malfind(200, { asset: "WS-02" })]);
+    expect(find(wrongHost, "t1").description).not.toContain("a malfind finding for the target process");
   });
 });
 
