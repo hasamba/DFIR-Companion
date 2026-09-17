@@ -35,9 +35,9 @@ import { decodeDefenderEvent, defenderDescription } from "./defenderEvents.js";
 import { commandCandidates } from "./commandNormalize.js";
 import { secretSpillSignal } from "./secretSpillRules.js";
 import { streamOverlay } from "./ntfsStreams.js";
-import { boundDnsVariants, dnsOverlay } from "./dnsRecord.js";
+import { boundDnsVariants } from "./dnsRecord.js";
 import { runWindowsDnsConnJoin } from "./siemDnsConnJoin.js";
-import { WIN_EVENTS, channelTable, type WinEventDef } from "./winEventTables.js";
+import { WIN_EVENTS, channelTable, windowsDnsOverlay, type WinEventDef } from "./winEventTables.js";
 export { WIN_EVENTS, type WinEventDef };
 import { processGuid, processOverlay } from "./processAccess.js";
 import { aggregateEvents, maxEventsDefault } from "./eventAggregate.js";
@@ -872,8 +872,8 @@ export function mapWindows(
         })
       : null;
   if (pa) ({ description, severity, mitre } = pa);
-  // Sysmon 22 / DNS-Client 3006/3008/3020 (dnsRecord.ts, #933 item 2), over ONE namespace per record.
-  const dq = def.dns ? dnsOverlay((k) => getCI(isObject(edRaw) ? ed : rec, k), def.dns, description) : null;
+  // Sysmon 22 / DNS-Client (dnsRecord.ts, #933 item 2) or DNS Server 257/258/259 (dnsServerRecord.ts, #996).
+  const dq = windowsDnsOverlay(def.dns, eid, (k) => getCI(isObject(edRaw) ? ed : rec, k), description);
   if (dq) ({ description } = dq);
   // Kerberoasting / AS-REP roasting: an RC4-encrypted Kerberos ticket request for a user service
   // account grades the otherwise-Low 4769/4768 with the correct technique (see kerberosRoastSignal).

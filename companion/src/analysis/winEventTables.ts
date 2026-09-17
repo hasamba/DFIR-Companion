@@ -1,5 +1,12 @@
 import type { Severity } from "./stateTypes.js";
-import { DNS_CLIENT_EVENTS, SYSMON_22_DNS, type DnsEventSchema } from "./dnsRecord.js";
+import {
+  DNS_CLIENT_EVENTS,
+  SYSMON_22_DNS,
+  dnsOverlay,
+  type DnsEventSchema,
+  type DnsOverlay,
+} from "./dnsRecord.js";
+import { dnsServerOverlay, isDnsServerAnalyticEid, type DnsServerOverlay } from "./dnsServerRecord.js";
 
 // The Windows event tables mapWindows reads (siemImport.ts): what an Event ID is called and how it
 // grades before any signal adjudicates it. Kept apart from the mapper so the mapper stays within its
@@ -132,10 +139,36 @@ export const SYSMON_EVENTS: Record<number, WinEventDef> = {
   },
 };
 
-/** The channel's own table: the DNS Client's (dnsRecord.ts), Sysmon's, PowerShell's, else Security's. */
+// The DNS Server's own Analytical log (dnsServerRecord.ts, #996) — 257/258/259 branch on the eid
+// inside windowsDnsOverlay below, same as WFP 5156 above, so no `dns:` schema sits on these entries.
+export const DNS_SERVER_EVENTS: Record<number, WinEventDef> = {
+  257: { label: "DNS Server: response sent", severity: "Info", kind: "dns" },
+  258: { label: "DNS Server: response failed", severity: "Low", kind: "dns" },
+  259: { label: "DNS Server: query ignored", severity: "Low", kind: "dns" },
+};
+
+/** The channel's own table: the DNS Client's / Server's (dnsRecord.ts), Sysmon's, PowerShell's, else Security's. */
 export function channelTable(channel: string): Record<number, WinEventDef> {
   if (/dns[ -]?client/i.test(channel)) return DNS_CLIENT_EVENTS;
+  if (/dns[ -]?server/i.test(channel)) return DNS_SERVER_EVENTS;
   if (/sysmon/i.test(channel)) return SYSMON_EVENTS;
   if (/powershell/i.test(channel)) return POWERSHELL_EVENTS;
   return WIN_EVENTS;
+}
+
+/**
+ * The single DNS overlay decision siemImport.ts's `mapWindows` needs, kept off that file's own
+ * tight size budget: the event's own endpoint-vantage schema when it has one (Sysmon 22 /
+ * DNS-Client), else dnsServerRecord.ts's resolver-vantage overlay when the eid is 257/258/259,
+ * else none.
+ */
+export function windowsDnsOverlay(
+  dnsSchema: DnsEventSchema | undefined,
+  eid: number,
+  read: (key: string) => unknown,
+  description: string,
+): DnsOverlay | DnsServerOverlay | null {
+  if (dnsSchema) return dnsOverlay(read, dnsSchema, description);
+  if (isDnsServerAnalyticEid(eid)) return dnsServerOverlay(read, eid, description);
+  return null;
 }

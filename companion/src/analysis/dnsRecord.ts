@@ -35,8 +35,8 @@ const STATUS_TABLE: Record<number, { state: DnsState; words: string }> = {
   9701: { state: "record-missing", words: "the record does not exist (DNS_ERROR_RECORD_DOES_NOT_EXIST)" },
 };
 
-/** Query types named in the words; every other type is `type N`. */
-const TYPE_NAMES: Record<number, string> = {
+/** Query types named in the words; every other type is `type N` — reused by dnsServerRecord.ts (#996). */
+export const TYPE_NAMES: Record<number, string> = {
   1: "A",
   2: "NS",
   5: "CNAME",
