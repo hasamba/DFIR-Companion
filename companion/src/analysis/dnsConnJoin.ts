@@ -15,7 +15,7 @@
 // search or a prefix read, and nothing scans a pair's list per lead.
 
 import type { DnsGapBand, DnsLeadState, DnsReply } from "./canonicalDns.js";
-import type { ConnObservation, DnsObservation, DnsSource } from "./dnsWireRead.js";
+import type { ConnObservation, DnsObservation, DnsSource, SuricataQueryCandidate } from "./dnsWireRead.js";
 
 /** DNS observations retained per upload; records past it are counted per source, never read. */
 export const DNS_OBSERVATIONS_MAX = 65_536;
@@ -65,10 +65,19 @@ export interface DnsObservations {
   connOverflow: number;
   /** Connection records with both ends but no start time — never placed, never "absent". */
   connUnplaced: number;
+  /** Suricata query-type events, held only to pair against a v1 answer's missing question (#996). */
+  suricataQueries: SuricataQueryCandidate[];
 }
 
 export function emptyDnsObservations(): DnsObservations {
-  return { dns: [], dnsOverflow: new Map(), conns: [], connOverflow: 0, connUnplaced: 0 };
+  return {
+    dns: [],
+    dnsOverflow: new Map(),
+    conns: [],
+    connOverflow: 0,
+    connUnplaced: 0,
+    suricataQueries: [],
+  };
 }
 
 export function addDns(sink: DnsObservations, o: DnsObservation): void {

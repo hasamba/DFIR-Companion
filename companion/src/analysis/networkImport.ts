@@ -39,7 +39,9 @@ import { mapSmbRows, tallySmbChains } from "./smbChainRows.js";
 import { addConn, addDns, emptyDnsObservations, joinDnsLeads } from "./dnsConnJoin.js";
 import {
   isSuricataDnsAnswer,
+  pairSuricataQueries,
   readSuricataDns,
+  readSuricataDnsQueryCandidate,
   readSuricataFlow,
   readZeekConn,
   readZeekDns,
@@ -677,7 +679,8 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
         }
         if (etype === "http") addRequest(webObs, readSuricataHttp(row, recordIndex));
         if (etype === "fileinfo") addTransfer(webObs, readSuricataFileinfo(row, recordIndex));
-        // A dns answer/response is an exchange row; a query event establishes only its indicator.
+        // A dns answer/response is an exchange row; a query event establishes only its indicator
+        // (and, #996, a candidate paired against a v1 answer's missing question, below the loop).
         // flow / netflow records are indexed for the join and are never rows of their own.
         if (etype === "dns") {
           const dns = getCI(row, "dns");
@@ -685,6 +688,8 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
             const o = readSuricataDns(row, recordIndex);
             if (o) addDns(dnsObs, o);
           }
+          const c = readSuricataDnsQueryCandidate(row);
+          if (c) dnsObs.suricataQueries.push(c);
         }
         if (etype === "flow" || etype === "netflow") {
           const c = readSuricataFlow(row, etype, recordIndex);
@@ -749,6 +754,7 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
   // TLS session rows (the retained sessions joined to their x509 records first) and the
   // relationship rows one upload establishes (#997) are two families.
   const [tlsRows, tlsGraphRows] = tlsFamilies(tlsObs, flowBudget);
+  pairSuricataQueries(dnsObs.dns, dnsObs.suricataQueries); // #996 — before the join reads dnsObs.dns
   mapped.push(
     ...interleave(
       [

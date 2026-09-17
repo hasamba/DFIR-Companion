@@ -562,6 +562,36 @@ describe("Suricata dns and flow", () => {
       ...over,
     };
   }
+  // #996: v1 wrote one answer RR per event with `rrname` as the RR's OWNER — no question field.
+  function v1Answer(over: Row = {}, dns: Row = {}): Row {
+    return {
+      timestamp: stamp(0),
+      event_type: "dns",
+      flow_id: 1,
+      src_ip: SERVER,
+      src_port: 53,
+      dest_ip: CLIENT,
+      dest_port: 51000,
+      proto: "UDP",
+      dns: { version: 1, type: "answer", id: 7, rrname: "cdn.example.net", rrtype: "A", rdata: A1, ...dns },
+      ...over,
+    };
+  }
+  // #996: a standalone Suricata query event — normally discarded, kept only as a pairing candidate.
+  function suricataQuery(over: Row = {}, dns: Row = {}): Row {
+    return {
+      timestamp: stamp(-1),
+      event_type: "dns",
+      flow_id: 1,
+      src_ip: CLIENT,
+      src_port: 51000,
+      dest_ip: SERVER,
+      dest_port: 53,
+      proto: "UDP",
+      dns: { type: "query", id: 7, rrname: "www.example.com", rrtype: "A", ...dns },
+      ...over,
+    };
+  }
   function flow(over: Row = {}, f: Row = {}): Row {
     return {
       timestamp: stamp(120),
@@ -761,5 +791,89 @@ describe("bounds", () => {
     expect(
       r.events.some((e) => e.description.startsWith("Flow:") && e.description.includes("10.0 MB sent")),
     ).toBe(true);
+  });
+});
+
+describe("Suricata query ↔ answer pairing by dns.id + flow_id (#996)", () => {
+  const stamp = (offset: number) => new Date((T0 + offset) * 1000).toISOString().replace("Z", "+0000");
+  const v1Answer = (over: Row = {}, dns: Row = {}): Row => ({
+    timestamp: stamp(0),
+    event_type: "dns",
+    flow_id: 1,
+    src_ip: SERVER,
+    src_port: 53,
+    dest_ip: CLIENT,
+    dest_port: 51000,
+    proto: "UDP",
+    dns: { version: 1, type: "answer", id: 7, rrname: "cdn.example.net", rrtype: "A", rdata: A1, ...dns },
+    ...over,
+  });
+  const suricataQuery = (over: Row = {}, dns: Row = {}): Row => ({
+    timestamp: stamp(-1),
+    event_type: "dns",
+    flow_id: 1,
+    src_ip: CLIENT,
+    src_port: 51000,
+    dest_ip: SERVER,
+    dest_port: 53,
+    proto: "UDP",
+    dns: { type: "query", id: 7, rrname: "www.example.com", rrtype: "A", ...dns },
+    ...over,
+  });
+
+  it("recovers a v1 answer's missing question from a matching separate query event", () => {
+    const e = one([suricataQuery(), v1Answer()]);
+    expect(e.description).toContain("[query: www.example.com]");
+    expect(e.canonical?.dns?.query).toBe("www.example.com");
+  });
+
+  it("a v1 answer with no matching query anywhere in the upload reads exactly as before", () => {
+    const e = one([v1Answer()]);
+    expect(e.description).toContain("[query: (not in this record)]"); // unchanged placeholder, not a guess
+    expect(e.canonical?.dns?.query ?? "").toBe("");
+  });
+
+  it("shares flow_id but a DIFFERENT dns.id — does not pair", () => {
+    const e = one([suricataQuery({}, { id: 9 }), v1Answer()]);
+    expect(e.canonical?.dns?.query ?? "").toBe("");
+  });
+
+  it("shares dns.id but a DIFFERENT flow_id — does not pair", () => {
+    const e = one([suricataQuery({ flow_id: 2 }), v1Answer()]);
+    expect(e.canonical?.dns?.query ?? "").toBe("");
+  });
+
+  it("a v2/v3 answer that already has its own question is untouched, even with a same-key candidate", () => {
+    const v2Answer = (): Row => ({
+      timestamp: stamp(0),
+      event_type: "dns",
+      flow_id: 1,
+      src_ip: SERVER,
+      src_port: 53,
+      dest_ip: CLIENT,
+      dest_port: 51000,
+      proto: "UDP",
+      dns: { version: 2, type: "answer", id: 7, rrname: "already.example", rrtype: "A", rcode: "NOERROR" },
+    });
+    const e = one([suricataQuery(), v2Answer()]);
+    expect(e.canonical?.dns?.query).toBe("already.example");
+  });
+
+  it("a standalone query event with no matching answer produces no row — the pre-existing indicator scrape is unaffected either way", () => {
+    const r = parse([suricataQuery()]);
+    expect(dnsRows([suricataQuery()])).toHaveLength(0);
+    // suricataIocs() already scraped this name from the query event before #996 — unrelated to pairing.
+    expect(r.iocs.some((i) => i.value === "www.example.com")).toBe(true);
+  });
+
+  it("the query event's own type can sit at the record root or inside queries[]", () => {
+    const rootType = one([suricataQuery(), v1Answer()]);
+    expect(rootType.canonical?.dns?.queryType).toBe(1); // A
+
+    const nestedType = one([
+      suricataQuery({}, { rrtype: undefined, queries: [{ rrname: "www.example.com", rrtype: "AAAA" }] }),
+      v1Answer(),
+    ]);
+    expect(nestedType.canonical?.dns?.queryType).toBe(28); // AAAA
   });
 });
