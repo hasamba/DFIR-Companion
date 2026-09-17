@@ -101,6 +101,9 @@ export interface DnsObservation {
   ownership: "not in this record" | "stated in the record";
   /** The record's own connection identifier (`uid` / `flow_id`) — excluded from the join. */
   recordId?: string;
+  /** Suricata's own DNS transaction id (`dns.id`) — paired with recordId/flow_id to recover a v1
+   * answer's missing question (#996); never set for Zeek. */
+  transactionId?: string;
 }
 
 export interface ConnObservation {
@@ -446,6 +449,7 @@ export function readSuricataDns(row: Row, recordIndex: number): DnsObservation |
         for (const v of values) all.push({ value: str(v), ...typeOf(typeName, undefined) });
   const rcode = upperToken(getCI(dns, "rcode"));
   const flowId = text(getCI(row, "flow_id"))?.trim();
+  const transactionId = text(getCI(dns, "id"))?.trim(); // #996: paired with flowId to recover a v1 question
   const type = queryTypeOf(qtype, undefined);
   return {
     source: "suricata-dns",
@@ -463,7 +467,68 @@ export function readSuricataDns(row: Row, recordIndex: number): DnsObservation |
     ...boundReturned(all, type.queryType),
     ownership: all.some((a) => a.owner) ? "stated in the record" : "not in this record",
     ...(flowId ? { recordId: flowId } : {}),
+    ...(transactionId ? { transactionId } : {}),
   };
+}
+
+// ───────────────────────────── #996: Suricata query ↔ answer pairing ───────
+
+export interface SuricataQueryCandidate {
+  key: string; // flow_id + "|" + dns.id
+  queryName: string;
+  queryType?: number;
+  queryTypeName?: string;
+}
+
+const suricataPairKey = (flowId: string, transactionId: string): string => `${flowId}|${transactionId}`;
+
+/**
+ * A standalone Suricata query event (`dns.type: "query"/"request"`) — #996: captured ONLY to pair
+ * with a v1 answer event missing its own question, via the shared flow_id + dns.id. Never becomes
+ * a DnsObservation on its own: a query with no matching answer in this upload stays invisible,
+ * exactly as it does today.
+ */
+export function readSuricataDnsQueryCandidate(row: Row): SuricataQueryCandidate | undefined {
+  const dns = getCI(row, "dns");
+  if (!isObject(dns)) return undefined;
+  const t = text(getCI(dns, "type"))?.trim().toLowerCase();
+  if (t !== "query" && t !== "request") return undefined;
+  const flowId = text(getCI(row, "flow_id"))?.trim();
+  const transactionId = text(getCI(dns, "id"))?.trim();
+  const [queryName] = suricataQueryNames(dns);
+  if (!flowId || !transactionId || !queryName) return undefined;
+  const queries = getCI(dns, "queries");
+  const q0 = Array.isArray(queries) && isObject(queries[0]) ? queries[0] : undefined;
+  const qtype = getCI(dns, "rrtype") ?? (q0 ? getCI(q0, "rrtype") : undefined);
+  return { key: suricataPairKey(flowId, transactionId), queryName, ...queryTypeOf(qtype, undefined) };
+}
+
+/**
+ * #996: recovers a v1 Suricata answer's missing question from its paired query candidate, when
+ * one exists in this upload. Never touches a record that already has a query name (v2/v3, or a
+ * v1 record with nothing to pair against stays exactly as it reads today). `flow_id` + `dns.id`
+ * is not a perfect uniqueness guarantee: `dns.id` is a 16-bit transaction id (a collision needs
+ * one flow to carry tens of thousands of DNS transactions), and two duplicate/retransmitted
+ * query lines sharing a key resolve arbitrarily (last in file order wins) if they ever disagree
+ * — neither judged worth a timestamp-distance guard for the failure's real-world likelihood.
+ */
+export function pairSuricataQueries(
+  observations: DnsObservation[],
+  candidates: readonly SuricataQueryCandidate[],
+): void {
+  if (!candidates.length) return;
+  const byKey = new Map(candidates.map((c) => [c.key, c])); // already bounded at collection (addSuricataQuery)
+  observations.forEach((o, i) => {
+    if (o.query || !o.recordId || !o.transactionId) return;
+    const c = byKey.get(suricataPairKey(o.recordId, o.transactionId));
+    if (!c) return;
+    observations[i] = {
+      ...o,
+      ...queryFields(c.queryName),
+      queryField: "dns.id+flow_id pairing",
+      ...(c.queryType !== undefined ? { queryType: c.queryType, queryTypeName: c.queryTypeName } : {}),
+    };
+  });
 }
 
 // ───────────────────────────── connections ─────────────────────────────

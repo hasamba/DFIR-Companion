@@ -15,7 +15,7 @@
 // search or a prefix read, and nothing scans a pair's list per lead.
 
 import type { DnsGapBand, DnsLeadState, DnsReply } from "./canonicalDns.js";
-import type { ConnObservation, DnsObservation, DnsSource } from "./dnsWireRead.js";
+import type { ConnObservation, DnsObservation, DnsSource, SuricataQueryCandidate } from "./dnsWireRead.js";
 
 /** DNS observations retained per upload; records past it are counted per source, never read. */
 export const DNS_OBSERVATIONS_MAX = 65_536;
@@ -65,10 +65,19 @@ export interface DnsObservations {
   connOverflow: number;
   /** Connection records with both ends but no start time — never placed, never "absent". */
   connUnplaced: number;
+  /** Suricata query-type events, held only to pair against a v1 answer's missing question (#996). */
+  suricataQueries: SuricataQueryCandidate[];
 }
 
 export function emptyDnsObservations(): DnsObservations {
-  return { dns: [], dnsOverflow: new Map(), conns: [], connOverflow: 0, connUnplaced: 0 };
+  return {
+    dns: [],
+    dnsOverflow: new Map(),
+    conns: [],
+    connOverflow: 0,
+    connUnplaced: 0,
+    suricataQueries: [],
+  };
 }
 
 export function addDns(sink: DnsObservations, o: DnsObservation): void {
@@ -87,6 +96,11 @@ export function addConn(sink: DnsObservations, o: ConnObservation | "unplaced"):
   if (o === "unplaced") sink.connUnplaced += 1;
   else if (sink.conns.length >= CONN_INDEX_MAX) sink.connOverflow += 1;
   else sink.conns.push(o);
+}
+
+/** Bounded like addDns above (#996) — a query-only-heavy upload must not grow this without limit. */
+export function addSuricataQuery(sink: DnsObservations, c: SuricataQueryCandidate): void {
+  if (sink.suricataQueries.length < DNS_OBSERVATIONS_MAX) sink.suricataQueries.push(c);
 }
 
 // ───────────────────────────── time ─────────────────────────────
