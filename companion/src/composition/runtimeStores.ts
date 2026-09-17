@@ -87,6 +87,7 @@ import { SourceTrustStore } from "../analysis/sourceTrustStore.js";
 import { DwellWindowStore } from "../analysis/dwellWindowStore.js";
 import { ClockSkewStore } from "../analysis/clockSkewStore.js";
 import { SuperTimelineStore } from "../analysis/superTimelineStore.js";
+import { AuthObservationStore } from "../analysis/authObservationStore.js";
 import { StarredReportStore } from "../analysis/starredReportStore.js";
 import { ForensicGateControlStore } from "../analysis/forensicGateControl.js";
 import { CustodyStore } from "../analysis/custody.js";
@@ -350,6 +351,11 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
     operationalMetrics,
   );
   const tagsStore = new TagsStore(store, superTimelineStore); // #958 analyst event tags exempt raw rows from the cap
+  const authObservationStore = new AuthObservationStore(
+    store,
+    Number(process.env.DFIR_SPRAY_OBSERVATION_RETENTION_HOURS) || undefined,
+    operationalMetrics,
+  ); // #1104 cross-upload password-spray detection
   const starredReportStore = new StarredReportStore(store);
   const forensicGateControlStore = new ForensicGateControlStore(store);
   const custodyStore = new CustodyStore(store);
@@ -490,6 +496,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
     dwellWindowStore,
     clockSkewStore,
     superTimelineStore,
+    authObservationStore,
     starredReportStore,
     forensicGateControlStore,
     custodyStore,

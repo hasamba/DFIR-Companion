@@ -104,6 +104,9 @@ export class AnalysisPipeline {
         get superTimelineStore() {
           return opts.superTimelineStore;
         },
+        get authObservationStore() {
+          return opts.authObservationStore;
+        },
       },
       withStateLock: (caseId, fn) => this.withStateLock(caseId, fn),
       mergeWithAliases: (state, delta, ctx) => this.mergeWithAliases(state, delta, ctx),

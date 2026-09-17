@@ -41,6 +41,7 @@ import type { SourceTrustStore } from "../analysis/sourceTrustStore.js";
 import type { ClockSkewStore } from "../analysis/clockSkewStore.js";
 import type { DwellWindowStore } from "../analysis/dwellWindowStore.js";
 import type { SuperTimelineStore } from "../analysis/superTimelineStore.js";
+import type { AuthObservationStore } from "../analysis/authObservationStore.js";
 import type { StarredReportStore } from "../analysis/starredReportStore.js";
 import type { TaggerStore } from "../analysis/taggerStore.js";
 import type { ForensicGateControlStore } from "../analysis/forensicGateControl.js";
@@ -261,6 +262,10 @@ export interface AppOptions {
   // Super-timeline: the complete record of every imported event (a superset of the forensic timeline).
   // Every normal import dual-writes its newly-added events here; the forensic timeline stays curated.
   superTimelineStore?: SuperTimelineStore;
+  // Cross-upload password-spray observation store (#1104). When set, importEcar/importM365 use it
+  // to detect a spray whose attempts split across two uploads. Absent (scripts/tests) -> the
+  // cross-upload pass is simply off, same as superTimelineStore.
+  authObservationStore?: AuthObservationStore;
   // Saved copy of the TimeSketch-style Starred Events Report (a per-case side file) — POST
   // /starred-report generates it fresh each time (ephemeral); PUT persists the analyst's chosen
   // copy here so it survives a reload; GET reads it back.

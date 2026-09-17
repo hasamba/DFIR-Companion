@@ -58,7 +58,11 @@ export interface EcarImportOptions {
   maxIocs?: number; // safety cap on emitted IOCs. Default 5000.
 }
 
-export type EcarParseResult = SiemParseResult;
+export type EcarParseResult = SiemParseResult & {
+  // Every within-upload spray candidate this parse built (#1104) — importBatch left unset here,
+  // since parseEcarJson is pure and has no idPrefix; the ingest layer (importEcar) stamps it.
+  sprayCandidates: SprayCandidate[];
+};
 
 // The source label every ECAR-derived event/IOC carries (the tool name, via toolDetect's corroboration).
 export const ECAR_SOURCE = "EDR (ECAR)";
@@ -550,5 +554,6 @@ export function parseEcarJson(text: string, opts: EcarImportOptions = {}): EcarP
     groups,
     format,
     hostname,
+    sprayCandidates,
   };
 }

@@ -13,7 +13,7 @@ import { parseOsqueryLog, type OsqueryImportOptions } from "../osqueryImport.js"
 import { deltaSchema } from "../responseSchema.js";
 import { applySeverityFloor } from "../severityFloor.js";
 import { type InvestigationState, type Severity } from "../stateTypes.js";
-import { noteEmptyImport } from "./importState.js";
+import { noteEmptyImport, crossUploadSprayRows } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 import type { CloudCoverageDraft } from "../cloudCoverage.js";
 
@@ -50,7 +50,17 @@ export async function importM365(
   },
 ): Promise<ImportWithCoverage> {
   const parsedRaw = parseM365Audit(text, opts.m365);
-  const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+
+  // Cross-upload password-spray pass (#1104) — see importEcar's identical comment.
+  const crossRows = await crossUploadSprayRows(ctx, caseId, opts, parsedRaw.sprayCandidates, {
+    source: "Microsoft 365",
+    importer: "m365",
+    mappingVersion: "m365-spray-cross-v1",
+  });
+  const parsed = {
+    ...parsedRaw,
+    events: applySeverityFloor([...parsedRaw.events, ...crossRows], opts.minSeverity),
+  };
   if (parsed.events.length === 0)
     return {
       state: await noteEmptyImport(ctx, caseId, opts, "Microsoft 365", parsed.total),

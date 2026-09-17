@@ -2,6 +2,7 @@ import type { WindowContext, mergeDelta } from "../stateMerge.js";
 import type { InvestigationState } from "../stateTypes.js";
 import type { StateStore } from "../stateStore.js";
 import type { SuperTimelineStore } from "../superTimelineStore.js";
+import type { AuthObservationStore } from "../authObservationStore.js";
 
 /**
  * What an importer needs from the pipeline, and nothing else (#384).
@@ -43,6 +44,11 @@ export interface ImportContext {
     // them in the delta. Optional because minimal wirings (tests) have no super-timeline; the
     // importer then reports the rows as dropped rather than falling back into the forensic timeline.
     superTimelineStore?: SuperTimelineStore;
+    // Cross-upload password-spray detection (#1104). Optional for the same reason as
+    // superTimelineStore: minimal/test wirings have no observation store, and importEcar/importM365
+    // then skip the cross-upload pass entirely — exactly today's within-upload-only behavior, no
+    // regression for a caller that doesn't wire it.
+    authObservationStore?: AuthObservationStore;
   };
 
   /**

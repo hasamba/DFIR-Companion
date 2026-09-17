@@ -34,12 +34,20 @@ export interface SprayCandidate {
   hostOrTenant: string;
   outcome: SprayOutcome;
   locator: string; // e.g. "record:12" — this candidate's own raw-record locator
+  // Which upload produced this candidate (#1104, cross-upload detection). Unset for the
+  // pre-#1104 within-upload-only call sites — every candidate then falls into one implicit
+  // batch, so importBatches/accountsByBatch below are a no-op for them.
+  importBatch?: string;
 }
 
 export interface SprayPatternMeta {
   source: string; // stamped on the row's `sources` field, e.g. "ECAR", "Microsoft 365"
   importer: string; // canonical.producer.importer, e.g. "ecar", "m365"
   mappingVersion: string;
+  // Cross-upload rendering (#1104). Both optional and read only to adjust the description's lead
+  // clause — the within-upload call site passes neither, so its output is unchanged.
+  crossUpload?: boolean; // this pattern only crosses the threshold when combined across uploads
+  truncatedHistory?: boolean; // the prior-observation window was capped; the count may be a floor
 }
 
 export interface PasswordSprayPattern {
@@ -53,6 +61,13 @@ export interface PasswordSprayPattern {
   accountsTruncated: boolean;
   locators: string[];
   followedBySuccess?: { account: string; timestamp: string; locator: string };
+  // Cross-upload support (#1104). importBatches is every distinct SprayCandidate.importBatch
+  // among the episode's contributors (unset candidates all share one implicit batch, so this is
+  // always length 1 for the pre-#1104 call sites). accountsByBatch is, for each of those
+  // batches, how many distinct accounts THAT BATCH ALONE contributed — the ingest layer uses it
+  // to skip an episode already fully explained by one upload's own within-upload row.
+  importBatches: string[];
+  accountsByBatch: Record<string, number>;
 }
 
 // First index in a timestamp-ascending array whose ms value is strictly greater than `afterMs`.
@@ -99,6 +114,18 @@ function normalizeAccount(account: string): string {
   return account.trim().toLowerCase();
 }
 
+// The identity of "the same observation" — shared by dedupExact() below and by
+// authObservationStore.ts's append() (#1104), so there is exactly one definition of it, not two.
+// Same-second granularity, same account normalization, deliberately excludes importBatch: two
+// uploads describing the same real auth attempt must collapse to one observation, or an
+// overlapping re-export would inflate the distinct-account count.
+export function sprayObservationKey(
+  c: Pick<SprayCandidate, "sourceIp" | "hostOrTenant" | "account" | "timestamp" | "outcome">,
+): string {
+  const secondFloor = c.timestamp.slice(0, 19); // ISO up to whole seconds
+  return `${c.sourceIp}|${c.hostOrTenant}|${normalizeAccount(c.account)}|${secondFloor}|${c.outcome}`;
+}
+
 function toMs(iso: string): number {
   const t = Date.parse(iso);
   return Number.isFinite(t) ? t : NaN;
@@ -114,7 +141,7 @@ interface Episode {
   windowKind: "burst" | "slow";
   startMs: number;
   endMs: number;
-  accounts: Map<string, string>; // normalized -> raw (first seen)
+  accounts: Map<string, { raw: string; batches: Set<string> }>; // normalized -> raw + contributing batches
   locators: string[];
 }
 
@@ -146,7 +173,11 @@ function tumblingEpisodes(
     }
     current.endMs = ms;
     const norm = normalizeAccount(c.account);
-    if (norm && !current.accounts.has(norm)) current.accounts.set(norm, c.account);
+    if (norm) {
+      const entry = current.accounts.get(norm);
+      if (entry) entry.batches.add(batchOf(c));
+      else current.accounts.set(norm, { raw: c.account, batches: new Set([batchOf(c)]) });
+    }
     current.locators.push(c.locator);
   }
   return episodes;
@@ -159,13 +190,19 @@ function dedupExact(candidates: SprayCandidate[]): SprayCandidate[] {
   const seen = new Set<string>();
   const out: SprayCandidate[] = [];
   for (const c of candidates) {
-    const secondFloor = c.timestamp.slice(0, 19); // ISO up to whole seconds
-    const key = `${c.sourceIp}|${c.hostOrTenant}|${normalizeAccount(c.account)}|${secondFloor}|${c.outcome}`;
+    const key = sprayObservationKey(c);
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(c);
   }
   return out;
+}
+
+// Every candidate falls into a batch; unset importBatch (the pre-#1104 call sites) is its own
+// implicit batch, so importBatches/accountsByBatch stay a no-op for existing callers.
+const IMPLICIT_BATCH = "__implicit_batch__";
+function batchOf(c: Pick<SprayCandidate, "importBatch">): string {
+  return c.importBatch ?? IMPLICIT_BATCH;
 }
 
 export function passwordSprayPatterns(candidates: SprayCandidate[]): PasswordSprayPattern[] {
@@ -205,9 +242,21 @@ export function passwordSprayPatterns(candidates: SprayCandidate[]): PasswordSpr
       const episodes = tumblingEpisodes(sourceIp, hostOrTenant, windowKind, windowMs, failed);
       for (const ep of episodes) {
         if (ep.accounts.size < threshold) continue;
-        const accountNames = [...ep.accounts.values()];
+        const accountNames = [...ep.accounts.values()].map((v) => v.raw);
         const accountsShown = accountNames.slice(0, ACCOUNTS_PER_ROW_MAX);
         const accountsTruncated = accountNames.length > ACCOUNTS_PER_ROW_MAX;
+
+        // Per-batch distinct-account counts: for each batch, how many of THIS episode's accounts
+        // that batch alone contributed at least one candidate for. The ingest layer (#1104) uses
+        // the max of these to decide whether one upload's own within-upload row already explains
+        // the episode (dominance), so a cross-upload row is never a duplicate of it.
+        const accountsByBatch: Record<string, number> = {};
+        for (const { batches } of ep.accounts.values()) {
+          for (const batch of batches) {
+            accountsByBatch[batch] = (accountsByBatch[batch] ?? 0) + 1;
+          }
+        }
+        const importBatches = Object.keys(accountsByBatch);
 
         // followedBySuccess: earliest success in the SAME group, for one of the episode's
         // accounts, strictly after episode close, within the bounded grace window. The window
@@ -240,6 +289,8 @@ export function passwordSprayPatterns(candidates: SprayCandidate[]): PasswordSpr
             ? [...ep.locators.slice(0, ACCOUNTS_PER_ROW_MAX - 1), followedBySuccess.locator]
             : ep.locators.slice(0, ACCOUNTS_PER_ROW_MAX),
           ...(followedBySuccess ? { followedBySuccess } : {}),
+          importBatches,
+          accountsByBatch,
         });
       }
     }
@@ -280,8 +331,16 @@ export function sprayPatternToMappedEvent(p: PasswordSprayPattern, meta: SprayPa
   const successNote = p.followedBySuccess
     ? `; ${p.followedBySuccess.account} authenticated successfully from the same source at ${p.followedBySuccess.timestamp}`
     : "";
+  // Cross-upload lead + disclosure (#1104) — never on the within-upload call site (meta.crossUpload
+  // unset there), so its description is byte-for-byte unchanged.
+  const crossLead = meta.crossUpload
+    ? `Password-spray pattern (${windowWords}, across ${p.importBatches.length} uploads): `
+    : `Password-spray pattern (${windowWords}): `;
+  const historyNote = meta.truncatedHistory
+    ? "; prior observations beyond the query cap were not available — this count may be a floor, not a total"
+    : "";
   const description = boundedTextTo(
-    `Password-spray pattern (${windowWords}): ${p.sourceIp} failed against ${p.accountsTotal} distinct accounts on ${p.hostOrTenant} between ${p.start} and ${p.end} [${p.accountsShown.join(", ")}${truncNote}]${successNote}`,
+    `${crossLead}${p.sourceIp} failed against ${p.accountsTotal} distinct accounts on ${p.hostOrTenant} between ${p.start} and ${p.end} [${p.accountsShown.join(", ")}${truncNote}]${successNote}${historyNote}`,
     600,
   );
 
