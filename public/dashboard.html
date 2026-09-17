@@ -5661,7 +5661,6 @@
     });
     document.getElementById("settingsOverlay").addEventListener("click", (e) => { if (e.target.id === "settingsOverlay") closeSettingsModal(); });
     document.getElementById("kbdShortcutsChk").addEventListener("change", e => setKbdShortcutsEnabled(e.target.checked));
-    document.getElementById("webTrailerProfileChk").addEventListener("change", e => setWebTrailerProfile(e.target.checked));
     document.getElementById("secSelectAll").addEventListener("click", () => {
       document.querySelectorAll("#secChecks .sec-check input[type=checkbox]").forEach(cb => { cb.checked = true; });
     });

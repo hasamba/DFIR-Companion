@@ -106,6 +106,12 @@
       applyMode: applySettingsMode,
       mode: settingsMode,
     };
+    // #993 — wired here (once, at load) rather than inline in dashboard.html: the inline <script>
+    // block is size-ledgered with no headroom, and this listener only needs to fire once, not on
+    // every settings-modal open.
+    document
+      .getElementById("webTrailerProfileChk")
+      .addEventListener("change", (e) => setWebTrailerProfile(e.target.checked));
   }
 
   window.openSettingsTab = openSettingsTab;
