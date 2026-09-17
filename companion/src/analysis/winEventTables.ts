@@ -60,6 +60,7 @@ export const WIN_EVENTS: Record<number, WinEventDef> = {
   5145: { label: "Network share object checked", severity: "Low", mitre: ["T1021.002"] },
   4946: { label: "Windows Firewall rule added", severity: "Medium", mitre: ["T1562.004"] },
   4947: { label: "Windows Firewall rule modified", severity: "Medium", mitre: ["T1562.004"] },
+  5156: { label: "Connection permitted (WFP)", severity: "Low", kind: "network" }, // #996 — the firewall audit's own Sysmon-3-equivalent
   5058: { label: "Key file operation", severity: "Low" },
   5059: { label: "Key migration operation", severity: "Low" },
   // Defense evasion
