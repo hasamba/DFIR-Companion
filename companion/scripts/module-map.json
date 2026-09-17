@@ -182,6 +182,7 @@
     "awsImport.ts": "analysis/ingest",
     "awsLineage.ts": "analysis/ingest",
     "awsReplicas.ts": "analysis/ingest",
+    "bamRowMap.ts": "analysis/ingest",
     "bashHistoryImport.ts": "analysis/ingest",
     "beaconDetect.ts": "analysis/detect",
     "binaryRenameImport.ts": "analysis/ingest",
