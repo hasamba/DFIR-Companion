@@ -1,25 +1,23 @@
-// Deterministic importer for SIEM / EDR JSON exports — the second JSON ingest path
-// besides THOR. Where THOR has a fixed JSON-Lines schema, SIEM/EDR exports vary wildly
-// (Elastic/Kibana, Splunk, an EDR console, a raw winlogbeat dump…), so this module:
+// Deterministic importer for SIEM / EDR JSON exports — the second JSON ingest path besides THOR. Where THOR
+// has a fixed JSON-Lines schema, SIEM/EDR exports vary wildly (Elastic/Kibana, Splunk, an EDR console, a
+// raw winlogbeat dump…), so this module:
 //
-//   1. UNWRAPS the common container envelopes to a flat array of event records:
-//      Elastic/Kibana table export ({ data: [{ _source }] }), an Elasticsearch search
-//      response ({ hits: { hits: [{ _source }] } }), a plain JSON array, NDJSON
-//      (one JSON object per line, optionally _source-wrapped), or { events|records|
-//      results|logs: [...] }.
-//   2. MAPS each record to a forensic event DETERMINISTICALLY (no AI call). Windows
-//      Event Log + Sysmon records (the dominant SIEM data, and the attached example
-//      file) get a rich per-EID mapping (label, derived severity, MITRE, structured
-//      IOC/asset extraction). Any OTHER SIEM/EDR record falls back to field
-//      auto-detection (timestamp / host / message / severity), so a CrowdStrike /
-//      Defender / SentinelOne export still produces dated events + IOCs.
-//   3. AGGREGATES repetitive identical events into one counted row (like THOR /
-//      logAggregate) and caps the total, so an 11k-event export does not flood the
-//      timeline. Synthesis + the high-severity backfill still cover everything.
+//   1. UNWRAPS the common container envelopes to a flat array of event records: Elastic/Kibana table export
+//      ({ data: [{ _source }] }), an Elasticsearch search response ({ hits: { hits: [{ _source }] } }), a
+//      plain JSON array, NDJSON (one JSON object per line, optionally _source-wrapped), or {
+//      events|records|results|logs: [...] }.
+//   2. MAPS each record to a forensic event DETERMINISTICALLY (no AI call). Windows Event Log + Sysmon
+//      records (the dominant SIEM data, and the attached example file) get a rich per-EID mapping (label,
+//      derived severity, MITRE, structured IOC/asset extraction). Any OTHER SIEM/EDR record falls back to
+//      field auto-detection (timestamp / host / message / severity), so a CrowdStrike / Defender /
+//      SentinelOne export still produces dated events + IOCs.
+//   3. AGGREGATES repetitive identical events into one counted row (like THOR / logAggregate) and caps the
+//      total, so an 11k-event export does not flood the timeline. Synthesis + the high-severity backfill
+//      still cover everything.
 //
-// Windows logs carry no maliciousness score (`level` is "Information" for almost
-// everything), so severity is DERIVED from the event type (WIN_EVENTS / SYSMON_EVENTS),
-// with a conservative bump for LOLBin / suspicious command lines and LSASS access.
+// Windows logs carry no maliciousness score (`level` is "Information" for almost everything), so severity
+// is DERIVED from the event type (WIN_EVENTS / SYSMON_EVENTS), with a conservative bump for LOLBin /
+// suspicious command lines and LSASS access.
 
 import { worstSeverity as worst, type ForensicEvent, type Severity, type TlpMarking } from "./stateTypes.js";
 import { MONTHS, parseBsdTime } from "./bsdTime.js";
@@ -38,6 +36,7 @@ import { commandCandidates } from "./commandNormalize.js";
 import { secretSpillSignal } from "./secretSpillRules.js";
 import { streamOverlay } from "./ntfsStreams.js";
 import { boundDnsVariants, dnsOverlay } from "./dnsRecord.js";
+import { runWindowsDnsConnJoin } from "./siemDnsConnJoin.js";
 import { WIN_EVENTS, channelTable, type WinEventDef } from "./winEventTables.js";
 export { WIN_EVENTS, type WinEventDef };
 import { processGuid, processOverlay } from "./processAccess.js";
@@ -1537,6 +1536,7 @@ export function buildSiemResult(
   }
 
   if (opts.aggregate !== false) boundDnsVariants(mapped, iocSink); // dnsRecord.ts, #933 item 2
+  runWindowsDnsConnJoin(mapped, iocSink); // #996 — always after boundDnsVariants
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,

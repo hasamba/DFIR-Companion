@@ -61,7 +61,8 @@ export const RESULTS_KEPT_MAX = 64;
 const VALUE_SHOWN_MAX = 60;
 const VALUE_KEPT_MAX = 512;
 const NAME_SHOWN_MAX = 120;
-const DESCRIPTION_MAX = 600;
+/** Reused by siemDnsConnJoin.ts (#996) when it appends its own tags to an already-built row. */
+export const DESCRIPTION_MAX = 600;
 
 export type DnsState =
   | "success"
@@ -482,6 +483,19 @@ export function boundDnsVariants(
     // The envelope must not present one folded set as the row's: it shows none, and says so.
     if (row.canonical?.dns) row.canonical.dns = { ...row.canonical.dns, returned: [], folded: true };
   }
+  rewriteAggKeySink(sink, rewritten);
+}
+
+/**
+ * Follow an IOC's provenance when the row that sourced it gets its `aggKey` rewritten in place
+ * (`boundDnsVariants` above, and the Windows DNS→connection join in `siemDnsConnJoin.ts` /
+ * `siemImport.ts`) — an IOC's `sourceAggKeys` must keep pointing at the row's CURRENT key, or
+ * provenance silently stops resolving after the rewrite.
+ */
+export function rewriteAggKeySink(
+  sink: Map<string, { sourceAggKeys?: string[] }>,
+  rewritten: Map<string, string>,
+): void {
   if (!rewritten.size) return;
   for (const [key, ioc] of sink) {
     if (!ioc.sourceAggKeys?.some((k) => rewritten.has(k))) continue;

@@ -139,8 +139,15 @@ export function leadTags(c: DnsChain): { inWindow: string[]; rest: string[] } {
   };
 }
 
-/** The window every lead was read against, with its basis; a range when the row folded TTLs. */
-export function windowTag(c: DnsChain, ttl: { min: number; max: number } | undefined): string | undefined {
+/**
+ * The window every lead was read against, with its basis; a range when the row folded TTLs.
+ * Narrowed to the two fields actually read (not the full `DnsChain`) so the Windows/endpoint join
+ * (siemDnsConnJoin.ts, #996) can reuse this wording without fabricating a Zeek `DnsObservation`.
+ */
+export function windowTag(
+  c: Pick<DnsChain, "joinState" | "leads">,
+  ttl: { min: number; max: number } | undefined,
+): string | undefined {
   if (c.joinState !== "joined" || !c.leads.length) return undefined;
   const bases = new Set(c.leads.map((l) => l.window.basis));
   const range = ttl ? (ttl.min === ttl.max ? `${ttl.min} s` : `${ttl.min}–${ttl.max} s`) : "";
@@ -150,7 +157,8 @@ export function windowTag(c: DnsChain, ttl: { min: number; max: number } | undef
   return `window: TTL ${range} +${DNS_WINDOW_SLACK_S} s where the record carries one, else fixed ${fixed} s`;
 }
 
-export function joinTag(c: DnsChain): string | undefined {
+/** Narrowed to `joinState` alone — same reuse reason as `windowTag` above. */
+export function joinTag(c: Pick<DnsChain, "joinState">): string | undefined {
   switch (c.joinState) {
     case "no connection records in this upload":
       return "connection join: no connection records in this upload";

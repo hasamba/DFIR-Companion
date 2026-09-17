@@ -157,7 +157,8 @@ export function tallyDnsChains(
 
 // ───────────────────────────── envelope ─────────────────────────────
 
-const leadBlock = (l: Lead): DnsLead => ({
+/** Reused by siemDnsConnJoin.ts (#996) to build the same DnsLead shape for the endpoint vantage. */
+export const leadBlock = (l: Lead): DnsLead => ({
   address: l.address,
   state: l.state,
   ...(l.band ? { band: l.band } : {}),
