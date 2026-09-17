@@ -32,11 +32,15 @@ async function makePipeline(caseId = "c1") {
   await cases.createCase({ caseId, name: "n", investigator: "i", aiProvider: null });
   const stateStore = new StateStore(cases);
   const authObservationStore = new AuthObservationStore(cases, 168);
-  const pipeline = new AnalysisPipeline({ stateStore, authObservationStore });
+  const pipeline = new AnalysisPipeline({
+    stateStore,
+    authObservationStore,
+    imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+  });
   return { pipeline, authObservationStore };
 }
 
-function sprayRows(events: { mitreTechniques: string[] }[]) {
+function sprayRows<T extends { mitreTechniques: string[] }>(events: T[]): T[] {
   return events.filter((e) => e.mitreTechniques.includes("T1110.003"));
 }
 
@@ -75,11 +79,9 @@ describe("cross-upload password-spray detection (#1104)", () => {
       idPrefix: "e2",
       importedAt: "2026-06-01T01:45:00Z",
     });
-    const cross = sprayRows(s2.forensicTimeline).filter((e) =>
-      (e as { description: string }).description.includes("across"),
-    );
+    const cross = sprayRows(s2.forensicTimeline).filter((e) => e.description.includes("across"));
     expect(cross).toHaveLength(1);
-    expect((cross[0] as { description: string }).description).toMatch(/across 2 uploads/);
+    expect(cross[0].description).toMatch(/across 2 uploads/);
   });
 
   it("dominance: a batch that already crosses the threshold alone suppresses the cross-upload row", async () => {
@@ -104,11 +106,7 @@ describe("cross-upload password-spray detection (#1104)", () => {
       importedAt: "2026-06-01T02:05:00Z",
     });
     expect(sprayRows(s2.forensicTimeline)).toHaveLength(1);
-    expect(
-      sprayRows(s2.forensicTimeline).some((e) =>
-        (e as { description: string }).description.includes("across"),
-      ),
-    ).toBe(false);
+    expect(sprayRows(s2.forensicTimeline).some((e) => e.description.includes("across"))).toBe(false);
   });
 
   it("re-importing the same file writes no new observations and no duplicate cross-upload row", async () => {
@@ -127,9 +125,7 @@ describe("cross-upload password-spray detection (#1104)", () => {
       idPrefix: "r2",
       importedAt: "2026-06-01T01:45:00Z",
     });
-    const crossAfterTwo = sprayRows(s2.forensicTimeline).filter((e) =>
-      (e as { description: string }).description.includes("across"),
-    );
+    const crossAfterTwo = sprayRows(s2.forensicTimeline).filter((e) => e.description.includes("across"));
     expect(crossAfterTwo).toHaveLength(1);
 
     const before = await authObservationStore.queryWindow("c3", "2026-01-01T00:00:00Z");
@@ -144,9 +140,7 @@ describe("cross-upload password-spray detection (#1104)", () => {
     const after = await authObservationStore.queryWindow("c3", "2026-01-01T00:00:00Z");
     expect(after.observations).toHaveLength(6); // no new rows for the duplicate observations
 
-    const crossAfterThree = sprayRows(s3.forensicTimeline).filter((e) =>
-      (e as { description: string }).description.includes("across"),
-    );
+    const crossAfterThree = sprayRows(s3.forensicTimeline).filter((e) => e.description.includes("across"));
     // The recomputed pattern has the identical aggKey, so it collapses onto the existing row
     // rather than adding a second one.
     expect(crossAfterThree).toHaveLength(1);
@@ -171,9 +165,7 @@ describe("cross-upload password-spray detection (#1104)", () => {
       importedAt: "2026-06-01T00:05:00Z",
       minSeverity: "Medium",
     });
-    const cross = sprayRows(s2.forensicTimeline).filter((e) =>
-      (e as { description: string }).description.includes("across"),
-    );
+    const cross = sprayRows(s2.forensicTimeline).filter((e) => e.description.includes("across"));
     expect(cross).toHaveLength(1);
     expect(cross[0].severity).toBe("Medium");
   });
@@ -197,9 +189,7 @@ describe("cross-upload password-spray detection (#1104)", () => {
       idPrefix: "m2",
       importedAt: "2026-06-01T01:45:00Z",
     });
-    const cross = sprayRows(s2.forensicTimeline).filter((e) =>
-      (e as { description: string }).description.includes("across"),
-    );
+    const cross = sprayRows(s2.forensicTimeline).filter((e) => e.description.includes("across"));
     expect(cross).toHaveLength(1);
   });
 });
