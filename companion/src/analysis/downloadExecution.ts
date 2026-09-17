@@ -97,9 +97,10 @@ const RANK: Record<string, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Crit
 // ───────────────────────────── paths ─────────────────────────────
 
 export interface FilePath {
-  /** The volume as the record spells it: a drive letter (`c`), a `{guid}`, or "" when it names none. */
+  /** The volume as the record spells it: a drive letter (`c`), a `{guid}`, an NT device token
+   * (`harddiskvolume3`), or "" when it names none. */
   volume: string;
-  volumeKind: "drive" | "guid" | "none";
+  volumeKind: "drive" | "guid" | "device" | "none";
   /** Below the volume root, backslashes, case-folded, no leading separator. */
   relative: string;
 }
@@ -107,7 +108,9 @@ export interface FilePath {
 /**
  * The path a record carries, split into the volume it names and the path below the root.
  * MFTECmd writes `.\Users\x\a.exe` (no volume); PECmd `\VOLUME{guid}\USERS\X\A.EXE`; Sysmon
- * `C:\Users\x\a.exe`. Junctions, 8.3 names and `\\?\` device paths are not resolved.
+ * `C:\Users\x\a.exe`; a BAM row (Windows.Forensics.Bam's `Binary`) `\Device\HarddiskVolume3\
+ * Users\x\a.exe` — the NT device namespace, its ONLY path shape (#985 item 2/3). Junctions, 8.3
+ * names and `\\?\` device paths are not resolved.
  */
 export function filePath(raw: string): FilePath | null {
   let p = raw.trim().replace(/\//g, "\\");
@@ -116,6 +119,7 @@ export function filePath(raw: string): FilePath | null {
   let volumeKind: FilePath["volumeKind"] = "none";
   const guid = /^\\VOLUME\{([^}]+)\}/i.exec(p);
   const drive = /^([A-Za-z]):/.exec(p);
+  const device = /^\\Device\\([A-Za-z0-9]+)\\/i.exec(p);
   if (guid) {
     volume = `{${guid[1].toLowerCase()}}`;
     volumeKind = "guid";
@@ -124,6 +128,10 @@ export function filePath(raw: string): FilePath | null {
     volume = drive[1].toLowerCase();
     volumeKind = "drive";
     p = p.slice(2);
+  } else if (device) {
+    volume = device[1].toLowerCase();
+    volumeKind = "device";
+    p = p.slice(device[0].length - 1);
   } else if (p.startsWith(".\\")) p = p.slice(1);
   const relative = p.replace(/^\\+/, "").toLowerCase();
   return relative ? { volume, volumeKind, relative } : null;
@@ -135,7 +143,11 @@ export function sameLocation(a: FilePath, b: FilePath): { same: boolean; volumeN
   if (a.volumeKind === "none" || b.volumeKind === "none")
     return { same: true, volumeNote: "volume not compared (one record names none)" };
   if (a.volumeKind !== b.volumeKind)
-    return { same: true, volumeNote: "volume not compared (GUID vs drive letter)" };
+    // Kind-aware, not a fixed literal (#985 item 2/3 design review, finding F3): a device-vs-drive
+    // pair used to inherit the GUID-vs-drive wording verbatim, which reads as a wrong claim. Every
+    // consumer of this text (matchWords()) matches on the "volume not compared (" PREFIX, never the
+    // exact string, so a new kind pairing never needs a matching code change anywhere else.
+    return { same: true, volumeNote: `volume not compared (${a.volumeKind} vs ${b.volumeKind})` };
   return { same: a.volume === b.volume };
 }
 
@@ -233,19 +245,30 @@ const VELO_YARA_RULE = /^Velociraptor(?: \[[^\]]*\])? YARA: (\S+)/;
 const isVeloYara = (e: TimelineEventShape): boolean =>
   (e.sources ?? []).includes("Velociraptor") && VELO_YARA_RULE.test(e.description ?? "");
 
+// A BAM (Background Activity Moderator) execution record — velociraptorImport.ts's bamFields(),
+// self-prefixed "Velociraptor BAM: <basename> last run ..." the same way mapYara self-prefixes its
+// own description, so the generic artifact-prefix injection produces the same space-not-colon
+// shape: "Velociraptor [<artifact>] BAM: ...". Unlike THOR/YARA this is EXECUTION evidence, not a
+// verdict — an observation time to order against the mark's anchor, no severity of its own (#985
+// item 2/3).
+const isBam = (e: TimelineEventShape): boolean =>
+  (e.sources ?? []).includes("Velociraptor") &&
+  /^Velociraptor(?: \[[^\]]*\])? BAM: /.test(e.description ?? "");
+
 function artifactOf(e: TimelineEventShape): string {
   const src = (e.sources ?? []).join(" ");
   const action = veloAction(e);
-  // Checked first (THOR, then Velociraptor-native YARA): both findings' own messages routinely name
-  // a Windows artifact they flagged (a Sysmon-sourced log line, an event ID 4688 hit, a rule/hit-
-  // context excerpt) — the Sysmon/4688 checks below, run against raw description text, would
-  // otherwise mislabel a real row (#985 item 4, 985-1a-3 design review finding F7, reconfirmed for
-  // this leg by 985-1a-2's design review).
+  // Checked first (THOR, then Velociraptor-native YARA, then BAM): each finding's own message
+  // routinely names a Windows artifact it flagged, or (for BAM) the attacker-influenced binary
+  // basename — the Sysmon/4688 checks below, run against raw description text, would otherwise
+  // mislabel a real row (#985 item 4, 985-1a-3 design review finding F7, reconfirmed for each later
+  // leg by its own design review).
   if (isThor(e)) return "THOR";
   if (isVeloYara(e)) {
     const rule = VELO_YARA_RULE.exec(e.description ?? "")?.[1];
     return `Velociraptor YARA: ${rule ?? "rule"}`;
   }
+  if (isBam(e)) return "BAM";
   if (/Prefetch/i.test(src) || /prefetch/i.test(action)) return "Prefetch";
   if (/UserAssist/i.test(src) || /UserAssist/i.test(action)) return "UserAssist";
   if (/Amcache/i.test(src) || /Amcache/i.test(action)) return "Amcache";
@@ -274,6 +297,7 @@ function classify<T extends TimelineEventShape>(e: T): Indexed<T> | null {
   if (isMark(e)) kind = "mark";
   else if (isThor(e) || isVeloYaraRow) kind = "detection";
   else if (
+    isBam(e) ||
     /Prefetch/i.test(src) ||
     /prefetch/i.test(action) ||
     /UserAssist/i.test(src) ||
@@ -410,7 +434,7 @@ function matchWords<T extends TimelineEventShape>(
   const r = m.record;
   const when = r.event.timestamp ? neutral(r.event.timestamp).slice(0, 40) : "no time";
   const order = r.kind === "execution" ? `, ${orderWords(ms(r.event.timestamp), anchor)}` : "";
-  const EXECUTION_WHAT: Record<string, string> = { Prefetch: "last run", UserAssist: "ran" };
+  const EXECUTION_WHAT: Record<string, string> = { Prefetch: "last run", UserAssist: "ran", BAM: "last run" };
   const DETECTION_WHAT: Record<string, string> = { THOR: "flagged" };
   const what =
     r.kind === "execution"
@@ -418,10 +442,14 @@ function matchWords<T extends TimelineEventShape>(
       : r.kind === "detection"
         ? (DETECTION_WHAT[r.artifact] ?? "content match")
         : "present";
+  // Any differing-kind volume pairing (GUID vs drive, device vs drive, device vs GUID, ...) — a
+  // prefix + exclusion check, not an exact-string compare, so a new FilePath volumeKind never needs
+  // a matching change here (#985 item 2/3 design review, finding F3).
+  const ONE_NAMES_NONE = "volume not compared (one record names none)";
   const notes = [
     r.kind === "presence" ? "not an execution record" : "",
     m.by === "hash" ? `by hash, at ${excerpt(r.event.path ?? "")}` : "",
-    m.volumeNote === "volume not compared (GUID vs drive letter)" ? m.volumeNote : "",
+    m.volumeNote?.startsWith("volume not compared (") && m.volumeNote !== ONE_NAMES_NONE ? m.volumeNote : "",
   ]
     .filter(Boolean)
     .join("; ");
