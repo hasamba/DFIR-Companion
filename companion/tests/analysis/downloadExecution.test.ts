@@ -298,6 +298,133 @@ describe("mark → execution", () => {
   });
 });
 
+// #985: velociraptorImport.ts's actionEvent() always sets sources: ["Velociraptor"] — never the
+// tool name — so a Prefetch/Amcache/ShimCache/UserAssist row imported through Velociraptor carried
+// no signal `classify()` recognised. The tool name is still in `description`, in a fixed segment
+// (`Velociraptor [<artifact>]: <action>: <subject>`) written by the importer's own code, never by
+// attacker-influenced `<subject>` text.
+describe("Velociraptor-shaped rows (no literal tool name in sources)", () => {
+  const veloRow = (over: Partial<Ev> = {}): Ev => ({
+    id: "v1",
+    timestamp: at(3),
+    description: "Velociraptor [Windows.Forensics.Prefetch]: Executed (prefetch) (1×): tool.exe - @ WS-01",
+    severity: "Info",
+    mitreTechniques: [],
+    path: "C:\\Users\\x\\Downloads\\tool.exe",
+    asset: "WS-01",
+    sources: ["Velociraptor"],
+    ...over,
+  });
+
+  it("a Velociraptor Prefetch row corroborates a mark the same way a KAPE one does", () => {
+    const out = run([mark({ sources: ["Sysmon"], asset: "WS-01" }), veloRow()]);
+    const m = find(out, "m1");
+    expect(m.severity).toBe("High");
+    expect(m.description).toContain("Prefetch last run");
+  });
+
+  it("a Velociraptor Amcache/ShimCache row is presence, listed and never a raise", () => {
+    const out = run([
+      mark({ sources: ["Sysmon"], asset: "WS-01" }),
+      veloRow({
+        id: "a1",
+        description:
+          "Velociraptor [Windows.Forensics.Amcache/InventoryApplicationFile]: Program file present (Amcache): tool.exe - @ WS-01",
+      }),
+      veloRow({
+        id: "sh1",
+        description:
+          "Velociraptor [Windows.Registry.AppCompatCache]: Present in ShimCache (time shown is the file's modification time, not a run time): tool.exe - @ WS-01",
+      }),
+    ]);
+    const m = find(out, "m1");
+    expect(m.severity).toBe("Medium");
+    expect(m.description).toContain("Amcache present");
+    expect(m.description).toContain("ShimCache present");
+    expect(find(out, "a1").severity).toBe("Info");
+  });
+
+  it("a UserAssist row is execution evidence: raises to High like Prefetch, no technique added", () => {
+    const out = run([
+      mark({ sources: ["Sysmon"], asset: "WS-01" }),
+      veloRow({
+        id: "u1",
+        description: "Velociraptor [Windows.Registry.UserAssist]: Ran (UserAssist) (5×): tool.exe - @ WS-01",
+      }),
+    ]);
+    const m = find(out, "m1");
+    expect(m.severity).toBe("High");
+    expect(m.mitreTechniques).toEqual([]);
+    expect(m.description).toContain("UserAssist");
+  });
+
+  it("a subject that happens to contain 'prefetch' or 'UserAssist' does not spoof a classification", () => {
+    // The bounded match only reads the fixed action segment before the subject's own colon
+    // boundary — a downloaded file named to look like the action text must not self-corroborate.
+    const spoofPath = "C:\\Users\\x\\Downloads\\notprefetch_UserAssist_tool.exe";
+    const out = run([
+      mark({ sources: ["Sysmon"], asset: "WS-01", path: spoofPath }),
+      {
+        id: "spoof1",
+        timestamp: at(3),
+        description: `Velociraptor [Some.Other.Artifact]: Did something unrelated: ${spoofPath} - @ WS-01`,
+        severity: "Info",
+        mitreTechniques: [],
+        path: spoofPath,
+        asset: "WS-01",
+        sources: ["Velociraptor"],
+      },
+    ]);
+    expect(find(out, "m1").description).not.toContain(DOWNLOAD_EXECUTED_MARKER);
+  });
+
+  it("a non-Velociraptor row with a lookalike description prefix is not classified by it", () => {
+    // The description-based fallback is gated on sources actually naming Velociraptor — a row from
+    // another importer (or a KAPE row whose free text happens to start the same way) must not be
+    // read as if it were one (#985 code review).
+    const out = run([
+      mark({ sources: ["Sysmon"], asset: "WS-01" }),
+      {
+        id: "lookalike1",
+        timestamp: at(3),
+        description:
+          "Velociraptor [Windows.Forensics.Prefetch]: Executed (prefetch) (1×): tool.exe - @ WS-01",
+        severity: "Info",
+        mitreTechniques: [],
+        path: "C:\\Users\\x\\Downloads\\tool.exe",
+        asset: "WS-01",
+        sources: ["SomeOtherTool"],
+      },
+    ]);
+    expect(find(out, "m1").description).not.toContain(DOWNLOAD_EXECUTED_MARKER);
+  });
+
+  it("a real Windows.Registry.UserAssist row from parseVelociraptorJson corroborates a mark", async () => {
+    // Pinned against the actual importer, not a hand-built description (#985 code review): Name
+    // carries a full resolved path (velociraptorImport.test.ts's own UserAssist fixture uses
+    // "C:\\Tools\\mimikatz.exe"), not a GUID-prefixed shell token.
+    const { parseVelociraptorJson } = await import("../../src/analysis/velociraptorImport.js");
+    const { events } = parseVelociraptorJson(
+      JSON.stringify([
+        {
+          _Source: "Windows.Registry.UserAssist",
+          Name: "C:\\Users\\x\\Downloads\\tool.exe",
+          NumberOfExecutions: 3,
+          LastExecution: at(3),
+          Fqdn: "WS-01",
+        },
+      ]),
+    );
+    const row = events[0] as unknown as Ev;
+    expect(row.description).toContain("Ran (UserAssist)");
+    expect(row.sources).toContain("Velociraptor");
+    const out = run([mark({ sources: ["Sysmon"], asset: "WS-01" }), { ...row, id: "real-ua1" }]);
+    const m = find(out, "m1");
+    expect(m.severity).toBe("High");
+    expect(m.description).toContain("UserAssist ran");
+  });
+});
+
 describe("stream → command line", () => {
   const streamRow = (over: Partial<Ev> = {}): Ev => ({
     id: "st1",
