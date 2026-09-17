@@ -78,6 +78,7 @@ export const DOWNLOAD_EXECUTED_MARKER = "[download-marked file executed:";
 export const RAN_MARKED_FILE_MARKER = "[ran a download-marked file:";
 export const STREAM_REFERENCED_MARKER = "[stream referenced by a command line:";
 export const STREAM_REFERENCE_MARKER = "[command line references a stream:";
+export const YARA_MATCHES_MARK_MARKER = "[matches a download mark:";
 
 /** Executions named per mark; the rest are counted. */
 export const EXECUTIONS_NAMED_MAX = 8;
@@ -166,7 +167,7 @@ function orderWords(run: number | null, anchor: number | null): string {
 
 // ───────────────────────────── records ─────────────────────────────
 
-type Kind = "mark" | "execution" | "presence" | "stream";
+type Kind = "mark" | "execution" | "presence" | "stream" | "detection";
 
 interface Indexed<T> {
   event: T;
@@ -174,6 +175,12 @@ interface Indexed<T> {
   host: string;
   file: FilePath;
   artifact: string;
+  /** Whether this record's own sha256/md5 is real, observed identity of the file it names — false
+   * for a CLI YARA row, whose hash comes from the rule author's reference-sample metadata, never a
+   * hash the CLI computes of the file it scanned (#985 item 4, design review). Read at both the
+   * hash-bucket build/read sites AND the path-bucket veto (a false value must never let this
+   * record's hash reject an otherwise-valid path match, nor let it join or be joined by hash). */
+  identityHash: boolean;
 }
 
 const isMark = (e: TimelineEventShape): boolean =>
@@ -186,6 +193,13 @@ const isProcessStart = (e: TimelineEventShape): boolean =>
 // `sources` naming Velociraptor — see downloadCorroborationShared.ts for the spoof-protection
 // reasoning.
 
+// The raw YARA CLI importer's own fixed description prefix (yaraImport.ts's parseYaraOutput):
+// "YARA: <rule> matched <file>...". Only the CLI path is recognised here — Velociraptor's own
+// native YARA scanning is a documented follow-up (985-1a-2): its description is rewritten by a
+// LATER, generic artifact-prefix step this file cannot see at classification time, and its
+// self-scan/volatile exclusion signal does not survive that rewrite reliably (see the design doc).
+const YARA_CLI_RULE = /^YARA: (\S+) matched/;
+
 function artifactOf(e: TimelineEventShape): string {
   const src = (e.sources ?? []).join(" ");
   const action = veloAction(e);
@@ -195,6 +209,10 @@ function artifactOf(e: TimelineEventShape): string {
   if (/ShimCache/i.test(src) || /ShimCache/i.test(action)) return "ShimCache";
   if (/Sysmon/i.test(src) || /Sysmon/i.test(e.description ?? "")) return "Sysmon 1";
   if (/4688/.test(e.description ?? "")) return "Security 4688";
+  if ((e.sources ?? []).includes("YARA")) {
+    const rule = YARA_CLI_RULE.exec(e.description ?? "")?.[1];
+    return `YARA: ${rule ?? "rule"}`;
+  }
   return src || "process start";
 }
 
@@ -202,6 +220,7 @@ function classify<T extends TimelineEventShape>(e: T): Indexed<T> | null {
   if (!e.path) return null;
   const src = (e.sources ?? []).join(" ");
   const action = veloAction(e);
+  const isCliYara = (e.sources ?? []).includes("YARA");
   let kind: Kind | null = null;
   if (isMark(e)) kind = "mark";
   else if (
@@ -213,10 +232,11 @@ function classify<T extends TimelineEventShape>(e: T): Indexed<T> | null {
   )
     kind = "execution";
   else if (/Amcache|ShimCache/i.test(src) || /Amcache|ShimCache/i.test(action)) kind = "presence";
+  else if (isCliYara) kind = "detection";
   if (!kind) return null;
   const file = filePath(e.path);
   if (!file) return null;
-  return { event: e, kind, host: hostOf(e), file, artifact: artifactOf(e) };
+  return { event: e, kind, host: hostOf(e), file, artifact: artifactOf(e), identityHash: !isCliYara };
 }
 
 /** A digest disagreement between two rows that both carry one kind — SHA-256 decides over MD5. */
@@ -273,7 +293,7 @@ function candidatesFor<T extends TimelineEventShape>(
     if (r === mark || seen.has(r)) continue;
     const loc = sameLocation(mark.file, r.file);
     if (!loc.same) continue;
-    if (hashVeto(mark.event, r.event)) {
+    if (r.identityHash && hashVeto(mark.event, r.event)) {
       reused += 1;
       continue;
     }
@@ -330,7 +350,12 @@ function matchWords<T extends TimelineEventShape>(
   const when = r.event.timestamp ? neutral(r.event.timestamp).slice(0, 40) : "no time";
   const order = r.kind === "execution" ? `, ${orderWords(ms(r.event.timestamp), anchor)}` : "";
   const EXECUTION_WHAT: Record<string, string> = { Prefetch: "last run", UserAssist: "ran" };
-  const what = r.kind === "execution" ? (EXECUTION_WHAT[r.artifact] ?? "process start") : "present";
+  const what =
+    r.kind === "execution"
+      ? (EXECUTION_WHAT[r.artifact] ?? "process start")
+      : r.kind === "detection"
+        ? "content match"
+        : "present";
   const notes = [
     r.kind === "presence" ? "not an execution record" : "",
     m.by === "hash" ? `by hash, at ${excerpt(r.event.path ?? "")}` : "",
@@ -397,6 +422,7 @@ const MARKERS = [
   BROWSER_VISIT_MARKER,
   REFERRER_VISIT_MARKER,
   VISIT_PRECEDES_MARK_MARKER,
+  YARA_MATCHES_MARK_MARKER,
 ];
 const NOTE_NAMES = MARKERS.map((m) => m.slice(1, -1));
 
@@ -443,12 +469,16 @@ export function corroborateDownloadExecution<T extends TimelineEventShape>(event
   for (const r of indexed) {
     if (!r || r.kind === "mark") continue;
     addToBucket(byPath, r.file.relative, r);
-    for (const h of [r.event.sha256, r.event.md5]) if (h) addToBucket(byHash, h.toLowerCase(), r);
+    // A record whose own hash isn't real identity (a CLI YARA row) must never be findable BY
+    // hash either — not just never add itself (#985 item 4, design review).
+    if (r.identityHash)
+      for (const h of [r.event.sha256, r.event.md5]) if (h) addToBucket(byHash, h.toLowerCase(), r);
   }
 
-  // Mark → execution: the note per mark, and the executions that corroborated one.
+  // Mark → execution (and → YARA content match): the note per mark, and the corroborating rows.
   const markNotes = new Map<T, { note: string; executed: boolean }>();
   const corroborating = new Map<T, { marks: string[]; more: number }>();
+  const yaraMatches = new Map<T, { marks: string[]; more: number }>();
   for (const r of indexed) {
     if (!r || r.kind !== "mark") continue;
     const { matches, unattributed, reused, beyondIndex } = candidatesFor(r, byPath, byHash);
@@ -498,12 +528,23 @@ export function corroborateDownloadExecution<T extends TimelineEventShape>(event
         m.record.kind === "execution" && run !== null && anchor !== null && run - anchor > ORDER_TOLERANCE_MS
       );
     };
-    const executed = matches.some(after);
+    // A content match has no observation time to order against — YARA carries none — so it
+    // corroborates unconditionally, unlike an execution record's after-the-anchor requirement.
+    const isDetection = (m: Match<T>): boolean => m.record.kind === "detection";
+    const executed = matches.some(after) || matches.some(isDetection);
     markNotes.set(r.event, { note: parts.join("; "), executed });
     for (const m of matches.filter(after)) {
       const c =
         corroborating.get(m.record.event) ??
         corroborating.set(m.record.event, { marks: [], more: 0 }).get(m.record.event)!;
+      if (c.marks.length < MARKS_PER_CORROBORATOR_MAX)
+        c.marks.push(`${excerpt(r.event.path ?? "")}${r.host ? ` on ${neutral(r.host).slice(0, 80)}` : ""}`);
+      else c.more += 1;
+    }
+    for (const m of matches.filter(isDetection)) {
+      const c =
+        yaraMatches.get(m.record.event) ??
+        yaraMatches.set(m.record.event, { marks: [], more: 0 }).get(m.record.event)!;
       if (c.marks.length < MARKS_PER_CORROBORATOR_MAX)
         c.marks.push(`${excerpt(r.event.path ?? "")}${r.host ? ` on ${neutral(r.host).slice(0, 80)}` : ""}`);
       else c.more += 1;
@@ -628,6 +669,14 @@ export function corroborateDownloadExecution<T extends TimelineEventShape>(event
       description = appendDerivedNote(description, VISIT_PRECEDES_MARK_MARKER, clipNote(words));
       // Raised too, like the corroborating execution row — otherwise an Info-severity visit falls
       // into the super-timeline before the next merge and this join can never re-find it.
+      severity = raise({ ...e, severity }, "Medium");
+    }
+    const yaraMatch = yaraMatches.get(e);
+    if (yaraMatch) {
+      const words = [...yaraMatch.marks, ...(yaraMatch.more ? [`+${yaraMatch.more} more`] : [])].join("; ");
+      description = appendDerivedNote(description, YARA_MATCHES_MARK_MARKER, clipNote(words));
+      // severityFromMeta floors a CLI YARA row at Medium always, so this is usually a no-op — kept
+      // for a future rule-meta field that floor doesn't yet account for.
       severity = raise({ ...e, severity }, "Medium");
     }
     if (description === (e.description ?? "") && severity === (e.severity ?? "Info")) return e;

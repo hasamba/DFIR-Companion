@@ -7,6 +7,7 @@ import {
   RAN_MARKED_FILE_MARKER,
   STREAM_REFERENCED_MARKER,
   STREAM_REFERENCE_MARKER,
+  YARA_MATCHES_MARK_MARKER,
   EXECUTIONS_NAMED_MAX,
 } from "../../src/analysis/downloadExecution.js";
 import {
@@ -427,6 +428,81 @@ describe("Velociraptor-shaped rows (no literal tool name in sources)", () => {
     const m = find(out, "m1");
     expect(m.severity).toBe("High");
     expect(m.description).toContain("UserAssist ran");
+  });
+});
+
+// #985 item 4 (hash-across-artifacts half, CLI-sourced YARA only — see RECOMMENDATION-985-1a-yara
+// for why the Velociraptor-native YARA leg is a separate follow-up): a download mark's file,
+// matched by PATH to a YARA rule hit from the raw CLI importer. The CLI row's own sha256/md5 is
+// the rule author's reference-sample hash (rule metadata), never a hash the CLI computes of the
+// scanned file — so it must never veto a path match, and must never enter the hash-bucket join.
+describe("mark → YARA content match (CLI-sourced only)", () => {
+  const yaraRow = async (headerLine: string, over: Partial<Ev> = {}): Promise<Ev> => {
+    const { parseYaraOutput } = await import("../../src/analysis/yaraImport.js");
+    const { events } = parseYaraOutput(headerLine);
+    return { ...(events[0] as unknown as Ev), id: "y1", timestamp: at(3), ...over };
+  };
+  const TOOL_PATH = String.raw`C:\Users\x\Downloads\tool.exe`;
+  const OTHER_PATH = String.raw`C:\Users\x\Downloads\other.exe`;
+
+  it("a CLI YARA match at the mark's exact path raises the mark to High, no technique, both rows noted", async () => {
+    const yara = await yaraRow(`EvilRule [apt,trojan] ${TOOL_PATH}`);
+    const out = run([mark({ sources: ["Sysmon"], asset: "WS-01" }), yara]);
+    const m = find(out, "m1");
+    expect(m.severity).toBe("High");
+    expect(m.mitreTechniques).toEqual([]);
+    expect(m.description).toContain(DOWNLOAD_EXECUTED_MARKER);
+    expect(m.description).toContain("YARA: EvilRule content match");
+    const y = find(out, "y1");
+    expect(y.description).toContain(YARA_MATCHES_MARK_MARKER);
+  });
+
+  it("the mark's own real hash disagreeing with the YARA row's rule-metadata hash does NOT veto the path match", async () => {
+    // Pins the exact bug the design review found: candidatesFor's path-bucket hashVeto ran
+    // unconditionally against every candidate, including a CLI YARA row whose hash field isn't
+    // this row's own identity at all.
+    const yara = await yaraRow(`EvilRule [author="x",sha256="${"ab".repeat(32)}"] ${TOOL_PATH}`);
+    const out = run([
+      mark({
+        sources: ["Sysmon"],
+        asset: "WS-01",
+        sha256: "cd".repeat(32), // a real, independently-observed hash — genuinely differs from the rule's
+      }),
+      yara,
+    ]);
+    expect(find(out, "m1").description).toContain(DOWNLOAD_EXECUTED_MARKER);
+    expect(find(out, "m1").severity).toBe("High");
+  });
+
+  it("a YARA row at a different path never joins", async () => {
+    const yara = await yaraRow(`EvilRule [apt] ${OTHER_PATH}`);
+    const out = run([mark({ sources: ["Sysmon"], asset: "WS-01" }), yara]);
+    expect(find(out, "m1").description).not.toContain(DOWNLOAD_EXECUTED_MARKER);
+    expect(find(out, "m1").severity).toBe("Medium");
+  });
+
+  it("two named, disagreeing hosts never join (a second named-host execution row supplies the host)", async () => {
+    const yara = await yaraRow(`EvilRule [apt] ${TOOL_PATH}`, { asset: "WS-02" });
+    const out = run([mark({ sources: ["Sysmon"], asset: "WS-01" }), yara]);
+    expect(find(out, "y1").description).not.toContain(YARA_MATCHES_MARK_MARKER);
+  });
+
+  it("a CLI YARA row's rule-metadata hash never participates in an unrelated mark's hash-bucket match", async () => {
+    // Closes the cross-source hash-bucket collision the design review found: a CLI YARA row must
+    // never be findable via byHash, not just never ADD itself to it.
+    const sharedHash = "ef".repeat(32);
+    const yara = await yaraRow(`EvilRule [author="x",sha256="${sharedHash}"] ${OTHER_PATH}`);
+    const out = run([
+      mark({
+        sources: ["Sysmon"],
+        asset: "WS-01",
+        path: String.raw`C:\Users\x\Downloads\unrelated.exe`,
+        sha256: sharedHash,
+      }),
+      yara,
+    ]);
+    expect(find(out, "m1").description).not.toContain(DOWNLOAD_EXECUTED_MARKER);
+    expect(find(out, "m1").severity).toBe("Medium");
   });
 });
 
