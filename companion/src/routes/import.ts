@@ -27,6 +27,7 @@ import { parseJournald, type JournaldImportOptions } from "../analysis/journaldI
 import { parseSysdig, type SysdigImportOptions } from "../analysis/sysdigImport.js";
 import { parseWazuhAlerts, type WazuhImportOptions } from "../analysis/wazuhImport.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
+import { resolveTrailerProfile } from "../analysis/webRecordFields.js";
 import { settleForensicImport, type SettleDeps } from "./importSettle.js";
 import { commitDedicatedImport, importerParameter, persistImportEvidence } from "./importCommit.js";
 import { autoTagNewEvents } from "../analysis/taggerAuto.js";
@@ -300,6 +301,9 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     // (all-Info telemetry like KAPE/Plaso) are kept whole — see applySeverityFloor. A missing
     // / unrecognized value imports everything.
     const minSeverity = parseMinSeverity(req.body?.minSeverity);
+    // Declared web-log trailer profile (#993) — read only when the detected kind is "combinedlog";
+    // every other kind's body field is ignored.
+    const trailerProfile = kind === "combinedlog" ? resolveTrailerProfile(req.body?.webLogFormat) : undefined;
 
     try {
       const seq = await store.nextImportSeq(caseId);
@@ -365,6 +369,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         ...(hasParseProgress(kind) ? { onParseProgress: tracking.onParseProgress } : {}),
         minSeverity,
         ...(job?.signal ? { signal: job.signal } : {}),
+        ...(trailerProfile ? { combinedLog: { trailerProfile } } : {}),
       };
       options.onAiStatus?.(caseId, {
         status: "analyzing",
@@ -562,6 +567,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
       return res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });
     }
     if (rejectIfAiImportOverBudget(kind, caseId, res)) return; // CSV/log = LLM call; meter AI budget
+    const trailerProfile = kind === "combinedlog" ? resolveTrailerProfile(req.body?.webLogFormat) : undefined;
 
     // Plaso streams from disk line-by-line (handles 500 MB+ super-timelines that can't be held as a
     // string at all); every other kind is read into one string and dispatched as usual. A non-Plaso
@@ -659,6 +665,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         ...(hasParseProgress(kind) ? { onParseProgress: tracking.onParseProgress } : {}),
         minSeverity,
         ...(job?.signal ? { signal: job.signal } : {}),
+        ...(trailerProfile ? { combinedLog: { trailerProfile } } : {}),
       };
       options.onAiStatus?.(caseId, {
         status: "analyzing",

@@ -70,6 +70,12 @@
         } // cancelled the whole import
         minSeverity = ans;
       }
+      // Declared web-log trailer profile (#993) — only "combinedlog" imports read it; every other
+      // kind's field is ignored server-side, so it's safe to send on every file in the batch.
+      const webLogFormat =
+        typeof getWebTrailerProfile === "function" && getWebTrailerProfile()
+          ? "squid_combined"
+          : "";
 
       // Data files → the unified /import endpoint (server auto-detects + routes).
       // Files over 200 MB would OOM the browser tab if read via FileReader, so for those
@@ -99,7 +105,7 @@
             r = await fetch(`/cases/${caseId}/import-file`, {
               method: "POST",
               headers: { "content-type": "application/json" },
-              body: JSON.stringify({ path: filePath, minSeverity }),
+              body: JSON.stringify({ path: filePath, minSeverity, webLogFormat }),
             });
           } else {
             // Small file: read in browser with progress (0→40%), then upload (bar holds at 40% until server N/M).
@@ -108,7 +114,7 @@
             r = await fetch(`/cases/${caseId}/import`, {
               method: "POST",
               headers: { "content-type": "application/json" },
-              body: JSON.stringify({ filename: f.name, text, minSeverity }),
+              body: JSON.stringify({ filename: f.name, text, minSeverity, webLogFormat }),
             });
           }
           const jr = await r.json().catch(() => ({}));

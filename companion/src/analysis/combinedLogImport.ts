@@ -489,6 +489,13 @@ export function mapCombinedLogLine(
     canonical: createCanonicalEvent({
       event: { category: "network", type: "web-request" },
       ...(client ? { network: { source: { address: client } } } : {}),
+      // `%u` — the server/proxy's OWN determination of who authenticated (HTTP Basic/NTLM/
+      // Kerberos, verified before the request was served), the same trust class as `client`
+      // above. NEVER `%l` (ident/RFC 1413, a client-asserted claim this mapper already discards
+      // at the destructure — see `clientRaw` above): proxyWorkstationChain.ts's account-identity
+      // join (#993) reads this field, and an unverified ident here would make that join no
+      // better than the X-Forwarded-For / Authorization-header sources it deliberately excludes.
+      ...(user ? { account: { name: user } } : {}),
       web: {
         method,
         ...(host ? { host } : {}),

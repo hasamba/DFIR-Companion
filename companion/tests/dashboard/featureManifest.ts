@@ -678,7 +678,13 @@ export const FEATURES: Feature[] = [
   {
     // Import minimum-severity preference. Same: both load-time statements in range were stanzas.
     file: "dashboard-import-severity.js",
-    publish: ["askMinSeverity", "setImportSevPref", "syncImportSevDefaultSelect"],
+    publish: [
+      "askMinSeverity",
+      "setImportSevPref",
+      "syncImportSevDefaultSelect",
+      "getWebTrailerProfile",
+      "setWebTrailerProfile",
+    ],
     private: [],
   },
   {

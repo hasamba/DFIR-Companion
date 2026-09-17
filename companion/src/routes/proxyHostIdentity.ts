@@ -6,14 +6,16 @@ import type { RouteContext } from "./context.js";
 
 /**
  * Proxy -> workstation host-identity matches (#993, proxy->workstation half of #933 item 1) — a
- * proxy/web-log event's own `network.source.address` resolved against hostBinding.ts's own
- * host-identity index (#1156). Read-time only, recomputed every call, never persisted.
+ * proxy/web-log event's own `network.source.address` AND (when the record carries one) its own
+ * authenticated `account.name`, each resolved against hostBinding.ts's own host-identity index
+ * (#1156). Read-time only, recomputed every call, never persisted.
  *   - GET /cases/:id/proxy-host-identity-matches[?toleranceMs=]
  *
  * `:id` needs no isValidCaseId check: createApp mounts createCaseIdGate() on `/cases/:id`.
  *
  * NEVER an unconditional "this is the workstation" claim — see proxyWorkstationChain.ts's own
- * header for the sensor-topology and DHCP-lease caveats this route's own output cannot resolve.
+ * header for the sensor-topology, DHCP-lease and account-sharing caveats this route's own output
+ * cannot resolve.
  */
 
 const DEFAULT_TOLERANCE_MS = 21_600_000; // 6 hours — no existing precedent value in this codebase

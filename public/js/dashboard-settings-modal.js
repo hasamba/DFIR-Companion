@@ -55,6 +55,7 @@
     document.getElementById("settingsInvestigator").value =
       localStorage.getItem("dfir.investigator") || "";
     document.getElementById("kbdShortcutsChk").checked = kbdShortcutsEnabled();
+    document.getElementById("webTrailerProfileChk").checked = getWebTrailerProfile();
     renderSecChecks();
     renderTlChecks();
     syncImportSevDefaultSelect();

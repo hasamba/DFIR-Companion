@@ -76,7 +76,32 @@
       pref && pref.remember && VALID_SEV.includes(pref.value) ? pref.value : "";
   }
 
+  // ── Web/proxy log trailer format (#993) ────────────────────────────────
+  // Whether Squid access/proxy logs in this browser use the squid_combined LogFormat (appends a
+  // cache-result field after the User-Agent). It's a fact about the deployment, not a per-import
+  // choice, so it's a plain persisted preference (Settings → General) rather than a per-batch
+  // prompt: without it, the server never labels the field (webRecordFields.ts — declared, never
+  // inferred from the tokens' shape).
+  const WEB_TRAILER_KEY = "dfir_weblog_squid_trailer";
+  function getWebTrailerProfile() {
+    try {
+      return localStorage.getItem(WEB_TRAILER_KEY) === "1";
+    } catch (e) {
+      return false;
+    }
+  }
+  function setWebTrailerProfile(on) {
+    try {
+      if (on) localStorage.setItem(WEB_TRAILER_KEY, "1");
+      else localStorage.removeItem(WEB_TRAILER_KEY);
+    } catch (e) {
+      /* quota — non-fatal */
+    }
+  }
+
   window.askMinSeverity = askMinSeverity;
   window.setImportSevPref = setImportSevPref;
   window.syncImportSevDefaultSelect = syncImportSevDefaultSelect;
+  window.getWebTrailerProfile = getWebTrailerProfile;
+  window.setWebTrailerProfile = setWebTrailerProfile;
 })();
