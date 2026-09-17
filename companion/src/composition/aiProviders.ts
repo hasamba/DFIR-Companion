@@ -48,6 +48,7 @@ import { CloudCoverageStore } from "../analysis/cloudCoverage.js";
 import { AiControlStore } from "../analysis/aiControl.js";
 import { HuntOutcomeStore } from "../analysis/huntOutcomeStore.js";
 import { SuperTimelineStore } from "../analysis/superTimelineStore.js";
+import { AuthObservationStore } from "../analysis/authObservationStore.js";
 import { IocAliasStore } from "../analysis/iocAlias.js";
 import type { KevStore } from "../analysis/kevStore.js";
 import type { ClockSkewStore } from "../analysis/clockSkewStore.js";
@@ -266,6 +267,11 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
       Number(process.env.DFIR_SUPERTIMELINE_MAX) || undefined,
       params.operationalMetrics,
     ), // explainEvent falls back here for raw super-only events
+    authObservationStore: new AuthObservationStore(
+      params.store,
+      Number(process.env.DFIR_SPRAY_OBSERVATION_RETENTION_HOURS) || undefined,
+      params.operationalMetrics,
+    ), // #1104 cross-upload password-spray detection
     ocrRunner: params.ocrRunner,
     presidio: params.presidio,
     presidioPendingStore: params.presidioPendingStore ?? new PresidioPendingStore(params.store),

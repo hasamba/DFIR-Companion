@@ -167,6 +167,11 @@ const WRITABLE_ENV_PREFIXES = [
   "DFIR_UNDO_",
   "DFIR_CORRELATE_",
   "DFIR_SUPERTIMELINE_",
+  // Password-spray detection tuning (#1086/#1104), including the within-upload thresholds
+  // (DFIR_SPRAY_BURST_MINUTES/_SLOW_HOURS/_THRESHOLD/_SUCCESS_GRACE_MINUTES) and the cross-upload
+  // observation-store retention (DFIR_SPRAY_OBSERVATION_RETENTION_HOURS) — none redirect case data
+  // or relax a security control.
+  "DFIR_SPRAY_",
   "DFIR_REPORT_",
   "DFIR_LOG_LEVEL",
   "DFIR_UPDATE_CHECK",

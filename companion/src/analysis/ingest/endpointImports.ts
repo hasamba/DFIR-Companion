@@ -24,7 +24,7 @@ import {
   type RcloneCaseContext,
 } from "../rcloneImport.js";
 import { parseVelociraptorJsonProgress, type VelociraptorImportOptions } from "../velociraptorImport.js";
-import { noteEmptyImport } from "./importState.js";
+import { noteEmptyImport, crossUploadSprayRows } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 
 /**
@@ -316,7 +316,15 @@ export async function importEcar(
   },
 ): Promise<InvestigationState> {
   const parsedRaw = parseEcarJson(text, { ...opts.ecar });
-  const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
+  const crossRows = await crossUploadSprayRows(ctx, caseId, opts, parsedRaw.sprayCandidates, {
+    source: ECAR_SOURCE,
+    importer: "ecar",
+    mappingVersion: "ecar-spray-cross-v1",
+  });
+  const parsed = {
+    ...parsedRaw,
+    events: applySeverityFloor([...parsedRaw.events, ...crossRows], opts.minSeverity),
+  };
   if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "ECAR", parsed.total);
 
   const raw = {

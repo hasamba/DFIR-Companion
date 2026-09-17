@@ -415,6 +415,55 @@ function appendEntities(dbPath, kind, entities) {
     db.close();
   }
 }
+
+// #1104 (cross-upload password-spray detection). Deliberately its own op, not a parameter on the
+// shared queryEntities: that function is load-bearing for forensicTimeline/superTimeline with many
+// callers, and reordering its ordinal-ascending cursor for one new caller is disproportionate risk
+// for a single-pass review. Newest-first (DESC) so a capped window keeps the observations nearest
+// in time to the CURRENT import, not the oldest ones in the window.
+function queryAuthObservationsWindow(dbPath, sinceMs, limit) {
+  if (!existsSync(dbPath)) return { entities: [], truncated: false };
+  const db = openDatabase(dbPath);
+  try {
+    const boundedLimit = Math.max(0, Math.min(200000, Math.floor(limit)));
+    const countRow = db.prepare(
+      "SELECT count(*) AS n FROM entities WHERE kind='authObservation' AND timestamp_ms>=?"
+    ).get(sinceMs);
+    const total = Number(countRow ? countRow.n : 0);
+    const rows = db.prepare(
+      "SELECT payload FROM entities WHERE kind='authObservation' AND timestamp_ms>=? " +
+      "ORDER BY timestamp_ms DESC, row_id DESC LIMIT ?"
+    ).all(sinceMs, boundedLimit);
+    return {
+      entities: rows.map((row) => JSON.parse(row.payload)),
+      truncated: total > boundedLimit,
+    };
+  } finally {
+    db.close();
+  }
+}
+
+// #1104. Bounds a kind's stored row count to a rolling window instead of the life of the case.
+// entity_values cascades on DELETE (schema FK); only entity_counts needs an explicit decrement,
+// by the statement's own reported change count — never assumed from the caller's candidate count.
+function pruneEntitiesBefore(dbPath, kind, beforeMs) {
+  if (!existsSync(dbPath)) return 0;
+  const db = openDatabase(dbPath);
+  try {
+    return withTransaction(db, () => {
+      const result = db.prepare(
+        "DELETE FROM entities WHERE kind=? AND timestamp_ms IS NOT NULL AND timestamp_ms<?"
+      ).run(kind, beforeMs);
+      const deleted = Number(result.changes || 0);
+      if (deleted > 0) {
+        db.prepare("UPDATE entity_counts SET count=max(count-?, 0) WHERE kind=?").run(deleted, kind);
+      }
+      return deleted;
+    });
+  } finally {
+    db.close();
+  }
+}
 ` +
   SUPER_WORKER_SOURCE +
   String.raw`
@@ -505,6 +554,8 @@ async function dispatch(message) {
     case "hasEntityIds": return hasEntityIds(message.dbPath, message.kind, message.ids);
     case "entityCounts": return entityCounts(message.dbPath, message.kinds);
     case "appendEntities": return appendEntities(message.dbPath, message.kind, message.entities);
+    case "queryAuthObservationsWindow": return queryAuthObservationsWindow(message.dbPath, message.sinceMs, message.limit);
+    case "pruneEntitiesBefore": return pruneEntitiesBefore(message.dbPath, message.kind, message.beforeMs);
     case "migrateSuper": return migrateSuper(message.dbPath, message.eventsPath, message.labelsPath, message.tagsPath, message.excludeAuthorPrefix, message.max);
     case "appendSuper": return appendSuper(message.dbPath, message.events, message.max);
     case "scanSuper": return scanSuper(message.dbPath, message.query || {});

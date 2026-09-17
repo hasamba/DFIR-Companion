@@ -20,7 +20,7 @@ import * as ingest from "./ingest/index.js";
 import type { PipelineOptions } from "./ai/pipelineOptions.js";
 export type { PipelineOptions } from "./ai/pipelineOptions.js";
 import { withRetry } from "./ai/retry.js";
-import type { ImportContext } from "./ingest/importContext.js";
+import { buildImportOpts, type ImportContext } from "./ingest/importContext.js";
 
 /** The argument list of an importer, minus the ImportContext it takes first (#384). Every import method below is a one-line delegation to src/analysis/ingest/ — deriving the parameters rather than restating them means the two cannot drift: change an importer's signature and the delegation stops compiling, which a hand-copied signature would not have. */
 type ImporterArgs<F> = F extends (ctx: ImportContext, ...args: infer R) => unknown ? R : never;
@@ -94,17 +94,7 @@ export class AnalysisPipeline {
   constructor(private readonly opts: PipelineOptions) {
     this.log = opts.logger ?? createConsoleLogger(normalizeLogLevel(process.env.DFIR_LOG_LEVEL));
     this.importCtx = {
-      opts: {
-        get stateStore() {
-          return opts.stateStore;
-        },
-        get onState() {
-          return opts.onState;
-        },
-        get superTimelineStore() {
-          return opts.superTimelineStore;
-        },
-      },
+      opts: buildImportOpts(opts),
       withStateLock: (caseId, fn) => this.withStateLock(caseId, fn),
       mergeWithAliases: (state, delta, ctx) => this.mergeWithAliases(state, delta, ctx),
     };

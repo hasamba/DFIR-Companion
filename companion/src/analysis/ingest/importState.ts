@@ -2,6 +2,17 @@ import type { PlasoParseResult } from "../plasoImport.js";
 import { deltaSchema } from "../responseSchema.js";
 import { applySeverityFloor } from "../severityFloor.js";
 import type { InvestigationState, Severity } from "../stateTypes.js";
+import type { SiemEvent } from "../siemImport.js";
+import { aggregateEvents } from "../eventAggregate.js";
+import {
+  passwordSprayPatterns,
+  sprayLowSlowHours,
+  sprayPatternToMappedEvent,
+  sprayThreshold,
+  SPRAY_PATTERNS_MAX,
+  type SprayCandidate,
+} from "../passwordSprayFanout.js";
+import type { StoredAuthObservation } from "../authObservationStore.js";
 import type { ImportContext } from "./importContext.js";
 
 /**
@@ -137,4 +148,76 @@ export async function persistPlasoParsed(
   };
 
   return commitDelta(ctx, caseId, deltaSchema.parse(raw), opts);
+}
+
+// Cross-upload password-spray detection (#1104, second half of 930.5 / 931.3). Shared by
+// importEcar and importM365 so the query-window bound, the per-batch dominance filter (never
+// double-report an episode a within-upload row already explains), and the truncation-disclosure
+// rule live in exactly one place.
+//
+// Returns [] whenever ctx.opts.authObservationStore is absent (minimal/test wirings) or this
+// upload's own parse produced no spray candidates at all — today's within-upload-only behavior,
+// unchanged.
+export async function crossUploadSprayRows(
+  ctx: ImportContext,
+  caseId: string,
+  opts: { idPrefix: string; importedAt: string },
+  sprayCandidates: SprayCandidate[],
+  meta: { source: string; importer: string; mappingVersion: string },
+): Promise<SiemEvent[]> {
+  const store = ctx.opts.authObservationStore;
+  if (!store || !sprayCandidates.length) return [];
+
+  const withBatch: SprayCandidate[] = sprayCandidates.map((c) => ({ ...c, importBatch: opts.idPrefix }));
+
+  // The bound is the SMALLER of the detector's own slow-spray window and the store's retention —
+  // never the larger. A wider bound would load the whole retention window into every import for a
+  // detector whose own episodes never span more than sprayLowSlowHours() anyway.
+  const windowHours = Math.min(sprayLowSlowHours(), store.retentionHours());
+  const importedAtMs = Date.parse(opts.importedAt);
+  const anchorMs = Number.isFinite(importedAtMs) ? importedAtMs : Date.now();
+  const sinceIso = new Date(anchorMs - windowHours * 3_600_000).toISOString();
+
+  // Query BEFORE appending this upload's own observations, so `combined` is built by hand instead
+  // of writing then reading the same rows back (no round trip, and no risk of the query cap
+  // dropping the candidates this very call is about to write).
+  const { observations, truncated } = await store.queryWindow(caseId, sinceIso);
+  const priorCandidates: SprayCandidate[] = observations.map((o) => ({
+    timestamp: o.timestamp,
+    account: o.account,
+    sourceIp: o.sourceIp,
+    hostOrTenant: o.hostOrTenant,
+    outcome: o.outcome,
+    locator: o.locator,
+    importBatch: o.importBatch,
+  }));
+
+  const threshold = sprayThreshold();
+  const crossPatterns = passwordSprayPatterns([...priorCandidates, ...withBatch])
+    // A combined episode is reported ONLY when no single batch's own count already meets the
+    // threshold — otherwise the within-upload pass (unchanged, runs separately) already emitted a
+    // row for it, and this one would be a duplicate with a different aggKey (an earlier `start`
+    // pulled back by the older stored observations).
+    .filter((p) => p.importBatches.length > 1 && Math.max(...Object.values(p.accountsByBatch)) < threshold)
+    .slice(0, SPRAY_PATTERNS_MAX)
+    .map((p) => sprayPatternToMappedEvent(p, { ...meta, crossUpload: true, truncatedHistory: truncated }));
+  // aggregateEvents does the MappedEvent -> SiemEvent conversion (mitre -> mitreTechniques,
+  // sourceRecordId bookkeeping) every other importer output goes through before it can enter a
+  // delta — sprayPatternToMappedEvent alone is not that shape. No minSeverity here: the caller
+  // applies the floor once, to the combined [...sourceEvents, ...crossRows] array.
+  const crossRows = aggregateEvents(crossPatterns, { maxEvents: SPRAY_PATTERNS_MAX + 1 }).events;
+
+  const toStore: StoredAuthObservation[] = withBatch.map((c) => ({
+    timestamp: c.timestamp,
+    account: c.account,
+    sourceIp: c.sourceIp,
+    hostOrTenant: c.hostOrTenant,
+    outcome: c.outcome,
+    locator: c.locator,
+    importer: meta.importer,
+    importBatch: c.importBatch ?? opts.idPrefix,
+  }));
+  await store.append(caseId, toStore);
+
+  return crossRows;
 }

@@ -162,6 +162,7 @@
     "attackMitigationsData.ts": "analysis/intel",
     "attackTechniqueNames.ts": "analysis/timeline",
     "auditdImport.ts": "analysis/ingest",
+    "authObservationStore.ts": "analysis/ingest",
     "awsConfigLogging.ts": "analysis/ingest",
     "awsDescription.ts": "analysis/detect",
     "awsCompute.ts": "analysis/ingest",

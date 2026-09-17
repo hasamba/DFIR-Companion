@@ -3,7 +3,9 @@ import {
   passwordSprayPatterns,
   sprayPatternRows,
   sprayPatternToMappedEvent,
+  sprayObservationKey,
   SPRAY_PATTERNS_MAX,
+  SPRAY_THRESHOLD_DEFAULT,
   ACCOUNTS_PER_ROW_MAX,
   type SprayCandidate,
 } from "../../src/analysis/passwordSprayFanout.js";
@@ -189,6 +191,63 @@ describe("passwordSprayPatterns — caps and disclosure", () => {
   });
 });
 
+describe("passwordSprayPatterns — importBatches / accountsByBatch (#1104)", () => {
+  it("a single-batch episode reports one importBatch and one accountsByBatch entry", () => {
+    const accounts = ["alice", "bob", "carol", "dave", "erin"];
+    const candidates = accounts.map((a, i) =>
+      candidate({ account: a, timestamp: iso(i * 1000), importBatch: "t1" }),
+    );
+    const patterns = passwordSprayPatterns(candidates).filter((p) => p.windowKind === "burst");
+    expect(patterns[0].importBatches).toEqual(["t1"]);
+    expect(patterns[0].accountsByBatch).toEqual({ t1: 5 });
+  });
+
+  it("candidates from two batches in one episode report both ids and correct per-batch counts", () => {
+    const first = ["alice", "bob", "carol"].map((a, i) =>
+      candidate({ account: a, timestamp: iso(i * 1000), importBatch: "t1" }),
+    );
+    const second = ["dave", "erin"].map((a, i) =>
+      candidate({ account: a, timestamp: iso((i + 3) * 1000), importBatch: "t2" }),
+    );
+    const patterns = passwordSprayPatterns([...first, ...second]).filter((p) => p.windowKind === "burst");
+    expect(patterns[0].importBatches.sort()).toEqual(["t1", "t2"]);
+    expect(patterns[0].accountsByBatch).toEqual({ t1: 3, t2: 2 });
+  });
+
+  it("a candidate with no importBatch is grouped under one implicit batch (existing callers unaffected)", () => {
+    const accounts = ["alice", "bob", "carol", "dave", "erin"];
+    const candidates = accounts.map((a, i) => candidate({ account: a, timestamp: iso(i * 1000) }));
+    const patterns = passwordSprayPatterns(candidates).filter((p) => p.windowKind === "burst");
+    expect(patterns[0].importBatches).toHaveLength(1);
+  });
+
+  it("dominance case: one batch alone already meets the threshold inside a combined episode", () => {
+    // t1 alone has 5 distinct accounts (already a within-upload spray); t2 adds 2 more.
+    const t1 = ["alice", "bob", "carol", "dave", "erin"].map((a, i) =>
+      candidate({ account: a, timestamp: iso(i * 1000), importBatch: "t1" }),
+    );
+    const t2 = ["frank", "grace"].map((a, i) =>
+      candidate({ account: a, timestamp: iso((i + 5) * 1000), importBatch: "t2" }),
+    );
+    const patterns = passwordSprayPatterns([...t1, ...t2]).filter((p) => p.windowKind === "burst");
+    expect(patterns[0].importBatches.sort()).toEqual(["t1", "t2"]);
+    expect(patterns[0].accountsByBatch.t1).toBe(5);
+    expect(Math.max(...Object.values(patterns[0].accountsByBatch))).toBeGreaterThanOrEqual(
+      SPRAY_THRESHOLD_DEFAULT,
+    );
+  });
+});
+
+describe("sprayObservationKey (#1104)", () => {
+  it("is stable for the same observation and differs when any identity field differs", () => {
+    const a = candidate({ account: "Alice ", timestamp: iso(500) }); // trailing space + sub-second
+    const b = candidate({ account: "alice", timestamp: iso(999) }); // same second, normalizes equal
+    const c = candidate({ account: "alice", timestamp: iso(1000) }); // next second — different
+    expect(sprayObservationKey(a)).toBe(sprayObservationKey(b));
+    expect(sprayObservationKey(a)).not.toBe(sprayObservationKey(c));
+  });
+});
+
 describe("sprayPatternToMappedEvent — shape", () => {
   it("carries T1110.003, a stable aggKey, and canonical evidence locators", () => {
     const patterns = passwordSprayPatterns(
@@ -205,6 +264,43 @@ describe("sprayPatternToMappedEvent — shape", () => {
     expect(row.aggKey).toContain("spray-pattern|ecar|");
     expect(row.canonical?.evidence.rawRecords.length).toBeGreaterThan(0);
     expect(row.canonical?.producer.importer).toBe("ecar");
+  });
+
+  it("names the upload count and discloses truncation when meta.crossUpload/.truncatedHistory are set", () => {
+    const patterns = passwordSprayPatterns(
+      ["alice", "bob", "carol"]
+        .map((a, i) => candidate({ account: a, timestamp: iso(i * 1000), importBatch: "t1" }))
+        .concat(
+          ["dave", "erin"].map((a, i) =>
+            candidate({ account: a, timestamp: iso((i + 3) * 1000), importBatch: "t2" }),
+          ),
+        ),
+    ).filter((p) => p.windowKind === "burst");
+    const row = sprayPatternToMappedEvent(patterns[0], {
+      source: "ECAR",
+      importer: "ecar-cross-upload",
+      mappingVersion: "ecar-spray-cross-v1",
+      crossUpload: true,
+      truncatedHistory: true,
+    });
+    expect(row.description).toContain("across 2 uploads");
+    expect(row.description).toContain("may be a floor, not a total");
+  });
+
+  it("is unchanged for the within-upload call site (meta.crossUpload/.truncatedHistory unset)", () => {
+    const patterns = passwordSprayPatterns(
+      ["alice", "bob", "carol", "dave", "erin"].map((a, i) =>
+        candidate({ account: a, timestamp: iso(i * 1000) }),
+      ),
+    ).filter((p) => p.windowKind === "burst");
+    const row = sprayPatternToMappedEvent(patterns[0], {
+      source: "ECAR",
+      importer: "ecar",
+      mappingVersion: "ecar-spray-v1",
+    });
+    expect(row.description).not.toContain("across");
+    expect(row.description).not.toContain("floor, not a total");
+    expect(row.description.startsWith("Password-spray pattern (burst): ")).toBe(true);
   });
 
   it("bumps severity one rank when followedBySuccess is present", () => {

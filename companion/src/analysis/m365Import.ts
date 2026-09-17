@@ -71,6 +71,9 @@ export interface M365ParseResult {
   format: string; // "m365-ual" | "entra-signin" | "entra-audit" | "mixed" | "empty"
   /** Per-upload coverage drafts (#1063) — Workload/Operation per tenant. */
   coverage: CloudCoverageDraft[];
+  // Every within-upload spray candidate this parse built (#1104) — importBatch left unset here,
+  // since parseM365Audit is pure and has no idPrefix; the ingest layer (importM365) stamps it.
+  sprayCandidates: SprayCandidate[];
 }
 
 interface OpDef {
@@ -405,7 +408,17 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
   const records = extractM365(text);
   const total = records.length;
   if (total === 0) {
-    return { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, format: "empty", coverage: [] };
+    return {
+      events: [],
+      iocs: [],
+      total: 0,
+      kept: 0,
+      dropped: 0,
+      groups: 0,
+      format: "empty",
+      coverage: [],
+      sprayCandidates: [],
+    };
   }
 
   const iocSink = new Map<string, SiemIoc>();
@@ -527,5 +540,6 @@ export function parseM365Audit(text: string, opts: M365ImportOptions = {}): M365
     groups,
     format,
     coverage,
+    sprayCandidates,
   };
 }
