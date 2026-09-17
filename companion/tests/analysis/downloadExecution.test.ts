@@ -506,6 +506,179 @@ describe("mark → YARA content match (CLI-sourced only)", () => {
   });
 });
 
+// #985 item 4 (hash-across-artifacts half, THOR leg — 985-1a-3): a download mark's file, matched
+// by path OR hash to a THOR (Nextron) finding. Unlike CLI YARA, THOR's own sha256/md5/path are
+// genuine per-row identity (thorRowMap.ts's own documented contract — what correlate.ts already
+// unions on), so both bucket paths are eligible. The mark raises to the THOR finding's OWN graded
+// severity, not a flat tier.
+describe("mark → THOR finding", () => {
+  const ENVELOPE = { scanid: "S-test0001", log_version: "v1.0.0" };
+  const TOOL_PATH = String.raw`C:\Users\x\Downloads\tool.exe`;
+  const OTHER_PATH = String.raw`C:\Users\x\Downloads\other.exe`;
+
+  const standaloneThorRow = async (row: Record<string, unknown>, over: Partial<Ev> = {}): Promise<Ev> => {
+    const { parseThorReport } = await import("../../src/analysis/thorImport.js");
+    const { events } = parseThorReport(JSON.stringify(row));
+    return { ...(events[0] as unknown as Ev), id: "t1", timestamp: at(3), ...over };
+  };
+
+  const veloThorRow = async (row: Record<string, unknown>, over: Partial<Ev> = {}): Promise<Ev> => {
+    const { thorFields } = await import("../../src/analysis/thorRowMap.js");
+    const f = thorFields(row, { artifact: "Generic.Scanner.ThorZIP", host: "DESKTOP-01" });
+    return {
+      id: "t1",
+      timestamp: at(3),
+      description: f?.description ?? "",
+      severity: f?.severity ?? "Info",
+      mitreTechniques: f?.mitre ?? [],
+      ...(f?.path ? { path: f.path } : {}),
+      ...(f?.sha256 ? { sha256: f.sha256 } : {}),
+      ...(f?.md5 ? { md5: f.md5 } : {}),
+      sources: ["Velociraptor"],
+      ...over,
+    };
+  };
+
+  it("a standalone THOR alert (sources: THOR) at the mark's path raises the mark to Critical, no technique, both rows noted", async () => {
+    const thor = await standaloneThorRow({
+      ...ENVELOPE,
+      level: "Alert",
+      module: "ProcessCheck",
+      message: "Malicious process found",
+      process_name: "tool.exe",
+      image_file: TOOL_PATH,
+      image_sha256: "11".repeat(32),
+    });
+    const out = run([mark({ sources: ["Sysmon"], asset: "WS-01" }), thor]);
+    const m = find(out, "m1");
+    expect(m.severity).toBe("Critical");
+    expect(m.mitreTechniques).toEqual([]);
+    expect(m.description).toContain(DOWNLOAD_EXECUTED_MARKER);
+    expect(m.description).toContain("THOR flagged");
+    const t = find(out, "t1");
+    expect(t.description).toContain(YARA_MATCHES_MARK_MARKER);
+  });
+
+  it("a Velociraptor-streamed THOR row (sources: Velociraptor, description 'THOR ...') also matches, raised to its own severity", async () => {
+    const thor = await veloThorRow({
+      ...ENVELOPE,
+      level: "Warning",
+      module: "Filescan",
+      message: "Possibly Dangerous file found",
+      file: TOOL_PATH,
+      sha256: "22".repeat(32),
+    });
+    expect(thor.description.startsWith("THOR Warning [Filescan]")).toBe(true);
+    const out = run([mark({ sources: ["Sysmon"], asset: "DESKTOP-01" }), thor]);
+    const m = find(out, "m1");
+    expect(m.severity).toBe("High"); // LEVEL["warning"] -> High
+    expect(m.description).toContain(DOWNLOAD_EXECUTED_MARKER);
+  });
+
+  it("a THOR row matches by hash alone, at a different path", async () => {
+    const sharedHash = "33".repeat(32);
+    const thor = await standaloneThorRow({
+      ...ENVELOPE,
+      level: "Notice",
+      module: "Filescan",
+      message: "Suspicious file found",
+      file: OTHER_PATH,
+      sha256: sharedHash,
+    });
+    const out = run([mark({ sources: ["Sysmon"], asset: "WS-01", sha256: sharedHash }), thor]);
+    const m = find(out, "m1");
+    expect(m.severity).toBe("Medium"); // LEVEL["notice"] -> Medium
+    expect(m.description).toContain("(by hash, at");
+  });
+
+  it("a subjectIsEntry (LogScan) THOR row carries no path — excluded by classify()'s existing !e.path gate, no new logic needed", async () => {
+    const thor = await veloThorRow({
+      ...ENVELOPE,
+      level: "Warning",
+      module: "LogScan",
+      message: "Suspicious Log Entry found",
+      entry: "2026-08-18T16:14:39.033 Engine:command line reported as threat: tool.exe",
+      file: TOOL_PATH, // the LOG the entry was read from, not the finding's subject
+    });
+    expect(thor.path).toBeUndefined();
+    const out = run([mark({ sources: ["Sysmon"], asset: "DESKTOP-01" }), thor]);
+    expect(find(out, "m1").description).not.toContain(DOWNLOAD_EXECUTED_MARKER);
+    expect(find(out, "m1").severity).toBe("Medium");
+  });
+
+  it("a self-scan-demoted (Info) THOR row that matches a mark neither raises the mark beyond its own evidence nor re-promotes itself", async () => {
+    // Simulates mapGeneric's/thorImport.ts's own self-scan demotion, which runs upstream of this
+    // pass (#985 item 4, 985-1a-3 design review, finding F2): the row already carries severity
+    // "Info" by the time it reaches corroborateDownloadExecution.
+    const thor: Ev = {
+      id: "t1",
+      timestamp: at(3),
+      description: "THOR Warning [Filescan]: Possibly Dangerous file found — tool.exe",
+      severity: "Info",
+      mitreTechniques: [],
+      path: TOOL_PATH,
+      sources: ["Velociraptor"],
+      asset: "WS-01",
+    };
+    const out = run([mark({ sources: ["Sysmon"], asset: "WS-01" }), thor]);
+    expect(find(out, "m1").severity).toBe("Medium"); // unchanged — the mark's own starting severity
+    expect(find(out, "t1").severity).toBe("Info"); // not re-promoted to Medium
+  });
+
+  it("a THOR row at a different path/hash never joins", async () => {
+    const thor = await standaloneThorRow({
+      ...ENVELOPE,
+      level: "Alert",
+      module: "Filescan",
+      message: "Malicious file found",
+      file: OTHER_PATH,
+    });
+    const out = run([mark({ sources: ["Sysmon"], asset: "WS-01" }), thor]);
+    expect(find(out, "m1").description).not.toContain(DOWNLOAD_EXECUTED_MARKER);
+    expect(find(out, "m1").severity).toBe("Medium");
+  });
+
+  it("two named, disagreeing hosts never join", async () => {
+    const thor = await standaloneThorRow(
+      { ...ENVELOPE, level: "Alert", module: "Filescan", message: "Malicious file found", file: TOOL_PATH },
+      { asset: "WS-02" },
+    );
+    const out = run([mark({ sources: ["Sysmon"], asset: "WS-01" }), thor]);
+    expect(find(out, "t1").description).not.toContain(YARA_MATCHES_MARK_MARKER);
+  });
+
+  it("a THOR message naming Sysmon or event ID 4688 is still labelled THOR, not mislabelled by the description-text heuristics (F7)", async () => {
+    const thor = await standaloneThorRow({
+      ...ENVELOPE,
+      level: "Alert",
+      module: "LogScan",
+      message: "Suspicious Sysmon Event ID 4688 process creation logged",
+      file: TOOL_PATH,
+    });
+    const out = run([mark({ sources: ["Sysmon"], asset: "WS-01" }), thor]);
+    expect(find(out, "m1").description).toContain("THOR flagged");
+    expect(find(out, "m1").description).not.toMatch(/Sysmon 1 flagged|Security 4688 flagged/);
+  });
+
+  it("a spoofed description starting 'THOR ' from an unrecognized source never corroborates (F5)", () => {
+    const out = run([
+      mark({ sources: ["Sysmon"], asset: "WS-01" }),
+      {
+        id: "t1",
+        timestamp: at(3),
+        description: "THOR Alert [Fake]: not a real THOR row",
+        severity: "Critical",
+        mitreTechniques: [],
+        path: TOOL_PATH,
+        sources: ["SomeOtherTool"],
+        asset: "WS-01",
+      },
+    ]);
+    expect(find(out, "m1").description).not.toContain(DOWNLOAD_EXECUTED_MARKER);
+    expect(find(out, "m1").severity).toBe("Medium");
+  });
+});
+
 // #985 (browser-origin half): a mark's own download URL or referrer, matched against a
 // Velociraptor browser-history "Visited" row for the same URL — T1189's precondition, never the
 // technique itself (no mitreTechniques added in any case here).

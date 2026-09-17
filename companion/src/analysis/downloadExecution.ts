@@ -200,9 +200,26 @@ const isProcessStart = (e: TimelineEventShape): boolean =>
 // self-scan/volatile exclusion signal does not survive that rewrite reliably (see the design doc).
 const YARA_CLI_RULE = /^YARA: (\S+) matched/;
 
+// A THOR (Nextron) finding: the standalone importer (`sources: ["THOR"]`, thorImport.ts) or one
+// streamed through Velociraptor (`sources: ["Velociraptor"]`, thorRowMap.ts's thorFields() —
+// description begins "THOR <level> [<module>]: ...", a prefix Velociraptor's generic artifact-name
+// injection explicitly exempts THOR rows from, so it stays stable, unlike CLI YARA's raw text).
+// Gated on `sources` first, like every other description-text detector in this file (`veloAction`,
+// CLI YARA's own `sources.includes("YARA")`) — an ungated `/^THOR /` test would let an unrelated
+// row spoof a match by copying the literal prefix into its own description (#985 item 4, 985-1a-3
+// design review, finding F5).
+const isThor = (e: TimelineEventShape): boolean =>
+  (e.sources ?? []).includes("THOR") ||
+  ((e.sources ?? []).includes("Velociraptor") && /^THOR /.test(e.description ?? ""));
+
 function artifactOf(e: TimelineEventShape): string {
   const src = (e.sources ?? []).join(" ");
   const action = veloAction(e);
+  // Checked first: a THOR finding's own message routinely names the Windows artifact it flagged (a
+  // Sysmon-sourced log line, an event ID 4688 hit) — the Sysmon/4688 checks below, run against raw
+  // description text, would otherwise mislabel a real THOR row (#985 item 4, 985-1a-3 design
+  // review, finding F7).
+  if (isThor(e)) return "THOR";
   if (/Prefetch/i.test(src) || /prefetch/i.test(action)) return "Prefetch";
   if (/UserAssist/i.test(src) || /UserAssist/i.test(action)) return "UserAssist";
   if (/Amcache/i.test(src) || /Amcache/i.test(action)) return "Amcache";
@@ -223,6 +240,7 @@ function classify<T extends TimelineEventShape>(e: T): Indexed<T> | null {
   const isCliYara = (e.sources ?? []).includes("YARA");
   let kind: Kind | null = null;
   if (isMark(e)) kind = "mark";
+  else if (isThor(e)) kind = "detection";
   else if (
     /Prefetch/i.test(src) ||
     /prefetch/i.test(action) ||
@@ -302,7 +320,10 @@ function candidatesFor<T extends TimelineEventShape>(
   }
   for (const b of hashBuckets)
     for (const r of b.records) {
-      if (r === mark || seen.has(r) || r.kind !== "execution") continue;
+      // Detection-kind (THOR/YARA) admitted too — only ever reaches this bucket when its own hash
+      // is real identity (identityHash: true), which the write side already gates (#985 item 4,
+      // 985-1a-3 design review, finding F1: this read-side filter used to drop it silently).
+      if (r === mark || seen.has(r) || (r.kind !== "execution" && r.kind !== "detection")) continue;
       // The same bytes — SHA-256 decides when both carry it, so a matching MD5 beside a
       // differing SHA-256 is a disagreement, not a match.
       if (hashVeto(mark.event, r.event) || !sameHash(mark.event, r.event)) continue;
@@ -350,11 +371,12 @@ function matchWords<T extends TimelineEventShape>(
   const when = r.event.timestamp ? neutral(r.event.timestamp).slice(0, 40) : "no time";
   const order = r.kind === "execution" ? `, ${orderWords(ms(r.event.timestamp), anchor)}` : "";
   const EXECUTION_WHAT: Record<string, string> = { Prefetch: "last run", UserAssist: "ran" };
+  const DETECTION_WHAT: Record<string, string> = { THOR: "flagged" };
   const what =
     r.kind === "execution"
       ? (EXECUTION_WHAT[r.artifact] ?? "process start")
       : r.kind === "detection"
-        ? "content match"
+        ? (DETECTION_WHAT[r.artifact] ?? "content match")
         : "present";
   const notes = [
     r.kind === "presence" ? "not an execution record" : "",
@@ -475,10 +497,11 @@ export function corroborateDownloadExecution<T extends TimelineEventShape>(event
       for (const h of [r.event.sha256, r.event.md5]) if (h) addToBucket(byHash, h.toLowerCase(), r);
   }
 
-  // Mark → execution (and → YARA content match): the note per mark, and the corroborating rows.
-  const markNotes = new Map<T, { note: string; executed: boolean }>();
+  // Mark → execution (and → a THOR/YARA content match): the note per mark, and the corroborating
+  // rows. `detectionMatches` (formerly `yaraMatches`) now carries either detection source.
+  const markNotes = new Map<T, { note: string; raiseTo: Severity | null }>();
   const corroborating = new Map<T, { marks: string[]; more: number }>();
-  const yaraMatches = new Map<T, { marks: string[]; more: number }>();
+  const detectionMatches = new Map<T, { marks: string[]; more: number }>();
   for (const r of indexed) {
     if (!r || r.kind !== "mark") continue;
     const { matches, unattributed, reused, beyondIndex } = candidatesFor(r, byPath, byHash);
@@ -528,11 +551,25 @@ export function corroborateDownloadExecution<T extends TimelineEventShape>(event
         m.record.kind === "execution" && run !== null && anchor !== null && run - anchor > ORDER_TOLERANCE_MS
       );
     };
-    // A content match has no observation time to order against — YARA carries none — so it
-    // corroborates unconditionally, unlike an execution record's after-the-anchor requirement.
+    // A content match has no observation time to order against — neither THOR nor YARA carries
+    // one — so it corroborates unconditionally, unlike an execution record's after-the-anchor
+    // requirement. An execution match after the anchor raises the mark to a flat High (established,
+    // unchanged). A detection match raises the mark to ITS OWN graded severity, not a flat tier —
+    // a THOR `notice` and a THOR `alert` are not the same strength of evidence, and CLI YARA's own
+    // severityFromMeta already floors at Medium, so this is a no-op change for shipped behaviour
+    // (#985 item 4, 985-1a-3 design review, finding F4).
     const isDetection = (m: Match<T>): boolean => m.record.kind === "detection";
-    const executed = matches.some(after) || matches.some(isDetection);
-    markNotes.set(r.event, { note: parts.join("; "), executed });
+    let raiseTo: Severity | null = matches.some(after) ? "High" : null;
+    for (const m of matches.filter(isDetection)) {
+      // THOR carries a real graded severity scale (Critical/High/Medium/Info) and raises the mark
+      // proportionally to it. CLI YARA's own severityFromMeta floors every hit at Medium regardless
+      // of true confidence, so a CLI YARA content match keeps the established flat High (985-1a)
+      // rather than being pulled down to Medium by this rule — verified by running the existing
+      // 985-1a tests, which caught this as a real regression before it shipped.
+      const sev = m.record.artifact === "THOR" ? (m.record.event.severity ?? "Info") : "High";
+      if (raiseTo === null || RANK[sev] > RANK[raiseTo]) raiseTo = sev;
+    }
+    markNotes.set(r.event, { note: parts.join("; "), raiseTo });
     for (const m of matches.filter(after)) {
       const c =
         corroborating.get(m.record.event) ??
@@ -543,8 +580,8 @@ export function corroborateDownloadExecution<T extends TimelineEventShape>(event
     }
     for (const m of matches.filter(isDetection)) {
       const c =
-        yaraMatches.get(m.record.event) ??
-        yaraMatches.set(m.record.event, { marks: [], more: 0 }).get(m.record.event)!;
+        detectionMatches.get(m.record.event) ??
+        detectionMatches.set(m.record.event, { marks: [], more: 0 }).get(m.record.event)!;
       if (c.marks.length < MARKS_PER_CORROBORATOR_MAX)
         c.marks.push(`${excerpt(r.event.path ?? "")}${r.host ? ` on ${neutral(r.host).slice(0, 80)}` : ""}`);
       else c.more += 1;
@@ -628,7 +665,7 @@ export function corroborateDownloadExecution<T extends TimelineEventShape>(event
     const mark = markNotes.get(e);
     if (mark) {
       description = appendDerivedNote(description, DOWNLOAD_EXECUTED_MARKER, clipNote(mark.note));
-      if (mark.executed) severity = raise(e, "High");
+      if (mark.raiseTo) severity = raise(e, mark.raiseTo);
     }
     const ran = corroborating.get(e);
     if (ran) {
@@ -671,13 +708,18 @@ export function corroborateDownloadExecution<T extends TimelineEventShape>(event
       // into the super-timeline before the next merge and this join can never re-find it.
       severity = raise({ ...e, severity }, "Medium");
     }
-    const yaraMatch = yaraMatches.get(e);
-    if (yaraMatch) {
-      const words = [...yaraMatch.marks, ...(yaraMatch.more ? [`+${yaraMatch.more} more`] : [])].join("; ");
+    const detectionMatch = detectionMatches.get(e);
+    if (detectionMatch) {
+      const words = [
+        ...detectionMatch.marks,
+        ...(detectionMatch.more ? [`+${detectionMatch.more} more`] : []),
+      ].join("; ");
       description = appendDerivedNote(description, YARA_MATCHES_MARK_MARKER, clipNote(words));
-      // severityFromMeta floors a CLI YARA row at Medium always, so this is usually a no-op — kept
-      // for a future rule-meta field that floor doesn't yet account for.
-      severity = raise({ ...e, severity }, "Medium");
+      // severityFromMeta floors a CLI YARA row at Medium always, so this is usually a no-op there.
+      // A THOR row can be Info (self-scan demoted) — matching a mark doesn't change that THOR
+      // itself graded this hit as noise, so the raise is skipped rather than re-promoting it (#985
+      // item 4, 985-1a-3 design review, finding F2).
+      if ((e.severity ?? "Info") !== "Info") severity = raise({ ...e, severity }, "Medium");
     }
     if (description === (e.description ?? "") && severity === (e.severity ?? "Info")) return e;
     return { ...e, description, severity };
