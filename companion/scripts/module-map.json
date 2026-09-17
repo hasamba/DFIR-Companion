@@ -296,6 +296,7 @@
     "diagnostics.ts": "analysis/case",
     "diskWarn.ts": "analysis/case",
     "dnsRecord.ts": "analysis/ingest",
+    "dnsServerRecord.ts": "analysis/ingest",
     "dnsConnJoin.ts": "analysis/ingest",
     "dnsWireRead.ts": "analysis/ingest",
     "dnsWireRows.ts": "analysis/ingest",

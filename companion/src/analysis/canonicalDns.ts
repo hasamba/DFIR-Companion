@@ -82,16 +82,18 @@ export const dnsBlockSchema = z.object({
   networkQuery: z.boolean().optional(),
   returned: z.array(dnsReturnedValueSchema),
   ownership: z.enum(["not in this record", "stated in the record"]),
-  vantage: z.enum(["endpoint", "sensor"]),
+  vantage: z.enum(["endpoint", "sensor", "resolver"]),
   // An overflow row (dnsRecord.ts boundDnsVariants / dnsWireRows.ts): distinct shapes beyond the
   // budget were folded here; `returned` is empty on purpose and no set is representative.
   folded: z.boolean().optional(),
-  // ── sensor rows only ──
+  // ── sensor and resolver rows only ──
   client: z.string().optional(),
   // The server the client asked — a recursive resolver or, when the client is itself a
   // resolver, an authority. The record does not say which.
   server: z.string().optional(),
   rcode: z.string().optional(),
+  // The DNS transaction id (resolver rows only — dnsServerRecord.ts, #996).
+  xid: z.string().optional(),
   flags: z
     .object({ aa: z.boolean().optional(), ra: z.boolean().optional(), rejected: z.boolean().optional() })
     .optional(),
