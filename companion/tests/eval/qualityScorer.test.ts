@@ -157,7 +157,12 @@ describe("scoreClaims union matching (#1217)", () => {
     return {
       evidenceEventIds: ["rw-e1", "rw-e2", "rw-e3"],
       claims: [
-        { id: "f1", title: "Macro execution", description: "A macro spawned PowerShell.", evidenceEventIds: ["rw-e1"] },
+        {
+          id: "f1",
+          title: "Macro execution",
+          description: "A macro spawned PowerShell.",
+          evidenceEventIds: ["rw-e1"],
+        },
         {
           id: "f2",
           title: "Shadow copy deletion",
@@ -312,15 +317,19 @@ describe("passesCaseQuality real-run tolerance (#1217)", () => {
     expect(passesCaseQuality(baseScore, { real: true })).toBe(true);
     const extraLegitimateIoc: CaseQualityScore = {
       ...baseScore,
-      iocs: { ...baseScore.iocs, precision: 0.5, unexpected: ["a real, evidence-grounded extra observation"] },
+      iocs: {
+        ...baseScore.iocs,
+        precision: 0.5,
+        unexpected: ["a real, evidence-grounded extra observation"],
+      },
     };
     expect(passesCaseQuality(extraLegitimateIoc, { real: true })).toBe(true);
   });
 
   it("still gates recall, hallucination, forbidden conclusions, and the confidence rubric on a real run", () => {
-    expect(passesCaseQuality({ ...baseScore, claims: { ...baseScore.claims, recall: 0.5 } }, { real: true })).toBe(
-      false,
-    );
+    expect(
+      passesCaseQuality({ ...baseScore, claims: { ...baseScore.claims, recall: 0.5 } }, { real: true }),
+    ).toBe(false);
     expect(
       passesCaseQuality(
         { ...baseScore, danglingEvidenceRefs: [{ claimId: "f1", evidenceEventIds: ["bogus"] }] },
@@ -330,8 +339,8 @@ describe("passesCaseQuality real-run tolerance (#1217)", () => {
     expect(
       passesCaseQuality({ ...baseScore, forbiddenConclusions: ["invented-actor"] }, { real: true }),
     ).toBe(false);
-    expect(passesCaseQuality({ ...baseScore, confidenceIssues: ["f1: confidence has no reason"] }, { real: true })).toBe(
-      false,
-    );
+    expect(
+      passesCaseQuality({ ...baseScore, confidenceIssues: ["f1: confidence has no reason"] }, { real: true }),
+    ).toBe(false);
   });
 });
