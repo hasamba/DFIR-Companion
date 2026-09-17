@@ -43,6 +43,7 @@ export const DERIVED_NOTE_NAMES: readonly string[] = [
   "downloaded from a visited page",
   "referrer page visited",
   "preceded a download mark",
+  "matches a download mark",
 ];
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
