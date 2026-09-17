@@ -24,6 +24,7 @@ import type { HuntUpload } from "../integrations/velociraptor/velociraptorApi.js
 import type { PlaybookTask } from "../analysis/playbook.js";
 import type { PlaybookControl } from "../analysis/playbookControl.js";
 import type { NotificationEvent } from "../analysis/notifications.js";
+import type { CombinedLogImportOptions } from "../analysis/combinedLogImport.js";
 
 /**
  * Dependencies shared across more than one route domain, built once in createApp and passed to
@@ -49,6 +50,9 @@ export type ImportBase = {
   minSeverity?: Severity;
   signal?: AbortSignal;
   startBatch?: number;
+  // Analyst-declared web-log trailer profile (#993) — read only by the "combinedlog" importer;
+  // every other kind ignores it.
+  combinedLog?: CombinedLogImportOptions;
 };
 
 export interface RouteContext {

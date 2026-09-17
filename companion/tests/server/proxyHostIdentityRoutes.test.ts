@@ -92,7 +92,7 @@ describe("GET /cases/:id/proxy-host-identity-matches", () => {
     expect(res.body.matches).toHaveLength(1);
     expect(res.body.matches[0]).toMatchObject({ eventId: "w1", outcome: "matched" });
     expect(res.body.matches[0].hosts).toEqual([
-      { host: "ws-042", sampleTime: "2026-06-10T12:00:00Z", evidenceEventIds: ["l1"] },
+      { host: "ws-042", sampleTime: "2026-06-10T12:00:00Z", evidenceEventIds: ["l1"], via: ["address"] },
     ]);
   });
 

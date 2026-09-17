@@ -4,72 +4,114 @@
 // names this issue as its own motivating case and does the identity resolution; this module is
 // the join over the case's own already-merged forensic timeline.
 //
+// TWO INDEPENDENT IDENTITY PATHS, NEVER PICKED DOWN TO ONE. The issue named two: "the same client
+// address in both" and "an authenticated user present in both". Both are resolved separately
+// against hostBinding.ts's own index (byIp / byAccount) and merged only by HOST NAME on the
+// result — an event matching both paths to the SAME host says so (`via` on that host names both);
+// an event whose two paths disagree returns BOTH hosts, never a pick. A host reached by only one
+// path is exactly as real as one reached by both; this module states which, never discards either.
+//
 // READ-TIME, ROUTE-LEVEL, NEVER A MERGE-TIME PASS — matches hostBinding.ts's own existing
 // consumers (hostDuplicateGate.ts, hostScopeLoad.ts), both async route-driven loads over
 // state.forensicTimeline, never wired into stateMerge.ts. Recomputed on every call, never
 // persisted.
 //
-// ELIGIBILITY. Any event carrying `canonical.network.source.address` — not scoped to a #1032
-// web-chain envelope (`canonical.web`) alone. combinedLogImport.ts's own Squid/combined-access-log
-// rows independently stamp the same field from the log's own first (non-forgeable) column, the
-// same trust class as a Zeek row's own `id.orig_h` — both are the log-writer's own observed TCP
-// peer, never a client-supplied header. A LATER, client-asserted identity (Squid's `%un`, an HTTP
-// `Authorization` username, `X-Forwarded-For`) is a genuinely different trust class and is never
-// read here — see the design doc's own Non-goals.
+// ELIGIBILITY, ADDRESS PATH. Any event carrying `canonical.network.source.address` — not scoped
+// to a #1032 web-chain envelope (`canonical.web`) alone. combinedLogImport.ts's own Squid/
+// combined-access-log rows independently stamp the same field from the log's own first
+// (non-forgeable) column, the same trust class as a Zeek row's own `id.orig_h` — both are the
+// log-writer's own observed TCP peer, never a client-supplied header. X-Forwarded-For and a bare
+// HTTP `Authorization` header stay excluded: neither is verified by the log-writer itself, so
+// either is a client's claim, not the log-writer's own observation.
 //
-// EXCLUDED: exactly the set `buildHostBindingIndex` itself indexes from — `event.type === "logon"
-// && event.outcome === "success"` (mirrors hostBinding.ts's own predicate exactly, `category` is
-// never consulted by either side). Every such event also carries `network.source.address` (the
-// field this join reads), so without this exclusion it would trivially "resolve" against itself
-// (a zero-time-diff self-match) — noise, never a real proxy/endpoint join. A FAILED logon (outcome
-// !== "success") is never indexed, so it is real, eligible evidence here — an attacker's own
-// source IP on a rejected auth attempt is not dropped.
+// ELIGIBILITY, ACCOUNT PATH. Scoped to `canonical.web` records ONLY — never any event that merely
+// carries `canonical.account.name` (a 4624 logon, an EDR process-create, a cloud sign-in all do,
+// and none of them is "a proxy log naming its client"). Within that scope, combinedLogImport.ts
+// writes `account.name` from the combined-log format's OWN `%u` field — the server/proxy's own
+// determination of who authenticated (HTTP Basic/NTLM/Kerberos, verified before the request was
+// served) — never `%l` (ident/RFC 1413, a client-asserted claim the importer already discards).
+// `%u` is therefore the same trust class as the address path's source column: the log-writer's
+// own verified fact, not a header the client wrote. A Zeek/Suricata web-chain row carries no
+// authenticated-user field today (canonicalWeb.ts's `web.user` is declared but unpopulated by any
+// importer), so only combined-log rows are eligible here in practice — stated as a scope, not
+// hardcoded to one importer, so a future importer that legitimately populates it is eligible too.
 //
-// AMBIGUITY. `resolveIpAtTime` returns every HostBinding inside the tolerance window with no
-// dedup by host — the SAME workstation logging on more than once in the window (ordinary re-auth)
-// must never misreport as ambiguous. Ambiguity is keyed on the count of DISTINCT hosts among the
-// hits, never the raw hit count.
+// EXCLUDED (both paths): exactly the set `buildHostBindingIndex` itself indexes from —
+// `event.type === "logon" && event.outcome === "success"` (mirrors hostBinding.ts's own predicate
+// exactly, `category` is never consulted by either side). Every such event also carries
+// `network.source.address` (the field the address path reads), so without this exclusion it would
+// trivially "resolve" against itself (a zero-time-diff self-match) — noise, never a real
+// proxy/endpoint join. A logon event never carries `canonical.web`, so the account path excludes
+// it by scope alone; the explicit check stays shared for the address path. A FAILED logon
+// (outcome !== "success") is never indexed, so it is real, eligible evidence here — an attacker's
+// own source IP on a rejected auth attempt is not dropped.
+//
+// AMBIGUITY. `resolveIpAtTime`/`resolveAccountAtTime` return every HostBinding inside the
+// tolerance window with no dedup by host — the SAME workstation logging on more than once in the
+// window (ordinary re-auth) must never misreport as ambiguous. Ambiguity is keyed on the count of
+// DISTINCT hosts among the MERGED hits from both paths, never the raw hit count.
 //
 // WHAT A MATCH NEVER CLAIMS. "This event's own network.source.address matches a host-binding
-// record's own IP at this time, within the declared tolerance" — never "this is the originating
-// workstation" as an unqualified fact. Stated IN-BAND on every result (`caveats`), not only in
-// this comment, so an API consumer cannot over-read a bare `matched`/host name: (a) if the case's
-// own sensor sits on the far side of a forward proxy, the resolved host could be the proxy
-// server's own machine identity, not an end-user's; (b) hostBinding.ts's own documented
-// limitation — no DHCP-lease evidence exists anywhere in this codebase, so the IP could have been
-// reassigned to a different host between the logon sample and this event, and the tolerance
-// window is a heuristic proxy for "still plausibly the same lease," never a guarantee.
+// record's own IP at this time, within the declared tolerance" (or, for the account path, "...own
+// authenticated account matches a host-binding record's own account, present at that host, at
+// this time") — never "this is the originating workstation" as an unqualified fact. Stated
+// IN-BAND on every result (`caveats`), not only in this comment, so an API consumer cannot
+// over-read a bare `matched`/host name: (a) if the case's own sensor sits on the far side of a
+// forward proxy, an address match could name the proxy server's own machine identity, not an
+// end-user's; (b) hostBinding.ts's own documented limitation — no DHCP-lease evidence exists
+// anywhere in this codebase, so an address could have been reassigned to a different host between
+// the logon sample and this event; (c) a shared or reused credential (service account, kiosk
+// login, another user still signed in) makes an account match no more specific than the account
+// itself is — sharper evidence when the SAME line stamped it than address-only, never a
+// guarantee.
 //
 // TRUST BOUNDARY, NOT FULLY AUDITED. This module trusts whatever value an importer already wrote
-// to `canonical.network.source.address`. Zeek (`webChainRows.ts`) and Squid/combined-log
-// (`combinedLogImport.ts`) are both confirmed to write the log-writer's own observed TCP peer,
-// never a client-supplied header. Other importers writing this same field (cloud/email/Entra/AWS/
-// GCP sign-in and activity logs) were not individually audited for this PR — a full cross-importer
-// trust audit is filed as a follow-up, not attempted here.
+// to `canonical.network.source.address` / `canonical.account.name`. Zeek (`webChainRows.ts`) and
+// Squid/combined-log (`combinedLogImport.ts`) are both confirmed to write the log-writer's own
+// observed TCP peer for the address, and combined-log alone is confirmed to write the log-writer's
+// own verified `%u` for the account. Other importers writing `network.source.address` (cloud/
+// email/Entra/AWS/GCP sign-in and activity logs) were not individually audited for this PR — a
+// full cross-importer trust audit is filed as a follow-up, not attempted here.
 //
 // CLOCK SKEW. hostBinding.ts explicitly declines to align for skew itself ("a caller wanting
 // aligned bindings passes already-aligned events"); this module reads `state.forensicTimeline` as
 // stored. The declared tolerance window absorbs ordinary skew as a side effect, never a guarantee.
 
-import { buildHostBindingIndex, resolveIpAtTime, type HostBinding } from "./hostBinding.js";
+import {
+  buildHostBindingIndex,
+  resolveAccountAtTime,
+  resolveIpAtTime,
+  type HostBinding,
+} from "./hostBinding.js";
 import type { HostAliasIndex } from "./hostAlias.js";
 import type { ForensicEvent } from "./stateTypes.js";
 
 export type ProxyHostIdentityOutcome = "no-match" | "matched" | "ambiguous";
+export type ProxyHostIdentityVia = "address" | "account";
 
 const SENSOR_TOPOLOGY_CAVEAT =
-  "a match names whichever host's own logon evidence shares this event's source address at this " +
-  "time — if this case's own sensor captured proxy-to-internet traffic rather than client-to-proxy " +
-  "traffic, that host could be the proxy server itself, not an end-user workstation";
+  "an address match names whichever host's own logon evidence shares this event's source address " +
+  "at this time — if this case's own sensor captured proxy-to-internet traffic rather than " +
+  "client-to-proxy traffic, that host could be the proxy server itself, not an end-user workstation";
 const DHCP_LEASE_CAVEAT =
   "no DHCP-lease evidence exists in this codebase — the address could have been reassigned to a " +
   "different host between the logon sample and this event; the tolerance window is a heuristic, never a guarantee";
+const ACCOUNT_SHARING_CAVEAT =
+  "an account match names whichever host's own logon evidence shows this authenticated account " +
+  "present at that time — a shared or reused credential (service account, kiosk login, another " +
+  "user still signed in) is not distinguishable from this evidence alone";
 
 export interface ProxyHostIdentityMatch {
   eventId: string;
   address: string;
+  account: string;
   outcome: ProxyHostIdentityOutcome;
-  hosts: { host: string; sampleTime: string; evidenceEventIds: string[] }[];
+  hosts: {
+    host: string;
+    sampleTime: string;
+    evidenceEventIds: string[];
+    via: ProxyHostIdentityVia[];
+  }[];
   locators: { source: string; locator: string }[];
   toleranceMs: number;
   caveats: string[];
@@ -86,6 +128,20 @@ function isIndexedLogon(e: ForensicEvent): boolean {
   return e.canonical?.event?.type === "logon" && e.canonical?.event?.outcome === "success";
 }
 
+/** Merge one identity path's hits into the per-host accumulator, tagging which path found each. */
+function mergeHits(
+  byHost: Map<string, { bindings: HostBinding[]; via: Set<ProxyHostIdentityVia> }>,
+  hits: readonly HostBinding[],
+  via: ProxyHostIdentityVia,
+): void {
+  for (const hit of hits) {
+    const entry = byHost.get(hit.host) ?? { bindings: [], via: new Set() };
+    entry.bindings.push(hit);
+    entry.via.add(via);
+    byHost.set(hit.host, entry);
+  }
+}
+
 export function resolveProxyHostIdentity(
   events: readonly ForensicEvent[],
   aliasIndex: HostAliasIndex,
@@ -95,34 +151,41 @@ export function resolveProxyHostIdentity(
   const results: ProxyHostIdentityMatch[] = [];
 
   for (const e of events) {
-    const address = e.canonical?.network?.source?.address;
-    if (!address) continue;
+    const address = e.canonical?.network?.source?.address ?? "";
+    // Account path scoped to canonical.web — see the module header's ELIGIBILITY, ACCOUNT PATH.
+    const account = e.canonical?.web ? (e.canonical?.account?.name ?? "") : "";
+    if (!address && !account) continue;
     if (isIndexedLogon(e)) continue;
 
-    const hits = resolveIpAtTime(index, address, e.timestamp, toleranceMs);
-    const byHost = new Map<string, HostBinding[]>();
-    for (const hit of hits) {
-      const list = byHost.get(hit.host) ?? [];
-      list.push(hit);
-      byHost.set(hit.host, list);
-    }
+    const byHost = new Map<string, { bindings: HostBinding[]; via: Set<ProxyHostIdentityVia> }>();
+    if (address) mergeHits(byHost, resolveIpAtTime(index, address, e.timestamp, toleranceMs), "address");
+    if (account) mergeHits(byHost, resolveAccountAtTime(index, account, e.timestamp, toleranceMs), "account");
 
     const hosts = [...byHost.entries()]
-      .map(([host, bindings]) => ({
-        host,
-        sampleTime: bindings[bindings.length - 1].sampleTime, // pre-sorted by sampleTime, most recent last
-        evidenceEventIds: bindings.map((b) => b.evidenceEventId),
-      }))
+      .map(([host, { bindings, via }]) => {
+        const sorted = [...bindings].sort((a, b) => a.sampleTime.localeCompare(b.sampleTime));
+        return {
+          host,
+          sampleTime: sorted[sorted.length - 1].sampleTime, // most recent across BOTH paths
+          evidenceEventIds: [...new Set(bindings.map((b) => b.evidenceEventId))],
+          via: [...via].sort(),
+        };
+      })
       .sort((a, b) => (a.host < b.host ? -1 : a.host > b.host ? 1 : 0));
+
+    const caveats: string[] = [];
+    if (hosts.some((h) => h.via.includes("address"))) caveats.push(SENSOR_TOPOLOGY_CAVEAT, DHCP_LEASE_CAVEAT);
+    if (hosts.some((h) => h.via.includes("account"))) caveats.push(ACCOUNT_SHARING_CAVEAT);
 
     results.push({
       eventId: e.id,
       address,
+      account,
       outcome: hosts.length === 0 ? "no-match" : hosts.length === 1 ? "matched" : "ambiguous",
       hosts,
       locators: locatorsOf(e),
       toleranceMs,
-      caveats: hosts.length === 0 ? [] : [SENSOR_TOPOLOGY_CAVEAT, DHCP_LEASE_CAVEAT],
+      caveats,
     });
   }
 

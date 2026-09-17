@@ -6,6 +6,7 @@ import {
   readSquidTrailer,
   readTarget,
   readTrailer,
+  resolveTrailerProfile,
   statusWords,
   trailerTokens,
 } from "../../src/analysis/webRecordFields.js";
@@ -281,5 +282,19 @@ describe("readSize / statusWords — a count is not a body; a status is not a re
     expect(statusWords(304)).not.toContain("redirect");
     expect(statusWords(200)).toBe("");
     expect(statusWords(404)).toBe("");
+  });
+});
+
+describe("resolveTrailerProfile — the one name an analyst can declare (#993)", () => {
+  it("maps the declared Squid LogFormat name to slot 0", () => {
+    expect(resolveTrailerProfile("squid_combined")).toEqual({ squidSlot: 0 });
+  });
+  it("leaves anything else undeclared — never inferred from the value's shape", () => {
+    expect(resolveTrailerProfile(undefined)).toBeUndefined();
+    expect(resolveTrailerProfile("")).toBeUndefined();
+    expect(resolveTrailerProfile("squid")).toBeUndefined();
+    expect(resolveTrailerProfile("SQUID_COMBINED")).toBeUndefined();
+    expect(resolveTrailerProfile(1)).toBeUndefined();
+    expect(resolveTrailerProfile(null)).toBeUndefined();
   });
 });

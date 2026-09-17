@@ -67,6 +67,13 @@ describe("mapCombinedLogLine", () => {
     expect(m.sources).toEqual(["Web Access Log"]);
     const domains = [...sink.values()].filter((i) => i.type === "domain").map((i) => i.value);
     expect(domains).toContain("vault.cloudpear.io");
+    // #993: the same %u field, structured -- proxyWorkstationChain.ts's account path reads this.
+    expect(m.canonical?.account?.name).toBe("arjun.mehta@northpeaklabs.com");
+  });
+
+  it('writes no canonical.account when the log\'s own user field is "-" (unauthenticated)', () => {
+    const m = mapCombinedLogLine(HEALTH, new Map())!;
+    expect(m.canonical?.account).toBeUndefined();
   });
 
   it("tags an absolute-URL GET the same way as the CONNECT tunnel", () => {
