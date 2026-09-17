@@ -66,3 +66,30 @@ export interface ImportContext {
     ctx: WindowContext,
   ): Promise<InvestigationState>;
 }
+
+/**
+ * Builds `ImportContext["opts"]` as LIVE getters over `source` (never a snapshot — see the `opts`
+ * doc comment above). Pulled out of `AnalysisPipeline`'s constructor, which is ledgered near the
+ * 800-line file-size limit (CLAUDE.md §5), so a future field here costs one line at the call site.
+ */
+export function buildImportOpts(source: {
+  readonly stateStore: StateStore;
+  readonly onState?: (state: InvestigationState) => void;
+  readonly superTimelineStore?: SuperTimelineStore;
+  readonly authObservationStore?: AuthObservationStore;
+}): ImportContext["opts"] {
+  return {
+    get stateStore() {
+      return source.stateStore;
+    },
+    get onState() {
+      return source.onState;
+    },
+    get superTimelineStore() {
+      return source.superTimelineStore;
+    },
+    get authObservationStore() {
+      return source.authObservationStore;
+    },
+  };
+}

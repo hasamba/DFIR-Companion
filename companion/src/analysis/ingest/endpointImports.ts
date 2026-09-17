@@ -316,11 +316,6 @@ export async function importEcar(
   },
 ): Promise<InvestigationState> {
   const parsedRaw = parseEcarJson(text, { ...opts.ecar });
-
-  // Cross-upload password-spray pass (#1104) — computed BEFORE the floor and BEFORE ids are
-  // assigned, so a cross-upload row rides through the exact same treatment (severity floor, id
-  // assignment) a within-upload spray row already gets, and an upload whose only events are
-  // spray-worthy is never swallowed by the empty-import guard below.
   const crossRows = await crossUploadSprayRows(ctx, caseId, opts, parsedRaw.sprayCandidates, {
     source: ECAR_SOURCE,
     importer: "ecar",
