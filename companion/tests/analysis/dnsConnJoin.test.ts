@@ -876,4 +876,28 @@ describe("Suricata query ↔ answer pairing by dns.id + flow_id (#996)", () => {
     ]);
     expect(nestedType.canonical?.dns?.queryType).toBe(28); // AAAA
   });
+
+  it("pairs regardless of file order — the query line can come after the answer line", () => {
+    const e = one([v1Answer(), suricataQuery()]);
+    expect(e.canonical?.dns?.query).toBe("www.example.com");
+  });
+
+  it("two query lines sharing a key resolve to the last one in file order (disclosed, not defended)", () => {
+    const e = one([
+      suricataQuery({}, { rrname: "first.example" }),
+      suricataQuery({}, { rrname: "second.example" }),
+      v1Answer(),
+    ]);
+    expect(e.canonical?.dns?.query).toBe("second.example");
+  });
+
+  it("candidates past the retained bound never pair — the cap on suricataQueries is enforced at collection", () => {
+    const rows: Row[] = [];
+    for (let i = 0; i < DNS_OBSERVATIONS_MAX; i++)
+      rows.push(suricataQuery({ flow_id: 1 }, { id: 100, rrname: "filler.example" }));
+    rows.push(suricataQuery({ flow_id: 1 }, { id: 7 })); // the real candidate — pushed past the cap
+    rows.push(v1Answer());
+    const e = one(rows);
+    expect(e.canonical?.dns?.query ?? "").toBe(""); // the one candidate that would have matched never got in
+  }, 60_000);
 });

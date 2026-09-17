@@ -36,7 +36,7 @@ import { mapWebRows, tallyWebChains } from "./webChainRows.js";
 import { readSuricataSmb } from "./smbChainRead.js";
 import { addSmb, emptySmbOperations, joinSmbChains } from "./smbChainJoin.js";
 import { mapSmbRows, tallySmbChains } from "./smbChainRows.js";
-import { addConn, addDns, emptyDnsObservations, joinDnsLeads } from "./dnsConnJoin.js";
+import { addConn, addDns, addSuricataQuery, emptyDnsObservations, joinDnsLeads } from "./dnsConnJoin.js";
 import {
   isSuricataDnsAnswer,
   pairSuricataQueries,
@@ -689,7 +689,7 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
             if (o) addDns(dnsObs, o);
           }
           const c = readSuricataDnsQueryCandidate(row);
-          if (c) dnsObs.suricataQueries.push(c);
+          if (c) addSuricataQuery(dnsObs, c);
         }
         if (etype === "flow" || etype === "netflow") {
           const c = readSuricataFlow(row, etype, recordIndex);

@@ -98,6 +98,11 @@ export function addConn(sink: DnsObservations, o: ConnObservation | "unplaced"):
   else sink.conns.push(o);
 }
 
+/** Bounded like addDns above (#996) — a query-only-heavy upload must not grow this without limit. */
+export function addSuricataQuery(sink: DnsObservations, c: SuricataQueryCandidate): void {
+  if (sink.suricataQueries.length < DNS_OBSERVATIONS_MAX) sink.suricataQueries.push(c);
+}
+
 // ───────────────────────────── time ─────────────────────────────
 
 const S = 1000;

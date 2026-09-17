@@ -17,7 +17,6 @@
 
 import { isIP } from "node:net";
 import type { DnsReply } from "./canonicalDns.js";
-import { DNS_OBSERVATIONS_MAX } from "./dnsConnJoin.js";
 import { asciiName, isValidQueryName } from "./dnsRecord.js";
 import { keyDigest, showToken } from "./recordIdentity.js";
 import { getCI, isObject, normalizeTime, str } from "./siemImport.js";
@@ -508,15 +507,17 @@ export function readSuricataDnsQueryCandidate(row: Row): SuricataQueryCandidate 
  * #996: recovers a v1 Suricata answer's missing question from its paired query candidate, when
  * one exists in this upload. Never touches a record that already has a query name (v2/v3, or a
  * v1 record with nothing to pair against stays exactly as it reads today). `flow_id` + `dns.id`
- * is not a perfect uniqueness guarantee (`dns.id` is a 16-bit transaction id) — a collision needs
- * one flow to carry tens of thousands of DNS transactions, judged not worth a timestamp guard.
+ * is not a perfect uniqueness guarantee: `dns.id` is a 16-bit transaction id (a collision needs
+ * one flow to carry tens of thousands of DNS transactions), and two duplicate/retransmitted
+ * query lines sharing a key resolve arbitrarily (last in file order wins) if they ever disagree
+ * — neither judged worth a timestamp-distance guard for the failure's real-world likelihood.
  */
 export function pairSuricataQueries(
   observations: DnsObservation[],
   candidates: readonly SuricataQueryCandidate[],
 ): void {
   if (!candidates.length) return;
-  const byKey = new Map(candidates.slice(0, DNS_OBSERVATIONS_MAX).map((c) => [c.key, c]));
+  const byKey = new Map(candidates.map((c) => [c.key, c])); // already bounded at collection (addSuricataQuery)
   observations.forEach((o, i) => {
     if (o.query || !o.recordId || !o.transactionId) return;
     const c = byKey.get(suricataPairKey(o.recordId, o.transactionId));
