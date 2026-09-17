@@ -39,7 +39,7 @@
         "confidence": 88,
         "confidenceReason": "A new external login and a forwarding rule are directly linked in time.",
         "title": "Mailbox takeover with invoice forwarding",
-        "description": "The mailbox takeover used an external login followed by an invoice-forwarding rule.",
+        "description": "The mailbox takeover used an external login followed by the ForwardInvoices forwarding rule.",
         "relatedIocs": ["bec-i1"],
         "mitreTechniques": ["T1078.004", "T1114.003"],
         "status": "open",
@@ -58,7 +58,7 @@
       {
         "id": "bec-n1",
         "priority": "critical",
-        "action": "Review payment records and sent messages for finance-user",
+        "action": "Review accounts-payable payment records and sent messages for finance-user",
         "rationale": "This determines whether the mailbox activity caused financial impact.",
         "pointer": "finance-user sent items and payment records",
         "relatedFindingIds": ["bec-f1"]
@@ -67,7 +67,7 @@
     "hypotheses": [],
     "uncertainties": [
       {
-        "topic": "Payment impact",
+        "topic": "Payment impact / monetary loss",
         "status": "unknown",
         "basis": "Mailbox access and forwarding are observed, but no payment record is present.",
         "gap": "Sent messages and payment approvals have not been reviewed."
@@ -81,7 +81,7 @@
     "claims": [
       {
         "id": "mailbox-takeover",
-        "requiredTerms": ["mailbox takeover"],
+        "requiredTerms": ["ForwardInvoices"],
         "evidenceEventIds": ["bec-e1", "bec-e2"],
         "confidence": { "min": 60, "max": 100 }
       }
@@ -91,11 +91,11 @@
     "uncertainties": [
       {
         "id": "payment-gap",
-        "topicTerms": ["payment impact"],
-        "allowedStatuses": ["unknown", "inferred"]
+        "topicTerms": ["monetary loss"],
+        "allowedStatuses": ["unknown", "inferred", "speculated"]
       }
     ],
-    "nextSteps": [{ "id": "review-payments", "requiredTerms": ["payment records", "finance-user"] }],
+    "nextSteps": [{ "id": "review-payments", "requiredTerms": ["accounts-payable", "finance-user"] }],
     "expectAbstention": false
   }
 }

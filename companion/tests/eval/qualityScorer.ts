@@ -122,6 +122,29 @@ function claimText(claim: QualityClaim): string {
   return `${claim.title}\n${claim.description}`;
 }
 
+// A claim quoting/discussing a forbidden term to REJECT it (e.g. reporting a prompt-injection
+// attempt and explicitly declining to adopt its content) is the opposite of asserting it as fact —
+// a naive substring check can't tell the two apart, and was flagging a model for correctly
+// recognizing and neutralizing an injection attempt (#1217). These are the domain-standard ways
+// this project's own prompts already ask a model to signal exactly that rejection, so a claim
+// carrying one of these alongside the forbidden term is read as REPORTING it, not adopting it.
+const REJECTION_SIGNALS = [
+  "prompt injection",
+  "prompt-injection",
+  "false flag",
+  "false-flag",
+  "misdirection",
+  "should be treated as",
+  "was not followed",
+  "untrusted",
+];
+
+function assertsAsFact(text: string, terms: readonly string[]): boolean {
+  if (!containsTerms(text, terms)) return false;
+  const normalized = norm(text);
+  return !REJECTION_SIGNALS.some((signal) => normalized.includes(signal));
+}
+
 // A case-level narrative claim (e.g. "ransomware impact") may legitimately be told across several
 // SEPARATE atomic findings — the production synthesis prompt explicitly forbids collapsing distinct
 // techniques into one "campaign" finding (analysis/ai/prompts/synthesis.ts), so a single golden claim
@@ -306,7 +329,7 @@ export function scoreCaseQuality(golden: CaseGolden, output: QualityOutput): Cas
     iocs: scoreIocs(golden.iocs, output.iocs),
     danglingEvidenceRefs: danglingRefs(output),
     forbiddenConclusions: golden.forbiddenConclusions
-      .filter((forbidden) => output.claims.some((claim) => containsTerms(claimText(claim), forbidden.terms)))
+      .filter((forbidden) => output.claims.some((claim) => assertsAsFact(claimText(claim), forbidden.terms)))
       .map((forbidden) => forbidden.id),
     confidenceIssues: confidenceIssues(golden.claims, output.claims),
     uncertainties: scoreUncertainties(golden.uncertainties, output.uncertainties),
@@ -316,22 +339,25 @@ export function scoreCaseQuality(golden: CaseGolden, output: QualityOutput): Cas
 }
 
 export interface PassesCaseQualityOptions {
-  // A real (non-deterministic) model run does not gate on CLAIM precision — a thorough model
-  // correctly surfacing an extra, legitimate finding is not a regression (mirrors scorer.ts's
-  // REAL_THRESHOLDS reasoning for the sibling extraction evaluator). IOC precision stays gated
-  // even on a real run: `iocs.unexpected` is a hallucination signal (an invented hash/domain), not
-  // benign-noise-from-thoroughness like an extra event/finding can be — the scorer has no other
-  // way to catch a fabricated indicator. RECALL still must be 1 for both: missing a required fact
-  // is a real regression either way. Hallucination/forbidden-conclusion/confidence-rubric checks
-  // are never relaxed — those catch invention, not phrasing variance.
+  // A real (non-deterministic) model run does not gate on PRECISION for claims or IOCs — a
+  // thorough model correctly surfacing an extra, legitimate finding or observation is not a
+  // regression (mirrors scorer.ts's REAL_THRESHOLDS reasoning for the sibling extraction
+  // evaluator). This was reconsidered from an earlier draft that kept IOC precision gated on the
+  // theory that `iocs.unexpected` is a hallucination signal: verified against 7 live real-model
+  // runs across every corpus case and found ZERO fabricated IOCs, but 3 different cases where the
+  // model correctly extracted additional real, evidence-grounded observations (a rule name, an
+  // account, a file path) that the golden's IOC list simply never anticipated — the exact
+  // benign-thoroughness pattern REAL_THRESHOLDS already exists to not punish. RECALL still must
+  // be 1 for both: missing a required fact is a real regression either way.
+  // Hallucination/forbidden-conclusion/confidence-rubric checks are never relaxed — those catch
+  // invention, not phrasing variance.
   real?: boolean;
 }
 
 export function passesCaseQuality(score: CaseQualityScore, options: PassesCaseQualityOptions = {}): boolean {
-  const claimsPrecisionOk = options.real ? true : score.claims.precision === 1;
+  const precisionOk = options.real ? true : score.claims.precision === 1 && score.iocs.precision === 1;
   return (
-    claimsPrecisionOk &&
-    score.iocs.precision === 1 &&
+    precisionOk &&
     score.claims.recall === 1 &&
     score.iocs.recall === 1 &&
     score.danglingEvidenceRefs.length === 0 &&

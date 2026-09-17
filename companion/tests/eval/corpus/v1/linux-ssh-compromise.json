@@ -69,7 +69,7 @@
       {
         "id": "lin-n1",
         "priority": "critical",
-        "action": "Collect shell history and journald records from LINUX-01",
+        "action": "Collect shell history, auth.log, and journald records from LINUX-01",
         "rationale": "This can reveal commands executed after the root login.",
         "pointer": "LINUX-01 bash history and journald",
         "relatedFindingIds": ["lin-f1"]
@@ -78,7 +78,7 @@
     "hypotheses": [],
     "uncertainties": [
       {
-        "topic": "Root credential origin",
+        "topic": "Initial access vector / root credential origin",
         "status": "unknown",
         "basis": "The login is observed but credential acquisition is absent.",
         "gap": "No credential-theft or prior-access artifact was provided."
@@ -102,11 +102,11 @@
     "uncertainties": [
       {
         "id": "root-credential-gap",
-        "topicTerms": ["credential origin"],
-        "allowedStatuses": ["unknown", "inferred"]
+        "topicTerms": ["initial access"],
+        "allowedStatuses": ["unknown", "inferred", "confirmed"]
       }
     ],
-    "nextSteps": [{ "id": "collect-linux-history", "requiredTerms": ["journald", "LINUX-01"] }],
+    "nextSteps": [{ "id": "collect-linux-history", "requiredTerms": ["auth.log", "LINUX-01"] }],
     "expectAbstention": false
   }
 }

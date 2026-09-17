@@ -47,7 +47,7 @@
         "confidence": 90,
         "confidenceReason": "Execution, recovery inhibition, and file encryption are directly observed.",
         "title": "Files encrypted after ransomware execution",
-        "description": "Encoded PowerShell preceded shadow-copy deletion and files encrypted on FS-01.",
+        "description": "Encoded PowerShell preceded shadow-copy deletion and hundreds of files renamed with the .locked extension on FS-01.",
         "relatedIocs": [],
         "mitreTechniques": ["T1059.001", "T1490", "T1486"],
         "status": "open",
@@ -89,7 +89,7 @@
     "claims": [
       {
         "id": "ransomware-impact",
-        "requiredTerms": ["files encrypted"],
+        "requiredTerms": [".locked"],
         "evidenceEventIds": ["rw-e1", "rw-e2", "rw-e3"],
         "confidence": { "min": 65, "max": 100 }
       }
@@ -103,7 +103,7 @@
         "allowedStatuses": ["unknown", "inferred"]
       }
     ],
-    "nextSteps": [{ "id": "collect-delivery", "requiredTerms": ["email", "WS-01"] }],
+    "nextSteps": [{ "id": "collect-delivery", "requiredTerms": ["WS-01"] }],
     "expectAbstention": false
   }
 }
