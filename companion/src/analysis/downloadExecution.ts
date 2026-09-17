@@ -181,6 +181,14 @@ interface Indexed<T> {
    * hash-bucket build/read sites AND the path-bucket veto (a false value must never let this
    * record's hash reject an otherwise-valid path match, nor let it join or be joined by hash). */
   identityHash: boolean;
+  /** Whether a match on this record should raise the mark to the record's OWN graded severity,
+   * rather than a flat tier — true for THOR and Velociraptor-native YARA (both carry a real,
+   * context-graded severity scale: yaraGrade.ts's gradeYaraHit()), false for CLI YARA (its severity
+   * floors at Medium regardless of confidence, so it keeps the established flat-High raise). Read
+   * instead of comparing the `artifact` label string — a string compare is exactly the fragile
+   * pattern that caused a regression when this rule was first added for THOR (#985 item 4, 985-1a-2
+   * design review, finding F5). */
+  proportionalSeverity: boolean;
 }
 
 const isMark = (e: TimelineEventShape): boolean =>
@@ -212,14 +220,32 @@ const isThor = (e: TimelineEventShape): boolean =>
   (e.sources ?? []).includes("THOR") ||
   ((e.sources ?? []).includes("Velociraptor") && /^THOR /.test(e.description ?? ""));
 
+// A Velociraptor-native YARA hit (velociraptorImport.ts's mapYara — DetectRaptor.Generic.
+// Detection.YaraFile, Windows.Detection.Yara.Glob/Process). mapYara's own description starts
+// "Velociraptor YARA: <rule> - ...", which the generic artifact-prefix injection rewrites to
+// "Velociraptor [<artifact>] YARA: <rule> - ..." — the injection only touches the literal
+// `^Velociraptor` prefix, so the `YARA: ` marker survives shifted, well inside mapYara's own
+// 600-char cap. Anchored to the START of the description (not a loose substring test) so a
+// coincidental "YARA:" elsewhere in an unrelated row's own text can never match, and gated on
+// `sources` first like every other description-text detector in this file (#985 item 4, 985-1a-2
+// design review).
+const VELO_YARA_RULE = /^Velociraptor(?: \[[^\]]*\])? YARA: (\S+)/;
+const isVeloYara = (e: TimelineEventShape): boolean =>
+  (e.sources ?? []).includes("Velociraptor") && VELO_YARA_RULE.test(e.description ?? "");
+
 function artifactOf(e: TimelineEventShape): string {
   const src = (e.sources ?? []).join(" ");
   const action = veloAction(e);
-  // Checked first: a THOR finding's own message routinely names the Windows artifact it flagged (a
-  // Sysmon-sourced log line, an event ID 4688 hit) — the Sysmon/4688 checks below, run against raw
-  // description text, would otherwise mislabel a real THOR row (#985 item 4, 985-1a-3 design
-  // review, finding F7).
+  // Checked first (THOR, then Velociraptor-native YARA): both findings' own messages routinely name
+  // a Windows artifact they flagged (a Sysmon-sourced log line, an event ID 4688 hit, a rule/hit-
+  // context excerpt) — the Sysmon/4688 checks below, run against raw description text, would
+  // otherwise mislabel a real row (#985 item 4, 985-1a-3 design review finding F7, reconfirmed for
+  // this leg by 985-1a-2's design review).
   if (isThor(e)) return "THOR";
+  if (isVeloYara(e)) {
+    const rule = VELO_YARA_RULE.exec(e.description ?? "")?.[1];
+    return `Velociraptor YARA: ${rule ?? "rule"}`;
+  }
   if (/Prefetch/i.test(src) || /prefetch/i.test(action)) return "Prefetch";
   if (/UserAssist/i.test(src) || /UserAssist/i.test(action)) return "UserAssist";
   if (/Amcache/i.test(src) || /Amcache/i.test(action)) return "Amcache";
@@ -238,9 +264,15 @@ function classify<T extends TimelineEventShape>(e: T): Indexed<T> | null {
   const src = (e.sources ?? []).join(" ");
   const action = veloAction(e);
   const isCliYara = (e.sources ?? []).includes("YARA");
+  // Checked before the execution-kind chain, not just for the label reasons above: a memory-only
+  // Velociraptor YARA hit carries no observation time to order against, so it must never fall
+  // through to "execution" and be treated as a confirmed run — a content match is weaker evidence
+  // than a process start, even though mapYara sets no `canonical` field today (#985 item 4,
+  // 985-1a-2 design review, finding F3 — defensive against a future change).
+  const isVeloYaraRow = isVeloYara(e);
   let kind: Kind | null = null;
   if (isMark(e)) kind = "mark";
-  else if (isThor(e)) kind = "detection";
+  else if (isThor(e) || isVeloYaraRow) kind = "detection";
   else if (
     /Prefetch/i.test(src) ||
     /prefetch/i.test(action) ||
@@ -254,7 +286,15 @@ function classify<T extends TimelineEventShape>(e: T): Indexed<T> | null {
   if (!kind) return null;
   const file = filePath(e.path);
   if (!file) return null;
-  return { event: e, kind, host: hostOf(e), file, artifact: artifactOf(e), identityHash: !isCliYara };
+  return {
+    event: e,
+    kind,
+    host: hostOf(e),
+    file,
+    artifact: artifactOf(e),
+    identityHash: !isCliYara,
+    proportionalSeverity: isThor(e) || isVeloYaraRow,
+  };
 }
 
 /** A digest disagreement between two rows that both carry one kind — SHA-256 decides over MD5. */
@@ -561,12 +601,15 @@ export function corroborateDownloadExecution<T extends TimelineEventShape>(event
     const isDetection = (m: Match<T>): boolean => m.record.kind === "detection";
     let raiseTo: Severity | null = matches.some(after) ? "High" : null;
     for (const m of matches.filter(isDetection)) {
-      // THOR carries a real graded severity scale (Critical/High/Medium/Info) and raises the mark
+      // THOR and Velociraptor-native YARA both carry a real graded severity scale and raise the mark
       // proportionally to it. CLI YARA's own severityFromMeta floors every hit at Medium regardless
       // of true confidence, so a CLI YARA content match keeps the established flat High (985-1a)
       // rather than being pulled down to Medium by this rule — verified by running the existing
-      // 985-1a tests, which caught this as a real regression before it shipped.
-      const sev = m.record.artifact === "THOR" ? (m.record.event.severity ?? "Info") : "High";
+      // 985-1a tests, which caught this as a real regression before it shipped. Read from the
+      // classification-time flag, not the `artifact` label string — a string compare is exactly the
+      // fragile pattern that caused that regression in the first place (#985 item 4, 985-1a-2 design
+      // review, finding F5).
+      const sev = m.record.proportionalSeverity ? (m.record.event.severity ?? "Info") : "High";
       if (raiseTo === null || RANK[sev] > RANK[raiseTo]) raiseTo = sev;
     }
     markNotes.set(r.event, { note: parts.join("; "), raiseTo });
