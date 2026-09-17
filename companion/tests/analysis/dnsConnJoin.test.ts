@@ -562,36 +562,6 @@ describe("Suricata dns and flow", () => {
       ...over,
     };
   }
-  // #996: v1 wrote one answer RR per event with `rrname` as the RR's OWNER — no question field.
-  function v1Answer(over: Row = {}, dns: Row = {}): Row {
-    return {
-      timestamp: stamp(0),
-      event_type: "dns",
-      flow_id: 1,
-      src_ip: SERVER,
-      src_port: 53,
-      dest_ip: CLIENT,
-      dest_port: 51000,
-      proto: "UDP",
-      dns: { version: 1, type: "answer", id: 7, rrname: "cdn.example.net", rrtype: "A", rdata: A1, ...dns },
-      ...over,
-    };
-  }
-  // #996: a standalone Suricata query event — normally discarded, kept only as a pairing candidate.
-  function suricataQuery(over: Row = {}, dns: Row = {}): Row {
-    return {
-      timestamp: stamp(-1),
-      event_type: "dns",
-      flow_id: 1,
-      src_ip: CLIENT,
-      src_port: 51000,
-      dest_ip: SERVER,
-      dest_port: 53,
-      proto: "UDP",
-      dns: { type: "query", id: 7, rrname: "www.example.com", rrtype: "A", ...dns },
-      ...over,
-    };
-  }
   function flow(over: Row = {}, f: Row = {}): Row {
     return {
       timestamp: stamp(120),
