@@ -604,6 +604,7 @@
     "severityFloor.ts": "analysis/findings",
     "shadowArtifacts.ts": "analysis/detect",
     "siemBuildProgress.ts": "analysis/ingest",
+    "siemDnsConnJoin.ts": "analysis/ingest",
     "siemImport.ts": "analysis/ingest",
     "concatenatedJson.ts": "analysis/ingest",
     "sigmaCondition.ts": "analysis/hunt",

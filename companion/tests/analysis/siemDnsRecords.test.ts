@@ -26,6 +26,15 @@ const dnsClient = (eid: number, ed: Record<string, string>, over: { ts?: string 
   event_data: ed,
 });
 
+// #996: a Sysmon 3 "Network connection detected" record — the connection side of the join.
+const sysmon3 = (ed: Record<string, string>, over: { ts?: string; host?: string } = {}): object => ({
+  "@timestamp": over.ts ?? "2026-03-01T10:00:05Z",
+  log_name: "Microsoft-Windows-Sysmon/Operational",
+  computer_name: over.host ?? "WS-01",
+  event_id: 3,
+  event_data: { Image: "C:\\Windows\\System32\\svchost.exe", Protocol: "tcp", Initiated: "true", ...ed },
+});
+
 // The import pipeline after the parser (platformImports.ts): keys stripped, the import's source
 // stamped, then correlateEvents' re-import rule.
 const afterImport = (events: SiemEvent[]): ForensicEvent[] =>
@@ -171,6 +180,10 @@ describe("Sysmon 22 — what one record establishes", () => {
       ],
       ownership: "not in this record",
       vantage: "endpoint",
+      // #996: every Windows DNS row now carries the join outcome, even with no Sysmon 3 records
+      // in the upload at all — the row still says so, rather than staying silent about it.
+      joinState: "no connection records in this upload",
+      leads: [],
     });
     expect(c.event).toMatchObject({ category: "network", type: "query" });
   });
@@ -587,5 +600,97 @@ describe("DNS Client operational log", () => {
     );
     expect(r.events[0].description).not.toContain("[query:");
     expect(r.events[0].canonical?.dns).toBeUndefined();
+  });
+});
+
+describe("Sysmon 22 → Sysmon 3 — the within-upload connection join (#996)", () => {
+  it("a returned address followed by a matching connection reads as one lead, in the reused words", () => {
+    const r = parseSiemExport(
+      elastic(
+        sysmon22({ QueryName: "join.example", QueryStatus: "0", QueryResults: "::ffff:203.0.113.9;" }),
+        sysmon3({ DestinationIp: "203.0.113.9", DestinationPort: "443" }),
+      ),
+    );
+    const e = r.events.find((ev) => ev.description.includes("[query: join.example]"))!;
+    expect(e.description).toContain(
+      "203.0.113.9: connection record ≤10 s after the answer arrived, inside the window",
+    );
+    expect(e.description).toContain("window: fixed 300 s — no TTL in this record");
+    expect(e.canonical?.dns).toMatchObject({
+      joinState: "joined",
+      leads: [{ address: "203.0.113.9", state: "connected inside the window", band: "≤10 s" }],
+    });
+    expect(canonicalConformanceIssues(e.canonical)).toEqual([]);
+  });
+
+  it("two identical queries with the SAME connection outcome collapse; a different outcome splits into its own row", () => {
+    const query = () =>
+      sysmon22({ QueryName: "join.example", QueryStatus: "0", QueryResults: "::ffff:203.0.113.9;" });
+    const r = parseSiemExport(
+      elastic(
+        query(), // T0 — sees the connection below, inside its window
+        { ...query(), "@timestamp": "2026-03-01T10:00:01Z" } as object, // T0+1s — also inside window
+        { ...query(), "@timestamp": "2026-03-01T11:00:00Z" } as object, // an hour later — connection is EARLIER for this one
+        sysmon3({ DestinationIp: "203.0.113.9" }, { ts: "2026-03-01T10:00:10Z" }),
+      ),
+    );
+    const rows = r.events.filter((e) => e.description.includes("[query: join.example]"));
+    expect(rows).toHaveLength(2);
+    const inWindow = rows.find((e) => e.description.includes("inside the window"))!;
+    const earlier = rows.find((e) => e.description.includes("earlier connection"))!;
+    expect(inWindow.count).toBe(2);
+    expect(earlier.count).toBeUndefined(); // a single, un-collapsed occurrence — count is unset, not 1
+    expect(inWindow.aggKey).not.toBe(earlier.aggKey);
+    expect(earlier.description).toContain(
+      "203.0.113.9: earlier connection records only — none after this answer",
+    );
+  });
+
+  it("IOC provenance (sourceAggKeys) still resolves the row after the join rewrites its aggKey", () => {
+    const r = parseSiemExport(
+      elastic(
+        sysmon22({ QueryName: "join.example", QueryStatus: "0", QueryResults: "::ffff:203.0.113.9;" }),
+        sysmon3({ DestinationIp: "203.0.113.9" }),
+      ),
+    );
+    const e = r.events.find((ev) => ev.description.includes("[query: join.example]"))!;
+    const ioc = r.iocs.find((i) => i.value === "join.example")!;
+    expect(ioc.sourceAggKeys).toContain(e.aggKey);
+  });
+
+  it("no Sysmon 3 at all says so explicitly rather than staying silent", () => {
+    const r = parseSiemExport(
+      elastic(
+        sysmon22({ QueryName: "alone.example", QueryStatus: "0", QueryResults: "::ffff:203.0.113.9;" }),
+      ),
+    );
+    const e = r.events[0];
+    expect(e.description).toContain("connection join: no connection records in this upload");
+    expect(e.canonical?.dns).toMatchObject({ joinState: "no connection records in this upload", leads: [] });
+  });
+
+  it("a candidate is any destination-bearing Sysmon 3 row — Initiated is not read (disclosed limitation, #996)", () => {
+    const r = parseSiemExport(
+      elastic(
+        sysmon22({ QueryName: "join.example", QueryStatus: "0", QueryResults: "::ffff:203.0.113.9;" }),
+        sysmon3({ DestinationIp: "203.0.113.9", Initiated: "false" }),
+      ),
+    );
+    const e = r.events.find((ev) => ev.description.includes("[query: join.example]"))!;
+    // Documents current behavior, not an endorsement: an inbound connection (this host did NOT
+    // originate it) still joins — siemDnsConnJoin.ts's header explains why (both siemImport.ts and
+    // canonicalEvent.ts sit at their file-size ledger ceiling; a follow-up threads Initiated
+    // through once either has room).
+    expect(e.canonical?.dns).toMatchObject({ joinState: "joined" });
+  });
+
+  it("a folded (bounded-variants overflow) row is skipped by the join — nothing to re-annotate", () => {
+    const churn = Array.from({ length: DNS_VARIANTS_MAX + 1 }, (_, i) =>
+      sysmon22({ QueryName: "churn.example", QueryStatus: "0", QueryResults: `type: 16 nonce-${i};` }),
+    );
+    const r = parseSiemExport(elastic(...churn, sysmon3({ DestinationIp: "203.0.113.9" })));
+    const overflow = r.events.find((e) => e.description.includes("[overflow:"))!;
+    expect(overflow.description).not.toContain("connection join:");
+    expect(overflow.canonical?.dns).toMatchObject({ folded: true });
   });
 });
