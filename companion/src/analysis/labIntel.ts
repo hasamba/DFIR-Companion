@@ -1,4 +1,5 @@
-import type { ForensicEvent, InvestigationState, LabIntelRecord } from "./stateTypes.js";
+import type { ForensicEvent, InvestigationState, LabIntelRecord, Severity } from "./stateTypes.js";
+import { appendDerivedNote, splitDerivedNotes } from "./derivedNote.js";
 
 // Sandbox detonations as intelligence about a SAMPLE, attached to the incident events that carry
 // its hash (#932 item 5). Read the EvidenceOrigin comment in stateTypes.ts for why lab rows are kept
@@ -115,10 +116,63 @@ function epoch(iso: string): number {
   return Number.isFinite(t) ? t : 0;
 }
 
-// Attach each sample's detonations to the incident events that carry its hash. Pure. Lab rows are
-// never annotated (a sandbox row annotating itself would be circular), a stale annotation whose
-// record is gone is cleared, and an event with no match is returned as the SAME object so a merge
-// with no registry costs nothing.
+// The note this pass appends to a HOST/wire event that shares a hash with a malicious or suspicious
+// detonation (#985 item 4, sandbox half). Deliberately NOT the same content as labIntelTag's AI-only
+// tag: no signature text. #932 item 5's own regression guard (labIntelIngest.test.ts) asserts a host
+// sighting's description never contains a signature's own behaviour text ("injection_explorer" in
+// the real CAPE fixture) — that guard exists because the ORIGINAL bug was correlate.ts unioning a
+// lab row's claim onto a host row's own description; this note is careful not to recreate any part
+// of that even though it never merges rows, only appends a clearly bracketed, attributed addendum.
+// Full signatures remain fully visible where they already are (the AI tag, the standalone Sandbox
+// Reports section) — unaffected by this pass.
+export const SANDBOX_VERDICT_MARKER = "[sandbox verdict:";
+const SANDBOX_VERDICT_NOTE_NAME = SANDBOX_VERDICT_MARKER.slice(1, -1);
+const SANDBOX_VERDICT_NOTE_RE = new RegExp(
+  `\\s*\\[${SANDBOX_VERDICT_NOTE_NAME.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}:[\\s\\S]{0,900}?\\]`,
+  "gu",
+);
+const RANK: Record<Severity, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Critical: 4 };
+const raise = (current: Severity, to: Severity): Severity => (RANK[to] > RANK[current] ? to : current);
+
+/** Strips this pass's own prior note (via `splitDerivedNotes`, so every OTHER pass's note stays
+ * intact) before recomputing it fresh on every call — `appendDerivedNote` keeps every existing note
+ * rather than replacing one with the same marker, so skipping this step would duplicate the note
+ * without bound on every re-merge. The same discipline `downloadExecution.ts`'s `withoutOwnNotes`
+ * already uses for its own markers. */
+function withoutSandboxVerdictNote(description: string | undefined): string {
+  const { base, notes } = splitDerivedNotes(description);
+  if (!notes) return base;
+  const kept = notes.replace(SANDBOX_VERDICT_NOTE_RE, "");
+  return [base, kept.trim()].filter(Boolean).join(" ");
+}
+
+function sandboxVerdictNote(matches: readonly LabIntelRecord[]): { note: string; severity: Severity } | null {
+  const { shown, omitted } = selectLabIntelForDisplay(matches);
+  const worst = shown.reduce<Severity>((sev, r) => {
+    if (r.verdict === "malicious") return raise(sev, "High");
+    if (r.verdict === "suspicious") return raise(sev, "Medium");
+    return sev;
+  }, "Info");
+  if (worst === "Info") return null; // every shown record is "unknown" — inconclusive, not a finding
+  const parts = shown.map((r) =>
+    [cleanTagText(r.source, 24), r.verdict, cleanTagText(r.family, MAX_FAMILY), String(r.score)]
+      .filter(Boolean)
+      .join(" "),
+  );
+  const note = `${parts.join("; ")}${omitted ? ` +${omitted} more` : ""}`;
+  return { note, severity: worst };
+}
+
+// Attach each sample's detonations to the incident events that carry its hash, and — new in #985
+// item 4 — turn a malicious/suspicious verdict into the same kind of analyst-visible note + severity
+// raise every other #985 join already produces (previously reached only the AI prompt and a
+// standalone report section). Pure. Lab rows are never annotated (a sandbox row annotating itself
+// would be circular), a stale annotation whose record is gone clears both the field and the note
+// (never lowering severity, matching every pass in this family), and an event with no match is
+// returned as the SAME object so a merge with no registry costs nothing. Folded directly in here,
+// not a separate pass, because this function has TWO callers — stateMerge.ts's mergeDelta AND
+// synthesisPersist.ts's mergeConcurrentAdditions (the synthesis-race reconciliation path) — and a
+// pass wired into only one of them would silently miss whichever sighting arrived through the other.
 export function annotateSightingsWithLabIntel(state: InvestigationState): InvestigationState {
   const registry = state.labIntel ?? [];
   const hasStale = state.forensicTimeline.some((e) => e.labIntel !== undefined);
@@ -128,14 +182,22 @@ export function annotateSightingsWithLabIntel(state: InvestigationState): Invest
   let changed = false;
   const forensicTimeline = state.forensicTimeline.map((e) => {
     const matches = isLabProduced(e) ? undefined : bySha.get(normalizeSha256(e.sha256));
+    const strippedDescription = withoutSandboxVerdictNote(e.description);
     if (!matches?.length) {
-      if (e.labIntel === undefined) return e;
+      if (e.labIntel === undefined && strippedDescription === (e.description ?? "")) return e;
       changed = true;
       const { labIntel: _dropped, ...rest } = e;
-      return rest;
+      return { ...rest, description: strippedDescription };
     }
     changed = true;
-    return { ...e, labIntel: matches };
+    const verdictNote = sandboxVerdictNote(matches);
+    if (!verdictNote) return { ...e, labIntel: matches, description: strippedDescription };
+    return {
+      ...e,
+      labIntel: matches,
+      description: appendDerivedNote(strippedDescription, SANDBOX_VERDICT_MARKER, verdictNote.note),
+      severity: raise(e.severity ?? "Info", verdictNote.severity),
+    };
   });
   return changed ? { ...state, forensicTimeline } : state;
 }

@@ -188,7 +188,7 @@ describe("the sighting carries the sample's lab verdict", () => {
     return e!;
   };
 
-  it("sandbox first, then the host artifact: the host event gets the registry record and keeps its own time", async () => {
+  it("sandbox first, then the host artifact: the host event gets the registry record, keeps its own time, is raised, and is noted — but never with signature text", async () => {
     await importSandbox();
     await importHost();
     const e = sighting(await stateStore.load("c1"));
@@ -196,7 +196,9 @@ describe("the sighting carries the sample's lab verdict", () => {
     expect(e.labIntel?.[0].verdict).toBe("malicious");
     expect(e.timestamp).toBe("2023-03-15T08:00:00.000Z"); // the incident time, not the detonation
     expect(e.origin).toBeUndefined();
-    expect(e.description).not.toMatch(/inject/i); // the host row still describes the host event
+    expect(e.severity).toBe("High"); // #985 item 4 (sandbox half): a malicious verdict raises
+    expect(e.description).toContain("CAPEv2 malicious Emotet");
+    expect(e.description).not.toMatch(/inject/i); // #932 item 5's own guard — no signature TEXT here
   });
 
   it("host artifact first, then the sandbox: same result — the annotation does not depend on import order", async () => {
@@ -205,6 +207,7 @@ describe("the sighting carries the sample's lab verdict", () => {
     const e = sighting(await stateStore.load("c1"));
     expect(e.labIntel).toHaveLength(1);
     expect(e.timestamp).toBe("2023-03-15T08:00:00.000Z");
+    expect(e.severity).toBe("High");
   });
 
   it("renders the verdict to the model as a <sandbox:…> tag beside <host:…>", async () => {
@@ -336,7 +339,10 @@ describe("the registry survives the reducers", () => {
 
   // A sandbox import that annotated a sighting WHILE synthesis ran: the reducer keeps the sighting
   // from the pre-import snapshot, so it must re-annotate over the merged state.
-  it("mergeConcurrentAdditions re-annotates a sighting the concurrent import annotated", async () => {
+  it("mergeConcurrentAdditions re-annotates a sighting the concurrent import annotated — including the #985 note and raise, not just the registry", async () => {
+    // #985 item 4 (sandbox half), design review finding: the note/raise logic must be reachable
+    // through THIS path too, not only stateMerge.ts's mergeDelta — a sandbox report landing while
+    // synthesis is in flight must not silently lose the raise.
     await importHost();
     const loaded = await stateStore.load("c1"); // synthesis snapshot: no registry yet
     await importSandbox();
@@ -346,6 +352,8 @@ describe("the registry survives the reducers", () => {
     const e = merged.forensicTimeline.find((x) => (x.sha256 ?? "").toLowerCase() === SHA);
     expect(merged.labIntel).toHaveLength(1);
     expect(e?.labIntel).toHaveLength(1);
+    expect(e?.severity).toBe("High");
+    expect(e?.description).toContain("CAPEv2 malicious Emotet");
   });
 
   it("mergeConcurrentAdditions unions the registry from both sides", () => {
