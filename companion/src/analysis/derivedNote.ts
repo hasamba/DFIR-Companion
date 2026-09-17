@@ -40,6 +40,9 @@ export const DERIVED_NOTE_NAMES: readonly string[] = [
   "service/task creation after a pipe call",
   "preceded by a service-control pipe call",
   "flow resource attribution",
+  "downloaded from a visited page",
+  "referrer page visited",
+  "preceded a download mark",
 ];
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

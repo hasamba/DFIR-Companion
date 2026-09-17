@@ -30,10 +30,29 @@
 // Prefetch row imported BEFORE its mark was demoted to the super-timeline and is out of reach. A
 // record that corroborates a mark is itself raised so it survives demote; the manual says which
 // order to import in. The notes are recomputed from the current evidence on every merge.
+//
+// A third join — a mark's own download URL or referrer against a Velociraptor browser-history
+// visit that precedes it, the browser-origin half #985 asks for — lives in downloadVisitOrigin.ts
+// (split out for the file-size ledger, #384). Same posture: no technique is added, and a mark is
+// raised no higher than Medium, below what real execution evidence earns.
 
 import type { Severity } from "./stateTypes.js";
 import { appendDerivedNote, splitDerivedNotes } from "./derivedNote.js";
-import { shortHost } from "./correlate.js";
+import {
+  type TimelineEventShape,
+  ORDER_TOLERANCE_MS,
+  neutral,
+  excerpt,
+  ms,
+  hostOf,
+  veloAction,
+} from "./downloadCorroborationShared.js";
+import {
+  browserVisitCorroboration,
+  BROWSER_VISIT_MARKER,
+  REFERRER_VISIT_MARKER,
+  VISIT_PRECEDES_MARK_MARKER,
+} from "./downloadVisitOrigin.js";
 
 // The timeline layer may not import the ingest layer (ARCHITECTURE.md), so the three readings this
 // pass shares with ntfsStreams.ts / recordIdentity.ts are restated here and pinned against their
@@ -54,16 +73,6 @@ export function splitStream(path: string): { hostPath: string; stream: string } 
   return { hostPath: path.slice(0, sep + 1) + name.slice(0, colon), stream };
 }
 
-/** Brackets to parentheses, control characters and hash runs neutralised (recordIdentity.ts). */
-const neutral = (t: string): string =>
-  t
-    .replace(/\[/g, "(")
-    .replace(/\]/g, ")")
-    .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
-    .replace(/\s+/g, " ")
-    .replace(/[a-f0-9]{32,}/gi, (m) => `${m.slice(0, 8)}…${m.slice(-4)}`)
-    .trim();
-
 /** The markers this pass appends. Stripped by correlate.ts before a duplicate key is taken. */
 export const DOWNLOAD_EXECUTED_MARKER = "[download-marked file executed:";
 export const RAN_MARKED_FILE_MARKER = "[ran a download-marked file:";
@@ -72,33 +81,15 @@ export const STREAM_REFERENCE_MARKER = "[command line references a stream:";
 
 /** Executions named per mark; the rest are counted. */
 export const EXECUTIONS_NAMED_MAX = 8;
-/** A run inside this window of the anchor has no established order. */
-export const ORDER_TOLERANCE_MS = 2000;
 const COMMAND_LINE_SCAN_MAX = 4096;
 /** Records indexed per path or hash bucket; the rest are counted, never read. */
 const BUCKET_MAX = 64;
 /** Marks named on one corroborating execution row; the rest are counted. */
-const MARKS_PER_EXECUTION_MAX = 4;
+const MARKS_PER_CORROBORATOR_MAX = 4;
 /** Command lines named on one stream row; the rest are counted. */
 const COMMANDS_PER_STREAM_MAX = 4;
 const REFERENCES_PER_COMMAND_MAX = 4;
-const EXCERPT_MAX = 200;
 const NOTE_MAX = 900;
-
-interface TimelineEventShape {
-  id?: string;
-  description?: string;
-  asset?: string;
-  severity?: Severity;
-  mitreTechniques?: string[];
-  path?: string;
-  sha256?: string;
-  md5?: string;
-  sources?: string[];
-  timestamp?: string;
-  commandLine?: string;
-  canonical?: { event?: { category?: string; type?: string } };
-}
 
 const RANK: Record<string, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Critical: 4 };
 
@@ -147,17 +138,7 @@ export function sameLocation(a: FilePath, b: FilePath): { same: boolean; volumeN
   return { same: a.volume === b.volume };
 }
 
-// ───────────────────────────── hosts ─────────────────────────────
-
-const hostOf = (e: TimelineEventShape): string => shortHost(e.asset);
-
 // ───────────────────────────── time ─────────────────────────────
-
-const ms = (iso: string | undefined): number | null => {
-  if (!iso) return null;
-  const t = Date.parse(iso);
-  return Number.isFinite(t) ? t : null;
-};
 
 function gapWords(gapMs: number): string {
   const s = Math.round(Math.abs(gapMs) / 1000);
@@ -201,19 +182,9 @@ const isMark = (e: TimelineEventShape): boolean =>
 const isProcessStart = (e: TimelineEventShape): boolean =>
   e.canonical?.event?.category === "process" && e.canonical.event.type === "start";
 
-// Velociraptor's `actionEvent()` writes `Velociraptor [<artifact>]: <action>: <subject>…` — the
-// artifact/action segment is fixed text the importer itself wrote, never the row's own (attacker-
-// influenced) data. None of the five actions this pass cares about ("Executed (prefetch)",
-// "Present in ShimCache…", "Installed program (Amcache)", "Program file present (Amcache)",
-// "Ran (UserAssist)") contain a colon, so the first `:` after `]: ` is always the real boundary
-// before `<subject>` — a downloaded file whose name happens to contain one of these words cannot
-// spoof a match, because that text lives past the boundary this capture stops at. Gated on `sources`
-// actually naming Velociraptor: the bounded capture alone only protects the SUBJECT half of the
-// string; without this gate a row from any importer whose description happened to start with the
-// literal prefix (e.g. a copied/relayed description) would still be read (#985 code review).
-const VELO_ACTION = /^Velociraptor \[[^\]]*\]: ([^:]*):/;
-const veloAction = (e: TimelineEventShape): string =>
-  (e.sources ?? []).includes("Velociraptor") ? (VELO_ACTION.exec(e.description ?? "")?.[1] ?? "") : "";
+// `veloAction` (imported) reads Velociraptor's `[<artifact>]: <action>` segment, gated on
+// `sources` naming Velociraptor — see downloadCorroborationShared.ts for the spoof-protection
+// reasoning.
 
 function artifactOf(e: TimelineEventShape): string {
   const src = (e.sources ?? []).join(" ");
@@ -362,7 +333,7 @@ function matchWords<T extends TimelineEventShape>(
   const what = r.kind === "execution" ? (EXECUTION_WHAT[r.artifact] ?? "process start") : "present";
   const notes = [
     r.kind === "presence" ? "not an execution record" : "",
-    m.by === "hash" ? `by hash, at ${neutral(r.event.path ?? "").slice(0, EXCERPT_MAX)}` : "",
+    m.by === "hash" ? `by hash, at ${excerpt(r.event.path ?? "")}` : "",
     m.volumeNote === "volume not compared (GUID vs drive letter)" ? m.volumeNote : "",
   ]
     .filter(Boolean)
@@ -416,8 +387,6 @@ const isHiddenStream = (e: TimelineEventShape): boolean => {
   return !!stream && RANK[e.severity ?? "Info"] >= RANK.Medium;
 };
 
-const excerpt = (s: string): string => neutral(s).slice(0, EXCERPT_MAX);
-
 // ───────────────────────────── the pass ─────────────────────────────
 
 const MARKERS = [
@@ -425,6 +394,9 @@ const MARKERS = [
   RAN_MARKED_FILE_MARKER,
   STREAM_REFERENCED_MARKER,
   STREAM_REFERENCE_MARKER,
+  BROWSER_VISIT_MARKER,
+  REFERRER_VISIT_MARKER,
+  VISIT_PRECEDES_MARK_MARKER,
 ];
 const NOTE_NAMES = MARKERS.map((m) => m.slice(1, -1));
 
@@ -532,7 +504,7 @@ export function corroborateDownloadExecution<T extends TimelineEventShape>(event
       const c =
         corroborating.get(m.record.event) ??
         corroborating.set(m.record.event, { marks: [], more: 0 }).get(m.record.event)!;
-      if (c.marks.length < MARKS_PER_EXECUTION_MAX)
+      if (c.marks.length < MARKS_PER_CORROBORATOR_MAX)
         c.marks.push(`${excerpt(r.event.path ?? "")}${r.host ? ` on ${neutral(r.host).slice(0, 80)}` : ""}`);
       else c.more += 1;
     }
@@ -600,6 +572,14 @@ export function corroborateDownloadExecution<T extends TimelineEventShape>(event
     }
   }
 
+  // Mark → browser visit (#985) — the matching lives in downloadVisitOrigin.ts; this pass only
+  // hands it the classified marks (event + resolved host), the same input shape as the mark →
+  // execution join above.
+  const markRecords = indexed
+    .filter((r): r is Indexed<T> => !!r && r.kind === "mark")
+    .map((r) => ({ event: r.event, host: r.host }));
+  const { ownVisitNotes, referrerVisitNotes, precededNotes } = browserVisitCorroboration(events, markRecords);
+
   return events.map((e) => {
     const base = withoutOwnNotes(e.description);
     let description = base;
@@ -630,6 +610,24 @@ export function corroborateDownloadExecution<T extends TimelineEventShape>(event
         STREAM_REFERENCE_MARKER,
         clipNote(references.slice(0, 4).join("; ")),
       );
+      severity = raise({ ...e, severity }, "Medium");
+    }
+    const ownVisit = ownVisitNotes.get(e);
+    if (ownVisit) {
+      description = appendDerivedNote(description, BROWSER_VISIT_MARKER, clipNote(ownVisit));
+      severity = raise({ ...e, severity }, "Medium");
+    }
+    const refVisit = referrerVisitNotes.get(e);
+    if (refVisit) {
+      description = appendDerivedNote(description, REFERRER_VISIT_MARKER, clipNote(refVisit));
+      severity = raise({ ...e, severity }, "Medium");
+    }
+    const preceded = precededNotes.get(e);
+    if (preceded) {
+      const words = [...preceded.marks, ...(preceded.more ? [`+${preceded.more} more`] : [])].join("; ");
+      description = appendDerivedNote(description, VISIT_PRECEDES_MARK_MARKER, clipNote(words));
+      // Raised too, like the corroborating execution row — otherwise an Info-severity visit falls
+      // into the super-timeline before the next merge and this join can never re-find it.
       severity = raise({ ...e, severity }, "Medium");
     }
     if (description === (e.description ?? "") && severity === (e.severity ?? "Info")) return e;
