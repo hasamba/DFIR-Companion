@@ -377,6 +377,52 @@ describe("Velociraptor-shaped rows (no literal tool name in sources)", () => {
     ]);
     expect(find(out, "m1").description).not.toContain(DOWNLOAD_EXECUTED_MARKER);
   });
+
+  it("a non-Velociraptor row with a lookalike description prefix is not classified by it", () => {
+    // The description-based fallback is gated on sources actually naming Velociraptor — a row from
+    // another importer (or a KAPE row whose free text happens to start the same way) must not be
+    // read as if it were one (#985 code review).
+    const out = run([
+      mark({ sources: ["Sysmon"], asset: "WS-01" }),
+      {
+        id: "lookalike1",
+        timestamp: at(3),
+        description:
+          "Velociraptor [Windows.Forensics.Prefetch]: Executed (prefetch) (1×): tool.exe - @ WS-01",
+        severity: "Info",
+        mitreTechniques: [],
+        path: "C:\\Users\\x\\Downloads\\tool.exe",
+        asset: "WS-01",
+        sources: ["SomeOtherTool"],
+      },
+    ]);
+    expect(find(out, "m1").description).not.toContain(DOWNLOAD_EXECUTED_MARKER);
+  });
+
+  it("a real Windows.Registry.UserAssist row from parseVelociraptorJson corroborates a mark", async () => {
+    // Pinned against the actual importer, not a hand-built description (#985 code review): Name
+    // carries a full resolved path (velociraptorImport.test.ts's own UserAssist fixture uses
+    // "C:\\Tools\\mimikatz.exe"), not a GUID-prefixed shell token.
+    const { parseVelociraptorJson } = await import("../../src/analysis/velociraptorImport.js");
+    const { events } = parseVelociraptorJson(
+      JSON.stringify([
+        {
+          _Source: "Windows.Registry.UserAssist",
+          Name: "C:\\Users\\x\\Downloads\\tool.exe",
+          NumberOfExecutions: 3,
+          LastExecution: at(3),
+          Fqdn: "WS-01",
+        },
+      ]),
+    );
+    const row = events[0] as unknown as Ev;
+    expect(row.description).toContain("Ran (UserAssist)");
+    expect(row.sources).toContain("Velociraptor");
+    const out = run([mark({ sources: ["Sysmon"], asset: "WS-01" }), { ...row, id: "real-ua1" }]);
+    const m = find(out, "m1");
+    expect(m.severity).toBe("High");
+    expect(m.description).toContain("UserAssist ran");
+  });
 });
 
 describe("stream → command line", () => {

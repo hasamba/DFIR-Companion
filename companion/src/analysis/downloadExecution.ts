@@ -207,13 +207,17 @@ const isProcessStart = (e: TimelineEventShape): boolean =>
 // "Present in ShimCache…", "Installed program (Amcache)", "Program file present (Amcache)",
 // "Ran (UserAssist)") contain a colon, so the first `:` after `]: ` is always the real boundary
 // before `<subject>` — a downloaded file whose name happens to contain one of these words cannot
-// spoof a match, because that text lives past the boundary this capture stops at.
+// spoof a match, because that text lives past the boundary this capture stops at. Gated on `sources`
+// actually naming Velociraptor: the bounded capture alone only protects the SUBJECT half of the
+// string; without this gate a row from any importer whose description happened to start with the
+// literal prefix (e.g. a copied/relayed description) would still be read (#985 code review).
 const VELO_ACTION = /^Velociraptor \[[^\]]*\]: ([^:]*):/;
-const veloAction = (desc: string | undefined): string => VELO_ACTION.exec(desc ?? "")?.[1] ?? "";
+const veloAction = (e: TimelineEventShape): string =>
+  (e.sources ?? []).includes("Velociraptor") ? (VELO_ACTION.exec(e.description ?? "")?.[1] ?? "") : "";
 
 function artifactOf(e: TimelineEventShape): string {
   const src = (e.sources ?? []).join(" ");
-  const action = veloAction(e.description);
+  const action = veloAction(e);
   if (/Prefetch/i.test(src) || /prefetch/i.test(action)) return "Prefetch";
   if (/UserAssist/i.test(src) || /UserAssist/i.test(action)) return "UserAssist";
   if (/Amcache/i.test(src) || /Amcache/i.test(action)) return "Amcache";
@@ -226,7 +230,7 @@ function artifactOf(e: TimelineEventShape): string {
 function classify<T extends TimelineEventShape>(e: T): Indexed<T> | null {
   if (!e.path) return null;
   const src = (e.sources ?? []).join(" ");
-  const action = veloAction(e.description);
+  const action = veloAction(e);
   let kind: Kind | null = null;
   if (isMark(e)) kind = "mark";
   else if (
