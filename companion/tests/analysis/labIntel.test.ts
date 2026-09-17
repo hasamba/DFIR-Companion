@@ -7,6 +7,7 @@ import {
   isLabProduced,
   selectLabIntelForDisplay,
   cleanTagText,
+  SANDBOX_VERDICT_MARKER,
 } from "../../src/analysis/labIntel.js";
 import type { ForensicEvent, InvestigationState, LabIntelRecord } from "../../src/analysis/stateTypes.js";
 
@@ -81,15 +82,42 @@ describe("upsertLabIntel", () => {
 });
 
 describe("annotateSightingsWithLabIntel", () => {
-  it("puts the sample's detonations on the incident event that carries the hash — and touches nothing else on it", () => {
+  it("puts the sample's detonations on the incident event that carries the hash, raises a malicious verdict to High, and notes it — never touching the row's own time or base description", () => {
     const e = ev({ id: "e1", sha256: SHA, severity: "Info", timestamp: "2026-05-01T08:00:00Z" });
     const out = annotateSightingsWithLabIntel(state([e], [rec()]));
     const got = out.forensicTimeline[0];
     expect(got.labIntel).toHaveLength(1);
     expect(got.labIntel?.[0].verdict).toBe("malicious");
     expect(got.timestamp).toBe("2026-05-01T08:00:00Z"); // NOT the detonation time
-    expect(got.severity).toBe("Info");
-    expect(got.description).toBe(e.description);
+    expect(got.severity).toBe("High");
+    expect(got.description).toContain(e.description);
+    expect(got.description).toContain(SANDBOX_VERDICT_MARKER);
+    expect(got.description).toContain("CAPEv2 malicious Emotet 9");
+    // #932 item 5's own regression guard: signature TEXT never reaches a host row's description —
+    // only the AI-only tag and the standalone Sandbox Reports section carry it.
+    expect(got.description).not.toMatch(/inject/i);
+  });
+  it("raises a suspicious verdict to Medium, not High", () => {
+    const out = annotateSightingsWithLabIntel(
+      state([ev({ id: "e1", sha256: SHA, severity: "Info" })], [rec({ verdict: "suspicious" })]),
+    );
+    expect(out.forensicTimeline[0].severity).toBe("Medium");
+    expect(out.forensicTimeline[0].description).toContain(SANDBOX_VERDICT_MARKER);
+  });
+  it("does not raise or note an unknown verdict — an inconclusive result is not a finding", () => {
+    const e = ev({ id: "e1", sha256: SHA, severity: "Info" });
+    const out = annotateSightingsWithLabIntel(state([e], [rec({ verdict: "unknown" })]));
+    expect(out.forensicTimeline[0].severity).toBe("Info");
+    expect(out.forensicTimeline[0].description).toBe(e.description);
+  });
+  it("follows the WORST verdict among several records for the same sample", () => {
+    const out = annotateSightingsWithLabIntel(
+      state(
+        [ev({ id: "e1", sha256: SHA, severity: "Info" })],
+        [rec({ runId: "1", verdict: "unknown" }), rec({ runId: "2", verdict: "malicious" })],
+      ),
+    );
+    expect(out.forensicTimeline[0].severity).toBe("High");
   });
   it("matches on the normalised hash, so an uppercase digest on the event still matches", () => {
     const out = annotateSightingsWithLabIntel(state([ev({ id: "e1", sha256: SHA.toUpperCase() })], [rec()]));
@@ -98,11 +126,36 @@ describe("annotateSightingsWithLabIntel", () => {
   it("never annotates a lab row, even one carrying the hash", () => {
     const out = annotateSightingsWithLabIntel(state([ev({ id: "e1", sha256: SHA, origin: "lab" })], [rec()]));
     expect(out.forensicTimeline[0].labIntel).toBeUndefined();
+    expect(out.forensicTimeline[0].description).not.toContain(SANDBOX_VERDICT_MARKER);
   });
-  it("clears a stale annotation when the registry no longer has the record", () => {
-    const stale = ev({ id: "e1", sha256: SHA, labIntel: [rec()] });
+  it("clears a stale note when the registry no longer has the record, but never lowers severity", () => {
+    const stale = ev({
+      id: "e1",
+      sha256: SHA,
+      severity: "High",
+      description: `file created C:\\Users\\x\\invoice.exe ${SANDBOX_VERDICT_MARKER} CAPEv2 malicious Emotet 9]`,
+      labIntel: [rec()],
+    });
     const out = annotateSightingsWithLabIntel(state([stale], []));
-    expect(out.forensicTimeline[0].labIntel).toBeUndefined();
+    const got = out.forensicTimeline[0];
+    expect(got.labIntel).toBeUndefined();
+    expect(got.description).not.toContain(SANDBOX_VERDICT_MARKER);
+    expect(got.severity).toBe("High"); // never lowered — matches every other pass in this family
+  });
+  it("is idempotent: running it twice does not duplicate the note or re-raise past High", () => {
+    const once = annotateSightingsWithLabIntel(state([ev({ id: "e1", sha256: SHA })], [rec()]));
+    const twice = annotateSightingsWithLabIntel({ ...once, labIntel: [rec()] });
+    const desc = twice.forensicTimeline[0].description;
+    expect(desc.match(new RegExp(SANDBOX_VERDICT_MARKER.replace(/[[\]]/g, "\\$&"), "g")) ?? []).toHaveLength(
+      1,
+    );
+    expect(twice.forensicTimeline[0].severity).toBe("High");
+  });
+  it("sanitizes an attacker-influenced family name in the note", () => {
+    const out = annotateSightingsWithLabIntel(
+      state([ev({ id: "e1", sha256: SHA })], [rec({ family: "<script>Emotet</script>" })]),
+    );
+    expect(out.forensicTimeline[0].description).not.toMatch(/[<>]/);
   });
   it("is a no-op that returns the same object when there is no registry", () => {
     const s = state([ev({ id: "e1", sha256: SHA })]);
