@@ -7,6 +7,9 @@ import {
   RAN_MARKED_FILE_MARKER,
   STREAM_REFERENCED_MARKER,
   STREAM_REFERENCE_MARKER,
+  BROWSER_VISIT_MARKER,
+  REFERRER_VISIT_MARKER,
+  VISIT_PRECEDES_MARK_MARKER,
   EXECUTIONS_NAMED_MAX,
 } from "../../src/analysis/downloadExecution.js";
 import { PROVENANCE_NOTE } from "../../src/analysis/ntfsStreams.js";
@@ -422,6 +425,91 @@ describe("Velociraptor-shaped rows (no literal tool name in sources)", () => {
     const m = find(out, "m1");
     expect(m.severity).toBe("High");
     expect(m.description).toContain("UserAssist ran");
+  });
+});
+
+// #985 (browser-origin half): a mark's own download URL or referrer, matched against a
+// Velociraptor browser-history "Visited" row for the same URL — T1189's precondition, never the
+// technique itself (no mitreTechniques added in any case here).
+describe("mark → browser visit", () => {
+  const visitRow = async (url: string, over: Partial<Ev> = {}): Promise<Ev> => {
+    const { parseVelociraptorJson } = await import("../../src/analysis/velociraptorImport.js");
+    const { events } = parseVelociraptorJson(
+      JSON.stringify([
+        {
+          _Source: "Windows.Applications.Chrome.History",
+          visited_url: url,
+          title: "Evil",
+          visit_count: 1,
+          visit_time: at(-30),
+          Fqdn: "WS-01",
+        },
+      ]),
+    );
+    return { ...(events[0] as unknown as Ev), id: "v1", ...over };
+  };
+
+  it("the mark's own URL, visited: raises to Medium, no technique, both rows noted", async () => {
+    const visit = await visitRow("https://evil.example/tool.exe");
+    const out = run([mark({ sources: ["Sysmon"], asset: "WS-01" }), visit]);
+    const m = find(out, "m1");
+    expect(m.severity).toBe("Medium");
+    expect(m.mitreTechniques).toEqual([]);
+    expect(m.description).toContain(BROWSER_VISIT_MARKER);
+    expect(m.description).toContain("visited the download URL");
+    const v = find(out, "v1");
+    expect(v.severity).toBe("Medium");
+    expect(v.description).toContain(VISIT_PRECEDES_MARK_MARKER);
+  });
+
+  it("a visit to the referrer page (not the download URL) is noted separately", async () => {
+    const visit = await visitRow("https://phish.example/page");
+    const out = run([
+      mark({
+        sources: ["Sysmon"],
+        asset: "WS-01",
+        description: `MFT: .\\Users\\x\\Downloads\\tool.exe — downloaded from the Internet zone (https://evil.example/tool.exe, referrer https://phish.example/page) — ${PROVENANCE_NOTE}`,
+      }),
+      visit,
+    ]);
+    const m = find(out, "m1");
+    expect(m.severity).toBe("Medium");
+    expect(m.mitreTechniques).toEqual([]);
+    expect(m.description).toContain(REFERRER_VISIT_MARKER);
+    expect(m.description).toContain("visited the referrer page");
+    expect(m.description).not.toContain("visited the download URL");
+  });
+
+  it("normalizes scheme/host case and a trailing slash, but not the path", async () => {
+    const visit = await visitRow("HTTPS://Evil.Example/tool.exe/");
+    const out = run([mark({ sources: ["Sysmon"], asset: "WS-01" }), visit]);
+    expect(find(out, "m1").description).toContain(BROWSER_VISIT_MARKER);
+    const differentPath = await visitRow("https://evil.example/other.exe");
+    const miss = run([mark({ sources: ["Sysmon"], asset: "WS-01" }), differentPath]);
+    expect(find(miss, "m1").description).not.toContain(BROWSER_VISIT_MARKER);
+  });
+
+  it("two named, disagreeing hosts never join", async () => {
+    const visit = await visitRow("https://evil.example/tool.exe", { asset: "WS-02" });
+    const out = run([mark({ sources: ["Sysmon"], asset: "WS-01" }), visit]);
+    expect(find(out, "m1").description).not.toContain(BROWSER_VISIT_MARKER);
+  });
+
+  it("a non-Velociraptor row with a lookalike 'Visited' description does not spoof a match", () => {
+    const out = run([
+      mark({ sources: ["Sysmon"], asset: "WS-01" }),
+      {
+        id: "lookalike1",
+        timestamp: at(-30),
+        description:
+          "Velociraptor [Windows.Applications.Chrome.History]: Visited (1×): https://evil.example/tool.exe - @ WS-01",
+        severity: "Info",
+        mitreTechniques: [],
+        asset: "WS-01",
+        sources: ["SomeOtherTool"],
+      },
+    ]);
+    expect(find(out, "m1").description).not.toContain(BROWSER_VISIT_MARKER);
   });
 });
 

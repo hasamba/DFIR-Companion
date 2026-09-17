@@ -30,6 +30,14 @@
 // Prefetch row imported BEFORE its mark was demoted to the super-timeline and is out of reach. A
 // record that corroborates a mark is itself raised so it survives demote; the manual says which
 // order to import in. The notes are recomputed from the current evidence on every merge.
+//
+// A third join: a mark's own download URL or referrer (ntfsStreams.ts's `markWords()` embeds both
+// straight into the mark's description) against a Velociraptor browser-history "Visited" row for
+// the same URL — the browser-origin half #985 asks for. It establishes that the browser was used
+// to reach that URL, never that the visit CAUSED the download (T1189 needs an analyst's own read,
+// not an automated one) — no technique is added here either, and the mark is raised no higher than
+// Medium, below what real execution evidence earns. This pass runs before correlateEvents
+// (stateMerge.ts), so the description text it reads is still the raw importer output.
 
 import type { Severity } from "./stateTypes.js";
 import { appendDerivedNote, splitDerivedNotes } from "./derivedNote.js";
@@ -69,6 +77,9 @@ export const DOWNLOAD_EXECUTED_MARKER = "[download-marked file executed:";
 export const RAN_MARKED_FILE_MARKER = "[ran a download-marked file:";
 export const STREAM_REFERENCED_MARKER = "[stream referenced by a command line:";
 export const STREAM_REFERENCE_MARKER = "[command line references a stream:";
+export const BROWSER_VISIT_MARKER = "[downloaded from a visited page:";
+export const REFERRER_VISIT_MARKER = "[referrer page visited:";
+export const VISIT_PRECEDES_MARK_MARKER = "[preceded a download mark:";
 
 /** Executions named per mark; the rest are counted. */
 export const EXECUTIONS_NAMED_MAX = 8;
@@ -418,6 +429,83 @@ const isHiddenStream = (e: TimelineEventShape): boolean => {
 
 const excerpt = (s: string): string => neutral(s).slice(0, EXCERPT_MAX);
 
+// ───────────────────────────── the mark → browser visit pass ─────────────────────────────
+
+/** The mark's own download URL / referrer, embedded in its description by ntfsStreams.ts's
+ * `markWords()` (`downloaded from <zone> (<url>[, referrer <referrer>])`). "" when the record
+ * carried neither. */
+const MARK_URL =
+  /downloaded from (?:the [A-Za-z ]+ zone|zone \S+) \((https?:\/\/[^,)]+)(?:, referrer (https?:\/\/[^)]+))?\)/i;
+function markUrls(e: TimelineEventShape): { url: string; referrer: string } {
+  const m = MARK_URL.exec(splitDerivedNotes(e.description).base);
+  return { url: m?.[1]?.trim() ?? "", referrer: m?.[2]?.trim() ?? "" };
+}
+
+/** A Velociraptor browser-history "Visited" row's URL. `veloAction` already gates on `sources`
+ * naming Velociraptor, so a non-Velociraptor row with a lookalike description cannot spoof this. */
+function veloVisitUrl(e: TimelineEventShape): string {
+  if (!/^Visited/i.test(veloAction(e))) return "";
+  const m = /https?:\/\/\S+/i.exec(e.description ?? "");
+  return m ? m[0].replace(/[.,;]+$/, "") : "";
+}
+
+/** Scheme and host fold together (case is not a real difference there); the path/query stay
+ * case-sensitive — a real distinguishing part of a URL. A bare origin's trailing slash is not a
+ * distinct page. */
+function normalizeUrl(u: string): string {
+  const m = /^(https?):\/\/([^/]+)(\/.*)?$/i.exec(u.trim());
+  if (!m) return u.trim();
+  const path = (m[3] ?? "").replace(/\/+$/, "");
+  return `${m[1].toLowerCase()}://${m[2].toLowerCase()}${path}`;
+}
+
+interface Visit<T> {
+  event: T;
+  host: string;
+  hostNote?: string;
+}
+
+/** The visit rows matching a URL, filtered by the same host rule as the mark → execution join:
+ * two NAMED hosts must agree; an unnamed record attaches only when the eligible set names at
+ * most one host. */
+function matchVisits<T extends TimelineEventShape>(
+  markHost: string,
+  url: string,
+  visitByUrl: Map<string, { event: T; host: string }[]>,
+): Visit<T>[] {
+  const candidates = visitByUrl.get(normalizeUrl(url)) ?? [];
+  if (!candidates.length) return [];
+  const namedHosts = new Set([markHost, ...candidates.map((c) => c.host)].filter(Boolean));
+  const out: Visit<T>[] = [];
+  for (const c of candidates) {
+    if (markHost && c.host) {
+      if (markHost === c.host) out.push(c);
+      continue;
+    }
+    if (namedHosts.size > 1) continue;
+    out.push({
+      ...c,
+      hostNote:
+        namedHosts.size === 1
+          ? `host not named on one record — attributed to the case's one named host, ${neutral([...namedHosts][0]).slice(0, 80)}`
+          : "host not named on either record",
+    });
+  }
+  return out;
+}
+
+function visitWords<T extends TimelineEventShape>(v: Visit<T>): string {
+  const when = v.event.timestamp ? neutral(v.event.timestamp).slice(0, 40) : "no time";
+  const hostNote = v.hostNote ? ` (${v.hostNote})` : "";
+  return `${excerpt(v.event.description ?? "")} — ${when}${hostNote}`;
+}
+
+/** One label's note: the first eligible visit, named; the rest counted. */
+function joinVisits<T extends TimelineEventShape>(matches: Visit<T>[], label: string): string {
+  const more = matches.length > 1 ? `; +${matches.length - 1} more` : "";
+  return `${label}: ${visitWords(matches[0])}${more}`;
+}
+
 // ───────────────────────────── the pass ─────────────────────────────
 
 const MARKERS = [
@@ -425,6 +513,9 @@ const MARKERS = [
   RAN_MARKED_FILE_MARKER,
   STREAM_REFERENCED_MARKER,
   STREAM_REFERENCE_MARKER,
+  BROWSER_VISIT_MARKER,
+  REFERRER_VISIT_MARKER,
+  VISIT_PRECEDES_MARK_MARKER,
 ];
 const NOTE_NAMES = MARKERS.map((m) => m.slice(1, -1));
 
@@ -600,6 +691,41 @@ export function corroborateDownloadExecution<T extends TimelineEventShape>(event
     }
   }
 
+  // Mark → browser visit: a mark's own download URL, or its referrer, matched against a
+  // Velociraptor "Visited" row for the same URL. Establishes that the browser reached that URL —
+  // not that the visit caused the download (no technique added; #985).
+  const visitByUrl = new Map<string, { event: T; host: string }[]>();
+  for (const e of events) {
+    const url = veloVisitUrl(e);
+    if (!url) continue;
+    const key = normalizeUrl(url);
+    const list = visitByUrl.get(key) ?? visitByUrl.set(key, []).get(key)!;
+    if (list.length < BUCKET_MAX) list.push({ event: e, host: hostOf(e) });
+  }
+  const ownVisitNotes = new Map<T, string>();
+  const referrerVisitNotes = new Map<T, string>();
+  const precededNotes = new Map<T, { marks: string[]; more: number }>();
+  if (visitByUrl.size) {
+    for (const r of indexed) {
+      if (!r || r.kind !== "mark") continue;
+      const { url, referrer } = markUrls(r.event);
+      if (!url && !referrer) continue;
+      const own = url ? matchVisits(r.host, url, visitByUrl) : [];
+      const ref = referrer && referrer !== url ? matchVisits(r.host, referrer, visitByUrl) : [];
+      if (own.length) ownVisitNotes.set(r.event, joinVisits(own, "visited the download URL"));
+      if (ref.length) referrerVisitNotes.set(r.event, joinVisits(ref, "visited the referrer page"));
+      for (const v of [...own, ...ref]) {
+        const c =
+          precededNotes.get(v.event) ?? precededNotes.set(v.event, { marks: [], more: 0 }).get(v.event)!;
+        if (c.marks.length < MARKS_PER_EXECUTION_MAX)
+          c.marks.push(
+            `${excerpt(r.event.path ?? "")}${r.host ? ` on ${neutral(r.host).slice(0, 80)}` : ""}`,
+          );
+        else c.more += 1;
+      }
+    }
+  }
+
   return events.map((e) => {
     const base = withoutOwnNotes(e.description);
     let description = base;
@@ -630,6 +756,24 @@ export function corroborateDownloadExecution<T extends TimelineEventShape>(event
         STREAM_REFERENCE_MARKER,
         clipNote(references.slice(0, 4).join("; ")),
       );
+      severity = raise({ ...e, severity }, "Medium");
+    }
+    const ownVisit = ownVisitNotes.get(e);
+    if (ownVisit) {
+      description = appendDerivedNote(description, BROWSER_VISIT_MARKER, clipNote(ownVisit));
+      severity = raise({ ...e, severity }, "Medium");
+    }
+    const refVisit = referrerVisitNotes.get(e);
+    if (refVisit) {
+      description = appendDerivedNote(description, REFERRER_VISIT_MARKER, clipNote(refVisit));
+      severity = raise({ ...e, severity }, "Medium");
+    }
+    const preceded = precededNotes.get(e);
+    if (preceded) {
+      const words = [...preceded.marks, ...(preceded.more ? [`+${preceded.more} more`] : [])].join("; ");
+      description = appendDerivedNote(description, VISIT_PRECEDES_MARK_MARKER, clipNote(words));
+      // Raised too, like the corroborating execution row — otherwise an Info-severity visit falls
+      // into the super-timeline before the next merge and this join can never re-find it.
       severity = raise({ ...e, severity }, "Medium");
     }
     if (description === (e.description ?? "") && severity === (e.severity ?? "Info")) return e;
