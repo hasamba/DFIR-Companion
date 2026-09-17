@@ -74,11 +74,11 @@ async function runOne(
   try {
     const output = await runCorpusCase(fixture, metered);
     const score = scoreCaseQuality(fixture.golden, output);
-    console.log(formatCaseQualityReport(fixture.id, score));
+    console.log(formatCaseQualityReport(fixture.id, score, { real }));
     return {
       id: fixture.id,
       scenario: fixture.scenario,
-      status: passesCaseQuality(score) ? "passed" : "quality_failed",
+      status: passesCaseQuality(score, { real }) ? "passed" : "quality_failed",
       metrics: metrics(score, fixture),
       resources: withTotalDuration(metered.snapshot(), started),
     };

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { passesCaseQuality, scoreCaseQuality, type CaseGolden, type QualityOutput } from "./qualityScorer.js";
+import {
+  passesCaseQuality,
+  scoreCaseQuality,
+  type CaseGolden,
+  type CaseQualityScore,
+  type QualityOutput,
+} from "./qualityScorer.js";
 
 const GOLDEN: CaseGolden = {
   claims: [
@@ -123,5 +129,137 @@ describe("scoreCaseQuality (#378 production quality gates)", () => {
     };
     expect(passesCaseQuality(scoreCaseQuality(cleanGolden, { ...OUTPUT, claims: [], iocs: [] }))).toBe(true);
     expect(passesCaseQuality(scoreCaseQuality(cleanGolden, OUTPUT))).toBe(false);
+  });
+});
+
+// #1217: the production prompt explicitly forbids collapsing multiple techniques into one
+// "campaign" finding, so a golden claim describing a case-level narrative (spanning several seed
+// events / techniques) must be satisfiable by the UNION of the separate atomic findings that make
+// it up — not require a single produced finding to carry the whole story alone.
+describe("scoreClaims union matching (#1217)", () => {
+  const MULTI_GOLDEN: CaseGolden = {
+    claims: [
+      {
+        id: "ransomware-impact",
+        requiredTerms: ["files encrypted"],
+        evidenceEventIds: ["rw-e1", "rw-e2", "rw-e3"],
+        confidence: { min: 50, max: 100 },
+      },
+    ],
+    iocs: [],
+    forbiddenConclusions: [],
+    uncertainties: [],
+    nextSteps: [],
+    expectAbstention: false,
+  };
+
+  function atomicOutput(): QualityOutput {
+    return {
+      evidenceEventIds: ["rw-e1", "rw-e2", "rw-e3"],
+      claims: [
+        { id: "f1", title: "Macro execution", description: "A macro spawned PowerShell.", evidenceEventIds: ["rw-e1"] },
+        {
+          id: "f2",
+          title: "Shadow copy deletion",
+          description: "Shadow copies were deleted ahead of impact.",
+          evidenceEventIds: ["rw-e2"],
+        },
+        {
+          id: "f3",
+          title: "Mass encryption",
+          description: "Hundreds of files encrypted with a ransomware extension.",
+          evidenceEventIds: ["rw-e3"],
+        },
+      ],
+      iocs: [],
+      uncertainties: [],
+      nextSteps: [],
+    };
+  }
+
+  it("matches a golden claim against the union of the atomic findings that jointly cover it", () => {
+    const score = scoreCaseQuality(MULTI_GOLDEN, atomicOutput());
+    expect(score.claims.missed).toEqual([]);
+    expect(score.claims.falseConclusions).toEqual([]);
+    expect(score.claims.precision).toBe(1);
+    expect(score.claims.recall).toBe(1);
+  });
+
+  it("still misses when the union's evidence is incomplete", () => {
+    const output = atomicOutput();
+    output.claims = output.claims.slice(0, 2); // rw-e3 never surfaced
+    const score = scoreCaseQuality(MULTI_GOLDEN, output);
+    expect(score.claims.missed).toEqual(["ransomware-impact"]);
+    expect(score.claims.falseConclusions).toEqual(["f1", "f2"]);
+  });
+
+  it("still misses when the union's evidence is complete but no claim's text carries the required term", () => {
+    const output = atomicOutput();
+    output.claims[2] = { ...output.claims[2], description: "Hundreds of documents were renamed." };
+    const score = scoreCaseQuality(MULTI_GOLDEN, output);
+    expect(score.claims.missed).toEqual(["ransomware-impact"]);
+  });
+
+  it("does not launder an unrelated extra finding into the union (minimal cover only)", () => {
+    const output = atomicOutput();
+    output.claims.push({
+      id: "f4",
+      title: "Unrelated benign process",
+      description: "A signed OS process ran, unrelated to the ransomware chain.",
+      evidenceEventIds: [],
+    });
+    const score = scoreCaseQuality(MULTI_GOLDEN, output);
+    expect(score.claims.missed).toEqual([]);
+    expect(score.claims.falseConclusions).toEqual(["f4"]);
+  });
+
+  it("does not fuse text across a union boundary into a false term match", () => {
+    const output = atomicOutput();
+    // f2's text ends with a trailing space + "files", f3's starts directly with "encrypted" (no
+    // leading space) — a naive "" join would fuse them into "...files encrypted..." even though
+    // no single claim, nor the intended reading, ever says that. "\n\n" must keep them apart.
+    output.claims[1] = { ...output.claims[1], description: "Shadow copies deleted. Many files " };
+    output.claims[2] = { ...output.claims[2], description: "encrypted with a ransomware extension." };
+    const score = scoreCaseQuality(MULTI_GOLDEN, output);
+    expect(score.claims.missed).toEqual(["ransomware-impact"]);
+  });
+});
+
+describe("passesCaseQuality real-run tolerance (#1217)", () => {
+  const baseScore: CaseQualityScore = {
+    claims: { total: 1, matched: 1, precision: 0.5, recall: 1, missed: [], falseConclusions: ["extra"] },
+    iocs: { total: 1, matched: 1, precision: 0.5, recall: 1, missed: [], unexpected: ["extra-ioc"] },
+    danglingEvidenceRefs: [],
+    forbiddenConclusions: [],
+    confidenceIssues: [],
+    uncertainties: { total: 1, matched: 1, recall: 1, missed: [] },
+    nextSteps: { total: 1, matched: 1, recall: 1, missed: [] },
+    abstentionPassed: true,
+  };
+
+  it("fails imperfect precision on a mock/deterministic run (default, unchanged)", () => {
+    expect(passesCaseQuality(baseScore)).toBe(false);
+  });
+
+  it("does not gate on precision for a real run — a thorough model's extra correct findings are not a failure", () => {
+    expect(passesCaseQuality(baseScore, { real: true })).toBe(true);
+  });
+
+  it("still gates recall, hallucination, forbidden conclusions, and the confidence rubric on a real run", () => {
+    expect(passesCaseQuality({ ...baseScore, claims: { ...baseScore.claims, recall: 0.5 } }, { real: true })).toBe(
+      false,
+    );
+    expect(
+      passesCaseQuality(
+        { ...baseScore, danglingEvidenceRefs: [{ claimId: "f1", evidenceEventIds: ["bogus"] }] },
+        { real: true },
+      ),
+    ).toBe(false);
+    expect(
+      passesCaseQuality({ ...baseScore, forbiddenConclusions: ["invented-actor"] }, { real: true }),
+    ).toBe(false);
+    expect(passesCaseQuality({ ...baseScore, confidenceIssues: ["f1: confidence has no reason"] }, { real: true })).toBe(
+      false,
+    );
   });
 });

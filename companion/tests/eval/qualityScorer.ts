@@ -122,25 +122,76 @@ function claimText(claim: QualityClaim): string {
   return `${claim.title}\n${claim.description}`;
 }
 
+// A case-level narrative claim (e.g. "ransomware impact") may legitimately be told across several
+// SEPARATE atomic findings — the production synthesis prompt explicitly forbids collapsing distinct
+// techniques into one "campaign" finding (analysis/ai/prompts/synthesis.ts), so a single golden claim
+// spanning several seed events must be satisfiable by the findings that jointly make it up (#1217).
+//
+// Greedy MINIMAL cover: repeatedly add the not-yet-used candidate covering the most still-uncovered
+// required ids, and never add one that covers zero new ids — so an unrelated or duplicate finding
+// can't ride along "used" for free just because it happens to be in the pool.
+function greedyMinimalCover(
+  required: readonly string[],
+  candidates: readonly { index: number; ids: readonly string[] }[],
+): number[] | null {
+  const remaining = new Set(required);
+  const chosen: number[] = [];
+  const pool = [...candidates];
+  while (remaining.size > 0) {
+    let bestIndex = -1;
+    let bestNewCoverage = 0;
+    for (let i = 0; i < pool.length; i += 1) {
+      const newCoverage = pool[i].ids.filter((id) => remaining.has(id)).length;
+      if (newCoverage > bestNewCoverage) {
+        bestNewCoverage = newCoverage;
+        bestIndex = i;
+      }
+    }
+    if (bestIndex < 0) return null; // no remaining candidate covers anything new — unsatisfiable
+    const [best] = pool.splice(bestIndex, 1);
+    chosen.push(best.index);
+    for (const id of best.ids) remaining.delete(id);
+  }
+  return chosen;
+}
+
 function scoreClaims(golden: readonly GoldenClaim[], produced: readonly QualityClaim[]) {
   const used = new Set<number>();
   const missed: string[] = [];
   for (const expected of golden) {
-    const hit = produced.findIndex(
-      (claim, index) =>
-        !used.has(index) &&
-        coveredBy(expected.evidenceEventIds, claim.evidenceEventIds) &&
-        containsTerms(claimText(claim), expected.requiredTerms),
+    const availableIndices = produced.map((_, index) => index).filter((index) => !used.has(index));
+
+    // Fast path: one claim alone satisfies it (today's behavior, unchanged).
+    const soloHit = availableIndices.find(
+      (index) =>
+        coveredBy(expected.evidenceEventIds, produced[index].evidenceEventIds) &&
+        containsTerms(claimText(produced[index]), expected.requiredTerms),
     );
-    if (hit < 0) missed.push(expected.id);
-    else used.add(hit);
+    if (soloHit !== undefined) {
+      used.add(soloHit);
+      continue;
+    }
+
+    // Fallback: the union of several atomic findings, each contributing at least one required id.
+    const candidates = availableIndices
+      .map((index) => ({ index, ids: produced[index].evidenceEventIds }))
+      .filter((c) => c.ids.some((id) => expected.evidenceEventIds.includes(id)));
+    const cover = greedyMinimalCover(expected.evidenceEventIds, candidates);
+    const combinedText = cover?.length
+      ? cover.map((index) => claimText(produced[index])).join("\n\n")
+      : "";
+    if (cover && containsTerms(combinedText, expected.requiredTerms)) {
+      for (const index of cover) used.add(index);
+    } else {
+      missed.push(expected.id);
+    }
   }
   const falseConclusions = produced.filter((_, index) => !used.has(index)).map((claim) => claim.id);
   return {
     total: golden.length,
-    matched: used.size,
+    matched: golden.length - missed.length,
     precision: ratio(used.size, used.size + falseConclusions.length),
-    recall: ratio(used.size, golden.length),
+    recall: ratio(golden.length - missed.length, golden.length),
     missed,
     falseConclusions,
   };
@@ -249,11 +300,20 @@ export function scoreCaseQuality(golden: CaseGolden, output: QualityOutput): Cas
   };
 }
 
-export function passesCaseQuality(score: CaseQualityScore): boolean {
+export interface PassesCaseQualityOptions {
+  // A real (non-deterministic) model run does not gate on claim/IOC PRECISION — a thorough model
+  // correctly surfacing an extra, legitimate finding is not a regression (mirrors scorer.ts's
+  // REAL_THRESHOLDS reasoning for the sibling extraction evaluator). RECALL still must be 1: missing
+  // a required fact is a real regression, real run or not. Hallucination/forbidden-conclusion/
+  // confidence-rubric checks are never relaxed — those catch invention, not phrasing variance.
+  real?: boolean;
+}
+
+export function passesCaseQuality(score: CaseQualityScore, options: PassesCaseQualityOptions = {}): boolean {
+  const precisionOk = options.real ? true : score.claims.precision === 1 && score.iocs.precision === 1;
   return (
-    score.claims.precision === 1 &&
+    precisionOk &&
     score.claims.recall === 1 &&
-    score.iocs.precision === 1 &&
     score.iocs.recall === 1 &&
     score.danglingEvidenceRefs.length === 0 &&
     score.forbiddenConclusions.length === 0 &&
@@ -264,7 +324,11 @@ export function passesCaseQuality(score: CaseQualityScore): boolean {
   );
 }
 
-export function formatCaseQualityReport(name: string, score: CaseQualityScore): string {
+export function formatCaseQualityReport(
+  name: string,
+  score: CaseQualityScore,
+  options: PassesCaseQualityOptions = {},
+): string {
   const pct = (value: number): string => `${(value * 100).toFixed(1)}%`;
   const details = [
     `  claims precision ${pct(score.claims.precision)} recall ${pct(score.claims.recall)}`,
@@ -281,7 +345,7 @@ export function formatCaseQualityReport(name: string, score: CaseQualityScore): 
   ];
   if (!score.abstentionPassed) problems.push("clean-case abstention failed");
   return [
-    `[${passesCaseQuality(score) ? "PASS" : "FAIL"}] production: ${name}`,
+    `[${passesCaseQuality(score, options) ? "PASS" : "FAIL"}] production: ${name}`,
     ...details,
     ...(problems.length ? [`  ${problems.join("; ")}`] : []),
   ].join("\n");
