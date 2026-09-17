@@ -679,6 +679,123 @@ describe("mark → THOR finding", () => {
   });
 });
 
+// #985 item 4 (hash-across-artifacts half, Velociraptor-native YARA leg — 985-1a-2): a download
+// mark's file, matched by path or hash to a Velociraptor-native YARA hit (velociraptorImport.ts's
+// mapYara). Unlike CLI YARA, its sha256/md5 (vrHashes) are genuine per-row identity, and its
+// severity (yaraGrade.ts's gradeYaraHit) already reflects self-scan/volatile/heuristic demotion, so
+// the mark raises proportionally to it — read through the classification-time flag, not a string
+// compare on the artifact label (985-1a-3's own F5 fix, reused here).
+describe("mark → Velociraptor-native YARA content match", () => {
+  const TOOL_PATH = String.raw`C:\Users\x\Downloads\tool.exe`;
+  const OTHER_PATH = String.raw`C:\Users\x\Downloads\other.exe`;
+
+  const veloYaraRow = async (row: Record<string, unknown>, over: Partial<Ev> = {}): Promise<Ev> => {
+    const { parseVelociraptorJson } = await import("../../src/analysis/velociraptorImport.js");
+    const { events } = parseVelociraptorJson(JSON.stringify({ "Windows.Detection.Yara.Glob": [row] }));
+    return { ...(events[0] as unknown as Ev), id: "y1", timestamp: at(3), ...over };
+  };
+
+  it("a named-malware rule at the mark's exact path raises the mark to High, no technique, both rows noted", async () => {
+    const yara = await veloYaraRow({
+      Rule: "APT_Malware_Foo",
+      OSPath: TOOL_PATH,
+      HashSHA256: "44".repeat(32),
+    });
+    expect(yara.description).toBe(
+      `Velociraptor [Windows.Detection.Yara.Glob] YARA: APT_Malware_Foo - ${TOOL_PATH}`,
+    );
+    const out = run([mark({ sources: ["Sysmon"], asset: "WS-01" }), yara]);
+    const m = find(out, "m1");
+    expect(m.severity).toBe("High");
+    expect(m.mitreTechniques).toEqual([]);
+    expect(m.description).toContain(DOWNLOAD_EXECUTED_MARKER);
+    expect(m.description).toContain("Velociraptor YARA: APT_Malware_Foo content match");
+    expect(find(out, "y1").description).toContain(YARA_MATCHES_MARK_MARKER);
+  });
+
+  it("a self-scan hit (severity: Info) neither raises the mark beyond its own evidence nor re-promotes itself", async () => {
+    const yara = await veloYaraRow({
+      Rule: "APT_Malware_Foo",
+      OSPath: String.raw`C:\Program Files\Velociraptor\Velociraptor.exe`,
+    });
+    expect(yara.severity).toBe("Info");
+    const out = run([mark({ sources: ["Sysmon"], asset: "WS-01", path: yara.path }), yara]);
+    expect(find(out, "m1").severity).toBe("Medium"); // unchanged — the mark's own starting severity
+    expect(find(out, "y1").severity).toBe("Info"); // not re-promoted to Medium
+  });
+
+  it("a heuristic-trusted hit (Low, NOT Info) IS re-promoted when it matches — intentional, not a self-scan (F1)", async () => {
+    const yara = await veloYaraRow({
+      Rule: "SIGNATURE_BASE_SUSP_Something",
+      OSPath: String.raw`C:\Windows\System32\svchost.exe`,
+    });
+    expect(yara.severity).toBe("Low");
+    const out = run([mark({ sources: ["Sysmon"], asset: "WS-01", path: yara.path }), yara]);
+    expect(find(out, "m1").severity).toBe("Medium"); // raise(Medium, Low) stays Medium — no-op here
+    expect(find(out, "y1").severity).toBe("Medium"); // re-promoted from Low — the reciprocal arm's intended behaviour
+  });
+
+  it("a heuristic rule elsewhere (Medium) raises the mark proportionally, not to a flat tier", async () => {
+    const yara = await veloYaraRow({
+      Rule: "SIGNATURE_BASE_SUSP_Something",
+      OSPath: TOOL_PATH,
+    });
+    expect(yara.severity).toBe("Medium");
+    const out = run([mark({ sources: ["Sysmon"], asset: "WS-01" }), yara]);
+    expect(find(out, "m1").severity).toBe("Medium");
+    expect(find(out, "m1").description).toContain(DOWNLOAD_EXECUTED_MARKER);
+  });
+
+  it("a hit matches by hash alone, at a different path", async () => {
+    const sharedHash = "55".repeat(32);
+    const yara = await veloYaraRow({
+      Rule: "APT_Malware_Foo",
+      OSPath: OTHER_PATH,
+      HashSHA256: sharedHash,
+    });
+    const out = run([mark({ sources: ["Sysmon"], asset: "WS-01", sha256: sharedHash }), yara]);
+    const m = find(out, "m1");
+    expect(m.severity).toBe("High");
+    expect(m.description).toContain("(by hash, at");
+  });
+
+  it("a hit at a different path/hash never joins", async () => {
+    const yara = await veloYaraRow({ Rule: "APT_Malware_Foo", OSPath: OTHER_PATH });
+    const out = run([mark({ sources: ["Sysmon"], asset: "WS-01" }), yara]);
+    expect(find(out, "m1").description).not.toContain(DOWNLOAD_EXECUTED_MARKER);
+    expect(find(out, "m1").severity).toBe("Medium");
+  });
+
+  it("a rule/hit-context mentioning Sysmon or event ID 4688 is still labelled Velociraptor YARA, not mislabelled (F7)", async () => {
+    const yara = await veloYaraRow({
+      Rule: "Sysmon_4688_Suspicious_Child",
+      OSPath: TOOL_PATH,
+    });
+    const out = run([mark({ sources: ["Sysmon"], asset: "WS-01" }), yara]);
+    expect(find(out, "m1").description).toContain("Velociraptor YARA:");
+    expect(find(out, "m1").description).not.toMatch(/Sysmon 1 content match|Security 4688 content match/);
+  });
+
+  it("a memory hit shaped with a canonical process/start marker still classifies as detection, not execution (F3)", async () => {
+    const yara = await veloYaraRow(
+      { Rule: "APT_Malware_Foo", OSPath: TOOL_PATH },
+      { canonical: { event: { category: "process", type: "start" } } },
+    );
+    // If misclassified as execution, the note would say "process start"/"last run" and raise flat
+    // High unconditionally; as detection it says "content match" and raises proportionally.
+    const out = run([mark({ sources: ["Sysmon"], asset: "WS-01" }), yara]);
+    expect(find(out, "m1").description).toContain("Velociraptor YARA: APT_Malware_Foo content match");
+  });
+
+  it("CLI YARA's own flat-High raise is unaffected by the proportionalSeverity flag", async () => {
+    const { parseYaraOutput } = await import("../../src/analysis/yaraImport.js");
+    const { events } = parseYaraOutput(`EvilRule [apt] ${TOOL_PATH}`);
+    const cliYara: Ev = { ...(events[0] as unknown as Ev), id: "c1", timestamp: at(3) };
+    const out = run([mark({ sources: ["Sysmon"], asset: "WS-01" }), cliYara]);
+    expect(find(out, "m1").severity).toBe("High");
+  });
+});
+
 // #985 (browser-origin half): a mark's own download URL or referrer, matched against a
 // Velociraptor browser-history "Visited" row for the same URL — T1189's precondition, never the
 // technique itself (no mitreTechniques added in any case here).
