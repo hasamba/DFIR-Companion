@@ -629,8 +629,8 @@ describe("Sysmon 22 → Sysmon 3 — the within-upload connection join (#996)", 
     const r = parseSiemExport(
       elastic(
         query(), // T0 — sees the connection below, inside its window
-        { ...query(), "@timestamp": "2026-03-01T10:00:01Z" } as object, // T0+1s — also inside window
-        { ...query(), "@timestamp": "2026-03-01T11:00:00Z" } as object, // an hour later — connection is EARLIER for this one
+        { ...query(), "@timestamp": "2026-03-01T10:00:01Z" }, // T0+1s — also inside window
+        { ...query(), "@timestamp": "2026-03-01T11:00:00Z" }, // an hour later — connection is EARLIER for this one
         sysmon3({ DestinationIp: "203.0.113.9" }, { ts: "2026-03-01T10:00:10Z" }),
       ),
     );
