@@ -24,6 +24,7 @@ import type { Severity } from "./stateTypes.js";
 import { normalizeRow } from "./veloRowNormalize.js";
 import { parsedNewProcess, salientFromMessage } from "./veloMessageFields.js";
 import { thorFields } from "./thorRowMap.js";
+import { bamFields } from "./bamRowMap.js";
 import { consolidateVeloScriptBlocks } from "./scriptBlockFragments.js";
 // The expandable full-detail message, and the cap that bounds it — see truncatedRemainder.ts.
 import { cappedMessage } from "./truncatedRemainder.js";
@@ -853,9 +854,8 @@ function applyTimestomp(row: Row, m: MappedEvent): void {
 }
 
 function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, SiemIoc>): MappedEvent {
-  // A THOR finding streamed through an artifact — read it the THOR way. Artifact + host are what let
-  // it prove it is really THOR's, and keep one endpoint's findings apart from another's.
-  const thor = thorFields(row, { artifact, host });
+  // A THOR or BAM finding streamed through an artifact — Artifact + host let each prove itself.
+  const special = thorFields(row, { artifact, host }) ?? bamFields(row, { artifact, host });
   const { sha256, md5 } = collectRowIocs(row, sink);
   scrapeEvidence(row, sink); // URLs/IPs/hashes embedded in Message/Line/Content (key-driven extractors miss these)
   const msg = firstStr(row, GENERIC_MSG_KEYS);
@@ -870,16 +870,16 @@ function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, 
         .join(" - ");
 
   const sevWord = firstStr(row, ["Severity", "Level", "Risk", "Priority"]).toLowerCase();
-  let severity: Severity = thor?.severity ?? SEV_WORDS[sevWord] ?? "Info";
+  let severity: Severity = special?.severity ?? SEV_WORDS[sevWord] ?? "Info";
 
-  const procName = thor?.processName || firstStr(row, ["Exe", "Image", "ProcessName"]);
+  const procName = special?.processName || firstStr(row, ["Exe", "Image", "ProcessName"]);
   const parentName =
-    thor?.parentName || firstStr(row, ["ParentName", "ParentImage", "ParentExe", "ParentProcessName"]);
+    special?.parentName || firstStr(row, ["ParentName", "ParentImage", "ParentExe", "ParentProcessName"]);
   // A recognised THOR row uses THOR's identity or NONE. thorRowMap withholds the hash and path of a
   // log-entry finding on purpose (they name the surrounding log and a file merely mentioned in the
   // line, and correlate merges on both); letting the generic lookups below supply them anyway hands
   // the collapse straight back.
-  const path = thor ? (thor.path ?? "") : firstStr(row, ["OSPath", "FullPath", "_FullPath", "FilePath"]);
+  const path = special ? special.path || "" : firstStr(row, ["OSPath", "FullPath", "_FullPath", "FilePath"]);
 
   // Self-scan: a THOR finding streamed through Velociraptor (the ThorZIP artifact) flags the
   // collector binary itself and the cached simulation corpus, exactly as the standalone THOR importer
@@ -897,14 +897,14 @@ function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, 
   if (genRansom) severity = worst(severity, genRansom.severity);
   if (rdp) severity = worst(severity, rdp.severity);
 
-  // A THOR row names its own finding; the generic form would name the artifact plumbing instead.
-  let description = thor?.description ?? `Velociraptor${artifact ? ` [${artifact}]` : ""}: ${base}`;
+  // A THOR/BAM row names its own finding; the generic form would name the artifact plumbing instead.
+  let description = special?.description ?? `Velociraptor${artifact ? ` [${artifact}]` : ""}: ${base}`;
   if (genRansom) description = `${description} — ${genRansom.note} (T1486)`.slice(0, 600);
   else if (rdp) description = `${description} — ${rdp.note} (T1021.001)`.slice(0, 600);
   description = withHostSuffix(description.slice(0, 600), host).slice(0, 600);
 
   const aggKey =
-    thor?.aggKey ??
+    special?.aggKey ??
     `vr|${artifact.toLowerCase()}|${host.toLowerCase()}|${base.toLowerCase()}`
       .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<guid>")
       .replace(/\d+/g, "#")
@@ -918,18 +918,18 @@ function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, 
     aggKey,
     sources: ["Velociraptor"],
     ...(() => {
-      // Same rule for the hashes: THOR's own, or none at all for a THOR row.
-      const sha = thor ? thor.sha256 : sha256;
-      const m5 = thor ? thor.md5 : md5;
+      // Same rule for the hashes: THOR's own, or none at all for a THOR/BAM row.
+      const sha = special ? special.sha256 : sha256;
+      const m5 = special ? special.md5 : md5;
       return { ...(sha ? { sha256: sha } : {}), ...(m5 && !sha ? { md5: m5 } : {}) };
     })(),
     ...(path ? { path } : {}),
     ...(host ? { asset: host } : {}),
     ...(procName ? { processName: baseName(procName) } : {}),
     ...(parentName ? { parentName: baseName(parentName) } : {}),
-    ...(thor?.detail ? { message: thor.detail } : {}), // the dashboard's [details] panel body
+    ...(special?.detail ? { message: special.detail } : {}), // the dashboard's [details] panel body
   };
-  if (thor?.mitre.length) m.mitre = [...thor.mitre];
+  if (special?.mitre.length) m.mitre = [...special.mitre];
   for (const id of ransomMitre) if (!m.mitre.includes(id)) m.mitre.push(id);
   applyTimestomp(row, m); // MFT rows: flag $SI/$FN timestomping (T1070.006, → Medium)
   return m;

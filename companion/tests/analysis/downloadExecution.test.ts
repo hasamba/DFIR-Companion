@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   corroborateDownloadExecution,
   filePath,
+  sameLocation,
   streamReferences,
   DOWNLOAD_EXECUTED_MARKER,
   RAN_MARKED_FILE_MARKER,
@@ -94,6 +95,33 @@ describe("paths", () => {
     });
     expect(filePath("/Users/x/a.exe")?.relative).toBe("users\\x\\a.exe");
     expect(filePath("")).toBeNull();
+  });
+
+  it("recognizes an NT device path (BAM's Binary column) as its own volume kind (#985 item 2/3)", () => {
+    expect(filePath("\\Device\\HarddiskVolume3\\Users\\x\\Downloads\\tool.exe")).toEqual({
+      volume: "harddiskvolume3",
+      volumeKind: "device",
+      relative: "users\\x\\downloads\\tool.exe",
+    });
+    // Case-insensitive, matching every other volume prefix this function already recognizes.
+    expect(filePath("\\device\\HARDDISKVOLUME3\\Users\\x\\a.exe")?.volumeKind).toBe("device");
+  });
+
+  it("sameLocation gives a correctly-worded, kind-aware note for every differing volume pairing", () => {
+    const device = filePath("\\Device\\HarddiskVolume3\\Users\\x\\a.exe")!;
+    const drive = filePath("C:\\Users\\x\\a.exe")!;
+    const guid = filePath("\\VOLUME{01d5-ab}\\Users\\x\\a.exe")!;
+    expect(sameLocation(device, drive)).toEqual({
+      same: true,
+      volumeNote: "volume not compared (device vs drive)",
+    });
+    expect(sameLocation(guid, drive)).toEqual({
+      same: true,
+      volumeNote: "volume not compared (guid vs drive)",
+    });
+    // Two device paths still distinguish by their own volume token — not a blanket "not compared".
+    const otherDevice = filePath("\\Device\\HarddiskVolume4\\Users\\x\\a.exe")!;
+    expect(sameLocation(device, otherDevice)).toEqual({ same: false });
   });
 });
 
@@ -235,7 +263,7 @@ describe("mark → execution", () => {
       mark({ path: "C:\\Users\\x\\Downloads\\tool.exe", sources: ["Sysmon"], asset: "WS-01" }),
       prefetch({ asset: "WS-01" }),
     ]);
-    expect(find(out, "m1").description).toContain("volume not compared (GUID vs drive letter)");
+    expect(find(out, "m1").description).toContain("volume not compared (drive vs guid)");
   });
 
   it("hosts: two named hosts that differ never join; an unnamed record is not attributed when the case names two hosts", () => {
@@ -793,6 +821,135 @@ describe("mark → Velociraptor-native YARA content match", () => {
     const cliYara: Ev = { ...(events[0] as unknown as Ev), id: "c1", timestamp: at(3) };
     const out = run([mark({ sources: ["Sysmon"], asset: "WS-01" }), cliYara]);
     expect(find(out, "m1").severity).toBe("High");
+  });
+});
+
+// #985 item 2/3: a download mark's file, matched by path (device or drive-lettered) to a BAM
+// (Background Activity Moderator) execution record — Windows.Forensics.Bam via
+// velociraptorImport.ts's bamFields(). Execution-kind, like Prefetch: an observation time to order
+// against the mark's anchor, a flat-High raise on an after-anchor match, no severity of its own.
+describe("mark → BAM execution", () => {
+  const DEVICE_TOOL_PATH = String.raw`\Device\HarddiskVolume3\Users\x\Downloads\tool.exe`;
+  const DEVICE_OTHER_PATH = String.raw`\Device\HarddiskVolume3\Users\x\Downloads\other.exe`;
+
+  const bamRow = async (row: Record<string, unknown>, over: Partial<Ev> = {}): Promise<Ev> => {
+    const { parseVelociraptorJson } = await import("../../src/analysis/velociraptorImport.js");
+    const { events } = parseVelociraptorJson(JSON.stringify({ "Windows.Forensics.Bam": [row] }));
+    return { ...(events[0] as unknown as Ev), id: "b1", ...over };
+  };
+
+  it("a BAM record after the mark's anchor raises the mark to High, no technique, both rows noted", async () => {
+    const bam = await bamRow({
+      SID: "S-1-5-21-1-2-3-1001",
+      UserName: "alice",
+      Binary: DEVICE_TOOL_PATH,
+      Bam_time: at(3),
+    });
+    expect(bam.description).toBe(
+      "Velociraptor [Windows.Forensics.Bam] BAM: tool.exe last run 2026-05-02T10:00:03.000Z (user alice)",
+    );
+    expect(bam.severity).toBe("Info");
+    const out = run([mark({ sources: ["Sysmon"], asset: "WS-01" }), bam]);
+    const m = find(out, "m1");
+    expect(m.severity).toBe("High");
+    expect(m.mitreTechniques).toEqual([]);
+    expect(m.description).toContain(DOWNLOAD_EXECUTED_MARKER);
+    expect(m.description).toContain("BAM last run");
+    const b = find(out, "b1");
+    expect(b.description).toContain(RAN_MARKED_FILE_MARKER);
+  });
+
+  it("device-vs-drive: a BAM device path matches a drive-lettered mark on the relative path alone", async () => {
+    const bam = await bamRow({
+      SID: "S-1-5-21-1-2-3-1001",
+      UserName: "alice",
+      Binary: DEVICE_TOOL_PATH,
+      Bam_time: at(3),
+    });
+    const out = run([
+      mark({ sources: ["Sysmon"], asset: "WS-01", path: String.raw`C:\Users\x\Downloads\tool.exe` }),
+      bam,
+    ]);
+    const m = find(out, "m1");
+    expect(m.severity).toBe("High");
+    expect(m.description).toContain("volume not compared (drive vs device)");
+  });
+
+  it("a run before the anchor or with no readable time is said and raises nothing", async () => {
+    const before = await bamRow({
+      SID: "S-1-5-21-1-2-3-1001",
+      UserName: "alice",
+      Binary: DEVICE_TOOL_PATH,
+      Bam_time: at(-86400),
+    });
+    const out = run([mark(), before]);
+    expect(find(out, "m1").severity).toBe("Medium");
+    expect(find(out, "m1").description).toContain("BAM last run");
+  });
+
+  it("a BAM record at a different path never joins", async () => {
+    const bam = await bamRow({
+      SID: "S-1-5-21-1-2-3-1001",
+      UserName: "alice",
+      Binary: DEVICE_OTHER_PATH,
+      Bam_time: at(3),
+    });
+    const out = run([mark({ sources: ["Sysmon"], asset: "WS-01" }), bam]);
+    expect(find(out, "m1").description).not.toContain(DOWNLOAD_EXECUTED_MARKER);
+    expect(find(out, "m1").severity).toBe("Medium");
+  });
+
+  it("two named, disagreeing hosts never join", async () => {
+    const bam = await bamRow(
+      { SID: "S-1-5-21-1-2-3-1001", UserName: "alice", Binary: DEVICE_TOOL_PATH, Bam_time: at(3) },
+      { asset: "WS-02" },
+    );
+    const out = run([mark({ sources: ["Sysmon"], asset: "WS-01" }), bam]);
+    expect(find(out, "b1").description).not.toContain(RAN_MARKED_FILE_MARKER);
+  });
+
+  it("a hostile binary basename naming Sysmon or event ID 4688 is still labelled BAM, not mislabelled", async () => {
+    const bam = await bamRow({
+      SID: "S-1-5-21-1-2-3-1001",
+      UserName: "alice",
+      Binary: String.raw`\Device\HarddiskVolume3\Users\x\Downloads\Sysmon 4688.exe`,
+      Bam_time: at(3),
+    });
+    const out = run([
+      mark({ sources: ["Sysmon"], asset: "WS-01", path: String.raw`C:\Users\x\Downloads\Sysmon 4688.exe` }),
+      bam,
+    ]);
+    expect(find(out, "m1").description).toContain("BAM last run");
+    expect(find(out, "m1").description).not.toMatch(/Sysmon 1 last run|Security 4688 last run/);
+  });
+
+  it("thorFields and bamFields compose without cross-contamination", async () => {
+    const { parseVelociraptorJson } = await import("../../src/analysis/velociraptorImport.js");
+    // A THOR row is unaffected by bamFields being tried second (thorFields short-circuits first).
+    const thorRaw = parseVelociraptorJson(
+      JSON.stringify({
+        "Generic.Scanner.ThorZIP": [
+          {
+            scanid: "S-1",
+            log_version: "v1",
+            level: "Alert",
+            module: "Filescan",
+            message: "m",
+            file: "a.exe",
+          },
+        ],
+      }),
+    ).events[0];
+    expect(thorRaw.description).toMatch(/^THOR /);
+    // A BAM row is unaffected by THOR's absence.
+    const bamRaw = parseVelociraptorJson(
+      JSON.stringify({
+        "Windows.Forensics.Bam": [
+          { SID: "S-1-5-21-1-2-3-1001", UserName: "alice", Binary: DEVICE_TOOL_PATH, Bam_time: at(3) },
+        ],
+      }),
+    ).events[0];
+    expect(bamRaw.description).toContain("BAM: tool.exe");
   });
 });
 
