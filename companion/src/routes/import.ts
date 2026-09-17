@@ -27,6 +27,7 @@ import { parseJournald, type JournaldImportOptions } from "../analysis/journaldI
 import { parseSysdig, type SysdigImportOptions } from "../analysis/sysdigImport.js";
 import { parseWazuhAlerts, type WazuhImportOptions } from "../analysis/wazuhImport.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
+import { buildImportBase } from "./importBase.js";
 import { settleForensicImport, type SettleDeps } from "./importSettle.js";
 import { commitDedicatedImport, importerParameter, persistImportEvidence } from "./importCommit.js";
 import { autoTagNewEvents } from "../analysis/taggerAuto.js";
@@ -357,15 +358,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
           detail: `${kind} import — ${done}/${total}`,
         }),
       );
-      const base = {
-        label: storedName,
-        idPrefix: `${seq}`,
-        importedAt,
-        onProgress: tracking.onProgress,
-        ...(hasParseProgress(kind) ? { onParseProgress: tracking.onParseProgress } : {}),
-        minSeverity,
-        ...(job?.signal ? { signal: job.signal } : {}),
-      };
+      const base = buildImportBase({ storedName, seq, importedAt, kind, minSeverity, tracking, job, req });
       options.onAiStatus?.(caseId, {
         status: "analyzing",
         phase: "extracting",
@@ -651,15 +644,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
           detail: `${kind} import — ${done}/${total}`,
         }),
       );
-      const base = {
-        label: storedName,
-        idPrefix: `${seq}`,
-        importedAt,
-        onProgress: tracking.onProgress,
-        ...(hasParseProgress(kind) ? { onParseProgress: tracking.onParseProgress } : {}),
-        minSeverity,
-        ...(job?.signal ? { signal: job.signal } : {}),
-      };
+      const base = buildImportBase({ storedName, seq, importedAt, kind, minSeverity, tracking, job, req });
       options.onAiStatus?.(caseId, {
         status: "analyzing",
         phase: "extracting",

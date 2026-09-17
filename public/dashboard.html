@@ -1231,6 +1231,12 @@
           </select>
         </div>
         <div class="sfield">
+          <label for="webTrailerProfileChk">Proxy/web-log format <span class="sfield-hint" data-safe-style="display:inline">— declares that this case's Squid access/proxy logs use the squid_combined format, so the cache-result field (hit vs. miss, direct vs. via a parent) is read instead of shown as raw text. Off by default. Saved in this browser.</span></label>
+          <label data-safe-style="display:flex;align-items:center;gap:6px;font-size:13px;margin:4px 0">
+            <input type="checkbox" id="webTrailerProfileChk" /> This case's proxy logs use Squid's combined format
+          </label>
+        </div>
+        <div class="sfield">
           <label for="logLevelSelect">Log verbosity <span class="sfield-hint" data-safe-style="display:inline">— takes effect immediately (no restart)</span></label>
           <select id="logLevelSelect">
             <option value="error">error — only failures</option>

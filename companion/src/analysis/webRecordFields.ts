@@ -236,6 +236,16 @@ export interface TrailerProfile {
 }
 
 /**
+ * The one profile name an analyst can declare on import (#993). `squid_combined` is Squid's own
+ * LogFormat directive name for this shape and appends exactly one trailer token, the `%Ss:%Sh`
+ * pair, right after the User-Agent field — slot 0. Anything else (including no declaration) stays
+ * undeclared, per the module header: never inferred from the tokens themselves.
+ */
+export function resolveTrailerProfile(raw: unknown): TrailerProfile | undefined {
+  return raw === "squid_combined" ? { squidSlot: 0 } : undefined;
+}
+
+/**
  * Split the text after the User-Agent into tokens: a quoted run is one token, bare runs split.
  * Tokens are returned WHOLE — never clipped here. Their display is clipped in readTrailer, but
  * their identity is a digest of the complete text: a token clipped before hashing let two values
