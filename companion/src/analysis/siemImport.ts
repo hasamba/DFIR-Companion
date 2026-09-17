@@ -923,9 +923,9 @@ export function mapWindows(
   const commandLine = def.kind === "process" ? str(getCI(ed, "CommandLine")) : "";
   const observedTimestamp = str(getCI(ed, "UtcTime")).trim() || firstStr(rec, TIME_KEYS);
   const normalizedTimestamp = pickTimestamp(rec, ed);
-  const sourceIp = cleanIp(str(getCI(ed, "IpAddress")) || str(getCI(ed, "SourceIp")));
-  const destinationIp = cleanIp(str(getCI(ed, "DestinationIp")));
-  const destinationPort = Number(str(getCI(ed, "DestinationPort")));
+  const sourceIp = cleanIp(firstStr(ed, eid === 5156 ? ["SourceAddress"] : ["IpAddress", "SourceIp"])); // #996
+  const destinationIp = cleanIp(firstStr(ed, eid === 5156 ? ["DestAddress"] : ["DestinationIp"]));
+  const destinationPort = Number(firstStr(ed, eid === 5156 ? ["DestPort"] : ["DestinationPort"]));
   const logonTypeRaw = str(getCI(ed, "LogonType")).trim();
   const logonType = logonTypeRaw && Number.isFinite(Number(logonTypeRaw)) ? Number(logonTypeRaw) : undefined;
   const isLogon = !isSysmon && (eid === 4624 || eid === 4625);

@@ -35,6 +35,20 @@ const sysmon3 = (ed: Record<string, string>, over: { ts?: string; host?: string 
   event_data: { Image: "C:\\Windows\\System32\\svchost.exe", Protocol: "tcp", Initiated: "true", ...ed },
 });
 
+// #996: a WFP 5156 "connection permitted" record — the Security-log connection side of the join.
+const wfp5156 = (ed: Record<string, string>, over: { ts?: string; host?: string } = {}): object => ({
+  "@timestamp": over.ts ?? "2026-03-01T10:00:05Z",
+  log_name: "Security",
+  computer_name: over.host ?? "WS-01",
+  event_id: 5156,
+  event_data: {
+    Application: "\\device\\harddiskvolume2\\windows\\system32\\svchost.exe",
+    Protocol: "6",
+    Direction: "%%14593",
+    ...ed,
+  },
+});
+
 // The import pipeline after the parser (platformImports.ts): keys stripped, the import's source
 // stamped, then correlateEvents' re-import rule.
 const afterImport = (events: SiemEvent[]): ForensicEvent[] =>
@@ -692,5 +706,44 @@ describe("Sysmon 22 → Sysmon 3 — the within-upload connection join (#996)", 
     const overflow = r.events.find((e) => e.description.includes("[overflow:"))!;
     expect(overflow.description).not.toContain("connection join:");
     expect(overflow.canonical?.dns).toMatchObject({ folded: true });
+  });
+});
+
+describe("Sysmon 22 → WFP 5156 — the firewall audit connection join (#996)", () => {
+  it("a Security-log WFP row on its own (no Sysmon at all) still joins", () => {
+    const r = parseSiemExport(
+      elastic(
+        sysmon22({ QueryName: "wfp.example", QueryStatus: "0", QueryResults: "::ffff:203.0.113.9;" }),
+        wfp5156({ DestAddress: "203.0.113.9", DestPort: "443" }),
+      ),
+    );
+    const e = r.events.find((ev) => ev.description.includes("[query: wfp.example]"))!;
+    expect(e.description).toContain(
+      "203.0.113.9: connection record ≤10 s after the answer arrived, inside the window",
+    );
+    expect(e.canonical?.dns).toMatchObject({
+      joinState: "joined",
+      leads: [{ address: "203.0.113.9", state: "connected inside the window" }],
+    });
+  });
+
+  it("the WFP row itself reads as a labelled, low-severity network event", () => {
+    const r = parseSiemExport(elastic(wfp5156({ DestAddress: "203.0.113.9", DestPort: "443" })));
+    const e = r.events[0];
+    expect(e.description).toContain("Connection permitted (WFP)");
+    expect(e.severity).toBe("Low");
+  });
+
+  it("a Sysmon 3 and a WFP 5156 candidate for the SAME address still produce exactly one lead", () => {
+    const r = parseSiemExport(
+      elastic(
+        sysmon22({ QueryName: "both.example", QueryStatus: "0", QueryResults: "::ffff:203.0.113.9;" }),
+        sysmon3({ DestinationIp: "203.0.113.9" }),
+        wfp5156({ DestAddress: "203.0.113.9", DestPort: "443" }, { ts: "2026-03-01T10:00:06Z" }),
+      ),
+    );
+    const e = r.events.find((ev) => ev.description.includes("[query: both.example]"))!;
+    const dns = e.canonical?.dns as { leads?: unknown[] } | undefined;
+    expect(dns?.leads).toHaveLength(1);
   });
 });
