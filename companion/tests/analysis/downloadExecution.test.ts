@@ -7,11 +7,13 @@ import {
   RAN_MARKED_FILE_MARKER,
   STREAM_REFERENCED_MARKER,
   STREAM_REFERENCE_MARKER,
+  EXECUTIONS_NAMED_MAX,
+} from "../../src/analysis/downloadExecution.js";
+import {
   BROWSER_VISIT_MARKER,
   REFERRER_VISIT_MARKER,
   VISIT_PRECEDES_MARK_MARKER,
-  EXECUTIONS_NAMED_MAX,
-} from "../../src/analysis/downloadExecution.js";
+} from "../../src/analysis/downloadVisitOrigin.js";
 import { PROVENANCE_NOTE } from "../../src/analysis/ntfsStreams.js";
 import { parseKapeCsv, prefetchOwnPath } from "../../src/analysis/kapeImport.js";
 import { cleanDescription } from "../../src/analysis/correlate.js";
@@ -510,6 +512,68 @@ describe("mark → browser visit", () => {
       },
     ]);
     expect(find(out, "m1").description).not.toContain(BROWSER_VISIT_MARKER);
+  });
+
+  it("a visit AFTER the mark, or within tolerance, is never labeled 'preceded' and raises nothing", async () => {
+    // #985 code review: matching by URL alone is not evidence of order. A revisit, a re-download
+    // check, or analyst verification browsing after the file already exists must not corroborate
+    // a drive-by story the evidence doesn't support.
+    const after = await visitRow("https://evil.example/tool.exe", { timestamp: at(30) });
+    const outAfter = run([mark({ sources: ["Sysmon"], asset: "WS-01" }), after]);
+    expect(find(outAfter, "m1").description).not.toContain(BROWSER_VISIT_MARKER);
+    expect(find(outAfter, "m1").severity).toBe("Medium"); // the mark's own default severity, unraised
+    const v = find(outAfter, "v1");
+    expect(v.description).not.toContain(VISIT_PRECEDES_MARK_MARKER);
+    expect(v.severity).toBe("Info");
+    const within = await visitRow("https://evil.example/tool.exe", { timestamp: at(1) });
+    const outWithin = run([mark({ sources: ["Sysmon"], asset: "WS-01" }), within]);
+    expect(find(outWithin, "m1").description).not.toContain(BROWSER_VISIT_MARKER);
+  });
+
+  it("a real Zone.Identifier mark from ntfsStreams.readHost is corroborated by a real visit", async () => {
+    // Pinned against the actual mark-producing code, not a hand-typed description (#985 code
+    // review, same lesson as the #1196 UserAssist fix): if markWords()'s wording ever drifts,
+    // this test — not just the regex it exercises — fails.
+    const { readHost } = await import("../../src/analysis/ntfsStreams.js");
+    const h = readHost({
+      path: ".\\Users\\x\\Downloads\\tool.exe",
+      contents: "[ZoneTransfer]\r\nZoneId=3\r\nHostUrl=https://evil.example/tool.exe\r\n",
+    });
+    const row = mark({
+      sources: ["Sysmon"],
+      asset: "WS-01",
+      description: `MFT: x — ${[h.words, ...h.qualifiers].join(" — ")}`,
+    });
+    const visit = await visitRow("https://evil.example/tool.exe");
+    expect(find(run([row, visit]), "m1").description).toContain(BROWSER_VISIT_MARKER);
+  });
+
+  it("a referrer equal to the download URL after normalization is not double-counted", async () => {
+    const visit = await visitRow("https://evil.example/tool.exe");
+    const out = run([
+      mark({
+        sources: ["Sysmon"],
+        asset: "WS-01",
+        description: `MFT: .\\Users\\x\\Downloads\\tool.exe — downloaded from the Internet zone (https://evil.example/tool.exe, referrer HTTPS://Evil.Example/tool.exe/) — ${PROVENANCE_NOTE}`,
+      }),
+      visit,
+    ]);
+    const m = find(out, "m1");
+    expect(m.description).toContain("visited the download URL");
+    expect(m.description).not.toContain("visited the referrer page");
+    const v = find(out, "v1");
+    expect(
+      v.description.match(new RegExp(VISIT_PRECEDES_MARK_MARKER.replace(/[[\]]/g, "\\$&"), "g")) ?? [],
+    ).toHaveLength(1);
+  });
+
+  it("a default port (:443 on https) folds; a different explicit port does not", async () => {
+    const visit = await visitRow("https://evil.example:443/tool.exe");
+    const out = run([mark({ sources: ["Sysmon"], asset: "WS-01" }), visit]);
+    expect(find(out, "m1").description).toContain(BROWSER_VISIT_MARKER);
+    const otherPort = await visitRow("https://evil.example:8443/tool.exe");
+    const miss = run([mark({ sources: ["Sysmon"], asset: "WS-01" }), otherPort]);
+    expect(find(miss, "m1").description).not.toContain(BROWSER_VISIT_MARKER);
   });
 });
 

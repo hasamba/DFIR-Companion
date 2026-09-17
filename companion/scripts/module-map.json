@@ -668,6 +668,8 @@
     "ransomwareDetect.ts": "analysis/detect",
     "timestompCorroborate.ts": "analysis/timeline",
     "downloadExecution.ts": "analysis/timeline",
+    "downloadVisitOrigin.ts": "analysis/timeline",
+    "downloadCorroborationShared.ts": "analysis/timeline",
     "smbExecution.ts": "analysis/timeline",
     "injectionSequence.ts": "analysis/timeline",
     "timestompDetect.ts": "analysis/detect",
