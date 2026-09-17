@@ -3,16 +3,28 @@
 //
 // ntfsStreams.ts (#984) made a download mark say what it establishes — where a file came from,
 // not that it ran — and took the execution techniques off it. The evidence that the file ran lives
-// in OTHER uploads: Prefetch, Sysmon 1 / Security 4688 / EDR process starts. They meet here, in a
-// merge-time pass over the forensic timeline, like the timestomp corroboration (#909 item 8).
+// in OTHER uploads: Prefetch, UserAssist, Sysmon 1 / Security 4688 / EDR process starts. They meet
+// here, in a merge-time pass over the forensic timeline, like the timestomp corroboration (#909
+// item 8). UserAssist is partial by design — it only records programs launched through Explorer
+// (refutationGate.ts's EVIDENCE_CLASS_SOURCES excludes it for exactly that reason, when deciding
+// whether an ABSENCE proves nothing ran) — but that caveat is about absence, not presence; a
+// UserAssist row that IS there is as real a "this ran" record as Prefetch.
 //
-// What the pass establishes: that a process-start or Prefetch record names the SAME file — the same
-// host, the same volume where both say one, the same path below the volume root, and the same
-// bytes where both carry a digest — and when that record is dated relative to the mark row's own
-// anchor. It does not establish that a user opened the file (no technique is added), that a file
-// with no mark is local, that a `.zip`'s mark covers what was extracted, or that a run within two
-// seconds of the anchor came after it. Presence records (Amcache, ShimCache) are listed as presence
-// and raise nothing. A hash that differs vetoes a path match: a reused path is not the same file.
+// What the pass establishes: that a process-start, Prefetch, or UserAssist record names the SAME
+// file — the same host, the same volume where both say one, the same path below the volume root,
+// and the same bytes where both carry a digest — and when that record is dated relative to the
+// mark row's own anchor. It does not establish that a user opened the file (no technique is added),
+// that a file with no mark is local, that a `.zip`'s mark covers what was extracted, or that a run
+// within two seconds of the anchor came after it. Presence records (Amcache, ShimCache) are listed
+// as presence and raise nothing. A hash that differs vetoes a path match: a reused path is not the
+// same file.
+//
+// Two import paths name these tools differently. KAPE's importer (kapeImport.ts) stamps `sources`
+// with the tool's own name ("Prefetch", "Amcache", "ShimCache"). Velociraptor's importer folds every
+// artifact through one generic event shape (`actionEvent()`) that always sets `sources: ["Velociraptor"]`
+// — the tool name only survives in `description`, in the fixed `[<artifact>]: <action>` segment the
+// importer's own code writes, never in the attacker-influenced subject text that follows. `artifactOf`/
+// `classify` below fall back to that segment, bounded so it can't run into the subject (#985).
 //
 // The boundary's cost, said: "nothing automatic reads the raw record" (ARCHITECTURE.md), so a
 // Prefetch row imported BEFORE its mark was demoted to the super-timeline and is out of reach. A
@@ -189,11 +201,27 @@ const isMark = (e: TimelineEventShape): boolean =>
 const isProcessStart = (e: TimelineEventShape): boolean =>
   e.canonical?.event?.category === "process" && e.canonical.event.type === "start";
 
+// Velociraptor's `actionEvent()` writes `Velociraptor [<artifact>]: <action>: <subject>…` — the
+// artifact/action segment is fixed text the importer itself wrote, never the row's own (attacker-
+// influenced) data. None of the five actions this pass cares about ("Executed (prefetch)",
+// "Present in ShimCache…", "Installed program (Amcache)", "Program file present (Amcache)",
+// "Ran (UserAssist)") contain a colon, so the first `:` after `]: ` is always the real boundary
+// before `<subject>` — a downloaded file whose name happens to contain one of these words cannot
+// spoof a match, because that text lives past the boundary this capture stops at. Gated on `sources`
+// actually naming Velociraptor: the bounded capture alone only protects the SUBJECT half of the
+// string; without this gate a row from any importer whose description happened to start with the
+// literal prefix (e.g. a copied/relayed description) would still be read (#985 code review).
+const VELO_ACTION = /^Velociraptor \[[^\]]*\]: ([^:]*):/;
+const veloAction = (e: TimelineEventShape): string =>
+  (e.sources ?? []).includes("Velociraptor") ? (VELO_ACTION.exec(e.description ?? "")?.[1] ?? "") : "";
+
 function artifactOf(e: TimelineEventShape): string {
   const src = (e.sources ?? []).join(" ");
-  if (/Prefetch/i.test(src)) return "Prefetch";
-  if (/Amcache/i.test(src)) return "Amcache";
-  if (/ShimCache/i.test(src)) return "ShimCache";
+  const action = veloAction(e);
+  if (/Prefetch/i.test(src) || /prefetch/i.test(action)) return "Prefetch";
+  if (/UserAssist/i.test(src) || /UserAssist/i.test(action)) return "UserAssist";
+  if (/Amcache/i.test(src) || /Amcache/i.test(action)) return "Amcache";
+  if (/ShimCache/i.test(src) || /ShimCache/i.test(action)) return "ShimCache";
   if (/Sysmon/i.test(src) || /Sysmon/i.test(e.description ?? "")) return "Sysmon 1";
   if (/4688/.test(e.description ?? "")) return "Security 4688";
   return src || "process start";
@@ -202,10 +230,18 @@ function artifactOf(e: TimelineEventShape): string {
 function classify<T extends TimelineEventShape>(e: T): Indexed<T> | null {
   if (!e.path) return null;
   const src = (e.sources ?? []).join(" ");
+  const action = veloAction(e);
   let kind: Kind | null = null;
   if (isMark(e)) kind = "mark";
-  else if (/Prefetch/i.test(src) || isProcessStart(e)) kind = "execution";
-  else if (/Amcache|ShimCache/i.test(src)) kind = "presence";
+  else if (
+    /Prefetch/i.test(src) ||
+    /prefetch/i.test(action) ||
+    /UserAssist/i.test(src) ||
+    /UserAssist/i.test(action) ||
+    isProcessStart(e)
+  )
+    kind = "execution";
+  else if (/Amcache|ShimCache/i.test(src) || /Amcache|ShimCache/i.test(action)) kind = "presence";
   if (!kind) return null;
   const file = filePath(e.path);
   if (!file) return null;
@@ -322,8 +358,8 @@ function matchWords<T extends TimelineEventShape>(
   const r = m.record;
   const when = r.event.timestamp ? neutral(r.event.timestamp).slice(0, 40) : "no time";
   const order = r.kind === "execution" ? `, ${orderWords(ms(r.event.timestamp), anchor)}` : "";
-  const what =
-    r.kind === "execution" ? (r.artifact === "Prefetch" ? "last run" : "process start") : "present";
+  const EXECUTION_WHAT: Record<string, string> = { Prefetch: "last run", UserAssist: "ran" };
+  const what = r.kind === "execution" ? (EXECUTION_WHAT[r.artifact] ?? "process start") : "present";
   const notes = [
     r.kind === "presence" ? "not an execution record" : "",
     m.by === "hash" ? `by hash, at ${neutral(r.event.path ?? "").slice(0, EXCERPT_MAX)}` : "",
