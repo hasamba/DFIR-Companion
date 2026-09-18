@@ -194,6 +194,21 @@ describe("production-corpus real-run outcome uses aggregate recall, not all-or-n
     expect(withClean.claimRecall).toBe(0);
   });
 
+  it("the clean case's exclusion actually changes the OUTCOME, not just the raw helper (would flip pass/fail if it weren't excluded)", () => {
+    // 1 dirty miss + 9 clean cases at vacuous recall=1: WITH exclusion, the dirty-case aggregate
+    // is 0/1 = 0 (fails). If the clean cases were wrongly included in the denominator, the
+    // aggregate would be 9/10 = 0.9 (passes) — this proves the exclusion is wired all the way
+    // through to buildEvaluationReport, not just present in the standalone helper.
+    const cleanCases = Array.from({ length: 9 }, (_, i) => ({
+      ...BASE_CASE,
+      id: `clean-${i}`,
+      scenario: "clean",
+    }));
+    const cases = [dirtyCase("miss", { claimRecall: 0 }), ...cleanCases];
+    const report = buildEvaluationReport(realInput(cases));
+    expect(report.outcome).toBe("quality_failed");
+  });
+
   it.each(["forbiddenConclusions", "danglingEvidenceRefs", "confidenceIssues"] as const)(
     "still fails on a real run when %s is nonzero on any one case, regardless of perfect aggregates",
     (field) => {
@@ -220,6 +235,28 @@ describe("production-corpus real-run outcome uses aggregate recall, not all-or-n
     const report = buildEvaluationReport(
       realInput([dirtyCase("d1"), { ...dirtyCase("d2"), status: "runner_failed" }]),
     );
+    expect(report.outcome).toBe("runner_failed");
+  });
+
+  it("preserves original precedence when a runner failure and a provider failure land in DIFFERENT sections — runner_failed still wins", () => {
+    // Regression guard: an earlier draft checked extraction/screenshot statuses before case
+    // statuses, which silently reversed this precedence whenever the two failures came from
+    // different sections. Case has runner_failed; extraction (a separate section) has
+    // provider_failed — the combined-list check must still resolve to runner_failed.
+    const report = buildEvaluationReport({
+      ...realInput([{ ...dirtyCase("d1"), status: "runner_failed" }]),
+      extraction: [
+        {
+          id: "ex-1",
+          modality: "csv",
+          status: "provider_failed",
+          precision: 1,
+          recall: 1,
+          resources: BASE_CASE.resources,
+          errorKind: "timeout",
+        },
+      ],
+    });
     expect(report.outcome).toBe("runner_failed");
   });
 

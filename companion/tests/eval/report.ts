@@ -164,16 +164,19 @@ function determineOutcome(input: EvaluationReportInput): EvaluationOutcome {
   if (input.baselineComparison?.status === "incompatible") return "runner_failed";
   if (input.baselineComparison?.status === "regressed") return "quality_failed";
 
+  const caseStatuses = input.cases.map((result) => result.status);
   const otherStatuses = [
     ...input.extraction.map((result) => result.status),
     ...input.screenshot.map((result) => result.status),
   ];
-  if (otherStatuses.includes("runner_failed")) return "runner_failed";
-  if (otherStatuses.includes("provider_failed")) return "provider_failed";
-
-  const caseStatuses = input.cases.map((result) => result.status);
-  if (caseStatuses.includes("runner_failed")) return "runner_failed";
-  if (caseStatuses.includes("provider_failed")) return "provider_failed";
+  // Checked across cases AND extraction/screenshot TOGETHER, in this order — matches the original
+  // (pre-#1224) precedence exactly: an infrastructure failure anywhere always beats a provider
+  // failure anywhere, regardless of which section it came from. Checking each section's own
+  // statuses independently first (an earlier draft) silently reversed that precedence whenever an
+  // infra failure and a provider failure land in DIFFERENT sections.
+  const allInfraStatuses = [...caseStatuses, ...otherStatuses];
+  if (allInfraStatuses.includes("runner_failed")) return "runner_failed";
+  if (allInfraStatuses.includes("provider_failed")) return "provider_failed";
 
   // On a real run, aggregate recall (mirroring scorer.ts's REAL_THRESHOLDS) replaces requiring
   // every case's own status to be "passed" — the exact bug #1224 was filed for. Mock/deterministic
