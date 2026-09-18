@@ -589,8 +589,8 @@ interface LegacyLogon {
   workstation?: string;
   sessionId?: string;
 }
-
 const LEGACY_LOGON_MARKER = /(Successful|Failed) logon \(EID (?:4624|4625)\)/;
+const EDGE_OBSERVED = "edge-observed" as const; // #1292: a 4624/4625 `IpAddress=` is only ever rendered from the Security record's own field (renderer set pinned by hostBinding.test.ts) — the basis siemImport.ts stamps on; the generic `srcIp` branch stays unstamped (#1265's exemption)
 const LEGACY_ACCOUNT =
   /(?<![\\/:.\w])(NT AUTHORITY|NT SERVICE|Window Manager|Font Driver Host|[A-Za-z][A-Za-z0-9.-]{1,30})\\([A-Za-z0-9._$-]{2,40})(?![\\/\w])/g;
 
@@ -715,14 +715,7 @@ function legacyCanonical(event: ForensicEvent): CanonicalEventEnvelope {
       ? {
           network: {
             ...network,
-            // #1292: a logon's `IpAddress=` is only ever rendered into this prose from a Windows
-            // Security 4624/4625 record's own kernel-recorded field (logonEvents / accountUsageImport),
-            // the same basis siemImport.ts stamps edge-observed on — so hostBinding.ts's index gate
-            // keeps admitting the legacy path (#1162). The generic `srcIp` branch above stays
-            // unstamped: its provenance is unknowable, #1265's one deliberate exemption.
-            ...(logon?.sourceIp
-              ? { source: { address: logon.sourceIp, provenance: "edge-observed" as const } }
-              : {}),
+            ...(logon?.sourceIp ? { source: { address: logon.sourceIp, provenance: EDGE_OBSERVED } } : {}),
           },
         }
       : {}),
