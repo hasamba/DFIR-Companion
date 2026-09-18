@@ -105,6 +105,18 @@ describe("parseBookmark — malformed/hostile input", () => {
     expect(() => parseBookmark(crafted)).toThrow(CfurlBookmarkError);
   });
 
+  // #1190: BMK_DATE accepted any finite double with no range check on the resulting Date, so a
+  // huge-but-finite value silently flowed through as an Invalid Date. Hand-built minimal bookmark
+  // (no real fixture here carries a date item): a single kBookmarkFileCreationDate item whose
+  // 8-byte big-endian double is 1e300 -- finite, but out of JS's representable Date range.
+  it("rejects a finite-but-out-of-range BMK_DATE value (huge secs -> Invalid Date)", () => {
+    const crafted = Buffer.from(
+      "626f6f6b4400000000000000100000001400000008000000000400007e37e43c8800759c00000000feffffff010000000000000001000000401000000400000000000000",
+      "hex",
+    );
+    expect(() => parseBookmark(crafted)).toThrow(/out of representable range/);
+  });
+
   it("detects a TOC-chain cycle rather than looping forever", () => {
     const data = buf(REAL_BOOKMARK_HEX);
     const crafted = Buffer.from(data);

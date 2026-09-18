@@ -316,6 +316,8 @@ export function summaryRow(
     canonical: createCanonicalEvent({
       event: { category: "cloud", type: "compute-lifecycle", action: "lifecycle", outcome: "success" },
       actor: { kind: "account", name: inst.launch?.by ?? inst.id },
+      // AWS CloudTrail's own sourceIPAddress field (see this file's own sourceIPAddress-labeled
+      // summary above) — edge-observed, not client-asserted (#1184 audit).
       ...(inst.launch?.address ? { network: { source: { address: inst.launch.address } } } : {}),
       ...(inst.launch?.credentialId ? { authentication: { credentialId: inst.launch.credentialId } } : {}),
       cloud: { provider: "aws", accountId: inst.account, region: inst.region, resource: inst.id },

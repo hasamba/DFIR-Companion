@@ -1,6 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { requestAuthentication } from "../auth/types.js";
-import { canonicalHostName, type NearDuplicate } from "../analysis/hostAlias.js";
+import { canonicalHostName, NEAR_DUPLICATE_BLOCKING, type NearDuplicate } from "../analysis/hostAlias.js";
 import { loadHostDuplicatePanelCandidates } from "../analysis/hostScopeLoad.js";
 import type { RouteContext } from "./context.js";
 
@@ -49,9 +49,11 @@ export function registerHostDuplicateRoutes(app: Express, ctx: RouteContext): vo
 
   // A "network-identity" candidate never blocks synthesis in the first place
   // (hostDuplicateGate.ts's own pendingNearDuplicates — the only source HostMergeDecisionRequired
-  // reads — never includes them).
+  // reads — never includes them). Reads hostAlias.ts's own NEAR_DUPLICATE_BLOCKING rather than
+  // negating one reason string, so a third reason added to the type forces a deliberate choice at
+  // the source instead of silently becoming blocking here (#1259).
   function isBlocking(p: NearDuplicate): boolean {
-    return p.reason !== "network-identity";
+    return NEAR_DUPLICATE_BLOCKING[p.reason];
   }
 
   // Both resolve paths answer with the freshly-recomputed pending list.

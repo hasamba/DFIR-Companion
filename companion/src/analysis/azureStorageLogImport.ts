@@ -168,6 +168,8 @@ export function mapAzureStorageLogRecord(
   const statusCode = Number(getCI(rec, "statusCode"));
   const success = Number.isFinite(statusCode) && statusCode >= 200 && statusCode < 300;
 
+  // Azure Storage's own diagnostic log field, recorded by Azure's own request-handling
+  // infrastructure at call time — edge-observed, not client-asserted (#1184 audit).
   const ip = cleanIp(stripPort(str(getCI(rec, "callerIpAddress"))));
   if (ip) addIoc(sink, "ip", ip);
 

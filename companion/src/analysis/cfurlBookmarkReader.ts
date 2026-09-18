@@ -111,7 +111,11 @@ function getItem(data: Buffer, hdrsize: number, offset: number, budget: Budget, 
     // Dates are stored as *big-endian* doubles, unlike everything else in this format.
     const secs = bytes.readDoubleBE(0);
     if (!Number.isFinite(secs)) throw new CfurlBookmarkError("date value not finite");
-    return new Date(Date.UTC(2001, 0, 1) + secs * 1000);
+    const date = new Date(Date.UTC(2001, 0, 1) + secs * 1000);
+    // A finite secs value can still produce an out-of-range, Invalid Date — reject it here rather
+    // than let it masquerade as a decoded value (#1190).
+    if (Number.isNaN(date.getTime())) throw new CfurlBookmarkError("date value out of representable range");
+    return date;
   }
   if (dtype === BMK_BOOLEAN) return dsubtype === BMK_BOOLEAN_ST_TRUE;
   if (dtype === BMK_UUID) {

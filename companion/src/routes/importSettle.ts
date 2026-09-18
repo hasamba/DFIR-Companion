@@ -30,6 +30,11 @@ export interface SettleDeps {
   };
   superTimelineStore?: { append(caseId: string, events: ForensicEvent[]): Promise<number> };
   onSuperTimeline?: (caseId: string) => void;
+  // Fired right after the importedAt/importBatchId stamp save below (#1174) — without it, dashboard
+  // subscribers only learn about the new stamps whenever a LATER broadcast happens to fire (the
+  // tagger, demote, or the resynthesis every caller triggers after settle returns), not at the
+  // instant the stamps were actually persisted.
+  onState?: (state: InvestigationState) => void;
   autoTagImported: (caseId: string, added: ForensicEvent[]) => Promise<void>;
   demoteForensicForCase: (caseId: string) => Promise<InvestigationState>;
 }
@@ -75,6 +80,7 @@ export async function settleForensicImport(
     };
     added = imported.forensicTimeline.filter((e) => addedIds.has(e.id));
     await deps.stateStore.save(imported);
+    deps.onState?.(imported);
   }
 
   // Dual-write FIRST, from the pre-demote (now stamped) state.

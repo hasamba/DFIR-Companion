@@ -59,6 +59,13 @@ export interface HostBindingIndex {
 // 2 Interactive, 7 Unlock, 10 RemoteInteractive/RDP, 11 CachedInteractive.
 const ACCOUNT_PRESENCE_LOGON_TYPES = new Set([2, 7, 10, 11]);
 
+// Exported so any other module deriving something from "would this event be indexed here"
+// shares the SAME predicate rather than re-deriving it — proxyWorkstationChain.ts's own
+// isIndexedLogon used to be a private copy of exactly this check (#1188).
+export function isIndexableLogon(e: ForensicEvent): boolean {
+  return e.canonical?.event?.type === "logon" && e.canonical?.event?.outcome === "success";
+}
+
 // A logon whose IP is empty, a placeholder, or loopback is not a real network-identity source —
 // every host on the fleet logs these the same way, so admitting them would make an IP "match"
 // every host in the case.
@@ -173,18 +180,31 @@ export function canonicalIp(raw: string): string {
 
 export function canonicalAccount(domain: string | undefined, name: string): string {
   const n = name.trim().toLowerCase();
-  const d = domain?.trim().toLowerCase();
-  return d ? `${d}\\${n}` : n;
+  // A placeholder domain ('-'/'*') must fold the same way here as it does for the admission gate
+  // (hasNoDomain, below) — otherwise a domain that GATES as "absent" but still spells its way into
+  // the index KEY makes the binding unreachable: resolveAccountAtTime looks up the bare name, never
+  // "-\name" (#1246). No current importer produces this shape (winAccountRoles.ts's entity()
+  // already collapses "-" before this module sees it) — defense-in-depth, not a live bug.
+  return hasNoDomain(domain) ? n : `${domain!.trim().toLowerCase()}\\${n}`;
+}
+
+export type IpExclusionReason = "placeholder" | "loopback-v4" | "link-local-v4" | "link-local-v6";
+
+/** Why `isIdentifyingIp` would reject this address, or `null` when it would not (#1236) — exported
+ * so a caller wanting exclusion observability (buildHostBindingIndex's own `excluded` sink below)
+ * can count by reason without duplicating these checks. */
+export function ipExclusionReason(raw: string): IpExclusionReason | null {
+  const ip = canonicalIp(raw);
+  if (NON_IDENTIFYING_IPS.has(ip)) return "placeholder";
+  if (isLoopbackV4(ip)) return "loopback-v4";
+  if (isLinkLocalV4(ip)) return "link-local-v4";
+  if (isLinkLocalV6(ip)) return "link-local-v6";
+  return null;
 }
 
 /** Not a real, per-machine address — a placeholder, loopback or link-local. Reused by dnsCrossUploadConnJoin.ts (#996): a match on one of these is noise, not identity, on the connection side too. */
 export function isIdentifyingIp(raw: string): boolean {
-  const ip = canonicalIp(raw);
-  if (NON_IDENTIFYING_IPS.has(ip)) return false;
-  if (isLoopbackV4(ip)) return false;
-  if (isLinkLocalV4(ip)) return false;
-  if (isLinkLocalV6(ip)) return false;
-  return true;
+  return ipExclusionReason(raw) === null;
 }
 
 // The real Windows-logon importer (winAccountRoles.ts's own entity()) already collapses a "-" or
@@ -213,7 +233,14 @@ function hasNoDomain(domain: string | undefined): boolean {
 function bareAccountName(name: string, domain: string | undefined): string {
   if (hasNoDomain(domain)) return name;
   const sep = name.lastIndexOf("\\");
-  return sep === -1 ? name : name.slice(sep + 1);
+  if (sep !== -1) return name.slice(sep + 1);
+  // A UPN (jdoe@corp.com) with a real domain SEPARATELY recorded (winAccountRoles.ts's entity()
+  // now prefers that domain over the UPN's own realm, #1253) carries no backslash for the check
+  // above to find — without this, the key became "corp\jdoe@corp.com" (both the resolved domain
+  // AND the UPN's own realm baked into one key), unreachable by the domain\user spelling a same
+  // session's 4624 binding elsewhere would produce.
+  const at = name.lastIndexOf("@");
+  return at === -1 ? name : name.slice(0, at);
 }
 
 function isHumanAccount(name: string, domain: string | undefined): boolean {
@@ -231,15 +258,24 @@ function push(map: Map<string, HostBinding[]>, key: string, binding: HostBinding
   map.set(key, list);
 }
 
+/**
+ * @param excluded Optional sink (#1236): when given, `buildHostBindingIndex` increments a count
+ * per `IpExclusionReason` for every logon sample whose own source IP was policy-excluded (a
+ * placeholder, loopback, or link-local address never contributed to `byIp`) — the only way to
+ * distinguish "no logon evidence existed" from "evidence existed but was excluded" without this.
+ * The module stays pure: nothing is read from or written to any shared/global state, only this
+ * caller-owned object.
+ */
 export function buildHostBindingIndex(
   events: readonly ForensicEvent[],
   aliasIndex?: HostAliasIndex,
+  excluded?: Map<IpExclusionReason, number>,
 ): HostBindingIndex {
   const index: HostBindingIndex = { byIp: new Map(), byAccount: new Map() };
 
   for (const event of events) {
     const c = event.canonical;
-    if (!c || c.event.type !== "logon" || c.event.outcome !== "success") continue;
+    if (!c || !isIndexableLogon(event)) continue;
     const sampleTime = event.timestamp;
     if (!sampleTime) continue;
 
@@ -247,6 +283,10 @@ export function buildHostBindingIndex(
     // the logon — see the DIRECTIONALITY note at the top of this file.
     const ip = c.network?.source?.address;
     const clientName = c.session?.terminal?.trim();
+    if (excluded && ip) {
+      const reason = ipExclusionReason(ip);
+      if (reason) excluded.set(reason, (excluded.get(reason) ?? 0) + 1);
+    }
     if (ip && isIdentifyingIp(ip) && clientName && isIdentifyingClientName(clientName)) {
       const host = aliasIndex ? resolveHost(aliasIndex, clientName) : clientName;
       push(index.byIp, canonicalIp(ip), {

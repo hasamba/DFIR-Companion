@@ -32,6 +32,9 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}
     steps:
+      # #817's commit-pin policy deliberately covers third-party actions only — GitHub's own
+      # actions/checkout is lower supply-chain risk, and every workflow in this repo tracks it by a
+      # moving major-version tag, not a commit SHA (#1192).
       - uses: actions/checkout@v6
 
       - name: Ensure issue labels exist

@@ -97,6 +97,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
   const settleDeps = {
     superTimelineStore: options.superTimelineStore,
     onSuperTimeline: options.onSuperTimeline,
+    onState: options.onState,
     autoTagImported,
     demoteForensicForCase,
   };

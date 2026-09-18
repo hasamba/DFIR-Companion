@@ -16,6 +16,20 @@ import type { RouteContext } from "./context.js";
  * NEVER an unconditional "this is the workstation" claim — see proxyWorkstationChain.ts's own
  * header for the sensor-topology, DHCP-lease and account-sharing caveats this route's own output
  * cannot resolve.
+ *
+ * MEMORY (#1186): this route calls `stateStore.load()` — the full InvestigationState, including
+ * the entire forensic timeline — rather than `StateStore.forensicTimelineBatches()`, the
+ * streaming path crossCase.ts's own "loadOverview, not load: the forensic timeline is by far the
+ * largest kind" precedent uses for a read path that only needs events. Deliberate, not an
+ * oversight: `resolveProxyHostIdentity` needs `buildHostBindingIndex` built from every logon-shaped
+ * event before it can resolve a single proxy row against it, so a true streaming rewrite needs TWO
+ * passes over the timeline (one to collect logons for the index, one to resolve every event
+ * against it) and a public-contract change to `proxyWorkstationChain.ts` to make that possible
+ * without holding the whole array — real, but a bigger change than this route's own severity
+ * (behavior is correct; this is a peak-memory concern, not a correctness one) warrants without
+ * concrete evidence it is an actual bottleneck in a real case. If it becomes one, batch through
+ * `forensicTimelineBatches()`: accumulate only logon-shaped events into the index-building pass,
+ * then a second pass resolving each batch against the already-built index.
  */
 
 const DEFAULT_TOLERANCE_MS = 21_600_000; // 6 hours — no existing precedent value in this codebase
@@ -24,8 +38,11 @@ const DEFAULT_TOLERANCE_MS = 21_600_000; // 6 hours — no existing precedent va
 // this feature's own disclosure can carry. 30 days.
 const MAX_TOLERANCE_MS = 2_592_000_000;
 
+// toleranceMs=0 is accepted, not rejected (#1189): resolveIpAtTime/resolveAccountAtTime compare
+// with `Math.abs(diff) <= toleranceMs`, so 0 is a real, meaningful value — an exact-instant match —
+// not a degenerate one.
 const querySchema = z.object({
-  toleranceMs: z.coerce.number().int().positive().max(MAX_TOLERANCE_MS).optional(),
+  toleranceMs: z.coerce.number().int().nonnegative().max(MAX_TOLERANCE_MS).optional(),
 });
 
 export function registerProxyHostIdentityRoutes(app: Express, ctx: RouteContext): void {

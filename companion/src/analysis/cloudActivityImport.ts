@@ -134,6 +134,8 @@ function mapGcp(rec: Row, sink: Map<string, SiemIoc>, locator: string): MappedEv
   if (!method || !pp) return [];
 
   const principal = str(getPath(pp, "authenticationInfo.principalEmail"));
+  // GCP's own Cloud Audit Log field, recorded by GCP's own infrastructure at call time —
+  // edge-observed, not client-asserted (#1184 audit).
   const ip = cleanIp(str(getPath(pp, "requestMetadata.callerIp")));
   const resource = str(getCI(pp, "resourceName"));
   const statusCode = Number(getPath(pp, "status.code")) || 0;
@@ -195,6 +197,9 @@ function mapAzure(rec: Row, sink: Map<string, SiemIoc>, recordIndex: number): Ma
   if (!op) return null;
 
   const caller = pickStr(rec, ["caller", "Caller", "identity.claims.name"]);
+  // All four are Azure's own activity-log fields (recorded by Azure's own infrastructure at call
+  // time), across the three export shapes this codebase already reads from — edge-observed, not
+  // client-asserted (#1184 audit).
   const ip = cleanIp(
     pickStr(rec, ["httpRequest.clientIpAddress", "claims.ipaddr", "CallerIpAddress", "callerIpAddress"]),
   );

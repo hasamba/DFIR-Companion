@@ -124,6 +124,21 @@ describe("GET /cases/:id/proxy-host-identity-matches", () => {
     expect(res.body.matches[0].toleranceMs).toBe(43_200_000);
   });
 
+  // #1189: toleranceMs=0 is a real, meaningful value (an exact-instant match), not a degenerate
+  // one — must be accepted, not 400ed.
+  it("accepts toleranceMs=0 as an exact-instant match", async () => {
+    const { app, stateStore } = await makeApp();
+    await stateStore.save(
+      stateWith([
+        logonEvent("l1", "fs-01", "ws-042", "10.0.0.5", "2026-06-10T12:00:00Z"),
+        webEvent("w1", "10.0.0.5", "2026-06-10T12:00:00Z"),
+      ]),
+    );
+    const res = await request(app).get("/cases/c1/proxy-host-identity-matches?toleranceMs=0");
+    expect(res.status).toBe(200);
+    expect(res.body.matches[0]).toMatchObject({ outcome: "matched", toleranceMs: 0 });
+  });
+
   it("400s a malformed toleranceMs instead of silently clamping it", async () => {
     const { app, stateStore } = await makeApp();
     await stateStore.save(stateWith([]));

@@ -91,6 +91,15 @@ describe("parseBplist — malformed/hostile input", () => {
     expect(() => parseBplist(crafted)).toThrow(/uid.*out of range/i);
   });
 
+  it("rejects a finite-but-out-of-range date (huge secs -> Invalid Date), never returns it (#1190)", () => {
+    // Hand-crafted: a single date object (type 0x33) at offset 8, secs = 1e300 -- finite, but the
+    // resulting Date is out of JS's representable range (Invalid Date).
+    const crafted = buf(
+      "62706c6973743030337e37e43c8800759c080000000000000101000000000000000100000000000000000000000000000011",
+    );
+    expect(() => parseBplist(crafted)).toThrow(/out of representable range/);
+  });
+
   it("rejects an offset-table entry that points at the offset table itself rather than real object data", () => {
     // Hand-crafted: a single valid null object at offset 8, but the offset-table entry is crafted
     // to point at the table's own offset (9) instead of the real object (8).

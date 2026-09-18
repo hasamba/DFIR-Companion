@@ -76,7 +76,25 @@ export interface ParsedEmail {
   attachmentsNotRead: number;
   /** Delivery indications: `Delivered-To` (unauthenticated) and the TOPMOST `Received … for <addr>` hop. */
   deliveryIndicated: DeliveryIndication[];
-  originatingIp: string; // X-Originating-IP / earliest external Received hop
+  // X-Originating-IP / earliest external Received hop. NEVER stamped onto canonical.network.source
+  // .address (#1184): unlike a TCP-layer observation (Zeek's id.orig_h) or a provider's own
+  // edge-recorded field (AWS CloudTrail sourceIPAddress, Azure/GCP/Entra/M365 audit-log IP
+  // fields), an email's own header chain can be attacker-influenced in some transport paths — a
+  // webmail client or a malicious relay can assert an X-Originating-IP or forge an intermediate
+  // Received hop. Stamping it into the same trust-sensitive canonical field those edge-observed
+  // sources use would let a forged value join a host-identity resolution (proxyWorkstationChain.ts
+  // reads canonical.network.source.address from ANY event, unscoped by category) as if it were
+  // equally trustworthy. Kept in description text and IOC extraction below — informational uses,
+  // not an identity claim.
+  //
+  // "Edge-observed" for the other 12 audited sites (#1184) is a claim about FORGE-RESISTANCE —
+  // an attacker cannot inject an arbitrary value into e.g. AWS CloudTrail's own sourceIPAddress
+  // the way a header can be crafted — not a claim that the recorded peer is always the literal
+  // end-user device: any of those fields can legitimately show a proxy, NAT gateway or federation
+  // server's own address instead. That is a separate, already-acknowledged topology-precision
+  // limitation (see hostBinding.ts's own DIRECTIONALITY note), distinct from forgeability, and
+  // neither this field nor those needed re-scoping for it.
+  originatingIp: string;
   auth: EmailAuth;
   urls: string[];
   attachments: EmailAttachment[];
@@ -655,7 +673,6 @@ function buildEvent(p: ParsedEmail, severity: Severity): SiemEvent {
           }
         : {}),
     },
-    ...(p.originatingIp ? { network: { source: { address: p.originatingIp } } } : {}),
     time: { observed: p.rawDate, normalized: p.date },
     evidence: {
       rawRecords: [
@@ -679,7 +696,6 @@ function buildEvent(p: ParsedEmail, severity: Severity): SiemEvent {
       ...(p.to.length ? { "mailbox.recipients": ["To", "Cc"] } : {}),
       ...(p.messageId ? { "mailbox.messageId": ["Message-ID"] } : {}),
       ...(p.subject ? { "mailbox.subject": ["Subject"] } : {}),
-      ...(p.originatingIp ? { "network.source.address": ["X-Originating-IP", "Received"] } : {}),
       ...(p.attachments[0]
         ? { "object.name": ["Content-Disposition.filename"], "file.name": ["Content-Disposition.filename"] }
         : {}),

@@ -29,6 +29,18 @@ export interface NearDuplicate {
   sampleTime?: string;
 }
 
+// Whether a reason blocks HostMergeDecisionRequired (hostDuplicates.ts's own resolve-kick) or
+// stays panel-only — a Record keyed by the `reason` union itself, so adding a THIRD reason forces
+// a compile error here until it is given a deliberate true/false, rather than silently becoming
+// blocking (or not) by negation of whichever reason string happens to be the only other one today
+// (#1259). The real "never blocks" guarantee still lives in hostDuplicateGate.ts's own
+// pendingNearDuplicates (never receives a bindingIndex) — this Record only names the CONSEQUENCE
+// each reason has downstream, not re-derive that guarantee.
+export const NEAR_DUPLICATE_BLOCKING: Record<NearDuplicate["reason"], boolean> = {
+  "shortname-fqdn": true,
+  "network-identity": false,
+};
+
 // Lowercase, trim, drop a trailing FQDN dot. Never strips the domain — "ws-042" and
 // "ws-042.corp.local" stay distinct until something links them.
 export function canonicalHostName(raw: string): string {

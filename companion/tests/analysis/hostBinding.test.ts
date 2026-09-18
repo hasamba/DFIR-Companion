@@ -7,6 +7,7 @@ import {
   canonicalIp,
   resolveAccountAtTime,
   resolveIpAtTime,
+  type IpExclusionReason,
 } from "../../src/analysis/hostBinding.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
@@ -79,6 +80,15 @@ describe("canonicalAccount", () => {
 
   it("is a bare lowercased name with no domain", () => {
     expect(canonicalAccount(undefined, "Alice")).toBe("alice");
+  });
+
+  // #1246: the admission gate (hasNoDomain) already treated '-'/'*' as absent, but the index KEY
+  // still spelled it out ("-\\alice") — a domain a caller would never query, making the binding
+  // unreachable. Both must fold the same placeholder convention.
+  it("folds a placeholder domain ('-' or '*') to a bare name, same as an absent domain", () => {
+    expect(canonicalAccount("-", "Alice")).toBe("alice");
+    expect(canonicalAccount("*", "Alice")).toBe("alice");
+    expect(canonicalAccount("-", "Alice")).toBe(canonicalAccount(undefined, "Alice"));
   });
 });
 
@@ -181,6 +191,47 @@ describe("buildHostBindingIndex + resolveIpAtTime (IP -> client host)", () => {
     expect(index.byIp.size).toBe(0);
   });
 
+  // #1236: buildHostBindingIndex had zero exclusion observability — no way for an analyst to tell
+  // "no logon evidence existed" from "evidence existed but was policy-excluded". The optional
+  // `excluded` sink counts by reason without changing the return shape or any existing caller.
+  it("counts policy-excluded IPs by reason in the optional excluded sink, when one is given", () => {
+    const events = [
+      logonEvent({ sessionHost: "ws-042", clientName: "ws-042", ip: "-", ts: "2026-06-10T12:00:00Z" }),
+      logonEvent({
+        sessionHost: "ws-042",
+        clientName: "ws-042",
+        ip: "127.0.0.5",
+        ts: "2026-06-10T12:00:01Z",
+      }),
+      logonEvent({ sessionHost: "fs-01", clientName: "ws-042", ip: "fe80::1", ts: "2026-06-10T12:00:02Z" }),
+      logonEvent({
+        sessionHost: "fs-01",
+        clientName: "ws-042",
+        ip: "169.254.1.1",
+        ts: "2026-06-10T12:00:03Z",
+      }),
+      logonEvent({ sessionHost: "fs-01", clientName: "ws-042", ip: "10.0.0.5", ts: "2026-06-10T12:00:04Z" }),
+    ];
+    const excluded = new Map<IpExclusionReason, number>();
+    buildHostBindingIndex(events, undefined, excluded);
+    expect(Object.fromEntries(excluded)).toEqual({
+      placeholder: 1,
+      "loopback-v4": 1,
+      "link-local-v6": 1,
+      "link-local-v4": 1,
+    });
+  });
+
+  it("never touches the excluded sink for an identifying IP, and costs nothing when no sink is given", () => {
+    const events = [
+      logonEvent({ sessionHost: "fs-01", clientName: "ws-042", ip: "10.0.0.5", ts: "2026-06-10T12:00:00Z" }),
+    ];
+    const excluded = new Map<IpExclusionReason, number>();
+    buildHostBindingIndex(events, undefined, excluded);
+    expect(excluded.size).toBe(0);
+    expect(() => buildHostBindingIndex(events)).not.toThrow();
+  });
+
   it("excludes IPv6 link-local addresses (fe80::/10) from the IP index, zoned or not", () => {
     const events = [
       logonEvent({ sessionHost: "fs-01", clientName: "ws-042", ip: "fe80::1", ts: "2026-06-10T12:00:00Z" }),
@@ -268,6 +319,44 @@ describe("buildHostBindingIndex + resolveAccountAtTime (account -> session host)
     ];
     const index = buildHostBindingIndex(events);
     const hits = resolveAccountAtTime(index, "CORP\\alice", "2026-06-10T12:00:00Z", 1_000);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].host).toBe("ws-042");
+  });
+
+  // #1246: an accountDomain of '-' admits as human (hasNoDomain) but must ALSO key the index under
+  // the bare name, not "-\\alice" — otherwise resolveAccountAtTime("alice", ...) would never find it.
+  it("indexes an account with a placeholder ('-') domain under the bare name, reachable by it", () => {
+    const events = [
+      logonEvent({
+        sessionHost: "ws-042",
+        accountName: "alice",
+        accountDomain: "-",
+        logonType: 10,
+        ts: "2026-06-10T12:00:00Z",
+      }),
+    ];
+    const index = buildHostBindingIndex(events);
+    const hits = resolveAccountAtTime(index, "alice", "2026-06-10T12:00:00Z", 1_000);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].host).toBe("ws-042");
+  });
+
+  // #1253: a UPN-form account.name (winAccountRoles.ts's entity() now sets domain to the
+  // separately-recorded real domain, but name stays the raw UPN) must still be reachable by the
+  // domain\user spelling a same-session 4624 binding elsewhere would produce, not stay keyed under
+  // its own un-split realm\user@realm form.
+  it("indexes a UPN-form account.name under the bare local part, reachable by domain\\user", () => {
+    const events = [
+      logonEvent({
+        sessionHost: "ws-042",
+        accountName: "jdoe@corp.com",
+        accountDomain: "CORP",
+        logonType: 10,
+        ts: "2026-06-10T12:00:00Z",
+      }),
+    ];
+    const index = buildHostBindingIndex(events);
+    const hits = resolveAccountAtTime(index, "CORP\\jdoe", "2026-06-10T12:00:00Z", 1_000);
     expect(hits).toHaveLength(1);
     expect(hits[0].host).toBe("ws-042");
   });

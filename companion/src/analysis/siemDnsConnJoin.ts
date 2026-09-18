@@ -1,7 +1,7 @@
 // The Windows half of #996's within-upload join: Sysmon 22 / DNS-Client 3006/3008/3020 returned
 // addresses against Sysmon 3 ("Network connection detected") records from the SAME host, in the
 // SAME upload. Reuses dnsConnJoin.ts's JoinState/Lead types and dnsWireWords.ts's lead/join
-// wording verbatim (canonicalDns.ts's header: "Two vantages share it") — this file only adds the
+// wording verbatim (canonicalDns.ts's header: "Three vantages share it") — this file only adds the
 // host-keyed candidate collection and matching, the part genuinely new for the endpoint vantage.
 //
 // Windows DNS records carry no client IP (dnsRecord.ts: "the vantage is the endpoint's own stub
@@ -19,6 +19,12 @@
 // and canonicalEvent.ts are both already at their file-size ledger's ceiling (#384/#385), and the
 // row's own wording never claims causation regardless — "order and address, never cause" holds
 // either way. A follow-up can thread `Initiated` through once either file has room again.
+//
+// The SAME gap exists on the WFP 5156 vantage, at the same root cause: `Direction` (%%14592
+// inbound / %%14593 outbound) is not decoded anywhere in the import path, so an inbound 5156 whose
+// peer address matches a returned DNS address shows as "connected" too (#1212). Fix both
+// `Initiated` and `Direction` together, not separately — they are the same limitation on two
+// sources, and threading only one through would leave the join inconsistent between vantages.
 
 import {
   CONN_INDEX_MAX,
@@ -185,7 +191,7 @@ const MARK_TAG = / #[A-Za-z0-9_-]{22}$/;
  * instead of one row claiming a single outcome — the "un-aggregated observations" requirement:
  * the join itself already ran per individual record, before this folds the RESULT into the key
  * `aggregateEvents` groups by), and sets `canonical.dns.joinState`/`.leads` — the same fields
- * `dnsBlockSchema` already accepts for the sensor vantage (canonicalDns.ts, "Two vantages share
+ * `dnsBlockSchema` already accepts for the sensor vantage (canonicalDns.ts, "Three vantages share
  * it"). Called AFTER `boundDnsVariants` (its own `aggKey` suffix regex must see the row
  * untouched) and BEFORE `aggregateEvents`. A row `boundDnsVariants` already folded
  * (`canonical.dns.folded`) is skipped — its original returned addresses are no longer knowable.

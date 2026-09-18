@@ -6,6 +6,7 @@ import {
   BUCKET_MAX,
 } from "../../src/analysis/injectionSequence.js";
 import { processGuid } from "../../src/analysis/processAccess.js";
+import { malfindDescription } from "../../src/analysis/memoryFields.js";
 import { parseSiemExport } from "../../src/analysis/siemImport.js";
 import { correlateEvents, cleanDescription } from "../../src/analysis/correlate.js";
 import type { ForensicEvent, Severity } from "../../src/analysis/stateTypes.js";
@@ -347,6 +348,31 @@ describe("recompute, bounds, safety", () => {
     // A malfind row on a different host must never cross-corroborate either.
     const wrongHost = run([access(), thread(), malfind(200, { asset: "WS-02" })]);
     expect(find(wrongHost, "t1").description).not.toContain("a malfind finding for the target process");
+  });
+
+  // #1195: this pass recognises a malfind row by regex-matching memoryFields.ts's own
+  // malfindDescription() prose. Using the REAL writer here, not a hand-typed phrase, so a future
+  // wording change to malfindDescription breaks THIS test rather than silently dropping the pointer.
+  it("still recognises a malfind row built from memoryFields.ts's real malfindDescription()", () => {
+    const description = malfindDescription(
+      "Volatility3",
+      "malfind",
+      "notepad.exe",
+      "200",
+      " at 0x1000",
+      "",
+      "",
+    );
+    const malfind: Ev = {
+      id: "m1",
+      timestamp: "",
+      description,
+      severity: "High",
+      mitreTechniques: ["T1055"],
+      asset: "WS-01",
+    };
+    const out = run([access(), thread(), malfind]);
+    expect(find(out, "t1").description).toContain("a malfind finding for the target process");
   });
 });
 

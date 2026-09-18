@@ -214,11 +214,20 @@ const isProcessStart = (e: TimelineEventShape): boolean =>
 // reasoning.
 
 // The raw YARA CLI importer's own fixed description prefix (yaraImport.ts's parseYaraOutput):
-// "YARA: <rule> matched <file>...". Only the CLI path is recognised here — Velociraptor's own
-// native YARA scanning is a documented follow-up (985-1a-2): its description is rewritten by a
-// LATER, generic artifact-prefix step this file cannot see at classification time, and its
-// self-scan/volatile exclusion signal does not survive that rewrite reliably (see the design doc).
+// "YARA: <rule> matched <file>...". Only the CLI path is recognised here — a Velociraptor-native
+// row's description is rewritten by a LATER, generic artifact-prefix step this file cannot see at
+// classification time, so `isVeloYara`/`VELO_YARA_RULE` below (985-1a-2, shipped) recognises that
+// row shape separately, off its own structured `severity` field, not a truncatable text marker.
 const YARA_CLI_RULE = /^YARA: (\S+) matched/;
+
+// SO-CRATES' own YARA file-match event (socratesImport.ts, sources ["SO-CRATES", "YARA"]):
+// "YARA: <rule> on <target>" — same "YARA: " prefix as the raw CLI importer's own row, but a
+// different trailing word ("on", not "matched"), so YARA_CLI_RULE above never matches it and the
+// rule name fell through to the generic "YARA: rule" fallback, anonymizing exactly the engine/rule
+// name an analyst would want named (#1205). Checked first, named distinctly from a raw CLI hit.
+const SOCRATES_YARA_RULE = /^YARA: (\S+) on /;
+const isSocratesYara = (e: TimelineEventShape): boolean =>
+  (e.sources ?? []).includes("SO-CRATES") && SOCRATES_YARA_RULE.test(e.description ?? "");
 
 // A THOR (Nextron) finding: the standalone importer (`sources: ["THOR"]`, thorImport.ts) or one
 // streamed through Velociraptor (`sources: ["Velociraptor"]`, thorRowMap.ts's thorFields() —
@@ -264,6 +273,10 @@ function artifactOf(e: TimelineEventShape): string {
   // mislabel a real row (#985 item 4, 985-1a-3 design review finding F7, reconfirmed for each later
   // leg by its own design review).
   if (isThor(e)) return "THOR";
+  if (isSocratesYara(e)) {
+    const rule = SOCRATES_YARA_RULE.exec(e.description ?? "")?.[1];
+    return `SO-CRATES YARA: ${rule ?? "rule"}`;
+  }
   if (isVeloYara(e)) {
     const rule = VELO_YARA_RULE.exec(e.description ?? "")?.[1];
     return `Velociraptor YARA: ${rule ?? "rule"}`;
@@ -300,6 +313,9 @@ function classify<T extends TimelineEventShape>(e: T): Indexed<T> | null {
     isBam(e) ||
     /Prefetch/i.test(src) ||
     /prefetch/i.test(action) ||
+    // Reachable via Velociraptor's own UserAssist artifact today (PR #1196's description fallback)
+    // — kapeImport.ts has no UserAssist module mapping, so a KAPE-CSV UserAssist import cannot yet
+    // produce a row this matches (#1197). Add that mapping if/when KAPE UserAssist import is needed.
     /UserAssist/i.test(src) ||
     /UserAssist/i.test(action) ||
     isProcessStart(e)

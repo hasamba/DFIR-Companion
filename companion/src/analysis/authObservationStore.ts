@@ -89,14 +89,24 @@ export class AuthObservationStore {
     const now = Date.now();
     const last = this.lastPrunedAtMs.get(caseId) ?? 0;
     if (now - last < PRUNE_THROTTLE_MS) return;
+    // Set BEFORE the await, not after (#1239): this.lastPrunedAtMs also throttles a second
+    // concurrent append() for the same case (an import burst) from racing a duplicate prune while
+    // the first is still in flight. On failure, roll the timestamp back to its previous value —
+    // a transient worker error must not cost this case a full extra hour of accumulating expired
+    // rows before the next attempt.
     this.lastPrunedAtMs.set(caseId, now);
     const beforeMs = now - this.retentionHoursValue * 3_600_000;
-    await caseSqliteWorker.request<number>({
-      op: "pruneEntitiesBefore",
-      dbPath,
-      kind: KIND,
-      beforeMs,
-    });
+    try {
+      await caseSqliteWorker.request<number>({
+        op: "pruneEntitiesBefore",
+        dbPath,
+        kind: KIND,
+        beforeMs,
+      });
+    } catch (err) {
+      if (this.lastPrunedAtMs.get(caseId) === now) this.lastPrunedAtMs.set(caseId, last);
+      throw err;
+    }
   }
 
   /**
