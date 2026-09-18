@@ -190,6 +190,7 @@
     "bsdTime.ts": "analysis/ingest",
     "bplistReader.ts": "analysis/ingest",
     "bulkExtractorUrlImport.ts": "analysis/ingest",
+    "bulkExtractorCarvedImport.ts": "analysis/ingest",
     "burstDetect.ts": "analysis/detect",
     "canonicalEvent.ts": "shared",
     "canonicalWeb.ts": "shared",

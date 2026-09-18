@@ -220,6 +220,8 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         return observe(pipeline.importAwsFlowLog(caseId, text, base));
       case "bulkextractorurl":
         return observe(pipeline.importBulkExtractorUrl(caseId, text, base));
+      case "bulkextractorcarved":
+        return observe(pipeline.importBulkExtractorCarved(caseId, text, base));
       case "flossresult":
         return observe(pipeline.importFlossResult(caseId, text, base));
       case "caparesult":
