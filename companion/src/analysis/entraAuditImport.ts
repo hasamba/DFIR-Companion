@@ -156,7 +156,7 @@ function envelope(
           },
         }
       : {}),
-    ...(ip ? { network: { source: { address: ip } } } : {}),
+    ...(ip ? { network: { source: { address: ip, provenance: "edge-observed" } } } : {}),
     cloud: {
       provider: "entra",
       ...(r.tenant ? { tenant: r.tenant } : {}),
@@ -454,7 +454,7 @@ export function mapSpSignIn(rec: Row, sink: Map<string, SiemIoc>, index: number)
             },
           }
         : {}),
-      ...(ip ? { network: { source: { address: ip } } } : {}),
+      ...(ip ? { network: { source: { address: ip, provenance: "edge-observed" } } } : {}),
       cloud: {
         provider: "entra",
         ...(tenant ? { tenant } : {}),

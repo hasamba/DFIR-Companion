@@ -410,7 +410,7 @@ function tokenEnvelope(
     ...(actor ? { actor } : {}),
     ...(subject ? { subject } : {}),
     ...(!activity && client ? { object: client } : {}),
-    ...(ip ? { network: { source: { address: ip } } } : {}),
+    ...(ip ? { network: { source: { address: ip, provenance: "edge-observed" } } } : {}),
     cloud: {
       provider: "google-workspace",
       ...(tenant ? { tenant } : {}),
@@ -470,7 +470,7 @@ function gwsEnvelope(
     event: { category: "cloud", type, action: name, outcome: "success" },
     ...(self ? { actor: self } : {}),
     ...(impersonated ? { subject: impersonated } : {}),
-    ...(ip ? { network: { source: { address: ip } } } : {}),
+    ...(ip ? { network: { source: { address: ip, provenance: "edge-observed" } } } : {}),
     cloud: {
       provider: "google-workspace",
       ...(tenant ? { tenant } : {}),

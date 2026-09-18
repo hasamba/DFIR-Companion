@@ -734,8 +734,10 @@ function summaryRow(
       object: { kind: "mailbox", id: ref.key, name: ref.name || ref.key },
       // Inherited from the chain's own earliest step — an Exchange audit record or a UAL sign-in
       // record (readUalLogon), both Microsoft-recorded audit log fields, never raw email header
-      // content — edge-observed, not client-asserted (#1184 audit).
-      ...(first.ip ? { network: { source: { address: first.ip } } } : {}),
+      // content — edge-observed, not client-asserted (#1184 audit). #1265's own provenance stamp
+      // is valid here only while every real caller's own IP input stays edge-observed — re-verify
+      // this invariant before this chain ever aggregates a new, header-derived source.
+      ...(first.ip ? { network: { source: { address: first.ip, provenance: "edge-observed" } } } : {}),
       cloud: { provider: "m365", ...(tenant ? { tenant } : {}), principalType: "user" },
       time: { observed, normalized: normalizeTime(observed) },
       evidence: { rawRecords: chain.cited.map((x) => ({ source: "m365-ual", locator: x.locator })) },
