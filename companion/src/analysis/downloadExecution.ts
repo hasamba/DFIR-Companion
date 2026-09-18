@@ -300,6 +300,9 @@ function classify<T extends TimelineEventShape>(e: T): Indexed<T> | null {
     isBam(e) ||
     /Prefetch/i.test(src) ||
     /prefetch/i.test(action) ||
+    // Reachable via Velociraptor's own UserAssist artifact today (PR #1196's description fallback)
+    // — kapeImport.ts has no UserAssist module mapping, so a KAPE-CSV UserAssist import cannot yet
+    // produce a row this matches (#1197). Add that mapping if/when KAPE UserAssist import is needed.
     /UserAssist/i.test(src) ||
     /UserAssist/i.test(action) ||
     isProcessStart(e)
