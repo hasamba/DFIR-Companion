@@ -66,4 +66,40 @@ describe("HostDuplicateDismissalStore", () => {
     expect(dismissalKey("A.corp", "A")).toBe(dismissalKey("a.corp", "a"));
     expect(dismissalKey("a.corp", "a")).not.toBe(dismissalKey("a", "a.corp"));
   });
+
+  // #1170: a per-pair undo, never a whole-file clear (the only workaround today, which silently
+  // re-arms every other dismissal in the case too).
+  describe("remove (#1170)", () => {
+    it("removes exactly the named pair, leaving every other dismissal intact", async () => {
+      await store.append("c1", { canonical: "a.corp", other: "a", dismissedAt: "t1", dismissedBy: "x" });
+      await store.append("c1", { canonical: "b.corp", other: "b", dismissedAt: "t2", dismissedBy: "y" });
+      const removed = await store.remove("c1", "a.corp", "a");
+      expect(removed).toBe(true);
+      const remaining = await store.load("c1");
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0].canonical).toBe("b.corp");
+    });
+
+    it("returns false and changes nothing when the pair is not currently dismissed", async () => {
+      await store.append("c1", { canonical: "a.corp", other: "a", dismissedAt: "t1", dismissedBy: "x" });
+      const removed = await store.remove("c1", "nope.corp", "nope");
+      expect(removed).toBe(false);
+      expect(await store.load("c1")).toHaveLength(1);
+    });
+
+    it("matches on the normalized key, independent of casing", async () => {
+      await store.append("c1", {
+        canonical: "WIN11.Windomain.Local",
+        other: "WIN11",
+        dismissedAt: "t",
+        dismissedBy: "x",
+      });
+      expect(await store.remove("c1", "win11.windomain.local", "win11")).toBe(true);
+      expect(await store.load("c1")).toEqual([]);
+    });
+
+    it("removing from an empty/nonexistent file returns false without throwing", async () => {
+      expect(await store.remove("c1", "a", "b")).toBe(false);
+    });
+  });
 });

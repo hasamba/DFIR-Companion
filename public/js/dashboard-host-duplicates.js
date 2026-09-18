@@ -9,6 +9,7 @@
   "use strict";
 
   let pending = [];
+  let dismissed = [];
 
   // Two actions, same buttons, same delegated handler, regardless of reason — merging an IP into
   // a host name is exactly the same "treat this spelling as that host" operation as a name-
@@ -25,8 +26,32 @@
     );
   }
 
-  function renderHostDuplicates(list) {
-    if (!list || !list.length) return "";
+  // #1170: every dismissal is listed, with a per-pair undo — the only prior workaround (deleting
+  // the whole host-duplicate-dismissals.json file on disk) silently re-armed EVERY dismissal in
+  // the case, not just the one the analyst wanted to reconsider. `dismissedList` is optional and
+  // defaults to none, so this stays a pure, backward-compatible extension of the existing
+  // rendering contract (every prior caller/test still passes one argument).
+  function dismissedRows(dismissedList) {
+    if (!dismissedList || !dismissedList.length) return "";
+    const rows = dismissedList
+      .map(
+        (d) =>
+          `<div class="hd-row hd-dismissed-row">` +
+          `<code>${esc(d.other)}</code> and <code>${esc(d.canonical)}</code> — dismissed as different machines ` +
+          `${d.dismissedAt ? `on ${esc(fmtDateTime(d.dismissedAt))}` : ""}${d.dismissedBy ? ` by ${esc(d.dismissedBy)}` : ""}. ` +
+          `<button data-hd-undo="1" data-hd-canonical="${escAttr(d.canonical)}" data-hd-other="${escAttr(d.other)}" ` +
+          `title="Reconsider — this pair becomes eligible to be suggested again.">Undo</button>` +
+          `</div>`,
+      )
+      .join("");
+    return (
+      `<details class="hd-dismissed"><summary>Previously dismissed (${dismissedList.length})</summary>${rows}</details>`
+    );
+  }
+
+  function renderHostDuplicates(list, dismissedList) {
+    if ((!list || !list.length) && (!dismissedList || !dismissedList.length)) return "";
+    if (!list) list = [];
     const blocking = list.filter((d) => d.reason !== "network-identity");
     const networkIdentity = list.filter((d) => d.reason === "network-identity");
 
@@ -62,7 +87,7 @@
         `already in this case.</div>${networkIdentityRows}`
       : "";
 
-    return blockingBlock + networkIdentityBlock;
+    return blockingBlock + networkIdentityBlock + dismissedRows(dismissedList);
   }
 
   // The section is DATA-GATED: hidden while nothing is pending, shown the moment something is.
@@ -78,8 +103,11 @@
   function paintSectionGate() {
     const sec = document.getElementById("sec-host-duplicates");
     if (!sec) return;
-    sec.dataset.gateOpen = pending.length ? "1" : "";
-    if (pending.length) {
+    // Open for a pending pair OR a past dismissal (#1170) — an analyst reconsidering an old
+    // "different machines" call must be able to reach it even when nothing else is outstanding.
+    const hasContent = pending.length || dismissed.length;
+    sec.dataset.gateOpen = hasContent ? "1" : "";
+    if (hasContent) {
       try {
         const vis = JSON.parse(localStorage.getItem(SECTIONS_VIS_KEY) || "{}");
         if (vis["sec-host-duplicates"] !== true) {
@@ -102,7 +130,7 @@
     paintSectionGate();
     const el = document.getElementById("hostDuplicatesBody");
     if (!el) return;
-    el.innerHTML = renderHostDuplicates(pending);
+    el.innerHTML = renderHostDuplicates(pending, dismissed);
     // One delegated listener, bound once: innerHTML is replaced on every repaint, so per-button
     // listeners would be lost each time.
     if (!el.dataset.hdBound) {
@@ -114,10 +142,12 @@
   async function loadHostDuplicates(caseId) {
     if (!caseId) return;
     try {
-      const r = await fetch(`/cases/${encodeURIComponent(caseId)}/host-duplicates`);
-      if (!r.ok) return;
-      const d = await r.json();
-      pending = d.pending || [];
+      const [pendingRes, dismissedRes] = await Promise.all([
+        fetch(`/cases/${encodeURIComponent(caseId)}/host-duplicates`),
+        fetch(`/cases/${encodeURIComponent(caseId)}/host-duplicates/dismissed`),
+      ]);
+      if (pendingRes.ok) pending = (await pendingRes.json()).pending || [];
+      if (dismissedRes.ok) dismissed = (await dismissedRes.json()).dismissed || [];
       paint();
     } catch {
       // A panel that cannot load must not take the dashboard down with it.
@@ -145,15 +175,38 @@
     }
   }
 
+  // #1170: undo never kicks a resynthesis — re-arming the gate (if it was a blocking pair) is the
+  // correct, expected outcome of an explicit "reconsider this" action, not a resume.
+  async function undoDismiss(caseId, canonical, other) {
+    try {
+      const r = await fetch(`/cases/${encodeURIComponent(caseId)}/host-duplicates/dismiss`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ canonical: canonical, other: other }),
+      });
+      if (!r.ok) return;
+      const d = await r.json();
+      dismissed = d.dismissed || [];
+      pending = d.pending || [];
+      paint();
+    } catch {
+      /* leave the panel as it was */
+    }
+  }
+
   function onPanelClick(evt) {
     const target = evt.target && evt.target.closest ? evt.target : null;
     if (!target) return;
-    const button = target.closest("[data-hd-merge], [data-hd-dismiss]");
+    const button = target.closest("[data-hd-merge], [data-hd-dismiss], [data-hd-undo]");
     if (!button) return;
     const caseId = (document.getElementById("caseId") || {}).value;
     if (!caseId || !caseId.trim()) return;
     const canonical = button.getAttribute("data-hd-canonical");
     const other = button.getAttribute("data-hd-other");
+    if (button.hasAttribute("data-hd-undo")) {
+      void undoDismiss(caseId.trim(), canonical, other);
+      return;
+    }
     const action = button.hasAttribute("data-hd-merge") ? "merge" : "dismiss";
     if (action === "merge" && !confirm(`Treat ${other} and ${canonical} as one host?`)) return;
     void resolve(caseId.trim(), action, canonical, other);

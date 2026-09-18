@@ -102,6 +102,107 @@ describe("/cases/:id/host-duplicates", () => {
   });
 });
 
+describe("/cases/:id/host-duplicates/dismissed — per-pair undo (#1170)", () => {
+  it("lists an empty dismissed set before anything is dismissed", async () => {
+    const res = await request(app).get("/cases/c1/host-duplicates/dismissed");
+    expect(res.status).toBe(200);
+    expect(res.body.dismissed).toEqual([]);
+  });
+
+  it("lists a dismissal after dismissing, then undoing it removes exactly that one", async () => {
+    await request(app)
+      .post("/cases/c1/host-duplicates/dismiss")
+      .send({ canonical: "win11.windomain.local", other: "win11" });
+    const listed = await request(app).get("/cases/c1/host-duplicates/dismissed");
+    expect(listed.body.dismissed).toHaveLength(1);
+    expect(listed.body.dismissed[0]).toMatchObject({ canonical: "win11.windomain.local", other: "win11" });
+
+    const undo = await request(app)
+      .delete("/cases/c1/host-duplicates/dismiss")
+      .send({ canonical: "win11.windomain.local", other: "win11" });
+    expect(undo.status).toBe(200);
+    expect(undo.body.dismissed).toEqual([]);
+    // The pair is eligible again — the pending list is derived, never cached.
+    expect(undo.body.pending).toHaveLength(1);
+    expect(undo.body.pending[0]).toMatchObject({ canonical: "win11.windomain.local", other: "win11" });
+  });
+
+  it("undoing one dismissal never touches a different pair's own dismissal", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-hostdup-undo-two-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const stateStore = new StateStore(cases);
+    const s = emptyState("c1");
+    s.forensicTimeline.push(
+      ev("a", "WIN11"),
+      ev("b", "WIN11.windomain.local"),
+      ev("c", "DC01"),
+      ev("d", "DC01.corp.local"),
+    );
+    await stateStore.save(s);
+    const twoPairApp = createApp(cases, {
+      stateStore,
+      assetOverridesStore: new AssetOverridesStore(cases),
+      hostDuplicateDismissalStore: new HostDuplicateDismissalStore(cases),
+    });
+    await request(twoPairApp)
+      .post("/cases/c1/host-duplicates/dismiss")
+      .send({ canonical: "win11.windomain.local", other: "win11" });
+    await request(twoPairApp)
+      .post("/cases/c1/host-duplicates/dismiss")
+      .send({ canonical: "dc01.corp.local", other: "dc01" });
+
+    const undo = await request(twoPairApp)
+      .delete("/cases/c1/host-duplicates/dismiss")
+      .send({ canonical: "win11.windomain.local", other: "win11" });
+    expect(undo.body.dismissed).toHaveLength(1);
+    expect(undo.body.dismissed[0]).toMatchObject({ canonical: "dc01.corp.local", other: "dc01" });
+  });
+
+  it("returns 404, not 200, for a pair that was never dismissed", async () => {
+    const res = await request(app)
+      .delete("/cases/c1/host-duplicates/dismiss")
+      .send({ canonical: "win11.windomain.local", other: "win11" });
+    expect(res.status).toBe(404);
+  });
+
+  it("rejects a malformed undo request the same way dismiss does", async () => {
+    const res = await request(app).delete("/cases/c1/host-duplicates/dismiss").send({ canonical: "a.corp" });
+    expect(res.status).toBe(400);
+  });
+
+  it("never kicks a resynthesis on undo — re-arming the gate is the correct outcome, not a resume", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-hostdup-undo-kick-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const stateStore = new StateStore(cases);
+    const s = emptyState("c1");
+    s.forensicTimeline.push(ev("a", "WIN11"), ev("b", "WIN11.windomain.local"));
+    await stateStore.save(s);
+    const dismissals = new HostDuplicateDismissalStore(cases);
+    const kick = vi.fn();
+    const kickApp = express();
+    kickApp.use(express.json());
+    registerHostDuplicateRoutes(kickApp, {
+      store: cases,
+      options: {
+        stateStore,
+        assetOverridesStore: new AssetOverridesStore(cases),
+        hostDuplicateDismissalStore: dismissals,
+      },
+      resynthesizeInBackground: kick,
+    } as unknown as RouteContext);
+    await request(kickApp)
+      .post("/cases/c1/host-duplicates/dismiss")
+      .send({ canonical: "win11.windomain.local", other: "win11" });
+    kick.mockClear(); // the dismiss above already kicked once, legitimately (the gate cleared)
+    await request(kickApp)
+      .delete("/cases/c1/host-duplicates/dismiss")
+      .send({ canonical: "win11.windomain.local", other: "win11" });
+    expect(kick).not.toHaveBeenCalled();
+  });
+});
+
 function logonEvent(id: string, sessionHost: string, clientName: string, ip: string): ForensicEvent {
   return {
     id,

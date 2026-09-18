@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { loadDashboardModule } from "../helpers/dashboardModule.js";
 
 interface Api {
-  renderHostDuplicates(pending: unknown[]): string;
+  renderHostDuplicates(pending: unknown[], dismissed?: unknown[]): string;
 }
 
 const panel = loadDashboardModule<Api>("dashboard-host-duplicates.js", [
@@ -99,6 +99,54 @@ describe("host duplicates panel — network-identity rows (#1163)", () => {
   });
 });
 
+describe("host duplicates panel — previously dismissed, per-pair undo (#1170)", () => {
+  const dismissal = {
+    canonical: "win11.windomain.local",
+    other: "win11",
+    dismissedAt: "2026-06-10T12:00:00Z",
+    dismissedBy: "alice",
+  };
+
+  it("renders nothing when there is neither a pending pair nor a dismissal", () => {
+    expect(panel.renderHostDuplicates([], [])).toBe("");
+    expect(panel.renderHostDuplicates([])).toBe(""); // pre-#1170 single-argument call still works
+  });
+
+  it("renders the dismissed list even when nothing is pending", () => {
+    const html = panel.renderHostDuplicates([], [dismissal]);
+    expect(html).toContain("win11.windomain.local");
+    expect(html).toContain("win11");
+    expect(html.toLowerCase()).toContain("previously dismissed");
+    expect(html).toContain("data-hd-undo");
+  });
+
+  it("names who dismissed it and when, using date+time not bare time-of-day", () => {
+    const html = panel.renderHostDuplicates([], [dismissal]);
+    expect(html).toContain("alice");
+    expect(html).toContain(new Date(dismissal.dismissedAt).toLocaleString());
+  });
+
+  it("shows both the pending rows and the dismissed list together", () => {
+    const html = panel.renderHostDuplicates([pair], [dismissal]);
+    expect(html.toLowerCase()).toContain("analysis is on hold");
+    expect(html.toLowerCase()).toContain("previously dismissed");
+  });
+
+  it("escapes a hostile analyst name in the dismissed row", () => {
+    const html = panel.renderHostDuplicates(
+      [],
+      [{ ...dismissal, dismissedBy: "<img src=x onerror=alert(1)>" }],
+    );
+    expect(html).not.toContain("<img src=x");
+    expect(html).toContain("&lt;img");
+  });
+
+  it("shows no 'previously dismissed' section when the dismissed list is empty", () => {
+    const html = panel.renderHostDuplicates([pair], []);
+    expect(html.toLowerCase()).not.toContain("previously dismissed");
+  });
+});
+
 // ── Reachability (#575 follow-up) ────────────────────────────────────────────────────────────────
 //
 // Everything above tests the panel's HTML. None of it could catch the reported bug, which was that
@@ -117,8 +165,9 @@ describe("host duplicates panel reachability", () => {
     expect(markup).toMatch(/<section id="sec-host-duplicates" data-gate-open=""/);
   });
 
-  it("opens the gate exactly when a pair is pending, and defers display to applySectionsVis", () => {
-    expect(module).toMatch(/gateOpen = pending\.length \? "1" : ""/);
+  it("opens the gate when a pair is pending OR a dismissal exists to review (#1170), and defers display to applySectionsVis", () => {
+    expect(module).toMatch(/const hasContent = pending\.length \|\| dismissed\.length/);
+    expect(module).toMatch(/gateOpen = hasContent \? "1" : ""/);
     expect(module).toMatch(/applySectionsVis\(\)/);
   });
 
