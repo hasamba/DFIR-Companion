@@ -181,6 +181,36 @@ describe("buildHostBindingIndex + resolveIpAtTime (IP -> client host)", () => {
     expect(index.byIp.size).toBe(0);
   });
 
+  it("excludes IPv6 link-local addresses (fe80::/10) from the IP index, zoned or not", () => {
+    const events = [
+      logonEvent({ sessionHost: "fs-01", clientName: "ws-042", ip: "fe80::1", ts: "2026-06-10T12:00:00Z" }),
+      logonEvent({
+        sessionHost: "fs-01",
+        clientName: "ws-042",
+        ip: "fe80::1%eth0",
+        ts: "2026-06-10T12:00:01Z",
+      }),
+      logonEvent({ sessionHost: "fs-01", clientName: "ws-042", ip: "febf::1", ts: "2026-06-10T12:00:02Z" }),
+    ];
+    const index = buildHostBindingIndex(events);
+    expect(index.byIp.size).toBe(0);
+  });
+
+  it("still admits a ULA (fc00::/7) address as identifying, matching how RFC1918 IPv4 is treated", () => {
+    const events = [
+      logonEvent({
+        sessionHost: "fs-01",
+        clientName: "ws-042",
+        ip: "fd12:3456::1",
+        ts: "2026-06-10T12:00:00Z",
+      }),
+    ];
+    const index = buildHostBindingIndex(events);
+    const hits = resolveIpAtTime(index, "fd12:3456::1", "2026-06-10T12:00:00Z", 1_000);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].host).toBe("ws-042");
+  });
+
   it("resolves the client name through a supplied HostAliasIndex, distinct from a differently-spelled input", () => {
     const aliasIndex = buildHostAliasIndex(
       [{ clientId: "C.1", hostname: "ws-042", fqdn: "ws-042.corp.local" }],

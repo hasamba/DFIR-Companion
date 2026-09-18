@@ -82,6 +82,21 @@ function isLoopbackV4(ip: string): boolean {
   return /^127\./.test(ip);
 }
 
+// IPv6 link-local (fe80::/10): auto-configured per-interface, valid only on its own link, and
+// this module already strips the "%zone" suffix that would disambiguate it (see canonicalIp) —
+// without that scope, the same textual "fe80::..." address can legitimately name two unrelated
+// hosts on two different links within the same case. Matches the module's own stated intent at
+// canonicalIp's own comment, which describes this exclusion but never implemented it.
+//
+// ULA (fc00::/7) is deliberately NOT excluded here: unlike link-local, a ULA address's /48 prefix
+// is meant to be effectively globally unique (RFC 4193), the same functional role RFC1918 IPv4
+// plays for a fleet — and this module already treats RFC1918 as identifying (it is not in
+// NON_IDENTIFYING_IPS). Excluding ULA but not RFC1918 would apply an inconsistent standard to the
+// two address families for no evidenced reason.
+function isLinkLocalV6(ip: string): boolean {
+  return /^fe[89ab][0-9a-f]:/.test(ip);
+}
+
 // IPv4-mapped IPv6 ("::ffff:10.0.0.5") folds to the dotted-quad form so a source that logs one
 // form and a source that logs the other still collide on the same key. Matched on the ORIGINAL
 // textual form: the generic IPv6 normalization below rewrites the trailing dotted-quad into hex
@@ -117,6 +132,7 @@ function isIdentifyingIp(raw: string): boolean {
   const ip = canonicalIp(raw);
   if (NON_IDENTIFYING_IPS.has(ip)) return false;
   if (isLoopbackV4(ip)) return false;
+  if (isLinkLocalV6(ip)) return false;
   return true;
 }
 
