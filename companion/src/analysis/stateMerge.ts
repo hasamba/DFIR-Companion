@@ -155,12 +155,18 @@ export function mergeDelta(
       // The annotation the value carried is context the existing row may not have yet — keep the
       // first one seen rather than churning it on every re-import.
       if (repaired.note && !dup.note) dup.note = repaired.note;
+      // #1266: an unmarked row is never demoted by a later marked sighting; a marked row is cleared
+      // only by an EVENT-LINKED ordinary sighting (extractedFrom) — the one signal every model
+      // delta has already had stripped (responseSchema.ts), so a model restating the value can't
+      // un-mark it and quietly restore the MISP to_ids flag for a forged header.
+      if (dup.provenance && !incoming.provenance && incoming.extractedFrom?.length) delete dup.provenance;
     } else {
       iocs.push({
         id: canonical,
         type: incoming.type,
         value: incoming.value,
         firstSeen: ctx.timestamp,
+        ...(incoming.provenance ? { provenance: incoming.provenance } : {}),
         ...(repaired.note ? { note: repaired.note } : {}),
         ...(incoming.extractedFrom?.length ? { extractedFrom: [...incoming.extractedFrom] } : {}),
       });

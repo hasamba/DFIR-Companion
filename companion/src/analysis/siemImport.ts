@@ -20,6 +20,8 @@
 // suspicious command lines and LSASS access.
 
 import { worstSeverity as worst, type ForensicEvent, type Severity, type TlpMarking } from "./stateTypes.js";
+import { addIoc, mergeRowIocs, resolveExtractedFrom, type SiemIoc } from "./iocSink.js";
+export { addIoc, mergeRowIocs, resolveExtractedFrom, type SiemIoc };
 import { MONTHS, parseBsdTime } from "./bsdTime.js";
 import { isInternalIpv4 } from "./internalIp.js";
 import { winRoleBlocks } from "./winAccountRoles.js";
@@ -106,18 +108,6 @@ export interface SiemEvent extends Pick<ForensicEvent, "origin"> {
   // resolve against — not persisted on ForensicEvent, stripped before it reaches case state.
   aggKey?: string;
   sharingMarking?: TlpMarking; // See ForensicEvent.sharingMarking (#933 item 21).
-}
-
-export interface SiemIoc {
-  type: "ip" | "domain" | "hash" | "file" | "process" | "url" | "sid" | "other";
-  value: string;
-  // Import-scoped only: the aggKey(s) of the row(s) that produced this IOC within one parse call.
-  // Resolved to real case-scoped event ids by pipeline.ts and converted into `extractedFrom`;
-  // never itself persisted into case state.
-  sourceAggKeys?: string[];
-  // Case-scoped event id(s) this IOC was authoritatively extracted from. Set by pipeline.ts after
-  // resolving sourceAggKeys; empty/absent falls back to iocProvenanceChain.ts's approximate matcher.
-  extractedFrom?: string[];
 }
 
 export interface SiemParseResult {
@@ -1468,48 +1458,6 @@ function detectVendor(rec: Row): string | undefined {
   if (/qradar/i.test(blob)) return "QRadar";
   if (/wazuh/i.test(blob)) return "Wazuh";
   return undefined;
-}
-
-// ───────────────────────────── IOC sink ─────────────────────────────
-
-export function addIoc(sink: Map<string, SiemIoc>, type: SiemIoc["type"], value: string): void {
-  const v = value.trim();
-  if (!v) return;
-  const key = `${type}:${v.toLowerCase()}`;
-  if (!sink.has(key)) sink.set(key, { type, value: v });
-}
-
-// Merge a per-row IOC sink into the file-level sink once that row's aggKey (from its MappedEvent)
-// is known, unioning sourceAggKeys so a value seen across multiple rows keeps every row's link.
-// Call with no aggKey for a row that produced IOCs but no event (e.g. non-alert network telemetry)
-// — the value still merges in, just without a link, matching today's approximate-only behavior.
-export function mergeRowIocs(
-  fileSink: Map<string, SiemIoc>,
-  rowSink: Map<string, SiemIoc>,
-  aggKey?: string,
-): void {
-  for (const [key, ioc] of rowSink) {
-    const existing = fileSink.get(key);
-    const keys = existing?.sourceAggKeys ?? [];
-    const nextKeys = aggKey && !keys.includes(aggKey) ? [...keys, aggKey] : keys;
-    fileSink.set(key, { ...(existing ?? ioc), ...(nextKeys.length ? { sourceAggKeys: nextKeys } : {}) });
-  }
-}
-
-// Resolve each IOC's sourceAggKeys against a final aggKey->event-id lookup (built once events have
-// their case-scoped ids), stamping extractedFrom. An aggKey with no match (e.g. the event was
-// capped by maxEvents) is silently dropped — that IOC just falls back to approximate matching.
-export function resolveExtractedFrom(
-  iocs: readonly SiemIoc[],
-  eventIdByAggKey: ReadonlyMap<string, string>,
-): SiemIoc[] {
-  return iocs.map((c) => {
-    if (!c.sourceAggKeys?.length) return c;
-    const ids = [
-      ...new Set(c.sourceAggKeys.map((k) => eventIdByAggKey.get(k)).filter((x): x is string => !!x)),
-    ];
-    return ids.length ? { ...c, extractedFrom: ids } : c;
-  });
 }
 
 // ───────────────────────────── top-level parse ─────────────────────────────

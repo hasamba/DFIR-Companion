@@ -436,6 +436,7 @@
     "iocMerge.ts": "analysis/findings",
     "iocProvenance.ts": "analysis/findings",
     "iocProvenanceChain.ts": "analysis/findings",
+    "iocSink.ts": "analysis/ingest",
     "iocRepair.ts": "analysis/findings",
     "iocRiskScore.ts": "analysis/findings",
     "iocValue.ts": "analysis/findings",

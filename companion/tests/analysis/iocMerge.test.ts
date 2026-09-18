@@ -77,3 +77,58 @@ describe("mergeIocs", () => {
     expect(win01?.iocIds).toContain("i2");
   });
 });
+
+describe("#1266 -- client-reported provenance across an analyst merge", () => {
+  const at = "2026-06-01T00:00:00Z";
+  const withIocs = (iocs: Parameters<typeof mergeIocs>[0]["iocs"]) => ({ ...emptyState("c1"), iocs });
+
+  it("a marked duplicate never marks an unmarked canonical", () => {
+    const s = withIocs([
+      { id: "a", type: "ip", value: "1.2.3.4", firstSeen: at },
+      { id: "b", type: "ip", value: "1.2.3.4 ", firstSeen: at, provenance: "client-reported" },
+    ]);
+    expect(mergeIocs(s, "b", "a").state.iocs[0].provenance).toBeUndefined();
+  });
+
+  it("an event-linked unmarked duplicate clears a marked canonical", () => {
+    const s = withIocs([
+      { id: "a", type: "ip", value: "1.2.3.4", firstSeen: at, provenance: "client-reported" },
+      { id: "b", type: "ip", value: "1.2.3.4 ", firstSeen: at, extractedFrom: ["ev1"] },
+    ]);
+    expect(mergeIocs(s, "b", "a").state.iocs[0].provenance).toBeUndefined();
+  });
+
+  it("an UNLINKED unmarked duplicate leaves a marked canonical marked", () => {
+    const s = withIocs([
+      { id: "a", type: "ip", value: "1.2.3.4", firstSeen: at, provenance: "client-reported" },
+      { id: "b", type: "ip", value: "1.2.3.4 ", firstSeen: at },
+    ]);
+    expect(mergeIocs(s, "b", "a").state.iocs[0].provenance).toBe("client-reported");
+  });
+});
+
+describe("#1266 -- both rows marked", () => {
+  it("the merged canonical stays marked", () => {
+    const at = "2026-06-01T00:00:00Z";
+    const s = {
+      ...emptyState("c1"),
+      iocs: [
+        {
+          id: "a",
+          type: "ip" as const,
+          value: "1.2.3.4",
+          firstSeen: at,
+          provenance: "client-reported" as const,
+        },
+        {
+          id: "b",
+          type: "ip" as const,
+          value: "1.2.3.4 ",
+          firstSeen: at,
+          provenance: "client-reported" as const,
+        },
+      ],
+    };
+    expect(mergeIocs(s, "b", "a").state.iocs[0].provenance).toBe("client-reported");
+  });
+});
