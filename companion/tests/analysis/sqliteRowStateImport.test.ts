@@ -835,8 +835,11 @@ describe("parseSqliteRowStateCsv — structured summary totals (#1290 Part B)", 
       })!;
       const rows = findRows(r);
       expect(rows.length).toBeGreaterThan(0);
-      // The pass must actually fire on this input, or the test proves nothing.
-      const marked = markContainerEscape(rows);
+      // The pass must actually fire on this input, or the test proves nothing. The importer emits
+      // SiemEvents; the ingest layer adds the two link arrays on merge, so add them here the same way.
+      const marked = markContainerEscape(
+        rows.map((e, i) => ({ ...e, id: `e${i + 1}`, relatedFindingIds: [], sourceScreenshots: [] })),
+      );
       expect(marked).not.toBe(rows);
       for (const e of marked) {
         expect(e.severity).toBe("Medium");
