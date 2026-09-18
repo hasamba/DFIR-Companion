@@ -52,18 +52,24 @@ export async function importM365(
   const parsedRaw = parseM365Audit(text, opts.m365);
 
   // Cross-upload password-spray pass (#1104) — see importEcar's identical comment.
-  const crossRows = await crossUploadSprayRows(ctx, caseId, opts, parsedRaw.sprayCandidates, {
-    source: "Microsoft 365",
-    importer: "m365",
-    mappingVersion: "m365-spray-cross-v1",
-  });
+  const { events: crossRows, retentionNote } = await crossUploadSprayRows(
+    ctx,
+    caseId,
+    opts,
+    parsedRaw.sprayCandidates,
+    {
+      source: "Microsoft 365",
+      importer: "m365",
+      mappingVersion: "m365-spray-cross-v1",
+    },
+  );
   const parsed = {
     ...parsedRaw,
     events: applySeverityFloor([...parsedRaw.events, ...crossRows], opts.minSeverity),
   };
   if (parsed.events.length === 0)
     return {
-      state: await noteEmptyImport(ctx, caseId, opts, "Microsoft 365", parsed.total),
+      state: await noteEmptyImport(ctx, caseId, opts, "Microsoft 365", parsed.total, retentionNote || undefined),
       coverage: parsed.coverage,
     };
 
@@ -81,7 +87,8 @@ export async function importM365(
     timelineNote:
       `Microsoft 365 import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
-      `, ${parsed.iocs.length} IOC(s)`,
+      `, ${parsed.iocs.length} IOC(s)` +
+      (retentionNote ? `; ${retentionNote}` : ""),
     summary: "",
   };
   const delta = deltaSchema.parse(raw);
