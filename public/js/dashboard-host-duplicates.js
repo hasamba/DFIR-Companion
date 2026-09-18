@@ -51,7 +51,7 @@
         (d) =>
           `<div class="hd-row">` +
           `<code>${esc(d.other)}</code> may belong to the same machine as <code>${esc(d.canonical)}</code> — ` +
-          `last seen using this address ${esc(d.sampleTime ? fmtTime(d.sampleTime) : "recently")}. ` +
+          `last seen using this address ${esc(d.sampleTime ? fmtDateTime(d.sampleTime) : "recently")}. ` +
           `${actionButtons(d)}` +
           `</div>`,
       )

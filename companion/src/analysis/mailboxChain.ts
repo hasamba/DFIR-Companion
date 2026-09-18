@@ -732,6 +732,9 @@ function summaryRow(
       event: { category: "email", type: "mailbox-chain", action: "chain", outcome: "success" },
       actor: { kind: "account", name: first.actor || e.actor },
       object: { kind: "mailbox", id: ref.key, name: ref.name || ref.key },
+      // Inherited from the chain's own earliest step — an Exchange audit record or a UAL sign-in
+      // record (readUalLogon), both Microsoft-recorded audit log fields, never raw email header
+      // content — edge-observed, not client-asserted (#1184 audit).
       ...(first.ip ? { network: { source: { address: first.ip } } } : {}),
       cloud: { provider: "m365", ...(tenant ? { tenant } : {}), principalType: "user" },
       time: { observed, normalized: normalizeTime(observed) },

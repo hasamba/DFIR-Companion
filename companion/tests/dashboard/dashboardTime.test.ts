@@ -18,6 +18,7 @@ const {
   isoToUtcInput,
   utcInputToIso,
   fmtTime,
+  fmtDateTime,
   mcpJobDuration,
   skewOffsetLabel,
 } = loadDashboardModule<TimeApi>("dashboard-time.js");
@@ -168,5 +169,20 @@ describe("fmtTime", () => {
   // it would be.
   it("returns Invalid Date, not the input, for junk", () => {
     expect(fmtTime("nope")).toBe("Invalid Date");
+  });
+});
+
+describe("fmtDateTime (#1168)", () => {
+  it("renders the locale date AND time for a valid instant, unlike fmtTime", () => {
+    expect(fmtDateTime("2026-03-01T12:00:00Z")).toBe(new Date("2026-03-01T12:00:00Z").toLocaleString());
+  });
+
+  it("differs from fmtTime by including the date portion", () => {
+    const iso = "2026-03-01T12:00:00Z";
+    expect(fmtDateTime(iso)).not.toBe(fmtTime(iso));
+  });
+
+  it("returns Invalid Date, not the input, for junk", () => {
+    expect(fmtDateTime("nope")).toBe("Invalid Date");
   });
 });

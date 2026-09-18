@@ -81,6 +81,14 @@ function fmtTime(iso) {
   try { return new Date(iso).toLocaleTimeString(); } catch { return iso; }
 }
 
+// Same shape as fmtTime, but WITH the date — for a row where the instant could be days, weeks or
+// months old (e.g. a network-identity binding sample, #1168) and a bare time-of-day would read as
+// "today" and actively mislead. A distinct function rather than changing fmtTime itself: fmtTime
+// already has other real callers (dashboard-ai-status.js) this issue never asked to change.
+function fmtDateTime(iso) {
+  try { return new Date(iso).toLocaleString(); } catch { return iso; }
+}
+
 function mcpJobDuration(ms) {
   const seconds = Math.max(0, Math.floor(ms / 1000));
   if (seconds < 60) return `${seconds}s`;
@@ -138,6 +146,7 @@ window.DfirTime = {
   veloMonAge,
   relTime,
   fmtTime,
+  fmtDateTime,
   mcpJobDuration,
   activityTimeAgo,
   cockpitAge,
