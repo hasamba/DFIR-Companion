@@ -142,12 +142,32 @@ Point `--real` at a strong model via `DFIR_VISION_MODEL` (it need not be the mod
 **Production cases — evidence-coverage claim scoring.** Each golden claim names the forensic event
 IDs a matching finding must cite (a subset check, not an exact-set one — citing additional
 legitimately-related events no longer fails the claim) plus its required meaning. A finding with
-similar wording but missing evidence still fails. Additional *findings* still count as false
+similar wording but missing evidence still fails. Additional _findings_ still count as false
 conclusions because these compact case goldens are exhaustive. **History:** this was originally an
 exact-set match; two real models (`openrouter/google/gemini-3.7-flash`,
 `anthropic/claude-sonnet-4.6`) both scored a hard 0.0% claims precision/recall on 8-9 of 9 cases
 under it despite scoring well on IOCs, uncertainties and next-steps — no real model reliably
 reproduces a golden's exact id combination, so the bar was too strict to ever pass.
+
+**Union matching (#1217/#1226).** The candidate pool for both passes below is restricted to
+not-yet-used findings that cite at least one required event ID — an unrelated finding is never
+considered. Within that pool, the scorer runs a greedy minimal-cover selection over the required
+event IDs (a single finding covering everything is the degenerate one-candidate case of the same
+selection, not a separate stage). If that cover's own combined text is missing a required term —
+e.g. the production synthesis prompt forbids collapsing multiple techniques into one finding, so
+a case-level claim spanning several techniques is legitimately told across several atomic
+findings, and the greedy id-cover can pick an aggregate finding that covers every ID but not the
+specific phrasing — it runs a SECOND greedy cover, this time over the still-missing terms. Either
+way, only findings that actually contribute a required ID or a still-missing term are marked
+"used" — a finding that merely sits in the same candidate pool never gets laundered in for free.
+("Minimal" here is the standard greedy-set-cover approximation, not a global optimum — the same
+guarantee level this file's helpers have always had.)
+
+**Precision on `--real` (#1217).** Like the extraction evaluator above, a real run does not gate
+on claims or IOC _precision_ — an extra, legitimate finding or observation the golden's compact
+case didn't anticipate is not itself a regression. Recall still must be 1 for both, and mock/
+deterministic runs keep the original, exact precision gate.
+
 The scorer separately rejects references to IDs absent from the input timeline, known forbidden
 conclusions/entities, out-of-range confidence, missing confidence reasons, unresolved evidence gaps
 without an honest uncertainty, unhelpful next steps, and any finding at all in an abstention case.

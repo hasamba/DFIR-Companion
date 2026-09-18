@@ -11,6 +11,7 @@ import { HuntRequirementStore } from "../../src/analysis/huntRequirementStore.js
 import { TeamAuth } from "../../src/auth/teamAuth.js";
 import { AuthStore } from "../../src/auth/authStore.js";
 import { createApp } from "../../src/server.js";
+import { provisionServiceToken } from "../helpers/serviceTokenAuth.js";
 
 let app: ReturnType<typeof createApp>;
 
@@ -187,5 +188,54 @@ describe("/cases/:id/hunt-requirements with team-auth on", () => {
     });
     const res = await request(teamApp).delete("/cases/c1/hunt-requirements/anything");
     expect(res.status).toBe(401);
+  });
+
+  // #1169: the scenario above never reaches this route's own humanIdentityFor() 403 branch — the
+  // upstream session gate already rejected the request. A real service token (authenticated, with
+  // write access to this exact case) clears that gate and proves the route's OWN gate is what
+  // rejects a non-human caller.
+  it("rejects POST from a real, authenticated service token (not a human session)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-hunt-requirements-teamauth-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const store = new AuthStore(join(root, "auth.sqlite"));
+    const token = await provisionServiceToken(store, "c1", ["write"]);
+    const teamAuth = new TeamAuth({
+      store,
+      bootstrapToken: "test-bootstrap-token",
+      cookieSecure: false,
+      sessionTtlMs: 60 * 60_000,
+    });
+    const teamApp = createApp(cases, {
+      teamAuth,
+      huntRequirementStore: new HuntRequirementStore(cases),
+    });
+    const res = await request(teamApp)
+      .post("/cases/c1/hunt-requirements")
+      .set("Authorization", `Bearer ${token}`)
+      .send(requirementBody());
+    expect(res.status).toBe(403);
+  });
+
+  it("rejects DELETE from a real, authenticated service token (not a human session)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-hunt-requirements-teamauth-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const store = new AuthStore(join(root, "auth.sqlite"));
+    const token = await provisionServiceToken(store, "c1", ["write"]);
+    const teamAuth = new TeamAuth({
+      store,
+      bootstrapToken: "test-bootstrap-token",
+      cookieSecure: false,
+      sessionTtlMs: 60 * 60_000,
+    });
+    const teamApp = createApp(cases, {
+      teamAuth,
+      huntRequirementStore: new HuntRequirementStore(cases),
+    });
+    const res = await request(teamApp)
+      .delete("/cases/c1/hunt-requirements/anything")
+      .set("Authorization", `Bearer ${token}`);
+    expect(res.status).toBe(403);
   });
 });

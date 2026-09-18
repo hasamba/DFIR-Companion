@@ -64,6 +64,16 @@ const ACCOUNT_PRESENCE_LOGON_TYPES = new Set([2, 7, 10, 11]);
 // every host in the case.
 const NON_IDENTIFYING_IPS = new Set(["", "-", "0.0.0.0", "::", "::1", "127.0.0.1"]);
 
+// Windows commonly records Workstation Name as "-" (or "*") when the field is unpopulated —
+// the same placeholder convention this module already applies to IPs above. Binding an IP to a
+// host literally named "-" would be a junk binding, not an absent one.
+const NON_IDENTIFYING_CLIENT_NAMES = new Set(["-", "*"]);
+
+function isIdentifyingClientName(name: string): boolean {
+  const trimmed = name.trim();
+  return trimmed.length > 0 && !NON_IDENTIFYING_CLIENT_NAMES.has(trimmed);
+}
+
 // A computer account or a well-known non-human principal appears on essentially every host's own
 // local logons and corroborates nothing about which machine a HUMAN was using.
 const NON_HUMAN_ACCOUNTS = new Set(["system", "local service", "network service", "anonymous logon"]);
@@ -139,8 +149,8 @@ export function buildHostBindingIndex(
     // IP -> host: the CLIENT's own name (Workstation Name), never the session host that recorded
     // the logon — see the DIRECTIONALITY note at the top of this file.
     const ip = c.network?.source?.address;
-    const clientName = c.session?.terminal;
-    if (ip && isIdentifyingIp(ip) && clientName) {
+    const clientName = c.session?.terminal?.trim();
+    if (ip && isIdentifyingIp(ip) && clientName && isIdentifyingClientName(clientName)) {
       const host = aliasIndex ? resolveHost(aliasIndex, clientName) : clientName;
       push(index.byIp, canonicalIp(ip), {
         host,

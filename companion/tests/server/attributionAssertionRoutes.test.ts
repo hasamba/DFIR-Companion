@@ -9,6 +9,7 @@ import { AttributionAssertionStore } from "../../src/analysis/attributionAsserti
 import { TeamAuth } from "../../src/auth/teamAuth.js";
 import { AuthStore } from "../../src/auth/authStore.js";
 import { createApp } from "../../src/server.js";
+import { provisionServiceToken } from "../helpers/serviceTokenAuth.js";
 
 let app: ReturnType<typeof createApp>;
 
@@ -230,5 +231,53 @@ describe("/cases/:id/attribution-assertions with team-auth on", () => {
     });
     const res = await request(teamApp).delete("/cases/c1/attribution-assertions/anything");
     expect(res.status).toBe(401);
+  });
+
+  // #1169: a real, authenticated (but non-human) service token clears the upstream session gate,
+  // proving THIS route's own humanIdentityFor() 403 branch — not just the shared unit-tested
+  // function — is reachable and correct.
+  it("rejects POST from a real, authenticated service token (not a human session)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-attribution-assertions-teamauth-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const store = new AuthStore(join(root, "auth.sqlite"));
+    const token = await provisionServiceToken(store, "c1", ["write"]);
+    const teamAuth = new TeamAuth({
+      store,
+      bootstrapToken: "test-bootstrap-token",
+      cookieSecure: false,
+      sessionTtlMs: 60 * 60_000,
+    });
+    const teamApp = createApp(cases, {
+      teamAuth,
+      attributionAssertionStore: new AttributionAssertionStore(cases),
+    });
+    const res = await request(teamApp)
+      .post("/cases/c1/attribution-assertions")
+      .set("Authorization", `Bearer ${token}`)
+      .send(assertionBody());
+    expect(res.status).toBe(403);
+  });
+
+  it("rejects DELETE from a real, authenticated service token (not a human session)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-attribution-assertions-teamauth-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const store = new AuthStore(join(root, "auth.sqlite"));
+    const token = await provisionServiceToken(store, "c1", ["write"]);
+    const teamAuth = new TeamAuth({
+      store,
+      bootstrapToken: "test-bootstrap-token",
+      cookieSecure: false,
+      sessionTtlMs: 60 * 60_000,
+    });
+    const teamApp = createApp(cases, {
+      teamAuth,
+      attributionAssertionStore: new AttributionAssertionStore(cases),
+    });
+    const res = await request(teamApp)
+      .delete("/cases/c1/attribution-assertions/anything")
+      .set("Authorization", `Bearer ${token}`);
+    expect(res.status).toBe(403);
   });
 });
