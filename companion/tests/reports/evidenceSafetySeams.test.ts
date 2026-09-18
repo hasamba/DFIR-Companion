@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, type MockInstance } from "vitest";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -65,6 +65,7 @@ function hostileState(): InvestigationState {
 let cases: CaseStore;
 let stateStore: StateStore;
 let activityLogStore: ActivityLogStore;
+let add: MockInstance<ActivityLogStore["add"]>;
 let writer: ReportWriter;
 let app: ReturnType<typeof createApp>;
 
@@ -76,6 +77,7 @@ beforeEach(async () => {
   stateStore = new StateStore(cases);
   await stateStore.save(hostileState());
   activityLogStore = new ActivityLogStore(cases);
+  add = vi.spyOn(activityLogStore, "add");
   writer = new ReportWriter(cases, stateStore);
   app = createApp(cases, { stateStore, reportWriter: writer, activityLogStore });
 });
@@ -97,7 +99,11 @@ describe("today's exporters pass the check", () => {
     const deck = await request(app).get("/cases/c1/present/export");
     expect(deck.status).toBe(200);
     expect(deck.text).not.toContain('class="evidence-safety"');
-    await settled();
+    // "Nothing was logged" cannot be polled for, and a sleep only guards it in the safe direction.
+    // The append is ISSUED synchronously at the route (`void logActivity` → `store.add` runs before
+    // its first await), so by the time any response above arrived, a spurious log would already
+    // have called `add` — the spy is deterministic where a sleep is a guess (#1320 review).
+    expect(add).not.toHaveBeenCalled();
     expect(await activityLogStore.load("c1")).toEqual([]);
   });
 });
@@ -200,11 +206,4 @@ describe("the deck check reads the finished file", () => {
 // the shared helper, exactly as tests/helpers/activityLog.ts documents.
 async function warnings() {
   return awaitActivityEntries(app, "c1", "evidence-safety-warning");
-}
-
-// A NEGATIVE assertion ("nothing was logged") cannot be polled for; the one test that makes it
-// gives the append a generous turn instead. It can only fail in the safe direction (a late entry
-// would fail it, never pass it), so it is not a flake source.
-async function settled(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 100));
 }
