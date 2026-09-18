@@ -82,6 +82,107 @@ function deriveTableName(sourceLabel: string | undefined): {
   return { tableName: clip(stripped, MAX_FIELD_LEN), tableNameSource: "filename" };
 }
 
+// #1144 — a deterministic, per-report, per-source-combo tally of Carved/Deleted rows. Grouped by
+// (operation, fileSource, cellSource) only — never a table-content claim, never a time dimension
+// (there is none: see the per-row [undated] disclosure). One CSV import is already exactly one
+// table (sqlite-dissect exports one CSV per table), so this tally is scoped to this one import;
+// no cross-table aggregation is attempted here. `record()` takes the SAME already-validated
+// values mapRow() computed for the row it just accepted — never a second, independent parse of
+// the raw CSV columns, so the two can never silently disagree (Ollama code review finding).
+class CarvedDeletedTally {
+  private readonly counts = new Map<string, number>();
+  private carvedTotal = 0;
+  private deletedTotal = 0;
+
+  record(
+    operation: SqliteRowStateOperation,
+    fileSource: SqliteFileSource,
+    cellSource: SqliteCellSource,
+  ): void {
+    if (operation !== "Carved" && operation !== "Deleted") return;
+    if (operation === "Carved") this.carvedTotal += 1;
+    else this.deletedTotal += 1;
+    const key = `${operation}|${fileSource}|${cellSource}`;
+    this.counts.set(key, (this.counts.get(key) ?? 0) + 1);
+  }
+
+  isEmpty(): boolean {
+    return this.carvedTotal === 0 && this.deletedTotal === 0;
+  }
+
+  // Ordinal, not localeCompare — the report text must be byte-reproducible across locales/ICU
+  // versions, not merely stable within one (Ollama code review finding).
+  private breakdown(operation: SqliteRowStateOperation): string {
+    return [...this.counts.entries()]
+      .filter(([key]) => key.startsWith(`${operation}|`))
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([key, count]) => {
+        const [, fileSource, cellSource] = key.split("|");
+        return `${count} via ${fileSource}/${cellSource}`;
+      })
+      .join(", ");
+  }
+
+  /** Builds the one summary MappedEvent for this report, or null when nothing to report. Never a
+   * timestamp, never an intent claim — mirrors the per-row disclosure convention exactly.
+   * `rowsTruncated` must name the SAME MAX_ROWS_SCANNED cap the per-row events were subject to —
+   * a partial tally presented as complete would itself be a report-integrity defect (Ollama code
+   * review finding). The disclosure clause is a PROTECTED SUFFIX, appended after `clip()`, so an
+   * unbounded number of distinct (fileSource, cellSource) combinations can never truncate it away
+   * (Ollama code review finding: the hedge was previously inside the clipped portion). */
+  toEvent(
+    tableName: string,
+    tableNameSource: "filename" | "unavailable",
+    reportFingerprint: string,
+    rowsTruncated: boolean,
+  ): MappedEvent | null {
+    if (this.isEmpty()) return null;
+    const tableLabel =
+      tableNameSource === "filename" && tableName
+        ? `(from filename) ${tableName}`
+        : "(table name unavailable)";
+    const cleanTableLabel = tableLabel.replace(/[[\]]/g, "");
+    const parts: string[] = [];
+    if (this.carvedTotal > 0) parts.push(`${this.carvedTotal} Carved (${this.breakdown("Carved")})`);
+    if (this.deletedTotal > 0) parts.push(`${this.deletedTotal} Deleted (${this.breakdown("Deleted")})`);
+    const reportTag = `; report ${reportFingerprint.slice(0, 16)}`;
+    const disclosure =
+      `; consistent with routine database maintenance as well as intentional record removal; ` +
+      `undated, no temporal correlation performed` +
+      (rowsTruncated ? `; PARTIAL — counts reflect only the first ${MAX_ROWS_SCANNED} rows scanned` : "");
+    const variable = clip(
+      `sqlite-dissect row-state summary: table ${cleanTableLabel} — ${parts.join(", ")}`,
+      600 - reportTag.length - disclosure.length,
+    );
+    const description = `${variable}${disclosure}${reportTag}`;
+    const aggKey = boundedAggKey(`sqlite-row-state-summary|${reportFingerprint}`);
+    return {
+      timestamp: "",
+      description,
+      severity: "Info",
+      mitre: [],
+      aggKey,
+      sources: ["sqlite-dissect"],
+      ...(tableNameSource === "filename" && tableName ? { path: tableName } : {}),
+      canonical: createCanonicalEvent({
+        event: { category: "file", type: "sqlite-row-state-summary", action: "found" },
+        time: { observed: "", normalized: "" },
+        evidence: {
+          rawRecords: [{ source: "sqlite-row-state", locator: `summary:${reportFingerprint.slice(0, 16)}` }],
+        },
+        // A distinct mapping version from the per-row "sqlite-row-state-v1" — this is a new event
+        // type, not a schema revision of the per-row `sqliteRowState` canonical block (which is
+        // unchanged and stays on its own zod-literal-pinned version) — Ollama code review finding.
+        producer: {
+          importer: "sqlite-row-state",
+          parserVersion: "1",
+          mappingVersion: "sqlite-row-state-summary-v1",
+        },
+      }),
+    };
+  }
+}
+
 function isValidHeader(header: string[]): boolean {
   if (header.length <= HEADER_PREFIX.length) return false;
   for (let i = 0; i < HEADER_PREFIX.length; i++) {
@@ -100,13 +201,23 @@ function parseNonNegativeInt(raw: string | undefined): number | null {
   return Number.isSafeInteger(n) ? n : null;
 }
 
+interface MappedRow {
+  event: MappedEvent;
+  // The SAME validated triple the event itself was built from — exposed so a caller-side tally
+  // (CarvedDeletedTally) never independently re-parses the raw CSV columns and risks silently
+  // disagreeing with what this function actually accepted (Ollama code review finding).
+  operation: SqliteRowStateOperation;
+  fileSource: SqliteFileSource;
+  cellSource: SqliteCellSource;
+}
+
 function mapRow(
   header: string[],
   row: string[],
   reportFingerprint: string,
   tableName: string,
   tableNameSource: "filename" | "unavailable",
-): MappedEvent | null {
+): MappedRow | null {
   const fileSource = row[0] as SqliteFileSource;
   if (!(sqliteFileSources as readonly string[]).includes(fileSource)) return null;
   const versionNumber = parseNonNegativeInt(row[1]);
@@ -178,13 +289,17 @@ function mapRow(
   );
   const description = `${body}${reportTag}`;
 
-  return {
+  const event: MappedEvent = {
     timestamp: "",
     description,
     severity: "Info",
     mitre: [],
     aggKey,
     sources: ["sqlite-dissect"],
+    // Structured, tagger-matchable identity (#1144) — same filename-derived value already carried
+    // in the canonical block's own tableName/tableNameSource, never a claim of a verified database
+    // identity. Unset when unavailable, never a fabricated path.
+    ...(tableNameSource === "filename" && tableName ? { path: tableName } : {}),
     canonical: createCanonicalEvent({
       event: { category: "file", type: "sqlite-row-state", action: "found" },
       time: { observed: "", normalized: "" },
@@ -211,6 +326,7 @@ function mapRow(
       },
     }),
   };
+  return { event, operation, fileSource, cellSource };
 }
 
 export function parseSqliteRowStateCsv(
@@ -227,6 +343,7 @@ export function parseSqliteRowStateCsv(
   const reportFingerprint = createHash("sha256").update(text).digest("hex");
 
   const mapped: MappedEvent[] = [];
+  const tally = new CarvedDeletedTally();
   let total = 0;
   let malformedRows = 0;
   let rowsTruncated = false;
@@ -245,12 +362,13 @@ export function parseSqliteRowStateCsv(
       malformedRows += 1;
       continue;
     }
-    const event = mapRow(header, row, reportFingerprint, tableName, tableNameSource);
-    if (!event) {
+    const mappedRow = mapRow(header, row, reportFingerprint, tableName, tableNameSource);
+    if (!mappedRow) {
       malformedRows += 1;
       continue;
     }
-    mapped.push(event);
+    mapped.push(mappedRow.event);
+    tally.record(mappedRow.operation, mappedRow.fileSource, mappedRow.cellSource);
   }
 
   const { events, groups } = aggregateEvents(mapped, {
@@ -258,6 +376,26 @@ export function parseSqliteRowStateCsv(
     minSeverity: "Info",
     maxEvents: opts.maxEvents ?? MAX_ROWS_SCANNED,
   });
+
+  // Appended AFTER aggregation/capping, never through it — pushing the summary into `mapped`
+  // would leave it subject to the same `maxEvents` slice as every per-row event, and a count-1
+  // summary sorts BEHIND any collapsed group with count > 1, so a large report could silently
+  // drop the one line meant to survive everything else (Ollama code review finding). Discloses
+  // `rowsTruncated` explicitly rather than presenting a partial tally as complete.
+  const summaryEvent = tally.toEvent(tableName, tableNameSource, reportFingerprint, rowsTruncated);
+  if (summaryEvent) {
+    events.push({
+      id: "",
+      timestamp: "",
+      description: summaryEvent.description,
+      severity: "Info",
+      mitreTechniques: [],
+      aggKey: summaryEvent.aggKey,
+      sources: summaryEvent.sources ? [...summaryEvent.sources] : undefined,
+      ...(summaryEvent.path ? { path: summaryEvent.path } : {}),
+      canonical: summaryEvent.canonical,
+    });
+  }
 
   return {
     events,
