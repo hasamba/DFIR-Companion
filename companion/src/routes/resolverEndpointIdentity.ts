@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import { resolveResolverEndpointIdentity } from "../analysis/dnsResolverEndpointJoin.js";
 import { loadHostAliasIndex } from "../analysis/hostScopeLoad.js";
+import type { ForensicEvent } from "../analysis/stateTypes.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -17,6 +18,14 @@ import type { RouteContext } from "./context.js";
  * NEVER an unconditional "this is the host" or "this never happened" claim — see
  * dnsResolverEndpointJoin.ts's own header for the forwarding-topology, DHCP-lease, cache-hit and
  * CNAME-chain caveats this route's own output cannot resolve.
+ *
+ * READS forensic ∪ super-timeline (#1243): an import-time DNS Server Analytical / Sysmon-22 row can
+ * be routed to the super-timeline under the severity gate rather than the forensic timeline (see
+ * ARCHITECTURE.md's forensic/super-timeline boundary). This route is a plain analyst-facing read —
+ * no AI synthesis in its call graph — so joining both stores is the same recipe threatIntel.ts's
+ * ioc-provenance routes already use, not the AI-boundary promotion pattern viewSummary needs.
+ * Reading the whole super-timeline into memory is the same deliberate full-load tradeoff #1269
+ * documents on proxyHostIdentity.ts.
  */
 
 // Stage 1 (IP -> host): the same kind of "how stale is this logon sample" question
@@ -46,7 +55,7 @@ export function registerResolverEndpointIdentityRoutes(app: Express, ctx: RouteC
     if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
     try {
       const caseId = req.params.id;
-      const [state, aliasIndex] = await Promise.all([
+      const [state, aliasIndex, superEvents] = await Promise.all([
         options.stateStore.load(caseId),
         loadHostAliasIndex(
           {
@@ -55,11 +64,14 @@ export function registerResolverEndpointIdentityRoutes(app: Express, ctx: RouteC
           },
           caseId,
         ),
+        options.superTimelineStore
+          ? options.superTimelineStore.all(caseId)
+          : Promise.resolve<ForensicEvent[]>([]),
       ]);
       const hostToleranceMs = parsed.data.hostToleranceMs ?? DEFAULT_HOST_TOLERANCE_MS;
       const queryToleranceMs = parsed.data.queryToleranceMs ?? DEFAULT_QUERY_TOLERANCE_MS;
       const matches = resolveResolverEndpointIdentity(
-        state.forensicTimeline,
+        [...state.forensicTimeline, ...superEvents],
         aliasIndex,
         hostToleranceMs,
         queryToleranceMs,
