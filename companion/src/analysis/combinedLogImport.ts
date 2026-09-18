@@ -75,6 +75,7 @@ import {
 } from "./webRecordFields.js";
 import { isIP } from "node:net";
 import { createCanonicalEvent } from "./canonicalEvent.js";
+import { canonicalIp } from "./hostBinding.js";
 
 export interface CombinedLogImportOptions {
   aggregate?: boolean;
@@ -488,7 +489,11 @@ export function mapCombinedLogLine(
     // The target is kept AS SENT (bounded), so a reader decodes it under its own policy.
     canonical: createCanonicalEvent({
       event: { category: "network", type: "web-request" },
-      ...(client ? { network: { source: { address: client } } } : {}),
+      // hostBinding.ts's own lookup canonicalizes via canonicalIp() (lowercase, IPv6 compression,
+      // ::ffff:v4 folding); normalizing here too means a common-but-legal spelling difference
+      // never under-matches an otherwise-identical binding (#1187). srcIp above is left as the
+      // line's own raw spelling — only this trust-sensitive, join-relevant field is normalized.
+      ...(client ? { network: { source: { address: canonicalIp(client) } } } : {}),
       // `%u` — the server/proxy's OWN determination of who authenticated (HTTP Basic/NTLM/
       // Kerberos, verified before the request was served), the same trust class as `client`
       // above. NEVER `%l` (ident/RFC 1413, a client-asserted claim this mapper already discards

@@ -24,6 +24,7 @@ import {
   WEB_REQUESTS_MAX,
 } from "../../src/analysis/webChainJoin.js";
 import { WEB_SHAPES_MAX } from "../../src/analysis/webChainRows.js";
+import { canonicalIp } from "../../src/analysis/hostBinding.js";
 import type { ForensicEvent, IOC } from "../../src/analysis/stateTypes.js";
 
 const SHA = "3a7b" + "0".repeat(56) + "c9e1";
@@ -704,5 +705,18 @@ describe("createCanonicalEvent locatorMap", () => {
         locatorMap: { web: "record:9" },
       }),
     ).toThrow(/record:9/);
+  });
+});
+
+// #1187: hostBinding.ts's own lookup canonicalizes source IPs (lowercase, IPv6 compression,
+// ::ffff:v4 folding). A row logging a differently-spelled-but-equivalent form must still collide
+// with the same binding, or the proxy-host-identity join under-matches (never wrong, just missed).
+describe("network.source.address is canonicalized to match hostBinding.ts's own lookup (#1187)", () => {
+  it("folds an uppercase, non-compressed IPv6 client address to hostBinding's canonical form", () => {
+    const verbose = "2001:0DB8:0000:0000:0000:0000:0000:0001";
+    const r = parse([http({ "id.orig_h": verbose }), files({ "id.orig_h": verbose })]);
+    const req = requests(r)[0];
+    expect(req.canonical?.network?.source?.address).toBe(canonicalIp(verbose));
+    expect(req.canonical?.network?.source?.address).toBe("2001:db8::1");
   });
 });

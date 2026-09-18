@@ -76,6 +76,16 @@ describe("mapCombinedLogLine", () => {
     expect(m.canonical?.account).toBeUndefined();
   });
 
+  // #1187: hostBinding.ts's own lookup canonicalizes source IPs (lowercase, IPv6 compression,
+  // ::ffff:v4 folding). A differently-spelled-but-equivalent client address must still collide
+  // with the same binding, or the proxy-host-identity join under-matches.
+  it("canonicalizes an uppercase, non-compressed IPv6 client address to hostBinding's form", () => {
+    const line =
+      '2001:0DB8:0000:0000:0000:0000:0000:0001 - - [14/May/2024:19:00:00 +0000] "GET /status HTTP/1.1" 200 83 "-" "Prometheus/2.47.0"';
+    const m = mapCombinedLogLine(line, new Map())!;
+    expect(m.canonical?.network?.source?.address).toBe("2001:db8::1");
+  });
+
   it("tags an absolute-URL GET the same way as the CONNECT tunnel", () => {
     const sink = new Map<string, SiemIoc>();
     const m = mapCombinedLogLine(GET_EXFIL, sink)!;

@@ -40,6 +40,7 @@ import {
   webBlock,
 } from "./webChainWords.js";
 import { isIP } from "node:net";
+import { canonicalIp } from "./hostBinding.js";
 import { readTarget } from "./webRecordFields.js";
 
 /** Distinct row shapes one import keeps per kind; every later new shape folds into an overflow row. */
@@ -428,7 +429,12 @@ function envelopeOf(t: WebTally): CanonicalEventEnvelope {
       ...(r.src || r.dst
         ? {
             network: {
-              ...(r.src ? { source: { address: r.src } } : {}),
+              // hostBinding.ts's own lookup canonicalizes via canonicalIp() (lowercase, IPv6
+              // compression, ::ffff:v4 folding); normalizing here too means a common-but-legal
+              // spelling difference never under-matches an otherwise-identical binding (#1187).
+              // actor.address above is left as the line's own raw spelling — only this
+              // trust-sensitive, join-relevant field is normalized.
+              ...(r.src ? { source: { address: canonicalIp(r.src) } } : {}),
               ...(r.dst ? { destination: { address: r.dst, ...(r.port ? { port: r.port } : {}) } } : {}),
               protocol: "http",
             },
