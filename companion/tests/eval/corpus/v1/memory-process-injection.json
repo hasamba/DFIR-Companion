@@ -95,7 +95,7 @@
         "allowedStatuses": ["unknown", "inferred"]
       }
     ],
-    "nextSteps": [{ "id": "collect-autoruns", "requiredTerms": ["persistence artifacts", "WS-09"] }],
+    "nextSteps": [{ "id": "collect-autoruns", "requiredTerms": ["persistence", "WS-09"] }],
     "expectAbstention": false
   }
 }

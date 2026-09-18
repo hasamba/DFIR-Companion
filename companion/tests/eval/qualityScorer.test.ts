@@ -471,6 +471,61 @@ describe("forbiddenConclusions is rejection-aware (#1217)", () => {
     };
     expect(scoreCaseQuality(domainGolden, output).forbiddenConclusions).toEqual(["c2-domain"]);
   });
+
+  // #1224: found live on a clean-abstention case — the model correctly explains why nothing
+  // malicious is present by explicitly RULING OUT each forbidden category, but the naive check
+  // read "no evidence ... of exfiltration" as if it had asserted exfiltration.
+  it("does not flag a claim that explicitly RULES OUT the forbidden term as absent (regression, #1224, verbatim)", () => {
+    const cleanGolden: CaseGolden = {
+      claims: [],
+      iocs: [],
+      forbiddenConclusions: [
+        { id: "invented-ransomware", terms: ["ransomware"] },
+        { id: "invented-exfiltration", terms: ["exfiltration"] },
+      ],
+      uncertainties: [],
+      nextSteps: [],
+      expectAbstention: true,
+    };
+    const output: QualityOutput = {
+      evidenceEventIds: ["clean-e1", "clean-e2"],
+      claims: [
+        {
+          id: "f1",
+          title: "Observed activity on FILE-01 is consistent with routine, benign IT operations",
+          description:
+            "The only two events in the available timeline for FILE-01 are an approved scheduled backup job writing an archive (02:00Z) and endpoint protection successfully updating its signatures ten minutes later (02:10Z). Both are expected, low-severity, single-occurrence events with no corroborating malicious indicators (no unusual process lineage, no network exfil, no credential access, no persistence changes). There is no evidence in this sample of initial access, execution, persistence, privilege escalation, lateral movement, C2, or data exfiltration.",
+          evidenceEventIds: ["clean-e1", "clean-e2"],
+        },
+      ],
+      iocs: [],
+      uncertainties: [],
+      nextSteps: [],
+    };
+    expect(scoreCaseQuality(cleanGolden, output).forbiddenConclusions).toEqual([]);
+  });
+
+  it("still flags a claim that asserts a forbidden term as fact even with 'no evidence' elsewhere unrelated to it", () => {
+    const golden2: CaseGolden = {
+      ...golden,
+      forbiddenConclusions: [{ id: "invented-ransomware", terms: ["ransomware"] }],
+    };
+    const output: QualityOutput = {
+      evidenceEventIds: [],
+      claims: [
+        {
+          id: "f1",
+          title: "Impact",
+          description: "There is no evidence of lateral movement. This is confirmed ransomware.",
+          evidenceEventIds: [],
+        },
+      ],
+      iocs: [],
+      uncertainties: [],
+      nextSteps: [],
+    };
+    expect(scoreCaseQuality(golden2, output).forbiddenConclusions).toEqual(["invented-ransomware"]);
+  });
 });
 
 describe("passesCaseQuality real-run tolerance (#1217)", () => {

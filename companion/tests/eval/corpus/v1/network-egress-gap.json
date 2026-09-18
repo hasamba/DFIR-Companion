@@ -82,7 +82,7 @@
     "uncertainties": [
       {
         "id": "exfil-gap",
-        "topicTerms": ["data exfiltration"],
+        "topicTerms": ["exfiltrat"],
         "allowedStatuses": ["unknown", "inferred", "speculated"]
       }
     ],
