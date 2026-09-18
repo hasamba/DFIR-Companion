@@ -79,6 +79,10 @@ export const FEATURES: Feature[] = [
       "renderGeoView",
       "ensureGeoMap",
       "renderGeoMarkers",
+      // Pure HTML helpers, published so iocClientReportedLabel.test.ts can assert the popup and
+      // list flags without Leaflet (#1326).
+      "geoIpFlags",
+      "geoPopupHtml",
       "geoFocusIp",
       "geoDownloadCsv",
       "geoToggleFullscreen",

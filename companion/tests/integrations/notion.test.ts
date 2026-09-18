@@ -114,6 +114,33 @@ describe("notionBlocks", () => {
     )[0];
     expect(batchBlocks([tableBlock])).toHaveLength(1); // weight 91 ≤ 100
   });
+
+  // #1326: the IOC table is a read surface an analyst consumes like the markdown report, so a
+  // sender-controlled indicator (#1266) carries the same "(client-reported)" suffix there. The
+  // plain sighting beside it stays bare — absence is the default, not a third label.
+  it("suffixes a client-reported IOC value in the IOC table, and nothing else", () => {
+    const state: InvestigationState = {
+      ...sampleState(),
+      iocs: [
+        { id: "i1", type: "ip", value: "8.8.8.8", firstSeen: AT },
+        { id: "i2", type: "ip", value: "203.0.113.9", firstSeen: AT, provenance: "client-reported" },
+      ],
+    };
+    const blocks = buildCompanionBlocks(state, emptyReportMeta(), { caseId: "c1", exportedAt: AT });
+    const heading = blocks.findIndex(
+      (b) => b.type === "heading_2" && plainTextOf(b) === "Indicators of Compromise",
+    );
+    expect(heading).toBeGreaterThan(-1);
+    const iocTable = blocks[heading + 1];
+    expect(iocTable.type).toBe("table");
+    const rows = (iocTable.table as { children: NotionBlock[] }).children;
+    const cellText = (row: NotionBlock, col: number): string =>
+      (row.table_row as { cells: Array<Array<{ text: { content: string } }>> }).cells[col]
+        .map((r) => r.text.content)
+        .join("");
+    const values = rows.slice(1).map((row) => cellText(row, 1));
+    expect(values).toEqual(["8.8.8.8", "203.0.113.9 (client-reported)"]);
+  });
 });
 
 // ---- orchestrator with a recording in-memory mock --------------------------
