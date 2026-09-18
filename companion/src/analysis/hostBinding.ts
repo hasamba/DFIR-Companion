@@ -78,6 +78,13 @@ function isIdentifyingClientName(name: string): boolean {
 // local logons and corroborates nothing about which machine a HUMAN was using.
 const NON_HUMAN_ACCOUNTS = new Set(["system", "local service", "network service", "anonymous logon"]);
 
+// Built-in local accounts (Administrator RID 500, Guest RID 501) live in every Windows host's own
+// local SAM under that name — an un-domained "administrator" logon on host A and on host B are two
+// different local principals that merely share a name, the same "matches every host" failure the
+// module already guards against for IPs. Excluded ONLY when no domain is present: a domained
+// "CORP\Administrator" is a specific, identifying domain account, not a local built-in.
+const NON_HUMAN_LOCAL_ACCOUNTS_NO_DOMAIN = new Set(["administrator", "guest"]);
+
 function isLoopbackV4(ip: string): boolean {
   return /^127\./.test(ip);
 }
@@ -147,11 +154,23 @@ export function isIdentifyingIp(raw: string): boolean {
   return true;
 }
 
-function isHumanAccount(name: string): boolean {
+// The real Windows-logon importer (winAccountRoles.ts's own entity()) already collapses a "-" or
+// empty TargetDomainName to an omitted domain before this module ever sees it, so `domain` here
+// should normally arrive as undefined for a local-SAM logon — but this check folds "-"/"*"
+// defensively too, matching this module's own established placeholder-rejection convention
+// (NON_IDENTIFYING_IPS, NON_IDENTIFYING_CLIENT_NAMES) rather than trusting every present or future
+// caller to have already normalized it (Ollama review finding on #1161).
+function hasNoDomain(domain: string | undefined): boolean {
+  const d = domain?.trim();
+  return !d || d === "-" || d === "*";
+}
+
+function isHumanAccount(name: string, domain: string | undefined): boolean {
   const n = name.trim().toLowerCase();
   if (!n) return false;
   if (n.endsWith("$")) return false; // computer account
   if (NON_HUMAN_ACCOUNTS.has(n)) return false;
+  if (hasNoDomain(domain) && NON_HUMAN_LOCAL_ACCOUNTS_NO_DOMAIN.has(n)) return false;
   return true;
 }
 
@@ -193,7 +212,7 @@ export function buildHostBindingIndex(
     const logonType = c.authentication?.logonType;
     if (
       accountName &&
-      isHumanAccount(accountName) &&
+      isHumanAccount(accountName, c.account?.domain) &&
       logonType !== undefined &&
       ACCOUNT_PRESENCE_LOGON_TYPES.has(logonType) &&
       c.target?.kind === "host" &&
