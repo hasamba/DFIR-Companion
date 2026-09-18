@@ -43,11 +43,7 @@ import { macFsEventBlockSchema } from "./canonicalMacFsEvent.js";
 import { spotlightUsageBlockSchema } from "./canonicalSpotlightUsage.js";
 import { macLoginItemBlockSchema } from "./canonicalMacLoginItemTarget.js";
 
-// An exact-match compatibility barrier, not a changelog stamp: every reader treats any other
-// version as opaque. Optional fields are added WITHOUT a bump; a bump needs a registered migration
-// in upgradeForensicEvent, and none exists. Policy: mkdocs-docs/reference/canonical-events.md
-// § "Schema and migration policy" (#1315).
-export const CANONICAL_EVENT_SCHEMA_VERSION = "1.0.0" as const;
+export const CANONICAL_EVENT_SCHEMA_VERSION = "1.0.0" as const; // exact-match barrier; bump policy: #1315
 /** The producer stamped on an envelope DERIVED from legacy flat fields at the read boundary. */
 export const LEGACY_UPGRADE_IMPORTER = "legacy-upgrade";
 
@@ -170,9 +166,7 @@ export const canonicalEventEnvelopeSchema = z.object({
           address: z.string().optional(),
           port: z.number().int().positive().max(65535).optional(),
           hostname: z.string().optional(),
-          // #1265: stamped by edge-observed writers only, read fail-closed. Contract: ARCHITECTURE.md
-          // § "The `network.source.provenance` trust flag"; enforced by the sweep test named there.
-          provenance: z.literal("edge-observed").optional(),
+          provenance: z.literal("edge-observed").optional(), // #1265; contract in ARCHITECTURE.md (provenance flag)
         })
         .optional(),
       destination: z
@@ -767,9 +761,7 @@ function legacyCanonical(event: ForensicEvent): CanonicalEventEnvelope {
 
 export function upgradeForensicEvent(event: ForensicEvent): ForensicEvent {
   if (event.canonical?.schemaVersion === CANONICAL_EVENT_SCHEMA_VERSION) return event;
-  // Any other version may carry meaning this build does not understand. Preserve it verbatim
-  // instead of silently downgrading it. No version-to-version migration is registered yet; a bump
-  // of CANONICAL_EVENT_SCHEMA_VERSION must add one here first, or every stored envelope goes dark.
+  // Preserve an unknown version verbatim; no migration is registered yet — a bump must add one here first.
   if (event.canonical) return event;
   return { ...event, canonical: legacyCanonical(event) };
 }
