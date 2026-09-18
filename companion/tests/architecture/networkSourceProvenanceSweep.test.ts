@@ -7,7 +7,8 @@
 // object literals. Each file that has one must appear in exactly one of two lists below:
 //   - SITES: audited edge-observed, every literal must carry the stamp;
 //   - EXEMPT: deliberately unstamped, with the reason recorded here, every literal must NOT carry
-//     the stamp (so a stamp cannot creep in without revisiting the reason).
+//     the stamp (so a stamp cannot creep in without revisiting the reason). A mixed file names the
+//     address expression of each site that DOES stamp in `stamped`; every other site stays bare.
 // A file with such a literal in neither list fails — that is the "new writer forgot to decide"
 // case this sweep exists to catch. The registry here, not any prose, is the writer count: the
 // audit's own hand-kept total drifted from it on the day it was written (#1314).
@@ -78,14 +79,19 @@ const SITES: Record<string, number> = {
   "ecarImport.ts": 1, // ECAR EDR src_ip — endpoint-sensor-observed (already trusted by #1267 as passwordSprayFanout input)
 };
 
-/** Deliberately unstamped: file -> { occurrences, why }. */
-const EXEMPT: Record<string, { occurrences: number; why: string }> = {
+/** Deliberately unstamped: file -> { occurrences, stamped?, why }. `stamped` lists the `address:`
+ * expression of each site in the file that carries the stamp by recorded decision (a mixed file);
+ * a site not named there must not stamp, and a name that matches no site is stale. */
+const EXEMPT: Record<string, { occurrences: number; stamped?: string[]; why: string }> = {
   "canonicalEvent.ts": {
     occurrences: 2,
+    stamped: ["logon.sourceIp"],
     why:
-      "legacy ForensicEvent -> canonical upgrade path: copies whatever srcIp/logon.sourceIp the " +
+      "legacy ForensicEvent -> canonical upgrade path. The generic srcIp branch copies whatever the " +
       "ORIGINAL pre-canonical importer wrote, whose provenance is unknowable at upgrade time — " +
-      "fail-closed is the honest answer, and this is the already-disclosed pre-#1265 persisted-data case",
+      "fail-closed is the honest answer, and this is the already-disclosed pre-#1265 persisted-data case. " +
+      "The logon.sourceIp branch stamps (#1342): a 4624/4625 `IpAddress=` is only ever rendered from the " +
+      "Security record's own field (renderer set pinned by hostBinding.test.ts), the basis siemImport.ts stamps on",
   },
 };
 
@@ -115,6 +121,8 @@ function sourceLiterals(source: string): string[] {
 }
 
 const STAMP = /provenance:\s*"edge-observed"/;
+/** The `address:` expression of a `source: { ... }` literal, so a mixed EXEMPT file can name a site. */
+const ADDRESS_EXPR = /\baddress\s*:\s*([^,}\s]+)/;
 const read = (file: string): string => readFileSync(path.join(ANALYSIS_DIR, file), "utf8");
 
 type ReaderKind = "gated" | "agnostic" | "tracked";
@@ -130,8 +138,8 @@ const READERS: Record<string, { kind: ReaderKind; why: string }> = {
     why: "connection source -> host name via the same resolveIpAtTime call; the lead reports 'this host connected' (#1313)",
   },
   "hostBinding.ts": {
-    kind: "tracked",
-    why: "IP -> workstation-name index (byIp) that both gated readers resolve against; the index side is #1292, open",
+    kind: "gated",
+    why: "IP -> workstation-name index (byIp) that both gated readers resolve against; an unstamped address never enters the index — gated by #1342 (was tracked under #1292)",
   },
   "dnsCrossUploadConnJoin.ts": {
     kind: "agnostic",
@@ -218,11 +226,16 @@ describe("network.source.address writers decide on provenance (#1265)", () => {
     });
   }
 
-  for (const [file, { occurrences }] of Object.entries(EXEMPT)) {
-    it(`${file} is deliberately unstamped at every address write site`, () => {
+  for (const [file, { occurrences, stamped = [] }] of Object.entries(EXEMPT)) {
+    it(`${file} is deliberately unstamped at every address write site not named in stamped`, () => {
       const literals = sourceLiterals(read(file));
       expect(literals.length).toBe(occurrences);
-      for (const literal of literals) expect(literal).not.toMatch(STAMP);
+      const exprs = literals.map((literal) => ADDRESS_EXPR.exec(literal)?.[1] ?? "");
+      for (const name of stamped) expect(exprs, `stale stamped site ${name} in ${file}`).toContain(name);
+      literals.forEach((literal, i) => {
+        if (stamped.includes(exprs[i])) expect(literal).toMatch(STAMP);
+        else expect(literal).not.toMatch(STAMP);
+      });
     });
   }
 
