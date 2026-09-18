@@ -300,6 +300,55 @@ describe("buildHostBindingIndex + resolveAccountAtTime (account -> session host)
     expect(index.byAccount.size).toBe(0);
   });
 
+  it("excludes an un-domained built-in local account (Administrator/Guest) from the account index", () => {
+    const events = [
+      logonEvent({
+        sessionHost: "ws-042",
+        accountName: "Administrator",
+        logonType: 2,
+        ts: "2026-06-10T12:00:00Z",
+      }),
+      logonEvent({ sessionHost: "ws-043", accountName: "Guest", logonType: 2, ts: "2026-06-10T12:00:01Z" }),
+    ];
+    const index = buildHostBindingIndex(events);
+    expect(index.byAccount.size).toBe(0);
+  });
+
+  it("also excludes an Administrator logon whose domain is a placeholder ('-' or '*'), not just absent", () => {
+    const events = [
+      logonEvent({
+        sessionHost: "ws-042",
+        accountName: "Administrator",
+        accountDomain: "-",
+        logonType: 2,
+        ts: "2026-06-10T12:00:00Z",
+      }),
+      logonEvent({
+        sessionHost: "ws-043",
+        accountName: "Administrator",
+        accountDomain: "*",
+        logonType: 2,
+        ts: "2026-06-10T12:00:01Z",
+      }),
+    ];
+    const index = buildHostBindingIndex(events);
+    expect(index.byAccount.size).toBe(0);
+  });
+
+  it("still admits a DOMAINED Administrator account as identifying (a specific domain principal)", () => {
+    const events = [
+      logonEvent({
+        sessionHost: "ws-042",
+        accountName: "Administrator",
+        accountDomain: "CORP",
+        logonType: 2,
+        ts: "2026-06-10T12:00:00Z",
+      }),
+    ];
+    const index = buildHostBindingIndex(events);
+    expect(resolveAccountAtTime(index, "corp\\administrator", "2026-06-10T12:00:00Z", 1_000)).toHaveLength(1);
+  });
+
   it("folds account key case and domain shape when resolving", () => {
     const events = [
       logonEvent({
