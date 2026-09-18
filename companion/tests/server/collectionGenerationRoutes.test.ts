@@ -231,9 +231,11 @@ describe("/cases/:id/collection-generations", () => {
     expect(res.body.cohorts[0].resolvedHost).toBe("ws-200");
   }, 20000);
 
-  it("compare 400s on an unknown domain rather than silently returning nothing", async () => {
-    const res = await request(app).get("/cases/c1/collection-generations/compare?domain=bogus");
-    expect(res.status).toBe(400);
+  it("compare ignores a `domain` query param entirely — it was dead surface, removed for #1134", async () => {
+    const withBogusDomain = await request(app).get("/cases/c1/collection-generations/compare?domain=bogus");
+    const withoutDomain = await request(app).get("/cases/c1/collection-generations/compare");
+    expect(withBogusDomain.status).toBe(200);
+    expect(withBogusDomain.body).toEqual(withoutDomain.body);
   });
 
   it("compare returns an empty cohort list for a fresh case, never a 500", async () => {
