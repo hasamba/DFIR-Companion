@@ -292,8 +292,12 @@ export function buildHostBindingIndex(
     const edgeObserved = source?.provenance === "edge-observed";
     const ip = edgeObserved ? source.address : undefined;
     const clientName = c.session?.terminal?.trim();
-    if (excluded) {
-      const reason = ip ? ipExclusionReason(ip) : source?.address ? "not-edge-observed" : null;
+    if (excluded && source?.address) {
+      // Value classification first, provenance second: an unstamped loopback still counts as
+      // "loopback-v4", so the #1236 counts an operator already reads do not silently migrate to the
+      // new key (Ollama review finding on #1292). "not-edge-observed" is only ever the reason for an
+      // address that WOULD have been identifying.
+      const reason = ipExclusionReason(source.address) ?? (edgeObserved ? null : "not-edge-observed");
       if (reason) excluded.set(reason, (excluded.get(reason) ?? 0) + 1);
     }
     if (ip && isIdentifyingIp(ip) && clientName && isIdentifyingClientName(clientName)) {

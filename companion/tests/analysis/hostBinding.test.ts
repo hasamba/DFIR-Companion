@@ -10,6 +10,11 @@ import {
   type IpExclusionReason,
 } from "../../src/analysis/hostBinding.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const SRC_ANALYSIS = join(dirname(fileURLToPath(import.meta.url)), "../../src/analysis");
 
 let seq = 0;
 function logonEvent(o: {
@@ -663,21 +668,25 @@ describe("buildHostBindingIndex requires the edge-observed provenance stamp (#12
     expect(hits[0].host).toBe("WS-042");
   });
 
-  it("nulls only the address: account -> host still binds from an unstamped event", () => {
-    const events = [
-      logonEvent({
-        sessionHost: "WS-042",
-        accountName: "jdoe",
-        accountDomain: "CORP",
-        logonType: 2,
-        ip: "10.0.0.5",
-        ts: "2026-07-30T10:00:00Z",
-        unprovenanced: true,
-      }),
-    ];
-    const index = buildHostBindingIndex(events);
-    expect(index.byIp.size).toBe(0);
-    const hits = resolveAccountAtTime(index, "corp\\jdoe", "2026-07-30T10:00:00Z", 1_000);
+  it("nulls only the address: account -> host still binds from an unstamped event whose IP half would otherwise have bound", () => {
+    // Same event twice, stamped vs not — the ONLY difference is the provenance stamp, so the
+    // byIp assertion below cannot pass on pre-fix code (Ollama review finding: without a
+    // clientName the IP arm was empty regardless, making the assertion vacuous).
+    const shape = {
+      sessionHost: "WS-042",
+      clientName: "WS-042",
+      accountName: "jdoe",
+      accountDomain: "CORP",
+      logonType: 2,
+      ip: "10.0.0.5",
+      ts: "2026-07-30T10:00:00Z",
+    };
+    const stamped = buildHostBindingIndex([logonEvent(shape)]);
+    expect(stamped.byIp.size).toBe(1);
+
+    const unstamped = buildHostBindingIndex([logonEvent({ ...shape, unprovenanced: true })]);
+    expect(unstamped.byIp.size).toBe(0);
+    const hits = resolveAccountAtTime(unstamped, "corp\\jdoe", "2026-07-30T10:00:00Z", 1_000);
     expect(hits).toHaveLength(1);
     expect(hits[0].host).toBe("WS-042");
   });
@@ -697,5 +706,91 @@ describe("buildHostBindingIndex requires the edge-observed provenance stamp (#12
     const index = buildHostBindingIndex(events, undefined, excluded);
     expect(excluded.get("not-edge-observed")).toBe(1);
     expect(index.byIp.size).toBe(1);
+  });
+
+  it("classifies the value first: an unstamped loopback still counts as loopback-v4, never not-edge-observed", () => {
+    // The #1236 counts an operator already reads must not migrate to the new key just because a
+    // placeholder/loopback address also lacks the stamp (Ollama review finding on #1292).
+    const events = [
+      logonEvent({
+        sessionHost: "SRV-01",
+        clientName: "WS-042",
+        ip: "127.0.0.2",
+        ts: "2026-07-30T10:00:00Z",
+        unprovenanced: true,
+      }),
+      logonEvent({
+        sessionHost: "SRV-01",
+        clientName: "WS-042",
+        ip: "-",
+        ts: "2026-07-30T10:00:00Z",
+        unprovenanced: true,
+      }),
+    ];
+    const excluded = new Map<IpExclusionReason, number>();
+    buildHostBindingIndex(events, undefined, excluded);
+    expect(excluded.get("loopback-v4")).toBe(1);
+    expect(excluded.get("placeholder")).toBe(1);
+    expect(excluded.get("not-edge-observed")).toBeUndefined();
+  });
+
+  it("the legacy prose upgrade stamps a 4624's IpAddress= (Windows-record field) but NOT the generic srcIp (provenance unknowable)", () => {
+    // Two legacy, envelope-less rows. The first carries a 4624 `IpAddress=` — rendered only from a
+    // Windows Security record — and must keep binding through the gate (#1162). The second is the
+    // generic legacy `srcIp` field: #1265's one deliberate exemption, whose origin the upgrader
+    // cannot know, so it must NOT be stamped and therefore must NOT bind.
+    const prose4624: ForensicEvent = {
+      id: "legacy-4624",
+      timestamp: "2026-07-30T10:00:00Z",
+      description:
+        "Windows Security Successful logon (EID 4624) - CORP\\jdoe - LogonType=3 - IpAddress=10.0.0.5 - WorkstationName=WS-042 @ SRV-01",
+      severity: "Low",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      asset: "SRV-01",
+    };
+    const genericSrcIp: ForensicEvent = {
+      id: "legacy-srcip",
+      timestamp: "2026-07-30T10:00:00Z",
+      description:
+        "Windows Security Successful logon (EID 4624) - CORP\\jdoe - LogonType=3 - WorkstationName=WS-043 @ SRV-01",
+      severity: "Low",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      asset: "SRV-01",
+      srcIp: "10.0.0.6",
+    };
+    const [a, b] = [prose4624, genericSrcIp].map(upgradeForensicEvent);
+    expect(a.canonical?.network?.source?.provenance).toBe("edge-observed");
+    expect(b.canonical?.network?.source?.address).toBe("10.0.0.6");
+    expect(b.canonical?.network?.source?.provenance).toBeUndefined();
+
+    const index = buildHostBindingIndex([a, b]);
+    expect(resolveIpAtTime(index, "10.0.0.5", "2026-07-30T10:00:00Z", 1_000).map((h) => h.host)).toEqual([
+      "WS-042",
+    ]);
+    expect(resolveIpAtTime(index, "10.0.0.6", "2026-07-30T10:00:00Z", 1_000)).toEqual([]);
+  });
+
+  it("contract: the legacy IpAddress= grammar is rendered only by the Windows Security record writers the stamp is justified by", () => {
+    // The stamp in canonicalEvent.ts keys on the presence of `IpAddress=` inside the
+    // "Successful/Failed logon (EID 4624/4625)" grammar. That is honest only while every renderer of
+    // that grammar reads a Windows Security record's own field. This pins the renderer set so a new
+    // prose writer cannot mint the trust anchor by accident (Ollama review finding on #1292).
+    // A renderer of that grammar is a file that both formats a `(EID ${eid})` description AND reads
+    // an `IpAddress` field into it. Today: siemImport.ts (a parsed Security record — it also builds
+    // the canonical envelope, so its live rows never take the legacy path; only its pre-envelope
+    // rows on disk do) and accountUsageImport.ts (Velociraptor's CondensedAccountUsage — the same
+    // Security-record columns, flattened). Both read the OS-recorded field, never a client header.
+    // A third name here means a new renderer that must be audited before this test is widened.
+    const files = readdirSync(SRC_ANALYSIS)
+      .filter((f) => f.endsWith(".ts") && f !== "seedDemoCase.ts")
+      .filter((f) => {
+        const text = readFileSync(join(SRC_ANALYSIS, f), "utf8");
+        return text.includes("(EID ${") && text.includes("IpAddress");
+      });
+    expect(files.sort()).toEqual(["accountUsageImport.ts", "siemImport.ts"]);
   });
 });
