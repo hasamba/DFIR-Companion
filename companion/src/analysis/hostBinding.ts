@@ -82,6 +82,15 @@ function isLoopbackV4(ip: string): boolean {
   return /^127\./.test(ip);
 }
 
+// IPv4 link-local / APIPA (169.254.0.0/16): the exact IPv4 analog of IPv6 link-local below —
+// auto-assigned when DHCP fails, valid only on its own segment, so the same textual address can
+// legitimately name two unrelated hosts. Excluding IPv6 link-local while admitting its IPv4
+// counterpart would be an inconsistent standard the module doesn't otherwise apply (Ollama review
+// finding on #1160).
+function isLinkLocalV4(ip: string): boolean {
+  return /^169\.254\./.test(ip);
+}
+
 // IPv6 link-local (fe80::/10): auto-configured per-interface, valid only on its own link, and
 // this module already strips the "%zone" suffix that would disambiguate it (see canonicalIp) —
 // without that scope, the same textual "fe80::..." address can legitimately name two unrelated
@@ -132,6 +141,7 @@ function isIdentifyingIp(raw: string): boolean {
   const ip = canonicalIp(raw);
   if (NON_IDENTIFYING_IPS.has(ip)) return false;
   if (isLoopbackV4(ip)) return false;
+  if (isLinkLocalV4(ip)) return false;
   if (isLinkLocalV6(ip)) return false;
   return true;
 }

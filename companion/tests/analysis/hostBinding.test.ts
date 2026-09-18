@@ -191,6 +191,34 @@ describe("buildHostBindingIndex + resolveIpAtTime (IP -> client host)", () => {
         ts: "2026-06-10T12:00:01Z",
       }),
       logonEvent({ sessionHost: "fs-01", clientName: "ws-042", ip: "febf::1", ts: "2026-06-10T12:00:02Z" }),
+      logonEvent({
+        sessionHost: "fs-01",
+        clientName: "ws-042",
+        ip: "fe80:0:0:0:0:0:0:1",
+        ts: "2026-06-10T12:00:03Z",
+      }),
+    ];
+    const index = buildHostBindingIndex(events);
+    expect(index.byIp.size).toBe(0);
+  });
+
+  it("still admits fec0::1, one step past the excluded fe80::/10 range, as identifying", () => {
+    const events = [
+      logonEvent({ sessionHost: "fs-01", clientName: "ws-042", ip: "fec0::1", ts: "2026-06-10T12:00:00Z" }),
+    ];
+    const index = buildHostBindingIndex(events);
+    const hits = resolveIpAtTime(index, "fec0::1", "2026-06-10T12:00:00Z", 1_000);
+    expect(hits).toHaveLength(1);
+  });
+
+  it("excludes IPv4 link-local / APIPA (169.254.0.0/16) from the IP index, the same as its IPv6 analog", () => {
+    const events = [
+      logonEvent({
+        sessionHost: "fs-01",
+        clientName: "ws-042",
+        ip: "169.254.1.1",
+        ts: "2026-06-10T12:00:00Z",
+      }),
     ];
     const index = buildHostBindingIndex(events);
     expect(index.byIp.size).toBe(0);
