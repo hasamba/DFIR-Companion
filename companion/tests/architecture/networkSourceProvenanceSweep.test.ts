@@ -139,7 +139,7 @@ const READERS: Record<string, { kind: ReaderKind; why: string }> = {
   },
   "hostBinding.ts": {
     kind: "gated",
-    why: "IP -> workstation-name index (byIp) that both gated readers resolve against; an unstamped address never enters the index — gated by #1342 (was tracked under #1292)",
+    why: "IP -> workstation-name index (byIp) that both gated readers resolve against; the index side fail-closes on the stamp too since #1292 landed in #1342",
   },
   "dnsCrossUploadConnJoin.ts": {
     kind: "agnostic",
