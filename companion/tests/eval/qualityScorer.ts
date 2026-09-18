@@ -102,9 +102,19 @@ const norm = (value: string): string => value.trim().toLowerCase();
 const ratio = (numerator: number, denominator: number): number =>
   denominator === 0 ? 1 : numerator / denominator;
 
+// Single source of truth for "does this text carry this term" — every other check (the whole-
+// claim gate, the missing-terms split, the per-candidate term match) derives from this exact
+// predicate, so two independently-reimplemented matchers can never quietly diverge (#1226 review).
+function hasTerm(text: string, term: string): boolean {
+  return norm(text).includes(norm(term));
+}
+
 function containsTerms(text: string, terms: readonly string[]): boolean {
-  const normalized = norm(text);
-  return terms.every((term) => normalized.includes(norm(term)));
+  return terms.every((term) => hasTerm(text, term));
+}
+
+function missingTerms(text: string, terms: readonly string[]): string[] {
+  return terms.filter((term) => !hasTerm(text, term));
 }
 
 // A claim must CITE (at least) its required evidence, not reproduce the golden's exact id set. Two
@@ -251,20 +261,32 @@ function scoreClaims(golden: readonly GoldenClaim[], produced: readonly QualityC
     const cover = greedyMinimalCover(expected.evidenceEventIds, candidates);
     let matchedIndices: number[] | null = null;
     if (cover) {
+      const coveredSet = new Set(cover);
       const coverText = cover.map((index) => claimText(produced[index])).join("\n\n");
-      if (containsTerms(coverText, expected.requiredTerms)) {
+      const stillMissing = missingTerms(coverText, expected.requiredTerms);
+      if (stillMissing.length === 0) {
         matchedIndices = cover;
       } else {
-        // The minimal ID-cover's own text doesn't carry the required term — e.g. it greedily
-        // picked one aggregate finding that covers every id but not the specific phrasing. Retry
-        // against the FULL candidate pool (still guaranteed to cover the required ids, since it's
-        // a superset of `cover`): its union may carry the term via a claim the minimal cover
-        // didn't need for id coverage alone. Without this, a term-blind aggregate finding can
-        // shadow the atomic findings that DO carry the required language and reintroduce the
-        // exact miss this fallback exists to fix (#1217).
-        const allIndices = candidates.map((c) => c.index);
-        const fullText = allIndices.map((index) => claimText(produced[index])).join("\n\n");
-        if (containsTerms(fullText, expected.requiredTerms)) matchedIndices = allIndices;
+        // The minimal ID-cover's own text doesn't carry every required term — e.g. it greedily
+        // picked one aggregate finding that covers every id but not the specific phrasing. Run a
+        // SECOND minimal cover, this time over the still-missing TERMS: each remaining candidate's
+        // "ids" are whichever missing terms its own text (not concatenated with anything) happens
+        // to contain, via the SAME `hasTerm` predicate as every other term check in this file —
+        // never a separately-reimplemented one that could quietly diverge. This shares the exact
+        // same "never add a zero-contribution candidate" guarantee as the id-cover pass above — a
+        // candidate that carries neither a new required id nor a still-missing term is never
+        // marked used, closing the laundering a full-pool "mark everything used" retry would
+        // otherwise cause (#1226) — while still finding the required language wherever it lives
+        // among the atomic findings, not just the id-cover's own text, which is what fixes the
+        // term-blind-aggregate miss this fallback exists for (#1217).
+        const remaining = candidates
+          .filter((c) => !coveredSet.has(c.index))
+          .map((c) => ({
+            index: c.index,
+            ids: stillMissing.filter((term) => hasTerm(claimText(produced[c.index]), term)),
+          }));
+        const termCover = greedyMinimalCover(stillMissing, remaining);
+        if (termCover) matchedIndices = [...cover, ...termCover];
       }
     }
     if (matchedIndices) {
@@ -429,9 +451,15 @@ export function formatCaseQualityReport(
     `  IOC precision ${pct(score.iocs.precision)} recall ${pct(score.iocs.recall)}`,
     `  uncertainty recall ${pct(score.uncertainties.recall)} next-step recall ${pct(score.nextSteps.recall)}`,
   ];
+  // On a real run, an extra claim beyond the golden's evidence doesn't fail the gate — precision
+  // is non-gating there (see PassesCaseQualityOptions) — so labeling it "false conclusion" reads
+  // as a hard failure sitting right next to a [PASS] banner. Relabel as a note instead (#1228).
+  // Mock/deterministic reports (the default) are unchanged: precision still gates there.
+  const falseConclusionLabel = (id: string): string =>
+    options.real ? `note: extra conclusion ${id} (not gated)` : `false conclusion ${id}`;
   const problems = [
     ...score.claims.missed.map((id) => `missed claim ${id}`),
-    ...score.claims.falseConclusions.map((id) => `false conclusion ${id}`),
+    ...score.claims.falseConclusions.map(falseConclusionLabel),
     ...score.forbiddenConclusions.map((id) => `forbidden conclusion ${id}`),
     ...score.confidenceIssues,
     ...score.uncertainties.missed.map((id) => `missed uncertainty ${id}`),
