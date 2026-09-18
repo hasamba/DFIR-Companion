@@ -127,4 +127,28 @@ export type DnsLead = z.infer<typeof dnsLeadSchema>;
 export type DnsLeadState = z.infer<typeof dnsLeadStateSchema>;
 export type DnsReply = z.infer<typeof dnsReplySchema>;
 export type DnsGapBand = z.infer<typeof dnsGapBandSchema>;
+
+// Shared window vocabulary for every DNS-answer-to-connection join (#996) — same-upload
+// (dnsConnJoin.ts, which re-exports these unchanged for its own existing importers) and
+// cross-upload (dnsCrossUploadConnJoin.ts) alike. Homed here, not in either join module, so
+// `analysis/timeline` (cross-upload) can reach them without importing `analysis/ingest`
+// (same-upload) — a layering violation neither module's own domain should need to cross for three
+// pure, upload-agnostic constants/one pure function.
+
+/** Seconds added to every window for the client's resolve-to-connect latency. */
+export const DNS_WINDOW_SLACK_S = 1;
+/** The window when the record carries no TTL — worded as fixed, never as a TTL. */
+export const DNS_FIXED_WINDOW_S = 300;
+
+const GAP_BAND_S = 1000;
+
+export function gapBand(gapMs: number): DnsGapBand {
+  if (gapMs <= 1 * GAP_BAND_S) return "≤1 s";
+  if (gapMs <= 10 * GAP_BAND_S) return "≤10 s";
+  if (gapMs <= 60 * GAP_BAND_S) return "≤60 s";
+  if (gapMs <= 600 * GAP_BAND_S) return "≤10 min";
+  if (gapMs <= 3600 * GAP_BAND_S) return "≤1 h";
+  if (gapMs <= 86_400 * GAP_BAND_S) return "≤24 h";
+  return ">24 h";
+}
 export type DnsReturnedValue = z.infer<typeof dnsReturnedValueSchema>;
