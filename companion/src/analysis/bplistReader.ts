@@ -91,9 +91,8 @@ function readMultibyteInt(buf: Buffer, off: number, len: number): bigint {
 // A length nibble of 0xF means "read an int object next, its decoded value is the real length" —
 // used by data/ASCII/UTF-16/array/set/dict records alike.
 function readExtendedLength(buf: Buffer, off: number, budget: Budget): { length: bigint; next: number } {
-  const lowNibble = off < buf.length ? buf[off] & 0x0f : -1;
-  if ((buf[off] & 0xf0) !== 0x10) throw new BplistError("extended length not followed by an int object");
-  void lowNibble;
+  if (off >= buf.length || (buf[off] & 0xf0) !== 0x10)
+    throw new BplistError("extended length not followed by an int object");
   const intLen = 2 ** (buf[off] & 0x0f);
   const length = readMultibyteUint(buf, off + 1, intLen);
   budget.bumpObjects();
