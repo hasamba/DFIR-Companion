@@ -758,4 +758,16 @@ describe("Sysmon 22 → WFP 5156 — the firewall audit connection join (#996)",
     expect(vals).toContain("ip:10.0.0.5");
     expect(vals).toContain("ip:203.0.113.9");
   });
+
+  // #1213: rawFieldMap cited Sysmon's field spellings for every event, including a 5156 row —
+  // fields that do not exist on a WFP record — even though the canonical value itself was already
+  // read from SourceAddress/DestAddress.
+  it("cites SourceAddress/DestAddress, not Sysmon's field names, on a WFP 5156 row's provenance", () => {
+    const r = parseSiemExport(
+      elastic(wfp5156({ SourceAddress: "10.0.0.5", DestAddress: "203.0.113.9", DestPort: "443" })),
+    );
+    const prov = r.events[0].canonical?.fieldProvenance;
+    expect(prov?.["network.source.address"]).toMatchObject({ rawFields: ["EventData.SourceAddress"] });
+    expect(prov?.["network.destination.address"]).toMatchObject({ rawFields: ["EventData.DestAddress"] });
+  });
 });
