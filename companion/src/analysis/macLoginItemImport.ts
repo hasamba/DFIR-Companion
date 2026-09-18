@@ -34,7 +34,7 @@ import {
   kBookmarkDisplayName,
 } from "./cfurlBookmarkReader.js";
 import { createCanonicalEvent } from "./canonicalEvent.js";
-import { looksLikeAliasRecord, parseAliasRecord } from "./aliasRecordReader.js";
+import { AliasRecordError, looksLikeAliasRecord, parseAliasRecord } from "./aliasRecordReader.js";
 import {
   MAC_LOGIN_ITEM_ALIAS_BASIS,
   MAC_LOGIN_ITEM_BASIS,
@@ -177,18 +177,20 @@ function decodeBookmark(bytes: Buffer | undefined): BookmarkFacts {
   }
 }
 
-function pathComponents(posix: string): string[] {
-  return posix
-    .split("/")
-    .filter((c) => c.length > 0)
-    .slice(0, MAX_PATH_DEPTH)
-    .map((c) => clip(c, MAX_FIELD_LEN));
+/** Null when the stored path is deeper than the budget — malformed, never a shortened path shown as whole. */
+function pathComponents(posix: string): string[] | null {
+  const parts = posix.split("/").filter((c) => c.length > 0);
+  if (parts.length > MAX_PATH_DEPTH) return null;
+  return parts.map((c) => clip(c, MAX_FIELD_LEN));
 }
 
 function decodeAlias(bytes: Buffer): BookmarkFacts {
   try {
     const a = parseAliasRecord(bytes);
     const aliasRaw: Record<string, string> = { aliasAppinfo: a.appinfo, aliasRecsize: String(a.recsize) };
+    if (a.trailingBytes > 0) aliasRaw.aliasTrailingBytes = String(a.trailingBytes);
+    const components = a.posixPath ? pathComponents(a.posixPath) : undefined;
+    if (components === null) return { decodeStatus: "malformed", recordKind: "alias-record" };
     if (a.fsType) aliasRaw.aliasFsType = a.fsType;
     if (a.diskType !== undefined) aliasRaw.aliasDiskType = String(a.diskType);
     if (a.creatorCode) aliasRaw.aliasCreatorCode = a.creatorCode;
@@ -205,8 +207,8 @@ function decodeAlias(bytes: Buffer): BookmarkFacts {
       decodeStatus: "decoded",
       aliasVersion: a.version,
       aliasKind: a.kind,
-      ...(a.posixPath ? { targetPathComponents: pathComponents(a.posixPath) } : {}),
-      ...(a.cnidPath ? { targetCnidPath: a.cnidPath.slice(0, MAX_PATH_DEPTH).map((c) => String(c)) } : {}),
+      ...(components ? { targetPathComponents: components } : {}),
+      ...(a.cnidPath ? { targetCnidPath: a.cnidPath.map((c) => String(c)) } : {}),
       ...(a.targetCnid !== undefined ? { targetCnid: String(a.targetCnid) } : {}),
       ...(a.folderCnid !== undefined ? { folderCnid: String(a.folderCnid) } : {}),
       ...(a.volumeName ? { volumeName: clip(a.volumeName, MAX_FIELD_LEN) } : {}),
@@ -218,7 +220,9 @@ function decodeAlias(bytes: Buffer): BookmarkFacts {
       ...(a.unknownTags.length ? { aliasUnknownTags: a.unknownTags.slice(0, 64) } : {}),
       aliasRaw,
     };
-  } catch {
+  } catch (err) {
+    // Only the reader's own typed failure is "malformed"; anything else is a bug and must surface.
+    if (!(err instanceof AliasRecordError)) throw err;
     return { decodeStatus: "malformed", recordKind: "alias-record" };
   }
 }
@@ -233,7 +237,13 @@ function decodeAliasOrBookmark(bytes: Buffer | undefined): BookmarkFacts {
   if (!bytes) return { decodeStatus: "absent" };
   if (looksLikeAliasRecord(bytes)) return decodeAlias(bytes);
   const magic = bytes.length >= 4 ? bytes.toString("ascii", 0, 4) : "";
-  if (magic === "book" || magic === "alis") return decodeBookmark(bytes);
+  if (magic === "book" || magic === "alis") {
+    const facts = decodeBookmark(bytes);
+    // "alis" is ALSO a legal alias appinfo: bytes that fail both the probe and the bookmark
+    // decoder are undecidable, so no record kind is asserted for them (code review finding 4).
+    if (facts.decodeStatus === "malformed" && magic === "alis") return { decodeStatus: "malformed" };
+    return facts;
+  }
   return { decodeStatus: "malformed", recordKind: "alias-record" };
 }
 
@@ -331,11 +341,34 @@ function rawFieldsFrom(
       rawFieldsFrom(v, new Set(), `${prefix}CustomItemProperties.`, rawFields);
       continue;
     }
-    rawFields[clip(`${prefix}${k}`, 60)] = clip(stringifyRaw(v), MAX_FIELD_LEN);
+    const key = clip(`${prefix}${k}`, 60);
+    if (key in rawFields) continue; // two long keys that clip alike: keep the first, never overwrite
+    rawFields[key] = clip(stringifyRaw(v), MAX_FIELD_LEN);
   }
 }
 
+/** The alias reader's own facts first, then the container's raw keys while the bound allows. */
+function mergeRawFields(
+  aliasRaw: Record<string, string> | undefined,
+  containerRaw: Record<string, string>,
+): Record<string, string> {
+  const out: Record<string, string> = { ...(aliasRaw ?? {}) };
+  for (const [k, v] of Object.entries(containerRaw)) {
+    if (Object.keys(out).length >= MAX_RAW_FIELDS) break;
+    if (!(k in out)) out[k] = v;
+  }
+  return out;
+}
+
 const SFL2_TYPED_KEYS: ReadonlySet<string> = new Set(["Name", "Bookmark"]);
+
+/** A positive signature, not just "some `items` array": an empty list, or one whose items carry the
+ * keys both reference parsers read (Name / Bookmark / uuid). Any other keyed archive stays null. */
+function looksLikeSfl2(items: ResolvedValue | undefined): items is ResolvedValue[] {
+  if (!Array.isArray(items)) return false;
+  if (items.length === 0) return true;
+  return items.some((it) => isMap(it) && (it.has("Name") || it.has("Bookmark") || it.has("uuid")));
+}
 
 function collectSfl2Items(root: Map<string, ResolvedValue>): RawItem[] {
   const items: RawItem[] = [];
@@ -439,7 +472,7 @@ function mapItem(
     600 - reportTag.length,
   );
   const isV1 = item.sourceFormat === "btm-legacy" || item.sourceFormat === "btm-modern";
-  const rawFields = { ...item.rawFields, ...(facts.aliasRaw ?? {}) };
+  const rawFields = mergeRawFields(facts.aliasRaw, item.rawFields);
   const description = `${body}${reportTag}`;
 
   const event: MappedEvent = {
@@ -539,7 +572,7 @@ export function parseMacLoginItemBtm(
     ) {
       sourceFormat = "btm-modern";
       items = collectModernItems(root);
-    } else if (isMap(root) && Array.isArray(root.get("items"))) {
+    } else if (isMap(root) && looksLikeSfl2(root.get("items"))) {
       sourceFormat = "sfl2";
       items = collectSfl2Items(root);
     } else {

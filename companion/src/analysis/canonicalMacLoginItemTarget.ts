@@ -22,8 +22,9 @@ export const MAX_RAW_FIELDS = 32;
 
 export const MAC_LOGIN_ITEM_ALIAS_BASIS =
   "the target name/volume/CNID/date facts come from decoding the item's own classic Alias Manager " +
-  "record (versions 2 and 3, per mac_alias's writer and plistutils's samples) exactly as it was " +
-  "written; this is a decoded CONFIGURATION record, never evidence the target executed, and never " +
+  "record (versions 2 and 3, per mac_alias's writer and plistutils's samples) as it was written, " +
+  "with HFS-style names rendered the way mac_alias renders them (a stored '/' shown as ':'); " +
+  "this is a decoded CONFIGURATION record, never evidence the target executed, and never " +
   "a live resolution against the current filesystem -- a record that fails to decode is disclosed " +
   'as bookmarkDecodeStatus: "malformed", never silently dropped; a POSIX path is the path the ' +
   "record stored, and when only a carbon (colon-separated) path or a bare filename exists that is " +

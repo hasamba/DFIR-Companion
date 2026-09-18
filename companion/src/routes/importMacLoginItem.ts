@@ -82,7 +82,10 @@ export function registerMacLoginItemImportRoute(
     const dataBase64 = typeof req.body?.dataBase64 === "string" ? req.body.dataBase64 : "";
     if (!dataBase64) return res.status(400).json({ error: "dataBase64 is required" });
     // Bound the DECODED size from the encoded length before allocating anything: 4 base64 chars
-    // carry 3 bytes. The JSON body itself is already bounded by DFIR_MAX_BODY_MB in httpStack.ts.
+    // carry 3 bytes. The JSON body itself is bounded by DFIR_MAX_BODY_MB in httpStack.ts (256 MB by
+    // default) — a 32 MiB legal file is ~43 MiB of base64, well inside it, so this route's own
+    // 413 is the one a caller sees; an operator who lowers the body cap below ~43 MB lowers the
+    // effective file cap with it (the body parser's 413 names the env var to raise).
     const cap = readCap();
     if (Math.floor((dataBase64.length * 3) / 4) > cap) {
       return res.status(413).json({ error: `file is too large to import (over ${cap} bytes)` });

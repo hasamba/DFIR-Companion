@@ -204,11 +204,40 @@ describe("parseAliasRecord — every malformed case throws AliasRecordError, nev
     expect(r.unknownTags).toEqual([7, 20]);
   });
 
-  it("tolerates trailing bytes after recsize (mac_alias never compares recsize to the buffer)", () => {
+  it("tolerates trailing bytes after recsize (mac_alias never compares recsize to the buffer) and discloses them", () => {
     const b = Buffer.concat([buf(ALIAS_V2), Buffer.from([1, 2, 3])]);
     const r = parseAliasRecord(b);
     expect(r.recsize).toBe(buf(ALIAS_V2).length);
+    expect(r.trailingBytes).toBe(3);
     expect(r.posixPath).toBe("/Applications/EvilAgent.app");
+  });
+
+  it("never reads a tag that sits past recsize — bytes the record did not claim are not its facts", () => {
+    // A minimal record (fixed block + terminator, recsize set accordingly), followed by a forged
+    // tag 18 ("/Evil") and its own terminator. Before the fix the loop scanned to the end of the
+    // buffer and minted the forged path as the record's stored path (code review finding 3).
+    const head = buf(ALIAS_V2).subarray(0, 8 + 142);
+    const own = Buffer.concat([head, Buffer.from([0xff, 0xff])]);
+    own.writeInt16BE(own.length, 4);
+    const forged = Buffer.concat([
+      Buffer.from([0x00, 0x12, 0x00, 0x05]),
+      Buffer.from("/Evil"),
+      Buffer.from([0x00, 0xff, 0xff]),
+    ]);
+    const r = parseAliasRecord(Buffer.concat([own, forged]));
+    expect(r.posixPath).toBeUndefined();
+    expect(r.trailingBytes).toBe(forged.length);
+  });
+
+  it("a CNID path deeper than the budget is malformed, never a silently shortened path", () => {
+    const head = buf(ALIAS_V2).subarray(0, 8 + 142);
+    const n = 65;
+    const tag = Buffer.alloc(4 + n * 4);
+    tag.writeInt16BE(1, 0);
+    tag.writeInt16BE(n * 4, 2);
+    const b = Buffer.concat([head, tag, Buffer.from([0xff, 0xff])]);
+    b.writeInt16BE(b.length, 4);
+    expect(() => parseAliasRecord(b)).toThrow(/depth budget/);
   });
 
   it("a zero date is absent, never 1904-01-01", () => {

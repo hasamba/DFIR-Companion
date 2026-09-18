@@ -152,6 +152,8 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
   // A macOS login-item container is binary-only (#1301): under one of its names the TEXT path is
   // refused rather than sniffed, so an XML `plutil` export or a text-read of the binary can never
   // be minted as a launchd-job record. routes/import.ts turns "unknown" into the specific hint.
+  // Deliberately ahead of the custom-importer registry too: a declarative text importer cannot
+  // read a binary plist, so a custom kind claiming one of these names would only ever misparse.
   const resolveImportKind = (filename: string, text: string): string =>
     looksLikeMacLoginItemFilename(filename)
       ? "unknown"

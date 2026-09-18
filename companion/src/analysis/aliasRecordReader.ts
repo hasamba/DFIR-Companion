@@ -41,8 +41,11 @@ export interface AliasRecord {
   version: 2 | 3;
   /** The caller-set four-char code in bytes 0-3, as 4 ASCII chars when printable else hex. */
   appinfo: string;
-  /** Declared record size (header included); trailing bytes past it are tolerated. */
+  /** Declared record size (header included). Parsing stops there: bytes past it are never read
+   * as record content (they would be tool-endorsed facts the record did not claim). */
   recsize: number;
+  /** How many bytes followed the declared record — tolerated (mac_alias never compares), disclosed. */
+  trailingBytes: number;
   /** 0 = file, 1 = folder per mac_alias's ALIAS_KIND_FILE/ALIAS_KIND_FOLDER; anything else raw. */
   kind: number;
   volumeName?: string;
@@ -138,10 +141,18 @@ export function parseAliasRecord(input: Buffer): AliasRecord {
   const version: 2 | 3 = versionRaw;
   const b = input;
 
+  const end = recsize; // already checked <= input.length
   const fixedBytes = version === 2 ? V2_FIXED_BYTES : V3_FIXED_BYTES;
-  if (HEADER_BYTES + fixedBytes > b.length) fail("alias fixed block truncated");
+  if (HEADER_BYTES + fixedBytes > end) fail("alias fixed block truncated");
 
-  const rec: AliasRecord = { version, appinfo, recsize, kind: 0, unknownTags: [] };
+  const rec: AliasRecord = {
+    version,
+    appinfo,
+    recsize,
+    trailingBytes: input.length - recsize,
+    kind: 0,
+    unknownTags: [],
+  };
   let off = HEADER_BYTES;
   if (version === 2) {
     // >h 28p I 2s h I 64p I I 4s 4s h h I 2s 10s
@@ -175,17 +186,17 @@ export function parseAliasRecord(input: Buffer): AliasRecord {
 
   let tags = 0;
   for (;;) {
-    if (off + 2 > b.length) fail("alias tag list has no terminator");
+    if (off + 2 > end) fail("alias tag list has no terminator");
     const tag = b.readInt16BE(off);
     off += 2;
     if (tag === TAG_TERMINATOR) break;
     tags += 1;
     if (tags > MAX_ALIAS_TAGS) fail("alias tag budget exceeded");
-    if (off + 2 > b.length) fail("alias tag length truncated");
+    if (off + 2 > end) fail("alias tag length truncated");
     const length = b.readInt16BE(off);
     off += 2;
     if (length < 0) fail(`alias tag ${tag} has a negative length`);
-    if (off + length > b.length) fail(`alias tag ${tag} value runs past the buffer`);
+    if (off + length > end) fail(`alias tag ${tag} value runs past the record`);
     const value = b.subarray(off, off + length);
     off += length + (length & 1);
 
@@ -195,7 +206,9 @@ export function parseAliasRecord(input: Buffer): AliasRecord {
         break;
       case TAG_CNID_PATH: {
         if (length < 4 || length % 4 !== 0) fail("alias CNID path length not a multiple of 4");
-        const n = Math.min(length / 4, MAX_CNID_PATH);
+        const n = length / 4;
+        // Over budget is malformed, never a silently shortened path presented as complete.
+        if (n > MAX_CNID_PATH) fail("alias CNID path exceeds the depth budget");
         rec.cnidPath = Array.from({ length: n }, (_, i) => value.readUInt32BE(i * 4));
         break;
       }

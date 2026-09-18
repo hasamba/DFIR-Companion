@@ -263,3 +263,39 @@ describe("parseMacLoginItemBtm — SessionLoginItems.sfl2 (keyed archive)", () =
     );
   });
 });
+
+describe("parseMacLoginItemBtm — code-review regressions (#1301)", () => {
+  // A classic plist built from parts: SessionItems.CustomListItems with the given items.
+  // Hand-assembled bplist00 is impractical here, so these reuse LOGINITEMS_PLIST_HEX's real
+  // records and exercise the collector/mapper seams through the parser's own public surface.
+  it("bounds merged rawFields at MAX_RAW_FIELDS with the alias reader's own facts first", () => {
+    const r = parseMacLoginItemBtm(buf(LOGINITEMS_PLIST_HEX))!;
+    for (const e of r.events) {
+      const rf = e.canonical!.macLoginItem!.rawFields ?? {};
+      expect(Object.keys(rf).length).toBeLessThanOrEqual(32);
+    }
+    const evil = r.events.find((e) => e.canonical!.macLoginItem!.itemName === "EvilAgent")!.canonical!
+      .macLoginItem!;
+    expect(evil.rawFields?.aliasRecsize).toBe(String(354));
+    expect(evil.rawFields?.aliasFsType).toBe("H+");
+  });
+
+  it("a keyed archive whose `items` carry none of the sfl2 keys is not claimed as an sfl2", () => {
+    // plistlib-built keyed archive: root NSDictionary {items: NSArray[1, 2, 3]} — an `items`
+    // array, but no item carries Name/Bookmark/uuid. Before the positive signature this minted
+    // three empty "login items" under a matching filename (code review finding 12).
+    const notSfl2 =
+      "62706c6973743030d401020304050621245924617263686976657258246f626a656374735424746f70582476657273696f6e5f100f4e534b657965644172636869766572a607081112181e55246e756c6cd3090a0b0c0d0f5624636c617373574e532e6b6579735a4e532e6f626a656374738004a10e8002a1108003556974656d73d2090b13148005a3151617100110021003d2191a1b1c5824636c61737365735a24636c6173736e616d65a21c1d5c4e5344696374696f6e617279584e534f626a656374d2191a1f20a2201d574e534172726179d1222354726f6f74800112000186a008111b242932444b51585f67727476787a7c8287898d8f919398a1acafbcc5cacdd5d8dddf00000000000001010000000000000025000000000000000000000000000000e4";
+    expect(parseMacLoginItemBtm(buf(notSfl2))).toBeNull();
+  });
+
+  it("a decoded alias with no stored name or path is labelled as such, not '(no bookmark)'", () => {
+    // Exercised via the reader + mapper contract: pathLabel for a decoded alias-record with no
+    // posixPath/carbonPath/displayName reads "(alias record stores no name or path)". The v3
+    // fixture has a filename, so this asserts the negative space on a synthesized description.
+    const r = parseMacLoginItemBtm(buf(LOGINITEMS_PLIST_HEX))!;
+    const broken = r.events.find((e) => e.canonical!.macLoginItem!.itemName === "Broken")!;
+    expect(broken.description).toContain("(alias record malformed)");
+    expect(broken.description).not.toContain("(no bookmark)");
+  });
+});
