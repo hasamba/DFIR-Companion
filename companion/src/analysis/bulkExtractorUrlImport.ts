@@ -30,11 +30,12 @@ export const MAX_DISTINCT_VALUES = 2000;
 export const MAX_ROWS_SCANNED = 500_000;
 const HEADER_MAX_LINES = 200;
 const HEADER_MAX_BYTES = 4096;
+// Shared with bulkExtractorCarvedImport.ts (#1116) — same feature-file grammar, one source of truth.
 // A sanity ceiling on the RAW offset field's own length, applied at scan time — rawOffset is
 // otherwise kept unbounded/verbatim (canonicalRecoveredFragment.ts), so a pathological field
 // (megabytes before the first tab) is rejected outright as malformed rather than silently
 // truncated, which would corrupt rather than preserve the evidence.
-const MAX_RAW_OFFSET_STORAGE_LEN = 10_000;
+export const MAX_RAW_OFFSET_STORAGE_LEN = 10_000;
 const URL_SHAPE_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
 
 export interface BulkExtractorUrlOptions {
@@ -71,7 +72,7 @@ export function isBulkExtractorUrlFeatureFile(text: string): boolean {
  * the work `split` itself does, not just the loop over its result (Codex code review finding:
  * splitting the WHOLE text first still scanned it all). Returns null when the file has no header
  * at all (the first line isn't a comment) — not a match. */
-function headerBlock(text: string): string[] | null {
+export function headerBlock(text: string): string[] | null {
   const stripped = text.startsWith("﻿") ? text.slice(1) : text;
   if (!stripped.startsWith("#")) return null;
   const lines = stripped.split(/\r\n|\r|\n/, HEADER_MAX_LINES + 10);
@@ -91,7 +92,7 @@ function headerBlock(text: string): string[] | null {
  * design review finding #5: rejecting/rounding would corrupt real evidence offsets). Bounded
  * BEFORE splitting so a pathological offset field (thousands of hyphens) can't force an
  * oversized intermediate array (Codex code review finding). */
-function parseOffset(raw: string): { parsed: boolean; rootOffset?: number; path?: RecoveryPathHop[] } {
+export function parseOffset(raw: string): { parsed: boolean; rootOffset?: number; path?: RecoveryPathHop[] } {
   if (raw.length > MAX_RAW_OFFSET_PARSE_LEN) return { parsed: false };
   const tokens = raw.split("-");
   const root = tokens[0];
@@ -115,7 +116,7 @@ function parseOffset(raw: string): { parsed: boolean; rootOffset?: number; path?
 /** Plain truncation, never a digest splice — `boundedTextTo` is for discriminator keys/aggKeys,
  * and splicing a hex digest into evidence text (e.g. a URL) can read as a fabricated fragment
  * (Codex code review finding). */
-function clip(text: string, max: number): { text: string; truncated: boolean } {
+export function clip(text: string, max: number): { text: string; truncated: boolean } {
   if (text.length <= max) return { text, truncated: false };
   return { text: text.slice(0, max), truncated: true };
 }
