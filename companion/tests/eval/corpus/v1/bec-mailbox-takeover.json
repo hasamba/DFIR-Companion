@@ -67,7 +67,7 @@
     "hypotheses": [],
     "uncertainties": [
       {
-        "topic": "Payment impact / monetary loss",
+        "topic": "Financial impact / monetary loss",
         "status": "unknown",
         "basis": "Mailbox access and forwarding are observed, but no payment record is present.",
         "gap": "Sent messages and payment approvals have not been reviewed."
@@ -91,7 +91,7 @@
     "uncertainties": [
       {
         "id": "payment-gap",
-        "topicTerms": ["monetary loss"],
+        "topicTerms": ["financial"],
         "allowedStatuses": ["unknown", "inferred", "speculated"]
       }
     ],
