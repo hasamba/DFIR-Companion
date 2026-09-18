@@ -248,10 +248,12 @@ describe("every moved function still resolves at its call sites", () => {
   // kept so the EXCLUDE filter did not silently widen with search; 112 with originSuffix, the relay
   // badge's "created by …" / "origin not recorded" words (#933 item 18); 113 with intelWhenChip,
   // the badge's "when does this verdict apply" chip (#933 item 19); 114 with fmtDateTime, the
-  // date+time formatter for a row whose instant could be days/weeks/months old (#1168). The number
-  // is a vacuity guard, not a budget.
-  it("moved 114 functions, so the check below is not vacuous", () => {
-    expect(MOVED.length).toBe(114);
+  // date+time formatter for a row whose instant could be days/weeks/months old (#1168); 115 with
+  // looksLikeBinaryImportName, the client mirror of the server's binary login-item name gate that
+  // routes a picked BTM/sfl2/loginitems file as bytes instead of text (#1301). The number is a
+  // vacuity guard, not a budget.
+  it("moved 115 functions, so the check below is not vacuous", () => {
+    expect(MOVED.length).toBe(115);
   });
 
   it("provides every one of them as a global once the tagged scripts have run", async () => {

@@ -42,6 +42,7 @@ const REQUIRED_FIELD: Record<(typeof EVIDENCE_IMPORT_ROUTES)[number], string> = 
   "import-m365": "text",
   "import-leapp": "text",
   "import-mac-login-item": "path",
+  "import-binary": "filename",
   "import-aws": "text",
   "import-cloud-activity": "text",
   "import-plaso": "text",

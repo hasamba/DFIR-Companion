@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   looksLikeMacBtmFilename,
+  looksLikeMacLoginItemFilename,
   isBplistMagic,
   detectBinaryImportKind,
 } from "../../src/analysis/macBinaryDetect.js";
@@ -49,5 +50,32 @@ describe("detectBinaryImportKind — both filename AND real magic required", () 
 
   it("rejects real bplist magic under an unrelated filename", () => {
     expect(detectBinaryImportKind("Spotlight.bplist", REAL_MAGIC)).toBeNull();
+  });
+});
+
+describe("looksLikeMacLoginItemFilename — the two pre-BTM containers (#1301)", () => {
+  it("recognizes the SessionLoginItems sfl2 list and the classic loginitems plist", () => {
+    expect(looksLikeMacLoginItemFilename("com.apple.LSSharedFileList.SessionLoginItems.sfl2")).toBe(true);
+    expect(looksLikeMacLoginItemFilename("0012_com.apple.LSSharedFileList.SessionLoginItems.sfl2")).toBe(
+      true,
+    );
+    expect(looksLikeMacLoginItemFilename("com.apple.loginitems.plist")).toBe(true);
+    expect(looksLikeMacLoginItemFilename("COM.APPLE.LOGINITEMS.PLIST")).toBe(true);
+    expect(looksLikeMacLoginItemFilename("backgrounditems.btm")).toBe(true);
+  });
+
+  it("rejects every OTHER sfl2 list — same container, not a persistence record", () => {
+    expect(looksLikeMacLoginItemFilename("com.apple.LSSharedFileList.RecentDocuments.sfl2")).toBe(false);
+    expect(looksLikeMacLoginItemFilename("com.apple.LSSharedFileList.FavoriteVolumes.sfl2")).toBe(false);
+    expect(looksLikeMacLoginItemFilename("com.apple.LSSharedFileList.SessionLoginItems.sfl")).toBe(false); // v1
+    expect(looksLikeMacLoginItemFilename("com.apple.loginwindow.plist")).toBe(false);
+  });
+
+  it("detectBinaryImportKind still requires the real magic for the new names", () => {
+    expect(detectBinaryImportKind("com.apple.loginitems.plist", REAL_MAGIC)).toBe("macloginitem");
+    expect(detectBinaryImportKind("com.apple.LSSharedFileList.SessionLoginItems.sfl2", REAL_MAGIC)).toBe(
+      "macloginitem",
+    );
+    expect(detectBinaryImportKind("com.apple.loginitems.plist", Buffer.from("<?xml version"))).toBeNull();
   });
 });

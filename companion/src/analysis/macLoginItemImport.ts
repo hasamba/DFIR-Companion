@@ -8,10 +8,18 @@
 // executableModificationDate, sha256) plus the bookmark/lightweightRequirement byte fields; every
 // OTHER present key is carried through as disclosed, unconfirmed rawFields rather than asserted
 // into a guessed schema. See RECOMMENDATION-12.md for the full research trail.
+// #1301 adds the two pre-BTM containers: `SessionLoginItems.sfl2` (a keyed archive whose root is a
+// dict with `items[]` of {Name, uuid, Bookmark, CustomItemProperties} — shape read from mac_apt's
+// ReadSFL2Plist and macMRU-Parser's ParseSFL2) and the classic `com.apple.loginitems.plist` (a PLAIN
+// bplist, `SessionItems.CustomListItems[]` of {Name, Alias} — mac_apt's process_loginitems_plist),
+// whose `Alias` bytes are either a classic Alias Manager record (aliasRecordReader.ts) or, on
+// later systems, a CFURL bookmark; the two are told apart by structure, never by the first four
+// bytes. The filename gate in macBinaryDetect.ts is what keeps an MRU `.sfl2` (same container) out
+// of here — the parser cannot tell a RecentDocuments list from a login-item list by shape.
 
 import { createHash } from "node:crypto";
 import { boundedAggKey } from "./aggKey.js";
-import { parseBplist } from "./bplistReader.js";
+import { BplistUid, parseBplist, type BplistValue } from "./bplistReader.js";
 import { resolveKeyedArchive, type ResolvedValue } from "./nsKeyedArchiver.js";
 import {
   parseBookmark,
@@ -26,7 +34,9 @@ import {
   kBookmarkDisplayName,
 } from "./cfurlBookmarkReader.js";
 import { createCanonicalEvent } from "./canonicalEvent.js";
+import { AliasRecordError, looksLikeAliasRecord, parseAliasRecord } from "./aliasRecordReader.js";
 import {
+  MAC_LOGIN_ITEM_ALIAS_BASIS,
   MAC_LOGIN_ITEM_BASIS,
   MAX_FIELD_LEN,
   MAX_PATH_DEPTH,
@@ -54,8 +64,16 @@ export interface MacLoginItemResult {
   /** Items kept (never dropped -- see mapItem) whose own bookmark data failed to decode; disclosed
    * separately from malformedItems/dropped, which stay 0 because no item is ever discarded here. */
   malformedBookmarks: number;
-  sourceFormat: "btm-legacy" | "btm-modern";
+  sourceFormat: SourceFormat;
 }
+
+type SourceFormat = "btm-legacy" | "btm-modern" | "sfl2" | "loginitems-plist";
+const FORMAT_LABEL: Record<SourceFormat, string> = {
+  "btm-legacy": "MacBtmLegacy",
+  "btm-modern": "MacBtmModern",
+  sfl2: "MacSfl2",
+  "loginitems-plist": "MacLoginItemsPlist",
+};
 
 function clip(text: string, max: number): string {
   return text.length <= max ? text : text.slice(0, max);
@@ -91,6 +109,7 @@ function stringifyRaw(v: ResolvedValue): string {
 }
 
 interface BookmarkFacts {
+  recordKind?: "cfurl-bookmark" | "alias-record";
   targetPathComponents?: string[];
   targetCnidPath?: string[];
   volumeName?: string;
@@ -101,6 +120,17 @@ interface BookmarkFacts {
   displayName?: string;
   decodeStatus: "decoded" | "malformed" | "absent";
   tocTruncated?: boolean;
+  aliasVersion?: 2 | 3;
+  aliasKind?: number;
+  targetCnid?: string;
+  folderCnid?: string;
+  volumeCreationDate?: string;
+  posixMountPoint?: string;
+  aliasUnknownTags?: number[];
+  /** A carbon (colon-separated) path when the record has no POSIX path — shown as stored, never split. */
+  carbonPath?: string;
+  /** Extra disclosed facts an alias record carries (appinfo, recsize, fs/disk type, codes). */
+  aliasRaw?: Record<string, string>;
 }
 
 function decodeBookmark(bytes: Buffer | undefined): BookmarkFacts {
@@ -140,14 +170,86 @@ function decodeBookmark(bytes: Buffer | undefined): BookmarkFacts {
       ...(typeof displayNameRaw === "string" ? { displayName: clip(displayNameRaw, MAX_FIELD_LEN) } : {}),
       decodeStatus: "decoded" as const,
       ...(bm.tocChainTruncated ? { tocTruncated: true } : {}),
+      recordKind: "cfurl-bookmark" as const,
     };
   } catch {
-    return { decodeStatus: "malformed" };
+    return { decodeStatus: "malformed", recordKind: "cfurl-bookmark" };
   }
 }
 
+/** Null when the stored path is deeper than the budget — malformed, never a shortened path shown as whole. */
+function pathComponents(posix: string): string[] | null {
+  const parts = posix.split("/").filter((c) => c.length > 0);
+  if (parts.length > MAX_PATH_DEPTH) return null;
+  return parts.map((c) => clip(c, MAX_FIELD_LEN));
+}
+
+function decodeAlias(bytes: Buffer): BookmarkFacts {
+  try {
+    const a = parseAliasRecord(bytes);
+    const aliasRaw: Record<string, string> = { aliasAppinfo: a.appinfo, aliasRecsize: String(a.recsize) };
+    if (a.trailingBytes > 0) aliasRaw.aliasTrailingBytes = String(a.trailingBytes);
+    const components = a.posixPath ? pathComponents(a.posixPath) : undefined;
+    if (components === null) return { decodeStatus: "malformed", recordKind: "alias-record" };
+    if (a.fsType) aliasRaw.aliasFsType = a.fsType;
+    if (a.diskType !== undefined) aliasRaw.aliasDiskType = String(a.diskType);
+    if (a.creatorCode) aliasRaw.aliasCreatorCode = a.creatorCode;
+    if (a.typeCode) aliasRaw.aliasTypeCode = a.typeCode;
+    if (a.levelsFrom !== undefined) aliasRaw.aliasLevelsFrom = String(a.levelsFrom);
+    if (a.levelsTo !== undefined) aliasRaw.aliasLevelsTo = String(a.levelsTo);
+    if (a.volumeAttributes !== undefined) aliasRaw.aliasVolumeAttributes = String(a.volumeAttributes);
+    if (a.folderName) aliasRaw.aliasFolderName = clip(a.folderName, MAX_FIELD_LEN);
+    if (a.pascalFilename && a.pascalFilename !== a.targetFilename)
+      aliasRaw.aliasPascalFilename = clip(a.pascalFilename, MAX_FIELD_LEN);
+    if (a.userHomePrefixLen !== undefined) aliasRaw.aliasUserHomePrefixLen = String(a.userHomePrefixLen);
+    return {
+      recordKind: "alias-record",
+      decodeStatus: "decoded",
+      aliasVersion: a.version,
+      aliasKind: a.kind,
+      ...(components ? { targetPathComponents: components } : {}),
+      ...(a.cnidPath ? { targetCnidPath: a.cnidPath.map((c) => String(c)) } : {}),
+      ...(a.targetCnid !== undefined ? { targetCnid: String(a.targetCnid) } : {}),
+      ...(a.folderCnid !== undefined ? { folderCnid: String(a.folderCnid) } : {}),
+      ...(a.volumeName ? { volumeName: clip(a.volumeName, MAX_FIELD_LEN) } : {}),
+      ...(a.volumeCreationDate ? { volumeCreationDate: a.volumeCreationDate } : {}),
+      ...(a.targetCreationDate ? { fileCreationDate: a.targetCreationDate } : {}),
+      ...(a.targetFilename ? { displayName: clip(a.targetFilename, MAX_FIELD_LEN) } : {}),
+      ...(a.posixMountPoint ? { posixMountPoint: clip(a.posixMountPoint, MAX_FIELD_LEN) } : {}),
+      ...(a.carbonPath ? { carbonPath: clip(a.carbonPath, MAX_FIELD_LEN) } : {}),
+      ...(a.unknownTags.length ? { aliasUnknownTags: a.unknownTags.slice(0, 64) } : {}),
+      aliasRaw,
+    };
+  } catch (err) {
+    // Only the reader's own typed failure is "malformed"; anything else is a bug and must surface.
+    if (!(err instanceof AliasRecordError)) throw err;
+    return { decodeStatus: "malformed", recordKind: "alias-record" };
+  }
+}
+
+/**
+ * The classic plist's `Alias` key holds either a classic Alias Manager record or (later systems) a
+ * CFURL bookmark. Dispatch is by STRUCTURE — the alias header's version and recsize — never by the
+ * first four bytes, which are a caller-set `appinfo` code that may legally read "alis" (#1301
+ * design review finding 2). Undecidable bytes are malformed, never guessed.
+ */
+function decodeAliasOrBookmark(bytes: Buffer | undefined): BookmarkFacts {
+  if (!bytes) return { decodeStatus: "absent" };
+  if (looksLikeAliasRecord(bytes)) return decodeAlias(bytes);
+  const magic = bytes.length >= 4 ? bytes.toString("ascii", 0, 4) : "";
+  if (magic === "book" || magic === "alis") {
+    const facts = decodeBookmark(bytes);
+    // "alis" is ALSO a legal alias appinfo: bytes that fail both the probe and the bookmark
+    // decoder are undecidable, so no record kind is asserted for them (code review finding 4).
+    if (facts.decodeStatus === "malformed" && magic === "alis") return { decodeStatus: "malformed" };
+    return facts;
+  }
+  return { decodeStatus: "malformed", recordKind: "alias-record" };
+}
+
 interface RawItem {
-  sourceFormat: "btm-legacy" | "btm-modern";
+  sourceFormat: SourceFormat;
+  itemName?: string;
   userUuid?: string;
   locator: string;
   itemType?: number;
@@ -156,6 +258,8 @@ interface RawItem {
   sha256?: string;
   rawFields: Record<string, string>;
   bookmarkBytes?: Buffer;
+  /** Set for the classic plist: the `Alias` bytes, decoded by structure (alias record or bookmark). */
+  aliasBytes?: Buffer;
 }
 
 function collectLegacyItems(root: Map<string, ResolvedValue>): RawItem[] {
@@ -223,17 +327,117 @@ function collectModernItems(root: ResolvedValue[]): RawItem[] {
   return items;
 }
 
+/** Copies every entry of `m` not in `skip` into `rawFields` under `prefix`, one level deep, bounded. */
+function rawFieldsFrom(
+  m: Map<string, ResolvedValue>,
+  skip: ReadonlySet<string>,
+  prefix: string,
+  rawFields: Record<string, string>,
+): void {
+  for (const [k, v] of m) {
+    if (skip.has(k)) continue;
+    if (Object.keys(rawFields).length >= MAX_RAW_FIELDS) break;
+    if (k === "CustomItemProperties" && isMap(v)) {
+      rawFieldsFrom(v, new Set(), `${prefix}CustomItemProperties.`, rawFields);
+      continue;
+    }
+    const key = clip(`${prefix}${k}`, 60);
+    if (key in rawFields) continue; // two long keys that clip alike: keep the first, never overwrite
+    rawFields[key] = clip(stringifyRaw(v), MAX_FIELD_LEN);
+  }
+}
+
+/** The alias reader's own facts first, then the container's raw keys while the bound allows. */
+function mergeRawFields(
+  aliasRaw: Record<string, string> | undefined,
+  containerRaw: Record<string, string>,
+): Record<string, string> {
+  const out: Record<string, string> = { ...(aliasRaw ?? {}) };
+  for (const [k, v] of Object.entries(containerRaw)) {
+    if (Object.keys(out).length >= MAX_RAW_FIELDS) break;
+    if (!(k in out)) out[k] = v;
+  }
+  return out;
+}
+
+const SFL2_TYPED_KEYS: ReadonlySet<string> = new Set(["Name", "Bookmark"]);
+
+/** A positive signature, not just "some `items` array": an empty list, or one whose items carry the
+ * keys both reference parsers read (Name / Bookmark / uuid). Any other keyed archive stays null. */
+function looksLikeSfl2(items: ResolvedValue | undefined): items is ResolvedValue[] {
+  if (!Array.isArray(items)) return false;
+  if (items.length === 0) return true;
+  return items.some((it) => isMap(it) && (it.has("Name") || it.has("Bookmark") || it.has("uuid")));
+}
+
+function collectSfl2Items(root: Map<string, ResolvedValue>): RawItem[] {
+  const items: RawItem[] = [];
+  const list = root.get("items");
+  if (!Array.isArray(list)) return items;
+  list.forEach((item, i) => {
+    if (!isMap(item)) return;
+    const rawFields: Record<string, string> = {};
+    rawFieldsFrom(item, SFL2_TYPED_KEYS, "", rawFields);
+    const name = item.get("Name");
+    items.push({
+      sourceFormat: "sfl2",
+      locator: `sfl2:${i}`,
+      ...(typeof name === "string" ? { itemName: clip(name, MAX_FIELD_LEN) } : {}),
+      rawFields,
+      bookmarkBytes: asBuffer(item.get("Bookmark")),
+    });
+  });
+  return items;
+}
+
+const LOGINITEMS_TYPED_KEYS: ReadonlySet<string> = new Set(["Name", "Alias"]);
+
+/** The classic plain-plist container: SessionItems.CustomListItems[] of {Name, Alias}. */
+function collectLoginItemsPlistItems(root: Map<string, ResolvedValue>): RawItem[] | null {
+  const session = root.get("SessionItems");
+  const list = isMap(session) ? session.get("CustomListItems") : undefined;
+  if (!Array.isArray(list)) return null;
+  const items: RawItem[] = [];
+  list.forEach((item, i) => {
+    if (!isMap(item)) return;
+    const rawFields: Record<string, string> = {};
+    rawFieldsFrom(item, LOGINITEMS_TYPED_KEYS, "", rawFields);
+    const name = item.get("Name");
+    items.push({
+      sourceFormat: "loginitems-plist",
+      locator: `sessionitem:${i}`,
+      ...(typeof name === "string" ? { itemName: clip(name, MAX_FIELD_LEN) } : {}),
+      rawFields,
+      aliasBytes: asBuffer(item.get("Alias")),
+    });
+  });
+  return items;
+}
+
+/** A plain (non-keyed-archive) bplist resolves to the same Map/array shapes the archive resolver emits. */
+function plainValue(v: BplistValue, depth = 0): ResolvedValue {
+  if (depth > MAX_PLAIN_DEPTH) return null;
+  if (v instanceof BplistUid) return null;
+  if (Array.isArray(v)) return v.map((e) => plainValue(e, depth + 1));
+  if (v instanceof Map) {
+    const out = new Map<string, ResolvedValue>();
+    for (const [k, val] of v) if (typeof k === "string") out.set(k, plainValue(val, depth + 1));
+    return out;
+  }
+  return v;
+}
+const MAX_PLAIN_DEPTH = 16;
+
 function mapItem(
   item: RawItem,
   reportFingerprint: string,
 ): { event: MappedEvent; bookmarkMalformed: boolean } {
-  const facts = decodeBookmark(item.bookmarkBytes);
+  const facts = item.aliasBytes ? decodeAliasOrBookmark(item.aliasBytes) : decodeBookmark(item.bookmarkBytes);
+  const targetBytes = item.aliasBytes ?? item.bookmarkBytes;
   // The FULL digest, never a clipped slice — a clipped digest fed into an identity hash risks
   // colliding two content-distinct bookmarks that happen to share the same short prefix (the
   // standing "hash unclipped raw values" lesson from item 11, per Ollama code review finding).
-  const bookmarkDigest = item.bookmarkBytes
-    ? createHash("sha256").update(item.bookmarkBytes).digest("hex")
-    : "none";
+  const bookmarkDigest = targetBytes ? createHash("sha256").update(targetBytes).digest("hex") : "none";
   const findingId = createHash("sha256")
     .update(
       JSON.stringify([
@@ -249,16 +453,26 @@ function mapItem(
   const aggKey = boundedAggKey(`mac-login-item|${reportFingerprint}|${findingId}`);
 
   const reportTag = `; report ${reportFingerprint.slice(0, 16)}, item ${findingId.slice(0, 12)}`;
+  const isAlias = facts.recordKind === "alias-record";
   const pathLabel = facts.targetPathComponents?.length
     ? `/${facts.targetPathComponents.join("/")}`
-    : facts.decodeStatus === "malformed"
-      ? "(bookmark malformed)"
-      : "(no bookmark)";
+    : facts.carbonPath
+      ? `(carbon path ${facts.carbonPath})`
+      : facts.decodeStatus === "decoded" && facts.displayName
+        ? `(alias: ${facts.displayName}${facts.volumeName ? ` on ${facts.volumeName}` : ""})`
+        : facts.decodeStatus === "malformed"
+          ? isAlias
+            ? "(alias record malformed)"
+            : "(bookmark malformed)"
+          : "(no bookmark)";
+  const nameLabel = item.itemName ? ` "${item.itemName}"` : "";
   const body = clip(
-    `macOS login item (${item.sourceFormat}): ${pathLabel} — a decoded configuration record, ` +
+    `macOS login item (${item.sourceFormat})${nameLabel}: ${pathLabel} — a decoded configuration record, ` +
       `never evidence of execution`,
     600 - reportTag.length,
   );
+  const isV1 = item.sourceFormat === "btm-legacy" || item.sourceFormat === "btm-modern";
+  const rawFields = mergeRawFields(facts.aliasRaw, item.rawFields);
   const description = `${body}${reportTag}`;
 
   const event: MappedEvent = {
@@ -280,6 +494,7 @@ function mapItem(
       macLoginItem: {
         tool: "bookmark-decoder",
         sourceFormat: item.sourceFormat,
+        ...(item.itemName ? { itemName: item.itemName } : {}),
         ...(item.userUuid ? { userUuid: item.userUuid } : {}),
         ...(item.itemType !== undefined ? { itemType: item.itemType } : {}),
         ...(item.modificationDate ? { modificationDate: item.modificationDate } : {}),
@@ -287,7 +502,7 @@ function mapItem(
           ? { executableModificationDate: item.executableModificationDate }
           : {}),
         ...(item.sha256 ? { sha256: item.sha256 } : {}),
-        ...(Object.keys(item.rawFields).length ? { rawFields: item.rawFields } : {}),
+        ...(Object.keys(rawFields).length ? { rawFields } : {}),
         ...(facts.targetPathComponents ? { targetPathComponents: facts.targetPathComponents } : {}),
         ...(facts.targetCnidPath ? { targetCnidPath: facts.targetCnidPath } : {}),
         ...(facts.volumeName ? { volumeName: facts.volumeName } : {}),
@@ -298,10 +513,18 @@ function mapItem(
         ...(facts.displayName ? { displayName: facts.displayName } : {}),
         bookmarkDecodeStatus: facts.decodeStatus,
         ...(facts.tocTruncated ? { bookmarkTocTruncated: true } : {}),
-        targetEvidence: "stored-bookmark-metadata",
+        ...(!isV1 && facts.recordKind ? { targetRecordKind: facts.recordKind } : {}),
+        ...(facts.aliasVersion ? { aliasVersion: facts.aliasVersion } : {}),
+        ...(facts.aliasKind !== undefined ? { aliasKind: facts.aliasKind } : {}),
+        ...(facts.targetCnid ? { targetCnid: facts.targetCnid } : {}),
+        ...(facts.folderCnid ? { folderCnid: facts.folderCnid } : {}),
+        ...(facts.volumeCreationDate ? { volumeCreationDate: facts.volumeCreationDate } : {}),
+        ...(facts.posixMountPoint ? { posixMountPoint: facts.posixMountPoint } : {}),
+        ...(facts.aliasUnknownTags ? { aliasUnknownTags: facts.aliasUnknownTags } : {}),
+        targetEvidence: isAlias ? "stored-alias-metadata" : "stored-bookmark-metadata",
         reportFingerprint,
-        mappingVersion: "mac-login-item-target-v1",
-        basis: MAC_LOGIN_ITEM_BASIS,
+        mappingVersion: isV1 ? "mac-login-item-target-v1" : "mac-login-item-target-v2",
+        basis: isAlias ? MAC_LOGIN_ITEM_ALIAS_BASIS : MAC_LOGIN_ITEM_BASIS,
       },
     }),
   };
@@ -321,27 +544,40 @@ export function parseMacLoginItemBtm(
   // as a misleading 400 rather than the real failure).
   if (bytes.length < 8 || bytes.toString("ascii", 0, 8) !== "bplist00") return null;
 
-  const parsed = resolveKeyedArchive(parseBplist(bytes));
-  if (!parsed) return null;
-  const r = parsed.roots.get("root");
-  if (r === undefined) return null;
-  const root: ResolvedValue = r;
-
+  const plist = parseBplist(bytes);
+  const parsed = resolveKeyedArchive(plist);
   let items: RawItem[] = [];
-  let sourceFormat: "btm-legacy" | "btm-modern";
-  if (isMap(root) && asNumber(root.get("version")) === 2) {
-    sourceFormat = "btm-legacy";
-    items = collectLegacyItems(root);
-  } else if (
-    Array.isArray(root) &&
-    root.length >= 2 &&
-    isMap(root[0]) &&
-    (asNumber(root[0].get("version")) ?? 0) >= 3
-  ) {
-    sourceFormat = "btm-modern";
-    items = collectModernItems(root);
+  let sourceFormat: SourceFormat;
+  if (!parsed) {
+    // Not a keyed archive: the only plain-plist shape accepted is the classic loginitems plist.
+    const plain = plainValue(plist);
+    const collected = isMap(plain) ? collectLoginItemsPlistItems(plain) : null;
+    if (!collected) return null;
+    sourceFormat = "loginitems-plist";
+    items = collected;
   } else {
-    return null; // neither confirmed BTM shape matched -- never a blind fallback
+    const r = parsed.roots.get("root");
+    if (r === undefined) return null;
+    const root: ResolvedValue = r;
+    // The legacy guard excludes a root carrying `items` so an sfl2 that happens to store
+    // `version: 2` is not claimed here and silently emptied (#1301 design review finding 8).
+    if (isMap(root) && asNumber(root.get("version")) === 2 && !Array.isArray(root.get("items"))) {
+      sourceFormat = "btm-legacy";
+      items = collectLegacyItems(root);
+    } else if (
+      Array.isArray(root) &&
+      root.length >= 2 &&
+      isMap(root[0]) &&
+      (asNumber(root[0].get("version")) ?? 0) >= 3
+    ) {
+      sourceFormat = "btm-modern";
+      items = collectModernItems(root);
+    } else if (isMap(root) && looksLikeSfl2(root.get("items"))) {
+      sourceFormat = "sfl2";
+      items = collectSfl2Items(root);
+    } else {
+      return null; // no confirmed shape matched -- never a blind fallback
+    }
   }
 
   const reportFingerprint = createHash("sha256").update(bytes).digest("hex");
@@ -370,7 +606,7 @@ export function parseMacLoginItemBtm(
     kept: events.length,
     dropped: malformedItems,
     groups,
-    format: sourceFormat === "btm-legacy" ? "MacBtmLegacy" : "MacBtmModern",
+    format: FORMAT_LABEL[sourceFormat],
     malformedItems,
     malformedBookmarks,
     sourceFormat,
