@@ -362,6 +362,64 @@ describe("buildHostBindingIndex + resolveAccountAtTime (account -> session host)
     const index = buildHostBindingIndex(events);
     expect(resolveAccountAtTime(index, "corp\\ALICE", "2026-06-10T12:00:00Z", 1_000)).toHaveLength(1);
   });
+
+  it("does not double the domain prefix when account.name already carries it (the real winAccountRoles.ts / legacy-upgrade shape)", () => {
+    // winAccountRoles.ts's own entity() and this module's own legacy-prose upgrade both put the
+    // FULL "domain\name" string into account.name AND repeat the domain in account.domain — the
+    // shape logonEvent()'s own test helper above never simulates (it always passes a bare name).
+    const events: ForensicEvent[] = [
+      {
+        id: "id-domain-prefixed",
+        timestamp: "2026-06-10T12:00:00Z",
+        description: "Windows Security logon @ ws-042",
+        severity: "Low",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset: "ws-042",
+        canonical: createCanonicalEvent({
+          event: { category: "authentication", type: "logon", outcome: "success" },
+          actor: { kind: "account", name: "CORP\\jdoe", domain: "CORP" },
+          account: { name: "CORP\\jdoe", domain: "CORP" },
+          target: { kind: "host", name: "ws-042" },
+          authentication: { logonType: 2 },
+          time: { observed: "2026-06-10T12:00:00Z", normalized: "2026-06-10T12:00:00Z" },
+          evidence: { rawRecords: [{ source: "test", locator: "row:domain-prefixed" }] },
+          producer: { importer: "test", parserVersion: "1", mappingVersion: "1" },
+        }),
+      },
+    ];
+    const index = buildHostBindingIndex(events);
+    expect([...index.byAccount.keys()]).toEqual(["corp\\jdoe"]);
+    expect(resolveAccountAtTime(index, "corp\\jdoe", "2026-06-10T12:00:00Z", 1_000)).toHaveLength(1);
+  });
+
+  it("still recognizes NT AUTHORITY\\SYSTEM as non-human when account.name is domain-prefixed", () => {
+    const events: ForensicEvent[] = [
+      {
+        id: "id-system-domained",
+        timestamp: "2026-06-10T12:00:00Z",
+        description: "Windows Security logon @ ws-042",
+        severity: "Low",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset: "ws-042",
+        canonical: createCanonicalEvent({
+          event: { category: "authentication", type: "logon", outcome: "success" },
+          actor: { kind: "account", name: "NT AUTHORITY\\SYSTEM", domain: "NT AUTHORITY" },
+          account: { name: "NT AUTHORITY\\SYSTEM", domain: "NT AUTHORITY" },
+          target: { kind: "host", name: "ws-042" },
+          authentication: { logonType: 2 },
+          time: { observed: "2026-06-10T12:00:00Z", normalized: "2026-06-10T12:00:00Z" },
+          evidence: { rawRecords: [{ source: "test", locator: "row:system-domained" }] },
+          producer: { importer: "test", parserVersion: "1", mappingVersion: "1" },
+        }),
+      },
+    ];
+    const index = buildHostBindingIndex(events);
+    expect(index.byAccount.size).toBe(0);
+  });
 });
 
 // #1162: buildHostBindingIndex silently skips any event with no canonical envelope. Every event
