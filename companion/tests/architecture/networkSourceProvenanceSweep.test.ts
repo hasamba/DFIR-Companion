@@ -130,8 +130,8 @@ const READERS: Record<string, { kind: ReaderKind; why: string }> = {
     why: "connection source -> host name via the same resolveIpAtTime call; the lead reports 'this host connected' (#1313)",
   },
   "hostBinding.ts": {
-    kind: "tracked",
-    why: "IP -> workstation-name index (byIp) that both gated readers resolve against; the index side is #1292, open",
+    kind: "gated",
+    why: "IP -> workstation-name index (byIp) that both gated readers resolve against; the index side fail-closes on the stamp too since #1292 landed in #1342",
   },
   "dnsCrossUploadConnJoin.ts": {
     kind: "agnostic",
