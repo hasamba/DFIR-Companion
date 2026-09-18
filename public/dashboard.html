@@ -4752,18 +4752,11 @@
         // Annotation split out of the value at ingest (#177) — e.g. the host label that used to be
         // concatenated as "10.10.20.15 (DC01)". Kept visible, just never inside the indicator.
         const noteHtml = i.note ? ` <span class="ioc-note-chip" title="Context recorded with this indicator">${esc(i.note)}</span>` : "";
-        // A sender-controlled indicator (#1266) — an X-Originating-IP header, a Received hop —
-        // must not sit beside sensor-observed peers at identical weight (#1326). Same wording as
-        // the report; NOT "provenance", which this row already uses for the detection/telemetry
-        // lens (iocProvenanceBadge). Strict compare: absent means an ordinary sighting.
-        const clientReportedHtml = i.provenance === "client-reported"
-          ? ` <span class="ioc-note-chip" title="Reported by the client side of the conversation (e.g. a mail header the sender controls) — not observed by a sensor">client-reported</span>`
-          : "";
         return `<div class="ioc-row${isSel ? " ioc-selected" : ""}${isNew ? " ioc-new" : ""}" data-iocid="${escAttr(i.id)}">`
           + `<input type="checkbox" class="ioc-cb ioc-row-cb" data-iocid="${escAttr(i.id)}" ${isSel ? "checked" : ""} title="Select IOC" />`
           + `<span class="ioc-type-cell" title="${escAttr(i.id)}">${esc(i.type)}</span>`
           + `<span class="ioc-main-cell">`
-          +   `<span class="ioc-value-line"><span class="qa-val" data-vtype="${escAttr(i.type)}" data-val="${escAttr(i.value)}" data-iocid="${escAttr(i.id)}">${valueHtml}</span>${clientReportedHtml}${noteHtml}${newBadge}${iocRiskBadge(i.id)}${iocCorroBadge(i.id)}${iocProvenanceBadge(i.id)}${enrichHtml}${tagsHtml}</span>`
+          +   `<span class="ioc-value-line"><span class="qa-val" data-vtype="${escAttr(i.type)}" data-val="${escAttr(i.value)}" data-iocid="${escAttr(i.id)}">${valueHtml}</span>${iocClientReportedChip(i)}${noteHtml}${newBadge}${iocRiskBadge(i.id)}${iocCorroBadge(i.id)}${iocProvenanceBadge(i.id)}${enrichHtml}${tagsHtml}</span>`
           + `</span>`
           + `<span class="ioc-actions-cell">${commentChip("ioc", i.id)} ${tagAddBtn("ioc", i.id)} ${huntChip("ioc", i.id)} ${iocChainChip(i.id)} ${fpAction} `
           +   `<button class="ioc-merge-btn" data-iocid="${escAttr(i.id)}" data-value="${escAttr(i.value)}" data-ioctype="${escAttr(i.type)}" title="Merge into another IOC (duplicate indicator)" type="button" data-safe-style="background:none;border:none;cursor:pointer;padding:1px 2px;color:var(--text-faint);font-size:10px">⇄</button>`

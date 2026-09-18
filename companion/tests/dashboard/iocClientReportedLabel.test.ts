@@ -66,25 +66,33 @@ describe("geo map — client-reported IPs are labelled (#1326)", () => {
   });
 });
 
-// renderIocs lives in the inline script and is exercised by the browser alone, so this pins the
-// text of THAT function — not the whole page — to the strict compare the sentinel demands
-// (stateTypes.ts: a future second literal must not be mistaken for this one) and to the chip
-// wording. Scoping the assertion to the function is what stops a matching string elsewhere in
-// 5,000 lines from satisfying it.
-describe("IOC panel row — client-reported chip (#1326)", () => {
-  const main = mainInlineScript();
-  const renderIocs = functionsOf(main).find((f) => f.name === "renderIocs");
-  const body = renderIocs?.node.getText(main.ast) ?? "";
+// The chip is rendered by dashboard-ioc-provenance.js (the module that owns the row's other
+// badges) so the inline script — which sits at its size-ledger ceiling — only calls it. The
+// module is exercised for real; renderIocs is pinned only to the call, scoped to that function so
+// a matching string elsewhere in 5,000 lines cannot satisfy it.
+interface ProvApi {
+  iocClientReportedChip(ioc: { provenance?: string }): string;
+}
+const prov = loadDashboardModule<ProvApi>("dashboard-ioc-provenance.js", ["dashboard-escape.js"]);
 
+describe("IOC panel row — client-reported chip (#1326)", () => {
   it("gates the chip on the exact provenance literal", () => {
-    expect(renderIocs, "renderIocs must still live in the inline script").toBeDefined();
-    expect(body).toContain('i.provenance === "client-reported"');
+    expect(prov.iocClientReportedChip({ provenance: "client-reported" })).toMatch(
+      /class="ioc-note-chip[^"]*"[^>]*>client-reported</,
+    );
+    expect(prov.iocClientReportedChip({})).toBe("");
+    // A future second literal must not be mistaken for this one (stateTypes.ts sentinel).
+    expect(prov.iocClientReportedChip({ provenance: "client-reported-ish" })).toBe("");
   });
 
-  it("says client-reported, in the existing chip styling, and never a second 'provenance' badge", () => {
-    expect(body).toMatch(/class="ioc-note-chip[^"]*"[^>]*>client-reported</);
-    // The detection/telemetry badge is the ONE thing on this row allowed to be called provenance.
-    const provenanceWords = body.match(/>provenance</gi) ?? [];
-    expect(provenanceWords).toEqual([]);
+  it("never calls itself a 'provenance' badge — that word is the detection/telemetry lens", () => {
+    expect(prov.iocClientReportedChip({ provenance: "client-reported" })).not.toMatch(/>provenance</i);
+  });
+
+  it("is what the inline IOC row actually renders", () => {
+    const main = mainInlineScript();
+    const renderIocs = functionsOf(main).find((f) => f.name === "renderIocs");
+    expect(renderIocs, "renderIocs must still live in the inline script").toBeDefined();
+    expect(renderIocs?.node.getText(main.ast) ?? "").toContain("${iocClientReportedChip(i)}");
   });
 });

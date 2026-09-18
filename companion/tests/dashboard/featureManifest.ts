@@ -1388,6 +1388,7 @@ export const FEATURES: Feature[] = [
       "loadIocRisk",
       "scheduleIocRiskReload",
       "iocProvenanceOf",
+      "iocClientReportedChip",
       "iocProvenanceBadge",
       "iocRiskRankOf",
       "iocRoleOf",
