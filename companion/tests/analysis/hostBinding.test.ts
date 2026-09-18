@@ -181,6 +181,47 @@ describe("buildHostBindingIndex + resolveIpAtTime (IP -> client host)", () => {
     expect(index.byIp.size).toBe(0);
   });
 
+  // #1236: buildHostBindingIndex had zero exclusion observability — no way for an analyst to tell
+  // "no logon evidence existed" from "evidence existed but was policy-excluded". The optional
+  // `excluded` sink counts by reason without changing the return shape or any existing caller.
+  it("counts policy-excluded IPs by reason in the optional excluded sink, when one is given", () => {
+    const events = [
+      logonEvent({ sessionHost: "ws-042", clientName: "ws-042", ip: "-", ts: "2026-06-10T12:00:00Z" }),
+      logonEvent({
+        sessionHost: "ws-042",
+        clientName: "ws-042",
+        ip: "127.0.0.5",
+        ts: "2026-06-10T12:00:01Z",
+      }),
+      logonEvent({ sessionHost: "fs-01", clientName: "ws-042", ip: "fe80::1", ts: "2026-06-10T12:00:02Z" }),
+      logonEvent({
+        sessionHost: "fs-01",
+        clientName: "ws-042",
+        ip: "169.254.1.1",
+        ts: "2026-06-10T12:00:03Z",
+      }),
+      logonEvent({ sessionHost: "fs-01", clientName: "ws-042", ip: "10.0.0.5", ts: "2026-06-10T12:00:04Z" }),
+    ];
+    const excluded = new Map<string, number>();
+    buildHostBindingIndex(events, undefined, excluded);
+    expect(Object.fromEntries(excluded)).toEqual({
+      placeholder: 1,
+      "loopback-v4": 1,
+      "link-local-v6": 1,
+      "link-local-v4": 1,
+    });
+  });
+
+  it("never touches the excluded sink for an identifying IP, and costs nothing when no sink is given", () => {
+    const events = [
+      logonEvent({ sessionHost: "fs-01", clientName: "ws-042", ip: "10.0.0.5", ts: "2026-06-10T12:00:00Z" }),
+    ];
+    const excluded = new Map<string, number>();
+    buildHostBindingIndex(events, undefined, excluded);
+    expect(excluded.size).toBe(0);
+    expect(() => buildHostBindingIndex(events)).not.toThrow();
+  });
+
   it("excludes IPv6 link-local addresses (fe80::/10) from the IP index, zoned or not", () => {
     const events = [
       logonEvent({ sessionHost: "fs-01", clientName: "ws-042", ip: "fe80::1", ts: "2026-06-10T12:00:00Z" }),

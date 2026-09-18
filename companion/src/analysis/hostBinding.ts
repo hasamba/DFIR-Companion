@@ -184,14 +184,23 @@ export function canonicalAccount(domain: string | undefined, name: string): stri
   return d ? `${d}\\${n}` : n;
 }
 
+export type IpExclusionReason = "placeholder" | "loopback-v4" | "link-local-v4" | "link-local-v6";
+
+/** Why `isIdentifyingIp` would reject this address, or `null` when it would not (#1236) — exported
+ * so a caller wanting exclusion observability (buildHostBindingIndex's own `excluded` sink below)
+ * can count by reason without duplicating these checks. */
+export function ipExclusionReason(raw: string): IpExclusionReason | null {
+  const ip = canonicalIp(raw);
+  if (NON_IDENTIFYING_IPS.has(ip)) return "placeholder";
+  if (isLoopbackV4(ip)) return "loopback-v4";
+  if (isLinkLocalV4(ip)) return "link-local-v4";
+  if (isLinkLocalV6(ip)) return "link-local-v6";
+  return null;
+}
+
 /** Not a real, per-machine address — a placeholder, loopback or link-local. Reused by dnsCrossUploadConnJoin.ts (#996): a match on one of these is noise, not identity, on the connection side too. */
 export function isIdentifyingIp(raw: string): boolean {
-  const ip = canonicalIp(raw);
-  if (NON_IDENTIFYING_IPS.has(ip)) return false;
-  if (isLoopbackV4(ip)) return false;
-  if (isLinkLocalV4(ip)) return false;
-  if (isLinkLocalV6(ip)) return false;
-  return true;
+  return ipExclusionReason(raw) === null;
 }
 
 // The real Windows-logon importer (winAccountRoles.ts's own entity()) already collapses a "-" or
@@ -238,9 +247,18 @@ function push(map: Map<string, HostBinding[]>, key: string, binding: HostBinding
   map.set(key, list);
 }
 
+/**
+ * @param excluded Optional sink (#1236): when given, `buildHostBindingIndex` increments a count
+ * per `IpExclusionReason` for every logon sample whose own source IP was policy-excluded (a
+ * placeholder, loopback, or link-local address never contributed to `byIp`) — the only way to
+ * distinguish "no logon evidence existed" from "evidence existed but was excluded" without this.
+ * The module stays pure: nothing is read from or written to any shared/global state, only this
+ * caller-owned object.
+ */
 export function buildHostBindingIndex(
   events: readonly ForensicEvent[],
   aliasIndex?: HostAliasIndex,
+  excluded?: Map<IpExclusionReason, number>,
 ): HostBindingIndex {
   const index: HostBindingIndex = { byIp: new Map(), byAccount: new Map() };
 
@@ -254,6 +272,10 @@ export function buildHostBindingIndex(
     // the logon — see the DIRECTIONALITY note at the top of this file.
     const ip = c.network?.source?.address;
     const clientName = c.session?.terminal?.trim();
+    if (excluded && ip) {
+      const reason = ipExclusionReason(ip);
+      if (reason) excluded.set(reason, (excluded.get(reason) ?? 0) + 1);
+    }
     if (ip && isIdentifyingIp(ip) && clientName && isIdentifyingClientName(clientName)) {
       const host = aliasIndex ? resolveHost(aliasIndex, clientName) : clientName;
       push(index.byIp, canonicalIp(ip), {
