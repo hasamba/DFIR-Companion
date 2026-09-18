@@ -137,7 +137,8 @@ export function canonicalAccount(domain: string | undefined, name: string): stri
   return d ? `${d}\\${n}` : n;
 }
 
-function isIdentifyingIp(raw: string): boolean {
+/** Not a real, per-machine address — a placeholder, loopback or link-local. Reused by dnsCrossUploadConnJoin.ts (#996): a match on one of these is noise, not identity, on the connection side too. */
+export function isIdentifyingIp(raw: string): boolean {
   const ip = canonicalIp(raw);
   if (NON_IDENTIFYING_IPS.has(ip)) return false;
   if (isLoopbackV4(ip)) return false;
