@@ -69,7 +69,14 @@ export async function importM365(
   };
   if (parsed.events.length === 0)
     return {
-      state: await noteEmptyImport(ctx, caseId, opts, "Microsoft 365", parsed.total, retentionNote || undefined),
+      state: await noteEmptyImport(
+        ctx,
+        caseId,
+        opts,
+        "Microsoft 365",
+        parsed.total,
+        retentionNote || undefined,
+      ),
       coverage: parsed.coverage,
     };
 

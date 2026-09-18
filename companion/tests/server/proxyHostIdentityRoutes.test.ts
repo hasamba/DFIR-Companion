@@ -179,7 +179,9 @@ describe("GET /cases/:id/proxy-host-identity-matches", () => {
   // state.forensicTimeline alone, this event would vanish and the match below would not appear.
   it("resolves a proxy row that lives only in the super-timeline, not the forensic timeline", async () => {
     const { app, stateStore, superTimelineStore } = await makeAppWithSuperTimeline();
-    await stateStore.save(stateWith([logonEvent("l1", "fs-01", "ws-042", "10.0.0.5", "2026-06-10T12:00:00Z")]));
+    await stateStore.save(
+      stateWith([logonEvent("l1", "fs-01", "ws-042", "10.0.0.5", "2026-06-10T12:00:00Z")]),
+    );
     await superTimelineStore.append("c1", [webEvent("w1", "10.0.0.5", "2026-06-10T12:05:00Z")]);
 
     const res = await request(app).get("/cases/c1/proxy-host-identity-matches");

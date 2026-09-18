@@ -212,7 +212,9 @@ describe("GET /cases/:id/resolver-endpoint-matches", () => {
   // regressed to reading state.forensicTimeline alone, both would vanish and no match would appear.
   it("resolves and confirms a resolver row that lives only in the super-timeline, not the forensic timeline", async () => {
     const { app, stateStore, superTimelineStore } = await makeAppWithSuperTimeline();
-    await stateStore.save(stateWith([logonEvent("l1", "fs-01", "ws-042", "10.0.0.5", "2026-06-10T12:00:00Z")]));
+    await stateStore.save(
+      stateWith([logonEvent("l1", "fs-01", "ws-042", "10.0.0.5", "2026-06-10T12:00:00Z")]),
+    );
     await superTimelineStore.append("c1", [
       resolverEvent("r1", "10.0.0.5", "cdn.example.net", "2026-06-10T12:05:00Z"),
       endpointDnsEvent("e1", "ws-042", "cdn.example.net", "2026-06-10T12:05:01Z"),
