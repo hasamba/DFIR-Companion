@@ -9,6 +9,9 @@ import { EvidenceAttestationStore } from "../../src/analysis/evidenceAttestation
 import { humanIdentityFor } from "../../src/routes/evidenceAttestation.js";
 import type { RequestAuthentication, AuthIdentity } from "../../src/auth/types.js";
 import { createApp } from "../../src/server.js";
+import { TeamAuth } from "../../src/auth/teamAuth.js";
+import { AuthStore } from "../../src/auth/authStore.js";
+import { provisionServiceToken } from "../helpers/serviceTokenAuth.js";
 
 let app: ReturnType<typeof createApp>;
 
@@ -162,5 +165,75 @@ describe("humanIdentityFor (#1111)", () => {
 
   it("rejects a missing auth entirely when team-auth is on", () => {
     expect(humanIdentityFor(undefined, true)).toBeNull();
+  });
+});
+
+// #1169: humanIdentityFor's own unit tests above prove the pure function is correct, but nothing
+// proved this ROUTE's own 403 branch is reachable over real HTTP. A request with no session at all
+// never reaches it (rejected upstream, 401); a real, authenticated service token does reach it.
+describe("/cases/:id/evidence-attestations with team-auth on", () => {
+  it("rejects POST with no session identity", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-evidence-attestation-teamauth-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const teamAuth = new TeamAuth({
+      store: new AuthStore(join(root, "auth.sqlite")),
+      bootstrapToken: "test-bootstrap-token",
+      cookieSecure: false,
+      sessionTtlMs: 60 * 60_000,
+    });
+    const teamApp = createApp(cases, {
+      teamAuth,
+      evidenceAttestationStore: new EvidenceAttestationStore(cases),
+    });
+    const res = await request(teamApp)
+      .post("/cases/c1/evidence-attestations/execution")
+      .send({ reason: "x" });
+    expect(res.status).toBe(401);
+  });
+
+  it("rejects POST from a real, authenticated service token (not a human session)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-evidence-attestation-teamauth-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const store = new AuthStore(join(root, "auth.sqlite"));
+    const token = await provisionServiceToken(store, "c1", ["write"]);
+    const teamAuth = new TeamAuth({
+      store,
+      bootstrapToken: "test-bootstrap-token",
+      cookieSecure: false,
+      sessionTtlMs: 60 * 60_000,
+    });
+    const teamApp = createApp(cases, {
+      teamAuth,
+      evidenceAttestationStore: new EvidenceAttestationStore(cases),
+    });
+    const res = await request(teamApp)
+      .post("/cases/c1/evidence-attestations/execution")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ reason: "x" });
+    expect(res.status).toBe(403);
+  });
+
+  it("rejects DELETE from a real, authenticated service token (not a human session)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-evidence-attestation-teamauth-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const store = new AuthStore(join(root, "auth.sqlite"));
+    const token = await provisionServiceToken(store, "c1", ["write"]);
+    const teamAuth = new TeamAuth({
+      store,
+      bootstrapToken: "test-bootstrap-token",
+      cookieSecure: false,
+      sessionTtlMs: 60 * 60_000,
+    });
+    const teamApp = createApp(cases, {
+      teamAuth,
+      evidenceAttestationStore: new EvidenceAttestationStore(cases),
+    });
+    const res = await request(teamApp)
+      .delete("/cases/c1/evidence-attestations/execution")
+      .set("Authorization", `Bearer ${token}`);
+    expect(res.status).toBe(403);
   });
 });
