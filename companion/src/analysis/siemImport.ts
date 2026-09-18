@@ -1123,8 +1123,9 @@ export function mapWindows(
     },
   });
 
-  // IOCs from the structured fields.
-  for (const ipKey of ["IpAddress", "DestinationIp", "SourceIp", "ClientAddress"]) {
+  // IOCs from the structured fields. SourceAddress/DestAddress are WFP 5156's own spellings (#1211).
+  const WFP_5156_IP_KEYS = ["SourceAddress", "DestAddress"];
+  for (const ipKey of ["IpAddress", "DestinationIp", "SourceIp", "ClientAddress", ...WFP_5156_IP_KEYS]) {
     const ip = cleanIp(str(getCI(ed, ipKey)));
     if (ip) addIoc(iocSink, "ip", ip);
   }

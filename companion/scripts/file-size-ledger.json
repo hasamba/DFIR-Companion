@@ -3,7 +3,7 @@
   "analysis/evidenceGraph.ts": 855,
   "analysis/memoryImport.ts": 1655,
   "analysis/seedDemoCase.ts": 2700,
-  "analysis/siemImport.ts": 1566,
+  "analysis/siemImport.ts": 1567,
   "analysis/velociraptorImport.ts": 1876,
   "integrations/velociraptor/velociraptorApi.ts": 1245,
   "public/dashboard.html#inline-js": 1957,
