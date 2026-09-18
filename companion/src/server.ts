@@ -213,6 +213,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     dispatchNotify,
     resolveImportKind: imports.resolveImportKind,
     ingestStreamed: imports.ingestStreamed,
+    ingestMacLoginItemBinary: imports.ingestMacLoginItemStreamed,
     liveToolConfigs: tools.liveToolConfigs,
     resolveToolForExt: tools.resolveToolForExt,
     rawExtClaimed: tools.rawExtClaimed,

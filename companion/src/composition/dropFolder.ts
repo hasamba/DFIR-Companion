@@ -38,6 +38,10 @@ import type { ToolConfig } from "../integrations/tools/toolConfig.js";
 import { suggestedToolForExtension } from "../integrations/tools/toolConfig.js";
 import { createToolRunCache, type ToolRunCache } from "../integrations/tools/toolProvenance.js";
 import { ingestCapture } from "../ingest/captureIngest.js";
+import { detectBinaryImportKind } from "../analysis/macBinaryDetect.js";
+import { MAX_INPUT_BYTES } from "../analysis/bplistReader.js";
+import { readHandleBounded, FileTooLargeError } from "../storage/boundedRead.js";
+import { maxImportFileBytes } from "../routes/importFileHead.js";
 import {
   selectReadyFiles,
   classifyDropFile,
@@ -93,6 +97,15 @@ export interface DropFolderDeps {
     originalName: string,
     minSeverity?: undefined,
   ) => Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
+  // The one binary import kind this codebase natively decodes (#1013's own macOS Background Task
+  // Management parser) — consulted BEFORE the raw-tool-input routing below claims a matching file,
+  // so a real BTM (name + bplist00 magic both required) auto-imports instead of sitting as a
+  // "run external tool" pending banner forever.
+  ingestMacLoginItemBinary: (
+    caseId: string,
+    bytes: Buffer,
+    originalName: string,
+  ) => Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
   // External-tool routing for raw (non-text) inputs.
   liveToolConfigs: () => Map<string, ToolConfig>;
   resolveToolForExt: (ext: string, configured: Map<string, ToolConfig>) => string | null;
@@ -135,6 +148,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
     dispatchNotify,
     resolveImportKind,
     ingestStreamed,
+    ingestMacLoginItemBinary,
     liveToolConfigs,
     resolveToolForExt,
     rawExtClaimed,
@@ -329,6 +343,48 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         // that would hand the path to a tool or the text reader anyway.
         if (err instanceof LinkGuardError) throw err;
         /* unreadable head → fall back to extension-only classification */
+      }
+
+      // A macOS Background Task Management file (#1013) is the one binary this codebase natively
+      // decodes — checked BEFORE the raw-tool-input routing below claims it, even if an operator has
+      // a custom tool configured for `.btm`: the native importer is purpose-built for exactly this
+      // artifact and is strictly more precise than an arbitrary external tool for this one format.
+      // `detectBinaryImportKind` requires BOTH the filename pattern AND the real bplist00 magic, so
+      // a foreign file merely named `*.btm` is never coerced. `head` can be undefined (unreadable
+      // head, guarded above) — that case falls through to the existing extension-only path below,
+      // unchanged from before this branch existed.
+      if (head && detectBinaryImportKind(name, head)) {
+        // The 8 KB head sniffed above is only enough to DETECT the format (name + magic bytes at
+        // offset 0) — a real bookmark payload lives well past 8 KB, so ingestion needs the whole
+        // file. Same no-follow + bounded-read shape composition/externalTools.ts already uses for
+        // an untrusted drop-folder path; capped at the PARSER's own bound (never the codebase-wide
+        // drop cap, which can be far larger) so a mistaken multi-GB `.btm` cannot force an oversized
+        // in-memory allocation.
+        const handle = await openNoFollow(full);
+        let bytes: Buffer;
+        try {
+          bytes = await readHandleBounded(handle, Math.min(maxImportFileBytes(), MAX_INPUT_BYTES));
+        } catch (err) {
+          if (err instanceof FileTooLargeError) {
+            return {
+              ok: false,
+              reason: `macOS login item file is too large to import (${err.size} bytes > ${err.maxBytes}-byte cap)`,
+            };
+          }
+          throw err;
+        } finally {
+          await handle.close();
+        }
+        const result = await ingestMacLoginItemBinary(caseId, bytes, name);
+        // analyzed is always true for this importer today (fully deterministic, no AI-off gate) —
+        // this check exists only for parity with the ingestStreamed path below, should that ever
+        // change.
+        return result.analyzed
+          ? { ok: true }
+          : {
+              ok: false,
+              reason: "AI is off — saved as evidence but not analyzed; enable AI and re-import",
+            };
       }
 
       // A raw file no text importer can read: a claimed extension, or anything the sniff says is binary.
