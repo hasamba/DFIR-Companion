@@ -40,7 +40,7 @@
         "confidence": 55,
         "confidenceReason": "The risky sign-in is real, but the VPN record offers a benign explanation.",
         "title": "Suspicious cloud sign-in requires validation",
-        "description": "The suspicious cloud sign-in conflicts with a corporate VPN assignment and does not confirm takeover.",
+        "description": "The cloud sign-in flagged as impossible travel conflicts with a corporate VPN assignment and does not confirm takeover.",
         "relatedIocs": [],
         "mitreTechniques": ["T1078.004"],
         "status": "open",
@@ -59,7 +59,7 @@
       {
         "id": "cld-n1",
         "priority": "high",
-        "action": "Review cloud audit logs and device identity for user-b",
+        "action": "Review cloud sign-in logs, audit logs, and device identity for user-b",
         "rationale": "Device and post-login activity can distinguish normal VPN use from account misuse.",
         "pointer": "user-b cloud audit logs",
         "relatedFindingIds": ["cld-f1"]
@@ -68,7 +68,7 @@
     "hypotheses": [],
     "uncertainties": [
       {
-        "topic": "Cloud identity compromise",
+        "topic": "Whether user-b's account is compromised (cloud identity)",
         "status": "inferred",
         "basis": "The risk alert is countered by a corporate VPN record.",
         "gap": "Device identity and post-login cloud actions are missing."
@@ -82,7 +82,7 @@
     "claims": [
       {
         "id": "cloud-signin",
-        "requiredTerms": ["suspicious cloud sign-in", "VPN"],
+        "requiredTerms": ["impossible travel", "VPN"],
         "evidenceEventIds": ["cld-e1", "cld-e2"],
         "confidence": { "min": 30, "max": 70 }
       }
@@ -92,11 +92,11 @@
     "uncertainties": [
       {
         "id": "cloud-identity-gap",
-        "topicTerms": ["cloud identity compromise"],
+        "topicTerms": ["user-b's account"],
         "allowedStatuses": ["unknown", "inferred"]
       }
     ],
-    "nextSteps": [{ "id": "review-cloud-audit", "requiredTerms": ["cloud audit logs", "user-b"] }],
+    "nextSteps": [{ "id": "review-cloud-audit", "requiredTerms": ["sign-in logs", "user-b"] }],
     "expectAbstention": false
   }
 }

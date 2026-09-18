@@ -30,7 +30,7 @@
         "confidence": 55,
         "confidenceReason": "Transfer volume is observed, but payload and initiating process are absent.",
         "title": "Unusual outbound transfer requires validation",
-        "description": "An unusual outbound transfer to upload.example may be exfiltration, but it is not confirmed.",
+        "description": "An unusual outbound transfer of 850 MB to upload.example may be exfiltration, but it is not confirmed.",
         "relatedIocs": ["net-i1"],
         "mitreTechniques": ["T1041"],
         "status": "open",
@@ -72,7 +72,7 @@
     "claims": [
       {
         "id": "unusual-egress",
-        "requiredTerms": ["unusual outbound transfer"],
+        "requiredTerms": ["850 MB"],
         "evidenceEventIds": ["net-e1"],
         "confidence": { "min": 30, "max": 65 }
       }

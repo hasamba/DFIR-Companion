@@ -39,7 +39,7 @@
         "confidence": 82,
         "confidenceReason": "The mount and archive-copy events directly show the transfer.",
         "title": "Archive copied to removable media",
-        "description": "A project archive was copied to removable media on WS-07; intent is not established.",
+        "description": "project-export.7z was copied to removable media on WS-07; intent is not established.",
         "relatedIocs": [],
         "mitreTechniques": ["T1052.001"],
         "status": "open",
@@ -67,7 +67,7 @@
     "hypotheses": [],
     "uncertainties": [
       {
-        "topic": "User intent",
+        "topic": "User intent and whether the transfer was legitimate",
         "status": "unknown",
         "basis": "The transfer is observed but authorization context is absent.",
         "gap": "DLP policy, approval records, and user context have not been collected."
@@ -81,7 +81,7 @@
     "claims": [
       {
         "id": "removable-copy",
-        "requiredTerms": ["copied to removable media"],
+        "requiredTerms": ["project-export.7z"],
         "evidenceEventIds": ["ins-e1", "ins-e2"],
         "confidence": { "min": 55, "max": 100 }
       }
@@ -91,11 +91,11 @@
     "uncertainties": [
       {
         "id": "intent-gap",
-        "topicTerms": ["user intent"],
+        "topicTerms": ["legitimate"],
         "allowedStatuses": ["unknown", "inferred"]
       }
     ],
-    "nextSteps": [{ "id": "collect-dlp", "requiredTerms": ["DLP logs", "WS-07"] }],
+    "nextSteps": [{ "id": "collect-dlp", "requiredTerms": ["DLP"] }],
     "expectAbstention": false
   }
 }

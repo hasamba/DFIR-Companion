@@ -39,7 +39,7 @@
         "confidence": 86,
         "confidenceReason": "Executable private memory and its live socket are observed in the same process.",
         "title": "Injected process retained a network connection",
-        "description": "Process injection in explorer.exe is linked to a network connection on WS-09.",
+        "description": "Process injection in explorer.exe is linked to an outbound connection on WS-09.",
         "relatedIocs": ["mem-i1"],
         "mitreTechniques": ["T1055", "T1071.001"],
         "status": "open",
@@ -58,7 +58,7 @@
       {
         "id": "mem-n1",
         "priority": "high",
-        "action": "Collect autoruns and scheduled tasks from WS-09",
+        "action": "Search WS-09 for persistence artifacts: autoruns and scheduled tasks",
         "rationale": "This can identify the persistence mechanism that launched the injected code.",
         "pointer": "WS-09 autoruns and scheduled tasks",
         "relatedFindingIds": ["mem-f1"]
@@ -67,9 +67,9 @@
     "hypotheses": [],
     "uncertainties": [
       {
-        "topic": "Persistence mechanism",
+        "topic": "Initial access vector and persistence mechanism",
         "status": "unknown",
-        "basis": "The memory image shows injection but not how it survives reboot.",
+        "basis": "The memory image shows injection but not how it survives reboot or how the attacker got in.",
         "gap": "Autoruns, services, and scheduled-task artifacts are missing."
       }
     ],
@@ -81,7 +81,7 @@
     "claims": [
       {
         "id": "memory-injection",
-        "requiredTerms": ["process injection", "network connection"],
+        "requiredTerms": ["process injection", "outbound connection"],
         "evidenceEventIds": ["mem-e1", "mem-e2"],
         "confidence": { "min": 55, "max": 100 }
       }
@@ -91,11 +91,11 @@
     "uncertainties": [
       {
         "id": "persistence-gap",
-        "topicTerms": ["persistence mechanism"],
+        "topicTerms": ["initial access"],
         "allowedStatuses": ["unknown", "inferred"]
       }
     ],
-    "nextSteps": [{ "id": "collect-autoruns", "requiredTerms": ["autoruns", "WS-09"] }],
+    "nextSteps": [{ "id": "collect-autoruns", "requiredTerms": ["persistence artifacts", "WS-09"] }],
     "expectAbstention": false
   }
 }
