@@ -237,6 +237,9 @@ describe("resolveResolverEndpointIdentity", () => {
       QUERY_TOLERANCE_MS,
     );
     expect(results[0]).toMatchObject({ outcome: "no-match", hosts: [] });
+    // A no-match is not a negative fact either: a stub resolver's cache hit never reaches this
+    // DNS server, so the caveat must survive on a no-match row, not only on a matched one.
+    expect(results[0].caveats.some((c) => c.includes("not a negative fact"))).toBe(true);
   });
 
   it("reports ambiguous -- two hosts sharing one IP in the window -- and checks each independently", () => {
