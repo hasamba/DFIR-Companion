@@ -300,4 +300,59 @@ describe("auto-run ignores non-blocking network-identity candidates (#1167)", ()
     expect(reasons).toEqual(["network-identity", "shortname-fqdn"]);
     expect(kick).not.toHaveBeenCalled();
   });
+
+  it("does not re-kick synthesis for each network-identity candidate resolved after the blocking pair already cleared", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-hostdup-kick-netid3-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const stateStore = new StateStore(cases);
+    const s = emptyState("c1");
+    s.forensicTimeline.push(
+      ev("a", "WIN11"),
+      ev("b", "WIN11.windomain.local"),
+      ev("c", "10.0.0.5"),
+      logonEvent("d", "fs-01", "ws-042", "10.0.0.5"),
+      ev("e", "10.0.0.6"),
+      logonEvent("f", "fs-02", "ws-043", "10.0.0.6"),
+    );
+    await stateStore.save(s);
+    const kick = vi.fn();
+    const mixedApp = express();
+    mixedApp.use(express.json());
+    registerHostDuplicateRoutes(mixedApp, {
+      store: cases,
+      options: {
+        stateStore,
+        assetOverridesStore: new AssetOverridesStore(cases),
+        hostDuplicateDismissalStore: new HostDuplicateDismissalStore(cases),
+      },
+      resynthesizeInBackground: kick,
+    } as unknown as RouteContext);
+
+    const list = await request(mixedApp).get("/cases/c1/host-duplicates");
+    expect(list.body.pending).toHaveLength(3); // 1 blocking pair + 2 network-identity candidates
+
+    // Resolving the blocking pair is the one real transition — exactly one kick.
+    const first = await request(mixedApp)
+      .post("/cases/c1/host-duplicates/dismiss")
+      .send({ canonical: "win11.windomain.local", other: "win11" });
+    expect(first.body.pending).toHaveLength(2);
+    expect(kick).toHaveBeenCalledTimes(1);
+
+    // Resolving one of the two remaining network-identity candidates must NOT re-kick: synthesis
+    // was already unblocked by the previous step, and one network-identity row still remains.
+    const second = await request(mixedApp)
+      .post("/cases/c1/host-duplicates/dismiss")
+      .send({ canonical: "ws-042", other: "10.0.0.5" });
+    expect(second.body.pending).toHaveLength(1);
+    expect(kick).toHaveBeenCalledTimes(1);
+
+    // Resolving the LAST candidate of any kind still kicks once more (the list going fully empty
+    // is its own trigger, preserving this route's original, pre-#1167 behavior) — total 2, not 3.
+    const third = await request(mixedApp)
+      .post("/cases/c1/host-duplicates/dismiss")
+      .send({ canonical: "ws-043", other: "10.0.0.6" });
+    expect(third.body.pending).toEqual([]);
+    expect(kick).toHaveBeenCalledTimes(2);
+  });
 });
