@@ -56,6 +56,8 @@ export interface SqliteRowStateResult {
   events: SiemEvent[];
   iocs: [];
   total: number;
+  /** Count of mapped, kept rows only — captured before the per-report Carved/Deleted summary
+   * line is appended to `events`, so it never counts that summary as a row (#1289). */
   kept: number;
   dropped: number;
   groups: number;
@@ -377,6 +379,11 @@ export function parseSqliteRowStateCsv(
     maxEvents: opts.maxEvents ?? MAX_ROWS_SCANNED,
   });
 
+  // Captured BEFORE the summary event is pushed below: `kept` reports the count of mapped rows,
+  // not row-plus-summary-line, so it stays consistent with `total` (rows scanned) for the
+  // "N row(s) from M scanned" string rendered in recoveryImports.ts.
+  const kept = events.length;
+
   // Appended AFTER aggregation/capping, never through it — pushing the summary into `mapped`
   // would leave it subject to the same `maxEvents` slice as every per-row event, and a count-1
   // summary sorts BEHIND any collapsed group with count > 1, so a large report could silently
@@ -401,7 +408,7 @@ export function parseSqliteRowStateCsv(
     events,
     iocs: [],
     total,
-    kept: events.length,
+    kept,
     dropped: malformedRows,
     groups,
     format: "SqliteDissectCommitCsv",

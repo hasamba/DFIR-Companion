@@ -368,7 +368,8 @@ describe("parseSqliteRowStateCsv — Carved/Deleted summary event (#1144)", () =
     expect(r.dropped).toBe(0);
     // One per-row event plus the summary event.
     expect(r.events).toHaveLength(2);
-    expect(r.kept).toBe(2);
+    // `kept` counts mapped rows only, not the appended summary line (#1289).
+    expect(r.kept).toBe(1);
   });
 
   it("discloses truncation in the summary rather than presenting a partial tally as complete", () => {
