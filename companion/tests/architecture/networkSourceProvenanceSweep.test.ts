@@ -1,9 +1,7 @@
-// #1265: every writer of `canonical.network.source.address` whose value is the log source's own
-// recorder edge observing its peer (never client-supplied content) must stamp
-// `provenance: "edge-observed"` alongside it. A category-based reader filter is unsound
-// (exchangeAuditImport.ts/mailboxChain.ts are genuinely edge-observed but share
-// `category: "email"` with the one confirmed-forgeable writer, emailImport.ts), so the reader in
-// proxyWorkstationChain.ts fail-closes on the flag instead.
+// #1265: the `network.source.provenance` stamp. The contract — what edge-observed means, who
+// stamps, who must gate, why a category filter cannot substitute — lives in ARCHITECTURE.md
+// § "The `network.source.provenance` trust flag". This file is the enforcement, and its SITES /
+// EXEMPT / READERS registries are the list of record for who writes and reads the field.
 //
 // WHAT THIS CHECKS. Every file under src/analysis/ is scanned for `source: { ... address: ... }`
 // object literals. Each file that has one must appear in exactly one of two lists below:
@@ -11,9 +9,8 @@
 //   - EXEMPT: deliberately unstamped, with the reason recorded here, every literal must NOT carry
 //     the stamp (so a stamp cannot creep in without revisiting the reason).
 // A file with such a literal in neither list fails — that is the "new writer forgot to decide"
-// case this sweep exists to catch. #1184/#1267's own audit claimed 13 sites; this scan found 28
-// across 23 files, because the audit matched the dotted-string form `network.source.address`
-// and missed the object-literal form most importers actually use.
+// case this sweep exists to catch. The registry here, not any prose, is the writer count: the
+// audit's own hand-kept total drifted from it on the day it was written (#1314).
 //
 // WHAT THIS DOES NOT CHECK. It is plain-text, not AST-based: property shorthand (`{ address }`),
 // a computed key, or a write routed through a helper that builds the object elsewhere are
@@ -46,6 +43,9 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const ANALYSIS_DIR = fileURLToPath(new URL("../../src/analysis/", import.meta.url));
+
+/** Where a failing sweep sends its author: the one home of the contract, not this file. */
+const CONTRACT = 'the contract is ARCHITECTURE.md § "The `network.source.provenance` trust flag"';
 
 /** Audited edge-observed writers: file -> number of `source: { address }` literals it holds.
  * The count makes a file with more than one site require every one to be stamped. */
@@ -198,7 +198,9 @@ describe("network.source.address writers decide on provenance (#1265)", () => {
     const unregistered = files.filter(
       (f) => !(f in SITES) && !(f in EXEMPT) && sourceLiterals(read(f)).length > 0,
     );
-    expect(unregistered).toEqual([]);
+    expect(unregistered, `${CONTRACT} — register each file in SITES (stamped) or EXEMPT (with why)`).toEqual(
+      [],
+    );
   });
 
   it("nothing in SITES or EXEMPT names a file that no longer has such a literal", () => {
@@ -234,7 +236,9 @@ describe("network.source.address readers decide on provenance (#1313)", () => {
 
   it("every src/analysis file that reads the field is registered in READERS", () => {
     const unregistered = files.filter((f) => !(f in READERS) && readCount(read(f)) > 0);
-    expect(unregistered).toEqual([]);
+    expect(unregistered, `${CONTRACT} — register each file in READERS as gated, agnostic or tracked`).toEqual(
+      [],
+    );
   });
 
   it("nothing in READERS names a file that no longer reads the field", () => {

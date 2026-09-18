@@ -166,7 +166,9 @@ export const canonicalEventEnvelopeSchema = z.object({
           address: z.string().optional(),
           port: z.number().int().positive().max(65535).optional(),
           hostname: z.string().optional(),
-          provenance: z.literal("edge-observed").optional(), // #1265: edge-observed writer only, fail-closed elsewhere
+          // #1265: stamped by edge-observed writers only, read fail-closed. Contract: ARCHITECTURE.md
+          // § "The `network.source.provenance` trust flag"; enforced by the sweep test named there.
+          provenance: z.literal("edge-observed").optional(),
         })
         .optional(),
       destination: z

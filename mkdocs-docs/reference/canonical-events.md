@@ -37,6 +37,9 @@ Every normalized leaf field carries its own provenance:
 
 Importer conformance tests reject an envelope that contains an untraceable normalized field. This
 provenance is internal evidence lineage; it does not replace the case's Chain of Custody record.
+It is also distinct from the `network.source.provenance` trust stamp, a developer-facing contract
+between importers and host-attribution readers that is documented in the repository's
+`ARCHITECTURE.md`.
 
 ## Schema and migration policy
 
