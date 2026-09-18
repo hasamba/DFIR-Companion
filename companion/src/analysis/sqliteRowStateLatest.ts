@@ -13,6 +13,15 @@ function clip(text: string, max: number): string {
   return text.length <= max ? text : text.slice(0, max);
 }
 
+// #1318 — display bounds for the two CSV/config-derived values interpolated into prose. Both are
+// clipped at MAX_FIELD_LEN (300) structurally, which is far wider than a description clause can
+// carry: a 300-char rowId or label alone consumed the whole body budget and cut the row's own
+// identity text. The full values stay in the canonical block (`rowId`, `matchedHighValueLabel`);
+// only the prose is shortened, the same `show(x, N)` discipline the compute-row modules use.
+const ROW_ID_DISPLAY_MAX = 64;
+const LABEL_DISPLAY_MAX = 80;
+const show = (v: string, max: number): string => (v.length > max ? `${v.slice(0, max - 1)}…` : v);
+
 /** DFIR_SQLITE_HIGH_VALUE_LABELS: comma-separated substrings (analyst-configured, never inferred).
  * An empty/absent var, or a var containing only empty items (e.g. a trailing comma), means no
  * labels — never one empty-string label that would match every table (the #1069 falsy-string
@@ -55,7 +64,7 @@ export function matchHighValueLabel(
 export function highValueClause(label: string | undefined): string {
   if (!label) return "";
   return (
-    `; table name matches an analyst-configured high-value label ("${label}") — a ` +
+    `; table name matches an analyst-configured high-value label ("${show(label, LABEL_DISPLAY_MAX)}") — a ` +
     `filename-derived match only, not independent verification of the table's real schema/content`
   );
 }
@@ -139,21 +148,22 @@ export function latestClause(
   multiMember: boolean,
   carvedAtOrAboveWinningVersion: boolean,
 ): string {
+  const shownRowId = show(rowId, ROW_ID_DISPLAY_MAX);
   const carvedCaveat = carvedAtOrAboveWinningVersion
     ? "; a Carved row for this same rowid, at or above this version, is excluded from this " +
       "comparison — its own identity is a carving-signature reconstruction, not a live index read"
     : "";
   if (ambiguous) {
     return (
-      `; more than one row recorded the same (highest) version for row ${rowId} in this report ` +
+      `; more than one row recorded the same (highest) version for row ${shownRowId} in this report ` +
       `with different content — which reflects the true latest state cannot be determined from ` +
       `this report alone${carvedCaveat}`
     );
   }
   if (!multiMember) return "";
   return operation === "Deleted"
-    ? `; the last recorded event for row ${rowId} in this report was its own deletion${carvedCaveat}`
-    : `; the highest recorded version for row ${rowId} in this report — not proof this reflects ` +
+    ? `; the last recorded event for row ${shownRowId} in this report was its own deletion${carvedCaveat}`
+    : `; the highest recorded version for row ${shownRowId} in this report — not proof this reflects ` +
         `any write after this capture, and a reused rowid may combine two unrelated records' own ` +
         `history${carvedCaveat}`;
 }

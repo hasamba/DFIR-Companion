@@ -39,6 +39,13 @@ import type { MappedEvent, SiemEvent } from "./siemImport.js";
 import { aggregateEvents } from "./eventAggregate.js";
 
 export const MAX_ROWS_SCANNED = 20_000; // report-wide
+// #1318 — a row's description stacks a body (~209 chars minimum) under up to three protected
+// suffixes: the high-value-label clause, the latest-per-rowId clause (with its Carved caveat)
+// and the report tag. The fixed prose of that stack alone measures 545 chars, so a 600 budget
+// cut the body mid-word — losing the row's own identity and its `[undated: …]` disclosure — for
+// any ambiguous tie with a Carved sibling, no analyst label needed. 1400 is the same bound
+// mailboxChain.ts / azureComputeState.ts already use for their own multi-clause rows.
+export const DESCRIPTION_MAX = 1400;
 
 // The fixed 9-column header prefix `_write_cells()` writes for a B_TREE_TABLE_LEAF page (an
 // ordinary rowid table) — the WITHOUT ROWID / index-page shape omits "Row ID" and is deliberately
@@ -168,13 +175,13 @@ class CarvedDeletedTally {
     // #1290 Part A — the SAME report-level match every row already carries (tableName is a
     // report-level derived value, not per-row content), so no re-matching is done here.
     const highValue = highValueClause(matchedHighValueLabel);
-    // Clamped at 0 — a near-max-length analyst-configured label can push the reserved suffix
-    // (highValue + disclosure + reportTag) past 600 on its own; `clip()`'s own budget must never go
-    // negative, which `String.slice(0, negative)` would read as "trim from the end" instead of
-    // "keep nothing" (code review finding, same class as `applyLatestForRowId`'s own fix).
+    // Clamped at 0 — the reserved suffix (highValue + disclosure + reportTag) is bounded well
+    // under DESCRIPTION_MAX now that the label display is clipped, but `clip()`'s own budget must
+    // never go negative, which `String.slice(0, negative)` would read as "trim from the end"
+    // instead of "keep nothing" (code review finding, same class as `applyLatestForRowId`'s own fix).
     const variable = clip(
       `sqlite-dissect row-state summary: table ${cleanTableLabel} — ${parts.join(", ")}`,
-      Math.max(0, 600 - reportTag.length - disclosure.length - highValue.length),
+      Math.max(0, DESCRIPTION_MAX - reportTag.length - disclosure.length - highValue.length),
     );
     const description = `${variable}${disclosure}${highValue}${reportTag}`;
     const aggKey = boundedAggKey(`sqlite-row-state-summary|${reportFingerprint}`);
@@ -242,7 +249,7 @@ interface MappedRow {
   cellSource: SqliteCellSource;
   // #1152 — the SAME validated values needed for the deferred "latest per rowId" pass, and the
   // pre-clip/pre-suffix body text + report tag needed to rebuild a flagged row's description
-  // within the existing 600-char budget (never appended past it).
+  // within the existing DESCRIPTION_MAX budget (never appended past it).
   rowId?: string;
   versionNumber: number;
   columnsDigest: string;
@@ -329,10 +336,10 @@ function mapRow(
   // #1290 Part A's own clause is known immediately (report-level match, not deferred); #1152's own
   // "latest" clause is NOT known yet (needs every row in the report) — the initial description
   // below carries only the former. `applyLatestForRowId` rebuilds it for any flagged row, reusing
-  // `rawBody`/`reportTag`/`highValue` so the 600-char budget is honoured either way.
+  // `rawBody`/`reportTag`/`highValue` so the DESCRIPTION_MAX budget is honoured either way.
   const highValue = highValueClause(matchedHighValueLabel);
   // Clamped at 0 for the same reason as the summary's own budget above.
-  const description = `${clip(rawBody, Math.max(0, 600 - reportTag.length - highValue.length))}${highValue}${reportTag}`;
+  const description = `${clip(rawBody, Math.max(0, DESCRIPTION_MAX - reportTag.length - highValue.length))}${highValue}${reportTag}`;
 
   const event: MappedEvent = {
     timestamp: "",
@@ -387,7 +394,7 @@ function mapRow(
 }
 
 /** Phase 2 of the per-report pass (#1152): rebuilds the description and canonical block for every
- * row `computeLatestForRowId` flagged, within the SAME 600-char budget `mapRow` already used —
+ * row `computeLatestForRowId` flagged, within the SAME DESCRIPTION_MAX budget `mapRow` already used —
  * never appended past it. Skipped entirely by the caller when the report was truncated. Mutates
  * `mapped` in place by replacing the flagged indices' own entries with a new object (never mutating
  * the existing `MappedEvent`, which callers may treat as structurally shared). */
@@ -414,7 +421,7 @@ function applyLatestForRowId(mapped: MappedEvent[], rows: readonly MappedRow[]):
     // must never flip `clip()`'s own budget negative, which `String.slice(0, negative)` would
     // read as "trim from the end," silently producing a longer-than-intended description instead
     // of the shorter one this budget exists to guarantee (code review finding).
-    const description = `${clip(row.rawBody, Math.max(0, 600 - suffix.length))}${suffix}`;
+    const description = `${clip(row.rawBody, Math.max(0, DESCRIPTION_MAX - suffix.length))}${suffix}`;
     const prior = mapped[index];
     mapped[index] = {
       ...prior,
