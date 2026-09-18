@@ -376,4 +376,25 @@ describe("collection generation diff panel — mobile recording flow (#1138 code
     ).renderCollectionGenerationDiff();
     expect(html).not.toMatch(/\badded\b|\bremoved\b|\bdeleted\b/i);
   });
+
+  // #1141: the pair <summary> re-escaped orderLabel()'s already-escaped output, and an unmapped
+  // change.direction was escaped once in the fallback assignment and again at interpolation.
+  it("does not double-escape the pair summary or an unmapped direction label", async () => {
+    const pairWithAmpersand = {
+      ...PERSISTENCE_PAIR,
+      pairs: [
+        {
+          ...PERSISTENCE_PAIR.pairs[0],
+          earlier: { order: { kind: "sequence", sequence: "A & B" } },
+          changes: [{ ...PERSISTENCE_PAIR.pairs[0].changes[0], direction: "weird & direction" }],
+        },
+      ],
+    };
+    const html = (
+      await panel({ cohorts: [pairWithAmpersand] }, { cohorts: [] })
+    ).renderCollectionGenerationDiff();
+    expect(html).toContain("A &amp; B");
+    expect(html).not.toContain("&amp;amp;");
+    expect(html).toContain("weird &amp; direction");
+  });
 });
