@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   headersMatch,
+  pinnedClocks,
   readOrigin,
   REGISTRY,
   REGISTRY_PINS,
@@ -9,7 +10,12 @@ import {
 } from "../../src/analysis/mobileOriginRegistry.js";
 import { parseLeappTsv } from "../../src/analysis/mobileLeappImport.js";
 import { correlateEvents } from "../../src/analysis/correlate.js";
-import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
+import {
+  APP_CORROBORATION_MARKER,
+  markAppCorroboration,
+} from "../../src/analysis/mobileBackgroundActivity.js";
+import { INFECTION_WINDOW_MARKER, markInfectionWindow } from "../../src/analysis/mobileInfectionWindow.js";
+import type { ForensicEvent, IOC } from "../../src/analysis/stateTypes.js";
 
 // #932 item 18 (#988): a LEAPP row's origin is read from its own columns against a registry
 // pinned to upstream; a facet with no establishing column is "not established"; nothing here says
@@ -36,8 +42,8 @@ function cellsFor(entryName: string, row: Record<string, string>): string[] {
 describe("the registry pin", () => {
   it("names both upstream commits and every entry's exact header tuple", () => {
     expect(REGISTRY_PINS.iLEAPP.commit).toBe("6dc251d857c0");
-    expect(REGISTRY_PINS.ALEAPP.commit).toBe("498491475597");
-    expect(REGISTRY_VERSION).toBe("leapp-origin-2026-09-16");
+    expect(REGISTRY_PINS.ALEAPP.commit).toBe("ce0880dc232c");
+    expect(REGISTRY_VERSION).toBe("leapp-origin-2026-09-18");
     for (const e of REGISTRY) expect(e.headers.length, e.name).toBeGreaterThan(0);
     const safari = registryEntry("Safari Browser - History")!;
     expect(headersMatch(safari, safari.headers)).toBe(true);
@@ -510,5 +516,616 @@ describe("item 16 — usage/power/permission/network entries, and Notification D
       );
       expect(r.block.registry.coverage, name).toBe("schema-matches");
     }
+  });
+});
+
+// #1298 (932.15 family): seven ALEAPP AppOps / usagestats artifacts join the registry — the
+// Android granted/used-permission prerequisite. Every Android tuple below is typed out from the
+// upstream `data_headers` read at the pinned commit, NOT taken from `entry.headers`: a registry
+// tuple that drifts from upstream must fail here (#1336 — the notification entry pinned 17 of 23
+// columns and the old fixture, built from the entry's own tuple, could never notice).
+const ALEAPP_UPSTREAM: Record<string, readonly string[]> = {
+  "Web History": [
+    "Last Visit Time",
+    "URL",
+    "Title",
+    "Visit Count",
+    "Typed Count",
+    "ID",
+    "Hidden",
+    "Browser Name",
+  ],
+  "Web Visits": [
+    "Visit Timestamp",
+    "URL",
+    "Title",
+    "Duration",
+    "Transition Type",
+    "Qualifier(s)",
+    "From Visit URL",
+    "Browser Name",
+  ],
+  "Search Terms": ["Last Visit Time", "Search Term", "URL", "Title", "Visit Count", "Browser Name"],
+  "Android Notification History": [
+    "Posted Time",
+    "Title",
+    "Text",
+    "Package Name",
+    "User ID",
+    "UID",
+    "Package Index",
+    "Channel Name",
+    "Channel Name Index",
+    "Channel ID",
+    "Channel ID Index",
+    "Conversation ID",
+    "Conversation ID Index",
+    "Major Version",
+    "Image Type",
+    "Image Bitmap Filename",
+    "Image Resource ID",
+    "Image Resource ID Package",
+    "Image Data Length",
+    "Image Data Offset",
+    "Image URI",
+    "Protobuf File Name",
+    "Timestamp From Protobuf File Name",
+  ],
+  "Android Notification History - Status": ["Status", "User"],
+  "Android Notification History - Snoozed": ["Reminder Time", "Snoozed Notification"],
+  Accounts_ce: ["Account Type", "Account Name", "Password"],
+  installedappsGass: ["User", "Bundle ID", "Version Code", "SHA-256 Hash"],
+  InstalledappsLibrary: ["User", "Purchase Time", "Account", "Doc ID"],
+  // appops.py line 143 / 167
+  "App Ops Permissions": [
+    "Access Timestamp",
+    "Reject Timestamp",
+    "Package Name",
+    "ID",
+    "Proxy Package Name",
+    "Proxy Package UID",
+    "Permission",
+  ],
+  "App Ops Permissions - Legacy": [
+    "Timestamp TP",
+    "Timestamp TC",
+    "Timestamp TB",
+    "Timestamp TF",
+    "Timestamp TFS",
+    "Timestamp TT",
+    "Package Name",
+    "Duration",
+    "Proxy Package Name",
+    "Proxy Package UID",
+    "Permission",
+  ],
+  // appOpsAccesses.py
+  "App Ops Recent Accesses": [
+    "Access Timestamp",
+    "Reject Timestamp",
+    "Package Name",
+    "UID",
+    "Permission",
+    "Op Code",
+    "Attribution Tag",
+    "App State At Access",
+    "Access Flag",
+    "Access Duration (ms)",
+    "Op Mode",
+    "Proxy Package Name",
+    "Proxy Attribution Tag",
+    "Proxy UID",
+    "Source File",
+  ],
+  // appOpsModes.py
+  "App Ops Permission Modes": [
+    "Package Name",
+    "UID",
+    "Android User",
+    "Permission",
+    "Op Code",
+    "Mode",
+    "Mode Stored Against",
+    "Source File",
+  ],
+  // permissionAccessState.py, two processors
+  "App Op Modes (Permission Store)": [
+    "Package Name",
+    "App ID",
+    "Android User",
+    "App Op",
+    "Op Code",
+    "Mode",
+    "Mode Stored Against",
+  ],
+  "Permission Grants (Permission Store)": [
+    "Package Name",
+    "App ID",
+    "Android User",
+    "Permission",
+    "Granted",
+    "Permission Flags",
+  ],
+  // usagestats.py
+  "Usage Stats": [
+    "User (UID)",
+    "Timestamp / Last Time Active",
+    "Usage Type",
+    "Time Active (ms)",
+    "Time Active (sec)",
+    "Last Time Service Used",
+    "Total Time Service Used (ms)",
+    "Last Time Visible",
+    "Total Time Visible (ms)",
+    "Last Time Component Used",
+    "App Launch Count",
+    "Package",
+    "Event Type",
+    "Class",
+    "Event Flags (as stored)",
+    "Shortcut ID",
+    "Standby Bucket (high 16 bits)",
+    "Standby Reason (low 16 bits)",
+    "Notification Channel",
+    "Instance ID",
+    "Task Root Package",
+    "Task Root Class",
+    "Locus ID",
+    "Interaction Category",
+    "Interaction Action",
+    "Interval",
+  ],
+};
+
+/** readOrigin against the UPSTREAM tuple (not the entry's), a row keyed by header name. */
+function upstreamRead(name: string, row: Record<string, string>) {
+  const headers = ALEAPP_UPSTREAM[name];
+  return readOrigin(
+    "android",
+    name,
+    headers,
+    headers.map((h) => row[h] ?? ""),
+  );
+}
+
+describe("#1298 — ALEAPP AppOps / usagestats entries, pinned and cross-checked against upstream", () => {
+  it("every Android entry's tuple is exactly the upstream data_headers at the pinned commit", () => {
+    const android = REGISTRY.filter((e) => e.platform === "android").map((e) => e.name);
+    expect(android.sort()).toEqual(Object.keys(ALEAPP_UPSTREAM).sort());
+    for (const [name, headers] of Object.entries(ALEAPP_UPSTREAM)) {
+      const entry = registryEntry(name)!;
+      expect(entry, name).toBeDefined();
+      expect(headersMatch(entry, headers), name).toBe(true);
+      expect(entry.headers.length, name).toBe(headers.length);
+    }
+  });
+
+  it("invariants: every declared clock is one of its entry's headers, in header order; the access columns are exactly the five known", () => {
+    for (const e of REGISTRY) {
+      if (!e.clocks) continue;
+      const idx = e.clocks.map((c) => e.headers.indexOf(c));
+      expect(idx, e.name).not.toContain(-1);
+      expect(
+        [...idx].sort((a, b) => a - b),
+        e.name,
+      ).toEqual(idx);
+    }
+    // The words now name the access column; this list is every entry that has one, in registry
+    // order, so a pre-existing reading can only change by editing this line.
+    expect(REGISTRY.filter((e) => e.accessColumn).map((e) => [e.name, e.accessColumn])).toEqual([
+      ["Application Permissions", "Access"],
+      ["App Ops Recent Accesses", "Op Mode"],
+      ["App Ops Permission Modes", "Mode"],
+      ["App Op Modes (Permission Store)", "Mode"],
+      ["Permission Grants (Permission Store)", "Granted"],
+    ]);
+  });
+
+  it("#1336 — Android Notification History reads schema-matches on a real 23-column export, with its package typed", () => {
+    const r = upstreamRead("Android Notification History", {
+      "Posted Time": "2026-05-02 10:00:00",
+      Title: "hi",
+      "Package Name": "com.example.chat",
+    });
+    expect(r.block.registry.coverage).toBe("schema-matches");
+    expect(r.block.facets.record).toBe("notification");
+    expect(r.block.app).toEqual({ package: "com.example.chat" });
+  });
+
+  it("App Ops Permissions: a permission record with a typed package; no outcome column, no acquisition, no authorship", () => {
+    const r = upstreamRead("App Ops Permissions", {
+      "Reject Timestamp": "2026-05-02 10:00:00",
+      "Package Name": "com.example.app",
+      Permission: "CAMERA",
+    });
+    expect(r.block.registry.coverage).toBe("schema-matches");
+    expect(r.block.registry.pinned).toBe("ALEAPP@ce0880dc232c");
+    expect(r.block.facets).toMatchObject({
+      record: "permission",
+      locality: "device-local",
+      acquisition: "not-established",
+      authorship: "not-established",
+    });
+    expect(r.block.app).toEqual({ package: "com.example.app" });
+    expect(r.block.evidence.find((e) => e.facet === "access")).toBeUndefined();
+    expect(r.words).toBe(`not-established, device-local, permission — ${REGISTRY_VERSION}`);
+    expect(r.words).not.toMatch(/granted by|the user|malicious/i);
+  });
+
+  it("App Ops Permissions - Legacy is registered as the same kind of record", () => {
+    const r = upstreamRead("App Ops Permissions - Legacy", {
+      "Timestamp TT": "2026-05-02 10:00:00",
+      "Package Name": "com.example.app",
+      Permission: "READ_SMS",
+    });
+    expect(r.block.registry.coverage).toBe("schema-matches");
+    expect(r.block.facets.record).toBe("permission");
+    expect(r.block.app).toEqual({ package: "com.example.app" });
+  });
+
+  it("the four mode/state tables carry Op Mode / Mode / Granted verbatim, and the words name the column that said it", () => {
+    // Values as ALEAPP writes them: OP_MODES at android-15.0.0_r1 (appOpsAccesses.py) is ALLOWED /
+    // IGNORED / ERRORED / DEFAULT / FOREGROUND, or the stored integer outside that set; Granted is
+    // Yes / No from AOSP's own isPermissionGranted port, or the raw flags value when undecidable.
+    // Three different facts (a mode at access time, a configured mode, a stored grant) — so the
+    // words say which column spoke, never one shared label for all three.
+    const cases: [string, string, string, string][] = [
+      ["App Ops Recent Accesses", "Op Mode", "ALLOWED", "(op mode ALLOWED)"],
+      ["App Ops Permission Modes", "Mode", "ERRORED", "(mode ERRORED)"],
+      ["App Op Modes (Permission Store)", "Mode", "7", "(mode 7)"],
+      ["Permission Grants (Permission Store)", "Granted", "Yes", "(granted Yes)"],
+    ];
+    for (const [name, column, value, words] of cases) {
+      const r = upstreamRead(name, { "Package Name": "com.example.app", [column]: value });
+      expect(r.block.registry.coverage, name).toBe("schema-matches");
+      expect(r.block.facets.record, name).toBe("permission");
+      expect(r.block.app, name).toEqual({ package: "com.example.app" });
+      expect(r.block.evidence, name).toContainEqual({ facet: "access", column, value });
+      expect(r.words, name).toContain(words);
+      expect(r.words, name).not.toContain("(access ");
+    }
+    // A stored `No` never reads like a `Yes`; an empty cell says nothing at all.
+    const no = upstreamRead("Permission Grants (Permission Store)", {
+      "Package Name": "com.x",
+      Granted: "No",
+    });
+    expect(no.words).toContain("(granted No)");
+    expect(no.words).not.toContain("Yes");
+    const blank = upstreamRead("Permission Grants (Permission Store)", { "Package Name": "com.x" });
+    expect(blank.block.evidence.find((e) => e.facet === "access")).toBeUndefined();
+    expect(blank.words).not.toContain("granted");
+    // The iOS TCC reading is unchanged: its column is literally `Access`.
+    const tcc = registryEntry("Application Permissions")!;
+    const t = readOrigin(
+      "ios",
+      tcc.name,
+      tcc.headers,
+      cellsFor(tcc.name, { "Bundle ID": "com.a", Access: "Not allowed" }),
+    );
+    expect(t.words).toContain("(access Not allowed)");
+  });
+
+  it("a renamed or missing column on a new entry is headers-differ, never a guess", () => {
+    const h = [...ALEAPP_UPSTREAM["Permission Grants (Permission Store)"]];
+    const renamed = h.map((x) => (x === "Granted" ? "Is Granted" : x));
+    const r = readOrigin(
+      "android",
+      "Permission Grants (Permission Store)",
+      renamed,
+      renamed.map(() => ""),
+    );
+    expect(r.block.registry.coverage).toBe("headers-differ");
+    expect(r.block.app).toBeUndefined();
+    const short = readOrigin("android", "Usage Stats", ALEAPP_UPSTREAM["Usage Stats"].slice(0, 25), []);
+    expect(short.block.registry.coverage).toBe("headers-differ");
+  });
+
+  it("pinnedClocks: an entry's declared clocks are upstream's own datetime columns, only when the headers match the pin", () => {
+    expect(
+      pinnedClocks(
+        "android",
+        "App Ops Permissions - Legacy",
+        ALEAPP_UPSTREAM["App Ops Permissions - Legacy"],
+      ),
+    ).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(pinnedClocks("android", "Usage Stats", ALEAPP_UPSTREAM["Usage Stats"])).toEqual([1, 5, 7, 9]);
+    expect(
+      pinnedClocks("android", "App Ops Recent Accesses", ALEAPP_UPSTREAM["App Ops Recent Accesses"]),
+    ).toEqual([0, 1]);
+    // No declaration → the importer's generic picker; a mismatched tuple → the generic picker too.
+    expect(pinnedClocks("android", "Web Visits", ALEAPP_UPSTREAM["Web Visits"])).toBeUndefined();
+    expect(pinnedClocks("android", "Usage Stats", ALEAPP_UPSTREAM["Usage Stats"].slice(1))).toBeUndefined();
+    expect(pinnedClocks("ios", "Usage Stats", ALEAPP_UPSTREAM["Usage Stats"])).toBeUndefined();
+    // An `unknown`-platform import matches, exactly as readOrigin lets it.
+    expect(pinnedClocks("unknown", "Usage Stats", ALEAPP_UPSTREAM["Usage Stats"])).toEqual([1, 5, 7, 9]);
+  });
+
+  it("Usage Stats: a usage record identified by Package; the duration columns are never a facet", () => {
+    const r = upstreamRead("Usage Stats", {
+      "User (UID)": "0",
+      "Timestamp / Last Time Active": "2026-05-02 10:00:00",
+      "Usage Type": "packages",
+      "Time Active (ms)": "123456",
+      Package: "com.example.app",
+    });
+    expect(r.block.registry.coverage).toBe("schema-matches");
+    expect(r.block.facets).toMatchObject({ record: "usage", acquisition: "not-established" });
+    expect(r.block.app).toEqual({ package: "com.example.app" });
+    expect(r.block.evidence.map((e) => e.column)).not.toContain("Time Active (ms)");
+  });
+
+  it("end to end: a Usage Stats row whose first clock is empty is dated by the next datetime column — never by a duration", () => {
+    const headers = ALEAPP_UPSTREAM["Usage Stats"];
+    const row = (cells: Record<string, string>) => headers.map((h) => cells[h] ?? "").join("\t");
+    const text = [
+      headers.join("\t"),
+      row({
+        "User (UID)": "0",
+        "Time Active (ms)": "123456",
+        "Time Active (sec)": "123",
+        "Last Time Visible": "2026-05-02 10:00:00",
+        Package: "com.example.app",
+      }),
+      row({ "User (UID)": "0", "Time Active (ms)": "999", Package: "com.example.app" }),
+    ].join("\n");
+    const r = parseLeappTsv(text, "Usage Stats.tsv", { platform: "android" });
+    expect(r.origin.schemaMatches).toBe(2);
+    expect(r.events).toHaveLength(2);
+    // aggregateEvents sorts, so find each row by its content, never by position.
+    const dated = r.events.find((e) => e.description.includes("123456"))!;
+    const durationsOnly = r.events.find((e) => e.description.includes("999"))!;
+    expect(dated.timestamp).toBe("2026-05-02T10:00:00Z");
+    expect(dated.description).toContain("[Last Time Visible: 2026-05-02 10:00:00]");
+    expect(dated.canonical?.mobile?.facets.record).toBe("usage");
+    // Only durations populated: undated, and no duration is ever shown as the row's clock.
+    expect(r.undated).toBe(1);
+    expect(durationsOnly.timestamp).toBe("");
+    expect(durationsOnly.description).not.toMatch(/\[Time Active \((ms|sec)\): /);
+  });
+
+  it("end to end: a Legacy AppOps row is dated by whichever Timestamp T* column is populated, in upstream order", () => {
+    const headers = ALEAPP_UPSTREAM["App Ops Permissions - Legacy"];
+    const row = (cells: Record<string, string>) => headers.map((h) => cells[h] ?? "").join("\t");
+    const text = [
+      headers.join("\t"),
+      row({
+        "Timestamp TT": "2026-05-02 10:00:00",
+        "Package Name": "com.example.app",
+        Permission: "READ_SMS",
+      }),
+      row({
+        "Timestamp TC": "2026-05-01 09:00:00",
+        "Timestamp TT": "2026-05-02 10:00:00",
+        "Package Name": "com.example.app",
+        Permission: "READ_SMS",
+      }),
+    ].join("\n");
+    const r = parseLeappTsv(text, "App Ops Permissions - Legacy.tsv", { platform: "android" });
+    expect(r.origin.schemaMatches).toBe(2);
+    expect(r.undated).toBe(0);
+    const byClock = (name: string) => r.events.find((e) => e.description.includes(`[${name}: `))!;
+    expect(byClock("Timestamp TT").timestamp).toBe("2026-05-02T10:00:00Z");
+    // Both TC and TT populated: TC wins, upstream order — TT stays in the rendered cells.
+    const tc = byClock("Timestamp TC");
+    expect(tc.timestamp).toBe("2026-05-01T09:00:00Z");
+    expect(tc.description).toContain("2026-05-02 10:00:00");
+  });
+
+  it("end to end: a real 23-column Android Notification History row is dated by Posted Time and typed by package (#1336)", () => {
+    const headers = ALEAPP_UPSTREAM["Android Notification History"];
+    const row = (cells: Record<string, string>) => headers.map((h) => cells[h] ?? "").join("\t");
+    const text = [
+      headers.join("\t"),
+      row({
+        "Posted Time": "2026-05-02 10:00:00",
+        Title: "hi",
+        "Package Name": "com.example.chat",
+        "Timestamp From Protobuf File Name": "2026-05-02 10:00:05",
+      }),
+    ].join("\n");
+    const r = parseLeappTsv(text, "Android Notification History.tsv", { platform: "android" });
+    expect(r.origin).toMatchObject({ schemaMatches: 1, headersDiffer: 0 });
+    expect(r.events[0].timestamp).toBe("2026-05-02T10:00:00Z");
+    expect(r.events[0].description).toContain("[Posted Time: 2026-05-02 10:00:00]");
+    expect(r.events[0].canonical?.mobile?.app).toEqual({ package: "com.example.chat" });
+  });
+
+  it("end to end: which AppOps clock is populated is the outcome, and the row is dated by it and names it", () => {
+    const headers = ALEAPP_UPSTREAM["App Ops Permissions"];
+    const row = (cells: Record<string, string>) => headers.map((h) => cells[h] ?? "").join("\t");
+    const text = [
+      headers.join("\t"),
+      row({
+        "Reject Timestamp": "2026-05-02 10:00:00",
+        "Package Name": "com.example.app",
+        Permission: "CAMERA",
+      }),
+      row({
+        "Access Timestamp": "2026-05-03 11:00:00",
+        "Package Name": "com.example.app",
+        Permission: "CAMERA",
+      }),
+    ].join("\n");
+    const r = parseLeappTsv(text, "App Ops Permissions.tsv", {
+      platform: "android",
+      device: "Subject Pixel",
+    });
+    expect(r.origin.schemaMatches).toBe(2);
+    expect(r.events).toHaveLength(2);
+    // aggregateEvents sorts: find each row by its own clock tag, never by position.
+    const rejected = r.events.find((e) => e.description.includes("[Reject Timestamp:"))!;
+    const accessed = r.events.find((e) => e.description.includes("[Access Timestamp:"))!;
+    expect(rejected.timestamp).toBe("2026-05-02T10:00:00Z");
+    expect(rejected.description).toContain("[Reject Timestamp: 2026-05-02 10:00:00]");
+    expect(accessed.timestamp).toBe("2026-05-03T11:00:00Z");
+    expect(accessed.description).toContain("[Access Timestamp: 2026-05-03 11:00:00]");
+    for (const e of r.events) {
+      expect(e.asset).toBe("Subject Pixel");
+      expect(e.canonical?.mobile?.facets.record).toBe("permission");
+      expect(e.canonical?.mobile?.app).toEqual({ package: "com.example.app" });
+      expect(e.description).toContain(`permission — ${REGISTRY_VERSION}]`);
+    }
+  });
+
+  it("end to end: a Permission Grants table has no clock — its rows import undated, never with an invented time", () => {
+    const headers = ALEAPP_UPSTREAM["Permission Grants (Permission Store)"];
+    const text = [
+      headers.join("\t"),
+      ["com.example.app", "10123", "0", "android.permission.READ_SMS", "Yes", "USER_SET"].join("\t"),
+    ].join("\n");
+    const r = parseLeappTsv(text, "Permission Grants (Permission Store).tsv", { platform: "android" });
+    expect(r.origin.schemaMatches).toBe(1);
+    expect(r.undated).toBe(1);
+    expect(r.events[0].timestamp).toBe("");
+    expect(r.events[0].description).toContain("(granted Yes)");
+    expect(r.events[0].canonical?.mobile?.app).toEqual({ package: "com.example.app" });
+  });
+
+  // Consumer safety: the typed package on an Android permission/usage row must not leak into the
+  // passes that read `app.package` today. (mobileAppPresenceComparator.ts reads the backup-
+  // generation ledger, never a timeline row — structurally unaffected, no test to write.)
+  it("markAppCorroboration is iOS-only: two Android rows naming one package on one device get no note", () => {
+    const tsvOf = (name: string, cells: Record<string, string>) => {
+      const headers = ALEAPP_UPSTREAM[name];
+      return [headers.join("\t"), headers.map((h) => cells[h] ?? "").join("\t")].join("\n");
+    };
+    const a = parseLeappTsv(
+      tsvOf("App Ops Permissions", {
+        "Access Timestamp": "2026-05-02 10:00:00",
+        "Package Name": "com.example.app",
+        Permission: "CAMERA",
+      }),
+      "App Ops Permissions.tsv",
+      { platform: "android", device: "Subject Pixel" },
+    ).events[0];
+    const u = parseLeappTsv(
+      tsvOf("Usage Stats", {
+        "Timestamp / Last Time Active": "2026-05-02 11:00:00",
+        Package: "com.example.app",
+      }),
+      "Usage Stats.tsv",
+      { platform: "android", device: "Subject Pixel" },
+    ).events[0];
+    const rows = [a, u].map((e, i) => ({
+      ...e,
+      id: `r${i}`,
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    })) as ForensicEvent[];
+    for (const e of markAppCorroboration(rows)) expect(e.description).not.toContain(APP_CORROBORATION_MARKER);
+    // Positive control, same shape: the equivalent iOS pair on one device DOES get the note — so
+    // the Android silence above is the platform gate, not a row the pass could not read.
+    const iosRow = (name: string, cells: Record<string, string>, id: string) => {
+      const entry = registryEntry(name)!;
+      const text = [entry.headers.join("\t"), entry.headers.map((h) => cells[h] ?? "").join("\t")].join("\n");
+      const e = parseLeappTsv(text, `${name}.tsv`, { platform: "ios", device: "Subject iPhone" }).events[0];
+      return { ...e, id, mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] } as ForensicEvent;
+    };
+    const ios = markAppCorroboration([
+      iosRow(
+        "Application Permissions",
+        {
+          "Last Modified Timestamp": "2026-05-02 10:00:00",
+          "Bundle ID": "com.example.app",
+          Service: "Camera",
+          Access: "Allowed",
+        },
+        "i1",
+      ),
+      iosRow(
+        "knowledgeC - App Usage",
+        {
+          "Start Time": "2026-05-02 11:00:00",
+          "End Time": "2026-05-02 11:05:00",
+          "Time Added": "2026-05-02 11:05:00",
+          Application: "com.example.app",
+        },
+        "i2",
+      ),
+    ]);
+    expect(ios.some((e) => e.description.includes(APP_CORROBORATION_MARKER))).toBe(true);
+  });
+
+  it("markInfectionWindow: an Android permission row naming a live-malicious package is placed, never a sign — only an app-inventory row is", () => {
+    const tsvOf = (name: string, cells: Record<string, string>) => {
+      const headers = ALEAPP_UPSTREAM[name];
+      return [headers.join("\t"), headers.map((h) => cells[h] ?? "").join("\t")].join("\n");
+    };
+    const perm = parseLeappTsv(
+      tsvOf("App Ops Permissions", {
+        "Access Timestamp": "2026-05-01 10:00:00",
+        "Package Name": "com.evil.app",
+        Permission: "CAMERA",
+      }),
+      "App Ops Permissions.tsv",
+      { platform: "android", device: "Subject Pixel" },
+    ).events[0];
+    const rows = [
+      { ...perm, id: "p1", mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] },
+    ] as ForensicEvent[];
+    const iocs: IOC[] = [
+      {
+        id: "i1",
+        type: "process",
+        value: "com.evil.app",
+        firstSeen: "2026-05-01T00:00:00Z",
+        enrichments: [
+          {
+            source: "VirusTotal",
+            verdict: "malicious",
+            fetchedAt: "2026-05-01T00:00:00Z",
+            assertionId: "a1",
+            status: "live",
+          },
+        ],
+      },
+    ];
+    // Alone, the permission row is not an earliest sign: nothing to place it against.
+    for (const e of markInfectionWindow(rows, iocs, "2026-06-01T00:00:00Z"))
+      expect(e.description).not.toContain(INFECTION_WINDOW_MARKER);
+    // With an inventory sign later than it, it is placed BEFORE that sign like any other mobile row.
+    const inv = parseLeappTsv(
+      tsvOf("installedappsGass", {
+        User: "0",
+        "Bundle ID": "com.evil.app",
+        "Version Code": "1",
+        "SHA-256 Hash": "a".repeat(64),
+      }),
+      "installedappsGass.tsv",
+      { platform: "android", device: "Subject Pixel" },
+    ).events[0];
+    const dated = {
+      ...inv,
+      id: "g1",
+      timestamp: "2026-05-03T00:00:00Z",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    } as ForensicEvent;
+    const marked = markInfectionWindow([...rows, dated], iocs, "2026-06-01T00:00:00Z");
+    expect(marked[0].description).toContain(INFECTION_WINDOW_MARKER);
+    expect(marked[0].description).toContain("before the earliest sign");
+    // #1336 typed the package on Android Notification History too: a notification naming the
+    // malicious package is likewise never a sign (only an app-inventory row is) — with no inventory
+    // row present, nothing on the device gets a window note at all.
+    const notif = parseLeappTsv(
+      tsvOf("Android Notification History", {
+        "Posted Time": "2026-04-30 09:00:00",
+        "Package Name": "com.evil.app",
+        Title: "hi",
+      }),
+      "Android Notification History.tsv",
+      { platform: "android", device: "Subject Pixel" },
+    ).events[0];
+    const notifRow = {
+      ...notif,
+      id: "n1",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    } as ForensicEvent;
+    for (const e of markInfectionWindow([...rows, notifRow], iocs, "2026-06-01T00:00:00Z"))
+      expect(e.description).not.toContain(INFECTION_WINDOW_MARKER);
   });
 });

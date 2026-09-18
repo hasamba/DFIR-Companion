@@ -41,7 +41,7 @@ export function findingsCsv(state: InvestigationState): string {
 }
 
 export function iocsCsv(state: InvestigationState): string {
-  const header = "id,type,value,firstSeen,sources,sourceCount,enrichment,riskScore,riskFactors";
+  const header = "id,type,value,firstSeen,sources,sourceCount,enrichment,riskScore,riskFactors,provenance";
   const iocSrc = deriveIocSources(state.iocs, state.forensicTimeline);
   const risk = scoreIocsFromState(state); // #63 composite risk (verdict + severity + corroboration)
   // WHEN each verdict applies (#933 item 19) rides in the same cell, in braces, so a spreadsheet
@@ -70,6 +70,9 @@ export function iocsCsv(state: InvestigationState): string {
       intel,
       r?.score ?? "",
       (r?.factors ?? []).join(" | "),
+      // #1326: its own column, never a suffix on the value — the value cell is exactly what a
+      // downstream tool would feed a block-list, and a client-reported one must be tellable apart.
+      i.provenance ?? "",
     ]);
   });
   return [header, ...rows].join("\n") + "\n";
@@ -108,7 +111,8 @@ export function forensicTimelineCsv(state: InvestigationState): string {
 
 // IP + geolocation export for the Geographic map panel (#133) — for external OSINT tooling.
 export function geoMapCsv(data: GeoMapData): string {
-  const header = "ip,country,city,lat,lon,asn,severity,verdict,internal,eventCount,approximate";
+  const header =
+    "ip,country,city,lat,lon,asn,severity,verdict,internal,eventCount,approximate,clientReported";
   const rows = data.markers.map((m) =>
     row([
       m.ip,
@@ -122,6 +126,7 @@ export function geoMapCsv(data: GeoMapData): string {
       m.internal ? "yes" : "no",
       String(m.eventCount),
       m.approximate ? "yes" : "no",
+      m.clientReported ? "yes" : "no", // #1326: a pin placed from a sender-controlled header
     ]),
   );
   return [header, ...rows].join("\n") + "\n";

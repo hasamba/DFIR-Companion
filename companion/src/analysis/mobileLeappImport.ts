@@ -12,7 +12,7 @@ import {
 import { parseCsvRecords } from "./csvImport.js";
 import { boundedAggKey, boundedText, boundedTextTo } from "./aggKey.js";
 import { createCanonicalEvent } from "./canonicalEvent.js";
-import { readOrigin, REGISTRY_VERSION } from "./mobileOriginRegistry.js";
+import { pinnedClocks, readOrigin, REGISTRY_VERSION } from "./mobileOriginRegistry.js";
 
 // Deterministic importer for iLEAPP / ALEAPP output — iOS and Android logical-extraction parsing.
 // No AI call.
@@ -244,12 +244,15 @@ export function parseLeappTsv(
   if (records.length < 2) return empty;
 
   const headers = (records[0] ?? []).map((h) => h.trim());
-  const candidates = timeColumns(headers);
   const rows = records.slice(1);
   const total = rows.length;
 
   const label = sourceLabel(opts.platform ?? "unknown");
   const artifact = artifactName(filename);
+  const platform = opts.platform ?? "unknown";
+  // A registered artifact whose headers match the pin may declare upstream's own datetime columns
+  // (#1298); otherwise the generic picker, as for every table before it.
+  const candidates = pinnedClocks(platform, artifact, headers) ?? timeColumns(headers);
   const iocSink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
   let undated = 0;
@@ -260,7 +263,6 @@ export function parseLeappTsv(
     notCovered: 0,
     excluded: 0,
   };
-  const platform = opts.platform ?? "unknown";
   const device = (opts.device ?? "").trim().slice(0, 120);
 
   for (const [rowIndex, cells] of rows.entries()) {

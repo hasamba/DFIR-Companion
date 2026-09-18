@@ -98,13 +98,14 @@ function sanitizeForNote(s: string): string {
 }
 
 /** Attributed instance/endpoint entries parsed from the sibling pass's own note text. */
-interface AttributedEndpoint {
+export interface AttributedEndpoint {
   label: "source" | "destination";
   ip: string;
   instanceId: string;
 }
 
-function parseAttributionEndpoints(description: string | undefined): AttributedEndpoint[] {
+/** Shared with awsFlowSensitiveDataJoin.ts (#1295) so both joins read the sibling note identically. */
+export function parseAttributionEndpoints(description: string | undefined): AttributedEndpoint[] {
   const m = ATTRIBUTION_NOTE_RE.exec(description ?? "");
   if (!m) return [];
   const out: AttributedEndpoint[] = [];

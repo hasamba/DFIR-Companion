@@ -27,11 +27,17 @@
 // corroboration) from a fresh check of iLEAPP main @ 6dc251d857c0 (2026-09-14). Moving the shared
 // iLEAPP pin re-verifies every EXISTING iOS entry too, since headersMatch is exact-and-ordered —
 // every pre-existing iOS entry was re-diffed against the new commit before this change; every
-// header tuple is unchanged. ALEAPP is untouched (nothing Android added or re-verified here).
-export const REGISTRY_VERSION = "leapp-origin-2026-09-16";
+// header tuple is unchanged.
+// 2026-09-18: seven Android entries added for #1298 (932.15's granted/used-permission
+// prerequisite: AppOps modern + legacy, Recent Accesses, Permission Modes, the two Permission
+// Store views, Usage Stats) from ALEAPP main @ ce0880dc232c. Every pre-existing Android entry was
+// re-diffed against that commit: eight unchanged; `Android Notification History` had pinned 17 of
+// upstream's 23 columns since before the previous pin (#1336) and is corrected here. iLEAPP is
+// untouched.
+export const REGISTRY_VERSION = "leapp-origin-2026-09-18";
 export const REGISTRY_PINS = {
   iLEAPP: { ref: "main", commit: "6dc251d857c0", date: "2026-09-14" },
-  ALEAPP: { ref: "main", commit: "498491475597", date: "2026-09-13" },
+  ALEAPP: { ref: "main", commit: "ce0880dc232c", date: "2026-09-18" },
 } as const;
 
 import { ACQUISITIONS, LOCALITIES, RECORD_TYPES, type MobileBlock } from "./canonicalMobile.js";
@@ -62,6 +68,12 @@ interface RegistryEntry {
    * compare. Named `app-inventory` originally (#988); now also populated on usage/power/permission/
    * network/notification rows (#932 item 16) so those join by the same identity. */
   app?: { package?: string; sha256?: string };
+  /** Upstream's own `datetime`-typed headers, in upstream order — the row's clock candidates
+   * (#1298). Declared only where the importer's generic picker (a header containing the word
+   * `time` or `date`, or ending in `timestamp`) would miss a clock (`Timestamp TP` satisfies
+   * neither rule) or take a duration for one (`Time Active (ms)` contains the word `time`); an
+   * entry without it keeps the generic picker. Honoured only when the headers match the pin. */
+  clocks?: readonly string[];
 }
 
 const SAFARI_ICLOUD_TABS = [
@@ -355,10 +367,19 @@ export const REGISTRY: readonly RegistryEntry[] = [
       "Image Type",
       "Image Bitmap Filename",
       "Image Resource ID",
+      // #1336: the six columns below were upstream at the previous pin too; the entry had stopped
+      // at `Image Resource ID`, so every real export read headers-differ.
+      "Image Resource ID Package",
+      "Image Data Length",
+      "Image Data Offset",
+      "Image URI",
+      "Protobuf File Name",
+      "Timestamp From Protobuf File Name",
     ],
     // As for Notification Duet: the package posted it; that is all the column says.
     record: "notification",
     locality: "device-local",
+    app: { package: "Package Name" },
   },
   {
     platform: "android",
@@ -405,6 +426,172 @@ export const REGISTRY: readonly RegistryEntry[] = [
     acquisitionColumn: "Account",
     account: { name: "Account" },
   },
+  // #1298 (932.15's granted/used prerequisite). An AppOps row is evidence the OS recorded a
+  // permission operation for that package — never proof the user consciously granted it, never
+  // proof of malicious use. A stored grant (`Granted`, `Mode`) is a state at collection time, not
+  // a grant event and not evidence the permission was ever exercised. A usage row is presence in
+  // the OS's usage ledger, not execution of a particular function.
+  {
+    platform: "android",
+    name: "App Ops Permissions",
+    lastUpdate: "2026-08-01",
+    // No outcome column: whether the op was allowed or rejected is which timestamp is populated,
+    // and AppOps keeps both a last access and a last reject per op, so both can be. The importer
+    // dates the row by the first populated declared clock and stamps that clock's name on it —
+    // `[Reject Timestamp: …]` when only the reject is set; when both are, the row is dated by the
+    // access and the reject survives only as a rendered cell. No facet restates it.
+    headers: [
+      "Access Timestamp",
+      "Reject Timestamp",
+      "Package Name",
+      "ID",
+      "Proxy Package Name",
+      "Proxy Package UID",
+      "Permission",
+    ],
+    clocks: ["Access Timestamp", "Reject Timestamp"],
+    record: "permission",
+    locality: "device-local",
+    app: { package: "Package Name" },
+  },
+  {
+    platform: "android",
+    name: "App Ops Permissions - Legacy",
+    lastUpdate: "2026-08-01",
+    headers: [
+      "Timestamp TP",
+      "Timestamp TC",
+      "Timestamp TB",
+      "Timestamp TF",
+      "Timestamp TFS",
+      "Timestamp TT",
+      "Package Name",
+      "Duration",
+      "Proxy Package Name",
+      "Proxy Package UID",
+      "Permission",
+    ],
+    clocks: ["Timestamp TP", "Timestamp TC", "Timestamp TB", "Timestamp TF", "Timestamp TFS", "Timestamp TT"],
+    record: "permission",
+    locality: "device-local",
+    app: { package: "Package Name" },
+  },
+  {
+    platform: "android",
+    name: "App Ops Recent Accesses",
+    lastUpdate: "2026-09-06",
+    headers: [
+      "Access Timestamp",
+      "Reject Timestamp",
+      "Package Name",
+      "UID",
+      "Permission",
+      "Op Code",
+      "Attribution Tag",
+      "App State At Access",
+      "Access Flag",
+      "Access Duration (ms)",
+      "Op Mode",
+      "Proxy Package Name",
+      "Proxy Attribution Tag",
+      "Proxy UID",
+      "Source File",
+    ],
+    clocks: ["Access Timestamp", "Reject Timestamp"],
+    record: "permission",
+    locality: "device-local",
+    app: { package: "Package Name" },
+    // The mode in force at access time: upstream's OP_MODES (AppOpsManager at android-15.0.0_r1)
+    // is ALLOWED / IGNORED / ERRORED / DEFAULT / FOREGROUND, or the stored integer outside that
+    // set — carried verbatim, as TCC's Access is. A different fact from a configured `Mode`.
+    accessColumn: "Op Mode",
+  },
+  {
+    platform: "android",
+    name: "App Ops Permission Modes",
+    lastUpdate: "2026-09-06",
+    headers: [
+      "Package Name",
+      "UID",
+      "Android User",
+      "Permission",
+      "Op Code",
+      "Mode",
+      "Mode Stored Against",
+      "Source File",
+    ],
+    record: "permission",
+    locality: "device-local",
+    app: { package: "Package Name" },
+    // The CONFIGURED mode for the op (same OP_MODES vocabulary), not an access — a state.
+    accessColumn: "Mode",
+  },
+  {
+    platform: "android",
+    name: "App Op Modes (Permission Store)",
+    lastUpdate: "2026-09-07",
+    headers: ["Package Name", "App ID", "Android User", "App Op", "Op Code", "Mode", "Mode Stored Against"],
+    record: "permission",
+    locality: "device-local",
+    app: { package: "Package Name" },
+    accessColumn: "Mode",
+  },
+  {
+    platform: "android",
+    name: "Permission Grants (Permission Store)",
+    lastUpdate: "2026-09-07",
+    headers: ["Package Name", "App ID", "Android User", "Permission", "Granted", "Permission Flags"],
+    record: "permission",
+    locality: "device-local",
+    app: { package: "Package Name" },
+    // AOSP's own PermissionFlags.isPermissionGranted, ported upstream: Yes / No, or the raw flags
+    // value when it cannot decide — never re-derived here.
+    accessColumn: "Granted",
+  },
+  {
+    platform: "android",
+    name: "Usage Stats",
+    lastUpdate: "2026-08-01",
+    headers: [
+      "User (UID)",
+      "Timestamp / Last Time Active",
+      "Usage Type",
+      "Time Active (ms)",
+      "Time Active (sec)",
+      "Last Time Service Used",
+      "Total Time Service Used (ms)",
+      "Last Time Visible",
+      "Total Time Visible (ms)",
+      "Last Time Component Used",
+      "App Launch Count",
+      "Package",
+      "Event Type",
+      "Class",
+      "Event Flags (as stored)",
+      "Shortcut ID",
+      "Standby Bucket (high 16 bits)",
+      "Standby Reason (low 16 bits)",
+      "Notification Channel",
+      "Instance ID",
+      "Task Root Package",
+      "Task Root Class",
+      "Locus ID",
+      "Interaction Category",
+      "Interaction Action",
+      "Interval",
+    ],
+    // Four datetime columns upstream; `Time Active (ms)` and its siblings are durations and are
+    // never a clock.
+    clocks: [
+      "Timestamp / Last Time Active",
+      "Last Time Service Used",
+      "Last Time Visible",
+      "Last Time Component Used",
+    ],
+    record: "usage",
+    locality: "device-local",
+    app: { package: "Package" },
+  },
 ];
 
 const norm = (s: string) => s.trim();
@@ -418,6 +605,29 @@ export function registryEntry(artifact: string): RegistryEntry | undefined {
 export function headersMatch(entry: RegistryEntry, headers: readonly string[]): boolean {
   const have = headers.map(norm);
   return have.length === entry.headers.length && have.every((h, i) => h === entry.headers[i]);
+}
+
+/** An entry may be read for its own platform, or for an `unknown` import; never across platforms.
+ * One predicate for readOrigin and pinnedClocks, so a row can never be dated by a pin its origin
+ * reading would not vouch for. */
+function platformAdmits(entry: RegistryEntry, platform: MobileBlock["platform"]): boolean {
+  return entry.platform === platform || platform === "unknown";
+}
+
+/** The column indices of an entry's declared clocks, in the order the entry declares them (the
+ * registry test holds that to upstream's header order) — or undefined when the artifact declares
+ * none, is not this platform's, or its headers do not match the pin (then the importer's generic
+ * picker applies, as it always did). */
+export function pinnedClocks(
+  platform: MobileBlock["platform"],
+  artifact: string,
+  headers: readonly string[],
+): number[] | undefined {
+  const entry = registryEntry(artifact);
+  if (!entry?.clocks || !platformAdmits(entry, platform) || !headersMatch(entry, headers)) return undefined;
+  const have = headers.map(norm);
+  const out = entry.clocks.map((c) => have.indexOf(norm(c))).filter((i) => i >= 0);
+  return out.length ? out : undefined;
 }
 
 export interface OriginReading {
@@ -443,7 +653,7 @@ export function readOrigin(
   const found = registryEntry(artifact);
   // The registry entry must be the requested platform's: an Android import of a file named like
   // an iOS artifact is not evidence of anything and is said so, not read as iOS.
-  const entry = found && found.platform !== platform && platform !== "unknown" ? undefined : found;
+  const entry = found && !platformAdmits(found, platform) ? undefined : found;
   const col = (name: string): string => {
     const i = headers.findIndex((h) => norm(h) === name);
     return i >= 0 ? (cells[i] ?? "").trim() : "";
@@ -563,7 +773,11 @@ export function readOrigin(
     ...(deviceName ? [`row names device "${tagSafe(deviceName.slice(0, NAME_MAX))}"`] : []),
     ...(accountName ? [`row names account "${tagSafe(accountName.slice(0, NAME_MAX))}"`] : []),
     ...(transition ? [`transition ${tagSafe(transition.slice(0, NAME_MAX))}`] : []),
-    ...(access ? [`access ${tagSafe(access.slice(0, NAME_MAX))}`] : []),
+    // The column's own name, lowercased, so a configured `mode`, an at-access `op mode` and a
+    // stored `granted` never read as one shared fact; TCC's column is literally `Access`.
+    ...(entry.accessColumn && access
+      ? [`${entry.accessColumn.toLowerCase()} ${tagSafe(access.slice(0, NAME_MAX))}`]
+      : []),
   ];
   const words = `${parts.join(", ")}${names.length ? ` (${names.join("; ")})` : ""}${conflicts.length ? "; conflict: " + conflicts.map(tagSafe).join("; ") : ""} — ${REGISTRY_VERSION}`;
   return { block, words };
