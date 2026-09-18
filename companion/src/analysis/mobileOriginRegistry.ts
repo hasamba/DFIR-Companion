@@ -4,8 +4,8 @@
 //
 // PINNED TO UPSTREAM. Every entry names the artifact exactly as upstream names it (the TSV
 // filename LEAPP writes), the module's `last_update_date` where the module has one, and the
-// header tuple the module's `data_headers` emits, in order. Read from the upstream sources on
-// 2026-09-14: iLEAPP main @ 925f3d71e2e0, ALEAPP main @ 498491475597 (both 2026-09-13). A TSV
+// header tuple the module's `data_headers` emits, in order. Read from the upstream sources at
+// REGISTRY_PINS below (see the dated comment above it for when/why each side last moved). A TSV
 // whose headers differ from the pinned tuple is `headers-differ` even when its name matches — a
 // guess about a renamed column would mislabel a row both ways. A bare TSV carries no producer
 // version, so coverage is `schema-matches`, never `producer-verified`: the headers match the
