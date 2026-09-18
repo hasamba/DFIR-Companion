@@ -1055,3 +1055,72 @@ describe("mergeDelta leaves event-carried techniques to projection (#893)", () =
     expect(next.mitreTechniques.map((t) => t.id)).toEqual(["T1486"]);
   });
 });
+
+describe("#1266 -- client-reported IOC provenance through mergeDelta", () => {
+  const ctx = { windowSequence: 1, timestamp: "2026-05-28T10:00:00.000Z", sourceScreenshots: [] };
+  const marked = { id: "i1", type: "ip" as const, value: "1.2.3.4", provenance: "client-reported" as const };
+  const plainLinked = { id: "i9", type: "ip" as const, value: "1.2.3.4", extractedFrom: ["ev-zeek-1"] };
+  const plainUnlinked = { id: "i8", type: "ip" as const, value: "1.2.3.4" };
+
+  it("persists the marker on a new IOC", () => {
+    const next = mergeDelta(emptyState("c1"), { ...baseDelta, iocs: [marked] }, ctx);
+    expect(next.iocs[0].provenance).toBe("client-reported");
+  });
+
+  it("never demotes an existing unmarked IOC on a later marked sighting", () => {
+    const s1 = mergeDelta(emptyState("c1"), { ...baseDelta, iocs: [plainLinked] }, ctx);
+    const s2 = mergeDelta(s1, { ...baseDelta, iocs: [marked] }, { ...ctx, windowSequence: 2 });
+    expect(s2.iocs).toHaveLength(1);
+    expect(s2.iocs[0].provenance).toBeUndefined();
+  });
+
+  it("clears the marker on a later EVENT-LINKED ordinary sighting of the same value", () => {
+    const s1 = mergeDelta(emptyState("c1"), { ...baseDelta, iocs: [marked] }, ctx);
+    const s2 = mergeDelta(s1, { ...baseDelta, iocs: [plainLinked] }, { ...ctx, windowSequence: 2 });
+    expect(s2.iocs).toHaveLength(1);
+    expect(s2.iocs[0].provenance).toBeUndefined();
+    expect(s2.iocs[0].extractedFrom).toEqual(["ev-zeek-1"]);
+  });
+
+  it("does NOT clear the marker on an unlinked restatement -- what a stripped AI delta looks like", () => {
+    const s1 = mergeDelta(emptyState("c1"), { ...baseDelta, iocs: [marked] }, ctx);
+    const s2 = mergeDelta(s1, { ...baseDelta, iocs: [plainUnlinked] }, { ...ctx, windowSequence: 2 });
+    expect(s2.iocs).toHaveLength(1);
+    expect(s2.iocs[0].provenance).toBe("client-reported");
+  });
+
+  it("an IOC persisted before the field existed merges unchanged (no field, no marker)", () => {
+    const s1 = mergeDelta(emptyState("c1"), { ...baseDelta, iocs: [plainUnlinked] }, ctx);
+    expect("provenance" in s1.iocs[0]).toBe(false);
+    const s2 = mergeDelta(s1, { ...baseDelta, iocs: [plainUnlinked] }, { ...ctx, windowSequence: 2 });
+    expect("provenance" in s2.iocs[0]).toBe(false);
+  });
+
+  it("alias-routed incoming (ctx.iocAliases) follows the same rules on the canonical row", () => {
+    const s1 = mergeDelta(emptyState("c1"), { ...baseDelta, iocs: [marked] }, ctx);
+    const canonicalId = s1.iocs[0].id;
+    const aliasCtx = { ...ctx, windowSequence: 2, iocAliases: { "1.2.3.5": canonicalId } };
+    const linkedAlias = { id: "i7", type: "ip" as const, value: "1.2.3.5", extractedFrom: ["ev-zeek-2"] };
+    const s2 = mergeDelta(s1, { ...baseDelta, iocs: [linkedAlias] }, aliasCtx);
+    expect(s2.iocs).toHaveLength(1);
+    expect(s2.iocs[0].provenance).toBeUndefined();
+    expect(s2.iocs[0].aliasValues).toContain("1.2.3.5");
+  });
+});
+
+describe("#1266 -- re-import idempotency and a marked duplicate", () => {
+  const ctx = { windowSequence: 1, timestamp: "2026-05-28T10:00:00.000Z", sourceScreenshots: [] };
+  it("a marked IOC re-imported as marked (with extractedFrom) stays marked", () => {
+    const marked = {
+      id: "i1",
+      type: "ip" as const,
+      value: "1.2.3.4",
+      provenance: "client-reported" as const,
+      extractedFrom: ["ev-mail-1"],
+    };
+    const s1 = mergeDelta(emptyState("c1"), { ...baseDelta, iocs: [marked] }, ctx);
+    const s2 = mergeDelta(s1, { ...baseDelta, iocs: [marked] }, { ...ctx, windowSequence: 2 });
+    expect(s2.iocs).toHaveLength(1);
+    expect(s2.iocs[0].provenance).toBe("client-reported");
+  });
+});

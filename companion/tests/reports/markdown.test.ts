@@ -1109,3 +1109,41 @@ describe("renderMarkdownReport — IOC section leads with indicators (eval follo
     expect(md).toMatch(/Plus 1 observation\(s\)/); // …it is a count instead
   });
 });
+
+describe("#1266 -- the IOC table and the geo table both say (client-reported)", () => {
+  it("suffixes the value in the IOC table only for a client-reported IOC", () => {
+    const state = emptyState("c1");
+    state.iocs.push(
+      {
+        id: "i1",
+        type: "ip",
+        value: "198.51.100.23",
+        firstSeen: "2026-05-28T09:00:00.000Z",
+        provenance: "client-reported",
+      },
+      { id: "i2", type: "ip", value: "8.8.8.8", firstSeen: "2026-05-28T09:00:00.000Z" },
+    );
+    const md = renderMarkdownReport(state);
+    expect(md).toContain("| i1 | ip | 198.51.100.23 (client-reported) |");
+    expect(md).toContain("| i2 | ip | 8.8.8.8 |");
+  });
+});
+
+describe("#1266 -- the geo table suffixes the IP, not the severity", () => {
+  it("renders (client-reported) on the IP cell of a client-reported pin", () => {
+    const state = emptyState("c1");
+    state.iocs.push({
+      id: "i1",
+      type: "ip",
+      value: "198.51.100.23",
+      firstSeen: "2026-05-28T09:00:00.000Z",
+      provenance: "client-reported",
+      enrichments: [
+        { source: "GeoIP", verdict: "unknown", fetchedAt: "t", lat: 37.4, lon: -122.1, country: "US" },
+      ],
+    });
+    const md = renderMarkdownReport(state);
+    const geoSection = md.slice(md.indexOf("### 4.10 Geographic distribution"));
+    expect(geoSection).toContain("| 198.51.100.23 (client-reported) | US |");
+  });
+});

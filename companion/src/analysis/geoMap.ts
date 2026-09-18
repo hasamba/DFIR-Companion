@@ -30,6 +30,7 @@ export interface GeoMarker {
   verdict?: string;
   internal: boolean;
   falsePositive: boolean;
+  clientReported?: boolean; // #1266: the IOC was read from a sender-controlled header — a pin, not an observation
   eventCount: number;
   sources: string[];
   firstSeen?: string;
@@ -230,6 +231,7 @@ export function buildGeoMap(state: InvestigationState, opts: GeoMapOptions = {})
       verdict: worstVerdict(i),
       internal: isInternalIp(i.value),
       falsePositive: isLegit,
+      ...(i.provenance === "client-reported" ? { clientReported: true } : {}),
       eventCount: a?.count ?? 0,
       sources: a ? [...a.sources].sort() : [],
       firstSeen: a?.first,

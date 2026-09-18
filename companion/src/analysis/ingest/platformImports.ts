@@ -68,6 +68,7 @@ export async function importSiem(
       type: c.type,
       value: c.value,
       ...(c.extractedFrom ? { extractedFrom: c.extractedFrom } : {}),
+      ...(c.provenance ? { provenance: c.provenance } : {}), // #1266
     })),
     mitreTechniques: [],
     forensicEvents,
@@ -288,7 +289,14 @@ export async function importEmail(
 
   const raw = {
     findings: [],
-    iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+    // #1266: carry the sink's provenance marker — this whitelist is the only seam between
+    // emailImport.ts's originatingIp stamp and mergeDelta, and it used to drop it silently.
+    iocs: parsed.iocs.map((c, i) => ({
+      id: `${opts.idPrefix}i${i + 1}`,
+      type: c.type,
+      value: c.value,
+      ...(c.provenance ? { provenance: c.provenance } : {}),
+    })),
     mitreTechniques: [],
     forensicEvents: parsed.events.map((e, i) => ({
       ...e,

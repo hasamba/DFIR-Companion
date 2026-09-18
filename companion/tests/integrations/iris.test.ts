@@ -729,3 +729,36 @@ describe("IrisClient.findCaseByName", () => {
     expect(found).toEqual({ caseId: 2, caseName: "Acme-Breach-2026" });
   });
 });
+
+describe("#1266 -- irisMap.mapIoc says client-reported first, on both description branches", () => {
+  const NO_EVENTS = new Map<string, ForensicEvent>();
+  it("plain branch: the Observed-by line is preceded by the client-reported line, and the tag is added", () => {
+    const body = mapIoc(
+      ioc({ value: "8.8.8.8", type: "ip", provenance: "client-reported" }),
+      IOC_TYPES,
+      NO_EVENTS,
+    )!;
+    expect(String(body.ioc_description).startsWith("Client-reported:")).toBe(true);
+    expect(body.ioc_description).toContain("Observed by DFIR Companion");
+    expect(String(body.ioc_tags).split(",")).toContain("client-reported");
+  });
+  it("enrichment branch: still says client-reported first", () => {
+    const body = mapIoc(
+      ioc({
+        value: "8.8.8.8",
+        type: "ip",
+        provenance: "client-reported",
+        enrichments: [{ source: "VirusTotal", verdict: "malicious", score: "5/70", fetchedAt: "t" }],
+      }),
+      IOC_TYPES,
+      NO_EVENTS,
+    )!;
+    expect(String(body.ioc_description).startsWith("Client-reported:")).toBe(true);
+    expect(body.ioc_description).toContain("Threat intel:");
+  });
+  it("an unmarked IOC's body is unchanged", () => {
+    const body = mapIoc(ioc({ value: "8.8.8.8", type: "ip" }), IOC_TYPES, NO_EVENTS)!;
+    expect(body.ioc_description).not.toContain("Client-reported");
+    expect(String(body.ioc_tags)).not.toContain("client-reported");
+  });
+});

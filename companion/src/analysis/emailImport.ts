@@ -732,8 +732,16 @@ function collectIocs(p: ParsedEmail, maxIocs: number): SiemIoc[] {
     if (a?.domain && DOMAIN_RE.test(a.domain)) addIoc(sink, "domain", a.domain);
   }
 
-  // Originating IP.
-  if (p.originatingIp) addIoc(sink, "ip", p.originatingIp);
+  // Originating IP — #1266: marked client-reported. X-Originating-IP / the earliest external
+  // Received hop is a claim about WHO SENT the message, written by whoever relayed it; the URL/
+  // host/attachment IOCs above are WHAT THE MESSAGE POINTS AT and stay unmarked (blocking a lure
+  // host is the point of a phishing indicator; blocking a claimed relay on the claim alone could
+  // block a legitimate MTA). A lure host that is the same literal IP as this claim yields one
+  // unmarked ip IOC (addIoc: plain wins) — correct, it is lure content regardless of the header.
+  // Scope decision, not the whole principle: From/Reply-To/Return-Path domains are also sender-
+  // written identity claims and stay unmarked here (#1266 scoped the marker to the one value whose
+  // IOC TYPE reads as a network observation); widening it is its own call.
+  if (p.originatingIp) addIoc(sink, "ip", p.originatingIp, "client-reported");
 
   // Attachment filenames + any hashes (header/body) + the attachments' own digests.
   for (const att of p.attachments) {

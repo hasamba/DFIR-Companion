@@ -34,8 +34,14 @@ export function mergeIocs(state: InvestigationState, fromId: string, intoId: str
   const enrichedBy = uniq([...(into.enrichedBy ?? []), ...(from.enrichedBy ?? [])]);
   const aliasValues = uniq([...(into.aliasValues ?? []), from.value, ...(from.aliasValues ?? [])]);
 
+  // #1266: the canonical row keeps its own marker; a marked duplicate never marks an unmarked
+  // canonical, and an unmarked duplicate clears a marked canonical only if it is event-linked —
+  // the same rule as stateMerge.ts's dedup path.
+  const { provenance: _own, ...intoPlain } = into;
+  const keepMarker = Boolean(into.provenance) && !(!from.provenance && from.extractedFrom?.length);
   const merged: IOC = {
-    ...into,
+    ...intoPlain,
+    ...(keepMarker ? { provenance: into.provenance } : {}),
     ...(extractedFrom.length ? { extractedFrom } : {}),
     ...(enrichments.length ? { enrichments } : {}),
     ...(enrichedBy.length ? { enrichedBy } : {}),

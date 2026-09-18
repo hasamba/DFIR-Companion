@@ -178,3 +178,35 @@ describe("stripAiExtractedFrom", () => {
     expect(parsed.iocs[0].extractedFrom).toEqual(["e042"]); // original untouched
   });
 });
+
+describe("#1266 -- a model can neither mark nor un-mark IOC provenance", () => {
+  it("stripAiExtractedFrom removes provenance from every IOC in a model delta", () => {
+    const parsed = deltaSchema.parse({
+      findings: [],
+      iocs: [{ id: "i1", type: "ip", value: "1.2.3.4", provenance: "client-reported" }],
+      mitreTechniques: [],
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: "",
+      summary: "",
+    });
+    expect(parsed.iocs[0].provenance).toBe("client-reported"); // the schema accepts it (importers use it)
+    const stripped = stripAiExtractedFrom(parsed);
+    expect("provenance" in stripped.iocs[0]).toBe(false);
+    expect("extractedFrom" in stripped.iocs[0]).toBe(false);
+  });
+
+  it("the schema rejects any provenance value other than the one literal", () => {
+    expect(() =>
+      deltaSchema.parse({
+        findings: [],
+        iocs: [{ id: "i1", type: "ip", value: "1.2.3.4", provenance: "verified" }],
+        mitreTechniques: [],
+        threadsOpened: [],
+        threadsClosed: [],
+        timelineNote: "",
+        summary: "",
+      }),
+    ).toThrow();
+  });
+});

@@ -93,6 +93,10 @@ export function filterBlocklistIocs(
   const results: { ioc: IOC; effectiveType: BlocklistIocType }[] = [];
   for (const ioc of iocs) {
     if (opts.excludeIocIds?.has(ioc.id)) continue;
+    // #1266: a block-list ACTS, and a client-reported value (a sender-controlled header, e.g.
+    // X-Originating-IP) is a claim, not an observation — a forged header must never be able to
+    // put an address on it, whatever intel says about that address. Same rule as MISP to_ids.
+    if (ioc.provenance === "client-reported") continue;
     const eff = effectiveType(ioc);
     if (!eff || !types.includes(eff)) continue;
     // Canonical SEVERITY_RANK: lower = more severe, so "below the floor" is a GREATER rank.
@@ -148,7 +152,7 @@ export function buildIocBlocklistTxt(state: InvestigationState, opts: IocBlockli
     "# DFIR Companion — IOC Block List",
     `# Case: ${opts.caseName?.trim() || state.caseId}`,
     `# Generated: ${ts}`,
-    `# Filters: scope applied, legitimate excluded, min severity: ${minSev}${opts.verdictOnly ? ", verdict-confirmed only" : ""}`,
+    `# Filters: scope applied, legitimate excluded, client-reported excluded, min severity: ${minSev}${opts.verdictOnly ? ", verdict-confirmed only" : ""}`,
     "",
   ];
 
