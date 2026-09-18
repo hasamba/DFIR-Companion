@@ -15,7 +15,7 @@ import {
   MAX_COLUMNS_PER_ROW,
   MAX_FIELD_LEN,
   MAX_VALUE_LEN,
-  SQLITE_ROW_STATE_BASIS,
+  SQLITE_ROW_STATE_BASIS_V2,
   sqliteCellSources,
   sqliteFileSources,
   sqliteRowStateOperations,
@@ -23,6 +23,14 @@ import {
   type SqliteFileSource,
   type SqliteRowStateOperation,
 } from "./canonicalSqliteRowState.js";
+import {
+  computeLatestForRowId,
+  highValueClause,
+  latestClause,
+  matchHighValueLabel,
+  parseHighValueLabels,
+  type LatestRowFacts,
+} from "./sqliteRowStateLatest.js";
 import type { MappedEvent, SiemEvent } from "./siemImport.js";
 import { aggregateEvents } from "./eventAggregate.js";
 
@@ -135,6 +143,7 @@ class CarvedDeletedTally {
     tableNameSource: "filename" | "unavailable",
     reportFingerprint: string,
     rowsTruncated: boolean,
+    matchedHighValueLabel: string | undefined,
   ): MappedEvent | null {
     if (this.isEmpty()) return null;
     const tableLabel =
@@ -150,11 +159,14 @@ class CarvedDeletedTally {
       `; consistent with routine database maintenance as well as intentional record removal; ` +
       `undated, no temporal correlation performed` +
       (rowsTruncated ? `; PARTIAL — counts reflect only the first ${MAX_ROWS_SCANNED} rows scanned` : "");
+    // #1290 Part A — the SAME report-level match every row already carries (tableName is a
+    // report-level derived value, not per-row content), so no re-matching is done here.
+    const highValue = highValueClause(matchedHighValueLabel);
     const variable = clip(
       `sqlite-dissect row-state summary: table ${cleanTableLabel} — ${parts.join(", ")}`,
-      600 - reportTag.length - disclosure.length,
+      600 - reportTag.length - disclosure.length - highValue.length,
     );
-    const description = `${variable}${disclosure}${reportTag}`;
+    const description = `${variable}${disclosure}${highValue}${reportTag}`;
     const aggKey = boundedAggKey(`sqlite-row-state-summary|${reportFingerprint}`);
     return {
       timestamp: "",
@@ -170,12 +182,21 @@ class CarvedDeletedTally {
         evidence: {
           rawRecords: [{ source: "sqlite-row-state", locator: `summary:${reportFingerprint.slice(0, 16)}` }],
         },
-        // A distinct mapping version from the per-row "sqlite-row-state-v1" — this is a new event
-        // type, not a schema revision of the per-row `sqliteRowState` canonical block (which is
-        // unchanged and stays on its own zod-literal-pinned version) — Ollama code review finding.
+        // A distinct mapping version from the per-row "sqlite-row-state-v1"/"-v2" — this is a new
+        // event type, not a schema revision of the per-row `sqliteRowState` canonical block —
+        // Ollama code review finding.
         producer: {
           importer: "sqlite-row-state",
           parserVersion: "1",
+          mappingVersion: "sqlite-row-state-summary-v1",
+        },
+        // #1290 Part B — structured totals so a reader (the Hypothesis-hint route) never has to
+        // parse the description's own prose. Genuinely new: the summary event carried no
+        // `sqliteRowState`-family block before this, so a single literal version is correct here.
+        sqliteRowStateSummary: {
+          carvedTotal: this.carvedTotal,
+          deletedTotal: this.deletedTotal,
+          truncated: rowsTruncated,
           mappingVersion: "sqlite-row-state-summary-v1",
         },
       }),
@@ -209,6 +230,15 @@ interface MappedRow {
   operation: SqliteRowStateOperation;
   fileSource: SqliteFileSource;
   cellSource: SqliteCellSource;
+  // #1152 — the SAME validated values needed for the deferred "latest per rowId" pass, and the
+  // pre-clip/pre-suffix body text + report tag needed to rebuild a flagged row's description
+  // within the existing 600-char budget (never appended past it).
+  rowId?: string;
+  versionNumber: number;
+  columnsDigest: string;
+  rawBody: string;
+  reportTag: string;
+  highValue: string;
 }
 
 function mapRow(
@@ -217,6 +247,7 @@ function mapRow(
   reportFingerprint: string,
   tableName: string,
   tableNameSource: "filename" | "unavailable",
+  matchedHighValueLabel: string | undefined,
 ): MappedRow | null {
   const fileSource = row[0] as SqliteFileSource;
   if (!(sqliteFileSources as readonly string[]).includes(fileSource)) return null;
@@ -281,13 +312,16 @@ function mapRow(
   // common case for successive updates to the SAME physical slot) never read as identical text
   // once aggKey is stripped at persistence (Codex code review finding).
   const rowIdPart = rowId ? `, row ${rowId}` : "";
-  const body = clip(
+  const rawBody =
     `sqlite-dissect row state: table ${tableLabel} — ${operation} via ${fileSource}/${cellSource} at page ` +
-      `${pageNumber} offset ${fileOffset} (v${versionNumber}/pv${pageVersionNumber}, loc ${location}${rowIdPart}); ` +
-      `a structural fact, never proof of intent; [undated: sqlite-dissect's report carries no event time]`,
-    600 - reportTag.length,
-  );
-  const description = `${body}${reportTag}`;
+    `${pageNumber} offset ${fileOffset} (v${versionNumber}/pv${pageVersionNumber}, loc ${location}${rowIdPart}); ` +
+    `a structural fact, never proof of intent; [undated: sqlite-dissect's report carries no event time]`;
+  // #1290 Part A's own clause is known immediately (report-level match, not deferred); #1152's own
+  // "latest" clause is NOT known yet (needs every row in the report) — the initial description
+  // below carries only the former. `applyLatestForRowId` rebuilds it for any flagged row, reusing
+  // `rawBody`/`reportTag`/`highValue` so the 600-char budget is honoured either way.
+  const highValue = highValueClause(matchedHighValueLabel);
+  const description = `${clip(rawBody, 600 - reportTag.length - highValue.length)}${highValue}${reportTag}`;
 
   const event: MappedEvent = {
     timestamp: "",
@@ -304,7 +338,7 @@ function mapRow(
       event: { category: "file", type: "sqlite-row-state", action: "found" },
       time: { observed: "", normalized: "" },
       evidence: { rawRecords: [{ source: "sqlite-row-state", locator: `row:${findingId.slice(0, 16)}` }] },
-      producer: { importer: "sqlite-row-state", parserVersion: "1", mappingVersion: "sqlite-row-state-v1" },
+      producer: { importer: "sqlite-row-state", parserVersion: "1", mappingVersion: "sqlite-row-state-v2" },
       sqliteRowState: {
         tool: "sqlite-dissect",
         tableName: clip(tableName, MAX_FIELD_LEN),
@@ -321,12 +355,57 @@ function mapRow(
         columns,
         notCitedColumns,
         reportFingerprint,
-        mappingVersion: "sqlite-row-state-v1",
-        basis: SQLITE_ROW_STATE_BASIS,
+        mappingVersion: "sqlite-row-state-v2",
+        basis: SQLITE_ROW_STATE_BASIS_V2,
+        ...(matchedHighValueLabel ? { matchedHighValueLabel } : {}),
       },
     }),
   };
-  return { event, operation, fileSource, cellSource };
+  return {
+    event,
+    operation,
+    fileSource,
+    cellSource,
+    rowId,
+    versionNumber,
+    columnsDigest,
+    rawBody,
+    reportTag,
+    highValue,
+  };
+}
+
+/** Phase 2 of the per-report pass (#1152): rebuilds the description and canonical block for every
+ * row `computeLatestForRowId` flagged, within the SAME 600-char budget `mapRow` already used —
+ * never appended past it. Skipped entirely by the caller when the report was truncated. Mutates
+ * `mapped` in place by replacing the flagged indices' own entries with a new object (never mutating
+ * the existing `MappedEvent`, which callers may treat as structurally shared). */
+function applyLatestForRowId(mapped: MappedEvent[], rows: readonly MappedRow[]): void {
+  const facts: LatestRowFacts[] = rows.map((r) => ({
+    rowId: r.rowId,
+    versionNumber: r.versionNumber,
+    columnsDigest: r.columnsDigest,
+    operation: r.operation,
+  }));
+  for (const { index, ambiguous, multiMember } of computeLatestForRowId(facts)) {
+    const row = rows[index];
+    const clause = latestClause(row.rowId!, row.operation, ambiguous, multiMember);
+    const suffix = `${row.highValue}${clause}${row.reportTag}`;
+    const description = `${clip(row.rawBody, 600 - suffix.length)}${suffix}`;
+    const prior = mapped[index];
+    mapped[index] = {
+      ...prior,
+      description,
+      canonical: {
+        ...prior.canonical!,
+        sqliteRowState: {
+          ...prior.canonical!.sqliteRowState!,
+          latestForRowId: ambiguous ? undefined : (true as const),
+          latestForRowIdAmbiguous: ambiguous ? (true as const) : undefined,
+        },
+      },
+    };
+  }
 }
 
 export function parseSqliteRowStateCsv(
@@ -341,8 +420,13 @@ export function parseSqliteRowStateCsv(
 
   const { tableName, tableNameSource } = deriveTableName(opts.sourceLabel);
   const reportFingerprint = createHash("sha256").update(text).digest("hex");
+  // #1290 Part A — computed ONCE per report: `tableName` is a report-level derived value, not
+  // per-row content, so every row in this import shares the same match (or lack of one).
+  const highValueLabels = parseHighValueLabels(process.env.DFIR_SQLITE_HIGH_VALUE_LABELS);
+  const matchedHighValueLabel = matchHighValueLabel(tableName, tableNameSource, highValueLabels);
 
   const mapped: MappedEvent[] = [];
+  const rows: MappedRow[] = [];
   const tally = new CarvedDeletedTally();
   let total = 0;
   let malformedRows = 0;
@@ -362,14 +446,26 @@ export function parseSqliteRowStateCsv(
       malformedRows += 1;
       continue;
     }
-    const mappedRow = mapRow(header, row, reportFingerprint, tableName, tableNameSource);
+    const mappedRow = mapRow(
+      header,
+      row,
+      reportFingerprint,
+      tableName,
+      tableNameSource,
+      matchedHighValueLabel,
+    );
     if (!mappedRow) {
       malformedRows += 1;
       continue;
     }
     mapped.push(mappedRow.event);
+    rows.push(mappedRow);
     tally.record(mappedRow.operation, mappedRow.fileSource, mappedRow.cellSource);
   }
+
+  // #1152 — a partial scan cannot honestly claim "the highest recorded version," so the whole
+  // derivation is skipped (never a partial-latest claim) when `rowsTruncated`.
+  if (!rowsTruncated) applyLatestForRowId(mapped, rows);
 
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
@@ -382,7 +478,13 @@ export function parseSqliteRowStateCsv(
   // summary sorts BEHIND any collapsed group with count > 1, so a large report could silently
   // drop the one line meant to survive everything else (Ollama code review finding). Discloses
   // `rowsTruncated` explicitly rather than presenting a partial tally as complete.
-  const summaryEvent = tally.toEvent(tableName, tableNameSource, reportFingerprint, rowsTruncated);
+  const summaryEvent = tally.toEvent(
+    tableName,
+    tableNameSource,
+    reportFingerprint,
+    rowsTruncated,
+    matchedHighValueLabel,
+  );
   if (summaryEvent) {
     events.push({
       id: "",

@@ -24,6 +24,45 @@ export interface HypothesisView extends Hypothesis {
   assessment: HypothesisAssessment;
   qualifier: string;
   evidence: EvidenceRow[];
+  // #1290 Part B — ONE case-wide value, repeated identically on every element (never a
+  // per-hypothesis-derived fact, and never implying one hypothesis is more relevant than another
+  // just because this field is present on it). Mirrors attributionAssertions.ts's own
+  // `matchedAdversaryGroupId` read-time-annotation pattern, but unlike that field this one is NOT
+  // per-item-distinct — see caseSqliteRowStateHint()'s own doc comment for why it is still shaped
+  // this way rather than changing the route's response envelope. Absent when the case has no
+  // sqlite-row-state Carved/Deleted summary events at all.
+  caseSqliteRowStateHint?: string;
+}
+
+/** #1290 Part B — a read-time-only, non-persisted, case-wide hint: sums the STRUCTURED
+ * `sqliteRowStateSummary` totals (#1290, sqliteRowStateImport.ts) across every matching event in
+ * the forensic timeline — never parses a description's own prose (a report-integrity requirement
+ * this codebase already established for the summary event itself). Verbatim wording, deliberately
+ * unembellished (no "may indicate", no severity, no verb implying causality) — Ollama's own review
+ * of the original issue flagged this exact overclaim risk. Not scoped to a Hypothesis's own
+ * subject/host: nothing in the sqlite-row-state schema carries one to scope by. Returns undefined
+ * when the case has no such summary event (never an empty-string or zero-count annotation). */
+export function caseSqliteRowStateHint(events: readonly ForensicEvent[]): string | undefined {
+  let carved = 0;
+  let deleted = 0;
+  let truncated = false;
+  let found = false;
+  for (const e of events) {
+    const summary = e.canonical?.sqliteRowStateSummary;
+    if (!summary) continue;
+    found = true;
+    carved += summary.carvedTotal;
+    deleted += summary.deletedTotal;
+    if (summary.truncated) truncated = true;
+  }
+  if (!found) return undefined;
+  const caveat = truncated
+    ? " — one or more contributing reports were partial, so these totals may undercount"
+    : "";
+  return (
+    `${carved} carved/${deleted} deleted SQLite rows exist in this case; consistent with routine ` +
+    `maintenance as well as tampering; no timestamps available for correlation${caveat}`
+  );
 }
 
 export function withAssessments(
@@ -32,6 +71,7 @@ export function withAssessments(
   elig: AssessmentEligibility,
 ): HypothesisView[] {
   const assessments = assessHypothesisEvidence(hypotheses, elig);
+  const hint = caseSqliteRowStateHint(events);
   return hypotheses.map((h) => {
     const assessment = assessments.get(h.id)!;
     return {
@@ -39,6 +79,7 @@ export function withAssessments(
       assessment,
       qualifier: hypothesisQualifier(h, assessment),
       evidence: [...describeHypothesisEvidence(assessment, events).values()],
+      ...(hint ? { caseSqliteRowStateHint: hint } : {}),
     };
   });
 }
