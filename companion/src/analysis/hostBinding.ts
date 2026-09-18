@@ -69,7 +69,10 @@ const NON_IDENTIFYING_IPS = new Set(["", "-", "0.0.0.0", "::", "::1", "127.0.0.1
 // host literally named "-" would be a junk binding, not an absent one.
 const NON_IDENTIFYING_CLIENT_NAMES = new Set(["-", "*"]);
 
-function isIdentifyingClientName(name: string): boolean {
+// Exported so any other module reading session.terminal / Workstation Name applies the SAME
+// placeholder rejection rather than re-deriving its own — hostScopeAggregate.ts (#1231) and
+// loginGraph.ts (#1232) both had their own gap here until they started sharing this.
+export function isIdentifyingClientName(name: string): boolean {
   const trimmed = name.trim();
   return trimmed.length > 0 && !NON_IDENTIFYING_CLIENT_NAMES.has(trimmed);
 }

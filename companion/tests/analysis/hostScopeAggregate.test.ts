@@ -64,6 +64,31 @@ describe("accumulate", () => {
     expect([...referenced.referencedBy]).toEqual(["srv-file01"]);
   });
 
+  // #1231: a "-"/"*" Workstation Name (Windows' own unpopulated-field placeholder) was admitted as
+  // a literal referenced host, producing a junk "-" entry in host-evidence aggregation.
+  it("never treats a placeholder Workstation Name ('-' or '*') as a referenced host", () => {
+    const acc = accumulate(
+      [
+        ev({
+          id: "4",
+          asset: "srv-file01",
+          sources: ["Chainsaw"],
+          canonical: { session: { terminal: "-" } } as ForensicEvent["canonical"],
+        }),
+        ev({
+          id: "5",
+          asset: "srv-file02",
+          sources: ["Chainsaw"],
+          canonical: { session: { terminal: "*" } } as ForensicEvent["canonical"],
+        }),
+      ],
+      index,
+      new Map(),
+    );
+    expect(acc.has("-")).toBe(false);
+    expect(acc.has("*")).toBe(false);
+  });
+
   it("does not treat a canonical target equal to the event's own asset as a reference", () => {
     const acc = accumulate(
       [
