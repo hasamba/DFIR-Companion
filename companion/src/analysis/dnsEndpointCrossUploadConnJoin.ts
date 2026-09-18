@@ -133,9 +133,18 @@ function leadFor(
   bindingSampleTime?: string;
   otherHostCaveat?: boolean;
 } {
-  const candidates = matched.get(`${host}|${address}`) ?? [];
   const first = Date.parse(d.timestamp);
   const last = Date.parse(d.endTimestamp ?? d.timestamp);
+  // A malformed persisted timestamp (Date.parse -> NaN) must never silently fall through to a
+  // conservative-looking "no connection"/"earlier connections only" via a NaN comparison — named
+  // explicitly, the same fix as the sibling file dnsCrossUploadConnJoin.ts (#1250, #1257).
+  if (!Number.isFinite(first) || !Number.isFinite(last)) return { state: "DNS row time not placeable" };
+
+  // A candidate whose OWN time is unparseable is excluded rather than silently losing every NaN
+  // comparison (#1257) — a wrong "earlier connections only" verdict is worse than not participating.
+  const candidates = (matched.get(`${host}|${address}`) ?? []).filter((c) =>
+    Number.isFinite(Date.parse(c.event.endTimestamp ?? c.event.timestamp)),
+  );
 
   if (candidates.length) {
     // Same fold-aware search #1248's own code review established: by the connection's own LAST
