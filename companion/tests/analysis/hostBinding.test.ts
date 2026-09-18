@@ -314,6 +314,27 @@ describe("buildHostBindingIndex + resolveAccountAtTime (account -> session host)
     expect(index.byAccount.size).toBe(0);
   });
 
+  it("also excludes an Administrator logon whose domain is a placeholder ('-' or '*'), not just absent", () => {
+    const events = [
+      logonEvent({
+        sessionHost: "ws-042",
+        accountName: "Administrator",
+        accountDomain: "-",
+        logonType: 2,
+        ts: "2026-06-10T12:00:00Z",
+      }),
+      logonEvent({
+        sessionHost: "ws-043",
+        accountName: "Administrator",
+        accountDomain: "*",
+        logonType: 2,
+        ts: "2026-06-10T12:00:01Z",
+      }),
+    ];
+    const index = buildHostBindingIndex(events);
+    expect(index.byAccount.size).toBe(0);
+  });
+
   it("still admits a DOMAINED Administrator account as identifying (a specific domain principal)", () => {
     const events = [
       logonEvent({

@@ -153,12 +153,23 @@ function isIdentifyingIp(raw: string): boolean {
   return true;
 }
 
+// The real Windows-logon importer (winAccountRoles.ts's own entity()) already collapses a "-" or
+// empty TargetDomainName to an omitted domain before this module ever sees it, so `domain` here
+// should normally arrive as undefined for a local-SAM logon — but this check folds "-"/"*"
+// defensively too, matching this module's own established placeholder-rejection convention
+// (NON_IDENTIFYING_IPS, NON_IDENTIFYING_CLIENT_NAMES) rather than trusting every present or future
+// caller to have already normalized it (Ollama review finding on #1161).
+function hasNoDomain(domain: string | undefined): boolean {
+  const d = domain?.trim();
+  return !d || d === "-" || d === "*";
+}
+
 function isHumanAccount(name: string, domain: string | undefined): boolean {
   const n = name.trim().toLowerCase();
   if (!n) return false;
   if (n.endsWith("$")) return false; // computer account
   if (NON_HUMAN_ACCOUNTS.has(n)) return false;
-  if (!domain?.trim() && NON_HUMAN_LOCAL_ACCOUNTS_NO_DOMAIN.has(n)) return false;
+  if (hasNoDomain(domain) && NON_HUMAN_LOCAL_ACCOUNTS_NO_DOMAIN.has(n)) return false;
   return true;
 }
 
