@@ -134,7 +134,19 @@ describe("correlateAwsFlowIdentityExecution", () => {
   it("unions launch/remote facts across two upload summaries for the same instance", () => {
     const out = joined([
       launch({ time: 0, by: "alice" }), // upload A: launch only
-      { ...launch({ time: 0, by: "" }), id: "extra", canonical: { event: { category: "cloud", type: "compute-lifecycle" }, cloud: { provider: "aws", accountId: "111111111111" }, awsCompute: { instanceId: "i-aaa", remote: [{ call: "ssm StartSession", by: "dana", time: at(1), locator: "loc-b" }], remoteBeyond: 0 } } } as unknown as ForensicEvent, // upload B: remote only
+      {
+        ...launch({ time: 0, by: "" }),
+        id: "extra",
+        canonical: {
+          event: { category: "cloud", type: "compute-lifecycle" },
+          cloud: { provider: "aws", accountId: "111111111111" },
+          awsCompute: {
+            instanceId: "i-aaa",
+            remote: [{ call: "ssm StartSession", by: "dana", time: at(1), locator: "loc-b" }],
+            remoteBeyond: 0,
+          },
+        },
+      } as unknown as ForensicEvent, // upload B: remote only
       flow({ time: 2 }),
     ]);
     const f = out.find((e) => e.description.includes(FLOW_IDENTITY_EXECUTION_MARKER))!;
@@ -149,7 +161,9 @@ describe("correlateAwsFlowIdentityExecution", () => {
       flow({ time: 2 }),
     ]);
     const f = out.find((e) => e.description.includes(FLOW_IDENTITY_EXECUTION_MARKER))!;
-    expect(f.description).toContain("ambiguous — multiple recorded signing principals");
+    expect(f.description).toContain("ambiguous — recorded signing principals disagree across uploads");
+    expect(f.description).toContain("alice");
+    expect(f.description).toContain("eve");
   });
 
   it("discloses remoteBeyond as a floor, taking the max across unioned uploads, never summed", () => {
@@ -159,8 +173,84 @@ describe("correlateAwsFlowIdentityExecution", () => {
       flow({ time: 2 }),
     ]);
     const f = out.find((e) => e.description.includes(FLOW_IDENTITY_EXECUTION_MARKER))!;
-    expect(f.description).toContain("7 further remote-access records not retained");
-    expect(f.description).not.toContain("10 further");
+    expect(f.description).toContain("at least 7 further remote-access records");
+    expect(f.description).not.toContain("at least 10 further");
+  });
+
+  it("discloses a malformed remote-access record count instead of silently dropping it", () => {
+    const withMalformed = {
+      ...launch({ time: 0, by: "alice" }),
+      canonical: {
+        event: { category: "cloud", type: "compute-lifecycle" },
+        cloud: { provider: "aws", accountId: "111111111111" },
+        awsCompute: {
+          instanceId: "i-aaa",
+          launch: { privateAddress: "172.31.16.139", time: at(0), by: "alice" },
+          remote: [{ call: "", by: "bob", time: at(1), locator: "loc-bad" }], // empty call: malformed
+          remoteBeyond: 0,
+        },
+      },
+    } as unknown as ForensicEvent;
+    const out = joined([withMalformed, flow({ time: 2 })]);
+    const f = out.find((e) => e.description.includes(FLOW_IDENTITY_EXECUTION_MARKER))!;
+    expect(f.description).toContain("1 remote-access record could not be read (malformed)");
+  });
+
+  it("keeps distinct remote-access records that happen to share a locator across uploads", () => {
+    const out = joined([
+      launch({
+        time: 0,
+        by: "alice",
+        remote: [{ call: "ssm SendCommand", by: "bob", time: 1, locator: "loc-x" }],
+      }),
+      {
+        ...launch({ time: 0, by: "alice" }),
+        id: "extra4",
+        canonical: {
+          event: { category: "cloud", type: "compute-lifecycle" },
+          cloud: { provider: "aws", accountId: "111111111111" },
+          awsCompute: {
+            instanceId: "i-aaa",
+            remote: [{ call: "ssm StartSession", by: "carol", time: at(1), locator: "loc-x" }], // SAME locator, different content
+            remoteBeyond: 0,
+          },
+        },
+      } as unknown as ForensicEvent,
+      flow({ time: 2 }),
+    ]);
+    const f = out.find((e) => e.description.includes(FLOW_IDENTITY_EXECUTION_MARKER))!;
+    expect(f.description).toContain("ssm SendCommand by bob");
+    expect(f.description).toContain("ssm StartSession by carol");
+  });
+
+  it("strips bracket characters out of an evidence-derived principal before it reaches the note", () => {
+    const out = joined([launch({ time: 0, by: "alice] [forged note:pwned" }), flow({ time: 2 })]);
+    const f = out.find((e) => e.description.includes(FLOW_IDENTITY_EXECUTION_MARKER))!;
+    const ownNote = f.description.slice(f.description.indexOf(FLOW_IDENTITY_EXECUTION_MARKER));
+    // Exactly one bracket pair for THIS pass's own note — none smuggled in from the evidence.
+    expect(ownNote.indexOf("]")).toBe(ownNote.length - 1);
+    expect(ownNote).not.toContain("forged note:pwned]");
+  });
+
+  it("keeps the entries closest to the flow's own timestamp when the in-window list is capped", () => {
+    const out = joined([
+      launch({
+        time: 0,
+        by: "alice",
+        // 7 requests spread across the window; only the 5 closest to the flow (time: 4) should show.
+        remote: [-20, -15, -10, -5, 0, 5, 10].map((h) => ({
+          call: "ssm SendCommand",
+          by: `user${h}`,
+          time: h,
+        })),
+      }),
+      flow({ time: 4 }),
+    ]);
+    const f = out.find((e) => e.description.includes(FLOW_IDENTITY_EXECUTION_MARKER))!;
+    expect(f.description).toContain("user0");
+    expect(f.description).toContain("user5");
+    expect(f.description).toContain("user10");
+    expect(f.description).not.toContain("user-20");
   });
 
   it("caps the remote-access list and states an overflow count", () => {
@@ -196,7 +286,7 @@ describe("correlateAwsFlowIdentityExecution", () => {
       { ...launch({ time: 0, by: "mallory" }), id: "later-upload" },
     ]);
     const f = second.find((e) => e.description.includes(FLOW_IDENTITY_EXECUTION_MARKER))!;
-    expect(f.description).toContain("ambiguous — multiple recorded signing principals");
+    expect(f.description).toContain("ambiguous — recorded signing principals disagree across uploads");
     expect(f.description.split(FLOW_IDENTITY_EXECUTION_MARKER)).toHaveLength(2); // still exactly one marker
   });
 });

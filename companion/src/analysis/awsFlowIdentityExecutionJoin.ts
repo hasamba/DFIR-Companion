@@ -21,8 +21,10 @@
 //     called ambiguous (names no instance) gets no identity fragment here either;
 //   - compute-lifecycle summaries for the SAME (account, instanceId) across separate uploads are
 //     unioned — launch identity from whichever upload carries one (more than one distinct value
-//     across uploads is stated as ambiguous, never silently picked), remote-access entries deduped
-//     by their own locator. One upload's own coverage gap is not the instance's whole story;
+//     across uploads is stated as ambiguous, naming every disagreeing principal, never silently
+//     picked), remote-access entries deduped by their own full content (never locator alone, so a
+//     genuine locator collision with different content is never silently overwritten). One
+//     upload's own coverage gap is not the instance's whole story;
 //   - `remoteBeyond` (requests the summary itself did not retain) is disclosed by count whenever
 //     any matching block reports one — the MAXIMUM seen across unioned blocks, a conservative
 //     "at least this many" floor, never summed (uploads can overlap the same underlying calls);
@@ -71,8 +73,21 @@ interface RemoteEntry {
 
 interface InstanceIdentity {
   launchBy: Set<string>;
-  remote: Map<string, RemoteEntry>; // keyed by locator, deduped across unioned uploads
+  remote: Map<string, RemoteEntry>; // keyed by content, so a genuine locator collision with
+  // different content is never silently overwritten (Ollama code review, M4)
   remoteBeyond: number; // max seen across unioned blocks, never summed
+  remoteSkipped: number; // malformed remote records dropped at parse time (M1) — disclosed, never silent
+}
+
+// Evidence-derived strings (a launch/remote "by" principal, an SSM document name) flow verbatim
+// into a bracket-delimited note whose own strip/recompute lifecycle depends on bracket content
+// never nesting (Ollama code review, H1). A forged or malformed CloudTrail record naming a
+// principal/document containing "[" or "]" would otherwise corrupt that invariant and could make
+// this pass's own strip regex, or the sibling's, mis-parse an unrelated note. Strip brackets from
+// every evidence-derived string before it is ever interpolated — this is a report-integrity
+// requirement (CLAUDE.md), not polish.
+function sanitizeForNote(s: string): string {
+  return s.replace(/[[\]]/gu, "");
 }
 
 /** Attributed instance/endpoint entries parsed from the sibling pass's own note text. */
@@ -104,13 +119,32 @@ function buildIdentityIndex(events: readonly ForensicEvent[]): Map<string, Insta
     const instanceId = c.awsCompute!.instanceId ?? "";
     if (!accountId || !instanceId) continue;
     const key = `${accountId}|${instanceId}`;
-    const entry = index.get(key) ?? { launchBy: new Set<string>(), remote: new Map(), remoteBeyond: 0 };
+    const entry = index.get(key) ?? {
+      launchBy: new Set<string>(),
+      remote: new Map(),
+      remoteBeyond: 0,
+      remoteSkipped: 0,
+    };
     const by = c.awsCompute!.launch?.by;
-    if (by) entry.launchBy.add(by);
+    if (by) entry.launchBy.add(sanitizeForNote(by));
     for (const r of c.awsCompute!.remote ?? []) {
       const t = ms(r.time);
-      if (t === null || !r.by || !r.call || !r.locator) continue;
-      entry.remote.set(r.locator, { call: r.call, by: r.by, time: r.time, timeMs: t, locator: r.locator, document: r.document });
+      if (t === null || !r.by || !r.call || !r.locator) {
+        entry.remoteSkipped += 1;
+        continue;
+      }
+      // Keyed on full content, not locator alone: two records that legitimately share a locator
+      // string across overlapping uploads collapse to one identical key naturally; any real
+      // difference produces a distinct entry instead of one silently overwriting the other.
+      const contentKey = `${r.locator}|${r.call}|${r.by}|${r.time}`;
+      entry.remote.set(contentKey, {
+        call: sanitizeForNote(r.call),
+        by: sanitizeForNote(r.by),
+        time: r.time,
+        timeMs: t,
+        locator: r.locator,
+        document: r.document ? sanitizeForNote(r.document) : undefined,
+      });
     }
     entry.remoteBeyond = Math.max(entry.remoteBeyond, c.awsCompute!.remoteBeyond ?? 0);
     index.set(key, entry);
@@ -124,12 +158,14 @@ function formatFragment(endpoint: AttributedEndpoint, identity: InstanceIdentity
       ? "launch record not in evidence"
       : identity.launchBy.size === 1
         ? `launched by ${[...identity.launchBy][0]}`
-        : `launched by: ambiguous — multiple recorded signing principals across uploads`;
+        : `launched by: ambiguous — recorded signing principals disagree across uploads (${[...identity.launchBy].join(", ")})`;
 
-  const inWindow = [...identity.remote.values()]
-    .filter((r) => Math.abs(r.timeMs - flowMs) <= REMOTE_WINDOW_MS)
-    .sort((a, b) => a.timeMs - b.timeMs);
-  const shown = inWindow.slice(0, MAX_REMOTE_ENTRIES);
+  const inWindow = [...identity.remote.values()].filter(
+    (r) => Math.abs(r.timeMs - flowMs) <= REMOTE_WINDOW_MS,
+  );
+  // Closest-to-the-flow entries are the probative ones when a cap is needed, not the earliest.
+  inWindow.sort((a, b) => Math.abs(a.timeMs - flowMs) - Math.abs(b.timeMs - flowMs));
+  const shown = inWindow.slice(0, MAX_REMOTE_ENTRIES).sort((a, b) => a.timeMs - b.timeMs);
   const overflow = inWindow.length - shown.length;
 
   let remotePart: string;
@@ -143,17 +179,24 @@ function formatFragment(endpoint: AttributedEndpoint, identity: InstanceIdentity
     remotePart = `remote-access within ±24h (requested; whether anything ran is not in CloudTrail): ${entries}${overflowSuffix}`;
   }
 
+  // Both suffixes below cover records the WINDOW FILTER NEVER SAW — they are stated separately
+  // from remotePart's own "within ±24h" clause so neither reads as if it were window-scoped.
+  const skippedSuffix =
+    identity.remoteSkipped > 0
+      ? `; ${identity.remoteSkipped} remote-access record${identity.remoteSkipped === 1 ? "" : "s"} could not be read (malformed)`
+      : "";
   const beyondSuffix =
     identity.remoteBeyond > 0
-      ? `; ${identity.remoteBeyond} further remote-access record${identity.remoteBeyond === 1 ? "" : "s"} not retained by the summary`
+      ? `; the summary itself did not retain at least ${identity.remoteBeyond} further remote-access record${identity.remoteBeyond === 1 ? "" : "s"} (any window)`
       : "";
 
-  return `${endpoint.label} ${endpoint.ip} = ${endpoint.instanceId}: ${launchPart}; ${remotePart}${beyondSuffix}`;
+  return `${endpoint.label} ${endpoint.ip} = ${endpoint.instanceId}: ${launchPart}; ${remotePart}${skippedSuffix}${beyondSuffix}`;
 }
 
 export function correlateAwsFlowIdentityExecution(events: readonly ForensicEvent[]): ForensicEvent[] {
+  // No early return on an empty index: a case that loses every compute-summary record between
+  // merges (re-scoped upload, corrected import) must still strip a now-stale note, not just skip.
   const index = buildIdentityIndex(events);
-  if (index.size === 0) return events as ForensicEvent[];
 
   return events.map((e) => {
     if (!isFlowEvent(e)) return e;
@@ -177,7 +220,11 @@ export function correlateAwsFlowIdentityExecution(events: readonly ForensicEvent
     }
     return {
       ...e,
-      description: appendDerivedNote(strippedDescription, FLOW_IDENTITY_EXECUTION_MARKER, fragments.join("; ")),
+      description: appendDerivedNote(
+        strippedDescription,
+        FLOW_IDENTITY_EXECUTION_MARKER,
+        fragments.join("; "),
+      ),
     };
   });
 }
