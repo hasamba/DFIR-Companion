@@ -466,6 +466,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
               stateStore: options.stateStore,
               superTimelineStore: options.superTimelineStore,
               onSuperTimeline: options.onSuperTimeline,
+              onState: options.onState,
               autoTagImported,
               demoteForensicForCase,
             },

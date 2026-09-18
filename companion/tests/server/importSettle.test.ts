@@ -129,6 +129,43 @@ describe("settleForensicImport — importedAt / importBatchId (#1157)", () => {
     expect(byId.get("new2")!.importBatchId).toBe(byId.get("new1")!.importBatchId);
   });
 
+  // #1174: dashboard/WS subscribers were not notified at the instant the importedAt/importBatchId
+  // stamps were saved — only whenever a LATER broadcast happened to fire.
+  it("notifies onState with the stamped state right after the save, not just on a later broadcast", async () => {
+    const before = state([ev("old", "High")]);
+    const merged = state([ev("old", "High"), ev("new1", "High")]);
+    let saved: InvestigationState | undefined;
+    const onState = vi.fn();
+    const deps = {
+      stateStore: {
+        load: async () => merged,
+        save: async (s: InvestigationState) => {
+          saved = s;
+        },
+      },
+      onState,
+      autoTagImported: async () => {},
+      demoteForensicForCase: async () => saved ?? merged,
+    };
+    await settleForensicImport(deps, "c1", before);
+    expect(onState).toHaveBeenCalledOnce();
+    expect(onState).toHaveBeenCalledWith(saved);
+  });
+
+  it("does not fire onState when nothing new was imported (save never ran)", async () => {
+    const before = state([ev("old", "High")]);
+    const merged = state([ev("old", "High")]);
+    const onState = vi.fn();
+    const deps = {
+      stateStore: { load: async () => merged, save: async () => {} },
+      onState,
+      autoTagImported: async () => {},
+      demoteForensicForCase: async () => merged,
+    };
+    await settleForensicImport(deps, "c1", before);
+    expect(onState).not.toHaveBeenCalled();
+  });
+
   it("does not re-stamp a row that already existed before this import", async () => {
     const before = state([ev("old", "High")]);
     const merged = state([ev("old", "High")]); // nothing new — a no-op import

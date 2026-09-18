@@ -101,6 +101,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         stateStore: options.stateStore,
         superTimelineStore: options.superTimelineStore,
         onSuperTimeline: options.onSuperTimeline,
+        onState: options.onState,
         autoTagImported,
         demoteForensicForCase,
       }
