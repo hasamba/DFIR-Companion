@@ -31,6 +31,7 @@ import { CollectionPlanStore } from "../analysis/collectionPlanStore.js";
 import { HostScopeStore } from "../analysis/hostScopeStore.js";
 import { EvidenceAttestationStore } from "../analysis/evidenceAttestationStore.js";
 import { HuntRequirementStore } from "../analysis/huntRequirementStore.js";
+import { StaticReportAttestationStore } from "../analysis/staticReportAttestationStore.js";
 import { AttributionAssertionStore } from "../analysis/attributionAssertionStore.js";
 import { CollectionGenerationStore } from "../analysis/collectionGenerationStore.js";
 import { MobileBackupGenerationStore } from "../analysis/mobileBackupGenerationStore.js";
@@ -174,6 +175,8 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
   // Decision-linked hunt/collection requirements (#933 item 17): per-case only, same shape again.
   const huntRequirementStore = new HuntRequirementStore(store);
   const attributionAssertionStore = new AttributionAssertionStore(store);
+  // Analyst-attested static-report → host bindings (#1316): per-case only, same shape again.
+  const staticReportAttestationStore = new StaticReportAttestationStore(store);
   const artifactBundleStore = new ArtifactBundleStore(join(dirname(casesRoot), "bundles"));
   // Report templates are GLOBAL like case templates/bundles — a dedicated subdir beside cases/.
   const reportTemplateStore = new ReportTemplateStore(join(dirname(casesRoot), "report-templates"));
@@ -442,6 +445,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
     mobileBackupGenerationStore,
     huntRequirementStore,
     attributionAssertionStore,
+    staticReportAttestationStore,
     artifactBundleStore,
     reportTemplateStore,
     dashboardViewStore,
