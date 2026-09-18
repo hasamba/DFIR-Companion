@@ -102,6 +102,19 @@ describe("synthesize() near-duplicate gate", () => {
     expect(analyze).toHaveBeenCalled();
   });
 
+  // #1167: routes/hostDuplicates.ts's own kick-on-resolve fix assumes a "network-identity"
+  // candidate (an IP-shaped host name #1156's hostBinding.ts can resolve to a real machine name)
+  // never blocks synthesis. pendingNearDuplicates — the ONLY function synthesize()'s own gate
+  // calls — takes no bindingIndex parameter at all, so it structurally cannot produce that reason;
+  // this pins the invariant through the real gate/synthesis path, not just by reading the source.
+  it("does not throw on an IP-shaped host name with no shortname-fqdn pair (a network-identity-only case)", async () => {
+    await seed(["WIN11", "10.0.0.5"]);
+    await pipeline()
+      .synthesize("c1")
+      .catch(() => undefined);
+    expect(analyze).toHaveBeenCalled();
+  });
+
   it("is off when no dismissal store is configured", async () => {
     await seed(["WIN11", "WIN11.windomain.local"]);
     const ungated = new AnalysisPipeline({
