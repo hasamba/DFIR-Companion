@@ -122,7 +122,11 @@ describe("AnalysisPipeline", () => {
   it("synthesis prompt tells the model to return empty findings on a genuinely clean case (#1261)", async () => {
     const { SYNTHESIS_PROMPT } = await import("../../src/analysis/pipeline.js");
     expect(SYNTHESIS_PROMPT).toMatch(/EMPTY findings array/);
-    expect(SYNTHESIS_PROMPT).toMatch(/not about low confidence/i);
+    // Pin the two protective sentences too, not just the headline rule — a partial edit that keeps
+    // "return an EMPTY findings array" but drops these would still suppress genuine findings on a
+    // finding-rich case, which is the actual regression this instruction must never cause.
+    expect(SYNTHESIS_PROMPT).toMatch(/a genuinely suspicious finding\s*\n?\s*stays a finding at ANY confidence/);
+    expect(SYNTHESIS_PROMPT).toMatch(/that is NOT the clean case/);
   });
 
   it("synthesize derives findings + attacker path from the forensic timeline", async () => {
@@ -185,6 +189,43 @@ describe("AnalysisPipeline", () => {
     expect(state.attackerPath).toContain("Phishing");
     // synthesis must not wipe the forensic timeline it read from
     expect(state.forensicTimeline).toHaveLength(2);
+  });
+
+  it("synthesize tolerates an empty findings array on a genuinely clean case (#1261)", async () => {
+    const seeded = emptyState("c1");
+    seeded.forensicTimeline.push({
+      id: "e1",
+      timestamp: "2026-05-20T09:00:00Z",
+      description: "approved backup job wrote the scheduled archive",
+      severity: "Low",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: ["s1.webp"],
+    });
+    await stateStore.save(seeded);
+
+    const cleanDelta = JSON.stringify({
+      findings: [],
+      iocs: [],
+      mitreTechniques: [],
+      attackerPath: "",
+      summary: "Routine, approved maintenance activity; no attacker activity identified.",
+      forensicEvents: [],
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: "",
+    });
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock", cleanDelta),
+      stateStore,
+      imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
+    });
+
+    const state = await pipeline.synthesize("c1");
+    expect(state.findings).toHaveLength(0);
+    expect(state.lastSummary).toContain("Routine");
+    // synthesis must not manufacture a placeholder finding to fill the array
+    expect(state.forensicTimeline).toHaveLength(1);
   });
 
   it("records the synthesis call in the vision/synthesis/other cost buckets correctly", async () => {
