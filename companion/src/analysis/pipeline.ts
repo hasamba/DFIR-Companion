@@ -269,9 +269,8 @@ export class AnalysisPipeline {
     return this.opts.stateLock ? this.opts.stateLock.runExclusive(caseId, fn) : fn();
   }
 
-  // Wraps the module-level withRetry() with server-log visibility: every AI call site in this class
-  // routes through here instead of calling withRetry() directly — a failed/retried AI call now also
-  // logs a WARN per attempt with the case id, call label, provider error kind, and retry/give-up state.
+  // Wraps the module-level withRetry() with server-log visibility: every AI call site in this class routes through here, not withRetry() directly —
+  // a failed/retried AI call also logs a WARN per attempt with the case id, call label, provider error kind, and retry/give-up state.
   private withRetry<T>(
     caseId: string,
     label: string,
@@ -503,6 +502,12 @@ export class AnalysisPipeline {
 
   importAwsFlowLog(...args: ImporterArgs<typeof ingest.importAwsFlowLog>): Promise<InvestigationState> {
     return ingest.importAwsFlowLog(this.importCtx, ...args);
+  }
+  importAzureFlowLog(...args: ImporterArgs<typeof ingest.importAzureFlowLog>): Promise<InvestigationState> {
+    return ingest.importAzureFlowLog(this.importCtx, ...args);
+  }
+  importGcpFlowLog(...args: ImporterArgs<typeof ingest.importGcpFlowLog>): Promise<InvestigationState> {
+    return ingest.importGcpFlowLog(this.importCtx, ...args);
   }
 
   importDiskImageLog(...args: ImporterArgs<typeof ingest.importDiskImageLog>): Promise<InvestigationState> {
