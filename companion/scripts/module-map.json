@@ -178,6 +178,7 @@
     "azureVmssComputeState.ts": "analysis/ingest",
     "awsFlowLogImport.ts": "analysis/ingest",
     "awsFlowResourceAttribution.ts": "analysis/timeline",
+    "awsFlowIdentityExecutionJoin.ts": "analysis/timeline",
     "awsIdentity.ts": "analysis/detect",
     "awsImport.ts": "analysis/ingest",
     "awsLineage.ts": "analysis/ingest",
