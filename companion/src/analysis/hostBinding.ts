@@ -233,7 +233,14 @@ function hasNoDomain(domain: string | undefined): boolean {
 function bareAccountName(name: string, domain: string | undefined): string {
   if (hasNoDomain(domain)) return name;
   const sep = name.lastIndexOf("\\");
-  return sep === -1 ? name : name.slice(sep + 1);
+  if (sep !== -1) return name.slice(sep + 1);
+  // A UPN (jdoe@corp.com) with a real domain SEPARATELY recorded (winAccountRoles.ts's entity()
+  // now prefers that domain over the UPN's own realm, #1253) carries no backslash for the check
+  // above to find — without this, the key became "corp\jdoe@corp.com" (both the resolved domain
+  // AND the UPN's own realm baked into one key), unreachable by the domain\user spelling a same
+  // session's 4624 binding elsewhere would produce.
+  const at = name.lastIndexOf("@");
+  return at === -1 ? name : name.slice(0, at);
 }
 
 function isHumanAccount(name: string, domain: string | undefined): boolean {

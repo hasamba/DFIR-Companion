@@ -340,6 +340,26 @@ describe("buildHostBindingIndex + resolveAccountAtTime (account -> session host)
     expect(hits[0].host).toBe("ws-042");
   });
 
+  // #1253: a UPN-form account.name (winAccountRoles.ts's entity() now sets domain to the
+  // separately-recorded real domain, but name stays the raw UPN) must still be reachable by the
+  // domain\user spelling a same-session 4624 binding elsewhere would produce, not stay keyed under
+  // its own un-split realm\user@realm form.
+  it("indexes a UPN-form account.name under the bare local part, reachable by domain\\user", () => {
+    const events = [
+      logonEvent({
+        sessionHost: "ws-042",
+        accountName: "jdoe@corp.com",
+        accountDomain: "CORP",
+        logonType: 10,
+        ts: "2026-06-10T12:00:00Z",
+      }),
+    ];
+    const index = buildHostBindingIndex(events);
+    const hits = resolveAccountAtTime(index, "CORP\\jdoe", "2026-06-10T12:00:00Z", 1_000);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].host).toBe("ws-042");
+  });
+
   it("does NOT bind an account to a file server merely authenticated to over the network (LogonType 3)", () => {
     const events = [
       logonEvent({
