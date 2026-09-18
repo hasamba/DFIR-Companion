@@ -41,6 +41,7 @@ export const DERIVED_NOTE_NAMES: readonly string[] = [
   "preceded by a service-control pipe call",
   "flow resource attribution",
   "flow identity/execution",
+  "flow sensitive-data",
   "downloaded from a visited page",
   "referrer page visited",
   "preceded a download mark",

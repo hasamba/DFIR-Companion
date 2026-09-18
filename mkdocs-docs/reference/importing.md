@@ -985,16 +985,17 @@ managed account are all rows the device holds. So every LEAPP row now carries an
 read from the row's own columns against a registry of known iLEAPP / ALEAPP artifacts:
 
 ```
-iLEAPP Safari Browser - History [Visit Timestamp: 2026-05-02 10:00:00] [origin: synced-from-another-device, device-local, history — leapp-origin-2026-09-16]: …
-iLEAPP Safari Browser - iCloud Tabs [origin: synced, cloud, tab (row names device "Ana's iPad") — leapp-origin-2026-09-16]: …
-ALEAPP Android Notification History [origin: not-established, device-local, notification — leapp-origin-2026-09-16]: …
-ALEAPP Knowledge [origin: not established — leapp-origin-2026-09-16]: …
+iLEAPP Safari Browser - History [Visit Timestamp: 2026-05-02 10:00:00] [origin: synced-from-another-device, device-local, history — leapp-origin-2026-09-18]: …
+iLEAPP Safari Browser - iCloud Tabs [origin: synced, cloud, tab (row names device "Ana's iPad") — leapp-origin-2026-09-18]: …
+ALEAPP Android Notification History [origin: not-established, device-local, notification — leapp-origin-2026-09-18]: …
+ALEAPP Knowledge [origin: not established — leapp-origin-2026-09-18]: …
 ```
 
 **Facets, not a class.** *Acquisition* (recorded on this device / synced from another device /
 synced / from a store account / not established — a notification's package names the app that
 posted it and establishes neither delivery nor a read, so its acquisition stays not established), *locality* (device-local / cloud),
-*record type* (history, tab, notification, account, device, app inventory) and *authorship* are
+*record type* (history, tab, notification, account, device, app inventory, usage, power, permission,
+network) and *authorship* are
 read separately, and each names the column that established it. A facet with no establishing
 column is *not established* — never inferred from another. **Authorship is "not established" on
 every row**: no column in the registry identifies a person. Safari's `Origin` is Safari's own
@@ -1003,7 +1004,7 @@ person visited"; a Chromium `Transition Type` is kept as a navigation fact. An a
 row names is an association ("the row names device X"), never an actor or a source.
 
 **The registry is pinned to upstream** — iLEAPP `main@6dc251d857c0` (2026-09-14) and ALEAPP
-`main@498491475597` (2026-09-13), registry version `leapp-origin-2026-09-16` — by the artifact's
+`main@ce0880dc232c` (2026-09-18), registry version `leapp-origin-2026-09-18` — by the artifact's
 exact upstream name (the TSV filename) and its exact header tuple. A file whose headers differ from
 the pinned tuple reads "artifact known, headers differ from the pinned release"; an artifact not in
 the registry reads "not established"; a status or configuration sub-artifact reads "excluded". A
@@ -1013,8 +1014,29 @@ iCloud Tabs, Tabs (BrowserState / SafariTabs), Notification Duet, Account Data, 
 Device List, knowledgeC - App Usage, PowerLog - Application Runtime, Application Permissions (the
 modern `last_modified`-schema TCC export only — the older, pre-iOS-13 schema still reads
 "headers differ"), App Data (netusage); Chromium Web History / Web Visits / Search Terms, Android
-Notification History, Accounts_ce, installedappsGass, InstalledappsLibrary. The import response,
-the activity line, the timeline note and the run manifest all carry the registry's coverage counts.
+Notification History, Accounts_ce, installedappsGass, InstalledappsLibrary, and the Android
+permission and usage tables — App Ops Permissions (modern and Legacy), App Ops Recent Accesses,
+App Ops Permission Modes, App Op Modes and Permission Grants (Permission Store), Usage Stats. The
+import response, the activity line, the timeline note and the run manifest all carry the
+registry's coverage counts.
+
+**Android permission and usage rows say what the OS stored, nothing more.** An AppOps row is
+evidence the OS recorded a permission operation for that package — never proof the user
+consciously granted it, and never proof of malicious use. `App Ops Permissions` has no outcome
+column: the outcome is which of its two timestamps is populated, and the row is dated by, and
+names, that clock (`[Reject Timestamp: …]`); when both are populated the row is dated by the
+access and the reject stays in its cells. The three tables that carry a mode or a grant say which
+column spoke — `(op mode ALLOWED)` for the mode in force at an access, `(mode ERRORED)` for a
+configured mode, `(granted Yes)` for a stored grant — with the value exactly as ALEAPP wrote it
+(its `OP_MODES` at android-15.0.0_r1: `ALLOWED`, `IGNORED`, `ERRORED`, `DEFAULT`, `FOREGROUND`,
+or the stored integer outside that set; `Granted` is `Yes` / `No`, or the raw flags when
+undecidable). A stored mode or grant is a state at collection time, not a grant event and not
+evidence the permission was ever exercised; the tables that carry no clock import undated. A
+Usage Stats row is presence in the OS's usage ledger, not execution of a particular function; its
+`Time Active` columns are durations and are never read as the row's clock. Each row types its
+package the same way an app-inventory row does, so a later pass can join requested, granted and
+used by package — that join is not built here, and a row's `Proxy Package Name` (an op performed
+by one package on behalf of another) is not identity.
 
 **The subject device.** Give `device` on `/import-leapp` (the extraction's subject as you name it);
 it becomes the rows' host. It is never read from a row: a device a row names is an association.

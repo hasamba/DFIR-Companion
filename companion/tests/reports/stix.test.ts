@@ -281,3 +281,16 @@ describe("buildStixBundle", () => {
     expect(withId.name).toBe("Incident IR-2026-007 — c1");
   });
 });
+
+// A pipeline that pattern-matches indicators into detection never reads `labels`; a typed custom
+// property (STIX 2.1 §11) is what it can gate on. Plain indicators carry no such key at all.
+describe("client-reported indicators carry a machine-gatable custom property (#1325 follow-up)", () => {
+  it("sets x_dfir_companion_provenance only on a client-reported indicator", () => {
+    const state = emptyState("c1");
+    state.iocs.push(ioc({ id: "i1", value: "203.0.113.9", provenance: "client-reported" }));
+    state.iocs.push(ioc({ id: "i2", value: "198.51.100.7" }));
+    const inds = ofType(buildStixBundle(state).objects, "indicator");
+    expect(inds.find((o) => o.name === "203.0.113.9")!.x_dfir_companion_provenance).toBe("client-reported");
+    expect(inds.find((o) => o.name === "198.51.100.7")!).not.toHaveProperty("x_dfir_companion_provenance");
+  });
+});

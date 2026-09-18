@@ -168,8 +168,12 @@ describe("GET /cases/:id/geo-map.csv (#133)", () => {
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toContain("text/csv");
     expect(res.text.split("\n")[0]).toBe(
-      "ip,country,city,lat,lon,asn,severity,verdict,internal,eventCount,approximate",
+      "ip,country,city,lat,lon,asn,severity,verdict,internal,eventCount,approximate,clientReported",
     );
+    // The route contract pins the cell, not just the header: a sensor-observed IP is "no".
+    const row = res.text.split("\n")[1];
+    expect(row.startsWith('"8.8.8.8"')).toBe(true);
+    expect(row.endsWith(',"no"')).toBe(true);
   });
 });
 
