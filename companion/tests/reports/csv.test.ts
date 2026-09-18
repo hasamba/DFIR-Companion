@@ -162,7 +162,9 @@ describe("geoMapCsv (#133)", () => {
     };
     const csv = geoMapCsv(data);
     const [header, row] = csv.trim().split("\n");
-    expect(header).toBe("ip,country,city,lat,lon,asn,severity,verdict,internal,eventCount,approximate");
+    expect(header).toBe(
+      "ip,country,city,lat,lon,asn,severity,verdict,internal,eventCount,approximate,clientReported",
+    );
     expect(row).toContain("8.8.8.8");
     expect(row).toContain("Mountain View");
     expect(row).toContain("AS15169");
@@ -302,5 +304,34 @@ describe("iocsCsv provenance column (#1326)", () => {
     expect(plain.endsWith(',""')).toBe(true);
     // The value cell itself stays a clean indicator.
     expect(marked.split(",")[2]).toBe('"203.0.113.9"');
+  });
+});
+
+// #1326: the geo CSV is the "for external OSINT tooling" export — the same data-export reasoning
+// as iocsCsv: its own column, never a suffix on the ip.
+describe("geoMapCsv clientReported column (#1326)", () => {
+  it("is yes for a client-reported marker and no otherwise, with the ip cell untouched", () => {
+    const marker = (ip: string, clientReported?: boolean) => ({
+      iocId: ip,
+      ip,
+      lat: 0,
+      lon: 0,
+      severity: "Low",
+      eventCount: 1,
+      internal: false,
+      sources: [],
+      color: "gray",
+      ...(clientReported ? { clientReported } : {}),
+    });
+    const data = {
+      markers: [marker("203.0.113.9", true), marker("198.51.100.7")],
+      flows: [],
+      countries: [],
+      stats: { totalIps: 2, resolved: 2, external: 2, internal: 0, distinctCountries: 0, distinctAsns: 0 },
+    } as unknown as GeoMapData;
+    const [, a, b] = geoMapCsv(data).trim().split("\n");
+    expect(a.split(",")[0]).toBe('"203.0.113.9"');
+    expect(a.endsWith(',"yes"')).toBe(true);
+    expect(b.endsWith(',"no"')).toBe(true);
   });
 });

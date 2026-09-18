@@ -422,6 +422,9 @@ describe("clientReportedBadge (#1326)", () => {
     expect(chip).toContain('class="ioc-client-reported-chip"');
     expect(chip).toContain("client-reported");
     expect(chip).toContain("sender-controlled header");
+    // The title states the reason, never the downstream policy — a policy change must not make
+    // a tooltip lie with no test to catch it.
+    expect(chip).not.toMatch(/block-list|to_ids|MISP/);
     expect(ioc.clientReportedBadge({ id: "i2", type: "ip", value: "198.51.100.7" })).toBe("");
     expect(ioc.clientReportedBadge({ id: "i3", type: "ip", value: "x", provenance: "something-else" })).toBe(
       "",

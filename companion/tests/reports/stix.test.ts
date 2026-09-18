@@ -243,6 +243,9 @@ describe("client-reported indicators (#1325)", () => {
     const marked = inds.find((o) => o.name === "203.0.113.9")!;
     const plain = inds.find((o) => o.name === "198.51.100.7")!;
     expect(marked.labels).toEqual(["client-reported"]);
+    // A pipeline that never reads labels can still gate on a typed custom property (STIX 2.1 §11).
+    expect(marked.x_dfir_companion_provenance).toBe("client-reported");
+    expect(plain.x_dfir_companion_provenance).toBeUndefined();
     expect(String(marked.description).startsWith("Client-reported:")).toBe(true);
     expect(String(marked.description)).toContain("sender-controlled header");
     expect(plain.labels).toBeUndefined();

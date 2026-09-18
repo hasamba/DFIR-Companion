@@ -265,7 +265,11 @@ export function buildStixBundle(state: InvestigationState, opts: StixExportOptio
         pattern_type: "stix",
         valid_from: stixTime(ioc.firstSeen, now),
         indicator_types: [INDICATOR_TYPE[verdict ?? "unknown"]],
-        ...(clientReported ? { labels: ["client-reported"] } : {}),
+        // The label is what a TIP shows a human; the x_ property (STIX 2.1 §11 custom properties)
+        // is what a pipeline that never reads labels can gate enforcement on.
+        ...(clientReported
+          ? { labels: ["client-reported"], x_dfir_companion_provenance: "client-reported" }
+          : {}),
         description: clientReported ? `${CLIENT_REPORTED_LINE}\n${base}` : base,
       }),
     );
