@@ -32,9 +32,18 @@
 // not read. Not fed to beaconDetect.ts (interval rows read as low-jitter beacons).
 //
 // AGGREGATION. Every entry carries a measurement, so the key includes `start_time` — only an
-// exact re-export of the same interval merges. The reporter-side VPC names are in the key as
-// recorded (empty when annotations are off), so identical private 5-tuples in two VPCs of one
-// project stay apart whenever the export can tell them apart.
+// exact re-export of the same interval merges. The VPC names, disposition and drop reason are in
+// the key as recorded (empty when absent), so identical private 5-tuples in two VPCs of one
+// project, or two drop reasons, stay apart whenever the export can tell them apart.
+//
+// BOUNDS. Detection is by the `vpc_flows` logName wrapper ONLY — `resource.type` is not used,
+// because `gce_subnetwork` is shared with firewall-rules logging, whose entries also carry a
+// `connection` block. Ports must be <= 65535 (the canonical schema throws on more, and one bad
+// entry must never abort the upload, so each row's mapping is also guarded and counted
+// `malformed`). `start_time` must lie in [2001, 2242]; an `end_time` before `start_time` is
+// dropped from the row rather than printed as an interval. Counters above 2^53 are `malformed`,
+// never rounded. Free text (drop reason, instance/project/zone names) is bounded before the row
+// is composed, so the counters, times and both per-side annotation brackets always fit.
 //
 // Pure, deterministic, NO AI call.
 
@@ -89,8 +98,11 @@ const PROTOCOL_NAMES: Record<string, string> = {
   "50": "esp",
   "58": "icmpv6",
 };
+const MIN_MILLIS = 1_000_000_000_000;
 const MAX_MILLIS = 8_640_000_000_000;
+const MAX_PORT = 65535;
 const DESCRIPTION_MAX = 600;
+const TEXT_MAX = 64;
 const LOGNAME_PROJECT_RE = /^projects\/([^/]+)\/logs\//i;
 
 interface Instance {
@@ -124,20 +136,25 @@ interface Flow {
 /** A non-negative integer from a JSON number or a digit string (int64 export shape); null when absent; NaN when malformed. */
 function int(v: unknown): number | null {
   if (v === undefined || v === null || v === "") return null;
-  if (typeof v === "number") return Number.isInteger(v) && v >= 0 ? v : NaN;
-  if (typeof v === "string" && /^\d+$/.test(v.trim())) return Number(v.trim());
+  if (typeof v === "number") return Number.isSafeInteger(v) && v >= 0 ? v : NaN;
+  if (typeof v === "string" && /^\d+$/.test(v.trim())) {
+    const n = Number(v.trim());
+    return Number.isSafeInteger(n) ? n : NaN;
+  }
   return NaN;
 }
+
+const text = (v: unknown) => boundedTextTo(str(v).trim(), TEXT_MAX);
 
 function instance(v: unknown): Instance | null {
   if (!isObject(v)) return null;
   const vm = str(getCI(v, "vm_name")).trim();
   if (!vm) return null;
   return {
-    project: str(getCI(v, "project_id")).trim(),
-    region: str(getCI(v, "region")).trim(),
-    zone: str(getCI(v, "zone")).trim(),
-    vm,
+    project: text(getCI(v, "project_id")),
+    region: text(getCI(v, "region")),
+    zone: text(getCI(v, "zone")),
+    vm: boundedTextTo(vm, TEXT_MAX),
   };
 }
 
@@ -145,30 +162,33 @@ function gke(v: unknown): string {
   if (!isObject(v)) return "";
   const pod = getCI(v, "pod");
   const cluster = getCI(v, "cluster");
-  const podName = isObject(pod) ? str(getCI(pod, "pod_name")).trim() : "";
-  const ns = isObject(pod) ? str(getCI(pod, "pod_namespace")).trim() : "";
-  const clusterName = isObject(cluster) ? str(getCI(cluster, "cluster_name")).trim() : "";
+  const podName = isObject(pod) ? text(getCI(pod, "pod_name")) : "";
+  const ns = isObject(pod) ? text(getCI(pod, "pod_namespace")) : "";
+  const clusterName = isObject(cluster) ? text(getCI(cluster, "cluster_name")) : "";
   if (!podName) return "";
   return `${ns ? `${ns}/` : ""}${podName}${clusterName ? ` (cluster ${clusterName})` : ""}`;
 }
 
-/** True when a LogEntry is a vpc_flows record by its own wrapper, never by payload shape alone. */
+function decodedLogName(entry: Row): string {
+  return str(getCI(entry, "logName")).replace(/%2F/gi, "/").trim();
+}
+
+/**
+ * True when a LogEntry is a vpc_flows record by its own wrapper — the `vpc_flows` logName plus a
+ * `jsonPayload` object. Never by `resource.type` (gce_subnetwork is shared with firewall-rules
+ * logging, whose entries also carry a `connection`), never by payload shape alone. A claimed entry
+ * whose payload then fails validation is `malformed`, not `nonFlow`.
+ */
 export function isGcpFlowLogEntry(entry: Row): boolean {
-  const payload = getCI(entry, "jsonPayload");
-  if (!isObject(payload)) return false;
-  const conn = getCI(payload, "connection");
-  if (!isObject(conn) || !getCI(conn, "src_ip") || !getCI(conn, "dest_ip")) return false;
-  const logName = str(getCI(entry, "logName")).replace(/%2F/gi, "/");
-  if (/\/vpc_flows$/i.test(logName)) return true;
-  const resource = getCI(entry, "resource");
-  const type = isObject(resource) ? str(getCI(resource, "type")).trim().toLowerCase() : "";
-  return type === "gce_subnetwork" || type === "vpc_flow_logs_config";
+  return isObject(getCI(entry, "jsonPayload")) && /\/vpc_flows$/i.test(decodedLogName(entry));
 }
 
 /** Reads one entry's flow, or null (malformed). */
 function parseEntry(entry: Row): Flow | null {
   const p = getCI(entry, "jsonPayload") as Row;
-  const conn = getCI(p, "connection") as Row;
+  const connRaw = getCI(p, "connection");
+  if (!isObject(connRaw)) return null;
+  const conn = connRaw;
   const src = cleanIp(str(getCI(conn, "src_ip")));
   const dst = cleanIp(str(getCI(conn, "dest_ip")));
   const srcPort = int(getCI(conn, "src_port"));
@@ -183,10 +203,11 @@ function parseEntry(entry: Row): Flow | null {
     Number.isNaN(protocol)
   )
     return null;
+  if ((srcPort ?? 0) > MAX_PORT || (dstPort ?? 0) > MAX_PORT) return null;
   const reporter = str(getCI(p, "reporter")).trim().toUpperCase();
   if (!REPORTERS.has(reporter)) return null;
   const startMs = Date.parse(str(getCI(p, "start_time")));
-  if (!Number.isFinite(startMs) || Math.abs(startMs) > MAX_MILLIS) return null;
+  if (!Number.isFinite(startMs) || startMs < MIN_MILLIS || startMs > MAX_MILLIS) return null;
   const endMs = Date.parse(str(getCI(p, "end_time")));
   const dropped = str(getCI(p, "disposition")).trim().toUpperCase() === "DROPPED";
   const packets = int(getCI(p, dropped ? "packets_dropped" : "packets_sent"));
@@ -201,9 +222,10 @@ function parseEntry(entry: Row): Flow | null {
     protocol: String(protocol),
     reporter,
     startMs,
-    endIso: Number.isFinite(endMs) && Math.abs(endMs) <= MAX_MILLIS ? new Date(endMs).toISOString() : "",
+    endIso:
+      Number.isFinite(endMs) && endMs >= startMs && endMs <= MAX_MILLIS ? new Date(endMs).toISOString() : "",
     dropped,
-    dropReason: str(getCI(p, "drop_reason")).trim(),
+    dropReason: text(getCI(p, "drop_reason")),
     packets,
     bytes,
     srcInstance: instance(getCI(p, "src_instance")),
@@ -219,20 +241,27 @@ function endpoint(ip: string, port: number): string {
   return port > 0 ? `${ip}:${port}` : ip;
 }
 
+/** Public unicast IPv4 only: not internal, not multicast/reserved/broadcast (224.0.0.0/3) — a v6 peer is never an IOC. */
+function isIocCandidate(ip: string): boolean {
+  const m = /^(\d+)\.\d+\.\d+\.\d+$/.exec(ip);
+  return !!m && Number(m[1]) < 224 && !isInternalIpv4(ip);
+}
+
 function emittingProject(entry: Row): string {
   const resource = getCI(entry, "resource");
   const labels = isObject(resource) ? getCI(resource, "labels") : undefined;
-  const fromLabels = isObject(labels) ? str(getCI(labels, "project_id")).trim() : "";
-  return fromLabels || (LOGNAME_PROJECT_RE.exec(str(getCI(entry, "logName")))?.[1] ?? "");
+  const fromLabels = isObject(labels) ? text(getCI(labels, "project_id")) : "";
+  return fromLabels || boundedTextTo(LOGNAME_PROJECT_RE.exec(decodedLogName(entry))?.[1] ?? "", TEXT_MAX);
 }
 
 /** Probative fields first; annotation brackets appended whole only while the bound holds. */
 function describe(f: Flow): string {
   const protoName = PROTOCOL_NAMES[f.protocol] ?? f.protocol;
   const verdict = f.dropped ? `dropped${f.dropReason ? `: ${f.dropReason}` : ""}` : "observed";
+  const tail = f.dropped ? " dropped" : "";
   const counters = [
-    f.packets === null ? "" : `${f.packets} packet(s)`,
-    f.bytes === null ? "" : `${f.bytes} payload byte(s)${f.dropped ? " dropped" : ""}`,
+    f.packets === null ? "" : `${f.packets} packet(s)${tail}`,
+    f.bytes === null ? "" : `${f.bytes} payload byte(s)${tail}`,
   ]
     .filter(Boolean)
     .join(", ");
@@ -260,8 +289,7 @@ function describe(f: Flow): string {
 function mapFlow(f: Flow, entry: Row, index: number, sink: Map<string, SiemIoc>): MappedEvent {
   const protoName = PROTOCOL_NAMES[f.protocol] ?? f.protocol;
   const observed = new Date(f.startMs).toISOString();
-  for (const ip of [f.src, f.dst])
-    if (/^\d+\.\d+\.\d+\.\d+$/.test(ip) && !isInternalIpv4(ip)) addIoc(sink, "ip", ip);
+  for (const ip of [f.src, f.dst]) if (isIocCandidate(ip)) addIoc(sink, "ip", ip);
   const reporterSide = f.reporter.startsWith("SRC") ? f.srcInstance : f.dstInstance;
   const project = emittingProject(entry);
   const insertId = str(getCI(entry, "insertId")).trim();
@@ -274,7 +302,7 @@ function mapFlow(f: Flow, entry: Row, index: number, sink: Map<string, SiemIoc>)
     severity: "Low",
     mitre: [],
     aggKey: boundedAggKey(
-      `gcp-flow|${project}|${f.reporter}|${f.srcVpc}|${f.dstVpc}|${f.src}|${f.dst}|${f.srcPort}|${f.dstPort}|${f.protocol}|${f.dropped ? "dropped" : "observed"}|${f.startMs}`.toLowerCase(),
+      `gcp-flow|${project}|${f.reporter}|${f.srcVpc}|${f.dstVpc}|${f.src}|${f.dst}|${f.srcPort}|${f.dstPort}|${f.protocol}|${f.dropped ? `dropped:${f.dropReason}` : "observed"}|${f.startMs}`.toLowerCase(),
     ),
     sources: ["GCP VPC Flow Logs"],
     srcIp: f.src,
@@ -332,9 +360,18 @@ export function parseGcpFlowLog(text: string, opts: GcpFlowLogImportOptions = {}
       malformed++;
       return;
     }
+    // One entry's mapping must never abort the upload: anything the validators missed that the
+    // canonical schema rejects is counted here, not thrown out of the whole parse.
+    let row: MappedEvent;
+    try {
+      row = mapFlow(f, entry, index, sink);
+    } catch {
+      malformed++;
+      return;
+    }
     if (f.dropped) droppedRecords++;
     if (!(f.reporter.startsWith("SRC") ? f.srcInstance : f.dstInstance)) noReporterInstance++;
-    mapped.push(mapFlow(f, entry, index, sink));
+    mapped.push(row);
   });
 
   const { events, groups } = aggregateEvents(mapped, {

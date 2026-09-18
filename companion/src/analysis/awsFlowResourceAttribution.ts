@@ -56,8 +56,9 @@ interface Launch {
   timeMs: number;
 }
 
-// Provider-gated (#1294): Azure/GCP flow rows carry their own accountId (subscription / project)
-// and must never be matched against AWS launches — the launch index is AWS-only by construction.
+// Provider-gated (#1294): an Azure/GCP flow row (provider "azure"/"gcp", accountId a subscription or
+// project when the record names one) must never be matched against AWS launches; the AWS flow
+// importer has always stamped provider "aws", so no AWS row is excluded by this.
 function isFlowEvent(e: ForensicEvent): boolean {
   const c = e.canonical;
   return c?.event.category === "network" && c.event.type === "flow" && c.cloud?.provider === "aws";

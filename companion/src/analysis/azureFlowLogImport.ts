@@ -41,8 +41,17 @@
 // classify v6 ranges). Not fed to beaconDetect.ts — same reason as AWS (interval rows read as
 // low-jitter beacons).
 //
-// AGGREGATION. Rows that carry a measurement (C/E) key on the tuple's own timestamp and never
-// merge; B/D rows (no counters) use the AWS hourly bucket. State is always in the key.
+// AGGREGATION. Rows that carry a measurement (C/E) key on the tuple's own timestamp, so two
+// measurements of one flow never merge — only an exact duplicate tuple (same timestamp, a
+// re-exported line) collapses by count; B/D rows (no counters) use the AWS hourly bucket. State
+// and rule are always in the key, so the same tuple under two rules stays two rows.
+//
+// BOUNDS. Ports must be <= 65535 (the canonical port schema throws on more — and one forged line
+// must never abort an upload, so every row's mapping is also guarded and counted `malformed` on
+// any throw). Timestamps must lie in [2001, 2242] per unit (seconds 1e9..8.64e9, milliseconds
+// 1e12..8.64e12) — no cloud flow log predates 2001. Counters above 2^53 are `malformed` rather
+// than rounded. Rule and MAC text is bounded before composing the row so the C/E counters and the
+// encryption state can never be pushed past the 600-char description cut.
 //
 // Pure, deterministic, NO AI call.
 
@@ -101,8 +110,13 @@ const ENCRYPTION_RE = /^(?:X|NX(?:_[A-Z_]+)?)$/;
 const PROTOCOL_NAMES: Record<string, string> = { "1": "icmp", "6": "tcp", "17": "udp", "58": "icmpv6" };
 const STATE_WORD: Record<string, string> = { B: "begin", C: "continuing", E: "end", D: "denied" };
 const MS_THRESHOLD = 1e11;
+const MIN_SECONDS = 1_000_000_000;
 const MAX_SECONDS = 8_640_000_000;
+const MIN_MILLIS = 1_000_000_000_000;
 const MAX_MILLIS = 8_640_000_000_000;
+const MAX_PORT = 65535;
+const RULE_MAX = 120;
+const MAC_MAX = 32;
 const SUBSCRIPTION_RE = /\/subscriptions\/([0-9a-f-]{36})\//i;
 
 interface Tuple {
@@ -144,13 +158,16 @@ function parseTuple(raw: string): Tuple | null {
   )
     return null;
   if (![sport, dport, proto].every((x) => /^\d+$/.test(x))) return null;
+  if (Number(sport) > MAX_PORT || Number(dport) > MAX_PORT) return null;
   const counters = [ps, bs, pr, br];
   const measured = state === "C" || state === "E";
   if (counters.some((c) => !(c === "" || /^\d+$/.test(c)))) return null;
   if (measured && counters.some((c) => c === "")) return null;
+  if (counters.some((c) => c !== "" && !Number.isSafeInteger(Number(c)))) return null;
   const n = Number(ts);
+  if (!Number.isSafeInteger(n)) return null;
   const timeMs = n >= MS_THRESHOLD ? n : n * 1000;
-  if (n >= MS_THRESHOLD ? n > MAX_MILLIS : n > MAX_SECONDS) return null;
+  if (n >= MS_THRESHOLD ? n < MIN_MILLIS || n > MAX_MILLIS : n < MIN_SECONDS || n > MAX_SECONDS) return null;
   const src = cleanIp(srcRaw);
   const dst = cleanIp(dstRaw);
   if (!src || !dst) return null;
@@ -175,16 +192,22 @@ function endpoint(ip: string, port: number): string {
   return port > 0 ? `${ip}:${port}` : ip;
 }
 
+/** Public unicast IPv4 only: not internal, not multicast/reserved/broadcast (224.0.0.0/3) — a v6 peer is never an IOC. */
+function isIocCandidate(ip: string): boolean {
+  const m = /^(\d+)\.\d+\.\d+\.\d+$/.exec(ip);
+  return !!m && Number(m[1]) < 224 && !isInternalIpv4(ip);
+}
+
 function mapTuple(t: Tuple, ctx: RecordContext, sink: Map<string, SiemIoc>): MappedEvent {
   const protoName = PROTOCOL_NAMES[t.protocol] ?? t.protocol;
   const observed = new Date(t.timeMs).toISOString();
-  // IOCs: public IPv4 only — a routable v6 peer makes a row, never an IOC (header).
-  for (const ip of [t.src, t.dst])
-    if (/^\d+\.\d+\.\d+\.\d+$/.test(ip) && !isInternalIpv4(ip)) addIoc(sink, "ip", ip);
+  for (const ip of [t.src, t.dst]) if (isIocCandidate(ip)) addIoc(sink, "ip", ip);
 
-  const dirWords = t.direction === "I" ? `inbound to NIC ${ctx.mac}` : `outbound from NIC ${ctx.mac}`;
+  const mac = boundedTextTo(ctx.mac, MAC_MAX);
+  const rule = boundedTextTo(ctx.rule, RULE_MAX);
+  const dirWords = t.direction === "I" ? `inbound to NIC ${mac}` : `outbound from NIC ${mac}`;
   const ruleWords =
-    ctx.rule.toLowerCase() === "unspecified" ? "rule unspecified (encryption-denied)" : `rule ${ctx.rule}`;
+    rule.toLowerCase() === "unspecified" ? "rule unspecified (encryption-denied)" : `rule ${rule}`;
   const measured = t.state === "C" || t.state === "E";
   const counters = measured
     ? ` [${t.packetsSent} packet(s)/${t.bytesSent} byte(s) sent, ${t.packetsReceived} packet(s)/${t.bytesReceived} byte(s) received since last update]`
@@ -194,7 +217,7 @@ function mapTuple(t: Tuple, ctx: RecordContext, sink: Map<string, SiemIoc>): Map
     600,
   );
 
-  // A measured row (C/E) is its own observation and never merges; a B/D row buckets hourly.
+  // A measured row (C/E) keys on its own timestamp (only an exact duplicate merges); B/D buckets hourly.
   const timeKey = measured ? String(t.timeMs) : String(Math.floor(t.timeMs / 3_600_000));
   const srcPortField = t.srcPort > 0 ? t.srcPort : undefined;
   const dstPortField = t.dstPort > 0 ? t.dstPort : undefined;
@@ -205,7 +228,7 @@ function mapTuple(t: Tuple, ctx: RecordContext, sink: Map<string, SiemIoc>): Map
     severity: "Low",
     mitre: [],
     aggKey: boundedAggKey(
-      `azure-flow|${ctx.target}|${ctx.mac}|${t.src}|${t.dst}|${t.srcPort}|${t.dstPort}|${t.protocol}|${t.direction}|${t.state}|${timeKey}`.toLowerCase(),
+      `azure-flow|${ctx.target}|${ctx.mac}|${ctx.rule}|${t.src}|${t.dst}|${t.srcPort}|${t.dstPort}|${t.protocol}|${t.direction}|${t.state}|${timeKey}`.toLowerCase(),
     ),
     sources: ["Azure virtual network flow logs"],
     srcIp: t.src,
@@ -285,13 +308,19 @@ export function parseAzureFlowLog(
             malformed++;
             return;
           }
-          mapped.push(
-            mapTuple(
-              t,
-              { mac, target, subscription, rule, locator: `record:${r}/flow:${f}/group:${g}/tuple:${i}` },
-              sink,
-            ),
-          );
+          // One tuple's mapping must never abort the upload: anything the validators missed that
+          // the canonical schema rejects is counted here, not thrown out of the whole parse.
+          try {
+            mapped.push(
+              mapTuple(
+                t,
+                { mac, target, subscription, rule, locator: `record:${r}/flow:${f}/group:${g}/tuple:${i}` },
+                sink,
+              ),
+            );
+          } catch {
+            malformed++;
+          }
         });
       });
     });

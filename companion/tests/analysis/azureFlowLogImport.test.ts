@@ -227,6 +227,44 @@ describe("parseAzureFlowLog — malformed tuples", () => {
   });
 });
 
+describe("parseAzureFlowLog — code-review regressions (#1294)", () => {
+  const one = (tuple: string, rule = "x") => parseAzureFlowLog(blob([record({ [rule]: [tuple] })]));
+  it("a port above 65535 is malformed and never aborts the upload (the canonical schema would throw)", () => {
+    const r = parseAzureFlowLog(
+      blob([record({ x: ["1700000000,10.0.0.1,8.8.8.8,70000,443,6,I,B,X,,,,", OUT_E] })]),
+    );
+    expect(r.malformed).toBe(1);
+    expect(r.events).toHaveLength(1);
+  });
+  it("the same tuple under two rules stays two rows — a rule is never attributed to another rule's flow", () => {
+    const r = parseAzureFlowLog(blob([record({ ruleA: [OUT_B], ruleB: [OUT_B] })]));
+    expect(r.events).toHaveLength(2);
+  });
+  it("multicast, reserved and broadcast peers make rows but never IOCs", () => {
+    for (const ip of ["239.255.255.250", "224.0.0.5", "240.0.0.1", "255.255.255.255"]) {
+      const r = one(`1663146003606,10.0.0.6,${ip},23956,443,17,O,E,NX,3,767,2,1580`);
+      expect(r.events).toHaveLength(1);
+      expect(r.iocs).toHaveLength(0);
+    }
+  });
+  it("a counter above 2^53 is malformed, never rounded into a number the record did not state", () => {
+    expect(
+      one("1663146003606,10.0.0.6,192.0.2.180,23956,443,6,O,E,NX,3,18446744073709551615,2,1580").malformed,
+    ).toBe(1);
+  });
+  it("a timestamp before 2001 is malformed (seconds 0, milliseconds 1e11)", () => {
+    expect(one("0,10.0.0.6,192.0.2.180,23956,443,6,O,B,NX,0,0,0,0").malformed).toBe(1);
+    expect(one("100000000000,10.0.0.6,192.0.2.180,23956,443,6,O,B,NX,0,0,0,0").malformed).toBe(1);
+  });
+  it("an over-long rule name is bounded so the C/E counters and encryption state always survive the 600-char cut", () => {
+    const r = one(OUT_E, "R".repeat(2000));
+    const d = r.events[0].description;
+    expect(d.length).toBeLessThanOrEqual(600);
+    expect(d).toContain("since last update");
+    expect(d).toContain("[encryption NX]");
+  });
+});
+
 describe("parseAzureFlowLog — aggregation keys", () => {
   it("B and E rows of one flow never collapse", () => {
     const r = parseAzureFlowLog(blob([record({ x: [OUT_B, OUT_E] })]));

@@ -41,7 +41,7 @@ describe("isGcpFlowLogEntry", () => {
   it("claims a compute.googleapis.com vpc_flows entry", () => {
     expect(isGcpFlowLogEntry(entry({}))).toBe(true);
   });
-  it("claims a networkmanagement.googleapis.com vpc_flows entry by resource type", () => {
+  it("claims a networkmanagement.googleapis.com vpc_flows entry", () => {
     const e = entry(
       {},
       {
@@ -50,6 +50,22 @@ describe("isGcpFlowLogEntry", () => {
       },
     );
     expect(isGcpFlowLogEntry(e)).toBe(true);
+  });
+  it("does not claim a firewall-rules entry that shares gce_subnetwork and a connection block — logName is the wrapper", () => {
+    const fw = entry(
+      {},
+      {
+        logName: "projects/my-proj/logs/compute.googleapis.com%2Ffirewall",
+        resource: { type: "gce_subnetwork" },
+      },
+    );
+    expect(isGcpFlowLogEntry(fw)).toBe(false);
+    expect(parseGcpFlowLog(arr([fw])).nonFlow).toBe(1);
+  });
+  it("a vpc_flows entry with no connection block is malformed, not nonFlow", () => {
+    const r = parseGcpFlowLog(arr([entry({ connection: undefined })]));
+    expect(r.malformed).toBe(1);
+    expect(r.nonFlow).toBe(0);
   });
   it("does not claim a GCP audit-log entry (protoPayload) or a bare payload without the wrapper", () => {
     expect(
@@ -145,7 +161,7 @@ describe("parseGcpFlowLog — a real SRC-reported entry", () => {
     expect(e.canonical?.event.action).toBe("dropped");
     expect(e.severity).toBe("Low");
     expect(e.description).toContain("dropped: FIREWALL_DENY");
-    expect(e.description).toContain("1 packet(s), 60 payload byte(s) dropped");
+    expect(e.description).toContain("1 packet(s) dropped, 60 payload byte(s) dropped");
     expect(e.description).not.toContain("payload byte(s),");
   });
 
@@ -242,6 +258,110 @@ describe("parseGcpFlowLog — refused, malformed and counted", () => {
       arr([entry({ disposition: "DROPPED", drop_reason: "NO_MATCHING_ROUTE" }), entry({})]),
     );
     expect(r.droppedRecords).toBe(1);
+  });
+});
+
+describe("parseGcpFlowLog — code-review regressions (#1294)", () => {
+  it("a port above 65535 is malformed and never aborts the upload", () => {
+    const r = parseGcpFlowLog(
+      arr([
+        entry({
+          connection: { src_ip: "10.1.1.1", dest_ip: "10.1.1.2", src_port: 70000, dest_port: 1, protocol: 6 },
+        }),
+        entry({}),
+      ]),
+    );
+    expect(r.malformed).toBe(1);
+    expect(r.events).toHaveLength(1);
+  });
+  it("two DROPPED entries with different reasons stay two rows", () => {
+    const r = parseGcpFlowLog(
+      arr([
+        entry({ disposition: "DROPPED", drop_reason: "FIREWALL_DENY" }),
+        entry({ disposition: "DROPPED", drop_reason: "NO_MATCHING_ROUTE" }, { insertId: "b" }),
+      ]),
+    );
+    expect(r.events).toHaveLength(2);
+  });
+  it("multicast/broadcast peers make rows but never IOCs", () => {
+    const r = parseGcpFlowLog(
+      arr([
+        entry({
+          connection: {
+            src_ip: "10.1.1.1",
+            dest_ip: "239.255.255.250",
+            src_port: 1,
+            dest_port: 1900,
+            protocol: 17,
+          },
+        }),
+      ]),
+    );
+    expect(r.events).toHaveLength(1);
+    expect(r.iocs).toHaveLength(0);
+  });
+  it("a counter above 2^53 (number or string) is malformed, never rounded", () => {
+    expect(parseGcpFlowLog(arr([entry({ bytes_sent: "18446744073709551615" })])).malformed).toBe(1);
+    expect(parseGcpFlowLog(arr([entry({ bytes_sent: 1e21 })])).malformed).toBe(1);
+  });
+  it("a start_time before 2001 is malformed; an end_time before start_time is dropped from the row", () => {
+    expect(parseGcpFlowLog(arr([entry({ start_time: "1969-07-20T20:17:40Z" })])).malformed).toBe(1);
+    const d = parseGcpFlowLog(arr([entry({ end_time: "2024-04-30T00:00:00Z" })])).events[0].description;
+    expect(d).toContain("2024-05-01T09:59:58.123Z]");
+    expect(d).not.toContain("–");
+  });
+  it("dropped packets carry the same qualifier as dropped bytes", () => {
+    const d = parseGcpFlowLog(
+      arr([
+        entry({
+          disposition: "DROPPED",
+          drop_reason: "FIREWALL_DENY",
+          packets_dropped: 5,
+          bytes_dropped: 100,
+        }),
+      ]),
+    ).events[0].description;
+    expect(d).toContain("5 packet(s) dropped, 100 payload byte(s) dropped");
+  });
+  it("a fully %2F-encoded logName still yields the project when resource.labels has none", () => {
+    const e = parseGcpFlowLog(
+      arr([
+        entry(
+          {},
+          {
+            logName: "projects%2Fmy-proj%2Flogs%2Fcompute.googleapis.com%2Fvpc_flows",
+            resource: { type: "gce_subnetwork" },
+          },
+        ),
+      ]),
+    ).events[0];
+    expect(e.canonical?.cloud?.accountId).toBe("my-proj");
+  });
+  it("a 500-char drop reason and IPv6 endpoints never evict the counters, times or the per-side annotation brackets", () => {
+    const d = parseGcpFlowLog(
+      arr([
+        entry({
+          connection: {
+            src_ip: "2001:db8:aaaa:bbbb:cccc:dddd:eeee:0001",
+            dest_ip: "2001:db8:aaaa:bbbb:cccc:dddd:eeee:0002",
+            src_port: 1,
+            dest_port: 2,
+            protocol: 6,
+          },
+          disposition: "DROPPED",
+          drop_reason: "R".repeat(500),
+          bytes_sent: undefined,
+          packets_sent: undefined,
+          packets_dropped: 7,
+          bytes_dropped: 700,
+        }),
+      ]),
+    ).events[0].description;
+    expect(d.length).toBeLessThanOrEqual(600);
+    expect(d).toContain("7 packet(s) dropped, 700 payload byte(s) dropped");
+    expect(d).toContain("2024-05-01T09:59:58.123Z");
+    expect(d).toContain("[src instance web-1");
+    expect(d).toContain("[dest: no instance annotation]");
   });
 });
 
