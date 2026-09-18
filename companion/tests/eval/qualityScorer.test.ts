@@ -622,3 +622,31 @@ describe("formatCaseQualityReport labels non-gating extras accurately on a real 
     expect(report).toContain("note: extra conclusion f-extra (not gated)"); // still relabeled
   });
 });
+
+// #1241: unexpectedIocLabel mirrors falseConclusionLabel's relaxation for IOC precision on a
+// real run, but no test exercised it — every #1228 fixture set iocs.unexpected to [] (#1278).
+describe("formatCaseQualityReport labels unexpected IOCs accurately on a real run (#1241)", () => {
+  const scoreWithExtraIoc: CaseQualityScore = {
+    claims: { total: 1, matched: 1, precision: 1, recall: 1, missed: [], falseConclusions: [] },
+    iocs: { total: 1, matched: 1, precision: 0.5, recall: 1, missed: [], unexpected: ["1.2.3.4"] },
+    danglingEvidenceRefs: [],
+    forbiddenConclusions: [],
+    confidenceIssues: [],
+    uncertainties: { total: 1, matched: 1, recall: 1, missed: [] },
+    nextSteps: { total: 1, matched: 1, recall: 1, missed: [] },
+    abstentionPassed: true,
+  };
+
+  it("prints a hard-failure-reading 'unexpected IOC' label on a mock/deterministic run (default, unchanged)", () => {
+    const report = formatCaseQualityReport("some-case", scoreWithExtraIoc);
+    expect(report).toContain("[FAIL]"); // IOC precision still gates by default
+    expect(report).toContain("unexpected IOC 1.2.3.4");
+  });
+
+  it("relabels the same extra IOC as a non-gating note on a real run, never as 'unexpected IOC'", () => {
+    const report = formatCaseQualityReport("some-case", scoreWithExtraIoc, { real: true });
+    expect(report).toContain("[PASS]"); // IOC precision doesn't gate on a real run
+    expect(report).not.toContain("unexpected IOC");
+    expect(report).toContain("note: extra IOC 1.2.3.4 (not gated)");
+  });
+});

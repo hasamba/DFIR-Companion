@@ -199,6 +199,45 @@ describe("cross-upload password-spray detection (#1104)", () => {
     expect(cross[0].severity).toBe("Medium");
   });
 
+  it("a batch whose events predate the retention window discloses that cross-upload matching could not run (#1286)", async () => {
+    const { pipeline } = await makePipeline("c6");
+
+    // Events dated 30 days before real wall-clock now — well past the store's 168h (7-day)
+    // retention window. `pruneIfDue` keys off Date.now(), not this batch's own anchor, so these
+    // observations will not survive to be cross-matched by a later upload; the analyst must be
+    // told, not left to notice a silent non-match weeks later.
+    const staleBaseMs = Date.now() - 30 * 24 * 3_600_000;
+    const first = ["alice", "bob"].map((a, i) => loginRec(a, staleBaseMs, i * 20 * MIN));
+    const s1 = await pipeline.importEcar("c6", ndjson(...first), {
+      label: "stale-batch.ecar.json",
+      idPrefix: "st1",
+      importedAt: new Date().toISOString(),
+    });
+    // No cross-upload row from a single batch below threshold — the disclosure is independent of
+    // whether any spray pattern was actually detected.
+    expect(sprayRows(s1.forensicTimeline).filter((e) => e.description.includes("across"))).toHaveLength(0);
+
+    const note = s1.timeline.find((t) => t.description.includes("ECAR import"));
+    expect(note).toBeDefined();
+    expect(note?.description).toMatch(/retention window/i);
+  });
+
+  it("a fresh batch (recent events) does NOT carry the retention-exceeded disclosure", async () => {
+    const { pipeline } = await makePipeline("c7");
+
+    const freshBaseMs = Date.now() - 5 * MIN;
+    const first = ["alice", "bob"].map((a, i) => loginRec(a, freshBaseMs, i * MIN));
+    const s1 = await pipeline.importEcar("c7", ndjson(...first), {
+      label: "fresh-batch.ecar.json",
+      idPrefix: "fr1",
+      importedAt: new Date().toISOString(),
+    });
+
+    const note = s1.timeline.find((t) => t.description.includes("ECAR import"));
+    expect(note).toBeDefined();
+    expect(note?.description).not.toMatch(/retention window/i);
+  });
+
   it("importM365 detects the same cross-upload pattern over Entra sign-ins", async () => {
     const { pipeline } = await makePipeline("c5");
 
