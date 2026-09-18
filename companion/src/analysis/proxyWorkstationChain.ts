@@ -18,18 +18,10 @@
 //
 // ELIGIBILITY, ADDRESS PATH. Any event carrying `canonical.network.source.address` — not scoped
 // to a #1032 web-chain envelope (`canonical.web`) alone — AND (#1265) whose writer itself stamped
-// `network.source.provenance === "edge-observed"`. combinedLogImport.ts's own Squid/
-// combined-access-log rows independently stamp the same field from the log's own first
-// (non-forgeable) column, the same trust class as a Zeek row's own `id.orig_h` — both are the
-// log-writer's own observed TCP peer, never a client-supplied header. X-Forwarded-For and a bare
-// HTTP `Authorization` header stay excluded: neither is verified by the log-writer itself, so
-// either is a client's claim, not the log-writer's own observation. The provenance flag is
-// fail-closed: absent (any writer that predates #1265, or a future one that forgets to set it) is
-// read as NOT edge-observed and nulls the ADDRESS, never the account — an event that also carries
-// a scoped, eligible account still resolves via the account path alone. An event whose ONLY
-// eligible identity was the address (every event predating #1265, and any address-only event
-// going forward) produces no entry at all once nulled, same as an event with no address to begin
-// with — see TRUST BOUNDARY below.
+// `network.source.provenance === "edge-observed"`. Fail-closed: an absent stamp nulls the ADDRESS,
+// never the account, so an event that also carries a scoped, eligible account still resolves via
+// the account path alone. The stamp's contract — who stamps, who must gate, why category cannot
+// substitute — lives in ARCHITECTURE.md § "The `network.source.provenance` trust flag".
 //
 // ELIGIBILITY, ACCOUNT PATH. Scoped to `canonical.web` records ONLY — never any event that merely
 // carries `canonical.account.name` (a 4624 logon, an EDR process-create, a cloud sign-in all do,
@@ -72,30 +64,11 @@
 // itself is — sharper evidence when the SAME line stamped it than address-only, never a
 // guarantee.
 //
-// TRUST BOUNDARY (#1184 audited, #1265 structurally represented — NOT type-enforced: the schema
-// field is optional and independent of `address`, so a writer that forgets to stamp it still
-// compiles cleanly; the sweep test in tests/architecture/networkSourceProvenanceSweep.test.ts
-// catches it instead — every src/analysis file with a `source: { address }` literal must be
-// registered there as stamped or explicitly exempted, so an undecided new writer fails the
-// suite). This module trusts `canonical.account.name` on the account path exactly as before
-// (scoped to `canonical.web`, the server's own verified `%u`). The address
-// path additionally requires the provenance flag above — #1184's own cross-importer audit (PR
-// #1267) confirmed 12 writers plus the pre-existing Zeek/Squid pair (14 total) genuinely stamp
-// their own recorder edge's observed peer. A whole-src/analysis scan during this PR (the sweep
-// test) found EIGHT more real writers the audit missed — it matched the dotted-string form
-// `network.source.address` and not the object-literal form most importers use: siemImport.ts
-// (Windows EVTX, OS kernel-level), auditdImport.ts (kernel SOCKADDR), ecarImport.ts (EDR),
-// awsFlowLogImport.ts (VPC flow), exporterFlowImport.ts (NetFlow), and the Zeek/Suricata
-// dns/conn/notice/ssl/smb sensor rows (dnsWireRows, networkImport, tlsSession, smbChainRows) —
-// every one traced to a sensor-, exporter- or kernel-recorded field, never a client header. Real
-// total: 22 writers / 28 stamped sites; canonicalEvent.ts's own legacy-upgrade path (2 sites) is
-// the one deliberate exemption (provenance unknowable). #1267's own audit found ONE writer
-// (emailImport.ts's `originatingIp`, a client-supplied header) that is NOT edge-observed; that
-// stamp was removed rather than marked edge-observed. A category-based reader filter was
-// considered and rejected: `exchangeAuditImport.ts`/`mailboxChain.ts` (genuinely edge-observed)
-// and `emailImport.ts` (forgeable) all share `category: "email"`, so category cannot separate
-// them — hence a schema-carried flag, not a reader-side allowlist. See RECOMMENDATION-1265.md in
-// the proposal-loop designs directory for the full record.
+// TRUST BOUNDARY. This module trusts `canonical.account.name` on the account path (scoped to
+// `canonical.web`, the server's own verified `%u`). The address path additionally requires the
+// provenance stamp above. The stamp is not type-enforced — a writer that forgets it compiles
+// cleanly — so tests/architecture/networkSourceProvenanceSweep.test.ts registers every writer and
+// reader; ARCHITECTURE.md § "The `network.source.provenance` trust flag" is the contract.
 //
 // CLOCK SKEW. hostBinding.ts explicitly declines to align for skew itself ("a caller wanting
 // aligned bindings passes already-aligned events"); this module reads `state.forensicTimeline` as
@@ -177,12 +150,8 @@ export function resolveProxyHostIdentity(
   const results: ProxyHostIdentityMatch[] = [];
 
   for (const e of events) {
-    // #1265: the address path is eligible ONLY when the writer itself stamped
-    // network.source.provenance === "edge-observed" — a writer whose own recorder edge directly
-    // observed this peer, never a value copied from client-supplied header/body content. Fail
-    // closed: absent (every writer that predates this field, and any future writer that forgets
-    // to set it) reads as NOT edge-observed. This nulls only the address, never the whole event —
-    // an event can still resolve via the account path below on its own trust class.
+    // #1265: fail-closed on the writer's own stamp; nulls the address, never the event — see the
+    // module header's ELIGIBILITY, ADDRESS PATH.
     const source = e.canonical?.network?.source;
     const address = source?.provenance === "edge-observed" ? (source.address ?? "") : "";
     // Account path scoped to canonical.web — see the module header's ELIGIBILITY, ACCOUNT PATH.

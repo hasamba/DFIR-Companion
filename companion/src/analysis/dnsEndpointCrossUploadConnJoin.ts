@@ -33,6 +33,20 @@
 // same "how stale is this logon sample" question with — a fourth, different number for the same
 // question would be its own inconsistency. Every match instead carries the binding's own
 // `bindingSampleTime`, so an analyst judges staleness from the real evidence, not a baked-in number.
+//
+// TRUST BOUNDARY, CONNECTION SOURCE (#1313, the same gate as #1265). A connection's source address
+// becomes a HOST NAME here — "this host connected to the answer" — through the very
+// `resolveIpAtTime` call `proxyWorkstationChain.ts` fail-closes on `network.source.provenance ===
+// "edge-observed"`. This module applies the same gate for the same reason: only a writer whose own
+// recorder edge observed the peer may put a host's name on a connection. The flag is fail-closed:
+// absent (a connection persisted before #1265, or a flat-`srcIp` importer — Cisco ASA, Security
+// Onion, memory netscan — upgraded at load by canonicalEvent.ts, which cannot know the provenance)
+// reads as NOT edge-observed and the connection is never indexed under any host. DISCLOSED COST,
+// as #1265 disclosed it for the proxy chain: re-opening a case whose connections predate #1265
+// loses 100% of this join's host attribution for those connections. The connection itself is not
+// dropped — it still counts as "a connection to this address exists elsewhere in the case" (the
+// host-independent check above), because it is real evidence that SOMEONE reached the address;
+// what it can no longer do is name WHO.
 
 import { buildHostBindingIndex, canonicalIp, isIdentifyingIp, resolveIpAtTime } from "./hostBinding.js";
 import type { HostBinding, HostBindingIndex } from "./hostBinding.js";
@@ -82,6 +96,12 @@ function isConnCandidate(e: ForensicEvent): boolean {
   return !!src && !!dst && isIdentifyingIp(src) && isIdentifyingIp(dst);
 }
 
+/** #1313: the source address may name a host only when its writer stamped it edge-observed
+ * (#1265) — fail-closed, exactly as proxyWorkstationChain.ts reads the same flag. */
+function isHostAttributable(e: ForensicEvent): boolean {
+  return e.canonical?.network?.source?.provenance === "edge-observed";
+}
+
 interface HostedConn {
   event: ForensicEvent;
   binding: HostBinding;
@@ -104,6 +124,9 @@ function indexConns(
     destList.push(e);
     byDest.set(dst, destList);
 
+    // Real evidence that the address was reached (indexed above); never evidence of WHO reached it
+    // unless the writer itself vouched for the source — see TRUST BOUNDARY in the header.
+    if (!isHostAttributable(e)) continue;
     const bindings = resolveIpAtTime(bindingIndex, src, e.timestamp, hostToleranceMs);
     const distinctHosts = new Set(bindings.map((b) => b.host));
     if (distinctHosts.size !== 1) continue; // ambiguous or unresolved — confirms no one

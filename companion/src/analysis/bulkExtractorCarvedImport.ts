@@ -314,7 +314,12 @@ function mapGroup(
   const zeroByte = filesize === 0 || (spec !== undefined && hex === spec.empty);
   const sizeUnknown = filesize === undefined;
   // `degenerate` covers both a zero-byte object and an unknown size (schema comment) — neither is
-  // promoted — but the body must say WHICH, never call an unknown size "zero-byte".
+  // promoted — but the body must say WHICH, never call an unknown size "zero-byte". An unknown
+  // size has exactly two reachable causes and the body names the live one: the row regex makes
+  // <filesize> mandatory, so "not reported" is never true here. With a first-sighting row the
+  // digits were over the safe-integer range (parseContext dropped them) — a size no real image
+  // can yield, so the sentence points at the reported value. Without one (all-cached anomaly)
+  // the importer never read a size, though every marker row carried one.
   const degenerate = zeroByte || sizeUnknown;
   const promotable = spec !== undefined && hex.length === spec.len && !degenerate;
 
@@ -351,7 +356,9 @@ function mapGroup(
     : zeroByte
       ? "; zero-byte object, digest not promoted"
       : sizeUnknown
-        ? "; object size not reported or not parseable, digest not promoted"
+        ? firstReal
+          ? "; reported object size exceeds the representable range, digest not promoted"
+          : "; object size not read (no first-sighting row), digest not promoted"
         : spec === undefined
           ? "; digest algorithm not promotable"
           : "; digest length does not match its algorithm, not promoted";

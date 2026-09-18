@@ -133,6 +133,15 @@ const VERDICT_RANK: Record<IocEnrichment["verdict"], number> = {
   harmless: 1,
   unknown: 0,
 };
+// #1266 / #1325: a client-reported IOC (a value read from a sender-controlled header) must not
+// leave the bundle byte-identical to a sensor-observed one — every TIP ingests this export. One
+// constant per consumer, like irisMap.ts / mispPush.ts. `labels` is the STIX 2.1 common property
+// a TIP keeps (OpenCTI as a Label, MISP as a tag), so the marker survives import; the description
+// says it first, on both branches, because "observed" would be exactly the wrong claim.
+export const CLIENT_REPORTED_LINE =
+  "Client-reported: value read from a sender-controlled header (X-Originating-IP / Received hop), not an observed network fact.";
+const CLIENT_REPORTED_LABEL = "client-reported";
+
 const INDICATOR_TYPE: Record<IocEnrichment["verdict"], string> = {
   malicious: "malicious-activity",
   suspicious: "anomalous-activity",
@@ -249,16 +258,20 @@ export function buildStixBundle(state: InvestigationState, opts: StixExportOptio
     indicatorId.set(ioc.id, id);
     const verdict = worstVerdict(ioc);
     const summary = enrichmentSummary(ioc);
+    const base = summary
+      ? `Threat-intel verdict: ${verdict} — ${summary}`
+      : "Indicator observed during the investigation (no threat-intel enrichment).";
+    const clientReported = ioc.provenance === "client-reported";
     objects.push(
       sdo("indicator", id, {
         name: ioc.value,
         pattern,
         pattern_type: "stix",
         valid_from: stixTime(ioc.firstSeen, now),
+        // The verdict alone sets indicator_types; the provenance marker never touches it.
         indicator_types: [INDICATOR_TYPE[verdict ?? "unknown"]],
-        description: summary
-          ? `Threat-intel verdict: ${verdict} — ${summary}`
-          : "Indicator observed during the investigation (no threat-intel enrichment).",
+        ...(clientReported ? { labels: [CLIENT_REPORTED_LABEL] } : {}),
+        description: clientReported ? `${CLIENT_REPORTED_LINE}\n${base}` : base,
       }),
     );
   }
