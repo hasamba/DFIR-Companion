@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { parseSqliteRowStateCsv } from "../../src/analysis/sqliteRowStateImport.js";
+import {
+  parseSqliteRowStateCsv,
+  MAX_ROWS_SCANNED,
+  type SqliteRowStateResult,
+} from "../../src/analysis/sqliteRowStateImport.js";
 
 // Header/enum shape verified live against sqlite-dissect's (DC3) own csv_export.py
 // (CommitCsvExporter._write_cells) and constants.py — not invented.
@@ -287,5 +291,120 @@ describe("parseSqliteRowStateCsv — no IOC extraction (deliberate scope cut)", 
     const text = csv(["body"], [[...row(), "visit http://evil.example/payload.exe now"]]);
     const r = parseSqliteRowStateCsv(text)!;
     expect(r.iocs).toEqual([]);
+  });
+});
+
+describe("parseSqliteRowStateCsv — tagger-matchable path (#1144)", () => {
+  it("stamps the filename-derived table name as `path` so the content tagger can match a structured field", () => {
+    const text = csv(["body"], [[...row(), "hi"]]);
+    const r = parseSqliteRowStateCsv(text, { sourceLabel: "0007_messages.csv" })!;
+    expect(r.events[0].path).toBe("messages");
+  });
+
+  it("leaves `path` unset when the table name is unavailable — never a fabricated identity", () => {
+    const text = csv(["body"], [[...row(), "hi"]]);
+    const r = parseSqliteRowStateCsv(text)!;
+    expect(r.events[0].path).toBeUndefined();
+  });
+});
+
+function findSummary(r: SqliteRowStateResult) {
+  return r.events.filter((e) => e.canonical?.event.type === "sqlite-row-state-summary");
+}
+
+describe("parseSqliteRowStateCsv — Carved/Deleted summary event (#1144)", () => {
+  it("emits no summary event when every row is Added/Updated", () => {
+    const text = csv(
+      ["body"],
+      [
+        [...row({ operation: "Added" }), "a"],
+        [...row({ operation: "Updated", location: 1 }), "b"],
+      ],
+    );
+    const r = parseSqliteRowStateCsv(text)!;
+    expect(findSummary(r)).toHaveLength(0);
+  });
+
+  it("emits exactly one summary event, grouped by operation/fileSource/cellSource, when Carved or Deleted rows exist", () => {
+    const text = csv(
+      ["body"],
+      [
+        [...row({ operation: "Carved", fileSource: "DATABASE", cellSource: "Freelist", location: 0 }), "a"],
+        [...row({ operation: "Carved", fileSource: "DATABASE", cellSource: "Freelist", location: 1 }), "b"],
+        [...row({ operation: "Deleted", fileSource: "WAL", cellSource: "B-Tree", location: 2 }), "c"],
+        [...row({ operation: "Added", location: 3 }), "d"],
+      ],
+    );
+    const r = parseSqliteRowStateCsv(text, { sourceLabel: "0007_messages.csv" })!;
+    const summaries = findSummary(r);
+    expect(summaries).toHaveLength(1);
+    const s = summaries[0];
+    expect(s.severity).toBe("Info");
+    expect(s.timestamp).toBe("");
+    expect(s.path).toBe("messages");
+    expect(s.description).toContain("(from filename) messages");
+    expect(s.description).toContain("2 Carved");
+    expect(s.description).toContain("1 Deleted");
+    expect(s.description).toContain("DATABASE/Freelist");
+    expect(s.description).toContain("WAL/B-Tree");
+    // Never an intent claim — matches the per-row disclosure convention.
+    expect(s.description).not.toMatch(/evidence of|tampering|data destruction/i);
+    expect(s.description).toContain("routine database maintenance");
+    expect(s.description).toContain("undated");
+  });
+
+  it("keeps the summary event's own aggKey distinct from every per-row aggKey", () => {
+    const text = csv(["body"], [[...row({ operation: "Carved" }), "a"]]);
+    const r = parseSqliteRowStateCsv(text)!;
+    const keys = new Set(r.events.map((e) => e.aggKey));
+    expect(keys.size).toBe(r.events.length);
+  });
+
+  it("counts the underlying rows as kept but never as malformed/dropped", () => {
+    const text = csv(["body"], [[...row({ operation: "Carved" }), "a"]]);
+    const r = parseSqliteRowStateCsv(text)!;
+    expect(r.total).toBe(1);
+    expect(r.malformedRows).toBe(0);
+    expect(r.dropped).toBe(0);
+    // One per-row event plus the summary event.
+    expect(r.events).toHaveLength(2);
+    expect(r.kept).toBe(2);
+  });
+
+  it("discloses truncation in the summary rather than presenting a partial tally as complete", () => {
+    // One row over MAX_ROWS_SCANNED (20,000) genuinely trips rowsTruncated=true.
+    const rowCount = MAX_ROWS_SCANNED + 1;
+    const rows: (string | number)[][] = new Array(rowCount);
+    for (let i = 0; i < rowCount; i++) {
+      rows[i] = [...row({ operation: "Deleted", location: i }), "x"];
+    }
+    const text = csv(["body"], rows);
+    const r = parseSqliteRowStateCsv(text)!;
+    expect(r.rowsTruncated).toBe(true);
+    const summaries = findSummary(r);
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0].description).toContain("PARTIAL");
+    expect(summaries[0].description).toContain(`first ${MAX_ROWS_SCANNED} rows scanned`);
+  });
+
+  it("survives the description length clip without losing the disclosure clause, even with many distinct source combinations", () => {
+    const fileSources = ["DATABASE", "WAL", "WAL_INDEX", "ROLLBACK_JOURNAL"] as const;
+    const cellSources = ["B-Tree", "Disparate B-Tree", "Freelist"] as const;
+    const rows: (string | number)[][] = [];
+    let loc = 0;
+    for (const fs of fileSources) {
+      for (const cs of cellSources) {
+        rows.push([...row({ operation: "Deleted", fileSource: fs, cellSource: cs, location: loc++ }), "x"]);
+        rows.push([...row({ operation: "Carved", fileSource: fs, cellSource: cs, location: loc++ }), "x"]);
+      }
+    }
+    const text = csv(["body"], rows);
+    const r = parseSqliteRowStateCsv(text, { sourceLabel: "0001_a-very-long-table-name-for-testing.csv" })!;
+    const summaries = findSummary(r);
+    expect(summaries).toHaveLength(1);
+    // The disclosure clause is a protected suffix — it must survive regardless of how many
+    // distinct (fileSource, cellSource) combinations inflate the variable breakdown portion.
+    expect(summaries[0].description).toContain("routine database maintenance");
+    expect(summaries[0].description).toContain("undated, no temporal correlation performed");
   });
 });
