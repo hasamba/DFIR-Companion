@@ -53,7 +53,8 @@ export type CrossUploadDnsConnState =
   | "connected inside the window"
   | "first connection after the window"
   | "earlier connections only"
-  | "no connection found in this case";
+  | "no connection found in this case"
+  | "DNS row time not placeable";
 
 const AGGREGATION_WIDTH_CAVEAT =
   "this row may represent several folded query occurrences (see `occurrences`) — the window spans " +
@@ -117,13 +118,22 @@ function leadFor(
 
   const first = Date.parse(d.timestamp);
   const last = Date.parse(d.endTimestamp ?? d.timestamp);
+  // A malformed persisted timestamp (Date.parse -> NaN) must never silently fall through to a
+  // conservative-looking "no connection"/"earlier connections only" via a NaN comparison — named
+  // explicitly, mirroring dnsConnJoin.ts's own "connection records not placeable" for the same
+  // condition on the same-upload side (#1250).
+  if (!Number.isFinite(first) || !Number.isFinite(last)) return { state: "DNS row time not placeable" };
 
   // A connection candidate can ALSO be a folded row (`count` > 1) — the same aggregation-honesty
   // problem the DNS side has, on the other side of the join. Searched by its own LAST occurrence
   // (`connLast`), not its first: a connection whose fold started before `first` but reached into or
   // past it is not "earlier connections only" — some occurrence within that fold could plausibly be
-  // the one that followed this query.
-  const atOrAfter = matches.find((c) => Date.parse(c.endTimestamp ?? c.timestamp) >= first);
+  // the one that followed this query. A candidate whose OWN time is unparseable is excluded rather
+  // than silently losing every NaN comparison (#1250) — a wrong "earlier connections only" verdict
+  // is worse than a candidate not participating at all.
+  const placeableMatches = matches.filter((c) => Number.isFinite(Date.parse(c.endTimestamp ?? c.timestamp)));
+  if (!placeableMatches.length) return { state: "no connection found in this case" };
+  const atOrAfter = placeableMatches.find((c) => Date.parse(c.endTimestamp ?? c.timestamp) >= first);
   if (atOrAfter) {
     const connFirst = Date.parse(atOrAfter.timestamp);
     // Gap measured between the two folds' closest edges: zero when they overlap at all (connFirst
@@ -139,7 +149,10 @@ function leadFor(
     return { state, band: gapBand(gapMs), connectionEventId: atOrAfter.id };
   }
   // Every match's own LAST occurrence is still before `first` — truly earlier, not just folded.
-  return { state: "earlier connections only", connectionEventId: matches[matches.length - 1].id };
+  return {
+    state: "earlier connections only",
+    connectionEventId: placeableMatches[placeableMatches.length - 1].id,
+  };
 }
 
 export function resolveCrossUploadDnsConnLeads(

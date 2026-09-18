@@ -138,6 +138,40 @@ describe("resolveCrossUploadDnsConnLeads", () => {
     expect(results[0].caveats).toEqual([]);
   });
 
+  // #1250: a malformed persisted timestamp made Date.parse return NaN, and a NaN comparison
+  // silently classified the lead as "no connection"/"earlier connections only" -- indistinguishable
+  // from a genuine miss. Named explicitly instead.
+  it("names the DNS row's own time as not placeable, rather than a silent NaN-driven miss", () => {
+    const dns = {
+      ...sensorDnsEvent({
+        client: "10.0.0.5",
+        query: "cdn.example.net",
+        address: "203.0.113.5",
+        ts: "2026-06-10T12:00:00Z",
+      }),
+      timestamp: "not-a-real-timestamp",
+    };
+    const conn = connEvent({ src: "10.0.0.5", dst: "203.0.113.5", ts: "2026-06-10T12:00:02Z" });
+    const results = resolveCrossUploadDnsConnLeads([dns, conn], 300);
+    expect(results[0]).toMatchObject({ state: "DNS row time not placeable" });
+    expect(results[0].connectionEventId).toBeUndefined();
+  });
+
+  it("excludes a connection candidate whose own time is unparseable, rather than letting it win or lose a NaN comparison", () => {
+    const dns = sensorDnsEvent({
+      client: "10.0.0.5",
+      query: "cdn.example.net",
+      address: "203.0.113.5",
+      ts: "2026-06-10T12:00:00Z",
+    });
+    const badConn = {
+      ...connEvent({ src: "10.0.0.5", dst: "203.0.113.5", ts: "2026-06-10T12:00:02Z" }),
+      timestamp: "not-a-real-timestamp",
+    };
+    const results = resolveCrossUploadDnsConnLeads([dns, badConn], 300);
+    expect(results[0]).toMatchObject({ state: "no connection found in this case" });
+  });
+
   it("a folded row's window genuinely spans to the last occurrence, not just the first", () => {
     // first occurrence 12:00, last (folded) occurrence 12:20 -- a connection at 12:21 is inside
     // the window relative to the LAST occurrence even though it is 21 minutes after the FIRST.
