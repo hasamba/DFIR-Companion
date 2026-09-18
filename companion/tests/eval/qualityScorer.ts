@@ -102,9 +102,19 @@ const norm = (value: string): string => value.trim().toLowerCase();
 const ratio = (numerator: number, denominator: number): number =>
   denominator === 0 ? 1 : numerator / denominator;
 
+// Single source of truth for "does this text carry this term" — every other check (the whole-
+// claim gate, the missing-terms split, the per-candidate term match) derives from this exact
+// predicate, so two independently-reimplemented matchers can never quietly diverge (#1226 review).
+function hasTerm(text: string, term: string): boolean {
+  return norm(text).includes(norm(term));
+}
+
 function containsTerms(text: string, terms: readonly string[]): boolean {
-  const normalized = norm(text);
-  return terms.every((term) => normalized.includes(norm(term)));
+  return terms.every((term) => hasTerm(text, term));
+}
+
+function missingTerms(text: string, terms: readonly string[]): string[] {
+  return terms.filter((term) => !hasTerm(text, term));
 }
 
 // A claim must CITE (at least) its required evidence, not reproduce the golden's exact id set. Two
@@ -253,28 +263,29 @@ function scoreClaims(golden: readonly GoldenClaim[], produced: readonly QualityC
     if (cover) {
       const coveredSet = new Set(cover);
       const coverText = cover.map((index) => claimText(produced[index])).join("\n\n");
-      const missingTerms = expected.requiredTerms.filter((term) => !norm(coverText).includes(norm(term)));
-      if (missingTerms.length === 0) {
+      const stillMissing = missingTerms(coverText, expected.requiredTerms);
+      if (stillMissing.length === 0) {
         matchedIndices = cover;
       } else {
         // The minimal ID-cover's own text doesn't carry every required term — e.g. it greedily
         // picked one aggregate finding that covers every id but not the specific phrasing. Run a
         // SECOND minimal cover, this time over the still-missing TERMS: each remaining candidate's
         // "ids" are whichever missing terms its own text (not concatenated with anything) happens
-        // to contain. This shares the exact same "never add a zero-contribution candidate"
-        // guarantee as the id-cover pass above — a candidate that carries neither a new required
-        // id nor a still-missing term is never marked used, closing the laundering a full-pool
-        // "mark everything used" retry would otherwise cause (#1226) — while still finding the
-        // required language wherever it lives among the atomic findings, not just the id-cover's
-        // own text, which is what fixes the term-blind-aggregate miss this fallback exists for
-        // (#1217).
+        // to contain, via the SAME `hasTerm` predicate as every other term check in this file —
+        // never a separately-reimplemented one that could quietly diverge. This shares the exact
+        // same "never add a zero-contribution candidate" guarantee as the id-cover pass above — a
+        // candidate that carries neither a new required id nor a still-missing term is never
+        // marked used, closing the laundering a full-pool "mark everything used" retry would
+        // otherwise cause (#1226) — while still finding the required language wherever it lives
+        // among the atomic findings, not just the id-cover's own text, which is what fixes the
+        // term-blind-aggregate miss this fallback exists for (#1217).
         const remaining = candidates
           .filter((c) => !coveredSet.has(c.index))
           .map((c) => ({
             index: c.index,
-            ids: missingTerms.filter((term) => norm(claimText(produced[c.index])).includes(norm(term))),
+            ids: stillMissing.filter((term) => hasTerm(claimText(produced[c.index]), term)),
           }));
-        const termCover = greedyMinimalCover(missingTerms, remaining);
+        const termCover = greedyMinimalCover(stillMissing, remaining);
         if (termCover) matchedIndices = [...cover, ...termCover];
       }
     }

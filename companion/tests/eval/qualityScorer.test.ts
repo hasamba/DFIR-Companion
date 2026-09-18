@@ -234,8 +234,8 @@ describe("scoreClaims union matching (#1217)", () => {
     expect(score.claims.missed).toEqual([]);
     // f0 (id-cover) + f3 (carries the missing term) are used; f1/f2 contribute neither a new id
     // nor the missing term once f0 alone covers every id, so they correctly show as unused (#1226
-    // — a prior draft laundered every candidate in the pool into "used" regardless of whether it
-    // actually contributed anything).
+    // — the shipped #1217 full-pool retry this replaces marked every candidate in the pool
+    // "used" regardless of whether it actually contributed anything).
     expect(score.claims.falseConclusions).toEqual(["f1", "f2"]);
   });
 
@@ -274,6 +274,30 @@ describe("scoreClaims union matching (#1217)", () => {
     // contribute neither a new id nor the missing term once f0 alone covers every id — none of
     // them should ride along just for being in the same candidate pool as f3.
     expect(score.claims.falseConclusions).toEqual(["f1", "f2", "f5"]);
+  });
+
+  it("selects a different carrier for each of two still-missing terms, both genuinely needed (#1226)", () => {
+    const twoTermGolden: CaseGolden = {
+      ...MULTI_GOLDEN,
+      claims: [{ ...MULTI_GOLDEN.claims[0], requiredTerms: ["files encrypted", "recovery inhibited"] }],
+    };
+    const output = atomicOutput(); // f1(rw-e1), f2(rw-e2), f3(rw-e3, carries "files encrypted")
+    output.claims.unshift({
+      id: "f0",
+      title: "Ransomware attack chain",
+      description: "The attacker executed a full ransomware attack chain against fs-01 and ws-01.",
+      evidenceEventIds: ["rw-e1", "rw-e2", "rw-e3"], // id-cover alone; carries NEITHER required term
+    });
+    output.claims[2] = {
+      ...output.claims[2], // f2, already in the pool, now doubles as the OTHER term's carrier
+      description: "Shadow copies were deleted ahead of impact; recovery inhibited on the host.",
+    };
+    const score = scoreCaseQuality(twoTermGolden, output);
+    expect(score.claims.missed).toEqual([]);
+    // f0 (id-cover, carries neither term) + f2 ("recovery inhibited") + f3 ("files encrypted") are
+    // all needed and all used — two DIFFERENT missing terms, each carried by a different finding.
+    // f1 contributes neither a new id nor either missing term.
+    expect(score.claims.falseConclusions).toEqual(["f1"]);
   });
 });
 
@@ -522,5 +546,24 @@ describe("formatCaseQualityReport labels non-gating extras accurately on a real 
     expect(report).toContain("[PASS]"); // precision doesn't gate on a real run
     expect(report).not.toContain("false conclusion");
     expect(report).toContain("note: extra conclusion f-extra (not gated)");
+  });
+
+  it("still prints hard-gating problems with their own labels on a real run — the relabel touches only the non-gating extra", () => {
+    const stillFails: CaseQualityScore = {
+      ...scoreWithExtra,
+      claims: { ...scoreWithExtra.claims, missed: ["missed-claim-1"] },
+      forbiddenConclusions: ["invented-actor"],
+      confidenceIssues: ["f-extra: confidence has no reason"],
+      uncertainties: { ...scoreWithExtra.uncertainties, missed: ["missed-uncertainty-1"] },
+      nextSteps: { ...scoreWithExtra.nextSteps, missed: ["missed-next-step-1"] },
+    };
+    const report = formatCaseQualityReport("some-case", stillFails, { real: true });
+    expect(report).toContain("[FAIL]"); // a missed claim still gates on a real run
+    expect(report).toContain("missed claim missed-claim-1");
+    expect(report).toContain("forbidden conclusion invented-actor");
+    expect(report).toContain("f-extra: confidence has no reason");
+    expect(report).toContain("missed uncertainty missed-uncertainty-1");
+    expect(report).toContain("missed next step missed-next-step-1");
+    expect(report).toContain("note: extra conclusion f-extra (not gated)"); // still relabeled
   });
 });

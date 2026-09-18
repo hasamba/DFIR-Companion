@@ -149,16 +149,21 @@ exact-set match; two real models (`openrouter/google/gemini-3.7-flash`,
 under it despite scoring well on IOCs, uncertainties and next-steps — no real model reliably
 reproduces a golden's exact id combination, so the bar was too strict to ever pass.
 
-**Union matching (#1217/#1226).** A single finding covering the claim's whole evidence set is
-tried first. If none does — e.g. the production synthesis prompt forbids collapsing multiple
-techniques into one finding, so a case-level claim spanning several techniques is legitimately
-told across several atomic findings — the scorer tries a minimal cover of not-yet-used findings
-over the required event IDs, then, only if that cover's own text is missing a required term, a
-second minimal cover over the still-missing terms. Either way, only findings that actually
-contribute a required ID or a still-missing term are marked "used" — a finding that merely sits in
-the same candidate pool never gets laundered in for free.
+**Union matching (#1217/#1226).** The candidate pool for both passes below is restricted to
+not-yet-used findings that cite at least one required event ID — an unrelated finding is never
+considered. Within that pool, the scorer runs a greedy minimal-cover selection over the required
+event IDs (a single finding covering everything is the degenerate one-candidate case of the same
+selection, not a separate stage). If that cover's own combined text is missing a required term —
+e.g. the production synthesis prompt forbids collapsing multiple techniques into one finding, so
+a case-level claim spanning several techniques is legitimately told across several atomic
+findings, and the greedy id-cover can pick an aggregate finding that covers every ID but not the
+specific phrasing — it runs a SECOND greedy cover, this time over the still-missing terms. Either
+way, only findings that actually contribute a required ID or a still-missing term are marked
+"used" — a finding that merely sits in the same candidate pool never gets laundered in for free.
+("Minimal" here is the standard greedy-set-cover approximation, not a global optimum — the same
+guarantee level this file's helpers have always had.)
 
-**Precision on `--real` (#1225).** Like the extraction evaluator above, a real run does not gate
+**Precision on `--real` (#1217).** Like the extraction evaluator above, a real run does not gate
 on claims or IOC _precision_ — an extra, legitimate finding or observation the golden's compact
 case didn't anticipate is not itself a regression. Recall still must be 1 for both, and mock/
 deterministic runs keep the original, exact precision gate.
