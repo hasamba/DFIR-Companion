@@ -67,6 +67,7 @@ import { registerCollectionGenerationRoutes } from "../routes/collectionGenerati
 import { registerMobileBackupGenerationRoutes } from "../routes/mobileBackupGenerations.js";
 import { registerHostDuplicateRoutes } from "../routes/hostDuplicates.js";
 import { registerProxyHostIdentityRoutes } from "../routes/proxyHostIdentity.js";
+import { registerResolverEndpointIdentityRoutes } from "../routes/resolverEndpointIdentity.js";
 import { registerAiStateRoutes } from "../routes/aiState.js";
 import { registerClockSkewRoutes } from "../routes/clockSkew.js";
 import {
@@ -193,6 +194,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerAttributionAssertionRoutes(app, ctx);
   registerHostDuplicateRoutes(app, ctx);
   registerProxyHostIdentityRoutes(app, ctx);
+  registerResolverEndpointIdentityRoutes(app, ctx);
   registerAiStateRoutes(app, ctx);
   registerClockSkewRoutes(app, ctx);
   registerCoachRoutes(app, ctx);
