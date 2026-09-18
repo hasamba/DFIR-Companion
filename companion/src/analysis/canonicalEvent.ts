@@ -36,7 +36,7 @@ import {
   olevbaStompingLeadBlockSchema,
   olevbaCompoundLeadBlockSchema,
 } from "./canonicalOlevbaFinding.js";
-import { sqliteRowStateBlockSchema } from "./canonicalSqliteRowState.js";
+import { sqliteRowStateBlockSchema, sqliteRowStateSummaryBlockSchema } from "./canonicalSqliteRowState.js";
 import { mobileRequestedPermissionBlockSchema } from "./canonicalMobileRequestedPermission.js";
 import { exporterFlowBlockSchema, exporterFlowBeaconLeadBlockSchema } from "./canonicalExporterFlow.js";
 import { macFsEventBlockSchema } from "./canonicalMacFsEvent.js";
@@ -166,6 +166,7 @@ export const canonicalEventEnvelopeSchema = z.object({
           address: z.string().optional(),
           port: z.number().int().positive().max(65535).optional(),
           hostname: z.string().optional(),
+          provenance: z.literal("edge-observed").optional(), // #1265: edge-observed writer only, fail-closed elsewhere
         })
         .optional(),
       destination: z
@@ -198,6 +199,7 @@ export const canonicalEventEnvelopeSchema = z.object({
   capaCompositeLead: capaCompositeLeadBlockSchema.optional(), // capaResultImport.ts, #932 item 6
   olevbaFinding: olevbaFindingBlockSchema.optional(), // olevbaResultImport.ts, #932 item 7
   sqliteRowState: sqliteRowStateBlockSchema.optional(), // sqliteRowStateImport.ts, #932 item 8
+  sqliteRowStateSummary: sqliteRowStateSummaryBlockSchema.optional(), // #1290, on the summary event only
   mobileRequestedPermission: mobileRequestedPermissionBlockSchema.optional(), // mobsfPermissionImport.ts, #932 item 9
   exporterFlow: exporterFlowBlockSchema.optional(), // exporterFlowImport.ts, #932 item 10
   exporterFlowBeaconLead: exporterFlowBeaconLeadBlockSchema.optional(), // exporterFlowImport.ts, #932 item 10
@@ -378,8 +380,7 @@ export const canonicalEventEnvelopeSchema = z.object({
       principalType: z.string().optional(),
       tenant: z.string().optional(),
       accountId: z.string().optional(),
-      // The account the record was DELIVERED to (CloudTrail recipientAccountId). `accountId`
-      // stays the caller's account; a cross-account action differs in the two (#931 item 5).
+      // Account DELIVERED to (CloudTrail recipientAccountId); accountId stays the caller's (#931 item 5).
       recipientAccountId: z.string().optional(),
       region: z.string().optional(),
       resource: z.string().optional(),
@@ -407,7 +408,6 @@ export const canonicalEventEnvelopeSchema = z.object({
   }),
   fieldProvenance: z.record(fieldProvenanceSchema),
 });
-
 export type CanonicalEntity = z.infer<typeof canonicalEntitySchema>;
 export type CanonicalEventEnvelope = z.infer<typeof canonicalEventEnvelopeSchema>;
 export type CanonicalEventCategory = CanonicalEventEnvelope["event"]["category"];

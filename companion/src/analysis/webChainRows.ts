@@ -428,7 +428,7 @@ function envelopeOf(t: WebTally): CanonicalEventEnvelope {
       ...(r.src || r.dst
         ? {
             network: {
-              ...(r.src ? { source: { address: r.src } } : {}),
+              ...(r.src ? { source: { address: r.src, provenance: "edge-observed" } } : {}),
               ...(r.dst ? { destination: { address: r.dst, ...(r.port ? { port: r.port } : {}) } } : {}),
               protocol: "http",
             },

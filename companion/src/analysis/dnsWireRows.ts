@@ -262,7 +262,7 @@ function envelopeOf(t: ShapeRow<DnsTallyRow>): CanonicalEventEnvelope {
       ? { target: { kind: "network", address: d.server, ...(d.serverPort ? { port: d.serverPort } : {}) } }
       : {}),
     network: {
-      ...(d.client ? { source: { address: d.client } } : {}),
+      ...(d.client ? { source: { address: d.client, provenance: "edge-observed" } } : {}),
       ...(d.server
         ? { destination: { address: d.server, ...(d.serverPort ? { port: d.serverPort } : {}) } }
         : {}),

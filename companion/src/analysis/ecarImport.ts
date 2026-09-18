@@ -391,7 +391,7 @@ function canonicalizeEcarRecord(rec: Row, mapped: MappedEvent, recordIndex: numb
             ...(srcIp || sourcePort
               ? {
                   source: {
-                    ...(srcIp ? { address: srcIp } : {}),
+                    ...(srcIp ? { address: srcIp, provenance: "edge-observed" } : {}),
                     ...(sourcePort ? { port: sourcePort } : {}),
                   },
                 }

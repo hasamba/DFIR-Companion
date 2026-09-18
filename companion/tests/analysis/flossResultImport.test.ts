@@ -37,11 +37,17 @@ const STACK_ENTRY = {
   frame_offset: -8,
 };
 
+// language_strings/language_strings_missed share FLOSS's own flat StaticString shape (string,
+// offset, encoding) — no decoding-routine or stack-frame citation, verified against results.py.
+const LANGUAGE_ENTRY = { string: "runtime.gopanic", offset: 4096, encoding: "ASCII" };
+
 function floss(overrides: {
   metadata?: Partial<typeof METADATA>;
   decoded?: unknown[];
   stack?: unknown[];
   tight?: unknown[];
+  language?: unknown[];
+  languageMissed?: unknown[];
   static_?: unknown[];
 }): string {
   return JSON.stringify({
@@ -51,6 +57,8 @@ function floss(overrides: {
       decoded_strings: overrides.decoded ?? [],
       stack_strings: overrides.stack ?? [],
       tight_strings: overrides.tight ?? [],
+      language_strings: overrides.language ?? [],
+      language_strings_missed: overrides.languageMissed ?? [],
       static_strings: overrides.static_ ?? [],
     },
   });
@@ -279,6 +287,137 @@ describe("parseFlossResult — static_strings excluded by design, not a failure"
     expect(r).not.toBeNull();
     expect(r!.events).toHaveLength(0);
     expect(r!.staticStringsSeen).toBe(2);
+    expect(r!.staticStringsIocScanned).toBe(2);
+    expect(r!.staticStringsIocFound).toBe(0);
+  });
+
+  it("extracts a URL from a static string as a case IOC, without creating any event for it (#1120)", () => {
+    const r = parseFlossResult(
+      floss({ static_: [{ string: "http://c2.example.com/beacon", offset: 1, encoding: "ASCII" }] }),
+    )!;
+    expect(r.events).toHaveLength(0);
+    const urlIoc = r.iocs.find((i) => i.type === "url");
+    expect(urlIoc?.value).toContain("c2.example.com");
+    expect(r.staticStringsIocFound).toBeGreaterThan(0); // extractIocsFromText also yields a domain IOC alongside the url
+  });
+
+  it("still registers the sample's own hash as an IOC on a static-only report (#1120 — closes the gap where hash IOCs were silently dropped when zero events exist)", () => {
+    const r = parseFlossResult(floss({ static_: [{ string: "CODE", offset: 1, encoding: "ASCII" }] }))!;
+    const hashIocs = r.iocs.filter((i) => i.type === "hash").map((i) => i.value);
+    expect(hashIocs).toContain(METADATA.sha256.toLowerCase());
+  });
+
+  it("skips a malformed static_strings entry (non-object, missing string) without counting it as malformedEntries", () => {
+    const r = parseFlossResult(
+      floss({ static_: ["not an object", { offset: 1, encoding: "ASCII" }, { string: "CODE", offset: 2 }] }),
+    )!;
+    expect(r.malformedEntries).toBe(0);
+    expect(r.staticStringsIocScanned).toBe(3);
+  });
+
+  it("clips an oversized static string and skips IOC extraction on it (exact parity with the event path's own truncation rule)", () => {
+    const hugeUrl = "http://huge.example.com/" + "a".repeat(3000);
+    const r = parseFlossResult(floss({ static_: [{ string: hugeUrl, offset: 1, encoding: "ASCII" }] }))!;
+    expect(r.iocs.some((i) => i.type === "url")).toBe(false);
+    expect(r.staticStringsIocFound).toBe(0);
+  });
+
+  it("never crashes on a non-object entry in static_strings", () => {
+    expect(() => parseFlossResult(floss({ static_: ["not an object", 42, null] }))).not.toThrow();
+  });
+});
+
+describe("parseFlossResult — language_strings (#1120: confirmed language-runtime string table)", () => {
+  it("maps a confirmed language string to a 'language' kind event with its own citation shape", () => {
+    const r = parseFlossResult(
+      floss({ metadata: { language: "go", language_version: "1.21" }, language: [LANGUAGE_ENTRY] }),
+    )!;
+    expect(r.events).toHaveLength(1);
+    const block = r.events[0].canonical!.decodedString!;
+    expect(block.kind).toBe("language");
+    expect(block.mappingVersion).toBe("floss-language-v1");
+    if (block.kind === "language") {
+      expect(block.citations[0]).toEqual({
+        offset: 4096,
+        encoding: "ASCII",
+        language: "go",
+        languageVersion: "1.21",
+        missed: false,
+      });
+    }
+    expect(r.events[0].description).not.toContain("candidate, not independently confirmed");
+    expect(r.events[0].description).toContain("not proof of network contact or capability use");
+  });
+
+  it("defaults language/languageVersion to 'unknown' when metadata carries empty strings", () => {
+    const r = parseFlossResult(floss({ language: [LANGUAGE_ENTRY] }))!;
+    const block = r.events[0].canonical!.decodedString!;
+    if (block.kind === "language") {
+      expect(block.citations[0].language).toBe("unknown");
+      expect(block.citations[0].languageVersion).toBe("unknown");
+    }
+  });
+
+  it("defaults a missing encoding to 'unknown', never malformed, for a language string", () => {
+    const r = parseFlossResult(floss({ language: [{ string: "x", offset: 1 }] }))!;
+    expect(r.malformedEntries).toBe(0);
+    const block = r.events[0].canonical!.decodedString!;
+    if (block.kind === "language") expect(block.citations[0].encoding).toBe("unknown");
+  });
+
+  it("counts a language string entry missing 'string' or 'offset' as malformed", () => {
+    const r = parseFlossResult(floss({ language: [{ encoding: "ASCII" }, { string: "x" }] }))!;
+    expect(r.malformedEntries).toBe(2);
+    expect(r.events).toHaveLength(0);
+  });
+
+  it("allows a negative offset (FLOSS's own field may be signed)", () => {
+    const r = parseFlossResult(floss({ language: [{ ...LANGUAGE_ENTRY, offset: -4 }] }))!;
+    expect(r.malformedEntries).toBe(0);
+    expect(r.events).toHaveLength(1);
+  });
+});
+
+describe("parseFlossResult — language_strings_missed (#1120: unconfirmed candidate)", () => {
+  it("maps a missed-only value with missed:true and 'candidate, not independently confirmed' in the description", () => {
+    const r = parseFlossResult(floss({ languageMissed: [LANGUAGE_ENTRY] }))!;
+    expect(r.events).toHaveLength(1);
+    const block = r.events[0].canonical!.decodedString!;
+    if (block.kind === "language") expect(block.citations[0].missed).toBe(true);
+    expect(r.events[0].description).toContain("candidate, not independently confirmed");
+  });
+
+  it("a value present in BOTH arrays reads as confirmed (any-confirmed wins), keeps both citations distinct, and sums occurrences across both", () => {
+    const r = parseFlossResult(floss({ language: [LANGUAGE_ENTRY], languageMissed: [LANGUAGE_ENTRY] }))!;
+    expect(r.events).toHaveLength(1);
+    const block = r.events[0].canonical!.decodedString!;
+    expect(r.events[0].description).not.toContain("candidate, not independently confirmed");
+    if (block.kind === "language") {
+      expect(block.occurrences).toBe(2);
+      expect(block.citations).toHaveLength(2);
+      expect(block.citations.some((c) => c.missed)).toBe(true);
+      expect(block.citations.some((c) => !c.missed)).toBe(true);
+    }
+  });
+
+  it("confirmed values keep their dedup slot over the MAX_DISTINCT_VALUES cap even when missed rows of a DIFFERENT value are scanned first in the array order (confirmed array is scanned first overall)", () => {
+    const confirmed = { string: "confirmed-value", offset: 1, encoding: "ASCII" };
+    const missedOnly = Array.from({ length: 2000 }, (_, i) => ({
+      string: `missed-${i}`,
+      offset: i,
+      encoding: "ASCII",
+    }));
+    const r = parseFlossResult(floss({ language: [confirmed], languageMissed: missedOnly }))!;
+    const kinds = r.events.map((e) => e.canonical!.decodedString!);
+    const confirmedEvent = kinds.find((k) => k.value === "confirmed-value");
+    expect(confirmedEvent).toBeDefined();
+    expect(r.notCitedValues).toBeGreaterThan(0); // some missed-only values overflowed the cap instead
+  });
+});
+
+describe("isFlossResult — language-only recognition (#1120)", () => {
+  it("recognizes a language-only upload (no decoded/stack/tight/static)", () => {
+    expect(isFlossResult(JSON.parse(floss({ language: [LANGUAGE_ENTRY] })))).toBe(true);
   });
 });
 
@@ -320,5 +459,56 @@ describe("parseFlossResult — false detection / malformed JSON", () => {
 
   it("returns null for valid JSON that isn't a FLOSS document", () => {
     expect(parseFlossResult(JSON.stringify({ hello: "world" }))).toBeNull();
+  });
+});
+
+describe("parseFlossResult — MAX_ENTRIES_SCANNED scan order (#1120, Ollama design review finding 10)", () => {
+  it("a huge static_strings array never starves decoded/stack/tight/language (static is scanned strictly last)", () => {
+    const huge = Array.from({ length: 150_000 }, (_, i) => ({
+      string: `static-${i}`,
+      offset: i,
+      encoding: "ASCII",
+    }));
+    const r = parseFlossResult(floss({ decoded: [DECODED_ENTRY], static_: huge }))!;
+    expect(r.events).toHaveLength(1);
+    expect(r.malformedEntries).toBe(0);
+    expect(r.entriesTruncated).toBe(true); // static itself gets cut off
+    expect(r.staticStringsIocScanned).toBeLessThan(r.staticStringsSeen);
+  });
+
+  it("huge event-kind volume correctly starves static_strings to zero", () => {
+    const hugeDecoded = Array.from({ length: 100_000 }, (_, i) => ({
+      ...DECODED_ENTRY,
+      decoding_routine: i,
+    }));
+    const r = parseFlossResult(
+      floss({ decoded: hugeDecoded, static_: [{ string: "CODE", offset: 1, encoding: "ASCII" }] }),
+    )!;
+    expect(r.entriesTruncated).toBe(true);
+    expect(r.staticStringsIocScanned).toBe(0);
+    expect(r.staticStringsSeen).toBe(1);
+  });
+
+  it("never drops an IOC found before the budget cutoff mid-array (Ollama code review finding — an early return used to skip the merge)", () => {
+    const almostFullDecoded = Array.from({ length: 99_995 }, (_, i) => ({
+      ...DECODED_ENTRY,
+      decoding_routine: i,
+    }));
+    // 99_995 (decoded) + 5 (static) = 100_000: the first 5 static entries are visited and
+    // processed normally, the 6th trips the budget guard and must never lose the first 5's IOCs.
+    const staticEntries = [
+      { string: "http://c2.example.com/beacon", offset: 1, encoding: "ASCII" },
+      { string: "http://second.example.com/beacon", offset: 2, encoding: "ASCII" },
+      { string: "http://third.example.com/beacon", offset: 3, encoding: "ASCII" },
+      { string: "http://fourth.example.com/beacon", offset: 4, encoding: "ASCII" },
+      { string: "http://fifth.example.com/beacon", offset: 5, encoding: "ASCII" },
+      { string: "http://never-visited.example.com/beacon", offset: 6, encoding: "ASCII" },
+    ];
+    const r = parseFlossResult(floss({ decoded: almostFullDecoded, static_: staticEntries }))!;
+    expect(r.entriesTruncated).toBe(true);
+    expect(r.staticStringsIocScanned).toBe(5); // 99_995 + 5 = 100_000, the 6th entry never visited
+    const urlIocs = r.iocs.filter((i) => i.type === "url").map((i) => i.value);
+    expect(urlIocs.some((v) => v.includes("c2.example.com"))).toBe(true);
+    expect(urlIocs.some((v) => v.includes("second.example.com"))).toBe(true);
   });
 });

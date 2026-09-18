@@ -10,9 +10,9 @@ import { isDiskImageLog } from "./diskImageAcquisitionLog.js";
 import { isBulkExtractorUrlFeatureFile } from "./bulkExtractorUrlImport.js";
 import { isBulkExtractorCarvedFeatureFile } from "./bulkExtractorCarvedImport.js";
 import { isFlossResult } from "./flossResultImport.js";
-import { isCapaResult } from "./capaResultImport.js";
+import { isCapaResult, capaUnsupportedFlavorReason } from "./capaResultImport.js";
 import { isOlevbaResult } from "./olevbaResultImport.js";
-import { isMobsfReport } from "./mobsfPermissionImport.js";
+import { isMobsfReport, isMobsfIosReport } from "./mobsfPermissionImport.js";
 import { isNfdumpFlowRecord } from "./exporterFlowImport.js";
 import { isWerReport } from "./werImport.js";
 import { isRekallCommandList, looksLikeVolatilityText, looksLikeMemprocfsFindevil } from "./memoryImport.js";
@@ -134,8 +134,8 @@ function isAzure(s: Row): boolean {
       !!getCI(s, "correlationId"))
   );
 }
-// Kubernetes API-server audit Event (`audit.k8s.io`): the strong tell is the apiVersion; failing that, `verb` + `objectRef` +
-// the audit-specific `requestReceivedTimestamp`/`stage` fields no other JSON feed carries. Claimed ahead of the SIEM/Velociraptor catch-alls.
+// Kubernetes API-server audit Event (`audit.k8s.io`): the strong tell is the apiVersion; failing
+// that, a `verb` + `objectRef` + the audit-specific `requestReceivedTimestamp`/`stage` fields (which no other JSON feed carries). Claimed ahead of the SIEM/Velociraptor catch-alls.
 function isK8sAudit(s: Row): boolean {
   if (/audit\.k8s\.io/i.test(str(getCI(s, "apiVersion")))) return true;
   return (
@@ -207,10 +207,10 @@ function isVelociraptor(s: Row, root: unknown): boolean {
   if (!!getCI(s, "CallChain") && (getCI(s, "Pid") != null || getCI(s, "Ppid") != null)) return true;
   // Velociraptor Windows.Network.Netstat: Laddr/Lport/Status combination is specific to VR's netstat
   if (getCI(s, "Laddr") != null && getCI(s, "Lport") != null && getCI(s, "Status") != null) return true;
-  // Bare single-artifact exports (a plain row array, no _Source / not an artifact-map): recognize the
-  // distinctive column sets of common raw host artifacts so they route to Velociraptor (and get
-  // artifactName stamped) instead of falling through to the SIEM catch-all (Problem 1 — MFT/USN were
-  // mis-detected as SIEM). Kept conservative (distinctive columns only) so genuine SIEM rows aren't claimed.
+  // Bare single-artifact exports (a plain row array, no _Source / not an artifact-map): recognize
+  // distinctive column sets of common raw host artifacts so they route to Velociraptor (artifactName
+  // stamped) instead of the SIEM catch-all (MFT/USN were mis-detected as SIEM) — conservative,
+  // distinctive columns only, so genuine SIEM rows aren't claimed.
   // Windows.NTFS.MFT: OSPath + an NTFS $STANDARD_INFO/$FILE_NAME timestamp column (Created0x10/…).
   if (
     getCI(s, "OSPath") != null &&
@@ -410,6 +410,7 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (isCapaResult(root)) return "caparesult";
   if (isOlevbaResult(root)) return "olevbaresult";
   if (isMobsfReport(root)) return "mobsfpermission";
+  if (isMobsfIosReport(root)) return "mobsfpermission"; // #1136: same kind, ingest dispatches internally
   if (isNfdumpFlowRecord(sample)) return "exporterflow";
   if (isSandbox(sample)) return "sandbox";
   if (isAws(sample)) return "aws";
@@ -441,6 +442,9 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (looksLikeJournald(sample)) return "journald";
   if (isThor(sample)) return "thor";
   if (isSiem(sample)) return "siem";
+  // Capa-shaped but unsupported (e.g. flavor "dynamic", #1124) — refuse right before the
+  // unconditional SIEM fallback, after every specific importer above has had first claim.
+  if (capaUnsupportedFlavorReason(root)) return "unknown";
   return "siem"; // any other event-shaped JSON → the SIEM importer's field auto-detection
 }
 
@@ -545,13 +549,11 @@ function detectCsv(text: string, filename: string): ImportKind {
   if (velociraptorElasticCsvSig(h)) return "velociraptor";
   // A comma-delimited table with data rows → the generic (AI) CSV importer.
   if (headers.length >= 2 && rows.length > 0) return "csv";
-  // One column is still a table — but ONLY when the file says so on three counts at once. This is
-  // the last fallback before `log`, so every unrecognized text file lands here, and a comma-less
-  // log line parses as a one-column row: depth alone would have claimed stack traces and plain
-  // application logs as CSV, then eaten their first line as a header. So require the .csv/.tsv
-  // extension the author chose, the depth a real export has, AND values that look like values —
-  // whitespace-free single tokens, which is the IOC-list shape this exists for (a header plus a
-  // run of hashes, IPs or domains) and which no prose or log line survives.
+  // One column is still a table — but ONLY when the file says so on three counts at once (this is
+  // the last fallback before `log`, and a comma-less log line parses as a one-column row too):
+  // require the .csv/.tsv extension, the depth a real export has, AND whitespace-free single-token
+  // values — the IOC-list shape this exists for (a header plus a run of hashes/IPs/domains), which
+  // no prose or log line survives.
   if (headers.length === 1 && rows.length >= 10 && /\.(?:csv|tsv)$/i.test(filename)) {
     const token = (v: string): boolean => v !== "" && !/\s/.test(v);
     // 50 rows is enough to tell a value list from a log; scanning all of a 500k-line file is not.
@@ -626,8 +628,7 @@ export function detectImportKind(filename: string, text: string): ImportKind {
   // own Level/Title/Details rows but stamps a Velociraptor `_Source` on each, so the generic
   // Velociraptor signature claims the file first and grades most detections Info (4 High vs the 7 the
   // native path surfaces, and Hayabusa's rule titles / EIDs are flattened). Route by name to the
-  // native Hayabusa importer, which keeps Hayabusa's severity levels and field semantics. Gated on a
-  // Hayabusa-shaped body (a Level or RuleTitle field) so a merely-misnamed file is not mis-routed.
+  // native Hayabusa importer instead, gated on a Hayabusa-shaped body so a misnamed file isn't mis-routed.
   if (/hayabusa/i.test(filename) && /"(?:Level|RuleTitle|Rule Title)"\s*:/.test(t.slice(0, 8192))) {
     return "hayabusa";
   }

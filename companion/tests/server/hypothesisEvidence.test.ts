@@ -8,6 +8,8 @@ import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { HypothesisStore } from "../../src/analysis/hypothesisStore.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { caseSqliteRowStateHint } from "../../src/routes/hypothesisEvidence.js";
+import { createCanonicalEvent } from "../../src/analysis/canonicalEvent.js";
 
 // #933 item 22 — the hypothesis GET carries the evidence assessment; an analyst exclusion is an
 // audit-trailed, per-hypothesis act that deletes nothing.
@@ -187,5 +189,73 @@ describe("exclusions — an audit trail, never a deletion", () => {
     expect(noted.body.needsReview).toBe(true); // a note is not a review
     const acked = await request(app).patch(`/cases/c1/hypotheses/${a.id}`).send({ acknowledgeReview: true });
     expect(acked.body).toMatchObject({ needsReview: false, reviewReason: "" });
+  });
+});
+
+function summaryEvent(id: string, carved: number, deleted: number, truncated = false): ForensicEvent {
+  return ev(id, {
+    canonical: createCanonicalEvent({
+      event: { category: "file", type: "sqlite-row-state-summary", action: "found" },
+      time: { observed: "", normalized: "" },
+      evidence: { rawRecords: [{ source: "test", locator: `summary:${id}` }] },
+      producer: { importer: "test", parserVersion: "1", mappingVersion: "sqlite-row-state-summary-v1" },
+      sqliteRowStateSummary: {
+        carvedTotal: carved,
+        deletedTotal: deleted,
+        truncated,
+        mappingVersion: "sqlite-row-state-summary-v1",
+      },
+    }),
+  });
+}
+
+describe("caseSqliteRowStateHint (#1290 Part B)", () => {
+  it("is undefined when the case has no sqlite-row-state summary event", () => {
+    expect(caseSqliteRowStateHint([ev("e1")])).toBeUndefined();
+  });
+
+  it("sums structured totals across every matching event, never parsing description prose", () => {
+    const hint = caseSqliteRowStateHint([ev("e1"), summaryEvent("s1", 2, 1), summaryEvent("s2", 0, 3)]);
+    expect(hint).toBe(
+      "2 carved/4 deleted SQLite rows exist in this case; consistent with routine maintenance " +
+        "as well as tampering; no timestamps available for correlation",
+    );
+  });
+
+  it("discloses a caveat when any contributing summary was truncated", () => {
+    const hint = caseSqliteRowStateHint([summaryEvent("s1", 1, 1, true)]);
+    expect(hint).toContain("may undercount");
+  });
+
+  it("never implies causality or severity — deliberately unembellished wording", () => {
+    const hint = caseSqliteRowStateHint([summaryEvent("s1", 1, 0)])!;
+    expect(hint).not.toMatch(/may indicate|suspicious|malicious/i);
+  });
+
+  it("attaches the SAME hint identically to every hypothesis in the GET response", async () => {
+    const { app, stateStore } = await makeApp();
+    const state = await stateStore.load("c1");
+    await stateStore.save({
+      ...state,
+      forensicTimeline: [...state.forensicTimeline, summaryEvent("s1", 1, 1)],
+    });
+    await twoHypotheses(app);
+    const res = await request(app).get("/cases/c1/hypotheses");
+    expect(res.body).toHaveLength(2);
+    for (const h of res.body) {
+      expect(h.caseSqliteRowStateHint).toBe(
+        "1 carved/1 deleted SQLite rows exist in this case; consistent with routine maintenance " +
+          "as well as tampering; no timestamps available for correlation",
+      );
+    }
+  });
+
+  it("omits the field entirely when the case has no summary event", async () => {
+    const { app } = await makeApp();
+    await twoHypotheses(app);
+    const res = await request(app).get("/cases/c1/hypotheses");
+    for (const h of res.body) {
+      expect(h.caseSqliteRowStateHint).toBeUndefined();
+    }
   });
 });

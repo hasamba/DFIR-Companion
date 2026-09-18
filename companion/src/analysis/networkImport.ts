@@ -304,6 +304,7 @@ function mapSuricataAlert(row: Row, host: string, sink: Map<string, SiemIoc>, re
         ? {
             source: {
               address: src,
+              provenance: "edge-observed",
               ...(Number.isInteger(sourcePort) && sourcePort > 0 ? { port: sourcePort } : {}),
             },
           }
@@ -417,7 +418,7 @@ function mapZeekNotice(row: Row, host: string, sink: Map<string, SiemIoc>, recor
     ...(src ? { actor: { kind: "network", address: src } } : {}),
     ...(dst ? { target: { kind: "network", address: dst } } : {}),
     network: {
-      ...(src ? { source: { address: src } } : {}),
+      ...(src ? { source: { address: src, provenance: "edge-observed" } } : {}),
       ...(dst ? { destination: { address: dst } } : {}),
     },
     time: { observed: observedTimestamp, normalized: normalizedTimestamp },
@@ -543,7 +544,7 @@ function mapFlow(f: FlowAgg, host: string): MappedEvent {
         }
       : {}),
     network: {
-      ...(f.src ? { source: { address: f.src } } : {}),
+      ...(f.src ? { source: { address: f.src, provenance: "edge-observed" } } : {}),
       ...(f.dst
         ? {
             destination: {
@@ -581,8 +582,7 @@ function mapFlow(f: FlowAgg, host: string): MappedEvent {
     severity: "Info",
     mitre: [],
     canonical,
-    // Already unique per flow, so the shared aggregator passes these straight through rather than
-    // re-folding them (and the description, not `count`, carries the connection tally).
+    // Already unique per flow: the aggregator passes these through; the description, not `count`, carries the tally.
     aggKey: `zeek|conn|${f.src}|${f.dst}|${f.port}|${f.proto}`.slice(0, 400),
     sources: ["Zeek"],
     ...(host ? { asset: host } : {}),

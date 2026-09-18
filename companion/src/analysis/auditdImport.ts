@@ -439,6 +439,7 @@ function mapAuditEvent(ev: AuditEvent, iocSink: Map<string, SiemIoc>): MappedEve
           network: {
             source: {
               address: sourceAddress,
+              provenance: "edge-observed",
               ...(saddrInfo?.port ? { port: saddrInfo.port } : {}),
             },
           },

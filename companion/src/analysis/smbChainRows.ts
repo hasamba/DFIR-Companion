@@ -234,7 +234,7 @@ function canonicalOf(
       ? { target: { kind: "network", address: op.dst, ...(op.port ? { port: op.port } : {}) } }
       : {}),
     network: {
-      ...(op.src ? { source: { address: op.src } } : {}),
+      ...(op.src ? { source: { address: op.src, provenance: "edge-observed" } } : {}),
       ...(op.dst ? { destination: { address: op.dst, ...(op.port ? { port: op.port } : {}) } } : {}),
       protocol: "smb",
     },
