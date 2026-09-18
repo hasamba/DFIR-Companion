@@ -488,7 +488,7 @@ export function mapCombinedLogLine(
     // The target is kept AS SENT (bounded), so a reader decodes it under its own policy.
     canonical: createCanonicalEvent({
       event: { category: "network", type: "web-request" },
-      ...(client ? { network: { source: { address: client } } } : {}),
+      ...(client ? { network: { source: { address: client, provenance: "edge-observed" } } } : {}),
       // `%u` — the server/proxy's OWN determination of who authenticated (HTTP Basic/NTLM/
       // Kerberos, verified before the request was served), the same trust class as `client`
       // above. NEVER `%l` (ident/RFC 1413, a client-asserted claim this mapper already discards

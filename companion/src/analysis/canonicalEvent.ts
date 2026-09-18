@@ -166,6 +166,7 @@ export const canonicalEventEnvelopeSchema = z.object({
           address: z.string().optional(),
           port: z.number().int().positive().max(65535).optional(),
           hostname: z.string().optional(),
+          provenance: z.literal("edge-observed").optional(), // #1265: edge-observed writer only, fail-closed elsewhere
         })
         .optional(),
       destination: z
@@ -379,8 +380,7 @@ export const canonicalEventEnvelopeSchema = z.object({
       principalType: z.string().optional(),
       tenant: z.string().optional(),
       accountId: z.string().optional(),
-      // The account the record was DELIVERED to (CloudTrail recipientAccountId). `accountId`
-      // stays the caller's account; a cross-account action differs in the two (#931 item 5).
+      // Account DELIVERED to (CloudTrail recipientAccountId); accountId stays the caller's (#931 item 5).
       recipientAccountId: z.string().optional(),
       region: z.string().optional(),
       resource: z.string().optional(),

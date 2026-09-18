@@ -245,7 +245,7 @@ export function mapAzureStorageLogRecord(
         outcome: success ? "success" : "failure",
       },
       ...(requesterName ? { actor: { kind: "account", name: requesterName } } : {}),
-      ...(ip ? { network: { source: { address: ip } } } : {}),
+      ...(ip ? { network: { source: { address: ip, provenance: "edge-observed" } } } : {}),
       cloud: { provider: "azure", ...(resource ? { resource } : {}) },
       authentication: {
         mechanism,

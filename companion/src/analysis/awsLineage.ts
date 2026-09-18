@@ -667,7 +667,9 @@ function summaryRow(
     canonical: createCanonicalEvent({
       event: { category: "cloud", type: "credential-lineage", action: "lineage", outcome: "success" },
       actor: { kind: "account", name: k.issuerArn || k.credentialId },
-      ...(sources[0]?.address ? { network: { source: { address: sources[0].address } } } : {}),
+      ...(sources[0]?.address
+        ? { network: { source: { address: sources[0].address, provenance: "edge-observed" } } }
+        : {}),
       authentication: { credentialId: k.credentialId, ...(k.issuerArn ? { issuer: k.issuerArn } : {}) },
       cloud: { provider: "aws", ...(k.account ? { accountId: k.account } : {}) },
       time: { observed, normalized: normalizeTime(observed) },

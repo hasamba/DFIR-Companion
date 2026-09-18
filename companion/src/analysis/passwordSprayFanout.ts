@@ -358,8 +358,10 @@ export function sprayPatternToMappedEvent(p: PasswordSprayPattern, meta: SprayPa
       // Both real callers (ecarImport.ts's own EDR-observed srcIp, m365Import.ts's spray path
       // (readEntraSignIn's Entra sign-in log ipAddress field)) are already-covered,
       // provider/sensor-observed sources — never raw email header content — edge-observed,
-      // not client-asserted (#1184 audit).
-      network: { source: { address: p.sourceIp } },
+      // not client-asserted (#1184 audit). #1265's own provenance stamp is valid here only while
+      // every real caller's own IP input stays edge-observed — re-verify this invariant before
+      // this fan-out ever accepts a new, header-derived source.
+      network: { source: { address: p.sourceIp, provenance: "edge-observed" } },
       time: { observed: p.start, normalized: normalizeTime(p.start) },
       evidence: { rawRecords: p.locators.map((locator) => ({ source: meta.importer, locator })) },
       producer: {

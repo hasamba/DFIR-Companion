@@ -165,7 +165,7 @@ function row(
           : {}),
       ...(firstDelegation ? { subject: { kind: "account", name: firstDelegation } } : {}),
       ...(object ? { object } : {}),
-      ...(input.ip ? { network: { source: { address: input.ip } } } : {}),
+      ...(input.ip ? { network: { source: { address: input.ip, provenance: "edge-observed" } } } : {}),
       cloud: {
         provider: "gcp",
         ...(base.projects.log?.namespace === "projects" ? { tenant: base.projects.log.value } : {}),
