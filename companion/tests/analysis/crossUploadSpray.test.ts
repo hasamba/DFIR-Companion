@@ -84,6 +84,35 @@ describe("cross-upload password-spray detection (#1104)", () => {
     expect(cross[0].description).toMatch(/across 2 uploads/);
   });
 
+  it("a backdated upload (importedAt far after the events it carries) still finds the prior batch's observations (#1237)", async () => {
+    const { pipeline } = await makePipeline("c1b");
+
+    // Call 1: imported the same day its events happened, same shape as the first test above.
+    const first = ["alice", "bob", "carol", "dave"].map((a, i) => loginRec(a, BASE_MS, i * 20 * MIN));
+    const s1 = await pipeline.importEcar("c1b", ndjson(...first), {
+      label: "batch1.ecar.json",
+      idPrefix: "b1",
+      importedAt: "2026-06-01T01:05:00Z",
+    });
+    expect(sprayRows(s1.forensicTimeline)).toHaveLength(0);
+
+    // Call 2 carries events from the SAME day (so the combined episode is still one slow episode),
+    // but was actually uploaded to the companion 3 days later — a re-upload, a delayed bulk export,
+    // exactly the lag DFIR uploads routinely have. `importedAt` is real wall-clock upload time, far
+    // outside the default 24h slow-spray window measured from event time. Before the #1237 fix, the
+    // window was anchored on `importedAt`, so the query for batch 1's stored observations would miss
+    // them entirely and no cross-upload row would appear.
+    const second = ["erin", "frank"].map((a, i) => loginRec(a, BASE_MS, (4 + i) * 20 * MIN));
+    const s2 = await pipeline.importEcar("c1b", ndjson(...second), {
+      label: "batch2.ecar.json",
+      idPrefix: "b2",
+      importedAt: "2026-06-04T09:00:00Z",
+    });
+    const cross = sprayRows(s2.forensicTimeline).filter((e) => e.description.includes("across"));
+    expect(cross).toHaveLength(1);
+    expect(cross[0].description).toMatch(/across 2 uploads/);
+  });
+
   it("dominance: a batch that already crosses the threshold alone suppresses the cross-upload row", async () => {
     const { pipeline } = await makePipeline("c2");
 

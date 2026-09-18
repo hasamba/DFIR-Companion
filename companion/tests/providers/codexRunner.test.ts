@@ -157,6 +157,12 @@ describe("defaultCodexRunner", () => {
       maxStderrTailBytes: 8_000,
     });
 
+    // Under a fully loaded full-suite run, extreme CPU starvation can make this real subprocess
+    // blow past its own 30s timeout — the bounding logic below is lossless-by-construction
+    // (#1271), so a missing tail marker is never the algorithm reordering or dropping content.
+    // Assert this first so a genuine contention timeout fails loudly here instead of surfacing as
+    // a baffling "expected string to contain X" on the assertions below.
+    expect(r.timedOut).toBeFalsy();
     expect(Buffer.byteLength(r.stderr, "utf8")).toBeLessThan(200_000);
     // The front, which the reader slices into its message.
     expect(r.stderr.slice(0, 300)).toContain("Error: not logged in");
