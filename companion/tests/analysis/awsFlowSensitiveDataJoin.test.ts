@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   correlateAwsFlowSensitiveData,
   formatSensitiveDataFragment,
+  sessionReadingOf,
   FLOW_SENSITIVE_DATA_MARKER,
   type FlowSensitiveDataSummary,
 } from "../../src/analysis/awsFlowSensitiveDataJoin.js";
@@ -145,7 +146,7 @@ describe("correlateAwsFlowSensitiveData", () => {
     const summary = summaryOf(out);
     const note = noteOf(out)!;
     expect(note).toContain(
-      `source 172.31.16.139 = ${INSTANCE}: bulk read summary ${summary.id} within ±24h of the flow`,
+      `source 172.31.16.139 = ${INSTANCE}: bulk read summary ${summary.id}, whose read window overlaps the ±24h around the flow`,
     );
     expect(note).toContain("60 objects across 1 container (corp-data)");
     expect(note).toContain(
@@ -182,6 +183,40 @@ describe("correlateAwsFlowSensitiveData", () => {
   it("does not join a colon-less principalId", () => {
     const out = chain([launch(), ...manyReads(60, { principalId: INSTANCE }), flow({ time: 0 })]);
     expect(noteOf(out)).toBeUndefined();
+  });
+
+  it("does not join rows another provider canonicalized with the same words", () => {
+    const rows = manyReads(60).map((r) => ({
+      ...r,
+      canonical: { ...r.canonical!, cloud: { ...r.canonical!.cloud, provider: "gcp" } },
+    }));
+    const out = chain([launch(), ...rows, flow({ time: 0 })]);
+    expect(noteOf(out)).toBeUndefined();
+  });
+
+  it("is not vetoed by a row that is merely silent on delivery, but is by one that names another session", () => {
+    // A KMS call signed with the same key by another importer: no mechanism word, no protocol — silent.
+    const silent = {
+      ...read({ action: "Decrypt", resource: "", time: -0.5 }),
+      canonical: {
+        event: { category: "cloud", type: "api", action: "Decrypt" },
+        cloud: { provider: "aws", accountId: ACCOUNT },
+        authentication: { credentialId: "ASIAEXAMPLEKEY1" },
+      },
+    } as unknown as ForensicEvent;
+    expect(sessionReadingOf(silent)).toEqual({ kind: "silent" });
+    expect(noteOf(chain([launch(), ...manyReads(60), silent, flow({ time: 0 })]))).toBeDefined();
+    // The same key positively naming a different session under IMDS delivery: disagreement, veto.
+    const other = read({ action: "Decrypt", resource: "", time: -0.5, session: OTHER_INSTANCE });
+    expect(sessionReadingOf(other)).toEqual({
+      kind: "instance",
+      instanceId: OTHER_INSTANCE,
+      protocol: "IMDSv2",
+    });
+    expect(noteOf(chain([launch(), ...manyReads(60), other, flow({ time: 0 })]))).toBeUndefined();
+    const human = read({ action: "Decrypt", resource: "", time: -0.5, session: "alice" });
+    expect(sessionReadingOf(human)).toEqual({ kind: "disagrees" });
+    expect(noteOf(chain([launch(), ...manyReads(60), human, flow({ time: 0 })]))).toBeUndefined();
   });
 
   it("does not join reads in another account", () => {
@@ -324,6 +359,30 @@ describe("correlateAwsFlowSensitiveData", () => {
     expect(
       formatSensitiveDataFragment(endpoint, [{ ...late, firstMs: T0 + 24 * 3_600_000 }], T0),
     ).not.toBeNull();
+  });
+
+  it("sanitizes the endpoint half re-parsed from the sibling note, not just the group half", () => {
+    const endpoint = { label: "source" as const, ip: "[2001:db8::1]", instanceId: `${INSTANCE}]` };
+    const entry: FlowSensitiveDataSummary = {
+      summaryId: "cloud-bulk-read-x",
+      first: at(-2),
+      last: at(-1),
+      firstMs: T0 - 2 * 3_600_000,
+      lastMs: T0 - 3_600_000,
+      objectCount: 60,
+      containerCount: 1,
+      containers: ["a"],
+      sourceIp: "2001:db8::1",
+      role: "app-role",
+      credentialId: "ASIAEXAMPLEKEY1",
+      protocol: "IMDSv2",
+      truncated: false,
+    };
+    const fragment = formatSensitiveDataFragment(endpoint, [entry], T0)!;
+    expect(fragment).not.toContain("[");
+    expect(fragment).not.toContain("]");
+    expect(fragment).toContain("source 2001:db8::1 = " + INSTANCE + ":");
+    expect(fragment).toContain("the instance's own attributed address");
   });
 
   it("strips brackets from evidence-derived strings before they enter the note", () => {

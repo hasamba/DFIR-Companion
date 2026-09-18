@@ -9,14 +9,17 @@
 //   - "the bulk-read summary <id> the pass already graded was signed with instance-role
 //     credentials CloudTrail records as delivered to this instance" — the session is identified
 //     structurally on the raw read rows' own envelopes (AssumedRole, IMDSv1/IMDSv2 delivery, the
-//     session name is an instance id), never from summary prose and never from a role name;
+//     session name is an instance id, provider aws), never from summary prose and never from a
+//     role name. Rows that are merely SILENT on delivery (another importer, no mechanism word)
+//     never veto; rows that positively name another session or provider always do;
 //   - the counts and window are the summary's own; the note points at the summary by id;
 //   - NOT that the flow carried the objects, NOT that the read was performed FROM the instance
 //     (IMDS-delivered credentials can be stolen and used elsewhere — #908 item 7), NOT causation
 //     in either direction. The reader's recorded source address is disclosed as-is and compared
 //     to the attributed endpoint's address as a stated fact, never a verdict;
-//   - the join is windowed (±24h, inclusive, disclosed) and never claims "unusual" — no baseline
-//     exists to judge that honestly;
+//   - the join keeps a summary whose read window OVERLAPS the ±24h around the flow (inclusive,
+//     and worded as overlap, never as "within") and never claims "unusual" — no baseline exists
+//     to judge that honestly;
 //   - the envelope-side session rule is WEAKER than awsCompute.ts's own ownSessionInstance: the
 //     session ARN is not on the envelope, so its ARN-agreement check cannot be repeated here, and
 //     only ec2RoleDelivery "1.0"/"2.0" are visible as a protocol word. A miss is possible; a false
@@ -64,28 +67,50 @@ function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
 
-/** The instance whose IMDS-delivered credentials signed this row, from the envelope's own words; null otherwise. */
-export function instanceSessionOf(e: ForensicEvent): { instanceId: string; protocol: string } | null {
+/**
+ * What one row's envelope says about the session that signed it (Ollama code review, finding 2):
+ *   - `instance`: an AWS AssumedRole session whose credentials CloudTrail records as IMDS-delivered
+ *     and whose session name is an instance id — a positive reading;
+ *   - `disagrees`: the envelope positively names something else — a different provider, a
+ *     non-AssumedRole mechanism, an IMDS-delivered session whose name is NOT an instance id, or an
+ *     AssumedRole session whose name is not an instance id;
+ *   - `silent`: no envelope, or no mechanism, or an instance-shaped AssumedRole session with no
+ *     delivery word (another importer, or a record type that carries none) — says nothing either
+ *     way and never vetoes a join on its own.
+ */
+export type SessionReading =
+  { kind: "instance"; instanceId: string; protocol: string } | { kind: "disagrees" } | { kind: "silent" };
+
+export function sessionReadingOf(e: ForensicEvent): SessionReading {
   const c = e.canonical;
-  if (!c) return null;
-  if (c.authentication?.mechanism !== "AssumedRole") return null;
-  const protocol = c.authentication.protocol ?? "";
-  if (!IMDS_PROTOCOLS.has(protocol)) return null;
+  if (!c) return { kind: "silent" };
+  const provider = lower(c.cloud?.provider ?? "");
+  if (provider && provider !== "aws") return { kind: "disagrees" };
+  const mechanism = c.authentication?.mechanism;
+  if (mechanism === undefined) return { kind: "silent" };
+  if (mechanism !== "AssumedRole") return { kind: "disagrees" };
   const principalId = c.cloud?.principalId ?? "";
   // awsIdentity.ts's own session-name derivation: the text after the LAST ":"; no colon, no session.
   const colon = principalId.lastIndexOf(":");
-  if (colon < 0) return null;
-  const session = principalId.slice(colon + 1);
-  if (!INSTANCE_ID.test(session)) return null;
-  return { instanceId: session, protocol };
+  const session = colon < 0 ? "" : principalId.slice(colon + 1);
+  const protocol = c.authentication?.protocol;
+  if (!INSTANCE_ID.test(session)) {
+    // No principal at all and no delivery word: nothing asserted. A named-but-not-instance session,
+    // or a colon-less principal beside a delivery word, is a positive reading of something else.
+    return !principalId && protocol === undefined ? { kind: "silent" } : { kind: "disagrees" };
+  }
+  if (protocol === undefined) return { kind: "silent" };
+  if (!IMDS_PROTOCOLS.has(protocol)) return { kind: "disagrees" };
+  // Instance-shaped and IMDS-delivered, but no provider word: the row cannot say "CloudTrail".
+  if (!provider) return { kind: "silent" };
+  return { kind: "instance", instanceId: session, protocol };
 }
 
 interface SessionAgreement {
   instances: Set<string>;
   protocols: Set<string>;
-  rows: number;
-  /** Rows carrying this credential whose envelope does NOT read as an instance session. */
-  nonInstanceRows: number;
+  /** Rows carrying this credential whose envelope positively reads as NOT an instance session. */
+  disagreeingRows: number;
 }
 
 /** Every row signed with a credential, keyed on (account, credentialId): the credential IS the session. */
@@ -97,14 +122,13 @@ function sessionAgreementByCredential(events: readonly ForensicEvent[]): Map<str
     if (!credentialId) continue;
     const account = (c?.cloud?.accountId ?? c?.cloud?.tenant ?? "").trim();
     const key = `${lower(account)}|${lower(credentialId)}`;
-    const entry = out.get(key) ?? { instances: new Set(), protocols: new Set(), rows: 0, nonInstanceRows: 0 };
-    entry.rows += 1;
-    const session = instanceSessionOf(e);
-    if (session) {
-      entry.instances.add(lower(session.instanceId));
-      entry.protocols.add(session.protocol);
-    } else {
-      entry.nonInstanceRows += 1;
+    const entry = out.get(key) ?? { instances: new Set(), protocols: new Set(), disagreeingRows: 0 };
+    const reading = sessionReadingOf(e);
+    if (reading.kind === "instance") {
+      entry.instances.add(lower(reading.instanceId));
+      entry.protocols.add(reading.protocol);
+    } else if (reading.kind === "disagrees") {
+      entry.disagreeingRows += 1;
     }
     out.set(key, entry);
   }
@@ -169,7 +193,8 @@ function buildSummaryIndex(events: readonly ForensicEvent[]): Map<string, Summar
     if (!ids.has(id) || (idCounts.get(id) ?? 0) > 1) continue;
     if (!g.credentialId || g.listOnly) continue;
     const agree = agreement.get(`${lower(g.account)}|${lower(g.credentialId)}`);
-    if (!agree || agree.rows === 0 || agree.nonInstanceRows > 0 || agree.instances.size !== 1) continue;
+    // At least one positive reading, none contradicting it: silence never vetoes, disagreement always does.
+    if (!agree || agree.disagreeingRows > 0 || agree.instances.size !== 1) continue;
     const instanceId = [...agree.instances][0];
     const protocol = [...agree.protocols].sort().join("/");
     const entry = toEntry(g, id, protocol);
@@ -213,7 +238,7 @@ function formatEntry(entry: SummaryEntry, endpointIp: string): string {
       : `from ${entry.sourceIp} — not the instance's attributed address`;
   const prefix = entry.truncated ? "; measured on a prefix of its records" : "";
   return (
-    `bulk read summary ${entry.summaryId} within ±24h of the flow — ${what}${containerWords(entry)} between ` +
+    `bulk read summary ${entry.summaryId}, whose read window overlaps the ±24h around the flow — ${what}${containerWords(entry)} between ` +
     `${entry.first} and ${entry.last}, signed with instance-role credentials CloudTrail records as delivered to ` +
     `this instance (${entry.protocol}, role ${entry.role}, key ${keyWords(entry.credentialId)}), ${from}${prefix}`
   );
@@ -231,9 +256,12 @@ export function formatSensitiveDataFragment(
   const shown = byDistance.slice(0, MAX_SUMMARIES_PER_ENDPOINT).sort((a, b) => a.firstMs - b.firstMs);
   const overflow = inWindow.length - shown.length;
   const overflowSuffix = overflow > 0 ? `, + ${overflow} more in window` : "";
+  // The endpoint half is re-parsed from the sibling's note text — evidence-derived, sanitized like the rest.
+  const ip = sanitizeForNote(endpoint.ip);
+  const instanceId = sanitizeForNote(endpoint.instanceId);
   return (
-    `${endpoint.label} ${endpoint.ip} = ${endpoint.instanceId}: ` +
-    shown.map((e) => formatEntry(e, endpoint.ip)).join(", ") +
+    `${endpoint.label} ${ip} = ${instanceId}: ` +
+    shown.map((e) => formatEntry(e, ip)).join(", ") +
     overflowSuffix +
     "; a read signed with this instance's credentials is not shown to be caused by this flow"
   );
