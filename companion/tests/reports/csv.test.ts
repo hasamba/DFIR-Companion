@@ -57,9 +57,27 @@ describe("CSV renderers", () => {
   it("iocsCsv and timelineCsv produce headers even when empty", () => {
     const state = emptyState("c1");
     expect(iocsCsv(state).trim()).toBe(
-      "id,type,value,firstSeen,sources,sourceCount,enrichment,riskScore,riskFactors",
+      "id,type,value,firstSeen,sources,sourceCount,enrichment,riskScore,riskFactors,provenance",
     );
     expect(timelineCsv(state).trim()).toBe("timestamp,windowSequence,description,sourceScreenshots");
+  });
+
+  it("iocsCsv's provenance column marks a client-reported IOC and leaves a plain one empty (#1333)", () => {
+    // A sender-claimed X-Originating-IP must not sort, filter or pivot in a spreadsheet at the same
+    // weight as a sensor-observed peer. Absent provenance is "ordinary sighting", never a mark.
+    const state = emptyState("c1");
+    state.iocs.push({
+      id: "i1",
+      type: "ip",
+      value: "203.0.113.7",
+      firstSeen: "t0",
+      provenance: "client-reported",
+    });
+    state.iocs.push({ id: "i2", type: "ip", value: "203.0.113.8", firstSeen: "t0" });
+    const rows = iocsCsv(state).trim().split("\n");
+    const last = (r: string) => r.split(",").at(-1);
+    expect(last(rows[1])).toBe('"client-reported"');
+    expect(last(rows[2])).toBe('""');
   });
 
   it("iocsCsv includes a composite risk score + factors column (#63)", () => {
@@ -162,7 +180,9 @@ describe("geoMapCsv (#133)", () => {
     };
     const csv = geoMapCsv(data);
     const [header, row] = csv.trim().split("\n");
-    expect(header).toBe("ip,country,city,lat,lon,asn,severity,verdict,internal,eventCount,approximate");
+    expect(header).toBe(
+      "ip,country,city,lat,lon,asn,severity,verdict,internal,eventCount,approximate,clientReported",
+    );
     expect(row).toContain("8.8.8.8");
     expect(row).toContain("Mountain View");
     expect(row).toContain("AS15169");
@@ -203,6 +223,42 @@ describe("geoMapCsv (#133)", () => {
     };
     const [, row] = geoMapCsv(data).trim().split("\n");
     expect(row).toContain('"yes"');
+  });
+
+  it("emits clientReported:yes for a sender-claimed marker and :no for an observed one (#1333)", () => {
+    const marker = (iocId: string, ip: string, clientReported?: boolean): GeoMapData["markers"][number] => ({
+      iocId,
+      ip,
+      lat: 0,
+      lon: 0,
+      country: "Nowhere",
+      asn: undefined,
+      severity: "Info",
+      color: "gray",
+      verdict: undefined,
+      internal: false,
+      falsePositive: false,
+      eventCount: 0,
+      sources: [],
+      ...(clientReported ? { clientReported } : {}),
+    });
+    const data: GeoMapData = {
+      markers: [marker("i1", "203.0.113.7", true), marker("i2", "203.0.113.8")],
+      flows: [],
+      countries: [],
+      stats: {
+        totalIps: 2,
+        resolved: 2,
+        unresolved: 0,
+        internal: 0,
+        external: 2,
+        distinctCountries: 1,
+        distinctAsns: 0,
+      },
+    };
+    const [, claimed, observed] = geoMapCsv(data).trim().split("\n");
+    expect(claimed.split(",").at(-1)).toBe('"yes"');
+    expect(observed.split(",").at(-1)).toBe('"no"');
   });
 });
 

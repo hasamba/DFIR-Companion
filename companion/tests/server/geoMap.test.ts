@@ -168,7 +168,7 @@ describe("GET /cases/:id/geo-map.csv (#133)", () => {
     expect(res.status).toBe(200);
     expect(res.headers["content-type"]).toContain("text/csv");
     expect(res.text.split("\n")[0]).toBe(
-      "ip,country,city,lat,lon,asn,severity,verdict,internal,eventCount,approximate",
+      "ip,country,city,lat,lon,asn,severity,verdict,internal,eventCount,approximate,clientReported",
     );
   });
 });
