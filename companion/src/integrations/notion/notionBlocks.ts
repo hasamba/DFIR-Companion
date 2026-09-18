@@ -239,7 +239,9 @@ function iocsBlocks(iocs: readonly IOC[]): NotionBlock[] {
   if (!iocs.length) return [];
   const rows = iocs.map((i) => [
     i.type,
-    i.value,
+    // Same suffix as the markdown IOC table (reports/markdown.ts) — a sender-controlled indicator
+    // must not read like a sensor-observed one on a surface the analyst consumes (#1266, #1326).
+    i.provenance === "client-reported" ? `${i.value} (client-reported)` : i.value,
     i.firstSeen || "",
     worstVerdict(i.enrichments ?? []) ?? "",
     iocSourceLabel(i.enrichments ?? []),

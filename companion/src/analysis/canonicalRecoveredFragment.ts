@@ -162,10 +162,13 @@ const carvedFileBlockSchema = z.object({
   hashIocPromoted: z.boolean(),
   hashPromotionCaveat: z.literal(CARVED_HASH_PROMOTION_CAVEAT),
   /** `filesize` of the first non-cached row: the size the tool computed for that occurrence
-   * (bytes are written only for a digest's first sighting); absent when unparseable. */
+   * (bytes are written only for a digest's first sighting). Absent when the reported digits
+   * exceed the safe-integer range, or when no first-sighting row exists (all-cached anomaly).
+   * A row with no `<filesize>` at all is malformed and never becomes a record. */
   filesize: z.number().int().nonnegative().safe().optional(),
-  /** filesize 0, filesize absent/unparseable, or a digest equal to the algorithm's empty-input
-   * value — never promoted; the description says which of these it was. */
+  /** filesize 0, filesize absent (over the safe-integer range, or no first-sighting row), or a
+   * digest equal to the algorithm's empty-input value — never promoted; the description says
+   * which of these it was. */
   degenerate: z.boolean(),
   toolFlag: z.enum(carvedToolFlags),
   /** From `# Filename:` only (never a data row); bounded here AND at parse. */

@@ -199,7 +199,7 @@ describe("cross-upload password-spray detection (#1104)", () => {
     expect(cross[0].severity).toBe("Medium");
   });
 
-  it("a batch whose events predate the retention window discloses that cross-upload matching could not run (#1286)", async () => {
+  it("a batch whose events predate the retention window discloses that later uploads cannot correlate with it (#1286, #1299)", async () => {
     const { pipeline } = await makePipeline("c6");
 
     // Events dated 30 days before real wall-clock now — well past the store's 168h (7-day)
@@ -220,6 +220,34 @@ describe("cross-upload password-spray detection (#1104)", () => {
     const note = s1.timeline.find((t) => t.description.includes("ECAR import"));
     expect(note).toBeDefined();
     expect(note?.description).toMatch(/retention window/i);
+    // The query DID run for this batch (anchored on its own earliest event, #1237), and it can
+    // still match prior observations of the same age — the limit is one-directional: later
+    // uploads cannot reach it once the wall-clock prune removes it. The note must not claim more.
+    expect(note?.description).toMatch(/later uploads cannot be correlated with it/);
+    expect(note?.description).not.toMatch(/could not run/);
+  });
+
+  it("the retention disclosure on an EMPTY import is a '; '-joined clause, the same shape as the non-empty note (#1300)", async () => {
+    const { pipeline } = await makePipeline("c8");
+
+    // Stale batch (past the 168h retention) whose two Low failed logons are floored out by
+    // minSeverity: Medium — zero events, so the importer takes the noteEmptyImport path with the
+    // retention disclosure as its `detail`. That path used to parenthesise the detail while the
+    // non-empty path joined it with "; ", so the same fact rendered two ways.
+    const staleBaseMs = Date.now() - 30 * 24 * 3_600_000;
+    const first = ["alice", "bob"].map((a, i) => loginRec(a, staleBaseMs, i * 20 * MIN));
+    const s1 = await pipeline.importEcar("c8", ndjson(...first), {
+      label: "stale-empty.ecar.json",
+      idPrefix: "se1",
+      importedAt: new Date().toISOString(),
+      minSeverity: "Medium",
+    });
+    expect(s1.forensicTimeline).toHaveLength(0);
+
+    const note = s1.timeline.find((t) => t.description.includes("ECAR import"));
+    expect(note).toBeDefined();
+    expect(note?.description).toContain("nothing added to the case; cross-upload spray matching");
+    expect(note?.description).not.toContain("(cross-upload");
   });
 
   it("a fresh batch (recent events) does NOT carry the retention-exceeded disclosure", async () => {
