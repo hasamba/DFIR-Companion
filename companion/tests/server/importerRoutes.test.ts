@@ -121,3 +121,44 @@ describe("custom importer routes", () => {
     POLL_TIMEOUT_MS * 2,
   );
 });
+
+// #1124: /cases/:id/import's own "could not detect the file type" 400 names a capa-specific
+// reason when the body is recognizably capa-shaped (real identity fields) but not a static report
+// — an end-to-end HTTP proof this route actually wires capaFlavorHintFor in, not just a unit test
+// on the pure function.
+describe("capa dynamic-flavor diagnostic (#1124)", () => {
+  it("names the flavor instead of the generic unknown-format message", async () => {
+    const { app } = await harness();
+    const dynamicCapaReport = JSON.stringify({
+      meta: {
+        flavor: "dynamic",
+        sample: {
+          md5: "7a450304b58917290f54ffbdccb095b6",
+          sha1: "db054d79d4d913671732d9ff696dca69f911601a",
+          sha256: "afed46612dce2c6fa48d95192426366dcc0a4517f4b56240f0c8e39a5104748a",
+          path: "samples/sample.dll",
+        },
+      },
+      rules: {},
+    });
+    const r = await request(app)
+      .post("/cases/c1/import")
+      .send({ text: dynamicCapaReport, filename: "capa-dynamic.json" });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toBe(
+      'capa report flavor "dynamic" is not yet supported (only "static" reports are parsed)',
+    );
+  });
+
+  it("never fires the capa hint for an unrelated JSON object (falls to the SIEM catch-all as usual)", async () => {
+    const { app } = await harness();
+    const r = await request(app)
+      .post("/cases/c1/import")
+      .send({ text: JSON.stringify({ hello: "world" }), filename: "mystery.json" });
+    // Established, deliberate behavior: any object-shaped JSON that matches no specific importer
+    // falls to the SIEM importer's own lenient field auto-detection (detectJson's final `return
+    // "siem"`), not a 400 — this test only proves the new capa check doesn't misfire on it.
+    expect(r.status).toBe(202);
+    expect(r.body.kind).toBe("siem");
+  });
+});

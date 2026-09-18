@@ -2,8 +2,12 @@
 // item 6, "932.7"): named capabilities capa's rule-matching statically found present in a
 // sample. Never a claim any capability ran, never a verdict from any single match — see
 // RECOMMENDATION-6.md for the guardrails this enforces (legitimate/commercial software packs
-// and uses the same APIs too) and why "unusual sections" and dynamic-flavor reports are
-// deliberately out of scope.
+// and uses the same APIs too) and why "unusual sections" is out of scope (no capa-rules
+// namespace covers it — #1124). A dynamic-flavor report (capa's own DynamicAnalysis schema) is
+// real and documented upstream but never parsed here (#1124: zero real-case evidence to validate
+// against) — `capaUnsupportedFlavorReason` gives an honest diagnostic instead of silently
+// falling through to "could not detect the file type", turning the first real occurrence into
+// the trigger to build real support rather than leaving it unfalsifiable.
 //
 // Schema verified live against a REAL serialized capa 9.4.0 static report
 // (DefectDojo/django-DefectDojo's own test fixture), not just source-read dataclasses.
@@ -67,20 +71,53 @@ export interface CapaResultResult {
  * Codex design review finding). `meta.sample` must carry all four identity fields as strings —
  * capa's own schema makes them non-optional — and `rules` must be an object (zero matches is a
  * real, valid result). */
+/** `meta.sample` carrying all four identity fields as strings is capa's own real, non-optional
+ * schema shape — the signal that a document is genuinely capa-produced, independent of flavor. */
+function isCapaShapedSample(sample: unknown): boolean {
+  return (
+    isObject(sample) &&
+    typeof sample.md5 === "string" &&
+    typeof sample.sha1 === "string" &&
+    typeof sample.sha256 === "string" &&
+    typeof sample.path === "string"
+  );
+}
+
 export function isCapaResult(root: unknown): boolean {
   if (!isObject(root)) return false;
   const meta = root.meta;
   if (!isObject(meta) || meta.flavor !== "static") return false;
-  const sample = meta.sample;
-  if (!isObject(sample)) return false;
-  if (
-    typeof sample.md5 !== "string" ||
-    typeof sample.sha1 !== "string" ||
-    typeof sample.sha256 !== "string" ||
-    typeof sample.path !== "string"
-  )
-    return false;
+  if (!isCapaShapedSample(meta.sample)) return false;
   return isObject(root.rules);
+}
+
+const MAX_FLAVOR_LEN = 40;
+
+/** A recognizable-but-unsupported capa report: `meta.sample` has capa's own real identity-field
+ * shape (so this is genuinely capa-produced, not an arbitrary unrelated document), but
+ * `meta.flavor` isn't `"static"` — e.g. `"dynamic"` (capa's own DynamicAnalysis schema, real and
+ * documented upstream, never parsed here — #1124: no real-case evidence to build against yet).
+ * Returns a bounded, honest reason string instead of the caller falling through to a generic
+ * "could not detect the file type" message. Never a false positive: an unrelated JSON object, or
+ * one whose `meta.sample` doesn't carry capa's own identity fields, returns undefined. */
+export function capaUnsupportedFlavorReason(root: unknown): string | undefined {
+  if (!isObject(root)) return undefined;
+  const meta = root.meta;
+  if (!isObject(meta) || !isCapaShapedSample(meta.sample)) return undefined;
+  if (meta.flavor === "static") return undefined;
+  const flavor = typeof meta.flavor === "string" ? clip(meta.flavor, MAX_FLAVOR_LEN).text : "unrecognized";
+  return `capa report flavor "${flavor}" is not yet supported (only "static" reports are parsed)`;
+}
+
+/** `capaUnsupportedFlavorReason` over raw text a caller hasn't parsed yet (a route body, or a
+ * sniffed file-head sample that may be truncated) — never throws; a JSON.parse failure (including
+ * a truncated sample) safely means "no capa-specific hint available", not an error. */
+export function capaFlavorHintFor(text: string): string | undefined {
+  try {
+    return capaUnsupportedFlavorReason(JSON.parse(text));
+  } catch {
+    return undefined;
+  }
 }
 
 function nonNegSafeInt(v: unknown): number | undefined {
