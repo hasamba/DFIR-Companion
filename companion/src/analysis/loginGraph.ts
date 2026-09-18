@@ -1,6 +1,7 @@
 import type { ForensicEvent } from "./stateTypes.js";
 import { LOGON_TYPES, logonRisk } from "./siemImport.js";
 import { upgradeForensicEvent } from "./canonicalEvent.js";
+import { isIdentifyingClientName } from "./hostBinding.js";
 
 // Builds the Login Graph (Timesketch-style directed account → host logon graph) from the
 // super-timeline. Identity/session facts come from the canonical envelope; the legacy upgrader is
@@ -29,7 +30,10 @@ export function parseLoginEvent(e: ForensicEvent): ParsedLogon | null {
   if (!cleanAccount || !cleanHost) return null;
   const logonType = canonical.authentication?.logonType;
   const sourceIp = canonical.network?.source?.address;
-  const workstation = canonical.session?.terminal;
+  // Workstation Name is commonly recorded as "-" or "*" when unpopulated (#1232, mirroring
+  // hostBinding.ts's own NON_IDENTIFYING_CLIENT_NAMES guard) — a placeholder node adds no signal.
+  const rawWorkstation = canonical.session?.terminal;
+  const workstation = rawWorkstation && isIdentifyingClientName(rawWorkstation) ? rawWorkstation : undefined;
   const outcome = canonical.event.outcome === "failed" ? "failed" : "success";
   return {
     account: cleanAccount,

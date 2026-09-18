@@ -335,6 +335,38 @@ describe("buildHostBindingIndex + resolveAccountAtTime (account -> session host)
     expect(index.byAccount.size).toBe(0);
   });
 
+  it("excludes localized Administrator/Guest names and the non-localized DefaultAccount/WDAGUtilityAccount built-ins", () => {
+    const events = [
+      logonEvent({
+        sessionHost: "ws-042",
+        accountName: "Administrateur",
+        logonType: 2,
+        ts: "2026-06-10T12:00:00Z",
+      }),
+      logonEvent({ sessionHost: "ws-043", accountName: "Gast", logonType: 2, ts: "2026-06-10T12:00:01Z" }),
+      logonEvent({
+        sessionHost: "ws-044",
+        accountName: "Administrador",
+        logonType: 2,
+        ts: "2026-06-10T12:00:02Z",
+      }),
+      logonEvent({
+        sessionHost: "ws-045",
+        accountName: "DefaultAccount",
+        logonType: 2,
+        ts: "2026-06-10T12:00:03Z",
+      }),
+      logonEvent({
+        sessionHost: "ws-046",
+        accountName: "WDAGUtilityAccount",
+        logonType: 2,
+        ts: "2026-06-10T12:00:04Z",
+      }),
+    ];
+    const index = buildHostBindingIndex(events);
+    expect(index.byAccount.size).toBe(0);
+  });
+
   it("still admits a DOMAINED Administrator account as identifying (a specific domain principal)", () => {
     const events = [
       logonEvent({

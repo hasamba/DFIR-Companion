@@ -47,7 +47,11 @@ const MAX_SIGNATURES = 5;
 const MAX_TAG = 240;
 export function cleanTagText(raw: unknown, max: number): string {
   const s = String(raw ?? "")
-    .replace(/[<>\x00-\x1f\x7f]/g, " ")
+    // `]`/`[` too, not just `<`/`>`: SANDBOX_VERDICT_NOTE_RE strips a whole appended note by
+    // matching non-greedily up to the first `]` — a family/signature name carrying its own `]`
+    // (attacker-influenced) truncates that strip early and leaves a residue fragment on re-merge
+    // (#1207).
+    .replace(/[[\]<>\x00-\x1f\x7f]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
   return s.length > max ? s.slice(0, max - 1) + "…" : s;

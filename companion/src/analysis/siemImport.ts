@@ -925,6 +925,11 @@ export function mapWindows(
   const normalizedTimestamp = pickTimestamp(rec, ed);
   const sourceIp = cleanIp(firstStr(ed, eid === 5156 ? ["SourceAddress"] : ["IpAddress", "SourceIp"])); // #996
   const destinationIp = cleanIp(firstStr(ed, eid === 5156 ? ["DestAddress"] : ["DestinationIp"]));
+  // Citation field names for rawFieldMap below, eid-aware for the same reason as the reads above:
+  // a 5156 row has no IpAddress/SourceIp/DestinationIp fields (#1213).
+  const sourceIpFields =
+    eid === 5156 ? ["EventData.SourceAddress"] : ["EventData.IpAddress", "EventData.SourceIp"];
+  const destIpFields = eid === 5156 ? ["EventData.DestAddress"] : ["EventData.DestinationIp"];
   const destinationPort = Number(firstStr(ed, eid === 5156 ? ["DestPort"] : ["DestinationPort"]));
   const logonTypeRaw = str(getCI(ed, "LogonType")).trim();
   const logonType = logonTypeRaw && Number.isFinite(Number(logonTypeRaw)) ? Number(logonTypeRaw) : undefined;
@@ -1112,8 +1117,8 @@ export function mapWindows(
       ...(roles.actorFields ? { "actor.name": roles.actorFields } : {}),
       ...(host ? { "target.name": ["Computer", "host.name"] } : {}),
       ...(logonType !== undefined ? { "authentication.logonType": ["EventData.LogonType"] } : {}),
-      ...(sourceIp ? { "network.source.address": ["EventData.IpAddress", "EventData.SourceIp"] } : {}),
-      ...(destinationIp ? { "network.destination.address": ["EventData.DestinationIp"] } : {}),
+      ...(sourceIp ? { "network.source.address": sourceIpFields } : {}),
+      ...(destinationIp ? { "network.destination.address": destIpFields } : {}),
       ...(processName && !pa
         ? { "process.name": ["EventData.Image", "EventData.NewProcessName", "EventData.SourceImage"] }
         : {}),
@@ -1123,8 +1128,9 @@ export function mapWindows(
     },
   });
 
-  // IOCs from the structured fields.
-  for (const ipKey of ["IpAddress", "DestinationIp", "SourceIp", "ClientAddress"]) {
+  // IOCs from the structured fields. SourceAddress/DestAddress are WFP 5156's own spellings (#1211).
+  const WFP_5156_IP_KEYS = ["SourceAddress", "DestAddress"];
+  for (const ipKey of ["IpAddress", "DestinationIp", "SourceIp", "ClientAddress", ...WFP_5156_IP_KEYS]) {
     const ip = cleanIp(str(getCI(ed, ipKey)));
     if (ip) addIoc(iocSink, "ip", ip);
   }

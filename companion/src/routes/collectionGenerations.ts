@@ -46,9 +46,11 @@ export function actorFrom(
  * collection covered would let something other than a person vouch for it.
  */
 
+// No `domain` filter: comparePersistenceGenerations() only ever compares the "persistence"
+// domain today (persistenceGenerationComparator.ts), so a query param would be dead surface that
+// silently stops filtering once collectionDomains grows a second value (#1134).
 const compareQuerySchema = z.object({
   host: z.string().trim().min(1).optional(),
-  domain: z.enum(collectionDomains).optional(),
 });
 
 const recordRequestSchema = z.object({

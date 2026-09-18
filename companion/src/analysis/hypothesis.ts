@@ -36,7 +36,7 @@ export type HypothesisSource = (typeof HYPOTHESIS_SOURCES)[number];
 // never silently treated as either of the other two. Only refutationGate.ts reads this; it is never
 // exposed to the analyst-authored NewHypothesis/HypothesisPatch path, which never runs the gate.
 export const resolvedSubjectScopeSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("hosts"), hosts: z.array(z.string()) }),
+  z.object({ kind: z.literal("hosts"), hosts: z.array(z.string().trim().min(1)).min(1) }),
   z.object({ kind: z.literal("caseWide") }),
   z.object({ kind: z.literal("unknown") }),
 ]);

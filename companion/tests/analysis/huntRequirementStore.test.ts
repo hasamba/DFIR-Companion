@@ -150,6 +150,16 @@ describe("HuntRequirementStore", () => {
     ).rejects.toBeTruthy();
   });
 
+  it("rejects a hosts scope with an EMPTY hosts array, not just a missing one (#1165)", async () => {
+    const store = new HuntRequirementStore(cases);
+    await expect(
+      store.create("c1", {
+        ...requirement(),
+        subjectScope: { kind: "hosts", hosts: [] } as unknown as HuntRequirement["subjectScope"],
+      }),
+    ).rejects.toBeTruthy();
+  });
+
   it("rejects an unrecognized scope kind", async () => {
     const store = new HuntRequirementStore(cases);
     await expect(
