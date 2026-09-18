@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { buildStixBundle, iocToStixPattern, type StixObject } from "../../src/reports/stix.js";
+import {
+  CLIENT_REPORTED_LINE,
+  buildStixBundle,
+  iocToStixPattern,
+  type StixObject,
+} from "../../src/reports/stix.js";
 import { emptyState, type Finding, type IOC } from "../../src/analysis/stateTypes.js";
 
 function ioc(overrides: Partial<IOC>): IOC {
@@ -220,6 +225,52 @@ describe("buildStixBundle", () => {
     expect(rels.every((r) => r.source_ref === indicator.id)).toBe(true);
   });
 
+  // #1325: a client-reported IOC (#1266) must not leave the full bundle byte-identical to a
+  // sensor-observed one. The description says so first (the IRIS precedent) and `labels` carries
+  // the machine-readable marker a TIP can act on. `indicator_types` is untouched by the marker.
+  it("marks a client-reported IOC with a labels entry and a leading description line", () => {
+    const state = emptyState("c1");
+    state.iocs.push(
+      ioc({ id: "i1", value: "203.0.113.10" }),
+      ioc({ id: "i2", value: "203.0.113.20", provenance: "client-reported" }),
+    );
+    const [plain, marked] = ofType(buildStixBundle(state).objects, "indicator");
+    expect(plain.name).toBe("203.0.113.10");
+    expect(marked.name).toBe("203.0.113.20");
+
+    expect(marked.labels).toEqual(["client-reported"]);
+    expect(String(marked.description).startsWith(CLIENT_REPORTED_LINE)).toBe(true);
+    expect(marked.description).toContain("no threat-intel enrichment");
+    expect(marked.indicator_types).toEqual(["unknown"]);
+    expect(marked.confidence).toBeUndefined();
+
+    // The unmarked sibling is unchanged — no label, no line.
+    expect(plain.labels).toBeUndefined();
+    expect(plain.description).toBe(
+      "Indicator observed during the investigation (no threat-intel enrichment).",
+    );
+    expect(plain.indicator_types).toEqual(["unknown"]);
+  });
+
+  it("keeps the client-reported line first when live threat intel also describes the IOC", () => {
+    const state = emptyState("c1");
+    state.iocs.push(
+      ioc({
+        id: "i1",
+        value: "203.0.113.20",
+        provenance: "client-reported",
+        enrichments: [
+          { source: "VirusTotal", verdict: "suspicious", score: "5/70", fetchedAt: "t", status: "live" },
+        ],
+      }),
+    );
+    const ind = ofType(buildStixBundle(state).objects, "indicator")[0];
+    expect(ind.labels).toEqual(["client-reported"]);
+    expect(String(ind.description).startsWith(`${CLIENT_REPORTED_LINE}\n`)).toBe(true);
+    expect(ind.description).toContain("Threat-intel verdict: suspicious — VirusTotal: suspicious (5/70)");
+    expect(ind.indicator_types).toEqual(["anomalous-activity"]); // the verdict, not the marker, sets it
+  });
+
   it("names the report from the incident id when provided", () => {
     const plain = ofType(buildStixBundle(emptyState("c1")).objects, "report")[0];
     expect(plain.name).toBe("DFIR Companion — c1");
@@ -231,43 +282,15 @@ describe("buildStixBundle", () => {
   });
 });
 
-// #1325: the full bundle is a report, not the acting block-list, so a client-reported value is
-// still exported — but a TIP consuming the bundle must be able to tell it apart from a
-// sensor-observed indicator before it re-promotes it into enforcement.
-describe("client-reported indicators (#1325)", () => {
-  it("carries a client-reported label and says so first in the description", () => {
+// A pipeline that pattern-matches indicators into detection never reads `labels`; a typed custom
+// property (STIX 2.1 §11) is what it can gate on. Plain indicators carry no such key at all.
+describe("client-reported indicators carry a machine-gatable custom property (#1325 follow-up)", () => {
+  it("sets x_dfir_companion_provenance only on a client-reported indicator", () => {
     const state = emptyState("c1");
     state.iocs.push(ioc({ id: "i1", value: "203.0.113.9", provenance: "client-reported" }));
     state.iocs.push(ioc({ id: "i2", value: "198.51.100.7" }));
     const inds = ofType(buildStixBundle(state).objects, "indicator");
-    const marked = inds.find((o) => o.name === "203.0.113.9")!;
-    const plain = inds.find((o) => o.name === "198.51.100.7")!;
-    expect(marked.labels).toEqual(["client-reported"]);
-    // A pipeline that never reads labels can still gate on a typed custom property (STIX 2.1 §11).
-    expect(marked.x_dfir_companion_provenance).toBe("client-reported");
-    expect(plain.x_dfir_companion_provenance).toBeUndefined();
-    expect(String(marked.description).startsWith("Client-reported:")).toBe(true);
-    expect(String(marked.description)).toContain("sender-controlled header");
-    expect(plain.labels).toBeUndefined();
-    expect(String(plain.description).startsWith("Client-reported:")).toBe(false);
-  });
-
-  it("keeps the threat-intel summary after the client-reported line", () => {
-    const state = emptyState("c1");
-    state.iocs.push(
-      ioc({
-        id: "i1",
-        value: "203.0.113.9",
-        provenance: "client-reported",
-        enrichments: [
-          { source: "AbuseIPDB", verdict: "malicious", score: "100%", fetchedAt: "2026-05-20T09:00:00Z" },
-        ],
-      }),
-    );
-    const [ind] = ofType(buildStixBundle(state).objects, "indicator");
-    const d = String(ind.description);
-    expect(d.indexOf("Client-reported:")).toBe(0);
-    expect(d).toContain("AbuseIPDB: malicious (100%)");
-    expect(d.indexOf("Client-reported:")).toBeLessThan(d.indexOf("Threat-intel verdict"));
+    expect(inds.find((o) => o.name === "203.0.113.9")!.x_dfir_companion_provenance).toBe("client-reported");
+    expect(inds.find((o) => o.name === "198.51.100.7")!).not.toHaveProperty("x_dfir_companion_provenance");
   });
 });

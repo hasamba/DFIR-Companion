@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, type MockInstance } from "vitest";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +12,7 @@ import { renderStandalonePresentationChecked } from "../../src/reports/presentat
 import { emptyState, type InvestigationState } from "../../src/analysis/stateTypes.js";
 import { createApp } from "../../src/server.js";
 import * as evidenceSafety from "../../src/reports/evidenceSafety.js";
+import { awaitActivityEntries } from "../helpers/activityLog.js";
 
 // #1006 — the check is wired at the door of every human-readable export. Every exporter defangs
 // and escapes correctly today, so the real renderers produce no finding (the first block pins
@@ -64,6 +65,7 @@ function hostileState(): InvestigationState {
 let cases: CaseStore;
 let stateStore: StateStore;
 let activityLogStore: ActivityLogStore;
+let add: MockInstance<ActivityLogStore["add"]>;
 let writer: ReportWriter;
 let app: ReturnType<typeof createApp>;
 
@@ -75,6 +77,7 @@ beforeEach(async () => {
   stateStore = new StateStore(cases);
   await stateStore.save(hostileState());
   activityLogStore = new ActivityLogStore(cases);
+  add = vi.spyOn(activityLogStore, "add");
   writer = new ReportWriter(cases, stateStore);
   app = createApp(cases, { stateStore, reportWriter: writer, activityLogStore });
 });
@@ -96,7 +99,11 @@ describe("today's exporters pass the check", () => {
     const deck = await request(app).get("/cases/c1/present/export");
     expect(deck.status).toBe(200);
     expect(deck.text).not.toContain('class="evidence-safety"');
-    await settled();
+    // "Nothing was logged" cannot be polled for, and a sleep only guards it in the safe direction.
+    // The append is ISSUED synchronously at the route (`void logActivity` → `store.add` runs before
+    // its first await), so by the time any response above arrived, a spurious log would already
+    // have called `add` — the spy is deterministic where a sleep is a guess (#1320 review).
+    expect(add).not.toHaveBeenCalled();
     expect(await activityLogStore.load("c1")).toEqual([]);
   });
 });
@@ -192,12 +199,11 @@ describe("the deck check reads the finished file", () => {
   });
 });
 
-// The activity append is fire-and-forget at the route; give it a turn before reading the log.
-async function settled(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 20));
-}
-
+// The activity append is fire-and-forget at the route (`void logActivity(...)` in
+// evidenceSafetyLog.ts), so the response can land before the entry does. A fixed sleep here lost
+// that race on contended Linux CI (#1320: "expected [] to deeply equal [...]" while the same commit
+// passed on Windows and 3/3 locally). The wait IS the assertion — poll on a wall-clock budget via
+// the shared helper, exactly as tests/helpers/activityLog.ts documents.
 async function warnings() {
-  await settled();
-  return (await activityLogStore.load("c1")).filter((e) => e.action === "evidence-safety-warning");
+  return awaitActivityEntries(app, "c1", "evidence-safety-warning");
 }

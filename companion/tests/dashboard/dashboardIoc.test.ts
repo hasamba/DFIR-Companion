@@ -407,27 +407,3 @@ describe("intelWhenChip — when the verdict applies (#933 item 19)", () => {
     expect(badge).not.toContain("onmouseover");
   });
 });
-
-// #1326: the dashboard IOC list is where an analyst first meets a value, and a sender-controlled
-// header must not read with the same weight as a sensor-observed peer. The chip is the same
-// vocabulary as the markdown report's "(client-reported)" suffix and the IRIS tag.
-describe("clientReportedBadge (#1326)", () => {
-  it("renders a chip only for a client-reported IOC, with the reason in the title", () => {
-    const chip = ioc.clientReportedBadge({
-      id: "i1",
-      type: "ip",
-      value: "203.0.113.9",
-      provenance: "client-reported",
-    });
-    expect(chip).toContain('class="ioc-client-reported-chip"');
-    expect(chip).toContain("client-reported");
-    expect(chip).toContain("sender-controlled header");
-    // The title states the reason, never the downstream policy — a policy change must not make
-    // a tooltip lie with no test to catch it.
-    expect(chip).not.toMatch(/block-list|to_ids|MISP/);
-    expect(ioc.clientReportedBadge({ id: "i2", type: "ip", value: "198.51.100.7" })).toBe("");
-    expect(ioc.clientReportedBadge({ id: "i3", type: "ip", value: "x", provenance: "something-else" })).toBe(
-      "",
-    );
-  });
-});

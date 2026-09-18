@@ -41,8 +41,13 @@ export interface HypothesisView extends Hypothesis {
  * unembellished (no "may indicate", no severity, no verb implying causality) — Ollama's own review
  * of the original issue flagged this exact overclaim risk. Not scoped to a Hypothesis's own
  * subject/host: nothing in the sqlite-row-state schema carries one to scope by. Returns undefined
- * when the case has no such summary event (never an empty-string or zero-count annotation). */
-export function caseSqliteRowStateHint(events: readonly ForensicEvent[]): string | undefined {
+ * when the case has no such summary event (never an empty-string or zero-count annotation).
+ * #1319 — a summary the analyst marked false positive is skipped, as falsePositive.ts promises for
+ * every derived reader of the forensic timeline; ids match the way filterFalsePositiveEvents does. */
+export function caseSqliteRowStateHint(
+  events: readonly ForensicEvent[],
+  falsePositiveEventIds?: ReadonlySet<string>,
+): string | undefined {
   let carved = 0;
   let deleted = 0;
   let truncated = false;
@@ -50,6 +55,7 @@ export function caseSqliteRowStateHint(events: readonly ForensicEvent[]): string
   for (const e of events) {
     const summary = e.canonical?.sqliteRowStateSummary;
     if (!summary) continue;
+    if (falsePositiveEventIds?.has(e.id.trim().toLowerCase())) continue;
     found = true;
     carved += summary.carvedTotal;
     deleted += summary.deletedTotal;
@@ -71,7 +77,7 @@ export function withAssessments(
   elig: AssessmentEligibility,
 ): HypothesisView[] {
   const assessments = assessHypothesisEvidence(hypotheses, elig);
-  const hint = caseSqliteRowStateHint(events);
+  const hint = caseSqliteRowStateHint(events, elig.falsePositiveEventIds);
   return hypotheses.map((h) => {
     const assessment = assessments.get(h.id)!;
     return {

@@ -248,11 +248,10 @@ describe("every moved function still resolves at its call sites", () => {
   // kept so the EXCLUDE filter did not silently widen with search; 112 with originSuffix, the relay
   // badge's "created by …" / "origin not recorded" words (#933 item 18); 113 with intelWhenChip,
   // the badge's "when does this verdict apply" chip (#933 item 19); 114 with fmtDateTime, the
-  // date+time formatter for a row whose instant could be days/weeks/months old (#1168); 115 with
-  // clientReportedBadge, the IOC row's chip for a value read from a sender-controlled header
-  // (#1326). The number is a vacuity guard, not a budget.
-  it("moved 115 functions, so the check below is not vacuous", () => {
-    expect(MOVED.length).toBe(115);
+  // date+time formatter for a row whose instant could be days/weeks/months old (#1168). The number
+  // is a vacuity guard, not a budget.
+  it("moved 114 functions, so the check below is not vacuous", () => {
+    expect(MOVED.length).toBe(114);
   });
 
   it("provides every one of them as a global once the tagged scripts have run", async () => {

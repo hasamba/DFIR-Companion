@@ -111,14 +111,6 @@ function enrichBadges(ioc) {
   }).join(" ");
 }
 
-// #1326: an IOC read from a sender-controlled header (X-Originating-IP / Received hop) must not
-// read with the same weight as a sensor-observed peer. The chip uses the same word the markdown
-// report's suffix, the IRIS tag and the MISP comment use, so every surface says one thing.
-function clientReportedBadge(ioc) {
-  if (!ioc || ioc.provenance !== "client-reported") return "";
-  return ` <span class="ioc-client-reported-chip" title="Client-reported: value read from a sender-controlled header (X-Originating-IP / Received hop), not an observed network fact.">client-reported</span>`;
-}
-
 // Render the IOC list. Extracted from render() so paintIocImportMeta() can re-render it to paint
 // the "new since last import" highlight (green accent + NEW badge) without a full state re-render.
 // An IOC is "flagged" when any enrichment engine returned a malicious or suspicious verdict.
@@ -227,5 +219,4 @@ window.DfirIoc = {
   scoreCoversTag,
   originSuffix,
   enrichBadges,
-  clientReportedBadge,
 };

@@ -413,6 +413,23 @@ describe("parseFlossResult — language_strings_missed (#1120: unconfirmed candi
     expect(confirmedEvent).toBeDefined();
     expect(r.notCitedValues).toBeGreaterThan(0); // some missed-only values overflowed the cap instead
   });
+
+  it("keeps the ONE confirmed citation of a value over the RECOVERY_CITATIONS_MAX cap when the SAME value has more missed citations than the cap (#1305 — confirmed-first is mapGroup's own guarantee, not the caller's scan order)", () => {
+    const confirmed = { ...LANGUAGE_ENTRY, offset: 999999 };
+    const missed = Array.from({ length: 64 + 6 }, (_, i) => ({ ...LANGUAGE_ENTRY, offset: i }));
+    const r = parseFlossResult(floss({ language: [confirmed], languageMissed: missed }))!;
+    expect(r.events).toHaveLength(1);
+    const block = r.events[0].canonical!.decodedString!;
+    expect(block.kind).toBe("language");
+    if (block.kind === "language") {
+      expect(block.citations).toHaveLength(64);
+      expect(block.notCited).toBe(7);
+      expect(block.occurrences).toBe(71);
+      expect(block.citations.some((c) => !c.missed)).toBe(true);
+      expect(block.citations[0].missed).toBe(false);
+    }
+    expect(r.events[0].description).not.toContain("candidate, not independently confirmed");
+  });
 });
 
 describe("isFlossResult — language-only recognition (#1120)", () => {

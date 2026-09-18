@@ -94,8 +94,6 @@
 .ioc-prov-badge { border-radius: 4px; padding: 0 5px; font-size: 10px; font-weight: bold; }
 .ioc-prov-detection { background: var(--bg-secondary); color: var(--accent); border: 1px solid var(--border-color); }
 .ioc-prov-telemetry { background: var(--border-subtle); color: var(--text-faint); border: 1px solid var(--border-strong); }
-/* #1326: the value came from a sender-controlled header, not an observation. Warning-toned so it never reads as a peer of a sensor-observed IOC. */
-.ioc-client-reported-chip { border-radius: 4px; padding: 0 5px; font-size: 10px; font-weight: bold; background: var(--warning-bg); color: var(--sev-high); border: 1px solid var(--warning-border); }
 /* Composite IOC risk badge (#63) — severity-keyed colours; benign/low recede. */
 .ioc-risk-badge { border-radius: 4px; padding: 0 5px; font-size: 10px; font-weight: bold; text-transform: uppercase; }
 .ioc-risk-critical { background: var(--danger-bg); color: var(--badge-danger-text); border: 1px solid var(--danger-border); }

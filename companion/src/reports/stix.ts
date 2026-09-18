@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import type { InvestigationState, IOC, IocEnrichment } from "../analysis/stateTypes.js";
 import { actionableAssertions, assertionLabel, lastKnownAssertions } from "../analysis/intelViews.js";
 import { retiredFindingIds } from "../analysis/intelRetirement.js";
-import { CLIENT_REPORTED_LINE } from "../integrations/iris/irisMap.js";
 
 // Build a STIX 2.1 bundle (https://docs.oasis-open.org/cti/stix/v2.1/stix-v2.1.html) from the
 // case state — a deterministic transform, no AI, no new storage. The bundle is what every CTI
@@ -134,6 +133,15 @@ const VERDICT_RANK: Record<IocEnrichment["verdict"], number> = {
   harmless: 1,
   unknown: 0,
 };
+// #1266 / #1325: a client-reported IOC (a value read from a sender-controlled header) must not
+// leave the bundle byte-identical to a sensor-observed one — every TIP ingests this export. One
+// constant per consumer, like irisMap.ts / mispPush.ts. `labels` is the STIX 2.1 common property
+// a TIP keeps (OpenCTI as a Label, MISP as a tag), so the marker survives import; the description
+// says it first, on both branches, because "observed" would be exactly the wrong claim.
+export const CLIENT_REPORTED_LINE =
+  "Client-reported: value read from a sender-controlled header (X-Originating-IP / Received hop), not an observed network fact.";
+const CLIENT_REPORTED_LABEL = "client-reported";
+
 const INDICATOR_TYPE: Record<IocEnrichment["verdict"], string> = {
   malicious: "malicious-activity",
   suspicious: "anomalous-activity",
@@ -253,10 +261,6 @@ export function buildStixBundle(state: InvestigationState, opts: StixExportOptio
     const base = summary
       ? `Threat-intel verdict: ${verdict} — ${summary}`
       : "Indicator observed during the investigation (no threat-intel enrichment).";
-    // #1325: the bundle is a report, so a client-reported value is still exported — but a TIP that
-    // imports it must be able to tell it from a sensor-observed indicator before re-promoting it
-    // into enforcement. `labels` is what OpenCTI/MISP surface as tags; the description says it
-    // first, in the same words the IRIS push uses.
     const clientReported = ioc.provenance === "client-reported";
     objects.push(
       sdo("indicator", id, {
@@ -264,11 +268,12 @@ export function buildStixBundle(state: InvestigationState, opts: StixExportOptio
         pattern,
         pattern_type: "stix",
         valid_from: stixTime(ioc.firstSeen, now),
+        // The verdict alone sets indicator_types; the provenance marker never touches it.
         indicator_types: [INDICATOR_TYPE[verdict ?? "unknown"]],
         // The label is what a TIP shows a human; the x_ property (STIX 2.1 §11 custom properties)
         // is what a pipeline that never reads labels can gate enforcement on.
         ...(clientReported
-          ? { labels: ["client-reported"], x_dfir_companion_provenance: "client-reported" }
+          ? { labels: [CLIENT_REPORTED_LABEL], x_dfir_companion_provenance: CLIENT_REPORTED_LABEL }
           : {}),
         description: clientReported ? `${CLIENT_REPORTED_LINE}\n${base}` : base,
       }),
