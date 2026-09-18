@@ -125,6 +125,31 @@ describe("resolveCrossUploadDnsConnLeads", () => {
     expect(results[0]).toMatchObject({ state: "earlier connections only", connectionEventId: conn.id });
   });
 
+  it("reports 'earlier connections only' picking the connection whose fold reaches CLOSEST to the query, not whichever started latest (#1256)", () => {
+    const dns = sensorDnsEvent({
+      client: "10.0.0.5",
+      query: "cdn.example.net",
+      address: "203.0.113.5",
+      ts: "2026-06-10T12:00:00Z",
+    });
+    // A starts EARLIER but its own fold reaches LATER (closer to the query) than B, which starts
+    // later but ends sooner. The relevant connection is A, not "whichever is last in start order".
+    const connA = connEvent({
+      src: "10.0.0.5",
+      dst: "203.0.113.5",
+      ts: "2026-06-10T10:00:00Z",
+      endTs: "2026-06-10T10:30:00Z",
+    });
+    const connB = connEvent({
+      src: "10.0.0.5",
+      dst: "203.0.113.5",
+      ts: "2026-06-10T10:15:00Z",
+      endTs: "2026-06-10T10:16:00Z",
+    });
+    const results = resolveCrossUploadDnsConnLeads([dns, connA, connB], 300);
+    expect(results[0]).toMatchObject({ state: "earlier connections only", connectionEventId: connA.id });
+  });
+
   it("reports no connection found in this case when nothing matches at all", () => {
     const dns = sensorDnsEvent({
       client: "10.0.0.5",

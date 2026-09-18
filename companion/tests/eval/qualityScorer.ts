@@ -458,9 +458,14 @@ export function formatCaseQualityReport(
   // Mock/deterministic reports (the default) are unchanged: precision still gates there.
   const falseConclusionLabel = (id: string): string =>
     options.real ? `note: extra conclusion ${id} (not gated)` : `false conclusion ${id}`;
+  // Same relaxation as falseConclusionLabel: IOC precision is non-gating on a real run, so an
+  // unexpected IOC reads as a note rather than a failure there (#1241, mirroring #1228).
+  const unexpectedIocLabel = (key: string): string =>
+    options.real ? `note: extra IOC ${key} (not gated)` : `unexpected IOC ${key}`;
   const problems = [
     ...score.claims.missed.map((id) => `missed claim ${id}`),
     ...score.claims.falseConclusions.map(falseConclusionLabel),
+    ...score.iocs.unexpected.map(unexpectedIocLabel),
     ...score.forbiddenConclusions.map((id) => `forbidden conclusion ${id}`),
     ...score.confidenceIssues,
     ...score.uncertainties.missed.map((id) => `missed uncertainty ${id}`),

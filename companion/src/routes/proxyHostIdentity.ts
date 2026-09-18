@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import { resolveProxyHostIdentity } from "../analysis/proxyWorkstationChain.js";
 import { loadHostAliasIndex } from "../analysis/hostScopeLoad.js";
+import type { ForensicEvent } from "../analysis/stateTypes.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -30,6 +31,13 @@ import type { RouteContext } from "./context.js";
  * concrete evidence it is an actual bottleneck in a real case. If it becomes one, batch through
  * `forensicTimelineBatches()`: accumulate only logon-shaped events into the index-building pass,
  * then a second pass resolving each batch against the already-built index.
+ *
+ * READS forensic ∪ super-timeline (#1243): an import-time proxy/web-log row can be routed to the
+ * super-timeline under the severity gate rather than the forensic timeline (see ARCHITECTURE.md's
+ * forensic/super-timeline boundary). This route is a plain analyst-facing read — no AI synthesis in
+ * its call graph — so joining both stores is the same recipe threatIntel.ts's ioc-provenance routes
+ * already use, not the AI-boundary promotion pattern viewSummary needs. Same full-load tradeoff as
+ * the MEMORY note above, extended to the super-timeline read.
  */
 
 const DEFAULT_TOLERANCE_MS = 21_600_000; // 6 hours — no existing precedent value in this codebase
@@ -56,7 +64,7 @@ export function registerProxyHostIdentityRoutes(app: Express, ctx: RouteContext)
     if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
     try {
       const caseId = req.params.id;
-      const [state, aliasIndex] = await Promise.all([
+      const [state, aliasIndex, superEvents] = await Promise.all([
         options.stateStore.load(caseId),
         loadHostAliasIndex(
           {
@@ -65,9 +73,16 @@ export function registerProxyHostIdentityRoutes(app: Express, ctx: RouteContext)
           },
           caseId,
         ),
+        options.superTimelineStore
+          ? options.superTimelineStore.all(caseId)
+          : Promise.resolve<ForensicEvent[]>([]),
       ]);
       const toleranceMs = parsed.data.toleranceMs ?? DEFAULT_TOLERANCE_MS;
-      const matches = resolveProxyHostIdentity(state.forensicTimeline, aliasIndex, toleranceMs);
+      const matches = resolveProxyHostIdentity(
+        [...state.forensicTimeline, ...superEvents],
+        aliasIndex,
+        toleranceMs,
+      );
       return res.status(200).json({ matches });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });

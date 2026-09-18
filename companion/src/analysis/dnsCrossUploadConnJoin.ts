@@ -149,9 +149,17 @@ function leadFor(
     return { state, band: gapBand(gapMs), connectionEventId: atOrAfter.id };
   }
   // Every match's own LAST occurrence is still before `first` — truly earlier, not just folded.
+  // The MOST RELEVANT one is whichever's own fold reaches latest — not whichever started latest: a
+  // long-running connection that started early can still end closer to the query than a short one
+  // that started later. `placeableMatches` is sorted by START, so picking the last element would
+  // pick the latter by mistake when folds overlap. Same fix as the sibling file
+  // dnsEndpointCrossUploadConnJoin.ts (#1256).
+  const closest = placeableMatches.reduce((best, c) =>
+    Date.parse(c.endTimestamp ?? c.timestamp) > Date.parse(best.endTimestamp ?? best.timestamp) ? c : best,
+  );
   return {
     state: "earlier connections only",
-    connectionEventId: placeableMatches[placeableMatches.length - 1].id,
+    connectionEventId: closest.id,
   };
 }
 
