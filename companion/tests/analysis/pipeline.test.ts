@@ -125,7 +125,9 @@ describe("AnalysisPipeline", () => {
     // Pin the two protective sentences too, not just the headline rule — a partial edit that keeps
     // "return an EMPTY findings array" but drops these would still suppress genuine findings on a
     // finding-rich case, which is the actual regression this instruction must never cause.
-    expect(SYNTHESIS_PROMPT).toMatch(/a genuinely suspicious finding\s*\n?\s*stays a finding at ANY confidence/);
+    expect(SYNTHESIS_PROMPT).toMatch(
+      /a genuinely suspicious finding\s*\n?\s*stays a finding at ANY confidence/,
+    );
     expect(SYNTHESIS_PROMPT).toMatch(/that is NOT the clean case/);
   });
 
