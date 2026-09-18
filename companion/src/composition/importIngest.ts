@@ -218,6 +218,10 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         return observe(pipeline.importDiskImageLog(caseId, text, base));
       case "awsflowlog":
         return observe(pipeline.importAwsFlowLog(caseId, text, base));
+      case "azureflowlog":
+        return observe(pipeline.importAzureFlowLog(caseId, text, base));
+      case "gcpflowlog":
+        return observe(pipeline.importGcpFlowLog(caseId, text, base));
       case "bulkextractorurl":
         return observe(pipeline.importBulkExtractorUrl(caseId, text, base));
       case "bulkextractorcarved":

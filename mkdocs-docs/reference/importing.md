@@ -28,7 +28,7 @@ Before importing, you can set a **minimum severity** filter. Events below the fl
 | **Network** | Suricata eve.json, Zeek JSON (combined or per-stream conn/dns/http/ssl/x509/files), Security Onion events |
 | **Firewall / IDS / web logs** | Cisco ASA syslog (Built/Teardown/Deny), Snort/Suricata `alert_fast` IDS alerts, Apache/Nginx/Squid combined access logs, plain syslog (RFC 5424 / RFC 3164, Linux/Unix hosts) |
 | **Memory forensics** | Volatility 3 JSON + default text output, Rekall JSON, MemProcFS timeline CSV, MemProcFS findevil, Intact (trimmed VolWeb) `memory_payload.json` + `yarascan_results.jsonl` |
-| **Cloud IR** | AWS CloudTrail JSON, M365 Unified Audit Log, Entra ID sign-in/audit logs, GCP Cloud Audit Logs, Azure Activity Log |
+| **Cloud IR** | AWS CloudTrail JSON, M365 Unified Audit Log, Entra ID sign-in/audit logs, GCP Cloud Audit Logs, Azure Activity Log; **cloud flow logs** — AWS VPC Flow Logs (default v2 text), Azure virtual network flow logs (`flowLogVersion` 4 JSON), GCP VPC Flow Logs (Cloud Logging export) — see [Cloud flow logs](#cloud-flow-logs-aws-vpc-azure-vnet-gcp-vpc) |
 | **Identity provider** | Okta System Log, Google Workspace admin/login audit — severity comes from the event type, not the vendor's own operational grade, so IdP account-takeover tradecraft (MFA/2SV disabled, admin role granted, API token minted, OAuth grant consented, session impersonated, Workspace mail monitor added) grades above Info |
 | **Browser artifacts** | Hindsight JSON or CSV — Chrome/Edge/Brave history, downloads and interpretations. Every row is Info: browser artifacts are evidence, not verdicts, so they land in the super-timeline |
 | **macOS** | Unified log (`log show --style json`), LSQuarantine download provenance — quarantine rows carry both the data URL and the referring origin URL; **persistence artifacts** — LaunchAgent/LaunchDaemon plists, cron and shell profiles (see [Collecting macOS persistence artifacts](#collecting-macos-persistence-artifacts)) |
@@ -1458,6 +1458,38 @@ value the record does not carry, so `reduces` and `extends` are never said:
 Not built (stays open on #931 item 14): per-upload coverage rows (what each cloud upload can
 and cannot answer — deferred until it has a storage model that does not flood the forensic
 timeline), AWS Config recorder calls, and the billing half (dropped by triage).
+
+### Cloud flow logs: AWS VPC, Azure VNet, GCP VPC
+
+Three importers read the traffic records a cloud platform's own network plane writes. Every row
+is a Low-severity `network/flow` event with the 5-tuple, the protocol name, and the platform's
+own verdict word; public IPv4 peers become case IOCs, private and IPv6 peers never do. None of the
+three feeds the beacon detector (an interval-aggregated row would read as a low-jitter beacon).
+
+- **AWS VPC Flow Logs** — the default (version 2) 14-field text line. `NODATA` (nothing crossed
+  the interface) and `SKIPDATA` (AWS dropped records — a collection gap, never "no traffic") are
+  counted separately from malformed lines and named in the import note. A flow's private endpoint
+  is attributed to the EC2 instance that held that IP at the time when a CloudTrail upload's
+  compute-lifecycle rows are also in the case (see the compute-lifecycle section above).
+- **Azure virtual network flow logs** — the current Network Watcher JSON (`{ "records": [...] }`,
+  `flowLogVersion` 4). One tuple, one row: `Azure VNet flow: 10.0.0.6:23956 -> 192.0.2.180:443
+  (tcp) outbound from NIC 112233445566, end, rule DefaultRule_AllowInternetOutBound [3 packet(s)/
+  767 byte(s) sent, 2 packet(s)/1580 byte(s) received since last update] [encryption NX]`.
+  Direction is relative to the logged NIC, never to the organisation. A **begin** (`B`) or
+  **denied** (`D`) row prints no counters — the platform measured nothing. Counters on
+  `continuing`/`end` rows are increments since the previous tuple, never a connection total. The
+  retired **NSG flow log** format is recognised and refused by name (the note says how many
+  records), never misparsed; so is any `flowLogVersion` other than 4. **No VM is attributed**: the
+  record names a NIC by MAC, and nothing in the case binds a MAC to a VM.
+- **GCP VPC Flow Logs** — a Logs Explorer or sink export of `LogEntry` objects (`logName` ending
+  in `vpc_flows`). `GCP VPC flow (reported by SRC): 10.128.0.2:51234 -> 203.0.113.9:443 (tcp)
+  observed [12 packet(s), 8420 payload byte(s), 2024-05-01T09:59:58.123Z–2024-05-01T10:00:03.000Z]
+  [src instance web-1 (my-proj/us-central1-a, Google's annotation)] [dest: no instance
+  annotation]`. Instance, VPC and GKE names are **Google's own log-time annotations**, printed as
+  such — not a join made here — and a side without one says so. `DROPPED` records print the
+  dropped counters and the drop reason. Bytes are user payload only (no headers), so they do not
+  compare to the other two providers. **The records are sampled**: a flow that does not appear is
+  not evidence that no traffic occurred, and the import note says so.
 
 ### Entra applications: credentials, grants, roles, sign-ins
 

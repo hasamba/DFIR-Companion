@@ -56,8 +56,11 @@ interface Launch {
   timeMs: number;
 }
 
+// Provider-gated (#1294): Azure/GCP flow rows carry their own accountId (subscription / project)
+// and must never be matched against AWS launches — the launch index is AWS-only by construction.
 function isFlowEvent(e: ForensicEvent): boolean {
-  return e.canonical?.event.category === "network" && e.canonical.event.type === "flow";
+  const c = e.canonical;
+  return c?.event.category === "network" && c.event.type === "flow" && c.cloud?.provider === "aws";
 }
 
 function isComputeLaunch(
