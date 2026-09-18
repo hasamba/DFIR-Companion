@@ -409,9 +409,6 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (isPeSieveReport(root)) return "memory"; // #933 item 15 — verified against every check below for no field collision
   if (isFlossResult(root)) return "flossresult";
   if (isCapaResult(root)) return "caparesult";
-  // Recognizably capa-shaped but unsupported (e.g. flavor "dynamic", #1124) — refuse HERE, ahead
-  // of the SIEM catch-all, or it silently misparses instead of naming an honest reason.
-  if (capaUnsupportedFlavorReason(root)) return "unknown";
   if (isOlevbaResult(root)) return "olevbaresult";
   if (isMobsfReport(root)) return "mobsfpermission";
   if (isNfdumpFlowRecord(sample)) return "exporterflow";
@@ -445,6 +442,9 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (looksLikeJournald(sample)) return "journald";
   if (isThor(sample)) return "thor";
   if (isSiem(sample)) return "siem";
+  // Capa-shaped but unsupported (e.g. flavor "dynamic", #1124) — refuse right before the
+  // unconditional SIEM fallback, after every specific importer above has had first claim.
+  if (capaUnsupportedFlavorReason(root)) return "unknown";
   return "siem"; // any other event-shaped JSON → the SIEM importer's field auto-detection
 }
 

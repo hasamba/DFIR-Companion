@@ -548,7 +548,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     const originalName = basename(filePath);
     const kind = ctx.resolveImportKind()(originalName, sample);
     if (kind === "unknown") {
-      const capaHint = capaFlavorHintFor(sample);
+      const capaHint = capaFlavorHintFor(sample); // best-effort: a truncated sniffed head silently gives no hint
       return res.status(400).json({
         error: capaHint ?? "could not detect the file type — not recognized as any supported import format",
       });

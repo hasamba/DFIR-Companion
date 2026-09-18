@@ -190,14 +190,20 @@ describe("capaUnsupportedFlavorReason", () => {
     expect(capaUnsupportedFlavorReason({ meta: { flavor: "dynamic" } })).toBeUndefined();
   });
 
+  it("returns undefined when rules is absent — capa always serializes rules, even empty, so this isn't a real capa report (Ollama code review finding)", () => {
+    const noRules = JSON.parse(floss({}, { flavor: "dynamic" }));
+    delete noRules.rules;
+    expect(capaUnsupportedFlavorReason(noRules)).toBeUndefined();
+  });
+
   it("names an unrecognized (non-string or missing) flavor generically, on an otherwise capa-shaped sample", () => {
     expect(capaUnsupportedFlavorReason(JSON.parse(floss({}, { flavor: 12345 })))).toBe(
-      'capa report flavor "unrecognized" is not yet supported (only "static" reports are parsed)',
+      'capa report flavor "missing or unrecognized" is not yet supported (only "static" reports are parsed)',
     );
     const noFlavor = JSON.parse(floss({}));
     delete noFlavor.meta.flavor;
     expect(capaUnsupportedFlavorReason(noFlavor)).toBe(
-      'capa report flavor "unrecognized" is not yet supported (only "static" reports are parsed)',
+      'capa report flavor "missing or unrecognized" is not yet supported (only "static" reports are parsed)',
     );
   });
 
