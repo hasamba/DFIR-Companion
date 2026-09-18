@@ -10,6 +10,7 @@ import {
   SQLITE_ROW_STATE_BASIS,
   SQLITE_ROW_STATE_BASIS_V2,
 } from "../../src/analysis/canonicalSqliteRowState.js";
+import { markContainerEscape } from "../../src/analysis/containerEscape.js";
 
 // Header/enum shape verified live against sqlite-dissect's (DC3) own csv_export.py
 // (CommitCsvExporter._write_cells) and constants.py — not invented.
@@ -804,6 +805,51 @@ describe("parseSqliteRowStateCsv — structured summary totals (#1290 Part B)", 
         expect(e.description).toContain("cannot be determined from this report alone");
         expect(e.description).toContain("a Carved row for this same rowid");
         expect(e.description).toMatch(/; report [0-9a-f]{16}$/);
+      }
+    } finally {
+      if (priorEnv === undefined) delete process.env.DFIR_SQLITE_HIGH_VALUE_LABELS;
+      else process.env.DFIR_SQLITE_HIGH_VALUE_LABELS = priorEnv;
+    }
+  });
+
+  it("keeps the report tag and undated clause when a crafted filename trips the container-escape pass (#1340)", () => {
+    // The table name comes from the upload filename. A filename shaped like `docker run --privileged`
+    // makes every row-state description read as a container command line, and markContainerEscape
+    // (which runs inside mergeDelta on every event) appends its note after clipping the base. Its
+    // private clip used to be 600 while this importer emits up to DESCRIPTION_MAX, so the tail —
+    // the `; report <fp>` tag and the `[undated:` disclosure — was cut on exactly this input.
+    const priorEnv = process.env.DFIR_SQLITE_HIGH_VALUE_LABELS;
+    const label = "m".repeat(250);
+    process.env.DFIR_SQLITE_HIGH_VALUE_LABELS = label;
+    try {
+      const text = csv(
+        ["body"],
+        [
+          [...row({ rowId: 42, version: 2, operation: "Updated", pageNumber: 3, location: 0 }), "alice"],
+          [...row({ rowId: 42, version: 2, operation: "Deleted", pageNumber: 7, location: 1 }), "bob"],
+          [...row({ rowId: 42, version: 5, operation: "Carved", location: 2 }), "fragment"],
+        ],
+      );
+      const r = parseSqliteRowStateCsv(text, {
+        sourceLabel: `0007_docker run -v /:/host --privileged ${label}.csv`,
+      })!;
+      const rows = findRows(r);
+      expect(rows.length).toBeGreaterThan(0);
+      // The pass must actually fire on this input, or the test proves nothing.
+      const marked = markContainerEscape(rows);
+      expect(marked).not.toBe(rows);
+      for (const e of marked) {
+        expect(e.severity).toBe("Medium");
+        expect(e.description).toContain("[container escape:");
+        expect(e.description).toContain("[undated: sqlite-dissect's report carries no event time]");
+        expect(e.description).toMatch(/; report [0-9a-f]{16}/);
+      }
+      // The ambiguous rows carry the widest clause stack; the tail must survive there too.
+      const ambiguous = marked.filter((e) => e.canonical!.sqliteRowState!.latestForRowIdAmbiguous === true);
+      expect(ambiguous).toHaveLength(2);
+      for (const e of ambiguous) {
+        expect(e.description).toContain("a Carved row for this same rowid");
+        expect(e.description).toContain("cannot be determined from this report alone");
       }
     } finally {
       if (priorEnv === undefined) delete process.env.DFIR_SQLITE_HIGH_VALUE_LABELS;

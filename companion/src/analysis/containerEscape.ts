@@ -484,7 +484,12 @@ export function escapeBehavior(command: string): BehaviorHit[] {
 // ─────────────────────────── the timeline pass ───────────────────────────
 
 const RANK: Record<Severity, number> = { Info: 0, Low: 1, Medium: 2, High: 3, Critical: 4 };
-const DESCRIPTION_MAX = 600;
+// Base-text clip before the note goes on. This pass runs on EVERY merged event and reads the
+// description as a command line, so its clip must cover the widest description any importer emits
+// — gcpServiceAccountJoin and gwsDriveExposure emit 1600; sqliteRowStateImport, awsComputeState
+// and six more emit 1400. At 600 a crafted sqlite-dissect upload filename shaped like
+// `docker run --privileged` cut the row's `; report <fp>` tag and `[undated:` clause (#1340).
+const DESCRIPTION_MAX = 1600;
 
 function commandOf(e: ForensicEvent): string {
   // Each half is bounded BEFORE they are joined. Concatenating two unbounded imported fields and
