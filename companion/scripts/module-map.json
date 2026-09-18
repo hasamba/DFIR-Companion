@@ -629,6 +629,7 @@
     "smbChainRows.ts": "analysis/ingest",
     "socratesImport.ts": "analysis/ingest",
     "sqliteRowStateImport.ts": "analysis/ingest",
+    "sqliteRowStateLatest.ts": "analysis/ingest",
     "sourceTrust.ts": "analysis/intel",
     "sourceTrustStore.ts": "analysis/intel",
     "winEventTables.ts": "analysis/ingest",
