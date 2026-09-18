@@ -515,6 +515,12 @@ export class AnalysisPipeline {
     return ingest.importBulkExtractorUrl(this.importCtx, ...args);
   }
 
+  importBulkExtractorCarved(
+    ...args: ImporterArgs<typeof ingest.importBulkExtractorCarved>
+  ): Promise<InvestigationState> {
+    return ingest.importBulkExtractorCarved(this.importCtx, ...args);
+  }
+
   importFlossResult(...args: ImporterArgs<typeof ingest.importFlossResult>): Promise<InvestigationState> {
     return ingest.importFlossResult(this.importCtx, ...args);
   }
