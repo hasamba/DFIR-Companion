@@ -193,7 +193,31 @@ describe("correlateAwsFlowIdentityExecution", () => {
     } as unknown as ForensicEvent;
     const out = joined([withMalformed, flow({ time: 2 })]);
     const f = out.find((e) => e.description.includes(FLOW_IDENTITY_EXECUTION_MARKER))!;
-    expect(f.description).toContain("1 remote-access record could not be read (malformed)");
+    expect(f.description).toContain("at least 1 remote-access record could not be read (malformed)");
+  });
+
+  it("discloses the malformed count as a floor, taking the max across unioned uploads, never summed", () => {
+    // Malformed records carry no reliable content key, so they cannot be deduped like well-formed
+    // entries; the same upload imported twice must still read as one record, not two (#1293).
+    const malformedBlock = (id: string): ForensicEvent =>
+      ({
+        ...launch({ time: 0, by: "alice" }),
+        id,
+        canonical: {
+          event: { category: "cloud", type: "compute-lifecycle" },
+          cloud: { provider: "aws", accountId: "111111111111" },
+          awsCompute: {
+            instanceId: "i-aaa",
+            launch: { privateAddress: "172.31.16.139", time: at(0), by: "alice" },
+            remote: [{ call: "", by: "bob", time: at(1), locator: "loc-bad" }], // empty call: malformed
+            remoteBeyond: 0,
+          },
+        },
+      }) as unknown as ForensicEvent;
+    const out = joined([malformedBlock("dup1"), malformedBlock("dup2"), flow({ time: 2 })]);
+    const f = out.find((e) => e.description.includes(FLOW_IDENTITY_EXECUTION_MARKER))!;
+    expect(f.description).toContain("at least 1 remote-access record could not be read (malformed)");
+    expect(f.description).not.toContain("2 remote-access records could not be read");
   });
 
   it("keeps distinct remote-access records that happen to share a locator across uploads", () => {
