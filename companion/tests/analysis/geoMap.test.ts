@@ -235,3 +235,19 @@ describe("buildGeoMap (#133)", () => {
     expect(m.lat).toBeCloseTo(51.17, 1); // Germany centroid
   });
 });
+
+describe("#1266 -- a client-reported IP pin says so", () => {
+  it("sets clientReported on the marker only for a client-reported IOC", () => {
+    const s = state(
+      [
+        { ...ip("i1", "8.8.8.8", { lat: 37.4, lon: -122.1, country: "US" }), provenance: "client-reported" },
+        ip("i2", "9.9.9.9", { lat: 40.0, lon: -100.0, country: "US" }),
+      ],
+      [ev({ id: "e1", dstIp: "8.8.8.8", severity: "High", sources: ["Email"] })],
+    );
+    const g = buildGeoMap(s);
+    const byIp = Object.fromEntries(g.markers.map((m) => [m.ip, m.clientReported]));
+    expect(byIp["8.8.8.8"]).toBe(true);
+    expect(byIp["9.9.9.9"]).toBeUndefined();
+  });
+});

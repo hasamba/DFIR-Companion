@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { createHash } from "node:crypto";
 import { parseEmail, parseMimeEmail, looksLikeMsg } from "../../src/analysis/emailImport.js";
-import type { SiemEvent, SiemIoc } from "../../src/analysis/siemImport.js";
+import { addIoc, mergeRowIocs, type SiemEvent, type SiemIoc } from "../../src/analysis/siemImport.js";
 
 const b64 = (s: string): string => Buffer.from(s, "utf8").toString("base64");
 const enc = (s: string): string => `=?UTF-8?B?${b64(s)}?=`;
@@ -376,5 +376,67 @@ describe("parseMimeEmail — attachment digests and delivery indications (#930 i
     const none = parseEmail(phishingEml()).events[0].canonical?.mailbox!;
     expect(none.deliveryIndicated).toBeUndefined();
     expect(JSON.stringify(dt)).not.toMatch(/"delivered"/);
+  });
+});
+
+// ── #1266: client-reported provenance ─────────────────────────────────────────
+
+describe("#1266 -- IOC provenance at the sink", () => {
+  it("addIoc stores the marker, and plain wins in EITHER order", () => {
+    const a = new Map<string, SiemIoc>();
+    addIoc(a, "ip", "1.2.3.4", "client-reported");
+    expect(a.get("ip:1.2.3.4")?.provenance).toBe("client-reported");
+    addIoc(a, "ip", "1.2.3.4"); // a later ordinary sighting un-marks
+    expect(a.get("ip:1.2.3.4")).toEqual({ type: "ip", value: "1.2.3.4" });
+
+    const b = new Map<string, SiemIoc>();
+    addIoc(b, "ip", "1.2.3.4");
+    addIoc(b, "ip", "1.2.3.4", "client-reported"); // a later marked sighting cannot mark
+    expect(b.get("ip:1.2.3.4")).toEqual({ type: "ip", value: "1.2.3.4" });
+  });
+
+  it("mergeRowIocs applies the same plain-wins rule at the row -> file seam (not first-wins)", () => {
+    const file = new Map<string, SiemIoc>();
+    const marked = new Map<string, SiemIoc>();
+    addIoc(marked, "ip", "1.2.3.4", "client-reported");
+    mergeRowIocs(file, marked, "row-a");
+    expect(file.get("ip:1.2.3.4")?.provenance).toBe("client-reported");
+    const plain = new Map<string, SiemIoc>();
+    addIoc(plain, "ip", "1.2.3.4");
+    mergeRowIocs(file, plain, "row-b");
+    expect(file.get("ip:1.2.3.4")).toEqual({
+      type: "ip",
+      value: "1.2.3.4",
+      sourceAggKeys: ["row-a", "row-b"],
+    });
+    // and the reverse order: a marked row never re-marks a plain file entry
+    mergeRowIocs(file, marked, "row-c");
+    expect(file.get("ip:1.2.3.4")?.provenance).toBeUndefined();
+  });
+
+  it("marks originatingIp client-reported but NOT the lure's own URL/host IOCs (content vs attribution)", () => {
+    const { iocs } = parseEmail(phishingEml());
+    const orig = iocs.find((i) => i.type === "ip" && i.value === "198.51.100.23");
+    expect(orig?.provenance).toBe("client-reported");
+    for (const i of iocs) if (i.value !== "198.51.100.23") expect(i.provenance).toBeUndefined();
+  });
+
+  it("a lure URL whose host is the same literal IP as X-Originating-IP yields ONE unmarked ip IOC", () => {
+    const eml = phishingEml().replace("http://phish.evil.example/login", "http://198.51.100.23/login");
+    const { iocs } = parseEmail(eml);
+    const hits = iocs.filter((i) => i.type === "ip" && i.value === "198.51.100.23");
+    expect(hits).toHaveLength(1);
+    expect(hits[0].provenance).toBeUndefined(); // it is lure content regardless of the header
+  });
+});
+
+describe("#1266 -- resolveExtractedFrom preserves the marker", () => {
+  it("spreads the sink entry, marker included", async () => {
+    const { resolveExtractedFrom } = await import("../../src/analysis/siemImport.js");
+    const out = resolveExtractedFrom(
+      [{ type: "ip", value: "1.2.3.4", provenance: "client-reported", sourceAggKeys: ["k1"] }],
+      new Map([["k1", "ev-1"]]),
+    );
+    expect(out[0]).toMatchObject({ provenance: "client-reported", extractedFrom: ["ev-1"] });
   });
 });

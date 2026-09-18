@@ -12,6 +12,9 @@ import { byEventTime } from "../../analysis/forensicSort.js";
 import { severityRank } from "../../analysis/dashboardViews.js";
 import { repairIocValue, isWellFormedIocValue } from "../../analysis/iocValue.js";
 
+export const CLIENT_REPORTED_COMMENT =
+  "client-reported (sender-controlled header), not an observed network fact";
+
 export interface MispPushInput {
   caseId: string; // Companion case id — used for idempotency tag and event title
   state: InvestigationState;
@@ -215,12 +218,19 @@ export async function pushCaseToMisp(
     }
     // The annotation that was split out of the value rides along as the attribute comment, so the
     // host label survives the export instead of being lost with the malformed value.
-    const comment = ioc.note ?? repaired?.note;
+    const note = ioc.note ?? repaired?.note;
+    // #1266: a client-reported value (a sender-controlled header, never an observed network fact)
+    // is still worth sharing as context, but never flagged for automated blocking — to_ids off,
+    // and the comment says why so the receiving analyst sees the qualification, not just a bare IP.
+    const clientReported = ioc.provenance === "client-reported";
+    const comment = clientReported ? `${CLIENT_REPORTED_COMMENT}${note ? ` — ${note}` : ""}` : note;
     const body: MispAttrBody = {
       type: mapped.type,
       value,
       category: mapped.category,
-      to_ids: ioc.type === "ip" || ioc.type === "domain" || ioc.type === "hash" || ioc.type === "url",
+      to_ids:
+        !clientReported &&
+        (ioc.type === "ip" || ioc.type === "domain" || ioc.type === "hash" || ioc.type === "url"),
       ...(comment ? { comment } : {}),
     };
     try {

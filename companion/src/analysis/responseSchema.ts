@@ -102,6 +102,9 @@ export const deltaSchema = z.object({
       // Authoritative source-event links (set by the deterministic importers via pipeline.ts, never
       // by AI synthesis). Optional — absent for every existing caller.
       extractedFrom: z.array(z.string()).optional(),
+      // #1266: extraction-time provenance, set only by deterministic importers (emailImport.ts's
+      // originatingIp today); stripped from every model response below, same as extractedFrom.
+      provenance: z.literal("client-reported").optional(),
     }),
   ),
   mitreTechniques: z.array(
@@ -458,7 +461,11 @@ export function renameForgedFindingIds(delta: AnalysisDelta, known: ReadonlySet<
 export function stripAiExtractedFrom(delta: AnalysisDelta): AnalysisDelta {
   return {
     ...delta,
-    iocs: delta.iocs.map(({ extractedFrom, ...rest }) => rest),
+    // #1266: `provenance` is stripped with it. A model can neither MARK an IOC (a false "weak
+    // evidence" claim) nor un-mark one — and because stateMerge.ts clears a marker only on an
+    // incoming sighting that carries extractedFrom, a model restating a marked value cannot
+    // silently restore its MISP to_ids flag either.
+    iocs: delta.iocs.map(({ extractedFrom, provenance, ...rest }) => rest),
     // `origin` is trusted: it keeps a row out of host correlation and off the second-look pool
     // (#932 item 5). The schema carries it so deterministic promotion can transport a lab row, but
     // a model must never be able to assert it on a host observation — a prompt-injected or merely

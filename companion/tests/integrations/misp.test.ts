@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { pushCaseToMisp } from "../../src/integrations/misp/mispPush.js";
+import { pushCaseToMisp, CLIENT_REPORTED_COMMENT } from "../../src/integrations/misp/mispPush.js";
 import type {} from "../../src/integrations/misp/mispPush.js";
 import type {
   MispPushClientLike,
@@ -422,5 +422,34 @@ describe("pushCaseToMisp", () => {
     expect(res.timeline.skipped).toBe(1);
     expect(res.timeline.added).toBe(0);
     expect(res.warnings.some((w) => w.includes("e1"))).toBe(true);
+  });
+});
+
+describe("#1266 -- pushCaseToMisp never flags a client-reported value for automated blocking", () => {
+  it("to_ids is false and the comment says why (composing with an existing note); an unmarked ip keeps to_ids", async () => {
+    const m = new MockMispClient();
+    const state = {
+      ...sampleState(),
+      iocs: [
+        ioc({
+          value: "198.51.100.23",
+          type: "ip",
+          provenance: "client-reported",
+          note: "X-Originating-IP of the lure",
+        }),
+        ioc({ value: "203.0.113.9", type: "ip", provenance: "client-reported" }),
+        ioc({ value: "8.8.8.8", type: "ip" }),
+      ],
+    };
+    await pushCaseToMisp(m, { caseId: "case-alpha", state });
+    const byValue = Object.fromEntries(m.addedAttributes.map((a) => [a.body.value, a.body]));
+    expect(byValue["198.51.100.23"].to_ids).toBe(false);
+    expect(byValue["198.51.100.23"].comment).toBe(
+      `${CLIENT_REPORTED_COMMENT} — X-Originating-IP of the lure`,
+    );
+    expect(byValue["203.0.113.9"].to_ids).toBe(false);
+    expect(byValue["203.0.113.9"].comment).toBe(CLIENT_REPORTED_COMMENT);
+    expect(byValue["8.8.8.8"].to_ids).toBe(true);
+    expect(byValue["8.8.8.8"].comment).toBeUndefined();
   });
 });

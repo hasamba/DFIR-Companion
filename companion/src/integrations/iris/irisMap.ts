@@ -24,6 +24,9 @@ import { attackTechniqueMd, attackTechniqueUrl } from "../../analysis/attack.js"
 import { mostRestrictive, hasUnmarkedOrUnrecognized, atLeastAsRestrictive } from "../../analysis/tlp.js";
 import type { TlpLabel } from "../../analysis/stateTypes.js";
 
+export const CLIENT_REPORTED_LINE =
+  "Client-reported: value read from a sender-controlled header (X-Originating-IP / Received hop), not an observed network fact.";
+
 const TAG = "dfir-companion";
 
 // ---- dates -----------------------------------------------------------------
@@ -125,11 +128,21 @@ export function mapIoc(
   const intelLines = enr.map(
     (e) => `- ${e.source}: ${e.verdict}${e.score ? ` (${e.score})` : ""}${e.link ? ` ${e.link}` : ""}`,
   );
-  const description = intelLines.length
+  const base = intelLines.length
     ? `Threat intel:\n${intelLines.join("\n")}`
     : `Observed by DFIR Companion (first seen ${ioc.firstSeen}).`;
+  // #1266: said first, on both branches — "Observed by" would otherwise be exactly the wrong
+  // claim for a value read from a sender-controlled header.
+  const clientReported = ioc.provenance === "client-reported";
+  const description = clientReported ? `${CLIENT_REPORTED_LINE}\n${base}` : base;
   const enrichTags = [...new Set(enr.flatMap((e) => e.tags ?? []))].slice(0, 5);
-  const tags = [TAG, ioc.type, ...(verdict ? [verdict] : []), ...enrichTags];
+  const tags = [
+    TAG,
+    ioc.type,
+    ...(clientReported ? ["client-reported"] : []),
+    ...(verdict ? [verdict] : []),
+    ...enrichTags,
+  ];
 
   return {
     ioc_value: ioc.value,

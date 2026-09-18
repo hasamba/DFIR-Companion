@@ -319,3 +319,23 @@ describe("buildIocBlocklistStix", () => {
     expect(byName["2.3.4.5"].indicator_types as string[]).toContain("unknown");
   });
 });
+
+describe("#1266 -- a client-reported value never reaches an acting block-list", () => {
+  it("is excluded even with a malicious verdict, and the header says so", () => {
+    const iocs = [
+      ioc({
+        id: "i1",
+        type: "ip",
+        value: "198.51.100.23",
+        provenance: "client-reported",
+        enrichments: [enrich("malicious")],
+      }),
+      ioc({ id: "i2", type: "ip", value: "1.2.3.4", enrichments: [enrich("malicious")] }),
+    ];
+    const kept = filterBlocklistIocs(iocs, { minSeverity: "Info" }).map((r) => r.ioc.id);
+    expect(kept).toEqual(["i2"]);
+    const txt = buildIocBlocklistTxt({ ...emptyState("c1"), iocs }, { minSeverity: "Info" });
+    expect(txt).toContain("client-reported excluded");
+    expect(txt).not.toContain("198.51.100.23");
+  });
+});

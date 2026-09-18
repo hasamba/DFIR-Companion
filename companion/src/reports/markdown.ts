@@ -645,8 +645,7 @@ function customerExposure(exposure: CustomerExposureSummary | undefined, lines: 
   lines.push(`Providers: ${exposure.providers.join(", ") || "none"}`, "");
   lines.push(`Customer domains: ${exposure.targets.domains.join(", ") || "none"}`, "");
   lines.push(`Customer emails: ${exposure.targets.emails.join(", ") || "none"}`, "");
-  // Show only rows where a provider actually found something — clean "checked, no breach"
-  // rows are dropped (the providers/targets lines above already record what was checked).
+  // Only rows where a provider found something; clean "checked, no breach" rows are dropped (the lines above record checks).
   const found = exposure.results.filter(hasExposureFinding);
   if (found.length === 0) {
     lines.push("_No customer exposures found._", "");
@@ -834,8 +833,9 @@ function investigation(
         src && src.length ? `${src.join(", ")}${src.length > 1 ? ` (⊕ ${src.length})` : ""}` : "—";
       const r = iocRisk[i.id];
       const riskCell = r ? `**${r.score}**${r.factors.length ? ` — ${r.factors[0]}` : ""}` : "—";
+      const valueCell = i.provenance === "client-reported" ? `${i.value} (client-reported)` : i.value; // #1266
       lines.push(
-        `| ${cellMd(i.id)} | ${cellMd(i.type)} | ${cellMd(i.value)} | ${cellMd(i.firstSeen)} | ${cellMd(srcCell)} | ${cellMd(riskCell)} |`,
+        `| ${cellMd(i.id)} | ${cellMd(i.type)} | ${cellMd(valueCell)} | ${cellMd(i.firstSeen)} | ${cellMd(srcCell)} | ${cellMd(riskCell)} |`,
       );
     }
     const obs = state.iocs.length - indicators.length;
@@ -943,7 +943,7 @@ function geographicDistribution(state: InvestigationState, lines: string[]): voi
   lines.push("| IP | Country | City | ASN | Severity | Verdict |", "| --- | --- | --- | --- | --- | --- |");
   for (const m of geo.markers) {
     lines.push(
-      `| ${cellMd(m.ip)} | ${cellMd(m.country ?? "—")} | ${cellMd(m.city ?? (m.approximate ? "— (country-level)" : "—"))} | ` +
+      `| ${cellMd(m.clientReported ? `${m.ip} (client-reported)` : m.ip)} | ${cellMd(m.country ?? "—")} | ${cellMd(m.city ?? (m.approximate ? "— (country-level)" : "—"))} | ` +
         `${cellMd(m.asn ?? "—")} | ${m.severity}${m.falsePositive ? " (false positive)" : ""} | ${cellMd(m.verdict ?? "—")} |`,
     );
   }

@@ -281,11 +281,22 @@ export interface IntelRetirementDecision {
   assertionIds: string[];
 }
 
+// #1266: set at extraction time, only when the value was read from a field the remote sender
+// controls (today: emailImport.ts's X-Originating-IP / Received-hop originatingIp). Absent is NOT
+// "verified" — it is "extracted the ordinary way, no known sender control", the state of every
+// IOC before this field existed. A marker is cleared only by a later event-linked (extractedFrom)
+// sighting of the same value; a model delta can never set or clear it (responseSchema.ts). The
+// rule is a one-way ratchet: once a value has an ordinary sighting, no later marked sighting or
+// analyst merge can re-attach the marker — "unmarked" means "at least one ordinary sighting
+// exists", so that is correct, but it is the least obvious consequence of the asymmetry.
+export type IocProvenance = "client-reported";
+
 export interface IOC {
   id: string;
   type: "ip" | "domain" | "hash" | "file" | "process" | "url" | "sid" | "other";
   value: string;
   firstSeen: string;
+  provenance?: IocProvenance;
   enrichments?: IocEnrichment[]; // threat-intel HITS (added by the enrich pass)
   enrichedBy?: string[]; // provider names that have CHECKED this IOC (hit or not) — so a newly-enabled provider re-checks every IOC, and checked ones aren't re-queried
   // Assertion history and per-backend check state (#1024). `intelHistory` is append-only on
