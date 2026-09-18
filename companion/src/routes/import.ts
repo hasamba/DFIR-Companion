@@ -19,6 +19,7 @@ import { parseCloudTrail, type AwsImportOptions } from "../analysis/awsImport.js
 import { parseCloudActivity, type CloudActivityImportOptions } from "../analysis/cloudActivityImport.js";
 import { parsePlasoCsv, type PlasoImportOptions } from "../analysis/plasoImport.js";
 import { parseSandboxReport, type SandboxImportOptions } from "../analysis/sandboxImport.js";
+import { capaFlavorHintFor } from "../analysis/capaResultImport.js";
 import { parseMemoryOrIntact, type MemoryImportOptions } from "../analysis/intactImport.js";
 import { parseEmail, type EmailImportOptions } from "../analysis/emailImport.js";
 import { parseTheHive } from "../analysis/theHiveImport.js";
@@ -251,12 +252,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     }
   });
 
-  // Unified import: ONE endpoint the dashboard's single "Import" button posts any data file to.
-  // The server SNIFFS the file (filename + content) — JSON/NDJSON vs CSV vs log, then per-format
-  // signatures — and dispatches to the matching importer (deterministic ones, or the AI CSV/log
-  // path). Evidence-first: the raw file is persisted + audit-logged before analysis. The detected
-  // `kind` is returned so a mis-route is visible. (The per-format routes below remain for
-  // programmatic use.)
+  // Unified import: ONE endpoint the dashboard's single "Import" button posts any data file to. The
+  // server SNIFFS the file (filename + content) and dispatches to the matching importer, persisting
+  // + audit-logging the raw file first; `kind` is returned so a mis-route is visible. (Per-format
+  // routes below remain for programmatic use.)
   app.post("/cases/:id/import", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
@@ -281,8 +280,10 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
 
     const kind = ctx.resolveImportKind()(originalName, text);
     if (kind === "unknown") {
+      const capaHint = capaFlavorHintFor(text);
       return res.status(400).json({
         error:
+          capaHint ??
           "could not detect the file type — not recognized as any supported import (THOR / SIEM-EDR / Chainsaw-EVTX / Hayabusa / Velociraptor / Suricata-Zeek / KAPE / Cyber Triage / M365-Entra / AWS / GCP-Azure / Plaso / Sandbox / Volatility-Rekall memory / Email-eml-msg / auditd / journald / sysdig-Falco / syslog / CSV / log)",
       });
     }
@@ -514,10 +515,9 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   });
 
   // Import a large file from the server's local filesystem by path — bypasses the browser
-  // FileReader memory limit for files too large to upload through the dashboard (400 MB+).
-  // Same pipeline as /import: detect kind → persist evidence → dispatchImport → diff → resynth.
-  // Reading an operator-named path is intentional and gated like DFIR_NSRL_FILE / KEV import-file:
-  // resolveRequestPolicy makes this suffix global-admin, not case-write. Body: { path, minSeverity? }.
+  // FileReader memory limit for files too large to upload through the dashboard (400 MB+). Same
+  // pipeline as /import. Reading an operator-named path is intentional and gated global-admin (like
+  // DFIR_NSRL_FILE / KEV import-file), not case-write. Body: { path, minSeverity? }.
   app.post("/cases/:id/import-file", async (req: Request, res: Response) => {
     if (!options.pipeline) return res.status(501).json({ error: "AI pipeline not configured" });
     const caseId = req.params.id;
@@ -548,20 +548,20 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     const originalName = basename(filePath);
     const kind = ctx.resolveImportKind()(originalName, sample);
     if (kind === "unknown") {
-      return res
-        .status(400)
-        .json({ error: "could not detect the file type — not recognized as any supported import format" });
+      const capaHint = capaFlavorHintFor(sample); // best-effort: a truncated sniffed head silently gives no hint
+      return res.status(400).json({
+        error: capaHint ?? "could not detect the file type — not recognized as any supported import format",
+      });
     }
     if ((kind === "csv" || kind === "log") && !options.pipeline?.hasSynthesisProvider()) {
       return res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });
     }
     if (rejectIfAiImportOverBudget(kind, caseId, res)) return; // CSV/log = LLM call; meter AI budget
 
-    // Plaso streams from disk line-by-line (handles 500 MB+ super-timelines that can't be held as a
-    // string at all); every other kind is read into one string and dispatched as usual. A non-Plaso
-    // file over DFIR_MAX_IMPORT_FILE_MB is refused by the read itself — the string-length catch
-    // below only fires at ~512 MB, and a heap OOM on a small host arrives first (#921). The check
-    // is on the read's own descriptor, so a swap after the sniff cannot get past it.
+    // Plaso streams from disk line-by-line (handles 500 MB+ super-timelines); every other kind is
+    // read into one string. A non-Plaso file over DFIR_MAX_IMPORT_FILE_MB is refused by the read
+    // itself, on the read's own descriptor so a swap after the sniff can't get past it — the
+    // string-length catch below only fires at ~512 MB, and a heap OOM on a small host arrives first (#921).
     const streaming = kind === "plaso";
     let text = "";
     if (!streaming) {

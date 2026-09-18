@@ -1,8 +1,11 @@
-// FLOSS (FLARE Obfuscated String Solver) `-j`/`--json` results document (#932 item 5, "932.6"):
-// strings the tool recovered from a malware sample via decoding-routine analysis (`decoded`) or
-// runtime stack-construction analysis (`stack`/`tight`). Never a claim of network contact,
-// capability use, or a verified configuration — see RECOMMENDATION-5.md for the guardrails this
-// enforces and why `static_strings`/"interpreted configuration" are deliberately out of scope.
+// FLOSS (FLARE Obfuscated String Solver) `-j`/`--json` results document (#932 item 5, "932.6",
+// language-string half #1120): strings the tool recovered from a malware sample via
+// decoding-routine analysis (`decoded`), runtime stack-construction analysis (`stack`/`tight`), or
+// an identified language runtime's own string table (`language`, from `language_strings`/
+// `language_strings_missed`). `static_strings` gets IOC-corroboration only, never its own event —
+// see RECOMMENDATION-1120.md for why. Never a claim of network contact, capability use, or a
+// verified configuration — see RECOMMENDATION-5.md/RECOMMENDATION-1120.md for the guardrails this
+// enforces and why "interpreted configuration" stays deliberately out of scope.
 //
 // Schema verified live against FLOSS's own `results.py` dataclasses (mandiant/flare-floss on
 // GitHub) and a real populated sample, not invented.
@@ -12,10 +15,12 @@ import { boundedAggKey, boundedTextTo } from "./aggKey.js";
 import { createCanonicalEvent } from "./canonicalEvent.js";
 import {
   DECODED_STRING_BASIS,
+  LANGUAGE_STRING_BASIS,
   MAX_PRODUCER_VERSION_LEN,
   MAX_VALUE_LEN,
   RECOVERY_CITATIONS_MAX,
   type DecodedCitation,
+  type LanguageCitation,
   type SampleHash,
   type StackCitation,
 } from "./canonicalDecodedString.js";
@@ -32,10 +37,10 @@ import { aggregateEvents } from "./eventAggregate.js";
 
 export { MAX_VALUE_LEN, RECOVERY_CITATIONS_MAX };
 export const MAX_DISTINCT_VALUES = 2000; // per category
-export const MAX_ENTRIES_SCANNED = 100_000; // total across all in-scope categories
+export const MAX_ENTRIES_SCANNED = 100_000; // total across all in-scope categories, static last
 
 const HASH_RE = { md5: /^[a-f0-9]{32}$/i, sha1: /^[a-f0-9]{40}$/i, sha256: /^[a-f0-9]{64}$/i };
-const KINDS = ["decoded", "stack", "tight"] as const;
+const KINDS = ["decoded", "stack", "tight", "language"] as const;
 type Kind = (typeof KINDS)[number];
 
 export interface FlossResultOptions {
@@ -55,6 +60,15 @@ export interface FlossResultResult {
   notCitedValues: number;
   entriesTruncated: boolean;
   staticStringsSeen: number;
+  /** Entries from static_strings actually visited by the bounded IOC-only scan — may be less than
+   * staticStringsSeen when the shared MAX_ENTRIES_SCANNED budget was exhausted before reaching the
+   * end of the array, whether by higher-priority kinds first (static is always scanned last) or by
+   * static_strings itself being large enough to exhaust the remainder. "Visited," not "yielded an
+   * IOC." */
+  staticStringsIocScanned: number;
+  /** Raw IOC mentions found within static_strings values (pre-dedup, across all visited entries),
+   * never promoted to an event — see RECOMMENDATION-1120.md. */
+  staticStringsIocFound: number;
 }
 
 /** Both anchors required: a `metadata` object with a real version/file_path, AND a `strings`
@@ -95,7 +109,7 @@ interface Row {
   value: string;
   valueKey: string; // sha256 of the FULL (unclipped) value — grouping identity
   citationKey: string; // sha256 of this occurrence's own context fields — dedup identity
-  citation: DecodedCitation | StackCitation;
+  citation: DecodedCitation | StackCitation | LanguageCitation;
 }
 
 function parseSampleHash(metadata: Record<string, unknown>): SampleHash {
@@ -110,10 +124,20 @@ function parseSampleHash(metadata: Record<string, unknown>): SampleHash {
   return out;
 }
 
+// language_strings/language_strings_missed carry no per-entry provenance beyond string/offset —
+// language/languageVersion/missed come from the report's own metadata + which array this entry
+// was read from, passed in once per scanCategory call rather than per entry.
+interface LanguageContext {
+  language: string;
+  languageVersion: string;
+  missed: boolean;
+}
+
 function scanCategory(
   kind: Kind,
   entries: unknown[],
   scannedSoFar: number,
+  langCtx?: LanguageContext,
 ): { rows: Row[]; malformed: number; scanned: number; truncated: boolean } {
   const rows: Row[] = [];
   let malformed = 0;
@@ -133,7 +157,7 @@ function scanCategory(
       continue;
     }
     const valueKey = createHash("sha256").update(value).digest("hex");
-    let citation: DecodedCitation | StackCitation | undefined;
+    let citation: DecodedCitation | StackCitation | LanguageCitation | undefined;
     if (kind === "decoded") {
       const address = nonNegSafeInt(raw.address);
       const decodedAt = nonNegSafeInt(raw.decoded_at);
@@ -145,6 +169,20 @@ function scanCategory(
           encoding: str(raw.encoding) ?? "unknown",
           decodedAt,
           decodingRoutine,
+        };
+      }
+    } else if (kind === "language") {
+      const offset = signedSafeInt(raw.offset);
+      if (offset !== undefined && langCtx) {
+        // `||`, not `??` — an empty-string encoding falls back to "unknown" the same as a
+        // missing one (Ollama code review finding), then clipped like every other report-supplied
+        // string in this schema.
+        citation = {
+          offset,
+          encoding: clip(str(raw.encoding) || "unknown", MAX_PRODUCER_VERSION_LEN).text,
+          language: langCtx.language,
+          languageVersion: langCtx.languageVersion,
+          missed: langCtx.missed,
         };
       }
     } else {
@@ -192,7 +230,7 @@ function mapGroup(
   producerVersion: string,
   sink: Map<string, SiemIoc>,
 ): MappedEvent {
-  const seen = new Map<string, DecodedCitation | StackCitation>();
+  const seen = new Map<string, DecodedCitation | StackCitation | LanguageCitation>();
   for (const r of rows) {
     if (seen.has(r.citationKey)) continue;
     if (seen.size >= RECOVERY_CITATIONS_MAX) continue;
@@ -209,15 +247,28 @@ function mapGroup(
   // The schema unifies stack/tight under ONE mapping version (identical citation shape) — the
   // producer metadata must record the SAME string, never a per-kind template that disagrees with
   // the canonical block's own literal (Codex code review finding).
-  const mappingVersion: "floss-decoded-v1" | "floss-stack-v1" =
-    kind === "decoded" ? "floss-decoded-v1" : "floss-stack-v1";
+  const mappingVersion: "floss-decoded-v1" | "floss-stack-v1" | "floss-language-v1" =
+    kind === "decoded" ? "floss-decoded-v1" : kind === "language" ? "floss-language-v1" : "floss-stack-v1";
+
+  // A mixed confirmed+candidate group (language_strings + language_strings_missed for the SAME
+  // value) reads as confirmed if ANY citation is confirmed — the confident fact isn't hidden
+  // behind an unconfirmed candidate's own presence, but `missed` stays visible per citation
+  // regardless (never silently promoted or dropped).
+  const anyConfirmed = kind === "language" ? (citations as LanguageCitation[]).some((c) => !c.missed) : true;
+  const confirmationNote =
+    kind === "language" ? (anyConfirmed ? "" : "; candidate, not independently confirmed") : "";
 
   const reportTag = `; report ${reportFingerprint.slice(0, 16)}`;
-  const kindLabel = kind === "decoded" ? "decoded string" : `${kind} string`;
+  const kindLabel =
+    kind === "decoded"
+      ? "decoded string"
+      : kind === "language"
+        ? "language-runtime string"
+        : `${kind} string`;
   const body = boundedTextTo(
     `Recovered ${kindLabel} (FLOSS): ${value}${valueTruncated ? " [value truncated]" : ""} — ` +
       `${occurrences} occurrence(s) in this upload; a recovered string, not proof of network ` +
-      `contact or capability use; [undated: FLOSS's results document carries no event time]`,
+      `contact or capability use${confirmationNote}; [undated: FLOSS's results document carries no event time]`,
     600 - reportTag.length,
   );
   const description = `${body}${reportTag}`;
@@ -233,8 +284,6 @@ function mapGroup(
   for (const h of [sampleHash.sha256, sampleHash.sha1, sampleHash.md5]) if (h) addIoc(hashSink, "hash", h);
   mergeRowIocs(sink, hashSink, aggKey);
 
-  const basis = DECODED_STRING_BASIS;
-
   const recoveredFragmentLike =
     kind === "decoded"
       ? {
@@ -249,22 +298,37 @@ function mapGroup(
           citations: citations as DecodedCitation[],
           notCited,
           occurrences,
-          basis,
+          basis: DECODED_STRING_BASIS,
         }
-      : {
-          tool: "floss" as const,
-          kind,
-          value,
-          valueTruncated,
-          sampleHash,
-          reportFingerprint,
-          producerVersion: producerVersionClipped,
-          mappingVersion: "floss-stack-v1" as const,
-          citations: citations as StackCitation[],
-          notCited,
-          occurrences,
-          basis,
-        };
+      : kind === "language"
+        ? {
+            tool: "floss" as const,
+            kind: "language" as const,
+            value,
+            valueTruncated,
+            sampleHash,
+            reportFingerprint,
+            producerVersion: producerVersionClipped,
+            mappingVersion: "floss-language-v1" as const,
+            citations: citations as LanguageCitation[],
+            notCited,
+            occurrences,
+            basis: LANGUAGE_STRING_BASIS,
+          }
+        : {
+            tool: "floss" as const,
+            kind,
+            value,
+            valueTruncated,
+            sampleHash,
+            reportFingerprint,
+            producerVersion: producerVersionClipped,
+            mappingVersion: "floss-stack-v1" as const,
+            citations: citations as StackCitation[],
+            notCited,
+            occurrences,
+            basis: DECODED_STRING_BASIS,
+          };
 
   return {
     timestamp: "",
@@ -288,6 +352,45 @@ function clip(text: string, max: number): { text: string; truncated: boolean } {
   return { text: text.slice(0, max), truncated: true };
 }
 
+// static_strings gets IOC-corroboration only, never its own event — same clip+skip-if-truncated
+// rule the event path applies (mapGroup only extracts IOCs `if (!valueTruncated)`), so a
+// multi-megabyte static string is bounded exactly like an oversized decoded/stack/tight value,
+// never regex-scanned unbounded. `found` counts raw IOC mentions (pre-dedup, across all entries);
+// `scanned` counts entries visited regardless of validity (a non-object/non-string entry is
+// skipped, never counted as malformed — this asymmetry with the event path is deliberate: a raw
+// string dump's own malformed-entry count was never load-bearing the way a citation parse failure
+// is for decoded/stack/tight/language).
+function scanStaticIocsOnly(
+  entries: unknown[],
+  scannedSoFar: number,
+  sink: Map<string, SiemIoc>,
+  aggKey: string,
+): { found: number; scanned: number; truncated: boolean } {
+  let scanned = scannedSoFar;
+  let found = 0;
+  const rowSink = new Map<string, SiemIoc>();
+  for (const raw of entries) {
+    // Merge whatever this scan already found BEFORE returning — an early exit that skipped the
+    // merge would silently orphan every IOC visited before the cutoff (Ollama code review finding
+    // — `found`/`staticStringsIocFound` would report them while `iocs` never carried them).
+    if (scanned >= MAX_ENTRIES_SCANNED) {
+      mergeRowIocs(sink, rowSink, aggKey);
+      return { found, scanned, truncated: true };
+    }
+    scanned += 1;
+    if (!isObject(raw)) continue;
+    const value = str(raw.string);
+    if (!value) continue;
+    const { text: clipped, truncated } = clip(value, MAX_VALUE_LEN);
+    if (truncated) continue; // exact same "skip extraction on truncated value" rule as mapGroup
+    const foundIocs = extractIocsFromText(clipped);
+    found += foundIocs.length;
+    for (const ioc of foundIocs) addIoc(rowSink, ioc.type, ioc.value);
+  }
+  mergeRowIocs(sink, rowSink, aggKey);
+  return { found, scanned, truncated: false };
+}
+
 export function parseFlossResult(text: string, opts: FlossResultOptions = {}): FlossResultResult | null {
   let root: unknown;
   try {
@@ -306,8 +409,27 @@ export function parseFlossResult(text: string, opts: FlossResultOptions = {}): F
   let scanned = 0;
   let malformedEntries = 0;
   let entriesTruncated = false;
-  const rowsByKind: Record<Kind, Row[]> = { decoded: [], stack: [], tight: [] };
+  const rowsByKind: Record<Kind, Row[]> = { decoded: [], stack: [], tight: [], language: [] };
+  const language = clip(str(metadata.language) || "unknown", MAX_PRODUCER_VERSION_LEN).text;
+  const languageVersion = clip(str(metadata.language_version) || "unknown", MAX_PRODUCER_VERSION_LEN).text;
   for (const kind of KINDS) {
+    if (kind === "language") {
+      // language_strings scanned BEFORE language_strings_missed — for BOTH the shared entry
+      // budget and the per-category MAX_DISTINCT_VALUES cap, so a confirmed value never loses its
+      // dedup slot to a missed row of the same value arriving first (Ollama design review).
+      for (const [entries, missed] of [
+        [strings.language_strings, false],
+        [strings.language_strings_missed, true],
+      ] as const) {
+        if (!Array.isArray(entries)) continue;
+        const result = scanCategory("language", entries, scanned, { language, languageVersion, missed });
+        rowsByKind.language.push(...result.rows);
+        malformedEntries += result.malformed;
+        scanned = result.scanned;
+        if (result.truncated) entriesTruncated = true;
+      }
+      continue;
+    }
     const entries = strings[`${kind}_strings`];
     if (!Array.isArray(entries)) continue;
     const result = scanCategory(kind, entries, scanned);
@@ -316,8 +438,6 @@ export function parseFlossResult(text: string, opts: FlossResultOptions = {}): F
     scanned = result.scanned;
     if (result.truncated) entriesTruncated = true;
   }
-  const staticArr = strings.static_strings;
-  const staticStringsSeen = Array.isArray(staticArr) ? staticArr.length : 0;
 
   const sink = new Map<string, SiemIoc>();
   const mapped: MappedEvent[] = [];
@@ -350,10 +470,36 @@ export function parseFlossResult(text: string, opts: FlossResultOptions = {}): F
     }
   }
 
+  // static_strings: scanned LAST (after decoded/stack/tight/language have already had first claim
+  // on MAX_ENTRIES_SCANNED) so a huge static_strings array can never starve the citation-bearing
+  // kinds; the reverse can happen (huge event-kind volume starves static to zero), disclosed via
+  // staticStringsIocScanned < staticStringsSeen plus entriesTruncated.
+  const staticArr = strings.static_strings;
+  const staticStringsSeen = Array.isArray(staticArr) ? staticArr.length : 0;
+  const staticAggKey = boundedAggKey(`floss|${reportFingerprint}|static-strings-corroboration`);
+  let staticStringsIocScanned = 0;
+  let staticStringsIocFound = 0;
+  if (Array.isArray(staticArr)) {
+    const before = scanned;
+    const result = scanStaticIocsOnly(staticArr, scanned, sink, staticAggKey);
+    staticStringsIocScanned = result.scanned - before;
+    staticStringsIocFound = result.found;
+    scanned = result.scanned;
+    if (result.truncated) entriesTruncated = true;
+  }
+
+  // A static-only (or otherwise event-less) report would otherwise silently drop the sample's own
+  // hash from `iocs` entirely, since hash IOCs are normally attached per mapped event.
+  if (mapped.length === 0) {
+    const hashSink = new Map<string, SiemIoc>();
+    for (const h of [sampleHash.sha256, sampleHash.sha1, sampleHash.md5]) if (h) addIoc(hashSink, "hash", h);
+    mergeRowIocs(sink, hashSink, staticAggKey);
+  }
+
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: "Info",
-    maxEvents: opts.maxEvents ?? MAX_DISTINCT_VALUES * 3,
+    maxEvents: opts.maxEvents ?? MAX_DISTINCT_VALUES * 4,
   });
 
   return {
@@ -368,5 +514,7 @@ export function parseFlossResult(text: string, opts: FlossResultOptions = {}): F
     notCitedValues,
     entriesTruncated,
     staticStringsSeen,
+    staticStringsIocScanned,
+    staticStringsIocFound,
   };
 }

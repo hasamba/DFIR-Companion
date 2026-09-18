@@ -2,8 +2,15 @@
 // item 6, "932.7"): named capabilities capa's rule-matching statically found present in a
 // sample. Never a claim any capability ran, never a verdict from any single match — see
 // RECOMMENDATION-6.md for the guardrails this enforces (legitimate/commercial software packs
-// and uses the same APIs too) and why "unusual sections" and dynamic-flavor reports are
-// deliberately out of scope.
+// and uses the same APIs too) and why "unusual sections" is out of scope (no capa-rules
+// namespace covers it — #1124). A dynamic-flavor report (capa's own DynamicAnalysis schema) is
+// real and documented upstream but never parsed here (#1124: zero real-case evidence to validate
+// against) — `capaUnsupportedFlavorReason` gives an honest diagnostic instead of silently
+// falling through to "could not detect the file type", turning the first real occurrence into
+// the trigger to build real support rather than leaving it unfalsifiable. The identity-field
+// shape it checks (`meta.sample.{md5,sha1,sha256,path}`, `rules` as a dict) is confirmed
+// flavor-independent against capa's own real `result_document.py` (`Metadata`/`ResultDocument`
+// dataclasses, fetched live, 2026-09-18) — both flavors share the same `Sample`/`rules` shape.
 //
 // Schema verified live against a REAL serialized capa 9.4.0 static report
 // (DefectDojo/django-DefectDojo's own test fixture), not just source-read dataclasses.
@@ -62,25 +69,60 @@ export interface CapaResultResult {
   nodesTruncated: boolean;
 }
 
+/** `meta.sample` carrying all four identity fields as strings, plus a `rules` dict present, is
+ * capa's own real, non-optional `Metadata`/`ResultDocument` schema shape (confirmed flavor-
+ * independent against capa's own `result_document.py`, 2026-09-18) — the signal that a document
+ * is genuinely capa-produced, independent of flavor. Loose field validation (no hex/path-shape
+ * check) means this can still admit a hand-crafted document with empty-string identity fields;
+ * the bar is "capa-shaped enough to name a capa-specific reason for", not cryptographic proof. */
+function isCapaShapedDocument(root: Record<string, unknown>): boolean {
+  const meta = root.meta;
+  return (
+    isObject(meta) &&
+    isObject(meta.sample) &&
+    typeof meta.sample.md5 === "string" &&
+    typeof meta.sample.sha1 === "string" &&
+    typeof meta.sample.sha256 === "string" &&
+    typeof meta.sample.path === "string" &&
+    isObject(root.rules)
+  );
+}
+
 /** `flavor === "static"` is capa's own real discriminator (confirmed against a real serialized
  * report — a StaticAnalysis-vs-DynamicAnalysis field-set diff was NOT trustworthy on its own,
- * Codex design review finding). `meta.sample` must carry all four identity fields as strings —
- * capa's own schema makes them non-optional — and `rules` must be an object (zero matches is a
- * real, valid result). */
+ * Codex design review finding). */
 export function isCapaResult(root: unknown): boolean {
   if (!isObject(root)) return false;
-  const meta = root.meta;
-  if (!isObject(meta) || meta.flavor !== "static") return false;
-  const sample = meta.sample;
-  if (!isObject(sample)) return false;
-  if (
-    typeof sample.md5 !== "string" ||
-    typeof sample.sha1 !== "string" ||
-    typeof sample.sha256 !== "string" ||
-    typeof sample.path !== "string"
-  )
-    return false;
-  return isObject(root.rules);
+  if (!isCapaShapedDocument(root)) return false;
+  return (root.meta as Record<string, unknown>).flavor === "static";
+}
+
+const MAX_FLAVOR_LEN = 40;
+
+/** A recognizable-but-unsupported capa report: capa-shaped (per `isCapaShapedDocument`) but
+ * `meta.flavor` isn't `"static"` — e.g. `"dynamic"` (capa's own DynamicAnalysis schema, real and
+ * documented upstream, never parsed here — #1124: no real-case evidence to build against yet).
+ * Returns a bounded reason string instead of the caller falling through to a generic "could not
+ * detect the file type" message. Relative to that shape check: an unrelated JSON object, or one
+ * missing capa's own identity fields or `rules` dict, returns undefined. */
+export function capaUnsupportedFlavorReason(root: unknown): string | undefined {
+  if (!isObject(root) || !isCapaShapedDocument(root)) return undefined;
+  const meta = root.meta as Record<string, unknown>;
+  if (meta.flavor === "static") return undefined;
+  const flavor =
+    typeof meta.flavor === "string" ? clip(meta.flavor, MAX_FLAVOR_LEN).text : "missing or unrecognized";
+  return `capa report flavor "${flavor}" is not yet supported (only "static" reports are parsed)`;
+}
+
+/** `capaUnsupportedFlavorReason` over raw text a caller hasn't parsed yet (a route body, or a
+ * sniffed file-head sample that may be truncated) — never throws; a JSON.parse failure (including
+ * a truncated sample) safely means "no capa-specific hint available", not an error. */
+export function capaFlavorHintFor(text: string): string | undefined {
+  try {
+    return capaUnsupportedFlavorReason(JSON.parse(text));
+  } catch {
+    return undefined;
+  }
 }
 
 function nonNegSafeInt(v: unknown): number | undefined {
