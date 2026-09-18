@@ -28,6 +28,7 @@ function harness(store: CaseStore) {
     dispatchNotify: refuse,
     resolveImportKind: refuse,
     ingestStreamed: refuse,
+    ingestMacLoginItemBinary: refuse,
     liveToolConfigs: () => new Map(),
     resolveToolForExt: () => null,
     rawExtClaimed: () => false,
