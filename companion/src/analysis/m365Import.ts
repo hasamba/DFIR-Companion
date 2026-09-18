@@ -208,6 +208,9 @@ function mapUal(rec: Row, sink: Map<string, SiemIoc>): MappedEvent {
   const op = pickStr(rec, ["Operation", "Operations"]) || "operation";
   const workload = pickStr(rec, ["Workload"]);
   const user = pickStr(rec, ["UserId", "UserKey", "UserIds"]);
+  // All four are Microsoft 365's own Unified Audit Log fields, recorded by Microsoft's own
+  // service infrastructure from the authenticated session's real connection — edge-observed, not
+  // client-asserted (#1184 audit).
   const ip = extractIp(pickStr(rec, ["ClientIP", "ClientIPAddress", "ActorIpAddress", "ClientInfoString"]));
   const target = pickStr(rec, ["ObjectId", "MailboxOwnerUPN", "SiteUrl", "TargetUserOrGroupName"]);
   const result = pickStr(rec, ["ResultStatus", "ResultStatusDetail"]);

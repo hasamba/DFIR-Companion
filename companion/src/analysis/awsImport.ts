@@ -259,6 +259,8 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
   const { name: who, isRoot } = identity;
   const region = str(getCI(rec, "awsRegion"));
   const errorCode = str(getCI(rec, "errorCode"));
+  // AWS CloudTrail's own field, recorded by AWS's own control-plane infrastructure at call time —
+  // edge-observed, not client-asserted (#1184 audit).
   const rawIp = str(getCI(rec, "sourceIPAddress"));
   const ip = cleanIp(rawIp); // AWS-service callers ("ec2.amazonaws.com") yield no IP
 

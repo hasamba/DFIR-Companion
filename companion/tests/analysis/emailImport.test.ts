@@ -114,6 +114,19 @@ describe("parseEmail — event + IOCs + severity", () => {
     // The victim's own recipient domain is NOT turned into an IOC.
     expect(hasIoc(iocs, "domain", "victim.com")).toBe(false);
   });
+
+  // #1184: an email's X-Originating-IP / earliest external Received hop can be attacker-
+  // influenced in some transport paths — unlike a TCP-layer observation or a cloud provider's own
+  // edge-recorded field, both of which this codebase's host-identity joins (proxyWorkstationChain.ts)
+  // already trust. It must never share canonical.network.source.address with those, even though
+  // it is still surfaced in description text and IOC extraction (informational, not an identity
+  // claim, checked above).
+  it("never stamps the originating IP onto canonical.network.source.address (#1184)", () => {
+    const ev = only(parseEmail(phishingEml()).events);
+    expect(ev.canonical?.network?.source?.address).toBeUndefined();
+    // Confirm the IP really was parsed (the guard above would be vacuous otherwise).
+    expect(ev.description).toContain("198.51.100.23");
+  });
 });
 
 describe("parseEmail — severity heuristics", () => {
