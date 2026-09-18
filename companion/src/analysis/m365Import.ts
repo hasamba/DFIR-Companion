@@ -368,7 +368,7 @@ function mapSignIn(rec: Row, sink: Map<string, SiemIoc>, index: number): MappedE
             event: { category: "authentication", type: "signin", outcome },
             actor: { kind: "account", name: upn },
             account: { name: upn },
-            ...(ip ? { network: { source: { address: ip } } } : {}),
+            ...(ip ? { network: { source: { address: ip, provenance: "edge-observed" } } } : {}),
             time: {
               observed: pickStr(rec, ["createdDateTime"]),
               normalized: normalizeTime(pickStr(rec, ["createdDateTime"])),

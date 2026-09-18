@@ -7,6 +7,7 @@ import { join } from "node:path";
 import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
+import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import { createApp } from "../../src/server.js";
 import { createCanonicalEvent } from "../../src/analysis/canonicalEvent.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
@@ -19,6 +20,16 @@ async function makeApp() {
   const app = createApp(store, { stateStore });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   return { app, stateStore };
+}
+
+async function makeAppWithSuperTimeline() {
+  const root = await mkdtemp(join(tmpdir(), "dfir-proxy-host-identity-super-"));
+  const store = new CaseStore(root);
+  const stateStore = new StateStore(store);
+  const superTimelineStore = new SuperTimelineStore(store);
+  const app = createApp(store, { stateStore, superTimelineStore });
+  await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+  return { app, stateStore, superTimelineStore };
 }
 
 function logonEvent(id: string, host: string, client: string, ip: string, ts: string): ForensicEvent {
@@ -36,7 +47,7 @@ function logonEvent(id: string, host: string, client: string, ip: string, ts: st
       target: { kind: "host", name: host },
       authentication: { logonType: 3 },
       session: { terminal: client },
-      network: { source: { address: ip } },
+      network: { source: { address: ip, provenance: "edge-observed" } }, // #1265: the real Zeek/EVTX stamp
       time: { observed: ts, normalized: ts },
       evidence: { rawRecords: [{ source: "test", locator: `row:${id}` }] },
       producer: { importer: "test", parserVersion: "1", mappingVersion: "1" },
@@ -55,7 +66,7 @@ function webEvent(id: string, ip: string, ts: string): ForensicEvent {
     sourceScreenshots: [],
     canonical: createCanonicalEvent({
       event: { category: "network", type: "web-request" },
-      network: { source: { address: ip } },
+      network: { source: { address: ip, provenance: "edge-observed" } }, // #1265: the real Zeek/EVTX stamp
       time: { observed: ts, normalized: ts },
       evidence: { rawRecords: [{ source: "zeek-http", locator: `row:${id}` }] },
       producer: { importer: "zeek", parserVersion: "1", mappingVersion: "1" },
@@ -160,5 +171,25 @@ describe("GET /cases/:id/proxy-host-identity-matches", () => {
     const res = await request(app).get("/cases/nonexistent-case/proxy-host-identity-matches");
     expect(res.status).toBe(200);
     expect(res.body.matches).toEqual([]);
+  });
+
+  // #1277: dab20efe added the forensic ∪ super-timeline union read (#1243) but neither route's own
+  // suite proved it. The web-log row here lives ONLY in the super-timeline (as it would under the
+  // severity gate, which routes Info rows there) — if the route ever regressed to reading
+  // state.forensicTimeline alone, this event would vanish and the match below would not appear.
+  it("resolves a proxy row that lives only in the super-timeline, not the forensic timeline", async () => {
+    const { app, stateStore, superTimelineStore } = await makeAppWithSuperTimeline();
+    await stateStore.save(
+      stateWith([logonEvent("l1", "fs-01", "ws-042", "10.0.0.5", "2026-06-10T12:00:00Z")]),
+    );
+    await superTimelineStore.append("c1", [webEvent("w1", "10.0.0.5", "2026-06-10T12:05:00Z")]);
+
+    const res = await request(app).get("/cases/c1/proxy-host-identity-matches");
+    expect(res.status).toBe(200);
+    expect(res.body.matches).toHaveLength(1);
+    expect(res.body.matches[0]).toMatchObject({ eventId: "w1", outcome: "matched" });
+    expect(res.body.matches[0].hosts).toEqual([
+      { host: "ws-042", sampleTime: "2026-06-10T12:00:00Z", evidenceEventIds: ["l1"], via: ["address"] },
+    ]);
   });
 });

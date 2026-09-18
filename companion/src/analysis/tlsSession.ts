@@ -605,7 +605,7 @@ function envelopeOf(o: TlsObservation, count: number): CanonicalEventEnvelope {
     ...(o.src || o.dst
       ? {
           network: {
-            ...(o.src ? { source: { address: o.src } } : {}),
+            ...(o.src ? { source: { address: o.src, provenance: "edge-observed" } } : {}),
             ...(o.dst ? { destination: { address: o.dst, ...(o.port ? { port: o.port } : {}) } } : {}),
             protocol: "tls",
           },

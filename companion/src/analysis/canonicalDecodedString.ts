@@ -13,9 +13,9 @@ export type { SampleHash } from "./canonicalMalwareSample.js";
 export const decodedStringTools = ["floss"] as const;
 export type DecodedStringTool = (typeof decodedStringTools)[number];
 
-/** static_strings and "interpreted configuration" are deliberately not built — see
- * RECOMMENDATION-5.md. Extensible if a future item picks either up. */
-export const decodedStringKinds = ["decoded", "stack", "tight"] as const;
+/** "Interpreted configuration" is deliberately not built — see RECOMMENDATION-1120.md.
+ * static_strings gets IOC-corroboration only, never its own event kind — same doc. */
+export const decodedStringKinds = ["decoded", "stack", "tight", "language"] as const;
 export type DecodedStringKind = (typeof decodedStringKinds)[number];
 
 export const MAX_VALUE_LEN = 2000;
@@ -43,10 +43,31 @@ const stackCitationSchema = z.object({
 });
 export type StackCitation = z.infer<typeof stackCitationSchema>;
 
+// language_strings/language_strings_missed share FLOSS's own flat StaticString shape: no
+// decoding-routine or stack-frame provenance exists for this kind, only a string-table offset.
+const languageCitationSchema = z.object({
+  offset: z.number().int().safe(), // FLOSS's own field, may be negative for some layouts
+  // encoding/language are attacker-controlled report text, same as producerVersion — bounded the
+  // same way (Ollama code review finding: these were the only unbounded strings in this block).
+  encoding: z.string().max(MAX_PRODUCER_VERSION_LEN),
+  language: z.string().max(MAX_PRODUCER_VERSION_LEN),
+  languageVersion: z.string().max(MAX_PRODUCER_VERSION_LEN),
+  // true when this citation came from language_strings_missed (a candidate FLOSS could not fully
+  // confirm), false when it came from language_strings (confirmed) — never silently dropped or
+  // promoted to the same confidence as a confirmed citation.
+  missed: z.boolean(),
+});
+export type LanguageCitation = z.infer<typeof languageCitationSchema>;
+
 export const DECODED_STRING_BASIS =
   "a string FLOSS recovered from the sample via decoding-routine or stack-construction analysis; " +
   "not proof of network contact, not proof a capability was used, and not itself a verified " +
   "configuration — corroborate independently before treating it as an event";
+
+export const LANGUAGE_STRING_BASIS =
+  "a string FLOSS associated with an identified language runtime's string table; a value derived " +
+  "only from language_strings_missed is a candidate FLOSS could not fully confirm — treat as " +
+  "less certain than a confirmed value, and never as proof of network contact or capability use";
 
 export const decodedStringBlockSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -77,6 +98,20 @@ export const decodedStringBlockSchema = z.discriminatedUnion("kind", [
     notCited: z.number().int().nonnegative(),
     occurrences: z.number().int().positive(),
     basis: z.literal(DECODED_STRING_BASIS),
+  }),
+  z.object({
+    tool: z.enum(decodedStringTools),
+    kind: z.literal("language"),
+    value: z.string().min(1).max(MAX_VALUE_LEN),
+    valueTruncated: z.boolean(),
+    sampleHash: sampleHashSchema,
+    reportFingerprint: z.string().length(64),
+    producerVersion: z.string().max(MAX_PRODUCER_VERSION_LEN),
+    mappingVersion: z.literal("floss-language-v1"),
+    citations: z.array(languageCitationSchema).max(RECOVERY_CITATIONS_MAX),
+    notCited: z.number().int().nonnegative(),
+    occurrences: z.number().int().positive(),
+    basis: z.literal(LANGUAGE_STRING_BASIS),
   }),
 ]);
 export type DecodedStringBlock = z.infer<typeof decodedStringBlockSchema>;

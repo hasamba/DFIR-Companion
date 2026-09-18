@@ -222,6 +222,7 @@ const WRITABLE_ENV_PREFIXES = [
   "DFIR_DISK_WARN_PCT",
   "DFIR_IMPORTERS_DIR",
   "DFIR_MAX_PINNED_FINDINGS",
+  "DFIR_SQLITE_HIGH_VALUE_LABELS", // #1290 — an analyst-vouched substring list, display/analysis only
   "DFIR_LOG_MAX_TEMPLATES",
   "DFIR_PUBLIC_URL",
   "DFIR_UPDATE_REPO",

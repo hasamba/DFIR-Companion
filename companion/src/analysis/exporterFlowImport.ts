@@ -272,7 +272,11 @@ function mapFlow(flow: MergedFlow, reportFingerprint: string, sink: Map<string, 
       },
       evidence: { rawRecords: [{ source: "exporter-flow", locator: `flow:${aggKey.slice(0, 24)}` }] },
       network: {
-        source: { address: flow.srcAddr, ...(flow.srcPort !== undefined ? { port: flow.srcPort } : {}) },
+        source: {
+          address: flow.srcAddr,
+          provenance: "edge-observed",
+          ...(flow.srcPort !== undefined ? { port: flow.srcPort } : {}),
+        },
         destination: { address: flow.dstAddr, ...(flow.dstPort !== undefined ? { port: flow.dstPort } : {}) },
       },
       producer: { importer: "exporter-flow", parserVersion: "1", mappingVersion: "exporter-flow-v1" },
