@@ -160,9 +160,12 @@ export function resolveResolverEndpointIdentity(
       })
       .sort((a, b) => (a.host < b.host ? -1 : a.host > b.host ? 1 : 0));
 
-    const caveats: string[] = [];
-    if (hosts.length)
-      caveats.push(FORWARDING_TOPOLOGY_CAVEAT, DHCP_LEASE_CAVEAT, CACHE_HIT_CAVEAT, CHAIN_NAME_CAVEAT);
+    // CACHE_HIT_CAVEAT applies to a no-match row at least as strongly as a match: a stub
+    // resolver answering from its own cache is exactly what a bare "no host resolved" outcome
+    // looks like. The other three caveats describe a resolved host binding and don't apply
+    // when there is no host (#1244).
+    const caveats: string[] = [CACHE_HIT_CAVEAT];
+    if (hosts.length) caveats.push(FORWARDING_TOPOLOGY_CAVEAT, DHCP_LEASE_CAVEAT, CHAIN_NAME_CAVEAT);
 
     results.push({
       eventId: e.id,
