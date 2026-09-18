@@ -1,9 +1,14 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import {
   parseSqliteRowStateCsv,
   MAX_ROWS_SCANNED,
   type SqliteRowStateResult,
 } from "../../src/analysis/sqliteRowStateImport.js";
+import {
+  sqliteRowStateBlockSchema,
+  SQLITE_ROW_STATE_BASIS,
+  SQLITE_ROW_STATE_BASIS_V2,
+} from "../../src/analysis/canonicalSqliteRowState.js";
 
 // Header/enum shape verified live against sqlite-dissect's (DC3) own csv_export.py
 // (CommitCsvExporter._write_cells) and constants.py — not invented.
@@ -106,7 +111,9 @@ describe("parseSqliteRowStateCsv — a single Added row", () => {
     const text = csv(["body"], [[...row(), "hi"]]);
     const r = parseSqliteRowStateCsv(text)!;
     const e = r.events[0];
-    expect(e.canonical!.sqliteRowState!.mappingVersion).toBe("sqlite-row-state-v1");
+    // v2 (#1152): bumped from v1 when latestForRowId/latestForRowIdAmbiguous/
+    // matchedHighValueLabel were added to the per-row block.
+    expect(e.canonical!.sqliteRowState!.mappingVersion).toBe("sqlite-row-state-v2");
     expect(e.canonical!.producer.mappingVersion).toBe(e.canonical!.sqliteRowState!.mappingVersion);
   });
 });
@@ -406,5 +413,335 @@ describe("parseSqliteRowStateCsv — Carved/Deleted summary event (#1144)", () =
     // distinct (fileSource, cellSource) combinations inflate the variable breakdown portion.
     expect(summaries[0].description).toContain("routine database maintenance");
     expect(summaries[0].description).toContain("undated, no temporal correlation performed");
+  });
+});
+
+function findRows(r: SqliteRowStateResult) {
+  return r.events.filter((e) => e.canonical?.event.type === "sqlite-row-state");
+}
+
+describe("parseSqliteRowStateCsv — latest per rowId (#1152)", () => {
+  it("flags a singleton rowId's own row as latest, but adds no description clause (dilution guard)", () => {
+    const text = csv(["body"], [[...row({ rowId: 1 }), "a"]]);
+    const r = parseSqliteRowStateCsv(text)!;
+    const rows = findRows(r);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].canonical!.sqliteRowState!.latestForRowId).toBe(true);
+    expect(rows[0].description).not.toContain("the highest recorded version");
+    expect(rows[0].description).not.toContain("own deletion");
+  });
+
+  it("flags the highest-version row among a multi-member group and adds its own clause", () => {
+    const text = csv(
+      ["body"],
+      [
+        [...row({ rowId: 1, version: 1, operation: "Added", location: 0 }), "a"],
+        [...row({ rowId: 1, version: 2, operation: "Updated", location: 1 }), "b"],
+      ],
+    );
+    const r = parseSqliteRowStateCsv(text)!;
+    const rows = findRows(r);
+    const winner = rows.find((e) => e.canonical!.sqliteRowState!.versionNumber === 2)!;
+    const loser = rows.find((e) => e.canonical!.sqliteRowState!.versionNumber === 1)!;
+    expect(winner.canonical!.sqliteRowState!.latestForRowId).toBe(true);
+    expect(winner.description).toContain("the highest recorded version for row 1 in this report");
+    expect(loser.canonical!.sqliteRowState!.latestForRowId).toBeUndefined();
+  });
+
+  it("uses the deletion wording, never a 'no current row exists' claim, when the winner is Deleted", () => {
+    const text = csv(
+      ["body"],
+      [
+        [...row({ rowId: 1, version: 1, operation: "Added", location: 0 }), "a"],
+        [...row({ rowId: 1, version: 2, operation: "Deleted", location: 1 }), "a"],
+      ],
+    );
+    const r = parseSqliteRowStateCsv(text)!;
+    const rows = findRows(r);
+    const winner = rows.find((e) => e.canonical!.sqliteRowState!.operation === "Deleted")!;
+    expect(winner.canonical!.sqliteRowState!.latestForRowId).toBe(true);
+    expect(winner.description).toContain(
+      "the last recorded event for row 1 in this report was its own deletion",
+    );
+    expect(winner.description).not.toContain("no current row exists");
+  });
+
+  it("collapses a content-identical tie to one winner, never flagging ambiguity", () => {
+    const text = csv(
+      ["body"],
+      [
+        [...row({ rowId: 1, version: 2, operation: "Added", location: 0 }), "same"],
+        [...row({ rowId: 1, version: 2, operation: "Added", location: 1 }), "same"],
+      ],
+    );
+    const r = parseSqliteRowStateCsv(text)!;
+    const rows = findRows(r);
+    const winners = rows.filter((e) => e.canonical!.sqliteRowState!.latestForRowId === true);
+    const ambiguous = rows.filter((e) => e.canonical!.sqliteRowState!.latestForRowIdAmbiguous === true);
+    expect(winners).toHaveLength(1);
+    expect(ambiguous).toHaveLength(0);
+  });
+
+  it("flags a content-different tie as ambiguous instead of guessing a winner", () => {
+    const text = csv(
+      ["body"],
+      [
+        [...row({ rowId: 1, version: 2, operation: "Added", location: 0 }), "alice"],
+        [...row({ rowId: 1, version: 2, operation: "Added", location: 1 }), "bob"],
+      ],
+    );
+    const r = parseSqliteRowStateCsv(text)!;
+    const rows = findRows(r);
+    const ambiguous = rows.filter((e) => e.canonical!.sqliteRowState!.latestForRowIdAmbiguous === true);
+    expect(ambiguous).toHaveLength(2);
+    for (const e of ambiguous) {
+      expect(e.canonical!.sqliteRowState!.latestForRowId).toBeUndefined();
+      expect(e.description).toContain("which reflects the true latest state cannot be determined");
+    }
+  });
+
+  it("never lets a Carved row win, even at a higher version than a non-Carved sibling", () => {
+    const text = csv(
+      ["body"],
+      [
+        [...row({ rowId: 1, version: 1, operation: "Added", location: 0 }), "a"],
+        [...row({ rowId: 1, version: 5, operation: "Carved", location: 1 }), "fragment"],
+      ],
+    );
+    const r = parseSqliteRowStateCsv(text)!;
+    const rows = findRows(r);
+    const added = rows.find((e) => e.canonical!.sqliteRowState!.operation === "Added")!;
+    const carved = rows.find((e) => e.canonical!.sqliteRowState!.operation === "Carved")!;
+    expect(added.canonical!.sqliteRowState!.latestForRowId).toBe(true);
+    expect(carved.canonical!.sqliteRowState!.latestForRowId).toBeUndefined();
+  });
+
+  it("flags no winner at all when every row sharing a rowId is Carved", () => {
+    const text = csv(
+      ["body"],
+      [
+        [...row({ rowId: 1, version: 1, operation: "Carved", location: 0 }), "a"],
+        [...row({ rowId: 1, version: 2, operation: "Carved", location: 1 }), "b"],
+      ],
+    );
+    const r = parseSqliteRowStateCsv(text)!;
+    const rows = findRows(r);
+    for (const e of rows) {
+      expect(e.canonical!.sqliteRowState!.latestForRowId).toBeUndefined();
+      expect(e.canonical!.sqliteRowState!.latestForRowIdAmbiguous).toBeUndefined();
+    }
+  });
+
+  it("skips the whole derivation when the report was truncated — never a partial 'latest' claim", () => {
+    const rowCount = MAX_ROWS_SCANNED + 1;
+    const rows: (string | number)[][] = new Array(rowCount);
+    for (let i = 0; i < rowCount; i++) {
+      // Two rows share rowId 1 (would otherwise produce a winner) among the padding.
+      rows[i] = i < 2 ? [...row({ rowId: 1, version: i, location: i }), "x"] : [...row({ location: i }), "x"];
+    }
+    const text = csv(["body"], rows);
+    const r = parseSqliteRowStateCsv(text)!;
+    expect(r.rowsTruncated).toBe(true);
+    for (const e of findRows(r)) {
+      expect(e.canonical!.sqliteRowState!.latestForRowId).toBeUndefined();
+      expect(e.canonical!.sqliteRowState!.latestForRowIdAmbiguous).toBeUndefined();
+    }
+  });
+
+  it("stamps the v2 basis text naming the bounded latestForRowId claim, and the v2 mappingVersion", () => {
+    const text = csv(["body"], [[...row(), "a"]]);
+    const r = parseSqliteRowStateCsv(text)!;
+    const block = findRows(r)[0].canonical!.sqliteRowState!;
+    expect(block.mappingVersion).toBe("sqlite-row-state-v2");
+    expect(block.basis).toBe(SQLITE_ROW_STATE_BASIS_V2);
+    expect(block.basis).toContain("latestForRowId");
+  });
+
+  it("discloses a same-or-higher-version Carved row instead of silently overclaiming 'the highest'", () => {
+    const text = csv(
+      ["body"],
+      [
+        [...row({ rowId: 1, version: 1, operation: "Added", location: 0 }), "a"],
+        [...row({ rowId: 1, version: 2, operation: "Updated", location: 1 }), "b"],
+        [...row({ rowId: 1, version: 5, operation: "Carved", location: 2 }), "fragment"],
+      ],
+    );
+    const r = parseSqliteRowStateCsv(text)!;
+    const winner = findRows(r).find((e) => e.canonical!.sqliteRowState!.latestForRowId === true)!;
+    expect(winner.canonical!.sqliteRowState!.versionNumber).toBe(2); // the non-Carved winner
+    expect(winner.description).toContain("a Carved row for this same rowid");
+    expect(winner.description).not.toMatch(/highest recorded version.*\. /); // caveat must follow, not be silent
+  });
+});
+
+describe("sqliteRowStateBlockSchema — mappingVersion/basis/field coupling (#1152 code review)", () => {
+  it("still validates a v1-shaped block with no new fields (backward compatibility)", () => {
+    const v1Block = {
+      tool: "sqlite-dissect" as const,
+      tableName: "messages",
+      tableNameSource: "filename" as const,
+      operation: "Added" as const,
+      fileSource: "DATABASE" as const,
+      cellSource: "B-Tree" as const,
+      location: 0,
+      pageNumber: 3,
+      fileOffset: 4096,
+      versionNumber: 0,
+      pageVersionNumber: 0,
+      columns: [],
+      notCitedColumns: 0,
+      reportFingerprint: "a".repeat(64),
+      mappingVersion: "sqlite-row-state-v1" as const,
+      basis: SQLITE_ROW_STATE_BASIS,
+    };
+    expect(sqliteRowStateBlockSchema.safeParse(v1Block).success).toBe(true);
+  });
+
+  it("rejects mappingVersion v1 paired with the v2 basis text", () => {
+    const bad = {
+      tool: "sqlite-dissect" as const,
+      tableName: "",
+      tableNameSource: "unavailable" as const,
+      operation: "Added" as const,
+      fileSource: "DATABASE" as const,
+      cellSource: "B-Tree" as const,
+      location: 0,
+      pageNumber: 0,
+      fileOffset: 0,
+      versionNumber: 0,
+      pageVersionNumber: 0,
+      columns: [],
+      notCitedColumns: 0,
+      reportFingerprint: "a".repeat(64),
+      mappingVersion: "sqlite-row-state-v1" as const,
+      basis: SQLITE_ROW_STATE_BASIS_V2,
+    };
+    expect(sqliteRowStateBlockSchema.safeParse(bad).success).toBe(false);
+  });
+
+  it("rejects latestForRowId set on a mappingVersion v1 record", () => {
+    const bad = {
+      tool: "sqlite-dissect" as const,
+      tableName: "",
+      tableNameSource: "unavailable" as const,
+      operation: "Added" as const,
+      fileSource: "DATABASE" as const,
+      cellSource: "B-Tree" as const,
+      location: 0,
+      pageNumber: 0,
+      fileOffset: 0,
+      versionNumber: 0,
+      pageVersionNumber: 0,
+      columns: [],
+      notCitedColumns: 0,
+      reportFingerprint: "a".repeat(64),
+      mappingVersion: "sqlite-row-state-v1" as const,
+      basis: SQLITE_ROW_STATE_BASIS,
+      latestForRowId: true as const,
+    };
+    expect(sqliteRowStateBlockSchema.safeParse(bad).success).toBe(false);
+  });
+});
+
+describe("parseSqliteRowStateCsv — high-value label list (#1290 Part A)", () => {
+  const ENV_KEY = "DFIR_SQLITE_HIGH_VALUE_LABELS";
+  const priorEnv = process.env[ENV_KEY];
+
+  afterEach(() => {
+    if (priorEnv === undefined) delete process.env[ENV_KEY];
+    else process.env[ENV_KEY] = priorEnv;
+  });
+
+  it("matches a configured label against the filename-derived table name, structured and in text", () => {
+    process.env[ENV_KEY] = "history,messages,cookies";
+    const text = csv(["body"], [[...row(), "a"]]);
+    const r = parseSqliteRowStateCsv(text, { sourceLabel: "0007_messages.csv" })!;
+    const rowEvent = findRows(r)[0];
+    expect(rowEvent.canonical!.sqliteRowState!.matchedHighValueLabel).toBe("messages");
+    expect(rowEvent.description).toContain('matches an analyst-configured high-value label ("messages")');
+  });
+
+  it("does not match when the env var is unset", () => {
+    delete process.env[ENV_KEY];
+    const text = csv(["body"], [[...row(), "a"]]);
+    const r = parseSqliteRowStateCsv(text, { sourceLabel: "0007_messages.csv" })!;
+    expect(findRows(r)[0].canonical!.sqliteRowState!.matchedHighValueLabel).toBeUndefined();
+  });
+
+  it("treats an empty label item (trailing comma) as absent, never as a label matching everything", () => {
+    process.env[ENV_KEY] = ",history,";
+    const text = csv(["body"], [[...row(), "a"]]);
+    // A table name that shares no substring with "history" must not match a stray empty label.
+    const r = parseSqliteRowStateCsv(text, { sourceLabel: "0007_totallyunrelated.csv" })!;
+    expect(findRows(r)[0].canonical!.sqliteRowState!.matchedHighValueLabel).toBeUndefined();
+  });
+
+  it("never matches when the table name itself is unavailable", () => {
+    process.env[ENV_KEY] = "history";
+    const text = csv(["body"], [[...row(), "a"]]);
+    const r = parseSqliteRowStateCsv(text)!; // no sourceLabel -> tableNameSource "unavailable"
+    expect(findRows(r)[0].canonical!.sqliteRowState!.matchedHighValueLabel).toBeUndefined();
+  });
+
+  it("adds the same match clause to the per-report summary event", () => {
+    process.env[ENV_KEY] = "messages";
+    const text = csv(["body"], [[...row({ operation: "Deleted" }), "a"]]);
+    const r = parseSqliteRowStateCsv(text, { sourceLabel: "0007_messages.csv" })!;
+    expect(findSummary(r)[0].description).toContain('high-value label ("messages")');
+  });
+});
+
+describe("parseSqliteRowStateCsv — structured summary totals (#1290 Part B)", () => {
+  it("carries carvedTotal/deletedTotal/truncated as structured fields, not prose-only", () => {
+    const text = csv(
+      ["body"],
+      [
+        [...row({ operation: "Carved", location: 0 }), "a"],
+        [...row({ operation: "Carved", location: 1 }), "b"],
+        [...row({ operation: "Deleted", location: 2 }), "c"],
+      ],
+    );
+    const r = parseSqliteRowStateCsv(text)!;
+    const summary = findSummary(r)[0];
+    expect(summary.canonical!.sqliteRowStateSummary).toEqual({
+      carvedTotal: 2,
+      deletedTotal: 1,
+      truncated: false,
+      mappingVersion: "sqlite-row-state-summary-v1",
+    });
+  });
+
+  it("sets truncated:true structurally when the report was cut at MAX_ROWS_SCANNED", () => {
+    const rowCount = MAX_ROWS_SCANNED + 1;
+    const rows: (string | number)[][] = new Array(rowCount);
+    for (let i = 0; i < rowCount; i++) rows[i] = [...row({ operation: "Deleted", location: i }), "x"];
+    const r = parseSqliteRowStateCsv(csv(["body"], rows))!;
+    expect(r.rowsTruncated).toBe(true);
+    expect(findSummary(r)[0].canonical!.sqliteRowStateSummary!.truncated).toBe(true);
+  });
+
+  it("keeps the description within the 600-char budget even when the reserved suffix alone is oversized", () => {
+    const priorEnv = process.env.DFIR_SQLITE_HIGH_VALUE_LABELS;
+    // A near-MAX_FIELD_LEN label that still substring-matches the table name.
+    const label = "m".repeat(299);
+    process.env.DFIR_SQLITE_HIGH_VALUE_LABELS = label;
+    try {
+      const text = csv(["body"], [[...row({ operation: "Deleted" }), "a"]]);
+      const r = parseSqliteRowStateCsv(text, { sourceLabel: `0007_${label}x.csv` })!;
+      // Per-row: highValue (~466) + reportTag (24) still fits, so the total honours 600 exactly.
+      for (const e of findRows(r)) expect(e.description.length).toBeLessThanOrEqual(600);
+      // Summary: highValue + disclosure + reportTag exceeds 600 on its own. The clamp must clip the
+      // variable portion to NOTHING (the description is then exactly the protected suffixes) — the
+      // pre-fix `slice(0, negative)` would have kept most of the variable text and produced a
+      // LONGER description than the budget ever allowed.
+      const summary = findSummary(r)[0].description;
+      expect(summary.startsWith("sqlite-dissect row-state summary")).toBe(false);
+      expect(summary).toContain("routine database maintenance");
+      expect(summary).toContain('high-value label ("');
+      expect(summary).toMatch(/; report [0-9a-f]{16}$/);
+    } finally {
+      if (priorEnv === undefined) delete process.env.DFIR_SQLITE_HIGH_VALUE_LABELS;
+      else process.env.DFIR_SQLITE_HIGH_VALUE_LABELS = priorEnv;
+    }
   });
 });

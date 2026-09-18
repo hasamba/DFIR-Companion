@@ -1380,6 +1380,10 @@
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_LEARNED_PATTERN_MIN_COUNT">Learned-pattern recurrence floor<span class="sfield-hint">DFIR_LEARNED_PATTERN_MIN_COUNT — times a dismissed marker must recur before it down-weights new look-alike activity (unset = built-in default)</span></label><input id="env-DFIR_LEARNED_PATTERN_MIN_COUNT" placeholder="(default)" /></div>
         </div>
+        <div class="settings-group-head">SQLite row-state import</div>
+        <div class="sfield-row">
+          <div class="sfield"><label for="env-DFIR_SQLITE_HIGH_VALUE_LABELS">High-value database labels<span class="sfield-hint">DFIR_SQLITE_HIGH_VALUE_LABELS — comma-separated substrings (history, messages, cookies, …) matched against a sqlite-dissect import's own filename-derived table name; a filename-derived match only, never schema/content verification (empty = none)</span></label><input id="env-DFIR_SQLITE_HIGH_VALUE_LABELS" placeholder="history,messages,cookies" /></div>
+        </div>
         <div class="settings-group-head">Mobile companion</div>
         <div class="sfield-row3">
           <div class="sfield"><label for="env-DFIR_MOBILE_MAX_FINDINGS">Max findings<span class="sfield-hint">DFIR_MOBILE_MAX_FINDINGS — findings shown in the mobile PWA (default 50)</span></label><input id="env-DFIR_MOBILE_MAX_FINDINGS" placeholder="50" /></div>
