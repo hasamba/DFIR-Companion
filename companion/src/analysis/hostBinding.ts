@@ -69,7 +69,10 @@ const NON_IDENTIFYING_IPS = new Set(["", "-", "0.0.0.0", "::", "::1", "127.0.0.1
 // host literally named "-" would be a junk binding, not an absent one.
 const NON_IDENTIFYING_CLIENT_NAMES = new Set(["-", "*"]);
 
-function isIdentifyingClientName(name: string): boolean {
+// Exported so any other module reading session.terminal / Workstation Name applies the SAME
+// placeholder rejection rather than re-deriving its own — hostScopeAggregate.ts (#1231) and
+// loginGraph.ts (#1232) both had their own gap here until they started sharing this.
+export function isIdentifyingClientName(name: string): boolean {
   const trimmed = name.trim();
   return trimmed.length > 0 && !NON_IDENTIFYING_CLIENT_NAMES.has(trimmed);
 }
@@ -78,8 +81,69 @@ function isIdentifyingClientName(name: string): boolean {
 // local logons and corroborates nothing about which machine a HUMAN was using.
 const NON_HUMAN_ACCOUNTS = new Set(["system", "local service", "network service", "anonymous logon"]);
 
+// Built-in local accounts (Administrator RID 500, Guest RID 501, plus the fixed RID 503/504
+// DefaultAccount/WDAGUtilityAccount) live in every Windows host's own local SAM under that name —
+// an un-domained "administrator" logon on host A and on host B are two different local principals
+// that merely share a name, the same "matches every host" failure the module already guards
+// against for IPs. Excluded ONLY when no domain is present: a domained "CORP\Administrator" is a
+// specific, identifying domain account, not a local built-in.
+//
+// Administrator/Guest are localized on non-English Windows installs (the SAM display name, not the
+// RID, is what 4624 records) — DefaultAccount and WDAGUtilityAccount are not localized by Microsoft
+// and appear under the same English name on every locale.
+const NON_HUMAN_LOCAL_ACCOUNTS_NO_DOMAIN = new Set([
+  // English
+  "administrator",
+  "guest",
+  // French
+  "administrateur",
+  "invité",
+  // German
+  "administrator",
+  "gast",
+  // Spanish
+  "administrador",
+  "invitado",
+  // Portuguese
+  "administrador",
+  "convidado",
+  // Italian
+  "amministratore",
+  "ospite",
+  // Dutch
+  "beheerder",
+  "gast",
+  // Non-localized fixed built-ins (RID 503 / RID 504)
+  "defaultaccount",
+  "wdagutilityaccount",
+]);
+
 function isLoopbackV4(ip: string): boolean {
   return /^127\./.test(ip);
+}
+
+// IPv4 link-local / APIPA (169.254.0.0/16): the exact IPv4 analog of IPv6 link-local below —
+// auto-assigned when DHCP fails, valid only on its own segment, so the same textual address can
+// legitimately name two unrelated hosts. Excluding IPv6 link-local while admitting its IPv4
+// counterpart would be an inconsistent standard the module doesn't otherwise apply (Ollama review
+// finding on #1160).
+function isLinkLocalV4(ip: string): boolean {
+  return /^169\.254\./.test(ip);
+}
+
+// IPv6 link-local (fe80::/10): auto-configured per-interface, valid only on its own link, and
+// this module already strips the "%zone" suffix that would disambiguate it (see canonicalIp) —
+// without that scope, the same textual "fe80::..." address can legitimately name two unrelated
+// hosts on two different links within the same case. Matches the module's own stated intent at
+// canonicalIp's own comment, which describes this exclusion but never implemented it.
+//
+// ULA (fc00::/7) is deliberately NOT excluded here: unlike link-local, a ULA address's /48 prefix
+// is meant to be effectively globally unique (RFC 4193), the same functional role RFC1918 IPv4
+// plays for a fleet — and this module already treats RFC1918 as identifying (it is not in
+// NON_IDENTIFYING_IPS). Excluding ULA but not RFC1918 would apply an inconsistent standard to the
+// two address families for no evidenced reason.
+function isLinkLocalV6(ip: string): boolean {
+  return /^fe[89ab][0-9a-f]:/.test(ip);
 }
 
 // IPv4-mapped IPv6 ("::ffff:10.0.0.5") folds to the dotted-quad form so a source that logs one
@@ -113,18 +177,51 @@ export function canonicalAccount(domain: string | undefined, name: string): stri
   return d ? `${d}\\${n}` : n;
 }
 
-function isIdentifyingIp(raw: string): boolean {
+/** Not a real, per-machine address — a placeholder, loopback or link-local. Reused by dnsCrossUploadConnJoin.ts (#996): a match on one of these is noise, not identity, on the connection side too. */
+export function isIdentifyingIp(raw: string): boolean {
   const ip = canonicalIp(raw);
   if (NON_IDENTIFYING_IPS.has(ip)) return false;
   if (isLoopbackV4(ip)) return false;
+  if (isLinkLocalV4(ip)) return false;
+  if (isLinkLocalV6(ip)) return false;
   return true;
 }
 
-function isHumanAccount(name: string): boolean {
+// The real Windows-logon importer (winAccountRoles.ts's own entity()) already collapses a "-" or
+// empty TargetDomainName to an omitted domain before this module ever sees it, so `domain` here
+// should normally arrive as undefined for a local-SAM logon — but this check folds "-"/"*"
+// defensively too, matching this module's own established placeholder-rejection convention
+// (NON_IDENTIFYING_IPS, NON_IDENTIFYING_CLIENT_NAMES) rather than trusting every present or future
+// caller to have already normalized it (Ollama review finding on #1161).
+function hasNoDomain(domain: string | undefined): boolean {
+  const d = domain?.trim();
+  return !d || d === "-" || d === "*";
+}
+
+// Two real producers of a canonical account block that ALSO carry a domain field
+// (winAccountRoles.ts's own entity(), and this module's own legacy-prose upgrade in
+// canonicalEvent.ts) both put the FULL "domain\name" string into account.name and repeat the
+// domain separately in account.domain — composing a key from both naively would double the
+// domain prefix ("corp\corp\jdoe"), a key no real caller would ever query, and would also make
+// every human/non-human name check below compare against a domain-qualified string instead of a
+// bare name (a pre-existing bug found while adding #1162's own end-to-end legacy-path test).
+// Strip the prefix ONLY when a domain is independently present: a producer that qualifies
+// account.name WITHOUT setting account.domain (e.g. ecarImport.ts's raw, unprocessed `principal`
+// field) has no separate domain to reconstruct from, and stripping there would silently discard
+// the only copy of that information and risk colliding with an unrelated un-domained local
+// account of the same bare name (Ollama review finding on #1162).
+function bareAccountName(name: string, domain: string | undefined): string {
+  if (hasNoDomain(domain)) return name;
+  const sep = name.lastIndexOf("\\");
+  return sep === -1 ? name : name.slice(sep + 1);
+}
+
+function isHumanAccount(name: string, domain: string | undefined): boolean {
   const n = name.trim().toLowerCase();
   if (!n) return false;
   if (n.endsWith("$")) return false; // computer account
   if (NON_HUMAN_ACCOUNTS.has(n)) return false;
+  if (hasNoDomain(domain) && NON_HUMAN_LOCAL_ACCOUNTS_NO_DOMAIN.has(n)) return false;
   return true;
 }
 
@@ -162,11 +259,11 @@ export function buildHostBindingIndex(
 
     // account -> host: the SESSION host, only for logon types where the account is actually
     // present at/using that host (not a network logon merely authenticating across to it).
-    const accountName = c.account?.name;
+    const accountName = c.account?.name ? bareAccountName(c.account.name, c.account.domain) : undefined;
     const logonType = c.authentication?.logonType;
     if (
       accountName &&
-      isHumanAccount(accountName) &&
+      isHumanAccount(accountName, c.account?.domain) &&
       logonType !== undefined &&
       ACCOUNT_PRESENCE_LOGON_TYPES.has(logonType) &&
       c.target?.kind === "host" &&

@@ -67,7 +67,7 @@
     "hypotheses": [],
     "uncertainties": [
       {
-        "topic": "User intent and whether the transfer was legitimate",
+        "topic": "User intent: malicious exfiltration vs. legitimate use",
         "status": "unknown",
         "basis": "The transfer is observed but authorization context is absent.",
         "gap": "DLP policy, approval records, and user context have not been collected."
@@ -91,7 +91,7 @@
     "uncertainties": [
       {
         "id": "intent-gap",
-        "topicTerms": ["legitimate"],
+        "topicTerms": ["malicious"],
         "allowedStatuses": ["unknown", "inferred"]
       }
     ],

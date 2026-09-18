@@ -519,6 +519,8 @@
     "ROUTE POST /cases/:id/host-duplicates/dismiss",
     "ROUTE GET /cases/:id/proxy-host-identity-matches",
     "ROUTE GET /cases/:id/resolver-endpoint-matches",
+    "ROUTE GET /cases/:id/dns-connection-cross-upload-matches",
+    "ROUTE GET /cases/:id/endpoint-dns-connection-cross-upload-matches",
     "ROUTE GET /cases/:id/ai-state",
     "ROUTE GET /cases/:id/clock-skew",
     "ROUTE POST /cases/:id/clock-skew/recompute",

@@ -345,7 +345,7 @@ export function parseBulkExtractorUrl(
     iocs: [...sink.values()],
     total: rows.length + malformedRows,
     kept: events.length,
-    dropped: 0,
+    dropped: malformedRows,
     groups,
     format: "BulkExtractorUrlFeatureFile",
     malformedRows,

@@ -13,6 +13,7 @@
 // a download mark's anchor, and the existing flat-High execution raise already fits it exactly.
 import { getCI, isObject, str } from "./siemImport.js";
 import type { ThorFields } from "./thorRowMap.js";
+import { neutral } from "./downloadCorroborationShared.js";
 
 type Row = Record<string, unknown>;
 
@@ -46,7 +47,11 @@ export function bamFields(
 
   const userName = str(getCI(r, "UserName")).trim();
   const who = userName || sid;
-  const subject = baseName(binary);
+  // binary is the BAM registry value — attacker-influenced (whatever ran on the endpoint). neutral()
+  // folds brackets to parens so a crafted filename can never forge a registered derived-note marker
+  // like "[ran a download-marked file: ...]" (#1238), the same trust boundary downloadExecution.ts
+  // already applies to every other endpoint-named description source.
+  const subject = neutral(baseName(binary));
 
   // Self-prefixed "Velociraptor BAM: " so the generic artifact-prefix injection (velociraptorImport
   // .ts's mapRowToEvents) produces "Velociraptor [<artifact>] BAM: ..." — the space-not-colon shape

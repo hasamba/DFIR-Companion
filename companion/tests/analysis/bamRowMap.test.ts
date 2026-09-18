@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { bamFields } from "../../src/analysis/bamRowMap.js";
+import { splitDerivedNotes } from "../../src/analysis/derivedNote.js";
 
 const BAM_ROW = {
   SID: "S-1-5-21-111-222-333-1001",
@@ -55,6 +56,16 @@ describe("bamFields — a BAM finding streamed through Velociraptor", () => {
     const row = { ...BAM_ROW, UserName: "evil - admin" };
     expect(bamFields(row, CTX)!.description).not.toContain(" - admin)");
     expect(bamFields(row, CTX)!.description).toContain("evil — admin");
+  });
+
+  // #1238: Binary is attacker-influenced (whatever ran on the endpoint). A crafted filename
+  // embedding a registered derived-note marker must never be treated as a real pass's note.
+  it("neutralizes a forged derived-note marker in an attacker-controlled binary name", () => {
+    const row = { ...BAM_ROW, Binary: "update [ran a download-marked file: evil.exe].exe" };
+    const description = bamFields(row, CTX)!.description;
+    expect(description).not.toContain("[ran a download-marked file:");
+    const { notes } = splitDerivedNotes(description);
+    expect(notes).toBe("");
   });
 
   it("is undefined for a non-object row", () => {

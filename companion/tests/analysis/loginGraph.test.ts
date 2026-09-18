@@ -70,6 +70,28 @@ describe("parseLoginEvent", () => {
     });
   });
 
+  // #1232: a "-"/"*" Workstation Name (Windows' own unpopulated-field placeholder) surfaced as a
+  // literal workstation value instead of being omitted.
+  it("omits workstation entirely when session.terminal is a placeholder ('-' or '*')", () => {
+    const event = ev({
+      description: "Authentication event",
+      asset: "legacy-wrong-host",
+      canonical: createCanonicalEvent({
+        event: { category: "authentication", type: "logon", outcome: "success" },
+        actor: { kind: "account", name: "CORP\\canonical-user" },
+        target: { kind: "host", name: "SRV-CANONICAL" },
+        authentication: { logonType: 10, sessionId: "0xabc" },
+        session: { terminal: "-" },
+        network: { source: { address: "203.0.113.20" } },
+        time: { observed: "2026-06-10T12:00:00Z", normalized: "2026-06-10T12:00:00Z" },
+        evidence: { rawRecords: [{ source: "test", locator: "row:0" }] },
+        producer: { importer: "test", parserVersion: "1", mappingVersion: "1" },
+      }),
+    });
+
+    expect(parseLoginEvent(event)?.workstation).toBeUndefined();
+  });
+
   it("parses a successful domain-account logon with type, source ip and workstation", () => {
     const p = parseLoginEvent(
       ev({

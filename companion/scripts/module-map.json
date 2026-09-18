@@ -298,6 +298,8 @@
     "dnsRecord.ts": "analysis/ingest",
     "dnsServerRecord.ts": "analysis/ingest",
     "dnsResolverEndpointJoin.ts": "analysis/timeline",
+    "dnsCrossUploadConnJoin.ts": "analysis/timeline",
+    "dnsEndpointCrossUploadConnJoin.ts": "analysis/timeline",
     "dnsConnJoin.ts": "analysis/ingest",
     "dnsWireRead.ts": "analysis/ingest",
     "dnsWireRows.ts": "analysis/ingest",

@@ -57,7 +57,7 @@
       {
         "id": "lat-n1",
         "priority": "high",
-        "action": "Collect Security.evtx from WS-02",
+        "action": "Collect logon and Security.evtx history from WS-02",
         "rationale": "This can identify how admin-user credentials were obtained.",
         "pointer": "WS-02 Security.evtx",
         "relatedFindingIds": ["lat-f1"]
@@ -66,7 +66,7 @@
     "hypotheses": [],
     "uncertainties": [
       {
-        "topic": "Credential source",
+        "topic": "Initial access / credential source",
         "status": "unknown",
         "basis": "Credential use is observed but acquisition is not.",
         "gap": "Credential-access evidence from WS-02 is missing."
@@ -90,11 +90,11 @@
     "uncertainties": [
       {
         "id": "credential-source-gap",
-        "topicTerms": ["credential source"],
+        "topicTerms": ["initial access"],
         "allowedStatuses": ["unknown", "inferred"]
       }
     ],
-    "nextSteps": [{ "id": "collect-source-auth", "requiredTerms": ["Security.evtx", "WS-02"] }],
+    "nextSteps": [{ "id": "collect-source-auth", "requiredTerms": ["logon", "WS-02"] }],
     "expectAbstention": false
   }
 }

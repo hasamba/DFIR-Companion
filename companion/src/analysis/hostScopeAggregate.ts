@@ -1,6 +1,7 @@
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 import { SEVERITY_RANK } from "./stateTypes.js";
 import { resolveHost, type HostAliasIndex } from "./hostAlias.js";
+import { isIdentifyingClientName } from "./hostBinding.js";
 
 // Per-host evidence for the scope ledger, folded in ONE streaming pass over the super-timeline so a
 // multi-million-event case never materializes. Memory is bounded by host count, not event count.
@@ -53,7 +54,9 @@ function referencedHosts(event: ForensicEvent): string[] {
   const c = event.canonical;
   if (!c) return [];
   const names = [
-    c.session?.terminal,
+    // Workstation Name is commonly recorded as "-" or "*" when unpopulated (#1231, mirroring
+    // hostBinding.ts's own NON_IDENTIFYING_CLIENT_NAMES guard) — a literal host named "-" is junk.
+    c.session?.terminal && isIdentifyingClientName(c.session.terminal) ? c.session.terminal : undefined,
     c.target?.kind === "host" ? c.target.name : undefined,
     c.network?.source?.hostname,
     c.network?.destination?.hostname,

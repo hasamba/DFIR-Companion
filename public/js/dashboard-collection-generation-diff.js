@@ -39,7 +39,7 @@
   let pLoadSeq = 0; // generation token: only the latest load may mutate state (case-switch races)
 
   function persistenceChangeRow(change) {
-    const dir = DIRECTION_LABEL[change.direction] || esc(change.direction);
+    const dir = DIRECTION_LABEL[change.direction] || String(change.direction);
     let key;
     try {
       key = JSON.parse(change.key);
@@ -77,7 +77,7 @@
     const table = pair.changes.length
       ? `<table class="cgd-changes"><thead><tr><th>Direction</th><th>Technique</th><th>Path</th><th>Value</th></tr></thead><tbody>${rows}</tbody></table>`
       : `<div class="cgd-none">No differences between these two generations.</div>`;
-    return `<details class="cgd-pair"><summary>${esc(pairSummary(pair))}</summary>${table}</details>`;
+    return `<details class="cgd-pair"><summary>${pairSummary(pair)}</summary>${table}</details>`;
   }
 
   function excludedBlock(cohort) {
@@ -166,7 +166,7 @@
   let mFormOpen = false;
 
   function mobileChangeRow(change) {
-    const dir = DIRECTION_LABEL[change.direction] || esc(change.direction);
+    const dir = DIRECTION_LABEL[change.direction] || String(change.direction);
     const bundleId = change.key;
     const valueText =
       change.direction === "present-only-in-earlier"
@@ -182,7 +182,7 @@
     const table = pair.changes.length
       ? `<table class="cgd-changes"><thead><tr><th>Direction</th><th>Bundle ID</th><th>Item / Version</th></tr></thead><tbody>${rows}</tbody></table>`
       : `<div class="cgd-none">No differences between these two generations.</div>`;
-    return `<details class="cgd-pair"><summary>${esc(pairSummary(pair))}</summary>${table}</details>`;
+    return `<details class="cgd-pair"><summary>${pairSummary(pair)}</summary>${table}</details>`;
   }
 
   function mobileCohortBlock(cohort) {
