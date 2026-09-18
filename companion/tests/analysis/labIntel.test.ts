@@ -157,6 +157,19 @@ describe("annotateSightingsWithLabIntel", () => {
     );
     expect(out.forensicTimeline[0].description).not.toMatch(/[<>]/);
   });
+  // #1207: a family name carrying its own ']' truncated the non-greedy note-strip regex early on
+  // re-merge, leaving a residue fragment of the OLD note behind instead of removing it cleanly.
+  it("leaves no residue fragment on re-merge when the family name contains ']'", () => {
+    const once = annotateSightingsWithLabIntel(
+      state([ev({ id: "e1", sha256: SHA })], [rec({ family: "Emo]tet" })]),
+    );
+    const twice = annotateSightingsWithLabIntel({ ...once, labIntel: [rec({ family: "Emo]tet" })] });
+    const desc = twice.forensicTimeline[0].description;
+    expect(desc.match(new RegExp(SANDBOX_VERDICT_MARKER.replace(/[[\]]/g, "\\$&"), "g")) ?? []).toHaveLength(
+      1,
+    );
+    expect(desc).not.toContain("tet]"); // the old note's tail must not survive as a stray fragment
+  });
   it("is a no-op that returns the same object when there is no registry", () => {
     const s = state([ev({ id: "e1", sha256: SHA })]);
     expect(annotateSightingsWithLabIntel(s)).toBe(s);
