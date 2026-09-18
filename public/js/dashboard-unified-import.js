@@ -9,7 +9,8 @@
 (function () {
   function initUnifiedImport() {
     // ── Unified import: one button, the server auto-detects the file type ─────
-    // Images go through the same /captures path the extension uses; every other file is
+    // Images go through the same /captures path the extension uses; a recognized binary
+    // container (macOS login items) goes as bytes to /import-binary; every other file is
     // POSTed to /import, where the server sniffs it (JSON/CSV/log + per-format signatures)
     // and routes it to the right importer. Multiple files can be selected at once.
     document.getElementById("importBtn").onclick = () => {
@@ -106,6 +107,16 @@
               method: "POST",
               headers: { "content-type": "application/json" },
               body: JSON.stringify({ path: filePath, minSeverity, webLogFormat }),
+            });
+          } else if (looksLikeBinaryImportName(f.name)) {
+            // A binary plist (macOS login items, #1301): sent as bytes — reading it as text would
+            // corrupt it. Same base64-in-JSON envelope the tool run-upload path uses.
+            const dataBase64 = await fileToBase64(f);
+            showImportProgress(40);
+            r = await fetch(`/cases/${caseId}/import-binary`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ filename: f.name, dataBase64 }),
             });
           } else {
             // Small file: read in browser with progress (0→40%), then upload (bar holds at 40% until server N/M).
