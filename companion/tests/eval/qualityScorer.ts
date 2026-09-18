@@ -251,20 +251,31 @@ function scoreClaims(golden: readonly GoldenClaim[], produced: readonly QualityC
     const cover = greedyMinimalCover(expected.evidenceEventIds, candidates);
     let matchedIndices: number[] | null = null;
     if (cover) {
+      const coveredSet = new Set(cover);
       const coverText = cover.map((index) => claimText(produced[index])).join("\n\n");
-      if (containsTerms(coverText, expected.requiredTerms)) {
+      const missingTerms = expected.requiredTerms.filter((term) => !norm(coverText).includes(norm(term)));
+      if (missingTerms.length === 0) {
         matchedIndices = cover;
       } else {
-        // The minimal ID-cover's own text doesn't carry the required term — e.g. it greedily
-        // picked one aggregate finding that covers every id but not the specific phrasing. Retry
-        // against the FULL candidate pool (still guaranteed to cover the required ids, since it's
-        // a superset of `cover`): its union may carry the term via a claim the minimal cover
-        // didn't need for id coverage alone. Without this, a term-blind aggregate finding can
-        // shadow the atomic findings that DO carry the required language and reintroduce the
-        // exact miss this fallback exists to fix (#1217).
-        const allIndices = candidates.map((c) => c.index);
-        const fullText = allIndices.map((index) => claimText(produced[index])).join("\n\n");
-        if (containsTerms(fullText, expected.requiredTerms)) matchedIndices = allIndices;
+        // The minimal ID-cover's own text doesn't carry every required term — e.g. it greedily
+        // picked one aggregate finding that covers every id but not the specific phrasing. Run a
+        // SECOND minimal cover, this time over the still-missing TERMS: each remaining candidate's
+        // "ids" are whichever missing terms its own text (not concatenated with anything) happens
+        // to contain. This shares the exact same "never add a zero-contribution candidate"
+        // guarantee as the id-cover pass above — a candidate that carries neither a new required
+        // id nor a still-missing term is never marked used, closing the laundering a full-pool
+        // "mark everything used" retry would otherwise cause (#1226) — while still finding the
+        // required language wherever it lives among the atomic findings, not just the id-cover's
+        // own text, which is what fixes the term-blind-aggregate miss this fallback exists for
+        // (#1217).
+        const remaining = candidates
+          .filter((c) => !coveredSet.has(c.index))
+          .map((c) => ({
+            index: c.index,
+            ids: missingTerms.filter((term) => norm(claimText(produced[c.index])).includes(norm(term))),
+          }));
+        const termCover = greedyMinimalCover(missingTerms, remaining);
+        if (termCover) matchedIndices = [...cover, ...termCover];
       }
     }
     if (matchedIndices) {

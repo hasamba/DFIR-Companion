@@ -231,7 +231,11 @@ describe("scoreClaims union matching (#1217)", () => {
     });
     const score = scoreCaseQuality(MULTI_GOLDEN, output);
     expect(score.claims.missed).toEqual([]);
-    expect(score.claims.falseConclusions).toEqual([]);
+    // f0 (id-cover) + f3 (carries the missing term) are used; f1/f2 contribute neither a new id
+    // nor the missing term once f0 alone covers every id, so they correctly show as unused (#1226
+    // — a prior draft laundered every candidate in the pool into "used" regardless of whether it
+    // actually contributed anything).
+    expect(score.claims.falseConclusions).toEqual(["f1", "f2"]);
   });
 
   it("does not fuse text across a union boundary into a false term match", () => {
@@ -243,6 +247,32 @@ describe("scoreClaims union matching (#1217)", () => {
     output.claims[2] = { ...output.claims[2], description: "encrypted with a ransomware extension." };
     const score = scoreCaseQuality(MULTI_GOLDEN, output);
     expect(score.claims.missed).toEqual(["ransomware-impact"]);
+  });
+
+  // #1226: once the minimal id-cover forces the term-cover fallback (its own text lacks the
+  // required term), a naive full-pool retry marked EVERY remaining candidate "used" as soon as
+  // the pool's combined text satisfied the missing term — including one that contributes nothing
+  // new. Only the candidate(s) that actually carry the still-missing term should be marked "used".
+  it("does not launder an off-topic candidate into 'used' just because it sits in the same pool as the term-carrier (#1226)", () => {
+    const output = atomicOutput(); // f1(rw-e1), f2(rw-e2), f3(rw-e3, carries "files encrypted")
+    output.claims.unshift({
+      id: "f0",
+      title: "Ransomware attack chain",
+      description: "The attacker executed a full ransomware attack chain against fs-01 and ws-01.",
+      evidenceEventIds: ["rw-e1", "rw-e2", "rw-e3"], // greedy picks this ALONE for id-coverage
+    });
+    output.claims.push({
+      id: "f5",
+      title: "Unrelated redundant note",
+      description: "A duplicate observation on rw-e1, contributing nothing new.",
+      evidenceEventIds: ["rw-e1"], // already covered by f0 — touches a required id, carries no term
+    });
+    const score = scoreCaseQuality(MULTI_GOLDEN, output);
+    expect(score.claims.missed).toEqual([]);
+    // f0 (id-cover) + f3 (only candidate carrying the missing term) are used. f1, f2, and f5 all
+    // contribute neither a new id nor the missing term once f0 alone covers every id — none of
+    // them should ride along just for being in the same candidate pool as f3.
+    expect(score.claims.falseConclusions).toEqual(["f1", "f2", "f5"]);
   });
 });
 
