@@ -196,7 +196,11 @@ function mapFlowRecord(r: FlowRecord, sink: Map<string, SiemIoc>, recordIndex: n
     canonical: createCanonicalEvent({
       event: { category: "network", type: "flow", action: r.action.toLowerCase() },
       network: {
-        source: { address: r.srcaddr, ...(srcPortField ? { port: srcPortField } : {}) },
+        source: {
+          address: r.srcaddr,
+          provenance: "edge-observed",
+          ...(srcPortField ? { port: srcPortField } : {}),
+        },
         destination: { address: r.dstaddr, ...(dstPortField ? { port: dstPortField } : {}) },
         protocol: protoName,
       },

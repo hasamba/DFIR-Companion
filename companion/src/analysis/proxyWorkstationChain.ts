@@ -74,16 +74,22 @@
 //
 // TRUST BOUNDARY (#1184 audited, #1265 structurally represented — NOT type-enforced: the schema
 // field is optional and independent of `address`, so a writer that forgets to stamp it still
-// compiles cleanly; only the site-registered sweep test in
-// tests/architecture/networkSourceProvenanceSweep.test.ts catches that omission, and only at the
-// 15 sites it already knows about). This module trusts `canonical.account.name` on the account
-// path exactly as before (scoped to `canonical.web`, the server's own verified `%u`). The address
+// compiles cleanly; the sweep test in tests/architecture/networkSourceProvenanceSweep.test.ts
+// catches it instead — every src/analysis file with a `source: { address }` literal must be
+// registered there as stamped or explicitly exempted, so an undecided new writer fails the
+// suite). This module trusts `canonical.account.name` on the account path exactly as before
+// (scoped to `canonical.web`, the server's own verified `%u`). The address
 // path additionally requires the provenance flag above — #1184's own cross-importer audit (PR
 // #1267) confirmed 12 writers plus the pre-existing Zeek/Squid pair (14 total) genuinely stamp
-// their own recorder edge's observed peer; ONE more (siemImport.ts's own Windows EVTX
-// IpAddress/SourceIp/SourceAddress mapping, an OS-kernel-level network-stack recording, never a
-// client-supplied header) was found and verified during this PR's own implementation, bringing the
-// real total to 15 writers / 18 stamped sites. #1267's own audit found ONE writer
+// their own recorder edge's observed peer. A whole-src/analysis scan during this PR (the sweep
+// test) found EIGHT more real writers the audit missed — it matched the dotted-string form
+// `network.source.address` and not the object-literal form most importers use: siemImport.ts
+// (Windows EVTX, OS kernel-level), auditdImport.ts (kernel SOCKADDR), ecarImport.ts (EDR),
+// awsFlowLogImport.ts (VPC flow), exporterFlowImport.ts (NetFlow), and the Zeek/Suricata
+// dns/conn/notice/ssl/smb sensor rows (dnsWireRows, networkImport, tlsSession, smbChainRows) —
+// every one traced to a sensor-, exporter- or kernel-recorded field, never a client header. Real
+// total: 22 writers / 28 stamped sites; canonicalEvent.ts's own legacy-upgrade path (2 sites) is
+// the one deliberate exemption (provenance unknowable). #1267's own audit found ONE writer
 // (emailImport.ts's `originatingIp`, a client-supplied header) that is NOT edge-observed; that
 // stamp was removed rather than marked edge-observed. A category-based reader filter was
 // considered and rejected: `exchangeAuditImport.ts`/`mailboxChain.ts` (genuinely edge-observed)
