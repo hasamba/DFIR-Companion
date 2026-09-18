@@ -715,7 +715,14 @@ function legacyCanonical(event: ForensicEvent): CanonicalEventEnvelope {
       ? {
           network: {
             ...network,
-            ...(logon?.sourceIp ? { source: { address: logon.sourceIp } } : {}),
+            // #1292: a logon's `IpAddress=` is only ever rendered into this prose from a Windows
+            // Security 4624/4625 record's own kernel-recorded field (logonEvents / accountUsageImport),
+            // the same basis siemImport.ts stamps edge-observed on — so hostBinding.ts's index gate
+            // keeps admitting the legacy path (#1162). The generic `srcIp` branch above stays
+            // unstamped: its provenance is unknowable, #1265's one deliberate exemption.
+            ...(logon?.sourceIp
+              ? { source: { address: logon.sourceIp, provenance: "edge-observed" as const } }
+              : {}),
           },
         }
       : {}),

@@ -188,7 +188,8 @@ export function canonicalAccount(domain: string | undefined, name: string): stri
   return hasNoDomain(domain) ? n : `${domain!.trim().toLowerCase()}\\${n}`;
 }
 
-export type IpExclusionReason = "placeholder" | "loopback-v4" | "link-local-v4" | "link-local-v6";
+export type IpExclusionReason =
+  "placeholder" | "loopback-v4" | "link-local-v4" | "link-local-v6" | "not-edge-observed"; // #1292: address present but no `provenance: "edge-observed"` stamp
 
 /** Why `isIdentifyingIp` would reject this address, or `null` when it would not (#1236) — exported
  * so a caller wanting exclusion observability (buildHostBindingIndex's own `excluded` sink below)
@@ -281,10 +282,18 @@ export function buildHostBindingIndex(
 
     // IP -> host: the CLIENT's own name (Workstation Name), never the session host that recorded
     // the logon — see the DIRECTIONALITY note at the top of this file.
-    const ip = c.network?.source?.address;
+    // #1292: same fail-closed rule as proxyWorkstationChain.ts's reader (#1265) — an address the
+    // writer did not stamp `provenance: "edge-observed"` never enters the index. Every consumer of
+    // this index (six modules) resolves against it, so a future writer stamping the field from a
+    // client-forgeable header without being audited into #1184's allowlist would otherwise poison
+    // all of them at once, not just the one reader #1265 hardened. Only the ADDRESS is dropped; the
+    // account -> host half below reads nothing from network.source and is unaffected.
+    const source = c.network?.source;
+    const edgeObserved = source?.provenance === "edge-observed";
+    const ip = edgeObserved ? source.address : undefined;
     const clientName = c.session?.terminal?.trim();
-    if (excluded && ip) {
-      const reason = ipExclusionReason(ip);
+    if (excluded) {
+      const reason = ip ? ipExclusionReason(ip) : source?.address ? "not-edge-observed" : null;
       if (reason) excluded.set(reason, (excluded.get(reason) ?? 0) + 1);
     }
     if (ip && isIdentifyingIp(ip) && clientName && isIdentifyingClientName(clientName)) {

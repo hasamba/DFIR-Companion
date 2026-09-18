@@ -21,6 +21,9 @@ function logonEvent(o: {
   logonType?: number; // defaults to 3 (Network) — the shape a proxy/SMB-style join needs
   ts: string;
   outcome?: "success" | "failed";
+  /** #1292: omit the `provenance: "edge-observed"` stamp — the shape a writer outside #1184's
+   * audited allowlist would produce. The default stamps it, matching every real 4624 writer. */
+  unprovenanced?: boolean;
 }): ForensicEvent {
   seq += 1;
   return {
@@ -47,7 +50,13 @@ function logonEvent(o: {
       target: { kind: "host", name: o.sessionHost },
       authentication: { logonType: o.logonType ?? 3 },
       ...(o.clientName ? { session: { terminal: o.clientName } } : {}),
-      ...(o.ip ? { network: { source: { address: o.ip } } } : {}),
+      ...(o.ip
+        ? {
+            network: {
+              source: { address: o.ip, ...(o.unprovenanced ? {} : { provenance: "edge-observed" as const }) },
+            },
+          }
+        : {}),
       time: { observed: o.ts, normalized: o.ts },
       evidence: { rawRecords: [{ source: "test", locator: `row:${seq}` }] },
       producer: { importer: "test", parserVersion: "1", mappingVersion: "1" },
@@ -620,5 +629,73 @@ describe("buildHostBindingIndex through the legacy prose-upgrade path (#1162)", 
     const accountHits = resolveAccountAtTime(index, "corp\\jdoe", "2026-07-30T10:05:00Z", 1_000);
     expect(accountHits).toHaveLength(1);
     expect(accountHits[0].host).toBe("WS-042");
+  });
+});
+
+// #1292: #1265 made proxyWorkstationChain.ts's READER of network.source.address fail closed on the
+// `provenance: "edge-observed"` stamp, but the INDEX that reader (and five other consumers)
+// resolves against was still built from any address at all. A future writer stamping the field
+// from a client-forgeable header without being audited into the allowlist would have poisoned every
+// consumer at once. The index now mirrors the reader: no stamp, no IP binding — the account -> host
+// half is untouched, exactly as the reader nulls only the address and never the account.
+describe("buildHostBindingIndex requires the edge-observed provenance stamp (#1292)", () => {
+  it("does not bind IP -> host from an address with no provenance stamp", () => {
+    const events = [
+      logonEvent({
+        sessionHost: "SRV-01",
+        clientName: "WS-042",
+        ip: "10.0.0.5",
+        ts: "2026-07-30T10:00:00Z",
+        unprovenanced: true,
+      }),
+    ];
+    const index = buildHostBindingIndex(events);
+    expect(index.byIp.size).toBe(0);
+    expect(resolveIpAtTime(index, "10.0.0.5", "2026-07-30T10:00:00Z", 1_000)).toEqual([]);
+  });
+
+  it("still binds IP -> host from a stamped address (every real 4624 writer stamps it)", () => {
+    const events = [
+      logonEvent({ sessionHost: "SRV-01", clientName: "WS-042", ip: "10.0.0.5", ts: "2026-07-30T10:00:00Z" }),
+    ];
+    const hits = resolveIpAtTime(buildHostBindingIndex(events), "10.0.0.5", "2026-07-30T10:00:00Z", 1_000);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].host).toBe("WS-042");
+  });
+
+  it("nulls only the address: account -> host still binds from an unstamped event", () => {
+    const events = [
+      logonEvent({
+        sessionHost: "WS-042",
+        accountName: "jdoe",
+        accountDomain: "CORP",
+        logonType: 2,
+        ip: "10.0.0.5",
+        ts: "2026-07-30T10:00:00Z",
+        unprovenanced: true,
+      }),
+    ];
+    const index = buildHostBindingIndex(events);
+    expect(index.byIp.size).toBe(0);
+    const hits = resolveAccountAtTime(index, "corp\\jdoe", "2026-07-30T10:00:00Z", 1_000);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].host).toBe("WS-042");
+  });
+
+  it("counts the unstamped address in the excluded sink as its own reason, so the gate is observable", () => {
+    const events = [
+      logonEvent({
+        sessionHost: "SRV-01",
+        clientName: "WS-042",
+        ip: "10.0.0.5",
+        ts: "2026-07-30T10:00:00Z",
+        unprovenanced: true,
+      }),
+      logonEvent({ sessionHost: "SRV-01", clientName: "WS-043", ip: "10.0.0.6", ts: "2026-07-30T10:01:00Z" }),
+    ];
+    const excluded = new Map<IpExclusionReason, number>();
+    const index = buildHostBindingIndex(events, undefined, excluded);
+    expect(excluded.get("not-edge-observed")).toBe(1);
+    expect(index.byIp.size).toBe(1);
   });
 });
