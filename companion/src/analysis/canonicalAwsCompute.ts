@@ -13,6 +13,9 @@ import { awsLineageShapeSchema, awsLineageSourceSchema } from "./canonicalAwsLin
 
 const cited = z.object({ time: z.string(), locator: z.string() });
 
+/** An EC2 instance id as AWS writes it; shared so every pass that keys on one tests the same shape. */
+export const INSTANCE_ID = /^i-[0-9a-f]{8,17}$/i;
+
 export const awsComputeLaunchSchema = z.object({
   time: z.string(),
   /** Every replica record of the launch is cited. */
