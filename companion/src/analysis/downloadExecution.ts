@@ -214,10 +214,10 @@ const isProcessStart = (e: TimelineEventShape): boolean =>
 // reasoning.
 
 // The raw YARA CLI importer's own fixed description prefix (yaraImport.ts's parseYaraOutput):
-// "YARA: <rule> matched <file>...". Only the CLI path is recognised here — Velociraptor's own
-// native YARA scanning is a documented follow-up (985-1a-2): its description is rewritten by a
-// LATER, generic artifact-prefix step this file cannot see at classification time, and its
-// self-scan/volatile exclusion signal does not survive that rewrite reliably (see the design doc).
+// "YARA: <rule> matched <file>...". Only the CLI path is recognised here — a Velociraptor-native
+// row's description is rewritten by a LATER, generic artifact-prefix step this file cannot see at
+// classification time, so `isVeloYara`/`VELO_YARA_RULE` below (985-1a-2, shipped) recognises that
+// row shape separately, off its own structured `severity` field, not a truncatable text marker.
 const YARA_CLI_RULE = /^YARA: (\S+) matched/;
 
 // SO-CRATES' own YARA file-match event (socratesImport.ts, sources ["SO-CRATES", "YARA"]):
