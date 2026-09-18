@@ -133,7 +133,8 @@ describe("parseBulkExtractorCarved — one carved object", () => {
     expect(b.degenerate).toBe(false);
     expect(b.toolFlag).toBe("none");
     expect(b.allCachedAnomaly).toBe(false);
-    expect(b.completeness).toContain("not reported");
+    expect(b.completeness).toContain("not written as structured data");
+    expect(b.orderingAnomaly).toBe(false);
     expect(b.structuralValidation).toContain("acceptance gate");
     expect(b.hashScope).toContain("whole file");
     expect(b.citations[0]).toEqual({
@@ -143,7 +144,7 @@ describe("parseBulkExtractorCarved — one carved object", () => {
       path: [],
       context: expect.any(String),
     });
-    expect(e.description).toContain("completeness not reported by the tool");
+    expect(e.description).toContain("completeness not written by the tool as structured data");
     expect(e.description).toContain("not proof it existed as a named filesystem entry");
     expect(e.description).toContain("[undated:");
   });
@@ -252,6 +253,8 @@ describe("parseBulkExtractorCarved — <CACHED> folding (the tool's own dedup)",
     expect(b.value).toBe(`hash:md5:${MD5_A}`);
     expect(b.filesize).toBeUndefined();
     expect(r.events[0].description).toContain("importer-synthesized");
+    expect(r.events[0].description).toContain("object size not reported or not parseable");
+    expect(r.events[0].description).not.toContain("zero-byte");
   });
 
   it("gives two DIFFERENT digests two events and two IOCs", () => {
@@ -360,6 +363,14 @@ describe("parseBulkExtractorCarved — the tool's own verdict signals and hash s
     expect(r.events[0].description).toContain("flagged this object corrupted");
   });
 
+  it("does NOT read a _corrupted suffix as the tool's verdict on a recorder that never writes one (jpeg)", () => {
+    const f = feature("jpeg", [carvedRow("1", "jpeg/000/1.jpg_corrupted", { filesize: 10, hex: MD5_A })]);
+    const r = parseBulkExtractorCarved(f)!;
+    const b = r.events[0].canonical!.recoveredFragment!;
+    if (b.artifactClass === "carved-file") expect(b.toolFlag).toBe("none");
+    expect(r.events[0].description).not.toContain("flagged this object corrupted");
+  });
+
   it("reads evtx's orphan-record suffix", () => {
     const f = feature("evtx_carved", [
       carvedRow("9", "evtx_carved/000/9.evtx_orphan_record", { filesize: 300, hex: MD5_A }),
@@ -378,6 +389,9 @@ describe("parseBulkExtractorCarved — the tool's own verdict signals and hash s
     expect(scope("jpeg")).toContain("whole file");
     expect(scope("evtx_carved")).toContain("data buffer only");
     expect(scope("future_carved")).toContain("not stated");
+    // recorder names that exist but whose carve() call was never located in source never get the strong claim
+    expect(scope("unrar_carved")).toContain("not stated");
+    expect(scope("utmp_carved")).toContain("not stated");
   });
 });
 
@@ -481,5 +495,76 @@ describe("importBulkExtractorCarved — the ingest wrapper, end to end through a
     expect(hashes.map((i) => i.value)).toEqual([MD5_A]);
     expect(hashes[0].extractedFrom).toHaveLength(1);
     expect(carved.map((e) => e.id)).toContain(hashes[0].extractedFrom![0]);
+  });
+});
+
+describe("parseBulkExtractorCarved — ordering/shape anomalies the tool never writes (Ollama code review)", () => {
+  it("a cache marker BEFORE the digest's real row: flagged, and the real row's offset still leads the citations", () => {
+    const f = feature("jpeg", [
+      cachedRow("5", { filesize: 10, hex: MD5_A }),
+      carvedRow("100", "jpeg/000/100.jpg", { filesize: 10, hex: MD5_A }),
+    ]);
+    const r = parseBulkExtractorCarved(f)!;
+    const b = r.events[0].canonical!.recoveredFragment!;
+    if (b.artifactClass !== "carved-file") return;
+    expect(b.orderingAnomaly).toBe(true);
+    expect(b.citations[0].rawOffset).toBe("100");
+    expect(r.events[0].description).toContain("at image offset 100");
+    expect(r.events[0].description).toContain("row order/shape for this digest is one the tool never writes");
+  });
+
+  it("two non-cached rows for one digest: flagged (the carve cache blocks a second write in a pristine run)", () => {
+    const f = feature("jpeg", [
+      carvedRow("1", "jpeg/000/1.jpg", { filesize: 10, hex: MD5_A }),
+      carvedRow("2", "jpeg/000/2.jpg", { filesize: 10, hex: MD5_A }),
+    ]);
+    const b = parseBulkExtractorCarved(f)!.events[0].canonical!.recoveredFragment!;
+    if (b.artifactClass === "carved-file") expect(b.orderingAnomaly).toBe(true);
+  });
+
+  it("a row folded as cached by filename-absence alone (feature is not the <CACHED> literal): flagged", () => {
+    const f = feature("jpeg", [
+      carvedRow("1", "jpeg/000/1.jpg", { filesize: 10, hex: MD5_A }),
+      `2\tnot-the-literal\t${ctx({ filesize: 10, hex: MD5_A })}`,
+    ]);
+    const b = parseBulkExtractorCarved(f)!.events[0].canonical!.recoveredFragment!;
+    if (b.artifactClass === "carved-file") expect(b.orderingAnomaly).toBe(true);
+  });
+
+  it("the pristine shape — one real row first, then cache markers — is NOT flagged", () => {
+    const f = feature("jpeg", [
+      carvedRow("1", "jpeg/000/1.jpg", { filesize: 10, hex: MD5_A }),
+      cachedRow("2", { filesize: 10, hex: MD5_A }),
+      cachedRow("3", { filesize: 10, hex: MD5_A }),
+    ]);
+    const b = parseBulkExtractorCarved(f)!.events[0].canonical!.recoveredFragment!;
+    if (b.artifactClass === "carved-file") expect(b.orderingAnomaly).toBe(false);
+  });
+});
+
+describe("parseBulkExtractorCarved — remaining code-review pins", () => {
+  it("bounds sourceMedia from an oversized # Filename: header", () => {
+    const long = "/evidence/" + "x".repeat(3000) + ".E01";
+    const f = JPEG_ONE.replace("# Filename: /evidence/laptop.E01", `# Filename: ${long}`);
+    const b = parseBulkExtractorCarved(f)!.events[0].canonical!.recoveredFragment!;
+    if (b.artifactClass === "carved-file") expect(b.sourceMedia!.length).toBeLessThanOrEqual(2000);
+  });
+
+  it("tolerates an enclosing quote PAIR on the context but not a lone quote", () => {
+    const paired = feature("jpeg", [
+      `1\tjpeg/000/1.jpg\t"${ctx({ filename: "jpeg/000/1.jpg", filesize: 10, hex: MD5_A })}"`,
+    ]);
+    expect(parseBulkExtractorCarved(paired)!.events).toHaveLength(1);
+    const lone = feature("jpeg", [
+      `1\tjpeg/000/1.jpg\t"${ctx({ filename: "jpeg/000/1.jpg", filesize: 10, hex: MD5_A })}`,
+    ]);
+    expect(isBulkExtractorCarvedFeatureFile(lone)).toBe(false);
+  });
+
+  it("a wrong-length digest for a known algorithm says so, not 'algorithm not promotable'", () => {
+    const f = feature("jpeg", [carvedRow("1", "jpeg/000/1.jpg", { filesize: 10, algo: "md5", hex: "abcd" })]);
+    expect(parseBulkExtractorCarved(f)!.events[0].description).toContain(
+      "digest length does not match its algorithm",
+    );
   });
 });

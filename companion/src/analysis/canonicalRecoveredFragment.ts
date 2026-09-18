@@ -120,9 +120,10 @@ export const carvedToolFlags = ["none", "corrupted", "orphan-record"] as const;
 export type CarvedToolFlag = (typeof carvedToolFlags)[number];
 
 export const CARVED_COMPLETENESS =
-  "not reported — bulk_extractor's carver accepted this object at its own gate (e.g. a nonzero " +
-  "validated length) but its complete/truncated/corrupt verdict, where computed, is not written to " +
-  "the feature file";
+  "not written as structured data — bulk_extractor's carver accepted this object at its own gate " +
+  "(e.g. a nonzero validated length) but its complete/truncated/corrupt verdict, where computed, " +
+  "is discarded before the feature line; the only verdict any carver emits is the NTFS/evtx " +
+  "carved-filename suffix (see toolFlag)";
 export const CARVED_STRUCTURAL_VALIDATION =
   "passed the recorder's own acceptance gate before carving; not independently re-validated here; " +
   "the NTFS/evtx recorders alone suffix the carved filename with their verdict (see toolFlag)";
@@ -163,10 +164,12 @@ const carvedFileBlockSchema = z.object({
   /** `filesize` of the first non-cached row: the size the tool computed for that occurrence
    * (bytes are written only for a digest's first sighting); absent when unparseable. */
   filesize: z.number().int().nonnegative().safe().optional(),
-  /** filesize 0/absent, or a digest equal to the algorithm's empty-input value — never promoted. */
+  /** filesize 0, filesize absent/unparseable, or a digest equal to the algorithm's empty-input
+   * value — never promoted; the description says which of these it was. */
   degenerate: z.boolean(),
   toolFlag: z.enum(carvedToolFlags),
-  sourceMedia: z.string().optional(),
+  /** From `# Filename:` only (never a data row); bounded here AND at parse. */
+  sourceMedia: z.string().max(MAX_VALUE_LEN).optional(),
   reportFingerprint: z.string().length(64),
   citations: z.array(recoveryCitationSchema).max(RECOVERY_CITATIONS_MAX),
   notCited: z.number().int().nonnegative(),
@@ -177,6 +180,9 @@ const carvedFileBlockSchema = z.object({
    * file (the carve cache starts empty per run), so this upload was pruned, concatenated or
    * edited; imported and flagged, never normalized. */
   allCachedAnomaly: z.boolean(),
+  /** A cache marker before the digest's real row, a second real row, or a row folded as cached by
+   * filename-absence alone — orderings carve() never produces; flagged, never normalized. */
+  orderingAnomaly: z.boolean(),
   completeness: z.literal(CARVED_COMPLETENESS),
   structuralValidation: z.literal(CARVED_STRUCTURAL_VALIDATION),
   dedupBasis: z.literal(CARVED_DEDUP_BASIS),

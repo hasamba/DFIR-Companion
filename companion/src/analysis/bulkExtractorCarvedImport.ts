@@ -54,15 +54,17 @@ import { aggregateEvents } from "./eventAggregate.js";
 export { MAX_DISTINCT_VALUES, MAX_ROWS_SCANNED };
 /** Detection quorum: every non-empty data row among the first K must carry the carved shape —
  * real carved files are produced solely by `carve()`'s single `write()`, so one stray row means
- * the file is not one (a crafted url.txt could place fileobject-shaped bytes in ONE context
- * window; it cannot make every row match). */
+ * the file is not one. This defends against a TOOL-PRODUCED url.txt whose raw context windows
+ * happen to contain fileobject bytes; it is not an authenticity control — an adversary who writes
+ * the whole upload can satisfy it, which is why no record here claims existence or provenance. */
 export const DETECT_QUORUM_ROWS = 8;
 
 /** The three known children, in the order `carve()` writes them, nothing else admitted between
- * them; an optional enclosing quote pair tolerated (`quote_if_necessary` only escapes bad UTF-8
- * and backslashes, and `sanitize_filename` strips both from the path, so real lines are clean). */
+ * them; an enclosing quote PAIR tolerated (both or neither — `\1` backreference), since
+ * `quote_if_necessary` only escapes bad UTF-8 and backslashes and `sanitize_filename` strips both
+ * from the path, so real lines are clean. */
 const FILEOBJECT_RE =
-  /^"?<fileobject>(?:<filename>([^<]{1,4000})<\/filename>)?<filesize>(\d{1,20})<\/filesize><hashdigest type='([A-Za-z0-9-]{1,32})'>([0-9A-Fa-f]{1,128})<\/hashdigest><\/fileobject>"?$/;
+  /^(")?<fileobject>(?:<filename>([^<]{1,4000})<\/filename>)?<filesize>(\d{1,20})<\/filesize><hashdigest type='([A-Za-z0-9-]{1,32})'>([0-9A-Fa-f]{1,128})<\/hashdigest><\/fileobject>\1$/;
 const CACHED_FEATURE = "<CACHED>"; // feature_recorder.h:229, `static inline const std::string CACHED`
 
 /** Promotable digests and their exact hex lengths — an unrecognized `type=` keeps the digest in
@@ -73,22 +75,32 @@ const PROMOTABLE: Record<string, { len: number; empty: string }> = {
   sha256: { len: 64, empty: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" },
 };
 
-/** Per-recorder header behaviour, verified against every `.carve(` caller (RECOMMENDATION-1116.md). */
+/** Per-recorder header behaviour, verified against every located `.carve(` caller
+ * (RECOMMENDATION-1116.md). Only recorders whose 3-arg (empty-header) call was actually read are
+ * listed — `unrar_carved`/`utmp_carved` exist as recorder names but their carve call was not
+ * located, so they fall to the "not stated" scope rather than carry the strong claim. */
 const NO_HEADER_RECORDERS = new Set([
   "jpeg",
   "zip_carved",
-  "unrar_carved",
   "winpe_carved",
   "sqlite_carved",
   "kml_carved",
   "vcard_carved",
-  "utmp_carved",
   "ntfsmft_carved",
   "ntfsindx_carved",
   "ntfslogfile_carved",
   "ntfsusn_carved",
 ]);
 const HEADER_PREPENDING_RECORDERS = new Set(["evtx_carved", "rtti"]);
+/** The only recorders that write a verdict anywhere — as a carved-filename suffix. A matching
+ * suffix on any OTHER recorder's path is not the tool's verdict and must not be read as one. */
+const CORRUPTED_SUFFIX_RECORDERS = new Set([
+  "ntfsmft_carved",
+  "ntfsindx_carved",
+  "ntfslogfile_carved",
+  "ntfsusn_carved",
+]);
+const ORPHAN_SUFFIX_RECORDERS = new Set(["evtx_carved"]);
 
 export interface BulkExtractorCarvedOptions {
   aggregate?: boolean;
@@ -134,12 +146,12 @@ interface ParsedContext {
 function parseContext(raw: string): ParsedContext | null {
   const m = FILEOBJECT_RE.exec(raw);
   if (!m) return null;
-  const size = Number(m[2]);
+  const size = Number(m[3]);
   return {
-    filename: m[1] || undefined,
+    filename: m[2] || undefined,
     filesize: Number.isSafeInteger(size) && size >= 0 ? size : undefined,
-    algorithm: m[3].toLowerCase().replace(/-/g, ""),
-    hex: m[4].toLowerCase(),
+    algorithm: m[4].toLowerCase().replace(/-/g, ""),
+    hex: m[5].toLowerCase(),
   };
 }
 
@@ -168,6 +180,9 @@ interface Row {
   rawOffset: string;
   feature: string; // carved relative path, or "<CACHED>"
   cached: boolean;
+  /** Folded as cached by filename-absence while the feature was NOT the `<CACHED>` literal — a
+   * shape carve() never writes; surfaced as an ordering/shape anomaly, never normalized. */
+  cachedByAbsenceOnly: boolean;
   ctx: ParsedContext;
   context: string; // the raw context text, clipped — citation dedup partner of rawOffset
 }
@@ -177,9 +192,12 @@ function scanRows(lines: readonly string[]): { rows: Row[]; malformedRows: numbe
   let malformedRows = 0;
   let scanned = 0;
   let truncatedScan = false;
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     if (scanned >= MAX_ROWS_SCANNED) {
-      truncatedScan = true;
+      // Only a real unprocessed line is a truncation — a file of exactly MAX_ROWS_SCANNED
+      // newline-terminated lines leaves one empty trailing part (Ollama code review finding).
+      truncatedScan = lines.slice(i).some((l) => l.length > 0);
       break;
     }
     scanned += 1;
@@ -203,22 +221,31 @@ function scanRows(lines: readonly string[]): { rows: Row[]; malformedRows: numbe
     // Cached rows are recognized by EITHER signal (feature literal OR filename absence) — the
     // source writes both together, so either alone suffices and neither can be spoofed apart.
     const cached = feature === CACHED_FEATURE || !ctx.filename;
+    const cachedByAbsenceOnly = cached && feature !== CACHED_FEATURE;
     // A non-cached row's feature and <filename> child are the same variable in carve(); a mismatch
     // means the line was not produced by carve() (Ollama design review, B3 cross-check).
     if (!cached && ctx.filename !== feature) {
       malformedRows += 1;
       continue;
     }
-    rows.push({ rawOffset, feature, cached, ctx, context: clip(rawContext, MAX_CONTEXT_LEN).text });
+    rows.push({
+      rawOffset,
+      feature,
+      cached,
+      cachedByAbsenceOnly,
+      ctx,
+      context: clip(rawContext, MAX_CONTEXT_LEN).text,
+    });
   }
   return { rows, malformedRows, truncatedScan };
 }
 
-function toolFlagFor(carvedPath: string): CarvedToolFlag {
+function toolFlagFor(recorder: string, carvedPath: string): CarvedToolFlag {
   // scan_ntfs{mft,indx,logfile,usn}.cpp / scan_evtx.cpp suffix the carved filename with their own
-  // verdict; no other recorder writes one anywhere.
-  if (/_corrupted$/i.test(carvedPath)) return "corrupted";
-  if (/\.evtx_orphan_record$/i.test(carvedPath)) return "orphan-record";
+  // verdict; no other recorder writes one anywhere, so the suffix is only read for those.
+  if (CORRUPTED_SUFFIX_RECORDERS.has(recorder) && /_corrupted$/i.test(carvedPath)) return "corrupted";
+  if (ORPHAN_SUFFIX_RECORDERS.has(recorder) && /\.evtx_orphan_record$/i.test(carvedPath))
+    return "orphan-record";
   return "none";
 }
 
@@ -236,22 +263,34 @@ function mapGroup(
   sourceMedia: string | undefined,
   sink: Map<string, SiemIoc>,
 ): { event: MappedEvent; promoted: boolean } {
-  const firstReal = groupRows.find((r) => !r.cached);
+  const firstRealIdx = groupRows.findIndex((r) => !r.cached);
+  const firstReal = firstRealIdx >= 0 ? groupRows[firstRealIdx] : undefined;
   const allCachedAnomaly = !firstReal;
+  // Pristine per digest means exactly ONE non-cached row and it comes FIRST (the carve cache
+  // starts empty and blocks a second write) — a cache marker before it, a second real row, or a
+  // row folded as cached by filename-absence alone are all shapes carve() never writes. Flagged,
+  // never normalized (Ollama code review finding).
+  const realCount = groupRows.filter((r) => !r.cached).length;
+  const orderingAnomaly =
+    (firstReal !== undefined && (firstRealIdx > 0 || realCount > 1)) ||
+    groupRows.some((r) => r.cachedByAbsenceOnly);
   const { algorithm, hex } = groupRows[0].ctx;
   const rawValue = firstReal ? firstReal.feature : `hash:${algorithm}:${hex}`;
   const { text: value, truncated: valueTruncated } = clip(rawValue, MAX_VALUE_LEN);
   const filesize = firstReal?.ctx.filesize;
   const occurrences = groupRows.length;
   const cachedOccurrences = groupRows.filter((r) => r.cached).length;
-  const toolFlag = firstReal ? toolFlagFor(firstReal.feature) : "none";
+  const toolFlag = firstReal ? toolFlagFor(recorder, firstReal.feature) : "none";
 
-  // Distinct (rawOffset, context) citations, first-seen order, capped — same key as url.txt so a
-  // cache hit at the same offset with a different reported size is not silently collapsed.
+  // Distinct (rawOffset, context) citations, capped, with the first REAL row's citation leading so
+  // `where` never cites a duplicate marker's offset as the object's location; then first-seen
+  // order. Same key as url.txt so a cache hit at the same offset with a different reported size is
+  // not silently collapsed.
   const seen = new Map<string, RecoveryCitation>();
   const keyOf = (r: Row) =>
     createHash("sha256").update(r.rawOffset).update("\n").update(r.context).digest("hex");
-  for (const r of groupRows) {
+  const ordered = firstReal ? [firstReal, ...groupRows.filter((r) => r !== firstReal)] : groupRows;
+  for (const r of ordered) {
     const k = keyOf(r);
     if (seen.has(k) || seen.size >= RECOVERY_CITATIONS_MAX) continue;
     const p = parseOffset(r.rawOffset);
@@ -272,7 +311,11 @@ function mapGroup(
   const notCited = Math.max(0, new Set(groupRows.map(keyOf)).size - citations.length);
 
   const spec = PROMOTABLE[algorithm];
-  const degenerate = !filesize || (spec !== undefined && hex === spec.empty);
+  const zeroByte = filesize === 0 || (spec !== undefined && hex === spec.empty);
+  const sizeUnknown = filesize === undefined;
+  // `degenerate` covers both a zero-byte object and an unknown size (schema comment) — neither is
+  // promoted — but the body must say WHICH, never call an unknown size "zero-byte".
+  const degenerate = zeroByte || sizeUnknown;
   const promotable = spec !== undefined && hex.length === spec.len && !degenerate;
 
   const aggKey = boundedAggKey(`bulk-extractor-carved|${reportFingerprint}|${algorithm}|${hex}`);
@@ -300,18 +343,24 @@ function mapGroup(
     : "";
   const anomalyNote = allCachedAnomaly
     ? "; EVERY row was a tool-side duplicate marker — impossible for one pristine feature file, value is importer-synthesized"
-    : "";
+    : orderingAnomaly
+      ? "; row order/shape for this digest is one the tool never writes (edited, pruned or concatenated input)"
+      : "";
   const promoNote = promotable
     ? ""
-    : degenerate
+    : zeroByte
       ? "; zero-byte object, digest not promoted"
-      : "; digest algorithm not promotable";
+      : sizeUnknown
+        ? "; object size not reported or not parseable, digest not promoted"
+        : spec === undefined
+          ? "; digest algorithm not promotable"
+          : "; digest length does not match its algorithm, not promoted";
   const reportTag = `; report ${reportFingerprint.slice(0, 16)}`;
   const body = clip(
     `Carved file (bulk_extractor, ${recorder}): ${value}${valueTruncated ? " [value truncated]" : ""} — ` +
       `${algorithm} ${hex}${filesize !== undefined ? `, ${filesize} bytes` : ""}; ${where}; ` +
       `${occurrences} occurrence(s) in this upload${cachedNote}${anomalyNote}${flagNote}${promoNote}; ` +
-      `completeness not reported by the tool; a recovered file object, not proof it existed as a named ` +
+      `completeness not written by the tool as structured data; a recovered file object, not proof it existed as a named ` +
       `filesystem entry, was executed, opened, or belongs to any user; ` +
       `[undated: bulk_extractor's feature file carries no event time]`,
     600 - reportTag.length,
@@ -361,6 +410,7 @@ function mapGroup(
           occurrences,
           cachedOccurrences,
           allCachedAnomaly,
+          orderingAnomaly,
           completeness: CARVED_COMPLETENESS,
           structuralValidation: CARVED_STRUCTURAL_VALIDATION,
           dedupBasis: CARVED_DEDUP_BASIS,
@@ -381,9 +431,12 @@ export function parseBulkExtractorCarved(
   const version = producerVersion(header) ?? "unknown";
   // `# Filename:` only from the validated header block, never from a data row (#1115's own rule).
   const filenameLine = header.find((l) => /^#\s*Filename:/.test(l));
-  const sourceMedia = filenameLine
+  // headerBlock already caps the whole header at 4096 bytes; bounded again here so the canonical
+  // block's own limit is enforced at the source, not by a neighbour's cap.
+  const sourceMediaRaw = filenameLine
     ? filenameLine.replace(/^#\s*Filename:\s*/, "").trim() || undefined
     : undefined;
+  const sourceMedia = sourceMediaRaw ? clip(sourceMediaRaw, MAX_VALUE_LEN).text : undefined;
   const reportFingerprint = createHash("sha256").update(text).digest("hex");
 
   const stripped = text.startsWith("﻿") ? text.slice(1) : text;
