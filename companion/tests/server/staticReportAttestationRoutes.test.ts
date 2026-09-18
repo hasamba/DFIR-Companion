@@ -157,7 +157,9 @@ describe(ROUTE, () => {
     expect(matches.body.path.rows.map((r: { eventId: string }) => r.eventId)).toEqual(["v1"]);
     expect(matches.body.path.rows[0].identity).toBe("path-only");
     expect(matches.body.caveat).toMatch(/never a verification/);
-    expect(matches.body.hash.skipped).toMatch(/no digest attested/);
+    expect(matches.body.contract).toMatch(/command line/);
+    expect(matches.body.hash.skipped).toMatch(/no digest available/);
+    expect(list.body.caveat).toMatch(/never a verification/);
   });
 
   it("rejects an analyst digest that disagrees with the tool-reported one, and a second active attestation for the same report (400)", async () => {

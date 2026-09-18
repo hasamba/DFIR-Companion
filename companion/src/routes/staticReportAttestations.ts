@@ -7,7 +7,11 @@ import {
   InvalidStaticReportAttestationError,
   type StaticReportAttestation,
 } from "../analysis/staticReportAttestationStore.js";
-import { reportEventsByFingerprint, staticReportMatches } from "../analysis/staticReportMatch.js";
+import {
+  reportEventsByFingerprint,
+  staticReportMatches,
+  STATIC_REPORT_ATTESTATION_CAVEAT,
+} from "../analysis/staticReportMatch.js";
 import { humanIdentityFor } from "./evidenceAttestation.js";
 import type { RouteContext } from "./context.js";
 
@@ -90,7 +94,7 @@ export function registerStaticReportAttestationRoutes(app: Express, ctx: RouteCo
           reportPresent: reportEventsByFingerprint(events, a.reportFingerprint) !== null,
         };
       });
-      return res.status(200).json({ attestations });
+      return res.status(200).json({ attestations, caveat: STATIC_REPORT_ATTESTATION_CAVEAT });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

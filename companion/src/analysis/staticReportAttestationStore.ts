@@ -26,7 +26,7 @@ import { canonicalHostName } from "./hostAlias.js";
 export const STATIC_REPORT_TOOLS = ["olevba", "capa", "floss"] as const;
 export type StaticReportTool = (typeof STATIC_REPORT_TOOLS)[number];
 
-export const DIGEST_CROSS_CHECKS = ["tool-sha256", "md5-only-unchecked", "none"] as const;
+export const DIGEST_CROSS_CHECKS = ["tool-sha256", "tool-md5", "md5-only-unchecked", "none"] as const;
 export type DigestCrossCheck = (typeof DIGEST_CROSS_CHECKS)[number];
 
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -94,7 +94,8 @@ export interface NewStaticReportAttestation {
   supersedesId?: string;
 }
 
-// A client-correctable rejection — a route maps it to 400, never 500.
+// A client-correctable rejection — a route maps it to 400 (create) or 404 (revoke of an unknown
+// id), never 500.
 export class InvalidStaticReportAttestationError extends Error {}
 
 /** The digest this record binds to a host: the analyst's own, else the tool's. */
@@ -128,7 +129,7 @@ function crossCheck(input: NewStaticReportAttestation): DigestCrossCheck {
   const tool = input.toolReportedSha256?.toLowerCase();
   if (!sha) return "none";
   if (tool) return "tool-sha256";
-  if (input.toolReportedMd5) return "md5-only-unchecked";
+  if (input.toolReportedMd5) return input.documentMd5 ? "tool-md5" : "md5-only-unchecked";
   return "none";
 }
 

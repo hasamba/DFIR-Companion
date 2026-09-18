@@ -1,7 +1,11 @@
 import { filePath, sameLocation, hashVeto, type FilePath } from "./downloadExecution.js";
 import type { TimelineEventShape } from "./downloadCorroborationShared.js";
 import { resolveHost, type HostAliasIndex } from "./hostAlias.js";
-import type { StaticReportAttestation, StaticReportTool } from "./staticReportAttestationStore.js";
+import {
+  attestedDigest,
+  type StaticReportAttestation,
+  type StaticReportTool,
+} from "./staticReportAttestationStore.js";
 
 // The read-time join an analyst attestation makes sound (#1316): which victim-host rows name the
 // same location (olevba's own documentPath, on the attested host, through the attested volume
@@ -15,11 +19,10 @@ export const STATIC_REPORT_ATTESTATION_CAVEAT =
 
 export const STATIC_REPORT_MATCH_ROWS_MAX = 50;
 
-// Reports rows carry no time and no host; a process-creation row names a document only in its
-// command line, which this join does not read (top-level `path` only) — so an empty result never
-// means "never executed".
+// Report rows carry no time and no host; a process-creation row names a document only in its
+// command line, which this join does not read.
 export const PATH_JOIN_CONTRACT =
-  "path rows read a victim row's own top-level path only; the staged copy must keep the victim's relative path below the mount for a match to be possible";
+  "path rows read a victim row's own top-level path only (a process-creation row naming the document in its command line is not read), so an empty result never means the file was never opened or executed; the staged copy must keep the victim's relative path below the mount for a match to be possible";
 
 interface FingerprintBlock {
   reportFingerprint: string;
@@ -91,12 +94,16 @@ export function reportEventsByFingerprint<T extends StaticReportEventShape>(
 // and the raw CLI YARA importer (`sources` ["YARA"] alone — yaraImport.ts's own header says it is
 // an analyst-workstation scan). A SO-CRATES row carries ["SO-CRATES","YARA"] and a Velociraptor
 // YARA row no "YARA" at all — both are victim-side hunts and must NOT be excluded.
-const ANALYST_SOURCES = new Set(["olevba", "capa", "FLOSS", "PE-sieve"]);
-function isAnalystSide(e: StaticReportEventShape): boolean {
+// Spellings pinned by tests against the real importers' own output (olevbaResultImport.ts
+// "olevba", capaResultImport.ts "capa", flossResultImport.ts "FLOSS", pesieveImport.ts "PE-sieve",
+// yaraImport.ts YARA_SOURCE "YARA").
+const ANALYST_SOURCES = new Set(["olevba", "capa", "FLOSS", "PE-sieve", "YARA"]);
+const VICTIM_SIDE_SOURCES = new Set(["SO-CRATES", "Velociraptor"]);
+export function isAnalystSideRow(e: StaticReportEventShape): boolean {
   if (reportBlock(e)) return true;
   const sources = e.sources ?? [];
-  if (sources.some((s) => ANALYST_SOURCES.has(s))) return true;
-  return sources.includes("YARA") && !sources.includes("SO-CRATES") && !sources.includes("Velociraptor");
+  if (sources.some((s) => VICTIM_SIDE_SOURCES.has(s))) return false;
+  return sources.some((s) => ANALYST_SOURCES.has(s));
 }
 
 export interface StaticReportMatchRow {
@@ -104,11 +111,12 @@ export interface StaticReportMatchRow {
   timestamp: string;
   host: string;
   hostIsAttestedSubject: boolean;
-  identity: "path-only" | "analyst-attested-digest";
+  identity: "path-only" | "analyst-attested-digest" | "tool-reported-digest";
   victimPath?: string;
   victimSha256?: string;
   volumeNote?: string;
   digestConflict?: boolean;
+  digestAgrees?: boolean;
   basis: string;
 }
 
@@ -132,7 +140,9 @@ export interface StaticReportMatches {
     subjectHostCanonical: string;
     subjectHostKnown: boolean;
     documentOutsideAttestedMount: boolean;
+    volumelessDocumentPaths: number;
     volumeMismatchWithoutMapping: number;
+    volumeMismatchDespiteMapping: number;
     unattributedHostRows: number;
     md5OnlyVictimRows: number;
     pathJoinSkipped?: string;
@@ -166,10 +176,11 @@ function effectiveStagedPath(
   staged: FilePath,
   volume: StaticReportAttestation["evidenceVolume"],
 ): { effective: FilePath; outsideMount: boolean } {
-  if (!volume?.originalVolume) return { effective: staged, outsideMount: false };
+  if (!volume) return { effective: staged, outsideMount: false };
   const underMount =
     staged.volumeKind === volume.mountPoint.volumeKind && staged.volume === volume.mountPoint.volume;
   if (!underMount) return { effective: staged, outsideMount: true };
+  if (!volume.originalVolume) return { effective: staged, outsideMount: false };
   return { effective: { ...volume.originalVolume, relative: staged.relative }, outsideMount: false };
 }
 
@@ -183,7 +194,9 @@ export function staticReportMatches<T extends StaticReportEventShape>(input: {
   const prefix = revoked ? "ATTESTATION REVOKED — " : "";
   const subject = resolveHost(aliasIndex, att.subjectHost);
   const hostOf = (e: T): string | undefined => (e.asset ? resolveHost(aliasIndex, e.asset) : undefined);
-  const subjectHostKnown = events.some((e) => hostOf(e) === subject);
+  // Known through a VICTIM row only — an analyst-workstation row naming the subject host proves
+  // nothing about the victim (review #14).
+  const subjectHostKnown = events.some((e) => !isAnalystSideRow(e) && hostOf(e) === subject);
   const report = reportEventsByFingerprint(events, att.reportFingerprint);
 
   const diagnostics: StaticReportMatches["diagnostics"] = {
@@ -191,35 +204,56 @@ export function staticReportMatches<T extends StaticReportEventShape>(input: {
     subjectHostCanonical: subject,
     subjectHostKnown,
     documentOutsideAttestedMount: false,
+    volumelessDocumentPaths: 0,
     volumeMismatchWithoutMapping: 0,
+    volumeMismatchDespiteMapping: 0,
     unattributedHostRows: 0,
     md5OnlyVictimRows: 0,
   };
 
   const attestedWhen = `attested by ${att.attestedBy} at ${att.attestedAt}`;
-  const digest = att.documentSha256;
+  // The digest this attestation binds to the host: the analyst's own, else the one the tool's own
+  // sample metadata reported (capa/FLOSS) — the same value the store's one-host-per-document rule
+  // already binds (review #1). Which one it was is stated on every hash row.
+  const digest = attestedDigest(att);
+  const digestProvenance = att.documentSha256
+    ? "digest supplied by the analyst's attestation of the staged copy"
+    : "digest read from the tool's own sample metadata, not hashed by the analyst";
 
   // ── path kind ──
   const pathRows: StaticReportMatchRow[] = [];
   let pathExcluded = 0;
+  const mismatchNoMapping = new Set<string>();
+  const mismatchDespiteMapping = new Set<string>();
   const documentPaths = new Set<string>();
   for (const e of report?.events ?? []) {
     const p = reportBlock(e)?.block.documentPath;
     if (p) documentPaths.add(p);
   }
   const staged = [...documentPaths].map((p) => filePath(p)).filter((p): p is FilePath => p !== null);
+  diagnostics.volumelessDocumentPaths = staged.filter((s) => s.volumeKind === "none").length;
+  const placeable = staged.filter((s) => s.volumeKind !== "none");
   if (report?.tool !== "olevba") {
     diagnostics.pathJoinSkipped = report
       ? `${report.tool} reports carry no document path`
       : "report not present in this case";
-  } else if (staged.length === 0 || staged.every((s) => s.volumeKind === "none")) {
+  } else if (staged.length === 0) {
+    diagnostics.pathJoinSkipped = "the report names no document path";
+  } else if (placeable.length === 0) {
     diagnostics.pathJoinSkipped =
       "document path names no volume — a staged path without a drive, GUID or device cannot be placed on the victim";
   } else {
-    for (const s of staged) {
-      if (s.volumeKind === "none") continue;
+    for (const s of placeable) {
       const { effective, outsideMount } = effectiveStagedPath(s, att.evidenceVolume);
-      if (outsideMount) diagnostics.documentOutsideAttestedMount = true;
+      if (outsideMount) {
+        // The staged copy is not under the attested mount, so the attested mapping says nothing
+        // about it — a raw comparison would produce rows indistinguishable from a mapping-earned
+        // match (review #2). Skipped and said, never compared as written.
+        diagnostics.documentOutsideAttestedMount = true;
+        diagnostics.pathJoinSkipped =
+          "the staged document is not under the attested mount point — the attested volume mapping cannot place it, so no path rows were computed";
+        continue;
+      }
       for (const e of events) {
         if (!e.path) continue;
         const victim = filePath(e.path);
@@ -228,13 +262,15 @@ export function staticReportMatches<T extends StaticReportEventShape>(input: {
         if (!loc.same) {
           if (
             victim.relative === effective.relative &&
-            !att.evidenceVolume?.originalVolume &&
-            victim.volumeKind === effective.volumeKind
-          )
-            diagnostics.volumeMismatchWithoutMapping += 1;
+            victim.volumeKind === effective.volumeKind &&
+            !isAnalystSideRow(e) &&
+            hostOf(e) === subject
+          ) {
+            (att.evidenceVolume?.originalVolume ? mismatchDespiteMapping : mismatchNoMapping).add(e.id ?? "");
+          }
           continue;
         }
-        if (isAnalystSide(e)) {
+        if (isAnalystSideRow(e)) {
           pathExcluded += 1;
           continue;
         }
@@ -244,7 +280,9 @@ export function staticReportMatches<T extends StaticReportEventShape>(input: {
           continue;
         }
         if (host !== subject) continue;
+        const victimSha = e.sha256?.toLowerCase();
         const conflict = Boolean(digest) && hashVeto({ sha256: digest }, e);
+        const agrees = Boolean(digest) && victimSha === digest;
         pathRows.push({
           eventId: e.id ?? "",
           timestamp: e.timestamp ?? "",
@@ -255,46 +293,56 @@ export function staticReportMatches<T extends StaticReportEventShape>(input: {
           ...(e.sha256 ? { victimSha256: e.sha256 } : {}),
           ...(loc.volumeNote ? { volumeNote: loc.volumeNote } : {}),
           ...(conflict ? { digestConflict: true } : {}),
+          ...(agrees ? { digestAgrees: true } : {}),
           basis: conflict
             ? `${prefix}same path on the attested subject host, but the victim row's own digest DISAGREES with the attested document — a different file at this path; host identity ${attestedWhen}`
-            : `${prefix}same path on the attested subject host; host identity ${attestedWhen}, not hash-verified — a different file could occupy this path at a different time`,
+            : agrees
+              ? `${prefix}same path on the attested subject host, and the victim row's own digest AGREES with the attested document (${digestProvenance}); host identity ${attestedWhen}`
+              : `${prefix}same path on the attested subject host; host identity ${attestedWhen}, not hash-verified — a different file could occupy this path at a different time`,
         });
       }
     }
   }
+  diagnostics.volumeMismatchWithoutMapping = mismatchNoMapping.size;
+  diagnostics.volumeMismatchDespiteMapping = mismatchDespiteMapping.size;
 
   // ── hash kind ──
   const hashRows: StaticReportMatchRow[] = [];
   let hashExcluded = 0;
   let hashBasis: string | undefined;
   let hashSkipped: string | undefined;
+  for (const e of events) {
+    if (!e.sha256 && e.md5 && !isAnalystSideRow(e)) diagnostics.md5OnlyVictimRows += 1;
+  }
   if (!digest) {
-    hashSkipped = "no digest attested — the analyst did not hash the staged copy and the tool reported none";
+    hashSkipped =
+      "no digest available — the analyst did not hash the staged copy and the tool's own sample metadata reported none";
   } else {
     const crossCheck =
       att.digestCrossCheck === "tool-sha256"
         ? "corroborated by the tool's own sha256 of the sample"
-        : att.digestCrossCheck === "md5-only-unchecked"
-          ? "not cross-checked (the tool reported only an md5)"
-          : "not cross-checked (the tool reported no digest)";
-    hashBasis = `digest supplied by the analyst's attestation of the staged copy, ${crossCheck}; sha256 equality only — an md5-only victim row can never match`;
+        : att.digestCrossCheck === "tool-md5"
+          ? "corroborated at md5 strength only (the tool reported only an md5, the analyst supplied a matching one)"
+          : att.digestCrossCheck === "md5-only-unchecked"
+            ? "not cross-checked (the tool reported only an md5 and the analyst supplied none)"
+            : att.documentSha256
+              ? "not cross-checked (the tool reported no digest)"
+              : "the tool's own value, nothing independent to check it against";
+    hashBasis = `${digestProvenance}, ${crossCheck}; sha256 equality only — an md5-only victim row can never match`;
     for (const e of events) {
-      if (!e.sha256) {
-        if (e.md5) diagnostics.md5OnlyVictimRows += 1;
-        continue;
-      }
-      if (e.sha256.toLowerCase() !== digest) continue;
-      if (isAnalystSide(e)) {
+      if (!e.sha256 || e.sha256.toLowerCase() !== digest) continue;
+      if (isAnalystSideRow(e)) {
         hashExcluded += 1;
         continue;
       }
-      const host = hostOf(e) ?? "";
+      const host = hostOf(e);
+      if (!host) diagnostics.unattributedHostRows += 1;
       hashRows.push({
         eventId: e.id ?? "",
         timestamp: e.timestamp ?? "",
-        host,
+        host: host ?? "",
         hostIsAttestedSubject: host === subject,
-        identity: "analyst-attested-digest",
+        identity: att.documentSha256 ? "analyst-attested-digest" : "tool-reported-digest",
         victimSha256: e.sha256,
         ...(e.path ? { victimPath: e.path } : {}),
         basis: `${prefix}${hashBasis}; ${attestedWhen}`,

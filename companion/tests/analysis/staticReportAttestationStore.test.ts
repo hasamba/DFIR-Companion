@@ -8,10 +8,14 @@ import {
   volumeToken,
 } from "../../src/analysis/staticReportAttestationStore.js";
 
+import { mkdir } from "node:fs/promises";
+import { ZodError } from "zod";
+
 let dir = "";
-const cases = { stateDir: () => dir } as unknown as ConstructorParameters<
-  typeof StaticReportAttestationStore
->[0];
+// Per-case dirs like the real CaseStore, so a cross-case isolation test means something.
+const cases = {
+  stateDir: (caseId: string) => join(dir, caseId),
+} as unknown as ConstructorParameters<typeof StaticReportAttestationStore>[0];
 
 type NewInput = Parameters<StaticReportAttestationStore["create"]>[1];
 
@@ -33,6 +37,8 @@ function attestation(over: Partial<NewInput> = {}): NewInput {
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "static-report-attestation-"));
+  await mkdir(join(dir, "c1"));
+  await mkdir(join(dir, "c2"));
 });
 
 describe("volumeToken (review finding M-7)", () => {
@@ -71,11 +77,13 @@ describe("StaticReportAttestationStore", () => {
 
   it("rejects a malformed fingerprint, an empty host and an unknown tool", async () => {
     const store = new StaticReportAttestationStore(cases);
-    await expect(store.create("c1", attestation({ reportFingerprint: "abc" }))).rejects.toBeTruthy();
-    await expect(store.create("c1", attestation({ subjectHost: "   " }))).rejects.toBeTruthy();
+    await expect(store.create("c1", attestation({ reportFingerprint: "abc" }))).rejects.toBeInstanceOf(
+      ZodError,
+    );
+    await expect(store.create("c1", attestation({ subjectHost: "   " }))).rejects.toBeInstanceOf(ZodError);
     await expect(
       store.create("c1", attestation({ tool: "pesieve" as unknown as "olevba" })),
-    ).rejects.toBeTruthy();
+    ).rejects.toBeInstanceOf(ZodError);
   });
 
   it("normalizes evidenceVolume tokens at write time and rejects one that names no volume", async () => {
@@ -113,13 +121,30 @@ describe("StaticReportAttestationStore", () => {
     expect(ok.documentSha256).toBe(SHA_1);
   });
 
-  it("records md5-only-unchecked when the tool reported only an md5 (M-3)", async () => {
+  it("records md5-only-unchecked when the tool reported only an md5 and the analyst supplied none, tool-md5 when both agree, and rejects a disagreeing analyst md5 (M-3, code review #6/#13)", async () => {
     const store = new StaticReportAttestationStore(cases);
     const a = await store.create(
       "c1",
       attestation({ documentSha256: SHA_1, toolReportedMd5: "f".repeat(32) }),
     );
     expect(a.digestCrossCheck).toBe("md5-only-unchecked");
+    await store.revoke("c1", a.id, "x", "2026-09-18T01:00:00Z");
+    const b = await store.create(
+      "c1",
+      attestation({ documentSha256: SHA_1, documentMd5: "F".repeat(32), toolReportedMd5: "f".repeat(32) }),
+    );
+    expect(b.digestCrossCheck).toBe("tool-md5");
+    expect(b.documentMd5).toBe("f".repeat(32));
+    await expect(
+      store.create(
+        "c1",
+        attestation({
+          reportFingerprint: FP_B,
+          documentMd5: "e".repeat(32),
+          toolReportedMd5: "f".repeat(32),
+        }),
+      ),
+    ).rejects.toThrow(/documentMd5 .* disagrees/);
   });
 
   it("allows only one ACTIVE attestation per fingerprint (M-1)", async () => {
@@ -191,17 +216,18 @@ describe("StaticReportAttestationStore", () => {
 
   it("fails closed on a corrupt file and leaves it untouched", async () => {
     const store = new StaticReportAttestationStore(cases);
-    await writeFile(join(dir, "static-report-attestations.json"), "{not json");
+    await writeFile(join(dir, "c1", "static-report-attestations.json"), "{not json");
     await expect(store.load("c1")).rejects.toThrow(/not valid JSON/);
-    await writeFile(join(dir, "static-report-attestations.json"), JSON.stringify({ version: 1 }));
+    await writeFile(join(dir, "c1", "static-report-attestations.json"), JSON.stringify({ version: 1 }));
     await expect(store.load("c1")).rejects.toThrow(/does not match/);
   });
 
-  it("keeps cases isolated by stateDir", async () => {
+  it("keeps cases isolated on the same store — c2 never sees c1's attestation and may attest the same fingerprint", async () => {
     const store = new StaticReportAttestationStore(cases);
-    await store.create("c1", attestation());
-    const other = await mkdtemp(join(tmpdir(), "static-report-attestation-other-"));
-    const store2 = new StaticReportAttestationStore({ stateDir: () => other });
-    expect(await store2.load("c2")).toEqual([]);
+    await store.create("c1", attestation({ subjectHost: "ws-01" }));
+    expect(await store.load("c2")).toEqual([]);
+    const other = await store.create("c2", attestation({ subjectHost: "ws-02" }));
+    expect(other.subjectHost).toBe("ws-02");
+    expect(await store.load("c1")).toHaveLength(1);
   });
 });
