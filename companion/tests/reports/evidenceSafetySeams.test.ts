@@ -12,6 +12,7 @@ import { renderStandalonePresentationChecked } from "../../src/reports/presentat
 import { emptyState, type InvestigationState } from "../../src/analysis/stateTypes.js";
 import { createApp } from "../../src/server.js";
 import * as evidenceSafety from "../../src/reports/evidenceSafety.js";
+import { awaitActivityEntries } from "../helpers/activityLog.js";
 
 // #1006 — the check is wired at the door of every human-readable export. Every exporter defangs
 // and escapes correctly today, so the real renderers produce no finding (the first block pins
@@ -192,12 +193,18 @@ describe("the deck check reads the finished file", () => {
   });
 });
 
-// The activity append is fire-and-forget at the route; give it a turn before reading the log.
-async function settled(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 20));
+// The activity append is fire-and-forget at the route (`void logActivity(...)` in
+// evidenceSafetyLog.ts), so the response can land before the entry does. A fixed sleep here lost
+// that race on contended Linux CI (#1320: "expected [] to deeply equal [...]" while the same commit
+// passed on Windows and 3/3 locally). The wait IS the assertion — poll on a wall-clock budget via
+// the shared helper, exactly as tests/helpers/activityLog.ts documents.
+async function warnings() {
+  return awaitActivityEntries(app, "c1", "evidence-safety-warning");
 }
 
-async function warnings() {
-  await settled();
-  return (await activityLogStore.load("c1")).filter((e) => e.action === "evidence-safety-warning");
+// A NEGATIVE assertion ("nothing was logged") cannot be polled for; the one test that makes it
+// gives the append a generous turn instead. It can only fail in the safe direction (a late entry
+// would fail it, never pass it), so it is not a flake source.
+async function settled(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 100));
 }
