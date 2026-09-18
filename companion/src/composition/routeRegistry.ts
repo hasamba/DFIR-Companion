@@ -69,6 +69,7 @@ import { registerHostDuplicateRoutes } from "../routes/hostDuplicates.js";
 import { registerProxyHostIdentityRoutes } from "../routes/proxyHostIdentity.js";
 import { registerResolverEndpointIdentityRoutes } from "../routes/resolverEndpointIdentity.js";
 import { registerDnsCrossUploadConnRoutes } from "../routes/dnsCrossUploadConnMatches.js";
+import { registerDnsEndpointCrossUploadConnRoutes } from "../routes/dnsEndpointCrossUploadConnMatches.js";
 import { registerAiStateRoutes } from "../routes/aiState.js";
 import { registerClockSkewRoutes } from "../routes/clockSkew.js";
 import {
@@ -197,6 +198,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerProxyHostIdentityRoutes(app, ctx);
   registerResolverEndpointIdentityRoutes(app, ctx);
   registerDnsCrossUploadConnRoutes(app, ctx);
+  registerDnsEndpointCrossUploadConnRoutes(app, ctx);
   registerAiStateRoutes(app, ctx);
   registerClockSkewRoutes(app, ctx);
   registerCoachRoutes(app, ctx);
