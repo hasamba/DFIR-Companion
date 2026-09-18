@@ -7,6 +7,7 @@ import { join } from "node:path";
 import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
+import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import { createApp } from "../../src/server.js";
 import { createCanonicalEvent } from "../../src/analysis/canonicalEvent.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
@@ -19,6 +20,16 @@ async function makeApp() {
   const app = createApp(store, { stateStore });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
   return { app, stateStore };
+}
+
+async function makeAppWithSuperTimeline() {
+  const root = await mkdtemp(join(tmpdir(), "dfir-resolver-endpoint-super-"));
+  const store = new CaseStore(root);
+  const stateStore = new StateStore(store);
+  const superTimelineStore = new SuperTimelineStore(store);
+  const app = createApp(store, { stateStore, superTimelineStore });
+  await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+  return { app, stateStore, superTimelineStore };
 }
 
 function logonEvent(id: string, host: string, client: string, ip: string, ts: string): ForensicEvent {
@@ -193,5 +204,32 @@ describe("GET /cases/:id/resolver-endpoint-matches", () => {
     const res = await request(app).get("/cases/nonexistent-case/resolver-endpoint-matches");
     expect(res.status).toBe(200);
     expect(res.body.matches).toEqual([]);
+  });
+
+  // #1277: dab20efe added the forensic ∪ super-timeline union read (#1243) but neither route's own
+  // suite proved it. The resolver row and its endpoint confirmation live ONLY in the super-timeline
+  // (as they would under the severity gate, which routes Info/Low rows there) — if the route ever
+  // regressed to reading state.forensicTimeline alone, both would vanish and no match would appear.
+  it("resolves and confirms a resolver row that lives only in the super-timeline, not the forensic timeline", async () => {
+    const { app, stateStore, superTimelineStore } = await makeAppWithSuperTimeline();
+    await stateStore.save(stateWith([logonEvent("l1", "fs-01", "ws-042", "10.0.0.5", "2026-06-10T12:00:00Z")]));
+    await superTimelineStore.append("c1", [
+      resolverEvent("r1", "10.0.0.5", "cdn.example.net", "2026-06-10T12:05:00Z"),
+      endpointDnsEvent("e1", "ws-042", "cdn.example.net", "2026-06-10T12:05:01Z"),
+    ]);
+
+    const res = await request(app).get("/cases/c1/resolver-endpoint-matches");
+    expect(res.status).toBe(200);
+    expect(res.body.matches).toHaveLength(1);
+    expect(res.body.matches[0]).toMatchObject({ eventId: "r1", outcome: "matched" });
+    expect(res.body.matches[0].hosts).toEqual([
+      {
+        host: "ws-042",
+        sampleTime: "2026-06-10T12:00:00Z",
+        evidenceEventIds: ["l1"],
+        endpointQuery: "found",
+        endpointEventIds: ["e1"],
+      },
+    ]);
   });
 });
