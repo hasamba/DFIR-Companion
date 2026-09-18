@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatCaseQualityReport,
   passesCaseQuality,
   scoreCaseQuality,
   type CaseGolden,
@@ -493,5 +494,33 @@ describe("passesCaseQuality real-run tolerance (#1217)", () => {
     expect(
       passesCaseQuality({ ...baseScore, confidenceIssues: ["f1: confidence has no reason"] }, { real: true }),
     ).toBe(false);
+  });
+});
+
+// #1228: a real run doesn't gate on claims precision, but the report kept labeling an extra,
+// non-gating claim "false conclusion" — reading as a hard failure right next to a [PASS] banner.
+describe("formatCaseQualityReport labels non-gating extras accurately on a real run (#1228)", () => {
+  const scoreWithExtra: CaseQualityScore = {
+    claims: { total: 1, matched: 1, precision: 0.5, recall: 1, missed: [], falseConclusions: ["f-extra"] },
+    iocs: { total: 1, matched: 1, precision: 1, recall: 1, missed: [], unexpected: [] },
+    danglingEvidenceRefs: [],
+    forbiddenConclusions: [],
+    confidenceIssues: [],
+    uncertainties: { total: 1, matched: 1, recall: 1, missed: [] },
+    nextSteps: { total: 1, matched: 1, recall: 1, missed: [] },
+    abstentionPassed: true,
+  };
+
+  it("prints a hard-failure-reading 'false conclusion' label on a mock/deterministic run (default, unchanged)", () => {
+    const report = formatCaseQualityReport("some-case", scoreWithExtra);
+    expect(report).toContain("[FAIL]"); // precision still gates by default
+    expect(report).toContain("false conclusion f-extra");
+  });
+
+  it("relabels the same extra as a non-gating note on a real run, never as 'false conclusion'", () => {
+    const report = formatCaseQualityReport("some-case", scoreWithExtra, { real: true });
+    expect(report).toContain("[PASS]"); // precision doesn't gate on a real run
+    expect(report).not.toContain("false conclusion");
+    expect(report).toContain("note: extra conclusion f-extra (not gated)");
   });
 });

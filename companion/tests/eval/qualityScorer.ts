@@ -440,9 +440,15 @@ export function formatCaseQualityReport(
     `  IOC precision ${pct(score.iocs.precision)} recall ${pct(score.iocs.recall)}`,
     `  uncertainty recall ${pct(score.uncertainties.recall)} next-step recall ${pct(score.nextSteps.recall)}`,
   ];
+  // On a real run, an extra claim beyond the golden's evidence doesn't fail the gate — precision
+  // is non-gating there (see PassesCaseQualityOptions) — so labeling it "false conclusion" reads
+  // as a hard failure sitting right next to a [PASS] banner. Relabel as a note instead (#1228).
+  // Mock/deterministic reports (the default) are unchanged: precision still gates there.
+  const falseConclusionLabel = (id: string): string =>
+    options.real ? `note: extra conclusion ${id} (not gated)` : `false conclusion ${id}`;
   const problems = [
     ...score.claims.missed.map((id) => `missed claim ${id}`),
-    ...score.claims.falseConclusions.map((id) => `false conclusion ${id}`),
+    ...score.claims.falseConclusions.map(falseConclusionLabel),
     ...score.forbiddenConclusions.map((id) => `forbidden conclusion ${id}`),
     ...score.confidenceIssues,
     ...score.uncertainties.missed.map((id) => `missed uncertainty ${id}`),
