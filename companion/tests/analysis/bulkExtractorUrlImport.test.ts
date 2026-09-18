@@ -167,6 +167,9 @@ describe("parseBulkExtractorUrl — recursive forensic-path parsing", () => {
     const r = parseBulkExtractorUrl(makeFile([row, DIRECT_ROW]))!;
     expect(r.malformedRows).toBe(1);
     expect(r.events).toHaveLength(1); // only DIRECT_ROW survives
+    // #1142: dropped was hardcoded to 0, so total !== kept + dropped whenever a row was malformed.
+    expect(r.dropped).toBe(1);
+    expect(r.total).toBe(r.kept + r.dropped);
   });
 
   it("never crashes on a garbage offset field (absent provenance)", () => {
