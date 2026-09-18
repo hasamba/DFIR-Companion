@@ -1005,7 +1005,7 @@ export function mapWindows(
     ...(sourceIp || destinationIp || (Number.isInteger(destinationPort) && destinationPort > 0)
       ? {
           network: {
-            ...(sourceIp ? { source: { address: sourceIp } } : {}),
+            ...(sourceIp ? { source: { address: sourceIp, provenance: "edge-observed" } } : {}), // #1265: Windows EVTX field, OS kernel-level, never a client header
             ...(destinationIp || (Number.isInteger(destinationPort) && destinationPort > 0)
               ? {
                   destination: {

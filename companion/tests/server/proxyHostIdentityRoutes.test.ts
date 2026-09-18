@@ -36,7 +36,7 @@ function logonEvent(id: string, host: string, client: string, ip: string, ts: st
       target: { kind: "host", name: host },
       authentication: { logonType: 3 },
       session: { terminal: client },
-      network: { source: { address: ip } },
+      network: { source: { address: ip, provenance: "edge-observed" } }, // #1265: the real Zeek/EVTX stamp
       time: { observed: ts, normalized: ts },
       evidence: { rawRecords: [{ source: "test", locator: `row:${id}` }] },
       producer: { importer: "test", parserVersion: "1", mappingVersion: "1" },
@@ -55,7 +55,7 @@ function webEvent(id: string, ip: string, ts: string): ForensicEvent {
     sourceScreenshots: [],
     canonical: createCanonicalEvent({
       event: { category: "network", type: "web-request" },
-      network: { source: { address: ip } },
+      network: { source: { address: ip, provenance: "edge-observed" } }, // #1265: the real Zeek/EVTX stamp
       time: { observed: ts, normalized: ts },
       evidence: { rawRecords: [{ source: "zeek-http", locator: `row:${id}` }] },
       producer: { importer: "zeek", parserVersion: "1", mappingVersion: "1" },

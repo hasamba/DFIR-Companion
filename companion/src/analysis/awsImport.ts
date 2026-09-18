@@ -432,7 +432,7 @@ function mapRecord(rec: Row, sink: Map<string, SiemIoc>, recordIndex = 0): Repli
       : resource
         ? { target: { kind: "other", name: resource } }
         : {}),
-    ...(ip ? { network: { source: { address: ip } } } : {}),
+    ...(ip ? { network: { source: { address: ip, provenance: "edge-observed" } } } : {}),
     // The credential and the session issuer, typed (#931 item 5): a later row that used the
     // credential an issuance minted is matched on `credentialId`, never on a display name.
     ...(who2.credentialIdentity || who2.issuer?.arn || who2.protocol || who2.kind !== "Unknown"

@@ -41,7 +41,11 @@ function logonEvent(o: {
       target: { kind: "host", name: o.sessionHost },
       authentication: { logonType: o.logonType ?? 3 },
       ...(o.clientName ? { session: { terminal: o.clientName } } : {}),
-      ...(o.ip ? { network: { source: { address: o.ip } } } : {}),
+      // #1265: siemImport.ts's own real Windows EVTX IpAddress/SourceIp/SourceAddress mapping
+      // stamps provenance -- a FAILED logon (outcome: "failed", used by a test further down this
+      // file) is never indexed into hostBinding.ts's own index, so it flows through as a real,
+      // eligible address-path candidate here, same as production.
+      ...(o.ip ? { network: { source: { address: o.ip, provenance: "edge-observed" } } } : {}),
       ...(o.accountName
         ? { account: { name: o.accountName, ...(o.accountDomain ? { domain: o.accountDomain } : {}) } }
         : {}),
@@ -66,7 +70,7 @@ function webChainEvent(o: { ip: string; ts: string; locator?: string }): Forensi
     sourceScreenshots: [],
     canonical: createCanonicalEvent({
       event: { category: "network", type: "web-request" },
-      network: { source: { address: o.ip } },
+      network: { source: { address: o.ip, provenance: "edge-observed" } },
       time: { observed: o.ts, normalized: o.ts },
       evidence: { rawRecords: [{ source: "zeek-http", locator: o.locator ?? `row:${seq}` }] },
       producer: { importer: "zeek", parserVersion: "1", mappingVersion: "1" },
@@ -75,8 +79,16 @@ function webChainEvent(o: { ip: string; ts: string; locator?: string }): Forensi
 }
 
 /** A Squid/combined-access-log-shaped event: carries network.source.address but NO canonical.web
- * -- must still be eligible for the IP join (combinedLogImport.ts:491's own real behavior). */
-function combinedLogEvent(o: { ip: string; ts: string }): ForensicEvent {
+ * -- must still be eligible for the IP join (combinedLogImport.ts:491's own real behavior).
+ * Stamps `provenance: "edge-observed"` by default (the real, correct stamp per #1265); pass
+ * `unprovenanced: true` to build the #1265 negative-control fixture (e.g. an emailImport.ts-shaped
+ * or exchangeAuditImport.ts-shaped event) without a second helper. */
+function combinedLogEvent(o: {
+  ip: string;
+  ts: string;
+  category?: CanonicalEventCategory;
+  unprovenanced?: boolean;
+}): ForensicEvent {
   seq += 1;
   return {
     id: `combined-${seq}`,
@@ -87,8 +99,8 @@ function combinedLogEvent(o: { ip: string; ts: string }): ForensicEvent {
     relatedFindingIds: [],
     sourceScreenshots: [],
     canonical: createCanonicalEvent({
-      event: { category: "network", type: "web-request" },
-      network: { source: { address: o.ip } },
+      event: { category: o.category ?? "network", type: "web-request" },
+      network: { source: { address: o.ip, ...(o.unprovenanced ? {} : { provenance: "edge-observed" }) } },
       time: { observed: o.ts, normalized: o.ts },
       evidence: { rawRecords: [{ source: "combined-access-log", locator: `row:${seq}` }] },
       producer: { importer: "combined-log", parserVersion: "1", mappingVersion: "1" },
@@ -111,7 +123,7 @@ function proxyAccountEvent(o: { account: string; ip?: string; ts: string }): For
     sourceScreenshots: [],
     canonical: createCanonicalEvent({
       event: { category: "network", type: "web-request" },
-      ...(o.ip ? { network: { source: { address: o.ip } } } : {}),
+      ...(o.ip ? { network: { source: { address: o.ip, provenance: "edge-observed" } } } : {}),
       account: { name: o.account },
       web: {
         method: "GET",
@@ -301,7 +313,7 @@ describe("resolveProxyHostIdentity", () => {
       count: 2,
       canonical: createCanonicalEvent({
         event: { category: "network", type: "web-request" },
-        network: { source: { address: "10.0.0.5" } },
+        network: { source: { address: "10.0.0.5", provenance: "edge-observed" } },
         time: { observed: "2026-06-10T12:00:00Z", normalized: "2026-06-10T12:00:00Z" },
         evidence: {
           rawRecords: [
@@ -465,6 +477,134 @@ describe("resolveProxyHostIdentity", () => {
       expect(results[0].outcome).toBe("ambiguous");
       const byHost = Object.fromEntries(results[0].hosts.map((h) => [h.host, h.via]));
       expect(byHost).toEqual({ "ws-proxy-exit": ["address"], "ws-alice-laptop": ["account"] });
+    });
+  });
+
+  // ── #1265: provenance-scoped address path ─────────────────────────────────────────────────
+  describe('#1265 -- the address path requires network.source.provenance === "edge-observed"', () => {
+    it('does NOT match on an unprovenanced address, even in category "email" -- the exact #1184/#1267 exploit scenario', () => {
+      const logon = logonEvent({
+        sessionHost: "fs-01",
+        clientName: "ws-042",
+        ip: "10.0.0.5",
+        ts: "2026-06-10T12:00:00Z",
+      });
+      // Reproduces the STRUCTURAL shape of #1184/#1267's own finding (a matching
+      // category-"email" address with no provenance flag) -- it does not literally replay
+      // emailImport.ts's own producer/evidence metadata, only the category+unprovenanced-address
+      // combination that made the exploit possible. No account either, so the event carries no
+      // eligible identity at all under the new guard -- it produces NO entry, exactly like
+      // "ignores an event with no network.source.address at all" above (the unprovenanced address
+      // is invisible to this reader, not merely unmatched).
+      const forged = combinedLogEvent({
+        ip: "10.0.0.5",
+        ts: "2026-06-10T12:05:00Z",
+        category: "email",
+        unprovenanced: true,
+      });
+      expect(resolveProxyHostIdentity([logon, forged], EMPTY_ALIAS, 21_600_000)).toEqual([]);
+    });
+
+    it('DOES match a provenance-stamped address in category "email" -- category alone never gates eligibility', () => {
+      // exchangeAuditImport.ts/mailboxChain.ts are both confirmed edge-observed by #1267's own
+      // audit and both write category: "email" -- proves the gate is provenance-scoped, not
+      // accidentally re-implementing the category allowlist this design explicitly rejected.
+      const logon = logonEvent({
+        sessionHost: "fs-01",
+        clientName: "ws-042",
+        ip: "10.0.0.5",
+        ts: "2026-06-10T12:00:00Z",
+      });
+      const exchangeAudit = combinedLogEvent({
+        ip: "10.0.0.5",
+        ts: "2026-06-10T12:05:00Z",
+        category: "email",
+      });
+      const results = resolveProxyHostIdentity([logon, exchangeAudit], EMPTY_ALIAS, 21_600_000);
+      expect(results).toHaveLength(1);
+      expect(results[0]).toMatchObject({ eventId: exchangeAudit.id, outcome: "matched" });
+      expect(results[0].hosts.map((h) => h.host)).toEqual(["ws-042"]);
+    });
+
+    it("nulls only the unprovenanced address, never the whole event -- the account path still resolves on its own trust class", () => {
+      const logon = logonEvent({
+        sessionHost: "ws-042",
+        ts: "2026-06-10T11:00:00Z",
+        accountName: "alice",
+        logonType: 2,
+      });
+      // An unprovenanced address on a proxyAccountEvent-shaped row alongside a verified account.
+      const event: ForensicEvent = {
+        id: "unprov-acct",
+        timestamp: "2026-06-10T11:05:00Z",
+        description: "GET / [alice]",
+        severity: "Info",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        canonical: createCanonicalEvent({
+          event: { category: "network", type: "web-request" },
+          network: { source: { address: "10.0.0.5" } }, // no provenance -- e.g. a forged header
+          account: { name: "alice" },
+          web: {
+            method: "GET",
+            target: "/",
+            targetForm: "origin",
+            responseState: "recorded",
+            bodies: [],
+            bodiesTotal: 0,
+            records: 1,
+          },
+          time: { observed: "2026-06-10T11:05:00Z", normalized: "2026-06-10T11:05:00Z" },
+          evidence: { rawRecords: [{ source: "combined-access-log", locator: "row:unprov" }] },
+          producer: { importer: "combined-log", parserVersion: "1", mappingVersion: "1" },
+        }),
+      };
+      const results = resolveProxyHostIdentity([logon, event], EMPTY_ALIAS, 21_600_000);
+      expect(results).toHaveLength(1);
+      expect(results[0]).toMatchObject({
+        eventId: event.id,
+        address: "",
+        account: "alice",
+        outcome: "matched",
+      });
+      expect(results[0].hosts).toEqual([
+        {
+          host: "ws-042",
+          sampleTime: "2026-06-10T11:00:00Z",
+          evidenceEventIds: [logon.id],
+          via: ["account"],
+        },
+      ]);
+      // Address-only caveats must not fire when the address path never contributed.
+      expect(results[0].caveats.some((c) => c.includes("DHCP-lease"))).toBe(false);
+      expect(results[0].caveats.some((c) => c.includes("shared or reused credential"))).toBe(true);
+    });
+
+    it("rejects a non-literal provenance value at the schema boundary (strict z.literal, not a loose string)", () => {
+      expect(() =>
+        createCanonicalEvent({
+          event: { category: "network", type: "web-request" },
+          // @ts-expect-error -- exercising the schema's own runtime rejection of a typo'd value
+          network: { source: { address: "10.0.0.5", provenance: "header-reported" } },
+          time: { observed: "2026-06-10T12:00:00Z", normalized: "2026-06-10T12:00:00Z" },
+          evidence: { rawRecords: [{ source: "test", locator: "row:bad" }] },
+          producer: { importer: "test", parserVersion: "1", mappingVersion: "1" },
+        }),
+      ).toThrow();
+    });
+
+    it("still parses an old-shaped envelope with no network.source.provenance field at all (no schemaVersion bump)", () => {
+      // The real shape of every canonical event persisted before #1265 landed.
+      const envelope = createCanonicalEvent({
+        event: { category: "network", type: "web-request" },
+        network: { source: { address: "10.0.0.5" } },
+        time: { observed: "2026-06-10T12:00:00Z", normalized: "2026-06-10T12:00:00Z" },
+        evidence: { rawRecords: [{ source: "test", locator: "row:old" }] },
+        producer: { importer: "test", parserVersion: "1", mappingVersion: "1" },
+      });
+      expect(envelope.network?.source?.address).toBe("10.0.0.5");
+      expect(envelope.network?.source?.provenance).toBeUndefined();
     });
   });
 });
