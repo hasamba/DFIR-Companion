@@ -41,11 +41,20 @@ function markUrls(e: TimelineEventShape): { url: string; referrer: string } {
   return { url: m?.[1]?.trim() ?? "", referrer: m?.[2]?.trim() ?? "" };
 }
 
+const VELO_VISITED_SUBJECT = /^Velociraptor \[[^\]]*\]: Visited(?: \(\d+×\))?: (.*)$/;
+
 /** A Velociraptor browser-history "Visited" row's URL. `veloAction` already gates on `sources`
  * naming Velociraptor, so a non-Velociraptor row with a lookalike description cannot spoof this. */
 function veloVisitUrl(e: TimelineEventShape): string {
   if (!/^Visited/i.test(veloAction(e))) return "";
-  const m = /https?:\/\/\S+/i.exec(e.description ?? "");
+  const subject = VELO_VISITED_SUBJECT.exec(e.description ?? "")?.[1] ?? "";
+  // mapBrowserHistory's own subject shape (velociraptorImport.ts): `"<title>" — <url>` when a
+  // title exists, else a bare `<url>`. Anchor the URL search to the text after the LAST title
+  // separator, so a URL-like string embedded in the page TITLE is never captured instead of the
+  // row's real visited URL (#1202) — the real url is always last and, being whitespace-free,
+  // cannot itself contain a literal " — ".
+  const afterTitle = subject.includes(" — ") ? subject.slice(subject.lastIndexOf(" — ") + 3) : subject;
+  const m = /^https?:\/\/\S+/i.exec(afterTitle.trim());
   return m ? m[0].replace(/[.,;]+$/, "") : "";
 }
 

@@ -77,6 +77,29 @@ describe("mark → browser visit", () => {
     expect(v.description).toContain(VISIT_PRECEDES_MARK_MARKER);
   });
 
+  // #1202: veloVisitUrl used to match the FIRST https?://\S+ anywhere in the description — if the
+  // page TITLE itself contained a URL-like string, that decoy would be captured instead of the
+  // row's real visited URL, which follows it. Anchored to the text after the title now.
+  it("captures the row's real visited URL, not a URL-like string embedded in the page title", async () => {
+    const { parseVelociraptorJson } = await import("../../src/analysis/velociraptorImport.js");
+    const { events } = parseVelociraptorJson(
+      JSON.stringify([
+        {
+          _Source: "Windows.Applications.Chrome.History",
+          visited_url: "https://evil.example/tool.exe",
+          title: "see https://decoy.example for details",
+          visit_count: 1,
+          visit_time: at(-30),
+          Fqdn: "WS-01",
+        },
+      ]),
+    );
+    const visit: Ev = { ...(events[0] as unknown as Ev), id: "v1" };
+    expect(visit.description).toContain("https://decoy.example"); // sanity: the decoy is really there
+    const out = run([mark({ sources: ["Sysmon"], asset: "WS-01" }), visit]);
+    expect(find(out, "m1").description).toContain(BROWSER_VISIT_MARKER);
+  });
+
   it("a visit to the referrer page (not the download URL) is noted separately", async () => {
     const visit = await visitRow("https://phish.example/page");
     const out = run([
