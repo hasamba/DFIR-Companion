@@ -78,12 +78,42 @@ function isIdentifyingClientName(name: string): boolean {
 // local logons and corroborates nothing about which machine a HUMAN was using.
 const NON_HUMAN_ACCOUNTS = new Set(["system", "local service", "network service", "anonymous logon"]);
 
-// Built-in local accounts (Administrator RID 500, Guest RID 501) live in every Windows host's own
-// local SAM under that name — an un-domained "administrator" logon on host A and on host B are two
-// different local principals that merely share a name, the same "matches every host" failure the
-// module already guards against for IPs. Excluded ONLY when no domain is present: a domained
-// "CORP\Administrator" is a specific, identifying domain account, not a local built-in.
-const NON_HUMAN_LOCAL_ACCOUNTS_NO_DOMAIN = new Set(["administrator", "guest"]);
+// Built-in local accounts (Administrator RID 500, Guest RID 501, plus the fixed RID 503/504
+// DefaultAccount/WDAGUtilityAccount) live in every Windows host's own local SAM under that name —
+// an un-domained "administrator" logon on host A and on host B are two different local principals
+// that merely share a name, the same "matches every host" failure the module already guards
+// against for IPs. Excluded ONLY when no domain is present: a domained "CORP\Administrator" is a
+// specific, identifying domain account, not a local built-in.
+//
+// Administrator/Guest are localized on non-English Windows installs (the SAM display name, not the
+// RID, is what 4624 records) — DefaultAccount and WDAGUtilityAccount are not localized by Microsoft
+// and appear under the same English name on every locale.
+const NON_HUMAN_LOCAL_ACCOUNTS_NO_DOMAIN = new Set([
+  // English
+  "administrator",
+  "guest",
+  // French
+  "administrateur",
+  "invité",
+  // German
+  "administrator",
+  "gast",
+  // Spanish
+  "administrador",
+  "invitado",
+  // Portuguese
+  "administrador",
+  "convidado",
+  // Italian
+  "amministratore",
+  "ospite",
+  // Dutch
+  "beheerder",
+  "gast",
+  // Non-localized fixed built-ins (RID 503 / RID 504)
+  "defaultaccount",
+  "wdagutilityaccount",
+]);
 
 function isLoopbackV4(ip: string): boolean {
   return /^127\./.test(ip);
