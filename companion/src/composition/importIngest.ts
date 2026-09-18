@@ -34,6 +34,7 @@ import { demoteBelowSeverity, resolveForensicMinSeverity } from "../analysis/for
 import { settleForensicImport } from "../routes/importSettle.js";
 import type { InvestigationState, Severity, ForensicEvent } from "../analysis/stateTypes.js";
 import { logLine } from "../logging/serverLogger.js";
+import { parseMacLoginItemBtm } from "../analysis/macLoginItemImport.js";
 
 export interface ImportIngestDeps {
   store: CaseStore;
@@ -82,6 +83,7 @@ export interface ImportIngest {
     originalName: string,
     bytes: Buffer,
     provenance?: ArtifactProvenance,
+    rows?: number,
   ): Promise<{ storedName: string; importedAt: string; seq: number }>;
   /** Move sub-threshold events out of the forensic timeline (they live on in the super-timeline). */
   demoteForensicForCase(caseId: string): Promise<InvestigationState>;
@@ -92,6 +94,12 @@ export interface ImportIngest {
     originalName: string,
     minSeverity?: Severity,
     provenance?: ArtifactProvenance,
+  ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
+  /** The byte-native twin of ingestStreamed, for macOS Background Task Management (#933 item 8). */
+  ingestMacLoginItemStreamed(
+    caseId: string,
+    bytes: Buffer,
+    originalName: string,
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
 }
 
@@ -337,6 +345,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     originalName: string,
     bytes: Buffer,
     provenance?: ArtifactProvenance,
+    rows = 0,
   ): Promise<{ storedName: string; importedAt: string; seq: number }> {
     const seq = await store.nextImportSeq(caseId);
     const safe = originalName.replace(/[^\w.\-]+/g, "_").slice(0, 80) || "evidence.bin";
@@ -349,7 +358,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
       importedAt,
       filename: storedName,
       originalName,
-      rows: 0,
+      rows,
       bytes: bytes.byteLength,
     });
     return { storedName, importedAt, seq };
@@ -523,6 +532,117 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     return { storedName, addedEvents, addedIocs, analyzed: true };
   }
 
+  /**
+   * The byte-native twin of ingestStreamed, for macOS Background Task Management (#933 item 8,
+   * #1013) — the one import kind `dispatchImport` refuses to carry (`macLoginItemImports.ts`'s own
+   * header: byte-native, "NOT dispatched through ... dispatchImport"). Differs from ingestStreamed:
+   *   PARSES FIRST, same order as routes/importMacLoginItem.ts — persisting a file that fails to
+   *     parse (or parses to zero items) would leave a phantom "successful" ledger row for an import
+   *     that never actually happened;
+   *   calls `pipeline.importMacLoginItem()` directly, which applies its own state internally (it is
+   *     not a delta the caller applies, unlike every dispatchImport-routed kind);
+   *   settles INSIDE the same `importLock` section as the import call, not after it returns — the
+   *     drop-folder sweep runs `DROP_CONCURRENCY=4` imports at once, and settling outside the
+   *     section would reopen the exact demote race `demoteForensicForCase`'s own comment describes;
+   *   no AI-off branch: `importMacLoginItem` is fully deterministic (no LLM call), unlike csv/log;
+   *   no whitelist/NSRL/deobfuscation auto-mark pass: this importer never produces IOCs (bookmark
+   *     path facts only), so those three would be guaranteed no-ops here.
+   */
+  async function ingestMacLoginItemStreamed(
+    caseId: string,
+    bytes: Buffer,
+    originalName: string,
+  ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }> {
+    const pipeline = options.pipeline;
+    if (!pipeline) throw new Error("AI pipeline not configured");
+    options.onImport?.(caseId);
+
+    const preview = parseMacLoginItemBtm(bytes);
+    if (!preview) {
+      throw new Error("no recognized login-item entries found (unrecognized BTM structure)");
+    }
+    // Guarded on `kept` (what actually becomes persisted/imported events), not `total` (items
+    // scanned) — the two can diverge (a maxEvents cap, aggregation), and guarding on the wrong one
+    // would leave a "successful" ledger row with rows: 0 and zero timeline events for a file that
+    // never actually contributed anything (Ollama code review finding).
+    if (preview.kept === 0) {
+      throw new Error("BTM file parsed but contained no importable login items");
+    }
+
+    const { storedName, importedAt, seq } = await persistRawEvidence(
+      caseId,
+      originalName,
+      bytes,
+      undefined,
+      preview.kept,
+    );
+
+    options.onAiStatus?.(caseId, {
+      status: "analyzing",
+      phase: "extracting",
+      at: importedAt,
+      detail: `importing ${preview.kept} macOS login item(s)`,
+    });
+
+    const { addedEvents, addedIocs } = await importLock.runExclusive(caseId, async () => {
+      let stateBefore: InvestigationState | null = null;
+      if (options.stateStore) {
+        try {
+          stateBefore = await options.stateStore.load(caseId);
+        } catch {
+          /* keep null */
+        }
+      }
+
+      // Same call routes/importMacLoginItem.ts makes; it applies its own state (mergeWithAliases +
+      // save) internally rather than returning a delta this caller would apply.
+      await pipeline.importMacLoginItem(caseId, bytes, {
+        label: storedName,
+        idPrefix: `bt${seq}`,
+        importedAt,
+      });
+      options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+
+      let addedEvents = 0,
+        addedIocs = 0;
+      if (options.stateStore && stateBefore) {
+        try {
+          const { timelineDiff: tDiff, iocsDiff: iDiff } = await settleForensicImport(
+            {
+              stateStore: options.stateStore,
+              superTimelineStore: options.superTimelineStore,
+              onSuperTimeline: options.onSuperTimeline,
+              onState: options.onState,
+              autoTagImported,
+              demoteForensicForCase,
+            },
+            caseId,
+            stateBefore,
+          );
+          addedEvents = tDiff.added.length;
+          addedIocs = iDiff.added.length;
+          if (
+            (addedEvents || addedIocs || tDiff.removed.length || iDiff.removed.length) &&
+            options.importMetaStore
+          ) {
+            await options.importMetaStore.record(caseId, {
+              kind: "macloginitem",
+              file: storedName,
+              diff: tDiff,
+              iocsDiff: iDiff,
+            });
+            options.onImportMeta?.(caseId);
+          }
+        } catch {
+          /* non-fatal */
+        }
+      }
+      return { addedEvents, addedIocs };
+    });
+    resynthesizeInBackground(caseId);
+    return { storedName, addedEvents, addedIocs, analyzed: true };
+  }
+
   return {
     importerRegistry: () => registry,
     importerPrecedence: () => precedence,
@@ -536,5 +656,6 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     persistRawEvidence,
     demoteForensicForCase,
     ingestStreamed,
+    ingestMacLoginItemStreamed,
   };
 }
