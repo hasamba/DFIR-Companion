@@ -87,6 +87,7 @@ export interface TimeApi {
   veloMonAge(iso: string | null | undefined): string;
   relTime(iso: string | null | undefined): string;
   fmtTime(iso: string): string;
+  fmtDateTime(iso: string): string;
   mcpJobDuration(ms: number): string;
   activityTimeAgo(iso: string | null | undefined): string;
   cockpitAge(value: string | null | undefined): string;
