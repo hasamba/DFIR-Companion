@@ -11,7 +11,7 @@ import { isBulkExtractorUrlFeatureFile } from "./bulkExtractorUrlImport.js";
 import { isFlossResult } from "./flossResultImport.js";
 import { isCapaResult } from "./capaResultImport.js";
 import { isOlevbaResult } from "./olevbaResultImport.js";
-import { isMobsfReport } from "./mobsfPermissionImport.js";
+import { isMobsfReport, isMobsfIosReport } from "./mobsfPermissionImport.js";
 import { isNfdumpFlowRecord } from "./exporterFlowImport.js";
 import { isWerReport } from "./werImport.js";
 import { isRekallCommandList, looksLikeVolatilityText, looksLikeMemprocfsFindevil } from "./memoryImport.js";
@@ -135,8 +135,7 @@ function isAzure(s: Row): boolean {
   );
 }
 // Kubernetes API-server audit Event (`audit.k8s.io`): the strong tell is the apiVersion; failing
-// that, a `verb` + `objectRef` + the audit-specific `requestReceivedTimestamp`/`stage` fields (which
-// no other JSON feed carries). Claimed ahead of the SIEM/Velociraptor catch-alls.
+// that, a `verb` + `objectRef` + the audit-specific `requestReceivedTimestamp`/`stage` fields (which no other JSON feed carries). Claimed ahead of the SIEM/Velociraptor catch-alls.
 function isK8sAudit(s: Row): boolean {
   if (/audit\.k8s\.io/i.test(str(getCI(s, "apiVersion")))) return true;
   return (
@@ -411,6 +410,7 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (isCapaResult(root)) return "caparesult";
   if (isOlevbaResult(root)) return "olevbaresult";
   if (isMobsfReport(root)) return "mobsfpermission";
+  if (isMobsfIosReport(root)) return "mobsfpermission"; // #1136: same kind, ingest dispatches internally
   if (isNfdumpFlowRecord(sample)) return "exporterflow";
   if (isSandbox(sample)) return "sandbox";
   if (isAws(sample)) return "aws";
