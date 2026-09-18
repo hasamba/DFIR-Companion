@@ -354,6 +354,68 @@ describe("forbiddenConclusions is rejection-aware (#1217)", () => {
     };
     expect(scoreCaseQuality(golden, output).forbiddenConclusions).toEqual([]);
   });
+
+  it("still excuses a rejection whose only signal vocabulary is 'untrusted' (pins that removing it was not required)", () => {
+    const output: QualityOutput = {
+      evidenceEventIds: [],
+      claims: [
+        {
+          id: "f4",
+          title: "Attribution",
+          description: "The NIGHTFALL attribution rests solely on untrusted attacker-controlled content.",
+          evidenceEventIds: [],
+        },
+      ],
+      iocs: [],
+      uncertainties: [],
+      nextSteps: [],
+    };
+    expect(scoreCaseQuality(golden, output).forbiddenConclusions).toEqual([]);
+  });
+
+  it("falls back to the whole-claim check (not per-clause) for a multi-term forbidden conclusion", () => {
+    const multiTermGolden: CaseGolden = {
+      ...golden,
+      forbiddenConclusions: [{ id: "compound", terms: ["NIGHTFALL", "confirmed"] }],
+    };
+    const output: QualityOutput = {
+      evidenceEventIds: [],
+      claims: [
+        {
+          id: "f4",
+          title: "Attribution",
+          description: "NIGHTFALL involvement is confirmed by this activity.",
+          evidenceEventIds: [],
+        },
+      ],
+      iocs: [],
+      uncertainties: [],
+      nextSteps: [],
+    };
+    expect(scoreCaseQuality(multiTermGolden, output).forbiddenConclusions).toEqual(["compound"]);
+  });
+
+  it("falls back to the whole-claim check for a forbidden term that itself contains a clause delimiter", () => {
+    const domainGolden: CaseGolden = {
+      ...golden,
+      forbiddenConclusions: [{ id: "c2-domain", terms: ["evil.example"] }],
+    };
+    const output: QualityOutput = {
+      evidenceEventIds: [],
+      claims: [
+        {
+          id: "f4",
+          title: "C2",
+          description: "The host contacted evil.example, confirming command-and-control.",
+          evidenceEventIds: [],
+        },
+      ],
+      iocs: [],
+      uncertainties: [],
+      nextSteps: [],
+    };
+    expect(scoreCaseQuality(domainGolden, output).forbiddenConclusions).toEqual(["c2-domain"]);
+  });
 });
 
 describe("passesCaseQuality real-run tolerance (#1217)", () => {
