@@ -86,6 +86,14 @@ export interface ParsedEmail {
   // reads canonical.network.source.address from ANY event, unscoped by category) as if it were
   // equally trustworthy. Kept in description text and IOC extraction below — informational uses,
   // not an identity claim.
+  //
+  // "Edge-observed" for the other 12 audited sites (#1184) is a claim about FORGE-RESISTANCE —
+  // an attacker cannot inject an arbitrary value into e.g. AWS CloudTrail's own sourceIPAddress
+  // the way a header can be crafted — not a claim that the recorded peer is always the literal
+  // end-user device: any of those fields can legitimately show a proxy, NAT gateway or federation
+  // server's own address instead. That is a separate, already-acknowledged topology-precision
+  // limitation (see hostBinding.ts's own DIRECTIONALITY note), distinct from forgeability, and
+  // neither this field nor those needed re-scoping for it.
   originatingIp: string;
   auth: EmailAuth;
   urls: string[];
