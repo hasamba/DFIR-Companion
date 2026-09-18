@@ -32,6 +32,7 @@ import {
 import { summarizeBulkReads } from "./cloudBulkRead.js";
 import { correlateStorageKeyToRead } from "./azureStorageKeyToRead.js";
 import { correlateAwsFlowResourceAttribution } from "./awsFlowResourceAttribution.js";
+import { correlateAwsFlowIdentityExecution } from "./awsFlowIdentityExecutionJoin.js";
 import { attributionCoverageEvent, markServiceAccountBrowsing } from "./serviceAccountBrowsing.js";
 import { markContainerEscape } from "./containerEscape.js";
 import { toUtcIso } from "./timeUtc.js";
@@ -448,10 +449,15 @@ export function mergeDelta(
   // supersedes an earlier one. Only ever adds a note; never guesses through NAT/load-balancer
   // hops or an ambiguous tie.
   const withFlowAttribution = correlateAwsFlowResourceAttribution(withStorageKeyJoins);
+  // The attributed instance's own launch identity and windowed remote-access requests, disclosed
+  // beside the attribution note (#1151, a narrower slice of #931 item 13's own identity/execution
+  // ask). Reads only the attribution pass's own note text — never re-derives the attribution.
+  // States facts, never causation, and never claims a remote-access request ran anything.
+  const withFlowIdentityExecution = correlateAwsFlowIdentityExecution(withFlowAttribution);
   // Browsing by an account that cannot be interactive (#908 item 10). Here because the shellbag,
   // the logon that made a desktop session possible, and any archiving beside it arrive from three
   // different importers. Only raises, and only for an account something SAYS is noninteractive.
-  const browsingMarked = markServiceAccountBrowsing(withFlowAttribution);
+  const browsingMarked = markServiceAccountBrowsing(withFlowIdentityExecution);
   // Browsing evidence that carries no account cannot be judged, and "no service-account browsing
   // found" would report a collection gap as a result. The gap goes ON the timeline, replaceable.
   const attributionGap = attributionCoverageEvent(browsingMarked);
