@@ -72,4 +72,20 @@ export class HostDuplicateDismissalStore {
       return next;
     });
   }
+
+  // Removes exactly ONE dismissal (#1170) — never the whole file, which is the only workaround
+  // today and silently re-arms every other pair the analyst already judged, not just this one.
+  // The pair becomes eligible to be suggested again on the next read (the pending list is
+  // derived, never cached) — re-arming the AI-synthesis gate too, if it was a blocking pair. That
+  // is the correct, expected outcome of an explicit undo, not a side effect to guard against.
+  remove(caseId: string, canonical: string, other: string): Promise<boolean> {
+    return hostDuplicateLock.runExclusive(caseId, async () => {
+      const existing = await this.load(caseId);
+      const key = dismissalKey(canonical, other);
+      const next = existing.filter((e) => dismissalKey(e.canonical, e.other) !== key);
+      if (next.length === existing.length) return false;
+      await atomicWrite(this.path(caseId), JSON.stringify(next, null, 2));
+      return true;
+    });
+  }
 }

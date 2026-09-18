@@ -517,6 +517,8 @@
     "ROUTE GET /cases/:id/host-duplicates",
     "ROUTE POST /cases/:id/host-duplicates/merge",
     "ROUTE POST /cases/:id/host-duplicates/dismiss",
+    "ROUTE GET /cases/:id/host-duplicates/dismissed",
+    "ROUTE DELETE /cases/:id/host-duplicates/dismiss",
     "ROUTE GET /cases/:id/proxy-host-identity-matches",
     "ROUTE GET /cases/:id/resolver-endpoint-matches",
     "ROUTE GET /cases/:id/dns-connection-cross-upload-matches",

@@ -6,9 +6,15 @@ import type { RouteContext } from "./context.js";
 
 /**
  * Near-duplicate host review — the pre-synthesis merge gate's UI surface.
- *   - GET  /cases/:id/host-duplicates          — pairs still awaiting a decision.
- *   - POST /cases/:id/host-duplicates/merge    — fold `other` into `canonical` (asset-graph merge).
- *   - POST /cases/:id/host-duplicates/dismiss  — record that they are genuinely different machines.
+ *   - GET    /cases/:id/host-duplicates            — pairs still awaiting a decision.
+ *   - POST   /cases/:id/host-duplicates/merge      — fold `other` into `canonical` (asset-graph merge).
+ *   - POST   /cases/:id/host-duplicates/dismiss    — record that they are genuinely different machines.
+ *   - GET    /cases/:id/host-duplicates/dismissed  — every currently-recorded dismissal (#1170).
+ *   - DELETE /cases/:id/host-duplicates/dismiss    — undo exactly one dismissal (#1170), never every
+ *     dismissal in the case (deleting the store file on disk, the only prior workaround). The pair
+ *     becomes eligible to be suggested again on the next read — the pending list is derived, never
+ *     cached — including re-arming the AI-synthesis gate if it was a blocking pair, which is the
+ *     correct, expected outcome of an explicit undo, so this route never kicks a resynthesis.
  *
  * Resolving the LAST pending pair kicks the synthesis the gate was holding.
  *
@@ -117,6 +123,38 @@ export function registerHostDuplicateRoutes(app: Express, ctx: RouteContext): vo
         dismissedBy: requestAuthentication(req)?.identity.displayName ?? "local",
       });
       return await respond(req.params.id, res, wasBlocking);
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get("/cases/:id/host-duplicates/dismissed", async (req: Request, res: Response) => {
+    if (!configured(res)) return;
+    try {
+      return res
+        .status(200)
+        .json({ dismissed: await options.hostDuplicateDismissalStore!.load(req.params.id) });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.delete("/cases/:id/host-duplicates/dismiss", async (req: Request, res: Response) => {
+    if (!configured(res)) return;
+    const pair = readPair(req);
+    if (!pair) return res.status(400).json({ error: "canonical and other must be two different hosts" });
+    try {
+      const removed = await options.hostDuplicateDismissalStore!.remove(
+        req.params.id,
+        pair.canonical,
+        pair.other,
+      );
+      if (!removed) return res.status(404).json({ error: "no such dismissal" });
+      const [dismissed, pendingList] = await Promise.all([
+        options.hostDuplicateDismissalStore!.load(req.params.id),
+        pending(req.params.id),
+      ]);
+      return res.status(200).json({ dismissed, pending: pendingList });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
