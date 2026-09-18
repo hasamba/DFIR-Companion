@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createCanonicalEvent } from "../../src/analysis/canonicalEvent.js";
+import { createCanonicalEvent, upgradeForensicEvent } from "../../src/analysis/canonicalEvent.js";
 import { buildHostAliasIndex } from "../../src/analysis/hostAlias.js";
 import {
   buildHostBindingIndex,
@@ -312,5 +312,54 @@ describe("buildHostBindingIndex + resolveAccountAtTime (account -> session host)
     ];
     const index = buildHostBindingIndex(events);
     expect(resolveAccountAtTime(index, "corp\\ALICE", "2026-06-10T12:00:00Z", 1_000)).toHaveLength(1);
+  });
+});
+
+// #1162: buildHostBindingIndex silently skips any event with no canonical envelope. Every event
+// actually read from the state store is already upgraded (stateStore.ts's own load path maps
+// upgradeForensicEvent over the forensic timeline before any consumer sees it), so a legacy,
+// prose-only ForensicEvent DOES reach this module — but only through that upgrade. This pins the
+// contract end-to-end, through the real prose-parsing path, not by constructing an envelope
+// directly like every test above.
+describe("buildHostBindingIndex through the legacy prose-upgrade path (#1162)", () => {
+  it("binds IP -> client host and account -> session host from a legacy, envelope-less event", () => {
+    const legacy: ForensicEvent = {
+      id: "legacy-1",
+      timestamp: "2026-07-30T10:00:00Z",
+      description:
+        "Windows Security Successful logon (EID 4624) - CORP\\jdoe - LogonType=3 - " +
+        "IpAddress=10.0.0.5 - WorkstationName=WS-042 @ SRV-01 [Network]",
+      severity: "Low",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      asset: "SRV-01",
+    };
+    // The 4624 above is LogonType 3 (Network), which does not qualify for account -> host
+    // presence (see ACCOUNT_PRESENCE_LOGON_TYPES) — a second, interactive-family legacy event
+    // proves that half of the contract too.
+    const legacyInteractive: ForensicEvent = {
+      id: "legacy-2",
+      timestamp: "2026-07-30T10:05:00Z",
+      description: "Windows Security Successful logon (EID 4624) - CORP\\jdoe - LogonType=2 @ WS-042",
+      severity: "Low",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      asset: "WS-042",
+    };
+
+    expect(legacy.canonical).toBeUndefined();
+    const upgraded = [legacy, legacyInteractive].map(upgradeForensicEvent);
+    expect(upgraded[0].canonical).toBeDefined();
+
+    const index = buildHostBindingIndex(upgraded);
+    const ipHits = resolveIpAtTime(index, "10.0.0.5", "2026-07-30T10:00:00Z", 1_000);
+    expect(ipHits).toHaveLength(1);
+    expect(ipHits[0].host).toBe("WS-042");
+
+    const accountHits = resolveAccountAtTime(index, "corp\\jdoe", "2026-07-30T10:05:00Z", 1_000);
+    expect(accountHits).toHaveLength(1);
+    expect(accountHits[0].host).toBe("WS-042");
   });
 });
