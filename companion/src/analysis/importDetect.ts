@@ -4,7 +4,7 @@
 // first. Returns a kind mapping 1:1 to a pipeline import method, shown to the analyst so a mis-route is visible, not silent.
 
 import { isObject, getCI, getPath, str, parseConcatenatedJson } from "./siemImport.js";
-import { isAzureStorageLog } from "./azureStorageLogImport.js";
+import { detectCloudJson } from "./cloudJsonDetect.js";
 import { isAwsFlowLogLine } from "./awsFlowLogImport.js";
 import { isDiskImageLog } from "./diskImageAcquisitionLog.js";
 import { isBulkExtractorUrlFeatureFile } from "./bulkExtractorUrlImport.js";
@@ -116,22 +116,6 @@ function isSandbox(s: Row): boolean {
         !!getCI(s, "submit_name"))) ||
     !!getCI(s, "CAPE") ||
     getCI(s, "malscore") != null
-  );
-}
-function isAws(s: Row): boolean {
-  return !!getCI(s, "eventName") && !!getCI(s, "eventSource");
-}
-function isGcp(s: Row): boolean {
-  return !!getCI(s, "protoPayload") || /cloudaudit/i.test(str(getCI(s, "logName")));
-}
-function isAzure(s: Row): boolean {
-  return (
-    (!!getCI(s, "operationName") || !!getCI(s, "OperationNameValue") || !!getCI(s, "OperationName")) &&
-    (!!getCI(s, "caller") ||
-      !!getCI(s, "Caller") ||
-      !!getCI(s, "resourceId") ||
-      !!getCI(s, "ResourceId") ||
-      !!getCI(s, "correlationId"))
   );
 }
 // Kubernetes API-server audit Event (`audit.k8s.io`): the strong tell is the apiVersion; failing
@@ -412,10 +396,8 @@ function detectJson(root: unknown, sample: Row): ImportKind {
   if (isMobsfIosReport(root)) return "mobsfpermission"; // #1136: same kind, ingest dispatches internally
   if (isNfdumpFlowRecord(sample)) return "exporterflow";
   if (isSandbox(sample)) return "sandbox";
-  if (isAws(sample)) return "aws";
-  if (isGcp(sample)) return "cloud";
-  if (isAzureStorageLog(sample)) return "azurestoragelog";
-  if (isAzure(sample)) return "cloud";
+  const cloud = detectCloudJson(root, sample); // cloudJsonDetect.ts: flow logs first, then activity/audit/storage
+  if (cloud) return cloud;
   if (isOkta(sample)) return "okta";
   if (isGoogleWorkspace(sample, root)) return "gws";
   if (isHindsight(sample)) return "hindsight";

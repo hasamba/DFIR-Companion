@@ -32,6 +32,8 @@ export const IMPORT_KINDS = [
   "leapp",
   "aws",
   "awsflowlog",
+  "azureflowlog",
+  "gcpflowlog",
   "cloud",
   "azurestoragelog",
   "diskimagelog",
