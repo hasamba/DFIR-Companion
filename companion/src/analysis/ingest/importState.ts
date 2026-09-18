@@ -158,15 +158,27 @@ export async function persistPlasoParsed(
 // Returns [] whenever ctx.opts.authObservationStore is absent (minimal/test wirings) or this
 // upload's own parse produced no spray candidates at all — today's within-upload-only behavior,
 // unchanged.
+export interface CrossUploadSprayResult {
+  events: SiemEvent[];
+  // Set when this batch's own earliest event already predates the store's retention window at
+  // upload time (#1286). `AuthObservationStore.pruneIfDue` deletes by WALL-CLOCK age
+  // (`Date.now() - retentionHours`), not by any batch's own anchor, so observations this stale
+  // are pruned within the next throttled prune (≤1h) regardless of when they were written —
+  // they cannot be cross-matched now, and this batch's own append() below cannot survive to be
+  // cross-matched by a LATER upload either. Non-empty only when that condition holds, so a caller
+  // can fold it into the timeline note it already emits; empty string otherwise.
+  retentionNote: string;
+}
+
 export async function crossUploadSprayRows(
   ctx: ImportContext,
   caseId: string,
   opts: { idPrefix: string; importedAt: string },
   sprayCandidates: SprayCandidate[],
   meta: { source: string; importer: string; mappingVersion: string },
-): Promise<SiemEvent[]> {
+): Promise<CrossUploadSprayResult> {
   const store = ctx.opts.authObservationStore;
-  if (!store || !sprayCandidates.length) return [];
+  if (!store || !sprayCandidates.length) return { events: [], retentionNote: "" };
 
   const withBatch: SprayCandidate[] = sprayCandidates.map((c) => ({ ...c, importBatch: opts.idPrefix }));
 
@@ -190,6 +202,14 @@ export async function crossUploadSprayRows(
       ? importedAtMs
       : Date.now();
   const sinceIso = new Date(anchorMs - windowHours * 3_600_000).toISOString();
+
+  // Retention-age disclosure (#1286): if this batch's own earliest event already predates the
+  // retention horizon, cross-upload matching for it is effectively dead — see CrossUploadSprayResult.
+  const retentionHoursValue = store.retentionHours();
+  const retentionExceeded = anchorMs < Date.now() - retentionHoursValue * 3_600_000;
+  const retentionNote = retentionExceeded
+    ? `cross-upload spray matching could not run for this batch — its evidence predates the ${retentionHoursValue}h auth-observation retention window, so it cannot be correlated with other uploads`
+    : "";
 
   // Query BEFORE appending this upload's own observations, so `combined` is built by hand instead
   // of writing then reading the same rows back (no round trip, and no risk of the query cap
@@ -232,5 +252,5 @@ export async function crossUploadSprayRows(
   }));
   await store.append(caseId, toStore);
 
-  return crossRows;
+  return { events: crossRows, retentionNote };
 }

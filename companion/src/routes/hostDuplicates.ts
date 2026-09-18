@@ -139,6 +139,15 @@ export function registerHostDuplicateRoutes(app: Express, ctx: RouteContext): vo
     }
   });
 
+  // Deliberately asymmetric with merge/dismiss above: this handler does NOT snapshot
+  // `wasBlocking` before mutating, and its response shape (`{ dismissed, pending }`) differs
+  // from respond()'s (`{ pending }`). That is intentional, not an oversight — undo never
+  // resynthesizes (see the file-level docstring on why #1170 keeps it a no-op for synthesis),
+  // so there is no transition to detect and nothing here reads a `wasBlocking`/`wasClear`
+  // boolean today. If a future feature needs to know whether undoing a dismissal re-armed a
+  // blocking gate, snapshot it the same way merge/dismiss do — swap the order below to read
+  // `pending(req.params.id).some(isBlocking)` BEFORE calling `remove()`, then add the resulting
+  // boolean to the JSON body — rather than assuming the two routes already agree (#1283).
   app.delete("/cases/:id/host-duplicates/dismiss", async (req: Request, res: Response) => {
     if (!configured(res)) return;
     const pair = readPair(req);
