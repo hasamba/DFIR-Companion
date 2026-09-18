@@ -133,7 +133,7 @@ const READERS: Record<string, { kind: ReaderKind; why: string }> = {
   },
   "hostBinding.ts": {
     kind: "gated",
-    why: "IP -> workstation-name index (byIp) that both gated readers resolve against; the index side fail-closes on the stamp since #1292 (#1342)",
+    why: "IP -> workstation-name index (byIp) that both gated readers resolve against; the index side fail-closes on the stamp too since #1292 landed in #1342",
   },
   "dnsCrossUploadConnJoin.ts": {
     kind: "agnostic",
