@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { parseCapaResult, isCapaResult } from "../../src/analysis/capaResultImport.js";
+import {
+  parseCapaResult,
+  isCapaResult,
+  capaUnsupportedFlavorReason,
+  capaFlavorHintFor,
+} from "../../src/analysis/capaResultImport.js";
 
 // Field names/shapes verified live against a real serialized capa 9.4.0 static report
 // (DefectDojo/django-DefectDojo's own test fixture, unittests/scans/capa/one_finding.json).
@@ -155,6 +160,76 @@ describe("isCapaResult", () => {
 
   it("rejects a plain unrelated JSON object", () => {
     expect(isCapaResult({ hello: "world" })).toBe(false);
+  });
+});
+
+// #1124: a dynamic-flavor capa report (meta.flavor !== "static") is real and documented upstream
+// (capa's own DynamicAnalysis schema) but not parsed here — this codebase has never observed one
+// in a real case. Rather than silently falling through to "could not detect the file type", name
+// the reason so an analyst who hits this gets an honest, specific diagnostic instead of a generic
+// miss.
+describe("capaUnsupportedFlavorReason", () => {
+  it("names the flavor for a recognizable-but-unsupported capa report", () => {
+    const dynamic = JSON.parse(floss({}, { flavor: "dynamic" }));
+    expect(capaUnsupportedFlavorReason(dynamic)).toBe(
+      'capa report flavor "dynamic" is not yet supported (only "static" reports are parsed)',
+    );
+  });
+
+  it("returns undefined for a real static report", () => {
+    const staticReport = JSON.parse(floss({}));
+    expect(capaUnsupportedFlavorReason(staticReport)).toBeUndefined();
+  });
+
+  it("returns undefined for a plain unrelated JSON object (never a false positive)", () => {
+    expect(capaUnsupportedFlavorReason({ hello: "world" })).toBeUndefined();
+  });
+
+  it("returns undefined when meta.sample doesn't carry capa's own identity fields", () => {
+    expect(capaUnsupportedFlavorReason({ meta: { flavor: "dynamic", sample: {} } })).toBeUndefined();
+    expect(capaUnsupportedFlavorReason({ meta: { flavor: "dynamic" } })).toBeUndefined();
+  });
+
+  it("returns undefined when rules is absent — capa always serializes rules, even empty, so this isn't a real capa report (Ollama code review finding)", () => {
+    const noRules = JSON.parse(floss({}, { flavor: "dynamic" }));
+    delete noRules.rules;
+    expect(capaUnsupportedFlavorReason(noRules)).toBeUndefined();
+  });
+
+  it("names an unrecognized (non-string or missing) flavor generically, on an otherwise capa-shaped sample", () => {
+    expect(capaUnsupportedFlavorReason(JSON.parse(floss({}, { flavor: 12345 })))).toBe(
+      'capa report flavor "missing or unrecognized" is not yet supported (only "static" reports are parsed)',
+    );
+    const noFlavor = JSON.parse(floss({}));
+    delete noFlavor.meta.flavor;
+    expect(capaUnsupportedFlavorReason(noFlavor)).toBe(
+      'capa report flavor "missing or unrecognized" is not yet supported (only "static" reports are parsed)',
+    );
+  });
+
+  it("clips an oversized flavor string instead of throwing or emitting an unbounded message", () => {
+    const huge = "x".repeat(10_000);
+    const reason = capaUnsupportedFlavorReason(JSON.parse(floss({}, { flavor: huge })));
+    expect(reason).toBeDefined();
+    expect(reason!.length).toBeLessThan(200);
+  });
+});
+
+describe("capaFlavorHintFor", () => {
+  it("parses raw text and names the flavor", () => {
+    expect(capaFlavorHintFor(floss({}, { flavor: "dynamic" }))).toBe(
+      'capa report flavor "dynamic" is not yet supported (only "static" reports are parsed)',
+    );
+  });
+
+  it("returns undefined for a real static report", () => {
+    expect(capaFlavorHintFor(floss({}))).toBeUndefined();
+  });
+
+  it("never throws on unparseable or truncated text", () => {
+    expect(capaFlavorHintFor("not json at all")).toBeUndefined();
+    const truncated = floss({}, { flavor: "dynamic" }).slice(0, 40);
+    expect(capaFlavorHintFor(truncated)).toBeUndefined();
   });
 });
 
