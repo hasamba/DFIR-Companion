@@ -131,6 +131,16 @@ describe("AnalysisPipeline", () => {
     expect(SYNTHESIS_PROMPT).toMatch(/that is NOT the clean case/);
   });
 
+  it("synthesis prompt prefers a partially-seen sibling directory over external logs, scoped to plausible relevance (#1218)", async () => {
+    const { SYNTHESIS_PROMPT } = await import("../../src/analysis/pipeline.js");
+    expect(SYNTHESIS_PROMPT).toMatch(/SIBLING subfolders you have NOT seen/);
+    // Pin the narrowing guard too — without it the rule reads as "any unseen path anywhere",
+    // which fires on nearly every case with a file-path finding, not just a partially-seen
+    // attacker-staged tree (the actual scenario this instruction was written for).
+    expect(SYNTHESIS_PROMPT).toMatch(/could plausibly answer THIS question/);
+    expect(SYNTHESIS_PROMPT).toMatch(/Do not apply this to a directory with no attacker-relevant activity/);
+  });
+
   it("synthesize derives findings + attacker path from the forensic timeline", async () => {
     // Seed a forensic timeline (as per-window extraction would build) but no findings.
     const seeded = emptyState("c1");
