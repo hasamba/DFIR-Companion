@@ -44,7 +44,7 @@ export const LIMIT_NOTE = "what ran on the instance and its network egress are n
 export const COVERAGE_NOTE = "record retention and the trails' selectors are not in this evidence";
 export const BASIS =
   "records of this upload only; joined through the instance id; what ran on the instance and its network egress are not in CloudTrail";
-export const INSTANCE_ID = /^i-[0-9a-f]{8,17}$/i;
+export { INSTANCE_ID } from "./canonicalAwsCompute.js";
 export const ANY_SOURCE = new Set(["0.0.0.0/0", "::/0"]);
 export const DENIED = /accessdenied|unauthorized/i;
 /** ModifyInstanceAttribute attribute names the row may name; anything else is "other". */

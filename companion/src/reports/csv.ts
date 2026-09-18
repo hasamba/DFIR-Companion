@@ -41,9 +41,6 @@ export function findingsCsv(state: InvestigationState): string {
 }
 
 export function iocsCsv(state: InvestigationState): string {
-  // provenance (#1333) lets a spreadsheet keep a sender-claimed X-Originating-IP from sorting or
-  // pivoting at the same weight as a sensor-observed peer. It mirrors the state field exactly:
-  // "client-reported" or empty — an absent marker is an ordinary sighting, never a mark.
   const header = "id,type,value,firstSeen,sources,sourceCount,enrichment,riskScore,riskFactors,provenance";
   const iocSrc = deriveIocSources(state.iocs, state.forensicTimeline);
   const risk = scoreIocsFromState(state); // #63 composite risk (verdict + severity + corroboration)
@@ -73,6 +70,8 @@ export function iocsCsv(state: InvestigationState): string {
       intel,
       r?.score ?? "",
       (r?.factors ?? []).join(" | "),
+      // #1326: its own column, never a suffix on the value — the value cell is exactly what a
+      // downstream tool would feed a block-list, and a client-reported one must be tellable apart.
       i.provenance ?? "",
     ]);
   });
@@ -112,8 +111,6 @@ export function forensicTimelineCsv(state: InvestigationState): string {
 
 // IP + geolocation export for the Geographic map panel (#133) — for external OSINT tooling.
 export function geoMapCsv(data: GeoMapData): string {
-  // clientReported (#1333): a pin from a sender-controlled header, not an observation — same
-  // yes/no form as `internal` and `approximate`.
   const header =
     "ip,country,city,lat,lon,asn,severity,verdict,internal,eventCount,approximate,clientReported";
   const rows = data.markers.map((m) =>
@@ -129,7 +126,7 @@ export function geoMapCsv(data: GeoMapData): string {
       m.internal ? "yes" : "no",
       String(m.eventCount),
       m.approximate ? "yes" : "no",
-      m.clientReported ? "yes" : "no",
+      m.clientReported ? "yes" : "no", // #1326: a pin placed from a sender-controlled header
     ]),
   );
   return [header, ...rows].join("\n") + "\n";

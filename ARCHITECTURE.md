@@ -275,16 +275,12 @@ That is the gap the sweep closes.
   registered in the sweep's `SITES` map with its site count, and every site must carry the
   stamp. The judgement that a site is genuinely edge-observed is the audit's, recorded per site
   beside the entry.
-- **Exempt** — `canonicalEvent.ts`'s legacy-upgrade path is a mixed file, registered in `EXEMPT`
-  with its one stamping site named in `stamped`. Its generic `srcIp` branch copies whatever the
-  original pre-canonical importer wrote; that provenance is unknowable at upgrade time, so the
-  site must **not** stamp. Its `logon.sourceIp` branch does stamp
-  ([#1342](https://github.com/hasamba/DFIR-Companion/pull/1342)): a 4624/4625 `IpAddress=` is
-  only ever rendered from the Security record's own field (the renderer set is pinned by
-  `hostBinding.test.ts`), the same basis `siemImport.ts` stamps on. The unstamped branch is also
-  why **pre-#1265 persisted data is unstamped by design**: those envelopes were written before the
-  flag existed, and fail-closed is the honest reading of them. No `schemaVersion` bump accompanied
-  the field — see the schema policy in `mkdocs-docs/reference/canonical-events.md`.
+- **Exempt** — `canonicalEvent.ts`'s legacy-upgrade path copies whatever `srcIp` the original
+  pre-canonical importer wrote. Its provenance is unknowable at upgrade time, so it is registered
+  in `EXEMPT` and must **not** stamp. This is also why **pre-#1265 persisted data is unstamped by
+  design**: those envelopes were written before the flag existed, and fail-closed is the honest
+  reading of them. No `schemaVersion` bump accompanied the field — see the schema policy in
+  `mkdocs-docs/reference/canonical-events.md`.
 
 ### Who must gate
 
@@ -294,16 +290,14 @@ writer sweep made every new writer decide and nothing made a new reader decide. 
 of:
 
 - **gated** — the address becomes a **host-name claim** (`resolveIpAtTime` and the like). The
-  gate's presence is asserted. `proxyWorkstationChain.ts`, `dnsEndpointCrossUploadConnJoin.ts`
-  and, since [#1342](https://github.com/hasamba/DFIR-Companion/pull/1342), the `hostBinding.ts`
-  IP index that both resolve against are this class.
+  gate's presence is asserted. `proxyWorkstationChain.ts` and
+  `dnsEndpointCrossUploadConnJoin.ts` are this class.
 - **agnostic** — display attributes, join keys, search, already-caveated detections: a wrong value
   degrades a lead but never names a host, and a gate would drop genuine legacy sensor evidence
   to defend against a forged-address producer that does not exist. The reason is recorded per
   entry and the gate's **absence** is asserted, so a gate cannot creep in without revisiting it.
-- **tracked** — the decision is deferred to a named open issue. No file is in this class today;
-  `hostBinding.ts`'s IP index was, under
-  [#1292](https://github.com/hasamba/DFIR-Companion/issues/1292), until #1342 gated it.
+- **tracked** — the decision is deferred to a named open issue. `hostBinding.ts`'s IP index is
+  this class ([#1292](https://github.com/hasamba/DFIR-Companion/issues/1292)).
 
 ### How it is enforced
 
@@ -344,7 +338,7 @@ established, and it works the same way.
 The graph is built the same way `check-imports.mjs` builds it: a regex over relative `.js`
 specifiers, because the companion imports its own modules exclusively that way. No resolver needed.
 
-For context: **2,580 of the 2,618 cross-domain file dependencies already comply.** The map is mostly
+For context: **2,598 of the 2,636 cross-domain file dependencies already comply.** The map is mostly
 a description of how this codebase is already written, which is the only kind of rule people follow.
 Both figures come from `npm run check:boundaries -- --json`, which counts them in the same pass that
 finds the violations, and a test asserts this sentence against it. The pair read 1,275 of 1,323 long

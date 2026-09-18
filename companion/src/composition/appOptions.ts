@@ -100,6 +100,7 @@ import type { CollectionPlanStore } from "../analysis/collectionPlanStore.js";
 import type { HostScopeStore } from "../analysis/hostScopeStore.js";
 import type { EvidenceAttestationStore } from "../analysis/evidenceAttestationStore.js";
 import type { HuntRequirementStore } from "../analysis/huntRequirementStore.js";
+import type { StaticReportAttestationStore } from "../analysis/staticReportAttestationStore.js";
 import type { AttributionAssertionStore } from "../analysis/attributionAssertionStore.js";
 import type { CollectionGenerationStore } from "../analysis/collectionGenerationStore.js";
 import type { MobileBackupGenerationStore } from "../analysis/mobileBackupGenerationStore.js";
@@ -232,6 +233,7 @@ export interface AppOptions {
   // audience, deadline, scope, expected observable evidence — turned into a checklist by
   // huntRequirementChecklist.ts, reusing this same evidenceAttestationStore for attested coverage.
   huntRequirementStore?: HuntRequirementStore;
+  staticReportAttestationStore?: StaticReportAttestationStore;
   // Analyst-authored cluster/campaign/operator/sponsor attribution claims (#933 item 20), kept
   // structurally separate from adversaryHints.ts's own statistical technique-overlap similarity.
   attributionAssertionStore?: AttributionAssertionStore;

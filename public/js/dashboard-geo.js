@@ -78,7 +78,7 @@
     const topIps = geoFilteredMarkers().slice(0, 10).map(m =>
       `<li data-safe-style="cursor:pointer" data-geo-ip="${escAttr(m.ip)}" title="focus on map"><span data-safe-style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${GEO_COLOR[m.color] || GEO_COLOR.gray};margin-right:6px"></span>${esc(m.ip)}${geoIpFlags(m)} <span data-safe-style="color:var(--text-muted)">${esc([m.city, m.country].filter(Boolean).join(", ") || "—")} · ${esc(m.eventCount)} ev</span></li>`).join("");
     statsEl.innerHTML =
-      `<div data-safe-style="margin-bottom:4px">${esc(s.resolved)} mapped / ${esc(s.totalIps)} IPs · ${esc(s.external)} external · ${esc(s.internal)} internal · ${esc(s.distinctCountries)} countries · ${esc(s.distinctAsns)} ASNs${s.markerCap ? ` · showing first ${esc(s.markerCap)}` : ""}<span data-safe-style="color:var(--text-muted)"> · dashed = country-level (approx)</span></div>` +
+      `<div data-safe-style="margin-bottom:4px">${esc(s.resolved)} mapped / ${esc(s.totalIps)} IPs · ${esc(s.external)} external · ${esc(s.internal)} internal · ${esc(s.distinctCountries)} countries · ${esc(s.distinctAsns)} ASNs${s.markerCap ? ` · showing first ${esc(s.markerCap)}` : ""}<span data-safe-style="color:var(--text-muted)"> · dashed = country-level (approx) · long-dashed hollow = client-reported</span></div>` +
       (countries ? `<div data-safe-style="margin-bottom:4px"><b>Top countries:</b> ${countries}</div>` : "") +
       (topIps ? `<div><b>Top IPs:</b><ul data-safe-style="margin:4px 0;padding-left:18px">${topIps}</ul></div>` : "");
     if (geoMap) renderGeoMarkers();
@@ -138,6 +138,9 @@
     for (const m of markers) {
       const opts = { radius: 7, color: "#0d1117", weight: 1, fillColor: GEO_COLOR[m.color] || GEO_COLOR.gray, fillOpacity: m.approximate ? 0.45 : 0.85 };
       if (m.approximate) opts.dashArray = "2,3";
+      // #1326: a pin placed from a sender-controlled header is hollow and long-dashed, so it never
+      // reads as a sensor-observed peer at a glance — the same de-emphasis approximate gets.
+      if (m.clientReported) { opts.dashArray = "6,3"; opts.fillOpacity = 0.3; }
       const cm = L.circleMarker([m.lat, m.lon], opts);
       cm.bindPopup(geoPopupHtml(m));
       cm.addTo(geoLayer);
