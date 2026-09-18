@@ -89,9 +89,13 @@ describe("host duplicates panel — network-identity rows (#1163)", () => {
     expect(html.toLowerCase()).not.toContain("network identity");
   });
 
-  it("formats the sample time with the shared fmtTime helper rather than a raw ISO string", () => {
+  it("formats the sample time with the date, not just a bare time-of-day (#1168)", () => {
+    // fmtTime alone (new Date(...).toLocaleTimeString()) drops the date entirely — a binding
+    // sample days/weeks/months old would read as "today". fmtDateTime (toLocaleString()) keeps it.
     const html = panel.renderHostDuplicates([netIdPair]);
     expect(html).not.toContain("2026-06-10T12:00:00Z");
+    const expectedDateTime = new Date(netIdPair.sampleTime).toLocaleString();
+    expect(html).toContain(expectedDateTime);
   });
 });
 

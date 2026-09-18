@@ -1,4 +1,5 @@
 import type { BaselineComparison, EvaluationIdentity, EvaluationSummary } from "./baseline.js";
+import { REAL_THRESHOLDS } from "./scorer.js";
 
 export type EvaluationOutcome = "passed" | "quality_failed" | "provider_failed" | "runner_failed" | "skipped";
 
@@ -57,6 +58,9 @@ export interface EvaluationReportInput {
   providerFailureReason?: string;
   runnerError?: string;
   baselineComparison?: BaselineComparison;
+  // Single source of truth: the SAME options.real already threaded into runCorpusSuite for the
+  // #1217/#1226 precision relaxation — never set independently (#1224).
+  real?: boolean;
 }
 
 export interface EvaluationReport extends EvaluationReportInput {
@@ -95,21 +99,97 @@ function average(values: readonly number[]): number {
   return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 1;
 }
 
+// #1224: the production corpus's own single clean-abstention fixture would otherwise contribute a
+// vacuous recall=1 to every aggregate (ratio(0,0)=1, since it has no golden claims/IOCs/etc to
+// miss), silently inflating the floor every OTHER case is actually held to. Excluded here so the
+// aggregate reflects only the cases that are supposed to produce findings.
+export interface DirtyCaseAggregate {
+  claimRecall: number;
+  iocRecall: number;
+  uncertaintyRecall: number;
+  nextStepRecall: number;
+}
+
+export function computeDirtyCaseAggregate(cases: readonly EvaluationCaseResult[]): DirtyCaseAggregate {
+  const dirty = cases.filter((result) => result.scenario !== "clean");
+  return {
+    claimRecall: average(dirty.map((result) => result.metrics.claimRecall)),
+    iocRecall: average(dirty.map((result) => result.metrics.iocRecall)),
+    uncertaintyRecall: average(dirty.map((result) => result.metrics.uncertaintyRecall)),
+    nextStepRecall: average(dirty.map((result) => result.metrics.nextStepRecall)),
+  };
+}
+
+function meetsRecallFloor(aggregate: DirtyCaseAggregate): boolean {
+  const floor = REAL_THRESHOLDS.minRecall;
+  return (
+    aggregate.claimRecall >= floor &&
+    aggregate.iocRecall >= floor &&
+    aggregate.uncertaintyRecall >= floor &&
+    aggregate.nextStepRecall >= floor
+  );
+}
+
+// A hard violation is never relaxed, real run or not — these catch invention (a fabricated
+// attribution, a citation to an event that doesn't exist, a confidence score with no stated
+// reason), never a phrasing-variance false negative, so aggregate tolerance never applies to them.
+function hasHardViolation(cases: readonly EvaluationCaseResult[]): boolean {
+  return cases.some(
+    (result) =>
+      result.metrics.forbiddenConclusions > 0 ||
+      result.metrics.danglingEvidenceRefs > 0 ||
+      result.metrics.confidenceIssues > 0 ||
+      !result.metrics.abstained,
+  );
+}
+
+// A single case scoring 0 recall on EVERY dimension (the model produced nothing useful for it at
+// all) must fail the run even if the corpus-wide aggregate still clears the floor — otherwise one
+// genuinely broken case can hide behind several others scoring near-perfectly, which is exactly
+// the failure mode the OLD all-or-nothing gate caught and pure averaging would not (#1224).
+function hasTotalWhiff(cases: readonly EvaluationCaseResult[]): boolean {
+  return cases.some(
+    (result) =>
+      result.scenario !== "clean" &&
+      result.metrics.claimRecall === 0 &&
+      result.metrics.uncertaintyRecall === 0 &&
+      result.metrics.nextStepRecall === 0,
+  );
+}
+
 function determineOutcome(input: EvaluationReportInput): EvaluationOutcome {
   if (input.runnerError) return "runner_failed";
   if (input.providerFailureReason) return "provider_failed";
   if (input.skippedReason) return "skipped";
   if (input.baselineComparison?.status === "incompatible") return "runner_failed";
   if (input.baselineComparison?.status === "regressed") return "quality_failed";
-  const statuses = [
-    ...input.cases.map((result) => result.status),
+
+  const caseStatuses = input.cases.map((result) => result.status);
+  const otherStatuses = [
     ...input.extraction.map((result) => result.status),
     ...input.screenshot.map((result) => result.status),
   ];
-  if (statuses.includes("runner_failed")) return "runner_failed";
-  if (statuses.includes("provider_failed")) return "provider_failed";
-  if (statuses.includes("quality_failed")) return "quality_failed";
-  if (statuses.length > 0 && statuses.every((status) => status === "skipped")) return "skipped";
+  // Checked across cases AND extraction/screenshot TOGETHER, in this order — matches the original
+  // (pre-#1224) precedence exactly: an infrastructure failure anywhere always beats a provider
+  // failure anywhere, regardless of which section it came from. Checking each section's own
+  // statuses independently first (an earlier draft) silently reversed that precedence whenever an
+  // infra failure and a provider failure land in DIFFERENT sections.
+  const allInfraStatuses = [...caseStatuses, ...otherStatuses];
+  if (allInfraStatuses.includes("runner_failed")) return "runner_failed";
+  if (allInfraStatuses.includes("provider_failed")) return "provider_failed";
+
+  // On a real run, aggregate recall (mirroring scorer.ts's REAL_THRESHOLDS) replaces requiring
+  // every case's own status to be "passed" — the exact bug #1224 was filed for. Mock/deterministic
+  // runs are completely unchanged: every case's exact per-case verdict still gates.
+  const casesOk = input.real
+    ? !hasHardViolation(input.cases) &&
+      !hasTotalWhiff(input.cases) &&
+      meetsRecallFloor(computeDirtyCaseAggregate(input.cases))
+    : !caseStatuses.includes("quality_failed");
+  if (!casesOk || otherStatuses.includes("quality_failed")) return "quality_failed";
+
+  const allStatuses = [...caseStatuses, ...otherStatuses];
+  if (allStatuses.length > 0 && allStatuses.every((status) => status === "skipped")) return "skipped";
   return "passed";
 }
 

@@ -92,7 +92,7 @@
     "uncertainties": [
       {
         "id": "cloud-identity-gap",
-        "topicTerms": ["user-b's account"],
+        "topicTerms": ["user-b"],
         "allowedStatuses": ["unknown", "inferred"]
       }
     ],

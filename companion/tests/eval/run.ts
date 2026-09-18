@@ -21,6 +21,7 @@ import { evaluationIdentity } from "./identity.js";
 import { MeteredProvider } from "./meter.js";
 import {
   buildEvaluationReport,
+  computeDirtyCaseAggregate,
   reportExitCode,
   type EvaluationExtractionResult,
   type EvaluationReport,
@@ -311,11 +312,26 @@ async function execute(options: EvalCliOptions): Promise<EvaluationReport> {
       extraction,
       screenshot,
       createdAt: new Date().toISOString(),
+      real: options.real, // single source of truth — same flag runCorpusSuite already used (#1224)
       ...(options.mode === "screenshots" && options.real && screenshot.length === 0
         ? { skippedReason: "real screenshot set is not configured" }
         : {}),
     },
     options,
+  );
+}
+
+function logDirtyCaseAggregate(report: EvaluationReport): void {
+  // #1224: on a real run the outcome no longer requires every case to individually pass, so a
+  // wall of per-case [FAIL] lines above a "passed" outcome would read as self-contradictory —
+  // print the actual aggregate-vs-floor numbers the outcome was decided on.
+  if (report.cases.length === 0) return;
+  const aggregate = computeDirtyCaseAggregate(report.cases);
+  const pct = (value: number): string => `${(value * 100).toFixed(1)}%`;
+  console.log(
+    `dirty-case aggregate recall (floor ${pct(REAL_THRESHOLDS.minRecall)}): ` +
+      `claims ${pct(aggregate.claimRecall)} / iocs ${pct(aggregate.iocRecall)} / ` +
+      `uncertainty ${pct(aggregate.uncertaintyRecall)} / next-steps ${pct(aggregate.nextStepRecall)}`,
   );
 }
 
@@ -326,6 +342,7 @@ async function main(): Promise<void> {
   const model = options.real
     ? (process.env.DFIR_AI_SYNTH_MODEL ?? visionEnv(process.env, "MODEL") ?? "(default)")
     : "mock-model";
+  if (options.real) logDirtyCaseAggregate(report);
   console.log(`\nevaluation outcome: ${report.outcome} (model ${model})`);
   process.exitCode = reportExitCode(report.outcome);
 }
