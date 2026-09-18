@@ -355,6 +355,9 @@ export function sprayPatternToMappedEvent(p: PasswordSprayPattern, meta: SprayPa
       event: { category: "authentication", type: "password-spray-pattern", outcome: "pattern" },
       actor: { kind: "network", address: p.sourceIp },
       target: { kind: "host", name: p.hostOrTenant },
+      // Both real callers (ecarImport.ts's own EDR-observed srcIp, m365Import.ts's own
+      // ClientIP-family field) are already-covered, provider/sensor-observed sources — never raw
+      // email header content — edge-observed, not client-asserted (#1184 audit).
       network: { source: { address: p.sourceIp } },
       time: { observed: p.start, normalized: normalizeTime(p.start) },
       evidence: { rawRecords: p.locators.map((locator) => ({ source: meta.importer, locator })) },

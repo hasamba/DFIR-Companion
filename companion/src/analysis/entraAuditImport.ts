@@ -101,6 +101,9 @@ export function learnApiResolver(records: readonly Row[]): Resolver {
 
 function head(r: EntraAuditRecord): { who: string; ip: string; head: string } {
   const who = oneLine(r.initiator.upn || r.initiator.name || r.initiator.id).slice(0, WHO_MAX);
+  // initiatedBy.user.ipAddress (graph shape) / ActorIpAddress (the other export shape) — both
+  // Entra's own audit log fields, recorded by Microsoft's own directory-service infrastructure at
+  // call time — edge-observed, not client-asserted (#1184 audit).
   const ip = cleanIp(r.initiator.ip);
   return {
     who,
@@ -119,6 +122,7 @@ function envelope(
     resource?: string;
   },
 ): CanonicalEventEnvelope {
+  // Same Entra audit log field as head() above — edge-observed, not client-asserted (#1184 audit).
   const ip = cleanIp(r.initiator.ip);
   const actorId = r.initiator.id || r.initiator.appId;
   const actorName = r.initiator.upn || r.initiator.name;
@@ -339,6 +343,8 @@ export function readSpSignIn(rec: Row): SpSignIn {
   const resourceName = oneLine(
     str(getCI(rec, "resourceDisplayName")) || KNOWN_APIS[resourceAppId.toLowerCase()] || "",
   ).slice(0, WHO_MAX);
+  // Entra sign-in log's own `ipAddress` field, recorded by Microsoft's own directory-service
+  // infrastructure at call time — edge-observed, not client-asserted (#1184 audit).
   const ip = cleanIp(str(getCI(rec, "ipAddress")));
   const credType = str(getCI(rec, "clientCredentialType")).trim();
   const credKeyId = str(getCI(rec, "servicePrincipalCredentialKeyId")).trim();

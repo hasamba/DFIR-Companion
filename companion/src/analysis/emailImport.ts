@@ -76,7 +76,17 @@ export interface ParsedEmail {
   attachmentsNotRead: number;
   /** Delivery indications: `Delivered-To` (unauthenticated) and the TOPMOST `Received … for <addr>` hop. */
   deliveryIndicated: DeliveryIndication[];
-  originatingIp: string; // X-Originating-IP / earliest external Received hop
+  // X-Originating-IP / earliest external Received hop. NEVER stamped onto canonical.network.source
+  // .address (#1184): unlike a TCP-layer observation (Zeek's id.orig_h) or a provider's own
+  // edge-recorded field (AWS CloudTrail sourceIPAddress, Azure/GCP/Entra/M365 audit-log IP
+  // fields), an email's own header chain can be attacker-influenced in some transport paths — a
+  // webmail client or a malicious relay can assert an X-Originating-IP or forge an intermediate
+  // Received hop. Stamping it into the same trust-sensitive canonical field those edge-observed
+  // sources use would let a forged value join a host-identity resolution (proxyWorkstationChain.ts
+  // reads canonical.network.source.address from ANY event, unscoped by category) as if it were
+  // equally trustworthy. Kept in description text and IOC extraction below — informational uses,
+  // not an identity claim.
+  originatingIp: string;
   auth: EmailAuth;
   urls: string[];
   attachments: EmailAttachment[];
@@ -655,7 +665,6 @@ function buildEvent(p: ParsedEmail, severity: Severity): SiemEvent {
           }
         : {}),
     },
-    ...(p.originatingIp ? { network: { source: { address: p.originatingIp } } } : {}),
     time: { observed: p.rawDate, normalized: p.date },
     evidence: {
       rawRecords: [
@@ -679,7 +688,6 @@ function buildEvent(p: ParsedEmail, severity: Severity): SiemEvent {
       ...(p.to.length ? { "mailbox.recipients": ["To", "Cc"] } : {}),
       ...(p.messageId ? { "mailbox.messageId": ["Message-ID"] } : {}),
       ...(p.subject ? { "mailbox.subject": ["Subject"] } : {}),
-      ...(p.originatingIp ? { "network.source.address": ["X-Originating-IP", "Received"] } : {}),
       ...(p.attachments[0]
         ? { "object.name": ["Content-Disposition.filename"], "file.name": ["Content-Disposition.filename"] }
         : {}),
