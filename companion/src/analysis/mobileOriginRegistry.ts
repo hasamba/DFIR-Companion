@@ -68,6 +68,11 @@ interface RegistryEntry {
    * compare. Named `app-inventory` originally (#988); now also populated on usage/power/permission/
    * network/notification rows (#932 item 16) so those join by the same identity. */
   app?: { package?: string; sha256?: string };
+  /** Upstream's own `datetime`-typed headers, in upstream order — the row's clock candidates
+   * (#1298). Declared only where the importer's generic picker would miss a clock (`Timestamp TP`
+   * ends in neither `time` nor `timestamp`) or mistake a duration for one (`Time Active (ms)`);
+   * an entry without it keeps the generic picker. Honoured only when the headers match the pin. */
+  clocks?: readonly string[];
 }
 
 const SAFARI_ICLOUD_TABS = [
@@ -441,6 +446,7 @@ export const REGISTRY: readonly RegistryEntry[] = [
       "Proxy Package UID",
       "Permission",
     ],
+    clocks: ["Access Timestamp", "Reject Timestamp"],
     record: "permission",
     locality: "device-local",
     app: { package: "Package Name" },
@@ -462,6 +468,7 @@ export const REGISTRY: readonly RegistryEntry[] = [
       "Proxy Package UID",
       "Permission",
     ],
+    clocks: ["Timestamp TP", "Timestamp TC", "Timestamp TB", "Timestamp TF", "Timestamp TFS", "Timestamp TT"],
     record: "permission",
     locality: "device-local",
     app: { package: "Package Name" },
@@ -487,11 +494,13 @@ export const REGISTRY: readonly RegistryEntry[] = [
       "Proxy UID",
       "Source File",
     ],
+    clocks: ["Access Timestamp", "Reject Timestamp"],
     record: "permission",
     locality: "device-local",
     app: { package: "Package Name" },
-    // The AppOpsManager mode name (allow / ignore / deny / default / foreground) or the stored
-    // integer when outside the AOSP set — carried verbatim, as TCC's Access is.
+    // The mode in force at access time: upstream's OP_MODES (AppOpsManager at android-15.0.0_r1)
+    // is ALLOWED / IGNORED / ERRORED / DEFAULT / FOREGROUND, or the stored integer outside that
+    // set — carried verbatim, as TCC's Access is. A different fact from a configured `Mode`.
     accessColumn: "Op Mode",
   },
   {
@@ -511,6 +520,7 @@ export const REGISTRY: readonly RegistryEntry[] = [
     record: "permission",
     locality: "device-local",
     app: { package: "Package Name" },
+    // The CONFIGURED mode for the op (same OP_MODES vocabulary), not an access — a state.
     accessColumn: "Mode",
   },
   {
@@ -567,6 +577,14 @@ export const REGISTRY: readonly RegistryEntry[] = [
       "Interaction Action",
       "Interval",
     ],
+    // Four datetime columns upstream; `Time Active (ms)` and its siblings are durations and are
+    // never a clock.
+    clocks: [
+      "Timestamp / Last Time Active",
+      "Last Time Service Used",
+      "Last Time Visible",
+      "Last Time Component Used",
+    ],
     record: "usage",
     locality: "device-local",
     app: { package: "Package" },
@@ -584,6 +602,27 @@ export function registryEntry(artifact: string): RegistryEntry | undefined {
 export function headersMatch(entry: RegistryEntry, headers: readonly string[]): boolean {
   const have = headers.map(norm);
   return have.length === entry.headers.length && have.every((h, i) => h === entry.headers[i]);
+}
+
+/** The column indices of an entry's declared clocks, in upstream order — or undefined when the
+ * artifact declares none, is not this platform's, or its headers do not match the pin (then the
+ * importer's generic picker applies, as it always did). */
+export function pinnedClocks(
+  platform: MobileBlock["platform"],
+  artifact: string,
+  headers: readonly string[],
+): number[] | undefined {
+  const entry = registryEntry(artifact);
+  // Same platform rule as readOrigin: an `unknown` import may still match; a cross-platform one never.
+  if (
+    !entry?.clocks ||
+    (entry.platform !== platform && platform !== "unknown") ||
+    !headersMatch(entry, headers)
+  )
+    return undefined;
+  const have = headers.map(norm);
+  const out = entry.clocks.map((c) => have.indexOf(c)).filter((i) => i >= 0);
+  return out.length ? out : undefined;
 }
 
 export interface OriginReading {
@@ -729,7 +768,9 @@ export function readOrigin(
     ...(deviceName ? [`row names device "${tagSafe(deviceName.slice(0, NAME_MAX))}"`] : []),
     ...(accountName ? [`row names account "${tagSafe(accountName.slice(0, NAME_MAX))}"`] : []),
     ...(transition ? [`transition ${tagSafe(transition.slice(0, NAME_MAX))}`] : []),
-    ...(access ? [`access ${tagSafe(access.slice(0, NAME_MAX))}`] : []),
+    // The column's own name, lowercased, so a configured `mode`, an at-access `op mode` and a
+    // stored `granted` never read as one shared fact; TCC's column is literally `Access`.
+    ...(access ? [`${entry.accessColumn!.toLowerCase()} ${tagSafe(access.slice(0, NAME_MAX))}`] : []),
   ];
   const words = `${parts.join(", ")}${names.length ? ` (${names.join("; ")})` : ""}${conflicts.length ? "; conflict: " + conflicts.map(tagSafe).join("; ") : ""} — ${REGISTRY_VERSION}`;
   return { block, words };

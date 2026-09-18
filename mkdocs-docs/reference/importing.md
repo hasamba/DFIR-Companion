@@ -1008,12 +1008,19 @@ registry's coverage counts.
 evidence the OS recorded a permission operation for that package — never proof the user
 consciously granted it, and never proof of malicious use. `App Ops Permissions` has no outcome
 column: the outcome is which of its two timestamps is populated, and the row is dated by, and
-names, that clock (`[Reject Timestamp: …]`). A stored `Mode` / `Granted` value (`allow`, `deny`,
-`Yes`, `No`, as ALEAPP wrote it) is a state at collection time, not a grant event and not evidence
-the permission was ever exercised; the tables that carry no clock import undated. A Usage Stats
-row is presence in the OS's usage ledger, not execution of a particular function. Each row types
-its package the same way an app-inventory row does, so a later pass can join requested, granted
-and used by package — that join is not built here.
+names, that clock (`[Reject Timestamp: …]`); when both are populated the row is dated by the
+access and the reject stays in its cells. The three tables that carry a mode or a grant say which
+column spoke — `(op mode ALLOWED)` for the mode in force at an access, `(mode ERRORED)` for a
+configured mode, `(granted Yes)` for a stored grant — with the value exactly as ALEAPP wrote it
+(its `OP_MODES` at android-15.0.0_r1: `ALLOWED`, `IGNORED`, `ERRORED`, `DEFAULT`, `FOREGROUND`,
+or the stored integer outside that set; `Granted` is `Yes` / `No`, or the raw flags when
+undecidable). A stored mode or grant is a state at collection time, not a grant event and not
+evidence the permission was ever exercised; the tables that carry no clock import undated. A
+Usage Stats row is presence in the OS's usage ledger, not execution of a particular function; its
+`Time Active` columns are durations and are never read as the row's clock. Each row types its
+package the same way an app-inventory row does, so a later pass can join requested, granted and
+used by package — that join is not built here, and a row's `Proxy Package Name` (an op performed
+by one package on behalf of another) is not identity.
 
 **The subject device.** Give `device` on `/import-leapp` (the extraction's subject as you name it);
 it becomes the rows' host. It is never read from a row: a device a row names is an association.
