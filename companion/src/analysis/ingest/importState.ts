@@ -94,6 +94,9 @@ export async function noteEmptyImport(
   total: number,
   // What the importer could still say about the upload's shape (a memory export that holds zero
   // rows, a layout not read) — the analyst sees it even when a severity floor left no event.
+  // Rendered as a "; "-joined clause after the base sentence, the same shape the non-empty
+  // notes use for the same text (#1300) — never a parenthetical, which nested a second em-dash
+  // and read as an aside rather than the cause.
   detail?: string,
 ): Promise<InvestigationState> {
   const delta = deltaSchema.parse({
@@ -105,7 +108,7 @@ export async function noteEmptyImport(
     threadsClosed: [],
     timelineNote:
       `${kind} import: no events from ${total} record(s) — nothing added to the case` +
-      (detail ? ` (${detail})` : ""),
+      (detail ? `; ${detail}` : ""),
     summary: "",
   });
   return commitDelta(ctx, caseId, delta, opts);
@@ -205,10 +208,14 @@ export async function crossUploadSprayRows(
 
   // Retention-age disclosure (#1286): if this batch's own earliest event already predates the
   // retention horizon, cross-upload matching for it is effectively dead — see CrossUploadSprayResult.
+  // The wording is one-directional on purpose (#1299): the query below still RUNS for this batch
+  // and can match prior observations of the same age that survived the throttled prune, so the
+  // note must not say it "could not run". What is lost is the other direction — a LATER upload
+  // cannot reach this batch once the wall-clock prune removes it.
   const retentionHoursValue = store.retentionHours();
   const retentionExceeded = anchorMs < Date.now() - retentionHoursValue * 3_600_000;
   const retentionNote = retentionExceeded
-    ? `cross-upload spray matching could not run for this batch — its evidence predates the ${retentionHoursValue}h auth-observation retention window, so it cannot be correlated with other uploads`
+    ? `cross-upload spray matching for this batch is limited — its evidence predates the ${retentionHoursValue}h auth-observation retention window, so later uploads cannot be correlated with it`
     : "";
 
   // Query BEFORE appending this upload's own observations, so `combined` is built by hand instead

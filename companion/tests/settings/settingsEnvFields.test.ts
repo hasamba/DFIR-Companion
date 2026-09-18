@@ -1,7 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { readFile } from "node:fs/promises";
 
-import { validateEnvUpdates, RELOADABLE_ENV_PREFIXES } from "../../src/settings/envManager.js";
+import {
+  validateEnvUpdates,
+  RELOADABLE_ENV_PREFIXES,
+  LIVE_FROM_ENV_PREFIXES,
+} from "../../src/settings/envManager.js";
 
 /**
  * The Settings modal and POST /settings/env share an implicit contract: every field the modal lets
@@ -232,5 +236,15 @@ describe("Settings reload ⇄ RELOADABLE_ENV_PREFIXES", () => {
   it("keeps the KEV toggle on both halves", async () => {
     expect(RELOADABLE_ENV_PREFIXES.has("DFIR_KEV_")).toBe(true);
     expect(await browserPrefixes()).toContain("DFIR_KEV_");
+  });
+
+  it("keeps the SQLite high-value label list on both halves, and live (#1317)", async () => {
+    // parseSqliteRowStateCsv reads process.env on every import call, so the reload IS the change.
+    // Dropping the key from any of the three lists brings back "restart the server to apply" for
+    // a value the next import would have picked up anyway.
+    const key = "DFIR_SQLITE_HIGH_VALUE_LABELS";
+    expect(RELOADABLE_ENV_PREFIXES.has(key)).toBe(true);
+    expect(LIVE_FROM_ENV_PREFIXES.has(key)).toBe(true);
+    expect(await browserPrefixes()).toContain(key);
   });
 });

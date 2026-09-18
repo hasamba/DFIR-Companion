@@ -230,6 +230,86 @@ old paged lookup searched only the first 500 rows, so explaining an event past t
 `starredReport` likewise stopped calling `.all(caseId)`, which materialized the entire
 super-timeline to resolve a handful of ids.
 
+## The `network.source.provenance` trust flag
+
+The second rule about forensic correctness, and the same shape as the boundary above: one rule,
+many writers, one sweep that enforces it. This section is the contract's only home. Every comment
+in the code that touches the flag is a pointer here, and the registries in
+`tests/architecture/networkSourceProvenanceSweep.test.ts` are the list of record for who stamps
+and who reads — this section names no writer or reader count on purpose, because a hand-kept
+total drifted from the test that enforced it on the day it was written
+([#1314](https://github.com/hasamba/DFIR-Companion/issues/1314)).
+
+### The rule
+
+`canonical.network.source.address` is written by importers of two trust classes. A sensor,
+exporter or kernel records the TCP peer it **observed** — Zeek's `id.orig_h`, a Squid access
+log's first column, a VPC flow log's `srcaddr`, an EVTX 4624's `IpAddress`, an auditd `SOCKADDR`.
+An email header names whatever the client **claimed** — `X-Originating-IP`, `X-Forwarded-For`, a
+`Received:` line. Both land in the same field, and nothing in the value tells them apart.
+
+> **A writer stamps `provenance: "edge-observed"` only when its own recorder edge observed the
+> peer. A reader that turns the address into a host-name claim fail-closes on that stamp.**
+
+Fail-closed means: an absent stamp is read as *not* edge-observed. It nulls the **address**, never
+the event and never the account. An event that also carries an eligible account still resolves
+through the account path; an event whose only identity was an unstamped address produces no
+attribution at all, the same as an event with no address.
+
+Why a flag on the envelope and not a filter in the reader: a category-based allowlist cannot
+separate the two classes. `exchangeAuditImport.ts` and `mailboxChain.ts` are genuinely
+edge-observed and share `category: "email"` with `emailImport.ts`, whose `originatingIp` is a
+client header. The one forgeable writer found by the audit
+([#1184](https://github.com/hasamba/DFIR-Companion/issues/1184),
+[#1267](https://github.com/hasamba/DFIR-Companion/pull/1267)) had its address write removed
+rather than marked; the flag itself landed in
+[#1265](https://github.com/hasamba/DFIR-Companion/issues/1265).
+
+The stamp is **not type-enforced**. The schema field is optional and independent of `address`, so
+a writer that forgets it compiles cleanly, and its rows silently fall out of every gated reader.
+That is the gap the sweep closes.
+
+### Who stamps, who is exempt
+
+- **Writers** — every `src/analysis` file that builds a `source: { address }` literal is
+  registered in the sweep's `SITES` map with its site count, and every site must carry the
+  stamp. The judgement that a site is genuinely edge-observed is the audit's, recorded per site
+  beside the entry.
+- **Exempt** — `canonicalEvent.ts`'s legacy-upgrade path copies whatever `srcIp` the original
+  pre-canonical importer wrote. Its provenance is unknowable at upgrade time, so it is registered
+  in `EXEMPT` and must **not** stamp. This is also why **pre-#1265 persisted data is unstamped by
+  design**: those envelopes were written before the flag existed, and fail-closed is the honest
+  reading of them. No `schemaVersion` bump accompanied the field — see the schema policy in
+  `mkdocs-docs/reference/canonical-events.md`.
+
+### Who must gate
+
+The reader audit ([#1313](https://github.com/hasamba/DFIR-Companion/issues/1313)) found that the
+writer sweep made every new writer decide and nothing made a new reader decide. Every
+`src/analysis` file that reads the field is now registered in the sweep's `READERS` map as one
+of:
+
+- **gated** — the address becomes a **host-name claim** (`resolveIpAtTime` and the like). The
+  gate's presence is asserted. `proxyWorkstationChain.ts` and
+  `dnsEndpointCrossUploadConnJoin.ts` are this class.
+- **agnostic** — display attributes, join keys, search, already-caveated detections: a wrong value
+  degrades a lead but never names a host, and a gate would drop genuine legacy sensor evidence
+  to defend against a forged-address producer that does not exist. The reason is recorded per
+  entry and the gate's **absence** is asserted, so a gate cannot creep in without revisiting it.
+- **tracked** — the decision is deferred to a named open issue. `hostBinding.ts`'s IP index is
+  this class ([#1292](https://github.com/hasamba/DFIR-Companion/issues/1292)).
+
+### How it is enforced
+
+`tests/architecture/networkSourceProvenanceSweep.test.ts` scans every file under `src/analysis`.
+A file with a `source: { address }` literal that is in neither `SITES` nor `EXEMPT` fails; a file
+that reads the field and is not in `READERS` fails. Both failure messages point back to this
+section. The sweep is plain-text, not AST-based: property shorthand, computed keys and writes
+routed through a helper are invisible to it, and it verifies that the two literals sit together,
+not that the stamped value is truly edge-observed. `tests/analysis/proxyWorkstationChain.test.ts`
+pins the reader side — an unstamped address yields no attribution, an old-shaped envelope with no
+`provenance` field still parses.
+
 ## Enforcement
 
 `npm run check:boundaries` — the third gate in the family `check:size` and `check:imports` already
@@ -258,7 +338,7 @@ established, and it works the same way.
 The graph is built the same way `check-imports.mjs` builds it: a regex over relative `.js`
 specifiers, because the companion imports its own modules exclusively that way. No resolver needed.
 
-For context: **2,583 of the 2,621 cross-domain file dependencies already comply.** The map is mostly
+For context: **2,584 of the 2,622 cross-domain file dependencies already comply.** The map is mostly
 a description of how this codebase is already written, which is the only kind of rule people follow.
 Both figures come from `npm run check:boundaries -- --json`, which counts them in the same pass that
 finds the violations, and a test asserts this sentence against it. The pair read 1,275 of 1,323 long

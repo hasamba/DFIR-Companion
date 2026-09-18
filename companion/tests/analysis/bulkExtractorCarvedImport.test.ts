@@ -253,7 +253,8 @@ describe("parseBulkExtractorCarved — <CACHED> folding (the tool's own dedup)",
     expect(b.value).toBe(`hash:md5:${MD5_A}`);
     expect(b.filesize).toBeUndefined();
     expect(r.events[0].description).toContain("importer-synthesized");
-    expect(r.events[0].description).toContain("object size not reported or not parseable");
+    expect(r.events[0].description).toContain("object size not read (no first-sighting row)");
+    expect(r.events[0].description).not.toContain("exceeds the representable range");
     expect(r.events[0].description).not.toContain("zero-byte");
   });
 
@@ -333,6 +334,29 @@ describe("parseBulkExtractorCarved — digest promotion guards", () => {
     expect(b.hashIocPromoted).toBe(false);
     expect(r.iocs).toHaveLength(0);
     expect(r.events[0].description).toContain("zero-byte object");
+  });
+
+  it("a 20-digit <filesize> above MAX_SAFE_INTEGER: filesize dropped, degenerate, no IOC, and the description names the over-range size — never 'not reported'", () => {
+    // 8 PiB-scale: bulk_extractor cannot carve this from a real image, so the sentence must point
+    // at the reported value, not hedge about an absent one (an absent <filesize> is a malformed row).
+    const oversized = "99999999999999999999"; // 20 digits, passes the row regex, fails isSafeInteger
+    const f = feature("jpeg", [
+      `1\tjpeg/000/1.jpg\t<fileobject><filename>jpeg/000/1.jpg</filename><filesize>${oversized}</filesize><hashdigest type='md5'>${MD5_A}</hashdigest></fileobject>`,
+    ]);
+    const r = parseBulkExtractorCarved(f)!;
+    expect(r.events).toHaveLength(1);
+    expect(r.malformedRows).toBe(0);
+    const b = r.events[0].canonical!.recoveredFragment!;
+    if (b.artifactClass !== "carved-file") return;
+    expect(b.filesize).toBeUndefined();
+    expect(b.degenerate).toBe(true);
+    expect(b.hashIocPromoted).toBe(false);
+    expect(r.iocs).toHaveLength(0);
+    expect(r.events[0].description).toContain(
+      "reported object size exceeds the representable range, digest not promoted",
+    );
+    expect(r.events[0].description).not.toContain("not reported");
+    expect(r.events[0].description).not.toContain("zero-byte");
   });
 
   it("never promotes the algorithm's empty-input digest even with a nonzero reported size", () => {

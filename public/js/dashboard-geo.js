@@ -76,7 +76,7 @@
     const s = d.stats;
     const countries = (d.countries || []).map(c => `<span class="geo-chip" data-safe-style="border-left:3px solid ${GEO_COLOR[geoSevColor(c.severity)]};padding-left:6px;margin-right:10px">${esc(c.country)} <b>${esc(c.count)}</b></span>`).join("");
     const topIps = geoFilteredMarkers().slice(0, 10).map(m =>
-      `<li data-safe-style="cursor:pointer" data-geo-ip="${escAttr(m.ip)}" title="focus on map"><span data-safe-style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${GEO_COLOR[m.color] || GEO_COLOR.gray};margin-right:6px"></span>${esc(m.ip)} <span data-safe-style="color:var(--text-muted)">${esc([m.city, m.country].filter(Boolean).join(", ") || "—")} · ${esc(m.eventCount)} ev</span></li>`).join("");
+      `<li data-safe-style="cursor:pointer" data-geo-ip="${escAttr(m.ip)}" title="focus on map"><span data-safe-style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${GEO_COLOR[m.color] || GEO_COLOR.gray};margin-right:6px"></span>${esc(m.ip)}${geoIpFlags(m)} <span data-safe-style="color:var(--text-muted)">${esc([m.city, m.country].filter(Boolean).join(", ") || "—")} · ${esc(m.eventCount)} ev</span></li>`).join("");
     statsEl.innerHTML =
       `<div data-safe-style="margin-bottom:4px">${esc(s.resolved)} mapped / ${esc(s.totalIps)} IPs · ${esc(s.external)} external · ${esc(s.internal)} internal · ${esc(s.distinctCountries)} countries · ${esc(s.distinctAsns)} ASNs${s.markerCap ? ` · showing first ${esc(s.markerCap)}` : ""}<span data-safe-style="color:var(--text-muted)"> · dashed = country-level (approx)</span></div>` +
       (countries ? `<div data-safe-style="margin-bottom:4px"><b>Top countries:</b> ${countries}</div>` : "") +
@@ -117,6 +117,19 @@
     el.textContent = text;
     el.hidden = false;
   }
+  // The flags that follow an IP wherever this panel names one — the popup and the Top IPs list —
+  // so a marked marker never looks identical to an unmarked one on either surface. Same wording as
+  // the markdown report's geographic table. `clientReported` is the server's boolean for
+  // `IOC.provenance === "client-reported"` (#1266): a sender-controlled address, not a sighting.
+  function geoIpFlags(m) {
+    return `${m.falsePositive ? " (false positive)" : ""}${m.clientReported ? " (client-reported)" : ""}`;
+  }
+  // Pure: the popup body for one marker, kept apart from Leaflet so it can be asserted on.
+  function geoPopupHtml(m) {
+    const verdict = m.verdict && m.verdict !== "unknown" ? ` · ${esc(m.verdict)}` : "";
+    const approxNote = m.approximate ? " · <em>country-level (approx)</em>" : "";
+    return `<b>${esc(m.ip)}</b>${geoIpFlags(m)}<br>${esc([m.city, m.country].filter(Boolean).join(", ") || "unknown location")}${approxNote}<br>${esc(m.asn || "")}<br>${esc(m.severity)}${verdict} · ${esc(m.eventCount)} event(s)`;
+  }
   function renderGeoMarkers() {
     if (!geoMap || !geoMapData) return;
     geoLayer.clearLayers(); geoFlowLayer.clearLayers();
@@ -126,9 +139,7 @@
       const opts = { radius: 7, color: "#0d1117", weight: 1, fillColor: GEO_COLOR[m.color] || GEO_COLOR.gray, fillOpacity: m.approximate ? 0.45 : 0.85 };
       if (m.approximate) opts.dashArray = "2,3";
       const cm = L.circleMarker([m.lat, m.lon], opts);
-      const verdict = m.verdict && m.verdict !== "unknown" ? ` · ${esc(m.verdict)}` : "";
-      const approxNote = m.approximate ? " · <em>country-level (approx)</em>" : "";
-      cm.bindPopup(`<b>${esc(m.ip)}</b>${m.falsePositive ? " (false positive)" : ""}<br>${esc([m.city, m.country].filter(Boolean).join(", ") || "unknown location")}${approxNote}<br>${esc(m.asn || "")}<br>${esc(m.severity)}${verdict} · ${esc(m.eventCount)} event(s)`);
+      cm.bindPopup(geoPopupHtml(m));
       cm.addTo(geoLayer);
       bounds.push([m.lat, m.lon]);
       byIp[m.ip.toLowerCase()] = cm;
@@ -239,6 +250,8 @@
   window.renderGeoView = renderGeoView;
   window.ensureGeoMap = ensureGeoMap;
   window.renderGeoMarkers = renderGeoMarkers;
+  window.geoIpFlags = geoIpFlags;
+  window.geoPopupHtml = geoPopupHtml;
   window.geoFocusIp = geoFocusIp;
   window.geoDownloadCsv = geoDownloadCsv;
   window.geoToggleFullscreen = geoToggleFullscreen;

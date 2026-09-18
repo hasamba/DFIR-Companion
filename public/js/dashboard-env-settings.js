@@ -356,6 +356,9 @@
     "DFIR_KEV_",
     "DFIR_TOOL_",
     "DFIR_TLS_ALLOW_INSECURE_EXTERNAL",
+    // Exact key: the SQLite importer re-reads it on every call, so a save is live once the server
+    // reloads it (#1317). Same contract with settings/envManager.ts as the entries above.
+    "DFIR_SQLITE_HIGH_VALUE_LABELS",
   ];
 
   // Apply the groups a just-saved set of .env keys belongs to, without a restart (#178).

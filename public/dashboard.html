@@ -4756,7 +4756,7 @@
           + `<input type="checkbox" class="ioc-cb ioc-row-cb" data-iocid="${escAttr(i.id)}" ${isSel ? "checked" : ""} title="Select IOC" />`
           + `<span class="ioc-type-cell" title="${escAttr(i.id)}">${esc(i.type)}</span>`
           + `<span class="ioc-main-cell">`
-          +   `<span class="ioc-value-line"><span class="qa-val" data-vtype="${escAttr(i.type)}" data-val="${escAttr(i.value)}" data-iocid="${escAttr(i.id)}">${valueHtml}</span>${noteHtml}${newBadge}${iocRiskBadge(i.id)}${iocCorroBadge(i.id)}${iocProvenanceBadge(i.id)}${enrichHtml}${tagsHtml}</span>`
+          +   `<span class="ioc-value-line"><span class="qa-val" data-vtype="${escAttr(i.type)}" data-val="${escAttr(i.value)}" data-iocid="${escAttr(i.id)}">${valueHtml}</span>${iocClientReportedChip(i)}${noteHtml}${newBadge}${iocRiskBadge(i.id)}${iocCorroBadge(i.id)}${iocProvenanceBadge(i.id)}${enrichHtml}${tagsHtml}</span>`
           + `</span>`
           + `<span class="ioc-actions-cell">${commentChip("ioc", i.id)} ${tagAddBtn("ioc", i.id)} ${huntChip("ioc", i.id)} ${iocChainChip(i.id)} ${fpAction} `
           +   `<button class="ioc-merge-btn" data-iocid="${escAttr(i.id)}" data-value="${escAttr(i.value)}" data-ioctype="${escAttr(i.type)}" title="Merge into another IOC (duplicate indicator)" type="button" data-safe-style="background:none;border:none;cursor:pointer;padding:1px 2px;color:var(--text-faint);font-size:10px">⇄</button>`

@@ -230,8 +230,20 @@ function mapGroup(
   producerVersion: string,
   sink: Map<string, SiemIoc>,
 ): MappedEvent {
+  // Confirmed (language_strings) citations lead, missed ones follow, each half in first-seen
+  // order — so a value whose missed citations alone exceed RECOVERY_CITATIONS_MAX can never crowd
+  // its confirmed citation out of the cap and flip `anyConfirmed` to "candidate". The caller
+  // happens to scan language_strings first today, but that is its budget rule, not this cap's
+  // guarantee (#1305; same idiom as bulkExtractorCarvedImport's first-real-row lead).
+  const ordered =
+    kind === "language"
+      ? [
+          ...rows.filter((r) => !(r.citation as LanguageCitation).missed),
+          ...rows.filter((r) => (r.citation as LanguageCitation).missed),
+        ]
+      : rows;
   const seen = new Map<string, DecodedCitation | StackCitation | LanguageCitation>();
-  for (const r of rows) {
+  for (const r of ordered) {
     if (seen.has(r.citationKey)) continue;
     if (seen.size >= RECOVERY_CITATIONS_MAX) continue;
     seen.set(r.citationKey, r.citation);
