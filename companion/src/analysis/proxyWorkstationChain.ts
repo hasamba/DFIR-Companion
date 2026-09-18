@@ -79,6 +79,7 @@
 
 import {
   buildHostBindingIndex,
+  isIndexableLogon,
   resolveAccountAtTime,
   resolveIpAtTime,
   type HostBinding,
@@ -123,10 +124,11 @@ function locatorsOf(e: ForensicEvent): { source: string; locator: string }[] {
   return (e.canonical?.evidence?.rawRecords ?? []).map((r) => ({ source: r.source, locator: r.locator }));
 }
 
-/** Exactly the set `buildHostBindingIndex` itself indexes from — see the module header. */
-function isIndexedLogon(e: ForensicEvent): boolean {
-  return e.canonical?.event?.type === "logon" && e.canonical?.event?.outcome === "success";
-}
+// isIndexableLogon (hostBinding.ts) is exactly the set `buildHostBindingIndex` itself indexes
+// from — see the module header. Shared rather than re-derived (#1188) so the two can never drift.
+// The predicates aren't structurally identical: this route never checks timestamp, deliberately —
+// eligibility here is "would this event be indexed", and a no-timestamp logon can't self-match
+// anyway, so no separate timestamp check is needed on this side.
 
 /** Merge one identity path's hits into the per-host accumulator, tagging which path found each. */
 function mergeHits(
@@ -155,7 +157,7 @@ export function resolveProxyHostIdentity(
     // Account path scoped to canonical.web — see the module header's ELIGIBILITY, ACCOUNT PATH.
     const account = e.canonical?.web ? (e.canonical?.account?.name ?? "") : "";
     if (!address && !account) continue;
-    if (isIndexedLogon(e)) continue;
+    if (isIndexableLogon(e)) continue;
 
     const byHost = new Map<string, { bindings: HostBinding[]; via: Set<ProxyHostIdentityVia> }>();
     if (address) mergeHits(byHost, resolveIpAtTime(index, address, e.timestamp, toleranceMs), "address");

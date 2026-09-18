@@ -59,6 +59,13 @@ export interface HostBindingIndex {
 // 2 Interactive, 7 Unlock, 10 RemoteInteractive/RDP, 11 CachedInteractive.
 const ACCOUNT_PRESENCE_LOGON_TYPES = new Set([2, 7, 10, 11]);
 
+// Exported so any other module deriving something from "would this event be indexed here"
+// shares the SAME predicate rather than re-deriving it — proxyWorkstationChain.ts's own
+// isIndexedLogon used to be a private copy of exactly this check (#1188).
+export function isIndexableLogon(e: ForensicEvent): boolean {
+  return e.canonical?.event?.type === "logon" && e.canonical?.event?.outcome === "success";
+}
+
 // A logon whose IP is empty, a placeholder, or loopback is not a real network-identity source —
 // every host on the fleet logs these the same way, so admitting them would make an IP "match"
 // every host in the case.
@@ -239,7 +246,7 @@ export function buildHostBindingIndex(
 
   for (const event of events) {
     const c = event.canonical;
-    if (!c || c.event.type !== "logon" || c.event.outcome !== "success") continue;
+    if (!c || !isIndexableLogon(event)) continue;
     const sampleTime = event.timestamp;
     if (!sampleTime) continue;
 
