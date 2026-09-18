@@ -80,6 +80,15 @@ describe("canonicalAccount", () => {
   it("is a bare lowercased name with no domain", () => {
     expect(canonicalAccount(undefined, "Alice")).toBe("alice");
   });
+
+  // #1246: the admission gate (hasNoDomain) already treated '-'/'*' as absent, but the index KEY
+  // still spelled it out ("-\\alice") — a domain a caller would never query, making the binding
+  // unreachable. Both must fold the same placeholder convention.
+  it("folds a placeholder domain ('-' or '*') to a bare name, same as an absent domain", () => {
+    expect(canonicalAccount("-", "Alice")).toBe("alice");
+    expect(canonicalAccount("*", "Alice")).toBe("alice");
+    expect(canonicalAccount("-", "Alice")).toBe(canonicalAccount(undefined, "Alice"));
+  });
 });
 
 describe("buildHostBindingIndex + resolveIpAtTime (IP -> client host)", () => {
@@ -309,6 +318,24 @@ describe("buildHostBindingIndex + resolveAccountAtTime (account -> session host)
     ];
     const index = buildHostBindingIndex(events);
     const hits = resolveAccountAtTime(index, "CORP\\alice", "2026-06-10T12:00:00Z", 1_000);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].host).toBe("ws-042");
+  });
+
+  // #1246: an accountDomain of '-' admits as human (hasNoDomain) but must ALSO key the index under
+  // the bare name, not "-\\alice" — otherwise resolveAccountAtTime("alice", ...) would never find it.
+  it("indexes an account with a placeholder ('-') domain under the bare name, reachable by it", () => {
+    const events = [
+      logonEvent({
+        sessionHost: "ws-042",
+        accountName: "alice",
+        accountDomain: "-",
+        logonType: 10,
+        ts: "2026-06-10T12:00:00Z",
+      }),
+    ];
+    const index = buildHostBindingIndex(events);
+    const hits = resolveAccountAtTime(index, "alice", "2026-06-10T12:00:00Z", 1_000);
     expect(hits).toHaveLength(1);
     expect(hits[0].host).toBe("ws-042");
   });

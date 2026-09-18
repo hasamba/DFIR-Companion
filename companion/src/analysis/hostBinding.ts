@@ -180,8 +180,12 @@ export function canonicalIp(raw: string): string {
 
 export function canonicalAccount(domain: string | undefined, name: string): string {
   const n = name.trim().toLowerCase();
-  const d = domain?.trim().toLowerCase();
-  return d ? `${d}\\${n}` : n;
+  // A placeholder domain ('-'/'*') must fold the same way here as it does for the admission gate
+  // (hasNoDomain, below) — otherwise a domain that GATES as "absent" but still spells its way into
+  // the index KEY makes the binding unreachable: resolveAccountAtTime looks up the bare name, never
+  // "-\name" (#1246). No current importer produces this shape (winAccountRoles.ts's entity()
+  // already collapses "-" before this module sees it) — defense-in-depth, not a live bug.
+  return hasNoDomain(domain) ? n : `${domain!.trim().toLowerCase()}\\${n}`;
 }
 
 export type IpExclusionReason = "placeholder" | "loopback-v4" | "link-local-v4" | "link-local-v6";
