@@ -969,10 +969,10 @@ managed account are all rows the device holds. So every LEAPP row now carries an
 read from the row's own columns against a registry of known iLEAPP / ALEAPP artifacts:
 
 ```
-iLEAPP Safari Browser - History [Visit Timestamp: 2026-05-02 10:00:00] [origin: synced-from-another-device, device-local, history — leapp-origin-2026-09-13]: …
-iLEAPP Safari Browser - iCloud Tabs [origin: synced, cloud, tab (row names device "Ana's iPad") — leapp-origin-2026-09-13]: …
-ALEAPP Android Notification History [origin: not-established, device-local, notification — leapp-origin-2026-09-13]: …
-ALEAPP Knowledge [origin: not established — leapp-origin-2026-09-13]: …
+iLEAPP Safari Browser - History [Visit Timestamp: 2026-05-02 10:00:00] [origin: synced-from-another-device, device-local, history — leapp-origin-2026-09-16]: …
+iLEAPP Safari Browser - iCloud Tabs [origin: synced, cloud, tab (row names device "Ana's iPad") — leapp-origin-2026-09-16]: …
+ALEAPP Android Notification History [origin: not-established, device-local, notification — leapp-origin-2026-09-16]: …
+ALEAPP Knowledge [origin: not established — leapp-origin-2026-09-16]: …
 ```
 
 **Facets, not a class.** *Acquisition* (recorded on this device / synced from another device /
@@ -986,17 +986,19 @@ record-origin fact (the visit record originated on this device, or was synced fr
 person visited"; a Chromium `Transition Type` is kept as a navigation fact. An account or device a
 row names is an association ("the row names device X"), never an actor or a source.
 
-**The registry is pinned to upstream** — iLEAPP `main@925f3d71e2e0` and ALEAPP `main@498491475597`
-(both 2026-09-13), registry version `leapp-origin-2026-09-13` — by the artifact's exact upstream
-name (the TSV filename) and its exact header tuple. A file whose headers differ from the pinned
-tuple reads "artifact known, headers differ from the pinned release"; an artifact not in the
-registry reads "not established"; a status or configuration sub-artifact reads "excluded". A bare
-TSV carries no producer version, so the most a row can say is that its headers match the pinned
-release — the file's own LEAPP version is not recorded. Covered artifacts: Safari History, iCloud
-Tabs, Tabs (BrowserState / SafariTabs), Notification Duet, Account Data, Apple Account Device List;
-Chromium Web History / Web Visits / Search Terms, Android Notification History, Accounts_ce,
-installedappsGass, InstalledappsLibrary. The import response, the activity line, the timeline note
-and the run manifest all carry the registry's coverage counts.
+**The registry is pinned to upstream** — iLEAPP `main@6dc251d857c0` (2026-09-14) and ALEAPP
+`main@498491475597` (2026-09-13), registry version `leapp-origin-2026-09-16` — by the artifact's
+exact upstream name (the TSV filename) and its exact header tuple. A file whose headers differ from
+the pinned tuple reads "artifact known, headers differ from the pinned release"; an artifact not in
+the registry reads "not established"; a status or configuration sub-artifact reads "excluded". A
+bare TSV carries no producer version, so the most a row can say is that its headers match the
+pinned release — the file's own LEAPP version is not recorded. Covered artifacts: Safari History,
+iCloud Tabs, Tabs (BrowserState / SafariTabs), Notification Duet, Account Data, Apple Account
+Device List, knowledgeC - App Usage, PowerLog - Application Runtime, Application Permissions (the
+modern `last_modified`-schema TCC export only — the older, pre-iOS-13 schema still reads
+"headers differ"), App Data (netusage); Chromium Web History / Web Visits / Search Terms, Android
+Notification History, Accounts_ce, installedappsGass, InstalledappsLibrary. The import response,
+the activity line, the timeline note and the run manifest all carry the registry's coverage counts.
 
 **The subject device.** Give `device` on `/import-leapp` (the extraction's subject as you name it);
 it becomes the rows' host. It is never read from a row: a device a row names is an association.
