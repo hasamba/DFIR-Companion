@@ -142,12 +142,27 @@ Point `--real` at a strong model via `DFIR_VISION_MODEL` (it need not be the mod
 **Production cases — evidence-coverage claim scoring.** Each golden claim names the forensic event
 IDs a matching finding must cite (a subset check, not an exact-set one — citing additional
 legitimately-related events no longer fails the claim) plus its required meaning. A finding with
-similar wording but missing evidence still fails. Additional *findings* still count as false
+similar wording but missing evidence still fails. Additional _findings_ still count as false
 conclusions because these compact case goldens are exhaustive. **History:** this was originally an
 exact-set match; two real models (`openrouter/google/gemini-3.7-flash`,
 `anthropic/claude-sonnet-4.6`) both scored a hard 0.0% claims precision/recall on 8-9 of 9 cases
 under it despite scoring well on IOCs, uncertainties and next-steps — no real model reliably
 reproduces a golden's exact id combination, so the bar was too strict to ever pass.
+
+**Union matching (#1217/#1226).** A single finding covering the claim's whole evidence set is
+tried first. If none does — e.g. the production synthesis prompt forbids collapsing multiple
+techniques into one finding, so a case-level claim spanning several techniques is legitimately
+told across several atomic findings — the scorer tries a minimal cover of not-yet-used findings
+over the required event IDs, then, only if that cover's own text is missing a required term, a
+second minimal cover over the still-missing terms. Either way, only findings that actually
+contribute a required ID or a still-missing term are marked "used" — a finding that merely sits in
+the same candidate pool never gets laundered in for free.
+
+**Precision on `--real` (#1225).** Like the extraction evaluator above, a real run does not gate
+on claims or IOC _precision_ — an extra, legitimate finding or observation the golden's compact
+case didn't anticipate is not itself a regression. Recall still must be 1 for both, and mock/
+deterministic runs keep the original, exact precision gate.
+
 The scorer separately rejects references to IDs absent from the input timeline, known forbidden
 conclusions/entities, out-of-range confidence, missing confidence reasons, unresolved evidence gaps
 without an honest uncertainty, unhelpful next steps, and any finding at all in an abstention case.
