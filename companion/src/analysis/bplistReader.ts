@@ -136,7 +136,11 @@ function decodeObject(
     if (offset + 9 > buf.length) throw new BplistError("date out of range");
     const secs = buf.readDoubleBE(offset + 1);
     if (!Number.isFinite(secs)) throw new BplistError("date value not finite");
-    return new Date(EPOCH_2001 + secs * 1000);
+    const date = new Date(EPOCH_2001 + secs * 1000);
+    // A finite secs value (e.g. 1e300) can still produce an out-of-range, Invalid Date — reject it
+    // here rather than let it masquerade as a decoded value (#1190).
+    if (Number.isNaN(date.getTime())) throw new BplistError("date value out of representable range");
+    return date;
   }
   if ((typeByte & 0xf0) === 0x40) {
     let dataLen: bigint;

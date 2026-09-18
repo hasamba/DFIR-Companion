@@ -111,7 +111,13 @@ class Resolver {
         const resolved = time !== undefined ? this.resolve(time, depth + 1) : null;
         if (typeof resolved === "number" || typeof resolved === "bigint") {
           const secs = typeof resolved === "bigint" ? Number(resolved) : resolved;
-          return new Date(Date.UTC(2001, 0, 1) + secs * 1000);
+          const date = new Date(Date.UTC(2001, 0, 1) + secs * 1000);
+          // secs can be finite (or a huge bigint) and still produce an out-of-range Invalid Date —
+          // reject it here rather than let it flow into the resolved object graph, where it would
+          // silently degrade to null on JSON.stringify or throw for any later .toISOString() (#1190).
+          if (Number.isNaN(date.getTime()))
+            throw new NsKeyedArchiverError("date value out of representable range");
+          return date;
         }
         return { unknownClass: className, raw: this.resolveDictBody(dict, depth) };
       }
