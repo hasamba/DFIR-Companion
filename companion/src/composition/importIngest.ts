@@ -556,8 +556,15 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     options.onImport?.(caseId);
 
     const preview = parseMacLoginItemBtm(bytes);
-    if (!preview || preview.total === 0) {
+    if (!preview) {
       throw new Error("no recognized login-item entries found (unrecognized BTM structure)");
+    }
+    // Guarded on `kept` (what actually becomes persisted/imported events), not `total` (items
+    // scanned) — the two can diverge (a maxEvents cap, aggregation), and guarding on the wrong one
+    // would leave a "successful" ledger row with rows: 0 and zero timeline events for a file that
+    // never actually contributed anything (Ollama code review finding).
+    if (preview.kept === 0) {
+      throw new Error("BTM file parsed but contained no importable login items");
     }
 
     const { storedName, importedAt, seq } = await persistRawEvidence(

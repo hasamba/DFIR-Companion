@@ -10,6 +10,7 @@ import { DropStatusStore } from "../../src/analysis/dropStatus.js";
 import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import { MockProvider } from "../../src/providers/provider.js";
 import { createApp } from "../../src/server.js";
+import { CustomToolStore } from "../../src/integrations/tools/customToolStore.js";
 
 // #1153: the evidence drop folder had no notion of "a binary this codebase natively parses" — a
 // BTM file's raw bytes (bplist keyed archive) trip dropScan.ts's own looksBinary() NUL-byte sniff,
@@ -51,7 +52,7 @@ function findingPipeline(stateStore: StateStore): AnalysisPipeline {
   });
 }
 
-async function harness() {
+async function harness(customToolStore?: CustomToolStore) {
   const prevPoll = process.env.DFIR_DROP_POLL_S;
   process.env.DFIR_DROP_POLL_S = "2"; // minimum settle: seen at poll 1, imported at poll 2
   const root = await mkdtemp(join(tmpdir(), "dfir-drop-btm-"));
@@ -63,6 +64,7 @@ async function harness() {
     stateStore,
     jobManager,
     dropStatusStore: new DropStatusStore(store), // presence ARMS the drop-folder poller
+    ...(customToolStore ? { customToolStore } : {}),
   });
   const restore = () => {
     if (prevPoll === undefined) delete process.env.DFIR_DROP_POLL_S;
@@ -71,7 +73,10 @@ async function harness() {
   return { app, store, stateStore, jobManager, restore };
 }
 
-async function importLedgerRows(store: CaseStore, caseId: string): Promise<{ originalName: string }[]> {
+async function importLedgerRows(
+  store: CaseStore,
+  caseId: string,
+): Promise<{ originalName: string; rows: number }[]> {
   const raw = await readFile(store.importsLogPath(caseId), "utf8").catch(() => "");
   return raw
     .split("\n")
@@ -79,19 +84,29 @@ async function importLedgerRows(store: CaseStore, caseId: string): Promise<{ ori
     .map((l) => JSON.parse(l));
 }
 
-async function waitForSweep(jobManager: JobManager, caseId: string, deadlineMs = 20_000): Promise<void> {
+// composition/dropFolder.ts's own `scanCaseDrops` calls `jobManager.finish()` BEFORE
+// `dropStatusStore.record()` — so a job-status-only wait can resolve before the drop-status record
+// (or the file move) it precedes has actually happened (caught by this suite's own first draft,
+// which read dropStatus immediately after the job went terminal and flaked). Every assertion below
+// polls its own real, final condition instead, mirroring dropFolderSymlink.test.ts's own "wait for
+// the CONDITION the assertions need, not a fixed sleep past job creation" precedent.
+async function waitForCondition(check: () => Promise<boolean>, deadlineMs = 20_000): Promise<void> {
   const deadline = Date.now() + deadlineMs;
-  const settle = (): Promise<unknown> => new Promise((r) => setTimeout(r, 50));
-  let jobs = jobManager.list(caseId);
-  while (Date.now() < deadline && !jobs.some((j) => j.kind === "import" && j.status !== "running")) {
-    await settle();
-    jobs = jobManager.list(caseId);
+  while (Date.now() < deadline) {
+    if (await check()) return;
+    await new Promise((r) => setTimeout(r, 100));
   }
+  throw new Error("condition not met within the deadline");
+}
+
+async function fileExistsIn(dir: string, name: string): Promise<boolean> {
+  const entries = await readdir(dir).catch(() => [] as string[]);
+  return entries.includes(name);
 }
 
 describe("drop-folder auto-importer — macOS Background Task Management (#1153)", () => {
   it("auto-imports a real BTM file dropped into the evidence folder, instead of leaving it pending", async () => {
-    const { app, store, stateStore, jobManager, restore } = await harness();
+    const { app, store, stateStore, restore } = await harness();
     try {
       await request(app)
         .post("/cases")
@@ -100,7 +115,7 @@ describe("drop-folder auto-importer — macOS Background Task Management (#1153)
       await mkdir(dropDir, { recursive: true });
       await writeFile(join(dropDir, "backgrounditems.btm"), Buffer.from(LEGACY_BTM_HEX, "hex"));
 
-      await waitForSweep(jobManager, "c1");
+      await waitForCondition(() => fileExistsIn(join(dropDir, "_processed"), "backgrounditems.btm"));
 
       const state = await stateStore.load("c1");
       const macEvent = state.forensicTimeline.find((e) => e.canonical?.macLoginItem);
@@ -117,13 +132,84 @@ describe("drop-folder auto-importer — macOS Background Task Management (#1153)
       expect(processed).toContain("backgrounditems.btm");
       const dropStatus = await new DropStatusStore(store).load("c1");
       expect(dropStatus?.pendingRawInputs?.length ?? 0).toBe(0);
+      // The ledger's own `rows` count reflects what was actually kept/imported (preview.kept),
+      // matching routes/importMacLoginItem.ts's own inline convention — not the persistRawEvidence
+      // default of 0.
+      const imports = await importLedgerRows(store, "c1");
+      expect(imports.find((i) => i.originalName === "backgrounditems.btm")?.rows).toBe(1);
+    } finally {
+      restore();
+    }
+  }, 30_000);
+
+  it("never coerces a file merely NAMED like a BTM whose bytes are not a real bplist", async () => {
+    const { app, store, restore } = await harness();
+    try {
+      await request(app)
+        .post("/cases")
+        .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+      const dropDir = join(store.caseDir("c1"), "drop");
+      await mkdir(dropDir, { recursive: true });
+      // Real BTM filename, but the content is NOT bplist00 — detectBinaryImportKind requires both;
+      // this must fall through to the existing binary-sniff/pending path, unchanged.
+      await writeFile(
+        join(dropDir, "backgrounditems.btm"),
+        Buffer.from([0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]),
+      );
+
+      const dropStatusStore = new DropStatusStore(store);
+      await waitForCondition(async () =>
+        Boolean(
+          (await dropStatusStore.load("c1"))?.pendingRawInputs?.some(
+            (p) => p.relpath === "backgrounditems.btm",
+          ),
+        ),
+      );
+
+      const dropStatus = await dropStatusStore.load("c1");
+      expect(dropStatus?.pendingRawInputs?.some((p) => p.relpath === "backgrounditems.btm")).toBe(true);
+      const remaining = await readdir(dropDir);
+      expect(remaining).toContain("backgrounditems.btm");
+    } finally {
+      restore();
+    }
+  }, 30_000);
+
+  it("imports natively even when a configured custom tool claims the .btm extension (native takes precedence)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-drop-btm-tools-"));
+    const customToolStore = new CustomToolStore(join(root, "custom-tools.json"));
+    await customToolStore.add({
+      name: "Fake BTM Tool",
+      binary: "/bin/true",
+      extensions: [".btm"],
+      autoRun: true,
+    });
+    const { app, store, stateStore, restore } = await harness(customToolStore);
+    try {
+      await request(app)
+        .post("/cases")
+        .send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
+      const dropDir = join(store.caseDir("c1"), "drop");
+      await mkdir(dropDir, { recursive: true });
+      await writeFile(join(dropDir, "backgrounditems.btm"), Buffer.from(LEGACY_BTM_HEX, "hex"));
+
+      await waitForCondition(() => fileExistsIn(join(dropDir, "_processed"), "backgrounditems.btm"));
+
+      // Natively imported — the configured tool was never consulted (no "submitted"/pending state,
+      // and the real macLoginItem event landed in the forensic timeline).
+      const state = await stateStore.load("c1");
+      expect(state.forensicTimeline.some((e) => e.canonical?.macLoginItem)).toBe(true);
+      const dropStatus = await new DropStatusStore(store).load("c1");
+      expect(dropStatus?.pendingRawInputs?.length ?? 0).toBe(0);
+      const processed = await readdir(join(dropDir, "_processed")).catch(() => []);
+      expect(processed).toContain("backgrounditems.btm");
     } finally {
       restore();
     }
   }, 30_000);
 
   it("still imports the BTM file when the case's AI toggle is off (fully deterministic, no LLM call)", async () => {
-    const { app, store, stateStore, jobManager, restore } = await harness();
+    const { app, store, stateStore, restore } = await harness();
     try {
       await request(app)
         .post("/cases")
@@ -133,7 +219,7 @@ describe("drop-folder auto-importer — macOS Background Task Management (#1153)
       await mkdir(dropDir, { recursive: true });
       await writeFile(join(dropDir, "backgrounditems.btm"), Buffer.from(LEGACY_BTM_HEX, "hex"));
 
-      await waitForSweep(jobManager, "c1");
+      await waitForCondition(() => fileExistsIn(join(dropDir, "_processed"), "backgrounditems.btm"));
 
       const state = await stateStore.load("c1");
       expect(state.forensicTimeline.some((e) => e.canonical?.macLoginItem)).toBe(true);
@@ -145,7 +231,7 @@ describe("drop-folder auto-importer — macOS Background Task Management (#1153)
   }, 30_000);
 
   it("fails a foreign keyed archive under a matching BTM filename, and leaves NO import-ledger row for it", async () => {
-    const { app, store, jobManager, restore } = await harness();
+    const { app, store, restore } = await harness();
     try {
       await request(app)
         .post("/cases")
@@ -157,7 +243,7 @@ describe("drop-folder auto-importer — macOS Background Task Management (#1153)
         Buffer.from(UNRELATED_KEYED_ARCHIVE_HEX, "hex"),
       );
 
-      await waitForSweep(jobManager, "c1");
+      await waitForCondition(() => fileExistsIn(join(dropDir, "_failed"), "BackgroundItems-v3.btm"));
 
       const failed = await readdir(join(dropDir, "_failed")).catch(() => []);
       expect(failed).toContain("BackgroundItems-v3.btm");
@@ -171,7 +257,7 @@ describe("drop-folder auto-importer — macOS Background Task Management (#1153)
   }, 30_000);
 
   it("still ignores a random binary that is not name+magic BTM (existing pending-tool behavior unchanged)", async () => {
-    const { app, store, jobManager, restore } = await harness();
+    const { app, store, restore } = await harness();
     try {
       await request(app)
         .post("/cases")
@@ -181,9 +267,14 @@ describe("drop-folder auto-importer — macOS Background Task Management (#1153)
       // NUL byte forces the binary sniff; extension is unrecognized by any importer or tool.
       await writeFile(join(dropDir, "sample.bin"), Buffer.from([0x00, 0x01, 0x02, 0x03, 0x04]));
 
-      await waitForSweep(jobManager, "c1");
+      const dropStatusStore = new DropStatusStore(store);
+      await waitForCondition(async () =>
+        Boolean(
+          (await dropStatusStore.load("c1"))?.pendingRawInputs?.some((p) => p.relpath === "sample.bin"),
+        ),
+      );
 
-      const dropStatus = await new DropStatusStore(store).load("c1");
+      const dropStatus = await dropStatusStore.load("c1");
       expect(dropStatus?.pendingRawInputs?.some((p) => p.relpath === "sample.bin")).toBe(true);
       // Never moved — a pending raw input stays in place so a manual tool run can still act on it.
       const remaining = await readdir(dropDir);
@@ -193,10 +284,10 @@ describe("drop-folder auto-importer — macOS Background Task Management (#1153)
     }
   }, 30_000);
 
-  it("rejects an oversized .btm file instead of loading it fully into memory", async () => {
+  it("rejects a .btm file over the size cap, with the real byte counts in the failure reason", async () => {
     const prevMax = process.env.DFIR_MAX_IMPORT_FILE_MB;
     process.env.DFIR_MAX_IMPORT_FILE_MB = "1"; // shrink the cap so the test file can be small
-    const { app, store, jobManager, restore } = await harness();
+    const { app, store, restore } = await harness();
     try {
       await request(app)
         .post("/cases")
@@ -204,20 +295,23 @@ describe("drop-folder auto-importer — macOS Background Task Management (#1153)
       const dropDir = join(store.caseDir("c1"), "drop");
       await mkdir(dropDir, { recursive: true });
       // Real magic + real name so detection matches, padded well past the 1 MB cap.
-      const oversized = Buffer.concat([
-        Buffer.from(LEGACY_BTM_HEX, "hex"),
-        Buffer.alloc(2 * 1024 * 1024, 0x41),
-      ]);
+      const padBytes = 2 * 1024 * 1024;
+      const oversized = Buffer.concat([Buffer.from(LEGACY_BTM_HEX, "hex"), Buffer.alloc(padBytes, 0x41)]);
+      const realSize = oversized.byteLength;
       await writeFile(join(dropDir, "backgrounditems.btm"), oversized);
 
-      await waitForSweep(jobManager, "c1");
+      await waitForCondition(() => fileExistsIn(join(dropDir, "_failed"), "backgrounditems.btm"));
 
       const failed = await readdir(join(dropDir, "_failed")).catch(() => []);
       expect(failed).toContain("backgrounditems.btm");
       const imports = await importLedgerRows(store, "c1");
       expect(imports.some((i) => i.originalName === "backgrounditems.btm")).toBe(false);
+      // Asserts the REAL size and the REAL 1 MB cap both appear — a bare /too large/i match would
+      // also pass on a broken `${err.size}`/`${err.maxBytes}` interpolation (Ollama code review
+      // finding), so this pins the actual numbers, not just the word "large".
       const raw = await readFile(join(dropDir, "drop-log.txt"), "utf8").catch(() => "");
-      expect(raw).toMatch(/too large/i);
+      expect(raw).toContain(`${realSize} bytes`);
+      expect(raw).toContain(`${1024 * 1024}-byte cap`);
     } finally {
       restore();
       if (prevMax === undefined) delete process.env.DFIR_MAX_IMPORT_FILE_MB;

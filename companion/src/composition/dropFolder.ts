@@ -357,9 +357,9 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         // The 8 KB head sniffed above is only enough to DETECT the format (name + magic bytes at
         // offset 0) — a real bookmark payload lives well past 8 KB, so ingestion needs the whole
         // file. Same no-follow + bounded-read shape composition/externalTools.ts already uses for
-        // an untrusted drop-folder path; capped at the PARSER's own bound (never the codebase-wide
-        // drop cap, which can be far larger) so a mistaken multi-GB `.btm` cannot force an oversized
-        // in-memory allocation.
+        // an untrusted drop-folder path; capped at min(the import-file cap, the PARSER's own 32 MiB
+        // bound) — never DFIR_DROP_MAX_BYTES, which this branch never consults at all, so a mistaken
+        // multi-GB `.btm` cannot force an oversized in-memory allocation before either check runs.
         const handle = await openNoFollow(full);
         let bytes: Buffer;
         try {
@@ -375,16 +375,11 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         } finally {
           await handle.close();
         }
-        const result = await ingestMacLoginItemBinary(caseId, bytes, name);
-        // analyzed is always true for this importer today (fully deterministic, no AI-off gate) —
-        // this check exists only for parity with the ingestStreamed path below, should that ever
-        // change.
-        return result.analyzed
-          ? { ok: true }
-          : {
-              ok: false,
-              reason: "AI is off — saved as evidence but not analyzed; enable AI and re-import",
-            };
+        // No analyzed-false branch here (unlike the text path below): this importer is fully
+        // deterministic, with no AI-off gate to ever report through it (Ollama code review
+        // finding — the ternary this replaced was dead code).
+        await ingestMacLoginItemBinary(caseId, bytes, name);
+        return { ok: true };
       }
 
       // A raw file no text importer can read: a claimed extension, or anything the sniff says is binary.
