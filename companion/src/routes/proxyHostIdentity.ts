@@ -16,6 +16,14 @@ import type { RouteContext } from "./context.js";
  * NEVER an unconditional "this is the workstation" claim — see proxyWorkstationChain.ts's own
  * header for the sensor-topology, DHCP-lease and account-sharing caveats this route's own output
  * cannot resolve.
+ *
+ * Uses `stateStore.load()` (the FULL state), not `loadOverview()` or `forensicTimelineBatches()`
+ * (#1186): this route needs the whole forensicTimeline (buildHostBindingIndex/
+ * resolveProxyHostIdentity both scan it once, index-first, and offer no incremental-batch form),
+ * and every comparable read-only join route in this codebase (dnsCrossUploadConnMatches.ts,
+ * dnsEndpointCrossUploadConnMatches.ts, resolverEndpointIdentity.ts) already accepts an
+ * O(events) full-load per call. A future purpose-built streaming query would bound peak memory
+ * further, but is not a small change today — this is a deliberate choice, not an oversight.
  */
 
 const DEFAULT_TOLERANCE_MS = 21_600_000; // 6 hours — no existing precedent value in this codebase
