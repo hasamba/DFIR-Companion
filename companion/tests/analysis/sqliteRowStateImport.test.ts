@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import {
   parseSqliteRowStateCsv,
+  DESCRIPTION_MAX,
   MAX_ROWS_SCANNED,
   type SqliteRowStateResult,
 } from "../../src/analysis/sqliteRowStateImport.js";
@@ -721,7 +722,7 @@ describe("parseSqliteRowStateCsv — structured summary totals (#1290 Part B)", 
     expect(findSummary(r)[0].canonical!.sqliteRowStateSummary!.truncated).toBe(true);
   });
 
-  it("keeps the description within the 600-char budget even when the reserved suffix alone is oversized", () => {
+  it("keeps every description within DESCRIPTION_MAX, body intact, when the reserved suffix is oversized (#1318)", () => {
     const priorEnv = process.env.DFIR_SQLITE_HIGH_VALUE_LABELS;
     // A near-MAX_FIELD_LEN label that still substring-matches the table name.
     const label = "m".repeat(299);
@@ -729,17 +730,81 @@ describe("parseSqliteRowStateCsv — structured summary totals (#1290 Part B)", 
     try {
       const text = csv(["body"], [[...row({ operation: "Deleted" }), "a"]]);
       const r = parseSqliteRowStateCsv(text, { sourceLabel: `0007_${label}x.csv` })!;
-      // Per-row: highValue (~466) + reportTag (24) still fits, so the total honours 600 exactly.
-      for (const e of findRows(r)) expect(e.description.length).toBeLessThanOrEqual(600);
-      // Summary: highValue + disclosure + reportTag exceeds 600 on its own. The clamp must clip the
-      // variable portion to NOTHING (the description is then exactly the protected suffixes) — the
-      // pre-fix `slice(0, negative)` would have kept most of the variable text and produced a
-      // LONGER description than the budget ever allowed.
-      const summary = findSummary(r)[0].description;
-      expect(summary.startsWith("sqlite-dissect row-state summary")).toBe(false);
-      expect(summary).toContain("routine database maintenance");
-      expect(summary).toContain('high-value label ("');
-      expect(summary).toMatch(/; report [0-9a-f]{16}$/);
+      for (const e of findRows(r)) {
+        expect(e.description.length).toBeLessThanOrEqual(DESCRIPTION_MAX);
+        // The row's own identity and its undated disclosure live in the clipped body — they
+        // must survive the suffix stack, not be cut to make room for it.
+        expect(e.description).toContain("offset 4096");
+        expect(e.description).toContain("[undated:");
+      }
+      // The label is shown bounded in prose; the full value stays in the canonical block.
+      const summary = findSummary(r)[0];
+      expect(summary.description.length).toBeLessThanOrEqual(DESCRIPTION_MAX);
+      expect(summary.description.startsWith("sqlite-dissect row-state summary")).toBe(true);
+      expect(summary.description).toContain("routine database maintenance");
+      expect(summary.description).toContain(`high-value label ("${"m".repeat(79)}…")`);
+      expect(summary.description).toMatch(/; report [0-9a-f]{16}$/);
+      expect(findRows(r)[0].canonical!.sqliteRowState!.matchedHighValueLabel).toBe(label);
+    } finally {
+      if (priorEnv === undefined) delete process.env.DFIR_SQLITE_HIGH_VALUE_LABELS;
+      else process.env.DFIR_SQLITE_HIGH_VALUE_LABELS = priorEnv;
+    }
+  });
+
+  it("bounds a 300-char rowId in the latest clause from CSV content alone, no label configured (#1318)", () => {
+    // Uploaded content only: an ambiguous tie plus a Carved sibling puts the widest latest clause
+    // on the row, and a MAX_FIELD_LEN rowId used to consume the whole body budget by itself.
+    const rowId = "r".repeat(300);
+    const text = csv(
+      ["body"],
+      [
+        [...row({ rowId, version: 2, operation: "Updated", pageNumber: 3, location: 0 }), "alice"],
+        [...row({ rowId, version: 2, operation: "Deleted", pageNumber: 7, location: 1 }), "bob"],
+        [...row({ rowId, version: 5, operation: "Carved", location: 2 }), "fragment"],
+      ],
+    );
+    const r = parseSqliteRowStateCsv(text)!;
+    const ambiguous = findRows(r).filter(
+      (e) => e.canonical!.sqliteRowState!.latestForRowIdAmbiguous === true,
+    );
+    expect(ambiguous).toHaveLength(2);
+    // Two distinct observations (page 3 / page 7) must keep two distinct prose bodies.
+    expect(new Set(ambiguous.map((e) => e.description)).size).toBe(2);
+    for (const e of ambiguous) {
+      expect(e.description.length).toBeLessThanOrEqual(DESCRIPTION_MAX);
+      expect(e.description).toContain("[undated:");
+      expect(e.description).toContain("a Carved row for this same rowid");
+      expect(e.description).toContain(`for row ${"r".repeat(63)}… in this report`);
+      expect(e.canonical!.sqliteRowState!.rowId).toBe(rowId); // full value, structurally
+    }
+  });
+
+  it("keeps the full body under the ambiguous-plus-Carved clause stack in an ordinary config (#1318)", () => {
+    const priorEnv = process.env.DFIR_SQLITE_HIGH_VALUE_LABELS;
+    process.env.DFIR_SQLITE_HIGH_VALUE_LABELS = "messages";
+    try {
+      const text = csv(
+        ["body"],
+        [
+          [...row({ rowId: 42, version: 2, operation: "Updated", pageNumber: 3, location: 0 }), "alice"],
+          [...row({ rowId: 42, version: 2, operation: "Deleted", pageNumber: 7, location: 1 }), "bob"],
+          [...row({ rowId: 42, version: 5, operation: "Carved", location: 2 }), "fragment"],
+        ],
+      );
+      const r = parseSqliteRowStateCsv(text, { sourceLabel: "0007_ZMESSAGES.csv" })!;
+      const ambiguous = findRows(r).filter(
+        (e) => e.canonical!.sqliteRowState!.latestForRowIdAmbiguous === true,
+      );
+      expect(ambiguous).toHaveLength(2);
+      for (const e of ambiguous) {
+        expect(e.description.length).toBeLessThanOrEqual(DESCRIPTION_MAX);
+        expect(e.description).toContain("row 42");
+        expect(e.description).toContain("[undated: sqlite-dissect's report carries no event time]");
+        expect(e.description).toContain('high-value label ("messages")');
+        expect(e.description).toContain("cannot be determined from this report alone");
+        expect(e.description).toContain("a Carved row for this same rowid");
+        expect(e.description).toMatch(/; report [0-9a-f]{16}$/);
+      }
     } finally {
       if (priorEnv === undefined) delete process.env.DFIR_SQLITE_HIGH_VALUE_LABELS;
       else process.env.DFIR_SQLITE_HIGH_VALUE_LABELS = priorEnv;

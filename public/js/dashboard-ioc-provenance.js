@@ -91,6 +91,15 @@
     return ` <span class="ioc-prov-badge ioc-prov-telemetry" title="Telemetry-only: this IOC appears only in Info telemetry, not in any graded detection event">telemetry-only</span>`;
   }
 
+  // A sender-controlled indicator (#1266) — an X-Originating-IP header, a Received hop — must not
+  // sit beside sensor-observed peers at identical weight (#1326). Same wording as the report; NOT
+  // "provenance", which this row already uses for the detection/telemetry lens above. Strict
+  // compare: absent means an ordinary sighting.
+  function iocClientReportedChip(ioc) {
+    if (ioc.provenance !== "client-reported") return "";
+    return ` <span class="ioc-note-chip" title="Reported by the client side of the conversation (e.g. a mail header the sender controls) — not observed by a sensor">client-reported</span>`;
+  }
+
   // Composite IOC risk (#63): { iocId: { score, factors } }, derived server-side from verdict +
   // severity + corroboration + KEV + NSRL/whitelist. Bulk-fetched per case connect like provenance.
   let iocRisk = {};
@@ -478,6 +487,7 @@
   window.loadIocRisk = loadIocRisk;
   window.scheduleIocRiskReload = scheduleIocRiskReload;
   window.iocProvenanceOf = iocProvenanceOf;
+  window.iocClientReportedChip = iocClientReportedChip;
   window.iocProvenanceBadge = iocProvenanceBadge;
   window.iocRiskRankOf = iocRiskRankOf;
   window.iocRoleOf = iocRoleOf;

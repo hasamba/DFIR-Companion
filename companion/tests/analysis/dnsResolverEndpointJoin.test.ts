@@ -30,7 +30,7 @@ function logonEvent(o: { sessionHost: string; clientName: string; ip: string; ts
       target: { kind: "host", name: o.sessionHost },
       authentication: { logonType: 3 },
       session: { terminal: o.clientName },
-      network: { source: { address: o.ip } },
+      network: { source: { address: o.ip, provenance: "edge-observed" } }, // #1292: the stamp every real 4624 writer carries
       time: { observed: o.ts, normalized: o.ts },
       evidence: { rawRecords: [{ source: "test", locator: `row:${seq}` }] },
       producer: { importer: "test", parserVersion: "1", mappingVersion: "1" },

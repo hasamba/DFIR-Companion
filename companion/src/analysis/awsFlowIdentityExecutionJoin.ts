@@ -28,6 +28,8 @@
 //   - `remoteBeyond` (requests the summary itself did not retain) is disclosed by count whenever
 //     any matching block reports one — the MAXIMUM seen across unioned blocks, a conservative
 //     "at least this many" floor, never summed (uploads can overlap the same underlying calls);
+//     the malformed remote-record count takes the same max-across-blocks floor, because a record
+//     that failed to parse has no reliable content key to dedup on (#1293);
 //   - the remote-access list is capped; an overflow says how many more fell in the window;
 //   - re-runs on every merge; strips its own prior note first (bracket content never nests here,
 //     confirmed against every other note this file touches, so this is safe to strip in isolation
@@ -76,7 +78,8 @@ interface InstanceIdentity {
   remote: Map<string, RemoteEntry>; // keyed by content, so a genuine locator collision with
   // different content is never silently overwritten (Ollama code review, M4)
   remoteBeyond: number; // max seen across unioned blocks, never summed
-  remoteSkipped: number; // malformed remote records dropped at parse time (M1) — disclosed, never silent
+  remoteSkipped: number; // malformed remote records dropped at parse time (M1) — disclosed, never
+  // silent; max seen across unioned blocks, never summed (no content key to dedup on, #1293)
 }
 
 // Evidence-derived strings (a launch/remote "by" principal, an SSM document name) flow verbatim
@@ -127,10 +130,11 @@ function buildIdentityIndex(events: readonly ForensicEvent[]): Map<string, Insta
     };
     const by = c.awsCompute!.launch?.by;
     if (by) entry.launchBy.add(sanitizeForNote(by));
+    let blockSkipped = 0;
     for (const r of c.awsCompute!.remote ?? []) {
       const t = ms(r.time);
       if (t === null || !r.by || !r.call || !r.locator) {
-        entry.remoteSkipped += 1;
+        blockSkipped += 1;
         continue;
       }
       // Keyed on full content, not locator alone: two records that legitimately share a locator
@@ -147,6 +151,8 @@ function buildIdentityIndex(events: readonly ForensicEvent[]): Map<string, Insta
       });
     }
     entry.remoteBeyond = Math.max(entry.remoteBeyond, c.awsCompute!.remoteBeyond ?? 0);
+    // Same floor as remoteBeyond: the same upload imported twice must not double its count.
+    entry.remoteSkipped = Math.max(entry.remoteSkipped, blockSkipped);
     index.set(key, entry);
   }
   return index;
@@ -183,7 +189,7 @@ function formatFragment(endpoint: AttributedEndpoint, identity: InstanceIdentity
   // from remotePart's own "within ±24h" clause so neither reads as if it were window-scoped.
   const skippedSuffix =
     identity.remoteSkipped > 0
-      ? `; ${identity.remoteSkipped} remote-access record${identity.remoteSkipped === 1 ? "" : "s"} could not be read (malformed)`
+      ? `; at least ${identity.remoteSkipped} remote-access record${identity.remoteSkipped === 1 ? "" : "s"} could not be read (malformed)`
       : "";
   const beyondSuffix =
     identity.remoteBeyond > 0

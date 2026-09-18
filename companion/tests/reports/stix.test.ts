@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { buildStixBundle, iocToStixPattern, type StixObject } from "../../src/reports/stix.js";
+import {
+  CLIENT_REPORTED_LINE,
+  buildStixBundle,
+  iocToStixPattern,
+  type StixObject,
+} from "../../src/reports/stix.js";
 import { emptyState, type Finding, type IOC } from "../../src/analysis/stateTypes.js";
 
 function ioc(overrides: Partial<IOC>): IOC {
@@ -218,6 +223,52 @@ describe("buildStixBundle", () => {
     const rels = ofType(objects, "relationship").filter((r) => malware.some((m) => m.id === r.target_ref));
     expect(rels).toHaveLength(2);
     expect(rels.every((r) => r.source_ref === indicator.id)).toBe(true);
+  });
+
+  // #1325: a client-reported IOC (#1266) must not leave the full bundle byte-identical to a
+  // sensor-observed one. The description says so first (the IRIS precedent) and `labels` carries
+  // the machine-readable marker a TIP can act on. `indicator_types` is untouched by the marker.
+  it("marks a client-reported IOC with a labels entry and a leading description line", () => {
+    const state = emptyState("c1");
+    state.iocs.push(
+      ioc({ id: "i1", value: "203.0.113.10" }),
+      ioc({ id: "i2", value: "203.0.113.20", provenance: "client-reported" }),
+    );
+    const [plain, marked] = ofType(buildStixBundle(state).objects, "indicator");
+    expect(plain.name).toBe("203.0.113.10");
+    expect(marked.name).toBe("203.0.113.20");
+
+    expect(marked.labels).toEqual(["client-reported"]);
+    expect(String(marked.description).startsWith(CLIENT_REPORTED_LINE)).toBe(true);
+    expect(marked.description).toContain("no threat-intel enrichment");
+    expect(marked.indicator_types).toEqual(["unknown"]);
+    expect(marked.confidence).toBeUndefined();
+
+    // The unmarked sibling is unchanged — no label, no line.
+    expect(plain.labels).toBeUndefined();
+    expect(plain.description).toBe(
+      "Indicator observed during the investigation (no threat-intel enrichment).",
+    );
+    expect(plain.indicator_types).toEqual(["unknown"]);
+  });
+
+  it("keeps the client-reported line first when live threat intel also describes the IOC", () => {
+    const state = emptyState("c1");
+    state.iocs.push(
+      ioc({
+        id: "i1",
+        value: "203.0.113.20",
+        provenance: "client-reported",
+        enrichments: [
+          { source: "VirusTotal", verdict: "suspicious", score: "5/70", fetchedAt: "t", status: "live" },
+        ],
+      }),
+    );
+    const ind = ofType(buildStixBundle(state).objects, "indicator")[0];
+    expect(ind.labels).toEqual(["client-reported"]);
+    expect(String(ind.description).startsWith(`${CLIENT_REPORTED_LINE}\n`)).toBe(true);
+    expect(ind.description).toContain("Threat-intel verdict: suspicious — VirusTotal: suspicious (5/70)");
+    expect(ind.indicator_types).toEqual(["anomalous-activity"]); // the verdict, not the marker, sets it
   });
 
   it("names the report from the incident id when provided", () => {
