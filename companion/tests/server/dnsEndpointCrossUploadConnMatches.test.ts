@@ -79,6 +79,8 @@ function endpointDnsEvent(
   };
 }
 
+// Stamped edge-observed the way the live Zeek writer (networkImport.ts) stamps it (#1265): the join
+// resolves the source to a host only when its writer vouched for it (#1313).
 function connEvent(id: string, src: string, dst: string, ts: string): ForensicEvent {
   return {
     id,
@@ -90,7 +92,10 @@ function connEvent(id: string, src: string, dst: string, ts: string): ForensicEv
     sourceScreenshots: [],
     canonical: createCanonicalEvent({
       event: { category: "network", type: "connection" },
-      network: { source: { address: src }, destination: { address: dst, port: 443 } },
+      network: {
+        source: { address: src, provenance: "edge-observed" },
+        destination: { address: dst, port: 443 },
+      },
       time: { observed: ts, normalized: ts },
       evidence: { rawRecords: [{ source: "zeek-conn", locator: `row:${id}` }] },
       producer: { importer: "zeek", parserVersion: "1", mappingVersion: "1" },
