@@ -149,7 +149,7 @@ export function buildHostBindingIndex(
     // IP -> host: the CLIENT's own name (Workstation Name), never the session host that recorded
     // the logon — see the DIRECTIONALITY note at the top of this file.
     const ip = c.network?.source?.address;
-    const clientName = c.session?.terminal;
+    const clientName = c.session?.terminal?.trim();
     if (ip && isIdentifyingIp(ip) && clientName && isIdentifyingClientName(clientName)) {
       const host = aliasIndex ? resolveHost(aliasIndex, clientName) : clientName;
       push(index.byIp, canonicalIp(ip), {

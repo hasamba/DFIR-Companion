@@ -118,6 +118,16 @@ describe("buildHostBindingIndex + resolveIpAtTime (IP -> client host)", () => {
     expect(index.byIp.size).toBe(0);
   });
 
+  it("stores a whitespace-padded Workstation Name trimmed, so alias/name comparisons still match", () => {
+    const events = [
+      logonEvent({ sessionHost: "fs-01", clientName: "  ws-042  ", ip: "10.0.0.5", ts: "2026-06-10T12:00:00Z" }),
+    ];
+    const index = buildHostBindingIndex(events);
+    const hits = resolveIpAtTime(index, "10.0.0.5", "2026-06-10T12:00:00Z", 1_000);
+    expect(hits).toHaveLength(1);
+    expect(hits[0].host).toBe("ws-042");
+  });
+
   it("surfaces both hosts when one IP was bound to two clients in non-overlapping windows", () => {
     const events = [
       logonEvent({ sessionHost: "fs-01", clientName: "ws-001", ip: "10.0.0.9", ts: "2026-06-10T08:00:00Z" }),
