@@ -7,6 +7,7 @@ import {
   canonicalIp,
   resolveAccountAtTime,
   resolveIpAtTime,
+  type IpExclusionReason,
 } from "../../src/analysis/hostBinding.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
@@ -211,7 +212,7 @@ describe("buildHostBindingIndex + resolveIpAtTime (IP -> client host)", () => {
       }),
       logonEvent({ sessionHost: "fs-01", clientName: "ws-042", ip: "10.0.0.5", ts: "2026-06-10T12:00:04Z" }),
     ];
-    const excluded = new Map<string, number>();
+    const excluded = new Map<IpExclusionReason, number>();
     buildHostBindingIndex(events, undefined, excluded);
     expect(Object.fromEntries(excluded)).toEqual({
       placeholder: 1,
@@ -225,7 +226,7 @@ describe("buildHostBindingIndex + resolveIpAtTime (IP -> client host)", () => {
     const events = [
       logonEvent({ sessionHost: "fs-01", clientName: "ws-042", ip: "10.0.0.5", ts: "2026-06-10T12:00:00Z" }),
     ];
-    const excluded = new Map<string, number>();
+    const excluded = new Map<IpExclusionReason, number>();
     buildHostBindingIndex(events, undefined, excluded);
     expect(excluded.size).toBe(0);
     expect(() => buildHostBindingIndex(events)).not.toThrow();
