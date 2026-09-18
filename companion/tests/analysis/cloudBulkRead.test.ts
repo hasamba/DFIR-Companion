@@ -566,6 +566,18 @@ describe("regressions", () => {
     expect(gradeGroup(g[0])?.reason).toContain("the real total is higher");
   });
 
+  // #1140: `truncated` was assigned from a single export-wide counter, so one principal exceeding
+  // the cap marked every OTHER principal's group truncated too — even one with a handful of reads.
+  it("marks only the principal that exceeded the cap as truncated, not every group in the export", () => {
+    const over = Array.from({ length: MAX_RECORDS_PER_GROUP + 10 }, (_v, i) =>
+      read({ principal: "over-cap", resource: `corp-data/f-${i}.csv`, min: i * 0.001 }),
+    );
+    const small = manyReads(MIN_OBJECTS + 1, { principal: "well-under-cap" });
+    const g = groupBulkReads([...over, ...small]);
+    expect(g.find((x) => x.principal === "over-cap")?.truncated).toBe(true);
+    expect(g.find((x) => x.principal === "well-under-cap")?.truncated).toBe(false);
+  });
+
   it("says an unreadable source address was unreadable, not internal", () => {
     const g = groupBulkReads(manyReads(MIN_OBJECTS + 1, { ip: "not-an-address" }))[0];
     const v = gradeGroup(g);

@@ -263,6 +263,9 @@ export function groupBulkReads(
   // group before slicing meant a million-read export allocated and sorted a million objects while
   // holding the state lock — the cap saved the scan and nothing else.
   let dropped = 0;
+  // Per-key, not just the global `dropped` tally: the per-group `truncated` flag below must name
+  // ONLY the principal(s) that actually exceeded the cap, never every group in the export (#1140).
+  const droppedKeys = new Set<string>();
   for (const e of events) {
     const r = readCloudRecord(e);
     if (!r) continue;
@@ -274,6 +277,7 @@ export function groupBulkReads(
     const list = byKey.get(key) ?? [];
     if (list.length >= MAX_RECORDS_PER_GROUP) {
       dropped++;
+      droppedKeys.add(key);
       continue;
     }
     list.push(r);
@@ -370,7 +374,7 @@ export function groupBulkReads(
       // listOnly is judged on the WINDOW, not the whole group: a group whose densest window is
       // enumeration-only but which holds one object read elsewhere is not enumeration-only.
       listOnly: bestCounts.objects === 0 && window.every((r) => LIST_ONLY_RE.test(r.action)),
-      truncated: dropped > 0,
+      truncated: droppedKeys.has(key),
       failedCount: failedByKey.get(key) ?? 0,
     });
     bestCounts = null;
