@@ -217,3 +217,87 @@ describe("auto-run on last resolve", () => {
     expect(kick).toHaveBeenCalledTimes(1);
   });
 });
+
+// #1167: a non-blocking network-identity candidate must not delay the kick that resolving the
+// LAST BLOCKING (shortname-fqdn) pair earns — synthesis was never held on network-identity rows
+// in the first place (hostDuplicateGate.ts's own pendingNearDuplicates never reads them).
+describe("auto-run ignores non-blocking network-identity candidates (#1167)", () => {
+  it("kicks synthesis once the only blocking pair resolves, even with a network-identity candidate still pending", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-hostdup-kick-netid-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const stateStore = new StateStore(cases);
+    const s = emptyState("c1");
+    s.forensicTimeline.push(
+      ev("a", "WIN11"),
+      ev("b", "WIN11.windomain.local"),
+      ev("c", "10.0.0.5"),
+      logonEvent("d", "fs-01", "ws-042", "10.0.0.5"),
+    );
+    await stateStore.save(s);
+    const kick = vi.fn();
+    const mixedApp = express();
+    mixedApp.use(express.json());
+    registerHostDuplicateRoutes(mixedApp, {
+      store: cases,
+      options: {
+        stateStore,
+        assetOverridesStore: new AssetOverridesStore(cases),
+        hostDuplicateDismissalStore: new HostDuplicateDismissalStore(cases),
+      },
+      resynthesizeInBackground: kick,
+    } as unknown as RouteContext);
+
+    const list = await request(mixedApp).get("/cases/c1/host-duplicates");
+    expect(list.body.pending.map((p: { reason: string }) => p.reason).sort()).toEqual([
+      "network-identity",
+      "shortname-fqdn",
+    ]);
+
+    const resolve = await request(mixedApp)
+      .post("/cases/c1/host-duplicates/dismiss")
+      .send({ canonical: "win11.windomain.local", other: "win11" });
+    expect(resolve.status).toBe(200);
+    expect(resolve.body.pending).toHaveLength(1);
+    expect(resolve.body.pending[0].reason).toBe("network-identity");
+    expect(kick).toHaveBeenCalledWith("c1");
+    expect(kick).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not kick synthesis while a blocking pair is still unresolved, network-identity candidate aside", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-hostdup-kick-netid2-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const stateStore = new StateStore(cases);
+    const s = emptyState("c1");
+    s.forensicTimeline.push(
+      ev("a", "WIN11"),
+      ev("b", "WIN11.windomain.local"),
+      ev("c", "DC01"),
+      ev("d", "DC01.corp.local"),
+      ev("e", "10.0.0.5"),
+      logonEvent("f", "fs-01", "ws-042", "10.0.0.5"),
+    );
+    await stateStore.save(s);
+    const kick = vi.fn();
+    const mixedApp = express();
+    mixedApp.use(express.json());
+    registerHostDuplicateRoutes(mixedApp, {
+      store: cases,
+      options: {
+        stateStore,
+        assetOverridesStore: new AssetOverridesStore(cases),
+        hostDuplicateDismissalStore: new HostDuplicateDismissalStore(cases),
+      },
+      resynthesizeInBackground: kick,
+    } as unknown as RouteContext);
+
+    const resolve = await request(mixedApp)
+      .post("/cases/c1/host-duplicates/dismiss")
+      .send({ canonical: "win11.windomain.local", other: "win11" });
+    expect(resolve.status).toBe(200);
+    const reasons = resolve.body.pending.map((p: { reason: string }) => p.reason).sort();
+    expect(reasons).toEqual(["network-identity", "shortname-fqdn"]);
+    expect(kick).not.toHaveBeenCalled();
+  });
+});

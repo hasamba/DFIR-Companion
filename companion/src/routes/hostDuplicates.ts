@@ -48,12 +48,16 @@ export function registerHostDuplicateRoutes(app: Express, ctx: RouteContext): vo
   }
 
   // Both resolve paths answer with the freshly-recomputed pending list.
-  // Resolving the LAST pair is what lifts the gate, so that is the only moment worth a synthesis.
-  // Kicking on every resolve would spend one run per pair, and every run but the last would
-  // immediately re-throw on the pairs still outstanding.
+  // Resolving the LAST BLOCKING pair is what lifts the gate, so that is the only moment worth a
+  // synthesis. Kicking on every resolve would spend one run per pair, and every run but the last
+  // would immediately re-throw on the pairs still outstanding. A "network-identity" candidate
+  // never blocks synthesis in the first place (hostDuplicateGate.ts's own pendingNearDuplicates —
+  // the only source HostMergeDecisionRequired reads — never includes them), so one being left
+  // unresolved must not delay the kick that resolving the real, blocking pairs already earned
+  // (#1167).
   async function respond(caseId: string, res: Response): Promise<Response> {
     const remaining = await pending(caseId);
-    if (remaining.length === 0) ctx.resynthesizeInBackground(caseId);
+    if (remaining.every((p) => p.reason === "network-identity")) ctx.resynthesizeInBackground(caseId);
     return res.status(200).json({ pending: remaining });
   }
 
