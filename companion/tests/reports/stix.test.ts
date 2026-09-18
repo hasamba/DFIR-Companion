@@ -230,3 +230,41 @@ describe("buildStixBundle", () => {
     expect(withId.name).toBe("Incident IR-2026-007 — c1");
   });
 });
+
+// #1325: the full bundle is a report, not the acting block-list, so a client-reported value is
+// still exported — but a TIP consuming the bundle must be able to tell it apart from a
+// sensor-observed indicator before it re-promotes it into enforcement.
+describe("client-reported indicators (#1325)", () => {
+  it("carries a client-reported label and says so first in the description", () => {
+    const state = emptyState("c1");
+    state.iocs.push(ioc({ id: "i1", value: "203.0.113.9", provenance: "client-reported" }));
+    state.iocs.push(ioc({ id: "i2", value: "198.51.100.7" }));
+    const inds = ofType(buildStixBundle(state).objects, "indicator");
+    const marked = inds.find((o) => o.name === "203.0.113.9")!;
+    const plain = inds.find((o) => o.name === "198.51.100.7")!;
+    expect(marked.labels).toEqual(["client-reported"]);
+    expect(String(marked.description).startsWith("Client-reported:")).toBe(true);
+    expect(String(marked.description)).toContain("sender-controlled header");
+    expect(plain.labels).toBeUndefined();
+    expect(String(plain.description).startsWith("Client-reported:")).toBe(false);
+  });
+
+  it("keeps the threat-intel summary after the client-reported line", () => {
+    const state = emptyState("c1");
+    state.iocs.push(
+      ioc({
+        id: "i1",
+        value: "203.0.113.9",
+        provenance: "client-reported",
+        enrichments: [
+          { source: "AbuseIPDB", verdict: "malicious", score: "100%", fetchedAt: "2026-05-20T09:00:00Z" },
+        ],
+      }),
+    );
+    const [ind] = ofType(buildStixBundle(state).objects, "indicator");
+    const d = String(ind.description);
+    expect(d.indexOf("Client-reported:")).toBe(0);
+    expect(d).toContain("AbuseIPDB: malicious (100%)");
+    expect(d.indexOf("Client-reported:")).toBeLessThan(d.indexOf("Threat-intel verdict"));
+  });
+});

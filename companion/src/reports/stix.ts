@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { InvestigationState, IOC, IocEnrichment } from "../analysis/stateTypes.js";
 import { actionableAssertions, assertionLabel, lastKnownAssertions } from "../analysis/intelViews.js";
 import { retiredFindingIds } from "../analysis/intelRetirement.js";
+import { CLIENT_REPORTED_LINE } from "../integrations/iris/irisMap.js";
 
 // Build a STIX 2.1 bundle (https://docs.oasis-open.org/cti/stix/v2.1/stix-v2.1.html) from the
 // case state — a deterministic transform, no AI, no new storage. The bundle is what every CTI
@@ -249,6 +250,14 @@ export function buildStixBundle(state: InvestigationState, opts: StixExportOptio
     indicatorId.set(ioc.id, id);
     const verdict = worstVerdict(ioc);
     const summary = enrichmentSummary(ioc);
+    const base = summary
+      ? `Threat-intel verdict: ${verdict} — ${summary}`
+      : "Indicator observed during the investigation (no threat-intel enrichment).";
+    // #1325: the bundle is a report, so a client-reported value is still exported — but a TIP that
+    // imports it must be able to tell it from a sensor-observed indicator before re-promoting it
+    // into enforcement. `labels` is what OpenCTI/MISP surface as tags; the description says it
+    // first, in the same words the IRIS push uses.
+    const clientReported = ioc.provenance === "client-reported";
     objects.push(
       sdo("indicator", id, {
         name: ioc.value,
@@ -256,9 +265,8 @@ export function buildStixBundle(state: InvestigationState, opts: StixExportOptio
         pattern_type: "stix",
         valid_from: stixTime(ioc.firstSeen, now),
         indicator_types: [INDICATOR_TYPE[verdict ?? "unknown"]],
-        description: summary
-          ? `Threat-intel verdict: ${verdict} — ${summary}`
-          : "Indicator observed during the investigation (no threat-intel enrichment).",
+        ...(clientReported ? { labels: ["client-reported"] } : {}),
+        description: clientReported ? `${CLIENT_REPORTED_LINE}\n${base}` : base,
       }),
     );
   }

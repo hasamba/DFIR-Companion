@@ -56,6 +56,7 @@ export interface IocLike {
     fetchedAt?: string;
     temporal?: Record<string, unknown>;
   }>;
+  provenance?: string;
 }
 
 export interface FindingLike {
@@ -173,6 +174,8 @@ export interface IocApi {
   intelWhenChip(e: Record<string, unknown>): { chip: string; title: string };
   originSuffix(e: Record<string, unknown>): string;
   enrichBadges(ioc: IocLike): string;
+  /** A chip for a client-reported IOC (#1326); empty string for every other IOC. */
+  clientReportedBadge(ioc: IocLike): string;
   iocFlagged(i: IocLike): boolean;
   dedupeIocsById(iocs: IocLike[]): IocLike[];
   sortIocsForDisplay(iocs: IocLike[]): IocLike[];
