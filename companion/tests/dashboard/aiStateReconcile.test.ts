@@ -56,8 +56,11 @@ describe("the four moments the pill re-derives", () => {
     expect(status).toMatch(/evt\.status === "idle"[\s\S]{0,900}refreshAiState\(activeCaseId\)/);
   });
 
-  it("re-reads after a duplicate-host pair is resolved", () => {
-    expect(duplicates).toMatch(/refreshAiState\(caseId\)/);
+  it("re-reads after a duplicate-host pair is resolved, and again after undoing a dismissal (#1170)", () => {
+    // #1170: undoing a dismissal can re-arm the blocking gate — /ai-state live-derives from
+    // loadPendingHostDuplicates on every call, so without this the pill keeps showing the last
+    // completed run's status instead of immediately reflecting the reopened gate.
+    expect(duplicates.match(/refreshAiState\(caseId\)/g) ?? []).toHaveLength(2);
   });
 
   // Both Presidio paths, not just approve: suppress clears the gate exactly as much as approve does.

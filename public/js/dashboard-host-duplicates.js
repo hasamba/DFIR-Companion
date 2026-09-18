@@ -44,13 +44,12 @@
           `</div>`,
       )
       .join("");
-    return (
-      `<details class="hd-dismissed"><summary>Previously dismissed (${dismissedList.length})</summary>${rows}</details>`
-    );
+    return `<details class="hd-dismissed"><summary>Previously dismissed (${dismissedList.length})</summary>${rows}</details>`;
   }
 
   function renderHostDuplicates(list, dismissedList) {
-    if ((!list || !list.length) && (!dismissedList || !dismissedList.length)) return "";
+    if ((!list || !list.length) && (!dismissedList || !dismissedList.length))
+      return "";
     if (!list) list = [];
     const blocking = list.filter((d) => d.reason !== "network-identity");
     const networkIdentity = list.filter((d) => d.reason === "network-identity");
@@ -147,7 +146,8 @@
         fetch(`/cases/${encodeURIComponent(caseId)}/host-duplicates/dismissed`),
       ]);
       if (pendingRes.ok) pending = (await pendingRes.json()).pending || [];
-      if (dismissedRes.ok) dismissed = (await dismissedRes.json()).dismissed || [];
+      if (dismissedRes.ok)
+        dismissed = (await dismissedRes.json()).dismissed || [];
       paint();
     } catch {
       // A panel that cannot load must not take the dashboard down with it.
@@ -156,11 +156,14 @@
 
   async function resolve(caseId, action, canonical, other) {
     try {
-      const r = await fetch(`/cases/${encodeURIComponent(caseId)}/host-duplicates/${action}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ canonical: canonical, other: other }),
-      });
+      const r = await fetch(
+        `/cases/${encodeURIComponent(caseId)}/host-duplicates/${action}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ canonical: canonical, other: other }),
+        },
+      );
       if (!r.ok) return;
       const d = await r.json();
       pending = d.pending || [];
@@ -179,16 +182,24 @@
   // correct, expected outcome of an explicit "reconsider this" action, not a resume.
   async function undoDismiss(caseId, canonical, other) {
     try {
-      const r = await fetch(`/cases/${encodeURIComponent(caseId)}/host-duplicates/dismiss`, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ canonical: canonical, other: other }),
-      });
+      const r = await fetch(
+        `/cases/${encodeURIComponent(caseId)}/host-duplicates/dismiss`,
+        {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ canonical: canonical, other: other }),
+        },
+      );
       if (!r.ok) return;
       const d = await r.json();
       dismissed = d.dismissed || [];
       pending = d.pending || [];
       paint();
+      // /cases/:id/ai-state live-derives its "blocked" readout from loadPendingHostDuplicates on
+      // every call, so undoing a blocking pair genuinely re-arms it immediately — without this the
+      // pill keeps showing the last completed run's status until something else happens to poll it
+      // (Ollama review finding on #1170, mirrors resolve()'s own identical call for the same reason).
+      refreshAiState(caseId);
     } catch {
       /* leave the panel as it was */
     }
@@ -197,7 +208,9 @@
   function onPanelClick(evt) {
     const target = evt.target && evt.target.closest ? evt.target : null;
     if (!target) return;
-    const button = target.closest("[data-hd-merge], [data-hd-dismiss], [data-hd-undo]");
+    const button = target.closest(
+      "[data-hd-merge], [data-hd-dismiss], [data-hd-undo]",
+    );
     if (!button) return;
     const caseId = (document.getElementById("caseId") || {}).value;
     if (!caseId || !caseId.trim()) return;
@@ -208,13 +221,19 @@
       return;
     }
     const action = button.hasAttribute("data-hd-merge") ? "merge" : "dismiss";
-    if (action === "merge" && !confirm(`Treat ${other} and ${canonical} as one host?`)) return;
+    if (
+      action === "merge" &&
+      !confirm(`Treat ${other} and ${canonical} as one host?`)
+    )
+      return;
     void resolve(caseId.trim(), action, canonical, other);
   }
 
   // The badge lives in the page header, so this binds at load, not on module evaluation.
   function initHostDuplicates() {
-    document.getElementById("hostDuplicatesBadge")?.addEventListener("click", revealHostDuplicates);
+    document
+      .getElementById("hostDuplicatesBadge")
+      ?.addEventListener("click", revealHostDuplicates);
   }
 
   // Re-open the gate before scrolling. paint() already opened it, but a dashboard-view switch
