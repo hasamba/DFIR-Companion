@@ -63,6 +63,7 @@ import { registerHostScopeRoutes } from "../routes/hostScope.js";
 import { registerEvidenceAttestationRoutes } from "../routes/evidenceAttestation.js";
 import { registerHuntRequirementRoutes } from "../routes/huntRequirements.js";
 import { registerAttributionAssertionRoutes } from "../routes/attributionAssertions.js";
+import { registerStaticReportAttestationRoutes } from "../routes/staticReportAttestations.js";
 import { registerCollectionGenerationRoutes } from "../routes/collectionGenerations.js";
 import { registerMobileBackupGenerationRoutes } from "../routes/mobileBackupGenerations.js";
 import { registerHostDuplicateRoutes } from "../routes/hostDuplicates.js";
@@ -194,6 +195,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerMobileBackupGenerationRoutes(app, ctx);
   registerHuntRequirementRoutes(app, ctx);
   registerAttributionAssertionRoutes(app, ctx);
+  registerStaticReportAttestationRoutes(app, ctx);
   registerHostDuplicateRoutes(app, ctx);
   registerProxyHostIdentityRoutes(app, ctx);
   registerResolverEndpointIdentityRoutes(app, ctx);
