@@ -394,6 +394,35 @@ describe("buildHostBindingIndex + resolveAccountAtTime (account -> session host)
     expect(resolveAccountAtTime(index, "corp\\jdoe", "2026-06-10T12:00:00Z", 1_000)).toHaveLength(1);
   });
 
+  it("keeps a domain-qualified account.name intact when NO separate domain field confirms it (e.g. ecarImport.ts's raw, unprocessed principal field)", () => {
+    const events: ForensicEvent[] = [
+      {
+        id: "id-qualified-no-domain-field",
+        timestamp: "2026-06-10T12:00:00Z",
+        description: "EDR logon @ ws-042",
+        severity: "Low",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset: "ws-042",
+        canonical: createCanonicalEvent({
+          event: { category: "authentication", type: "logon", outcome: "success" },
+          actor: { kind: "account", name: "CORP\\jdoe" },
+          account: { name: "CORP\\jdoe" }, // no domain field — the whole string IS the only identity
+          target: { kind: "host", name: "ws-042" },
+          authentication: { logonType: 2 },
+          time: { observed: "2026-06-10T12:00:00Z", normalized: "2026-06-10T12:00:00Z" },
+          evidence: { rawRecords: [{ source: "test", locator: "row:qualified-no-domain" }] },
+          producer: { importer: "test", parserVersion: "1", mappingVersion: "1" },
+        }),
+      },
+    ];
+    const index = buildHostBindingIndex(events);
+    // Stripping here would collapse to bare "jdoe", discarding the only copy of the domain and
+    // risking a collision with an unrelated un-domained local "jdoe" on another host.
+    expect([...index.byAccount.keys()]).toEqual(["corp\\jdoe"]);
+  });
+
   it("still recognizes NT AUTHORITY\\SYSTEM as non-human when account.name is domain-prefixed", () => {
     const events: ForensicEvent[] = [
       {
@@ -422,12 +451,14 @@ describe("buildHostBindingIndex + resolveAccountAtTime (account -> session host)
   });
 });
 
-// #1162: buildHostBindingIndex silently skips any event with no canonical envelope. Every event
-// actually read from the state store is already upgraded (stateStore.ts's own load path maps
-// upgradeForensicEvent over the forensic timeline before any consumer sees it), so a legacy,
-// prose-only ForensicEvent DOES reach this module — but only through that upgrade. This pins the
-// contract end-to-end, through the real prose-parsing path, not by constructing an envelope
-// directly like every test above.
+// #1162: buildHostBindingIndex silently skips any event with no canonical envelope. stateStore.ts's
+// own load-time upgrade behavior (mapping upgradeForensicEvent over the forensic timeline before
+// any consumer sees it) is already independently pinned by
+// tests/analysis/stateStore.test.ts's own "upgrades legacy timeline rows on load" test — this test
+// does not re-prove that seam. What it DOES pin is the module-boundary contract this file is
+// otherwise silent on: given an already-upgraded legacy, prose-only event (the shape stateStore.ts
+// guarantees every consumer receives), buildHostBindingIndex produces real bindings through the
+// actual prose-parsing path, not just through a hand-built envelope like every test above.
 describe("buildHostBindingIndex through the legacy prose-upgrade path (#1162)", () => {
   it("binds IP -> client host and account -> session host from a legacy, envelope-less event", () => {
     const legacy: ForensicEvent = {

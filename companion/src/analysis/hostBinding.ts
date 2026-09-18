@@ -144,20 +144,6 @@ export function canonicalAccount(domain: string | undefined, name: string): stri
   return d ? `${d}\\${n}` : n;
 }
 
-// The real producers of a canonical account block that also carry a domain (winAccountRoles.ts's
-// own entity(), and this module's own legacy-prose upgrade in canonicalEvent.ts) both put the
-// FULL "domain\name" string into account.name AND repeat the domain separately in
-// account.domain — composing a key from both fields naively would double the domain prefix
-// ("corp\corp\jdoe"), a key no real caller would ever query, and would also make every
-// human/non-human name check below compare against a domain-qualified string instead of a bare
-// name (a pre-existing bug found while adding #1162's own end-to-end legacy-path test, filed and
-// fixed here — see the module's own tracking issue). Strip any domain prefix account.name may
-// already carry before using it for anything.
-function bareAccountName(name: string): string {
-  const sep = name.lastIndexOf("\\");
-  return sep === -1 ? name : name.slice(sep + 1);
-}
-
 function isIdentifyingIp(raw: string): boolean {
   const ip = canonicalIp(raw);
   if (NON_IDENTIFYING_IPS.has(ip)) return false;
@@ -176,6 +162,24 @@ function isIdentifyingIp(raw: string): boolean {
 function hasNoDomain(domain: string | undefined): boolean {
   const d = domain?.trim();
   return !d || d === "-" || d === "*";
+}
+
+// Two real producers of a canonical account block that ALSO carry a domain field
+// (winAccountRoles.ts's own entity(), and this module's own legacy-prose upgrade in
+// canonicalEvent.ts) both put the FULL "domain\name" string into account.name and repeat the
+// domain separately in account.domain — composing a key from both naively would double the
+// domain prefix ("corp\corp\jdoe"), a key no real caller would ever query, and would also make
+// every human/non-human name check below compare against a domain-qualified string instead of a
+// bare name (a pre-existing bug found while adding #1162's own end-to-end legacy-path test).
+// Strip the prefix ONLY when a domain is independently present: a producer that qualifies
+// account.name WITHOUT setting account.domain (e.g. ecarImport.ts's raw, unprocessed `principal`
+// field) has no separate domain to reconstruct from, and stripping there would silently discard
+// the only copy of that information and risk colliding with an unrelated un-domained local
+// account of the same bare name (Ollama review finding on #1162).
+function bareAccountName(name: string, domain: string | undefined): string {
+  if (hasNoDomain(domain)) return name;
+  const sep = name.lastIndexOf("\\");
+  return sep === -1 ? name : name.slice(sep + 1);
 }
 
 function isHumanAccount(name: string, domain: string | undefined): boolean {
@@ -221,7 +225,7 @@ export function buildHostBindingIndex(
 
     // account -> host: the SESSION host, only for logon types where the account is actually
     // present at/using that host (not a network logon merely authenticating across to it).
-    const accountName = c.account?.name ? bareAccountName(c.account.name) : undefined;
+    const accountName = c.account?.name ? bareAccountName(c.account.name, c.account.domain) : undefined;
     const logonType = c.authentication?.logonType;
     if (
       accountName &&
