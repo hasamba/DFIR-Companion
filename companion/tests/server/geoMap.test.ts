@@ -170,6 +170,10 @@ describe("GET /cases/:id/geo-map.csv (#133)", () => {
     expect(res.text.split("\n")[0]).toBe(
       "ip,country,city,lat,lon,asn,severity,verdict,internal,eventCount,approximate,clientReported",
     );
+    // The route contract pins the cell, not just the header: a sensor-observed IP is "no".
+    const row = res.text.split("\n")[1];
+    expect(row.startsWith('"8.8.8.8"')).toBe(true);
+    expect(row.endsWith(',"no"')).toBe(true);
   });
 });
 
