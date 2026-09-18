@@ -5,11 +5,21 @@ import {
   hostMergesFromAssetIds,
   resolveHost,
   findNearDuplicates,
+  NEAR_DUPLICATE_BLOCKING,
 } from "../../src/analysis/hostAlias.js";
 
 // AssetOverridesStore.mergeAsset persists asset ids ("host:ws-042.corp.local"), not host names.
 // Fed straight to buildHostAliasIndex those keys match nothing, so every analyst merge was a
 // silent no-op and merged machines stayed split across two rows in the ledger and the report.
+// #1259: hostDuplicates.ts's own resolve-kick reads this instead of negating one reason string —
+// pinned here so a third `NearDuplicate.reason` (a TS compile error on this object literal until
+// given a deliberate entry) can never silently default to blocking.
+describe("NEAR_DUPLICATE_BLOCKING", () => {
+  it("names shortname-fqdn as blocking and network-identity as not, exhaustively over the reason union", () => {
+    expect(NEAR_DUPLICATE_BLOCKING).toEqual({ "shortname-fqdn": true, "network-identity": false });
+  });
+});
+
 describe("hostMergesFromAssetIds", () => {
   it("unwraps host asset ids into host names", () => {
     expect(hostMergesFromAssetIds({ "host:ws-042.corp.local": "host:ws-042.example.invalid" })).toEqual({
