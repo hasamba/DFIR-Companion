@@ -104,6 +104,10 @@ export interface DnsObservation {
   /** Suricata's own DNS transaction id (`dns.id`) — paired with recordId/flow_id to recover a v1
    * answer's missing question (#996); never set for Zeek. */
   transactionId?: string;
+  /** The paired query record's own locator, set only when pairSuricataQueries recovered this
+   * record's question from a separate query event (#1220) — lets dns.query's field provenance
+   * point at the record the name actually came from, not just the answer's own locator. */
+  pairedQueryLocator?: string;
 }
 
 export interface ConnObservation {
@@ -478,6 +482,10 @@ export interface SuricataQueryCandidate {
   queryName: string;
   queryType?: number;
   queryTypeName?: string;
+  /** The query record's own locator (`record:N`) — carried onto a successful pair (#1220) so the
+   * answer's provenance can point back at the query line the question actually came from, rather
+   * than only naming "dns.id+flow_id pairing" with no record to hop to. */
+  locator: string;
 }
 
 const suricataPairKey = (flowId: string, transactionId: string): string => `${flowId}|${transactionId}`;
@@ -488,7 +496,10 @@ const suricataPairKey = (flowId: string, transactionId: string): string => `${fl
  * a DnsObservation on its own: a query with no matching answer in this upload stays invisible,
  * exactly as it does today.
  */
-export function readSuricataDnsQueryCandidate(row: Row): SuricataQueryCandidate | undefined {
+export function readSuricataDnsQueryCandidate(
+  row: Row,
+  recordIndex: number,
+): SuricataQueryCandidate | undefined {
   const dns = getCI(row, "dns");
   if (!isObject(dns)) return undefined;
   const t = text(getCI(dns, "type"))?.trim().toLowerCase();
@@ -500,7 +511,12 @@ export function readSuricataDnsQueryCandidate(row: Row): SuricataQueryCandidate 
   const queries = getCI(dns, "queries");
   const q0 = Array.isArray(queries) && isObject(queries[0]) ? queries[0] : undefined;
   const qtype = getCI(dns, "rrtype") ?? (q0 ? getCI(q0, "rrtype") : undefined);
-  return { key: suricataPairKey(flowId, transactionId), queryName, ...queryTypeOf(qtype, undefined) };
+  return {
+    key: suricataPairKey(flowId, transactionId),
+    queryName,
+    locator: `record:${recordIndex}`,
+    ...queryTypeOf(qtype, undefined),
+  };
 }
 
 /**
@@ -526,6 +542,7 @@ export function pairSuricataQueries(
       ...o,
       ...queryFields(c.queryName),
       queryField: "dns.id+flow_id pairing",
+      pairedQueryLocator: c.locator,
       ...(c.queryType !== undefined ? { queryType: c.queryType, queryTypeName: c.queryTypeName } : {}),
     };
   });
