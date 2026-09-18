@@ -109,6 +109,15 @@ describe("buildHostBindingIndex + resolveIpAtTime (IP -> client host)", () => {
     expect(index.byIp.size).toBe(0);
   });
 
+  it("contributes no IP binding for a dash/placeholder Workstation Name (unpopulated field)", () => {
+    const events = [
+      logonEvent({ sessionHost: "fs-01", clientName: "-", ip: "10.0.0.5", ts: "2026-06-10T12:00:00Z" }),
+      logonEvent({ sessionHost: "fs-01", clientName: "*", ip: "10.0.0.6", ts: "2026-06-10T12:00:00Z" }),
+    ];
+    const index = buildHostBindingIndex(events);
+    expect(index.byIp.size).toBe(0);
+  });
+
   it("surfaces both hosts when one IP was bound to two clients in non-overlapping windows", () => {
     const events = [
       logonEvent({ sessionHost: "fs-01", clientName: "ws-001", ip: "10.0.0.9", ts: "2026-06-10T08:00:00Z" }),
