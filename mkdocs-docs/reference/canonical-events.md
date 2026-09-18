@@ -37,21 +37,31 @@ Every normalized leaf field carries its own provenance:
 
 Importer conformance tests reject an envelope that contains an untraceable normalized field. This
 provenance is internal evidence lineage; it does not replace the case's Chain of Custody record.
+It is also distinct from the `network.source.provenance` trust stamp, a developer-facing contract
+between importers and host-attribution readers that is documented in the repository's
+`ARCHITECTURE.md`.
 
 ## Schema and migration policy
 
-The first schema version is `1.0.0`.
+The schema version is `1.0.0`, and it has not changed since the envelope was introduced. The version
+is not a changelog stamp. Every reader matches it exactly: the envelope schema, the Login Graph and
+Evidence Chain readers, and the re-import merge all treat an envelope with any other version as
+opaque. They preserve it verbatim and read nothing from it.
 
-- A **patch** version may clarify validation or a deterministic mapping without changing the
-  meaning of existing fields.
-- A **minor** version may add optional fields. Existing readers must continue to accept events that
-  do not have them.
-- A **major** version is required to remove a field or change its meaning. It must ship with an
-  explicit, tested migration.
-- An event with no envelope is a legacy event. It is upgraded on read using its existing structured
-  fields; guarded description parsing is confined to this one-time legacy migration. The original
-  event remains intact and the new envelope is persisted on the next normal case save.
-- An unknown future schema version must be preserved, not silently rewritten or downgraded.
+- **Adding an optional field does not bump the version.** Every reader must fail closed when the
+  field is absent, so an envelope written before the field existed is still read in full. Every
+  optional block and field added since `1.0.0` landed this way, including the
+  `network.source.provenance` stamp.
+- **Changing how a persisted envelope is read bumps the version.** Removing a field, changing its
+  meaning, or making a reader depend on a field that older envelopes lack all qualify.
+- **A bump is only safe together with a registered migration**, and none exists today. The upgrade
+  path knows one migration: an event with no envelope at all is a legacy event, upgraded on read
+  from its existing structured fields, with guarded description parsing confined to that one-time
+  step; the original event stays intact and the new envelope is persisted on the next normal case
+  save. A bump without a migration for the previous version makes every stored envelope in every
+  existing case invisible to the Login Graph, the Evidence Chain and the merge, and no test would
+  catch it.
+- An unknown future schema version is preserved, not silently rewritten or downgraded.
 
 Migration is therefore incremental: opening an older case does not require a bulk rewrite or a
 re-import, and no legacy field or report wording is removed.

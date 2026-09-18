@@ -232,6 +232,19 @@ describe("caseSqliteRowStateHint (#1290 Part B)", () => {
     expect(hint).not.toMatch(/may indicate|suspicious|malicious/i);
   });
 
+  // #1319 — a summary the analyst marked false positive is out of the sum, as falsePositive.ts
+  // promises for every derived reader of the forensic timeline. When the only summary is marked,
+  // the hint is absent rather than a zero-count annotation.
+  it("skips summary events the analyst marked false positive", () => {
+    const events = [ev("e1"), summaryEvent("s1", 2, 1), summaryEvent("s2", 0, 3)];
+    expect(caseSqliteRowStateHint(events, new Set(["s2"]))).toBe(
+      "2 carved/1 deleted SQLite rows exist in this case; consistent with routine maintenance " +
+        "as well as tampering; no timestamps available for correlation",
+    );
+    expect(caseSqliteRowStateHint([summaryEvent("s1", 2, 1)], new Set(["s1"]))).toBeUndefined();
+    expect(caseSqliteRowStateHint(events, new Set())).toContain("2 carved/4 deleted");
+  });
+
   it("attaches the SAME hint identically to every hypothesis in the GET response", async () => {
     const { app, stateStore } = await makeApp();
     const state = await stateStore.load("c1");
@@ -247,6 +260,24 @@ describe("caseSqliteRowStateHint (#1290 Part B)", () => {
         "1 carved/1 deleted SQLite rows exist in this case; consistent with routine maintenance " +
           "as well as tampering; no timestamps available for correlation",
       );
+    }
+  });
+
+  it("a false-positive mark on a summary event takes its rows out of the hint (#1319)", async () => {
+    const { app, stateStore } = await makeApp();
+    const state = await stateStore.load("c1");
+    await stateStore.save({
+      ...state,
+      forensicTimeline: [...state.forensicTimeline, summaryEvent("s1", 2, 1), summaryEvent("s2", 0, 3)],
+    });
+    await twoHypotheses(app);
+    await request(app)
+      .post("/cases/c1/false-positive")
+      .send({ kind: "event", ref: "s2", reason: "benign", note: "authorized" });
+    const res = await request(app).get("/cases/c1/hypotheses");
+    expect(res.body).toHaveLength(2);
+    for (const h of res.body) {
+      expect(h.caseSqliteRowStateHint).toContain("2 carved/1 deleted");
     }
   });
 

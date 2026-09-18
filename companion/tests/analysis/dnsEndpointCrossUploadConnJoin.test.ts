@@ -76,13 +76,17 @@ function endpointDnsEvent(o: {
   };
 }
 
-/** A connection-shaped event in a SEPARATE upload -- any of the four canonical.network producers. */
+/** A connection-shaped event in a SEPARATE upload -- any of the four canonical.network producers.
+ * Stamped `provenance: "edge-observed"` by default, the way every live connection writer does
+ * (#1265); `unstamped: true` models a legacy connection (pre-#1265 envelope, or a flat-`srcIp`
+ * importer upgraded at load) whose source address the join must never resolve to a host (#1313). */
 function connEvent(o: {
   src: string;
   dst: string;
   ts: string;
   endTs?: string;
   count?: number;
+  unstamped?: boolean;
 }): ForensicEvent {
   seq += 1;
   return {
@@ -97,7 +101,10 @@ function connEvent(o: {
     sourceScreenshots: [],
     canonical: createCanonicalEvent({
       event: { category: "network", type: "connection" },
-      network: { source: { address: o.src }, destination: { address: o.dst, port: 443 } },
+      network: {
+        source: { address: o.src, ...(o.unstamped ? {} : { provenance: "edge-observed" as const }) },
+        destination: { address: o.dst, port: 443 },
+      },
       time: { observed: o.ts, normalized: o.ts },
       evidence: { rawRecords: [{ source: "zeek-conn", locator: `row:${seq}` }] },
       producer: { importer: "zeek", parserVersion: "1", mappingVersion: "1" },
@@ -194,6 +201,45 @@ describe("resolveEndpointCrossUploadDnsConnLeads", () => {
       WINDOW_SECONDS,
     );
     expect(results[0].state).toBe("no connection found in this case");
+  });
+
+  // #1313: the same fail-closed gate proxyWorkstationChain.ts applies (#1265) -- this join resolves
+  // the connection's source address to a HOST NAME through the same resolveIpAtTime call, so an
+  // address no writer stamped as edge-observed must never name a host. The connection is still
+  // real evidence that SOMEONE reached the address, so it keeps feeding the other-host caveat.
+  it("never resolves an UNSTAMPED connection source to a host, even when logon evidence would match it", () => {
+    const logon = logonEvent({
+      sessionHost: "fs-01",
+      clientName: "ws-042",
+      ip: "10.0.0.5",
+      ts: "2026-06-10T12:00:00Z",
+    });
+    const dns = endpointDnsEvent({
+      host: "ws-042",
+      query: "cdn.example.net",
+      address: "203.0.113.5",
+      ts: "2026-06-10T12:05:00Z",
+    });
+    const legacyConn = connEvent({
+      src: "10.0.0.5",
+      dst: "203.0.113.5",
+      ts: "2026-06-10T12:05:02Z",
+      unstamped: true,
+    });
+    expect(legacyConn.canonical?.network?.source?.provenance).toBeUndefined();
+    const results = resolveEndpointCrossUploadDnsConnLeads(
+      [logon, dns, legacyConn],
+      EMPTY_ALIAS,
+      HOST_TOLERANCE_MS,
+      WINDOW_SECONDS,
+    );
+    expect(results).toHaveLength(1);
+    expect(results[0].state).toBe("no connection found in this case");
+    expect(results[0].connectionEventId).toBeUndefined();
+    expect(results[0].bindingSampleTime).toBeUndefined();
+    expect(results[0].caveats.some((c) => c.includes("a connection to this address exists elsewhere"))).toBe(
+      true,
+    );
   });
 
   it("does not match when the connection's source IP resolves to a DIFFERENT host", () => {
