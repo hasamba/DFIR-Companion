@@ -120,7 +120,12 @@ describe("buildHostBindingIndex + resolveIpAtTime (IP -> client host)", () => {
 
   it("stores a whitespace-padded Workstation Name trimmed, so alias/name comparisons still match", () => {
     const events = [
-      logonEvent({ sessionHost: "fs-01", clientName: "  ws-042  ", ip: "10.0.0.5", ts: "2026-06-10T12:00:00Z" }),
+      logonEvent({
+        sessionHost: "fs-01",
+        clientName: "  ws-042  ",
+        ip: "10.0.0.5",
+        ts: "2026-06-10T12:00:00Z",
+      }),
     ];
     const index = buildHostBindingIndex(events);
     const hits = resolveIpAtTime(index, "10.0.0.5", "2026-06-10T12:00:00Z", 1_000);
