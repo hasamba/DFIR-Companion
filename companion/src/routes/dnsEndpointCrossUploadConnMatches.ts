@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import { resolveEndpointCrossUploadDnsConnLeads } from "../analysis/dnsEndpointCrossUploadConnJoin.js";
+import type { IpExclusionReason } from "../analysis/hostBinding.js";
 import { loadHostAliasIndex } from "../analysis/hostScopeLoad.js";
 import type { RouteContext } from "./context.js";
 
@@ -18,6 +19,14 @@ import type { RouteContext } from "./context.js";
  * NEVER an unconditional "this host connected" or "this never happened" claim — see
  * dnsEndpointCrossUploadConnJoin.ts's own header for the forwarding-topology, DHCP-lease,
  * aggregation-width and other-host caveats this route's own output cannot resolve.
+ *
+ * DISCLOSES `excludedLogonSamples` (#1345): the count of logon samples hostBinding.ts refused to
+ * index, by reason (`not-edge-observed` since #1342 — every 4624 persisted before its writer stamped
+ * provenance, which `upgradeForensicEvent` never revisits). On such a case every IP->host binding
+ * vanishes and a lead that used to say "connected inside the window" says "no connection found in
+ * this case"; the count is the only signal the analyst gets that a re-import, not absent evidence,
+ * is the cause. Route-level counter beside the rows, same shape as `skipped` on velociraptor.ts /
+ * import.ts. Repair is #1352.
  */
 
 // Same "how stale is this logon sample" question dnsResolverEndpointJoin.ts and
@@ -58,13 +67,15 @@ export function registerDnsEndpointCrossUploadConnRoutes(app: Express, ctx: Rout
       ]);
       const hostToleranceMs = parsed.data.hostToleranceMs ?? DEFAULT_HOST_TOLERANCE_MS;
       const windowSeconds = parsed.data.windowSeconds ?? DEFAULT_WINDOW_SECONDS;
+      const excluded = new Map<IpExclusionReason, number>();
       const matches = resolveEndpointCrossUploadDnsConnLeads(
         state.forensicTimeline,
         aliasIndex,
         hostToleranceMs,
         windowSeconds,
+        excluded,
       );
-      return res.status(200).json({ matches });
+      return res.status(200).json({ matches, excludedLogonSamples: Object.fromEntries(excluded) });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

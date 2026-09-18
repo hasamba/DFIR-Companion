@@ -80,6 +80,7 @@ import {
   resolveAccountAtTime,
   resolveIpAtTime,
   type HostBinding,
+  type IpExclusionReason,
 } from "./hostBinding.js";
 import type { HostAliasIndex } from "./hostAlias.js";
 import type { ForensicEvent } from "./stateTypes.js";
@@ -141,12 +142,15 @@ function mergeHits(
   }
 }
 
+/** `excluded` (#1345): the caller-owned sink `buildHostBindingIndex` counts rejected logon samples
+ * into, by reason — the only signal that a `no-match` below was a gated binding, not absent evidence. */
 export function resolveProxyHostIdentity(
   events: readonly ForensicEvent[],
   aliasIndex: HostAliasIndex,
   toleranceMs: number,
+  excluded?: Map<IpExclusionReason, number>,
 ): ProxyHostIdentityMatch[] {
-  const index = buildHostBindingIndex(events, aliasIndex);
+  const index = buildHostBindingIndex(events, aliasIndex, excluded);
   const results: ProxyHostIdentityMatch[] = [];
 
   for (const e of events) {

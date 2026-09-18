@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { z } from "zod";
 import { resolveResolverEndpointIdentity } from "../analysis/dnsResolverEndpointJoin.js";
+import type { IpExclusionReason } from "../analysis/hostBinding.js";
 import { loadHostAliasIndex } from "../analysis/hostScopeLoad.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import type { RouteContext } from "./context.js";
@@ -26,6 +27,13 @@ import type { RouteContext } from "./context.js";
  * ioc-provenance routes already use, not the AI-boundary promotion pattern viewSummary needs.
  * Reading the whole super-timeline into memory is the same deliberate full-load tradeoff #1269
  * documents on proxyHostIdentity.ts.
+ *
+ * DISCLOSES `excludedLogonSamples` (#1345): the count of logon samples hostBinding.ts refused to
+ * index, by reason (`not-edge-observed` since #1342 — every 4624 persisted before its writer stamped
+ * provenance, which `upgradeForensicEvent` never revisits). On such a case every IP->host binding
+ * vanishes and a row that used to say `matched` says `no-match` with `caveats: []`; the count is the
+ * only signal the analyst gets that a re-import, not absent evidence, is the cause. Route-level
+ * counter beside the rows, same shape as `skipped` on velociraptor.ts / import.ts. Repair is #1352.
  */
 
 // Stage 1 (IP -> host): the same kind of "how stale is this logon sample" question
@@ -70,13 +78,15 @@ export function registerResolverEndpointIdentityRoutes(app: Express, ctx: RouteC
       ]);
       const hostToleranceMs = parsed.data.hostToleranceMs ?? DEFAULT_HOST_TOLERANCE_MS;
       const queryToleranceMs = parsed.data.queryToleranceMs ?? DEFAULT_QUERY_TOLERANCE_MS;
+      const excluded = new Map<IpExclusionReason, number>();
       const matches = resolveResolverEndpointIdentity(
         [...state.forensicTimeline, ...superEvents],
         aliasIndex,
         hostToleranceMs,
         queryToleranceMs,
+        excluded,
       );
-      return res.status(200).json({ matches });
+      return res.status(200).json({ matches, excludedLogonSamples: Object.fromEntries(excluded) });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

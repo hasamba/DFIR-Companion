@@ -49,7 +49,7 @@
 // what it can no longer do is name WHO.
 
 import { buildHostBindingIndex, canonicalIp, isIdentifyingIp, resolveIpAtTime } from "./hostBinding.js";
-import type { HostBinding, HostBindingIndex } from "./hostBinding.js";
+import type { HostBinding, HostBindingIndex, IpExclusionReason } from "./hostBinding.js";
 import { resolveHost } from "./hostAlias.js";
 import type { HostAliasIndex } from "./hostAlias.js";
 import { DNS_FIXED_WINDOW_S, DNS_WINDOW_SLACK_S, gapBand } from "./canonicalDns.js";
@@ -207,13 +207,17 @@ function leadFor(
   return { state: "no connection found in this case", otherHostCaveat: !!byDest.get(address)?.length };
 }
 
+/** `excluded` (#1345): the caller-owned sink `buildHostBindingIndex` counts rejected logon samples
+ * into, by reason — the only signal that a "no connection found" lead below lost its connection to a
+ * gated binding, not to absent evidence. */
 export function resolveEndpointCrossUploadDnsConnLeads(
   events: readonly ForensicEvent[],
   aliasIndex: HostAliasIndex,
   hostToleranceMs: number,
   windowSeconds: number = DNS_FIXED_WINDOW_S,
+  excluded?: Map<IpExclusionReason, number>,
 ): EndpointCrossUploadDnsConnLead[] {
-  const bindingIndex = buildHostBindingIndex(events, aliasIndex);
+  const bindingIndex = buildHostBindingIndex(events, aliasIndex, excluded);
   const { matched, byDest } = indexConns(events, bindingIndex, hostToleranceMs);
   const results: EndpointCrossUploadDnsConnLead[] = [];
 

@@ -36,7 +36,12 @@
 // per-resolver-row loop — mirrors `buildHostBindingIndex`'s own one-time-build shape, so this is
 // O(events) total, never O(resolver rows × events).
 
-import { buildHostBindingIndex, resolveIpAtTime, type HostBinding } from "./hostBinding.js";
+import {
+  buildHostBindingIndex,
+  resolveIpAtTime,
+  type HostBinding,
+  type IpExclusionReason,
+} from "./hostBinding.js";
 import { resolveHost, type HostAliasIndex } from "./hostAlias.js";
 import type { ForensicEvent } from "./stateTypes.js";
 
@@ -123,13 +128,16 @@ function confirmationFor(
     : { confirmation: "not confirmed at the endpoint", eventIds: [] };
 }
 
+/** `excluded` (#1345): the caller-owned sink `buildHostBindingIndex` counts rejected logon samples
+ * into, by reason — the only signal that a `no-match` below was a gated binding, not absent evidence. */
 export function resolveResolverEndpointIdentity(
   events: readonly ForensicEvent[],
   aliasIndex: HostAliasIndex,
   hostToleranceMs: number,
   queryToleranceMs: number,
+  excluded?: Map<IpExclusionReason, number>,
 ): ResolverEndpointMatch[] {
-  const bindingIndex = buildHostBindingIndex(events, aliasIndex);
+  const bindingIndex = buildHostBindingIndex(events, aliasIndex, excluded);
   const endpointIndex = indexEndpointDns(events, aliasIndex);
   const results: ResolverEndpointMatch[] = [];
 

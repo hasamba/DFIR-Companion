@@ -32,7 +32,16 @@ async function makeAppWithSuperTimeline() {
   return { app, stateStore, superTimelineStore };
 }
 
-function logonEvent(id: string, host: string, client: string, ip: string, ts: string): ForensicEvent {
+// `stamped: false` builds the logon a case imported before d0b613fa (#1310) still holds — a persisted
+// canonical event is never re-derived, so it carries no `provenance` and #1342's gate drops it.
+function logonEvent(
+  id: string,
+  host: string,
+  client: string,
+  ip: string,
+  ts: string,
+  stamped = true,
+): ForensicEvent {
   return {
     id,
     timestamp: ts,
@@ -47,7 +56,8 @@ function logonEvent(id: string, host: string, client: string, ip: string, ts: st
       target: { kind: "host", name: host },
       authentication: { logonType: 3 },
       session: { terminal: client },
-      network: { source: { address: ip, provenance: "edge-observed" } }, // #1265: the real Zeek/EVTX stamp
+      // #1265: the real Zeek/EVTX stamp
+      network: { source: { address: ip, ...(stamped ? { provenance: "edge-observed" as const } : {}) } },
       time: { observed: ts, normalized: ts },
       evidence: { rawRecords: [{ source: "test", locator: `row:${id}` }] },
       producer: { importer: "test", parserVersion: "1", mappingVersion: "1" },
@@ -105,6 +115,24 @@ describe("GET /cases/:id/proxy-host-identity-matches", () => {
     expect(res.body.matches[0].hosts).toEqual([
       { host: "ws-042", sampleTime: "2026-06-10T12:00:00Z", evidenceEventIds: ["l1"], via: ["address"] },
     ]);
+    expect(res.body.excludedLogonSamples).toEqual({}); // #1345: a stamped logon is never counted out
+  });
+
+  // #1345: since #1342 an unstamped logon (every 4624 persisted before d0b613fa) silently leaves the
+  // IP->host index, so a match that used to say `matched` says `no-match` with `caveats: []`. The
+  // route now discloses the gated count to the analyst — the only signal that a re-import is needed.
+  it("discloses a logon the provenance gate excluded instead of a bare no-match", async () => {
+    const { app, stateStore } = await makeApp();
+    await stateStore.save(
+      stateWith([
+        logonEvent("l1", "fs-01", "ws-042", "10.0.0.5", "2026-06-10T12:00:00Z", false),
+        webEvent("w1", "10.0.0.5", "2026-06-10T12:05:00Z"),
+      ]),
+    );
+    const res = await request(app).get("/cases/c1/proxy-host-identity-matches");
+    expect(res.status).toBe(200);
+    expect(res.body.matches[0]).toMatchObject({ eventId: "w1", outcome: "no-match" });
+    expect(res.body.excludedLogonSamples).toEqual({ "not-edge-observed": 1 });
   });
 
   it("uses the default 6-hour tolerance when none is given, and rejects a match outside it", async () => {
