@@ -561,6 +561,8 @@ function mapEvent(rec: Row, event: Row, sink: Map<string, SiemIoc>, locator: str
   const name = text(getCI(event, "name"));
   const who = readActor(rec);
   const actor = who.label;
+  // Google Workspace's own Admin/Activity API field, recorded by Google's own infrastructure at
+  // call time — edge-observed, not client-asserted (#1184 audit).
   const ip = cleanIp(text(getCI(rec, "ipAddress")));
   const tenant = text(getPath(rec, "id.customerId"));
   if (ip) addIoc(sink, "ip", ip);
