@@ -235,7 +235,10 @@ describe("caseSqliteRowStateHint (#1290 Part B)", () => {
   it("attaches the SAME hint identically to every hypothesis in the GET response", async () => {
     const { app, stateStore } = await makeApp();
     const state = await stateStore.load("c1");
-    await stateStore.save({ ...state, forensicTimeline: [...state.forensicTimeline, summaryEvent("s1", 1, 1)] });
+    await stateStore.save({
+      ...state,
+      forensicTimeline: [...state.forensicTimeline, summaryEvent("s1", 1, 1)],
+    });
     await twoHypotheses(app);
     const res = await request(app).get("/cases/c1/hypotheses");
     expect(res.body).toHaveLength(2);

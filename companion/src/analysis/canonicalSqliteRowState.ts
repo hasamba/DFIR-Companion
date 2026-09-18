@@ -46,12 +46,14 @@ export const SQLITE_ROW_STATE_BASIS =
 // sentence appended for new rows only, never a rewrite of the v1 text.
 export const SQLITE_ROW_STATE_BASIS_V2 =
   SQLITE_ROW_STATE_BASIS +
-  "; `latestForRowId` names only the highest-version row sharing a rowId within this ONE report " +
-  "(never across reports, never claimed as the live database's current content, and skipped " +
-  "entirely when the report was truncated) — a reused rowid can still combine two unrelated " +
-  "records' own history under one group";
+  "; `latestForRowId` names only the highest-version NON-Carved row sharing a rowId within this " +
+  "ONE report (never across reports, never claimed as the live database's current content, and " +
+  "skipped entirely when the report was truncated) — Carved rows never win because their rowId is " +
+  "itself a carving-signature reconstruction; `latestForRowIdAmbiguous` marks rows tied at that " +
+  "highest version with different content, where no single latest state can be named; a reused " +
+  "rowid can still combine two unrelated records' own history under one group";
 
-export const sqliteRowStateBlockSchema = z.object({
+const sqliteRowStateBlockObjectSchema = z.object({
   tool: z.enum(sqliteRowStateTools),
   // Sourced from the uploaded filename (best-effort) — the CSV's own content carries no table-name
   // field at all. No .min(1): an unparseable filename falls back to "" rather than crashing the
@@ -90,7 +92,36 @@ export const sqliteRowStateBlockSchema = z.object({
   // guard as `tableLabel`). Absent when no label list is configured or none matched.
   matchedHighValueLabel: z.string().max(MAX_FIELD_LEN).optional(),
 });
-export type SqliteRowStateBlock = z.infer<typeof sqliteRowStateBlockSchema>;
+
+// The two unions above are independent zod checks — without this, {mappingVersion: "v1", basis:
+// BASIS_V2} or {mappingVersion: "v1", latestForRowId: true} would both validate, even though the
+// schema's own comments promise mappingVersion/basis move together and only v2 rows carry the new
+// fields (code review finding: the coupling was documented, never enforced).
+export const sqliteRowStateBlockSchema = sqliteRowStateBlockObjectSchema.superRefine((val, ctx) => {
+  const isV1 = val.mappingVersion === "sqlite-row-state-v1";
+  if (isV1 && val.basis !== SQLITE_ROW_STATE_BASIS) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "mappingVersion v1 must carry the v1 basis text",
+      path: ["basis"],
+    });
+  }
+  if (!isV1 && val.basis !== SQLITE_ROW_STATE_BASIS_V2) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "mappingVersion v2 must carry the v2 basis text",
+      path: ["basis"],
+    });
+  }
+  if (isV1 && (val.latestForRowId !== undefined || val.latestForRowIdAmbiguous !== undefined)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "latestForRowId/latestForRowIdAmbiguous require mappingVersion v2",
+      path: ["mappingVersion"],
+    });
+  }
+});
+export type SqliteRowStateBlock = z.infer<typeof sqliteRowStateBlockObjectSchema>;
 
 // #1290 Part B — structured totals on the ONE per-report Carved/Deleted summary event (#1144).
 // Genuinely new (the summary event carried no `sqliteRowState` block before this), so no old

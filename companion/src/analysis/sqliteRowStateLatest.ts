@@ -42,7 +42,12 @@ export function matchHighValueLabel(
   if (tableNameSource !== "filename" || !tableName) return undefined;
   const haystack = tableName.toLowerCase();
   for (const label of labels) {
-    if (haystack.includes(label)) return label.replace(/[[\]]/g, "");
+    if (!haystack.includes(label)) continue;
+    const stripped = label.replace(/[[\]]/g, "");
+    // A label made ENTIRELY of brackets (e.g. "[") strips to "" — returning it would violate this
+    // function's own "absent when none matched" contract for every downstream caller, which only
+    // ever falsy-checks the result (code review finding).
+    if (stripped) return stripped;
   }
   return undefined;
 }
@@ -69,6 +74,11 @@ export interface LatestRowResult {
   index: number;
   ambiguous: boolean;
   multiMember: boolean;
+  // A Carved row shares this rowId with a version >= the winner's/tied rows' own version — Carved
+  // rows never win (their rowId is a carving-signature reconstruction, not a live index read), but
+  // a consumer disclosing "the highest recorded version" must say so, or the prose overclaims in
+  // exactly the case this exclusion exists for (code review finding).
+  carvedAtOrAboveWinningVersion: boolean;
 }
 
 /** Computes, for every rowId group within ONE report, which single row (if any) is "the latest" —
@@ -97,15 +107,20 @@ export function computeLatestForRowId(rows: readonly LatestRowFacts[]): LatestRo
     if (candidates.length === 0) continue; // an all-Carved group never gets a winner
     const maxVersion = Math.max(...candidates.map((i) => rows[i].versionNumber));
     const winners = candidates.filter((i) => rows[i].versionNumber === maxVersion);
+    const carvedAtOrAboveWinningVersion = indices.some(
+      (i) => rows[i].operation === "Carved" && rows[i].versionNumber >= maxVersion,
+    );
     if (winners.length === 1) {
-      results.push({ index: winners[0], ambiguous: false, multiMember });
+      results.push({ index: winners[0], ambiguous: false, multiMember, carvedAtOrAboveWinningVersion });
       continue;
     }
     const digests = new Set(winners.map((i) => rows[i].columnsDigest));
     if (digests.size === 1) {
-      results.push({ index: winners[0], ambiguous: false, multiMember });
+      results.push({ index: winners[0], ambiguous: false, multiMember, carvedAtOrAboveWinningVersion });
     } else {
-      for (const i of winners) results.push({ index: i, ambiguous: true, multiMember });
+      for (const i of winners) {
+        results.push({ index: i, ambiguous: true, multiMember, carvedAtOrAboveWinningVersion });
+      }
     }
   }
   return results;
@@ -113,23 +128,32 @@ export function computeLatestForRowId(rows: readonly LatestRowFacts[]): LatestRo
 
 /** The description clause for one flagged row. Empty for a singleton group's own winner (finding:
  * appending this to every one-row "history" would be near-universal noise, diluting the feature —
- * the canonical `latestForRowId: true` flag is still set for a singleton, just without prose). */
+ * the canonical `latestForRowId: true` flag is still set for a singleton, just without prose).
+ * `carvedAtOrAboveWinningVersion` MUST be disclosed whenever true — without it, "the highest
+ * recorded version" is a false claim in the exact case Carved-exclusion exists for (code review
+ * finding: a Carved row can carry a higher/equal version than the non-Carved winner). */
 export function latestClause(
   rowId: string,
   operation: SqliteRowStateOperation,
   ambiguous: boolean,
   multiMember: boolean,
+  carvedAtOrAboveWinningVersion: boolean,
 ): string {
+  const carvedCaveat = carvedAtOrAboveWinningVersion
+    ? "; a Carved row for this same rowid, at or above this version, is excluded from this " +
+      "comparison — its own identity is a carving-signature reconstruction, not a live index read"
+    : "";
   if (ambiguous) {
     return (
       `; more than one row recorded the same (highest) version for row ${rowId} in this report ` +
       `with different content — which reflects the true latest state cannot be determined from ` +
-      `this report alone`
+      `this report alone${carvedCaveat}`
     );
   }
   if (!multiMember) return "";
   return operation === "Deleted"
-    ? `; the last recorded event for row ${rowId} in this report was its own deletion`
+    ? `; the last recorded event for row ${rowId} in this report was its own deletion${carvedCaveat}`
     : `; the highest recorded version for row ${rowId} in this report — not proof this reflects ` +
-        `any write after this capture, and a reused rowid may combine two unrelated records' own history`;
+        `any write after this capture, and a reused rowid may combine two unrelated records' own ` +
+        `history${carvedCaveat}`;
 }

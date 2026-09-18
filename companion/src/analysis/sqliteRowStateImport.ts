@@ -1,8 +1,12 @@
 // sqlite-dissect's (DC3) default `-e csv` commit-history export, one CSV per table (#932 item 8,
 // "932.13"): a structural fact about one cell's presence/change in one table's commit history —
 // main-database, WAL, rollback-journal or carved/freelist provenance. Never a claim about intent,
-// never a "current state" verdict (no latest-wins derivation is attempted here), and never an
-// independent re-verification of the tool's own commit-boundary determination.
+// never a live database "current state" verdict, and never an independent re-verification of the
+// tool's own commit-boundary determination. #1152 adds ONE bounded exception: `latestForRowId`
+// names the highest-version, non-Carved row sharing a rowId within this single report — never
+// across reports, never claimed as the live database's own current content, skipped entirely when
+// the report was truncated. See canonicalSqliteRowState.ts's own SQLITE_ROW_STATE_BASIS_V2 for the
+// exact, persisted wording of that bound.
 //
 // Schema verified live against sqlite-dissect's own csv_export.py (CommitCsvExporter) and
 // constants.py — not invented. See RECOMMENDATION-8.md for the full research trail.
@@ -162,9 +166,13 @@ class CarvedDeletedTally {
     // #1290 Part A — the SAME report-level match every row already carries (tableName is a
     // report-level derived value, not per-row content), so no re-matching is done here.
     const highValue = highValueClause(matchedHighValueLabel);
+    // Clamped at 0 — a near-max-length analyst-configured label can push the reserved suffix
+    // (highValue + disclosure + reportTag) past 600 on its own; `clip()`'s own budget must never go
+    // negative, which `String.slice(0, negative)` would read as "trim from the end" instead of
+    // "keep nothing" (code review finding, same class as `applyLatestForRowId`'s own fix).
     const variable = clip(
       `sqlite-dissect row-state summary: table ${cleanTableLabel} — ${parts.join(", ")}`,
-      600 - reportTag.length - disclosure.length - highValue.length,
+      Math.max(0, 600 - reportTag.length - disclosure.length - highValue.length),
     );
     const description = `${variable}${disclosure}${highValue}${reportTag}`;
     const aggKey = boundedAggKey(`sqlite-row-state-summary|${reportFingerprint}`);
@@ -321,7 +329,8 @@ function mapRow(
   // below carries only the former. `applyLatestForRowId` rebuilds it for any flagged row, reusing
   // `rawBody`/`reportTag`/`highValue` so the 600-char budget is honoured either way.
   const highValue = highValueClause(matchedHighValueLabel);
-  const description = `${clip(rawBody, 600 - reportTag.length - highValue.length)}${highValue}${reportTag}`;
+  // Clamped at 0 for the same reason as the summary's own budget above.
+  const description = `${clip(rawBody, Math.max(0, 600 - reportTag.length - highValue.length))}${highValue}${reportTag}`;
 
   const event: MappedEvent = {
     timestamp: "",
@@ -387,11 +396,23 @@ function applyLatestForRowId(mapped: MappedEvent[], rows: readonly MappedRow[]):
     columnsDigest: r.columnsDigest,
     operation: r.operation,
   }));
-  for (const { index, ambiguous, multiMember } of computeLatestForRowId(facts)) {
+  for (const { index, ambiguous, multiMember, carvedAtOrAboveWinningVersion } of computeLatestForRowId(
+    facts,
+  )) {
     const row = rows[index];
-    const clause = latestClause(row.rowId!, row.operation, ambiguous, multiMember);
+    const clause = latestClause(
+      row.rowId!,
+      row.operation,
+      ambiguous,
+      multiMember,
+      carvedAtOrAboveWinningVersion,
+    );
     const suffix = `${row.highValue}${clause}${row.reportTag}`;
-    const description = `${clip(row.rawBody, 600 - suffix.length)}${suffix}`;
+    // Clamped at 0 — an oversized suffix (a long configured label + a long rowId's own clause)
+    // must never flip `clip()`'s own budget negative, which `String.slice(0, negative)` would
+    // read as "trim from the end," silently producing a longer-than-intended description instead
+    // of the shorter one this budget exists to guarantee (code review finding).
+    const description = `${clip(row.rawBody, Math.max(0, 600 - suffix.length))}${suffix}`;
     const prior = mapped[index];
     mapped[index] = {
       ...prior,

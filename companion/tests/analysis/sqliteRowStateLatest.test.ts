@@ -17,11 +17,7 @@ describe("parseHighValueLabels", () => {
   });
 
   it("trims, lowercases, and drops empty items", () => {
-    expect(parseHighValueLabels(" History , Messages ,,cookies")).toEqual([
-      "history",
-      "messages",
-      "cookies",
-    ]);
+    expect(parseHighValueLabels(" History , Messages ,,cookies")).toEqual(["history", "messages", "cookies"]);
   });
 
   it("caps the list at MAX_HIGH_VALUE_LABELS", () => {
@@ -87,13 +83,23 @@ describe("computeLatestForRowId", () => {
     expect(results.find((r) => r.index === 2)).toMatchObject({ ambiguous: false, multiMember: false });
   });
 
-  it("excludes Carved candidates from winning but keeps them counted toward multiMember", () => {
+  it("excludes Carved candidates from winning but keeps them counted toward multiMember, and flags the Carved row's higher version", () => {
     const rows = [
       fact({ rowId: "1", versionNumber: 1, operation: "Added" }),
       fact({ rowId: "1", versionNumber: 9, operation: "Carved" }),
     ];
     const results = computeLatestForRowId(rows);
-    expect(results).toEqual([{ index: 0, ambiguous: false, multiMember: true }]);
+    expect(results).toEqual([
+      { index: 0, ambiguous: false, multiMember: true, carvedAtOrAboveWinningVersion: true },
+    ]);
+  });
+
+  it("does not flag a Carved row whose version is BELOW the winner's", () => {
+    const rows = [
+      fact({ rowId: "1", versionNumber: 5, operation: "Added" }),
+      fact({ rowId: "1", versionNumber: 1, operation: "Carved" }),
+    ];
+    expect(computeLatestForRowId(rows)[0].carvedAtOrAboveWinningVersion).toBe(false);
   });
 
   it("produces no result when every member of a group is Carved", () => {
@@ -103,23 +109,58 @@ describe("computeLatestForRowId", () => {
     ];
     expect(computeLatestForRowId(rows)).toEqual([]);
   });
+
+  it("collapses a content-identical tie (same columnsDigest) to the first winner, never ambiguous", () => {
+    const rows = [
+      fact({ rowId: "1", versionNumber: 2, columnsDigest: "same" }),
+      fact({ rowId: "1", versionNumber: 2, columnsDigest: "same" }),
+    ];
+    const results = computeLatestForRowId(rows);
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({ index: 0, ambiguous: false, multiMember: true });
+  });
+
+  it("flags every member of a content-different tie as ambiguous, none as the winner", () => {
+    const rows = [
+      fact({ rowId: "1", versionNumber: 2, columnsDigest: "alice" }),
+      fact({ rowId: "1", versionNumber: 2, columnsDigest: "bob" }),
+      fact({ rowId: "1", versionNumber: 1, columnsDigest: "older" }),
+    ];
+    const results = computeLatestForRowId(rows);
+    expect(results.map((r) => r.index).sort()).toEqual([0, 1]);
+    for (const r of results) expect(r.ambiguous).toBe(true);
+  });
 });
 
 describe("latestClause", () => {
   it("is empty for a singleton, non-ambiguous winner", () => {
-    expect(latestClause("1", "Added", false, false)).toBe("");
+    expect(latestClause("1", "Added", false, false, false)).toBe("");
   });
 
   it("uses deletion wording for a Deleted multi-member winner", () => {
-    expect(latestClause("1", "Deleted", false, true)).toContain("its own deletion");
-    expect(latestClause("1", "Deleted", false, true)).not.toContain("no current row exists");
+    expect(latestClause("1", "Deleted", false, true, false)).toContain("its own deletion");
+    expect(latestClause("1", "Deleted", false, true, false)).not.toContain("no current row exists");
   });
 
   it("uses generic wording for a non-Deleted multi-member winner", () => {
-    expect(latestClause("1", "Updated", false, true)).toContain("the highest recorded version");
+    expect(latestClause("1", "Updated", false, true, false)).toContain("the highest recorded version");
   });
 
   it("uses ambiguity wording regardless of multiMember", () => {
-    expect(latestClause("1", "Added", true, true)).toContain("cannot be determined");
+    expect(latestClause("1", "Added", true, true, false)).toContain("cannot be determined");
+  });
+
+  it("appends the Carved caveat to every branch when a Carved row sits at or above the winning version", () => {
+    for (const [op, ambiguous] of [
+      ["Updated", false],
+      ["Deleted", false],
+      ["Added", true],
+    ] as const) {
+      expect(latestClause("1", op, ambiguous, true, true)).toContain("a Carved row for this same rowid");
+    }
+  });
+
+  it("never emits the Carved caveat when the flag is false", () => {
+    expect(latestClause("1", "Updated", false, true, false)).not.toContain("Carved");
   });
 });
