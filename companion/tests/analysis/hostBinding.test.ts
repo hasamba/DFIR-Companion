@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createCanonicalEvent } from "../../src/analysis/canonicalEvent.js";
+import { createCanonicalEvent, upgradeForensicEvent } from "../../src/analysis/canonicalEvent.js";
 import { buildHostAliasIndex } from "../../src/analysis/hostAlias.js";
 import {
   buildHostBindingIndex,
@@ -361,5 +361,143 @@ describe("buildHostBindingIndex + resolveAccountAtTime (account -> session host)
     ];
     const index = buildHostBindingIndex(events);
     expect(resolveAccountAtTime(index, "corp\\ALICE", "2026-06-10T12:00:00Z", 1_000)).toHaveLength(1);
+  });
+
+  it("does not double the domain prefix when account.name already carries it (the real winAccountRoles.ts / legacy-upgrade shape)", () => {
+    // winAccountRoles.ts's own entity() and this module's own legacy-prose upgrade both put the
+    // FULL "domain\name" string into account.name AND repeat the domain in account.domain — the
+    // shape logonEvent()'s own test helper above never simulates (it always passes a bare name).
+    const events: ForensicEvent[] = [
+      {
+        id: "id-domain-prefixed",
+        timestamp: "2026-06-10T12:00:00Z",
+        description: "Windows Security logon @ ws-042",
+        severity: "Low",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset: "ws-042",
+        canonical: createCanonicalEvent({
+          event: { category: "authentication", type: "logon", outcome: "success" },
+          actor: { kind: "account", name: "CORP\\jdoe", domain: "CORP" },
+          account: { name: "CORP\\jdoe", domain: "CORP" },
+          target: { kind: "host", name: "ws-042" },
+          authentication: { logonType: 2 },
+          time: { observed: "2026-06-10T12:00:00Z", normalized: "2026-06-10T12:00:00Z" },
+          evidence: { rawRecords: [{ source: "test", locator: "row:domain-prefixed" }] },
+          producer: { importer: "test", parserVersion: "1", mappingVersion: "1" },
+        }),
+      },
+    ];
+    const index = buildHostBindingIndex(events);
+    expect([...index.byAccount.keys()]).toEqual(["corp\\jdoe"]);
+    expect(resolveAccountAtTime(index, "corp\\jdoe", "2026-06-10T12:00:00Z", 1_000)).toHaveLength(1);
+  });
+
+  it("keeps a domain-qualified account.name intact when NO separate domain field confirms it (e.g. ecarImport.ts's raw, unprocessed principal field)", () => {
+    const events: ForensicEvent[] = [
+      {
+        id: "id-qualified-no-domain-field",
+        timestamp: "2026-06-10T12:00:00Z",
+        description: "EDR logon @ ws-042",
+        severity: "Low",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset: "ws-042",
+        canonical: createCanonicalEvent({
+          event: { category: "authentication", type: "logon", outcome: "success" },
+          actor: { kind: "account", name: "CORP\\jdoe" },
+          account: { name: "CORP\\jdoe" }, // no domain field — the whole string IS the only identity
+          target: { kind: "host", name: "ws-042" },
+          authentication: { logonType: 2 },
+          time: { observed: "2026-06-10T12:00:00Z", normalized: "2026-06-10T12:00:00Z" },
+          evidence: { rawRecords: [{ source: "test", locator: "row:qualified-no-domain" }] },
+          producer: { importer: "test", parserVersion: "1", mappingVersion: "1" },
+        }),
+      },
+    ];
+    const index = buildHostBindingIndex(events);
+    // Stripping here would collapse to bare "jdoe", discarding the only copy of the domain and
+    // risking a collision with an unrelated un-domained local "jdoe" on another host.
+    expect([...index.byAccount.keys()]).toEqual(["corp\\jdoe"]);
+  });
+
+  it("still recognizes NT AUTHORITY\\SYSTEM as non-human when account.name is domain-prefixed", () => {
+    const events: ForensicEvent[] = [
+      {
+        id: "id-system-domained",
+        timestamp: "2026-06-10T12:00:00Z",
+        description: "Windows Security logon @ ws-042",
+        severity: "Low",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset: "ws-042",
+        canonical: createCanonicalEvent({
+          event: { category: "authentication", type: "logon", outcome: "success" },
+          actor: { kind: "account", name: "NT AUTHORITY\\SYSTEM", domain: "NT AUTHORITY" },
+          account: { name: "NT AUTHORITY\\SYSTEM", domain: "NT AUTHORITY" },
+          target: { kind: "host", name: "ws-042" },
+          authentication: { logonType: 2 },
+          time: { observed: "2026-06-10T12:00:00Z", normalized: "2026-06-10T12:00:00Z" },
+          evidence: { rawRecords: [{ source: "test", locator: "row:system-domained" }] },
+          producer: { importer: "test", parserVersion: "1", mappingVersion: "1" },
+        }),
+      },
+    ];
+    const index = buildHostBindingIndex(events);
+    expect(index.byAccount.size).toBe(0);
+  });
+});
+
+// #1162: buildHostBindingIndex silently skips any event with no canonical envelope. stateStore.ts's
+// own load-time upgrade behavior (mapping upgradeForensicEvent over the forensic timeline before
+// any consumer sees it) is already independently pinned by
+// tests/analysis/stateStore.test.ts's own "upgrades legacy timeline rows on load" test — this test
+// does not re-prove that seam. What it DOES pin is the module-boundary contract this file is
+// otherwise silent on: given an already-upgraded legacy, prose-only event (the shape stateStore.ts
+// guarantees every consumer receives), buildHostBindingIndex produces real bindings through the
+// actual prose-parsing path, not just through a hand-built envelope like every test above.
+describe("buildHostBindingIndex through the legacy prose-upgrade path (#1162)", () => {
+  it("binds IP -> client host and account -> session host from a legacy, envelope-less event", () => {
+    const legacy: ForensicEvent = {
+      id: "legacy-1",
+      timestamp: "2026-07-30T10:00:00Z",
+      description:
+        "Windows Security Successful logon (EID 4624) - CORP\\jdoe - LogonType=3 - " +
+        "IpAddress=10.0.0.5 - WorkstationName=WS-042 @ SRV-01 [Network]",
+      severity: "Low",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      asset: "SRV-01",
+    };
+    // The 4624 above is LogonType 3 (Network), which does not qualify for account -> host
+    // presence (see ACCOUNT_PRESENCE_LOGON_TYPES) — a second, interactive-family legacy event
+    // proves that half of the contract too.
+    const legacyInteractive: ForensicEvent = {
+      id: "legacy-2",
+      timestamp: "2026-07-30T10:05:00Z",
+      description: "Windows Security Successful logon (EID 4624) - CORP\\jdoe - LogonType=2 @ WS-042",
+      severity: "Low",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      asset: "WS-042",
+    };
+
+    expect(legacy.canonical).toBeUndefined();
+    const upgraded = [legacy, legacyInteractive].map(upgradeForensicEvent);
+    expect(upgraded[0].canonical).toBeDefined();
+
+    const index = buildHostBindingIndex(upgraded);
+    const ipHits = resolveIpAtTime(index, "10.0.0.5", "2026-07-30T10:00:00Z", 1_000);
+    expect(ipHits).toHaveLength(1);
+    expect(ipHits[0].host).toBe("WS-042");
+
+    const accountHits = resolveAccountAtTime(index, "corp\\jdoe", "2026-07-30T10:05:00Z", 1_000);
+    expect(accountHits).toHaveLength(1);
+    expect(accountHits[0].host).toBe("WS-042");
   });
 });
