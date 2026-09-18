@@ -47,7 +47,7 @@ function logonEvent(id: string, host: string, client: string, ip: string, ts: st
       target: { kind: "host", name: host },
       authentication: { logonType: 3 },
       session: { terminal: client },
-      network: { source: { address: ip } },
+      network: { source: { address: ip, provenance: "edge-observed" } }, // #1292: the stamp every real 4624 writer carries
       time: { observed: ts, normalized: ts },
       evidence: { rawRecords: [{ source: "test", locator: `row:${id}` }] },
       producer: { importer: "test", parserVersion: "1", mappingVersion: "1" },

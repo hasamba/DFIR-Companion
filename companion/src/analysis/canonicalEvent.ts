@@ -589,8 +589,8 @@ interface LegacyLogon {
   workstation?: string;
   sessionId?: string;
 }
-
 const LEGACY_LOGON_MARKER = /(Successful|Failed) logon \(EID (?:4624|4625)\)/;
+const EDGE_OBSERVED = "edge-observed" as const; // #1292: a 4624/4625 `IpAddress=` is only ever rendered from the Security record's own field (renderer set pinned by hostBinding.test.ts) — the basis siemImport.ts stamps on; the generic `srcIp` branch stays unstamped (#1265's exemption)
 const LEGACY_ACCOUNT =
   /(?<![\\/:.\w])(NT AUTHORITY|NT SERVICE|Window Manager|Font Driver Host|[A-Za-z][A-Za-z0-9.-]{1,30})\\([A-Za-z0-9._$-]{2,40})(?![\\/\w])/g;
 
@@ -715,7 +715,7 @@ function legacyCanonical(event: ForensicEvent): CanonicalEventEnvelope {
       ? {
           network: {
             ...network,
-            ...(logon?.sourceIp ? { source: { address: logon.sourceIp } } : {}),
+            ...(logon?.sourceIp ? { source: { address: logon.sourceIp, provenance: EDGE_OBSERVED } } : {}),
           },
         }
       : {}),
