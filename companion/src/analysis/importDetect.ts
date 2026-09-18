@@ -8,6 +8,7 @@ import { isAzureStorageLog } from "./azureStorageLogImport.js";
 import { isAwsFlowLogLine } from "./awsFlowLogImport.js";
 import { isDiskImageLog } from "./diskImageAcquisitionLog.js";
 import { isBulkExtractorUrlFeatureFile } from "./bulkExtractorUrlImport.js";
+import { isBulkExtractorCarvedFeatureFile } from "./bulkExtractorCarvedImport.js";
 import { isFlossResult } from "./flossResultImport.js";
 import { isCapaResult, capaUnsupportedFlavorReason } from "./capaResultImport.js";
 import { isOlevbaResult } from "./olevbaResultImport.js";
@@ -50,8 +51,7 @@ import {
   sqliteRowStateCsvSig,
 } from "./importDetectSources.js";
 
-// The kind list itself lives in importerSpec.ts, which is where a custom importer id is checked
-// against it — one array, so the union and the shadow-guard can never drift apart again.
+// The kind list lives in importerSpec.ts, where a custom importer id is checked against it — one array, so the union and the shadow-guard can never drift.
 export type ImportKind = (typeof IMPORT_KINDS)[number];
 
 type Row = Record<string, unknown>;
@@ -297,9 +297,8 @@ function isZeekStream(s: Row): boolean {
 function isNetwork(s: Row): boolean {
   return !!getCI(s, "event_type") || !!getCI(s, "_path") || isZeekStream(s);
 }
-// Cyber Triage timeline JSONL: every row carries `epoch_timestamp` + (`timestamp_desc` |
-// `timestamp_description`) + `message`, with a Cyber Triage `score`/`scoreDescription` verdict.
-// Specific enough to claim ahead of the `message`-based SIEM catch-all.
+// Cyber Triage timeline JSONL: every row carries `epoch_timestamp` + (`timestamp_desc` | `timestamp_description`) +
+// `message`, with a Cyber Triage `score`/`scoreDescription` verdict. Specific enough to claim ahead of the `message`-based SIEM catch-all.
 function isCybertriage(s: Row): boolean {
   return (
     getCI(s, "epoch_timestamp") != null &&
@@ -668,6 +667,7 @@ export function detectImportKind(filename: string, text: string): ImportKind {
 
   // Linux auditd records (`type=… msg=audit(…)`) — shape is unique enough to claim directly.
   if (isAuditd(t)) return "auditd";
+  if (isBulkExtractorCarvedFeatureFile(t)) return "bulkextractorcarved"; // before url: structural, name-agnostic (#1116)
   if (isBulkExtractorUrlFeatureFile(t)) return "bulkextractorurl"; // both header anchors required
 
   // AWS VPC Flow Log default (v2) format — 14 fields, specific enough not to collide below.
