@@ -27,11 +27,17 @@
 // corroboration) from a fresh check of iLEAPP main @ 6dc251d857c0 (2026-09-14). Moving the shared
 // iLEAPP pin re-verifies every EXISTING iOS entry too, since headersMatch is exact-and-ordered —
 // every pre-existing iOS entry was re-diffed against the new commit before this change; every
-// header tuple is unchanged. ALEAPP is untouched (nothing Android added or re-verified here).
-export const REGISTRY_VERSION = "leapp-origin-2026-09-16";
+// header tuple is unchanged.
+// 2026-09-18: seven Android entries added for #1298 (932.15's granted/used-permission
+// prerequisite: AppOps modern + legacy, Recent Accesses, Permission Modes, the two Permission
+// Store views, Usage Stats) from ALEAPP main @ ce0880dc232c. Every pre-existing Android entry was
+// re-diffed against that commit: eight unchanged; `Android Notification History` had pinned 17 of
+// upstream's 23 columns since before the previous pin (#1336) and is corrected here. iLEAPP is
+// untouched.
+export const REGISTRY_VERSION = "leapp-origin-2026-09-18";
 export const REGISTRY_PINS = {
   iLEAPP: { ref: "main", commit: "6dc251d857c0", date: "2026-09-14" },
-  ALEAPP: { ref: "main", commit: "498491475597", date: "2026-09-13" },
+  ALEAPP: { ref: "main", commit: "ce0880dc232c", date: "2026-09-18" },
 } as const;
 
 import { ACQUISITIONS, LOCALITIES, RECORD_TYPES, type MobileBlock } from "./canonicalMobile.js";
@@ -355,10 +361,19 @@ export const REGISTRY: readonly RegistryEntry[] = [
       "Image Type",
       "Image Bitmap Filename",
       "Image Resource ID",
+      // #1336: the six columns below were upstream at the previous pin too; the entry had stopped
+      // at `Image Resource ID`, so every real export read headers-differ.
+      "Image Resource ID Package",
+      "Image Data Length",
+      "Image Data Offset",
+      "Image URI",
+      "Protobuf File Name",
+      "Timestamp From Protobuf File Name",
     ],
     // As for Notification Duet: the package posted it; that is all the column says.
     record: "notification",
     locality: "device-local",
+    app: { package: "Package Name" },
   },
   {
     platform: "android",
@@ -404,6 +419,157 @@ export const REGISTRY: readonly RegistryEntry[] = [
     acquisition: "from-store-account",
     acquisitionColumn: "Account",
     account: { name: "Account" },
+  },
+  // #1298 (932.15's granted/used prerequisite). An AppOps row is evidence the OS recorded a
+  // permission operation for that package — never proof the user consciously granted it, never
+  // proof of malicious use. A stored grant (`Granted`, `Mode`) is a state at collection time, not
+  // a grant event and not evidence the permission was ever exercised. A usage row is presence in
+  // the OS's usage ledger, not execution of a particular function.
+  {
+    platform: "android",
+    name: "App Ops Permissions",
+    lastUpdate: "2026-08-01",
+    // No outcome column: the outcome is WHICH timestamp is populated. The importer dates the row
+    // by the first populated clock and stamps that clock's name on it, so `[Reject Timestamp: …]`
+    // carries the outcome without a second reading path here.
+    headers: [
+      "Access Timestamp",
+      "Reject Timestamp",
+      "Package Name",
+      "ID",
+      "Proxy Package Name",
+      "Proxy Package UID",
+      "Permission",
+    ],
+    record: "permission",
+    locality: "device-local",
+    app: { package: "Package Name" },
+  },
+  {
+    platform: "android",
+    name: "App Ops Permissions - Legacy",
+    lastUpdate: "2026-08-01",
+    headers: [
+      "Timestamp TP",
+      "Timestamp TC",
+      "Timestamp TB",
+      "Timestamp TF",
+      "Timestamp TFS",
+      "Timestamp TT",
+      "Package Name",
+      "Duration",
+      "Proxy Package Name",
+      "Proxy Package UID",
+      "Permission",
+    ],
+    record: "permission",
+    locality: "device-local",
+    app: { package: "Package Name" },
+  },
+  {
+    platform: "android",
+    name: "App Ops Recent Accesses",
+    lastUpdate: "2026-09-06",
+    headers: [
+      "Access Timestamp",
+      "Reject Timestamp",
+      "Package Name",
+      "UID",
+      "Permission",
+      "Op Code",
+      "Attribution Tag",
+      "App State At Access",
+      "Access Flag",
+      "Access Duration (ms)",
+      "Op Mode",
+      "Proxy Package Name",
+      "Proxy Attribution Tag",
+      "Proxy UID",
+      "Source File",
+    ],
+    record: "permission",
+    locality: "device-local",
+    app: { package: "Package Name" },
+    // The AppOpsManager mode name (allow / ignore / deny / default / foreground) or the stored
+    // integer when outside the AOSP set — carried verbatim, as TCC's Access is.
+    accessColumn: "Op Mode",
+  },
+  {
+    platform: "android",
+    name: "App Ops Permission Modes",
+    lastUpdate: "2026-09-06",
+    headers: [
+      "Package Name",
+      "UID",
+      "Android User",
+      "Permission",
+      "Op Code",
+      "Mode",
+      "Mode Stored Against",
+      "Source File",
+    ],
+    record: "permission",
+    locality: "device-local",
+    app: { package: "Package Name" },
+    accessColumn: "Mode",
+  },
+  {
+    platform: "android",
+    name: "App Op Modes (Permission Store)",
+    lastUpdate: "2026-09-07",
+    headers: ["Package Name", "App ID", "Android User", "App Op", "Op Code", "Mode", "Mode Stored Against"],
+    record: "permission",
+    locality: "device-local",
+    app: { package: "Package Name" },
+    accessColumn: "Mode",
+  },
+  {
+    platform: "android",
+    name: "Permission Grants (Permission Store)",
+    lastUpdate: "2026-09-07",
+    headers: ["Package Name", "App ID", "Android User", "Permission", "Granted", "Permission Flags"],
+    record: "permission",
+    locality: "device-local",
+    app: { package: "Package Name" },
+    // AOSP's own PermissionFlags.isPermissionGranted, ported upstream: Yes / No, or the raw flags
+    // value when it cannot decide — never re-derived here.
+    accessColumn: "Granted",
+  },
+  {
+    platform: "android",
+    name: "Usage Stats",
+    lastUpdate: "2026-08-01",
+    headers: [
+      "User (UID)",
+      "Timestamp / Last Time Active",
+      "Usage Type",
+      "Time Active (ms)",
+      "Time Active (sec)",
+      "Last Time Service Used",
+      "Total Time Service Used (ms)",
+      "Last Time Visible",
+      "Total Time Visible (ms)",
+      "Last Time Component Used",
+      "App Launch Count",
+      "Package",
+      "Event Type",
+      "Class",
+      "Event Flags (as stored)",
+      "Shortcut ID",
+      "Standby Bucket (high 16 bits)",
+      "Standby Reason (low 16 bits)",
+      "Notification Channel",
+      "Instance ID",
+      "Task Root Package",
+      "Task Root Class",
+      "Locus ID",
+      "Interaction Category",
+      "Interaction Action",
+      "Interval",
+    ],
+    record: "usage",
+    locality: "device-local",
+    app: { package: "Package" },
   },
 ];
 

@@ -36,8 +36,8 @@ function cellsFor(entryName: string, row: Record<string, string>): string[] {
 describe("the registry pin", () => {
   it("names both upstream commits and every entry's exact header tuple", () => {
     expect(REGISTRY_PINS.iLEAPP.commit).toBe("6dc251d857c0");
-    expect(REGISTRY_PINS.ALEAPP.commit).toBe("498491475597");
-    expect(REGISTRY_VERSION).toBe("leapp-origin-2026-09-16");
+    expect(REGISTRY_PINS.ALEAPP.commit).toBe("ce0880dc232c");
+    expect(REGISTRY_VERSION).toBe("leapp-origin-2026-09-18");
     for (const e of REGISTRY) expect(e.headers.length, e.name).toBeGreaterThan(0);
     const safari = registryEntry("Safari Browser - History")!;
     expect(headersMatch(safari, safari.headers)).toBe(true);
@@ -510,5 +510,316 @@ describe("item 16 — usage/power/permission/network entries, and Notification D
       );
       expect(r.block.registry.coverage, name).toBe("schema-matches");
     }
+  });
+});
+
+// #1298 (932.15 family): seven ALEAPP AppOps / usagestats artifacts join the registry — the
+// Android granted/used-permission prerequisite. Every Android tuple below is typed out from the
+// upstream `data_headers` read at the pinned commit, NOT taken from `entry.headers`: a registry
+// tuple that drifts from upstream must fail here (#1336 — the notification entry pinned 17 of 23
+// columns and the old fixture, built from the entry's own tuple, could never notice).
+const ALEAPP_UPSTREAM: Record<string, readonly string[]> = {
+  "Web History": [
+    "Last Visit Time",
+    "URL",
+    "Title",
+    "Visit Count",
+    "Typed Count",
+    "ID",
+    "Hidden",
+    "Browser Name",
+  ],
+  "Web Visits": [
+    "Visit Timestamp",
+    "URL",
+    "Title",
+    "Duration",
+    "Transition Type",
+    "Qualifier(s)",
+    "From Visit URL",
+    "Browser Name",
+  ],
+  "Search Terms": ["Last Visit Time", "Search Term", "URL", "Title", "Visit Count", "Browser Name"],
+  "Android Notification History": [
+    "Posted Time",
+    "Title",
+    "Text",
+    "Package Name",
+    "User ID",
+    "UID",
+    "Package Index",
+    "Channel Name",
+    "Channel Name Index",
+    "Channel ID",
+    "Channel ID Index",
+    "Conversation ID",
+    "Conversation ID Index",
+    "Major Version",
+    "Image Type",
+    "Image Bitmap Filename",
+    "Image Resource ID",
+    "Image Resource ID Package",
+    "Image Data Length",
+    "Image Data Offset",
+    "Image URI",
+    "Protobuf File Name",
+    "Timestamp From Protobuf File Name",
+  ],
+  "Android Notification History - Status": ["Status", "User"],
+  "Android Notification History - Snoozed": ["Reminder Time", "Snoozed Notification"],
+  Accounts_ce: ["Account Type", "Account Name", "Password"],
+  installedappsGass: ["User", "Bundle ID", "Version Code", "SHA-256 Hash"],
+  InstalledappsLibrary: ["User", "Purchase Time", "Account", "Doc ID"],
+  // appops.py line 143 / 167
+  "App Ops Permissions": [
+    "Access Timestamp",
+    "Reject Timestamp",
+    "Package Name",
+    "ID",
+    "Proxy Package Name",
+    "Proxy Package UID",
+    "Permission",
+  ],
+  "App Ops Permissions - Legacy": [
+    "Timestamp TP",
+    "Timestamp TC",
+    "Timestamp TB",
+    "Timestamp TF",
+    "Timestamp TFS",
+    "Timestamp TT",
+    "Package Name",
+    "Duration",
+    "Proxy Package Name",
+    "Proxy Package UID",
+    "Permission",
+  ],
+  // appOpsAccesses.py
+  "App Ops Recent Accesses": [
+    "Access Timestamp",
+    "Reject Timestamp",
+    "Package Name",
+    "UID",
+    "Permission",
+    "Op Code",
+    "Attribution Tag",
+    "App State At Access",
+    "Access Flag",
+    "Access Duration (ms)",
+    "Op Mode",
+    "Proxy Package Name",
+    "Proxy Attribution Tag",
+    "Proxy UID",
+    "Source File",
+  ],
+  // appOpsModes.py
+  "App Ops Permission Modes": [
+    "Package Name",
+    "UID",
+    "Android User",
+    "Permission",
+    "Op Code",
+    "Mode",
+    "Mode Stored Against",
+    "Source File",
+  ],
+  // permissionAccessState.py, two processors
+  "App Op Modes (Permission Store)": [
+    "Package Name",
+    "App ID",
+    "Android User",
+    "App Op",
+    "Op Code",
+    "Mode",
+    "Mode Stored Against",
+  ],
+  "Permission Grants (Permission Store)": [
+    "Package Name",
+    "App ID",
+    "Android User",
+    "Permission",
+    "Granted",
+    "Permission Flags",
+  ],
+  // usagestats.py
+  "Usage Stats": [
+    "User (UID)",
+    "Timestamp / Last Time Active",
+    "Usage Type",
+    "Time Active (ms)",
+    "Time Active (sec)",
+    "Last Time Service Used",
+    "Total Time Service Used (ms)",
+    "Last Time Visible",
+    "Total Time Visible (ms)",
+    "Last Time Component Used",
+    "App Launch Count",
+    "Package",
+    "Event Type",
+    "Class",
+    "Event Flags (as stored)",
+    "Shortcut ID",
+    "Standby Bucket (high 16 bits)",
+    "Standby Reason (low 16 bits)",
+    "Notification Channel",
+    "Instance ID",
+    "Task Root Package",
+    "Task Root Class",
+    "Locus ID",
+    "Interaction Category",
+    "Interaction Action",
+    "Interval",
+  ],
+};
+
+/** readOrigin against the UPSTREAM tuple (not the entry's), a row keyed by header name. */
+function upstreamRead(name: string, row: Record<string, string>) {
+  const headers = ALEAPP_UPSTREAM[name];
+  return readOrigin(
+    "android",
+    name,
+    headers,
+    headers.map((h) => row[h] ?? ""),
+  );
+}
+
+describe("#1298 — ALEAPP AppOps / usagestats entries, pinned and cross-checked against upstream", () => {
+  it("every Android entry's tuple is exactly the upstream data_headers at the pinned commit", () => {
+    const android = REGISTRY.filter((e) => e.platform === "android").map((e) => e.name);
+    expect(android.sort()).toEqual(Object.keys(ALEAPP_UPSTREAM).sort());
+    for (const [name, headers] of Object.entries(ALEAPP_UPSTREAM)) {
+      const entry = registryEntry(name)!;
+      expect(entry, name).toBeDefined();
+      expect(headersMatch(entry, headers), name).toBe(true);
+      expect(entry.headers.length, name).toBe(headers.length);
+    }
+  });
+
+  it("#1336 — Android Notification History reads schema-matches on a real 23-column export, with its package typed", () => {
+    const r = upstreamRead("Android Notification History", {
+      "Posted Time": "2026-05-02 10:00:00",
+      Title: "hi",
+      "Package Name": "com.example.chat",
+    });
+    expect(r.block.registry.coverage).toBe("schema-matches");
+    expect(r.block.facets.record).toBe("notification");
+    expect(r.block.app).toEqual({ package: "com.example.chat" });
+  });
+
+  it("App Ops Permissions: a permission record with a typed package; no outcome column, no acquisition, no authorship", () => {
+    const r = upstreamRead("App Ops Permissions", {
+      "Reject Timestamp": "2026-05-02 10:00:00",
+      "Package Name": "com.example.app",
+      Permission: "CAMERA",
+    });
+    expect(r.block.registry.coverage).toBe("schema-matches");
+    expect(r.block.registry.pinned).toBe("ALEAPP@ce0880dc232c");
+    expect(r.block.facets).toMatchObject({
+      record: "permission",
+      locality: "device-local",
+      acquisition: "not-established",
+      authorship: "not-established",
+    });
+    expect(r.block.app).toEqual({ package: "com.example.app" });
+    expect(r.block.evidence.find((e) => e.facet === "access")).toBeUndefined();
+    expect(r.words).toBe(`not-established, device-local, permission — ${REGISTRY_VERSION}`);
+    expect(r.words).not.toMatch(/granted by|the user|malicious/i);
+  });
+
+  it("App Ops Permissions - Legacy is registered as the same kind of record", () => {
+    const r = upstreamRead("App Ops Permissions - Legacy", {
+      "Timestamp TT": "2026-05-02 10:00:00",
+      "Package Name": "com.example.app",
+      Permission: "READ_SMS",
+    });
+    expect(r.block.registry.coverage).toBe("schema-matches");
+    expect(r.block.facets.record).toBe("permission");
+    expect(r.block.app).toEqual({ package: "com.example.app" });
+  });
+
+  it("the four outcome-bearing tables carry Mode / Op Mode / Granted verbatim as the access reading", () => {
+    const cases: [string, string, string][] = [
+      ["App Ops Recent Accesses", "Op Mode", "allow"],
+      ["App Ops Permission Modes", "Mode", "deny"],
+      ["App Op Modes (Permission Store)", "Mode", "ignore"],
+      ["Permission Grants (Permission Store)", "Granted", "Yes"],
+    ];
+    for (const [name, column, value] of cases) {
+      const r = upstreamRead(name, { "Package Name": "com.example.app", [column]: value });
+      expect(r.block.registry.coverage, name).toBe("schema-matches");
+      expect(r.block.facets.record, name).toBe("permission");
+      expect(r.block.app, name).toEqual({ package: "com.example.app" });
+      expect(r.block.evidence, name).toContainEqual({ facet: "access", column, value });
+      expect(r.words, name).toContain(`(access ${value})`);
+    }
+    // A stored `No` never reads like a `Yes`.
+    const no = upstreamRead("Permission Grants (Permission Store)", {
+      "Package Name": "com.x",
+      Granted: "No",
+    });
+    expect(no.words).toContain("(access No)");
+    expect(no.words).not.toContain("Yes");
+  });
+
+  it("Usage Stats: a usage record identified by Package; the duration columns are never a facet", () => {
+    const r = upstreamRead("Usage Stats", {
+      "User (UID)": "0",
+      "Timestamp / Last Time Active": "2026-05-02 10:00:00",
+      "Usage Type": "packages",
+      "Time Active (ms)": "123456",
+      Package: "com.example.app",
+    });
+    expect(r.block.registry.coverage).toBe("schema-matches");
+    expect(r.block.facets).toMatchObject({ record: "usage", acquisition: "not-established" });
+    expect(r.block.app).toEqual({ package: "com.example.app" });
+    expect(r.block.evidence.map((e) => e.column)).not.toContain("Time Active (ms)");
+  });
+
+  it("end to end: which AppOps clock is populated is the outcome, and the row is dated by it and names it", () => {
+    const headers = ALEAPP_UPSTREAM["App Ops Permissions"];
+    const row = (cells: Record<string, string>) => headers.map((h) => cells[h] ?? "").join("\t");
+    const text = [
+      headers.join("\t"),
+      row({
+        "Reject Timestamp": "2026-05-02 10:00:00",
+        "Package Name": "com.example.app",
+        Permission: "CAMERA",
+      }),
+      row({
+        "Access Timestamp": "2026-05-03 11:00:00",
+        "Package Name": "com.example.app",
+        Permission: "CAMERA",
+      }),
+    ].join("\n");
+    const r = parseLeappTsv(text, "App Ops Permissions.tsv", {
+      platform: "android",
+      device: "Subject Pixel",
+    });
+    expect(r.origin.schemaMatches).toBe(2);
+    expect(r.events).toHaveLength(2);
+    const [rejected, accessed] = r.events;
+    expect(rejected.timestamp).toBe("2026-05-02T10:00:00Z");
+    expect(rejected.description).toContain("[Reject Timestamp: 2026-05-02 10:00:00]");
+    expect(accessed.timestamp).toBe("2026-05-03T11:00:00Z");
+    expect(accessed.description).toContain("[Access Timestamp: 2026-05-03 11:00:00]");
+    for (const e of r.events) {
+      expect(e.asset).toBe("Subject Pixel");
+      expect(e.canonical?.mobile?.facets.record).toBe("permission");
+      expect(e.canonical?.mobile?.app).toEqual({ package: "com.example.app" });
+      expect(e.description).toContain(`permission — ${REGISTRY_VERSION}]`);
+    }
+  });
+
+  it("end to end: a Permission Grants table has no clock — its rows import undated, never with an invented time", () => {
+    const headers = ALEAPP_UPSTREAM["Permission Grants (Permission Store)"];
+    const text = [
+      headers.join("\t"),
+      ["com.example.app", "10123", "0", "android.permission.READ_SMS", "Yes", "USER_SET"].join("\t"),
+    ].join("\n");
+    const r = parseLeappTsv(text, "Permission Grants (Permission Store).tsv", { platform: "android" });
+    expect(r.origin.schemaMatches).toBe(1);
+    expect(r.undated).toBe(1);
+    expect(r.events[0].timestamp).toBe("");
+    expect(r.events[0].description).toContain("(access Yes)");
+    expect(r.events[0].canonical?.mobile?.app).toEqual({ package: "com.example.app" });
   });
 });
