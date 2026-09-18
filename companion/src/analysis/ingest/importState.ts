@@ -174,8 +174,21 @@ export async function crossUploadSprayRows(
   // never the larger. A wider bound would load the whole retention window into every import for a
   // detector whose own episodes never span more than sprayLowSlowHours() anyway.
   const windowHours = Math.min(sprayLowSlowHours(), store.retentionHours());
+  // Anchored on this BATCH's OWN earliest event time, never on `opts.importedAt` (server wall-clock
+  // at request time) or `Date.now()` (#1237): `store.queryWindow` filters stored observations by
+  // their own event timestamp, so anchoring on import time silently misses every prior observation
+  // once an upload's events are older than `windowHours` relative to NOW — the common case in DFIR,
+  // where uploads are almost always of past activity with arbitrary lag (a 3-day-old export, a
+  // re-upload, any batch processed days after capture). Anchoring on the batch's own earliest event
+  // time keeps the window centered on the evidence, exactly the case the store's own header sells:
+  // a low-and-slow spray uploaded in daily batches is still detected however stale the upload is.
+  const batchTimestampsMs = withBatch.map((c) => Date.parse(c.timestamp)).filter((ms) => Number.isFinite(ms));
   const importedAtMs = Date.parse(opts.importedAt);
-  const anchorMs = Number.isFinite(importedAtMs) ? importedAtMs : Date.now();
+  const anchorMs = batchTimestampsMs.length
+    ? Math.min(...batchTimestampsMs)
+    : Number.isFinite(importedAtMs)
+      ? importedAtMs
+      : Date.now();
   const sinceIso = new Date(anchorMs - windowHours * 3_600_000).toISOString();
 
   // Query BEFORE appending this upload's own observations, so `combined` is built by hand instead
