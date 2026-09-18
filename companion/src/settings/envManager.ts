@@ -85,6 +85,10 @@ export const RELOADABLE_ENV_PREFIXES = new Set([
   // there before the integration's Test/reconnect rebuilds the client — without this reload the flag
   // sits in .env until a restart while the reconnect keeps refusing the insecure external host.
   "DFIR_TLS_ALLOW_INSECURE_EXTERNAL",
+  // Exact key. parseSqliteRowStateCsv reads it from process.env on every import call, with nothing
+  // captured at startup, so the reload is the whole change — without it the dashboard tells the
+  // analyst to restart for a label list the next import would have picked up anyway (#1317).
+  "DFIR_SQLITE_HIGH_VALUE_LABELS",
 ]);
 
 /**
@@ -107,7 +111,13 @@ export const RELOADABLE_ENV_PREFIXES = new Set([
  * a separate behaviour change from the one #760 asked for, and over-reporting "restart" is the
  * safe direction to be wrong in.
  */
-export const LIVE_FROM_ENV_PREFIXES = new Set(["DFIR_KEV_"]);
+export const LIVE_FROM_ENV_PREFIXES = new Set([
+  "DFIR_KEV_",
+  // The SQLite importer's only reader is a per-call process.env read inside parseSqliteRowStateCsv
+  // (#1317). Its tuning siblings DFIR_RANSOM_EXTS / DFIR_SAMPLE_HOSTS are module-scope sets built
+  // once at import and stay off: calling them live would be #760 in the other direction.
+  "DFIR_SQLITE_HIGH_VALUE_LABELS",
+]);
 
 // Only keys starting with one of these prefixes may be written via POST /settings/env. The
 // dashboard can configure AI, integrations, enrichment, push, NSRL, and tools, but cannot

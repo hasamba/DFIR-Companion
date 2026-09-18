@@ -43,7 +43,7 @@ import { macFsEventBlockSchema } from "./canonicalMacFsEvent.js";
 import { spotlightUsageBlockSchema } from "./canonicalSpotlightUsage.js";
 import { macLoginItemBlockSchema } from "./canonicalMacLoginItemTarget.js";
 
-export const CANONICAL_EVENT_SCHEMA_VERSION = "1.0.0" as const;
+export const CANONICAL_EVENT_SCHEMA_VERSION = "1.0.0" as const; // exact-match barrier; bump policy: #1315
 /** The producer stamped on an envelope DERIVED from legacy flat fields at the read boundary. */
 export const LEGACY_UPGRADE_IMPORTER = "legacy-upgrade";
 
@@ -166,7 +166,7 @@ export const canonicalEventEnvelopeSchema = z.object({
           address: z.string().optional(),
           port: z.number().int().positive().max(65535).optional(),
           hostname: z.string().optional(),
-          provenance: z.literal("edge-observed").optional(), // #1265: edge-observed writer only, fail-closed elsewhere
+          provenance: z.literal("edge-observed").optional(), // #1265; contract in ARCHITECTURE.md (provenance flag)
         })
         .optional(),
       destination: z
@@ -761,7 +761,7 @@ function legacyCanonical(event: ForensicEvent): CanonicalEventEnvelope {
 
 export function upgradeForensicEvent(event: ForensicEvent): ForensicEvent {
   if (event.canonical?.schemaVersion === CANONICAL_EVENT_SCHEMA_VERSION) return event;
-  // A future major/minor version may contain meaning this build does not understand. Preserve it verbatim instead of silently downgrading it; explicit version migrations are registered here.
+  // Preserve an unknown version verbatim; no migration is registered yet — a bump must add one here first.
   if (event.canonical) return event;
   return { ...event, canonical: legacyCanonical(event) };
 }
