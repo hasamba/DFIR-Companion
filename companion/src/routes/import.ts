@@ -19,7 +19,7 @@ import { parseCloudTrail, type AwsImportOptions } from "../analysis/awsImport.js
 import { parseCloudActivity, type CloudActivityImportOptions } from "../analysis/cloudActivityImport.js";
 import { parsePlasoCsv, type PlasoImportOptions } from "../analysis/plasoImport.js";
 import { parseSandboxReport, type SandboxImportOptions } from "../analysis/sandboxImport.js";
-import { capaFlavorHintFor } from "../analysis/capaResultImport.js";
+import { unknownImportHintFor } from "../analysis/importKindHints.js";
 import { parseMemoryOrIntact, type MemoryImportOptions } from "../analysis/intactImport.js";
 import { parseEmail, type EmailImportOptions } from "../analysis/emailImport.js";
 import { parseTheHive } from "../analysis/theHiveImport.js";
@@ -280,7 +280,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
 
     const kind = ctx.resolveImportKind()(originalName, text);
     if (kind === "unknown") {
-      const capaHint = capaFlavorHintFor(text);
+      const capaHint = unknownImportHintFor(originalName, text);
       return res.status(400).json({
         error:
           capaHint ??
@@ -548,7 +548,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     const originalName = basename(filePath);
     const kind = ctx.resolveImportKind()(originalName, sample);
     if (kind === "unknown") {
-      const capaHint = capaFlavorHintFor(sample); // best-effort: a truncated sniffed head silently gives no hint
+      const capaHint = unknownImportHintFor(originalName, sample); // best-effort: a truncated head gives no capa hint
       return res.status(400).json({
         error: capaHint ?? "could not detect the file type — not recognized as any supported import format",
       });

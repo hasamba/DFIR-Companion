@@ -68,6 +68,33 @@ describe("uploadExtOf", () => {
   });
 });
 
+describe("looksLikeBinaryImportName (#1301)", () => {
+  it.each([
+    ["backgrounditems.btm", true],
+    ["BackgroundItems-v4.btm", true],
+    ["com.apple.LSSharedFileList.SessionLoginItems.sfl2", true],
+    ["COM.APPLE.LOGINITEMS.PLIST", true],
+    ["com.apple.LSSharedFileList.RecentDocuments.sfl2", false], // an MRU list, not a login item
+    ["com.apple.loginwindow.plist", false],
+    ["Security.evtx", false],
+    ["", false],
+  ])("%j -> %s", (name, expected) => expect(v.looksLikeBinaryImportName(name)).toBe(expected));
+
+  it("agrees with the server's own gate for every name it accepts", async () => {
+    const { looksLikeMacLoginItemFilename } = await import("../../src/analysis/macBinaryDetect.js");
+    for (const name of [
+      "backgrounditems.btm",
+      "BackgroundItems-v13.btm",
+      "com.apple.LSSharedFileList.SessionLoginItems.sfl2",
+      "com.apple.loginitems.plist",
+      "com.apple.LSSharedFileList.FavoriteVolumes.sfl2",
+      "notes.txt",
+    ]) {
+      expect(v.looksLikeBinaryImportName(name), name).toBe(looksLikeMacLoginItemFilename(name));
+    }
+  });
+});
+
 describe("toolForExt / suggestToolForExt / toolsForExt", () => {
   const status = {
     tools: [

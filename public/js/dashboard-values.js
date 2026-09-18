@@ -69,6 +69,21 @@ function uploadExtOf(name) {
   return dot > 0 ? s.slice(dot).toLowerCase() : "";
 }
 
+// A picked file this codebase parses byte-native (#1013, #1301): the macOS login-item containers.
+// Mirrors the server's own name gate (analysis/macBinaryDetect.ts looksLikeMacLoginItemFilename)
+// so the unified import sends these as bytes to /import-binary instead of reading them as text,
+// which corrupts a binary plist. The server still requires the real bplist00 magic — a text file
+// merely named like one gets the route's own 400, never a corrupt text import.
+function looksLikeBinaryImportName(name) {
+  const s = String(name || "");
+  return (
+    /backgrounditems\.btm$/i.test(s) ||
+    /BackgroundItems-v\d+\.btm$/i.test(s) ||
+    /com\.apple\.LSSharedFileList\.SessionLoginItems\.sfl2$/i.test(s) ||
+    /com\.apple\.loginitems\.plist$/i.test(s)
+  );
+}
+
 // Resolve which CONFIGURED tool handles a file extension (server preference order), from /tools/status.
 function toolForExt(ext, status) {
   const t = (status && status.tools || []).find((x) => x.configured && (x.extensions || []).includes(ext));
@@ -228,6 +243,7 @@ window.DfirValues = {
   pbLocalStats,
   ticketLabel,
   uploadExtOf,
+  looksLikeBinaryImportName,
   toolForExt,
   suggestToolForExt,
   toolsForExt,

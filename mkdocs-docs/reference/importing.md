@@ -167,10 +167,26 @@ LaunchDaemon; on an agent launchd ignores it and the row says so. A `LimitLoadTo
 directories is loaded by nothing on its own, and the row says the file alone does not establish
 that it was ever loaded.
 
-**Login items are not read.** Background Task Management (`BackgroundItems-v4.btm`, macOS 13+)
-and the older LSSharedFileList login items keep their targets as bookmark/alias blobs inside a
-binary keyed archive; decoding those is a separate importer. `sfltool dumpbtm` (13+) lists them
-for you to read by hand.
+**Login items are read from the binary containers themselves**, never from a text or XML
+conversion. Four files are decoded, each recognized by its exact name plus the real `bplist00`
+magic — a file merely named like one is refused, never coerced:
+
+| File | Where it usually is | Target format |
+|---|---|---|
+| `BackgroundItems-v*.btm` (macOS 13+) | `/private/var/db/com.apple.backgroundtaskmanagement/` | CFURL bookmark |
+| `backgrounditems.btm` (macOS 10.13–12) | `~/Library/Application Support/com.apple.backgroundtaskmanagementagent/` | CFURL bookmark |
+| `com.apple.LSSharedFileList.SessionLoginItems.sfl2` | `~/Library/Application Support/com.apple.sharedfilelist/` | CFURL bookmark |
+| `com.apple.loginitems.plist` (pre-10.13) | `~/Library/Preferences/` | classic Alias record (v2/v3), or a bookmark on later systems |
+
+Pick the file in the Import dialog — it is sent as bytes, not text — or name a server-side path
+via `POST /cases/:id/import-mac-login-item` (administrator only, because the server reads the
+path); a file dropped into the case evidence folder imports on its own. Every row is a decoded
+**configuration** record: the path, volume and file id the item's bookmark or Alias stored when it
+was written, plus the list's own item name where the container has one. It never says the target
+ran, and never resolves the target against a live filesystem. A bookmark or Alias that does not
+decode is kept and marked malformed. Only the `SessionLoginItems` list is accepted among the
+`.sfl2` files — the other shared file lists (recent documents, favorite volumes) use the same
+container but are not persistence records. The older `.sfl` (v1) list is not decoded.
 
 ### rclone and MEGAsync evidence
 
