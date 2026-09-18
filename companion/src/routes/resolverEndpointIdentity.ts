@@ -1,0 +1,72 @@
+import type { Express, Request, Response } from "express";
+import { z } from "zod";
+import { resolveResolverEndpointIdentity } from "../analysis/dnsResolverEndpointJoin.js";
+import { loadHostAliasIndex } from "../analysis/hostScopeLoad.js";
+import type { RouteContext } from "./context.js";
+
+/**
+ * DNS resolver -> endpoint host-identity matches (#996, resolver-endpoint half of #933 item 2) —
+ * a DNS Server Analytical row's own `client` IP resolved against hostBinding.ts's own host-identity
+ * index (#1158), then checked against that host's OWN endpoint-side DNS record for the same query.
+ * Read-time only, recomputed every call, never persisted. Modeled directly on
+ * routes/proxyHostIdentity.ts (#993), the working precedent for this shape of join.
+ *   - GET /cases/:id/resolver-endpoint-matches[?hostToleranceMs=&queryToleranceMs=]
+ *
+ * `:id` needs no isValidCaseId check: createApp mounts createCaseIdGate() on `/cases/:id`.
+ *
+ * NEVER an unconditional "this is the host" or "this never happened" claim — see
+ * dnsResolverEndpointJoin.ts's own header for the forwarding-topology, DHCP-lease, cache-hit and
+ * CNAME-chain caveats this route's own output cannot resolve.
+ */
+
+// Stage 1 (IP -> host): the same kind of "how stale is this logon sample" question
+// proxyHostIdentity.ts asks, so it reuses that route's own bounds unchanged.
+const DEFAULT_HOST_TOLERANCE_MS = 21_600_000; // 6 hours
+const MAX_HOST_TOLERANCE_MS = 2_592_000_000; // 30 days
+
+// Stage 2 (query timing): a resolver row and its OWN endpoint-side log line describe the SAME real
+// DNS transaction, seconds apart in practice — a multi-hour window would let an unrelated later
+// query on the same host false-match as "confirmed." Tight default, a day at most.
+const DEFAULT_QUERY_TOLERANCE_MS = 300_000; // 5 minutes
+const MAX_QUERY_TOLERANCE_MS = 86_400_000; // 24 hours
+
+const querySchema = z.object({
+  hostToleranceMs: z.coerce.number().int().positive().max(MAX_HOST_TOLERANCE_MS).optional(),
+  queryToleranceMs: z.coerce.number().int().positive().max(MAX_QUERY_TOLERANCE_MS).optional(),
+});
+
+export function registerResolverEndpointIdentityRoutes(app: Express, ctx: RouteContext): void {
+  const { options } = ctx;
+
+  app.get("/cases/:id/resolver-endpoint-matches", async (req: Request, res: Response) => {
+    if (!options.stateStore) {
+      return res.status(501).json({ error: "state store not configured" });
+    }
+    const parsed = querySchema.safeParse(req.query);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.message });
+    try {
+      const caseId = req.params.id;
+      const [state, aliasIndex] = await Promise.all([
+        options.stateStore.load(caseId),
+        loadHostAliasIndex(
+          {
+            ...(options.assetOverridesStore ? { assetOverrides: options.assetOverridesStore } : {}),
+            ...(options.velociraptorClientStore ? { fleet: options.velociraptorClientStore } : {}),
+          },
+          caseId,
+        ),
+      ]);
+      const hostToleranceMs = parsed.data.hostToleranceMs ?? DEFAULT_HOST_TOLERANCE_MS;
+      const queryToleranceMs = parsed.data.queryToleranceMs ?? DEFAULT_QUERY_TOLERANCE_MS;
+      const matches = resolveResolverEndpointIdentity(
+        state.forensicTimeline,
+        aliasIndex,
+        hostToleranceMs,
+        queryToleranceMs,
+      );
+      return res.status(200).json({ matches });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+}
