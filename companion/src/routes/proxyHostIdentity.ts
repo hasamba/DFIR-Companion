@@ -17,13 +17,19 @@ import type { RouteContext } from "./context.js";
  * header for the sensor-topology, DHCP-lease and account-sharing caveats this route's own output
  * cannot resolve.
  *
- * Uses `stateStore.load()` (the FULL state), not `loadOverview()` or `forensicTimelineBatches()`
- * (#1186): this route needs the whole forensicTimeline (buildHostBindingIndex/
- * resolveProxyHostIdentity both scan it once, index-first, and offer no incremental-batch form),
- * and every comparable read-only join route in this codebase (dnsCrossUploadConnMatches.ts,
- * dnsEndpointCrossUploadConnMatches.ts, resolverEndpointIdentity.ts) already accepts an
- * O(events) full-load per call. A future purpose-built streaming query would bound peak memory
- * further, but is not a small change today — this is a deliberate choice, not an oversight.
+ * MEMORY (#1186): this route calls `stateStore.load()` — the full InvestigationState, including
+ * the entire forensic timeline — rather than `StateStore.forensicTimelineBatches()`, the
+ * streaming path crossCase.ts's own "loadOverview, not load: the forensic timeline is by far the
+ * largest kind" precedent uses for a read path that only needs events. Deliberate, not an
+ * oversight: `resolveProxyHostIdentity` needs `buildHostBindingIndex` built from every logon-shaped
+ * event before it can resolve a single proxy row against it, so a true streaming rewrite needs TWO
+ * passes over the timeline (one to collect logons for the index, one to resolve every event
+ * against it) and a public-contract change to `proxyWorkstationChain.ts` to make that possible
+ * without holding the whole array — real, but a bigger change than this route's own severity
+ * (behavior is correct; this is a peak-memory concern, not a correctness one) warrants without
+ * concrete evidence it is an actual bottleneck in a real case. If it becomes one, batch through
+ * `forensicTimelineBatches()`: accumulate only logon-shaped events into the index-building pass,
+ * then a second pass resolving each batch against the already-built index.
  */
 
 const DEFAULT_TOLERANCE_MS = 21_600_000; // 6 hours — no existing precedent value in this codebase
