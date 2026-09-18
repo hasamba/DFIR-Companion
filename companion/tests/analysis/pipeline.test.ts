@@ -119,6 +119,12 @@ describe("AnalysisPipeline", () => {
     expect(SYNTHESIS_PROMPT).toMatch(/do not collapse/i);
   });
 
+  it("synthesis prompt tells the model to return empty findings on a genuinely clean case (#1261)", async () => {
+    const { SYNTHESIS_PROMPT } = await import("../../src/analysis/pipeline.js");
+    expect(SYNTHESIS_PROMPT).toMatch(/EMPTY findings array/);
+    expect(SYNTHESIS_PROMPT).toMatch(/not about low confidence/i);
+  });
+
   it("synthesize derives findings + attacker path from the forensic timeline", async () => {
     // Seed a forensic timeline (as per-window extraction would build) but no findings.
     const seeded = emptyState("c1");
