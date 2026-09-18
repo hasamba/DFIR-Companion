@@ -19,6 +19,12 @@
 // and canonicalEvent.ts are both already at their file-size ledger's ceiling (#384/#385), and the
 // row's own wording never claims causation regardless — "order and address, never cause" holds
 // either way. A follow-up can thread `Initiated` through once either file has room again.
+//
+// The SAME gap exists on the WFP 5156 vantage, at the same root cause: `Direction` (%%14592
+// inbound / %%14593 outbound) is not decoded anywhere in the import path, so an inbound 5156 whose
+// peer address matches a returned DNS address shows as "connected" too (#1212). Fix both
+// `Initiated` and `Direction` together, not separately — they are the same limitation on two
+// sources, and threading only one through would leave the join inconsistent between vantages.
 
 import {
   CONN_INDEX_MAX,
