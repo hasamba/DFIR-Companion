@@ -69,9 +69,10 @@ interface RegistryEntry {
    * network/notification rows (#932 item 16) so those join by the same identity. */
   app?: { package?: string; sha256?: string };
   /** Upstream's own `datetime`-typed headers, in upstream order — the row's clock candidates
-   * (#1298). Declared only where the importer's generic picker would miss a clock (`Timestamp TP`
-   * ends in neither `time` nor `timestamp`) or mistake a duration for one (`Time Active (ms)`);
-   * an entry without it keeps the generic picker. Honoured only when the headers match the pin. */
+   * (#1298). Declared only where the importer's generic picker (a header containing the word
+   * `time` or `date`, or ending in `timestamp`) would miss a clock (`Timestamp TP` satisfies
+   * neither rule) or take a duration for one (`Time Active (ms)` contains the word `time`); an
+   * entry without it keeps the generic picker. Honoured only when the headers match the pin. */
   clocks?: readonly string[];
 }
 
@@ -434,9 +435,11 @@ export const REGISTRY: readonly RegistryEntry[] = [
     platform: "android",
     name: "App Ops Permissions",
     lastUpdate: "2026-08-01",
-    // No outcome column: the outcome is WHICH timestamp is populated. The importer dates the row
-    // by the first populated clock and stamps that clock's name on it, so `[Reject Timestamp: …]`
-    // carries the outcome without a second reading path here.
+    // No outcome column: whether the op was allowed or rejected is which timestamp is populated,
+    // and AppOps keeps both a last access and a last reject per op, so both can be. The importer
+    // dates the row by the first populated declared clock and stamps that clock's name on it —
+    // `[Reject Timestamp: …]` when only the reject is set; when both are, the row is dated by the
+    // access and the reject survives only as a rendered cell. No facet restates it.
     headers: [
       "Access Timestamp",
       "Reject Timestamp",
@@ -604,24 +607,26 @@ export function headersMatch(entry: RegistryEntry, headers: readonly string[]): 
   return have.length === entry.headers.length && have.every((h, i) => h === entry.headers[i]);
 }
 
-/** The column indices of an entry's declared clocks, in upstream order — or undefined when the
- * artifact declares none, is not this platform's, or its headers do not match the pin (then the
- * importer's generic picker applies, as it always did). */
+/** An entry may be read for its own platform, or for an `unknown` import; never across platforms.
+ * One predicate for readOrigin and pinnedClocks, so a row can never be dated by a pin its origin
+ * reading would not vouch for. */
+function platformAdmits(entry: RegistryEntry, platform: MobileBlock["platform"]): boolean {
+  return entry.platform === platform || platform === "unknown";
+}
+
+/** The column indices of an entry's declared clocks, in the order the entry declares them (the
+ * registry test holds that to upstream's header order) — or undefined when the artifact declares
+ * none, is not this platform's, or its headers do not match the pin (then the importer's generic
+ * picker applies, as it always did). */
 export function pinnedClocks(
   platform: MobileBlock["platform"],
   artifact: string,
   headers: readonly string[],
 ): number[] | undefined {
   const entry = registryEntry(artifact);
-  // Same platform rule as readOrigin: an `unknown` import may still match; a cross-platform one never.
-  if (
-    !entry?.clocks ||
-    (entry.platform !== platform && platform !== "unknown") ||
-    !headersMatch(entry, headers)
-  )
-    return undefined;
+  if (!entry?.clocks || !platformAdmits(entry, platform) || !headersMatch(entry, headers)) return undefined;
   const have = headers.map(norm);
-  const out = entry.clocks.map((c) => have.indexOf(c)).filter((i) => i >= 0);
+  const out = entry.clocks.map((c) => have.indexOf(norm(c))).filter((i) => i >= 0);
   return out.length ? out : undefined;
 }
 
@@ -648,7 +653,7 @@ export function readOrigin(
   const found = registryEntry(artifact);
   // The registry entry must be the requested platform's: an Android import of a file named like
   // an iOS artifact is not evidence of anything and is said so, not read as iOS.
-  const entry = found && found.platform !== platform && platform !== "unknown" ? undefined : found;
+  const entry = found && !platformAdmits(found, platform) ? undefined : found;
   const col = (name: string): string => {
     const i = headers.findIndex((h) => norm(h) === name);
     return i >= 0 ? (cells[i] ?? "").trim() : "";
@@ -770,7 +775,9 @@ export function readOrigin(
     ...(transition ? [`transition ${tagSafe(transition.slice(0, NAME_MAX))}`] : []),
     // The column's own name, lowercased, so a configured `mode`, an at-access `op mode` and a
     // stored `granted` never read as one shared fact; TCC's column is literally `Access`.
-    ...(access ? [`${entry.accessColumn!.toLowerCase()} ${tagSafe(access.slice(0, NAME_MAX))}`] : []),
+    ...(entry.accessColumn && access
+      ? [`${entry.accessColumn.toLowerCase()} ${tagSafe(access.slice(0, NAME_MAX))}`]
+      : []),
   ];
   const words = `${parts.join(", ")}${names.length ? ` (${names.join("; ")})` : ""}${conflicts.length ? "; conflict: " + conflicts.map(tagSafe).join("; ") : ""} — ${REGISTRY_VERSION}`;
   return { block, words };

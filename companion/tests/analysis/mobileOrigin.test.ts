@@ -700,6 +700,27 @@ describe("#1298 — ALEAPP AppOps / usagestats entries, pinned and cross-checked
     }
   });
 
+  it("invariants: every declared clock is one of its entry's headers, in header order; the access columns are exactly the five known", () => {
+    for (const e of REGISTRY) {
+      if (!e.clocks) continue;
+      const idx = e.clocks.map((c) => e.headers.indexOf(c));
+      expect(idx, e.name).not.toContain(-1);
+      expect(
+        [...idx].sort((a, b) => a - b),
+        e.name,
+      ).toEqual(idx);
+    }
+    // The words now name the access column; this list is every entry that has one, in registry
+    // order, so a pre-existing reading can only change by editing this line.
+    expect(REGISTRY.filter((e) => e.accessColumn).map((e) => [e.name, e.accessColumn])).toEqual([
+      ["Application Permissions", "Access"],
+      ["App Ops Recent Accesses", "Op Mode"],
+      ["App Ops Permission Modes", "Mode"],
+      ["App Op Modes (Permission Store)", "Mode"],
+      ["Permission Grants (Permission Store)", "Granted"],
+    ]);
+  });
+
   it("#1336 — Android Notification History reads schema-matches on a real 23-column export, with its package typed", () => {
     const r = upstreamRead("Android Notification History", {
       "Posted Time": "2026-05-02 10:00:00",
@@ -931,7 +952,9 @@ describe("#1298 — ALEAPP AppOps / usagestats entries, pinned and cross-checked
     });
     expect(r.origin.schemaMatches).toBe(2);
     expect(r.events).toHaveLength(2);
-    const [rejected, accessed] = r.events;
+    // aggregateEvents sorts: find each row by its own clock tag, never by position.
+    const rejected = r.events.find((e) => e.description.includes("[Reject Timestamp:"))!;
+    const accessed = r.events.find((e) => e.description.includes("[Access Timestamp:"))!;
     expect(rejected.timestamp).toBe("2026-05-02T10:00:00Z");
     expect(rejected.description).toContain("[Reject Timestamp: 2026-05-02 10:00:00]");
     expect(accessed.timestamp).toBe("2026-05-03T11:00:00Z");
@@ -991,6 +1014,37 @@ describe("#1298 — ALEAPP AppOps / usagestats entries, pinned and cross-checked
       sourceScreenshots: [],
     })) as ForensicEvent[];
     for (const e of markAppCorroboration(rows)) expect(e.description).not.toContain(APP_CORROBORATION_MARKER);
+    // Positive control, same shape: the equivalent iOS pair on one device DOES get the note — so
+    // the Android silence above is the platform gate, not a row the pass could not read.
+    const iosRow = (name: string, cells: Record<string, string>, id: string) => {
+      const entry = registryEntry(name)!;
+      const text = [entry.headers.join("\t"), entry.headers.map((h) => cells[h] ?? "").join("\t")].join("\n");
+      const e = parseLeappTsv(text, `${name}.tsv`, { platform: "ios", device: "Subject iPhone" }).events[0];
+      return { ...e, id, mitreTechniques: [], relatedFindingIds: [], sourceScreenshots: [] } as ForensicEvent;
+    };
+    const ios = markAppCorroboration([
+      iosRow(
+        "Application Permissions",
+        {
+          "Last Modified Timestamp": "2026-05-02 10:00:00",
+          "Bundle ID": "com.example.app",
+          Service: "Camera",
+          Access: "Allowed",
+        },
+        "i1",
+      ),
+      iosRow(
+        "knowledgeC - App Usage",
+        {
+          "Start Time": "2026-05-02 11:00:00",
+          "End Time": "2026-05-02 11:05:00",
+          "Time Added": "2026-05-02 11:05:00",
+          Application: "com.example.app",
+        },
+        "i2",
+      ),
+    ]);
+    expect(ios.some((e) => e.description.includes(APP_CORROBORATION_MARKER))).toBe(true);
   });
 
   it("markInfectionWindow: an Android permission row naming a live-malicious package is placed, never a sign — only an app-inventory row is", () => {
@@ -1050,6 +1104,28 @@ describe("#1298 — ALEAPP AppOps / usagestats entries, pinned and cross-checked
       sourceScreenshots: [],
     } as ForensicEvent;
     const marked = markInfectionWindow([...rows, dated], iocs, "2026-06-01T00:00:00Z");
+    expect(marked[0].description).toContain(INFECTION_WINDOW_MARKER);
     expect(marked[0].description).toContain("before the earliest sign");
+    // #1336 typed the package on Android Notification History too: a notification naming the
+    // malicious package is likewise never a sign (only an app-inventory row is) — with no inventory
+    // row present, nothing on the device gets a window note at all.
+    const notif = parseLeappTsv(
+      tsvOf("Android Notification History", {
+        "Posted Time": "2026-04-30 09:00:00",
+        "Package Name": "com.evil.app",
+        Title: "hi",
+      }),
+      "Android Notification History.tsv",
+      { platform: "android", device: "Subject Pixel" },
+    ).events[0];
+    const notifRow = {
+      ...notif,
+      id: "n1",
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    } as ForensicEvent;
+    for (const e of markInfectionWindow([...rows, notifRow], iocs, "2026-06-01T00:00:00Z"))
+      expect(e.description).not.toContain(INFECTION_WINDOW_MARKER);
   });
 });
