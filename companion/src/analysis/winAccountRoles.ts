@@ -47,9 +47,14 @@ function entity(name: string, domain: string, sid: string): RoleEntity | undefin
   const user = name.trim();
   if (!user || user === "-" || user === "*") return undefined;
   const dom = domain.trim();
+  const hasRealDomain = !!dom && dom !== "-";
   const upnRealm = user.includes("@") ? user.slice(user.lastIndexOf("@") + 1) : "";
   const full = user.includes("@") || user.includes("\\") || !dom || dom === "-" ? user : `${dom}\\${user}`;
-  const realm = upnRealm || (full.includes("\\") ? full.split("\\")[0] : "");
+  // A separately-recorded, real domain (e.g. a 4624's NetBIOS TargetDomainName) is preferred over a
+  // UPN's own realm when the two differ — the realm is often a DNS suffix that a `domain\user`
+  // caller for the SAME session elsewhere would never spell that way (#1253). `name`/`full` are
+  // left as the raw UPN either way; only which domain is reported changes.
+  const realm = hasRealDomain ? dom : upnRealm || (full.includes("\\") ? full.split("\\")[0] : "");
   const id = sid.trim();
   return {
     kind: "account",

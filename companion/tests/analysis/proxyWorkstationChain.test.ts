@@ -174,6 +174,21 @@ describe("resolveProxyHostIdentity", () => {
     expect(results[0].caveats.length).toBeGreaterThan(0);
   });
 
+  // #1187: filed as a suspected under-match ("::FFFF:10.0.0.5" vs a 4624's dotted-quad). Verifying
+  // empirically whether it actually reproduces before changing anything.
+  it("still matches when the proxy row spells the same IP differently (::FFFF: form, uppercase)", () => {
+    const logon = logonEvent({
+      sessionHost: "fs-01",
+      clientName: "ws-042",
+      ip: "10.0.0.5",
+      ts: "2026-06-10T12:00:00Z",
+    });
+    const web = webChainEvent({ ip: "::FFFF:10.0.0.5", ts: "2026-06-10T12:05:00Z" });
+    const results = resolveProxyHostIdentity([logon, web], EMPTY_ALIAS, 21_600_000);
+    expect(results[0].outcome).toBe("matched");
+    expect(results[0].hosts.map((h) => h.host)).toEqual(["ws-042"]);
+  });
+
   it("also matches a combined-access-log (Squid) row -- eligibility is network.source.address, never canonical.web", () => {
     const logon = logonEvent({
       sessionHost: "fs-01",

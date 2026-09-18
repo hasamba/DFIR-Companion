@@ -104,6 +104,19 @@ describe("winRoleBlocks — who acted, who initiated", () => {
     expect(share.event).toEqual({ category: "network", type: "share-access" });
     expect(share.actor?.name).toBe("CORP\\svc_sql");
   });
+  // #1253: entity() used to always prefer the UPN's OWN realm for `domain`, discarding a
+  // separately-recorded, genuinely different NetBIOS domain (e.g. a 4624's TargetDomainName) —
+  // the spelling a domain\user caller for the SAME session elsewhere would actually query.
+  it("prefers a separately-recorded real domain over the UPN's own realm when they differ", () => {
+    expect(
+      winRoleBlocks(4624, false, f({ TargetUserName: "jdoe@corp.com", TargetDomainName: "CORP" })).actor,
+    ).toEqual({
+      kind: "account",
+      name: "jdoe@corp.com", // the UPN spelling itself is left alone — only `domain` changes
+      domain: "CORP",
+    });
+  });
+
   it("a UPN stays a UPN; a missing domain gives an undomained name; '-' and '*' are no account", () => {
     expect(winRoleBlocks(4624, false, f({ TargetUserName: "svc_sql@CORP.LOCAL" })).actor).toEqual({
       kind: "account",

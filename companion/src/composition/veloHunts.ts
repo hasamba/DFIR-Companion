@@ -523,6 +523,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
               stateStore: options.stateStore,
               superTimelineStore: options.superTimelineStore,
               onSuperTimeline: options.onSuperTimeline,
+              onState: options.onState,
               autoTagImported,
               demoteForensicForCase,
             },

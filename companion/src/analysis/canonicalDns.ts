@@ -1,8 +1,9 @@
-// The envelope block a DNS row carries (#933 item 2). Two vantages share it: the endpoint's own
-// stub-resolver records (Sysmon 22, DNS-Client 3006/3008/3020 — dnsRecord.ts, #1009) and a
-// network sensor's view of one query/answer exchange (Zeek `dns.log`, Suricata `dns` —
-// dnsWireRows.ts, #996). Kept beside canonicalEvent.ts so the envelope schema stays within its
-// size bound; the shapes are the envelope's, not an importer's.
+// The envelope block a DNS row carries (#933 item 2). Three vantages share it: the endpoint's own
+// stub-resolver records (Sysmon 22, DNS-Client 3006/3008/3020 — dnsRecord.ts, #1009), a network
+// sensor's view of one query/answer exchange (Zeek `dns.log`, Suricata `dns` — dnsWireRows.ts,
+// #996), and the resolver's own record of a query it answered (Windows DNS Server Analytical log
+// events 257/258/259 — dnsServerRecord.ts, #996, #1222). Kept beside canonicalEvent.ts so the
+// envelope schema stays within its size bound; the shapes are the envelope's, not an importer's.
 //
 // The values a record carries are `returned` — what the answering server sent back — and the
 // block says whether the record keeps their OWNER (Suricata answers name `rrname`; Zeek and the

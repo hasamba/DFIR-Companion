@@ -491,7 +491,7 @@ describe("item 16 — usage/power/permission/network entries, and Notification D
     expect(r.words).not.toContain("com.example.app");
   });
 
-  it("the six pre-existing iOS entries still read schema-matches after the pin move to 6dc251d857c0", () => {
+  it("every pre-existing iOS entry still reads schema-matches after the pin move to 6dc251d857c0", () => {
     for (const name of [
       "Safari Browser - History",
       "Safari Browser - iCloud Tabs",

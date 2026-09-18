@@ -688,7 +688,7 @@ export function parseNetworkLogs(text: string, opts: NetworkImportOptions = {}):
             const o = readSuricataDns(row, recordIndex);
             if (o) addDns(dnsObs, o);
           }
-          const c = readSuricataDnsQueryCandidate(row);
+          const c = readSuricataDnsQueryCandidate(row, recordIndex);
           if (c) addSuricataQuery(dnsObs, c);
         }
         if (etype === "flow" || etype === "netflow") {

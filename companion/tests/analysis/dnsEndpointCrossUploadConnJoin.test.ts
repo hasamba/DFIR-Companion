@@ -139,6 +139,63 @@ describe("resolveEndpointCrossUploadDnsConnLeads", () => {
     expect(results[0].caveats.length).toBeGreaterThan(0);
   });
 
+  // #1257: the same NaN-comparison gap tracked separately for the sibling file
+  // dnsCrossUploadConnJoin.ts (#1250) — a malformed persisted timestamp made Date.parse return
+  // NaN, and a NaN comparison silently classified the lead as a miss, indistinguishable from a
+  // genuine one. Named explicitly instead.
+  it("names the DNS row's own time as not placeable, rather than a silent NaN-driven miss", () => {
+    const logon = logonEvent({
+      sessionHost: "fs-01",
+      clientName: "ws-042",
+      ip: "10.0.0.5",
+      ts: "2026-06-10T12:00:00Z",
+    });
+    const dns = {
+      ...endpointDnsEvent({
+        host: "ws-042",
+        query: "cdn.example.net",
+        address: "203.0.113.5",
+        ts: "2026-06-10T12:05:00Z",
+      }),
+      timestamp: "not-a-real-timestamp",
+    };
+    const conn = connEvent({ src: "10.0.0.5", dst: "203.0.113.5", ts: "2026-06-10T12:05:02Z" });
+    const results = resolveEndpointCrossUploadDnsConnLeads(
+      [logon, dns, conn],
+      EMPTY_ALIAS,
+      HOST_TOLERANCE_MS,
+      WINDOW_SECONDS,
+    );
+    expect(results[0]).toMatchObject({ state: "DNS row time not placeable" });
+    expect(results[0].connectionEventId).toBeUndefined();
+  });
+
+  it("excludes a connection candidate whose own time is unparseable, rather than letting it win or lose a NaN comparison", () => {
+    const logon = logonEvent({
+      sessionHost: "fs-01",
+      clientName: "ws-042",
+      ip: "10.0.0.5",
+      ts: "2026-06-10T12:00:00Z",
+    });
+    const dns = endpointDnsEvent({
+      host: "ws-042",
+      query: "cdn.example.net",
+      address: "203.0.113.5",
+      ts: "2026-06-10T12:05:00Z",
+    });
+    const badConn = {
+      ...connEvent({ src: "10.0.0.5", dst: "203.0.113.5", ts: "2026-06-10T12:05:02Z" }),
+      timestamp: "not-a-real-timestamp",
+    };
+    const results = resolveEndpointCrossUploadDnsConnLeads(
+      [logon, dns, badConn],
+      EMPTY_ALIAS,
+      HOST_TOLERANCE_MS,
+      WINDOW_SECONDS,
+    );
+    expect(results[0].state).toBe("no connection found in this case");
+  });
+
   it("does not match when the connection's source IP resolves to a DIFFERENT host", () => {
     const logon = logonEvent({
       sessionHost: "fs-01",

@@ -38,8 +38,11 @@ const DEFAULT_TOLERANCE_MS = 21_600_000; // 6 hours — no existing precedent va
 // this feature's own disclosure can carry. 30 days.
 const MAX_TOLERANCE_MS = 2_592_000_000;
 
+// toleranceMs=0 is accepted, not rejected (#1189): resolveIpAtTime/resolveAccountAtTime compare
+// with `Math.abs(diff) <= toleranceMs`, so 0 is a real, meaningful value — an exact-instant match —
+// not a degenerate one.
 const querySchema = z.object({
-  toleranceMs: z.coerce.number().int().positive().max(MAX_TOLERANCE_MS).optional(),
+  toleranceMs: z.coerce.number().int().nonnegative().max(MAX_TOLERANCE_MS).optional(),
 });
 
 export function registerProxyHostIdentityRoutes(app: Express, ctx: RouteContext): void {

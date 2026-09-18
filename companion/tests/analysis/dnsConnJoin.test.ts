@@ -797,6 +797,17 @@ describe("Suricata query ↔ answer pairing by dns.id + flow_id (#996)", () => {
     expect(e.canonical?.dns?.query).toBe("www.example.com");
   });
 
+  // #1220: the query record the question was recovered FROM must be attached to evidence, so
+  // dns.query's provenance can point an analyst at the query line, not just name the pairing
+  // method with nothing to hop to.
+  it("attaches the paired query record to evidence.rawRecords and dns.query's own field provenance", () => {
+    const e = one([suricataQuery(), v1Answer()]);
+    const locators = e.canonical?.evidence.rawRecords.map((r) => r.locator) ?? [];
+    expect(locators).toContain("record:0"); // the query record (file order: query, then answer)
+    expect(locators).toContain("record:1"); // the answer record itself
+    expect(e.canonical?.fieldProvenance["dns.query"]?.recordLocators).toContain("record:0");
+  });
+
   it("a v1 answer with no matching query anywhere in the upload reads exactly as before", () => {
     const e = one([v1Answer()]);
     expect(e.description).toContain("[query: (not in this record)]"); // unchanged placeholder, not a guess

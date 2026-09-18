@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -98,6 +98,37 @@ describe("AuthObservationStore", () => {
     expect(deleted).toBe(1);
     const r = await shortRetention.queryWindow("c1", "1999-01-01T00:00:00Z");
     expect(r.observations).toHaveLength(0);
+  });
+
+  // #1239: the throttle timestamp was set BEFORE the prune's own await, so a failed prune (worker
+  // error, transient lock) still cost the case a full PRUNE_THROTTLE_MS before the next attempt —
+  // expired rows kept accumulating for an extra hour per failure. Rolled back on catch instead.
+  it("does not hold the prune throttle after a failed prune attempt — the next append retries it", async () => {
+    const { caseSqliteWorker } = await import("../../src/analysis/caseSqliteWorker.js");
+    const real = caseSqliteWorker.request.bind(caseSqliteWorker);
+    const spy = vi.spyOn(caseSqliteWorker, "request").mockImplementationOnce((req: unknown) => {
+      const r = req as { op: string };
+      if (r.op === "pruneEntitiesBefore") return Promise.reject(new Error("simulated worker failure"));
+      return real(req as never);
+    });
+    try {
+      await expect(
+        store.append("c1", [obs({ timestamp: "2026-06-01T00:00:00Z", account: "alice" })]),
+      ).rejects.toThrow("simulated worker failure");
+      // The append itself never ran (pruneIfDue rejected first) — the row must not be there.
+      const afterFailure = await store.queryWindow("c1", "2026-01-01T00:00:00Z");
+      expect(afterFailure.observations).toHaveLength(0);
+
+      // A second append, right away, must retry the prune rather than treat it as already-done —
+      // proven by the row from THIS append being visible (append only runs after pruneIfDue).
+      await store.append("c1", [obs({ timestamp: "2026-06-01T00:00:00Z", account: "bob" })]);
+      const afterRetry = await store.queryWindow("c1", "2026-01-01T00:00:00Z");
+      expect(afterRetry.observations.map((o) => o.account)).toEqual(["bob"]);
+      const pruneCalls = spy.mock.calls.filter((c) => (c[0] as { op: string }).op === "pruneEntitiesBefore");
+      expect(pruneCalls.length).toBeGreaterThanOrEqual(2); // the failed attempt, then the retry
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("distinct import batches for the same real attempt do not double the entity — identity excludes importBatch", async () => {

@@ -26,8 +26,8 @@
 // 2026-09-16: four iOS entries added for #932 item 16 (usage/power/permission/network app-identity
 // corroboration) from a fresh check of iLEAPP main @ 6dc251d857c0 (2026-09-14). Moving the shared
 // iLEAPP pin re-verifies every EXISTING iOS entry too, since headersMatch is exact-and-ordered —
-// all six were re-diffed against the new commit before this change; every header tuple is
-// unchanged. ALEAPP is untouched (nothing Android added or re-verified here).
+// every pre-existing iOS entry was re-diffed against the new commit before this change; every
+// header tuple is unchanged. ALEAPP is untouched (nothing Android added or re-verified here).
 export const REGISTRY_VERSION = "leapp-origin-2026-09-16";
 export const REGISTRY_PINS = {
   iLEAPP: { ref: "main", commit: "6dc251d857c0", date: "2026-09-14" },

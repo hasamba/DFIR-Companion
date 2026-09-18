@@ -228,6 +228,10 @@ function envelopeOf(t: ShapeRow<DnsTallyRow>): CanonicalEventEnvelope {
   const d = chain.dns;
   const rawRecords = [
     { source: d.source, locator: d.locator, ...(d.recordId ? { recordId: d.recordId } : {}) },
+    // #1220: the SEPARATE query record dns.id+flow_id pairing recovered this answer's question
+    // from — attached so the analyst can hop from the row to the query line, not just read the
+    // "dns.id+flow_id pairing" provenance string with nothing to point at.
+    ...(d.pairedQueryLocator ? [{ source: d.source, locator: d.pairedQueryLocator }] : []),
     ...chain.leads.flatMap((l) =>
       l.connection
         ? [
@@ -241,6 +245,7 @@ function envelopeOf(t: ShapeRow<DnsTallyRow>): CanonicalEventEnvelope {
     ),
   ];
   const locatorMap: Record<string, string> = {};
+  if (d.pairedQueryLocator) locatorMap["dns.query"] = d.pairedQueryLocator;
   chain.leads.forEach((l, i) => {
     if (l.connection) locatorMap[`dns.leads.${i}`] = l.connection.locator;
   });

@@ -91,9 +91,8 @@ function readMultibyteInt(buf: Buffer, off: number, len: number): bigint {
 // A length nibble of 0xF means "read an int object next, its decoded value is the real length" —
 // used by data/ASCII/UTF-16/array/set/dict records alike.
 function readExtendedLength(buf: Buffer, off: number, budget: Budget): { length: bigint; next: number } {
-  const lowNibble = off < buf.length ? buf[off] & 0x0f : -1;
-  if ((buf[off] & 0xf0) !== 0x10) throw new BplistError("extended length not followed by an int object");
-  void lowNibble;
+  if (off >= buf.length || (buf[off] & 0xf0) !== 0x10)
+    throw new BplistError("extended length not followed by an int object");
   const intLen = 2 ** (buf[off] & 0x0f);
   const length = readMultibyteUint(buf, off + 1, intLen);
   budget.bumpObjects();
@@ -136,7 +135,11 @@ function decodeObject(
     if (offset + 9 > buf.length) throw new BplistError("date out of range");
     const secs = buf.readDoubleBE(offset + 1);
     if (!Number.isFinite(secs)) throw new BplistError("date value not finite");
-    return new Date(EPOCH_2001 + secs * 1000);
+    const date = new Date(EPOCH_2001 + secs * 1000);
+    // A finite secs value (e.g. 1e300) can still produce an out-of-range, Invalid Date — reject it
+    // here rather than let it masquerade as a decoded value (#1190).
+    if (Number.isNaN(date.getTime())) throw new BplistError("date value out of representable range");
+    return date;
   }
   if ((typeByte & 0xf0) === 0x40) {
     let dataLen: bigint;
