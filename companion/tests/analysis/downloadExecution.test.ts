@@ -510,6 +510,31 @@ describe("mark → YARA content match (CLI-sourced only)", () => {
     expect(find(out, "y1").description).not.toContain(YARA_MATCHES_MARK_MARKER);
   });
 
+  // #1205: a SO-CRATES-sourced YARA file match ("YARA: <rule> on <target>") doesn't fit
+  // YARA_CLI_RULE's "matched" wording, so the rule name fell through to the generic "YARA: rule"
+  // fallback instead of naming the actual rule. Named distinctly from a raw CLI hit.
+  it("a SO-CRATES YARA file match names the actual rule, tagged distinctly from a raw CLI hit", async () => {
+    const { parseSocrates } = await import("../../src/analysis/socratesImport.js");
+    const { events } = parseSocrates(
+      JSON.stringify([
+        {
+          event_type: "filealerts",
+          timestamp: at(3),
+          filealerts: {
+            rule_name: "EvilRule",
+            sha256: "aa".repeat(32),
+            meta: { filename: "tool.exe" },
+          },
+        },
+      ]),
+    );
+    const socrates: Ev = { ...(events[0] as unknown as Ev), id: "y1", path: TOOL_PATH };
+    const out = run([mark({ sources: ["Sysmon"], asset: "WS-01" }), socrates]);
+    const m = find(out, "m1");
+    expect(m.severity).toBe("High");
+    expect(m.description).toContain("SO-CRATES YARA: EvilRule content match");
+  });
+
   it("a CLI YARA row's rule-metadata hash never participates in an unrelated mark's hash-bucket match", async () => {
     // Closes the cross-source hash-bucket collision the design review found: a CLI YARA row must
     // never be findable via byHash, not just never ADD itself to it.
