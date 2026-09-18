@@ -14,17 +14,20 @@
 // computes a "first connection"); each pair's list is sorted once, every lookup is a binary
 // search or a prefix read, and nothing scans a pair's list per lead.
 
+import { DNS_FIXED_WINDOW_S, DNS_WINDOW_SLACK_S, gapBand } from "./canonicalDns.js";
 import type { DnsGapBand, DnsLeadState, DnsReply } from "./canonicalDns.js";
 import type { ConnObservation, DnsObservation, DnsSource, SuricataQueryCandidate } from "./dnsWireRead.js";
+
+// Re-exported unchanged for this file's own existing importers (siemDnsConnJoin.ts,
+// dnsWireWords.ts, dnsWireRows.ts, quarantineJoin.ts) — the real definitions moved to
+// canonicalDns.ts (#996) so analysis/timeline's cross-upload join can reach them without
+// importing analysis/ingest. See canonicalDns.ts's own comment there for why.
+export { DNS_FIXED_WINDOW_S, DNS_WINDOW_SLACK_S, gapBand };
 
 /** DNS observations retained per upload; records past it are counted per source, never read. */
 export const DNS_OBSERVATIONS_MAX = 65_536;
 /** Connection records indexed per upload; past it no lead is computed at all. */
 export const CONN_INDEX_MAX = 1_048_576;
-/** Seconds added to every window for the client's resolve-to-connect latency. */
-export const DNS_WINDOW_SLACK_S = 1;
-/** The window when the record carries no TTL — worded as fixed, never as a TTL. */
-export const DNS_FIXED_WINDOW_S = 300;
 /** Other-name answers scanned per lead when checking whether the address was shared. */
 const SHARED_SCAN_MAX = 64;
 
@@ -106,16 +109,6 @@ export function addSuricataQuery(sink: DnsObservations, c: SuricataQueryCandidat
 // ───────────────────────────── time ─────────────────────────────
 
 const S = 1000;
-
-export function gapBand(gapMs: number): DnsGapBand {
-  if (gapMs <= 1 * S) return "≤1 s";
-  if (gapMs <= 10 * S) return "≤10 s";
-  if (gapMs <= 60 * S) return "≤60 s";
-  if (gapMs <= 600 * S) return "≤10 min";
-  if (gapMs <= 3600 * S) return "≤1 h";
-  if (gapMs <= 86_400 * S) return "≤24 h";
-  return ">24 h";
-}
 
 /** When the answer arrived: the record's time, plus the round trip when the time is the query's. */
 export const arrivalOf = (dns: DnsObservation): number =>
