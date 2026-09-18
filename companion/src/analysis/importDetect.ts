@@ -297,9 +297,8 @@ function isZeekStream(s: Row): boolean {
 function isNetwork(s: Row): boolean {
   return !!getCI(s, "event_type") || !!getCI(s, "_path") || isZeekStream(s);
 }
-// Cyber Triage timeline JSONL: every row carries `epoch_timestamp` + (`timestamp_desc` |
-// `timestamp_description`) + `message`, with a Cyber Triage `score`/`scoreDescription` verdict.
-// Specific enough to claim ahead of the `message`-based SIEM catch-all.
+// Cyber Triage timeline JSONL: every row carries `epoch_timestamp` + (`timestamp_desc` | `timestamp_description`) +
+// `message`, with a Cyber Triage `score`/`scoreDescription` verdict. Specific enough to claim ahead of the `message`-based SIEM catch-all.
 function isCybertriage(s: Row): boolean {
   return (
     getCI(s, "epoch_timestamp") != null &&
