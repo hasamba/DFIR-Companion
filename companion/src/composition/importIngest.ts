@@ -29,6 +29,7 @@ import type { AiControl } from "../analysis/aiControl.js";
 import type { ImporterRunStat } from "../analysis/diagnostics.js";
 import { ImporterStore, type ImporterRegistry, type ImporterPrecedence } from "../analysis/importerStore.js";
 import { detectImportWithCustom } from "../analysis/importDetect.js";
+import { looksLikeMacLoginItemFilename } from "../analysis/macBinaryDetect.js";
 import { observeImport } from "../analysis/operationalImport.js";
 import { demoteBelowSeverity, resolveForensicMinSeverity } from "../analysis/forensicGate.js";
 import { settleForensicImport } from "../routes/importSettle.js";
@@ -148,8 +149,15 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     precedence = await importerStore.precedence();
     options.onImporters?.();
   }
+  // A macOS login-item container is binary-only (#1301): under one of its names the TEXT path is
+  // refused rather than sniffed, so an XML `plutil` export or a text-read of the binary can never
+  // be minted as a launchd-job record. routes/import.ts turns "unknown" into the specific hint.
+  // Deliberately ahead of the custom-importer registry too: a declarative text importer cannot
+  // read a binary plist, so a custom kind claiming one of these names would only ever misparse.
   const resolveImportKind = (filename: string, text: string): string =>
-    detectImportWithCustom(filename, text, registry.importers, precedence);
+    looksLikeMacLoginItemFilename(filename)
+      ? "unknown"
+      : detectImportWithCustom(filename, text, registry.importers, precedence);
 
   // Dispatch a detected import kind to the matching pipeline importer. Shared by the unified /import
   // route and the Velociraptor bundle collector (which ingests uploaded JSON reports the same way).

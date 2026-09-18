@@ -483,6 +483,8 @@
     "m365Import.ts": "analysis/ingest",
     "mailboxChain.ts": "analysis/ingest",
     "macBinaryDetect.ts": "analysis/ingest",
+    "aliasRecordReader.ts": "analysis/ingest",
+    "importKindHints.ts": "analysis/ingest",
     "macFsEventImport.ts": "analysis/ingest",
     "macLoginItemImport.ts": "analysis/ingest",
     "macSpotlightUsageImport.ts": "analysis/ingest",
