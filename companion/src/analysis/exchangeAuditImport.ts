@@ -34,6 +34,9 @@ export function isExchangeRecord(rec: Row): boolean {
 export function mapExchangeRow(rec: Row, sink: Map<string, SiemIoc>, index: number): MappedEvent | null {
   const c = decodeExchangeRecord(rec, index);
   if (!c) return null;
+  // Exchange's own audit log fields (ClientIPAddress / ClientIP, see this function's own
+  // rawFieldMap entry below), recorded by Microsoft's own service infrastructure at call time —
+  // edge-observed, not client-asserted (#1184 audit).
   const ip = cleanIp(c.ip);
   if (ip) addIoc(sink, "ip", ip);
   const who = oneLine(c.actor).slice(0, WHO_MAX);

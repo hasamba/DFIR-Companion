@@ -315,6 +315,8 @@ function recordUse(
   if (!k.last || time > k.last.time) k.last = { time, locator };
   if (k.locators.length < RAW_RECORDS_MAX) k.locators.push(locator);
   if (RANK[severity] > RANK[k.top]) k.top = severity;
+  // AWS CloudTrail's own field, recorded by AWS's own control-plane infrastructure at call time —
+  // edge-observed, not client-asserted (#1184 audit).
   const address = cleanIp(str(getCI(rec, "sourceIPAddress"))) || str(getCI(rec, "sourceIPAddress")).trim();
   const agent = str(getCI(rec, "userAgent")).trim();
   trackSource(k, `${address}|${agent}`, address, agent, time, locator);

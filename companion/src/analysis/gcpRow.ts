@@ -30,6 +30,8 @@ export interface GcpRowInput {
   method: string;
   service: string;
   principal: string;
+  // GCP's own Cloud Audit Log field (protoPayload.requestMetadata.callerIp), recorded by GCP's
+  // own infrastructure at call time — edge-observed, not client-asserted (#1184 audit).
   ip: string;
   resource: string;
   statusCode: number;
