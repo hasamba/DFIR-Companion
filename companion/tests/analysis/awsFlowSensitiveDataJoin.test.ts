@@ -14,6 +14,7 @@ import { correlateAwsFlowIdentityExecution } from "../../src/analysis/awsFlowIde
 import {
   BULK_READ_MARKER,
   groupBulkReads,
+  summaryId,
   readCloudRecord,
   summarizeBulkReads,
 } from "../../src/analysis/cloudBulkRead.js";
@@ -309,14 +310,22 @@ describe("correlateAwsFlowSensitiveData", () => {
     expect(note).toContain("(bucket-b)");
   });
 
-  it("skips every recomputed group that shares one summary id (key omits the credential), never guessing which the pass kept", () => {
-    // Two credentials, same role, same address, same client, first read in the same second: the
-    // shipped summaryId collides and the pass kept one summary; the pointer is ambiguous.
+  it("two credentials under one role, address, client and second are two summaries; the join points at the one this instance's session signed (#1356)", () => {
+    // Before #1356 the shipped summaryId omitted the credential, the two groups shared one id, the
+    // pass kept one summary and this join had to skip the ambiguous pointer. The id now carries
+    // every component the grouping separates on, so each group keeps its own summary and the
+    // pointer names the credential whose rows agree with this instance's session.
     const a = manyReads(60, { credentialId: "ASIAKEYAAAA" });
     const b = manyReads(60, { credentialId: "ASIAKEYBBBB", session: OTHER_INSTANCE });
     const out = chain([launch(), ...a, ...b, flow({ time: 0 })]);
-    expect(groupBulkReads([...a, ...b])).toHaveLength(2);
-    expect(noteOf(out)).toBeUndefined();
+    const groups = groupBulkReads([...a, ...b]);
+    expect(groups).toHaveLength(2);
+    expect(summaryId(groups[0])).not.toBe(summaryId(groups[1]));
+    expect(out.filter((e) => e.description.includes(BULK_READ_MARKER))).toHaveLength(2);
+    const note = noteOf(out)!;
+    expect(note.match(/bulk read summary /gu)).toHaveLength(1);
+    const own = groups.find((g) => g.credentialId === "ASIAKEYAAAA")!;
+    expect(note).toContain(`bulk read summary ${summaryId(own)}`);
   });
 
   it("skips a credential whose rows disagree on the instance session", () => {
