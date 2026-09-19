@@ -72,10 +72,17 @@ function jobRowHtml(view) {
   // what it was before the model existed; the CSS gives it the next line, above the detail.
   const model = `<span class="job-model"${j.model ? "" : ' data-safe-style="display:none"'}`
     + ` title="The AI model this job uses">${esc(j.model || "")}</span>`;
+  // The progress bar (#1428), same rule as the model span: always emitted, hidden until the job
+  // reports progress, so the in-place patch has a node to fill. jobBarPercent is a global from
+  // js/dashboard-values.js, loaded before this file.
+  const pct = jobBarPercent(j);
+  const bar = `<span class="job-bar" role="progressbar" aria-label="Job progress" aria-valuemin="0" aria-valuemax="100"`
+    + ` aria-valuenow="${pct === null ? 0 : pct}"${pct === null ? ' data-safe-style="display:none"' : ""}>`
+    + `<span class="job-bar-fill" data-safe-style="width:${pct === null ? 0 : pct}%"></span></span>`;
   return `<div class="job-row" data-job-id="${esc(j.id)}"><span class="job-kind">${esc(j.kind)}</span>`
     + `<span class="job-label">${esc(j.label || "")}</span>`
     + `<span class="job-st job-${esc(j.status)}">${esc(j.status)}</span>`
-    + cancel + resume + model
+    + cancel + resume + model + bar
     + `<span class="job-detail"${view.detail ? "" : ' data-safe-style="display:none"'}>${esc(view.detail)}</span></div>`;
 }
 

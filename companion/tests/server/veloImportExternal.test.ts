@@ -7,6 +7,7 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
+import { JobManager } from "../../src/analysis/jobManager.js";
 import {
   VelociraptorClient,
   type VelociraptorApiConfig,
@@ -79,6 +80,9 @@ async function makeApp(
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
 
+  // One import at a time per case — the production setting. The external import is an import
+  // like any other, so it takes the case's slot and shows in the Background jobs popover (#1428).
+  const jobManager = new JobManager({ perCaseConcurrency: 1 });
   let rowsFetchCalls = 0;
   const client: MockVeloClient = {
     async getHuntArtifacts() {
@@ -119,12 +123,13 @@ async function makeApp(
     pipeline,
     stateStore,
     superTimelineStore,
+    jobManager,
     velociraptorClient: client as unknown as NonNullable<
       Parameters<typeof createApp>[1]
     >["velociraptorClient"],
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
-  return { app, stateStore, getRowsFetchCalls: () => rowsFetchCalls };
+  return { app, stateStore, jobManager, getRowsFetchCalls: () => rowsFetchCalls };
 }
 
 // The same app with NO Velociraptor client — the "API not configured" gate. Every branch of this route
@@ -601,5 +606,49 @@ describe("POST /cases/:id/velociraptor/import-external — the severity gate is 
     expect(res.status).toBe(200);
     const st = (await request(app).get("/cases/c1/super-timeline")).body;
     expect((st.events as unknown[]).length).toBe(1);
+  });
+});
+
+// The external import used to be a bare request: no job, no slot, no progress. The dashboard showed
+// "importing…" for as long as the request ran — minutes on a big flow — with no bar, no jobs chip
+// and no way to tell a slow import from a stuck one (#1428). It is an import like any other now.
+describe("POST /cases/:id/velociraptor/import-external — runs as a Background job", () => {
+  it("leaves a succeeded import job with per-artifact progress for a hunt", async () => {
+    const { app, jobManager } = await makeApp({
+      "Windows.Detection.Yara": [YARA_ROW],
+      "Windows.NTFS.MFT": [MFT_ROW],
+    });
+    const res = await request(app).post("/cases/c1/velociraptor/import-external").send({ ref: "H.ABC" });
+    expect(res.status).toBe(200);
+    const job = jobManager.list("c1").find((j) => j.kind === "import");
+    expect(job?.status).toBe("succeeded");
+    expect(job?.label).toContain("H.ABC");
+    expect(job?.progress).toEqual({ done: 2, total: 2 });
+  });
+
+  it("does the same for a flow", async () => {
+    const { app, jobManager } = await makeApp();
+    const res = await request(app)
+      .post("/cases/c1/velociraptor/import-external")
+      .send({ ref: "C.abc/F.DEF" });
+    expect(res.status).toBe(200);
+    const job = jobManager.list("c1").find((j) => j.kind === "import");
+    expect(job?.status).toBe("succeeded");
+    expect(job?.label).toContain("F.DEF");
+    expect(job?.progress).toEqual({ done: 1, total: 1 });
+  });
+
+  // Same reason the bundle collect takes the slot: it writes the timeline the dashboard's own
+  // imports write to, and two writers at once corrupt each other's "+N events" and undo checkpoints.
+  it("waits for the case's import slot before writing anything", async () => {
+    const { app, stateStore, jobManager } = await makeApp();
+    const blocker = jobManager.register({ caseId: "c1", kind: "enrichment", label: "holds the slot" });
+    await blocker.durable;
+    const pending = request(app).post("/cases/c1/velociraptor/import-external").send({ ref: "H.ABC" });
+    await new Promise((r) => setTimeout(r, 50));
+    expect((await stateStore.load("c1")).forensicTimeline).toHaveLength(0);
+    await jobManager.finish(blocker.jobId);
+    expect((await pending).status).toBe(200);
+    expect((await stateStore.load("c1")).forensicTimeline.length).toBeGreaterThan(0);
   });
 });

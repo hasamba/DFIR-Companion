@@ -252,9 +252,11 @@ describe("every moved function still resolves at its call sites", () => {
   // looksLikeBinaryImportName, the client mirror of the server's binary login-item name gate that
   // routes a picked BTM/sfl2/loginitems file as bytes instead of text (#1301); 116 with
   // undecodedBinaryImportHint, the client mirror of the server's "known but not decoded" refusal
-  // for the v1 SessionLoginItems.sfl (#1360). The number is a vacuity guard, not a budget.
-  it("moved 116 functions, so the check below is not vacuous", () => {
-    expect(MOVED.length).toBe(116);
+  // for the v1 SessionLoginItems.sfl (#1360); 117 with jobBarPercent, the Background jobs
+  // popover's "how full is the bar" rule shared by the row builder and the in-place patch (#1428).
+  // The number is a vacuity guard, not a budget.
+  it("moved 117 functions, so the check below is not vacuous", () => {
+    expect(MOVED.length).toBe(117);
   });
 
   it("provides every one of them as a global once the tagged scripts have run", async () => {

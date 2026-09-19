@@ -154,6 +154,19 @@ describe("jobRowHtml", () => {
   it("escapes a label, which comes from an imported filename", () => {
     expect(f.jobRowHtml({ ...view, job: { ...view.job, label: XSS } })).not.toContain("<img");
   });
+
+  // The bar (#1428). A running job with progress draws it at the right width; one without progress
+  // still emits the node — hidden — so the in-place patch has something to fill once progress arrives.
+  it("draws a progress bar sized to the job's progress", () => {
+    const html = f.jobRowHtml({ ...view, job: { ...view.job, progress: { done: 3, total: 10 } } });
+    expect(html).toMatch(/class="job-bar"[^>]*role="progressbar"/);
+    expect(html).toContain('aria-valuenow="30"');
+    expect(html).toMatch(/class="job-bar-fill"[^>]*width:30%/);
+  });
+
+  it("emits the bar hidden when the job carries no progress", () => {
+    expect(f.jobRowHtml(view)).toMatch(/class="job-bar"[^>]*display:none/);
+  });
 });
 
 describe("qaSpan", () => {

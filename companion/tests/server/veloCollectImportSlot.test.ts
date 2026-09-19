@@ -256,6 +256,32 @@ describe("a Velociraptor hunt collect takes the case's import slot", () => {
   );
 });
 
+// The import job itself, as the Background jobs popover reads it (#1428). A big bundle sits in
+// that popover as a bare "running" for many minutes: the loop advances one artifact at a time, but
+// never told the job, so a slow import and a stuck one looked the same. The job must carry
+// per-artifact progress — count, current artifact — which is what the popover turns into a bar,
+// a rate and an ETA.
+describe("a collect reports per-artifact progress on its import job", () => {
+  it(
+    "leaves the import job with progress at total/total and a detail naming the artifact count",
+    async () => {
+      const { app, jobManager } = await makeApp();
+      await request(app)
+        .post("/cases/c1/velociraptor/run-bundle")
+        .send({ bundleId: "best-practice", waitMinutes: 30 });
+      expect((await request(app).post("/cases/c1/velociraptor/collect")).status).toBe(202);
+      await waitForCollect(app);
+
+      const job = jobManager.list("c1").find((j) => j.kind === "import");
+      expect(job?.status).toBe("succeeded");
+      // Only Pstree returned rows, so the loop had exactly one artifact to import.
+      expect(job?.progress).toEqual({ done: 1, total: 1 });
+      expect(job?.detail).toMatch(/1\/1 artifact/);
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
+});
+
 // The same slot, from the analyst's side (#770). Holding it is correct; being SILENT about holding it
 // is what made a routine wait look like a hang — the card showed a bare "collecting" badge with no
 // text, no countdown, and no button for the whole time.

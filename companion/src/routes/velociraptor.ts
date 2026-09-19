@@ -21,6 +21,7 @@ import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
 import { registerVelociraptorMonitorRoutes } from "./velociraptorMonitors.js";
 import { registerVelociraptorVqlRoutes } from "./velociraptorVql.js";
+import { importArtifactsUnderJob } from "./veloExternalImportJob.js";
 import { vqlSizeProblem } from "../analysis/vqlInput.js";
 
 /**
@@ -628,6 +629,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
       });
     }
     const client = options.velociraptorClient;
+    const importJobDeps = { jobManager: options.jobManager, onAiStatus: options.onAiStatus, logLine };
     try {
       if (ref.kind === "hunt") {
         if (ref.isUploadsUrl) {
@@ -667,40 +669,25 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
           return res
             .status(404)
             .json({ error: `hunt ${ref.huntId} not found on the server, or it collected no artifacts` });
-        // STREAMED, not buffered. This read is ingestion, so it uses the 100,000-row collection cap —
-        // and `huntResultsByArtifact` would hold every artifact's rows in one object while this route
-        // stringified a second full copy of it, which on a large multi-artifact hunt is millions of rows
-        // live at once and the heap exhaustion the bundle collector was rewritten to avoid. So each
-        // artifact is read, ingested and released before the next is touched; at most one artifact's
-        // rows are ever resident. A read that fails is logged and skipped, exactly as before.
-        const imported: string[] = [];
-        let addedEvents = 0;
-        let addedIocs = 0;
-        for (const art of arts) {
-          let rows: unknown[];
-          try {
-            rows = (await client.huntArtifactRows(ref.huntId, art, [], undefined, true)).rows;
-          } catch (e) {
-            logLine(
-              `[velociraptor] external hunt ${ref.huntId}: artifact ${art} read failed: ${(e as Error).message}`,
-            );
-            continue;
-          }
-          if (!rows.length) continue;
-          const one = await ctx.ingestVeloArtifactMap(caseId, JSON.stringify({ [art]: rows }), {
-            label: `velo-hunt_${ref.huntId}_${art}.json`,
-            // Namespaced per artifact: a running index across the whole hunt would collide now that
-            // each artifact imports in its own pass.
-            idBase: `${ref.huntId}-${art}`,
-            superOnly,
-            minSeverity,
-            veloUrl: client.huntGuiUrlFor(ref.huntId),
-          });
-          rows = []; // release before the next artifact is read
-          imported.push(art);
-          addedEvents += one.addedEvents;
-          addedIocs += one.addedIocs;
-        }
+        // STREAMED, not buffered, one artifact at a time under the case's import job (#1428) — see
+        // veloExternalImportJob.ts. This read is ingestion, so it uses the 100,000-row collection cap.
+        const { imported, addedEvents, addedIocs } = await importArtifactsUnderJob(
+          importJobDeps,
+          caseId,
+          `hunt ${ref.huntId} (external import)`,
+          arts,
+          async (art) => (await client.huntArtifactRows(ref.huntId, art, [], undefined, true)).rows,
+          (art, rows) =>
+            ctx.ingestVeloArtifactMap(caseId, JSON.stringify({ [art]: rows }), {
+              label: `velo-hunt_${ref.huntId}_${art}.json`,
+              // Namespaced per artifact: a running index across the whole hunt would collide now that
+              // each artifact imports in its own pass.
+              idBase: `${ref.huntId}-${art}`,
+              superOnly,
+              minSeverity,
+              veloUrl: client.huntGuiUrlFor(ref.huntId),
+            }),
+        );
         if (!imported.length)
           return res.status(200).json({
             kind: "hunt",
@@ -760,36 +747,28 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
         return res
           .status(404)
           .json({ error: `flow ${ref.flowId} on ${ref.clientId} not found, or it collected no artifacts` });
-      // Streamed for the same reason as the hunt branch above: this loop used to accumulate every
-      // artifact into one map and then stringify a second copy of it, which at the collection row cap
-      // is millions of rows resident at once. Ingest and release each artifact before reading the next.
-      const importedArts: string[] = [];
-      let flowEvents = 0;
-      let flowIocs = 0;
-      for (const art of info.artifacts) {
-        let rows: unknown[] = [];
-        try {
-          rows = (await client.collectionResults(ref.clientId, ref.flowId, art, [], undefined, true)).rows;
-        } catch (e) {
-          logLine(
-            `[velociraptor] external flow ${ref.flowId}: artifact ${art} read failed: ${(e as Error).message}`,
-          );
-          continue;
-        }
-        if (!rows.length) continue;
-        const one = await ctx.ingestVeloArtifactMap(caseId, JSON.stringify({ [art]: rows }), {
-          label: `velo-flow_${ref.flowId}_${art}.json`,
-          idBase: `${ref.flowId}-${art}`,
-          superOnly,
-          minSeverity,
-          hostFallback: info.hostname,
-          veloUrl: client.flowGuiUrlFor(ref.clientId, ref.flowId),
-        });
-        rows = [];
-        importedArts.push(art);
-        flowEvents += one.addedEvents;
-        flowIocs += one.addedIocs;
-      }
+      // Streamed one artifact at a time under the case's import job, like the hunt branch (#1428).
+      const {
+        imported: importedArts,
+        addedEvents: flowEvents,
+        addedIocs: flowIocs,
+      } = await importArtifactsUnderJob(
+        importJobDeps,
+        caseId,
+        `flow ${ref.flowId} on ${info.hostname || ref.clientId} (external import)`,
+        info.artifacts,
+        async (art) =>
+          (await client.collectionResults(ref.clientId, ref.flowId, art, [], undefined, true)).rows,
+        (art, rows) =>
+          ctx.ingestVeloArtifactMap(caseId, JSON.stringify({ [art]: rows }), {
+            label: `velo-flow_${ref.flowId}_${art}.json`,
+            idBase: `${ref.flowId}-${art}`,
+            superOnly,
+            minSeverity,
+            hostFallback: info.hostname,
+            veloUrl: client.flowGuiUrlFor(ref.clientId, ref.flowId),
+          }),
+      );
       if (!importedArts.length)
         return res.status(200).json({
           kind: "flow",

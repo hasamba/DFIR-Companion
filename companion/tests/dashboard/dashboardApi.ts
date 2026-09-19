@@ -199,8 +199,13 @@ export interface ElementLike {
   querySelector?(sel: string): unknown;
 }
 
+export interface JobProgressLike {
+  status: string;
+  progress?: { done: number; total: number };
+}
+
 export interface JobView {
-  job: { id?: string; kind: string; label?: string; model?: string; status: string };
+  job: JobProgressLike & { id?: string; kind: string; label?: string; model?: string };
   cancel?: boolean;
   resume?: boolean;
   detail: string;
@@ -219,6 +224,7 @@ export interface ValuesApi {
   suggestToolForExt(ext: string, status: unknown): string | null;
   toolsForExt(ext: string, status: unknown): Array<{ id: string }>;
   jobMenuView(j: Record<string, unknown>): JobView;
+  jobBarPercent(j: JobProgressLike): number | null;
   updateJobRow(row: ElementLike, view: JobView): void;
   deepPassResultKey(cid: string): string;
   swCanvasXY(
