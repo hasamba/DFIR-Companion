@@ -202,6 +202,7 @@
   <script src="/js/dashboard-served-exposure.js"></script>
   <script src="/js/dashboard-kerberoast-chain.js"></script>
   <script src="/js/dashboard-tls-graph.js"></script>
+  <script src="/js/dashboard-handoff.js"></script>
   <script src="/js/dashboard-sensitive-access.js"></script>
   <script src="/js/dashboard-backup.js"></script>
   <script src="/js/dashboard-collection-plan.js"></script>
@@ -3828,12 +3829,26 @@
           <select id="nbType">
             <option value="note">Note</option>
             <option value="question">Question</option>
+            <option value="handoff">Handoff</option>
           </select>
           <textarea id="nbText" placeholder="Write a note or an open question…" rows="3"></textarea>
         </div>
         <div data-safe-style="display:flex;gap:8px;align-items:center">
           <button id="nbAddBtn">Add entry</button>
           <span id="nbMsg" class="manual-msg"></span>
+        </div>
+      </div>
+    </section>
+    <section id="sec-handoff" data-safe-style="grid-column: 1 / -1" class="collapsed"><h2>Handoff Brief<span class="ev-sub">what the case holds, what is open, what to check next &mdash; derived from the case as it stands, plus the outgoing analyst&rsquo;s own note; a count is not a conclusion</span></h2>
+      <div id="handoffPanel">&mdash;</div>
+      <div class="nb-add-form">
+        <div class="nb-add-row">
+          <textarea id="handoffText" placeholder="What I found, what is open, what to check next&hellip;" rows="4" data-safe-style="flex:1"></textarea>
+        </div>
+        <div data-safe-style="display:flex;gap:8px;align-items:center">
+          <button id="handoffSaveBtn" type="button">Save handoff note</button>
+          <button id="handoffCopyBtn" type="button">Copy brief as Markdown</button>
+          <span id="handoffMsg" class="manual-msg"></span>
         </div>
       </div>
     </section>
@@ -4132,7 +4147,7 @@
       { id: "sec-inv-log",      label: "Investigation Log" },
       { id: "sec-activity",     label: "Activity Log" },
       { id: "sec-mcp",          label: "MCP Analysis" },
-      { id: "sec-custody",      label: "Chain of Custody" }, { id: "sec-intel-retirement", label: "Intel Retirement Review" }, { id: "sec-remediation", label: "Remediation Checks" }, { id: "sec-campaign-scope", label: "Campaign Scope" }, { id: "sec-served-exposure", label: "Served Exposure" }, { id: "sec-kerberoast-chain", label: "Kerberoast Chain" }, { id: "sec-tls-graph", label: "TLS Relationships" }, { id: "sec-sensitive-access", label: "Sensitive Access" },
+      { id: "sec-custody",      label: "Chain of Custody" }, { id: "sec-intel-retirement", label: "Intel Retirement Review" }, { id: "sec-remediation", label: "Remediation Checks" }, { id: "sec-campaign-scope", label: "Campaign Scope" }, { id: "sec-served-exposure", label: "Served Exposure" }, { id: "sec-kerberoast-chain", label: "Kerberoast Chain" }, { id: "sec-tls-graph", label: "TLS Relationships" }, { id: "sec-handoff", label: "Handoff Brief" }, { id: "sec-sensitive-access", label: "Sensitive Access" },
       { id: "sec-case-details", label: "Case Details" },
     ];
     let DASHBOARD_VIEWS = [];                  // dashboard-view presets (#142), fetched from /dashboard-views
@@ -5086,7 +5101,7 @@
     // and the nineteen guard stanzas threaded through them, stay.
 
     // The asset graph's expand handler moved with it to js/dashboard-asset-graph.js.
-    if (typeof initAssetGraph === "function") initAssetGraph(); if (typeof initTlsGraph === "function") initTlsGraph();
+    if (typeof initAssetGraph === "function") initAssetGraph(); if (typeof initTlsGraph === "function") initTlsGraph(); if (typeof initHandoff === "function") initHandoff();
 
     // Deferred render for a section that was collapsed at data-arrival time (zero-size container).
     // The login graph's own expand handler moved with it to js/dashboard-login-graph.js.

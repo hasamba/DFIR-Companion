@@ -85,6 +85,7 @@ Multiple templates can be saved (e.g. "Executive" with fewer sections vs. "Techn
 17. Case details (analyst-authored sections: BIA, recommendations, glossary)
 18. Attacker Sessions — the timeline re-threaded as per-host chapters (see [Dashboard → Attacker Sessions](dashboard.md#attacker-sessions)); included in the Standard and Technical Detail templates, left out of the Executive Brief as operator-level detail
 19. Compliance Impact — control failures and regulatory notification obligations for confirmed findings, with the same "not legal advice" disclaimer and framework editions as the dashboard panel (see [Dashboard → Compliance Impact](dashboard.md#compliance-impact))
+20. Handoff Brief — what the case holds, what is open, what to check next, and the outgoing analyst's Handoff notes from the notebook (see [Dashboard → Handoff Brief](dashboard.md#handoff-brief)); opt-in everywhere — the Technical Detail template switches it on, the Standard and Executive templates never carry it
 
 Sections are enabled/disabled per template — see **Report Customisation** above.
 

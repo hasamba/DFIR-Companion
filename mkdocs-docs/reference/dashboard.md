@@ -736,6 +736,30 @@ Used to track your hunting coverage and avoid running the same hunt twice.
 ## Analyst Notebook
 
 Free-text notes. Supports Markdown. Notes are per-case and survive re-synthesis. Notes can be promoted to Hypotheses.
+A third entry type, **Handoff**, is the outgoing analyst's shift-change note — written from the
+[Handoff Brief](#handoff-brief) panel or here, shown with its own badge, and read by the brief.
+
+---
+
+## Handoff Brief
+
+What the case holds, what is open, what to check next — for a shift change. Every line is
+derived from the case as it stands: findings by severity and AI status, the open ones with the
+owner and workflow state recorded in Findings, key questions still unknown or partial (with their
+pointer), open hypotheses and threads, the critical and high next steps, IOCs no provider has
+checked, and the last import. Nothing is stored beyond the note.
+
+- **Your note.** Write "what I found, what is open, what to check next" and **Save handoff note**:
+  it is a Handoff entry in the Analyst Notebook (per-case, survives re-synthesis; part of the AI's
+  context only if you opted the notebook in). The newest note is shown in full, earlier ones as a
+  line each.
+- **Copy brief as Markdown** puts the whole brief on the clipboard for a shift log or chat.
+- The same brief is an optional report section — off everywhere by default, on in the Technical
+  Detail template (see [Reports](reports.md#whats-in-the-report)).
+- A count is a count: the brief never says contained, clean or done. Lists are bounded (10 per
+  section, 5 notes) and say how many they left out.
+
+In the Analyst, Lead, Triage, Deep-Dive and Hunt Prep views.
 
 ---
 

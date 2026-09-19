@@ -362,6 +362,7 @@
       ["servedExposure", () => loadServedExposure(caseId)],
       ["kerberoastChain", () => loadKerberoastChain(caseId)],
       ["tlsGraph", () => loadTlsGraph(caseId)],
+      ["handoff", () => loadHandoff(caseId)],
       ["sensitiveAccess", () => loadSensitiveAccess(caseId)],
       ["count", () => pollCount(caseId)],
       ["aiToggle", () => loadAiToggle(caseId)],

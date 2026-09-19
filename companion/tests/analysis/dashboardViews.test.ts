@@ -145,6 +145,7 @@ describe("dashboardViews — seed integrity", () => {
       "sec-served-exposure",
       "sec-kerberoast-chain",
       "sec-tls-graph",
+      "sec-handoff",
       "sec-sensitive-access",
       "sec-case-details",
     ]);

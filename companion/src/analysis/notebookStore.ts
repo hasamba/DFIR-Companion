@@ -18,7 +18,10 @@ import { StateLock } from "./stateLock.js";
 // entry loads as a plain "note" (the enum `.catch("note")`), and a note can be promoted into a
 // tracked hypothesis from the dashboard.
 
-export const NOTEBOOK_ENTRY_TYPES = ["note", "question"] as const;
+// `handoff` (#1406): the outgoing analyst's shift-handoff note — read by the Handoff Brief panel and
+// report section, shown here with its own badge, and part of the synthesis context only under the
+// same opt-in as every other entry.
+export const NOTEBOOK_ENTRY_TYPES = ["note", "question", "handoff"] as const;
 export type NotebookEntryType = (typeof NOTEBOOK_ENTRY_TYPES)[number];
 
 export const notebookEntrySchema = z.object({
