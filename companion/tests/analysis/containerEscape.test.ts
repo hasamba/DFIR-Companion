@@ -353,4 +353,21 @@ describe("codex review regressions", () => {
     ]);
     expect(out.severity).toBe("Medium");
   });
+
+  // The pass clipped the base at a private 600 while importers emit up to 1600 (#1340). The
+  // command that trips it can sit at the head of a long imported description — a sqlite-dissect
+  // row whose table name came from a crafted upload filename — and the clip took the tail with
+  // the report fingerprint and the undated disclosure.
+  it("keeps the tail of a long imported description that reads as a container command (#1340)", () => {
+    const head = "sqlite-dissect row-state: table docker run -v /:/host --privileged " + "m".repeat(250);
+    const filler = " page 3, offset 4096, row 42, " + "x".repeat(900);
+    const tail = " [undated: sqlite-dissect's report carries no event time]; report 0123456789abcdef";
+    const description = head + filler + tail;
+    expect(description.length).toBeGreaterThan(1000);
+    const [out] = markContainerEscape([ev({ description })]);
+    expect(out.severity).toBe("Medium");
+    expect(out.description).toContain("[container escape:");
+    expect(out.description).toContain(tail.trim());
+    expect(out.description).toContain("row 42");
+  });
 });

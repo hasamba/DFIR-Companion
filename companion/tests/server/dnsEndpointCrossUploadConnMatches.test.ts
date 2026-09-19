@@ -22,7 +22,16 @@ async function makeApp() {
   return { app, stateStore };
 }
 
-function logonEvent(id: string, host: string, client: string, ip: string, ts: string): ForensicEvent {
+// `stamped: false` builds the logon a case imported before d0b613fa (#1310) still holds — a persisted
+// canonical event is never re-derived, so it carries no `provenance` and #1342's gate drops it.
+function logonEvent(
+  id: string,
+  host: string,
+  client: string,
+  ip: string,
+  ts: string,
+  stamped = true,
+): ForensicEvent {
   return {
     id,
     timestamp: ts,
@@ -37,7 +46,8 @@ function logonEvent(id: string, host: string, client: string, ip: string, ts: st
       target: { kind: "host", name: host },
       authentication: { logonType: 3 },
       session: { terminal: client },
-      network: { source: { address: ip, provenance: "edge-observed" } }, // #1292: the stamp every real 4624 writer carries
+      // #1292: the stamp every real 4624 writer carries
+      network: { source: { address: ip, ...(stamped ? { provenance: "edge-observed" as const } : {}) } },
       time: { observed: ts, normalized: ts },
       evidence: { rawRecords: [{ source: "test", locator: `row:${id}` }] },
       producer: { importer: "test", parserVersion: "1", mappingVersion: "1" },
@@ -137,6 +147,27 @@ describe("GET /cases/:id/endpoint-dns-connection-cross-upload-matches", () => {
       state: "connected inside the window",
       connectionEventId: "c1conn",
     });
+    expect(res.body.excludedLogonSamples).toEqual({}); // #1345: a stamped logon is never counted out
+  });
+
+  // #1345: since #1342 an unstamped logon (every 4624 persisted before d0b613fa) silently leaves the
+  // IP->host index, so the connection's source resolves to no host and the lead that used to say
+  // "connected inside the window" says "no connection found in this case". The route now discloses
+  // the gated count to the analyst — the only signal that a re-import is needed.
+  it("discloses a logon the provenance gate excluded instead of a bare no-connection lead", async () => {
+    const { app, stateStore } = await makeApp();
+    await stateStore.save(
+      stateWith([
+        logonEvent("l1", "ws-042", "ws-042", "10.0.0.5", "2026-06-10T12:00:00Z", false),
+        endpointDnsEvent("d1", "ws-042", "cdn.example.net", "203.0.113.5", "2026-06-10T12:05:00Z"),
+        connEvent("c1conn", "10.0.0.5", "203.0.113.5", "2026-06-10T12:05:02Z"),
+      ]),
+    );
+    const res = await request(app).get("/cases/c1/endpoint-dns-connection-cross-upload-matches");
+    expect(res.status).toBe(200);
+    expect(res.body.matches[0]).toMatchObject({ eventId: "d1", state: "no connection found in this case" });
+    expect(res.body.matches[0].connectionEventId).toBeUndefined();
+    expect(res.body.excludedLogonSamples).toEqual({ "not-edge-observed": 1 });
   });
 
   it("uses the default 300s window when none is given, and does not confirm past it", async () => {

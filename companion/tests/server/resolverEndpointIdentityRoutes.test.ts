@@ -32,7 +32,16 @@ async function makeAppWithSuperTimeline() {
   return { app, stateStore, superTimelineStore };
 }
 
-function logonEvent(id: string, host: string, client: string, ip: string, ts: string): ForensicEvent {
+// `stamped: false` builds the logon a case imported before d0b613fa (#1310) still holds — a persisted
+// canonical event is never re-derived, so it carries no `provenance` and #1342's gate drops it.
+function logonEvent(
+  id: string,
+  host: string,
+  client: string,
+  ip: string,
+  ts: string,
+  stamped = true,
+): ForensicEvent {
   return {
     id,
     timestamp: ts,
@@ -47,7 +56,8 @@ function logonEvent(id: string, host: string, client: string, ip: string, ts: st
       target: { kind: "host", name: host },
       authentication: { logonType: 3 },
       session: { terminal: client },
-      network: { source: { address: ip, provenance: "edge-observed" } }, // #1292: the stamp every real 4624 writer carries
+      // #1292: the stamp every real 4624 writer carries
+      network: { source: { address: ip, ...(stamped ? { provenance: "edge-observed" as const } : {}) } },
       time: { observed: ts, normalized: ts },
       evidence: { rawRecords: [{ source: "test", locator: `row:${id}` }] },
       producer: { importer: "test", parserVersion: "1", mappingVersion: "1" },
@@ -150,6 +160,25 @@ describe("GET /cases/:id/resolver-endpoint-matches", () => {
         endpointEventIds: ["e1"],
       },
     ]);
+    expect(res.body.excludedLogonSamples).toEqual({}); // #1345: a stamped logon is never counted out
+  });
+
+  // #1345: since #1342 an unstamped logon (every 4624 persisted before d0b613fa) silently leaves the
+  // IP->host index, so a resolver row that used to resolve says `no-match` with `caveats: []`. The
+  // route now discloses the gated count to the analyst — the only signal that a re-import is needed.
+  it("discloses a logon the provenance gate excluded instead of a bare no-match", async () => {
+    const { app, stateStore } = await makeApp();
+    await stateStore.save(
+      stateWith([
+        logonEvent("l1", "fs-01", "ws-042", "10.0.0.5", "2026-06-10T12:00:00Z", false),
+        resolverEvent("r1", "10.0.0.5", "cdn.example.net", "2026-06-10T12:05:00Z"),
+        endpointDnsEvent("e1", "ws-042", "cdn.example.net", "2026-06-10T12:05:01Z"),
+      ]),
+    );
+    const res = await request(app).get("/cases/c1/resolver-endpoint-matches");
+    expect(res.status).toBe(200);
+    expect(res.body.matches[0]).toMatchObject({ eventId: "r1", outcome: "no-match" });
+    expect(res.body.excludedLogonSamples).toEqual({ "not-edge-observed": 1 });
   });
 
   it("uses the default 5-minute query tolerance when none is given, and does not confirm past it", async () => {
