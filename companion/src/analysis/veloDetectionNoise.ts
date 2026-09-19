@@ -30,17 +30,22 @@ export {
   isVolatileContainer,
 } from "./detectionStackPaths.js";
 
-// Hostnames that belong to a public detection SAMPLE corpus, not to any real endpoint. When a
-// Velociraptor artifact shells out to Chainsaw/Hayabusa, the tool scans the EVTX-ATTACK-SAMPLES set
-// it unpacked next to its own binaries alongside the host's real logs — and those sample events
-// carry the sample author's computer name, not the collection host's. Across the four eval
-// collections this one host supplied ~110 detections per case (22-76% of all Chainsaw hits),
-// including a Critical "Security Audit Logs Cleared", every one of them on a machine that was never
-// part of the investigation.
+// Hostnames that belong to a public SAMPLE corpus or a stock lab image, not to any endpoint in the
+// case. When a Velociraptor artifact shells out to Chainsaw/Hayabusa, the tool may scan a sample set
+// it unpacked next to its own binaries alongside the host's real logs — and those events carry the
+// sample author's computer name, not the collection host's. Across the four eval collections this
+// one host supplied ~110 detections per case (22-76% of all Chainsaw hits), including a Critical
+// "Security Audit Logs Cleared".
 //
-// WIN-UK1GV882OK6 is the canonical EVTX-ATTACK-SAMPLES computer name — a fixed, published identifier,
-// so matching it is not a demotion on a signal an intruder picks (renaming a victim host to the
-// public sample name would be self-defeating). Kept as a set so the list is easy to extend as other
+// WIN-UK1GV882OK6 is the hostname baked into the public Vagrant Windows box — a fixed, published
+// identifier — so it shows up on every lab built from that box, and every such lab is renamed by
+// its provisioner. That cuts both ways (#1417): the name is never a real case host, but a renamed
+// lab's OWN event logs carry it on every record written before the rename (Chocolatey installs,
+// profile loads, a firewall change — real, benign provisioning). This predicate only says "this is
+// not a case host's name". The CALLER decides whether the row is a renamed host's history or a
+// foreign corpus: hostIdentity.ts demotes only when the row names no collector (Fqdn/ClientId) at
+// all. Matching a fixed public name is not a demotion on a signal an intruder picks (renaming a
+// victim host to it would be self-defeating). Kept as a set so the list is easy to extend as other
 // well-known sample hosts surface; the value can be widened by DFIR_SAMPLE_HOSTS (comma-separated).
 const KNOWN_SAMPLE_HOSTS = new Set(
   ["WIN-UK1GV882OK6", ...(process.env.DFIR_SAMPLE_HOSTS ?? "").split(",")]

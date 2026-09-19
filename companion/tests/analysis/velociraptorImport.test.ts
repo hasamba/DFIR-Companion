@@ -527,7 +527,9 @@ describe("parseVelociraptorJson — DetectRaptor detection rows", () => {
     const e = r.events[0];
     expect(e.description).toContain("Velociraptor detection: BAU Cloud Data Transfer");
     expect(e.severity).toBe("Low"); // explicit Criticality:"Low" wins over the Medium baseline
-    expect(e.timestamp).toContain("2026-06-03T08:29:42"); // SITimestamps.LastModified0x10
+    // SITimestamps.Created0x10 — $SI Created outranks $SI LastModified (#1415: a copied binary keeps
+    // the source's LastModified, so dating from it puts the drop at the source file's build date).
+    expect(e.timestamp).toContain("2021-12-09T17:28:24");
     expect(e.path).toContain("OneDrive.exe");
   });
 

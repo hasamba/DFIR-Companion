@@ -74,8 +74,8 @@ import {
   isGeneratedModuleScript,
   isDetectionToolScript,
   isDetectionToolLocation,
-  isDetectionSampleHost,
 } from "./veloDetectionNoise.js";
+import { HostRenameLedger, demoteSampleHost, resolveRowHost, withFormerHostSuffix } from "./hostIdentity.js";
 import { gradeYaraHit, yaraHitAggKey } from "./yaraGrade.js";
 import {
   sigmaAggKey,
@@ -341,7 +341,7 @@ function winRowToFlat(row: Row): { rec: Row; host: string } | null {
       str(getPath(sys, "Provider.Name")) ||
       str(getPath(sys, "Provider.#attributes.Name"));
     return {
-      host: str(getCI(sys, "Computer")).trim(),
+      host: resolveRowHost(row).asset, // collector identity first; System.Computer only when no Fqdn (#1417)
       rec: {
         event_id: eid,
         channel,
@@ -357,7 +357,7 @@ function winRowToFlat(row: Row): { rec: Row; host: string } | null {
   if (eidFlat == null && !isObject(edRaw)) return null;
   if (isObject(eidFlat)) eidFlat = getCI(eidFlat, "Value") ?? getCI(eidFlat, "#text");
   return {
-    host: str(getCI(row, "Computer")).trim(),
+    host: resolveRowHost(row).asset,
     rec: {
       event_id: eidFlat,
       channel: str(getCI(row, "Channel")),
@@ -1572,6 +1572,7 @@ interface VrParseCtx {
   fallbackHost: string;
   iocSink: Map<string, SiemIoc>;
   hostTally: Map<string, number>;
+  renames: HostRenameLedger; // one Info marker per (host, former name) seen this import (#1417)
 }
 
 // Map ONE raw row to its forensic event(s). Most rows yield a single event; an MFT row yields one per
@@ -1583,8 +1584,10 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
   // `artifact_` index, so the gate re-opens and the whole collapse/un-flatten walk runs a second
   // time on every row of the import.
   const artifact = artifactName(row) || ctx.fallbackArtifact;
-  const host = pickHost(row) || ctx.fallbackHost; // a row's own host always wins; fallback only fills the gap
+  const rh = resolveRowHost(row); // collector identity over the record's Computer (#1417)
+  const host = rh.asset || ctx.fallbackHost; // a row's own host always wins; fallback only fills the gap
   if (host) ctx.hostTally.set(host, (ctx.hostTally.get(host) ?? 0) + 1);
+  ctx.renames.note(rh, pickTime(row));
 
   const rowSink = new Map<string, SiemIoc>();
   let detections = 0;
@@ -1685,6 +1688,8 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
     const fp = msgFingerprint(rowMessage(row));
     for (const m of ms) {
       if (!m) continue;
+      m.description = withFormerHostSuffix(m.description, rh.formerName);
+      demoteSampleHost(m, rh); // only a row with NO collector identity can be a sample-corpus host
       // Stamp the produced event with the VQL artifact that emitted it. Done once here (rather than in
       // each map* function) because `artifact` is already resolved in this dispatch loop and every
       // mapper's result flows through — so downstream (dwell-time window, evidence graph) can tell
@@ -1744,16 +1749,8 @@ function finalizeVrParse(
   opts: VelociraptorImportOptions,
 ): VelociraptorParseResult {
   const maxIocs = opts.maxIocs ?? 5000;
-  // Self-scan: Sigma/Hayabusa run through Velociraptor also scan the bundled EVTX-ATTACK-SAMPLES
-  // corpus, whose events carry the sample author's computer name — demote to Info. See chainsawImport.
-  for (const ev of mapped) {
-    if (ev.severity !== "Info" && isDetectionSampleHost(ev.asset ?? "")) {
-      ev.severity = "Info";
-      ev.description =
-        `${ev.description} [detection sample corpus — ${ev.asset} not in this collection]`.slice(0, 600);
-    }
-  }
-  const { events, groups } = aggregateEvents(mapped, {
+  // Sample-host demotion happens per row in mapRowToEvents (hostIdentity.ts); the rename markers join here.
+  const { events, groups } = aggregateEvents([...mapped, ...ctx.renames.events()], {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
@@ -1795,6 +1792,7 @@ function newVrCtx(opts: VelociraptorImportOptions): VrParseCtx {
     fallbackHost: (opts.hostFallback ?? "").trim(),
     iocSink: new Map<string, SiemIoc>(),
     hostTally: new Map<string, number>(),
+    renames: new HostRenameLedger(),
   };
 }
 
