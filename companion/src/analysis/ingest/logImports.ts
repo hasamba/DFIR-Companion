@@ -16,6 +16,7 @@ import { type InvestigationState, type Severity } from "../stateTypes.js";
 import { parseSysdig, type SysdigImportOptions } from "../sysdigImport.js";
 import { SYSLOG_SOURCE, parseSyslogProgress, type SyslogImportOptions } from "../syslogImport.js";
 import { pickImportYear } from "../timeYearClamp.js";
+import { describeFloor } from "./floorNote.js";
 import { noteEmptyImport } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 
@@ -46,7 +47,8 @@ export async function importBashHistory(
   const user = userFromHistoryFilename(opts.label);
   const parsedRaw = parseShellHistoryFile(text, { user });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Shell history", parsed.total);
+  if (parsed.events.length === 0 && parsed.iocs.length === 0)
+    return noteEmptyImport(ctx, caseId, opts, "Shell history", parsed.total);
 
   const raw = {
     findings: [],
@@ -60,7 +62,8 @@ export async function importBashHistory(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `Shell history import${user ? ` (${user})` : ""}: ${parsed.kept} command(s) from ${parsed.total} line(s)` +
+      `Shell history import${user ? ` (${user})` : ""}: ${parsed.events.length} command(s) from ${parsed.total} line(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
     summary: "",
   };
@@ -98,7 +101,7 @@ export async function importCombinedLog(
 ): Promise<InvestigationState> {
   const parsedRaw = parseCombinedLog(text, { ...opts.combinedLog });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0)
+  if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "Web/proxy access-log", parsed.total);
 
   const eventIdByAggKey = new Map<string, string>();
@@ -121,7 +124,8 @@ export async function importCombinedLog(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `Web/proxy access-log import (${parsed.format}): ${parsed.kept} request(s) from ${parsed.total} line(s)` +
+      `Web/proxy access-log import (${parsed.format}): ${parsed.events.length} request(s) from ${parsed.total} line(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
     summary: "",
   };
@@ -167,7 +171,8 @@ export async function importCiscoAsa(
     ...(assumeYear !== undefined ? { assumeYear } : {}),
   });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Cisco ASA", parsed.total);
+  if (parsed.events.length === 0 && parsed.iocs.length === 0)
+    return noteEmptyImport(ctx, caseId, opts, "Cisco ASA", parsed.total);
 
   const raw = {
     findings: [],
@@ -185,7 +190,8 @@ export async function importCiscoAsa(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `Cisco ASA import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} line(s)` +
+      `Cisco ASA import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} line(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
     summary: "",
   };
@@ -236,7 +242,8 @@ export async function importSyslog(
     opts.signal,
   );
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Syslog", parsed.total);
+  if (parsed.events.length === 0 && parsed.iocs.length === 0)
+    return noteEmptyImport(ctx, caseId, opts, "Syslog", parsed.total);
 
   const raw = {
     findings: [],
@@ -255,7 +262,8 @@ export async function importSyslog(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `Syslog import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} line(s)` +
+      `Syslog import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} line(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
     summary: "",
   };
@@ -309,7 +317,8 @@ export async function importAuditd(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `auditd import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+      `auditd import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} record(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       `, ${parsed.iocs.length} IOC(s)` +
       (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
@@ -365,7 +374,8 @@ export async function importJournald(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `journald import: ${parsed.kept} event(s) from ${parsed.total} entr(y/ies)` +
+      `journald import: ${parsed.events.length} event(s) from ${parsed.total} entr(y/ies)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       `, ${parsed.iocs.length} IOC(s)` +
       (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
@@ -421,7 +431,8 @@ export async function importSysdig(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `sysdig/Falco import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+      `sysdig/Falco import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} record(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.alerts > 0 ? `, ${parsed.alerts} Falco alert(s)` : "") +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       `, ${parsed.iocs.length} IOC(s)` +

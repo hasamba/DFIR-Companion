@@ -8,6 +8,7 @@ import { SNORT_SOURCE, parseSnortLog, type SnortImportOptions } from "../snortIm
 
 import { type InvestigationState, type Severity } from "../stateTypes.js";
 import { pickImportYear } from "../timeYearClamp.js";
+import { describeFloor } from "./floorNote.js";
 import { noteEmptyImport } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 
@@ -45,7 +46,8 @@ export async function importSnort(
     ...(assumeYear !== undefined ? { assumeYear } : {}),
   });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Snort", parsed.total);
+  if (parsed.events.length === 0 && parsed.iocs.length === 0)
+    return noteEmptyImport(ctx, caseId, opts, "Snort", parsed.total);
 
   const raw = {
     findings: [],
@@ -62,7 +64,8 @@ export async function importSnort(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `Snort import (${parsed.format}): ${parsed.kept} alert(s) from ${parsed.total} line(s)` +
+      `Snort import (${parsed.format}): ${parsed.events.length} alert(s) from ${parsed.total} line(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
     summary: "",
   };
@@ -129,7 +132,8 @@ export async function importNetwork(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `Network import (${parsed.format}): ${parsed.kept} detection event(s) from ${parsed.total} record(s)` +
+      `Network import (${parsed.format}): ${parsed.events.length} detection event(s) from ${parsed.total} record(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.alerts > 0 ? `, ${parsed.alerts} alert/notice(s)` : "") +
       `, ${parsed.iocs.length} IOC(s)` +
       (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
@@ -194,7 +198,8 @@ export async function importSecurityOnion(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `Security Onion import: ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+      `Security Onion import: ${parsed.events.length} event(s) from ${parsed.total} record(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       `, ${parsed.iocs.length} IOC(s)` +
       (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
     summary: "",
@@ -235,7 +240,7 @@ export async function importExporterFlow(
   const parsedRaw = parseExporterFlowNdjson(text, opts.exporterFlow);
   if (!parsedRaw) throw new Error("not an nfdump exporter flow ndjson document");
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) {
+  if (parsed.events.length === 0 && parsed.iocs.length === 0) {
     const gapDetail = [
       parsed.malformedRecords ? `${parsed.malformedRecords} malformed record(s)` : "",
       parsed.recordsTruncated ? "record scan stopped at the upload size cap" : "",
@@ -267,6 +272,7 @@ export async function importExporterFlow(
     threadsClosed: [],
     timelineNote:
       `nfdump exporter flow import: ${parsed.flowCount} normalized flow(s) from ${parsed.total} record(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.beaconLeadCount ? `, ${parsed.beaconLeadCount} periodicity lead(s)` : "") +
       (parsed.malformedRecords ? `, ${parsed.malformedRecords} malformed record(s)` : "") +
       (parsed.recordsTruncated ? ", record scan stopped at the upload size cap" : "") +

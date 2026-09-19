@@ -10,6 +10,7 @@ import { parseGcpFlowLog, type GcpFlowLogImportOptions } from "../gcpFlowLogImpo
 import { deltaSchema } from "../responseSchema.js";
 import { applySeverityFloor } from "../severityFloor.js";
 import { type InvestigationState, type Severity } from "../stateTypes.js";
+import { describeFloor } from "./floorNote.js";
 import { noteEmptyImport } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 
@@ -29,7 +30,7 @@ export async function importAwsFlowLog(
 ): Promise<InvestigationState> {
   const parsedRaw = parseAwsFlowLog(text, opts.awsFlowLog);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) {
+  if (parsed.events.length === 0 && parsed.iocs.length === 0) {
     // Codex review (P2): an all-SKIPDATA/NODATA upload must not silently lose the coverage
     // disclosure just because it produced zero events — SKIPDATA in particular is a real AWS
     // collection gap, not "nothing to report."
@@ -57,7 +58,8 @@ export async function importAwsFlowLog(
     // NODATA/SKIPDATA are disclosed by name (#931 item 13 — Codex review) — not lumped into one
     // generic "dropped": SKIPDATA is a real AWS-side collection gap, NODATA is not.
     timelineNote:
-      `AWS VPC Flow Log import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+      `AWS VPC Flow Log import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} record(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       (parsed.nodata ? `, ${parsed.nodata} NODATA interval(s)` : "") +
       (parsed.skipdata
@@ -114,7 +116,7 @@ export async function importAzureFlowLog(
   ]
     .filter(Boolean)
     .join(", ");
-  if (parsed.events.length === 0) {
+  if (parsed.events.length === 0 && parsed.iocs.length === 0) {
     return noteEmptyImport(
       ctx,
       caseId,
@@ -136,7 +138,8 @@ export async function importAzureFlowLog(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `Azure virtual network flow log import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.tuples} tuple(s) in ${parsed.records} record(s)` +
+      `Azure virtual network flow log import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.tuples} tuple(s) in ${parsed.records} record(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       (detail ? `, ${detail}` : "") +
       `, ${parsed.iocs.length} IOC(s). Direction is relative to the logged NIC; rule tokens are printed as logged and may be platform rules; no VM is attributed (the record names a NIC by MAC only).`,
@@ -185,7 +188,7 @@ export async function importGcpFlowLog(
   ]
     .filter(Boolean)
     .join(", ");
-  if (parsed.events.length === 0) {
+  if (parsed.events.length === 0 && parsed.iocs.length === 0) {
     return noteEmptyImport(ctx, caseId, opts, "GCP VPC Flow Logs", parsed.total, detail || undefined);
   }
   const raw = {
@@ -200,7 +203,8 @@ export async function importGcpFlowLog(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `GCP VPC Flow Log import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} log entr(ies)` +
+      `GCP VPC Flow Log import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} log entr(ies)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       (detail ? `, ${detail}` : "") +
       `, ${parsed.iocs.length} IOC(s). VPC Flow Logs are sampled — a flow that does not appear is not evidence of no traffic; instance and VPC names are Google's own log-time annotations, not a join made here; bytes are user payload only.`,
