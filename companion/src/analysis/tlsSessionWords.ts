@@ -98,6 +98,8 @@ export function certificateTag(o: TlsObservation): string {
     c.issuer !== undefined ? `issuer ${show(c.issuer)}` : "",
     c.notBefore || c.notAfter ? `valid ${show(c.notBefore ?? "?")}–${show(c.notAfter ?? "?")}` : "",
     total ? `covers ${total} name${total === 1 ? "" : "s"}: ${shownNames}${more}` : "",
+    c.decoded ? "decoded from the DER" : "",
+    ...(c.decodedDiffers ?? []).map((f) => `record ${f} differs from the DER's`),
   ]
     .filter(Boolean)
     .join("; ");

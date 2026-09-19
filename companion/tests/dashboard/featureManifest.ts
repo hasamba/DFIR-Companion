@@ -134,6 +134,11 @@ export const FEATURES: Feature[] = [
     private: ["exposure", "currentCaseId", "loadGen", "status", "mutationError"],
   },
   {
+    file: "dashboard-tls-graph.js",
+    publish: ["loadTlsGraph", "initTlsGraph"],
+    private: ["graph", "currentCaseId", "loadGen", "status", "gv", "kindsEnabled"],
+  },
+  {
     file: "dashboard-kerberoast-chain.js",
     publish: ["loadKerberoastChain"],
     private: ["chain", "currentCaseId", "loadGen", "status"],
