@@ -936,6 +936,13 @@ describe("summaryId is as discriminating as groupKey (#1356)", () => {
     expect(again.some((e) => e.id === legacy)).toBe(false);
   });
 
+  // A delimiter inside one component must not let two groups spell one key.
+  it("a separator character inside a component cannot make two groups share an id", () => {
+    const [a] = groupBulkReads(stamped({ key: "x|", account: "y" }));
+    const [b] = groupBulkReads(stamped({ key: "x", account: "|y" }));
+    expect(summaryId(a)).not.toBe(summaryId(b));
+  });
+
   it("the id is case-insensitive on the added components, like groupKey", () => {
     const [a] = groupBulkReads(stamped({ key: "asiaaaaa", account: "AbC", provider: "AWS" }));
     const [b] = groupBulkReads(stamped({ key: "ASIAAAAA", account: "abc", provider: "aws" }));

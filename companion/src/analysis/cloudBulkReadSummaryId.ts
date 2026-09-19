@@ -68,8 +68,19 @@ export function summaryId(group: BulkGroup): string {
   // name in two accounts, whose densest windows started in the same second (CloudTrail is
   // second-granular; two sessions issued together start together) shared one id, and the
   // replaced-by-id filter kept one of them. Every component groupKey separates on is here.
+  //
+  // Serialized as a JSON array, not a delimiter-joined string: a `|` inside one component (a
+  // credential id ending in one, an account beginning with one) would otherwise let two distinct
+  // groups spell the same key. The legacy id keeps its joined form so it can still be matched.
   return hashSummaryKey(
-    `${lower(group.principal)}|${lower(group.credentialId)}|${lower(group.account)}|${lower(group.provider)}` +
-      `|${group.sourceIp}|${lower(group.userAgent)}|${group.first}`,
+    JSON.stringify([
+      lower(group.principal),
+      lower(group.credentialId),
+      lower(group.account),
+      lower(group.provider),
+      group.sourceIp,
+      lower(group.userAgent),
+      group.first,
+    ]),
   );
 }
