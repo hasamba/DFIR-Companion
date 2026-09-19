@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   headersMatch,
   pinnedClocks,
-  readOrigin,
   REGISTRY,
   REGISTRY_PINS,
   REGISTRY_VERSION,
   registryEntry,
 } from "../../src/analysis/mobileOriginRegistry.js";
+import { readOrigin } from "../../src/analysis/mobileOriginRead.js";
 import { parseLeappTsv } from "../../src/analysis/mobileLeappImport.js";
 import { correlateEvents } from "../../src/analysis/correlate.js";
 import {
@@ -43,7 +43,7 @@ describe("the registry pin", () => {
   it("names both upstream commits and every entry's exact header tuple", () => {
     expect(REGISTRY_PINS.iLEAPP.commit).toBe("6dc251d857c0");
     expect(REGISTRY_PINS.ALEAPP.commit).toBe("ce0880dc232c");
-    expect(REGISTRY_VERSION).toBe("leapp-origin-2026-09-18");
+    expect(REGISTRY_VERSION).toBe("leapp-origin-2026-09-19");
     for (const e of REGISTRY) expect(e.headers.length, e.name).toBeGreaterThan(0);
     const safari = registryEntry("Safari Browser - History")!;
     expect(headersMatch(safari, safari.headers)).toBe(true);
@@ -1127,5 +1127,139 @@ describe("#1298 — ALEAPP AppOps / usagestats entries, pinned and cross-checked
     } as ForensicEvent;
     for (const e of markInfectionWindow([...rows, notifRow], iocs, "2026-06-01T00:00:00Z"))
       expect(e.description).not.toContain(INFECTION_WINDOW_MARKER);
+  });
+});
+
+describe("#1363 — permission, proxy and clock are typed on the block, for the requested/granted/used join", () => {
+  const upstreamRead = (name: string, cells: Record<string, string>) => {
+    const headers = ALEAPP_UPSTREAM[name];
+    return readOrigin(
+      "android",
+      name,
+      headers,
+      headers.map((h) => cells[h] ?? ""),
+    );
+  };
+  const tsvOf = (name: string, cells: Record<string, string>) => {
+    const headers = ALEAPP_UPSTREAM[name];
+    return [headers.join("\t"), headers.map((h) => cells[h] ?? "").join("\t")].join("\n");
+  };
+
+  it("every permission entry names its permission column; the three AppOps artifacts name their proxy column", () => {
+    expect(
+      REGISTRY.filter((e) => e.record === "permission" && e.platform === "android").map((e) => [
+        e.name,
+        e.permissionColumn,
+        e.proxyColumn,
+      ]),
+    ).toEqual([
+      ["App Ops Permissions", "Permission", "Proxy Package Name"],
+      ["App Ops Permissions - Legacy", "Permission", "Proxy Package Name"],
+      ["App Ops Recent Accesses", "Permission", "Proxy Package Name"],
+      ["App Ops Permission Modes", "Permission", undefined],
+      ["App Op Modes (Permission Store)", "App Op", undefined],
+      ["Permission Grants (Permission Store)", "Permission", undefined],
+    ]);
+    for (const e of REGISTRY) {
+      if (e.permissionColumn) expect(e.headers, e.name).toContain(e.permissionColumn);
+      if (e.proxyColumn) expect(e.headers, e.name).toContain(e.proxyColumn);
+    }
+  });
+
+  it("the permission name is a typed facet with its column in evidence; the words are unchanged", () => {
+    const r = upstreamRead("Permission Grants (Permission Store)", {
+      "Package Name": "com.example.app",
+      Permission: "android.permission.READ_SMS",
+      Granted: "Yes",
+    });
+    expect(r.block.permission).toBe("android.permission.READ_SMS");
+    expect(r.block.evidence).toContainEqual({
+      facet: "permission",
+      column: "Permission",
+      value: "android.permission.READ_SMS",
+    });
+    expect(r.block.proxy).toBeUndefined();
+    expect(r.words).toBe(`not-established, device-local, permission (granted Yes) — ${REGISTRY_VERSION}`);
+  });
+
+  it("a proxied AppOps row carries the proxy package typed, in evidence, and in the words — never as the app", () => {
+    const r = upstreamRead("App Ops Recent Accesses", {
+      "Access Timestamp": "2026-05-02 10:00:00",
+      "Package Name": "com.example.app",
+      Permission: "CAMERA",
+      "Op Mode": "ALLOWED",
+      "Proxy Package Name": "com.android.systemui",
+    });
+    expect(r.block.app).toEqual({ package: "com.example.app" });
+    expect(r.block.permission).toBe("CAMERA");
+    expect(r.block.proxy).toEqual({ package: "com.android.systemui" });
+    expect(r.block.evidence).toContainEqual({
+      facet: "proxy",
+      column: "Proxy Package Name",
+      value: "com.android.systemui",
+    });
+    expect(r.words).toBe(
+      `not-established, device-local, permission (op mode ALLOWED; proxy "com.android.systemui") — ${REGISTRY_VERSION}`,
+    );
+  });
+
+  it("a proxy value with brackets is tag-safe in the words and bounded on the block", () => {
+    const r = upstreamRead("App Ops Permissions", {
+      "Access Timestamp": "2026-05-02 10:00:00",
+      "Package Name": "com.example.app",
+      Permission: "CAMERA",
+      "Proxy Package Name": "[x]" + "p".repeat(300),
+    });
+    expect(r.block.proxy?.package).toHaveLength(200);
+    expect(r.words).toContain('proxy "(x)p');
+    expect(r.words).not.toContain("[x]");
+  });
+
+  it("end to end: the clock the importer chose is stamped by column name — Reject when only reject is set, Access when both are", () => {
+    const headers = ALEAPP_UPSTREAM["App Ops Permissions"];
+    const row = (cells: Record<string, string>) => headers.map((h) => cells[h] ?? "").join("\t");
+    const text = [
+      headers.join("\t"),
+      row({ "Reject Timestamp": "2026-05-02 10:00:00", "Package Name": "com.a", Permission: "CAMERA" }),
+      row({
+        "Access Timestamp": "2026-05-03 11:00:00",
+        "Reject Timestamp": "2026-05-03 11:30:00",
+        "Package Name": "com.a",
+        Permission: "CAMERA",
+      }),
+    ].join("\n");
+    const r = parseLeappTsv(text, "App Ops Permissions.tsv", { platform: "android", device: "Pixel" });
+    const rejected = r.events.find((e) => e.description.includes("[Reject Timestamp:"))!;
+    const both = r.events.find((e) => e.description.includes("[Access Timestamp:"))!;
+    expect(rejected.canonical?.mobile?.clock).toEqual({ column: "Reject Timestamp" });
+    expect(both.canonical?.mobile?.clock).toEqual({ column: "Access Timestamp" });
+    // The reject on the both-clocks row survives in the row's own prose only (#1298).
+    expect(both.description).toContain("Reject Timestamp: 2026-05-03 11:30:00");
+  });
+
+  it("end to end: an undated state row has no clock on the block; a proxied access has its proxy on the block", () => {
+    const state = parseLeappTsv(
+      tsvOf("Permission Grants (Permission Store)", {
+        "Package Name": "com.a",
+        Permission: "android.permission.CAMERA",
+        Granted: "No",
+      }),
+      "Permission Grants (Permission Store).tsv",
+      { platform: "android", device: "Pixel" },
+    ).events[0];
+    expect(state.canonical?.mobile?.clock).toBeUndefined();
+    expect(state.canonical?.mobile?.permission).toBe("android.permission.CAMERA");
+    const proxied = parseLeappTsv(
+      tsvOf("App Ops Permissions", {
+        "Access Timestamp": "2026-05-02 10:00:00",
+        "Package Name": "com.a",
+        Permission: "CAMERA",
+        "Proxy Package Name": "com.proxy",
+      }),
+      "App Ops Permissions.tsv",
+      { platform: "android", device: "Pixel" },
+    ).events[0];
+    expect(proxied.canonical?.mobile?.proxy).toEqual({ package: "com.proxy" });
+    expect(proxied.canonical?.mobile?.clock).toEqual({ column: "Access Timestamp" });
   });
 });

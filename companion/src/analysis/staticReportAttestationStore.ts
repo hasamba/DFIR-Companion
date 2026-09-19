@@ -23,7 +23,11 @@ import { canonicalHostName } from "./hostAlias.js";
 // document digest, supersedes) runs INSIDE the queued mutation — a route-side check would let two
 // concurrent creates both read "no active attestation" and both land (design review M-1).
 
-export const STATIC_REPORT_TOOLS = ["olevba", "capa", "floss"] as const;
+// "mobsf" (#1363): a MobSF Android report is the same kind of lab artifact — a static analysis of
+// an APK file, carrying a report fingerprint and the sample's own hashes, and no device. Attesting
+// it binds the report to the subject DEVICE the analyst named at LEAPP import (`subjectHost` is
+// that label); the mobile permission chain reads the active attestation, never a package name.
+export const STATIC_REPORT_TOOLS = ["olevba", "capa", "floss", "mobsf"] as const;
 export type StaticReportTool = (typeof STATIC_REPORT_TOOLS)[number];
 
 export const DIGEST_CROSS_CHECKS = ["tool-sha256", "tool-md5", "md5-only-unchecked", "none"] as const;

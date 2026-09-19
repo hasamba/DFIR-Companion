@@ -12,7 +12,8 @@ import {
 import { parseCsvRecords } from "./csvImport.js";
 import { boundedAggKey, boundedText, boundedTextTo } from "./aggKey.js";
 import { createCanonicalEvent } from "./canonicalEvent.js";
-import { pinnedClocks, readOrigin, REGISTRY_VERSION } from "./mobileOriginRegistry.js";
+import { pinnedClocks, REGISTRY_VERSION } from "./mobileOriginRegistry.js";
+import { readOrigin } from "./mobileOriginRead.js";
 
 // Deterministic importer for iLEAPP / ALEAPP output — iOS and Android logical-extraction parsing.
 // No AI call.
@@ -304,7 +305,9 @@ export function parseLeappTsv(
     description = boundedTextTo(description, DESCRIPTION_MAX);
     const canonical = createCanonicalEvent({
       event: { category: "other", type: `mobile-${reading.block.facets.record}` },
-      mobile: reading.block,
+      // The clock the row is dated by, stamped by column name (#1363): readOrigin cannot see which
+      // clock was chosen, and for App Ops Permissions that choice is the outcome (#1298).
+      mobile: clock ? { ...reading.block, clock: { column: clock.name } } : reading.block,
       time: { observed: clock?.raw ?? "", normalized: clock?.timestamp ?? "" },
       evidence: { rawRecords: [{ source: "leapp-tsv", locator: `${artifact}:row:${rowIndex + 1}` }] },
       producer: { importer: "leapp", parserVersion: "1", mappingVersion: REGISTRY_VERSION },

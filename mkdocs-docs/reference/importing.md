@@ -1034,9 +1034,30 @@ undecidable). A stored mode or grant is a state at collection time, not a grant 
 evidence the permission was ever exercised; the tables that carry no clock import undated. A
 Usage Stats row is presence in the OS's usage ledger, not execution of a particular function; its
 `Time Active` columns are durations and are never read as the row's clock. Each row types its
-package the same way an app-inventory row does, so a later pass can join requested, granted and
-used by package — that join is not built here, and a row's `Proxy Package Name` (an op performed
-by one package on behalf of another) is not identity.
+package the same way an app-inventory row does, so the requested ↔ granted ↔ used join below can
+read it; a row's `Proxy Package Name` (an op performed by one package on behalf of another) is
+typed beside it and is never identity.
+
+**Requested ↔ granted ↔ used, by package on the subject device.** `GET
+/cases/<id>/mobile-permission-chains?device=<name>` lists, for every Android package the
+device's own rows name, three columns kept apart: *requested* from a MobSF report, *granted* from
+the stored Permission Store / AppOps state, *used* from a dated AppOps access — each row naming
+its artifact, the column that spoke, the value verbatim and the record locator. A MobSF report
+has no device, so it takes part only once the analyst has attested it to that device through the
+same `POST /cases/<id>/static-report-attestations` used for olevba/capa/FLOSS reports
+(`subjectHost` is the device name given at LEAPP import); a report whose package merely matches
+is listed as an unbound candidate and never joined — same name is not the same binary. The
+attested APK's sha256 is compared with the device's installedappsGass hash and the result said
+(`agrees` / `disagrees` / no inventory hash), never enforced. Permission Store rows carry full
+permission names and AppOps rows carry op names — two vocabularies (`COARSE_LOCATION` is not
+`ACCESS_COARSE_LOCATION`); a row joins at permission level only on an exact normalized match, and
+every other row stays at package level with that sentence, so there is no "used but not
+requested" reading. Absence of a state row is a collection gap (pre-Android-15 devices keep grant
+state in `runtime-permissions.xml`, which no artifact here reads), never "not granted"; a
+reject-dated row, a legacy per-mode clock and a proxied access are listed but never count as use.
+The named readings — requested-not-granted, requested-granted-used, requested-used,
+requested-state-conflict — are labels on what the rows show, never a grade; the join is computed
+on every read and writes nothing to the timeline.
 
 **The subject device.** Give `device` on `/import-leapp` (the extraction's subject as you name it);
 it becomes the rows' host. It is never read from a row: a device a row names is an association.

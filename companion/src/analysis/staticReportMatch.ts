@@ -38,6 +38,7 @@ export interface StaticReportEventShape extends TimelineEventShape {
     capaMatch?: FingerprintBlock;
     capaCompositeLead?: FingerprintBlock;
     decodedString?: FingerprintBlock;
+    mobileRequestedPermission?: FingerprintBlock;
   };
 }
 
@@ -48,6 +49,7 @@ const BLOCKS: ReadonlyArray<[keyof NonNullable<StaticReportEventShape["canonical
   ["capaMatch", "capa"],
   ["capaCompositeLead", "capa"],
   ["decodedString", "floss"],
+  ["mobileRequestedPermission", "mobsf"],
 ];
 
 function reportBlock(e: StaticReportEventShape): { block: FingerprintBlock; tool: StaticReportTool } | null {
@@ -97,7 +99,7 @@ export function reportEventsByFingerprint<T extends StaticReportEventShape>(
 // Spellings pinned by tests against the real importers' own output (olevbaResultImport.ts
 // "olevba", capaResultImport.ts "capa", flossResultImport.ts "FLOSS", pesieveImport.ts "PE-sieve",
 // yaraImport.ts YARA_SOURCE "YARA").
-const ANALYST_SOURCES = new Set(["olevba", "capa", "FLOSS", "PE-sieve", "YARA"]);
+const ANALYST_SOURCES = new Set(["olevba", "capa", "FLOSS", "PE-sieve", "YARA", "mobsf"]);
 const VICTIM_SIDE_SOURCES = new Set(["SO-CRATES", "Velociraptor"]);
 export function isAnalystSideRow(e: StaticReportEventShape): boolean {
   if (reportBlock(e)) return true;
