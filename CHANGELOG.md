@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **A row promoted from the super-timeline stays promoted** — every promotion stamps the row, and the demote pass after each import keeps stamped rows whatever their severity (closes #1432)
 - **Super-timeline first page in milliseconds on a big store** — count, facets and the page come from indexed SQL instead of a whole-store scan (100k rows: 92 s → 0.03 s; 446k rows: never returned → sub-second), and text search scans linearly instead of re-sorting the table per page, so a large super-only import no longer freezes the dashboard (closes #1429)
 - **Copied binaries dated at the drop, not the source's build date** — nested `$SI`/`$FN` MFT columns now prefer `$FN` Created, then `$SI` Created, before LastModified, so a renamed copy of `cmd.exe` no longer lands on cmd.exe's build date and invents a staging wave and a months-long dwell (addresses #1415)
 - **Process command lines keep their tail** — Sysmon / 4688 `CommandLine` and `ParentCommandLine` render their arguments in full (up to 400 chars, the path that repeats `Image` elided as `…`), so a C2 `ip:port`, `whoami`, a `-hashes …@target` or a scan port list reaches the timeline and the AI; when the 600-char description would overflow, the parent's command line is trimmed first (addresses #1416)

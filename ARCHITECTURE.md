@@ -133,6 +133,9 @@ do so during the import that collected it. The order is **merge-all → tag → 
 every event in the forensic timeline, the tagger raises the ones its rules match, and demote then
 removes whatever is still `Info`. `runAndApplyTagger` **maps over the forensic timeline and never
 appends to it**, so once demote has run, the event is in the super-timeline only and out of reach.
+The one row demote never touches is a promoted one: `promoteSuperTimeline` stamps `promotedAt` on
+every row it pulls up (any intent), and `demoteBelowSeverity` keeps a stamped row whatever its
+severity — otherwise the next import silently undid the promotion (#1432).
 
 The consequence to hold on to: **a new tagger rule changes what future collections surface to the
 model, not what past ones do.** A later "Run tagger" still evaluates the historical super-timeline
