@@ -197,6 +197,7 @@
     "bulkExtractorCarvedImport.ts": "analysis/ingest",
     "burstDetect.ts": "analysis/detect",
     "canonicalEvent.ts": "shared",
+    "canonicalProvenanceBackfill.ts": "shared",
     "canonicalWeb.ts": "shared",
     "canonicalDns.ts": "shared",
     "canonicalTls.ts": "shared",

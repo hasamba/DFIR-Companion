@@ -41,11 +41,12 @@ import type { RouteContext } from "./context.js";
  * the MEMORY note above, extended to the super-timeline read.
  *
  * DISCLOSES `excludedLogonSamples` (#1345): the count of logon samples hostBinding.ts refused to
- * index, by reason (`not-edge-observed` since #1342 — every 4624 persisted before its writer stamped
- * provenance, which `upgradeForensicEvent` never revisits). On such a case every IP->host binding
- * vanishes and a row that used to say `matched` says `no-match` with `caveats: []`; the count is the
- * only signal the analyst gets that a re-import, not absent evidence, is the cause. Route-level
- * counter beside the rows, same shape as `skipped` on velociraptor.ts / import.ts. Repair is #1352.
+ * index, by reason. `not-edge-observed` (#1342) once covered every 4624 persisted before its writer
+ * stamped provenance; #1352's canonicalProvenanceBackfill.ts re-stamps those on read for the audited
+ * writers, so the reason is left for an importer outside that allowlist. On such a case the IP->host
+ * binding is absent and a row that used to say `matched` says `no-match` with `caveats: []`;
+ * the count is the only signal the analyst gets that exclusion, not absent evidence, is the cause.
+ * Route-level counter beside the rows, same shape as `skipped` on velociraptor.ts / import.ts.
  */
 
 const DEFAULT_TOLERANCE_MS = 21_600_000; // 6 hours — no existing precedent value in this codebase

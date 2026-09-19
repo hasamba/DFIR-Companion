@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { ForensicEvent } from "./stateTypes.js";
+import { backfillEdgeObserved } from "./canonicalProvenanceBackfill.js";
 import { smbBlockSchema, transferBlockSchema, webBlockSchema } from "./canonicalWeb.js";
 import { dnsBlockSchema } from "./canonicalDns.js";
 import { tlsGraphBlockSchema } from "./canonicalTls.js";
@@ -760,9 +761,8 @@ function legacyCanonical(event: ForensicEvent): CanonicalEventEnvelope {
 }
 
 export function upgradeForensicEvent(event: ForensicEvent): ForensicEvent {
-  if (event.canonical?.schemaVersion === CANONICAL_EVENT_SCHEMA_VERSION) return event;
-  // Preserve an unknown version verbatim; no migration is registered yet — a bump must add one here first.
-  if (event.canonical) return event;
+  if (event.canonical?.schemaVersion === CANONICAL_EVENT_SCHEMA_VERSION) return backfillEdgeObserved(event); // #1352
+  if (event.canonical) return event; // an unknown version is preserved verbatim; no migration is registered yet — a bump must add one here first
   return { ...event, canonical: legacyCanonical(event) };
 }
 

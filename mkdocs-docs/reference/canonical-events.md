@@ -51,7 +51,10 @@ opaque. They preserve it verbatim and read nothing from it.
 - **Adding an optional field does not bump the version.** Every reader must fail closed when the
   field is absent, so an envelope written before the field existed is still read in full. Every
   optional block and field added since `1.0.0` landed this way, including the
-  `network.source.provenance` stamp.
+  `network.source.provenance` stamp. Filling such a field in on read, from what the envelope
+  already states about itself, does not bump it either: an envelope that names an audited
+  importer in `producer.importer` gets the provenance stamp that importer now writes, and nothing
+  else about it changes.
 - **Changing how a persisted envelope is read bumps the version.** Removing a field, changing its
   meaning, or making a reader depend on a field that older envelopes lack all qualify.
 - **A bump is only safe together with a registered migration**, and none exists today. The upgrade

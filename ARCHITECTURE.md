@@ -277,9 +277,21 @@ That is the gap the sweep closes.
   beside the entry.
 - **Exempt** — `canonicalEvent.ts`'s legacy-upgrade path copies whatever `srcIp` the original
   pre-canonical importer wrote. Its provenance is unknowable at upgrade time, so it is registered
-  in `EXEMPT` and must **not** stamp. This is also why **pre-#1265 persisted data is unstamped by
-  design**: those envelopes were written before the flag existed, and fail-closed is the honest
-  reading of them. No `schemaVersion` bump accompanied the field — see the schema policy in
+  in `EXEMPT` and must **not** stamp. A legacy event with no envelope at all stays fail-closed
+  on that branch, and fail-closed is the honest reading of it.
+- **Backfilled on read** — an envelope that is already canonical names its writer in
+  `producer.importer`, so for it the provenance *is* knowable. Every audited writer persisted
+  unstamped envelopes before it stamped, and once the readers gated
+  ([#1342](https://github.com/hasamba/DFIR-Companion/pull/1342)) those rows fell out of every
+  IP-to-host binding although the same evidence imported a day later bound
+  ([#1352](https://github.com/hasamba/DFIR-Companion/issues/1352)).
+  `canonicalProvenanceBackfill.ts` runs inside `upgradeForensicEvent`, on the same read path as
+  the legacy upgrade: an unstamped address whose importer id is one an audited `SITES` writer
+  declares is stamped on that writer's basis; any other importer, the legacy-upgrade id and
+  `email` included, is left alone. The sweep pins the allowlist to the ids the `SITES` files
+  declare, in both directions. The stamp is persisted on the next normal case save, like the
+  legacy envelope. No `schemaVersion` bump accompanied the field or the backfill — an optional
+  field filled in on its writer's own terms — see the schema policy in
   `mkdocs-docs/reference/canonical-events.md`.
 
 ### Who must gate
@@ -296,8 +308,9 @@ of:
   degrades a lead but never names a host, and a gate would drop genuine legacy sensor evidence
   to defend against a forged-address producer that does not exist. The reason is recorded per
   entry and the gate's **absence** is asserted, so a gate cannot creep in without revisiting it.
-- **tracked** — the decision is deferred to a named open issue. `hostBinding.ts`'s IP index is
-  this class ([#1292](https://github.com/hasamba/DFIR-Companion/issues/1292)).
+- **tracked** — the decision is deferred to a named open issue. `hostBinding.ts`'s IP index was
+  this class until [#1292](https://github.com/hasamba/DFIR-Companion/issues/1292) landed in
+  #1342; it is gated now.
 
 ### How it is enforced
 
