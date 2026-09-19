@@ -428,7 +428,7 @@ export const FEATURES: Feature[] = [
     // load and nothing outside binds its functions while the page parses.
     file: "dashboard-adversary-hints.js",
     publish: ["loadAdversaryHints", "scheduleAdversaryHintsReload", "huntForTechnique"],
-    private: ["adversaryHintsData", "adversaryHintsTimer"],
+    private: ["adversaryHintsData", "adversaryHintsTimer", "gapLeadsData"],
   },
   {
     // Gap Hypotheses (#96). Same shape, and GH_SEV_COLOR is why the IIFE matters: unwrapped it

@@ -529,6 +529,7 @@
     "ROUTE GET /cases/:id/resolver-endpoint-matches",
     "ROUTE GET /cases/:id/tls-graph",
     "ROUTE GET /cases/:id/handoff",
+    "ROUTE GET /cases/:id/attribution-gap-leads",
     "ROUTE GET /cases/:id/dns-connection-cross-upload-matches",
     "ROUTE GET /cases/:id/endpoint-dns-connection-cross-upload-matches",
     "ROUTE GET /cases/:id/ai-state",

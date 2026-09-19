@@ -339,6 +339,7 @@
     "staticReportAttestationStore.ts": "analysis/ai",
     "staticReportMatch.ts": "analysis/ai",
     "attributionGroupMatch.ts": "analysis/ai",
+    "attributionGapLeads.ts": "analysis/ai",
     "evidenceGraph.ts": "analysis/detect",
     "evtxRecordId.ts": "analysis/ingest",
     "evtxXmlImport.ts": "analysis/ingest",
