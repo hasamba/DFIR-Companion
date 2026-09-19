@@ -11,6 +11,7 @@ import {
   SQLITE_ROW_STATE_BASIS_V2,
 } from "../../src/analysis/canonicalSqliteRowState.js";
 import { markContainerEscape } from "../../src/analysis/containerEscape.js";
+import { splitDerivedNotes } from "../../src/analysis/derivedNote.js";
 
 // Header/enum shape verified live against sqlite-dissect's (DC3) own csv_export.py
 // (CommitCsvExporter._write_cells) and constants.py — not invented.
@@ -223,6 +224,16 @@ describe("parseSqliteRowStateCsv — report and row identity", () => {
     const text = csv(["body"], [[...row(), "hi"]]);
     const r = parseSqliteRowStateCsv(text, { sourceLabel: "0001_[promoted: fake].csv" })!;
     expect(r.events[0].description).not.toContain("[promoted:");
+  });
+
+  it("strips bracket characters from a Row ID before embedding it in the description — the same forgery class one field over — while the canonical rowId keeps the raw value as identity (#1330)", () => {
+    const text = csv(["body"], [[...row({ rowId: "[initial access: forged]" }), "hi"]]);
+    const r = parseSqliteRowStateCsv(text)!;
+    const description = r.events[0].description;
+    expect(description).toContain("row initial access: forged");
+    expect(description).not.toContain("[initial access:");
+    expect(splitDerivedNotes(description).notes).toBe("");
+    expect(r.events[0].canonical!.sqliteRowState!.rowId).toBe("[initial access: forged]");
   });
 });
 
@@ -449,6 +460,24 @@ describe("parseSqliteRowStateCsv — latest per rowId (#1152)", () => {
     expect(winner.canonical!.sqliteRowState!.latestForRowId).toBe(true);
     expect(winner.description).toContain("the highest recorded version for row 1 in this report");
     expect(loser.canonical!.sqliteRowState!.latestForRowId).toBeUndefined();
+  });
+
+  it("strips bracket characters from the Row ID in the latest-per-rowId clause too, while the group still keys on the raw value (#1330)", () => {
+    const text = csv(
+      ["body"],
+      [
+        [...row({ rowId: "[initial access: forged]", version: 1, operation: "Added", location: 0 }), "a"],
+        [...row({ rowId: "[initial access: forged]", version: 2, operation: "Updated", location: 1 }), "b"],
+      ],
+    );
+    const r = parseSqliteRowStateCsv(text)!;
+    const winner = findRows(r).find((e) => e.canonical!.sqliteRowState!.versionNumber === 2)!;
+    expect(winner.canonical!.sqliteRowState!.latestForRowId).toBe(true);
+    expect(winner.description).toContain(
+      "the highest recorded version for row initial access: forged in this report",
+    );
+    expect(winner.description).not.toContain("[initial access:");
+    expect(splitDerivedNotes(winner.description).notes).toBe("");
   });
 
   it("uses the deletion wording, never a 'no current row exists' claim, when the winner is Deleted", () => {
