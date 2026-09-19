@@ -8,6 +8,7 @@
 import type { Severity } from "./stateTypes.js";
 import type { CollectedFile, LinuxArtifactKind } from "./linuxPersistence.js";
 import { TRANSIENT_RE, type PayloadJudgement } from "./linuxPayload.js";
+import type { QuarantineXattr } from "./quarantineRecord.js";
 
 export interface LinuxSignal {
   /** The collected file the signal came from. */
@@ -29,6 +30,13 @@ export interface LinuxSignal {
    * the reason's first 80 characters, so rewording a finding does not re-key the row (#933 item 8).
    */
   rule?: string;
+  /**
+   * macOS only (#1037 link 2): the program's own decoded `com.apple.quarantine` mark, carried as
+   * data so the merge-time join reads the event identifier from the record, never from `reason`.
+   * Set only for a decodable mark that names an event; the legacy URL form and an undecodable
+   * value carry no identifier and set nothing.
+   */
+  quarantine?: { program: string; label?: string; mark: QuarantineXattr };
 }
 
 export interface LinuxBaseline {

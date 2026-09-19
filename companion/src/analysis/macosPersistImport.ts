@@ -23,6 +23,7 @@ import { splitCollection, singleArtifact, type CollectedFile } from "./linuxPers
 import { analyzeLinuxCollection, type LinuxSignal } from "./linuxPersistRules.js";
 import { classifyMacArtifact, isBinaryPlist, isXmlPlist } from "./macosPersistence.js";
 import { gradeLaunchd, type MacContext } from "./macosPersistRules.js";
+import { withQuarantineEnvelope } from "./macosPersistQuarantine.js";
 import {
   collectionNote,
   iocsFromSignals,
@@ -76,17 +77,20 @@ export function parseMacPersist(
 ): MacPersistParse {
   const files = readMacCollection(filename, text);
   const signals = analyzeMacCollection(files, ctx);
+  // signalsToEvents is one event per signal, in order — so the envelope a launchd signal earns
+  // (its program's quarantine mark, #1037 link 2) is attached by index.
+  const events = signalsToEvents(
+    signals,
+    files,
+    fallbackTime,
+    "macOS persistence",
+    "macOS persistence",
+    "macospersist",
+  );
   return {
     files,
     signals,
-    events: signalsToEvents(
-      signals,
-      files,
-      fallbackTime,
-      "macOS persistence",
-      "macOS persistence",
-      "macospersist",
-    ),
+    events: events.map((e, i) => withQuarantineEnvelope(e, signals[i])),
     iocs: iocsFromSignals(signals),
     note: collectionNote(files, signals, "macOS persistence"),
   };

@@ -47,6 +47,8 @@ export const DERIVED_NOTE_NAMES: readonly string[] = [
   "preceded a download mark",
   "matches a download mark",
   "sandbox verdict",
+  "download record",
+  "persisted as",
 ];
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

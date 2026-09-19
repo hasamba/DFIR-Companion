@@ -17,6 +17,7 @@ import { linkArchiveToExfil } from "./exfilCorrelate.js";
 import { markProcessLifetimeSignals } from "./processLifetime.js";
 import { corroborateTimestompsOnTimeline } from "./timestompCorroborate.js";
 import { corroborateDownloadExecution } from "./downloadExecution.js";
+import { linkQuarantinePersistence } from "./quarantinePersistenceLink.js";
 import { corroborateSmbExecution } from "./smbExecution.js";
 import { corroborateDefenderEpisodes } from "./defenderEpisodes.js";
 import { markInfectionWindow } from "./mobileInfectionWindow.js";
@@ -399,10 +400,15 @@ export function mergeDelta(
   // MFT and the Prefetch / Sysmon rows arrive as separate imports. Only ever raises; its notes are
   // recomputed from the current evidence on every merge.
   const withDownloads = corroborateDownloadExecution(withTimestomp);
+  // A macOS quarantine-database record against the launchd job whose program carries the same
+  // event identifier (#1037 link 2). Here because the database dump and the persistence collection
+  // are never one upload. Only ever raises (the database row, to Medium); its notes are recomputed
+  // from the current evidence on every merge.
+  const withQuarantineLinks = linkQuarantinePersistence(withDownloads);
   // A share write of an executable-shaped file, then the evidence it ran; a service-control or
   // task-scheduling pipe call, then the service/task it may have created — host+time joins across
   // separate imports (#933 item 4, correlation half — #1092). Only ever raises.
-  const withSmbExecution = corroborateSmbExecution(withDownloads);
+  const withSmbExecution = corroborateSmbExecution(withQuarantineLinks);
   // A Defender action, then a later start of the same file on the same host (#930 item 1 part B).
   // Here because the Defender record and the process start arrive from different imports. Only
   // ever raises; its notes are recomputed from the current evidence on every merge.

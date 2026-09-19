@@ -15,6 +15,7 @@ import { breakHashRuns, identityMark, keyDigest, packTags, showToken } from "./r
 import type { MappedEvent } from "./siemImport.js";
 import { createCanonicalEvent, type CreateCanonicalEventInput } from "./canonicalEvent.js";
 import type { QuarantineAttributeBlock } from "./canonicalQuarantine.js";
+import { flagTags, timeWords } from "./quarantineAgreement.js";
 import {
   HOST_COLUMNS,
   RepeatedColumn,
@@ -144,6 +145,8 @@ export interface AttributeJoinFacts {
 export const attributeLocator = (a: AttributeObservation): string => `attribute:${a.index}`;
 
 /** The words of what the join established, or why it did not. */
+export { flagTags, timeWords };
+
 export function joinTags(join: AttributeJoin, downloadWords: string | undefined): string[] {
   const tags: string[] = [];
   switch (join.state) {
@@ -172,29 +175,6 @@ export function joinTags(join: AttributeJoin, downloadWords: string | undefined)
   if (join.timeAgreement) tags.push(timeWords(join.timeAgreement));
   tags.push(...flagTags(join));
   return tags;
-}
-
-/** The download bit as the record has it; "sandbox mark only" only when the sandbox bit is the whole word. */
-export function flagTags(join: Pick<AttributeJoin, "downloadFlag" | "sandboxOnly">): string[] {
-  if (join.downloadFlag === true) return ["download flag set"];
-  if (join.downloadFlag === false)
-    return [join.sandboxOnly ? "download flag not set — sandbox mark only" : "download flag not set"];
-  return [];
-}
-
-const ENCODING_WORDS: Record<string, string> = {
-  "cocoa-seconds": "Cocoa seconds",
-  iso: "ISO 8601",
-  "unix-seconds": "Unix seconds",
-  "unix-ms": "Unix milliseconds",
-  unreadable: "not readable",
-};
-
-export function timeWords(t: NonNullable<AttributeJoin["timeAgreement"]>): string {
-  if (t.state === "not compared") return `time not compared: ${t.reason}`;
-  const encodings = `(attribute: Unix hex; database: ${ENCODING_WORDS[t.databaseEncoding]})`;
-  if (t.state === "same second") return `marked and recorded in the same second ${encodings}`;
-  return `marked ${t.band} ${t.state === "marked after the record" ? "after" : "before"} the record ${encodings}`;
 }
 
 export function mapAttributeRow(a: AttributeObservation, facts: AttributeJoinFacts): MappedEvent {

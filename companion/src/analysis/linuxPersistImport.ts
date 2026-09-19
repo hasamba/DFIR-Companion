@@ -21,6 +21,7 @@
 // its description says so, so nobody reads its position on the timeline as a finding.
 
 import type { Severity } from "./stateTypes.js";
+import type { CanonicalEventEnvelope } from "./canonicalEvent.js";
 import {
   lastCollectionTruncation,
   MAX_MEMBERS,
@@ -39,6 +40,8 @@ import {
 export interface LinuxPersistEvent {
   /** Derived from the finding, not from an import counter — see stableEventId. */
   id: string;
+  /** Attached by the macOS importer for a persistence target that carries a quarantine mark (#1037). */
+  canonical?: CanonicalEventEnvelope;
   timestamp: string;
   description: string;
   severity: Severity;

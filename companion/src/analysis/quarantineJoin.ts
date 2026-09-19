@@ -15,8 +15,12 @@
 // database row's provenance; variants are counted once per identifier.
 
 import { createCanonicalEvent } from "./canonicalEvent.js";
-import type { QuarantineLocalFile, QuarantineTimeAgreement } from "./canonicalQuarantine.js";
-import { gapBand } from "./dnsConnJoin.js";
+import type { QuarantineLocalFile } from "./canonicalQuarantine.js";
+import {
+  quarantineAgentAgreement,
+  quarantineFlagFacts,
+  quarantineTimeAgreement,
+} from "./quarantineAgreement.js";
 import { breakHashRuns, identityMark, keyDigest, packTags, showToken } from "./recordIdentity.js";
 import type { MappedEvent } from "./siemImport.js";
 import {
@@ -60,43 +64,11 @@ export function addAttribute(store: AttributeObservations, a: AttributeObservati
 
 // ───────────────────────────── agreement ─────────────────────────────
 
-const S = 1000;
-
-function agentAgreement(markAgent: string, row: QuarantineRow): "agrees" | "differs" | "not compared" {
-  const { agent, bundleId } = row.envelope;
-  if (!agent && !bundleId) return "not compared";
-  const a = markAgent.trim().toLowerCase();
-  return a === (agent ?? "").trim().toLowerCase() || a === (bundleId ?? "").trim().toLowerCase()
-    ? "agrees"
-    : "differs";
-}
-
-function timeAgreement(markIso: string, row: QuarantineRow): QuarantineTimeAgreement {
-  const db = Date.parse(row.timestamp);
-  const mark = Date.parse(markIso);
-  if (row.envelope.timeEncoding === "unreadable" || !Number.isFinite(db))
-    return { state: "not compared", reason: "the database time is not readable" };
-  if (!Number.isFinite(mark)) return { state: "not compared", reason: "the attribute time is not readable" };
-  const diff = mark - db;
-  const encodings = {
-    attributeEncoding: "unix-hex-seconds" as const,
-    databaseEncoding: row.envelope.timeEncoding,
-  };
-  if (Math.abs(diff) < S) return { state: "same second", ...encodings };
-  return {
-    state: diff > 0 ? "marked after the record" : "marked before the record",
-    band: gapBand(Math.abs(diff)),
-    ...encodings,
-  };
-}
-
-/** The flag word as the attribute has it: the download bit, and whether the word is exactly the sandbox bit. */
-function flagsOf(a: AttributeObservation): Pick<AttributeJoin, "downloadFlag" | "sandboxOnly"> {
-  const f = a.mark!.flags;
-  const downloadFlag = f.named.includes("download");
-  const sandboxOnly = !downloadFlag && f.named.length === 1 && f.named[0] === "sandbox" && !f.unnamed;
-  return { downloadFlag, ...(sandboxOnly ? { sandboxOnly } : {}) };
-}
+const agentAgreement = (markAgent: string, row: QuarantineRow) =>
+  quarantineAgentAgreement(markAgent, row.envelope);
+const timeAgreement = (markIso: string, row: QuarantineRow) =>
+  quarantineTimeAgreement(markIso, row.timestamp, row.envelope.timeEncoding);
+const flagsOf = (a: AttributeObservation) => quarantineFlagFacts(a.mark!.flags);
 
 const agentWords = (row: QuarantineRow): string =>
   [row.envelope.agent, row.envelope.bundleId ? `(${row.envelope.bundleId})` : ""].filter(Boolean).join(" ");
