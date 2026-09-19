@@ -14,6 +14,7 @@ import { campaignScopeSection } from "./campaignScopeSection.js";
 import { servedExposureSection } from "./servedExposureSection.js";
 import { kerberoastChainSection } from "./kerberoastChainSection.js";
 import { sensitiveAccessSection } from "./sensitiveAccessSection.js";
+import { handoffBriefSection } from "./handoffSection.js";
 import { byEventTime } from "../analysis/forensicSort.js";
 import { emptyReportMeta, type ReportMeta, type ReportRevision } from "./reportMeta.js";
 import { deriveGlossary } from "./glossary.js";
@@ -93,7 +94,6 @@ const DEFAULT_AUDIENCE =
 function trimmedList(values: string[]): string[] {
   return values.map((v) => v.trim()).filter((v) => v.length > 0);
 }
-
 function titlePage(
   state: InvestigationState,
   meta: ReportMeta,
@@ -146,7 +146,6 @@ function defaultRevision(state: InvestigationState, meta: ReportMeta): ReportRev
     comments: "Initial report",
   };
 }
-
 function revisions(state: InvestigationState, meta: ReportMeta, lines: string[]): void {
   lines.push("## 1.1 Report revisions", "");
   const rows = meta.revisions.length > 0 ? meta.revisions : [defaultRevision(state, meta)];
@@ -167,7 +166,6 @@ function distribution(meta: ReportMeta, lines: string[]): void {
   }
   lines.push("");
 }
-
 function disclaimer(lines: string[]): void {
   lines.push("## 1.3 Disclaimer and reading guide", "");
   lines.push(
@@ -1407,6 +1405,7 @@ function analystNotebook(entries: NotebookEntry[], lines: string[]): void {
   const TYPE_LABEL: Record<NotebookEntry["type"], string> = {
     note: "Note",
     question: "Question",
+    handoff: "Handoff",
   };
   for (const e of entries) {
     const label = TYPE_LABEL[e.type] ?? e.type;
@@ -1493,6 +1492,7 @@ export function renderMarkdownReport(
     servedExposure: () => servedExposureSection(state, lines),
     kerberoastChain: () => kerberoastChainSection(state, lines),
     sensitiveAccess: () => sensitiveAccessSection(state, lines),
+    handoffBrief: () => handoffBriefSection(state, notebookEntries, hypotheses, lines),
   };
 
   for (const key of orderedEnabledSections(template)) builders[key]();

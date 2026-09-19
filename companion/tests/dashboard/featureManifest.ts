@@ -134,6 +134,11 @@ export const FEATURES: Feature[] = [
     private: ["exposure", "currentCaseId", "loadGen", "status", "mutationError"],
   },
   {
+    file: "dashboard-handoff.js",
+    publish: ["loadHandoff", "initHandoff"],
+    private: ["brief", "markdown", "currentCaseId", "loadGen", "status"],
+  },
+  {
     file: "dashboard-tls-graph.js",
     publish: ["loadTlsGraph", "initTlsGraph"],
     private: ["graph", "currentCaseId", "loadGen", "status", "gv", "kindsEnabled"],

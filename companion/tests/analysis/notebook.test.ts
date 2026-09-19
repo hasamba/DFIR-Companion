@@ -29,6 +29,12 @@ describe("NotebookStore", () => {
     expect(list[0]).toMatchObject({ type: "note", text: "suspect lateral movement" });
   });
 
+  it("accepts a handoff entry (#1406)", async () => {
+    const e = await store.add("c1", { type: "handoff", text: "Check WS-03 first.", author: "alice" });
+    expect(e.type).toBe("handoff");
+    expect((await store.load("c1")).find((x) => x.id === e.id)?.type).toBe("handoff");
+  });
+
   it("adds a note and a question", async () => {
     await store.add("c1", { type: "note", text: "initial access via phishing" });
     await store.add("c1", { type: "question", text: "when was the first execution?" });

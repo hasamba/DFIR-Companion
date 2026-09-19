@@ -47,6 +47,7 @@ import { evtxRecordIdentity } from "./evtxRecordId.js";
 import { LOLBINS, NOISY_LOLBINS, SUSP_PATH } from "./winProcessBaseline.js";
 import { extractDomains, TEXT_DOMAIN_SKIP_RE, TEXT_FILE_EXT_RE, hasPlausibleTld } from "./textDomains.js";
 import { trimSentencePunctuation } from "../ingest/textUriTrim.js";
+import { joinSubjectParts, renderSubjectField, subjectBudget } from "./renderCommandLine.js";
 
 // Re-exported for the sibling importers, which already source their shared helpers
 // (aggregateEvents / addIoc / cleanIp) from this module. `hasPlausibleTld` now lives in
@@ -511,8 +512,8 @@ const SUBJECT_KEYS = [
   // pipeline record on one host shared a key and aggregated into one row naming one command. NOT
   // ContextInfo, its companion field: that is per-session boilerplate (severity, host app, user),
   // identical across thousands of records, so keying on it would separate nothing and only pad the
-  // description. Note renderFields caps each field at 140 chars, so two commands that first differ
-  // beyond that still merge — the same pre-existing limit ScriptBlockText lives with.
+  // description. Note renderFields caps a command field at 400 chars (renderCommandLine.ts, #1416)
+  // and every other field at 140, so two commands that first differ beyond that still merge.
   "Payload",
   "NewProcessName",
   "ParentImage",
@@ -546,13 +547,13 @@ const IMAGE_PATH_KEYS = [
   "ImagePath",
 ];
 
-function renderFields(ed: Row, keys: string[]): string {
-  const parts: string[] = [];
-  for (const k of keys) {
-    const v = str(getCI(ed, k)).trim();
-    if (v && v !== "-" && v !== "%%1833") parts.push(`${k}=${oneLine(v).slice(0, 140)}`);
-  }
-  return parts.join(" - ");
+// Command fields drop their Image prefix and get a wider cap; ParentCommandLine yields first (#1416).
+function renderFields(ed: Row, keys: string[], budget?: number): string {
+  const sibling = (field: string) => str(getCI(ed, field));
+  const values = keys.map((k) => [k, oneLine(str(getCI(ed, k)).trim())] as const);
+  const kept = values.filter(([, v]) => v && v !== "-" && v !== "%%1833");
+  const parts = kept.map(([k, v]) => renderSubjectField(k, v, sibling));
+  return joinSubjectParts(parts, budget);
 }
 
 // Compose DOMAIN\user (or UPN) account references so the asset graph picks them up.
@@ -766,14 +767,13 @@ export function mapWindows(
   // unrelated Application event quoting the word IEX is promoted and tagged T1059.001.
   const psText = isPwsh ? firstStr(ed, ["ScriptBlockText", "Payload"]) : str(getCI(ed, "ScriptBlockText"));
   const accts = winAccounts(ed);
-  const subject = renderFields(ed, def.kind === "dns" ? SUBJECT_KEYS : [...SUBJECT_KEYS, "QueryName"]); // the overlay owns it
+  const head = `${tool} ${def.label} (EID ${eid})${accts.length ? ` - ${accts.join(", ")}` : ""}`;
+  const hostTail = host ? ` @ ${host}` : "";
+  const subjectKeys = def.kind === "dns" ? SUBJECT_KEYS : [...SUBJECT_KEYS, "QueryName"]; // the overlay owns it
+  const subject = renderFields(ed, subjectKeys, subjectBudget(head, hostTail)); // #1416: the subject's share of 600
   let description = defender
     ? defenderDescription(def.label, eid, accts, subject, host)
-    : `${tool} ${def.label} (EID ${eid})`;
-  if (accts.length && !defender) description += ` - ${accts.join(", ")}`;
-  if (subject && !defender) description += ` - ${subject}`;
-  if (host && !defender) description += ` @ ${host}`;
-  description = description.slice(0, 600);
+    : `${head}${subject ? ` - ${subject}` : ""}${hostTail}`.slice(0, 600);
 
   // The service binary, under either channel's spelling (4697 says ServiceFileName, 7045 says
   // ImagePath). Read before the severity block because that block now grades it.
