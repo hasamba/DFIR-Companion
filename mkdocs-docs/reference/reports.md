@@ -33,6 +33,22 @@ warning in three places: a banner at the top of the document itself, a line on t
 log, and the report status line in the dashboard. Fix the cause and regenerate before the file
 leaves the team.
 
+### IOC block-list
+
+The block-list is an acting export: a firewall or SIEM will block what it lists. Four filters
+are always applied, whatever the dialog options say:
+
+- **Scope** — an indicator cited only by findings outside the investigation scope is left out.
+- **False-positive** — indicators you marked legitimate are left out.
+- **Retired** — a finding you retired in the Intel Retirement Review keeps its own IOCs off the
+  list (an IOC another, non-retired finding relates stays).
+- **Client-reported** — a value read from a header the sender controls (an email's
+  `X-Originating-IP`) is a claim, not an observation. It is left out whatever the intel verdict
+  says, so a forged header can never put a real address on a block-list.
+
+The TXT header names the applied filters on its `# Filters:` line. The minimum severity and
+the IOC types are yours to choose in the dialog.
+
 ---
 
 ## Report Customisation
