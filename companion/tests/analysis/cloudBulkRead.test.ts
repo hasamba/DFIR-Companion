@@ -11,6 +11,8 @@ import {
   assumptionFor,
   gradeGroup,
   summarizeBulkReads,
+  legacySummaryId,
+  summaryHead,
   summaryId,
   objectLoggingNote,
   MIN_OBJECTS,
@@ -20,7 +22,9 @@ import {
   roleSegment,
   type BulkGroup,
 } from "../../src/analysis/cloudBulkRead.js";
-import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { mergeDelta } from "../../src/analysis/stateMerge.js";
+import type { AnalysisDelta } from "../../src/analysis/responseSchema.js";
 
 let seq = 0;
 const at = (min: number) => new Date(Date.parse("2026-01-01T10:00:00Z") + min * 60000).toISOString();
@@ -823,6 +827,119 @@ describe("credential-id attribution (#979)", () => {
       target: { kind: "other", id: "ASIAAAAA", name: "temporary credential" },
     };
     expect(roleAssumptions([issuance])[0].issuedKey).toBe("ASIAAAAA");
+  });
+});
+
+// #1356: the summary id must be as discriminating as the grouping. Two groups the grouping keeps
+// apart (two credentials under one role from one address; one role name in two accounts or on two
+// providers) whose densest window starts in the same second shared ONE id, and the replaced-by-id
+// filter on the next merge silently deleted one of the two summaries.
+describe("summaryId is as discriminating as groupKey (#1356)", () => {
+  const stamped = (over: { key?: string; account?: string; provider?: string }) =>
+    manyReads(MIN_OBJECTS + 1, { principal: "Backup" }).map((e) => ({
+      ...e,
+      canonical: {
+        ...e.canonical!,
+        ...(over.key ? { authentication: { credentialId: over.key } } : {}),
+        cloud: {
+          ...e.canonical!.cloud,
+          provider: over.provider ?? "aws",
+          accountId: over.account ?? "111122223333",
+        },
+      },
+    }));
+  const idsOf = (out: ForensicEvent[]) =>
+    out.filter((e) => e.description.includes("[cloud bulk read:")).map((e) => e.id);
+
+  it("two credentials under one role, address, client and start second get two ids", () => {
+    const groups = groupBulkReads([...stamped({ key: "ASIAAAAA" }), ...stamped({ key: "ASIABBBB" })]);
+    expect(groups).toHaveLength(2);
+    expect(groups[0].first).toBe(groups[1].first);
+    expect(summaryId(groups[0])).not.toBe(summaryId(groups[1]));
+  });
+
+  it("one role name in two accounts, or on two providers, gets two ids", () => {
+    const [a, b] = groupBulkReads([
+      ...stamped({ account: "111122223333" }),
+      ...stamped({ account: "444455556666" }),
+    ]);
+    expect(summaryId(a)).not.toBe(summaryId(b));
+    const [c, d] = groupBulkReads([...stamped({ provider: "aws" }), ...stamped({ provider: "gcp" })]);
+    expect(summaryId(c)).not.toBe(summaryId(d));
+  });
+
+  it("both summaries survive a re-merge", () => {
+    const input = [...stamped({ key: "ASIAAAAA" }), ...stamped({ key: "ASIABBBB" })];
+    const once = summarizeBulkReads(input);
+    expect(idsOf(once)).toHaveLength(2);
+    const twice = summarizeBulkReads(once);
+    expect(idsOf(twice).sort()).toEqual(idsOf(once).sort());
+    expect(twice).toHaveLength(once.length);
+  });
+
+  // The loss was real only through the whole merge: correlate.ts unions rows whose timestamp,
+  // cleaned description and host agree, and the marker is stripped before that comparison — so
+  // the identity has to be spoken outside the marker as well as hashed into the id.
+  it("two credentials under one role both reach the persisted timeline, merge after merge", () => {
+    const rows = [...stamped({ key: "ASIAAAAA" }), ...stamped({ key: "ASIABBBB" })];
+    const base = {
+      findings: [],
+      iocs: [],
+      mitreTechniques: [],
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: "",
+      summary: "",
+    };
+    const ctx = { windowSequence: 1, timestamp: at(60), sourceScreenshots: [] };
+    const delta = { ...base, forensicEvents: rows } as unknown as AnalysisDelta;
+    const first = mergeDelta(emptyState("c1"), delta, ctx);
+    const second = mergeDelta(first, delta, { ...ctx, windowSequence: 2 });
+    const third = mergeDelta(second, { ...base, forensicEvents: [] }, { ...ctx, windowSequence: 3 });
+    for (const state of [first, second, third]) {
+      const summaries = state.forensicTimeline.filter((e) => e.description.includes("[cloud bulk read:"));
+      expect(summaries.map((e) => e.id).sort()).toEqual(idsOf(first.forensicTimeline).sort());
+      expect(summaries).toHaveLength(2);
+      expect(summaries.map((e) => e.description.split(" [cloud bulk read:")[0]).sort()).toEqual([
+        "Cloud bulk read by Backup (credential ASIAAAAA…) in aws account 111122223333 from 10.0.1.5",
+        "Cloud bulk read by Backup (credential ASIABBBB…) in aws account 111122223333 from 10.0.1.5",
+      ]);
+    }
+  });
+
+  it("a credential-only group still names the fingerprint alone; a bare principal reads as before", () => {
+    const [keyOnly] = groupBulkReads(
+      manyReads(MIN_OBJECTS + 1, { description: "AWS GetObject (s3) from 10.0.1.5" }).map((e) => ({
+        ...e,
+        canonical: {
+          ...e.canonical!,
+          actor: { kind: "account", name: "" },
+          authentication: { credentialId: "ASIACCCC" },
+        },
+      })),
+    );
+    expect(summaryHead(keyOnly)).toBe("Cloud bulk read by credential ASIACCCC… from 10.0.1.5");
+    const [bare] = groupBulkReads(manyReads(MIN_OBJECTS + 1, { principal: "Backup" }));
+    expect(summaryHead(bare)).toBe("Cloud bulk read by Backup from 10.0.1.5");
+  });
+
+  // A case merged before the fix holds a summary under the old id: it is replaced, not orphaned.
+  it("replaces a summary persisted under the pre-#1356 id instead of leaving it beside the new one", () => {
+    const input = stamped({ key: "ASIAAAAA" });
+    const [g] = groupBulkReads(input);
+    const legacy = legacySummaryId(g);
+    expect(legacy).not.toBe(summaryId(g));
+    const once = summarizeBulkReads(input);
+    const persistedBefore = once.map((e) => (e.id === summaryId(g) ? { ...e, id: legacy } : e));
+    const again = summarizeBulkReads(persistedBefore);
+    expect(idsOf(again)).toEqual([summaryId(g)]);
+    expect(again.some((e) => e.id === legacy)).toBe(false);
+  });
+
+  it("the id is case-insensitive on the added components, like groupKey", () => {
+    const [a] = groupBulkReads(stamped({ key: "asiaaaaa", account: "AbC", provider: "AWS" }));
+    const [b] = groupBulkReads(stamped({ key: "ASIAAAAA", account: "abc", provider: "aws" }));
+    expect(summaryId(a)).toBe(summaryId(b));
   });
 });
 

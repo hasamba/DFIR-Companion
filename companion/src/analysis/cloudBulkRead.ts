@@ -37,6 +37,9 @@
 
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 import { addressReach } from "./publicAddress.js";
+import { legacySummaryId, summaryHead, summaryId } from "./cloudBulkReadSummaryId.js";
+
+export { legacySummaryId, summaryHead, summaryId } from "./cloudBulkReadSummaryId.js";
 
 /** The marker this pass puts on its summary events. Stripped by correlate.ts before dedup keying. */
 export const BULK_READ_MARKER = "[cloud bulk read:";
@@ -608,26 +611,6 @@ export function gradeGroup(group: BulkGroup, ctx: BulkContext = {}): BulkVerdict
 
 // ─────────────────────────── the timeline pass ───────────────────────────
 
-/** A stable id for a group's summary, so a re-merge replaces its summary instead of adding another. */
-export function summaryId(group: BulkGroup): string {
-  // THE WINDOW'S START IS PART OF THE IDENTITY. Without it, one principal reading on Monday and
-  // again on Friday from the same address produced ONE id, so the second summary replaced the
-  // first and a whole session vanished from the record.
-  //
-  // And the hash is 64-bit, in two independent halves. A 32-bit djb2 collides on inputs an
-  // attacker can choose — `principal-1r` and `principal-30` hashed identically — and a collision
-  // here does not merely confuse two rows, it DELETES one, because replacement filters by id.
-  const key = `${lower(group.principal)}|${group.sourceIp}|${lower(group.userAgent)}|${group.first}`;
-  let h1 = 5381;
-  let h2 = 52711;
-  for (let i = 0; i < key.length; i++) {
-    const c = key.charCodeAt(i);
-    h1 = ((h1 * 33) ^ c) >>> 0;
-    h2 = ((h2 * 31) ^ (c + i)) >>> 0;
-  }
-  return `bulkread-${h1.toString(36)}${h2.toString(36)}`;
-}
-
 /**
  * Principals that read in bulk on several different days.
  *
@@ -675,6 +658,7 @@ export function summarizeBulkReads(
     if (!verdict) continue;
     const id = summaryId(group);
     replaced.add(id);
+    replaced.add(legacySummaryId(group));
     summaries.push({
       id,
       timestamp: group.first,
@@ -683,11 +667,7 @@ export function summarizeBulkReads(
       // `[cloud bulk read: …]` note — so when the identity lived only inside the note, every
       // summary cleaned to the same four words and two sessions that started in the same second
       // deduplicated into one. A data-theft finding disappeared from the record with no trace.
-      description:
-        // A credential-only group (#931 item 4 — Account Key/SAS auth) has no principal; name
-        // the credential fingerprint instead of rendering a blank.
-        `Cloud bulk read by ${group.principal || (group.credentialId ? `credential ${group.credentialId.slice(0, 12)}…` : "an unidentified caller")}${group.sourceIp ? ` from ${group.sourceIp}` : ""}` +
-        ` ${BULK_READ_MARKER} ${verdict.reason}]`,
+      description: `${summaryHead(group)} ${BULK_READ_MARKER} ${verdict.reason}]`,
       severity: verdict.severity,
       mitreTechniques: ["T1530", "T1213"],
       relatedFindingIds: [],
