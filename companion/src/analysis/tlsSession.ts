@@ -18,6 +18,7 @@
 // certificate / name / client / JA3 relationship rows one upload establishes — is tlsGraph*.ts (#997).
 
 import { createHash } from "node:crypto";
+import { decodedDiffersOf, readDerFacts } from "./tlsDerRead.js";
 import { createCanonicalEvent, type CanonicalEventEnvelope } from "./canonicalEvent.js";
 import { isValidQueryName } from "./dnsRecord.js";
 import { identityMark, keyDigest } from "./recordIdentity.js";
@@ -46,6 +47,10 @@ export interface CertificateFacts {
   notBefore?: string;
   notAfter?: string;
   ca?: boolean;
+  /** The facts were read from the certificate's own DER bytes (tlsDerRead.ts, #997). */
+  decoded?: "der";
+  /** Stated fields (the record's own) whose RDN set differs from the decoded bytes' — a state, never a pick. */
+  decodedDiffers?: string[];
 }
 
 /** Why the x509 join did not fill an identity, or what it found beside one (tlsGraphJoin.ts, #997). */
@@ -399,9 +404,10 @@ function derCertificates(row: Row, t: Row, role: "server" | "client", fallbackTs
     const fp = derFingerprint(der)?.value;
     if (!fp || seen.has(fp)) continue;
     seen.add(fp);
-    // The leaf's subject/issuer/serial are the record's own fields; a chain entry's are not
-    // decoded here (no ASN.1 parser), so it carries its sha256 and nothing else. The leaf is the
-    // explicit `certificate`, else the FIRST chain entry (Suricata writes the chain leaf-first).
+    // Every member's facts are read from its own bytes (tlsDerRead.ts, #997). The leaf — the
+    // explicit `certificate`, else the FIRST chain entry (Suricata writes the chain leaf-first) —
+    // keeps the record's own stated fields on top and says which of them differ from the bytes;
+    // bytes that will not decode leave the member with its sha256 and nothing else.
     out.push({
       source: "suricata-tls",
       kind: "certificate",
@@ -410,10 +416,30 @@ function derCertificates(row: Row, t: Row, role: "server" | "client", fallbackTs
       uid: text(getCI(row, "flow_id")),
       observer: observerOf(row),
       cert: { kind: "fingerprint", value: fp, alg: "sha256" },
-      certificate: leaf ? suricataFacts(t) : {},
+      certificate: withDecoded(leaf ? suricataFacts(t) : {}, der),
     });
   }
   return out;
+}
+
+/** The stated facts with the DER's own beneath them: decoded fields fill what the record did not state. */
+function withDecoded(stated: CertificateFacts, b64: string): CertificateFacts {
+  const v = b64.replace(/\s+/g, "");
+  const d = BASE64.test(v) ? readDerFacts(Buffer.from(v, "base64")) : undefined;
+  if (!d) return stated;
+  const names = d.sanNames;
+  const decoded: CertificateFacts = {
+    subject: d.subject,
+    issuer: d.issuer,
+    ...(d.serial ? { serial: d.serial } : {}),
+    ...(names.length ? boundedNames(names) : {}),
+    ...(names.length ? dnsNamesOf(names.filter((n) => isTlsHostname(n, "san"))) : {}),
+    ...(d.notBefore ? { notBefore: d.notBefore } : {}),
+    ...(d.notAfter ? { notAfter: d.notAfter } : {}),
+    ca: d.ca,
+  };
+  const differs = decodedDiffersOf(stated, decoded);
+  return { ...decoded, ...stated, decoded: "der", ...(differs.length ? { decodedDiffers: differs } : {}) };
 }
 
 /** Suricata 8's `tls.client`: the client's certificate, when the record carries one. */

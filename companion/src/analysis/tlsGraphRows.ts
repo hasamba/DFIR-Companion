@@ -30,6 +30,7 @@ const KIND_WORDS: Record<TlsGraphNodeKind, string> = {
   name: "name",
   "client-certificate": "client certificate",
   ja3: "ja3",
+  ja3s: "ja3s",
 };
 
 const fmt = (n: number): string => n.toLocaleString("en-US");
@@ -132,7 +133,8 @@ const OVERFLOW_KEY = (kind: TlsGraphNodeKind, sensor: string, sources: readonly 
 
 // ───────────────────────────── words ─────────────────────────────
 
-const idWords = (n: TlsNode): string => (n.ref ? refWords(n.ref) : n.kind === "ja3" ? ends(n.id) : "");
+const idWords = (n: TlsNode): string =>
+  n.ref ? refWords(n.ref) : n.kind === "ja3" || n.kind === "ja3s" ? ends(n.id) : "";
 
 /** `<count> — a, b, c (+n more)`: the first LISTED_WORDS_MAX values, neutralised. */
 function countList(d: Distinct): string {
@@ -222,6 +224,15 @@ function ja3Tags(n: TlsNode): string[] {
   ];
 }
 
+function ja3sTags(n: TlsNode): string[] {
+  return [
+    `server addresses: ${countList(n.servers)}`,
+    ...(n.names.count ? [`under: ${listWords(n.names, "name")}`] : []),
+    `client addresses: ${countWords(n.clientAddresses)}`,
+    "a TLS library signature of the server stack — every server with the same stack shares it; never an identity",
+  ];
+}
+
 function tagsOf(n: TlsNode, g: TlsGraph): string[] {
   const body =
     n.kind === "certificate"
@@ -230,7 +241,9 @@ function tagsOf(n: TlsNode, g: TlsGraph): string[] {
         ? nameTags(n)
         : n.kind === "client-certificate"
           ? clientCertificateTags(n)
-          : ja3Tags(n);
+          : n.kind === "ja3s"
+            ? ja3sTags(n)
+            : ja3Tags(n);
   const leads = n.leads.map((l) => `lead: ${l.words}`);
   // The name node's span leads with the name, then the leads; every other kind leads with its leads.
   const ordered = n.kind === "name" ? [body[0], ...leads, ...body.slice(1)] : [...leads, ...body];

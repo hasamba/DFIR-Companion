@@ -20,6 +20,11 @@ import {
   monitorArtifactMap,
   type PollDeps,
 } from "../integrations/velociraptor/monitorPoller.js";
+import {
+  ensureClientMonitoring,
+  isClientMonitoringEnabled,
+  releaseClientMonitoring,
+} from "../integrations/velociraptor/clientMonitoringTable.js";
 import type { Severity } from "../analysis/stateTypes.js";
 import { logLine } from "../logging/serverLogger.js";
 
@@ -47,11 +52,24 @@ export interface VeloMonitors {
       hostname?: string;
       minSeverity?: Severity;
       allClients?: boolean;
+      /** true = the artifact was just read from Velociraptor's monitoring table; skip the enable step. */
+      alreadyEnabled?: boolean;
     },
   ): Promise<VeloMonitor>;
   scheduleVeloMonitor(caseId: string, monitor: VeloMonitor): void;
   pollVeloMonitor(caseId: string, id: string): Promise<void>;
   stopVeloMonitorTimer(caseId: string, id: string): void;
+  /**
+   * Re-verify that the monitor's artifact is still in Velociraptor's Client Monitoring table (#1409).
+   * Returns the monitor unchanged when it is; otherwise persists + returns it as errored with a
+   * plain-language lastError so the dashboard stops showing a green light over a silent stream.
+   */
+  verifyVeloMonitorEnabled(caseId: string, monitor: VeloMonitor): Promise<VeloMonitor>;
+  /**
+   * Remove a monitor and, when the companion enabled its artifact and no other monitor in any case
+   * still uses it, take the artifact back out of Velociraptor's Client Monitoring table (#1409).
+   */
+  deleteVeloMonitor(caseId: string, id: string): Promise<void>;
   /** Re-arm every non-stopped monitor across all cases (called once at startup). */
   resumeVeloMonitors(): Promise<void>;
 }
@@ -191,12 +209,27 @@ export function createVeloMonitors({ store, options, ingestStreamed }: VeloMonit
       hostname?: string;
       minSeverity?: Severity;
       allClients?: boolean;
+      alreadyEnabled?: boolean;
     },
   ): Promise<VeloMonitor> {
     const monStore = options.veloMonitorStore!;
     const nowEpoch = Math.floor(Date.now() / 1000);
     const id = monitorId(spec.clientId, spec.artifact);
     const existing = await monStore.get(caseId, id);
+    // Put the artifact in Velociraptor's Client Monitoring table first (#1409): a monitor for an
+    // artifact no client collects polls an empty stream forever while looking healthy. Throws (so the
+    // route answers 502 and nothing is persisted) when the table does not take it. A re-armed monitor
+    // keeps its "added" mark so the delete path still knows the companion owns the entry.
+    const ensured = spec.alreadyEnabled
+      ? "present"
+      : await ensureClientMonitoring(options.velociraptorClient!, spec.artifact);
+    // "present" because ANOTHER companion monitor put it there → this one inherits the "added" mark, so
+    // the entry is still released once the last monitor for the artifact is deleted.
+    const veloTableEntry =
+      ensured === "present" &&
+      (await someMonitor((m) => m.artifact === spec.artifact && m.veloTableEntry === "added"))
+        ? "added"
+        : ensured;
     const monitor: VeloMonitor = {
       id,
       clientId: spec.clientId,
@@ -210,14 +243,61 @@ export function createVeloMonitors({ store, options, ingestStreamed }: VeloMonit
       createdAt: existing?.createdAt ?? new Date().toISOString(),
       addedEvents: existing?.addedEvents ?? 0,
       polls: existing?.polls ?? 0,
+      veloTableEntry: existing?.veloTableEntry === "added" ? "added" : veloTableEntry,
     };
     await monStore.upsert(caseId, monitor);
     scheduleVeloMonitor(caseId, monitor);
     options.onVeloMonitor?.(caseId);
     logLine(
-      `[velo-monitor] started ${spec.artifact} on ${monitor.hostname || spec.clientId} (every ${spec.pollSeconds}s) for case ${caseId}`,
+      `[velo-monitor] started ${spec.artifact} on ${monitor.hostname || spec.clientId} (every ${spec.pollSeconds}s) for case ${caseId}` +
+        (veloTableEntry === "added" ? " — enabled it in Velociraptor's Client Monitoring table" : ""),
     );
     return monitor;
+  }
+
+  async function verifyVeloMonitorEnabled(caseId: string, monitor: VeloMonitor): Promise<VeloMonitor> {
+    const client = options.velociraptorClient;
+    const monStore = options.veloMonitorStore;
+    if (!client || !monStore) return monitor;
+    if (await isClientMonitoringEnabled(client, monitor.artifact)) return monitor;
+    const flagged: VeloMonitor = {
+      ...monitor,
+      status: "error",
+      lastError: `${monitor.artifact} is no longer enabled in Velociraptor → Client Monitoring — no client is collecting it. Start the monitor again to re-enable it.`,
+    };
+    await monStore.upsert(caseId, flagged);
+    options.onVeloMonitor?.(caseId);
+    return flagged;
+  }
+
+  // True when any persisted monitor, in any case, matches — the cross-case view the table needs,
+  // since one Velociraptor entry serves every case.
+  async function someMonitor(match: (m: VeloMonitor) => boolean): Promise<boolean> {
+    const monStore = options.veloMonitorStore!;
+    for (const c of await store.listCases()) {
+      for (const m of await monStore.list(c.caseId)) if (match(m)) return true;
+    }
+    return false;
+  }
+
+  async function deleteVeloMonitor(caseId: string, id: string): Promise<void> {
+    const monStore = options.veloMonitorStore!;
+    const monitor = await monStore.get(caseId, id);
+    stopVeloMonitorTimer(caseId, id);
+    await monStore.remove(caseId, id);
+    options.onVeloMonitor?.(caseId);
+    if (!monitor || monitor.veloTableEntry !== "added" || !options.velociraptorClient) return;
+    // Another monitor (any case; this one is already removed) still watches the artifact → its entry stays.
+    if (await someMonitor((m) => m.artifact === monitor.artifact)) return;
+    // Best-effort: the monitor is gone either way; a failed release is logged, not surfaced as a 5xx.
+    try {
+      await releaseClientMonitoring(options.velociraptorClient, monitor.artifact);
+      logLine(`[velo-monitor] removed ${monitor.artifact} from Velociraptor's Client Monitoring table`);
+    } catch (err) {
+      logLine(
+        `[velo-monitor] could not remove ${monitor.artifact} from Client Monitoring: ${(err as Error).message}`,
+      );
+    }
   }
 
   return {
@@ -226,6 +306,8 @@ export function createVeloMonitors({ store, options, ingestStreamed }: VeloMonit
     scheduleVeloMonitor,
     pollVeloMonitor,
     stopVeloMonitorTimer,
+    verifyVeloMonitorEnabled,
+    deleteVeloMonitor,
     resumeVeloMonitors,
   };
 }

@@ -6,6 +6,7 @@ import { smbBlockSchema, transferBlockSchema, webBlockSchema } from "./canonical
 import { dnsBlockSchema } from "./canonicalDns.js";
 import { tlsGraphBlockSchema } from "./canonicalTls.js";
 import { quarantineAttributeBlockSchema, quarantineBlockSchema } from "./canonicalQuarantine.js";
+import { tlsCertificateProvenanceFields } from "./canonicalTls.js";
 import { defenderBlockSchema } from "./canonicalDefender.js";
 import { mobileBlockSchema } from "./canonicalMobile.js";
 import { entraPathBlockSchema } from "./canonicalEntra.js";
@@ -89,13 +90,6 @@ const canonicalProcessSchema = z.object({
     })
     .optional(),
 });
-
-const tlsJoinNoteSchema = z.enum([
-  "records disagree",
-  "disagrees with this record",
-  "not among those read",
-  "subject/issuer differ",
-]);
 
 const rawRecordPointerSchema = z.object({
   source: z.string().min(1),
@@ -247,9 +241,7 @@ export const canonicalEventEnvelopeSchema = z.object({
           notBefore: z.string().optional(),
           notAfter: z.string().optional(),
           ca: z.boolean().optional(),
-          // The identity was filled from the upload's x509 record by FUID (tlsGraphJoin.ts, #997), or why that join was not made.
-          identityFrom: z.literal("x509 record").optional(),
-          x509Join: tlsJoinNoteSchema.optional(),
+          ...tlsCertificateProvenanceFields,
         })
         .optional(),
       // On a certificate row: which side presented it (Zeek x509 client_cert / host_cert).
@@ -270,8 +262,7 @@ export const canonicalEventEnvelopeSchema = z.object({
           notBefore: z.string().optional(),
           notAfter: z.string().optional(),
           chainFuids: z.array(z.string()).optional(),
-          identityFrom: z.literal("x509 record").optional(),
-          x509Join: tlsJoinNoteSchema.optional(),
+          ...tlsCertificateProvenanceFields,
         })
         .optional(),
       observer: z.object({ name: z.string(), sourceField: z.string() }).optional(),

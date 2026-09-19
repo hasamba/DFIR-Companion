@@ -162,6 +162,10 @@ function countingRunner(overrides: { huntState?: string } = {}): { runner: VqlRu
   const runner: VqlRunner = async (statements) => {
     const program = statements.join("\n");
     vql.push(program);
+    // The Client Monitoring table answers as "everything is enabled" (#1409): the enable step is not
+    // what this file pins, and an empty table would make every start a 502.
+    if (program.includes("get_client_monitoring()"))
+      return { rows: [{ State: { artifacts: { artifacts: ["Windows.Events.ProcessCreation"] } } }], raw: "" };
     if (program.includes("FROM hunts()")) {
       // `expires` far in the future, so a STOPPED answer is not misread as "stopped early".
       return {

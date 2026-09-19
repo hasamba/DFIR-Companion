@@ -726,6 +726,19 @@ leads a cluster suggests, and every claim is bounded to what the retained record
   [client addresses: 3] [to server addresses: 2 — …] [under: 2 names — …] [a TLS library signature
   — every client with the same stack shares it; never an identity] …`. A hash seen from 150
   addresses says `[client addresses: 150]` and nothing more.
+- **A JA3S row** — the server's own signature, emitted when a hash has two or more sessions —
+  reads `TLS-graph ja3s f4febc55…fda8 [server addresses: 1 — 203.0.113.9:443] [under: 2 names —
+  …] [client addresses: 3] [a TLS library signature of the server stack — every server with the
+  same stack shares it; never an identity] …`. It raises no lead: a server stack concentrated on
+  few addresses is the ordinary case.
+- **Decoded chain members.** A Suricata record's `tls.chain` / `tls.certificate` entries are
+  read from their own DER bytes — subject and issuer in the certificate's RDN order, serial, every
+  SAN, validity and the CA bit — so an intermediate or root carries `subject C=US, O=…, CN=Root
+  CA; … decoded from the DER` instead of a sha256 alone. The leaf keeps the record's stated
+  fields on top; when a stated subject or issuer names a different set of RDN components than the
+  bytes, the row says `record subject differs from the DER's` — a state, never a pick. Bytes that
+  will not decode leave the entry with its sha256 and nothing else. Nothing is verified (no
+  signature check, no chain validity) and no SAN becomes an indicator.
 - **Leads, with the alternative in the same span.** A lead ranks first under the budget and is
   kept before a plain node at the bound; it is a stronger *basis*, not a grade — every row stays
   Info with no technique, and every lead ends `a cluster proves nothing on its own — strengthen it
@@ -775,10 +788,35 @@ leads a cluster suggests, and every claim is bounded to what the retained record
   statement are aggregates, like every row's count;
   `uid`, x509 `id` and record indexes are never keyed. The graph, TLS session, flow, web and DNS
   families share the event budget the upload's detections leave, round-robin.
-- **What this does not do.** It does not relate records across uploads or sensors, decode chain
-  members, build JA3S (server-signature) nodes, draw a graph in the dashboard, or strengthen a
-  lead with endpoint evidence on its own — the correlate layer unions the *session* rows by
-  address as it does today.
+- **What this does not do.** It does not strengthen a lead with endpoint evidence on its own —
+  the correlate layer unions the *session* rows by address as it does today. Relationships across
+  uploads and sensors are the dashboard's **TLS Relationships** panel (below).
+
+### TLS relationships across uploads: the dashboard panel
+
+The **TLS Relationships** panel (Analyst, Lead, Report, Deep-Dive and Hunt Prep views) reads every
+TLS-graph row in the case — forensic and super-timeline, every upload, every sensor — and merges
+them by node identity at read time: one entry per certificate, name, client certificate, JA3 or
+JA3S, with the union of what every sensor saw beside it and, per observation, which sensor and
+which upload saw it and when. Nothing is persisted; nothing contacts observed infrastructure; the
+AI never reads the panel.
+
+- **The graph.** The same controls as the Asset graph (filter, fit, fullscreen, PNG, refresh,
+  layout and edge style, transparency, kind toggles). Nodes: certificates, names, client
+  certificates, JA3, JA3S, and the server endpoints the rows list; edges: a certificate *presented
+  under* a name and *at* a server, a JA3/JA3S *under* a name / *presented by* a server, a client
+  certificate *presented to* a server. Tap a node for its observations table. The drawing is
+  bounded (400 nodes, 1,200 edges); the table under it lists every node the route returned.
+- **Between sensors, stated — never resolved.** A certificate whose names differ between sensors
+  reads `names differ between sensors: sensor-a only a.example.net; sensor-b only b.example.net`;
+  a name served with different certificates on different sensors is said the same way. When any
+  sensor's list was incomplete (`256+`), the comparison is withheld: `names not compared between
+  sensors: a sensor's list is incomplete`. Leads keep the sensor that raised them. "Same
+  operator", "moved" and every verdict stay unsaid: a certificate shared across names is shared
+  hosting, a CDN, an inspection proxy or one operator, and the records do not say which.
+- **Bounds.** 4,096 nodes per call (the rest counted), 64 observations kept per node (sensors and
+  uploads still counted over all), 32 values listed per unioned edge. Rows an upload folded past
+  its own bound are counted as `folded` — nothing is known about them.
 
 ### Web requests and transfers: what one record establishes, and what one upload joins
 

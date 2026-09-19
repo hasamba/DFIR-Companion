@@ -70,6 +70,7 @@ import { registerMobileBackupGenerationRoutes } from "../routes/mobileBackupGene
 import { registerHostDuplicateRoutes } from "../routes/hostDuplicates.js";
 import { registerProxyHostIdentityRoutes } from "../routes/proxyHostIdentity.js";
 import { registerResolverEndpointIdentityRoutes } from "../routes/resolverEndpointIdentity.js";
+import { registerTlsGraphRoutes } from "../routes/tlsGraph.js";
 import { registerDnsCrossUploadConnRoutes } from "../routes/dnsCrossUploadConnMatches.js";
 import { registerDnsEndpointCrossUploadConnRoutes } from "../routes/dnsEndpointCrossUploadConnMatches.js";
 import { registerAiStateRoutes } from "../routes/aiState.js";
@@ -201,6 +202,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerHostDuplicateRoutes(app, ctx);
   registerProxyHostIdentityRoutes(app, ctx);
   registerResolverEndpointIdentityRoutes(app, ctx);
+  registerTlsGraphRoutes(app, ctx);
   registerDnsCrossUploadConnRoutes(app, ctx);
   registerDnsEndpointCrossUploadConnRoutes(app, ctx);
   registerAiStateRoutes(app, ctx);
