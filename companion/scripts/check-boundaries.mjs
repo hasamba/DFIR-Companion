@@ -36,14 +36,19 @@
  *   node scripts/check-boundaries.mjs            # gate
  *   node scripts/check-boundaries.mjs --update   # re-record after removing violations (shrink-only)
  *   node scripts/check-boundaries.mjs --init     # re-baseline; additions are printed, justify them
- *   node scripts/check-boundaries.mjs --json     # the counts ARCHITECTURE.md quotes; read-only
+ *   node scripts/check-boundaries.mjs --json     # the live counts, incl. the comply/total pair; read-only
  *
- * --update AND --init ALSO REWRITE ARCHITECTURE.md (issue #907). Three figures in that document are
- * outputs of this scan, and moduleMap.test.ts asserts all three, so they could not rot — but nothing
- * wrote them either, which made every PR that changed the ledger hand-edit numbers it could not know
- * without running this script, and made two branches touching the same sentence conflict on it. The
- * gate already rewrites the ledger it derives; the prose quoting that ledger is the same kind of
- * output. --json stays read-only, because reading the counts must never move anything.
+ * --update AND --init ALSO REWRITE ARCHITECTURE.md (issue #907). The violation count that document
+ * quotes is an output of this scan, and moduleMap.test.ts asserts it, so it could not rot — but
+ * nothing wrote it either, which made every PR that changed the ledger hand-edit a number it could
+ * not know without running this script. The gate already rewrites the ledger it derives; the prose
+ * quoting that ledger is the same kind of output. --json stays read-only, because reading the counts
+ * must never move anything.
+ *
+ * The comply/total pair is NOT written into ARCHITECTURE.md any more (#1368): both halves move with
+ * every import added anywhere, so a committed copy made every pair of concurrent PRs conflict and
+ * cost a CI cycle per lost race. --json is where that pair lives; moduleMap.test.ts rejects a doc
+ * that states it.
  *
  * No dependency: like check-imports.mjs, the graph is a regex over the import statements, because
  * the companion imports its own modules exclusively as relative specifiers ending in `.js`.
@@ -246,13 +251,11 @@ if (unclassified.length > 0) {
 const found = [...new Set(violations.map((v) => v.key))].sort();
 const detailOf = new Map(violations.map((v) => [v.key, v.detail]));
 
-// The figures ARCHITECTURE.md quotes, read out of the same pass that finds the violations rather
-// than counted by hand into the prose. Its "N of the M cross-domain file dependencies already
-// comply" sentence had drifted far enough that the implied violation count contradicted the ledger
-// sitting next to this script — because nothing derived the pair and nothing checked it.
-// tests/architecture/moduleMap.test.ts now asserts the doc against this output, the way it already
-// does for the violation count. As everywhere else in this file, the numbers themselves are not
-// repeated into a comment: a number written into a comment is a number that goes stale.
+// The live counts, read out of the same pass that finds the violations. ARCHITECTURE.md quotes only
+// the violation count (the ledger's length); the comply/total pair is reported here and nowhere
+// else (#1368 — see the header). tests/architecture/moduleMap.test.ts asserts the scan's counts
+// against the ledger. As everywhere else in this file, the numbers themselves are not repeated into
+// a comment: a number written into a comment is a number that goes stale.
 if (process.argv.includes("--json")) {
   console.log(
     JSON.stringify(
@@ -284,9 +287,9 @@ function syncArchitecture(violations) {
     violations,
   });
   const where = relative(join(COMPANION, ".."), ARCHITECTURE);
-  if (!doc.pair || doc.violationClaims === 0) {
+  if (doc.violationClaims === 0) {
     console.warn(
-      `[boundaries] ${where} no longer states ${!doc.pair ? "the comply/total pair" : "a violation count"} — left it alone; check the prose.`,
+      `[boundaries] ${where} no longer states a violation count — left it alone; check the prose.`,
     );
   }
   if (!doc.changed) return;

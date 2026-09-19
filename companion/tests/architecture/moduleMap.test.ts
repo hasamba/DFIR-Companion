@@ -43,9 +43,6 @@ const boundaryCounts = (): {
     ),
   );
 
-/** "1,679" -> 1679. The doc writes thousands separators; nothing else in it does. */
-const num = (s: string): number => Number(s.replace(/,/g, ""));
-
 describe("module map ↔ ARCHITECTURE.md", () => {
   it("documents every analysis domain, with the tier the map assigns it", async () => {
     const map = await readMap();
@@ -97,28 +94,22 @@ describe("module map ↔ ARCHITECTURE.md", () => {
     for (const claimed of claims) expect(claimed).toBe(ledger.length);
   });
 
-  it("states a comply/total pair that the boundary scan actually produces", async () => {
-    // The number that rotted. The doc read "1,275 of the 1,323 cross-domain file dependencies
-    // already comply", a difference that contradicted the ledger sitting beside it — and both
-    // halves were stale besides. Every other figure in that document stayed right because the test
-    // above guarded it; this one had nothing, so it drifted quietly while still reading as
-    // authoritative, which is the failure mode a wrong number in prose always has.
-    //
-    // Both halves are asserted, not just the difference: a pair can be internally consistent and
-    // still describe a codebase two hundred dependencies smaller than this one.
-    const counts = boundaryCounts();
+  it("does NOT state a comply/total pair — the scan and the ledger agree, but the prose stays silent (#1368)", async () => {
+    // The pair used to be pinned here (#907) and it rotted the other way: both halves move with
+    // every import added anywhere in the tree, so any two concurrent PRs regenerated the same
+    // sentence to different values, and the second one to merge went CONFLICTING with zero checks
+    // on the merge result — a CI cycle lost per race at five-plus merges an hour. The live pair is
+    // one `npm run check:boundaries -- --json` away; a committed copy of it was only ever a
+    // conflict generator. This guards against someone writing it back in.
     const doc = await readDoc();
+    expect(
+      /[\d,]+ of the [\d,]+ cross-domain file dependencies already comply/.test(doc),
+      "ARCHITECTURE.md must not commit the comply/total pair (#1368) — point at check:boundaries --json instead",
+    ).toBe(false);
 
-    const m = doc.match(/([\d,]+) of the ([\d,]+) cross-domain file dependencies already comply/);
-    expect(m, "ARCHITECTURE.md should state the cross-domain comply/total pair").not.toBeNull();
-
-    const [, complying, total] = m as RegExpMatchArray;
-    expect(num(complying), "the complying figure has drifted from check-boundaries").toBe(counts.complying);
-    expect(num(total), "the cross-domain total has drifted from check-boundaries").toBe(counts.crossDomain);
-
-    // The pair and the ledger have to agree with each other too. Asserting each against the scan
-    // separately would let a scan whose two counts disagreed satisfy both — and the whole reason
-    // the old pair looked wrong was that its difference contradicted the ledger.
+    // The scan's two counts still have to agree with the ledger beside it — that is the invariant
+    // the pinned sentence was guarding, and it survives the sentence.
+    const counts = boundaryCounts();
     const ledger = JSON.parse(
       await readFile(new URL("companion/scripts/boundary-violations.json", ROOT), "utf8"),
     ) as string[];
