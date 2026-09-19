@@ -255,6 +255,180 @@ describe("SuperTimelineStore", () => {
     expect(new Set(r.events.map((e) => e.id))).toEqual(new Set(["newest", "undated", "fresh"]));
   });
 
+  // #1429. query() used to answer every page by scanning and JSON-parsing the whole store — count,
+  // facets and page all came out of one pass over every row — and the scan's cursor defeated the
+  // time index, so each 1,000-row page re-sorted the whole table. 100k rows: 92 s for a first page
+  // of 100; 446k rows: never. The count, the facets and the page now come out of SQL when no text
+  // filter is set. These pin that the SQL path answers exactly what the scan path answered.
+  describe("the indexed query path (#1429)", () => {
+    // Dated and undated rows, three origins (one row with no origin at all → "Unknown"), two hosts
+    // plus a host-less row, a sidecar label, a tag-derived label that OVERRIDES the sidecar for one
+    // event, and a star.
+    async function seed() {
+      await store.append("c1", [
+        ev({
+          id: "d1",
+          timestamp: "2026-06-01T00:00:00Z",
+          artifactName: "Windows.NTFS.MFT",
+          asset: "HOST-A",
+        }),
+        ev({
+          id: "d2",
+          timestamp: "2026-06-02T00:00:00Z",
+          artifactName: "Windows.NTFS.MFT",
+          asset: "HOST-B",
+        }),
+        ev({ id: "d3", timestamp: "2026-06-03T00:00:00Z", sources: ["Sysmon"], asset: "HOST-A" }),
+        ev({ id: "d4", timestamp: "2026-09-01T00:00:00Z", artifactName: "Windows.Registry.UserAssist" }),
+        ev({
+          id: "u1",
+          timestamp: "",
+          description: "undated one",
+          artifactName: "Windows.NTFS.MFT",
+          asset: "HOST-A",
+        }),
+        ev({ id: "u2", timestamp: "", description: "undated two" }),
+      ]);
+      await store.setLabels("c1", "d2", ["key-evidence"]);
+      await store.setLabels("c1", "u1", ["noise", "starred"]);
+    }
+    // The route's tag-derived map: d3 gains a label the sidecar never had, and u1's sidecar labels
+    // are replaced (an id present in the map uses the map's labels, nothing else).
+    const labelMap = { d3: ["key-evidence"], u1: ["from-tags"] };
+
+    // Forcing the scan path: an exclude term that matches nothing changes no result, but it does
+    // switch query() onto the row-by-row path. Every query below is answered both ways and must agree.
+    async function both(q: Parameters<typeof store.query>[1], map?: Record<string, string[]>) {
+      const fast = await store.query("c1", q, map);
+      const scanned = await store.query("c1", { ...q, excludeText: ["zzz-matches-nothing"] }, map);
+      expect(scanned).toEqual(fast);
+      return fast;
+    }
+
+    it("orders dated rows first, then undated in insertion order, with an offset that crosses the boundary", async () => {
+      await seed();
+      expect((await both({})).events.map((e) => e.id)).toEqual(["d1", "d2", "d3", "d4", "u1", "u2"]);
+      expect((await both({ offset: 3, limit: 2 })).events.map((e) => e.id)).toEqual(["d4", "u1"]);
+      expect((await both({ offset: 5, limit: 2 })).events.map((e) => e.id)).toEqual(["u2"]);
+      expect((await both({ offset: 9, limit: 2 })).events).toEqual([]);
+      expect((await both({ offset: 3, limit: 2 })).total).toBe(6);
+    });
+
+    it("facets come from the time window alone, not from the origin/host/label selection", async () => {
+      await seed();
+      const r = await both({ origins: ["Sysmon"] });
+      expect(r.events.map((e) => e.id)).toEqual(["d3"]);
+      expect(r.total).toBe(1);
+      expect(r.origins).toEqual(["Sysmon", "Unknown", "Windows.NTFS.MFT", "Windows.Registry.UserAssist"]);
+      expect(r.hosts).toEqual(["(no host)", "HOST-A", "HOST-B"]);
+      expect(r.labelsAvailable).toEqual(["key-evidence", "noise"]); // the star is never a facet
+    });
+
+    it("a time window narrows the facets, keeps undated rows, and counts only what it keeps", async () => {
+      await seed();
+      const r = await both({ from: "2026-05-01T00:00:00Z", to: "2026-07-01T00:00:00Z" });
+      expect(r.events.map((e) => e.id)).toEqual(["d1", "d2", "d3", "u1", "u2"]);
+      expect(r.total).toBe(5);
+      expect(r.origins).toEqual(["Sysmon", "Unknown", "Windows.NTFS.MFT"]);
+    });
+
+    it("filters by origin, excluded origin and excluded host on the stored columns", async () => {
+      await seed();
+      expect((await both({ origins: ["Windows.NTFS.MFT", "Unknown"] })).events.map((e) => e.id)).toEqual([
+        "d1",
+        "d2",
+        "u1",
+        "u2",
+      ]);
+      expect((await both({ exclude: ["Windows.NTFS.MFT"] })).events.map((e) => e.id)).toEqual([
+        "d3",
+        "d4",
+        "u2",
+      ]);
+      expect((await both({ excludeHosts: ["HOST-A"] })).events.map((e) => e.id)).toEqual(["d2", "d4", "u2"]);
+      expect((await both({ excludeHosts: ["(no host)"] })).events.map((e) => e.id)).toEqual([
+        "d1",
+        "d2",
+        "d3",
+        "u1",
+      ]);
+    });
+
+    it("filters by label, tagged-only and starred from the sidecar", async () => {
+      await seed();
+      expect((await both({ labels: ["key-evidence"] })).events.map((e) => e.id)).toEqual(["d2"]);
+      expect((await both({ labels: ["noise", "key-evidence"] })).events.map((e) => e.id)).toEqual([
+        "d2",
+        "u1",
+      ]);
+      expect((await both({ taggedOnly: true })).events.map((e) => e.id)).toEqual(["d2", "u1"]);
+      expect((await both({ starred: true })).events.map((e) => e.id)).toEqual(["u1"]);
+      expect(
+        (await both({ starred: true, taggedOnly: true, labels: ["noise"] })).events.map((e) => e.id),
+      ).toEqual(["u1"]);
+    });
+
+    it("an id in the tag map uses the map's labels instead of the sidecar; every other id keeps the sidecar", async () => {
+      await seed();
+      const r = await both({ labels: ["key-evidence"] }, labelMap);
+      expect(r.events.map((e) => e.id)).toEqual(["d2", "d3"]);
+      expect(r.labelsAvailable).toEqual(["from-tags", "key-evidence"]); // u1's sidecar "noise" is gone
+      expect((await both({ starred: true }, labelMap)).events).toEqual([]); // u1's star lived in the sidecar
+      expect((await both({ taggedOnly: true }, labelMap)).events.map((e) => e.id)).toEqual([
+        "d2",
+        "d3",
+        "u1",
+      ]);
+      expect(
+        (await both({ labels: ["from-tags"], from: "2026-08-01T00:00:00Z" }, labelMap)).events.map(
+          (e) => e.id,
+        ),
+      ).toEqual(["u1"]);
+    });
+
+    it("text search and exclude keep their row-by-row semantics on top of the column filters", async () => {
+      await seed();
+      const r = await store.query("c1", { search: "undated", exclude: ["Unknown"] });
+      expect(r.events.map((e) => e.id)).toEqual(["u1"]);
+      expect(r.total).toBe(1);
+      expect((await store.query("c1", { excludeText: ["undated"] })).events.map((e) => e.id)).toEqual([
+        "d1",
+        "d2",
+        "d3",
+        "d4",
+      ]);
+    });
+
+    it("answers the first page of a large store in bounded time", async () => {
+      // 50,000 rows shaped like a real MFT/UserAssist import: mostly undated, ~1 KB payloads. The
+      // pre-#1429 path took ~25 s here and grew quadratically (92 s at 100k); the bound is generous
+      // so a slow CI runner passes, and a return to the scan-everything shape still fails it.
+      const pad = "x".repeat(900);
+      for (let b = 0; b < 50000; b += 5000) {
+        await store.append(
+          "c1",
+          Array.from({ length: 5000 }, (_, i) => {
+            const n = b + i;
+            return ev({
+              id: `big-${n}`,
+              timestamp: n % 4 === 0 ? new Date(Date.UTC(2026, 0, 1, 0, 0, 0) + n * 1000).toISOString() : "",
+              description: `row ${n} ${pad}`,
+              artifactName: `Windows.Art${n % 5}`,
+              asset: n % 3 === 0 ? "HOST-A" : "HOST-B",
+            });
+          }),
+        );
+      }
+      const started = performance.now();
+      const r = await store.query("c1", { offset: 0, limit: 100 });
+      const elapsed = performance.now() - started;
+      expect(r.total).toBe(50000);
+      expect(r.events).toHaveLength(100);
+      expect(r.origins).toHaveLength(5);
+      expect(elapsed, `first page took ${Math.round(elapsed)} ms`).toBeLessThan(3000);
+    }, 240_000);
+  });
+
   it("caps one query page while cursor batches cover the complete store", async () => {
     const events = Array.from({ length: 650 }, (_, i) =>
       ev({ id: `e${i}`, timestamp: new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString() }),

@@ -2,6 +2,7 @@ import { Worker } from "node:worker_threads";
 import { loadDatabaseSync } from "./sqliteRuntime.js";
 import { CASE_SQLITE_SCHEMA_SQL } from "./caseSqliteSchema.js";
 import { SUPER_WORKER_SOURCE } from "./caseSqliteWorkerSuper.js";
+import { SUPER_QUERY_WORKER_SOURCE } from "./caseSqliteWorkerSuperQuery.js";
 
 // node:sqlite is synchronous. Keeping the entire database lifecycle in this worker prevents a
 // checkpoint, migration, large import, or integrity check from pinning Express/WebSocket work on
@@ -466,6 +467,7 @@ function pruneEntitiesBefore(dbPath, kind, beforeMs) {
 }
 ` +
   SUPER_WORKER_SOURCE +
+  SUPER_QUERY_WORKER_SOURCE +
   String.raw`
 
 function integrity(dbPath) {
@@ -559,6 +561,7 @@ async function dispatch(message) {
     case "migrateSuper": return migrateSuper(message.dbPath, message.eventsPath, message.labelsPath, message.tagsPath, message.excludeAuthorPrefix, message.max);
     case "appendSuper": return appendSuper(message.dbPath, message.events, message.max);
     case "scanSuper": return scanSuper(message.dbPath, message.query || {});
+    case "querySuper": return querySuper(message.dbPath, message.query || {});
     case "getSuper": return getSuper(message.dbPath, message.id);
     case "setSuperLabels": return setSuperLabels(message.dbPath, message.eventId, message.labels);
     case "protectSuper": return protectSuper(message.dbPath, message.eventId);

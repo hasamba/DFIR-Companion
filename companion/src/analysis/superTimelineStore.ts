@@ -59,7 +59,10 @@ interface SuperScanRow {
   sortMs: number;
 }
 
+// Two phases, one per kind of row, so each page is a range read of the time index (#1429):
+// dated rows by (timestamp_ms, row_id), then undated rows by row_id.
 interface SuperScanCursor {
+  phase: "dated" | "undated";
   afterMs: number;
   afterRowId: number;
 }
@@ -135,13 +138,42 @@ export class SuperTimelineStore {
   }
 
   /**
-   * Filter, facet, and paginate while scanning SQLite in fixed-size pages. Facets retain their
-   * existing semantics (time-window only, independent of origin/label selection), but no complete
-   * event array is created just to return one dashboard page.
+   * Filter, facet, and paginate. Facets keep their semantics (time-window only, independent of
+   * origin/label selection) on both paths below.
+   *
+   * Without a text filter the count, the facets and the page come straight from SQL over the
+   * columns the writer projects (querySuper, #1429): nothing is parsed but the page's own rows.
+   * A text filter (search, excludeText) keeps its exact row-by-row JS predicates, so it still
+   * scans — in fixed-size index-served pages now, linear in the store, never quadratic.
    */
   async query(caseId: string, q: SuperQuery = {}, labelMap?: SuperLabelMap): Promise<SuperQueryResult> {
     const startedAt = performance.now();
     await this.ensureMigrated(caseId);
+    const offset = Math.max(0, Math.floor(q.offset ?? 0));
+    const requestedLimit = q.limit == null ? DEFAULT_SUPER_QUERY_LIMIT : Math.max(0, Math.floor(q.limit));
+    const limit = Math.min(requestedLimit, MAX_QUERY_PAGE);
+    if (!q.search && !q.excludeText?.length) {
+      const result = await caseSqliteWorker.request<SuperQueryResult>({
+        op: "querySuper",
+        dbPath: this.databasePath(caseId),
+        query: {
+          from: q.from,
+          to: q.to,
+          origins: q.origins ?? [],
+          exclude: q.exclude ?? [],
+          excludeHosts: q.excludeHosts ?? [],
+          labels: q.labels ?? [],
+          taggedOnly: q.taggedOnly === true,
+          starred: q.starred === true,
+          labelMap: labelMap ?? {},
+          offset,
+          limit,
+        },
+      });
+      const events = result.events.map(upgradeForensicEvent);
+      this.recordQuery(q.from || q.to ? "timestamp" : "ordinal", startedAt, events.length);
+      return { ...result, events };
+    }
     const originSet = q.origins?.length ? new Set(q.origins) : null;
     const excludeSet = q.exclude?.length ? new Set(q.exclude) : null;
     const excludeHostSet = q.excludeHosts?.length ? new Set(q.excludeHosts) : null;
@@ -149,9 +181,6 @@ export class SuperTimelineStore {
     const origins = new Set<string>();
     const hosts = new Set<string>();
     const labelsAvailable = new Set<string>();
-    const offset = Math.max(0, Math.floor(q.offset ?? 0));
-    const requestedLimit = q.limit == null ? DEFAULT_SUPER_QUERY_LIMIT : Math.max(0, Math.floor(q.limit));
-    const limit = Math.min(requestedLimit, MAX_QUERY_PAGE);
     const events: ForensicEvent[] = [];
     let total = 0;
 
@@ -364,6 +393,7 @@ export class SuperTimelineStore {
         query: {
           from: time.from,
           to: time.to,
+          phase: cursor?.phase ?? "dated",
           afterMs: cursor?.afterMs,
           afterRowId: cursor?.afterRowId,
           limit: Math.max(1, Math.min(MAX_QUERY_PAGE, Math.floor(batchSize))),

@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Super-timeline first page in milliseconds on a big store** — count, facets and the page come from indexed SQL instead of a whole-store scan (100k rows: 92 s → 0.03 s; 446k rows: never returned → sub-second), and text search scans linearly instead of re-sorting the table per page, so a large super-only import no longer freezes the dashboard (closes #1429)
 - **Copied binaries dated at the drop, not the source's build date** — nested `$SI`/`$FN` MFT columns now prefer `$FN` Created, then `$SI` Created, before LastModified, so a renamed copy of `cmd.exe` no longer lands on cmd.exe's build date and invents a staging wave and a months-long dwell (addresses #1415)
 - **Process command lines keep their tail** — Sysmon / 4688 `CommandLine` and `ParentCommandLine` render their arguments in full (up to 400 chars, the path that repeats `Image` elided as `…`), so a C2 `ip:port`, `whoami`, a `-hashes …@target` or a scan port list reaches the timeline and the AI; when the 600-char description would overflow, the parent's command line is trimmed first (addresses #1416)
 - **A renamed host is one host** — Velociraptor, Chainsaw and Hayabusa rows take the asset from the collector's identity (`Fqdn`) and read a differing `Computer` as the machine's former name, noted on the row and summarised once as `Host X was named Y until <time>`; the sample-host demotion only applies when a row carries no collector identity (addresses #1417)

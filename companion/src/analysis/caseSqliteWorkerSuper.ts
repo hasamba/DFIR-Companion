@@ -224,33 +224,58 @@ function appendSuper(dbPath, events, max) {
   try { return writeSuperEvents(db, events, max); } finally { db.close(); }
 }
 
+// One page of the raw record in the store's order: dated rows by timestamp then row_id, undated
+// rows after every dated one by row_id ("Ordering" in superTimelineStore.ts). Two phases, one per
+// kind of row, so each page is a range read of entities_time_idx (kind, timestamp_ms, row_id).
+// The cursor used to compare coalesce(timestamp_ms, MAX) in both WHERE and ORDER BY, which no
+// index can serve: every 1,000-row page re-scanned and re-sorted the whole table, and a 446k-row
+// store never finished a first page (#1429). The labels join runs over the page, not the table.
+function superWindowClauses(query) {
+  const where = ["e.kind='superTimeline'"];
+  const params = [];
+  if (query && typeof query.from === "string" && Number.isFinite(Date.parse(query.from))) {
+    where.push("(e.timestamp_ms IS NULL OR e.timestamp_ms>=?)");
+    params.push(Date.parse(query.from));
+  }
+  if (query && typeof query.to === "string" && Number.isFinite(Date.parse(query.to))) {
+    where.push("(e.timestamp_ms IS NULL OR e.timestamp_ms<=?)");
+    params.push(Date.parse(query.to));
+  }
+  return { where, params };
+}
+
+function superPageWithLabels(db, pageSql, params) {
+  return db.prepare(
+    "SELECT p.row_id, p.sort_ms, p.payload, " +
+    "CASE WHEN count(l.label)=0 THEN '[]' ELSE json_group_array(l.label) END AS labels " +
+    "FROM (" + pageSql + ") p LEFT JOIN super_labels l ON l.event_id=p.entity_id " +
+    "GROUP BY p.row_id ORDER BY p.sort_ms, p.row_id"
+  ).all(...params);
+}
+
 function scanSuper(dbPath, query) {
   if (!existsSync(dbPath)) return { rows: [], nextCursor: null };
   const db = openDatabase(dbPath);
   try {
-    const where = ["e.kind='superTimeline'"];
-    const params = [];
-    if (query && typeof query.from === "string" && Number.isFinite(Date.parse(query.from))) {
-      where.push("(e.timestamp_ms IS NULL OR e.timestamp_ms>=?)");
-      params.push(Date.parse(query.from));
-    }
-    if (query && typeof query.to === "string" && Number.isFinite(Date.parse(query.to))) {
-      where.push("(e.timestamp_ms IS NULL OR e.timestamp_ms<=?)");
-      params.push(Date.parse(query.to));
-    }
-    const afterMs = query && Number.isFinite(query.afterMs) ? query.afterMs : -9007199254740992;
-    const afterRowId = query && Number.isFinite(query.afterRowId) ? query.afterRowId : 0; // undated sort LAST: superTimelineStore.ts "Ordering"
-    where.push("(coalesce(e.timestamp_ms, 9007199254740991)>? OR " +
-      "(coalesce(e.timestamp_ms, 9007199254740991)=? AND e.row_id>?))");
-    params.push(afterMs, afterMs, afterRowId);
+    const { where, params } = superWindowClauses(query);
     const limit = Math.max(1, Math.min(10000, Math.floor((query && query.limit) || 1000)));
-    const rows = db.prepare(
-      "SELECT e.row_id, coalesce(e.timestamp_ms, 9007199254740991) AS sort_ms, e.payload, " +
-      "CASE WHEN count(l.label)=0 THEN '[]' ELSE json_group_array(l.label) END AS labels " +
-      "FROM entities e LEFT JOIN super_labels l ON l.event_id=e.entity_id " +
-      "WHERE " + where.join(" AND ") + " GROUP BY e.row_id " +
-      "ORDER BY sort_ms, e.row_id LIMIT ?"
-    ).all(...params, limit + 1);
+    const phase = query && query.phase === "undated" ? "undated" : "dated";
+    const afterRowId = query && Number.isFinite(query.afterRowId) ? query.afterRowId : 0;
+    let rows;
+    if (phase === "dated") {
+      const afterMs = query && Number.isFinite(query.afterMs) ? query.afterMs : -9007199254740992;
+      rows = superPageWithLabels(db,
+        "SELECT e.row_id, e.entity_id, e.timestamp_ms AS sort_ms, e.payload FROM entities e WHERE " +
+        where.concat(["e.timestamp_ms IS NOT NULL", "(e.timestamp_ms>? OR (e.timestamp_ms=? AND e.row_id>?))"]).join(" AND ") +
+        " ORDER BY e.timestamp_ms, e.row_id LIMIT ?",
+        params.concat([afterMs, afterMs, afterRowId, limit + 1]));
+    } else {
+      rows = superPageWithLabels(db,
+        "SELECT e.row_id, e.entity_id, 9007199254740991 AS sort_ms, e.payload FROM entities e WHERE " +
+        where.concat(["e.timestamp_ms IS NULL", "e.row_id>?"]).join(" AND ") +
+        " ORDER BY e.row_id LIMIT ?",
+        params.concat([afterRowId, limit + 1]));
+    }
     const hasMore = rows.length > limit;
     const pageRows = hasMore ? rows.slice(0, limit) : rows;
     const mapped = pageRows.map((row) => ({
@@ -259,12 +284,11 @@ function scanSuper(dbPath, query) {
       rowId: row.row_id,
       sortMs: row.sort_ms,
     }));
-    return {
-      rows: mapped,
-      nextCursor: hasMore && mapped.length
-        ? { afterMs: mapped[mapped.length - 1].sortMs, afterRowId: mapped[mapped.length - 1].rowId }
-        : null,
-    };
+    const last = mapped.length ? mapped[mapped.length - 1] : null;
+    let nextCursor = null;
+    if (hasMore && last) nextCursor = { phase, afterMs: last.sortMs, afterRowId: last.rowId };
+    else if (phase === "dated") nextCursor = { phase: "undated", afterMs: 0, afterRowId: 0 }; // the dated rows are done; the undated ones follow
+    return { rows: mapped, nextCursor };
   } finally {
     db.close();
   }

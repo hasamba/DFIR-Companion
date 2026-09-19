@@ -249,6 +249,7 @@
     "caseSqliteSchema.ts": "storage",
     "caseSqliteWorker.ts": "storage",
     "caseSqliteWorkerSuper.ts": "storage",
+    "caseSqliteWorkerSuperQuery.ts": "storage",
     "caseStats.ts": "analysis/case",
     "caseTransientPaths.ts": "storage",
     "capaResultImport.ts": "analysis/ingest",
