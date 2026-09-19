@@ -2,14 +2,14 @@
 // siemImport.ts only began stamping it at d0b613fa (#1310). A canonical 4624 persisted before that
 // carried the address with no stamp, and `upgradeForensicEvent` returned a current-version envelope
 // as written — so every IP -> host binding for such a case vanished at once, with nothing but the
-// #1345 counter to say so. The backfill here re-stamps on read, ONLY for an envelope whose
+// #1345 counter to say so. The pass here re-stamps on read, ONLY for an envelope whose
 // `producer.importer` is one of the audited edge-observed writers, because for those the envelope
 // itself says which importer wrote the address and that importer's recorder edge observed it.
 import { describe, it, expect } from "vitest";
 import {
   EDGE_OBSERVED_IMPORTERS,
-  backfillEdgeObserved,
-} from "../../src/analysis/canonicalProvenanceBackfill.js";
+  restampEdgeObserved,
+} from "../../src/analysis/canonicalProvenanceRestamp.js";
 import {
   CANONICAL_EVENT_SCHEMA_VERSION,
   LEGACY_UPGRADE_IMPORTER,
@@ -129,33 +129,33 @@ function proxyRow(ip: string): ForensicEvent {
   };
 }
 
-describe("backfillEdgeObserved (#1352)", () => {
+describe("restampEdgeObserved (#1352)", () => {
   it("stamps an unstamped address written by an audited edge-observed importer", () => {
     const e = event({ importer: "windows-event", ip: "10.0.0.5" });
-    const out = backfillEdgeObserved(e);
+    const out = restampEdgeObserved(e);
     expect(out.canonical?.network?.source).toEqual({ address: "10.0.0.5", provenance: "edge-observed" });
   });
 
   it("does not mutate its input", () => {
     const e = event({ importer: "windows-event", ip: "10.0.0.5" });
     const before = JSON.stringify(e);
-    backfillEdgeObserved(e);
+    restampEdgeObserved(e);
     expect(JSON.stringify(e)).toBe(before);
   });
 
   it("returns the same object when there is nothing to do", () => {
     const stamped = event({ importer: "windows-event", ip: "10.0.0.5", stamped: true });
-    expect(backfillEdgeObserved(stamped)).toBe(stamped);
+    expect(restampEdgeObserved(stamped)).toBe(stamped);
     const noAddress = event({ importer: "windows-event" });
-    expect(backfillEdgeObserved(noAddress)).toBe(noAddress);
+    expect(restampEdgeObserved(noAddress)).toBe(noAddress);
     const noEnvelope: ForensicEvent = { ...event({ importer: "windows-event" }), canonical: undefined };
-    expect(backfillEdgeObserved(noEnvelope)).toBe(noEnvelope);
+    expect(restampEdgeObserved(noEnvelope)).toBe(noEnvelope);
   });
 
   it("leaves an importer outside the audited allowlist unstamped — the legacy upgrader and the header-sourced email writer included", () => {
     for (const importer of [LEGACY_UPGRADE_IMPORTER, "email", "test"]) {
       const e = event({ importer, ip: "10.0.0.5" });
-      expect(backfillEdgeObserved(e)).toBe(e);
+      expect(restampEdgeObserved(e)).toBe(e);
       expect(e.canonical?.network?.source?.provenance).toBeUndefined();
     }
   });
@@ -166,12 +166,12 @@ describe("backfillEdgeObserved (#1352)", () => {
       ...e,
       canonical: { ...e.canonical!, network: { source: { port: 4444 } } },
     };
-    expect(backfillEdgeObserved(withPortOnly)).toBe(withPortOnly);
+    expect(restampEdgeObserved(withPortOnly)).toBe(withPortOnly);
   });
 
   it("keeps every other field of the envelope and the event", () => {
     const e = event({ importer: "windows-event", ip: "10.0.0.5" });
-    const out = backfillEdgeObserved(e);
+    const out = restampEdgeObserved(e);
     expect({ ...out, canonical: undefined }).toEqual({ ...e, canonical: undefined });
     expect({ ...out.canonical, network: undefined }).toEqual({ ...e.canonical, network: undefined });
   });
@@ -185,7 +185,7 @@ describe("backfillEdgeObserved (#1352)", () => {
   });
 });
 
-describe("upgradeForensicEvent applies the backfill on read (#1352)", () => {
+describe("upgradeForensicEvent applies the re-stamp on read (#1352)", () => {
   it("re-stamps a current-version envelope from an audited importer", () => {
     const e = event({ importer: "windows-event", ip: "10.0.0.5" });
     expect(e.canonical?.schemaVersion).toBe(CANONICAL_EVENT_SCHEMA_VERSION);
@@ -197,7 +197,7 @@ describe("upgradeForensicEvent applies the backfill on read (#1352)", () => {
     expect(upgradeForensicEvent(once)).toBe(once);
   });
 
-  it("still preserves an unknown schema version verbatim — no migration, no backfill", () => {
+  it("still preserves an unknown schema version verbatim — no migration, no re-stamp", () => {
     const e = event({ importer: "windows-event", ip: "10.0.0.5", schemaVersion: "9.9.9" });
     expect(upgradeForensicEvent(e)).toBe(e);
   });
@@ -215,7 +215,7 @@ describe("the same 4624 evidence binds IP -> host whether imported before or aft
     expect(yesterday.canonical?.network?.source).toEqual({ address: "10.0.0.5" });
   });
 
-  it("control: read without the backfill, yesterday's row contributes no IP binding (the #1342 gate)", () => {
+  it("control: read without the re-stamp, yesterday's row contributes no IP binding (the #1342 gate)", () => {
     const excluded = new Map<IpExclusionReason, number>();
     const index = buildHostBindingIndex([yesterday], undefined, excluded);
     expect(index.byIp.size).toBe(0);

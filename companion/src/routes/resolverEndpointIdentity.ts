@@ -30,7 +30,7 @@ import type { RouteContext } from "./context.js";
  *
  * DISCLOSES `excludedLogonSamples` (#1345): the count of logon samples hostBinding.ts refused to
  * index, by reason. `not-edge-observed` (#1342) once covered every 4624 persisted before its writer
- * stamped provenance; #1352's canonicalProvenanceBackfill.ts re-stamps those on read for the audited
+ * stamped provenance; #1352's canonicalProvenanceRestamp.ts re-stamps those on read for the audited
  * writers, so the reason is left for an importer outside that allowlist. On such a case the IP->host
  * binding is absent and a row that used to say `matched` says `no-match` with `caveats: []`;
  * the count is the only signal the analyst gets that exclusion, not absent evidence, is the cause.

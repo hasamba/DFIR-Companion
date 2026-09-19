@@ -1,6 +1,6 @@
 import type { ForensicEvent } from "./stateTypes.js";
 
-// #1352: read-time backfill of the `network.source.provenance` stamp for an already-canonical
+// #1352: read-time re-stamp of the `network.source.provenance` stamp for an already-canonical
 // envelope that an AUDITED edge-observed writer persisted before it stamped (siemImport.ts began
 // at d0b613fa, #1310; the other writers landed theirs in the same change). #1342 made
 // hostBinding.ts's IP index fail-closed on the stamp, so without this every IP -> host binding on
@@ -48,7 +48,7 @@ export const EDGE_OBSERVED_IMPORTERS: ReadonlySet<string> = new Set([
  * edge-observed and whose address is present but unstamped. Any other event — no envelope, no
  * address, already stamped, importer outside the allowlist — is returned as the same object.
  */
-export function backfillEdgeObserved(event: ForensicEvent): ForensicEvent {
+export function restampEdgeObserved(event: ForensicEvent): ForensicEvent {
   const canonical = event.canonical;
   const source = canonical?.network?.source;
   if (!canonical || !source?.address || source.provenance) return event;

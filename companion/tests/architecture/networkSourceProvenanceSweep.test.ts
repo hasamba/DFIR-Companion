@@ -40,7 +40,7 @@
 // (`const s = c.network?.source; s?.address`) or a helper is invisible to it.
 import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
-import { EDGE_OBSERVED_IMPORTERS } from "../../src/analysis/canonicalProvenanceBackfill.js";
+import { EDGE_OBSERVED_IMPORTERS } from "../../src/analysis/canonicalProvenanceRestamp.js";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -83,13 +83,13 @@ const SITES: Record<string, number> = {
   // Not a writer of addresses — the read-time re-stamp (#1352): copies an existing address from an
   // envelope whose producer.importer is one of the files above (pinned below), and stamps it on their
   // audited basis. Registered here so the stamp it writes is itself asserted.
-  "canonicalProvenanceBackfill.ts": 1,
+  "canonicalProvenanceRestamp.ts": 1,
 };
 
-/** Files in SITES whose `producer.importer` literals are the backfill allowlist's source of truth.
+/** Files in SITES whose `producer.importer` literals are the re-stamp allowlist's source of truth.
  * passwordSprayFanout.ts forwards its input row's importer (`meta.importer`) and declares none. */
 const IMPORTER_ID = /\bimporter:\s*"([^"]+)"/g;
-const BACKFILL_FILE = "canonicalProvenanceBackfill.ts";
+const RESTAMP_FILE = "canonicalProvenanceRestamp.ts";
 
 /** Deliberately unstamped: file -> { occurrences, stamped?, why }. `stamped` lists the `address:`
  * expression of each site in the file that carries the stamp by recorded decision (a mixed file);
@@ -189,7 +189,7 @@ const READERS: Record<string, { kind: ReaderKind; why: string }> = {
     kind: "agnostic",
     why: "analyst hunt field source.ip (fallback event.srcIp) and the free-text index — analyst search over what the records say",
   },
-  "canonicalProvenanceBackfill.ts": {
+  "canonicalProvenanceRestamp.ts": {
     kind: "agnostic",
     why: "reads the address only as the presence test for the #1352 re-stamp and never names a host; the trust decision is the importer allowlist, not the value",
   },
@@ -263,16 +263,16 @@ describe("network.source.address writers decide on provenance (#1265)", () => {
   // sound only while it is exactly the set of ids the audited writers above declare — an id no
   // SITES file writes would stamp an unaudited producer's rows; an audited writer's id missing from
   // it leaves that writer's pre-stamp rows dropped, the very bug #1352 fixed.
-  it("the #1352 backfill allowlist is exactly the producer.importer ids the SITES writers declare", () => {
+  it("the #1352 re-stamp allowlist is exactly the producer.importer ids the SITES writers declare", () => {
     const declared = new Set<string>();
     for (const file of Object.keys(SITES)) {
-      if (file === BACKFILL_FILE) continue;
+      if (file === RESTAMP_FILE) continue;
       for (const m of stripComments(read(file)).matchAll(IMPORTER_ID)) declared.add(m[1]);
     }
     expect([...EDGE_OBSERVED_IMPORTERS].sort()).toEqual([...declared].sort());
   });
 
-  it("no EXEMPT file, and not emailImport.ts, declares an importer id the #1352 backfill would trust", () => {
+  it("no EXEMPT file, and not emailImport.ts, declares an importer id the #1352 re-stamp would trust", () => {
     for (const file of [...Object.keys(EXEMPT), "emailImport.ts"]) {
       for (const m of stripComments(read(file)).matchAll(IMPORTER_ID)) {
         expect(EDGE_OBSERVED_IMPORTERS.has(m[1]), `${file} declares ${m[1]}`).toBe(false);
