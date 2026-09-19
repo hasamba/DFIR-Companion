@@ -7,6 +7,7 @@ import {
   splitResource,
   clientFromDescription,
   groupBulkReads,
+  groupBulkReadsWithDropped,
   roleAssumptions,
   assumptionFor,
   gradeGroup,
@@ -18,6 +19,7 @@ import {
   MIN_OBJECTS,
   MIN_CONTAINERS,
   MAX_RECORDS_PER_GROUP,
+  TRUNCATION_COVERAGE_ID,
   recurringPrincipals,
   roleSegment,
   type BulkGroup,
@@ -984,5 +986,38 @@ describe("account, provider and chronology (#979 code round)", () => {
       "key",
     );
     expect(assumptionFor(g, [{ ...base, time: Date.parse(at(-5)), account: "" }])?.by).toBe("key");
+  });
+});
+
+// #1372: the dropped-record count used to live in a module-private variable that EVERY
+// groupBulkReads call overwrote, so a second caller (the flow sensitive-data join) could silently
+// change what the truncation note reported. The count now travels with the groups it belongs to.
+describe("groupBulkReadsWithDropped", () => {
+  const overCap = () =>
+    Array.from({ length: MAX_RECORDS_PER_GROUP + 10 }, (_v, i) =>
+      read({ resource: `corp-data/f-${i}.csv`, min: i * 0.001 }),
+    );
+
+  it("returns the dropped count with the groups it was measured on", () => {
+    const { groups, dropped } = groupBulkReadsWithDropped(overCap());
+    expect(groups[0].truncated).toBe(true);
+    expect(dropped).toBe(10);
+    expect(groupBulkReadsWithDropped(manyReads(MIN_OBJECTS + 1)).dropped).toBe(0);
+  });
+
+  it("keeps an earlier result's count when a later call groups a different export", () => {
+    const input = overCap();
+    const first = groupBulkReadsWithDropped(input);
+    groupBulkReads(manyReads(MIN_OBJECTS + 1));
+    expect(first.dropped).toBe(10);
+    expect(groupBulkReads(input)).toEqual(first.groups);
+  });
+
+  it("reports the truncation note from its own grouping, not from whoever grouped last", async () => {
+    groupBulkReads(manyReads(MIN_OBJECTS + 1));
+    const note = summarizeBulkReads(overCap()).find((e) => e.id === TRUNCATION_COVERAGE_ID);
+    expect(note?.description).toContain("10 object-read record(s)");
+    const mod = await import("../../src/analysis/cloudBulkRead.js");
+    expect("lastDroppedRecords" in mod).toBe(false);
   });
 });

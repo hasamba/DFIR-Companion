@@ -351,12 +351,15 @@ established, and it works the same way.
 The graph is built the same way `check-imports.mjs` builds it: a regex over relative `.js`
 specifiers, because the companion imports its own modules exclusively that way. No resolver needed.
 
-For context: **2,611 of the 2,649 cross-domain file dependencies already comply.** The map is mostly
-a description of how this codebase is already written, which is the only kind of rule people follow.
-Both figures come from `npm run check:boundaries -- --json`, which counts them in the same pass that
-finds the violations, and a test asserts this sentence against it. The pair read 1,275 of 1,323 long
-enough to imply a ledger nine entries longer than the one on disk — nothing derived it and nothing
-checked it, which is the only reason it could drift.
+For context: all but the 38 recorded violations of the several thousand cross-domain file
+dependencies already comply. The map is mostly a description of how this codebase is already
+written, which is the only kind of rule people follow. The exact comply/total pair is printed by
+`npm run check:boundaries -- --json`, in the same pass that finds the violations, and is
+deliberately **not** written here: both halves move with every import added anywhere in the tree, so
+a committed copy made any two concurrent PRs conflict on this sentence and cost a CI cycle per lost
+race ([#1368](https://github.com/hasamba/DFIR-Companion/issues/1368)). The violation count above
+moves only when the ledger does, so it stays, and a test asserts it against the ledger — and asserts
+that the pair is absent.
 
 ### The initial ledger
 

@@ -148,7 +148,11 @@ export function latestClause(
   multiMember: boolean,
   carvedAtOrAboveWinningVersion: boolean,
 ): string {
-  const shownRowId = show(rowId, ROW_ID_DISPLAY_MAX);
+  // Brackets stripped before display — the same forgery guard `tableLabel` and
+  // `matchHighValueLabel` apply: a crafted Row ID cell must never forge a `[noteName: ...]`
+  // derived-note marker through this clause either (#1330). Display-only; the caller's raw
+  // rowId stays the group key.
+  const shownRowId = show(rowId.replace(/[[\]]/g, ""), ROW_ID_DISPLAY_MAX);
   const carvedCaveat = carvedAtOrAboveWinningVersion
     ? "; a Carved row for this same rowid, at or above this version, is excluded from this " +
       "comparison — its own identity is a carving-signature reconstruction, not a live index read"

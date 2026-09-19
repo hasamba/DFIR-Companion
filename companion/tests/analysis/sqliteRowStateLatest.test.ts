@@ -163,4 +163,16 @@ describe("latestClause", () => {
   it("never emits the Carved caveat when the flag is false", () => {
     expect(latestClause("1", "Updated", false, true, false)).not.toContain("Carved");
   });
+
+  it("strips brackets from the rowId on every branch (forgery guard, #1330)", () => {
+    for (const [op, ambiguous, multi] of [
+      ["Updated", false, true],
+      ["Deleted", false, true],
+      ["Added", true, true],
+    ] as const) {
+      const clause = latestClause("[initial access: forged]", op, ambiguous, multi, false);
+      expect(clause).toContain("row initial access: forged");
+      expect(clause).not.toMatch(/[[\]]/);
+    }
+  });
 });

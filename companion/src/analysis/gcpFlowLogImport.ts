@@ -42,14 +42,19 @@
 // entry must never abort the upload, so each row's mapping is also guarded and counted
 // `malformed`). `start_time` must lie in [2001, 2242]; an `end_time` before `start_time` is
 // dropped from the row rather than printed as an interval. Counters above 2^53 are `malformed`,
-// never rounded. Free text (drop reason, instance/project/zone names) is bounded before the row
-// is composed, so the counters, times and both per-side annotation brackets always fit.
+// never rounded. Free text (drop reason, instance/project/zone/VPC/pod names) is bounded AND
+// stripped of brackets before the row is composed, so the counters, times and both per-side
+// annotation brackets always fit and no logged string can print as a "[<name>: …]" derived note
+// (#1388). `project_id` must match GCP's own project-id grammar (6–30 chars, `[a-z][a-z0-9-]*`,
+// no trailing hyphen) or it is not the account — the row keeps, like an Azure record whose
+// subscription is not a GUID. `insertId` is an evidence pointer: over the text bound it is
+// `malformed`, never clipped into a pointer that no longer names the record (#1371).
 //
 // Pure, deterministic, NO AI call.
 
 import type { Severity } from "./stateTypes.js";
 import { createCanonicalEvent } from "./canonicalEvent.js";
-import { boundedAggKey, boundedTextTo } from "./aggKey.js";
+import { boundedAggKey, boundedTextTo, stripNoteBrackets } from "./aggKey.js";
 import { isInternalIpv4 } from "./internalIp.js";
 import {
   addIoc,
@@ -104,6 +109,10 @@ const MAX_PORT = 65535;
 const DESCRIPTION_MAX = 600;
 const TEXT_MAX = 64;
 const LOGNAME_PROJECT_RE = /^projects\/([^/]+)\/logs\//i;
+// GCP project ids: 6–30 lowercase letters, digits and hyphens, starting with a letter, not ending
+// in a hyphen (cloud.google.com/resource-manager/docs/creating-managing-projects). An AWS account
+// number or an arbitrary label never matches, so it never becomes cloud.accountId.
+const PROJECT_ID_RE = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/;
 
 interface Instance {
   project: string;
@@ -123,6 +132,7 @@ interface Flow {
   endIso: string;
   dropped: boolean;
   dropReason: string;
+  insertId: string;
   packets: number | null;
   bytes: number | null;
   srcInstance: Instance | null;
@@ -144,17 +154,24 @@ function int(v: unknown): number | null {
   return NaN;
 }
 
-const text = (v: unknown) => boundedTextTo(str(v).trim(), TEXT_MAX);
+/** Free text bound for the description: brackets stripped first, then the length bound. */
+const text = (v: unknown) => boundedTextTo(stripNoteBrackets(str(v).trim()), TEXT_MAX);
+
+/** The value when it is a GCP project id by grammar, else "" — never a bounded or clipped one. */
+const projectId = (v: unknown) => {
+  const id = str(v).trim();
+  return PROJECT_ID_RE.test(id) ? id : "";
+};
 
 function instance(v: unknown): Instance | null {
   if (!isObject(v)) return null;
-  const vm = str(getCI(v, "vm_name")).trim();
+  const vm = text(getCI(v, "vm_name"));
   if (!vm) return null;
   return {
     project: text(getCI(v, "project_id")),
     region: text(getCI(v, "region")),
     zone: text(getCI(v, "zone")),
-    vm: boundedTextTo(vm, TEXT_MAX),
+    vm,
   };
 }
 
@@ -213,7 +230,9 @@ function parseEntry(entry: Row): Flow | null {
   const packets = int(getCI(p, dropped ? "packets_dropped" : "packets_sent"));
   const bytes = int(getCI(p, dropped ? "bytes_dropped" : "bytes_sent"));
   if (Number.isNaN(packets) || Number.isNaN(bytes)) return null;
-  const vpc = (v: unknown) => (isObject(v) ? str(getCI(v, "vpc_name")).trim() : "");
+  const insertId = str(getCI(entry, "insertId")).trim();
+  if (insertId.length > TEXT_MAX) return null;
+  const vpc = (v: unknown) => (isObject(v) ? text(getCI(v, "vpc_name")) : "");
   return {
     src,
     dst,
@@ -226,6 +245,7 @@ function parseEntry(entry: Row): Flow | null {
       Number.isFinite(endMs) && endMs >= startMs && endMs <= MAX_MILLIS ? new Date(endMs).toISOString() : "",
     dropped,
     dropReason: text(getCI(p, "drop_reason")),
+    insertId,
     packets,
     bytes,
     srcInstance: instance(getCI(p, "src_instance")),
@@ -250,8 +270,8 @@ function isIocCandidate(ip: string): boolean {
 function emittingProject(entry: Row): string {
   const resource = getCI(entry, "resource");
   const labels = isObject(resource) ? getCI(resource, "labels") : undefined;
-  const fromLabels = isObject(labels) ? text(getCI(labels, "project_id")) : "";
-  return fromLabels || boundedTextTo(LOGNAME_PROJECT_RE.exec(decodedLogName(entry))?.[1] ?? "", TEXT_MAX);
+  const fromLabels = isObject(labels) ? projectId(getCI(labels, "project_id")) : "";
+  return fromLabels || projectId(LOGNAME_PROJECT_RE.exec(decodedLogName(entry))?.[1]);
 }
 
 /** Probative fields first; annotation brackets appended whole only while the bound holds. */
@@ -292,7 +312,6 @@ function mapFlow(f: Flow, entry: Row, index: number, sink: Map<string, SiemIoc>)
   for (const ip of [f.src, f.dst]) if (isIocCandidate(ip)) addIoc(sink, "ip", ip);
   const reporterSide = f.reporter.startsWith("SRC") ? f.srcInstance : f.dstInstance;
   const project = emittingProject(entry);
-  const insertId = str(getCI(entry, "insertId")).trim();
   const srcPortField = f.srcPort > 0 ? f.srcPort : undefined;
   const dstPortField = f.dstPort > 0 ? f.dstPort : undefined;
 
@@ -328,7 +347,10 @@ function mapFlow(f: Flow, entry: Row, index: number, sink: Map<string, SiemIoc>)
       time: { observed, normalized: observed },
       evidence: {
         rawRecords: [
-          { source: "gcp-vpc-flow-log", locator: `entry:${index}${insertId ? `/insertId:${insertId}` : ""}` },
+          {
+            source: "gcp-vpc-flow-log",
+            locator: `entry:${index}${f.insertId ? `/insertId:${f.insertId}` : ""}`,
+          },
         ],
       },
       producer: {

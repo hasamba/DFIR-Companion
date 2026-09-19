@@ -189,3 +189,183 @@ describe("host duplicates panel reachability", () => {
     expect(presidio).toBeGreaterThan(ai);
   });
 });
+
+// ── Live behaviour (#1281, #1282, #1284) ─────────────────────────────────────────────────────────
+//
+// The suites above call the pure renderer. These drive the module the way the page does — a
+// stubbed document, a fetch whose answers the test chooses, a confirm the test answers — because
+// each of the three findings lives in a code path the renderer never touches: the delegated click
+// handler, the AI-state kick after a write, and the two guarded list assignments in the loader.
+interface LiveApi {
+  loadHostDuplicates(caseId: string): Promise<void>;
+}
+
+interface FetchCall {
+  url: string;
+  method: string;
+}
+
+interface Answers {
+  pendingOk?: boolean;
+  dismissedOk?: boolean;
+  confirm?: boolean;
+  refreshAiState?: (caseId: string) => void;
+}
+
+/** A page with the panel's three elements, a chosen fetch, and the delegated click handler captured. */
+function liveHarness(answers: Answers = {}) {
+  const body: {
+    innerHTML: string;
+    dataset: Record<string, string>;
+    onClick: ((evt: unknown) => void) | null;
+    addEventListener: (type: string, fn: (evt: unknown) => void) => void;
+  } = {
+    innerHTML: "",
+    dataset: {},
+    onClick: null,
+    addEventListener(_type, fn) {
+      body.onClick = fn;
+    },
+  };
+  const section = { dataset: {} as Record<string, string> };
+  const badge = { style: { display: "" }, textContent: "" };
+  const elements: Record<string, unknown> = {
+    hostDuplicatesBody: body,
+    "sec-host-duplicates": section,
+    hostDuplicatesBadge: badge,
+    caseId: { value: "case-1" },
+  };
+  const calls: FetchCall[] = [];
+  const pendingRow = { canonical: "win11.windomain.local", other: "win11", reason: "shortname-fqdn" };
+  const dismissedRow = { canonical: "ws-042", other: "ws42", dismissedAt: "2026-06-10T12:00:00Z" };
+  const answer = (ok: boolean, payload: unknown) =>
+    Promise.resolve({ ok, status: ok ? 200 : 500, json: () => Promise.resolve(payload) });
+  const globals: Record<string, unknown> = {
+    document: { getElementById: (id: string) => elements[id] ?? null },
+    applySectionsVis: () => {},
+    SECTIONS_VIS_KEY: "sections-vis",
+    confirm: () => answers.confirm ?? true,
+    fetch: (url: string, init?: { method?: string }) => {
+      const method = init?.method ?? "GET";
+      calls.push({ url, method });
+      if (method === "DELETE") return answer(true, { dismissed: [], pending: [pendingRow] });
+      if (url.endsWith("/host-duplicates/dismissed"))
+        return answer(answers.dismissedOk ?? true, { dismissed: [dismissedRow] });
+      return answer(answers.pendingOk ?? true, { pending: [pendingRow] });
+    },
+  };
+  if (answers.refreshAiState) globals.refreshAiState = answers.refreshAiState;
+  const api = loadDashboardModule<LiveApi>(
+    "dashboard-host-duplicates.js",
+    ["dashboard-escape.js", "dashboard-time.js"],
+    globals,
+  );
+  const clickUndo = () => {
+    const button = {
+      hasAttribute: (name: string) => name === "data-hd-undo",
+      getAttribute: (name: string) => (name === "data-hd-canonical" ? "ws-042" : "ws42"),
+    };
+    body.onClick?.({ target: { closest: () => button } });
+  };
+  return { api, body, section, calls, clickUndo };
+}
+
+const settle = () => new Promise((r) => setTimeout(r, 10));
+
+describe("host duplicates panel — undo asks first (#1281)", () => {
+  it("does nothing when the analyst declines", async () => {
+    const { api, calls, clickUndo } = liveHarness({ confirm: false });
+    await api.loadHostDuplicates("case-1");
+    calls.length = 0;
+    clickUndo();
+    await settle();
+    expect(calls).toEqual([]);
+  });
+
+  it("names the consequence in the question and sends the DELETE when accepted", async () => {
+    const module = readFileSync(
+      new URL("../../../public/js/dashboard-host-duplicates.js", import.meta.url),
+      "utf8",
+    );
+    expect(module).toContain("Reconsider this pair? They will be suggested again.");
+    const { api, calls, clickUndo } = liveHarness({ confirm: true });
+    await api.loadHostDuplicates("case-1");
+    calls.length = 0;
+    clickUndo();
+    await settle();
+    expect(calls).toEqual([{ url: "/cases/case-1/host-duplicates/dismiss", method: "DELETE" }]);
+  });
+});
+
+describe("host duplicates panel — the AI-state kick is a guarded global (#1282)", () => {
+  it("kicks the published refreshAiState with the case id after an undo", async () => {
+    const kicked: string[] = [];
+    const { api, clickUndo } = liveHarness({ refreshAiState: (id) => kicked.push(id) });
+    await api.loadHostDuplicates("case-1");
+    clickUndo();
+    await settle();
+    expect(kicked).toEqual(["case-1"]);
+  });
+
+  it("is a no-op, not a swallowed ReferenceError, when nothing published it", async () => {
+    const { api, body, clickUndo } = liveHarness();
+    await api.loadHostDuplicates("case-1");
+    clickUndo();
+    await settle();
+    // The undo's answer was painted — the handler ran to completion with no publisher present.
+    expect(body.innerHTML.toLowerCase()).not.toContain("previously dismissed");
+    // And by construction: no bare-name call is left for a load-order change to break.
+    const module = readFileSync(
+      new URL("../../../public/js/dashboard-host-duplicates.js", import.meta.url),
+      "utf8",
+    );
+    expect(module).not.toMatch(/^\s*refreshAiState\(/m);
+    expect(module).toMatch(/window\.refreshAiState\?\.\(/);
+  });
+});
+
+describe("host duplicates panel — a failed refresh is visible, not stale (#1284)", () => {
+  it("shows both lists and no notice when both fetches succeed", async () => {
+    const { api, body } = liveHarness();
+    await api.loadHostDuplicates("case-1");
+    expect(body.innerHTML).toContain("win11.windomain.local");
+    expect(body.innerHTML.toLowerCase()).toContain("previously dismissed");
+    expect(body.innerHTML.toLowerCase()).not.toContain("couldn't refresh");
+  });
+
+  it("empties the pending list and says so when the pending fetch fails", async () => {
+    const { api, body } = liveHarness({ pendingOk: false });
+    await api.loadHostDuplicates("case-1");
+    expect(body.innerHTML).not.toContain("win11.windomain.local");
+    expect(body.innerHTML.toLowerCase()).toContain("previously dismissed"); // the healthy list still shows
+    expect(body.innerHTML.toLowerCase()).toContain("couldn't refresh");
+  });
+
+  it("clears a previously loaded list rather than keeping it after a later failure", async () => {
+    const answers: Answers = {};
+    const { api, body } = liveHarness(answers);
+    await api.loadHostDuplicates("case-1");
+    expect(body.innerHTML.toLowerCase()).toContain("previously dismissed");
+    answers.dismissedOk = false;
+    await api.loadHostDuplicates("case-1");
+    expect(body.innerHTML.toLowerCase()).not.toContain("previously dismissed");
+    expect(body.innerHTML.toLowerCase()).toContain("couldn't refresh");
+  });
+
+  it("keeps the section reachable while the notice is showing", async () => {
+    const { api, section } = liveHarness({ pendingOk: false, dismissedOk: false });
+    await api.loadHostDuplicates("case-1");
+    expect(section.dataset.gateOpen).toBe("1");
+  });
+
+  it("drops the notice once a later refresh succeeds", async () => {
+    const answers: Answers = { pendingOk: false };
+    const { api, body } = liveHarness(answers);
+    await api.loadHostDuplicates("case-1");
+    expect(body.innerHTML.toLowerCase()).toContain("couldn't refresh");
+    answers.pendingOk = true;
+    await api.loadHostDuplicates("case-1");
+    expect(body.innerHTML.toLowerCase()).not.toContain("couldn't refresh");
+    expect(body.innerHTML).toContain("win11.windomain.local");
+  });
+});
