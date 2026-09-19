@@ -227,7 +227,10 @@ export interface RouteContext {
   //                                 "collecting". Liveness comes from the in-flight map; a persisted
   //                                 "collecting" status survives the process that set it (#770).
   //   ingestVeloArtifactMap / ingestVeloUploads — the /import-external hunt/flow-map + uploads ingest cores.
-  //   createVeloMonitor           — build + persist + schedule one monitor (manual + auto-monitor routes).
+  //   createVeloMonitor           — build + persist + schedule one monitor (manual + auto-monitor routes);
+  //                                 enables the artifact in Velociraptor's Client Monitoring table (#1409).
+  //   verifyVeloMonitorEnabled    — flag a monitor whose artifact left that table (check-now route).
+  //   deleteVeloMonitor           — remove a monitor + release its table entry when the companion owns it.
   //   recordHuntDeploy            — record a deployed hunt in the #157 hunting-feedback-loop ledger.
   refreshVeloClients(): Promise<number>;
   resumeVeloMonitors(): Promise<void>;
@@ -265,8 +268,11 @@ export interface RouteContext {
       hostname?: string;
       minSeverity?: Severity;
       allClients?: boolean;
+      alreadyEnabled?: boolean;
     },
   ): Promise<VeloMonitor>;
+  verifyVeloMonitorEnabled(caseId: string, monitor: VeloMonitor): Promise<VeloMonitor>;
+  deleteVeloMonitor(caseId: string, id: string): Promise<void>;
   recordHuntDeploy(caseId: string, input: HuntDeployInput): Promise<void>;
   // Playbook derivation helpers (routes/playbookHunts.ts). Both are SHARED with createApp code that
   // stays — syncPlaybook is also called by the POST /cases/:id/push/iris route, and loadPlaybookControl

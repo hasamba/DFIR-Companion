@@ -344,6 +344,8 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     ingestVeloArtifactMap: externalIngest.ingestVeloArtifactMap,
     ingestVeloUploads: externalIngest.ingestVeloUploads,
     createVeloMonitor: monitors.createVeloMonitor,
+    verifyVeloMonitorEnabled: monitors.verifyVeloMonitorEnabled,
+    deleteVeloMonitor: monitors.deleteVeloMonitor,
     recordHuntDeploy: hunts.recordHuntDeploy,
     // Playbook derivation helpers (routes/playbookHunts.ts), shared with the staying
     // POST /cases/:id/push/iris route (syncPlaybook).

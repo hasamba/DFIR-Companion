@@ -231,6 +231,11 @@ describe("Velociraptor live monitors — routes", () => {
     const failRunner: VqlRunner = async (statements) => {
       const p = statements[0];
       if (p.includes("source(")) throw new Error("velo unreachable");
+      if (p.includes("get_client_monitoring()"))
+        return {
+          rows: [{ State: { artifacts: { artifacts: ["Windows.Events.ProcessCreation"] } } }],
+          raw: "",
+        };
       return { rows: [], raw: "" };
     };
     const { app } = await makeApp(failRunner);
@@ -258,5 +263,107 @@ describe("Velociraptor live monitors — routes", () => {
       (await request(bare).post("/cases/c1/velociraptor/monitors").send({ clientId: "C.x", artifact: "A.B" }))
         .status,
     ).toBe(501);
+  });
+});
+
+// A Velociraptor whose client-monitoring table is REAL state: add_client_monitoring / rm_client_monitoring
+// mutate it and get_client_monitoring() reads it back — so the tests can assert that starting a monitor
+// enables the artifact fleet-wide and deleting the last monitor for it removes it again (#1409).
+function statefulRunner(initial: string[], opts: { addFails?: boolean } = {}) {
+  const table = new Set(initial);
+  const programs: string[] = [];
+  const stateful: VqlRunner = async (statements, runOpts) => {
+    const p = statements[0];
+    programs.push(p);
+    const m = /(add|rm)_client_monitoring\(artifact='([^']+)'\)/.exec(p);
+    if (m) {
+      if (!opts.addFails) m[1] === "add" ? table.add(m[2]) : table.delete(m[2]);
+      return { rows: [{}], raw: "" };
+    }
+    if (p.includes("get_client_monitoring()"))
+      return { rows: [{ State: { artifacts: { artifacts: [...table] } } }], raw: "" };
+    return runner(statements, runOpts); // catalog + source() reads come from the default fake
+  };
+  return { runner: stateful, table, programs };
+}
+
+describe("Velociraptor live monitors — Client Monitoring table (#1409)", () => {
+  it("starting a monitor enables the artifact in Velociraptor when it is not configured", async () => {
+    const velo = statefulRunner(["Generic.Client.Stats"]);
+    const { app } = await makeApp(velo.runner);
+    const start = await request(app)
+      .post("/cases/c1/velociraptor/monitors")
+      .send({ allClients: true, artifact: "Custom.Windows.Events.Kerberoasting" });
+    expect(start.status).toBe(202);
+    expect(start.body.monitor.veloTableEntry).toBe("added");
+    expect(velo.table.has("Custom.Windows.Events.Kerberoasting")).toBe(true);
+  });
+
+  it("starting a monitor for an already-configured artifact does not touch the table", async () => {
+    const velo = statefulRunner(["Windows.Events.ProcessCreation"]);
+    const { app } = await makeApp(velo.runner);
+    const start = await request(app)
+      .post("/cases/c1/velociraptor/monitors")
+      .send({ clientId: "C.abc123", artifact: "Windows.Events.ProcessCreation" });
+    expect(start.status).toBe(202);
+    expect(start.body.monitor.veloTableEntry).toBe("present");
+    expect(velo.programs.some((p) => p.includes("add_client_monitoring"))).toBe(false);
+  });
+
+  it("refuses to show a green monitor when Velociraptor did not accept the artifact", async () => {
+    const velo = statefulRunner([], { addFails: true });
+    const { app } = await makeApp(velo.runner);
+    const start = await request(app)
+      .post("/cases/c1/velociraptor/monitors")
+      .send({ allClients: true, artifact: "Custom.Windows.Events.Kerberoasting" });
+    expect(start.status).toBe(502);
+    expect(start.body.error).toMatch(
+      /could not enable Custom\.Windows\.Events\.Kerberoasting in Velociraptor/,
+    );
+    expect((await request(app).get("/cases/c1/velociraptor/monitors")).body).toHaveLength(0);
+  });
+
+  it("deleting the last monitor for an artifact the companion enabled removes it from the table", async () => {
+    const velo = statefulRunner([]);
+    const { app } = await makeApp(velo.runner);
+    const a = await request(app)
+      .post("/cases/c1/velociraptor/monitors")
+      .send({ clientId: "C.abc123", artifact: "Windows.Events.DNSQueries" });
+    const b = await request(app)
+      .post("/cases/c1/velociraptor/monitors")
+      .send({ allClients: true, artifact: "Windows.Events.DNSQueries" });
+    expect(velo.table.has("Windows.Events.DNSQueries")).toBe(true);
+
+    await request(app).delete(`/cases/c1/velociraptor/monitors/${encodeURIComponent(a.body.monitor.id)}`);
+    expect(velo.table.has("Windows.Events.DNSQueries")).toBe(true); // b still needs it
+
+    await request(app).delete(`/cases/c1/velociraptor/monitors/${encodeURIComponent(b.body.monitor.id)}`);
+    expect(velo.table.has("Windows.Events.DNSQueries")).toBe(false);
+  });
+
+  it("deleting a monitor for an artifact that was already configured leaves the table alone", async () => {
+    const velo = statefulRunner(["Windows.Events.ProcessCreation"]);
+    const { app } = await makeApp(velo.runner);
+    const a = await request(app)
+      .post("/cases/c1/velociraptor/monitors")
+      .send({ clientId: "C.abc123", artifact: "Windows.Events.ProcessCreation" });
+    await request(app).delete(`/cases/c1/velociraptor/monitors/${encodeURIComponent(a.body.monitor.id)}`);
+    expect(velo.table.has("Windows.Events.ProcessCreation")).toBe(true);
+    expect(velo.programs.some((p) => p.includes("rm_client_monitoring"))).toBe(false);
+  });
+
+  it("check-now flags a monitor whose artifact was removed from the table behind its back", async () => {
+    const velo = statefulRunner([]);
+    const { app } = await makeApp(velo.runner);
+    const start = await request(app)
+      .post("/cases/c1/velociraptor/monitors")
+      .send({ clientId: "C.abc123", artifact: "Windows.Events.ProcessCreation" });
+    const mid = start.body.monitor.id;
+    velo.table.delete("Windows.Events.ProcessCreation"); // an admin removed it in the Velociraptor GUI
+
+    const poll = await request(app).post(`/cases/c1/velociraptor/monitors/${encodeURIComponent(mid)}/poll`);
+    expect(poll.status).toBe(200);
+    expect(poll.body.monitor.status).toBe("error");
+    expect(poll.body.monitor.lastError).toMatch(/no longer enabled in Velociraptor → Client Monitoring/);
   });
 });
