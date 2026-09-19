@@ -1,10 +1,19 @@
 import { z } from "zod";
 import type { Finding, InvestigationState, Severity, StepPriority } from "./stateTypes.js";
-import { tacticForTechniques, type IrisTactic } from "./mitreTactics.js";
+import { tacticForTechniques } from "./mitreTactics.js";
 import { collectSummary, isActionableCollect } from "./collectDirective.js";
 import { uncoveredCoreTactics, tacticCollectDirectives } from "./knownUnknowns.js";
 import { rankHosts } from "./hostRanking.js";
 import type { HostAliasIndex } from "./hostAlias.js";
+import {
+  fallbackFindingTask,
+  findingEvidenceHosts,
+  renderFindingTaskDescription,
+  PHASE_GUIDANCE,
+  TACTIC_FOCUS,
+  type FindingTask,
+  type StoredFindingTask,
+} from "./findingTasks.js";
 
 // Playbook tracking (issue #36, Phase 1). Turns the AI's "next steps" and the
 // high-severity findings into a trackable checklist of remediation/investigation
@@ -23,6 +32,9 @@ export const PLAYBOOK_SOURCES = ["next_step", "finding", "question", "known_unkn
 export type PlaybookSource = (typeof PLAYBOOK_SOURCES)[number];
 
 const STEP_PRIORITIES = ["critical", "high", "medium", "low"] as const;
+
+// Joins a folded next step's action / rationale / where-line; findingSeed splits on it again.
+const FOLDED_NOTE_SEP = " — ";
 
 export const playbookTaskSchema = z.object({
   id: z.string(),
@@ -106,39 +118,6 @@ const PHASE_LABEL: Record<IrPhase, string> = {
   recover: "Recover",
 };
 
-// Generic per-phase IR guidance (NIST SP 800-61 / SANS phases).
-const PHASE_GUIDANCE: Record<IrPhase, string> = {
-  contain:
-    "Isolate the affected host(s) from the network (capture volatile evidence first), block the related indicators at the firewall/EDR, and disable any implicated accounts or sessions.",
-  investigate:
-    "Scope the activity: confirm the entry vector, build the timeline, and determine blast radius (which hosts, accounts, and data are involved). Pull supporting artifacts and correlate across tools.",
-  eradicate:
-    "Remove the threat: terminate malicious processes, delete dropped artifacts, remove persistence (services / scheduled tasks / run keys / WMI), and reset compromised credentials. Close the exploited vector.",
-  recover:
-    "Restore affected systems from known-good backups, re-enable services, validate integrity, and add detections/monitoring so a recurrence of these techniques is caught.",
-};
-
-// Tactic-specific investigation focus, keyed by the finding's dominant ATT&CK tactic.
-const TACTIC_FOCUS: Record<IrisTactic, string> = {
-  "Initial Access":
-    "Identify the delivery mechanism (phishing, exposed service, valid account) and confirm patient zero.",
-  Execution:
-    "Trace the parent→child process chain and command lines; establish what ran and under which account.",
-  Persistence:
-    "Enumerate autoruns, services, scheduled tasks, and WMI subscriptions the adversary left behind.",
-  "Privilege Escalation": "Determine how elevation was achieved and which accounts gained higher privileges.",
-  "Defense Evasion":
-    "Check for cleared logs, disabled security tooling, and masqueraded or obfuscated binaries.",
-  "Credential Access": "Identify which credentials were accessed or dumped and rotate them immediately.",
-  Discovery: "Review what the adversary enumerated to gauge their knowledge of the environment.",
-  "Lateral Movement": "Map which hosts were reached and via what protocol and credentials.",
-  Collection: "Determine what data was staged for exfiltration and from where.",
-  "Command and Control": "Identify and block the C2 infrastructure; hunt for additional beacons.",
-  Exfiltration: "Quantify what data left the environment and through which channel.",
-  Impact:
-    "Assess the damage (encryption / destruction / disruption) and prioritize recovery of affected systems.",
-};
-
 // Which IR phases each severity expands into. Critical → full cycle; High → investigate + contain.
 const PHASES_BY_SEVERITY: Partial<Record<Severity, readonly IrPhase[]>> = {
   Critical: IR_PHASES,
@@ -154,17 +133,19 @@ function mitreSummary(techniques: readonly string[]): string {
 
 // Expand one Critical/High finding into ordered IR-phase task seeds. Each phase keeps a stable
 // sourceKey (`finding:<id>:<phase>`) so re-derivation stays idempotent.
-function buildFindingTemplateSeeds(f: Finding): DerivedTaskSeed[] {
+function buildFindingTemplateSeeds(f: Finding, aiTask?: FindingTask): DerivedTaskSeed[] {
   const priority = PRIORITY_FROM_SEVERITY[f.severity] ?? "medium";
   const phases = PHASES_BY_SEVERITY[f.severity];
   if (!phases) return [];
   const tactic = tacticForTechniques(f.mitreTechniques ?? [], f.description ?? "");
   const mitre = mitreSummary(f.mitreTechniques ?? []);
   return phases.map((phase) => {
-    let description = PHASE_GUIDANCE[phase];
+    let description: string = PHASE_GUIDANCE[phase];
     if (phase === "investigate") {
       if (tactic && TACTIC_FOCUS[tactic]) description += ` Focus: ${TACTIC_FOCUS[tactic]}`;
       description += mitre;
+      // #1418: the AI's evidence-named steps lead; the generic phase text follows as context.
+      if (aiTask) description = `${renderFindingTaskDescription(aiTask)}\n\n${description}`;
     }
     return {
       title: `${PHASE_LABEL[phase]}: ${f.title}`,
@@ -187,6 +168,10 @@ export interface DeriveOptions {
   // (Contain/Investigate/Eradicate/Recover) instead of a single "investigate & remediate" task.
   // Opt-in per case (Phase 2) so the playbook isn't flooded by default.
   useTemplates?: boolean;
+  // AI-written per-finding tasks (#1418), keyed by finding id — loaded from FindingTaskStore by the
+  // caller. A finding without one gets the deterministic fallback; the card is never the finding
+  // description again.
+  findingTasks?: Readonly<Record<string, StoredFindingTask>>;
   // Resolves short-name/FQDN host spellings (and explicit analyst asset merges) onto one canonical
   // host, so a duplicate spelling doesn't generate a second "collect evidence" task for a host the
   // analyst already merged in the Asset Graph.
@@ -205,6 +190,63 @@ function appendFoldedNotes(seeds: DerivedTaskSeed[], notes: readonly string[]): 
   seeds[idx] = {
     ...seeds[idx],
     description: [seeds[idx].description, `Next step: ${notes.join("; ")}`].filter(Boolean).join("\n\n"),
+  };
+}
+
+// One Critical/High finding → one playbook card that is a TASK (#1418). The AI-written task wins;
+// otherwise a deterministic one is built from the finding's own evidence (its cited hosts, the
+// tactic's collect directives, the tactic focus). Folded next steps become numbered "Also:" steps —
+// or, when there is no AI task, the first one's action becomes the title, since the model's own
+// next step is the better order than a templated one.
+interface FindingSeedInput {
+  state: InvestigationState;
+  aiTask: StoredFindingTask | undefined;
+  foldedNotes: readonly string[];
+  rabbitHole: boolean;
+  topHosts: readonly string[];
+  aliasIndex?: HostAliasIndex;
+}
+
+function findingSeed(f: Finding, input: FindingSeedInput, priority: StepPriority): DerivedTaskSeed {
+  const { state, aiTask, foldedNotes, rabbitHole } = input;
+  let task: FindingTask;
+  let extraSteps = foldedNotes;
+  if (aiTask) {
+    task = aiTask;
+  } else {
+    const tactic = tacticForTechniques(f.mitreTechniques ?? [], f.description ?? "");
+    const directives = tactic
+      ? tacticCollectDirectives(tactic, state, state.forensicTimeline, input.topHosts, input.aliasIndex)
+      : [];
+    task = fallbackFindingTask(f, {
+      hosts: findingEvidenceHosts(f, state.forensicTimeline),
+      // The directive's expectedOutcome reads "unexplained by any finding" — true for the
+      // known-unknown tasks it was written for, wrong under a finding that explains it.
+      collectLines: directives
+        .map((d) => collectSummary({ ...d, expectedOutcome: undefined }))
+        .filter(Boolean),
+    });
+    const [lead, ...rest] = foldedNotes;
+    if (lead) {
+      const [action, ...detail] = lead.split(FOLDED_NOTE_SEP);
+      task = {
+        ...task,
+        title: action,
+        steps: [...(detail.length ? [detail.join(FOLDED_NOTE_SEP)] : []), ...task.steps],
+      };
+      extraSteps = rest;
+    }
+  }
+  const rabbitNote = rabbitHole
+    ? `Possible rabbit hole — no causal link to the main attack path; verify before chasing.${f.relevanceDiscriminator ? ` (${f.relevanceDiscriminator})` : ""}`
+    : "";
+  return {
+    title: `${rabbitHole ? "Verify (possible rabbit hole): " : ""}${task.title}`,
+    description: renderFindingTaskDescription(task, { extraSteps, rabbitNote, why: f.description }),
+    priority,
+    source: "finding",
+    sourceKey: `finding:${f.id}`,
+    relatedFindingId: f.id,
   };
 }
 
@@ -241,7 +283,8 @@ export function derivePlaybookTasks(state: InvestigationState, opts: DeriveOptio
     const collectLine = collectSummary(s.collect);
     const whereLine = collectLine || (s.pointer ? `Where / what to collect: ${s.pointer}` : "");
     if (relatedFindingId && coveredFindingIds.has(relatedFindingId)) {
-      const note = [s.rationale, whereLine].filter(Boolean).join(" — ") || s.action;
+      // The action leads (#1418): findingSeed lifts it to the card title / an "Also:" step.
+      const note = [s.action, s.rationale, whereLine].filter(Boolean).join(FOLDED_NOTE_SEP);
       const notes = foldedNotesByFindingId.get(relatedFindingId) ?? [];
       notes.push(note);
       foldedNotesByFindingId.set(relatedFindingId, notes);
@@ -257,6 +300,8 @@ export function derivePlaybookTasks(state: InvestigationState, opts: DeriveOptio
       ...(relatedFindingId ? { relatedFindingId } : {}),
     });
   }
+  // Top hosts feed both the fallback task's collect directives and the known-unknown tasks below.
+  const topHosts = rankHosts(state, { aliasIndex: opts.aliasIndex }).topHosts;
   for (const f of state.findings ?? []) {
     if (f.status === "dismissed") continue;
     const priority = PRIORITY_FROM_SEVERITY[f.severity] ?? "medium";
@@ -268,32 +313,22 @@ export function derivePlaybookTasks(state: InvestigationState, opts: DeriveOptio
     const rabbitHole = f.relevance === "disconnected";
     const seedPriority = rabbitHole ? demotePriority(priority) : priority;
     const foldedNotes = foldedNotesByFindingId.get(f.id) ?? [];
+    const aiTask = opts.findingTasks?.[f.id];
     if (opts.useTemplates) {
-      const templateSeeds = buildFindingTemplateSeeds(f).map((t) =>
+      const templateSeeds = buildFindingTemplateSeeds(f, aiTask).map((t) =>
         rabbitHole ? { ...t, priority: demotePriority(t.priority) } : t,
       );
       appendFoldedNotes(templateSeeds, foldedNotes);
       seeds.push(...templateSeeds);
-    } else {
-      const rabbitNote = rabbitHole
-        ? `Possible rabbit hole — no causal link to the main attack path; verify before chasing.${f.relevanceDiscriminator ? ` (${f.relevanceDiscriminator})` : ""}`
-        : "";
-      const description = [
-        f.description,
-        rabbitNote,
-        foldedNotes.length ? `Next step: ${foldedNotes.join("; ")}` : "",
-      ]
-        .filter(Boolean)
-        .join("\n\n");
-      seeds.push({
-        title: `${rabbitHole ? "Verify (possible rabbit hole)" : "Investigate & remediate"}: ${f.title}`,
-        description,
-        priority: seedPriority,
-        source: "finding",
-        sourceKey: `finding:${f.id}`,
-        relatedFindingId: f.id,
-      });
+      continue;
     }
+    seeds.push(
+      findingSeed(
+        f,
+        { state, aiTask, foldedNotes, rabbitHole, topHosts, aliasIndex: opts.aliasIndex },
+        seedPriority,
+      ),
+    );
   }
   // Collection tasks from OPEN questions (investigation-guidance #8): an unknown/partial key question
   // that carries an actionable structured collect target becomes a trackable "collect X from host Y"
@@ -317,7 +352,6 @@ export function derivePlaybookTasks(state: InvestigationState, opts: DeriveOptio
   // with no covering finding becomes a status-tracked "collect the evidence that would explain it"
   // task, pointed at the right host + artifact (tacticCollectDirectives). Only fires once the case has
   // a real (Critical/High) finding — uncoveredCoreTactics gates on that. Stable sourceKey `ku:<tactic>`.
-  const topHosts = rankHosts(state, { aliasIndex: opts.aliasIndex }).topHosts;
   for (const tactic of uncoveredCoreTactics(state)) {
     const dirs = tacticCollectDirectives(tactic, state, state.forensicTimeline, topHosts, opts.aliasIndex);
     if (!dirs.length) continue;
