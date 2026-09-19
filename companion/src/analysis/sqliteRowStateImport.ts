@@ -327,8 +327,11 @@ function mapRow(
   const reportTag = `; report ${reportFingerprint.slice(0, 16)}`;
   // Version/page-version/location/rowId included so two history rows sharing a page/offset (the
   // common case for successive updates to the SAME physical slot) never read as identical text
-  // once aggKey is stripped at persistence (Codex code review finding).
-  const rowIdPart = rowId ? `, row ${rowId}` : "";
+  // once aggKey is stripped at persistence (Codex code review finding). Brackets stripped for
+  // the same reason as `tableLabel` — the Row ID cell is adversary-controlled CSV content and
+  // reaches the same derived-note parser; the canonical `rowId` keeps the raw value, as it is the
+  // row's identity (findingId, the latest-per-rowId grouping) and never prose (#1330).
+  const rowIdPart = rowId ? `, row ${rowId.replace(/[[\]]/g, "")}` : "";
   const rawBody =
     `sqlite-dissect row state: table ${tableLabel} — ${operation} via ${fileSource}/${cellSource} at page ` +
     `${pageNumber} offset ${fileOffset} (v${versionNumber}/pv${pageVersionNumber}, loc ${location}${rowIdPart}); ` +
