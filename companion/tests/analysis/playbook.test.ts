@@ -146,6 +146,98 @@ describe("derivePlaybookTasks", () => {
   });
 });
 
+describe("derivePlaybookTasks — finding cards are tasks (#1418)", () => {
+  const aiTask = {
+    title: "Confirm secretsdump.exe ran on WS-042 and scope the credential theft",
+    steps: ["Pull the prefetch and process tree around 14:02", "Search \\Windows\\Temp for NTDS.dit copies"],
+    doneWhen: "Execution confirmed or refuted; dumped files listed",
+    sourceHash: "h",
+    writtenAt: NOW,
+    engine: "ai" as const,
+  };
+
+  it("uses the AI-written task as the card: its title, numbered steps, Done when, and a one-line Why", () => {
+    const state = { ...emptyState("c1"), findings: [finding({ id: "fa" })] };
+    const [seed] = derivePlaybookTasks(state, { findingTasks: { fa: aiTask } });
+    expect(seed.title).toBe(aiTask.title);
+    expect(seed.description.split("\n")).toEqual([
+      "1. Pull the prefetch and process tree around 14:02",
+      "2. Search \\Windows\\Temp for NTDS.dit copies",
+      "Done when: Execution confirmed or refuted; dumped files listed",
+      "Why: lockbit.exe dropped",
+    ]);
+    expect(seed.sourceKey).toBe("finding:fa");
+  });
+
+  it("builds a deterministic task when no AI task exists — never the finding description", () => {
+    const state = {
+      ...emptyState("c1"),
+      findings: [finding({ id: "fa", mitreTechniques: ["T1003.002"], relatedEventIds: ["e1"] })],
+      forensicTimeline: [
+        {
+          id: "e1",
+          timestamp: NOW,
+          description: "secretsdump.exe ran",
+          severity: "Critical" as const,
+          mitreTechniques: [],
+          relatedFindingIds: ["fa"],
+          sourceScreenshots: [],
+          asset: "WS-042",
+        },
+      ],
+    };
+    const [seed] = derivePlaybookTasks(state);
+    expect(seed.title).toMatch(
+      /^Confirm the credential theft and rotate what was exposed: Ransomware staged$/,
+    );
+    expect(seed.description).not.toBe(state.findings[0].description);
+    expect(seed.description).toMatch(/^1\. Confirm the activity on WS-042/);
+    expect(seed.description).toContain("Done when:");
+    expect(seed.description).toContain("Why: lockbit.exe dropped");
+    expect(seed.description).not.toMatch(/^Investigate & remediate/);
+  });
+
+  it("a folded next step becomes the title when there is no AI task, and an 'Also:' step when there is one", () => {
+    const state = {
+      ...emptyState("c1"),
+      findings: [finding({ id: "f10" })],
+      nextSteps: [
+        nextStep({
+          id: "ns1",
+          action: "Analyze the PUA binary",
+          rationale: "confirm malicious",
+          pointer: "finding f10",
+        }),
+      ],
+    };
+    const [noAi] = derivePlaybookTasks(state);
+    expect(noAi.title).toBe("Analyze the PUA binary");
+    expect(noAi.description).toContain("confirm malicious");
+    expect(noAi.description).not.toMatch(/Also: Analyze the PUA binary/);
+
+    const [withAi] = derivePlaybookTasks(state, { findingTasks: { f10: aiTask } });
+    expect(withAi.title).toBe(aiTask.title);
+    expect(withAi.description).toContain("3. Also: Analyze the PUA binary");
+  });
+
+  it("keeps the rabbit-hole prefix and note on top of the task", () => {
+    const state = { ...emptyState("c1"), findings: [finding({ id: "fa", relevance: "disconnected" })] };
+    const [seed] = derivePlaybookTasks(state, { findingTasks: { fa: aiTask } });
+    expect(seed.title).toBe(`Verify (possible rabbit hole): ${aiTask.title}`);
+    expect(seed.description).toContain("Possible rabbit hole");
+    expect(seed.priority).toBe("high"); // demoted from critical
+  });
+
+  it("template mode: the Investigate phase leads with the AI steps when one exists", () => {
+    const state = { ...emptyState("c1"), findings: [finding({ id: "fa" })] };
+    const inv = derivePlaybookTasks(state, { useTemplates: true, findingTasks: { fa: aiTask } }).find(
+      (s) => s.sourceKey === "finding:fa:investigate",
+    )!;
+    expect(inv.description).toMatch(/^1\. Pull the prefetch/);
+    expect(inv.title).toBe("Investigate: Ransomware staged");
+  });
+});
+
 describe("mergePlaybook", () => {
   it("adds new seeds as todo tasks with id = sourceKey and increasing order", () => {
     const seeds = derivePlaybookTasks({

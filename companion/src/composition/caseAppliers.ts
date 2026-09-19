@@ -241,7 +241,9 @@ export function createCaseAppliers({
       { assetOverrides: options.assetOverridesStore, fleet: options.velociraptorClientStore },
       caseId,
     );
-    return options.playbookStore.sync(caseId, state, { useTemplates, aliasIndex });
+    // #1418: the AI-written per-finding tasks; a finding without one gets the deterministic fallback.
+    const findingTasks = options.findingTaskStore ? await options.findingTaskStore.load(caseId) : {};
+    return options.playbookStore.sync(caseId, state, { useTemplates, aliasIndex, findingTasks });
   }
 
   return {
