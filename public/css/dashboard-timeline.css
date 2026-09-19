@@ -333,8 +333,11 @@
   color: #1a1f29; border-radius: 4px; padding: 3px 12px; font-size: 11px; font-weight: bold; line-height: 1.4; cursor: pointer; }
 .job-resume { background: var(--accent); border-color: var(--accent); }
 /* The popover lives inside .toolbar-main, but its actions are not toolbar controls. Keep their
-   labels visible when the outer toolbar collapses its own buttons to icons-only. */
-.toolbar-main.icons-only .jobs-menu button { font-size: 11px; padding: 3px 12px; }
+   labels visible when the outer toolbar collapses its own buttons to icons-only. The :not() is
+   load-bearing (#1428): dashboard-toolbar.css collapses `.toolbar-main.icons-only button:not(.dv-item)`
+   to font-size 0, loads AFTER this file, and ties on specificity without it — which left ✕ Cancel and
+   ↻ Resume as blank 19px pills on every wide-toolbar screen. */
+.toolbar-main.icons-only .jobs-menu button:not(.dv-item) { font-size: 11px; padding: 3px 12px; }
 .job-cancel:hover, .job-resume:hover { filter: brightness(1.1); }
 .job-cancel:disabled, .job-resume:disabled { opacity: .5; cursor: default; }
 /* The progress bar (#1428): its own line between the header and the detail, filled in place as the
