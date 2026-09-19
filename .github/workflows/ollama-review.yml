@@ -10,25 +10,11 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      GH_REPO: ${{ github.repository }}
     steps:
       # #817's commit-pin policy deliberately covers third-party actions only (below) — GitHub's own
       # actions/checkout is lower supply-chain risk, and every workflow in this repo tracks it by a
       # moving major-version tag, not a commit SHA (#1192).
       - uses: actions/checkout@v6
-
-      - name: Ensure issue labels exist
-        run: |
-          set -euo pipefail
-          gh label create bug               --color d73a4a --description "Something is broken"                  --force
-          gh label create suggestion        --color 0075ca --description "Improvement to existing code"         --force
-          gh label create feature-request   --color a2eeef --description "New capability"                       --force
-          gh label create severity:critical --color b60205 --description "Exploitable or data-loss severity"    --force
-          gh label create severity:high     --color d93f0b --description "High severity"                        --force
-          gh label create severity:medium   --color fbca04 --description "Medium severity"                      --force
-          gh label create severity:low      --color c2e0c6 --description "Low severity"                         --force
 
       # Pinned to a commit, not a moving ref (#817): whatever `@latest` points at tomorrow would run
       # here with issues:write and an OIDC token. This is the commit `latest` resolved to on
@@ -47,28 +33,5 @@ jobs:
 
             Approve or request changes through the normal GitHub PR review
             mechanism, based only on whether the change is safe and correct
-            to merge. Do not withhold approval just because you noticed a
-            secondary gap, missing edge case, or improvement that is not
-            itself a merge blocker — approve the PR and file those
-            separately instead of losing them in an approval comment.
-
-            For every non-blocking gap, issue, or improvement you notice
-            while reviewing this diff:
-            - Before creating an issue, run
-              `gh issue list --state all --limit 5 --search "<key words from the title>"`
-              and skip the finding if an equivalent issue already exists.
-            - Create it immediately with:
-              gh issue create --title "<title>" --label <category> --label <severity> --body "<body>"
-              where:
-              - <title> starts with "[Bug]", "[Suggestion]", or
-                "[Feature Request]" followed by a short description.
-              - <category> is the matching label: bug, suggestion, or
-                feature-request.
-              - <severity> is one of: severity:critical, severity:high,
-                severity:medium, severity:low.
-              - <body> includes the file path and line number, a clear
-                explanation of the finding, the severity rating, a
-                recommended fix or next step, and the line
-                "Found while reviewing PR #${{ github.event.pull_request.number }}."
-            - If a `gh` command fails, print the error and move on to the
-              next finding. Never stop the review because one issue failed.
+            to merge. Put every finding in the review itself. Do not create
+            GitHub issues, and do not run `gh issue create`.
