@@ -84,6 +84,18 @@ describe("renderVeloRunList", () => {
     }
   });
 
+  it("folds each bundle's artifact list into a collapsed toggle", () => {
+    collect.activeCaseId = "c1";
+    collect.renderVeloRunList(BUNDLES);
+    const html = runList.innerHTML;
+    // One <details> per bundle, never pre-opened, with the count as its summary and the names inside.
+    expect(html.match(/<details class="velo-artifacts"/g)?.length).toBe(BUNDLES.length);
+    expect(html).not.toMatch(/<details class="velo-artifacts"[^>]*\sopen/);
+    expect(html).toMatch(/<summary[^>]*>1 artifact\(s\)<\/summary>/);
+    const inner = html.slice(html.indexOf("<details"), html.indexOf("</details>"));
+    expect(inner).toContain("Windows.System.Pslist");
+  });
+
   it("points at the Settings library when there is nothing to run", () => {
     collect.renderVeloRunList([]);
     expect(runList.innerHTML).toContain("No bundles yet");
