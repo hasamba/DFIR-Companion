@@ -525,6 +525,37 @@ describe("client certificate and JA3 nodes", () => {
     expect(row.description).not.toMatch(/fleet|lead/);
   });
 
+  it("a JA3S is a node of its own: the servers that presented it, the names, the client addresses — a server library signature, never an identity (#997)", () => {
+    const sessions = [1, 2, 3].map((i) =>
+      ssl({
+        uid: `S${i}`,
+        ts: T0 + i,
+        ja3s: "f4febc55ea12b31ae17cfb7e614afda8",
+        "id.resp_h": i === 3 ? "203.0.113.10" : "203.0.113.9",
+        "id.orig_h": `10.0.0.${i}`,
+      }),
+    );
+    const g = graphOf(store(sessions));
+    const j = node(g.nodes, "ja3s", "f4febc55")!;
+    expect(j.servers.values).toEqual(["203.0.113.10:443", "203.0.113.9:443"]);
+    expect(j.clientAddresses.count).toBe(3);
+    expect(j.names.values).toEqual(["cdn.example.net"]);
+    expect(j.leads).toEqual([]);
+    const row = mapTlsGraphRows(g, 100).find((r) => r.description.startsWith("TLS-graph ja3s"))!;
+    expect(row.description).toMatch(/^TLS-graph ja3s f4febc55…fda8 /);
+    expect(row.description).toContain("[server addresses: 2 — 203.0.113.10:443, 203.0.113.9:443]");
+    expect(row.description).toContain("[client addresses: 3]");
+    expect(row.description).toContain(
+      "[a TLS library signature of the server stack — every server with the same stack shares it; never an identity]",
+    );
+    expect(row.canonical?.tlsGraph?.node.kind).toBe("ja3s");
+    expect(canonicalEventEnvelopeSchema.safeParse(row.canonical).success).toBe(true);
+    // Seen once: not a node, like JA3.
+    expect(
+      node(graphOf(store([ssl({ ja3s: "f4febc55ea12b31ae17cfb7e614afda8" })])).nodes, "ja3s", "f4febc55"),
+    ).toBeUndefined();
+  });
+
   it("a JA3 seen once is not a node", () => {
     const g = graphOf(store([ssl({ ja3: "e7d705a3286e19ea42f587b344ee6865" })]));
     expect(node(g.nodes, "ja3", "e7d705a3")).toBeUndefined();

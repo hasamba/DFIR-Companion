@@ -1026,6 +1026,15 @@ Nothing is fetched and no server is contacted. The report section (off in saved 
 switched on) renders the same table.
 
 
+## TLS Relationships
+
+Certificate ↔ name ↔ client ↔ time across every upload and sensor in the case, as a graph and a
+table. Each entry is one certificate, name, client certificate, JA3 or JA3S with the union of what
+every sensor saw beside it; tap a node for the per-sensor, per-upload observations. Differences
+between sensors are stated with both sides, never resolved; a cluster is a lead, never a
+conclusion; a JA3/JA3S is a library signature; nothing here contacts observed infrastructure. See
+[Importing → TLS relationships across uploads](importing.md#tls-relationships-across-uploads-the-dashboard-panel).
+
 ## Kerberoast Chain
 
 Start from a service-ticket request and see what the case establishes about the service account

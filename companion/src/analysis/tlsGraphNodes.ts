@@ -386,7 +386,7 @@ const multiEdge = (n: TlsNode): boolean =>
 
 const emitted = (n: TlsNode): boolean => {
   if (n.kind === "name") return (n.certificates?.size ?? 0) >= 2 || n.servers.count >= 2;
-  if (n.kind === "ja3") return n.sessions >= 2;
+  if (n.kind === "ja3" || n.kind === "ja3s") return n.sessions >= 2;
   return true;
 };
 
@@ -454,6 +454,14 @@ export function buildTlsGraph(store: TlsObservations, sessions: TlsObservation[]
     }
     if (o.ja3 !== undefined) {
       const j = get("ja3", o.ja3, sensor);
+      touch(j, o, t);
+      if (o.sni !== undefined) add(j.names, o.sni);
+    }
+    // The server's own signature (#997): the addresses that presented it, under which names, to
+    // which clients. No lead of its own — a server stack concentrated on few addresses is the
+    // ordinary case, and a signature shared across a fleet says only that the stack is shared.
+    if (o.ja3s !== undefined) {
+      const j = get("ja3s", o.ja3s, sensor);
       touch(j, o, t);
       if (o.sni !== undefined) add(j.names, o.sni);
     }

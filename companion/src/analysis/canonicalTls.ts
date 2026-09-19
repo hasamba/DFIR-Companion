@@ -9,6 +9,21 @@
 
 import { z } from "zod";
 
+/**
+ * Where a certificate's identity and facts came from, on a TLS session or certificate row (the
+ * `tls.certificate` / `tls.clientCertificate` blocks in canonicalEvent.ts): filled from the
+ * upload's x509 record by FUID (tlsGraphJoin.ts), or why that join was not made; read from the
+ * certificate's own DER bytes (tlsDerRead.ts), and which stated fields differ from them.
+ */
+export const tlsCertificateProvenanceFields = {
+  identityFrom: z.literal("x509 record").optional(),
+  x509Join: z
+    .enum(["records disagree", "disagrees with this record", "not among those read", "subject/issuer differ"])
+    .optional(),
+  decoded: z.literal("der").optional(),
+  decodedDiffers: z.array(z.string()).optional(),
+};
+
 /** A set of distinct values: every one counted, up to 8 listed, `atLeast` when tracking stopped at 256. */
 export const tlsGraphEdgeSchema = z.object({
   count: z.number().int().nonnegative(),
@@ -28,7 +43,7 @@ export const tlsGraphLeadSchema = z.object({
   words: z.string(),
 });
 
-export const tlsGraphNodeKindSchema = z.enum(["certificate", "name", "client-certificate", "ja3"]);
+export const tlsGraphNodeKindSchema = z.enum(["certificate", "name", "client-certificate", "ja3", "ja3s"]);
 
 /** One certificate identity a name was served with, and when the sensor saw it. */
 export const tlsGraphSpanSchema = z.object({
