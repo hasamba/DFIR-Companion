@@ -271,6 +271,22 @@ describe("cockpitCardControls", () => {
     expect(f.cockpitCardControls({ id: "c1", kind: "lead", pinned: true }, false)).toContain("Unpin");
     expect(f.cockpitCardControls({ id: "c1", kind: "lead", assignee: "ada" }, false)).toContain("Reassign");
   });
+
+  it("adds a Fleet collection jump beside Open on an import-evidence card", () => {
+    const html = f.cockpitCardControls(
+      { id: "gap:import-evidence", kind: "gap", target: { panel: "import" } },
+      false,
+    );
+    expect(html).toContain('data-act="cockpitOpenTarget"');
+    expect(html).toContain('data-act="openFleetCollection"');
+    expect(html).toContain("Fleet collection");
+  });
+
+  it("keeps the Fleet collection jump off every other card", () => {
+    const html = f.cockpitCardControls({ id: "c1", kind: "gap", target: { panel: "findings" } }, false);
+    expect(html).not.toContain("openFleetCollection");
+    expect(f.cockpitCardControls({ id: "c2", kind: "alert" }, false)).not.toContain("openFleetCollection");
+  });
 });
 
 describe("cockpitCardHtml", () => {
