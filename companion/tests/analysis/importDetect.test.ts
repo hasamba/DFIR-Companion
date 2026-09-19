@@ -1199,3 +1199,28 @@ describe("detectImportWithCustom precedence", () => {
     expect(detectImportWithCustom("x.json", siem, m, "external-first")).toBe("my-evtx");
   });
 });
+
+// #1392: the macOS-persistence sniffer claimed ANY upload opening with the bplist0 magic, so every
+// binary plist that reached the text path became a launchd row. The text path now refuses the magic
+// ahead of detection (importIngest resolveImportKind); the detector itself must not claim it either,
+// or a direct caller would mint the same mislabel.
+describe("detectImportKind — a whole-upload binary plist is not a launchd plist (#1392)", () => {
+  const BPLIST = "bplist00\u00d4\u0001\u0002\u0003\u0004\u0005\u0006$archiver$objects$top$version";
+  it("never returns macospersist for a bare bplist0 body, whatever the name", () => {
+    for (const name of [
+      "com.apple.LSSharedFileList.RecentDocuments.sfl2",
+      "com.evil.agent.plist",
+      "x.bookmark",
+    ]) {
+      expect(detectImportKind(name, BPLIST), name).not.toBe("macospersist");
+    }
+  });
+  it("still claims an XML plist by content", () => {
+    expect(
+      detectImportKind(
+        "anything.txt",
+        '<?xml version="1.0"?><plist version="1.0"><dict><key>Label</key><string>x</string></dict></plist>',
+      ),
+    ).toBe("macospersist");
+  });
+});

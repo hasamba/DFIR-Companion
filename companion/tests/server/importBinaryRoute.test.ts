@@ -228,6 +228,38 @@ describe("POST /cases/:id/import-binary — the browser's byte-native path (#130
     expect(binary.body.error).toMatch(/not a recognized/);
   });
 
+  it("the TEXT path refuses ANY binary plist by its magic — no launchd row, no event, and the hint names plutil (#1392)", async () => {
+    const { app, store, stateStore } = await harness();
+    // Two non-login-item bplists: an MRU list the byte-native gate rightly declines, and an arbitrary
+    // app plist. Before the magic gate, each was sniffed as a binary LAUNCHD plist and minted a
+    // Medium "not read" row under the wrong artifact label.
+    const cases = [
+      { filename: "com.apple.LSSharedFileList.RecentDocuments.sfl2", hex: SFL2_HEX },
+      { filename: "com.evil.agent.plist", hex: LOGINITEMS_PLIST_HEX },
+    ];
+    for (const { filename, hex } of cases) {
+      const res = await request(app)
+        .post("/cases/c1/import")
+        .send({ filename, text: Buffer.from(hex, "hex").toString("latin1") });
+      expect(res.status, filename).toBe(400);
+      expect(res.body.refused, filename).toBe(true); // the dashboard shows a `refused` sentence verbatim
+      expect(res.body.error, filename).toMatch(/binary property list/);
+      expect(res.body.error, filename).toMatch(/plutil -convert xml1/);
+      expect(res.body.error, filename).toMatch(/import-binary/);
+      expect(res.body.error, filename).not.toMatch(/launchd/);
+    }
+    expect(await ledgerRows(store, "c1")).toHaveLength(0);
+    const state = await stateStore.load("c1");
+    expect(state.forensicTimeline).toHaveLength(0);
+    // The dashboard half of the contract: the batch loop reads the flag and keeps the sentence.
+    const dashboard = await readFile(
+      new URL("../../../public/js/dashboard-unified-import.js", import.meta.url),
+      "utf8",
+    );
+    expect(dashboard).toMatch(/jr\.refused/);
+    expect(dashboard).toMatch(/refused\.push\(jr\.error\)/);
+  });
+
   it("is a case-scoped WRITE, not the global-admin gate the server-path route needs", () => {
     expect(resolveRequestPolicy("POST", "/cases/c1/import-binary")).toEqual({
       kind: "case",

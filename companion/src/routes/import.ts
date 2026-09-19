@@ -19,7 +19,11 @@ import { parseCloudTrail, type AwsImportOptions } from "../analysis/awsImport.js
 import { parseCloudActivity, type CloudActivityImportOptions } from "../analysis/cloudActivityImport.js";
 import { parsePlasoCsv, type PlasoImportOptions } from "../analysis/plasoImport.js";
 import { parseSandboxReport, type SandboxImportOptions } from "../analysis/sandboxImport.js";
-import { unknownImportHintFor } from "../analysis/importKindHints.js";
+import {
+  IMPORT_FILE_UNKNOWN_MESSAGE,
+  UNIFIED_IMPORT_UNKNOWN_MESSAGE,
+  unknownImportResponse,
+} from "../analysis/importKindHints.js";
 import { parseMemoryOrIntact, type MemoryImportOptions } from "../analysis/intactImport.js";
 import { parseEmail, type EmailImportOptions } from "../analysis/emailImport.js";
 import { parseTheHive } from "../analysis/theHiveImport.js";
@@ -280,12 +284,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
 
     const kind = ctx.resolveImportKind()(originalName, text);
     if (kind === "unknown") {
-      const capaHint = unknownImportHintFor(originalName, text);
-      return res.status(400).json({
-        error:
-          capaHint ??
-          "could not detect the file type — not recognized as any supported import (THOR / SIEM-EDR / Chainsaw-EVTX / Hayabusa / Velociraptor / Suricata-Zeek / KAPE / Cyber Triage / M365-Entra / AWS / GCP-Azure / Plaso / Sandbox / Volatility-Rekall memory / Email-eml-msg / auditd / journald / sysdig-Falco / syslog / CSV / log)",
-      });
+      return res.status(400).json(unknownImportResponse(originalName, text, UNIFIED_IMPORT_UNKNOWN_MESSAGE));
     }
     if ((kind === "csv" || kind === "log") && !options.pipeline?.hasSynthesisProvider()) {
       return res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });
@@ -548,10 +547,8 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
     const originalName = basename(filePath);
     const kind = ctx.resolveImportKind()(originalName, sample);
     if (kind === "unknown") {
-      const capaHint = unknownImportHintFor(originalName, sample); // best-effort: a truncated head gives no capa hint
-      return res.status(400).json({
-        error: capaHint ?? "could not detect the file type — not recognized as any supported import format",
-      });
+      // best-effort: a truncated head gives no capa hint
+      return res.status(400).json(unknownImportResponse(originalName, sample, IMPORT_FILE_UNKNOWN_MESSAGE));
     }
     if ((kind === "csv" || kind === "log") && !options.pipeline?.hasSynthesisProvider()) {
       return res.status(501).json({ error: "AI provider not configured for CSV/log analysis" });

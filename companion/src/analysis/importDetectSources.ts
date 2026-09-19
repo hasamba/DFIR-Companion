@@ -233,16 +233,21 @@ export function looksLikeLinuxPersist(filename: string, text: string): boolean {
 // ───────────────────────── macOS persistence collection (#908 item 6) ─────────────────────────
 //
 // A property list is self-identifying — `<plist>` or the plist DOCTYPE — so a single collected
-// LaunchAgent needs no filename rule at all. A binary plist is claimed too, deliberately: the
-// importer's job there is to SAY the file needs converting, which is more useful than the generic
-// log path silently reading mojibake out of it.
+// LaunchAgent needs no filename rule at all.
+//
+// A whole-upload BINARY plist is NOT claimed (#1392). It used to be, so the importer could say the
+// file needs converting — but the magic says "bplist", not "launchd", and every other binary plist
+// (an MRU .sfl2, an app's .plist) got a launchd "not read" row under the wrong label. The text
+// boundary refuses the magic before detection runs (importIngest.ts resolveImportKind), with a hint
+// that names the conversion. A binary member INSIDE a collection whose header names a launchd path
+// is still graded as unreadable by gradeLaunchd, where the label is the header's, not a guess.
 //
 // A COLLECTION is claimed only when at least one header names a launchd path. A collection with no
 // launchd member is a Linux-shaped collection and belongs to the Linux importer, which grades the
 // cron and shell artifacts macOS shares with it.
 export function looksLikeMacosPersist(filename: string, text: string): boolean {
   const t = (text ?? "").trimStart();
-  if (isBinaryPlist(t)) return true;
+  if (isBinaryPlist(t)) return false;
 
   // The plist marker must open the DOCUMENT, not merely appear somewhere in its first 4 KB. The
   // loose test claimed a Velociraptor export whose rows carried plist file CONTENT, an NDJSON whose
