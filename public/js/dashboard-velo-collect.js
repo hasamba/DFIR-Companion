@@ -37,11 +37,14 @@ function renderVeloRunList(bundles) {
           : "";
         return `<div class="velo-bundle" data-safe-style="border:1px solid var(--border-color);border-radius:6px;padding:8px 10px;margin-bottom:8px">
         <div data-safe-style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-          <div><strong>${esc(b.name)}</strong>${badge} <span data-safe-style="color:var(--text-muted);font-size:11px">${esc(b.artifacts.length)} artifact(s)</span></div>
+          <div><strong>${esc(b.name)}</strong>${badge}</div>
           <div data-safe-style="display:flex;gap:6px;flex-wrap:wrap">${runBtn}</div>
         </div>
         ${b.description ? `<div data-safe-style="color:var(--text-muted);font-size:12px;margin-top:4px">${esc(b.description)}</div>` : ""}
-        <div data-safe-style="color:var(--text-dim);font-size:11px;margin-top:4px">${b.artifacts.map((a) => esc(a)).join(", ")}</div>
+        <details class="velo-artifacts" data-safe-style="margin-top:4px">
+          <summary data-safe-style="cursor:pointer;color:var(--text-muted);font-size:11px">${esc(b.artifacts.length)} artifact(s)</summary>
+          <div data-safe-style="color:var(--text-dim);font-size:11px;margin-top:4px">${b.artifacts.map((a) => esc(a)).join(", ")}</div>
+        </details>
         <div class="velo-run-form" data-id="${escAttr(b.id)}" data-safe-style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid var(--border-color)"></div>
       </div>`;
       })
