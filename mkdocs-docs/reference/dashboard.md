@@ -708,10 +708,13 @@ Each hypothesis has a status: **Open / Supported / Refuted / Unknown**. Open hyp
 
 A trackable checklist of response tasks:
 
-- Auto-generated from findings (Critical/High findings generate response steps)
+- Auto-generated from findings — every Critical/High finding becomes one **task**, not a restatement of the finding
+- Auto-generated from the AI's next steps and open key questions
 - Analyst-added custom tasks
 
 Each task has: status, assignee, due date, notes.
+
+**What a finding task looks like.** After each synthesis the AI writes one task per Critical/High finding from that finding's own cited events: an imperative title that names the host, tool or account ("Confirm secretsdump.exe ran on WS-042 and scope the credential theft"), one to four numbered steps that name the artifact, path and time window to look at, a **Done when** line, and a one-line **Why** taken from the finding. A finding the AI has not written a task for yet — an older case, a finding added by a deterministic backfill, or a provider outage — gets a deterministic task instead: confirm the activity on the cited hosts around the finding's time, collect the tactic's usual artifact, the tactic's investigation focus, and (Critical only) containment. Re-run synthesis to get AI-written tasks on an older case. A next step that points at a finding folds into that finding's task as an extra numbered step (or becomes its title when the AI wrote no task). `DFIR_FINDING_TASKS_MAX` caps how many findings the pass writes for per run (default 25).
 
 **IR Templates mode** (Settings → Velociraptor → IR Templates): expands each Critical/High finding into phase-based steps (Critical → Contain / Investigate / Eradicate / Recover; High → Investigate / Contain). The Investigate step is tailored to the finding's dominant ATT&CK tactic.
 

@@ -355,6 +355,8 @@
     "findingWorkflow.ts": "analysis/findings",
     "findingOutcome.ts": "analysis/findings",
     "findingsDiff.ts": "analysis/findings",
+    "findingTaskStore.ts": "analysis/intel",
+    "findingTasks.ts": "analysis/intel",
     "forensicGate.ts": "analysis/timeline",
     "forensicGateControl.ts": "analysis/timeline",
     "forensicSort.ts": "analysis/timeline",

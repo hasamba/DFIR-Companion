@@ -1708,6 +1708,7 @@
           <div class="sfield"><label for="env-DFIR_AI_STARREDREPORT_PROMPT_FILE">Starred-report prompt file<span class="sfield-hint">DFIR_AI_STARREDREPORT_PROMPT_FILE — TimeSketch-style Starred Events Report over the analyst's starred events</span></label><input id="env-DFIR_AI_STARREDREPORT_PROMPT_FILE" placeholder="path/to/starred-report.txt" /></div>
           <div class="sfield"><label for="env-DFIR_AI_VIEWSUMMARY_PROMPT_FILE">View-summary prompt file<span class="sfield-hint">DFIR_AI_VIEWSUMMARY_PROMPT_FILE — quick AI overview of the current super-timeline view (filters applied)</span></label><input id="env-DFIR_AI_VIEWSUMMARY_PROMPT_FILE" placeholder="path/to/view-summary.txt" /></div>
           <div class="sfield"><label for="env-DFIR_AI_SESSIONSUMMARY_PROMPT_FILE">Session-summary prompt file<span class="sfield-hint">DFIR_AI_SESSIONSUMMARY_PROMPT_FILE — focused account of ONE attacker session from the Attacker Sessions panel</span></label><input id="env-DFIR_AI_SESSIONSUMMARY_PROMPT_FILE" placeholder="path/to/session-summary.txt" /></div>
+          <div class="sfield"><label for="env-DFIR_AI_FINDINGTASKS_PROMPT_FILE">Finding-tasks prompt file<span class="sfield-hint">DFIR_AI_FINDINGTASKS_PROMPT_FILE — the post-synthesis pass that turns each Critical/High finding into a playbook task (#1418)</span></label><input id="env-DFIR_AI_FINDINGTASKS_PROMPT_FILE" placeholder="path/to/finding-tasks.txt" /></div>
         </div>
         <div class="settings-group-head">AI analysis parameters</div>
         <div class="sfield-row">
@@ -1723,6 +1724,7 @@
           <div class="sfield"><label for="env-DFIR_PBHUNT_MAX_EVENTS">Playbook-hunt context events<span class="sfield-hint">DFIR_PBHUNT_MAX_EVENTS — timeline events fed to the playbook-hunt prompt (default 120)</span></label><input id="env-DFIR_PBHUNT_MAX_EVENTS" placeholder="120" /></div>
           <div class="sfield"><label for="env-DFIR_PBHUNT_MAX_ARTIFACTS">Playbook-hunt artifacts cap<span class="sfield-hint">DFIR_PBHUNT_MAX_ARTIFACTS — max Velociraptor artifact names in the playbook-hunt prompt (default 150)</span></label><input id="env-DFIR_PBHUNT_MAX_ARTIFACTS" placeholder="150" /></div>
           <div class="sfield"><label for="env-DFIR_MEMORY_NEXTSTEP_MAX">Memory next-step max<span class="sfield-hint">DFIR_MEMORY_NEXTSTEP_MAX — max AI-suggested memory forensics next-steps per call (default 8)</span></label><input id="env-DFIR_MEMORY_NEXTSTEP_MAX" placeholder="8" /></div>
+          <div class="sfield"><label for="env-DFIR_FINDING_TASKS_MAX">Finding-tasks max<span class="sfield-hint">DFIR_FINDING_TASKS_MAX — max Critical/High findings the post-synthesis pass writes a playbook task for per run (default 25)</span></label><input id="env-DFIR_FINDING_TASKS_MAX" placeholder="25" /></div>
         </div>
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_GAP_HYPOTHESIS_MAX">Gap hypothesis max<span class="sfield-hint">DFIR_GAP_HYPOTHESIS_MAX — max gaps hypothesized per "Hypothesize gaps" call (default 5, worst-first)</span></label><input id="env-DFIR_GAP_HYPOTHESIS_MAX" placeholder="5" /></div>

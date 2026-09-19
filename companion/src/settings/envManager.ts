@@ -241,6 +241,8 @@ const WRITABLE_ENV_PREFIXES = [
   "DFIR_JOBS_MAX",
   "DFIR_JOBS_CONCURRENCY",
   "DFIR_JOBS_PER_CASE",
+  // #1418: cap on Critical/High findings the post-synthesis task pass writes for — a cost knob.
+  "DFIR_FINDING_TASKS_MAX",
   // The global opt-in that lets a DFIR_*_INSECURE=1 knob apply to a non-loopback host (the
   // per-integration _INSECURE keys are already writable through their family prefixes).
   "DFIR_TLS_ALLOW_INSECURE_EXTERNAL",
