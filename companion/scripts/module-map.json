@@ -699,6 +699,8 @@
     "timestompCorroborate.ts": "analysis/timeline",
     "downloadExecution.ts": "analysis/timeline",
     "quarantinePersistenceLink.ts": "analysis/timeline",
+    "quarantineVisitOrigin.ts": "analysis/timeline",
+    "quarantineExecutionLink.ts": "analysis/timeline",
     "downloadVisitOrigin.ts": "analysis/timeline",
     "downloadCorroborationShared.ts": "analysis/timeline",
     "smbExecution.ts": "analysis/timeline",

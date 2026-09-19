@@ -627,6 +627,38 @@ a URL segment, a path or a time.
   persistence collection first, or re-import the database dump afterwards — the notes are
   recomputed from the current evidence on every merge, and a re-import is the recovery.
 
+### macOS quarantine: the visit before the download, and the file that ran
+
+Two more merge-time joins complete the chain *this URL was fetched — which file is it — did it run*:
+
+- **Origin page ↔ browser visit.** The database record's origin page and download URL are matched
+  against browser-history visits — Velociraptor `Visited` rows and Hindsight `Browser visit` rows
+  — by URL equality alone (scheme and host folded, path exact; never a host, a basename or a
+  time). Only a visit dated *before* the record by more than the tolerance is noted: the record
+  gains `[origin page visited: … — <time>]` or `[download URL visited: …]`, the visit row gains
+  `[preceded a quarantine record: <download URL>]`, and both are raised to Medium so they sit
+  together in the forensic timeline. The note says the browser reached the page before the download
+  event was logged — never that the visit caused the download (no technique is added). Two named
+  hosts must agree; an unnamed side attaches only when the pair names one host, and says so.
+- **Marked file ↔ ran or used.** A file carrying a quarantine mark — an attribute record, or a
+  launchd job's program — is matched against process-start rows whose executable is the *same
+  path* (byte-exact: APFS may be case-sensitive, so `Installer` and `installer` are two files) and
+  against Spotlight store items for that path with a last-used date, each dated after the mark.
+  The marked row gains `[ran a quarantine-marked file: <process row> — 17 min after the mark]` or
+  `[quarantine-marked file used: Spotlight last-used … — opened or used, not necessarily
+  executed]`; the evidence row gains `[a quarantine-marked file: <path>]`; both raised to Medium.
+  A hash both rows carry and disagree on vetoes the match. Eight evidence rows are named per
+  file, the rest counted.
+- **What these do not say.** Malicious; that the download caused the run; that a file with no
+  such record never ran. No macOS process-execution log is parsed for this — unified-log `exec`
+  messages are free text — so the join runs over the process-start rows the case already holds
+  (EDR/SIEM JSON, Velociraptor process artifacts) and over Spotlight usage.
+- **Import order.** All of these rows are Info before a join raises them, and Info rows leave the
+  forensic timeline after each import settles: import the browser history and the process
+  evidence *after* the quarantine dump and the persistence collection, or re-import the dump last.
+  The IOC provenance view shows the visit and the record for a URL regardless of order — both
+  importers mint the `url` indicator.
+
 ### TLS records: what one record establishes
 
 Zeek `ssl.log` and `x509.log` and Suricata `tls` records are folded into rows the way `conn`

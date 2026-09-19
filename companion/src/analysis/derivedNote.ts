@@ -49,6 +49,12 @@ export const DERIVED_NOTE_NAMES: readonly string[] = [
   "sandbox verdict",
   "download record",
   "persisted as",
+  "origin page visited",
+  "download URL visited",
+  "preceded a quarantine record",
+  "ran a quarantine-marked file",
+  "quarantine-marked file used",
+  "a quarantine-marked file",
 ];
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
