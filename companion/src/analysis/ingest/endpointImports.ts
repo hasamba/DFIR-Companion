@@ -23,6 +23,7 @@ import {
   type RcloneCaseContext,
 } from "../rcloneImport.js";
 import { parseVelociraptorJsonProgress, type VelociraptorImportOptions } from "../velociraptorImport.js";
+import { describeFloor } from "./floorNote.js";
 import { noteEmptyImport } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 
@@ -54,7 +55,8 @@ export async function importThor(
 ): Promise<InvestigationState> {
   const parsedRaw = parseThorReport(jsonText, opts.thor);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "THOR", parsed.total);
+  if (parsed.events.length === 0 && parsed.iocs.length === 0)
+    return noteEmptyImport(ctx, caseId, opts, "THOR", parsed.total);
 
   // Assign stable, collision-free ids and validate the delta against the schema
   // (fills defaults like relatedFindingIds). No model call — purely structural.
@@ -66,7 +68,8 @@ export async function importThor(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `THOR import: ${parsed.kept} finding(s) kept, ${parsed.dropped} info/lifecycle row(s) dropped` +
+      `THOR import: ${parsed.events.length} finding(s) kept, ${parsed.dropped} info/lifecycle row(s) dropped` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
     summary: "",
   };
@@ -106,7 +109,8 @@ export async function importChainsaw(
 ): Promise<InvestigationState> {
   const parsedRaw = parseChainsawReport(jsonText, opts.chainsaw);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Chainsaw", parsed.total);
+  if (parsed.events.length === 0 && parsed.iocs.length === 0)
+    return noteEmptyImport(ctx, caseId, opts, "Chainsaw", parsed.total);
 
   const fallback = parsed.detections > 0 ? "Chainsaw" : "EVTX";
   const raw = {
@@ -121,7 +125,8 @@ export async function importChainsaw(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `${parsed.detections > 0 ? "Chainsaw" : "EVTX"} import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+      `${parsed.detections > 0 ? "Chainsaw" : "EVTX"} import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} record(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.detections > 0 ? `, ${parsed.detections} rule detection(s)` : "") +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       (parsed.groups > parsed.kept && parsed.dropped > 0
@@ -165,7 +170,8 @@ export async function importHayabusa(
 ): Promise<InvestigationState> {
   const parsedRaw = parseHayabusaTimeline(text, opts.hayabusa);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Hayabusa", parsed.total);
+  if (parsed.events.length === 0 && parsed.iocs.length === 0)
+    return noteEmptyImport(ctx, caseId, opts, "Hayabusa", parsed.total);
 
   const raw = {
     findings: [],
@@ -179,7 +185,8 @@ export async function importHayabusa(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `Hayabusa import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+      `Hayabusa import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} record(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       (parsed.groups > parsed.kept && parsed.dropped > 0
         ? `, ${parsed.dropped} record(s) omitted at the event cap`
@@ -239,7 +246,8 @@ export async function importVelociraptor(
     opts.onProgress,
   );
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Velociraptor", parsed.total);
+  if (parsed.events.length === 0 && parsed.iocs.length === 0)
+    return noteEmptyImport(ctx, caseId, opts, "Velociraptor", parsed.total);
 
   const eventIdByAggKey = new Map<string, string>();
   const forensicEvents = parsed.events.map((e, i) => {
@@ -267,7 +275,8 @@ export async function importVelociraptor(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `Velociraptor import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s)` +
+      `Velociraptor import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} row(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.detections > 0 ? `, ${parsed.detections} detection(s)` : "") +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       // Make truncation explicit: a huge MFT/USN artifact (275k+ rows) is capped, and the analyst
@@ -315,7 +324,7 @@ export async function importKape(
 ): Promise<InvestigationState> {
   const parsedRaw = parseKapeCsv(text, opts.kape);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0)
+  if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, `KAPE/${parsed.artifact}`, parsed.total);
 
   const raw = {
@@ -330,7 +339,8 @@ export async function importKape(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `KAPE/${parsed.artifact} import: ${parsed.kept} event(s) from ${parsed.total} row(s)` +
+      `KAPE/${parsed.artifact} import: ${parsed.events.length} event(s) from ${parsed.total} row(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
     summary: "",
   };
@@ -468,7 +478,8 @@ export async function importCybertriage(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `Cyber Triage import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s)` +
+      `Cyber Triage import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} row(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.notable > 0 ? `, ${parsed.notable} scored item(s)` : "") +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       `, ${parsed.iocs.length} IOC(s)` +

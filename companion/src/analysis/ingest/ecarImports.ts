@@ -2,6 +2,7 @@ import { ECAR_SOURCE, parseEcarJson, type EcarImportOptions } from "../ecarImpor
 import { deltaSchema } from "../responseSchema.js";
 import { applySeverityFloor } from "../severityFloor.js";
 import { type InvestigationState, type Severity } from "../stateTypes.js";
+import { describeFloor } from "./floorNote.js";
 import { noteEmptyImport, crossUploadSprayRows } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 
@@ -48,7 +49,7 @@ export async function importEcar(
     ...parsedRaw,
     events: applySeverityFloor([...parsedRaw.events, ...crossRows], opts.minSeverity),
   };
-  if (parsed.events.length === 0)
+  if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "ECAR", parsed.total, retentionNote || undefined);
 
   const raw = {
@@ -64,6 +65,7 @@ export async function importEcar(
     threadsClosed: [],
     timelineNote:
       `ECAR import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s)` +
+      describeFloor(parsedRaw.events.length + crossRows.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       (parsed.hostname ? ` (host ${parsed.hostname})` : "") +
       (retentionNote ? `; ${retentionNote}` : ""),

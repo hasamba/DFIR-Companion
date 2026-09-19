@@ -1,6 +1,7 @@
 import type { PlasoParseResult } from "../plasoImport.js";
 import { deltaSchema } from "../responseSchema.js";
 import { applySeverityFloor } from "../severityFloor.js";
+import { describeFloor } from "./floorNote.js";
 import type { InvestigationState, Severity } from "../stateTypes.js";
 import type { SiemEvent } from "../siemImport.js";
 import { aggregateEvents } from "../eventAggregate.js";
@@ -130,7 +131,8 @@ export async function persistPlasoParsed(
   },
 ): Promise<InvestigationState> {
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Plaso", parsed.total);
+  if (parsed.events.length === 0 && parsed.iocs.length === 0)
+    return noteEmptyImport(ctx, caseId, opts, "Plaso", parsed.total);
 
   const raw = {
     findings: [],
@@ -144,7 +146,8 @@ export async function persistPlasoParsed(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `Plaso import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s)` +
+      `Plaso import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} row(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       `, ${parsed.iocs.length} IOC(s)`,
     summary: "",

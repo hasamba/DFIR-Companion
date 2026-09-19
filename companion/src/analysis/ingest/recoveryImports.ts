@@ -5,6 +5,7 @@ import { deltaSchema } from "../responseSchema.js";
 import { applySeverityFloor } from "../severityFloor.js";
 import { resolveExtractedFrom } from "../siemImport.js";
 import { type InvestigationState, type Severity } from "../stateTypes.js";
+import { describeFloor } from "./floorNote.js";
 import { noteEmptyImport } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 
@@ -33,7 +34,7 @@ export async function importBulkExtractorUrl(
   const parsedRaw = parseBulkExtractorUrl(text, opts.bulkExtractorUrl);
   if (!parsedRaw) throw new Error("not a bulk_extractor url.txt feature file");
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) {
+  if (parsed.events.length === 0 && parsed.iocs.length === 0) {
     const gapDetail = [
       parsed.malformedRows ? `${parsed.malformedRows} malformed row(s)` : "",
       parsed.notCitedValues ? `${parsed.notCitedValues} distinct value(s) over the per-upload cap` : "",
@@ -65,7 +66,8 @@ export async function importBulkExtractorUrl(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `bulk_extractor url.txt import: ${parsed.kept} recovered URL fragment(s) from ${parsed.total} row(s)` +
+      `bulk_extractor url.txt import: ${parsed.events.length} recovered URL fragment(s) from ${parsed.total} row(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       (parsed.malformedRows ? `, ${parsed.malformedRows} malformed row(s)` : "") +
       (parsed.notCitedValues
@@ -109,7 +111,7 @@ export async function importBulkExtractorCarved(
   const parsedRaw = parseBulkExtractorCarved(text, opts.bulkExtractorCarved);
   if (!parsedRaw) throw new Error("not a bulk_extractor carved-object feature file");
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) {
+  if (parsed.events.length === 0 && parsed.iocs.length === 0) {
     const gapDetail = [
       parsed.malformedRows ? `${parsed.malformedRows} malformed row(s)` : "",
       parsed.notCitedValues ? `${parsed.notCitedValues} distinct digest(s) over the per-upload cap` : "",
@@ -148,7 +150,8 @@ export async function importBulkExtractorCarved(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `bulk_extractor ${parsed.recorder} carved-object import: ${parsed.kept} carved file(s) from ${parsed.total} row(s)` +
+      `bulk_extractor ${parsed.recorder} carved-object import: ${parsed.events.length} carved file(s) from ${parsed.total} row(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       (parsed.malformedRows ? `, ${parsed.malformedRows} malformed row(s)` : "") +
       (parsed.notCitedValues

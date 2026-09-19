@@ -19,6 +19,7 @@ import { parseTheHive, type TheHiveImportOptions } from "../theHiveImport.js";
 import { detectTool } from "../toolDetect.js";
 import { parseWazuhAlerts, type WazuhImportOptions } from "../wazuhImport.js";
 import { YARA_SOURCE, parseYaraOutput, type YaraImportOptions } from "../yaraImport.js";
+import { describeFloor } from "./floorNote.js";
 import { commitDelta, noteEmptyImport } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 import type { ForensicEvent } from "../stateTypes.js";
@@ -51,7 +52,8 @@ export async function importSiem(
 ): Promise<InvestigationState> {
   const parsedRaw = parseSiemExport(jsonText, opts.siem);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "SIEM", parsed.total);
+  if (parsed.events.length === 0 && parsed.iocs.length === 0)
+    return noteEmptyImport(ctx, caseId, opts, "SIEM", parsed.total);
 
   const source = detectTool(opts.label) ?? detectTool(parsed.format) ?? "SIEM import";
   const eventIdByAggKey = new Map<string, string>();
@@ -75,7 +77,8 @@ export async function importSiem(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `SIEM import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+      `SIEM import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} record(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
     summary: "",
@@ -124,7 +127,8 @@ export async function importDeclarative(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `${opts.importer.label} import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+      `${opts.importer.label} import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} record(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
     summary: "",
   };
@@ -248,7 +252,8 @@ export async function importMemory(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `Memory import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s) across ${parsed.tables} plugin(s)` +
+      `Memory import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} row(s) across ${parsed.tables} plugin(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.injected > 0 ? `, ${parsed.injected} injected-code hit(s)` : "") +
       (parsed.connections > 0 ? `, ${parsed.connections} connection(s)` : "") +
       (parsed.yaraHits ? `, ${parsed.yaraHits} YARA hit(s)` : "") +
@@ -349,7 +354,8 @@ export async function importTheHive(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `TheHive import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+      `TheHive import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} record(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.observables > 0 ? `, ${parsed.observables} observable(s)` : "") +
       `, ${parsed.iocCount} IOC(s)`,
     summary: "",
@@ -421,7 +427,8 @@ export async function importWazuh(
 ): Promise<InvestigationState> {
   const parsedRaw = parseWazuhAlerts(text, opts.wazuh);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Wazuh", parsed.total);
+  if (parsed.events.length === 0 && parsed.iocs.length === 0)
+    return noteEmptyImport(ctx, caseId, opts, "Wazuh", parsed.total);
 
   const raw = {
     findings: [],
@@ -435,7 +442,8 @@ export async function importWazuh(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `Wazuh import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+      `Wazuh import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} record(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       `, ${parsed.iocs.length} IOC(s)` +
       (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
@@ -480,7 +488,8 @@ export async function importYara(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `YARA import: ${parsed.kept} match event(s) from ${parsed.total} match(es)` +
+      `YARA import: ${parsed.events.length} match event(s) from ${parsed.total} match(es)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       `, ${parsed.iocs.length} IOC(s)` +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : ""),
     summary: "",
@@ -523,7 +532,8 @@ export async function importSocrates(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `SO-CRATES import (${parsed.format}): ${parsed.kept} detection event(s) from ${parsed.total} record(s)` +
+      `SO-CRATES import (${parsed.format}): ${parsed.events.length} detection event(s) from ${parsed.total} record(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       ` — ${parsed.alerts} Suricata alert(s), ${parsed.yara} YARA, ${parsed.sigma} Sigma, ${parsed.iocs.length} IOC(s)`,
     summary: "",
   };
@@ -566,7 +576,7 @@ export async function importEvtxXml(
     opts.signal,
   );
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0)
+  if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "Windows Event Log (XML)", parsed.total);
 
   const source = detectTool(opts.label) ?? "Windows Event Log";
@@ -582,7 +592,8 @@ export async function importEvtxXml(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `Windows Event Log (XML) import: ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+      `Windows Event Log (XML) import: ${parsed.events.length} event(s) from ${parsed.total} record(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       (parsed.hostname ? ` (host ${parsed.hostname})` : ""),
     summary: "",

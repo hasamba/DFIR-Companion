@@ -12,6 +12,7 @@ import { parseOsqueryLog, type OsqueryImportOptions } from "../osqueryImport.js"
 import { deltaSchema } from "../responseSchema.js";
 import { applySeverityFloor } from "../severityFloor.js";
 import { type InvestigationState, type Severity } from "../stateTypes.js";
+import { describeFloor } from "./floorNote.js";
 import { noteEmptyImport, crossUploadSprayRows } from "./importState.js";
 import type { ImportContext } from "./importContext.js";
 import type { CloudCoverageDraft } from "../cloudCoverage.js";
@@ -66,7 +67,7 @@ export async function importM365(
     ...parsedRaw,
     events: applySeverityFloor([...parsedRaw.events, ...crossRows], opts.minSeverity),
   };
-  if (parsed.events.length === 0)
+  if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return {
       state: await noteEmptyImport(
         ctx,
@@ -92,6 +93,7 @@ export async function importM365(
     threadsClosed: [],
     timelineNote:
       `Microsoft 365 import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+      describeFloor(parsedRaw.events.length + crossRows.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       `, ${parsed.iocs.length} IOC(s)` +
       (retentionNote ? `; ${retentionNote}` : ""),
@@ -132,7 +134,8 @@ export async function importOkta(
 ): Promise<InvestigationState> {
   const parsedRaw = parseOktaSystemLog(text, opts.okta);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Okta", parsed.total);
+  if (parsed.events.length === 0 && parsed.iocs.length === 0)
+    return noteEmptyImport(ctx, caseId, opts, "Okta", parsed.total);
 
   const raw = {
     findings: [],
@@ -146,7 +149,8 @@ export async function importOkta(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `Okta import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+      `Okta import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} record(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       `, ${parsed.iocs.length} IOC(s)`,
     summary: "",
@@ -184,7 +188,7 @@ export async function importAzureStorageLog(
 ): Promise<InvestigationState> {
   const parsedRaw = parseAzureStorageLog(text, opts.azureStorageLog);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0)
+  if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "Azure Storage Logs", parsed.total);
 
   const raw = {
@@ -199,7 +203,8 @@ export async function importAzureStorageLog(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `Azure Storage log import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+      `Azure Storage log import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} record(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       `, ${parsed.iocs.length} IOC(s)`,
     summary: "",
@@ -238,7 +243,7 @@ export async function importGoogleWorkspace(
 ): Promise<ImportWithCoverage> {
   const parsedRaw = parseGoogleWorkspaceReport(text, opts.gws);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0)
+  if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return {
       state: await noteEmptyImport(ctx, caseId, opts, "Google Workspace", parsed.total),
       coverage: parsed.coverage,
@@ -256,7 +261,8 @@ export async function importGoogleWorkspace(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `Google Workspace import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+      `Google Workspace import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} record(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       `, ${parsed.iocs.length} IOC(s)`,
     summary: "",
@@ -296,7 +302,8 @@ export async function importHindsight(
 ): Promise<InvestigationState> {
   const parsedRaw = parseHindsight(text, opts.hindsight);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Hindsight", parsed.total);
+  if (parsed.events.length === 0 && parsed.iocs.length === 0)
+    return noteEmptyImport(ctx, caseId, opts, "Hindsight", parsed.total);
 
   const raw = {
     findings: [],
@@ -310,7 +317,8 @@ export async function importHindsight(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `Hindsight import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s)` +
+      `Hindsight import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} row(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       `, ${parsed.iocs.length} IOC(s)`,
     summary: "",
@@ -348,7 +356,8 @@ export async function importMacos(
 ): Promise<InvestigationState> {
   const parsedRaw = parseMacos(text, opts.macos);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "macOS", parsed.total);
+  if (parsed.events.length === 0 && parsed.iocs.length === 0)
+    return noteEmptyImport(ctx, caseId, opts, "macOS", parsed.total);
 
   const raw = {
     findings: [],
@@ -362,7 +371,8 @@ export async function importMacos(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `macOS import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+      `macOS import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} record(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       `, ${parsed.iocs.length} IOC(s)`,
     summary: "",
@@ -402,7 +412,8 @@ export async function importLeapp(
 ): Promise<InvestigationState> {
   const parsedRaw = parseLeappTsv(text, opts.filename ?? opts.label, opts.leapp);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "LEAPP", parsed.total);
+  if (parsed.events.length === 0 && parsed.iocs.length === 0)
+    return noteEmptyImport(ctx, caseId, opts, "LEAPP", parsed.total);
 
   const raw = {
     findings: [],
@@ -416,7 +427,8 @@ export async function importLeapp(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `LEAPP import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} row(s)` +
+      `LEAPP import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} row(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       // A row with no usable time cell is kept undated (#932 item 12); the note says how many, so
       // "why is this one (undated)?" has an answer in the import record.
@@ -460,7 +472,7 @@ export async function importAws(
 ): Promise<ImportWithCoverage> {
   const parsedRaw = parseCloudTrail(text, opts.aws);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0)
+  if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return {
       state: await noteEmptyImport(ctx, caseId, opts, "AWS CloudTrail", parsed.total),
       coverage: parsed.coverage,
@@ -478,7 +490,8 @@ export async function importAws(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `AWS CloudTrail import: ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+      `AWS CloudTrail import: ${parsed.events.length} event(s) from ${parsed.total} record(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       `, ${parsed.iocs.length} IOC(s)`,
     summary: "",
@@ -518,7 +531,7 @@ export async function importCloudActivity(
 ): Promise<ImportWithCoverage> {
   const parsedRaw = parseCloudActivity(text, opts.cloud);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0)
+  if (parsed.events.length === 0 && parsed.iocs.length === 0)
     return {
       state: await noteEmptyImport(ctx, caseId, opts, "Cloud activity", parsed.total),
       coverage: parsed.coverage,
@@ -536,7 +549,8 @@ export async function importCloudActivity(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `Cloud activity import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+      `Cloud activity import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} record(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       `, ${parsed.iocs.length} IOC(s)`,
     summary: "",
@@ -577,7 +591,8 @@ export async function importK8sAudit(
 ): Promise<InvestigationState> {
   const parsedRaw = parseK8sAudit(text, opts.k8s);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "Kubernetes audit", parsed.total);
+  if (parsed.events.length === 0 && parsed.iocs.length === 0)
+    return noteEmptyImport(ctx, caseId, opts, "Kubernetes audit", parsed.total);
 
   const raw = {
     findings: [],
@@ -591,7 +606,8 @@ export async function importK8sAudit(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `Kubernetes audit import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+      `Kubernetes audit import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} record(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       `, ${parsed.iocs.length} IOC(s)`,
     summary: "",
@@ -630,7 +646,8 @@ export async function importOsquery(
 ): Promise<InvestigationState> {
   const parsedRaw = parseOsqueryLog(text, opts.osquery);
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0) return noteEmptyImport(ctx, caseId, opts, "osquery", parsed.total);
+  if (parsed.events.length === 0 && parsed.iocs.length === 0)
+    return noteEmptyImport(ctx, caseId, opts, "osquery", parsed.total);
 
   const raw = {
     findings: [],
@@ -644,7 +661,8 @@ export async function importOsquery(
     threadsOpened: [],
     threadsClosed: [],
     timelineNote:
-      `osquery import (${parsed.format}): ${parsed.kept} event(s) from ${parsed.total} record(s)` +
+      `osquery import (${parsed.format}): ${parsed.events.length} event(s) from ${parsed.total} record(s)` +
+      describeFloor(parsedRaw.events.length, parsed.events.length) +
       (parsed.groups > parsed.kept ? `, ${parsed.groups - parsed.kept} group(s) over the cap` : "") +
       `, ${parsed.iocs.length} IOC(s)`,
     summary: "",
