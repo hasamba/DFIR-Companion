@@ -24,8 +24,8 @@
 //     session ARN is not on the envelope, so its ARN-agreement check cannot be repeated here, and
 //     only ec2RoleDelivery "1.0"/"2.0" are visible as a protocol word. A miss is possible; a false
 //     join is not made from the envelope's own words;
-//   - a group whose recomputed summary id collides with another's (summaryId's key omits the
-//     credential and the account, groupKey does not) is an ambiguous pointer and is skipped, as is
+//   - a group whose recomputed summary id collides with another's (a hash collision — the key
+//     itself is as discriminating as groupKey since #1356) is an ambiguous pointer and is skipped, as is
 //     a credential-less group and a credential whose rows disagree on the session;
 //   - re-runs on every merge; strips its own prior note first; an empty index still strips.
 
@@ -180,8 +180,8 @@ function buildSummaryIndex(events: readonly ForensicEvent[]): Map<string, Summar
   // clobbers cloudBulkRead's module-private lastDropped; safe only because summarizeBulkReads runs
   // EARLIER in the chain and is that value's sole reader, immediately after its own call.
   const groups = groupBulkReads(events);
-  // summaryId's key omits credentialId/account/provider while groupKey includes them: two distinct
-  // groups can share one id, and the shipped pass kept only one. Ambiguous pointer → skip them all.
+  // summaryId's key is as discriminating as groupKey since #1356, so two distinct groups share an
+  // id only on a hash collision — still an ambiguous pointer, still skipped rather than guessed.
   const idCounts = new Map<string, number>();
   for (const g of groups) {
     const id = summaryId(g);
