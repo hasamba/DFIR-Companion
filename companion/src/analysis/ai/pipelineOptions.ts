@@ -7,6 +7,10 @@ import type { AnonControlStore } from "../anonControl.js";
 import type { DiscoveredEntitiesStore } from "../anonDiscovered.js";
 import type { CustomEntitiesStore } from "../anonEntities.js";
 import type { AssetOverridesStore } from "../assetOverrides.js";
+import type { CommentsStore } from "../comments.js";
+import type { DwellWindowStore } from "../dwellWindowStore.js";
+import type { HostScopeStore } from "../hostScopeStore.js";
+import type { TagsStore } from "../tags.js";
 import type { VelociraptorClientStore } from "../velociraptorClientStore.js";
 import type { HostDuplicateDismissalStore } from "../hostDuplicateDismissals.js";
 import type { EvidenceAttestationStore } from "../evidenceAttestationStore.js";
@@ -199,4 +203,11 @@ export interface PipelineOptions {
   // Analyst-attested EvidenceClass coverage (#1111): gateRefutedSeeds' third input, alongside
   // automatic detection. Absent → the gate behaves exactly as before this feature existed.
   evidenceAttestationStore?: EvidenceAttestationStore;
+  // The analyst-decision side files ask() reads INTO its prompt (#1411): tags + comments (what the
+  // analyst starred/annotated), signed host-scope decisions, dwell windows. Load-only here; each
+  // absent store simply leaves its block out (CLI/tests).
+  tagsStore?: TagsStore;
+  commentsStore?: CommentsStore;
+  hostScopeStore?: HostScopeStore;
+  dwellWindowStore?: DwellWindowStore;
 }

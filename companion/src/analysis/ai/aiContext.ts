@@ -198,10 +198,24 @@ export function fitTimelineText(
   renderEvent: (e: ForensicEvent) => string,
   overheadTokens: number,
 ): string {
-  let events = selectSynthesisEvents(scopedEvents, maxPromptEvents());
+  return (
+    fitTimelineEvents(scopedEvents, renderEvent, overheadTokens).map(renderEvent).join("\n") ||
+    "(no events yet)"
+  );
+}
+
+/**
+ * The events fitTimelineText renders, for a caller that must tell the analyst how many of the
+ * in-scope events the model actually saw (#1411): the trim is otherwise silent.
+ */
+export function fitTimelineEvents(
+  scopedEvents: ForensicEvent[],
+  renderEvent: (e: ForensicEvent) => string,
+  overheadTokens: number,
+): ForensicEvent[] {
+  const events = selectSynthesisEvents(scopedEvents, maxPromptEvents());
   const fit = fitItemsToBudget(events, renderEvent, Math.max(0, inputTokenBudget() - overheadTokens));
-  if (fit < events.length) events = selectSynthesisEvents(scopedEvents, fit);
-  return events.map(renderEvent).join("\n") || "(no events yet)";
+  return fit < events.length ? selectSynthesisEvents(scopedEvents, fit) : events;
 }
 
 /** The fixed overhead of a report prompt: the system prompt plus its non-timeline blocks. */

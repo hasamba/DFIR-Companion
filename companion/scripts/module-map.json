@@ -155,6 +155,7 @@
     "answerContradiction.ts": "analysis/ai",
     "applyDeobfuscation.ts": "analysis/privacy",
     "artifactBundleStore.ts": "analysis/ingest",
+    "askHistory.ts": "analysis/ai",
     "assetGraph.ts": "analysis/detect",
     "assetOverrides.ts": "analysis/detect",
     "attack.ts": "analysis/intel",

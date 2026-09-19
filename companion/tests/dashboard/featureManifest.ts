@@ -1482,7 +1482,8 @@ export const FEATURES: Feature[] = [
       "isNewEvent",
       "isNewIoc",
     ],
-    private: ["newEventKeys", "newIocKeys", "evKey", "evNorm"],
+    // askHistory / askHistoryCase: the Ask box's per-session thread (#1411) — state, so it stays in.
+    private: ["newEventKeys", "newIocKeys", "evKey", "evNorm", "askHistory", "askHistoryCase"],
   },
   {
     // Presidio approval panel. Its escape was written from three places outside the section, each

@@ -591,7 +591,26 @@ A free-text question box. Type any question in natural language:
 - "What credentials were likely stolen?"
 - "List all C2 IP addresses and their first-seen times."
 
-The AI answers using the full forensic timeline plus the **evidence-chain graph** — so it can trace multi-hop paths.
+The AI answers using the forensic timeline plus the **evidence-chain graph** — so it can trace multi-hop paths.
+
+It also reads your own decisions on the case, so the answer respects them instead of contradicting them:
+
+| Your work | What the model is told |
+|-----------|------------------------|
+| **Hypotheses** | Every hypothesis and its status. A refuted or exhausted theory must not be re-asserted. |
+| **Host scope** | The latest signed decision per host. A cleared or out-of-scope host must not be named as compromised; a contradiction is flagged, not overridden. |
+| **Dwell windows** | Your attacker-presence windows, for "when did they get in / leave" questions. |
+| **Prior hunts** | What was hunted and whether it found anything, so the collection pointer never re-proposes an empty hunt. |
+| **Stars, tags, comments** | What you marked or annotated, starred items first. |
+| **Notebook** | Only when **Include notebook in AI synthesis and Ask context** (Notebook panel) is on (the same opt-in synthesis uses). |
+
+The box keeps a short thread: the last three questions and answers ride along with the next one, so a
+follow-up like "and on which host?" works. The thread resets when you switch case or press **↺ New
+thread**. Nothing in the thread is saved.
+
+When the timeline is too large for the model, the answer is built from a prioritised subset. The panel
+then shows **answered from N of M in-scope events** so you know the model did not see the whole record.
+The super-timeline is never read.
 
 ---
 

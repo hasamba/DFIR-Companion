@@ -47,6 +47,10 @@ import { ImportMetaStore } from "../analysis/importMeta.js";
 import { CloudCoverageStore } from "../analysis/cloudCoverage.js";
 import { AiControlStore } from "../analysis/aiControl.js";
 import { HuntOutcomeStore } from "../analysis/huntOutcomeStore.js";
+import { TagsStore } from "../analysis/tags.js";
+import { CommentsStore } from "../analysis/comments.js";
+import { HostScopeStore } from "../analysis/hostScopeStore.js";
+import { DwellWindowStore } from "../analysis/dwellWindowStore.js";
 import { SuperTimelineStore } from "../analysis/superTimelineStore.js";
 import { AuthObservationStore } from "../analysis/authObservationStore.js";
 import { IocAliasStore } from "../analysis/iocAlias.js";
@@ -262,6 +266,12 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     cloudCoverageStore: new CloudCoverageStore(params.store), // #1063 per-upload cloud coverage for synthesis + the panel
     aiControlStore: new AiControlStore(params.store),
     huntOutcomeStore: new HuntOutcomeStore(params.store), // #157 hunting feedback loop
+    // #1411 ask() reads the analyst's marks, host-scope decisions and dwell windows. Read-only
+    // instances: TagsStore gets no protection sink because nothing here writes a tag.
+    tagsStore: new TagsStore(params.store),
+    commentsStore: new CommentsStore(params.store),
+    hostScopeStore: new HostScopeStore(params.store),
+    dwellWindowStore: new DwellWindowStore(params.store),
     superTimelineStore: new SuperTimelineStore(
       params.store,
       Number(process.env.DFIR_SUPERTIMELINE_MAX) || undefined,

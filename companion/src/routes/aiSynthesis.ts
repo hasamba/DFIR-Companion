@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from "express";
 import { logActivity } from "../analysis/activityLog.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
+import { registerAskCaseRoute } from "./askCase.js";
 import { readPublicAsset } from "../serverAssets.js";
 import { withNonce } from "../http/securityHeaders.js";
 import {
@@ -325,25 +326,9 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
     }
   });
 
-  // Ask the LLM a free-form question about the case ("was data exfiltrated?"). Single-shot,
-  // no state change — returns a grounded answer + status + collection guidance (`pointer`).
-  app.post("/cases/:id/ask", async (req: Request, res: Response) => {
-    if (!options.pipeline || !options.pipeline.hasSynthesisProvider())
-      return res.status(501).json({ error: "AI provider not configured for case questions" });
-    const question = typeof req.body?.question === "string" ? req.body.question.trim() : "";
-    if (!question) return res.status(400).json({ error: "question is required" });
-    try {
-      const answer = await options.pipeline.ask(req.params.id, question);
-      void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
-        category: "ai",
-        action: "ask",
-        detail: `asked: "${question.slice(0, 120)}"`,
-      });
-      return res.status(200).json(answer);
-    } catch (err) {
-      return sendPipelineError(res, err);
-    }
-  });
+  // POST /cases/:id/ask lives in routes/askCase.ts (#1411); registered HERE so its stack position
+  // is the one it always had.
+  registerAskCaseRoute(app, ctx);
 
   // Explain a single forensic event in context (issue #141). EPHEMERAL — no state change.
   // Returns structured analysis: what happened, why it matters, ATT&CK mapping, pivot queries,
