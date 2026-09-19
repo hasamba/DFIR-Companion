@@ -41,10 +41,14 @@ export interface MobsfAttestationShape {
 export const MAX_CHAINS = 500;
 export const MAX_ROWS_PER_PERMISSION = 50;
 export const MAX_PACKAGE_LEVEL_ROWS = 200;
-const NAME_MAX = 200;
 
 export const VOCABULARY_SENTENCE =
   "AppOps op names and manifest permission names are different vocabularies; not correlated at permission level";
+export const PACKAGE_LEVEL_NOTE: Record<PackageLevelReason, string> = {
+  "different-vocabulary": VOCABULARY_SENTENCE,
+  "not-requested": "a manifest-vocabulary permission the attested report(s) do not request",
+  "no-attested-report": "no MobSF report is attested to this device for this package; nothing to join to",
+};
 
 export const MOBILE_PERMISSION_CHAIN_CAVEAT =
   "Presence only, never a verdict. An AppOps access timestamp is evidence the OS recorded a " +
@@ -66,7 +70,7 @@ export type ChainCase =
   | "requested-not-granted"
   | "requested-state-conflict"
   | "requested-only";
-export type HashAgreement = "agrees" | "disagrees" | "no-inventory-hash";
+export type HashAgreement = "agrees" | "disagrees" | "no-inventory-hash" | "no-report-hash";
 
 export interface RequestedRow {
   asWritten: string;
@@ -86,7 +90,10 @@ export interface UsedRow {
   artifact: string;
   at: string;
   outcome: UsedOutcome;
-  /** `Op Mode` on a Recent Accesses row: the mode in force AT the access, not a stored state. */
+  /** `Op Mode` on a Recent Accesses row, verbatim: the op's CONFIGURED mode at collection time
+   * (upstream reads the op element's `m`, written only when it differs from the default) — a
+   * state, which is why the same row also lands in `granted`; carried here so a listed access is
+   * read beside the mode the op now has. */
   mode?: string;
   proxied?: string;
   eventId: string;
@@ -100,10 +107,14 @@ export interface PermissionChain {
   used: UsedRow[];
   case: ChainCase;
 }
+export type PackageLevelReason = "different-vocabulary" | "not-requested" | "no-attested-report";
 export interface PackageLevelRow {
   artifact: string;
   permissionAsWritten: string;
-  permissionMatch: "different-vocabulary";
+  /** Why the row is not on a permission chain: an AppOps op name (a different vocabulary from the
+   * manifest's), a manifest-vocabulary name the attested report(s) do not request, or no attested
+   * report at all for this package (code review F4). */
+  permissionMatch: PackageLevelReason;
   kind: "state" | "dated";
   value?: string;
   at?: string;
@@ -156,6 +167,8 @@ export interface MobilePermissionChainInput {
 
 const UNBOUND_REASON =
   "a report for this package name exists in the case but is not attested to this device — same name is not the same binary";
+const ATTESTED_ELSEWHERE_REASON =
+  "a report for this package name is attested to another device, not this one — same name is not the same binary";
 const DISAGREE_NOTE = "the analyzed APK's sha256 differs from the installed build's inventory hash";
 
 // The exact upstream vocabularies (design review F4). `Granted` is AOSP's isPermissionGranted
@@ -169,6 +182,8 @@ function readState(column: string, value: string): GrantedRow["read"] {
   if (v === "IGNORED" || v === "ERRORED") return "not-granted";
   return "unrecognized";
 }
+
+const STATE_COLUMNS = new Set(["Granted", "Mode", "Op Mode"]);
 
 function grantStateOf(rows: readonly GrantedRow[]): GrantState {
   if (rows.length === 0) return "no-grant-record";
@@ -200,8 +215,7 @@ function normalizeName(raw: string): string {
   return raw
     .trim()
     .replace(/^android\.permission\./i, "")
-    .toUpperCase()
-    .slice(0, NAME_MAX);
+    .toUpperCase();
 }
 
 function locatorOf(e: ForensicEvent): string {
@@ -272,10 +286,15 @@ export function mobilePermissionChains(input: MobilePermissionChainInput): Mobil
 
   // ── the attested reports for this device, and every MobSF report in the case ──
   const active = input.attestations.filter(
-    (a) => a.tool === "mobsf" && !a.revokedAt && canonicalHostName(a.subjectHost) === device,
+    (a) => a.tool === "mobsf" && !a.revokedAt && canon(a.subjectHost) === device,
   );
   const attestationByFingerprint = new Map<string, MobsfAttestationShape>();
   for (const a of active) attestationByFingerprint.set(a.reportFingerprint.toLowerCase(), a);
+  const attestedElsewhere = new Set(
+    input.attestations
+      .filter((a) => a.tool === "mobsf" && !a.revokedAt && canon(a.subjectHost) !== device)
+      .map((a) => a.reportFingerprint.toLowerCase()),
+  );
 
   interface Report {
     fingerprint: string;
@@ -309,7 +328,11 @@ export function mobilePermissionChains(input: MobilePermissionChainInput): Mobil
     const att = attestationByFingerprint.get(r.fingerprint);
     if (!att) {
       if (groups.has(key))
-        unboundCandidates.push({ fingerprint: r.fingerprint, package: r.pkg, reason: UNBOUND_REASON });
+        unboundCandidates.push({
+          fingerprint: r.fingerprint,
+          package: r.pkg,
+          reason: attestedElsewhere.has(r.fingerprint) ? ATTESTED_ELSEWHERE_REASON : UNBOUND_REASON,
+        });
       continue;
     }
     if (!groups.has(key)) {
@@ -331,11 +354,14 @@ export function mobilePermissionChains(input: MobilePermissionChainInput): Mobil
     const boundReports: BoundReport[] = bound.map((r) => {
       const att = attestationByFingerprint.get(r.fingerprint)!;
       const digest = att.documentSha256 ?? att.toolReportedSha256 ?? r.sha256;
+      // "disagrees" only when two real sha256 values were compared (code review F3).
       const hashAgreement: HashAgreement = !inventorySha
         ? "no-inventory-hash"
-        : digest && digest.toLowerCase() === inventorySha
-          ? "agrees"
-          : "disagrees";
+        : !digest
+          ? "no-report-hash"
+          : digest.toLowerCase() === inventorySha
+            ? "agrees"
+            : "disagrees";
       return {
         fingerprint: r.fingerprint,
         attestationId: att.id,
@@ -380,27 +406,53 @@ export function mobilePermissionChains(input: MobilePermissionChainInput): Mobil
       if (r.proxy) proxiedRows++;
       const name = normalizeName(r.permission);
       const locator = locatorOf(r.event);
-      // A state row is any UNDATED permission row; a used row any DATED one — structural, never
-      // the `access` facet's name (design review F9: a configured Mode also carries that facet).
+      // A row is a USED row when it is dated, and a STATE row when its artifact declares a
+      // state column (`Granted`, `Mode`, `Op Mode` — all configured/stored values, verified
+      // against upstream: Recent Accesses' `Op Mode` is the op element's `m`, not the mode at
+      // the access). Both are artifact facts from the registry, never the facet's name alone
+      // (design review F9); one Recent Accesses row can be both (code review F2/F6).
       const dated = Boolean(r.clock);
+      const isState = Boolean(r.access && STATE_COLUMNS.has(r.access.column));
       if (!requestedByName.has(name)) {
         if (packageLevel.length >= MAX_PACKAGE_LEVEL_ROWS) {
           truncated.add("packageLevel");
           continue;
         }
+        // An op name never carries a dot; a manifest-vocabulary name always does.
+        const reason: PackageLevelReason =
+          bound.length === 0
+            ? "no-attested-report"
+            : r.permission.includes(".")
+              ? "not-requested"
+              : "different-vocabulary";
         packageLevel.push({
           artifact: r.artifact,
           permissionAsWritten: r.permission,
-          permissionMatch: "different-vocabulary",
+          permissionMatch: reason,
           kind: dated ? "dated" : "state",
           ...(!dated && r.access ? { value: r.access.value } : {}),
           ...(dated ? { at: r.event.timestamp, outcome: outcomeOf(r.clock) } : {}),
           ...(r.proxy ? { proxied: r.proxy } : {}),
-          note: VOCABULARY_SENTENCE,
+          note: PACKAGE_LEVEL_NOTE[reason],
           eventId: r.event.id,
           locator,
         });
         continue;
+      }
+      if (isState) {
+        const list = grantedByName.get(name) ?? [];
+        if (list.length >= MAX_ROWS_PER_PERMISSION) truncated.add("granted");
+        else {
+          list.push({
+            artifact: r.artifact,
+            column: r.access!.column,
+            value: r.access!.value,
+            read: readState(r.access!.column, r.access!.value),
+            eventId: r.event.id,
+            locator,
+          });
+          grantedByName.set(name, list);
+        }
       }
       if (dated) {
         const list = usedByName.get(name) ?? [];
@@ -412,28 +464,12 @@ export function mobilePermissionChains(input: MobilePermissionChainInput): Mobil
           artifact: r.artifact,
           at: r.event.timestamp,
           outcome: outcomeOf(r.clock),
-          // `Op Mode` (App Ops Recent Accesses) is the mode in force at THAT access, not a state.
           ...(r.access?.column === "Op Mode" ? { mode: r.access.value } : {}),
           ...(r.proxy ? { proxied: r.proxy } : {}),
           eventId: r.event.id,
           locator,
         });
         usedByName.set(name, list);
-      } else if (r.access) {
-        const list = grantedByName.get(name) ?? [];
-        if (list.length >= MAX_ROWS_PER_PERMISSION) {
-          truncated.add("granted");
-          continue;
-        }
-        list.push({
-          artifact: r.artifact,
-          column: r.access.column,
-          value: r.access.value,
-          read: readState(r.access.column, r.access.value),
-          eventId: r.event.id,
-          locator,
-        });
-        grantedByName.set(name, list);
       }
     }
 

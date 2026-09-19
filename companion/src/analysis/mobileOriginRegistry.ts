@@ -513,9 +513,11 @@ export const REGISTRY: readonly RegistryEntry[] = [
     app: { package: "Package Name" },
     permissionColumn: "Permission",
     proxyColumn: "Proxy Package Name",
-    // The mode in force at access time: upstream's OP_MODES (AppOpsManager at android-15.0.0_r1)
-    // is ALLOWED / IGNORED / ERRORED / DEFAULT / FOREGROUND, or the stored integer outside that
-    // set — carried verbatim, as TCC's Access is. A different fact from a configured `Mode`.
+    // The op's CONFIGURED mode at collection time — upstream reads the op element's own `m`
+    // attribute, written only when the mode differs from the op's default (#1363 corrected the
+    // earlier "mode in force at access time" wording against appOpsAccesses.py). Vocabulary is
+    // OP_MODES (AppOpsManager at android-15.0.0_r1): ALLOWED / IGNORED / ERRORED / DEFAULT /
+    // FOREGROUND, or the stored integer outside that set — carried verbatim, as TCC's Access is.
     accessColumn: "Op Mode",
   },
   {
@@ -532,6 +534,7 @@ export const REGISTRY: readonly RegistryEntry[] = [
       "Mode Stored Against",
       "Source File",
     ],
+    clocks: [], // a stored state has no event time; never dated by a re-pinned column (#1363)
     record: "permission",
     locality: "device-local",
     app: { package: "Package Name" },
@@ -544,6 +547,7 @@ export const REGISTRY: readonly RegistryEntry[] = [
     name: "App Op Modes (Permission Store)",
     lastUpdate: "2026-09-07",
     headers: ["Package Name", "App ID", "Android User", "App Op", "Op Code", "Mode", "Mode Stored Against"],
+    clocks: [], // a stored state has no event time; never dated by a re-pinned column (#1363)
     record: "permission",
     locality: "device-local",
     app: { package: "Package Name" },
@@ -555,6 +559,7 @@ export const REGISTRY: readonly RegistryEntry[] = [
     name: "Permission Grants (Permission Store)",
     lastUpdate: "2026-09-07",
     headers: ["Package Name", "App ID", "Android User", "Permission", "Granted", "Permission Flags"],
+    clocks: [], // a stored state has no event time; never dated by a re-pinned column (#1363)
     record: "permission",
     locality: "device-local",
     app: { package: "Package Name" },
@@ -640,6 +645,9 @@ export function pinnedClocks(
 ): number[] | undefined {
   const entry = registryEntry(artifact);
   if (!entry?.clocks || !platformAdmits(entry, platform) || !headersMatch(entry, headers)) return undefined;
+  // An explicitly EMPTY declaration pins "no clock": a stored-state table (#1363) must never be
+  // dated by whatever time-shaped column a future re-pin might add.
+  if (entry.clocks.length === 0) return [];
   const have = headers.map(norm);
   const out = entry.clocks.map((c) => have.indexOf(norm(c))).filter((i) => i >= 0);
   return out.length ? out : undefined;

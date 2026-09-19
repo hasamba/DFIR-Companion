@@ -287,7 +287,28 @@ describe("mobilePermissionChains — the chain and its named cases", () => {
       expect(pl.permissionMatch).toBe("different-vocabulary");
       expect(pl.note).toBe(VOCABULARY_SENTENCE);
     }
-    expect(out.chains[0].permissions.map((p) => p.case)).not.toContain("used-not-requested");
+    // Every package-level row is, by construction, a name no requested permission carries.
+    const requested = new Set(chain.permissions.map((p) => p.name));
+    for (const pl of chain.packageLevel)
+      expect(requested.has(pl.permissionAsWritten.toUpperCase())).toBe(false);
+  });
+
+  it("F4 — package-level rows say WHY: no attested report, a manifest name not requested, or the op vocabulary", () => {
+    const r = mobsf("com.a", { "android.permission.CAMERA": "dangerous" });
+    const noReport = run([grant("com.a", "android.permission.CAMERA", "Yes"), access("com.a", "CAMERA")], []);
+    for (const pl of noReport.chains[0].packageLevel)
+      expect(pl).toMatchObject({ permissionMatch: "no-attested-report" });
+    expect(noReport.chains[0].packageLevel[0].note).not.toBe(VOCABULARY_SENTENCE);
+    const bound = run(
+      [...r.events, grant("com.a", "android.permission.READ_SMS", "Yes"), access("com.a", "COARSE_LOCATION")],
+      [attest(r.fingerprint)],
+    );
+    const byName = Object.fromEntries(bound.chains[0].packageLevel.map((pl) => [pl.permissionAsWritten, pl]));
+    expect(byName["android.permission.READ_SMS"].permissionMatch).toBe("not-requested");
+    expect(byName.COARSE_LOCATION).toMatchObject({
+      permissionMatch: "different-vocabulary",
+      note: VOCABULARY_SENTENCE,
+    });
   });
 
   it("matching is exact on the normalized short name, case-folded, prefix stripped — never a substring", () => {
@@ -360,14 +381,57 @@ describe("mobilePermissionChains — the chain and its named cases", () => {
     expect(out.chains[0].permissions[0]).toMatchObject({ case: "requested-only", used: [], granted: [] });
   });
 
-  it("an Op Mode on a Recent Accesses row rides on the used row as the mode in force, never as a state", () => {
+  it("a Recent Accesses row is both: its Op Mode is the op's CONFIGURED mode (a state, per upstream's `m`), its clock a use", () => {
     const r = mobsf("com.a", { "android.permission.CAMERA": "dangerous" });
     const out = run([...r.events, recent("com.a", "CAMERA", "ALLOWED")], [attest(r.fingerprint)]);
     const p = out.chains[0].permissions[0];
     expect(p.used).toEqual([expect.objectContaining({ outcome: "accessed", mode: "ALLOWED" })]);
-    expect(p.granted).toEqual([]);
-    expect(p.grantState).toBe("no-grant-record");
-    expect(p.case).toBe("requested-used");
+    expect(p.granted).toEqual([
+      expect.objectContaining({ artifact: "App Ops Recent Accesses", column: "Op Mode", value: "ALLOWED" }),
+    ]);
+    expect(p.grantState).toBe("granted");
+    expect(p.case).toBe("requested-granted-used");
+  });
+
+  it("F6 — an access whose configured Op Mode is IGNORED reads not-granted; the case never says used", () => {
+    const r = mobsf("com.a", { "android.permission.CAMERA": "dangerous" });
+    const out = run([...r.events, recent("com.a", "CAMERA", "IGNORED")], [attest(r.fingerprint)]);
+    const p = out.chains[0].permissions[0];
+    expect(p.used).toHaveLength(1);
+    expect(p.grantState).toBe("not-granted");
+    expect(p.case).toBe("requested-not-granted");
+  });
+
+  it("F2 — an undated Recent Accesses row (blank clocks, Op Mode set) is a state row only, never a use", () => {
+    const r = mobsf("com.a", { "android.permission.CAMERA": "dangerous" });
+    const undated = row("App Ops Recent Accesses", {
+      "Package Name": "com.a",
+      Permission: "CAMERA",
+      "Op Mode": "ALLOWED",
+    });
+    expect(undated.timestamp).toBe("");
+    const out = run([...r.events, undated], [attest(r.fingerprint)]);
+    const p = out.chains[0].permissions[0];
+    expect(p.used).toEqual([]);
+    expect(p.granted).toEqual([expect.objectContaining({ column: "Op Mode", value: "ALLOWED" })]);
+    expect(p.case).toBe("requested-granted");
+  });
+
+  it("F5 — the three stored-state tables import undated even when a re-pin adds a time-shaped column", () => {
+    for (const name of [
+      "App Ops Permission Modes",
+      "App Op Modes (Permission Store)",
+      "Permission Grants (Permission Store)",
+    ]) {
+      const entry = registryEntry(name)!;
+      expect(entry.clocks, name).toEqual([]);
+      const full = Object.fromEntries(
+        entry.headers.map((h) => [h, h.includes("Package") ? "com.a" : "2026-06-01 10:00:00"]),
+      );
+      const e = row(name, full);
+      expect(e.timestamp, name).toBe("");
+      expect(e.canonical?.mobile?.clock, name).toBeUndefined();
+    }
   });
 });
 
@@ -409,6 +473,7 @@ describe("mobilePermissionChains — device binding", () => {
     );
     expect(out.chains[0].reports).toEqual([]);
     expect(out.unboundCandidates).toHaveLength(1);
+    expect(out.unboundCandidates[0].reason).toMatch(/attested to another device/);
     expect(out.diagnostics.attestations).toBe(0);
   });
 
@@ -427,6 +492,15 @@ describe("mobilePermissionChains — device binding", () => {
     });
     expect(out.device).toBe("subject pixel");
     expect(out.chains[0].reports).toHaveLength(1);
+    // F1 — the attestation side folds through the same index: attested under the ALIAS, still bound.
+    const viaAlias = mobilePermissionChains({
+      device: "Subject Pixel",
+      events: rows,
+      attestations: [attest(r.fingerprint, "pixel-7")],
+      aliasIndex,
+    });
+    expect(viaAlias.chains[0].reports).toHaveLength(1);
+    expect(viaAlias.unboundCandidates).toEqual([]);
   });
 
   it("rows of another device, undated-device rows and iOS rows on the same asset are never read", () => {
@@ -470,6 +544,13 @@ describe("mobilePermissionChains — device binding", () => {
     });
     const out3 = run([...agree.events, inventory("com.a", OTHER_SHA)], [analystSha]);
     expect(out3.chains[0].reports[0].hashAgreement).toBe("agrees");
+
+    // F3 — no digest on either the attestation or the report: never "disagrees".
+    const noHash = mobsf("com.a", { "android.permission.CAMERA": "dangerous" }, "");
+    const bare = attest(noHash.fingerprint, "Subject Pixel", { toolReportedSha256: undefined });
+    const out4 = run([...noHash.events, inventory("com.a", OTHER_SHA)], [bare]);
+    expect(out4.chains[0].reports[0].hashAgreement).toBe("no-report-hash");
+    expect(out4.chains[0].reports[0]).not.toHaveProperty("note");
   });
 
   it("F5 — two active attested reports naming one package: both listed, each requested permission names its report(s)", () => {
@@ -502,11 +583,15 @@ describe("mobilePermissionChains — bounds and disclosure", () => {
     for (let i = 0; i < MAX_ROWS_PER_PERMISSION + 3; i++)
       events.push(access("com.p0", "CAMERA", `2026-06-0${(i % 9) + 1} 0${i % 10}:00:00`));
     for (let i = 0; i < MAX_PACKAGE_LEVEL_ROWS + 3; i++) events.push(access("com.p0", `OP_${i}`));
+    for (let i = 0; i < MAX_ROWS_PER_PERMISSION + 3; i++) events.push(mode("com.p0", "CAMERA", "ALLOWED"));
     const out = run([...r.events, ...events], [attest(r.fingerprint)]);
     expect(out.chains).toHaveLength(MAX_CHAINS);
-    expect(out.diagnostics.truncated).toEqual(expect.arrayContaining(["chains", "used", "packageLevel"]));
+    expect(out.diagnostics.truncated).toEqual(
+      expect.arrayContaining(["chains", "used", "granted", "packageLevel"]),
+    );
     const p0 = out.chains.find((c) => c.package === "com.p0")!;
     expect(p0.permissions[0].used).toHaveLength(MAX_ROWS_PER_PERMISSION);
+    expect(p0.permissions[0].granted).toHaveLength(MAX_ROWS_PER_PERMISSION);
     expect(p0.packageLevel).toHaveLength(MAX_PACKAGE_LEVEL_ROWS);
   });
 
