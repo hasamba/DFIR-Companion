@@ -122,9 +122,14 @@ function evidenceLinks(caseId, files) {
   return `<br><small data-safe-style="color:var(--text-muted)">evidence: ${links}</small>`;
 }
 
+// An import-evidence card also offers the other way to fill an empty case: collect it from the
+// fleet. openFleetCollection (dashboard-data-act.js) reveals the case-scoped Velociraptor panel.
 function cockpitCardControls(card, parked) {
   const id = escAttr(card.id);
-  const view = `<button data-act="cockpitOpenTarget" data-id="${id}">Open</button>`;
+  const fleet = card.target && card.target.panel === "import"
+    ? `<button data-act="openFleetCollection" title="Collect evidence from a Velociraptor client into this case">Fleet collection</button>`
+    : "";
+  const view = `<button data-act="cockpitOpenTarget" data-id="${id}">Open</button>${fleet}`;
   if (card.kind !== "lead" && card.kind !== "hypothesis") return view;
   if (parked) {
     return `${view}<button data-act="cockpitAction" data-cockpit-action="restore" data-id="${id}">Restore</button>`;
