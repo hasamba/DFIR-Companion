@@ -30,6 +30,9 @@ export interface VeloMonitor {
   addedEvents?: number; // cumulative forensic events ingested by this monitor
   polls?: number; // cumulative poll count
   lastError?: string; // last poll error (cleared on the next success)
+  // Whether starting this monitor put its artifact in Velociraptor's Client Monitoring table ("added")
+  // or found it there ("present") (#1409). Deleting the last monitor for an "added" artifact removes it.
+  veloTableEntry?: "added" | "present";
 }
 
 // Cap retained monitors per case so the side file stays small.

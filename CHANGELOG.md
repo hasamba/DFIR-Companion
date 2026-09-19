@@ -91,6 +91,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **One Windows record read by two parsers is one timeline row** — a Hayabusa run and a Chainsaw run over the same EVTX now merge on the record's own identity (channel + EventRecordID + host) and carry both tools as sources, instead of doubling the timeline. Two detections from the *same* parser on one record stay distinct. (#688)
 
 ### Fixed
+- **Live monitor enables its artifact in Velociraptor** — starting a monitor adds the artifact to Velociraptor → Client Monitoring when missing and verifies it landed, so a monitor no longer shows active while no client collects; deleting the last monitor releases the entry, and Poll now flags an artifact removed behind its back (closes #1409)
 - **Boundary figure no longer committed** — ARCHITECTURE.md drops the comply/total pair that made every concurrent PR conflict; the live pair is `check:boundaries --json` (closes #1368)
 - **Binary plists refused on the text path** — any `bplist0` upload is refused with the plutil / byte-native hint instead of being mislabelled a launchd plist, and the dashboard shows the sentence (closes #1392)
 - **Static-report attestation reads forensic ∪ super-timeline** — a FLOSS report (all rows Info) can now be attested and matched; the 400 says where it looked (closes #1389)

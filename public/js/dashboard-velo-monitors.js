@@ -66,6 +66,16 @@
           m.status === "error" && m.lastError
             ? `<div data-safe-style="font-size:12px;color:var(--sev-high);margin-top:3px">error: ${esc(m.lastError)}</div>`
             : "";
+        // The companion put this artifact in Velociraptor's Client Monitoring table (#1409) — say so,
+        // because deleting the last monitor for it takes it out again.
+        const owned =
+          m.veloTableEntry === "added"
+            ? ` · <span title="The companion enabled this artifact in Velociraptor → Client Monitoring (fleet-wide). Deleting the last monitor for it removes it again.">enabled in Velociraptor by the companion</span>`
+            : "";
+        const delTitle =
+          m.veloTableEntry === "added"
+            ? "Delete this monitor (also removes the artifact from Velociraptor → Client Monitoring if no other monitor uses it)"
+            : "Delete this monitor";
         const toggle =
           m.status === "stopped"
             ? `<button class="vmon-start" data-id="${escAttr(m.id)}" title="Resume this monitor">▶ Resume</button>`
@@ -76,10 +86,10 @@
           <div data-safe-style="display:flex;gap:6px">
             <button class="vmon-poll" data-id="${escAttr(m.id)}" title="Poll now (don't wait for the timer)">Poll now</button>
             ${toggle}
-            <button class="vmon-del" data-id="${escAttr(m.id)}" title="Delete this monitor">✕</button>
+            <button class="vmon-del" data-id="${escAttr(m.id)}" title="${escAttr(delTitle)}">✕</button>
           </div>
         </div>
-        <div data-safe-style="font-size:12px;color:var(--text-muted);margin-top:4px">${esc(stats)}</div>${err}
+        <div data-safe-style="font-size:12px;color:var(--text-muted);margin-top:4px">${esc(stats)}${owned}</div>${err}
       </div>`;
       })
       .join("");
@@ -116,6 +126,10 @@
       )
       .then(({ ok, j }) => {
         if (!ok) console.warn("monitor " + action + " failed", j);
+        // A resume that could not re-enable the artifact in Velociraptor answers 502 with the reason
+        // (#1409) — show it where the start form shows its errors, not only in the console.
+        const msg = document.getElementById("veloMonMsg");
+        if (msg) msg.textContent = !ok && j && j.error ? "error: " + j.error : "";
         loadVeloMonitors(caseId);
       })
       .catch((e) => console.warn("monitor " + action + " error", e))
@@ -245,7 +259,13 @@
           if (msg) msg.textContent = "error: " + (j.error || "failed");
           return;
         }
-        if (msg) msg.textContent = "";
+        if (msg)
+          msg.textContent =
+            j.monitor && j.monitor.veloTableEntry === "added"
+              ? "started — enabled " +
+                j.monitor.artifact +
+                " in Velociraptor → Client Monitoring (all clients)"
+              : "";
         document.getElementById("veloMonArtifactManual").value = "";
         loadVeloMonitors(caseId);
       })

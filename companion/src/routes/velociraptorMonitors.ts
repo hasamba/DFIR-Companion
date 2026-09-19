@@ -156,6 +156,7 @@ export function registerVelociraptorMonitorRoutes(app: Express, ctx: RouteContex
             pollSeconds,
             minSeverity,
             allClients: true,
+            alreadyEnabled: true, // it came from the table we just read
           }),
         );
       }
@@ -192,10 +193,20 @@ export function registerVelociraptorMonitorRoutes(app: Express, ctx: RouteContex
       id = req.params.mid;
     const monitor = await options.veloMonitorStore.get(caseId, id);
     if (!monitor) return res.status(404).json({ error: "monitor not found" });
-    const resumed = { ...monitor, status: "active" as const, lastError: undefined };
-    await options.veloMonitorStore.upsert(caseId, resumed);
-    ctx.scheduleVeloMonitor(caseId, resumed);
-    options.onVeloMonitor?.(caseId);
+    // Resuming goes through createVeloMonitor so the artifact is put back in Velociraptor's Client
+    // Monitoring table if it was removed while the monitor was stopped (#1409); the cursor is kept.
+    try {
+      await ctx.createVeloMonitor(caseId, {
+        clientId: monitor.clientId,
+        artifact: monitor.artifact,
+        pollSeconds: monitor.pollSeconds,
+        hostname: monitor.hostname,
+        minSeverity: monitor.minSeverity,
+        allClients: monitor.allClients,
+      });
+    } catch (err) {
+      return res.status(502).json({ error: (err as Error).message });
+    }
     return res.status(200).json({ ok: true });
   });
 
@@ -212,17 +223,20 @@ export function registerVelociraptorMonitorRoutes(app: Express, ctx: RouteContex
     const monitor = await options.veloMonitorStore.get(caseId, id);
     if (!monitor) return res.status(404).json({ error: "monitor not found" });
     await ctx.pollVeloMonitor(caseId, id);
-    return res.status(200).json({ ok: true, monitor: await options.veloMonitorStore.get(caseId, id) });
+    // An analyst-pressed check also re-reads the Client Monitoring table (#1409): an artifact removed
+    // in the Velociraptor GUI must not keep showing as a healthy, empty stream.
+    const polled = await options.veloMonitorStore.get(caseId, id);
+    const verified = polled ? await ctx.verifyVeloMonitorEnabled(caseId, polled) : polled;
+    return res.status(200).json({ ok: true, monitor: verified });
   });
 
-  // Delete a monitor entirely (stop + remove the row).
+  // Delete a monitor entirely (stop + remove the row; releases its Client Monitoring entry when the
+  // companion added it and nothing else uses it — #1409).
   app.delete("/cases/:id/velociraptor/monitors/:mid", async (req: Request, res: Response) => {
     if (!options.veloMonitorStore) return res.status(501).json({ error: "monitor store not configured" });
     const caseId = req.params.id,
       id = req.params.mid;
-    ctx.stopVeloMonitorTimer(caseId, id);
-    await options.veloMonitorStore.remove(caseId, id);
-    options.onVeloMonitor?.(caseId);
+    await ctx.deleteVeloMonitor(caseId, id);
     return res.status(204).end();
   });
 }
