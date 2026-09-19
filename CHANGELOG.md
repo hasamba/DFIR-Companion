@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Hayabusa emergency rows import as Critical** — the `emergency`/`emer` level is above critical in Hayabusa and no longer falls into the unknown-level Medium bucket (closes #1433)
 - **A row promoted from the super-timeline stays promoted** — every promotion stamps the row, and the demote pass after each import keeps stamped rows whatever their severity (closes #1432)
 - **Super-timeline first page in milliseconds on a big store** — count, facets and the page come from indexed SQL instead of a whole-store scan (100k rows: 92 s → 0.03 s; 446k rows: never returned → sub-second), and text search scans linearly instead of re-sorting the table per page, so a large super-only import no longer freezes the dashboard (closes #1429)
 - **Copied binaries dated at the drop, not the source's build date** — nested `$SI`/`$FN` MFT columns now prefer `$FN` Created, then `$SI` Created, before LastModified, so a renamed copy of `cmd.exe` no longer lands on cmd.exe's build date and invents a staging wave and a months-long dwell (addresses #1415)
