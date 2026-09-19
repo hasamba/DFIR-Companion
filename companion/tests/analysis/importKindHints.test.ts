@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { binaryArtifactHintFor, unknownImportHintFor } from "../../src/analysis/importKindHints.js";
+import {
+  binaryArtifactHintFor,
+  binaryPlistImportHint,
+  IMPORT_FILE_UNKNOWN_MESSAGE,
+  UNIFIED_IMPORT_UNKNOWN_MESSAGE,
+  unknownImportHintFor,
+  unknownImportResponse,
+} from "../../src/analysis/importKindHints.js";
 import {
   detectBinaryImportKind,
   looksLikeMacLoginItemFilename,
@@ -54,5 +61,62 @@ describe("binaryArtifactHintFor (#1360)", () => {
 
   it("reaches the unified route's unknown-kind message for a text-read of the v1 bplist", () => {
     expect(unknownImportHintFor(SFL_V1, BPLIST_AS_TEXT)).toMatch(/v1, macOS 10\.11–10\.12/);
+  });
+});
+
+// #1392: #1360 gated ONE name. Every other binary plist — an MRU .sfl2, an arbitrary app's .plist,
+// a .bookmark — still reached the text path, where the macOS-persistence sniffer claimed the
+// `bplist0` magic and minted the same wrong launchd row. The magic itself is now refused, and the
+// hint names both ways forward: the byte-native route for a login-item container, and the plutil
+// conversion BEFORE upload for everything else.
+describe("binaryPlistImportHint (#1392)", () => {
+  const RECENT_DOCS = "com.apple.LSSharedFileList.RecentDocuments.sfl2";
+
+  it("refuses any bplist0 body under a name the login-item gate does not take", () => {
+    for (const name of [RECENT_DOCS, "com.evil.agent.plist", "Safari.bookmark", "export.txt"]) {
+      const hint = binaryPlistImportHint(name, BPLIST_AS_TEXT);
+      expect(hint, name).toMatch(/binary property list/);
+      expect(hint, name).toContain(`"${name}"`);
+      expect(hint, name).toMatch(/plutil -convert xml1/);
+      expect(hint, name).toMatch(/import-binary/);
+      expect(hint, name).not.toMatch(/launchd/);
+    }
+  });
+
+  it("is silent for text, for an XML plist, and for a bplist mentioned past the first bytes", () => {
+    expect(
+      binaryPlistImportHint("a.plist", '<?xml version="1.0"?><plist version="1.0"><dict/></plist>'),
+    ).toBeUndefined();
+    expect(binaryPlistImportHint("a.log", "2026-01-01 the file was bplist00")).toBeUndefined();
+    expect(binaryPlistImportHint("a.log", "")).toBeUndefined();
+  });
+
+  it("reaches the unified route's unknown-kind message, after the name-gated hints", () => {
+    expect(unknownImportHintFor(RECENT_DOCS, BPLIST_AS_TEXT)).toMatch(/plutil -convert xml1/);
+    expect(unknownImportHintFor("com.evil.agent.plist", BPLIST_AS_TEXT)).toMatch(/plutil -convert xml1/);
+    // The v1 .sfl keeps its own sentence (#1360): no reader exists, so plutil is not the way forward.
+    expect(unknownImportHintFor(SFL_V1, BPLIST_AS_TEXT)).not.toMatch(/plutil/);
+    // A decoded container keeps the byte-native sentence (#1301), which already says how to upload it.
+    expect(unknownImportHintFor("backgrounditems.btm", BPLIST_AS_TEXT)).toMatch(
+      /binary macOS login-item container/,
+    );
+  });
+});
+
+describe("unknownImportResponse (#1392)", () => {
+  it("marks a file-specific hint `refused` so the dashboard shows the sentence, and leaves the generic one unmarked", () => {
+    const specific = unknownImportResponse(
+      "com.evil.agent.plist",
+      BPLIST_AS_TEXT,
+      UNIFIED_IMPORT_UNKNOWN_MESSAGE,
+    );
+    expect(specific).toEqual({ error: expect.stringMatching(/plutil -convert xml1/), refused: true });
+    const generic = unknownImportResponse(
+      "notes.bin",
+      "\u0000\u0001 nothing recognizable",
+      IMPORT_FILE_UNKNOWN_MESSAGE,
+    );
+    expect(generic).toEqual({ error: IMPORT_FILE_UNKNOWN_MESSAGE });
+    expect("refused" in generic).toBe(false);
   });
 });

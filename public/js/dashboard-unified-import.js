@@ -138,6 +138,14 @@
             });
           }
           const jr = await r.json().catch(() => ({}));
+          // The server refused THIS file with a sentence about it — a binary plist that needs the
+          // byte-native route or a plutil conversion, a login-item container sent as text (#1392).
+          // The analyst reads that sentence in the summary, not a bare "failed" count.
+          if (r.status === 400 && jr.refused && jr.error) {
+            dataFail++;
+            refused.push(jr.error);
+            continue;
+          }
           if (r.status === 403) {
             cancelImportProgress();
             statusEl.textContent =

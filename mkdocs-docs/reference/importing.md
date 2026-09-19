@@ -102,8 +102,10 @@ head -n -0 /Library/LaunchDaemons/*.plist /Library/LaunchAgents/*.plist \
   /Users/*/Library/LaunchAgents/*.plist /usr/lib/cron/tabs/* /Users/*/.zshrc > mac-persistence.txt
 ```
 
-**Convert binary plists first.** Most plists on disk are `bplist00`, which is not text. The
-Companion recognises one and tells you to convert it rather than reading nothing out of it:
+**Convert binary plists first.** Most plists on disk are `bplist00`, which is not text. A binary
+plist sent to the text import on its own is refused with that reason — nothing is read, no row is
+written, and the file is never labelled as a launchd job or any other artifact. Only the four
+login-item containers below are read as bytes. Convert everything else before you upload it:
 
 ```bash
 plutil -convert xml1 -o - /Library/LaunchDaemons/com.example.plist

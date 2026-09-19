@@ -39,7 +39,7 @@ import { suggestedToolForExtension } from "../integrations/tools/toolConfig.js";
 import { createToolRunCache, type ToolRunCache } from "../integrations/tools/toolProvenance.js";
 import { ingestCapture } from "../ingest/captureIngest.js";
 import { detectBinaryImportKind } from "../analysis/macBinaryDetect.js";
-import { capaFlavorHintFor } from "../analysis/capaResultImport.js";
+import { unknownImportHintFor } from "../analysis/importKindHints.js";
 import { MAX_INPUT_BYTES } from "../analysis/bplistReader.js";
 import { readHandleBounded, FileTooLargeError } from "../storage/boundedRead.js";
 import { maxImportFileBytes } from "../routes/importFileHead.js";
@@ -447,10 +447,12 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
       // Same named reason the /import routes give (#1302): a capa-shaped report whose flavor isn't
       // "static" is real upstream but unsupported, and the analyst should read that, not a generic
       // "unrecognized" — in the status record, the notification and drop-log.txt alike (#1308).
+      // The same helper names a binary plist and the login-item containers (#1301, #1360, #1392).
       if (kind === "unknown")
         return {
           ok: false,
-          reason: capaFlavorHintFor(text) ?? "unrecognized file type (not a supported import format)",
+          reason:
+            unknownImportHintFor(name, text) ?? "unrecognized file type (not a supported import format)",
         };
       const r = await ingestStreamed(caseId, kind, text, name, undefined);
       if (!r.analyzed)

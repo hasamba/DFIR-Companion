@@ -33,6 +33,7 @@ import {
   looksLikeMacLoginItemFilename,
   looksLikeUndecodedMacLoginItemFilename,
 } from "../analysis/macBinaryDetect.js";
+import { isBinaryPlist } from "../analysis/macosPersistence.js";
 import { observeImport } from "../analysis/operationalImport.js";
 import { demoteBelowSeverity, resolveForensicMinSeverity } from "../analysis/forensicGate.js";
 import { settleForensicImport } from "../routes/importSettle.js";
@@ -159,8 +160,14 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
   // read a binary plist, so a custom kind claiming one of these names would only ever misparse.
   // The v1 SessionLoginItems.sfl (#1360) is refused here as well — no reader exists for it, and a
   // text-read of it would otherwise be sniffed as a binary launchd plist under the wrong label.
+  // And so is EVERY other binary plist, by its `bplist0` magic (#1392): the name lists above cover
+  // the login-item containers only, and any other bplist — an MRU .sfl2, an app's .plist — reached
+  // the same sniffer and got the same wrong launchd row. No text importer can read one, so the
+  // honest answer is a refusal that names the plutil conversion (importKindHints.ts).
   const resolveImportKind = (filename: string, text: string): string =>
-    looksLikeMacLoginItemFilename(filename) || looksLikeUndecodedMacLoginItemFilename(filename)
+    looksLikeMacLoginItemFilename(filename) ||
+    looksLikeUndecodedMacLoginItemFilename(filename) ||
+    isBinaryPlist(text)
       ? "unknown"
       : detectImportWithCustom(filename, text, registry.importers, precedence);
 
