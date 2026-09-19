@@ -29,7 +29,7 @@ import { basename, dirname, extname, join, relative } from "node:path";
 import { decodeImportedText } from "../ingest/decodeText.js";
 import { readdir, stat, lstat, mkdir, rename, rm, writeFile } from "node:fs/promises";
 import type { CaseStore } from "../storage/caseStore.js";
-import { openNoFollow, readFileNoFollow, readHeadNoFollow, LinkGuardError } from "../storage/noFollowRead.js";
+import { openNoFollow, readHeadNoFollow, LinkGuardError } from "../storage/noFollowRead.js";
 import { isSafeDropRelpath } from "../storage/dropRelpath.js";
 import type { AppOptions } from "./appOptions.js";
 import type { AiControl } from "../analysis/aiControl.js";
@@ -269,6 +269,22 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
     }
   }
 
+  // The ONE whole-file read for every branch of processDropFile. The cap travels with the
+  // descriptor: opened O_NOFOLLOW, sized by fstat on that same handle, and the read stops one byte
+  // past the promised size (storage/boundedRead.ts). The listing stat's `isOversize` gate stays as
+  // the cheap early skip, but it is only a check on what the sweep saw — a file that grew, or was
+  // swapped for a larger one, between the listing and this read was read in full by the old
+  // path-based `readFileNoFollow` (#1329, the #947 check-then-read shape). Throws FileTooLargeError,
+  // which each caller phrases in its own terms.
+  async function readDropFileBounded(fullPath: string, maxBytes: number): Promise<Buffer> {
+    const handle = await openNoFollow(fullPath);
+    try {
+      return await readHandleBounded(handle, maxBytes);
+    } finally {
+      await handle.close();
+    }
+  }
+
   // Ingest one dropped image as screenshot evidence: transcode to webp (imageLoader sends screenshots
   // as image/webp, so a dropped png/jpg must be honest on disk + wire), then run the SAME capture +
   // vision trigger as POST /captures. triggerType "navigation" forces a prompt flush.
@@ -278,7 +294,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
     name: string,
     mtimeMs: number,
   ): Promise<void> {
-    const raw = await readFileNoFollow(fullPath);
+    const raw = await readDropFileBounded(fullPath, dropMaxBytes);
     let webp: Buffer;
     try {
       const sharp = (await import("sharp")).default;
@@ -361,10 +377,9 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         // an untrusted drop-folder path; capped at min(the import-file cap, the PARSER's own 32 MiB
         // bound) — never DFIR_DROP_MAX_BYTES, which this branch never consults at all, so a mistaken
         // multi-GB `.btm` cannot force an oversized in-memory allocation before either check runs.
-        const handle = await openNoFollow(full);
         let bytes: Buffer;
         try {
-          bytes = await readHandleBounded(handle, Math.min(maxImportFileBytes(), MAX_INPUT_BYTES));
+          bytes = await readDropFileBounded(full, Math.min(maxImportFileBytes(), MAX_INPUT_BYTES));
         } catch (err) {
           if (err instanceof FileTooLargeError) {
             return {
@@ -373,8 +388,6 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
             };
           }
           throw err;
-        } finally {
-          await handle.close();
         }
         // No analyzed-false branch here (unlike the text path below): this importer is fully
         // deterministic, with no AI-off gate to ever report through it (Ollama code review
@@ -428,7 +441,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         return { ok: true };
       }
       // BOM-aware: a Report.wer is UTF-16LE, and utf8 turns it into NUL-interleaved mojibake.
-      const text = decodeImportedText(await readFileNoFollow(full));
+      const text = decodeImportedText(await readDropFileBounded(full, dropMaxBytes));
       if (!text.trim()) return { ok: false, reason: "empty file" };
       const kind = resolveImportKind(name, text);
       // Same named reason the /import routes give (#1302): a capa-shaped report whose flavor isn't
@@ -451,6 +464,13 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
     } catch (err) {
       if (err instanceof LinkGuardError) {
         return { ok: false, reason: `${err.kind} detected in drop folder — refused to read (security)` };
+      }
+      // The listing-stat gate above passed, so the file changed size between the sweep and the read.
+      if (err instanceof FileTooLargeError) {
+        return {
+          ok: false,
+          reason: `too large at read time (${err.size} bytes > ${err.maxBytes}-byte cap; the file changed after the sweep listed it) — use Import-from-path`,
+        };
       }
       recordImportFailure(caseId, "drop", name, err);
       return { ok: false, reason: (err as Error)?.message ?? String(err) };
