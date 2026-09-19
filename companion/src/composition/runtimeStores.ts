@@ -97,6 +97,7 @@ import { ComplianceControlStore } from "../analysis/complianceControl.js";
 import { PlaybookStore } from "../analysis/playbookStore.js";
 import { PlaybookHuntStore } from "../analysis/playbookHuntStore.js";
 import { PlaybookControlStore } from "../analysis/playbookControl.js";
+import { FindingTaskStore } from "../analysis/findingTaskStore.js";
 import { AssetOverridesStore } from "../analysis/assetOverrides.js";
 import { HostDuplicateDismissalStore } from "../analysis/hostDuplicateDismissals.js";
 import { IocAliasStore } from "../analysis/iocAlias.js";
@@ -367,6 +368,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
   const playbookStore = new PlaybookStore(store);
   const playbookHuntStore = new PlaybookHuntStore(store);
   const playbookControlStore = new PlaybookControlStore(store);
+  const findingTaskStore = new FindingTaskStore(store); // #1418 per-finding analyst tasks
   const assetOverridesStore = new AssetOverridesStore(store);
   const hostDuplicateDismissalStore = new HostDuplicateDismissalStore(store);
   const iocAliasStore = new IocAliasStore(store); // #82: analyst IOC merges (survive re-synthesis)
@@ -509,6 +511,7 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
     playbookStore,
     playbookHuntStore,
     playbookControlStore,
+    findingTaskStore,
     assetOverridesStore,
     hostDuplicateDismissalStore,
     iocAliasStore,

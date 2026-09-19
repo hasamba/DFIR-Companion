@@ -40,6 +40,7 @@ import { AiCostStore } from "../analysis/aiCost.js";
 import { CorrelationProfileStore } from "../analysis/correlationProfile.js";
 import { NotebookStore } from "../analysis/notebookStore.js";
 import { HypothesisStore } from "../analysis/hypothesisStore.js";
+import { FindingTaskStore } from "../analysis/findingTaskStore.js";
 import { LearnedPatternStore } from "../analysis/learnedPatternStore.js";
 import { SourceTrustStore } from "../analysis/sourceTrustStore.js";
 import { PlaybookStore } from "../analysis/playbookStore.js";
@@ -257,6 +258,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     correlationProfileStore: new CorrelationProfileStore(params.store),
     notebookStore: new NotebookStore(params.store),
     hypothesisStore: new HypothesisStore(params.store), // #140 auto-generate hypotheses on synthesis
+    findingTaskStore: new FindingTaskStore(params.store), // #1418 per-finding analyst tasks after synthesis
     learnedPatternStore: new LearnedPatternStore(params.store), // #65 feed learned dismissal patterns into synthesis
     sourceTrustStore: new SourceTrustStore(params.store), // #66 per-source trust weights for merge + confidence
     clockSkewStore: params.clockSkewStore, // #228 measure clock skew on the PRE-merge timeline
