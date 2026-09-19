@@ -52,6 +52,7 @@ import type { ComplianceControlStore } from "../analysis/complianceControl.js";
 import type { PlaybookStore } from "../analysis/playbookStore.js";
 import type { PlaybookHuntStore } from "../analysis/playbookHuntStore.js";
 import type { PlaybookControlStore } from "../analysis/playbookControl.js";
+import type { FindingTaskStore } from "../analysis/findingTaskStore.js";
 import type { AssetOverridesStore } from "../analysis/assetOverrides.js";
 import type { HostDuplicateDismissalStore } from "../analysis/hostDuplicateDismissals.js";
 import type { LateralPathDismissStore } from "../analysis/lateralPathDismiss.js";
@@ -304,6 +305,9 @@ export interface AppOptions {
   // Per-case playbook settings (Phase 2): whether Critical/High findings expand into severity-based
   // IR templates. Read when deriving auto-tasks; default off (opt-in per case).
   playbookControlStore?: PlaybookControlStore;
+  // #1418: AI-written per-finding analyst tasks (state/finding-tasks.json). Written by the
+  // post-synthesis pass; read when deriving the playbook so a finding card is a task, not a restatement.
+  findingTaskStore?: FindingTaskStore;
   // Manual edits to the asset ↔ IoC graph (renames, additions, suppressions, link overrides).
   // Persisted per case in state/asset-overrides.json; survives synthesis. onAssetOverrides
   // pings dashboard clients over the WS to re-fetch the graph when overrides change.

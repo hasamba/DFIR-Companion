@@ -64,7 +64,7 @@ import { isFlatChainsawRow, mapFlatChainsawRow } from "./chainsawImport.js";
 import { mapPersistenceSniper, isPersistenceSniperRow } from "./persistenceSniperImport.js";
 import { mapBinaryRename } from "./binaryRenameImport.js";
 import { overlayFlatWindowsEid } from "./flatWindowsEvent.js";
-import { detectTimestomp } from "./timestompDetect.js";
+import { applyMftTimeHints } from "./mftTimeHints.js";
 import { networkTokens } from "./networkTokens.js";
 import { gradeMotwDownload, zoneText } from "./motwDownload.js";
 import { isAccountUsageRow, mapAccountUsage } from "./accountUsageImport.js";
@@ -785,11 +785,11 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
 
   const aggKey = detectionAggKey(host, v.title, path || processName || pipe || subject);
 
-  return {
+  const m: MappedEvent = {
     timestamp: pickTime(row),
     description,
     severity,
-    mitre: v.mitre,
+    mitre: [...v.mitre],
     aggKey,
     sources: ["Velociraptor"],
     ...(sha256 ? { sha256 } : {}),
@@ -799,6 +799,8 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
     ...(processName ? { processName } : {}),
     ...(parentName ? { parentName } : {}),
   };
+  applyMftTimeHints(row, m); // DetectRaptor *.Detection.MFT rows carry $SI/$FN stamps too
+  return m;
 }
 
 function mapEventlog(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEvent | null {
@@ -834,24 +836,6 @@ const NOISE_KEY =
 // Collection-metadata keys (the artifact id surfaced in the "[artifact]" prefix, the _ts collection
 // time) — skipped in the key=value fallback so they don't duplicate the prefix / add noise.
 const META_KEY = /^(_ts|_Source|_Artifact|ArtifactName)$/i;
-
-// NTFS timestomp check for an MFT row (Windows.NTFS.MFT). Windows.NTFS.MFT emits both $SI and $FN
-// creation on the SAME row — Created0x10 ($SI) and Created0x30 ($FN), either top-level or nested under
-// SITimestamps/FNTimestamps — so we compare them inline (no cross-event grouping). On a hit: bump the
-// row's severity to Medium, add T1070.006, and append the reason. Reads the RAW strings (not pickTime,
-// which drops the sub-second precision the truncation signal needs). Directories are skipped (noise).
-function applyTimestomp(row: Row, m: MappedEvent): void {
-  const isDir = getCI(row, "IsDir");
-  if (isDir === true || str(isDir).toLowerCase() === "true") return;
-  const si = str(getCI(row, "Created0x10")) || str(getPath(row, "SITimestamps.Created0x10"));
-  const fn = str(getCI(row, "Created0x30")) || str(getPath(row, "FNTimestamps.Created0x30"));
-  if (!si || !fn) return;
-  const v = detectTimestomp(si, fn);
-  if (!v) return;
-  m.severity = worst(m.severity, v.severity);
-  for (const id of v.mitre) if (!m.mitre.includes(id)) m.mitre.push(id);
-  m.description = `${m.description} — ${v.note}`.slice(0, 1200);
-}
 
 function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, SiemIoc>): MappedEvent {
   // A THOR or BAM finding streamed through an artifact — Artifact + host let each prove itself.
@@ -931,7 +915,7 @@ function mapGeneric(row: Row, artifact: string, host: string, sink: Map<string, 
   };
   if (special?.mitre.length) m.mitre = [...special.mitre];
   for (const id of ransomMitre) if (!m.mitre.includes(id)) m.mitre.push(id);
-  applyTimestomp(row, m); // MFT rows: flag $SI/$FN timestomping (T1070.006, → Medium)
+  applyMftTimeHints(row, m); // MFT rows: $SI/$FN timestomping (T1070.006, → Medium) + copied-binary lead
   return m;
 }
 

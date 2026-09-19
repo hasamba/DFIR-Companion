@@ -70,7 +70,7 @@ const PATH_RE = /(?:[A-Za-z]:\\|\\\\)[^\s"'|<>]+|(?<![\w/:])\/(?:[\w.\-]+\/)+[\w
 // attribute row (#1037) shows the file's path and the joined download facts the same way, and the
 // merge-time persistence link (quarantinePersistenceLink.ts) its program path and download facts.
 const UNTRUSTED_SPAN_RE =
-  /\[(?:trailer|query|returned|answers|rcode|the record also carries returned values|sni|cert|client cert|certificate|kind|agent|data url|origin|sender|quarantine mark|quarantine mark \(not decodable\)|quarantine url|event identifier not decodable|target|mime|filename|user|referrer|ua|proxied|matched|redirect target \(stated by the server\)|name|subject|issuer|presented under|presented by|presented to|under|served with|chain check|lead|certificate records for this identity disagree|file|local file|local files|download event|download record|persisted as|path): [^\]]*\]/g;
+  /\[(?:trailer|query|returned|answers|rcode|the record also carries returned values|sni|cert|client cert|certificate|kind|agent|data url|origin|sender|quarantine mark|quarantine mark \(not decodable\)|quarantine url|event identifier not decodable|target|mime|filename|user|referrer|ua|proxied|matched|redirect target \(stated by the server\)|name|subject|issuer|presented under|presented by|presented to|under|served with|chain check|lead|certificate records for this identity disagree|file|local file|local files|download event|download record|persisted as|origin page visited|download URL visited|preceded a quarantine record|ran a quarantine-marked file|quarantine-marked file used|a quarantine-marked file|path): [^\]]*\]/g;
 function scannedText(description: string): string {
   return description.replace(UNTRUSTED_SPAN_RE, " ");
 }

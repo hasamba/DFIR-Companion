@@ -20,6 +20,7 @@ import type { FalsePositiveStore } from "../falsePositive.js";
 import type { FindingsDiff } from "../findingsDiff.js";
 import type { HuntOutcomeStore } from "../huntOutcomeStore.js";
 import type { HypothesisStore } from "../hypothesisStore.js";
+import type { FindingTaskStore } from "../findingTaskStore.js";
 import type { ImportMetaStore } from "../importMeta.js";
 import type { CloudCoverageStore } from "../cloudCoverage.js";
 import type { IncidentTypeStore } from "../incidentTypeStore.js";
@@ -178,6 +179,8 @@ export interface PipelineOptions {
   // Per-case hypothesis store (issue #140). When set, synthesis merges the model's auto-generated
   // hypotheses into it (refresh-pristine / freeze-touched). Absent → no auto-generation (CLI/tests).
   hypothesisStore?: HypothesisStore;
+  // #1418: AI-written per-finding analyst tasks, written after each synthesis; the playbook reads them.
+  findingTaskStore?: FindingTaskStore;
   // Per-case playbook store. When set, synthesis reads DONE/SKIPPED task status so it can build on
   // completed work instead of re-recommending it (investigation-guidance #2). Absent → no digest.
   playbookStore?: PlaybookStore;

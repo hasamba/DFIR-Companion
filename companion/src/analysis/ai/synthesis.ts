@@ -47,6 +47,8 @@ import { getSynthesisPrompt } from "./prompts/index.js";
 import type { AiCallContext } from "./aiContext.js";
 import { type HuntContext } from "./hunts.js";
 import { buildSynthesisPrompt, type SynthesisPromptContext } from "./synthesisPrompt.js";
+import { writeFindingTasks } from "./findingTaskPass.js";
+import type { FindingTaskStore } from "../findingTaskStore.js";
 import {
   computeSynthHash,
   loadSynthesisInputs,
@@ -105,6 +107,7 @@ export interface SynthesisContext
       velociraptorClientStore?: VelociraptorClientStore;
       hostDuplicateDismissalStore?: HostDuplicateDismissalStore;
       evidenceAttestationStore?: EvidenceAttestationStore;
+      findingTaskStore?: FindingTaskStore;
     };
   /** mergeDelta plus the case's analyst IOC-merge aliases (#82). */
   mergeWithAliases(
@@ -590,6 +593,8 @@ export async function synthesize(
   next = await persistSynthesis(ctx, caseId, { loaded, next, findingsDiff });
 
   await autoGenerateHypotheses(ctx, caseId, delta.hypotheses, next, markers, aliasIndex);
+  // #1418: one more call turns each Critical/High finding into an analyst task for the playbook.
+  await writeFindingTasks(ctx, caseId, next, { provider: synthProvider });
 
   ctx.lastSynthHash.set(caseId, synthHash); // remember these inputs so an identical re-run skips the AI call
   await recordSynthesisOutcome(ctx, caseId, {

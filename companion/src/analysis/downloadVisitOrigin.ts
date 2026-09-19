@@ -42,6 +42,18 @@ function markUrls(e: TimelineEventShape): { url: string; referrer: string } {
 }
 
 const VELO_VISITED_SUBJECT = /^Velociraptor \[[^\]]*\]: Visited(?: \(\d+×\))?: (.*)$/;
+// hindsightImport.ts's own fixed prefix: `Browser visit: <url>[ — <title>]…`. Gated on `sources`
+// naming Hindsight, for the same spoof reason as the Velociraptor gate below (#1037 link 3).
+const HINDSIGHT_VISIT = /^Browser visit: (https?:\/\/\S+)/i;
+
+/** A browser-history visit row's URL — Velociraptor's "Visited" shape or Hindsight's — or "". */
+export function visitUrlOf(e: TimelineEventShape): string {
+  const velo = veloVisitUrl(e);
+  if (velo) return velo;
+  if (!(e.sources ?? []).includes("Hindsight")) return "";
+  const m = HINDSIGHT_VISIT.exec(splitDerivedNotes(e.description).base);
+  return m ? m[1].replace(/[.,;]+$/, "") : "";
+}
 
 /** A Velociraptor browser-history "Visited" row's URL. `veloAction` already gates on `sources`
  * naming Velociraptor, so a non-Velociraptor row with a lookalike description cannot spoof this. */
@@ -65,7 +77,7 @@ function veloVisitUrl(e: TimelineEventShape): string {
  * case-sensitive — a real distinguishing part of a URL. Percent-escape hex case and IDN/punycode
  * host spellings are NOT folded — a residual, safe-direction gap (a real match can be missed;
  * nothing is ever matched that shouldn't be) rather than fixed here (#985 code review). */
-function normalizeUrl(u: string): string {
+export function normalizeUrl(u: string): string {
   const m = /^(https?):\/\/([^/]+)(\/.*)?$/i.exec(u.trim());
   if (!m) return u.trim();
   const scheme = m[1].toLowerCase();
@@ -149,10 +161,16 @@ export interface BrowserVisitCorroboration<T> {
 export function browserVisitCorroboration<T extends TimelineEventShape>(
   events: readonly T[],
   marks: readonly { event: T; host: string }[],
+  // How a mark names its URLs and itself: the Windows mark's own description and path by default;
+  // the macOS quarantine record passes its envelope's dataUrl / originUrl and names itself by the
+  // download URL (quarantineVisitOrigin.ts, #1037).
+  opts: { urlsOf?: (e: T) => { url: string; referrer: string }; labelOf?: (e: T) => string } = {},
 ): BrowserVisitCorroboration<T> {
+  const urlsOf = opts.urlsOf ?? markUrls;
+  const labelOf = opts.labelOf ?? ((e: T) => excerpt(e.path ?? ""));
   const visitByUrl = new Map<string, { event: T; host: string }[]>();
   for (const e of events) {
-    const url = veloVisitUrl(e);
+    const url = visitUrlOf(e);
     if (!url) continue;
     const key = normalizeUrl(url);
     const list = visitByUrl.get(key) ?? visitByUrl.set(key, []).get(key)!;
@@ -163,7 +181,7 @@ export function browserVisitCorroboration<T extends TimelineEventShape>(
   const precededNotes = new Map<T, { marks: string[]; more: number }>();
   if (visitByUrl.size) {
     for (const r of marks) {
-      const { url, referrer } = markUrls(r.event);
+      const { url, referrer } = urlsOf(r.event);
       if (!url && !referrer) continue;
       const anchor = ms(r.event.timestamp);
       const sameAsUrl = url && referrer && normalizeUrl(referrer) === normalizeUrl(url);
@@ -177,9 +195,7 @@ export function browserVisitCorroboration<T extends TimelineEventShape>(
         const c =
           precededNotes.get(v.event) ?? precededNotes.set(v.event, { marks: [], more: 0 }).get(v.event)!;
         if (c.marks.length < MARKS_PER_VISIT_MAX)
-          c.marks.push(
-            `${excerpt(r.event.path ?? "")}${r.host ? ` on ${neutral(r.host).slice(0, 80)}` : ""}`,
-          );
+          c.marks.push(`${labelOf(r.event)}${r.host ? ` on ${neutral(r.host).slice(0, 80)}` : ""}`);
         else c.more += 1;
       }
     }
