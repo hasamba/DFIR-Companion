@@ -52,10 +52,16 @@ const TIME_KEYS = [
   "timestamp",
   "time",
   "StartTime",
+  // Nested NTFS $FILE_NAME / $STANDARD_INFO containers (DetectRaptor.Windows.Detection.MFT and newer
+  // Windows.NTFS.MFT). Same order as the bare columns below — $FN Created, $SI Created, then the
+  // modified / record-change times — because a COPIED file keeps the source's $SI LastModified while
+  // every Created stamp records the copy. Dating from LastModified0x10 put each attacker decoy (a copy
+  // of cmd.exe) at cmd.exe's build date, months before the drop, and the AI read that as a staging
+  // wave with a 264-day dwell (#1415).
+  "FNTimestamps.Created0x30",
+  "SITimestamps.Created0x10",
   "SITimestamps.LastModified0x10",
   "SITimestamps.LastRecordChange0x10",
-  "SITimestamps.Created0x10",
-  "FNTimestamps.Created0x30",
   // Bare NTFS $FILE_NAME / $STANDARD_INFO timestamps: Windows.NTFS.MFT (and USN) emit these as TOP-LEVEL
   // columns on many server versions (not nested under SITimestamps/FNTimestamps), so an MFT row would
   // otherwise land with NO time. Prefer $FN Created (0x30 — harder to timestomp) per analyst preference,

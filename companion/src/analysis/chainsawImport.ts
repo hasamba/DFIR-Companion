@@ -47,7 +47,13 @@ import {
   type SiemIoc,
   maxEventsDefault,
 } from "./siemImport.js";
-import { isDetectionSampleHost } from "./veloDetectionNoise.js";
+import {
+  HostRenameLedger,
+  demoteSampleHost,
+  resolveRowHost,
+  withFormerHostSuffix,
+  type RowHost,
+} from "./hostIdentity.js";
 
 type Row = Record<string, unknown>;
 
@@ -314,16 +320,31 @@ export function parseChainsawReport(text: string, opts: ChainsawImportOptions = 
   const iocSink = new Map<string, SiemIoc>();
   const hostTally = new Map<string, number>();
   const mapped: MappedEvent[] = [];
+  const renames = new HostRenameLedger();
   let detections = 0;
   let sawEvtx = false;
+
+  // Every event of one record carries the same host verdict: the collector's identity when the row
+  // has one (a Velociraptor hunt export routed here), else the record's own Computer. A record
+  // written under a former hostname says so in its description instead of becoming a second host
+  // (#1417). Only a row with NO collector identity can be a sample-corpus host: a tool may scan a
+  // sample set it unpacked next to its own binaries, and a bare Chainsaw file names no other machine
+  // than the one inside the record — demoted to Info so it stays in the super-timeline for reference
+  // but leaves the forensic view. See hostIdentity.ts and veloDetectionNoise.ts.
+  const push = (ev: MappedEvent, host: RowHost): void => {
+    ev.description = withFormerHostSuffix(ev.description, host.formerName);
+    demoteSampleHost(ev, host);
+    renames.note(host, ev.timestamp);
+    mapped.push(ev);
+  };
 
   for (const rec of records) {
     if (isFlatChainsawRow(rec)) {
       detections++;
-      const host = str(getCI(rec, "Computer")).trim();
-      if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
+      const rh = resolveRowHost(rec);
+      if (rh.asset) hostTally.set(rh.asset, (hostTally.get(rh.asset) ?? 0) + 1);
       sawEvtx = true; // this shape always has EventID/Channel/EventData, i.e. a real EVTX row
-      mapped.push(mapFlatChainsawRow(rec, host, iocSink));
+      push(mapFlatChainsawRow(rec, rh.asset, iocSink), rh);
       continue;
     }
     const detection = isDetection(rec);
@@ -332,44 +353,30 @@ export function parseChainsawReport(text: string, opts: ChainsawImportOptions = 
     if (docs.length === 0) {
       // A detection with no embedded event → keep the verdict; a non-Windows/empty raw
       // record → nothing to map, counts toward `dropped`.
-      if (detection) mapped.push(genericDetection(readSigmaMeta(rec), str(getCI(rec, "Computer")).trim()));
+      if (detection) mapped.push(genericDetection(readSigmaMeta(rec), resolveRowHost(rec).asset));
       continue;
     }
     const meta = detection ? readSigmaMeta(rec) : null;
     for (const event of docs) {
-      const { rec: flat, host } = toFlatRecord(event);
+      const { rec: flat, host: recordName } = toFlatRecord(event);
+      const rh = resolveRowHost(rec, recordName);
+      const host = rh.asset;
       if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
       const win = mapWindows(flat, host, iocSink);
       if (!win) {
-        if (meta) mapped.push(genericDetection(meta, host));
+        if (meta) push(genericDetection(meta, host), rh);
         continue;
       }
       sawEvtx = true;
-      if (meta) mapped.push(applySigma(win, meta));
+      if (meta) push(applySigma(win, meta), rh);
       else {
         win.sources = ["EVTX"];
-        mapped.push(win);
+        push(win, rh);
       }
     }
   }
 
-  // Self-scan: a Velociraptor artifact that shells out to Chainsaw scans the EVTX-ATTACK-SAMPLES
-  // corpus it unpacked next to its own binaries as well as the host's real logs. Those sample events
-  // carry the sample author's computer name (WIN-UK1GV882OK6), not the collection host — ~110 per
-  // case here, incl. a Critical "Security Audit Logs Cleared". Demote them to Info so they stay in
-  // the super-timeline for reference but leave the forensic view. See isDetectionSampleHost.
-  for (const ev of mapped) {
-    if (ev.severity !== "Info" && isDetectionSampleHost(ev.asset ?? "")) {
-      ev.severity = "Info";
-      ev.description =
-        `${ev.description} [detection sample corpus — ${ev.asset} is not a host in this collection]`.slice(
-          0,
-          600,
-        );
-    }
-  }
-
-  const { events, groups } = aggregateEvents(mapped, {
+  const { events, groups } = aggregateEvents([...mapped, ...renames.events()], {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? maxEventsDefault(),

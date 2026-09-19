@@ -47,7 +47,7 @@ import {
   isScriptBlockTextKey,
   type HayabusaRecord,
 } from "./scriptBlockFragments.js";
-import { isDetectionSampleHost } from "./veloDetectionNoise.js";
+import { demoteSampleHost, resolveRowHost, withFormerHostSuffix } from "./hostIdentity.js";
 import { evtxRecordIdentity } from "./evtxRecordId.js";
 
 type Row = Record<string, unknown>;
@@ -175,7 +175,10 @@ function mapRecord(
   const eid = firstStr(rec, ["EventID", "Event ID", "EventId", "EID"]);
   if (!ruleTitle && !eid) return null;
 
-  const host = firstStr(rec, ["Computer", "Hostname", "ComputerName"]);
+  // The collector's identity when the row carries one (a hunt export), else the record's Computer;
+  // a record written under a former hostname says so instead of becoming a second host (#1417).
+  const rh = resolveRowHost(rec);
+  const host = rh.asset;
   const level = firstStr(rec, ["Level"]).toLowerCase();
   const severity: Severity = LEVEL[level] ?? "Medium";
 
@@ -224,7 +227,7 @@ function mapRecord(
   if (eid || channel) description += ` (EID ${eid || "?"}${channel ? ` ${channel}` : ""})`;
   if (subject) description += ` — ${subject}`;
   if (host) description += ` @ ${host}`;
-  description = description.slice(0, 600);
+  description = withFormerHostSuffix(description.slice(0, 600), rh.formerName);
 
   const timestamp = hayaTime(firstStr(rec, ["Timestamp", "@timestamp", "datetime"]));
   // Identity of the Windows record this detection fired on (#688), so the SAME record read later by
@@ -241,28 +244,29 @@ function mapRecord(
       .replace(/\d+/g, "#")
       .slice(0, 400);
 
-  return {
-    host,
-    mapped: {
-      timestamp,
-      description,
-      severity,
-      mitre,
-      aggKey,
-      sources: ["Hayabusa"],
-      // The `subject` above cuts every detail field at 120 characters, so a reassembled script block
-      // would otherwise reach the analyst truncated to its first line. Carry the whole joined script
-      // as the expandable full detail. Only consolidated fragments set this.
-      ...(fullMessage ? { message: fullMessage } : {}),
-      ...(sha256 ? { sha256 } : {}),
-      ...(md5 && !sha256 ? { md5 } : {}),
-      ...(pathRaw ? { path: pathRaw } : {}),
-      ...(host ? { asset: host } : {}),
-      ...(processName ? { processName } : {}),
-      ...(parentName ? { parentName } : {}),
-      ...(recordIdentity ? { sourceRecordId: recordIdentity } : {}),
-    },
+  const mapped: MappedEvent = {
+    timestamp,
+    description,
+    severity,
+    mitre,
+    aggKey,
+    sources: ["Hayabusa"],
+    // The `subject` above cuts every detail field at 120 characters, so a reassembled script block
+    // would otherwise reach the analyst truncated to its first line. Carry the whole joined script
+    // as the expandable full detail. Only consolidated fragments set this.
+    ...(fullMessage ? { message: fullMessage } : {}),
+    ...(sha256 ? { sha256 } : {}),
+    ...(md5 && !sha256 ? { md5 } : {}),
+    ...(pathRaw ? { path: pathRaw } : {}),
+    ...(host ? { asset: host } : {}),
+    ...(processName ? { processName } : {}),
+    ...(parentName ? { parentName } : {}),
+    ...(recordIdentity ? { sourceRecordId: recordIdentity } : {}),
   };
+  // A sample-corpus host (veloDetectionNoise.ts) is demoted to Info — but only when the row has NO
+  // collector identity, so a renamed host's own history is never mistaken for a foreign sample (#1417).
+  demoteSampleHost(mapped, rh);
+  return { host, mapped };
 }
 
 // ───────────────────────────── record extraction ─────────────────────────────
@@ -321,15 +325,6 @@ export function parseHayabusaTimeline(text: string, opts: HayabusaImportOptions 
     const r = mapRecord(rec, details, iocSink, fullMessage);
     if (!r) continue;
     if (r.host) hostTally.set(r.host, (hostTally.get(r.host) ?? 0) + 1);
-    // Self-scan: when Hayabusa is run through a Velociraptor artifact it also scans the bundled
-    // EVTX-ATTACK-SAMPLES corpus, whose events carry the sample author's computer name (85% of the
-    // rows in one eval file). Demote them to Info so the sample corpus does not reappear as findings
-    // now that this file routes here natively instead of through the Velociraptor importer.
-    if (r.mapped.severity !== "Info" && isDetectionSampleHost(r.host)) {
-      r.mapped.severity = "Info";
-      r.mapped.description =
-        `${r.mapped.description} [detection sample corpus — ${r.host} not in this collection]`.slice(0, 600);
-    }
     mapped.push(r.mapped);
   }
 
