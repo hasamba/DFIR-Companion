@@ -13,6 +13,7 @@ import {
   staticReportMatches,
   STATIC_REPORT_ATTESTATION_CAVEAT,
 } from "../analysis/staticReportMatch.js";
+import type { ForensicEvent } from "../analysis/stateTypes.js";
 import { humanIdentityFor } from "./evidenceAttestation.js";
 import type { RouteContext } from "./context.js";
 
@@ -27,7 +28,20 @@ import type { RouteContext } from "./context.js";
  *
  * `:id` needs no isValidCaseId check: createApp mounts createCaseIdGate() on `/cases/:id`.
  * WRITES REQUIRE A HUMAN IDENTITY via routes/evidenceAttestation.ts's own `humanIdentityFor`.
+ *
+ * READS forensic ∪ super-timeline (#1389): every FLOSS row, and every olevba/capa finding row, is
+ * graded Info, so the settle-time demote moves them to the super-timeline — a FLOSS report never
+ * had a forensic row to carry its fingerprint, and a victim's Info file-create row is what the hash
+ * join needs to see. These routes are plain analyst-facing reads with no AI in their call graph, so
+ * joining both stores is the same recipe threatIntel.ts, proxyHostIdentity.ts and
+ * resolverEndpointIdentity.ts (#1243) use, not the AI-boundary promotion pattern (see
+ * ARCHITECTURE.md's forensic/super-timeline boundary). One difference from those readers: a row
+ * promoted through /super-timeline/promote sits in BOTH stores under one id (timeline.ts), and the
+ * match join emits one row per victim event, so the union is deduplicated by id, forensic row first.
+ * Same full-load tradeoff as those routes — `.all(caseId)` materializes the super-timeline.
  */
+
+const WHERE_LOOKED = "forensic timeline or super-timeline";
 
 const SHA256 = /^[0-9a-fA-F]{64}$/;
 const MD5 = /^[0-9a-fA-F]{32}$/;
@@ -75,16 +89,33 @@ export function registerStaticReportAttestationRoutes(app: Express, ctx: RouteCo
     );
   }
 
+  // Forensic ∪ super-timeline, one row per id (header). No super-timeline store → forensic only.
+  async function caseEventsFor(caseId: string): Promise<ForensicEvent[]> {
+    const [state, superEvents] = await Promise.all([
+      options.stateStore!.load(caseId),
+      options.superTimelineStore
+        ? options.superTimelineStore.all(caseId)
+        : Promise.resolve<ForensicEvent[]>([]),
+    ]);
+    const seen = new Set<string>();
+    const union: ForensicEvent[] = [];
+    for (const e of [...state.forensicTimeline, ...superEvents]) {
+      if (seen.has(e.id)) continue;
+      seen.add(e.id);
+      union.push(e);
+    }
+    return union;
+  }
+
   app.get("/cases/:id/static-report-attestations", async (req: Request, res: Response) => {
     if (!configured(res)) return;
     try {
       const caseId = req.params.id;
-      const [all, state, aliasIndex] = await Promise.all([
+      const [all, events, aliasIndex] = await Promise.all([
         options.staticReportAttestationStore!.load(caseId),
-        options.stateStore!.load(caseId),
+        caseEventsFor(caseId),
         aliasIndexFor(caseId),
       ]);
-      const events = state.forensicTimeline;
       // Victim rows only, the same read as staticReportMatches' subjectHostKnown (#1349).
       const hosts = new Set(
         events
@@ -120,11 +151,11 @@ export function registerStaticReportAttestationRoutes(app: Express, ctx: RouteCo
     }
     try {
       const caseId = req.params.id;
-      const state = await options.stateStore!.load(caseId);
-      const report = reportEventsByFingerprint(state.forensicTimeline, parsed.data.reportFingerprint);
+      const events = await caseEventsFor(caseId);
+      const report = reportEventsByFingerprint(events, parsed.data.reportFingerprint);
       if (!report) {
         return res.status(400).json({
-          error: `no event in case ${caseId} carries report fingerprint ${parsed.data.reportFingerprint.slice(0, 16)}… — import the report first, then attest it`,
+          error: `no event in case ${caseId} (${WHERE_LOOKED}) carries report fingerprint ${parsed.data.reportFingerprint.slice(0, 16)}… — import the report first, then attest it`,
         });
       }
       const attestation = await options.staticReportAttestationStore!.create(caseId, {
@@ -177,11 +208,8 @@ export function registerStaticReportAttestationRoutes(app: Express, ctx: RouteCo
       const all = await options.staticReportAttestationStore!.load(caseId);
       const attestation = all.find((a) => a.id === req.params.attId);
       if (!attestation) return res.status(404).json({ error: "static-report attestation not found" });
-      const [state, aliasIndex] = await Promise.all([
-        options.stateStore!.load(caseId),
-        aliasIndexFor(caseId),
-      ]);
-      const matches = staticReportMatches({ attestation, events: state.forensicTimeline, aliasIndex });
+      const [events, aliasIndex] = await Promise.all([caseEventsFor(caseId), aliasIndexFor(caseId)]);
+      const matches = staticReportMatches({ attestation, events, aliasIndex });
       return res.status(200).json({ attestation, ...matches });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
