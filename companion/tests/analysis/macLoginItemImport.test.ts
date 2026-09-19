@@ -290,12 +290,27 @@ describe("parseMacLoginItemBtm — code-review regressions (#1301)", () => {
   });
 
   it("a decoded alias with no stored name or path is labelled as such, not '(no bookmark)'", () => {
-    // Exercised via the reader + mapper contract: pathLabel for a decoded alias-record with no
-    // posixPath/carbonPath/displayName reads "(alias record stores no name or path)". The v3
-    // fixture has a filename, so this asserts the negative space on a synthesized description.
-    const r = parseMacLoginItemBtm(buf(LOGINITEMS_PLIST_HEX))!;
-    const broken = r.events.find((e) => e.canonical!.macLoginItem!.itemName === "Broken")!;
-    expect(broken.description).toContain("(alias record malformed)");
-    expect(broken.description).not.toContain("(no bookmark)");
+    // plistlib.dumps({"SessionItems": {"CustomListItems": [{"Name": "Nameless-v2", "Alias": <152-byte
+    // v2 alias record: empty Pascal filename, no tags>}]}}, FMT_BINARY). The reader decodes it
+    // cleanly (decodeStatus "decoded"), yet it carries no path, no carbon path and no display
+    // name. "(no bookmark)" is the label for an ABSENT record, so a present-but-empty one must
+    // say so instead (#1364).
+    const namelessV2 =
+      "62706c6973743030d101025c53657373696f6e4974656d73d103045f100f437573746f6d4c6973744974656d73a105d20607080955416c696173544e616d654f1098000000000098000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000ffff5b4e616d656c6573732d7632080b181b2d2f343a3fda0000000000000101000000000000000a000000000000000000000000000000e6";
+    const r = parseMacLoginItemBtm(buf(namelessV2))!;
+    expect(r.events).toHaveLength(1);
+    const nameless = r.events[0];
+    const c = nameless.canonical!.macLoginItem!;
+    expect(c.bookmarkDecodeStatus).toBe("decoded");
+    expect(c.targetRecordKind).toBe("alias-record");
+    expect(c.targetPathComponents).toBeUndefined();
+    expect(nameless.description).toContain("(alias record stores no name or path)");
+    expect(nameless.description).not.toContain("(no bookmark)");
+
+    // The absent state keeps its own label — an item with no Alias key at all.
+    const fixture = parseMacLoginItemBtm(buf(LOGINITEMS_PLIST_HEX))!;
+    const none = fixture.events.find((e) => e.canonical!.macLoginItem!.itemName === "NoAlias")!;
+    expect(none.description).toContain("(no bookmark)");
+    expect(none.description).not.toContain("stores no name or path");
   });
 });

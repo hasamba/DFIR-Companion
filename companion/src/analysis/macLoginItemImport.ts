@@ -464,7 +464,13 @@ function mapItem(
           ? isAlias
             ? "(alias record malformed)"
             : "(bookmark malformed)"
-          : "(no bookmark)";
+          : facts.decodeStatus === "decoded"
+            ? // Present and readable, but stores nothing usable — not the same as no record at
+              // all, which is the "(no bookmark)" absent state below (#1364).
+              isAlias
+              ? "(alias record stores no name or path)"
+              : "(bookmark stores no name or path)"
+            : "(no bookmark)";
   const nameLabel = item.itemName ? ` "${item.itemName}"` : "";
   const body = clip(
     `macOS login item (${item.sourceFormat})${nameLabel}: ${pathLabel} — a decoded configuration record, ` +
