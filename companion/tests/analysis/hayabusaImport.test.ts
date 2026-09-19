@@ -211,6 +211,15 @@ describe("parseHayabusaTimeline — levels, floor & edges", () => {
     expect(sev("informational")).toBe("Info");
   });
 
+  it("maps Hayabusa's emergency level (abbreviated emer) to Critical, not the Medium fallback (#1433)", () => {
+    const mk = (level: string): object => ({ ...jsonProc(), Level: level, RuleTitle: `R-${level}` });
+    const r = parseHayabusaTimeline(JSON.stringify([mk("emergency"), mk("emer")]));
+    const sev = (t: string): string | undefined =>
+      r.events.find((e) => e.description.includes(`R-${t}`))?.severity;
+    expect(sev("emergency")).toBe("Critical");
+    expect(sev("emer")).toBe("Critical");
+  });
+
   it("applies a minSeverity floor", () => {
     const hi = jsonProc();
     const lo = { ...jsonProc(), Level: "low", RuleTitle: "Noise" };

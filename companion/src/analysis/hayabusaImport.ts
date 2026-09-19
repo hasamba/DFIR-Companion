@@ -71,8 +71,12 @@ export interface HayabusaParseResult {
 }
 
 // Hayabusa level vocabulary → our Severity. Hayabusa abbreviates in some versions
-// (crit/med) and spells out in others (critical/medium); accept both.
+// (crit/med) and spells out in others (critical/medium); accept both. Its top level is
+// `emergency` (`emer`), ABOVE critical — our scale ends at Critical, so it lands there
+// rather than in the unknown-level Medium fallback (#1433).
 const LEVEL: Record<string, Severity> = {
+  emergency: "Critical",
+  emer: "Critical",
   critical: "Critical",
   crit: "Critical",
   high: "High",
