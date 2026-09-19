@@ -7,8 +7,10 @@ import { join } from "node:path";
 import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
+import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import { StaticReportAttestationStore } from "../../src/analysis/staticReportAttestationStore.js";
 import { parseOlevbaResult } from "../../src/analysis/olevbaResultImport.js";
+import { parseFlossResult } from "../../src/analysis/flossResultImport.js";
 import { createCanonicalEvent } from "../../src/analysis/canonicalEvent.js";
 import { emptyState } from "../../src/analysis/stateTypes.js";
 import type { ForensicEvent, InvestigationState } from "../../src/analysis/stateTypes.js";
@@ -42,10 +44,10 @@ function olevbaDoc(file: string): string {
   ]);
 }
 
-function olevbaEvents(file: string): { events: ForensicEvent[]; fingerprint: string } {
-  const parsed = parseOlevbaResult(olevbaDoc(file));
-  if (!parsed) throw new Error("fixture did not parse");
-  const events = parsed.events.map((e) => ({
+function toForensicEvents(
+  events: NonNullable<ReturnType<typeof parseOlevbaResult>>["events"],
+): ForensicEvent[] {
+  return events.map((e) => ({
     id: e.id,
     timestamp: e.timestamp,
     description: e.description,
@@ -55,10 +57,60 @@ function olevbaEvents(file: string): { events: ForensicEvent[]; fingerprint: str
     sourceScreenshots: [],
     sources: e.sources,
     canonical: e.canonical,
-  })) as ForensicEvent[];
+  }));
+}
+
+function olevbaEvents(file: string): { events: ForensicEvent[]; fingerprint: string } {
+  const parsed = parseOlevbaResult(olevbaDoc(file));
+  if (!parsed) throw new Error("fixture did not parse");
+  const events = toForensicEvents(parsed.events);
   const lead = events.find((e) => e.canonical?.olevbaCompoundLead);
   if (!lead?.canonical?.olevbaCompoundLead) throw new Error("no compound lead in fixture");
   return { events, fingerprint: lead.canonical.olevbaCompoundLead.reportFingerprint };
+}
+
+// The sample hash FLOSS's own metadata reports (shape per flossResultImport.test.ts). Every row
+// the FLOSS parser emits is Info, so after settle they all live in the super-timeline (#1389).
+const FLOSS_SAMPLE_SHA256 = "af2bdbe1aa9b6ec1e2ade1d694f41fc71a831d0268e9891562113d8a62add1bf";
+
+function flossEvents(): { events: ForensicEvent[]; fingerprint: string } {
+  const parsed = parseFlossResult(
+    JSON.stringify({
+      metadata: {
+        file_path: "/samples/malware.exe",
+        md5: "5e8ff9bf55ba3508199d22e984129be6",
+        sha256: FLOSS_SAMPLE_SHA256,
+        version: "v2.2.0-0-g783dd8f",
+        imagebase: 4194304,
+        min_length: 4,
+      },
+      analysis: {},
+      strings: {
+        decoded_strings: [
+          {
+            address: 4198400,
+            address_type: "absolute",
+            string: "cmd.exe /c whoami",
+            encoding: "ASCII",
+            decoded_at: 4199118,
+            decoding_routine: 4198722,
+          },
+        ],
+        stack_strings: [],
+        tight_strings: [],
+        language_strings: [],
+        language_strings_missed: [],
+        static_strings: [],
+      },
+    }),
+  );
+  if (!parsed) throw new Error("FLOSS fixture did not parse");
+  const events = toForensicEvents(parsed.events);
+  if (!events.every((e) => e.severity === "Info"))
+    throw new Error("fixture premise: every FLOSS row is Info");
+  const first = events.find((e) => e.canonical?.decodedString);
+  if (!first?.canonical?.decodedString) throw new Error("no decoded-string row in fixture");
+  return { events, fingerprint: first.canonical.decodedString.reportFingerprint };
 }
 
 function victimRow(id: string, host: string, path: string, sha256?: string): ForensicEvent {
@@ -97,6 +149,21 @@ async function makeApp() {
     staticReportAttestationStore: new StaticReportAttestationStore(cases),
   });
   return { app, stateStore, cases };
+}
+
+// The settled shape of a real case: Info rows demoted to the super-timeline (#1389).
+async function makeAppWithSuperTimeline() {
+  const root = await mkdtemp(join(tmpdir(), "dfir-static-report-att-super-"));
+  const cases = new CaseStore(root);
+  await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+  const stateStore = new StateStore(cases);
+  const superTimelineStore = new SuperTimelineStore(cases);
+  const app = createApp(cases, {
+    stateStore,
+    superTimelineStore,
+    staticReportAttestationStore: new StaticReportAttestationStore(cases),
+  });
+  return { app, stateStore, superTimelineStore };
 }
 
 describe(ROUTE, () => {
@@ -253,6 +320,77 @@ describe(ROUTE, () => {
     expect(
       (await request(app).post(ROUTE).send({ reportFingerprint: "x", subjectHost: "ws-01" })).status,
     ).toBe(400);
+  });
+});
+
+describe(`${ROUTE} reads forensic ∪ super-timeline (#1389)`, () => {
+  it("attests and matches a FLOSS report whose every row was demoted to the super-timeline", async () => {
+    const { app, stateStore, superTimelineStore } = await makeAppWithSuperTimeline();
+    const { events, fingerprint } = flossEvents();
+    // Nothing from the report survives the forensic cut; the victim's file-create row is Info too.
+    await stateStore.save(stateWith([]));
+    await superTimelineStore.append("c1", [
+      ...events,
+      victimRow("h1", "WS-01", "C:\\Users\\bob\\malware.exe", FLOSS_SAMPLE_SHA256),
+    ]);
+
+    const created = await request(app)
+      .post(ROUTE)
+      .send({ reportFingerprint: fingerprint, subjectHost: "ws-01" });
+    expect(created.status).toBe(200);
+    expect(created.body.attestation.tool).toBe("floss");
+    expect(created.body.attestation.toolReportedSha256).toBe(FLOSS_SAMPLE_SHA256);
+
+    const list = await request(app).get(ROUTE);
+    expect(list.body.attestations[0]).toMatchObject({ reportPresent: true, subjectHostKnown: true });
+
+    const matches = await request(app).get(`${ROUTE}/${created.body.attestation.id}/matches`);
+    expect(matches.status).toBe(200);
+    expect(matches.body.diagnostics).toMatchObject({ reportPresent: true, subjectHostKnown: true });
+    expect(matches.body.hash.rows).toHaveLength(1);
+    expect(matches.body.hash.rows[0]).toMatchObject({
+      eventId: "h1",
+      host: "ws-01",
+      hostIsAttestedSubject: true,
+    });
+  });
+
+  it("keeps the forensic-only case green when a super-timeline store is configured", async () => {
+    const { app, stateStore } = await makeAppWithSuperTimeline();
+    const { events, fingerprint } = olevbaEvents("C:\\x\\a.docm");
+    await stateStore.save(stateWith([...events, victimRow("v1", "ws-01", "C:\\x\\a.docm")]));
+    const created = await request(app)
+      .post(ROUTE)
+      .send({ reportFingerprint: fingerprint, subjectHost: "ws-01" });
+    expect(created.status).toBe(200);
+    expect(created.body.attestation.tool).toBe("olevba");
+    const matches = await request(app).get(`${ROUTE}/${created.body.attestation.id}/matches`);
+    expect(matches.body.path.rows.map((r: { eventId: string }) => r.eventId)).toEqual(["v1"]);
+  });
+
+  it("counts a promoted row once — it sits in both stores after /super-timeline/promote", async () => {
+    const { app, stateStore, superTimelineStore } = await makeAppWithSuperTimeline();
+    const { events, fingerprint } = olevbaEvents("C:\\x\\a.docm");
+    const victim = victimRow("v1", "ws-01", "C:\\x\\a.docm");
+    await stateStore.save(stateWith([...events, victim]));
+    await superTimelineStore.append("c1", [victim]);
+    const created = await request(app)
+      .post(ROUTE)
+      .send({ reportFingerprint: fingerprint, subjectHost: "ws-01" });
+    expect(created.status).toBe(200);
+    const matches = await request(app).get(`${ROUTE}/${created.body.attestation.id}/matches`);
+    expect(matches.body.path.rows.map((r: { eventId: string }) => r.eventId)).toEqual(["v1"]);
+  });
+
+  it("says where it looked when no row in either store carries the fingerprint", async () => {
+    const { app, stateStore } = await makeAppWithSuperTimeline();
+    await stateStore.save(stateWith([]));
+    const res = await request(app)
+      .post(ROUTE)
+      .send({ reportFingerprint: "9".repeat(64), subjectHost: "ws-01" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/forensic timeline/);
+    expect(res.body.error).toMatch(/super-timeline/);
   });
 });
 
