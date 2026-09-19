@@ -18,6 +18,8 @@ import { markProcessLifetimeSignals } from "./processLifetime.js";
 import { corroborateTimestompsOnTimeline } from "./timestompCorroborate.js";
 import { corroborateDownloadExecution } from "./downloadExecution.js";
 import { linkQuarantinePersistence } from "./quarantinePersistenceLink.js";
+import { linkQuarantineVisitOrigin } from "./quarantineVisitOrigin.js";
+import { linkQuarantineExecution } from "./quarantineExecutionLink.js";
 import { corroborateSmbExecution } from "./smbExecution.js";
 import { corroborateDefenderEpisodes } from "./defenderEpisodes.js";
 import { markInfectionWindow } from "./mobileInfectionWindow.js";
@@ -404,7 +406,11 @@ export function mergeDelta(
   // event identifier (#1037 link 2). Here because the database dump and the persistence collection
   // are never one upload. Only ever raises (the database row, to Medium); its notes are recomputed
   // from the current evidence on every merge.
-  const withQuarantineLinks = linkQuarantinePersistence(withDownloads);
+  const withQuarantinePersistence = linkQuarantinePersistence(withDownloads);
+  // The same record against the browser visits that precede its origin page / download URL, and
+  // the marked file against the rows that say it ran or was used (#1037 links 3 and 2). Here for
+  // the same reason; only ever raise; notes recomputed on every merge.
+  const withQuarantineLinks = linkQuarantineExecution(linkQuarantineVisitOrigin(withQuarantinePersistence));
   // A share write of an executable-shaped file, then the evidence it ran; a service-control or
   // task-scheduling pipe call, then the service/task it may have created — host+time joins across
   // separate imports (#933 item 4, correlation half — #1092). Only ever raises.
