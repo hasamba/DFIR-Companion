@@ -10,6 +10,18 @@
 
   let pending = [];
   let dismissed = [];
+  // #1284: true when the last load got a non-OK answer for either list. The lists are then empty,
+  // not the previous load's rows, and paint() says so — a dismissed pair silently shown as still
+  // pending (or the reverse) after a transient 5xx reads as fact.
+  let loadFailed = false;
+
+  // refreshAiState is published on window by public/js/dashboard-ai-status.js. This is a classic
+  // script, so a bare-name call would resolve through the global scope at call time and throw a
+  // ReferenceError — swallowed by the caller's catch — if that file were renamed or tagged later.
+  // Guarded, a missing publisher is a no-op by design (#1282).
+  function kickAiState(caseId) {
+    window.refreshAiState?.(caseId);
+  }
 
   // Two actions, same buttons, same delegated handler, regardless of reason — merging an IP into
   // a host name is exactly the same "treat this spelling as that host" operation as a name-
@@ -89,6 +101,16 @@
     return blockingBlock + networkIdentityBlock + dismissedRows(dismissedList);
   }
 
+  // #1284: the one line the analyst sees when a refresh failed. Every other panel that reports a
+  // failed load does it inline in its own body, in the high-severity colour.
+  function loadFailureNotice() {
+    return (
+      `<div class="hd-row hd-load-failed" data-safe-style="color:var(--sev-high)">` +
+      `Couldn't refresh the duplicate-host lists — the server answered with an error. ` +
+      `Reload the case to try again.</div>`
+    );
+  }
+
   // The section is DATA-GATED: hidden while nothing is pending, shown the moment something is.
   //
   // Opening the gate alone is not enough. applyViewLayout writes `false` into SECTIONS_VIS_KEY for
@@ -104,7 +126,9 @@
     if (!sec) return;
     // Open for a pending pair OR a past dismissal (#1170) — an analyst reconsidering an old
     // "different machines" call must be able to reach it even when nothing else is outstanding.
-    const hasContent = pending.length || dismissed.length;
+    // Also open on a failed load (#1284): the notice is the only signal that the empty lists are
+    // not an answer, and it is useless inside a hidden section.
+    const hasContent = pending.length || dismissed.length || loadFailed;
     sec.dataset.gateOpen = hasContent ? "1" : "";
     if (hasContent) {
       try {
@@ -129,13 +153,22 @@
     paintSectionGate();
     const el = document.getElementById("hostDuplicatesBody");
     if (!el) return;
-    el.innerHTML = renderHostDuplicates(pending, dismissed);
+    el.innerHTML =
+      renderHostDuplicates(pending, dismissed) +
+      (loadFailed ? loadFailureNotice() : "");
     // One delegated listener, bound once: innerHTML is replaced on every repaint, so per-button
     // listeners would be lost each time.
     if (!el.dataset.hdBound) {
       el.addEventListener("click", onPanelClick);
       el.dataset.hdBound = "1";
     }
+  }
+
+  // One policy for both lists (#1284): a non-OK answer is `null`, which the loader turns into an
+  // empty list plus the notice. It used to keep whatever the previous load had put there.
+  async function listOrNull(res, key) {
+    if (!res.ok) return null;
+    return (await res.json())[key] || [];
   }
 
   async function loadHostDuplicates(caseId) {
@@ -145,9 +178,11 @@
         fetch(`/cases/${encodeURIComponent(caseId)}/host-duplicates`),
         fetch(`/cases/${encodeURIComponent(caseId)}/host-duplicates/dismissed`),
       ]);
-      if (pendingRes.ok) pending = (await pendingRes.json()).pending || [];
-      if (dismissedRes.ok)
-        dismissed = (await dismissedRes.json()).dismissed || [];
+      const nextPending = await listOrNull(pendingRes, "pending");
+      const nextDismissed = await listOrNull(dismissedRes, "dismissed");
+      pending = nextPending || [];
+      dismissed = nextDismissed || [];
+      loadFailed = nextPending === null || nextDismissed === null;
       paint();
     } catch {
       // A panel that cannot load must not take the dashboard down with it.
@@ -172,7 +207,7 @@
       // emits nothing until it actually starts, so without this the pill sits on "on hold" over a
       // case that is no longer held. Re-derive now rather than wait for an event that may be
       // seconds away or, if the kick is a no-op, never come.
-      refreshAiState(caseId);
+      kickAiState(caseId);
     } catch {
       /* leave the panel as it was */
     }
@@ -199,7 +234,7 @@
       // every call, so undoing a blocking pair genuinely re-arms it immediately — without this the
       // pill keeps showing the last completed run's status until something else happens to poll it
       // (Ollama review finding on #1170, mirrors resolve()'s own identical call for the same reason).
-      refreshAiState(caseId);
+      kickAiState(caseId);
     } catch {
       /* leave the panel as it was */
     }
@@ -217,6 +252,9 @@
     const canonical = button.getAttribute("data-hd-canonical");
     const other = button.getAttribute("data-hd-other");
     if (button.hasAttribute("data-hd-undo")) {
+      // #1281: parity with merge. Undoing re-arms the synthesis gate for a blocking pair, so an
+      // accidental click would silently put a case the analyst thought was clear back on hold.
+      if (!confirm("Reconsider this pair? They will be suggested again.")) return;
       void undoDismiss(caseId.trim(), canonical, other);
       return;
     }
