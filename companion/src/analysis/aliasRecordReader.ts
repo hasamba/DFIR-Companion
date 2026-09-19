@@ -54,7 +54,7 @@ export interface AliasRecord {
   diskType?: number;
   folderCnid?: number;
   targetCnid?: number;
-  /** The unicode (tag 14) filename when present, else the Pascal one with mac_alias's `/`→`:` transform. */
+  /** The unicode (tag 14) filename when present, else the Pascal one; both carry the HFS `/`→`:` transform. */
   targetFilename?: string;
   /** The v2 Pascal-string filename after mac_alias's `/`→`:` transform, kept separately for disclosure. */
   pascalFilename?: string;
@@ -124,9 +124,12 @@ function hiResDate(b: Buffer, what: string): string | undefined {
 }
 
 function utf16Tag(value: Buffer, what: string): string {
-  // `>H count` then UTF-16BE; mac_alias reads `value[2:]` verbatim (no separator transform).
+  // `>H count` then UTF-16BE. The tag holds the HFS-form catalog name (HFS+ stores a POSIX ':'
+  // as '/' — hfs_catalog.c utf8_decodestr(..., ':', ...)), and mac_alias's WRITER applies the
+  // same ':'→'/' here as to the Pascal fields (alias.py:695/:701); only its reader is verbatim.
+  // Render '/'→':' so tags 14/15 and the Pascal fields agree (#1358).
   if (value.length < 2 || (value.length - 2) % 2 !== 0) fail(`${what} not a valid UTF-16 tag`);
-  return value.subarray(2).swap16().toString("utf16le");
+  return value.subarray(2).swap16().toString("utf16le").replace(/\//g, ":");
 }
 
 export function parseAliasRecord(input: Buffer): AliasRecord {
