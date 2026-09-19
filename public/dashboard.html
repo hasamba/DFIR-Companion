@@ -913,9 +913,10 @@
     <div class="comment-modal">
       <h3>IOC block-list</h3>
       <p data-safe-style="color:var(--text-muted); font-size:12px; margin:0 0 10px">
-        Export a clean, targeted indicator list for network/firewall teams. Scope and false-positive
-        IOC filters are always applied. Severity is derived from the worst enrichment verdict
-        (no enrichment = Info).</p>
+        Export a clean, targeted indicator list for network/firewall teams. Four filters are always
+        applied: scope, false-positive, retired (IOCs of a finding retired in the Intel Retirement
+        Review) and client-reported (a value from a sender-controlled header, e.g. X-Originating-IP).
+        Severity is derived from the worst enrichment verdict (no enrichment = Info).</p>
       <label data-safe-style="display:block; font-size:12px; margin-bottom:8px;">Minimum severity
         <select id="blMinSev" data-safe-style="width:100%; box-sizing:border-box; margin-top:3px; color:var(--text-bright); background:var(--border-color); border:1px solid var(--border-strong); border-radius:4px; padding:4px 6px;">
           <option value="Critical">Critical</option>

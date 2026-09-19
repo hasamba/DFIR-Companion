@@ -422,6 +422,12 @@ Each IOC shows:
   stored — open the source artifact for the exact row. Network addresses are exempt from the
   collapse, so two connections to different destinations stay two events.
 - **🚫 Mark False Positive** — known-good, excludes from analysis
+- **client-reported chip** — the value came from a header the sender controls (today: the
+  `X-Originating-IP` of an imported email), not from a sensor. It is a claim about who sent the
+  message, not an observed connection, and a forged header must never block a real address. The
+  IOC stays in the list, is enriched, and is printed in the report with a `(client-reported)`
+  suffix, but it never enters an IOC block-list, and a MISP push sends it without the IDS flag.
+  A later ordinary sighting of the same value (a Zeek connection, for example) clears the chip.
 - Click to run enrichment on demand
 
 **Inline quick-actions** — any detected value (IP/hash/domain/SID/URL/path) inside an event row or an
