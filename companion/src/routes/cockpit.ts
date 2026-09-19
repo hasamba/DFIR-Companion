@@ -13,6 +13,7 @@ function allCards(snapshot: CockpitSnapshot) {
   return [
     ...snapshot.sections.leads,
     ...snapshot.sections.hypotheses,
+    ...snapshot.sections.steps,
     ...snapshot.sections.contradictions,
     ...snapshot.sections.gaps,
     ...snapshot.sections.changes,

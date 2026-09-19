@@ -3,12 +3,12 @@ import type { NearDuplicate } from "./hostAlias.js";
 import type { Hypothesis } from "./hypothesis.js";
 import type { ImportMeta } from "./importMeta.js";
 import type { Job } from "./jobRegistry.js";
-import type { InvestigationState, Finding, Severity, CollectDirective } from "./stateTypes.js";
+import type { InvestigationState, Finding, Severity, CollectDirective, StepPriority } from "./stateTypes.js";
 import type { SynthMeta } from "./synthMeta.js";
 
 export type CockpitPhase = "triage" | "active-investigation" | "report-preparation";
 export type CockpitCardKind =
-  "lead" | "hypothesis" | "contradiction" | "gap" | "change" | "activity" | "blocker";
+  "lead" | "hypothesis" | "step" | "contradiction" | "gap" | "change" | "activity" | "blocker";
 export type CockpitAction = "pin" | "unpin" | "dismiss" | "restore" | "defer" | "assign" | "review";
 
 export interface CockpitActionInput {
@@ -76,6 +76,7 @@ export interface CockpitCard {
 export interface CockpitSections {
   leads: CockpitCard[];
   hypotheses: CockpitCard[];
+  steps: CockpitCard[];
   contradictions: CockpitCard[];
   gaps: CockpitCard[];
   changes: CockpitCard[];
@@ -129,6 +130,15 @@ const SEVERITY_SCORE: Record<Severity, number> = {
   Info: 100,
 };
 const SEVERITIES = new Set<string>(Object.keys(SEVERITY_SCORE));
+// How many playbook steps the "Next recommended step" group shows (#1424). The full list lives in
+// the Playbook panel; the cockpit shows only what to do first.
+const NEXT_STEP_LIMIT = 3;
+const STEP_SEVERITY: Record<StepPriority, Severity> = {
+  critical: "Critical",
+  high: "High",
+  medium: "Medium",
+  low: "Low",
+};
 
 function cleanIdentity(value: unknown): string {
   return (
@@ -243,6 +253,34 @@ function hypothesisCards(hypotheses: readonly Hypothesis[]): CockpitCard[] {
         },
         ...(item.assignee ? { assignee: item.assignee } : {}),
       } satisfies CockpitCard;
+    });
+}
+
+// The synthesis's recommended next steps (state.nextSteps, the Playbook), ranked critical-first
+// (#1424). A step a rejected finding made stale is hidden until the re-synthesis rewrites the list;
+// showing it would recommend work the analyst just refuted. Evidence and the finding jump come
+// from the first finding the step advances, so the card lands on the same event the lead does.
+function stepCards(state: InvestigationState): CockpitCard[] {
+  const findingById = new Map(state.findings.map((finding) => [finding.id, finding]));
+  return state.nextSteps
+    .filter((step) => !step.staleReSynth)
+    .map((step): CockpitCard => {
+      const finding = (step.relatedFindingIds ?? []).map((id) => findingById.get(id)).find(Boolean);
+      const evidenceIds = finding ? evidenceForFinding(state, finding) : [];
+      return {
+        id: `step:${step.id}`,
+        kind: "step",
+        title: step.action,
+        summary: step.rationale,
+        severity: STEP_SEVERITY[step.priority] ?? "Medium",
+        evidenceIds,
+        target: {
+          panel: "playbook",
+          ...(finding ? { findingId: finding.id } : {}),
+          ...(evidenceIds[0] ? { eventId: evidenceIds[0] } : {}),
+        },
+        action: collectionAction(step.collect, step.pointer),
+      };
     });
 }
 
@@ -623,6 +661,7 @@ export function deriveCockpit(input: CockpitInput): CockpitSnapshot {
   const raw: CockpitSections = {
     leads,
     hypotheses: hypothesisCards(input.hypotheses ?? []),
+    steps: stepCards(input.state),
     contradictions: contradictionCards(input),
     gaps: gapCards(input.state),
     changes: changeCards(input, lastReviewedAt),
@@ -636,7 +675,8 @@ export function deriveCockpit(input: CockpitInput): CockpitSnapshot {
       const decorated = cards.map((card) => applyDecision(card, decisions, input));
       parked.push(...decorated.filter((card) => isParked(card, now)));
       const active = prioritize(decorated.filter((card) => !isParked(card, now)));
-      return [key, key === "leads" ? active.slice(0, 3) : active];
+      const limit = key === "leads" ? 3 : key === "steps" ? NEXT_STEP_LIMIT : active.length;
+      return [key, active.slice(0, limit)];
     }),
   ) as unknown as CockpitSections;
   const hasEvidence = input.state.forensicTimeline.length > 0 || input.state.timeline.length > 0;
