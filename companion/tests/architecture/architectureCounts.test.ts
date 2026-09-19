@@ -18,21 +18,17 @@ const boundaryCounts = (): { crossDomain: number; complying: number; violations:
   ) as { crossDomain: number; complying: number; violations: number };
 
 describe("architectureWithCounts (#907)", () => {
-  it("rewrites the comply/total pair, grouped the way the guard test reads it", () => {
-    const out = architectureWithCounts(
-      "For context: **1 of the 2 cross-domain file dependencies already comply.**",
-      {
-        complying: 1983,
-        crossDomain: 2022,
-        violations: 39,
-      },
-    );
+  it("leaves a comply/total pair alone — that figure is no longer committed (#1368)", () => {
+    // The pair moved with every import added anywhere in the tree, so two concurrent PRs always
+    // regenerated the same sentence to different values and the second one to merge went
+    // CONFLICTING. The writer now owns only the ledger-derived count; the live pair is what
+    // `check:boundaries --json` prints. A stray pair in prose is left as-is so the guard test in
+    // moduleMap.test.ts can name it rather than have it silently "corrected".
+    const doc = "For context: **1 of the 2 cross-domain file dependencies already comply.**";
+    const out = architectureWithCounts(doc, { complying: 1983, crossDomain: 2022, violations: 39 });
 
-    expect(out.text).toBe(
-      "For context: **1,983 of the 2,022 cross-domain file dependencies already comply.**",
-    );
-    expect(out.pair).toBe(true);
-    expect(out.changed).toBe(true);
+    expect(out.text).toBe(doc);
+    expect(out.changed).toBe(false);
   });
 
   it("writes the violation count WITHOUT a separator, because the guard test matches it with a bare \\d+", () => {
@@ -77,7 +73,6 @@ describe("architectureWithCounts (#907)", () => {
       violations: 3,
     });
 
-    expect(out.pair).toBe(false);
     expect(out.violationClaims).toBe(0);
     expect(out.changed).toBe(false);
     expect(out.text).toBe("A document that no longer says any of it.");
@@ -89,7 +84,6 @@ describe("architectureWithCounts (#907)", () => {
     const doc = await readDoc();
     const out = architectureWithCounts(doc, boundaryCounts());
 
-    expect(out.pair, "ARCHITECTURE.md should still state the comply/total pair").toBe(true);
     expect(out.violationClaims, "ARCHITECTURE.md should still state a violation count").toBeGreaterThan(0);
     expect(out.changed, "check:boundaries --update would rewrite ARCHITECTURE.md right now").toBe(false);
   });
@@ -103,10 +97,9 @@ describe("architectureWithCounts (#907)", () => {
       violations: 3,
     });
 
-    expect(Object.keys(out).sort()).toEqual(["changed", "pair", "text", "violationClaims"]);
+    expect(Object.keys(out).sort()).toEqual(["changed", "text", "violationClaims"]);
     expect(typeof out.text).toBe("string");
     expect(typeof out.changed).toBe("boolean");
-    expect(typeof out.pair).toBe("boolean");
     expect(typeof out.violationClaims).toBe("number");
   });
 
