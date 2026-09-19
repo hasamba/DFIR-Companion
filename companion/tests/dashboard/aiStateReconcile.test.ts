@@ -60,7 +60,11 @@ describe("the four moments the pill re-derives", () => {
     // #1170: undoing a dismissal can re-arm the blocking gate — /ai-state live-derives from
     // loadPendingHostDuplicates on every call, so without this the pill keeps showing the last
     // completed run's status instead of immediately reflecting the reopened gate.
-    expect(duplicates.match(/refreshAiState\(caseId\)/g) ?? []).toHaveLength(2);
+    //
+    // #1282: both sites go through one guarded local, so the module never calls the bare name —
+    // a missing publisher is a no-op, not a ReferenceError swallowed by the caller's catch.
+    expect(duplicates.match(/^\s*kickAiState\(caseId\);/gm) ?? []).toHaveLength(2);
+    expect(duplicates.match(/window\.refreshAiState\?\.\(caseId\)/g) ?? []).toHaveLength(1);
   });
 
   // Both Presidio paths, not just approve: suppress clears the gate exactly as much as approve does.
