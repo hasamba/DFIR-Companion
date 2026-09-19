@@ -530,6 +530,15 @@ Compares the case's ATT&CK techniques against the MITRE ATT&CK Groups database t
 - Group name, aliases, and description
 - How many techniques overlap (and which ones)
 - **Likely next techniques** — techniques that matched groups use that haven't appeared in this case yet, ranked by how distinctive they are to those groups
+- **Gap leads from your attribution assertions** — for each attribution assertion you recorded
+  (`POST /cases/:id/attribution-assertions`) whose label *is* a known ATT&CK group name or alias
+  (exact match, never a substring), the techniques that group is documented to use that this case's
+  graded evidence has not shown, in kill-chain order with the same **hunt this** button. "Shown"
+  is base-or-better: a sub-technique in the case covers the group's base, a base covers the
+  group's sub-techniques, but a sibling sub-technique is another technique. Not observed ≠ did not
+  happen — these are hunt leads from your own claim, never evidence of absence, never attribution;
+  nothing is written to the assertion and no AI path reads the list. Absent when no assertion
+  matches a group.
 
 !!! warning "This is a hypothesis, not attribution"
     Use it to guide hunting — if a matched group tends to pivot via RDP, that's worth looking for. Never use this as attribution evidence.
