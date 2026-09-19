@@ -42,3 +42,14 @@ export function boundedTextTo(text: string, max: number): string {
 // a description clipped with a raw slice collapses them downstream no matter what the key said.
 // One implementation, one rule; the name says what it is for.
 export const boundedText = boundedAggKey;
+
+// Free text an importer prints into a description must never open or close a bracket. A
+// correlation pass appends its reason as a trailing "[<name>: …]" note, and derivedNote.ts finds
+// that note by its bracket — so a forged drop reason, VM name or rule token that reads
+// "[flow resource attribution: …]" would print as a note no pass ever wrote (#1388, the same
+// forgery class #1330 names for rowId). The AWS join passes strip the same two characters from
+// every evidence-derived string before interpolating it; importers use this one for the same
+// reason. The words still print — only the brackets go.
+export function stripNoteBrackets(text: string): string {
+  return text.replace(/[[\]]/gu, "");
+}

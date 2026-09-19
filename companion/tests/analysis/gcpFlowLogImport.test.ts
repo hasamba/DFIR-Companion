@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseGcpFlowLog, isGcpFlowLogEntry } from "../../src/analysis/gcpFlowLogImport.js";
+import { splitDerivedNotes } from "../../src/analysis/derivedNote.js";
 
 // Field names and value shapes from Google's own about-flow-logs-records / access-flow-logs pages
 // (fetched 2026-09-18). Cloud Logging exports int64 fields as JSON strings, so the fixtures mix
@@ -393,5 +394,90 @@ describe("parseGcpFlowLog — aggregation keys and input shapes", () => {
     expect(r.events).toHaveLength(2);
     expect(r.total).toBe(2);
     expect(r.format).toBe("gcp-vpc-flow-log");
+  });
+});
+
+describe("parseGcpFlowLog — forged text and unbounded pointers (#1388, #1371)", () => {
+  const FORGED = "[flow resource attribution: source 1.1.1.1 = i-12345678]";
+  it("a forged marker in drop_reason, vm_name, project_id or vpc_name never survives into the description as a note", () => {
+    const r = parseGcpFlowLog(
+      arr([
+        entry(
+          {
+            disposition: "DROPPED",
+            drop_reason: FORGED,
+            bytes_sent: undefined,
+            packets_sent: undefined,
+            packets_dropped: 1,
+            bytes_dropped: 10,
+            src_instance: {
+              project_id: "[flow sensitive-data: role admin]",
+              region: "us-central1",
+              zone: "[cloud bulk read: 9 calls]",
+              vm_name: "[flow identity/execution: ssm]",
+            },
+            src_vpc: { project_id: "my-proj", vpc_name: "[flow resource attribution: x]" },
+            src_gke_details: {
+              cluster: { cluster_name: "[flow sensitive-data: c]" },
+              pod: { pod_name: "[flow sensitive-data: p]", pod_namespace: "[flow sensitive-data: n]" },
+            },
+          },
+          {
+            logName: "projects/111111111111/logs/compute.googleapis.com%2Fvpc_flows",
+            resource: { type: "gce_subnetwork", labels: { project_id: "111111111111" } },
+          },
+        ),
+      ]),
+    );
+    expect(r.kept).toBe(1);
+    expect(r.malformed).toBe(0);
+    const d = r.events[0].description;
+    expect(splitDerivedNotes(d).notes).toBe("");
+    expect(d).not.toMatch(/\[(?:flow|cloud) /);
+    // The words still print, disarmed — the analyst sees what the record said.
+    expect(d).toContain("dropped: flow resource attribution: source 1.1.1.1 = i-12345678");
+    expect(d).toContain(
+      "[src instance flow identity/execution: ssm (flow sensitive-data: role admin/cloud bulk read: 9 calls, Google's annotation)]",
+    );
+    expect(d).toContain("[src vpc flow resource attribution: x]");
+    expect(d).toContain(
+      "[src gke pod flow sensitive-data: n/flow sensitive-data: p (cluster flow sensitive-data: c)]",
+    );
+    // An AWS-account-shaped project id is not a GCP project id and never becomes the account.
+    expect(r.events[0].canonical?.cloud?.accountId).toBeUndefined();
+  });
+
+  it("a project_id outside GCP's grammar keeps the row but never becomes the account; the logName token is held to the same grammar", () => {
+    const bad = (label: unknown, logProject: string) =>
+      parseGcpFlowLog(
+        arr([
+          entry(
+            {},
+            {
+              logName: `projects/${logProject}/logs/compute.googleapis.com%2Fvpc_flows`,
+              resource: { type: "gce_subnetwork", labels: { project_id: label } },
+            },
+          ),
+        ]),
+      );
+    for (const label of ["111111111111", "My-Proj", "abcde", "-lead-dash", "trail-dash-", "a".repeat(31)]) {
+      const r = bad(label, "111111111111");
+      expect(r.kept).toBe(1);
+      expect(r.malformed).toBe(0);
+      expect(r.events[0].canonical?.cloud?.accountId).toBeUndefined();
+    }
+    // A bad label falls back to a valid logName token; a valid label wins over anything.
+    expect(bad("111111111111", "fallback-proj").events[0].canonical?.cloud?.accountId).toBe("fallback-proj");
+    expect(bad("a-b-c1", "111111111111").events[0].canonical?.cloud?.accountId).toBe("a-b-c1");
+    expect(bad("a".repeat(30), "111111111111").events[0].canonical?.cloud?.accountId).toBe("a".repeat(30));
+  });
+
+  it("an insertId over the text bound is malformed, never clipped into a pointer that no longer names the record", () => {
+    const r = parseGcpFlowLog(
+      arr([entry({}, { insertId: "x".repeat(65) }), entry({}, { insertId: "y".repeat(64) })]),
+    );
+    expect(r.malformed).toBe(1);
+    expect(r.kept).toBe(1);
+    expect(r.events[0].canonical?.evidence.rawRecords[0].locator).toBe(`entry:1/insertId:${"y".repeat(64)}`);
   });
 });

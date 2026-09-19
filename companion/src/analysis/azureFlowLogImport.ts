@@ -51,13 +51,17 @@
 // any throw). Timestamps must lie in [2001, 2242] per unit (seconds 1e9..8.64e9, milliseconds
 // 1e12..8.64e12) — no cloud flow log predates 2001. Counters above 2^53 are `malformed` rather
 // than rounded. Rule and MAC text is bounded before composing the row so the C/E counters and the
-// encryption state can never be pushed past the 600-char description cut.
+// encryption state can never be pushed past the 600-char description cut, and stripped of
+// brackets so a forged rule token can never print as a "[<name>: …]" derived note (#1388). The
+// target resource id is bounded before it becomes `cloud.resource` (#1370): the bound is sized
+// so every real ARM id fits untouched (subscription 36 + resource group ≤ 90 + VNet ≤ 64 +
+// subnet ≤ 80 + the fixed path segments ≈ 355) and only a forged one gets the digest tail.
 //
 // Pure, deterministic, NO AI call.
 
 import type { Severity } from "./stateTypes.js";
 import { createCanonicalEvent } from "./canonicalEvent.js";
-import { boundedAggKey, boundedTextTo } from "./aggKey.js";
+import { boundedAggKey, boundedTextTo, stripNoteBrackets } from "./aggKey.js";
 import { isInternalIpv4 } from "./internalIp.js";
 import {
   addIoc,
@@ -117,6 +121,7 @@ const MAX_MILLIS = 8_640_000_000_000;
 const MAX_PORT = 65535;
 const RULE_MAX = 120;
 const MAC_MAX = 32;
+const TARGET_MAX = 512;
 const SUBSCRIPTION_RE = /\/subscriptions\/([0-9a-f-]{36})\//i;
 
 interface Tuple {
@@ -203,8 +208,9 @@ function mapTuple(t: Tuple, ctx: RecordContext, sink: Map<string, SiemIoc>): Map
   const observed = new Date(t.timeMs).toISOString();
   for (const ip of [t.src, t.dst]) if (isIocCandidate(ip)) addIoc(sink, "ip", ip);
 
-  const mac = boundedTextTo(ctx.mac, MAC_MAX);
-  const rule = boundedTextTo(ctx.rule, RULE_MAX);
+  const mac = boundedTextTo(stripNoteBrackets(ctx.mac), MAC_MAX);
+  const rule = boundedTextTo(stripNoteBrackets(ctx.rule), RULE_MAX);
+  const target = boundedTextTo(ctx.target, TARGET_MAX);
   const dirWords = t.direction === "I" ? `inbound to NIC ${mac}` : `outbound from NIC ${mac}`;
   const ruleWords =
     rule.toLowerCase() === "unspecified" ? "rule unspecified (encryption-denied)" : `rule ${rule}`;
@@ -248,7 +254,7 @@ function mapTuple(t: Tuple, ctx: RecordContext, sink: Map<string, SiemIoc>): Map
       cloud: {
         provider: "azure",
         ...(ctx.subscription ? { accountId: ctx.subscription } : {}),
-        ...(ctx.target ? { resource: ctx.target } : {}),
+        ...(target ? { resource: target } : {}),
       },
       time: { observed, normalized: observed },
       evidence: { rawRecords: [{ source: "azure-vnet-flow-log", locator: ctx.locator }] },

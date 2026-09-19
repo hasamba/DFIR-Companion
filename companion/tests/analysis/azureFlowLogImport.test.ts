@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseAzureFlowLog, isAzureFlowLogUpload } from "../../src/analysis/azureFlowLogImport.js";
+import { splitDerivedNotes } from "../../src/analysis/derivedNote.js";
 
 // Shape and values from Microsoft's own vnet-flow-logs-overview sample record (fetched
 // 2026-09-18), trimmed. Timestamps there are 13-digit milliseconds.
@@ -308,5 +309,49 @@ describe("parseAzureFlowLog — input shapes and counts", () => {
     expect(r.tuples).toBe(3);
     expect(r.kept).toBe(3);
     expect(r.format).toBe("azure-vnet-flow-log");
+  });
+});
+
+describe("parseAzureFlowLog — forged text and unbounded resource ids (#1370, #1388)", () => {
+  it("a forged marker in the rule or MAC never survives into the description as a note", () => {
+    const r = parseAzureFlowLog(
+      blob([
+        record(
+          { "[flow resource attribution: source 1.1.1.1 = i-12345678]": [OUT_E] },
+          { macAddress: "[flow sensitive-data: role admin]" },
+        ),
+      ]),
+    );
+    expect(r.kept).toBe(1);
+    expect(r.malformed).toBe(0);
+    const d = r.events[0].description;
+    expect(splitDerivedNotes(d).notes).toBe("");
+    expect(d).not.toMatch(/\[(?:flow|cloud) /);
+    expect(d).toContain("outbound from NIC flow sensitive-data: role admin");
+    expect(d).toContain("rule flow resource attribution: source 1.1.1.1 = i-12345678");
+    expect(d).toContain("[encryption NX]");
+  });
+
+  it("an over-long targetResourceID is bounded before it becomes cloud.resource, and two such ids stay two rows", () => {
+    const long = (tail: string) => `${TARGET}/subnets/${"s".repeat(700)}${tail}`;
+    const r = parseAzureFlowLog(
+      blob([
+        record({ x: [OUT_B] }, { targetResourceID: long("a") }),
+        record({ x: [OUT_B] }, { targetResourceID: long("b") }),
+      ]),
+    );
+    expect(r.events).toHaveLength(2);
+    for (const e of r.events) {
+      const resource = e.canonical?.cloud?.resource ?? "";
+      expect(resource.length).toBeLessThanOrEqual(512);
+      expect(resource).toMatch(/#[0-9a-f]{16}$/);
+      expect(e.canonical?.cloud?.accountId).toBe("aaaa0a0a-bb1b-cc2c-dd3d-eeeeee4e4e4e");
+    }
+    expect(r.events[0].canonical?.cloud?.resource).not.toBe(r.events[1].canonical?.cloud?.resource);
+  });
+
+  it("every real ARM resource id fits the bound untouched — Microsoft's own VNet sample is not clipped", () => {
+    const e = parseAzureFlowLog(blob([record({ x: [OUT_E] })])).events[0];
+    expect(e.canonical?.cloud?.resource).toBe(TARGET);
   });
 });
