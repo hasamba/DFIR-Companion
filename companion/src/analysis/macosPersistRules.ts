@@ -460,6 +460,16 @@ export function gradeLaunchd(file: CollectedFile, ctx: MacContext = {}): LinuxSi
       timeUnknown,
       target: resolved.target || job.program,
       rule: primaryRule(m),
+      // The mark as data, for the cross-import join (#1037 link 2) — only when it names an event.
+      ...(facts?.quarantineMark?.eventId
+        ? {
+            quarantine: {
+              program: job.program,
+              ...(job.label ? { label: job.label } : {}),
+              mark: facts.quarantineMark,
+            },
+          }
+        : {}),
     },
   ];
 }

@@ -46,6 +46,27 @@ describe("the # quarantine: header (#933 item 7)", () => {
     expect(s.reason).not.toContain("downloaded from");
     expect(s.severity).toBe("High");
   });
+  it("a decodable mark is carried on the signal with the program path, for the cross-import join (#1037 link 2)", () => {
+    const [s] = job(susp, "/Library/LaunchDaemons/x.plist", {
+      extra: { quarantine: "0083;5f3a1b2c;Safari;550E8400-E29B-41D4-A716-446655440000" },
+    });
+    expect(s.quarantine?.program).toBe("/Users/Shared/.a/agent");
+    expect(s.quarantine?.mark.eventId).toBe("550e8400-e29b-41d4-a716-446655440000");
+    expect(s.quarantine?.mark.agent).toBe("Safari");
+    expect(s.quarantine?.mark.flags.named).toContain("download");
+    // The legacy URL form and an undecodable value carry no identifier, so nothing to join on.
+    const [legacy] = job(susp, "/Library/LaunchDaemons/x.plist", {
+      extra: { quarantine: "https://evil.test/update.zip" },
+    });
+    expect(legacy.quarantine).toBeUndefined();
+    const [raw] = job(susp, "/Library/LaunchDaemons/x.plist", { extra: { quarantine: "garbage" } });
+    expect(raw.quarantine).toBeUndefined();
+    // A mark whose fourth field is not a UUID decodes but names no event — not carried either.
+    const [noId] = job(susp, "/Library/LaunchDaemons/x.plist", {
+      extra: { quarantine: "0083;5f3a1b2c;Safari;not-a-uuid" },
+    });
+    expect(noId.quarantine).toBeUndefined();
+  });
   it("only a mark whose flags say download raises; sandbox-only, other flags and undecodable marks are shown and raise nothing", () => {
     const medium = { ...susp, Disabled: "<true/>" };
     const grade = (quarantine: string) =>

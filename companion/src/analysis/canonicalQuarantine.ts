@@ -73,6 +73,14 @@ function quarantineTimeAgreementSchema() {
 }
 
 export const quarantineAttributeBlockSchema = z.object({
+  /**
+   * What carries the attribute: a collected attribute record (the default), or a persistence
+   * target — a launchd job's program whose plist header carried the mark (#1037 link 2). The
+   * merge-time join reads the second kind only.
+   */
+  role: z.enum(["attribute-record", "persistence-target"]).optional(),
+  /** The persistence artifact the program was read from, when the role is a persistence target. */
+  persistence: z.object({ artifact: z.string(), label: z.string().optional() }).optional(),
   path: z.string().optional(),
   pathState: z.enum(["not in this record", "2 values in this record", "clipped"]).optional(),
   mark: z

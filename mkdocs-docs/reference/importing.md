@@ -586,10 +586,46 @@ the two are joined only through the event identifier both carry, inside one uplo
   agent on the database record (addressed by position, `record:N`), the agreement facts on both,
   and a refused join on every database record it consulted.
 - **What this does not do.** It does not join the file to the evidence it ran (no macOS
-  process-execution record is parsed — link 2 of #1037), the origin URL to a browser-history
-  visit (link 3), a persistence target's own attribute to a database record (a different upload
-  format), or anything across uploads; a bare URL in the attribute column (a legacy collector
-  form) is not decoded here.
+  process-execution record is parsed), the origin URL to a browser-history visit (link 3 of
+  #1037), or anything else across uploads; a bare URL in the attribute column (a legacy collector
+  form) is not decoded here. The one cross-upload join that exists is the persistence link below.
+
+### macOS quarantine: the download → persistence link across uploads
+
+A [macOS persistence collection](#collecting-macos-persistence-artifacts) and a quarantine-database dump are never one
+upload, so a launchd job whose program carries a quarantine mark (`# quarantine:
+0083;5f3a1b2c;Safari;<uuid>` on the plist's header) and the database record that logged the
+download meet when the case merges — joined by the event identifier alone, never by a file name,
+a URL segment, a path or a time.
+
+- **The persistence finding** gains `[download record: data url https://…; origin https://…;
+  agent Safari (com.apple.Safari) — the database record with this event identifier; agent agrees;
+  marked and recorded in the same second (attribute: Unix hex; database: Cocoa seconds); download
+  flag set; host not compared — the persistence collection names no host]`. The agreement facts
+  are the same ones the within-upload join states, said per fact and never assumed; a database
+  record that names a host adds `; the database record names mac-01` — the collection carries no
+  host header, so the pair is said to be on one host by nobody.
+- **The database row** gains `[persisted as: /Users/Shared/.a/agent — the program of launchd job
+  com.vendor.helper (/Library/LaunchAgents/com.vendor.helper.plist); its quarantine attribute
+  carries this event identifier — set to run by launchd; whether it ran is not established by
+  these records]` and is raised to **Medium** — never higher — so it survives the Info demote and
+  sits in the forensic timeline beside the finding it explains. The persistence finding keeps the
+  severity its own evidence earned. Several jobs with one identifier read `[persisted as: 4
+  launchd programs — a, b, c and 1 more — the same identifier on several files: a copy, or an
+  archive's extracted members; the records do not say which — …]`.
+- **What is never joined, and says so on both sides.** An identifier whose database records
+  disagree (`database records with this identifier disagree — not joined`); a database record
+  naming two hosts (`the database record names two hosts — not joined`); a mark whose fourth
+  field is not a UUID, the legacy URL form, or an undecodable value (no identifier — nothing to
+  join). A sandbox-only mark still joins and says `download flag not set — sandbox mark only`:
+  the database proves a download event was logged, the flag says what the file's own mark says.
+  Past 8,192 distinct database identifiers in a case, a job whose identifier is not among them
+  says `not compared — more than 8,192 database identifiers in the case`.
+- **Import order matters, as it does for the Windows download-mark join.** A database row is
+  Info, and Info rows leave the forensic timeline after each import settles; a dump imported
+  *before* the persistence collection is out of reach when the collection arrives. Import the
+  persistence collection first, or re-import the database dump afterwards — the notes are
+  recomputed from the current evidence on every merge, and a re-import is the recovery.
 
 ### TLS records: what one record establishes
 
