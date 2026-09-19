@@ -15,13 +15,31 @@ import { getAskPrompt, getExplainEventPrompt, getFpSimilarityPrompt } from "./pr
 import type { PromotionIntent } from "../ingest/timelineImports.js";
 import {
   callAiJson,
-  fitTimelineText,
+  fitTimelineEvents,
   loadCtxAliasIndex,
   loadScopedEvents,
   promptOverhead,
   type AiCallContext,
 } from "./aiContext.js";
 import { promptDescription, PROMPT_DESCRIPTION_WIDE_MAX } from "./promptDescription.js";
+import type { AiControlStore } from "../aiControl.js";
+import type { CommentsStore } from "../comments.js";
+import type { DwellWindowStore } from "../dwellWindowStore.js";
+import type { HostScopeStore } from "../hostScopeStore.js";
+import type { HuntOutcomeStore } from "../huntOutcomeStore.js";
+import type { HypothesisStore } from "../hypothesisStore.js";
+import type { NotebookStore } from "../notebookStore.js";
+import type { TagsStore } from "../tags.js";
+import type { AskTurn } from "../askHistory.js";
+import { renderPriorHuntsBlock } from "../huntOutcomes.js";
+import {
+  renderAnalystMarksBlock,
+  renderAskHistoryBlock,
+  renderAskHypothesesBlock,
+  renderAskNotebookBlock,
+  renderDwellWindowsBlock,
+  renderHostScopeBlock,
+} from "./askContext.js";
 
 /**
  * The three "answer this specific question" AI calls (#418).
@@ -39,11 +57,16 @@ import { promptDescription, PROMPT_DESCRIPTION_WIDE_MAX } from "./promptDescript
  * aiContext.ts), so a question or an event explanation reads a merged near-duplicate as one machine.
  */
 export interface AnalystQueryContext extends AiCallContext {
-  readonly opts: AiCallContext["opts"] & {
-    superTimelineStore?: SuperTimelineStore;
-    assetOverridesStore?: AssetOverridesStore;
-    velociraptorClientStore?: VelociraptorClientStore;
-  };
+  readonly opts: AiCallContext["opts"] &
+    AnalystDecisionStores & {
+      superTimelineStore?: SuperTimelineStore;
+      assetOverridesStore?: AssetOverridesStore;
+      velociraptorClientStore?: VelociraptorClientStore;
+      hypothesisStore?: HypothesisStore;
+      huntOutcomeStore?: HuntOutcomeStore;
+      notebookStore?: NotebookStore;
+      aiControlStore?: AiControlStore;
+    };
   promoteSuperTimeline(
     caseId: string,
     events: ForensicEvent[],
@@ -51,12 +74,96 @@ export interface AnalystQueryContext extends AiCallContext {
   ): Promise<InvestigationState>;
 }
 
+/**
+ * The four analyst-decision stores ask() reads that the pipeline's AI context did not already carry
+ * (#1411). Getters, not a snapshot, like the rest of the pipeline's `aiCtx.opts` literal: a store
+ * wired after construction is still seen. Spread into that literal so pipeline.ts grows by one line.
+ */
+export interface AnalystDecisionStores {
+  tagsStore?: TagsStore;
+  commentsStore?: CommentsStore;
+  hostScopeStore?: HostScopeStore;
+  dwellWindowStore?: DwellWindowStore;
+}
+
+export function analystDecisionOpts(opts: AnalystDecisionStores): AnalystDecisionStores {
+  return {
+    get tagsStore() {
+      return opts.tagsStore;
+    },
+    get commentsStore() {
+      return opts.commentsStore;
+    },
+    get hostScopeStore() {
+      return opts.hostScopeStore;
+    },
+    get dwellWindowStore() {
+      return opts.dwellWindowStore;
+    },
+  };
+}
+
+export interface AskOptions {
+  /** The panel's last few Q&A pairs, already bounded by parseAskHistory. */
+  history?: AskTurn[];
+}
+
+/** The model's answer plus what it was answered FROM, so the panel can disclose a trimmed timeline. */
+export type AskResult = AskAnswer & {
+  usedEvents: number; // in-scope events the prompt actually carried
+  eventCount: number; // in-scope events the case has (scope window + false-positive markers applied)
+};
+
+/**
+ * The analyst's own work on the case, rendered for the prompt (#1411). Every store is optional and
+ * every block is "" when empty; the notebook honours the same opt-in synthesis does
+ * (ai-control.json `includeNotebook`), so a private note never reaches a model the analyst did not
+ * point at it. Reads side files only — never the super-timeline.
+ */
+async function analystDecisionBlocks(
+  ctx: AnalystQueryContext,
+  caseId: string,
+  history: readonly AskTurn[],
+): Promise<string> {
+  const o = ctx.opts;
+  const [hypotheses, decisions, windows, outcomes, tags, comments, notebook] = await Promise.all([
+    o.hypothesisStore?.load(caseId) ?? [],
+    o.hostScopeStore?.load(caseId) ?? [],
+    o.dwellWindowStore?.list(caseId) ?? [],
+    o.huntOutcomeStore?.load(caseId) ?? [],
+    o.tagsStore?.load(caseId) ?? [],
+    o.commentsStore?.load(caseId) ?? [],
+    loadNotebookIfOptedIn(ctx, caseId),
+  ]);
+  return (
+    renderAskHypothesesBlock(hypotheses) +
+    renderHostScopeBlock(decisions) +
+    renderDwellWindowsBlock(windows) +
+    renderPriorHuntsBlock(outcomes) +
+    renderAnalystMarksBlock(tags, comments) +
+    renderAskNotebookBlock(notebook) +
+    renderAskHistoryBlock(history)
+  );
+}
+
+async function loadNotebookIfOptedIn(ctx: AnalystQueryContext, caseId: string) {
+  if (!ctx.opts.notebookStore || !ctx.opts.aiControlStore) return [];
+  const control = await ctx.opts.aiControlStore.load(caseId);
+  return control.includeNotebook ? ctx.opts.notebookStore.load(caseId) : [];
+}
+
 // Answer a free-form analyst question from the case's own evidence. Text-only, EPHEMERAL — the
 // answer is returned for the analyst to act on, never written into the case.
-export async function ask(ctx: AnalystQueryContext, caseId: string, question: string): Promise<AskAnswer> {
+export async function ask(
+  ctx: AnalystQueryContext,
+  caseId: string,
+  question: string,
+  options: AskOptions = {},
+): Promise<AskResult> {
   const provider = ctx.opts.synthesisProvider ?? ctx.requireProvider("case questions");
   const loaded = await ctx.opts.stateStore.load(caseId);
   const { scoped } = await loadScopedEvents(ctx, caseId, loaded);
+  const decisionBlocks = await analystDecisionBlocks(ctx, caseId, options.history ?? []);
 
   const renderEvent = (e: ForensicEvent): string =>
     `[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${promptDescription(e.description)}`;
@@ -76,7 +183,7 @@ export async function ask(ctx: AnalystQueryContext, caseId: string, question: st
   const graphBlock = buildGraphContext({ ...loaded, forensicTimeline: scoped }, { maxEdges: graphMaxEdges });
 
   // Trim the timeline so the whole prompt fits the model context (the rest is fixed overhead).
-  const timelineText = fitTimelineText(
+  const shown = fitTimelineEvents(
     scoped,
     renderEvent,
     promptOverhead(
@@ -86,9 +193,11 @@ export async function ask(ctx: AnalystQueryContext, caseId: string, question: st
       loaded.attackerPath || "",
       findingsText,
       questionsText,
+      decisionBlocks,
       question,
     ),
   );
+  const timelineText = shown.map(renderEvent).join("\n") || "(no events yet)";
 
   const userPrompt =
     contextBlock +
@@ -97,11 +206,13 @@ export async function ask(ctx: AnalystQueryContext, caseId: string, question: st
     `FINDINGS:\n${findingsText}\n\n` +
     `FORENSIC TIMELINE (${scoped.length} in-scope events):\n${timelineText}\n\n` +
     `CURRENT QUESTIONS:\n${questionsText}\n\n` +
+    decisionBlocks +
     `ANALYST QUESTION: ${question.trim()}\n\nAnswer it as JSON.`;
 
-  return callAiJson(ctx, caseId, loaded, provider, "ask", getAskPrompt, userPrompt, (raw) =>
+  const answer = await callAiJson(ctx, caseId, loaded, provider, "ask", getAskPrompt, userPrompt, (raw) =>
     askSchema.parse(raw),
   );
+  return { ...answer, usedEvents: shown.length, eventCount: scoped.length };
 }
 
 /**

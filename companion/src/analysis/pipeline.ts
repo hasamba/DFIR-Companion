@@ -2,12 +2,7 @@ import { ProviderError, type AIProvider } from "../providers/provider.js";
 import { createConsoleLogger, normalizeLogLevel, type Logger } from "../logging/logger.js";
 import type { CaptureMetadata } from "../types.js";
 import type { InvestigationState } from "./stateTypes.js";
-import {
-  type AskAnswer,
-  type ExecSummary,
-  type ExplainEventResult,
-  type RemediationPlan,
-} from "./responseSchema.js";
+import { type ExecSummary, type ExplainEventResult, type RemediationPlan } from "./responseSchema.js";
 import { mergeDelta, type WindowContext } from "./stateMerge.js";
 
 import { checkConfiguredPromptDrift } from "./promptCapabilities.js";
@@ -226,6 +221,7 @@ export class AnalysisPipeline {
         get evidenceAttestationStore() {
           return opts.evidenceAttestationStore;
         },
+        ...analystQueries.analystDecisionOpts(opts),
         get retries() {
           return opts.retries;
         },
@@ -655,8 +651,12 @@ export class AnalysisPipeline {
   }
 
   // Everything below is a one-line delegation into src/analysis/ai/ (#418) — each method's documentation lives with its implementation there, so there is only ever one copy to keep true.
-  ask(caseId: string, question: string): Promise<AskAnswer> {
-    return analystQueries.ask(this.aiCtx, caseId, question);
+  ask(
+    caseId: string,
+    question: string,
+    options?: analystQueries.AskOptions,
+  ): Promise<analystQueries.AskResult> {
+    return analystQueries.ask(this.aiCtx, caseId, question, options);
   }
 
   explainEvent(caseId: string, eventId: string): Promise<ExplainEventResult> {

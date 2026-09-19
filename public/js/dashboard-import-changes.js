@@ -580,6 +580,37 @@
   // Import undo / redo (#76) moved to js/dashboard-import-undo.js (#415 tier 3). doAsk, which
   // sat under the same banner, is the AI Ask box and stayed — it follows immediately below.
 
+  // The Ask box's short conversation memory (#1411): the last few Q&A pairs ride along with the
+  // next question so "and on which host?" keeps its thread. Per browser session, per case — a
+  // case switch or "New thread" drops it. The server bounds what it accepts (askHistory.ts).
+  const ASK_HISTORY_MAX = 3;
+  let askHistory = [];
+  let askHistoryCase = "";
+
+  function askHistoryFor(caseId) {
+    if (caseId !== askHistoryCase) {
+      askHistory = [];
+      askHistoryCase = caseId;
+    }
+    return askHistory.slice(-ASK_HISTORY_MAX);
+  }
+
+  function clearAskThread() {
+    askHistory = [];
+    const box = document.getElementById("askAnswer");
+    if (box) box.innerHTML = "<div data-safe-style='color:var(--text-muted)'>new thread — the next question starts fresh</div>";
+  }
+
+  // "answered from N of M in-scope events" — shown ONLY when the timeline was trimmed to fit the
+  // model, so the analyst knows the answer did not see the whole record (#452's rule: disclose to
+  // the analyst, not just to the model).
+  function askCoverageHtml(a) {
+    const used = Number(a.usedEvents);
+    const total = Number(a.eventCount);
+    if (!Number.isFinite(used) || !Number.isFinite(total) || used >= total) return "";
+    return `<div data-safe-style="color:var(--tag-orange-text);font-size:12px;margin-top:4px">⚠ answered from ${esc(String(used))} of ${esc(String(total))} in-scope events — the timeline was trimmed to fit the model</div>`;
+  }
+
   function doAsk() {
     const caseId = document.getElementById("caseId").value.trim();
     const q = document.getElementById("askInput").value.trim();
@@ -592,10 +623,11 @@
     const box = document.getElementById("askAnswer");
     box.innerHTML =
       "<div data-safe-style='color:var(--text-muted)'>thinking…</div>";
+    const history = askHistoryFor(caseId);
     fetch(`/cases/${caseId}/ask`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ question: q }),
+      body: JSON.stringify({ question: q, history }),
     })
       .then(async (r) => {
         if (r.status === 409) {
@@ -613,10 +645,14 @@
       })
       .then((a) => {
         if (!a) return; // handled above (409 presidio hold)
+        askHistory.push({ question: q, answer: a.answer || "" });
         const events = citeEvents(a.relatedEventIds);
+        const threadNote = history.length
+          ? `<span data-safe-style="color:var(--text-muted);font-size:11px"> · follow-up (${esc(String(history.length))} prior)</span>`
+          : "";
         box.innerHTML =
           `<div class="info-card">` +
-          `<div>${askStatusBadge(a.status)} <strong>${esc(q)}</strong></div>` +
+          `<div>${askStatusBadge(a.status)} <strong>${esc(q)}</strong>${threadNote}</div>` +
           `<div data-safe-style="margin:6px 0">${esc(a.answer || "(no answer)")}</div>` +
           (a.pointer
             ? `<div data-safe-style="color:var(--accent)"><small>→ where to look: ${esc(a.pointer)}</small></div>`
@@ -624,8 +660,12 @@
           (events
             ? `<div data-safe-style="color:var(--text-muted)"><small>cited events: ${events}</small></div>`
             : "") +
-          `<div data-safe-style="margin-top:8px"><button id="askAddBtn" title="Add this to the case's open Key Investigative Questions (with the collection pointer); synthesis will answer it once the evidence supports it">Add to open questions</button> <span id="askAddStatus" data-safe-style="color:var(--text-muted);font-size:12px"></span></div>` +
+          askCoverageHtml(a) +
+          `<div data-safe-style="margin-top:8px"><button id="askAddBtn" title="Add this to the case's open Key Investigative Questions (with the collection pointer); synthesis will answer it once the evidence supports it">Add to open questions</button> ` +
+          `<button id="askNewThreadBtn" title="Forget the prior questions and answers — the next question starts a fresh thread">↺ New thread</button> ` +
+          `<span id="askAddStatus" data-safe-style="color:var(--text-muted);font-size:12px"></span></div>` +
           `</div>`;
+        document.getElementById("askNewThreadBtn").onclick = clearAskThread;
         document.getElementById("askAddBtn").onclick = () => {
           const st = document.getElementById("askAddStatus");
           st.textContent = "adding…";
