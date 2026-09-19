@@ -181,9 +181,7 @@ function toEntry(group: BulkGroup, id: string, protocol: string): SummaryEntry |
 function buildSummaryIndex(events: readonly ForensicEvent[]): Map<string, SummaryEntry[]> {
   const index = new Map<string, SummaryEntry[]>();
   const ids = new Set(events.map((e) => e.id));
-  // Recomputes the shipped pass's own grouping (default opts, as the merge chain calls it). This
-  // clobbers cloudBulkRead's module-private lastDropped; safe only because summarizeBulkReads runs
-  // EARLIER in the chain and is that value's sole reader, immediately after its own call.
+  // Recomputes the shipped pass's own grouping (default opts, as the merge chain calls it).
   const groups = groupBulkReads(events);
   // summaryId's key is as discriminating as groupKey since #1356, so two distinct groups share an
   // id only on a hash collision — still an ambiguous pointer, still skipped rather than guessed.

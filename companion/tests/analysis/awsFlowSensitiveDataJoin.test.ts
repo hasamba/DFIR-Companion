@@ -17,6 +17,8 @@ import {
   summaryId,
   readCloudRecord,
   summarizeBulkReads,
+  MAX_RECORDS_PER_GROUP,
+  TRUNCATION_COVERAGE_ID,
 } from "../../src/analysis/cloudBulkRead.js";
 import { DERIVED_NOTE_NAMES } from "../../src/analysis/derivedNote.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
@@ -458,6 +460,21 @@ describe("correlateAwsFlowSensitiveData", () => {
     const before = groupBulkReads(events).map((g) => `${g.credentialId}|${g.first}|${g.objectCount}`);
     const after = groupBulkReads(withSummaries).map((g) => `${g.credentialId}|${g.first}|${g.objectCount}`);
     expect(after).toEqual(before);
+  });
+
+  // #1372: the join's index builder re-runs groupBulkReads. That used to overwrite the module-private
+  // dropped-record count summarizeBulkReads read for its truncation note, so the note was right only
+  // because the merge chain happened to call the two in one order.
+  it("reports the same truncation count whether the join's index builder runs before or after the bulk-read pass", () => {
+    const overCap = Array.from({ length: MAX_RECORDS_PER_GROUP + 10 }, (_v, i) =>
+      read({ resource: `corp-data/f-${i}.csv`, time: -1 + i * 0.00001 }),
+    );
+    const noteIn = (out: ForensicEvent[]) => out.find((e) => e.id === TRUNCATION_COVERAGE_ID)?.description;
+    const chainOrder = noteIn(correlateAwsFlowSensitiveData(summarizeBulkReads(overCap)));
+    correlateAwsFlowSensitiveData([launch(), ...manyReads(60), flow({ time: 0 })]);
+    const joinFirst = noteIn(summarizeBulkReads(correlateAwsFlowSensitiveData(overCap)));
+    expect(chainOrder).toContain("10 object-read record(s)");
+    expect(joinFirst).toBe(chainOrder);
   });
 
   it("is registered as a derived note so correlation keeps it and dedup keying strips it", () => {
