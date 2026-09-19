@@ -244,16 +244,38 @@ function groupKey(r: ReadRecord): string {
   return `${lower(r.provider)}|${lower(r.account)}|${lower(r.principal)}|${lower(r.credentialId)}|${r.sourceIp}|${lower(r.userAgent)}`;
 }
 
+export interface GroupOpts {
+  windowMs?: number;
+  minObjects?: number;
+  minContainers?: number;
+}
+
+/** The groups one pass found, and how many object-read records that same pass could not examine. */
+export interface BulkGrouping {
+  groups: BulkGroup[];
+  dropped: number;
+}
+
 /**
  * Group object reads by who, from where, with what client, inside one window.
  *
  * The issue's five dimensions are principal, source, user agent, time and object breadth. The first
  * three are the key, time is the window, and breadth is what the group is measured on.
  */
-export function groupBulkReads(
+export function groupBulkReads(events: readonly ForensicEvent[], opts: GroupOpts = {}): BulkGroup[] {
+  return groupBulkReadsWithDropped(events, opts).groups;
+}
+
+/**
+ * groupBulkReads plus the dropped-record count, returned TOGETHER. The count once sat in a
+ * module-private variable that every call overwrote, so a second caller (the flow sensitive-data
+ * join) could change what the truncation note reported; the note was right only because the merge
+ * chain happened to call the two in one order (#1372). A value travels with the groups it belongs to.
+ */
+export function groupBulkReadsWithDropped(
   events: readonly ForensicEvent[],
-  opts: { windowMs?: number; minObjects?: number; minContainers?: number } = {},
-): BulkGroup[] {
+  opts: GroupOpts = {},
+): BulkGrouping {
   const windowMs = opts.windowMs ?? DEFAULT_WINDOW_MS;
   const minObjects = opts.minObjects ?? MIN_OBJECTS;
   const minContainers = opts.minContainers ?? MIN_CONTAINERS;
@@ -386,14 +408,7 @@ export function groupBulkReads(
   // Biggest first, then bounded: an export covering a whole estate can hold many groups, and the
   // analyst needs the largest, not the first twenty alphabetically.
   out.sort((a, b) => b.objectCount + b.containerCount - (a.objectCount + a.containerCount));
-  lastDropped = dropped;
-  return out.slice(0, MAX_GROUPS);
-}
-
-/** How many object-read records the last groupBulkReads call could not examine. */
-let lastDropped = 0;
-export function lastDroppedRecords(): number {
-  return lastDropped;
+  return { groups: out.slice(0, MAX_GROUPS), dropped };
 }
 
 // ─────────────────────────── role assumption ───────────────────────────
@@ -641,11 +656,11 @@ export function recurringPrincipals(events: readonly ForensicEvent[], minDays = 
 export function summarizeBulkReads(
   events: readonly ForensicEvent[],
   ctx: BulkContext = {},
-  opts: { windowMs?: number; minObjects?: number; minContainers?: number } = {},
+  opts: GroupOpts = {},
 ): ForensicEvent[] {
-  const groups = groupBulkReads(events, opts);
+  const { groups, dropped } = groupBulkReadsWithDropped(events, opts);
   const coverage = objectLoggingEvent(events);
-  const truncated = truncationEvent(events, lastDroppedRecords());
+  const truncated = truncationEvent(events, dropped);
   if (groups.length === 0 && !coverage && !truncated) return events as ForensicEvent[];
 
   const assumptions = ctx.assumptions ?? roleAssumptions(events);
