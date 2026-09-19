@@ -128,10 +128,22 @@ function jobMenuView(j) {
   return { job: j, cancel, resume, detail };
 }
 
+// The bar's fill, 0–100, for a RUNNING job that reports progress; null otherwise (#1428). Only while
+// running: a finished job at 100% is a full bar under a "succeeded" badge, which says nothing the
+// badge does not, and a queued one has no progress to show yet.
+function jobBarPercent(j) {
+  if (j.status !== "running" || !j.progress) return null;
+  const total = Number(j.progress.total);
+  if (!(total > 0)) return null;
+  return Math.min(100, Math.max(0, Math.round((Number(j.progress.done) / total) * 100)));
+}
+
 function updateJobRow(row, view) {
   const status = row.querySelector(".job-st");
   const detail = row.querySelector(".job-detail");
   const model = row.querySelector(".job-model");
+  const bar = row.querySelector(".job-bar");
+  const fill = row.querySelector(".job-bar-fill");
   row.querySelector(".job-kind").textContent = view.job.kind;
   row.querySelector(".job-label").textContent = view.job.label || "";
   if (model) {
@@ -140,6 +152,12 @@ function updateJobRow(row, view) {
   }
   status.className = `job-st job-${view.job.status}`;
   status.textContent = view.job.status;
+  const pct = jobBarPercent(view.job);
+  if (bar && fill) {
+    bar.style.display = pct === null ? "none" : "";
+    bar.setAttribute("aria-valuenow", String(pct === null ? 0 : pct));
+    fill.style.width = `${pct === null ? 0 : pct}%`;
+  }
   detail.textContent = view.detail;
   detail.style.display = view.detail ? "" : "none";
 }
@@ -264,6 +282,7 @@ window.DfirValues = {
   suggestToolForExt,
   toolsForExt,
   jobMenuView,
+  jobBarPercent,
   updateJobRow,
   deepPassResultKey,
   swCanvasXY,

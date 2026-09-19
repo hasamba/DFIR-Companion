@@ -193,6 +193,23 @@ describe("jobMenuView", () => {
   });
 });
 
+describe("jobBarPercent", () => {
+  it("is the whole-number percent of a running job's progress", () => {
+    expect(v.jobBarPercent({ status: "running", progress: { done: 7, total: 39 } })).toBe(18);
+    expect(v.jobBarPercent({ status: "running", progress: { done: 0, total: 5 } })).toBe(0);
+  });
+
+  it("is null without progress, with an empty total, or once the job stops running", () => {
+    expect(v.jobBarPercent({ status: "running" })).toBeNull();
+    expect(v.jobBarPercent({ status: "running", progress: { done: 0, total: 0 } })).toBeNull();
+    expect(v.jobBarPercent({ status: "succeeded", progress: { done: 5, total: 5 } })).toBeNull();
+  });
+
+  it("never exceeds 100 when done overshoots total", () => {
+    expect(v.jobBarPercent({ status: "running", progress: { done: 9, total: 5 } })).toBe(100);
+  });
+});
+
 describe("updateJobRow", () => {
   /** The children updateJobRow reaches for, and nothing else. */
   const fakeRow = () => {
@@ -202,8 +219,11 @@ describe("updateJobRow", () => {
       ".job-kind": { textContent: "" },
       ".job-label": { textContent: "" },
       ".job-model": { textContent: "", style: {} },
+      ".job-bar": { style: {}, setAttribute: (k: string, val: string) => (bar[k] = val) },
+      ".job-bar-fill": { style: {} },
     };
-    return { cells, querySelector: (sel: string) => cells[sel] };
+    const bar: Record<string, string> = {};
+    return { cells, bar, querySelector: (sel: string) => cells[sel] };
   };
 
   it("writes the job's fields into the row and classes the status", () => {
@@ -247,6 +267,39 @@ describe("updateJobRow", () => {
     delete row.cells[".job-model"];
     expect(() =>
       v.updateJobRow(row, { job: { kind: "k", status: "done", model: "m" }, detail: "" }),
+    ).not.toThrow();
+  });
+
+  // The bar follows progress in place (#1428): the popover patches far more often than it rebuilds.
+  it("sizes the bar to the job's progress and shows it", () => {
+    const row = fakeRow();
+    v.updateJobRow(row, {
+      job: { kind: "import", status: "running", progress: { done: 7, total: 39 } },
+      detail: "",
+    });
+    expect((row.cells[".job-bar-fill"].style as Record<string, string>).width).toBe("18%");
+    expect((row.cells[".job-bar"].style as Record<string, string>).display).toBe("");
+    expect(row.bar["aria-valuenow"]).toBe("18");
+  });
+
+  it("hides the bar once the job is no longer running", () => {
+    const row = fakeRow();
+    v.updateJobRow(row, {
+      job: { kind: "import", status: "succeeded", progress: { done: 39, total: 39 } },
+      detail: "",
+    });
+    expect((row.cells[".job-bar"].style as Record<string, string>).display).toBe("none");
+  });
+
+  it("survives a row with no bar cell at all", () => {
+    const row = fakeRow();
+    delete row.cells[".job-bar"];
+    delete row.cells[".job-bar-fill"];
+    expect(() =>
+      v.updateJobRow(row, {
+        job: { kind: "k", status: "running", progress: { done: 1, total: 2 } },
+        detail: "",
+      }),
     ).not.toThrow();
   });
 

@@ -276,7 +276,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       const sourcesByArtifact =
         job.sources?.length && job.artifacts.length === 1 ? { [job.artifacts[0]]: job.sources } : undefined;
       scratchDir = await mkdtemp(path.join(tmpdir(), "dfir-velo-hunt-"));
-      const artifactFiles: { name: string; file: string }[] = [];
+      const artifactFiles: { name: string; file: string; rows: number }[] = [];
       const snapshotFragments: HuntRunSnapshot[] = [];
       const skipped: SkippedArtifact[] = [];
       const cutShort: { name: string; kept: number; total: number }[] = []; // TruncatedArtifact
@@ -307,7 +307,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         snapshotFragments.push(buildHuntRunSnapshot({ [name]: rows })); // small capped key/host strings only — the rows themselves are never retained
         const file = path.join(scratchDir, `${artifactFiles.length}_${name}.json`);
         await writeFile(file, JSON.stringify({ [name]: rows }), "utf8");
-        artifactFiles.push({ name, file });
+        artifactFiles.push({ name, file, rows: rows.length });
       }
       for (const w of collectWarnings(job.huntId, skipped, cutShort)) logLine(w);
       // The artifacts that returned NEITHER rows nor an error — not a failure (they simply had nothing
@@ -377,7 +377,18 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       // across the loop instead of each artifact getting a fresh DFIR_SUPERTIMELINE_MAX.
       let superEventBudgetRemaining = Number(process.env.DFIR_SUPERTIMELINE_MAX) || 100000;
       let superBudgetExhaustedLogged = false;
-      for (const { name, file } of artifactFiles) {
+      // Per-artifact progress on the import job (#1428). A big bundle used to sit in the Background
+      // jobs popover as a bare "running" for many minutes — the loop was advancing one artifact at a
+      // time (a 100k-row MFT takes minutes on its own) but never told the job, so a slow import and a
+      // stuck one looked the same. The job engine turns these into a rate and an ETA; the popover
+      // draws the bar. The log line is the same signal for whoever is tailing the session log.
+      const reportArtifactProgress = (done: number, detail: string): void => {
+        if (importSlot) options.jobManager?.progress(importSlot.jobId, done, artifactFiles.length, detail);
+      };
+      for (const [index, { name, file, rows: rowCount }] of artifactFiles.entries()) {
+        const step = `artifact ${index + 1}/${artifactFiles.length} · ${name} (${rowCount} rows)`;
+        reportArtifactProgress(index, step);
+        logLine(`[velociraptor] hunt ${job.huntId}: importing ${step}`);
         const json = await readFile(file, "utf8");
         const { storedName, importedAt, seq } = await persistEvidence(
           caseId,
@@ -473,6 +484,10 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
           }
         }
       }
+      reportArtifactProgress(
+        artifactFiles.length,
+        `${artifactFiles.length}/${artifactFiles.length} artifact(s) imported`,
+      );
 
       // 4) The uploaded JSON reports read above → detect + dispatch.
       for (const up of uploads) {

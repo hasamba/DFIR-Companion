@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fleet Collection panel** — running a Velociraptor bundle, importing a GUI hunt/flow and live monitoring moved out of Settings (which is application-wide) into a case-scoped dashboard panel; Settings → Velociraptor keeps only the shared bundle library
 
 ### Added
+- **Import progress bar** — a hunt collect reports each artifact it imports (count, name, rows) to its Background job, and every job row with progress now draws a bar with rate and ETA, so a big bundle no longer sits as a bare "running" for minutes (closes #1428)
 - **Now — Next recommended step** — the cockpit shows the top three playbook steps after Open hypotheses, critical first, stale ones hidden; cards open the Playbook and take the usual pin / dismiss / defer / assign (closes #1424)
 - **Copied-binary lead on MFT rows** — a file whose `$SI` modified time predates its `$SI` created time was copied here (a renamed `cmd.exe`, a dropped tool); the row now says so, with both times, as a lead with no grade or technique; DetectRaptor `*.Detection.MFT` rows also get the existing `$SI`/`$FN` timestomp check (addresses #1422)
 - **Playbook finding cards are tasks** — each Critical/High finding becomes an imperative, evidence-named task (title, numbered steps, Done when) written by the AI after synthesis, with a deterministic fallback; the card is no longer the finding restated (closes #1418)
