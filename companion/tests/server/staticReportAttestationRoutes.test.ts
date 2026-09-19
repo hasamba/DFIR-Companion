@@ -217,6 +217,36 @@ describe(ROUTE, () => {
     expect((await request(app).get(`${ROUTE}/ghost/matches`)).status).toBe(404);
   });
 
+  it("does not count an analyst-side row toward subjectHostKnown — list and matches agree (#1349)", async () => {
+    const { app, stateStore } = await makeApp();
+    const { events, fingerprint } = olevbaEvents("C:\\x\\a.docm");
+    // A YARA row from the analyst workstation names WS-01; no victim row ever saw that host.
+    const analystRow: ForensicEvent = { ...victimRow("y1", "WS-01", "C:\\x\\a.docm"), sources: ["YARA"] };
+    await stateStore.save(stateWith([...events, analystRow]));
+    const created = await request(app)
+      .post(ROUTE)
+      .send({ reportFingerprint: fingerprint, subjectHost: "ws-01" });
+    expect(created.status).toBe(200);
+    const list = await request(app).get(ROUTE);
+    expect(list.body.attestations[0].subjectHostKnown).toBe(false);
+    const matches = await request(app).get(`${ROUTE}/${created.body.attestation.id}/matches`);
+    expect(matches.body.diagnostics.subjectHostKnown).toBe(false);
+  });
+
+  it("still counts a Sysmon victim row toward subjectHostKnown on the list route (#1349)", async () => {
+    const { app, stateStore } = await makeApp();
+    const { events, fingerprint } = olevbaEvents("C:\\x\\a.docm");
+    await stateStore.save(stateWith([...events, victimRow("v1", "WS-01", "C:\\x\\a.docm")]));
+    const created = await request(app)
+      .post(ROUTE)
+      .send({ reportFingerprint: fingerprint, subjectHost: "ws-01" });
+    expect(created.status).toBe(200);
+    const list = await request(app).get(ROUTE);
+    expect(list.body.attestations[0].subjectHostKnown).toBe(true);
+    const matches = await request(app).get(`${ROUTE}/${created.body.attestation.id}/matches`);
+    expect(matches.body.diagnostics.subjectHostKnown).toBe(true);
+  });
+
   it("rejects a malformed body with 400", async () => {
     const { app } = await makeApp();
     expect((await request(app).post(ROUTE).send({ subjectHost: "ws-01" })).status).toBe(400);

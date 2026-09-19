@@ -208,6 +208,26 @@ describe("POST /cases/:id/import-binary — the browser's byte-native path (#130
     expect(asText.body.error).toMatch(/binary macOS login-item container/);
   });
 
+  it("the TEXT path refuses the v1 SessionLoginItems.sfl by name — never sniffed as a binary launchd plist (#1360)", async () => {
+    const { app, store } = await harness();
+    const v1Name = "com.apple.LSSharedFileList.SessionLoginItems.sfl";
+    // A text-read of any bplist opens with the magic the macOS-persistence sniffer claims; before the
+    // name gate this minted a Medium "launchd plist … run plutil -convert xml1" row for the wrong artifact.
+    const res = await request(app)
+      .post("/cases/c1/import")
+      .send({ filename: v1Name, text: Buffer.from(SFL2_HEX, "hex").toString("latin1") });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/SessionLoginItems\.sfl \(v1, macOS 10\.11–10\.12\) is not decoded/);
+    expect(res.body.error).not.toMatch(/plutil/);
+    expect(await ledgerRows(store, "c1")).toHaveLength(0);
+    // And the byte-native route did not start accepting the name: the v1 reader was declined, not built.
+    const binary = await request(app)
+      .post("/cases/c1/import-binary")
+      .send({ filename: v1Name, dataBase64: b64(SFL2_HEX) });
+    expect(binary.status).toBe(400);
+    expect(binary.body.error).toMatch(/not a recognized/);
+  });
+
   it("is a case-scoped WRITE, not the global-admin gate the server-path route needs", () => {
     expect(resolveRequestPolicy("POST", "/cases/c1/import-binary")).toEqual({
       kind: "case",

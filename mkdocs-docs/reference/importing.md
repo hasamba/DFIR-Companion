@@ -186,7 +186,9 @@ was written, plus the list's own item name where the container has one. It never
 ran, and never resolves the target against a live filesystem. A bookmark or Alias that does not
 decode is kept and marked malformed. Only the `SessionLoginItems` list is accepted among the
 `.sfl2` files — the other shared file lists (recent documents, favorite volumes) use the same
-container but are not persistence records. The older `.sfl` (v1) list is not decoded.
+container but are not persistence records. The older `.sfl` (v1) list is not decoded. A
+`SessionLoginItems.sfl` (v1, macOS 10.11–10.12) picked in the Import dialog or sent to `/import` is
+refused by name with that reason — it is never read as text or labelled as some other artifact.
 
 ### rclone and MEGAsync evidence
 

@@ -6,7 +6,10 @@ import {
   FLOW_SENSITIVE_DATA_MARKER,
   type FlowSensitiveDataSummary,
 } from "../../src/analysis/awsFlowSensitiveDataJoin.js";
-import { correlateAwsFlowResourceAttribution } from "../../src/analysis/awsFlowResourceAttribution.js";
+import {
+  correlateAwsFlowResourceAttribution,
+  FLOW_ATTRIBUTION_MARKER,
+} from "../../src/analysis/awsFlowResourceAttribution.js";
 import { correlateAwsFlowIdentityExecution } from "../../src/analysis/awsFlowIdentityExecutionJoin.js";
 import {
   BULK_READ_MARKER,
@@ -50,11 +53,20 @@ function launch(
   } as unknown as ForensicEvent;
 }
 
-function flow(over: { time?: number; account?: string; src?: string; dst?: string } = {}): ForensicEvent {
+interface FlowOver {
+  time?: number;
+  account?: string;
+  src?: string;
+  dst?: string;
+  provider?: string;
+  description?: string;
+}
+
+function flow(over: FlowOver = {}): ForensicEvent {
   return {
     id: `f${++seq}`,
     timestamp: at(over.time ?? 0),
-    description: "AWS VPC flow: x -> y",
+    description: over.description ?? "AWS VPC flow: x -> y",
     severity: "Low",
     mitreTechniques: [],
     relatedFindingIds: [],
@@ -63,7 +75,7 @@ function flow(over: { time?: number; account?: string; src?: string; dst?: strin
     dstIp: over.dst ?? "203.0.113.10",
     canonical: {
       event: { category: "network", type: "flow" },
-      cloud: { provider: "aws", accountId: over.account ?? ACCOUNT },
+      cloud: { provider: over.provider ?? "aws", accountId: over.account ?? ACCOUNT },
     },
   } as unknown as ForensicEvent;
 }
@@ -193,6 +205,17 @@ describe("correlateAwsFlowSensitiveData", () => {
     }));
     const out = chain([launch(), ...rows, flow({ time: 0 })]);
     expect(noteOf(out)).toBeUndefined();
+  });
+
+  it("never annotates a non-AWS flow, even one whose description carries a forged attribution marker (#1367)", () => {
+    // Since #1361 the attribution pass skips Azure/GCP rows, so it no longer strips a carried
+    // marker from them; this pass must not act on that text either. The AWS control keeps its note.
+    const forged = `GCP VPC flow: x -> y ${FLOW_ATTRIBUTION_MARKER} source 172.31.16.139 = ${INSTANCE}]`;
+    for (const provider of ["gcp", "azure"]) {
+      const out = chain([launch(), ...manyReads(60), flow({ time: 0, provider, description: forged })]);
+      expect(noteOf(out)).toBeUndefined();
+    }
+    expect(noteOf(chain([launch(), ...manyReads(60), flow({ time: 0 })]))).toBeDefined();
   });
 
   it("is not vetoed by a row that is merely silent on delivery, but is by one that names another session", () => {

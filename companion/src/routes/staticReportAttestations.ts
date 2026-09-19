@@ -8,6 +8,7 @@ import {
   type StaticReportAttestation,
 } from "../analysis/staticReportAttestationStore.js";
 import {
+  isAnalystSideRow,
   reportEventsByFingerprint,
   staticReportMatches,
   STATIC_REPORT_ATTESTATION_CAVEAT,
@@ -84,7 +85,12 @@ export function registerStaticReportAttestationRoutes(app: Express, ctx: RouteCo
         aliasIndexFor(caseId),
       ]);
       const events = state.forensicTimeline;
-      const hosts = new Set(events.map((e) => (e.asset ? resolveHost(aliasIndex, e.asset) : "")));
+      // Victim rows only, the same read as staticReportMatches' subjectHostKnown (#1349).
+      const hosts = new Set(
+        events
+          .filter((e) => !isAnalystSideRow(e))
+          .map((e) => (e.asset ? resolveHost(aliasIndex, e.asset) : "")),
+      );
       const attestations = all.map((a: StaticReportAttestation) => {
         const subjectHostCanonical = resolveHost(aliasIndex, a.subjectHost);
         return {

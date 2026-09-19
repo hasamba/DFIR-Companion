@@ -60,12 +60,52 @@ describe("parseAliasRecord — version 2", () => {
     expect(r.recsize).toBe(buf(ALIAS_V2).length);
   });
 
-  it("renders a stored '/' in a Pascal name as ':' the way mac_alias does (HFS separator)", () => {
+  it("renders a stored '/' as ':' in BOTH the Pascal name and the UTF-16 tag 14 name (one spelling)", () => {
     const r = parseAliasRecord(buf(ALIAS_V2_SLASHNAME));
-    // mac_alias writes ':'→'/' into the Pascal field and reads '/'→':' back; the UTF-16 tag 14
-    // override is used verbatim (mac_alias does no replace there), so the override wins here.
-    expect(r.targetFilename).toBe("a/b.app");
+    // The fixture carries "a/b.app" in the Pascal field AND in tag 14 — mac_alias's writer applies
+    // ':'→'/' to both (alias.py:571 and :695), and HFS+ stores a POSIX ':' as '/' in the UCS
+    // catalog name (hfs_catalog.c utf8_decodestr(..., ':', ...)). One name, one form, so the
+    // reader must render both the same way; before #1358 tag 14 came back verbatim.
+    expect(r.targetFilename).toBe("a:b.app");
     expect(r.pascalFilename).toBe("a:b.app");
+    expect(r.targetFilename).toBe(r.pascalFilename);
+  });
+});
+
+describe("parseAliasRecord — UTF-16 tags carry the HFS form too (#1358)", () => {
+  // ALIAS_V3_ALIS with one code unit of tag 14 ("Payloads") and tag 15 ("Data") swapped for
+  // U+002F — same lengths, so recsize and every offset hold.
+  const TAG14 = "000e00120008005000610079006c006f006100640073";
+  const TAG15 = "000f000a00040044006100740061";
+  const V3_SLASHES = ALIAS_V3_ALIS.replace(TAG14, "000e00120008005000610079002f006f006100640073").replace(
+    TAG15,
+    "000f000a000400440061002f0061",
+  );
+
+  it("the fixture rewrite hit both tags", () => {
+    expect(ALIAS_V3_ALIS).toContain(TAG14);
+    expect(ALIAS_V3_ALIS).toContain(TAG15);
+    expect(V3_SLASHES).not.toBe(ALIAS_V3_ALIS);
+    expect(V3_SLASHES.length).toBe(ALIAS_V3_ALIS.length);
+  });
+
+  it("a v3 record (no Pascal filename) renders a tag 14 '/' as ':'", () => {
+    const r = parseAliasRecord(buf(V3_SLASHES));
+    expect(r.pascalFilename).toBeUndefined();
+    expect(r.targetFilename).toBe("Pay:oads");
+  });
+
+  it("a tag 15 unicode volume name renders '/' as ':'", () => {
+    const r = parseAliasRecord(buf(V3_SLASHES));
+    expect(r.volumeName).toBe("Da:a");
+  });
+
+  it("a literal ':' in a UTF-16 tag is left alone, and the POSIX tags stay verbatim", () => {
+    const r = parseAliasRecord(buf(V3_SLASHES));
+    expect(r.posixPath).toBe("/Users/bob/Payloads");
+    expect(r.posixMountPoint).toBe("/System/Volumes/Data");
+    const colon = ALIAS_V3_ALIS.replace(TAG15, "000f000a000400440061003a0061");
+    expect(parseAliasRecord(buf(colon)).volumeName).toBe("Da:a");
   });
 });
 

@@ -29,7 +29,10 @@ import type { AiControl } from "../analysis/aiControl.js";
 import type { ImporterRunStat } from "../analysis/diagnostics.js";
 import { ImporterStore, type ImporterRegistry, type ImporterPrecedence } from "../analysis/importerStore.js";
 import { detectImportWithCustom } from "../analysis/importDetect.js";
-import { looksLikeMacLoginItemFilename } from "../analysis/macBinaryDetect.js";
+import {
+  looksLikeMacLoginItemFilename,
+  looksLikeUndecodedMacLoginItemFilename,
+} from "../analysis/macBinaryDetect.js";
 import { observeImport } from "../analysis/operationalImport.js";
 import { demoteBelowSeverity, resolveForensicMinSeverity } from "../analysis/forensicGate.js";
 import { settleForensicImport } from "../routes/importSettle.js";
@@ -154,8 +157,10 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
   // be minted as a launchd-job record. routes/import.ts turns "unknown" into the specific hint.
   // Deliberately ahead of the custom-importer registry too: a declarative text importer cannot
   // read a binary plist, so a custom kind claiming one of these names would only ever misparse.
+  // The v1 SessionLoginItems.sfl (#1360) is refused here as well — no reader exists for it, and a
+  // text-read of it would otherwise be sniffed as a binary launchd plist under the wrong label.
   const resolveImportKind = (filename: string, text: string): string =>
-    looksLikeMacLoginItemFilename(filename)
+    looksLikeMacLoginItemFilename(filename) || looksLikeUndecodedMacLoginItemFilename(filename)
       ? "unknown"
       : detectImportWithCustom(filename, text, registry.importers, precedence);
 

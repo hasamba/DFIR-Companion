@@ -95,6 +95,29 @@ describe("looksLikeBinaryImportName (#1301)", () => {
   });
 });
 
+describe("undecodedBinaryImportHint (#1360)", () => {
+  const SFL_V1 = "com.apple.LSSharedFileList.SessionLoginItems.sfl";
+
+  it("refuses the v1 .sfl list before it is read as text, and nothing else", () => {
+    expect(v.undecodedBinaryImportHint(SFL_V1)).toMatch(
+      /SessionLoginItems\.sfl \(v1, macOS 10\.11–10\.12\) is not decoded/,
+    );
+    expect(v.undecodedBinaryImportHint(SFL_V1.toUpperCase())).toMatch(/\.sfl2/);
+    expect(v.undecodedBinaryImportHint("com.apple.LSSharedFileList.SessionLoginItems.sfl2")).toBeNull();
+    expect(v.undecodedBinaryImportHint("com.apple.LSSharedFileList.RecentDocuments.sfl")).toBeNull();
+    expect(v.undecodedBinaryImportHint("")).toBeNull();
+  });
+
+  it("keeps the v1 name OUT of the byte-native list — the binary routes would only 400 it", () => {
+    expect(v.looksLikeBinaryImportName(SFL_V1)).toBe(false);
+  });
+
+  it("says exactly what the server's text path would say for the same name", async () => {
+    const { binaryArtifactHintFor } = await import("../../src/analysis/importKindHints.js");
+    expect(v.undecodedBinaryImportHint(SFL_V1)).toBe(binaryArtifactHintFor(SFL_V1));
+  });
+});
+
 describe("toolForExt / suggestToolForExt / toolsForExt", () => {
   const status = {
     tools: [

@@ -85,10 +85,19 @@
       const kinds = {};
       let dataFail = 0,
         aiOffSkipped = 0;
+      const refused = []; // per-file refusal sentences the analyst must see, not just a count (#1360)
       if (data.length) showImportProgressIndeterminate();
       for (let i = 0; i < data.length; i++) {
         const f = data[i];
         statusEl.textContent = `importing ${i + 1}/${data.length}: ${f.name}…`;
+        // A container this codebase names but does not decode (#1360): refuse it here, before it is
+        // read as text or sent anywhere, with the same sentence the server's text path would return.
+        const undecoded = undecodedBinaryImportHint(f.name);
+        if (undecoded) {
+          dataFail++;
+          refused.push(undecoded);
+          continue;
+        }
         try {
           let r;
           if (f.size > LARGE_FILE_MB * 1024 * 1024) {
@@ -252,6 +261,7 @@
           `${imgAiOff} screenshot(s) saved but NOT analyzed — AI is off (turn AI on, then run: npm run reanalyze -- ${caseId})`,
         );
       if (dataFail) parts.push(`${dataFail} file(s) failed / unrecognized`);
+      parts.push(...refused);
       statusEl.textContent = parts.join(" · ") || "nothing imported";
       e.target.value = ""; // allow re-selecting the same files
       // Near-duplicate hosts (e.g. "HOST" vs "HOST.domain") are refreshed off the "idle" AI-status
