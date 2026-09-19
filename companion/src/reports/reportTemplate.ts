@@ -81,6 +81,15 @@ export const REPORT_SECTION_DEFS = [
       "Sensitive access (declared sensitive locations: object-access rows, candidates, what the rows establish)",
     defaultEnabled: false,
   },
+  // Opt-in EVERYWHERE (#1406): a shift-change surface — open threads, owners, the outgoing
+  // analyst's note — is working state, not a deliverable, and must never appear in a report by
+  // accident of "every section is what default means". Technical Detail switches it on explicitly.
+  {
+    key: "handoffBrief",
+    label: "Handoff brief (open items, what to check next, the outgoing analyst's note)",
+    defaultEnabled: false,
+    alwaysOptIn: true,
+  },
   // Opt-in EVERYWHERE (#969): a fresh template does not switch it on either, because the section
   // renders an analyst's recorded residual-risk status and must never appear in a report by
   // accident of "every section is what default means".
@@ -286,6 +295,7 @@ export const BUILT_IN_REPORT_TEMPLATES: readonly ReportTemplate[] = [
       { key: "servedExposure", enabled: false },
       { key: "kerberoastChain", enabled: false },
       { key: "sensitiveAccess", enabled: false },
+      { key: "handoffBrief", enabled: false },
       { key: "remediationChecks", enabled: false },
     ],
   }),
@@ -316,6 +326,7 @@ export const BUILT_IN_REPORT_TEMPLATES: readonly ReportTemplate[] = [
       { key: "d3fend", enabled: true },
       { key: "compliance", enabled: true },
       { key: "notebook", enabled: true },
+      { key: "handoffBrief", enabled: true },
     ],
   }),
 ];

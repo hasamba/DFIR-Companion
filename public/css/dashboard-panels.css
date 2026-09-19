@@ -245,11 +245,13 @@
 .nb-entry { border: 1px solid var(--border-color); border-radius: 6px; padding: 10px 12px; margin-bottom: 8px; background: var(--bg-primary); }
 .nb-entry.note { border-left: 3px solid var(--tag-green-text); }
 .nb-entry.question { border-left: 3px solid var(--sev-medium); }
+.nb-entry.handoff { border-left: 3px solid var(--tag-blue-text); }
 .nb-entry-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 11px; color: var(--text-muted); }
 .nb-type-badge { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
   border-radius: 4px; padding: 1px 6px; }
 .nb-type-badge.note { background: var(--success-bg); color: var(--tag-green-text); }
 .nb-type-badge.question { background: var(--warning-bg); color: var(--sev-medium); }
+.nb-type-badge.handoff { background: var(--info-bg); color: var(--tag-blue-text); }
 .nb-entry-text { font-size: 13px; white-space: pre-wrap; word-break: break-word; }
 .nb-entry-actions { margin-top: 8px; display: flex; gap: 6px; }
 .nb-action-btn { background: transparent; border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-muted);

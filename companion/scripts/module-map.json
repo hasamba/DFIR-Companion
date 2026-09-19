@@ -265,6 +265,7 @@
     "cloudMetadataAccess.ts": "analysis/timeline",
     "coach.ts": "analysis/ai",
     "cockpit.ts": "analysis/workflow",
+    "handoffBrief.ts": "analysis/workflow",
     "cockpitStore.ts": "analysis/workflow",
     "collectDirective.ts": "analysis/workflow",
     "collectDirectiveResolve.ts": "analysis/workflow",

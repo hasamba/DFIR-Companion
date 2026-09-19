@@ -41,6 +41,7 @@
     ["servedExposure", "Served exposure (declared served locations: files, requests, what the server logged)"],
     ["kerberoastChain", "Kerberoast chain (ticket requests, baseline, later use of the exact account)"],
     ["sensitiveAccess", "Sensitive access (declared sensitive locations: object-access rows, candidates, what the rows establish)"],
+    ["handoffBrief", "Handoff brief (open items, what to check next, the outgoing analyst's note)"],
     ["remediationChecks", "Remediation checks (analyst-recorded residual risk with the receipt it names)"],
   ];
   const RT_LABELS = Object.fromEntries(RT_SECTIONS);
