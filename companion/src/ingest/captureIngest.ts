@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { CaptureMetadata } from "../types.js";
+import { TRIGGER_TYPES, type CaptureMetadata } from "../types.js";
 import type { CaseStore } from "../storage/caseStore.js";
 import { isValidCaseId } from "../storage/caseStore.js";
 import { computeContentHash } from "../dedup/contentHash.js";
@@ -20,7 +20,7 @@ const payloadSchema = z.object({
   timestamp: z.string().min(1),
   url: z.string().min(1),
   tabTitle: z.string(),
-  triggerType: z.enum(["timer", "navigation", "tab_switch", "click"]),
+  triggerType: z.enum(TRIGGER_TYPES),
   imageBase64: z.string().min(1),
 });
 

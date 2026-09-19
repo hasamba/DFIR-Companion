@@ -1,4 +1,10 @@
-export type TriggerType = "timer" | "navigation" | "tab_switch" | "click";
+// What made the extension take a capture. ONE list, and the zod payload schema in
+// ingest/captureIngest.ts derives from it — the schema and the type drifted from the extension's
+// own `TriggerType` once (#1434: `manual`, the popup button and the hotkey, was refused with a
+// 400 the extension treats as permanent, so the analyst's capture was dropped). The extension's
+// union in extension/src/types.ts must list the same values; a contract test checks it.
+export const TRIGGER_TYPES = ["timer", "navigation", "tab_switch", "click", "manual"] as const;
+export type TriggerType = (typeof TRIGGER_TYPES)[number];
 
 export interface CaptureMetadata {
   caseId: string;

@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Popup and hotkey captures reach the case** — the companion accepts the extension's `manual` trigger instead of refusing it with a 400 the extension treated as final, and a contract test keeps the two trigger lists in step (closes #1434)
 - **Hayabusa emergency rows import as Critical** — the `emergency`/`emer` level is above critical in Hayabusa and no longer falls into the unknown-level Medium bucket (closes #1433)
 - **A row promoted from the super-timeline stays promoted** — every promotion stamps the row, and the demote pass after each import keeps stamped rows whatever their severity (closes #1432)
 - **Super-timeline first page in milliseconds on a big store** — count, facets and the page come from indexed SQL instead of a whole-store scan (100k rows: 92 s → 0.03 s; 446k rows: never returned → sub-second), and text search scans linearly instead of re-sorting the table per page, so a large super-only import no longer freezes the dashboard (closes #1429)
