@@ -52,8 +52,13 @@ function ms(timestamp: string | undefined): number | null {
   return Number.isFinite(t) ? t : null;
 }
 
+// Provider-gated (#1294): an Azure/GCP flow row must never be joined to AWS bulk-read summaries,
+// even when its description carries a (forged or stale) attribution marker that the now-gated
+// attribution pass no longer strips (#1367); the AWS flow importer has always stamped provider
+// "aws", so no AWS row is excluded by this.
 function isFlowEvent(e: ForensicEvent): boolean {
-  return e.canonical?.event.category === "network" && e.canonical.event.type === "flow";
+  const c = e.canonical;
+  return c?.event.category === "network" && c.event.type === "flow" && c.cloud?.provider === "aws";
 }
 
 // Same rule as the sibling: bracket content never nests inside a derived note, and every
