@@ -10,6 +10,8 @@ All panels are visible by default. Some are collapsed until they have data. Use 
 next-decision questions before exposing the full panel inventory:
 
 - the three highest-value active leads, ranked from current findings and open hypotheses;
+- the open hypotheses that need attention, then the top three **recommended next steps** from the
+  playbook (critical first; a step a rejected finding made stale is hidden until re-synthesis);
 - evidence that contradicts or weakens the current explanation;
 - unresolved questions and uncertainty with the exact evidence or collection action needed next;
 - running or failed imports and analyses;

@@ -527,3 +527,97 @@ describe("deriveCockpit host-duplicate blocker", () => {
     expect(deriveCockpit({ ...ready, hostDuplicates: [pair] }).readiness.ready).toBe(false);
   });
 });
+
+describe("deriveCockpit — next recommended step (#1424)", () => {
+  function step(
+    id: string,
+    priority: "critical" | "high" | "medium" | "low",
+    overrides: Partial<InvestigationState["nextSteps"][number]> = {},
+  ): InvestigationState["nextSteps"][number] {
+    return {
+      id,
+      priority,
+      action: `Action ${id}`,
+      rationale: `Why ${id}`,
+      pointer: `Pointer ${id}`,
+      ...overrides,
+    };
+  }
+
+  it("ranks the playbook's steps critical-first, caps them at three, and opens the Playbook panel", () => {
+    const result = deriveCockpit({
+      state: state({
+        nextSteps: [
+          step("s-low", "low"),
+          step("s-med", "medium"),
+          step("s-high", "high"),
+          step("s-crit", "critical", { relatedFindingIds: ["f1"] }),
+          step("s-high-2", "high"),
+        ],
+        findings: [finding("f1")],
+      }),
+      now: NOW,
+    });
+
+    expect(result.sections.steps.map((card) => card.id)).toEqual([
+      "step:s-crit",
+      "step:s-high",
+      "step:s-high-2",
+    ]);
+    expect(result.sections.steps[0]).toMatchObject({
+      kind: "step",
+      title: "Action s-crit",
+      summary: "Why s-crit",
+      action: "Pointer s-crit",
+      severity: "Critical",
+      evidenceIds: ["e-f1"],
+      target: { panel: "playbook", findingId: "f1", eventId: "e-f1" },
+    });
+  });
+
+  it("spells out a collection directive and hides steps a rejected finding made stale", () => {
+    const result = deriveCockpit({
+      state: state({
+        nextSteps: [
+          step("s-stale", "critical", { staleReSynth: true }),
+          step("s-collect", "high", {
+            collect: {
+              host: "WS-01",
+              artifact: "Windows.EventLogs.Evtx",
+              expectedOutcome: "4624 logons around the LSASS access",
+            },
+          }),
+        ],
+      }),
+      now: NOW,
+    });
+
+    expect(result.sections.steps.map((card) => card.id)).toEqual(["step:s-collect"]);
+    expect(result.sections.steps[0].action).toBe(
+      "Collect Windows.EventLogs.Evtx from WS-01 — 4624 logons around the LSASS access",
+    );
+  });
+
+  it("parks a dismissed step like any other cockpit card", () => {
+    const decisions: CockpitDecisionState = {
+      cards: [
+        {
+          cardId: "step:s-1",
+          dismissedAt: "2026-07-30T11:50:00.000Z",
+          updatedAt: "2026-07-30T11:50:00.000Z",
+          updatedBy: "Alice",
+        },
+      ],
+      reviews: [],
+      history: [],
+    };
+    const result = deriveCockpit({
+      state: state({ nextSteps: [step("s-1", "high")] }),
+      decisions,
+      now: NOW,
+    });
+
+    expect(result.sections.steps).toEqual([]);
+    expect(result.parked.map((card) => card.id)).toContain("step:s-1");
+  });
+});

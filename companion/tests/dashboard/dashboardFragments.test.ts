@@ -261,6 +261,11 @@ describe("cockpitCardControls", () => {
     for (const action of ["Pin", "Dismiss", "Defer", "Assign"]) expect(html).toContain(action);
   });
 
+  it("offers the full action set for a recommended next step (#1424)", () => {
+    const html = f.cockpitCardControls({ id: "step:s1", kind: "step" }, false);
+    for (const action of ["Pin", "Dismiss", "Defer", "Assign"]) expect(html).toContain(action);
+  });
+
   it("collapses a parked card to Open plus Restore", () => {
     const html = f.cockpitCardControls({ id: "c1", kind: "lead" }, true);
     expect(html).toContain("Restore");

@@ -33,6 +33,12 @@
       false,
     ],
     [
+      "steps",
+      "Next recommended step",
+      "No recommended step yet — synthesis writes the playbook after each import.",
+      false,
+    ],
+    [
       "contradictions",
       "Contradictions & uncertainty",
       "No material contradictions are currently recorded.",

@@ -130,7 +130,7 @@ function cockpitCardControls(card, parked) {
     ? `<button data-act="openFleetCollection" title="Collect evidence from a Velociraptor client into this case">Fleet collection</button>`
     : "";
   const view = `<button data-act="cockpitOpenTarget" data-id="${id}">Open</button>${fleet}`;
-  if (card.kind !== "lead" && card.kind !== "hypothesis") return view;
+  if (card.kind !== "lead" && card.kind !== "hypothesis" && card.kind !== "step") return view;
   if (parked) {
     return `${view}<button data-act="cockpitAction" data-cockpit-action="restore" data-id="${id}">Restore</button>`;
   }
