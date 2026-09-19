@@ -72,6 +72,7 @@ import { registerProxyHostIdentityRoutes } from "../routes/proxyHostIdentity.js"
 import { registerResolverEndpointIdentityRoutes } from "../routes/resolverEndpointIdentity.js";
 import { registerTlsGraphRoutes } from "../routes/tlsGraph.js";
 import { registerHandoffRoutes } from "../routes/handoff.js";
+import { registerAttributionGapLeadsRoutes } from "../routes/attributionGapLeads.js";
 import { registerDnsCrossUploadConnRoutes } from "../routes/dnsCrossUploadConnMatches.js";
 import { registerDnsEndpointCrossUploadConnRoutes } from "../routes/dnsEndpointCrossUploadConnMatches.js";
 import { registerAiStateRoutes } from "../routes/aiState.js";
@@ -205,6 +206,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerResolverEndpointIdentityRoutes(app, ctx);
   registerTlsGraphRoutes(app, ctx);
   registerHandoffRoutes(app, ctx);
+  registerAttributionGapLeadsRoutes(app, ctx);
   registerDnsCrossUploadConnRoutes(app, ctx);
   registerDnsEndpointCrossUploadConnRoutes(app, ctx);
   registerAiStateRoutes(app, ctx);
