@@ -55,6 +55,17 @@ export const mobileBlockSchema = z.object({
   /** An app-inventory row's typed identity, from the registry's declared columns — what the infection window compares. */
   app: z.object({ package: z.string().optional(), sha256: z.string().optional() }).optional(),
   account: z.object({ name: z.string(), type: z.string().optional() }).optional(),
+  /** A permission row's permission (or AppOps op) name, verbatim from the registry's declared
+   * column (#1363). Permission Store rows carry AOSP's full names; AppOps rows carry op names — two
+   * vocabularies, never mapped onto each other here. */
+  permission: z.string().optional(),
+  /** The package an AppOps op was performed THROUGH, when the row names one (#1363): the op is
+   * recorded against `app.package` but is not that package's own act. */
+  proxy: z.object({ package: z.string() }).optional(),
+  /** The column the importer dated the row by (#1363). For `App Ops Permissions` the outcome IS
+   * which clock is populated (#1298), so an `Access Timestamp` row and a `Reject Timestamp` row
+   * are different facts; absent on an undated row. */
+  clock: z.object({ column: z.string() }).optional(),
 });
 export type MobileBlock = z.infer<typeof mobileBlockSchema>;
 

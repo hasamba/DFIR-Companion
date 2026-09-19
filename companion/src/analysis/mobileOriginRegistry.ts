@@ -34,7 +34,7 @@
 // re-diffed against that commit: eight unchanged; `Android Notification History` had pinned 17 of
 // upstream's 23 columns since before the previous pin (#1336) and is corrected here. iLEAPP is
 // untouched.
-export const REGISTRY_VERSION = "leapp-origin-2026-09-18";
+export const REGISTRY_VERSION = "leapp-origin-2026-09-19";
 export const REGISTRY_PINS = {
   iLEAPP: { ref: "main", commit: "6dc251d857c0", date: "2026-09-14" },
   ALEAPP: { ref: "main", commit: "ce0880dc232c", date: "2026-09-18" },
@@ -42,7 +42,7 @@ export const REGISTRY_PINS = {
 
 import { ACQUISITIONS, LOCALITIES, RECORD_TYPES, type MobileBlock } from "./canonicalMobile.js";
 
-interface RegistryEntry {
+export interface RegistryEntry {
   platform: "ios" | "android";
   /** Upstream `name` — the TSV filename LEAPP writes. */
   name: string;
@@ -74,6 +74,12 @@ interface RegistryEntry {
    * neither rule) or take a duration for one (`Time Active (ms)` contains the word `time`); an
    * entry without it keeps the generic picker. Honoured only when the headers match the pin. */
   clocks?: readonly string[];
+  /** The column carrying a permission row's permission or AppOps op name (#1363), read verbatim
+   * into `block.permission` — never normalized here, never mapped between the two vocabularies. */
+  permissionColumn?: string;
+  /** The column naming the package an AppOps op was performed through (#1363) — `block.proxy`,
+   * in evidence and in the words, never folded into `app`. */
+  proxyColumn?: string;
 }
 
 const SAFARI_ICLOUD_TABS = [
@@ -453,6 +459,8 @@ export const REGISTRY: readonly RegistryEntry[] = [
     record: "permission",
     locality: "device-local",
     app: { package: "Package Name" },
+    permissionColumn: "Permission",
+    proxyColumn: "Proxy Package Name",
   },
   {
     platform: "android",
@@ -475,6 +483,8 @@ export const REGISTRY: readonly RegistryEntry[] = [
     record: "permission",
     locality: "device-local",
     app: { package: "Package Name" },
+    permissionColumn: "Permission",
+    proxyColumn: "Proxy Package Name",
   },
   {
     platform: "android",
@@ -501,9 +511,13 @@ export const REGISTRY: readonly RegistryEntry[] = [
     record: "permission",
     locality: "device-local",
     app: { package: "Package Name" },
-    // The mode in force at access time: upstream's OP_MODES (AppOpsManager at android-15.0.0_r1)
-    // is ALLOWED / IGNORED / ERRORED / DEFAULT / FOREGROUND, or the stored integer outside that
-    // set — carried verbatim, as TCC's Access is. A different fact from a configured `Mode`.
+    permissionColumn: "Permission",
+    proxyColumn: "Proxy Package Name",
+    // The op's CONFIGURED mode at collection time — upstream reads the op element's own `m`
+    // attribute, written only when the mode differs from the op's default (#1363 corrected the
+    // earlier "mode in force at access time" wording against appOpsAccesses.py). Vocabulary is
+    // OP_MODES (AppOpsManager at android-15.0.0_r1): ALLOWED / IGNORED / ERRORED / DEFAULT /
+    // FOREGROUND, or the stored integer outside that set — carried verbatim, as TCC's Access is.
     accessColumn: "Op Mode",
   },
   {
@@ -520,9 +534,11 @@ export const REGISTRY: readonly RegistryEntry[] = [
       "Mode Stored Against",
       "Source File",
     ],
+    clocks: [], // a stored state has no event time; never dated by a re-pinned column (#1363)
     record: "permission",
     locality: "device-local",
     app: { package: "Package Name" },
+    permissionColumn: "Permission",
     // The CONFIGURED mode for the op (same OP_MODES vocabulary), not an access — a state.
     accessColumn: "Mode",
   },
@@ -531,9 +547,11 @@ export const REGISTRY: readonly RegistryEntry[] = [
     name: "App Op Modes (Permission Store)",
     lastUpdate: "2026-09-07",
     headers: ["Package Name", "App ID", "Android User", "App Op", "Op Code", "Mode", "Mode Stored Against"],
+    clocks: [], // a stored state has no event time; never dated by a re-pinned column (#1363)
     record: "permission",
     locality: "device-local",
     app: { package: "Package Name" },
+    permissionColumn: "App Op",
     accessColumn: "Mode",
   },
   {
@@ -541,9 +559,11 @@ export const REGISTRY: readonly RegistryEntry[] = [
     name: "Permission Grants (Permission Store)",
     lastUpdate: "2026-09-07",
     headers: ["Package Name", "App ID", "Android User", "Permission", "Granted", "Permission Flags"],
+    clocks: [], // a stored state has no event time; never dated by a re-pinned column (#1363)
     record: "permission",
     locality: "device-local",
     app: { package: "Package Name" },
+    permissionColumn: "Permission",
     // AOSP's own PermissionFlags.isPermissionGranted, ported upstream: Yes / No, or the raw flags
     // value when it cannot decide — never re-derived here.
     accessColumn: "Granted",
@@ -610,7 +630,7 @@ export function headersMatch(entry: RegistryEntry, headers: readonly string[]): 
 /** An entry may be read for its own platform, or for an `unknown` import; never across platforms.
  * One predicate for readOrigin and pinnedClocks, so a row can never be dated by a pin its origin
  * reading would not vouch for. */
-function platformAdmits(entry: RegistryEntry, platform: MobileBlock["platform"]): boolean {
+export function platformAdmits(entry: RegistryEntry, platform: MobileBlock["platform"]): boolean {
   return entry.platform === platform || platform === "unknown";
 }
 
@@ -625,162 +645,12 @@ export function pinnedClocks(
 ): number[] | undefined {
   const entry = registryEntry(artifact);
   if (!entry?.clocks || !platformAdmits(entry, platform) || !headersMatch(entry, headers)) return undefined;
+  // An explicitly EMPTY declaration pins "no clock": a stored-state table (#1363) must never be
+  // dated by whatever time-shaped column a future re-pin might add.
+  if (entry.clocks.length === 0) return [];
   const have = headers.map(norm);
   const out = entry.clocks.map((c) => have.indexOf(norm(c))).filter((i) => i >= 0);
   return out.length ? out : undefined;
-}
-
-export interface OriginReading {
-  block: MobileBlock;
-  /** The bounded words for the description tag. */
-  words: string;
-}
-
-const NAME_MAX = 60;
-/** A name inside the tag: brackets to parentheses so the tag's own bracket stays its end. */
-const tagSafe = (v: string): string => v.replace(/\[/g, "(").replace(/\]/g, ")");
-
-/**
- * Read one row's origin against the registry. Pure. The block names every column that
- * established a facet; a facet with none is `not-established`.
- */
-export function readOrigin(
-  platform: MobileBlock["platform"],
-  artifact: string,
-  headers: readonly string[],
-  cells: readonly string[],
-): OriginReading {
-  const found = registryEntry(artifact);
-  // The registry entry must be the requested platform's: an Android import of a file named like
-  // an iOS artifact is not evidence of anything and is said so, not read as iOS.
-  const entry = found && !platformAdmits(found, platform) ? undefined : found;
-  const col = (name: string): string => {
-    const i = headers.findIndex((h) => norm(h) === name);
-    return i >= 0 ? (cells[i] ?? "").trim() : "";
-  };
-  const base: MobileBlock = {
-    platform,
-    artifact: norm(artifact).slice(0, 120),
-    registry: { version: REGISTRY_VERSION, coverage: "not-covered" },
-    facets: {
-      acquisition: "not-established",
-      locality: "not-established",
-      record: "other",
-      authorship: "not-established",
-    },
-    evidence: [],
-    conflicts: [],
-  };
-  if (!entry) {
-    const words = found
-      ? `not established — the artifact is a ${found.platform === "ios" ? "iLEAPP" : "ALEAPP"} table imported as ${platform} — ${REGISTRY_VERSION}`
-      : `not established — ${REGISTRY_VERSION}`;
-    return { block: base, words };
-  }
-  const pinned = `${entry.platform === "ios" ? "iLEAPP" : "ALEAPP"}@${REGISTRY_PINS[entry.platform === "ios" ? "iLEAPP" : "ALEAPP"].commit}`;
-  if (!headersMatch(entry, headers)) {
-    return {
-      block: { ...base, registry: { version: REGISTRY_VERSION, coverage: "headers-differ", pinned } },
-      words: `artifact known, headers differ from the pinned release (${pinned}) — ${REGISTRY_VERSION}`,
-    };
-  }
-  if (entry.excluded) {
-    return {
-      block: { ...base, registry: { version: REGISTRY_VERSION, coverage: "excluded", pinned } },
-      words: `excluded (${entry.excluded}) — ${REGISTRY_VERSION}`,
-    };
-  }
-  const evidence: MobileBlock["evidence"] = [];
-  const conflicts: string[] = [];
-  let acquisition: MobileBlock["facets"]["acquisition"] = "not-established";
-  if (entry.acquisitionFrom) {
-    const v = col(entry.acquisitionFrom.column);
-    const read = entry.acquisitionFrom.values[v];
-    if (read) {
-      acquisition = read;
-      evidence.push({ facet: "acquisition", column: entry.acquisitionFrom.column, value: v });
-    } else if (v)
-      conflicts.push(
-        `${entry.acquisitionFrom.column} reads "${v.slice(0, NAME_MAX)}", a value the pinned release does not define`,
-      );
-  } else if (entry.acquisition && entry.acquisitionColumn) {
-    const v = col(entry.acquisitionColumn);
-    if (v) {
-      acquisition = entry.acquisition;
-      evidence.push({ facet: "acquisition", column: entry.acquisitionColumn, value: v.slice(0, NAME_MAX) });
-    } else
-      conflicts.push(
-        `${entry.acquisitionColumn} is empty on a row of an artifact that establishes ${entry.acquisition} through it`,
-      );
-  }
-  evidence.push({ facet: "record", column: "(artifact)", value: entry.name });
-  evidence.push({ facet: "locality", column: "(artifact)", value: entry.name });
-  const transition = entry.transitionColumn ? col(entry.transitionColumn) : "";
-  if (transition)
-    evidence.push({
-      facet: "transition",
-      column: entry.transitionColumn!,
-      value: transition.slice(0, NAME_MAX),
-    });
-  const access = entry.accessColumn ? col(entry.accessColumn) : "";
-  if (access)
-    evidence.push({ facet: "access", column: entry.accessColumn!, value: access.slice(0, NAME_MAX) });
-  const deviceName = entry.device ? col(entry.device.name) : "";
-  const deviceId = entry.device?.id ? col(entry.device.id) : "";
-  const accountName = entry.account ? col(entry.account.name) : "";
-  const accountType = entry.account?.type ? col(entry.account.type) : "";
-  const appPackage = entry.app?.package ? col(entry.app.package) : "";
-  const appSha = entry.app?.sha256 ? col(entry.app.sha256).toLowerCase() : "";
-  const block: MobileBlock = {
-    ...base,
-    registry: { version: REGISTRY_VERSION, coverage: "schema-matches", pinned },
-    facets: {
-      acquisition,
-      locality: entry.locality,
-      record: entry.record,
-      authorship: "not-established",
-      ...(transition ? { transition: transition.slice(0, NAME_MAX) } : {}),
-    },
-    evidence,
-    conflicts,
-    ...(deviceName
-      ? {
-          device: {
-            name: deviceName.slice(0, NAME_MAX),
-            ...(deviceId ? { id: deviceId.slice(0, NAME_MAX) } : {}),
-          },
-        }
-      : {}),
-    ...(accountName
-      ? {
-          account: {
-            name: accountName.slice(0, NAME_MAX),
-            ...(accountType ? { type: accountType.slice(0, NAME_MAX) } : {}),
-          },
-        }
-      : {}),
-    ...(appPackage || /^[0-9a-f]{64}$/.test(appSha)
-      ? {
-          app: {
-            ...(appPackage ? { package: appPackage.slice(0, 200) } : {}),
-            ...(/^[0-9a-f]{64}$/.test(appSha) ? { sha256: appSha } : {}),
-          },
-        }
-      : {}),
-  };
-  const parts = [acquisition, entry.locality, entry.record];
-  const names = [
-    ...(deviceName ? [`row names device "${tagSafe(deviceName.slice(0, NAME_MAX))}"`] : []),
-    ...(accountName ? [`row names account "${tagSafe(accountName.slice(0, NAME_MAX))}"`] : []),
-    ...(transition ? [`transition ${tagSafe(transition.slice(0, NAME_MAX))}`] : []),
-    // The column's own name, lowercased, so a configured `mode`, an at-access `op mode` and a
-    // stored `granted` never read as one shared fact; TCC's column is literally `Access`.
-    ...(entry.accessColumn && access
-      ? [`${entry.accessColumn.toLowerCase()} ${tagSafe(access.slice(0, NAME_MAX))}`]
-      : []),
-  ];
-  const words = `${parts.join(", ")}${names.length ? ` (${names.join("; ")})` : ""}${conflicts.length ? "; conflict: " + conflicts.map(tagSafe).join("; ") : ""} — ${REGISTRY_VERSION}`;
-  return { block, words };
 }
 
 /** The guard the manual and the module header state, for tests and the timeline note. */

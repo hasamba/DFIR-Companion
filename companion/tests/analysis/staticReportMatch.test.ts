@@ -77,6 +77,29 @@ describe("reportEventsByFingerprint", () => {
     });
     expect(reportEventsByFingerprint(events, "d".repeat(64))).toBeNull();
   });
+
+  it("#1363 — a MobSF requested-permission block resolves as tool mobsf with the APK's own reported sha256", () => {
+    const events = [
+      ev({
+        sources: ["mobsf"],
+        canonical: {
+          mobileRequestedPermission: {
+            reportFingerprint: "e".repeat(64),
+            sampleHash: { sha256: SHA, md5: "f".repeat(32), hashUnavailable: false },
+          },
+        },
+      }),
+      ev(),
+    ];
+    expect(reportEventsByFingerprint(events, "e".repeat(64))).toEqual({
+      tool: "mobsf",
+      events: [events[0]],
+      toolReportedSha256: SHA,
+      toolReportedMd5: "f".repeat(32),
+    });
+    // A MobSF row is an analyst-side artifact (a lab report about an APK), like the other five.
+    expect(isAnalystSideRow(events[0])).toBe(true);
+  });
 });
 
 describe("staticReportMatches — path kind (olevba only)", () => {

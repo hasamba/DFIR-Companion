@@ -519,6 +519,7 @@
     "ROUTE POST /cases/:id/static-report-attestations",
     "ROUTE DELETE /cases/:id/static-report-attestations/:attId",
     "ROUTE GET /cases/:id/static-report-attestations/:attId/matches",
+    "ROUTE GET /cases/:id/mobile-permission-chains",
     "ROUTE GET /cases/:id/host-duplicates",
     "ROUTE POST /cases/:id/host-duplicates/merge",
     "ROUTE POST /cases/:id/host-duplicates/dismiss",
