@@ -214,6 +214,7 @@ export interface ValuesApi {
   veloTimeScopeIncomplete(form: ElementLike): boolean;
   uploadExtOf(name: string): string;
   looksLikeBinaryImportName(name: string): boolean;
+  undecodedBinaryImportHint(name: string): string | null;
   toolForExt(ext: string, status: unknown): string | null;
   suggestToolForExt(ext: string, status: unknown): string | null;
   toolsForExt(ext: string, status: unknown): Array<{ id: string }>;

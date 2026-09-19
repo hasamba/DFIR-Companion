@@ -84,6 +84,21 @@ function looksLikeBinaryImportName(name) {
   );
 }
 
+// A binary login-item container this codebase KNOWS but does not decode (#1360): the v1
+// SessionLoginItems.sfl that macOS 10.11–10.12 wrote. It is neither sent as bytes (the byte-native
+// routes would only 400 it) nor read as text (a text-read of the bplist was sniffed as a binary
+// launchd plist and minted as a "not read, run plutil" row — the wrong artifact, and a dead end).
+// Word for word the sentence the server's text path returns (analysis/importKindHints.ts
+// undecodedBinaryImportHint), so the picked file is refused before it is read at all.
+function undecodedBinaryImportHint(name) {
+  const s = String(name || "");
+  if (!/com\.apple\.LSSharedFileList\.SessionLoginItems\.sfl$/i.test(s)) return null;
+  return (
+    `"${s}": SessionLoginItems.sfl (v1, macOS 10.11–10.12) is not decoded; the .sfl2 list ` +
+    "(macOS 10.13 and later) is — nothing in this file was read or assessed"
+  );
+}
+
 // Resolve which CONFIGURED tool handles a file extension (server preference order), from /tools/status.
 function toolForExt(ext, status) {
   const t = (status && status.tools || []).find((x) => x.configured && (x.extensions || []).includes(ext));
@@ -244,6 +259,7 @@ window.DfirValues = {
   ticketLabel,
   uploadExtOf,
   looksLikeBinaryImportName,
+  undecodedBinaryImportHint,
   toolForExt,
   suggestToolForExt,
   toolsForExt,

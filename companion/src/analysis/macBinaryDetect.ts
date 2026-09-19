@@ -26,6 +26,19 @@ export function looksLikeMacLoginItemFilename(filename: string): boolean {
   );
 }
 
+// A login-item container this codebase KNOWS by name but does not decode (#1360): the v1
+// SessionLoginItems.sfl that macOS 10.11–10.12 wrote (custom SFLListItem archive, superseded by the
+// .sfl2 dict shape in 10.13). Deliberately a SEPARATE list from the accept gate above: it is only
+// consulted to refuse the name honestly on the text path, so the byte-native routes never start
+// accepting a file no reader exists for. A v1 reader was declined — the format is end-of-life and
+// no real capture exists to build one against.
+const SFL_V1_SESSION_LOGIN_ITEMS_NAME = /com\.apple\.LSSharedFileList\.SessionLoginItems\.sfl$/i;
+
+/** Known but not decoded: the v1 `.sfl` list. Never true for a name the accept gate takes. */
+export function looksLikeUndecodedMacLoginItemFilename(filename: string): boolean {
+  return SFL_V1_SESSION_LOGIN_ITEMS_NAME.test(filename);
+}
+
 /** The names the routes quote back when a file does not match. */
 export const MAC_LOGIN_ITEM_FILENAMES =
   "backgrounditems.btm, BackgroundItems-v*.btm, com.apple.LSSharedFileList.SessionLoginItems.sfl2 " +
