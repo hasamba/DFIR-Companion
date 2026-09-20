@@ -3,6 +3,11 @@ import { archiveCase, buildZip, zipArchiveFilename } from "../../src/analysis/ca
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { mkdtemp, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { inflateRawSync } from "node:zlib";
+import { caseSqliteWorker } from "../../src/analysis/caseSqliteWorker.js";
+import { loadDatabaseSync } from "../../src/analysis/sqliteRuntime.js";
+import { INVESTIGATION_DB_FILENAME } from "../../src/analysis/stateStore.js";
 
 // ── ZIP structure helpers ───────────────────────────────────────────────────
 
@@ -30,6 +35,36 @@ function zipEntryNames(buf: Buffer): string[] {
     ptr += 30 + nameLen + extraLen + compressedLen;
   }
   return names;
+}
+
+// Inflate one entry by name. buildZip stores method 8 (DEFLATE) with sizes in the local header.
+function zipEntryData(buf: Buffer, wanted: string): Buffer {
+  let ptr = 0;
+  while (ptr + 30 <= buf.length && readLe32(buf, ptr) === 0x04034b50) {
+    const nameLen = buf.readUInt16LE(ptr + 26);
+    const extraLen = buf.readUInt16LE(ptr + 28);
+    const compressedLen = readLe32(buf, ptr + 18);
+    const name = buf.toString("utf8", ptr + 30, ptr + 30 + nameLen);
+    const start = ptr + 30 + nameLen + extraLen;
+    if (name === wanted) return inflateRawSync(buf.subarray(start, start + compressedLen));
+    ptr = start + compressedLen;
+  }
+  throw new Error(`entry not in archive: ${wanted}`);
+}
+
+function appendForensic(dbPath: string, count: number): Promise<number> {
+  return caseSqliteWorker.request<number>({
+    op: "appendEntities",
+    dbPath,
+    kind: "forensicTimeline",
+    entities: Array.from({ length: count }, (_, i) => ({
+      id: `${count}-${i}`,
+      timestamp: "2026-01-01T00:00:00Z",
+      description: `row ${i}`,
+      severity: "Info",
+      sources: ["test"],
+    })),
+  });
 }
 
 describe("buildZip", () => {
@@ -224,19 +259,32 @@ describe("archiveCase", () => {
       try {
         await mkdir(join(dir, "c1", "state"), { recursive: true });
         await writeFile(join(dir, "c1", "case.json"), '{"caseId":"c1"}');
-        await writeFile(join(dir, "c1", "state", "investigation.sqlite"), "db");
+        // A real (empty) database: the archive snapshots it, and a snapshot of "db" would fail.
+        await appendForensic(join(dir, "c1", "state", "investigation.sqlite"), 0);
         await writeFile(join(dir, "c1", "state", "investigation.sqlite-journal"), "undo");
         await writeFile(
           join(dir, "c1", "state", "case.json.0f0f0f0f-0f0f-0f0f-0f0f-0f0f0f0f0f0f.tmp"),
           "partial",
         );
         // A name that merely LOOKS transient by extension is evidence and stays (rule 1 of
-        // caseTransientPaths.ts) — an analyst can import a sample called anything.
+        // caseTransientPaths.ts) — an analyst can import a sample called anything, including the
+        // case database's own sidecar names outside state/.
         await writeFile(join(dir, "c1", "notes-journal"), "evidence");
+        await mkdir(join(dir, "c1", "imports"), { recursive: true });
+        await writeFile(join(dir, "c1", "imports", "investigation.sqlite-wal"), "evidence");
+        await writeFile(join(dir, "c1", "imports", "investigation.sqlite-shm"), "evidence");
+        await writeFile(join(dir, "c1", "imports", "investigation.sqlite-journal"), "evidence");
 
         const result = await archiveCase(dir, "c1");
         const paths = result.manifest.files.map((f) => f.path).sort();
-        expect(paths).toEqual(["case.json", "notes-journal", "state/investigation.sqlite"]);
+        expect(paths).toEqual([
+          "case.json",
+          "imports/investigation.sqlite-journal",
+          "imports/investigation.sqlite-shm",
+          "imports/investigation.sqlite-wal",
+          "notes-journal",
+          "state/investigation.sqlite",
+        ]);
       } finally {
         await rm(dir, { recursive: true, force: true });
       }
@@ -246,10 +294,12 @@ describe("archiveCase", () => {
       const dir = await mkdtemp(join(tmpdir(), "dfir-archive-race-"));
       try {
         await mkdir(join(dir, "c1", "state"), { recursive: true });
-        await writeFile(join(dir, "c1", "state", "investigation.sqlite"), "db");
+        await appendForensic(join(dir, "c1", "state", "investigation.sqlite"), 0);
         const journal = join(dir, "c1", "state", "investigation.sqlite-journal");
         await writeFile(journal, "undo");
         // The commit that deletes the journal lands after readdir and before the per-file read.
+        // (The database itself is read from its snapshot, so a sibling file carries the read.)
+        await writeFile(join(dir, "c1", "case.json"), '{"caseId":"c1"}');
         let first = true;
         const result = await archiveCase(dir, "c1", {
           readFile: async (p: string) => {
@@ -260,9 +310,55 @@ describe("archiveCase", () => {
             return readFile(p);
           },
         });
-        expect(result.manifest.files.map((f) => f.path)).toEqual(["state/investigation.sqlite"]);
+        expect(result.manifest.files.map((f) => f.path).sort()).toEqual([
+          "case.json",
+          "state/investigation.sqlite",
+        ]);
       } finally {
         await rm(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
+  // #1454: the case database runs in WAL mode, so committed rows can sit in the -wal sidecar while
+  // any reader has the file open. A raw copy of the .sqlite file alone would then be stale, and the
+  // sidecars are not case content. The archive carries a VACUUM INTO snapshot instead — the same
+  // substitution the encrypted export makes — and never the sidecars.
+  describe("the case database enters the archive as a consistent snapshot", () => {
+    it("archives every committed row while a reader pins them in the WAL, and skips the sidecars", async () => {
+      const root = await mkdtemp(join(tmpdir(), "dfir-archive-snapshot-"));
+      const dbPath = join(root, "c1", "state", INVESTIGATION_DB_FILENAME);
+      const DatabaseSync = loadDatabaseSync();
+      let pin: InstanceType<typeof DatabaseSync> | null = null;
+      try {
+        await mkdir(join(root, "c1", "state"), { recursive: true });
+        await writeFile(join(root, "c1", "case.json"), '{"caseId":"c1"}');
+        await appendForensic(dbPath, 5);
+        // A read-only connection held across the next write keeps its rows out of the main file.
+        pin = new DatabaseSync(dbPath, { readOnly: true });
+        pin.prepare("SELECT count(*) AS n FROM entities").get();
+        await appendForensic(dbPath, 3);
+        expect(existsSync(dbPath + "-wal")).toBe(true);
+
+        const result = await archiveCase(root, "c1");
+        const paths = result.manifest.files.map((f) => f.path).sort();
+        expect(paths).toEqual(["case.json", `state/${INVESTIGATION_DB_FILENAME}`]);
+
+        const zip = await readFile(result.archivePath);
+        const archived = zipEntryData(zip, `c1/state/${INVESTIGATION_DB_FILENAME}`);
+        const extracted = join(root, "extracted.sqlite");
+        await writeFile(extracted, archived);
+        const counts = await caseSqliteWorker.request<Record<string, number>>({
+          op: "entityCounts",
+          dbPath: extracted,
+          kinds: ["forensicTimeline"],
+        });
+        expect(counts).toEqual({ forensicTimeline: 8 });
+        // The staging directory the snapshot was written to is gone again.
+        expect(await readdir(join(root, ".export-staging")).catch(() => [])).toEqual([]);
+      } finally {
+        pin?.close();
+        await rm(root, { recursive: true, force: true });
       }
     });
   });

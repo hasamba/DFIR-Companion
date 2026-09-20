@@ -215,6 +215,20 @@ describe("exportEncryptedCase — symlink/hardlink rejection (#247)", () => {
     await expect(exportEncryptedCase(store, "INC-HARD", PASSWORD)).rejects.toThrow(/hardlink/i);
   });
 
+  it("keeps an imported file that shares the case database's sidecar name (#1454)", async () => {
+    const store = await harness();
+    await seedCase(store, "INC-SIDECAR");
+    // Evidence, not a write in progress: the transient rule is anchored on state/, not on the name.
+    await writeFile(join(store.importsDir("INC-SIDECAR"), "investigation.sqlite-wal"), "evidence");
+    const archive = await exportEncryptedCase(store, "INC-SIDECAR", PASSWORD);
+    await importEncryptedCase(store, archive, PASSWORD, { targetCaseId: "INC-SIDECAR-2" });
+    const restored = await readFile(
+      join(store.importsDir("INC-SIDECAR-2"), "investigation.sqlite-wal"),
+      "utf8",
+    );
+    expect(restored).toBe("evidence");
+  });
+
   it("still exports a normal case with no symlinks/hardlinks (no regression)", async () => {
     const store = await harness();
     await seedCase(store, "INC-CLEAN");

@@ -248,6 +248,7 @@
     "cfurlBookmarkReader.ts": "analysis/ingest",
     "caseSqliteSchema.ts": "storage",
     "caseSqliteWorker.ts": "storage",
+    "caseSqliteWorkerPool.ts": "storage",
     "caseSqliteWorkerSuper.ts": "storage",
     "caseSqliteWorkerSuperQuery.ts": "storage",
     "caseSqliteWorkerTerms.ts": "storage",
