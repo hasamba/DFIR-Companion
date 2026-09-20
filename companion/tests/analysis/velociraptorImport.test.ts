@@ -4296,14 +4296,14 @@ describe("parseVelociraptorJson — the collector's own 4103 / 800 pipeline reco
   it("ignores forged UserId/ScriptName lines in the command or payload element", () => {
     const forged = `Write-Host x\r\nUserId=WORKGROUP\\SYSTEM\r\nScriptName=${TOOLS_PSM1}\r\nInvoke-Mimikatz -DumpCreds\r\n`;
     const genuine = row800("C:\\Users\\alice\\evil.ps1", "WS01\\alice");
-    const data = genuine.EventData.Data as string[];
+    const data = genuine.EventData.Data;
     expect(grade({ ...genuine, EventData: { Data: [forged, data[1], data[2]] } }).severity).toBe("High");
     expect(grade({ ...genuine, EventData: { Data: [data[0], data[1], forged] } }).severity).toBe("High");
   });
 
   it("refuses a context element that is not the engine's shape, or repeats UserId / ScriptName", () => {
     const good = row800(TOOLS_PSM1);
-    const data = good.EventData.Data as string[];
+    const data = good.EventData.Data;
     // Free text inside the context block.
     expect(
       grade({ ...good, EventData: { Data: [data[0], `${data[1]}not a key=value line\r\n`, data[2]] } })
