@@ -1,6 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { z } from "zod";
-import { resolveProxyHostIdentity } from "../analysis/proxyWorkstationChain.js";
+import { resolveProxyHostIdentity, proxyHostIdentityReads } from "../analysis/proxyWorkstationChain.js";
 import type { IpExclusionReason } from "../analysis/hostBinding.js";
 import { loadHostAliasIndex } from "../analysis/hostScopeLoad.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
@@ -83,7 +83,7 @@ export function registerProxyHostIdentityRoutes(app: Express, ctx: RouteContext)
           caseId,
         ),
         options.superTimelineStore
-          ? options.superTimelineStore.all(caseId)
+          ? options.superTimelineStore.collect(caseId, (e) => (proxyHostIdentityReads(e) ? e : undefined))
           : Promise.resolve<ForensicEvent[]>([]),
       ]);
       const toleranceMs = parsed.data.toleranceMs ?? DEFAULT_TOLERANCE_MS;

@@ -60,47 +60,72 @@ function uniqPush(into: string[], seen: Set<string>, values: readonly string[]):
 
 /** Evaluate every rule against every event. Pure — no mutation of inputs, no I/O. */
 export function runTagger(events: readonly ForensicEvent[], ruleset: CompiledRuleset): TaggerResult {
-  // Per-event accumulators, built lazily so events with no match never allocate.
+  const acc = createTaggerAccumulator(ruleset);
+  acc.add(events);
+  return acc.finish();
+}
+
+/**
+ * runTagger, one batch at a time (#1444). Per-event accumulators are built lazily so rows with no
+ * match never allocate, and the rule → matched-ids lists grow only with matches — so a 900k-row
+ * super-timeline fed through eventBatches() costs the matches, never the case. `sampleSize` keeps
+ * the first N matched events (in match order) for the dashboard's preview list; 0 keeps none.
+ */
+export interface TaggerAccumulator {
+  add(events: readonly ForensicEvent[]): void;
+  finish(): TaggerResult;
+  sample(): ForensicEvent[];
+}
+
+export function createTaggerAccumulator(ruleset: CompiledRuleset, sampleSize = 0): TaggerAccumulator {
   const byEvent = new Map<string, { res: EventTagResult; tagSeen: Set<string>; mitreSeen: Set<string> }>();
-  const perRule: RuleMatch[] = [];
+  const idsByRule = ruleset.rules.map((): string[] => []);
+  const sample: ForensicEvent[] = [];
 
-  for (const rule of ruleset.rules) {
-    const eventIds: string[] = [];
-    for (const event of events) {
-      if (!matchEvent(event, rule)) continue;
-      eventIds.push(event.id);
-      let slot = byEvent.get(event.id);
-      if (!slot) {
-        slot = {
-          res: { eventId: event.id, tags: [], mitre: [], severity: undefined, ruleIds: [] },
-          tagSeen: new Set(),
-          mitreSeen: new Set(),
-        };
-        byEvent.set(event.id, slot);
-      }
-      uniqPush(slot.res.tags, slot.tagSeen, rule.tags);
-      uniqPush(slot.res.mitre, slot.mitreSeen, rule.mitre);
-      slot.res.ruleIds.push(rule.id);
-      if (rule.severity) {
-        slot.res.severity = slot.res.severity
-          ? raiseSeverity(slot.res.severity, rule.severity)
-          : rule.severity;
-      }
-    }
-    perRule.push({
-      id: rule.id,
-      description: rule.description,
-      view: rule.view,
-      tags: rule.tags,
-      mitre: rule.mitre,
-      severity: rule.severity,
-      eventIds,
-      matched: eventIds.length,
-    });
-  }
-
-  const perEvent = [...byEvent.values()].map((s) => s.res);
-  return { perRule, perEvent, totalMatched: perEvent.length };
+  return {
+    add(events) {
+      ruleset.rules.forEach((rule, ruleIndex) => {
+        const eventIds = idsByRule[ruleIndex];
+        for (const event of events) {
+          if (!matchEvent(event, rule)) continue;
+          eventIds.push(event.id);
+          let slot = byEvent.get(event.id);
+          if (!slot) {
+            slot = {
+              res: { eventId: event.id, tags: [], mitre: [], severity: undefined, ruleIds: [] },
+              tagSeen: new Set(),
+              mitreSeen: new Set(),
+            };
+            byEvent.set(event.id, slot);
+            if (sample.length < sampleSize) sample.push(event);
+          }
+          uniqPush(slot.res.tags, slot.tagSeen, rule.tags);
+          uniqPush(slot.res.mitre, slot.mitreSeen, rule.mitre);
+          slot.res.ruleIds.push(rule.id);
+          if (rule.severity) {
+            slot.res.severity = slot.res.severity
+              ? raiseSeverity(slot.res.severity, rule.severity)
+              : rule.severity;
+          }
+        }
+      });
+    },
+    finish() {
+      const perRule: RuleMatch[] = ruleset.rules.map((rule, ruleIndex) => ({
+        id: rule.id,
+        description: rule.description,
+        view: rule.view,
+        tags: rule.tags,
+        mitre: rule.mitre,
+        severity: rule.severity,
+        eventIds: idsByRule[ruleIndex],
+        matched: idsByRule[ruleIndex].length,
+      }));
+      const perEvent = [...byEvent.values()].map((s) => s.res);
+      return { perRule, perEvent, totalMatched: perEvent.length };
+    },
+    sample: () => [...sample],
+  };
 }
 
 /**
@@ -140,4 +165,22 @@ export function selectScopedEvents(
   if (scope === "super") return [...superEvents];
   const seen = new Set(forensic.map((e) => e.id));
   return [...forensic, ...superEvents.filter((e) => !seen.has(e.id))];
+}
+
+/**
+ * selectScopedEvents, streamed (#1444): the same scope rule, but the super side arrives one batch
+ * at a time from eventBatches() and is fed straight into the accumulator. `superBatches` is null
+ * when no super-timeline store is configured — then "both" and "super" read exactly what they did
+ * before: the forensic side, or nothing.
+ */
+export async function feedTaggerScope(
+  acc: TaggerAccumulator,
+  scope: TaggerScope,
+  forensic: readonly ForensicEvent[],
+  superBatches: AsyncIterable<readonly ForensicEvent[]> | null,
+): Promise<void> {
+  if (scope !== "super") acc.add(forensic);
+  if (scope === "forensic" || !superBatches) return;
+  const seen = scope === "both" ? new Set(forensic.map((e) => e.id)) : null;
+  for await (const batch of superBatches) acc.add(seen ? batch.filter((e) => !seen.has(e.id)) : batch);
 }

@@ -200,6 +200,11 @@ function crossFactsOf(a: Acc): string[] {
     : [`served with different certificates on different sensors: ${onlyParts.join("; ")}`];
 }
 
+/** The rows buildTlsCaseGraph reads — the streaming route (#1444) keeps only these. */
+export function tlsCaseGraphReads(e: TlsCaseGraphEventShape): boolean {
+  return !!e.canonical?.tlsGraph;
+}
+
 export function buildTlsCaseGraph(events: readonly TlsCaseGraphEventShape[]): TlsCaseGraph {
   const accs = new Map<string, Acc>();
   let rowsRead = 0;

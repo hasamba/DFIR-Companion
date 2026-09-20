@@ -144,6 +144,17 @@ function mergeHits(
 
 /** `excluded` (#1345): the caller-owned sink `buildHostBindingIndex` counts rejected logon samples
  * into, by reason — the only signal that a `no-match` below was a gated binding, not absent evidence. */
+/**
+ * The rows resolveProxyHostIdentity reads (#1444): every indexable logon (the binding index) and
+ * every row with an edge-observed source address or a web-scoped account (the candidates). The
+ * streaming route keeps only these; anything else is a file/registry row the resolver skips.
+ */
+export function proxyHostIdentityReads(e: ForensicEvent): boolean {
+  if (isIndexableLogon(e)) return true;
+  const c = e.canonical;
+  return !!c?.network?.source?.address || !!(c?.web && c.account?.name);
+}
+
 export function resolveProxyHostIdentity(
   events: readonly ForensicEvent[],
   aliasIndex: HostAliasIndex,

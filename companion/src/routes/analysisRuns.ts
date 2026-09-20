@@ -10,7 +10,7 @@ import type { AnalysisRunManifest } from "../analysis/analysisRunTypes.js";
 import { IMPORT_KINDS } from "../analysis/importerSpec.js";
 import { diffIocs } from "../analysis/iocsDiff.js";
 import { getCsvPrompt, getLogPrompt, getObservePrompt, getSynthesisPrompt } from "../analysis/pipeline.js";
-import { selectScopedEvents } from "../analysis/tagger.js";
+import { createTaggerAccumulator, feedTaggerScope } from "../analysis/tagger.js";
 import { runAndApplyTagger, type TaggerScope } from "../analysis/taggerRun.js";
 import { diffTimeline } from "../analysis/timelineDiff.js";
 import { defaultReportTemplate } from "../reports/reportTemplate.js";
@@ -180,14 +180,17 @@ async function replayTagger(ctx: RouteContext, run: AnalysisRunManifest): Promis
   const scope = taggerScope(run);
   const ruleset = await options.taggerStore.load();
   const state = await options.stateStore.load(run.caseId);
-  const superEvents =
-    scope !== "forensic" && options.superTimelineStore
-      ? await options.superTimelineStore.all(run.caseId)
-      : [];
-  const events = selectScopedEvents(scope, state.forensicTimeline, superEvents);
+  // Streamed like the "Run tagger" route (#1444): the super side arrives one batch at a time.
+  const acc = createTaggerAccumulator(ruleset);
+  await feedTaggerScope(
+    acc,
+    scope,
+    state.forensicTimeline,
+    options.superTimelineStore ? options.superTimelineStore.eventBatches(run.caseId) : null,
+  );
   const applied = await runAndApplyTagger({
     caseId: run.caseId,
-    events,
+    result: acc.finish(),
     ruleset,
     forensicTimeline: state.forensicTimeline,
     tagsStore: options.tagsStore,
@@ -207,7 +210,9 @@ async function replayTagger(ctx: RouteContext, run: AnalysisRunManifest): Promis
     versions: { schema: "tagger/v1", rules: run.versions.rules },
     input: {
       artifacts: [],
-      eventIds: events.map((event) => event.id),
+      // The forensic ids, as the manual "Run tagger" route records them (#1444): the super side
+      // streamed through the accumulator and was never held as an array to list.
+      eventIds: next.forensicTimeline.map((event) => event.id),
       entityIds: [],
     },
     configuration: run.configuration,

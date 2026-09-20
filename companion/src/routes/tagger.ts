@@ -1,7 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { logActivity } from "../analysis/activityLog.js";
-import type { ForensicEvent } from "../analysis/stateTypes.js";
-import { runTagger, selectScopedEvents } from "../analysis/tagger.js";
+import { createTaggerAccumulator, feedTaggerScope } from "../analysis/tagger.js";
 import { compileText, TaggerRulesConflictError } from "../analysis/taggerStore.js";
 import { runAndApplyTagger, readTaggerSettings, TAGGER_AUTHOR_PREFIX } from "../analysis/taggerRun.js";
 import { sendPipelineError } from "./presidioApproval.js";
@@ -112,15 +111,17 @@ export function registerTaggerRoutes(app: Express, ctx: RouteContext): void {
 
       const summary = await ctx.runStateExclusive(caseId, async () => {
         const state = await options.stateStore!.load(caseId);
-        const superEvents =
-          scope !== "forensic" && options.superTimelineStore
-            ? await options.superTimelineStore.all(caseId)
-            : [];
-        const events: ForensicEvent[] = selectScopedEvents(scope, state.forensicTimeline, superEvents);
-
+        // The super side streams in one batch at a time (#1444) — never the whole array.
+        const acc = createTaggerAccumulator(ruleset);
+        await feedTaggerScope(
+          acc,
+          scope,
+          state.forensicTimeline,
+          options.superTimelineStore ? options.superTimelineStore.eventBatches(caseId) : null,
+        );
         const applied = await runAndApplyTagger({
           caseId,
-          events,
+          result: acc.finish(),
           ruleset,
           forensicTimeline: state.forensicTimeline,
           tagsStore: options.tagsStore!,
@@ -232,24 +233,23 @@ export function registerTaggerRoutes(app: Express, ctx: RouteContext): void {
     try {
       const ruleset = compileText(ruleYaml); // throws on invalid → 400 below
       const state = await options.stateStore.load(req.params.id);
-      const superEvents =
-        scope !== "forensic" && options.superTimelineStore
-          ? await options.superTimelineStore.all(req.params.id)
-          : [];
-      const events = selectScopedEvents(scope, state.forensicTimeline, superEvents);
-      const result = runTagger(events, ruleset);
-      // A capped, trimmed view of the matching events for the dashboard preview list.
+      // A capped, trimmed view of the matching events for the dashboard preview list — the
+      // accumulator keeps the first N matches as it streams (#1444), so nothing else is held.
       const PREVIEW_SAMPLE_CAP = 100;
-      const byId = new Map(events.map((e) => [e.id, e]));
-      const sample = result.perEvent.slice(0, PREVIEW_SAMPLE_CAP).map((m) => {
-        const e = byId.get(m.eventId);
-        return {
-          id: m.eventId,
-          timestamp: e?.timestamp ?? "",
-          asset: e?.asset ?? "",
-          description: (e?.description ?? "").slice(0, 200),
-        };
-      });
+      const acc = createTaggerAccumulator(ruleset, PREVIEW_SAMPLE_CAP);
+      await feedTaggerScope(
+        acc,
+        scope,
+        state.forensicTimeline,
+        options.superTimelineStore ? options.superTimelineStore.eventBatches(req.params.id) : null,
+      );
+      const result = acc.finish();
+      const sample = acc.sample().map((e) => ({
+        id: e.id,
+        timestamp: e.timestamp,
+        asset: e.asset ?? "",
+        description: e.description.slice(0, 200),
+      }));
       return res.status(200).json({ matched: result.totalMatched, scope, sample });
     } catch (err) {
       return res.status(400).json({ error: (err as Error).message });

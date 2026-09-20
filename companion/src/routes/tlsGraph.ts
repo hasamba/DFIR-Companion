@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { buildTlsCaseGraph } from "../analysis/tlsCaseGraph.js";
+import { buildTlsCaseGraph, tlsCaseGraphReads } from "../analysis/tlsCaseGraph.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import type { RouteContext } from "./context.js";
 
@@ -22,7 +22,7 @@ export function registerTlsGraphRoutes(app: Express, ctx: RouteContext): void {
       const [state, superEvents] = await Promise.all([
         options.stateStore.load(caseId),
         options.superTimelineStore
-          ? options.superTimelineStore.all(caseId)
+          ? options.superTimelineStore.collect(caseId, (e) => (tlsCaseGraphReads(e) ? e : undefined))
           : Promise.resolve<ForensicEvent[]>([]),
       ]);
       const graph = buildTlsCaseGraph([...state.forensicTimeline, ...superEvents]);

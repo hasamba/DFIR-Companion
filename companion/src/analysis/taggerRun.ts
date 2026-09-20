@@ -29,14 +29,21 @@ export function readTaggerSettings(env: NodeJS.ProcessEnv = process.env): Tagger
   return { auto: auto !== "false" && auto !== "0" && auto !== "off", scope };
 }
 
-export interface RunAndApplyParams {
+/**
+ * What to evaluate: either the scoped event array (the auto-tagger's freshly imported rows, the
+ * bulk sink's batch) or a TaggerResult a TaggerAccumulator already produced over a stream (#1444:
+ * "Run tagger" and its replay feed the super-timeline batch by batch and hand the result over,
+ * never the 900k-row array).
+ */
+export type TaggerInput = { events: readonly ForensicEvent[] } | { result: TaggerResult };
+
+export type RunAndApplyParams = TaggerInput & {
   caseId: string;
-  events: readonly ForensicEvent[]; // the scoped set to EVALUATE (already selected by scope)
   ruleset: CompiledRuleset;
   forensicTimeline: readonly ForensicEvent[]; // current forensic timeline (mapped for severity/MITRE)
   tagsStore: TagsStore;
   mutateForensic: boolean; // false when scope === "super" (raw timeline only)
-}
+};
 
 export interface RunAndApplyResult {
   result: TaggerResult;
@@ -51,8 +58,8 @@ export interface RunAndApplyResult {
  * applyToForensicEvent is raise-only/union-only, so a second run over the same data is a no-op.
  */
 export async function runAndApplyTagger(params: RunAndApplyParams): Promise<RunAndApplyResult> {
-  const { caseId, events, ruleset, forensicTimeline, tagsStore, mutateForensic } = params;
-  const result = runTagger(events, ruleset);
+  const { caseId, ruleset, forensicTimeline, tagsStore, mutateForensic } = params;
+  const result = "result" in params ? params.result : runTagger(params.events, ruleset);
 
   // Write tags per rule so each tag's author records the rule that produced it. add() is idempotent
   // per (target, label), so a tag two rules both apply is created once (first author wins). Load the

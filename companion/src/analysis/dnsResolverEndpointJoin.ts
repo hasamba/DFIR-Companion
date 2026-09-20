@@ -38,6 +38,7 @@
 
 import {
   buildHostBindingIndex,
+  isIndexableLogon,
   resolveIpAtTime,
   type HostBinding,
   type IpExclusionReason,
@@ -130,6 +131,12 @@ function confirmationFor(
 
 /** `excluded` (#1345): the caller-owned sink `buildHostBindingIndex` counts rejected logon samples
  * into, by reason — the only signal that a `no-match` below was a gated binding, not absent evidence. */
+/** The rows resolveResolverEndpointIdentity reads (#1444): logons for the binding index, resolver
+ * rows to resolve, endpoint DNS rows to confirm against. The streaming route keeps only these. */
+export function resolverEndpointIdentityReads(e: ForensicEvent): boolean {
+  return isIndexableLogon(e) || isResolverRow(e) || isEndpointDnsRow(e);
+}
+
 export function resolveResolverEndpointIdentity(
   events: readonly ForensicEvent[],
   aliasIndex: HostAliasIndex,

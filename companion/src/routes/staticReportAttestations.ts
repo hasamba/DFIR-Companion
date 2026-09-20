@@ -10,10 +10,11 @@ import {
 import {
   isAnalystSideRow,
   reportEventsByFingerprint,
+  staticReportEventProjection,
   staticReportMatches,
   STATIC_REPORT_ATTESTATION_CAVEAT,
+  type StaticReportEventShape,
 } from "../analysis/staticReportMatch.js";
-import type { ForensicEvent } from "../analysis/stateTypes.js";
 import { humanIdentityFor } from "./evidenceAttestation.js";
 import type { RouteContext } from "./context.js";
 
@@ -90,21 +91,24 @@ export function registerStaticReportAttestationRoutes(app: Express, ctx: RouteCo
   }
 
   // Forensic ∪ super-timeline, one row per id (header). No super-timeline store → forensic only.
-  async function caseEventsFor(caseId: string): Promise<ForensicEvent[]> {
-    const [state, superEvents] = await Promise.all([
-      options.stateStore!.load(caseId),
-      options.superTimelineStore
-        ? options.superTimelineStore.all(caseId)
-        : Promise.resolve<ForensicEvent[]>([]),
-    ]);
+  // Every row is the matcher's own lean projection (#1444): the super side streams through it, so
+  // a capped case costs a few short fields per row, never the 900k full events at once.
+  async function caseEventsFor(caseId: string): Promise<StaticReportEventShape[]> {
+    const state = await options.stateStore!.load(caseId);
     const seen = new Set<string>();
-    const union: ForensicEvent[] = [];
-    for (const e of [...state.forensicTimeline, ...superEvents]) {
+    const union: StaticReportEventShape[] = [];
+    for (const e of state.forensicTimeline) {
       if (seen.has(e.id)) continue;
       seen.add(e.id);
-      union.push(e);
+      union.push(staticReportEventProjection(e));
     }
-    return union;
+    if (!options.superTimelineStore) return union;
+    const superRows = await options.superTimelineStore.collect(caseId, (e) => {
+      if (seen.has(e.id)) return undefined;
+      seen.add(e.id);
+      return staticReportEventProjection(e);
+    });
+    return union.concat(superRows);
   }
 
   app.get("/cases/:id/static-report-attestations", async (req: Request, res: Response) => {

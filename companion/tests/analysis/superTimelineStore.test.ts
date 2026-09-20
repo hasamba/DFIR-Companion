@@ -443,3 +443,41 @@ describe("SuperTimelineStore", () => {
     expect(batched).toBe(650);
   });
 });
+
+describe("SuperTimelineStore.collect (#1444)", () => {
+  let cases: CaseStore;
+  let store: SuperTimelineStore;
+  beforeEach(async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-super-collect-"));
+    cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    store = new SuperTimelineStore(cases, 100000);
+  });
+
+  it("keeps only what `pick` returns, across page boundaries, dated and undated", async () => {
+    const dated = Array.from({ length: 7 }, (_, i) =>
+      ev({ id: `d${i}`, timestamp: `2026-06-0${i + 1}T00:00:00Z`, asset: i % 2 ? "odd" : "even" }),
+    );
+    const undated = [
+      ev({ id: "u1", timestamp: "", asset: "odd" }),
+      ev({ id: "u2", timestamp: "", asset: "even" }),
+    ];
+    await store.append("c1", [...undated, ...dated]);
+    const odd = await store.collect("c1", (e) => (e.asset === "odd" ? e.id : undefined), 3);
+    expect(odd).toEqual(["d1", "d3", "d5", "u1"]);
+  });
+
+  it("returns an empty array for an empty case and never materializes the events", async () => {
+    let seen = 0;
+    const out = await store.collect("c1", () => {
+      seen += 1;
+      return undefined;
+    });
+    expect(out).toEqual([]);
+    expect(seen).toBe(0);
+  });
+
+  it("has no whole-timeline read: `all` is gone so no route can load a capped case at once", () => {
+    expect((store as unknown as Record<string, unknown>).all).toBeUndefined();
+  });
+});

@@ -1,6 +1,9 @@
 import type { Express, Request, Response } from "express";
 import { z } from "zod";
-import { resolveResolverEndpointIdentity } from "../analysis/dnsResolverEndpointJoin.js";
+import {
+  resolveResolverEndpointIdentity,
+  resolverEndpointIdentityReads,
+} from "../analysis/dnsResolverEndpointJoin.js";
 import type { IpExclusionReason } from "../analysis/hostBinding.js";
 import { loadHostAliasIndex } from "../analysis/hostScopeLoad.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
@@ -74,7 +77,9 @@ export function registerResolverEndpointIdentityRoutes(app: Express, ctx: RouteC
           caseId,
         ),
         options.superTimelineStore
-          ? options.superTimelineStore.all(caseId)
+          ? options.superTimelineStore.collect(caseId, (e) =>
+              resolverEndpointIdentityReads(e) ? e : undefined,
+            )
           : Promise.resolve<ForensicEvent[]>([]),
       ]);
       const hostToleranceMs = parsed.data.hostToleranceMs ?? DEFAULT_HOST_TOLERANCE_MS;
