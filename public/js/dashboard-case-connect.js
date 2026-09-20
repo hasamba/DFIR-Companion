@@ -496,6 +496,10 @@
         // own button.
         if (typeof setSecondOpinionCapabilities === "function")
           setSecondOpinionCapabilities(h.secondOpinionEnabled, h.aiEnabled);
+        // The 🧠 box belongs to js/dashboard-search-scope.js, which reads it on Synthesize. Only a
+        // provider that acts on thinkingTokens earns it (#1468); the name is for the tooltip.
+        if (typeof setDeepReasoningCapability === "function")
+          setDeepReasoningCapability(!!h.deepReasoningSupported, h.aiProvider ?? "");
         // Deep pass runs on the SYNTHESIS provider — aiEnabled is the vision gate and would offer a
         // Run button that can only 501 in a vision-only config (#204).
         setDeepPassSynthesisEnabled(!!h.synthesisEnabled); // js/dashboard-deep-pass.js

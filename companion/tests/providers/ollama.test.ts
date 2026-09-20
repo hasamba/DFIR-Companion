@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { fetchMock, jsonResponse } from "../helpers/fetchMock.js";
 import { OllamaCloudProvider } from "../../src/providers/ollama.js";
+import type { AIProvider } from "../../src/providers/provider.js";
 import { buildProviderFrom } from "../../src/server.js";
 
 describe("OllamaCloudProvider", () => {
@@ -58,5 +59,13 @@ describe("buildProviderFrom — ollama base-URL wiring", () => {
       baseUrl: "http://localhost:11434/v1",
     });
     expect(p?.name).toBe("ollama");
+  });
+});
+
+describe("OllamaCloudProvider — supportsThinking (#1468)", () => {
+  it("inherits no thinking claim from OpenAIProvider", () => {
+    // Read through the interface: the class does not declare the field, and that is the point.
+    const p: AIProvider = new OllamaCloudProvider({ apiKey: "k", model: "llama3.1" });
+    expect(p.supportsThinking).toBeFalsy();
   });
 });

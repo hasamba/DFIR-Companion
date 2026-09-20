@@ -351,6 +351,9 @@ export interface AppOptions {
   // configured). onSecondOpinion pings dashboard clients to re-fetch after a run or accept/reject.
   secondOpinionStore?: SecondOpinionStore;
   secondOpinionEnabled?: boolean;
+  // Whether model B acts on `thinkingTokens` (#1468). /health folds it into `deepReasoningSupported`
+  // so the 🧠 box stays live when only the second-opinion provider can reason.
+  secondOpinionThinking?: boolean;
   onSecondOpinion?: (caseId: string) => void;
   // Last-import record (when it ran + forensic-timeline diff) for the dashboard's "last import N
   // ago - +N new events" indicator and what-was-added view above the timeline. The unified /import

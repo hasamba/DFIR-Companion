@@ -8,6 +8,7 @@ import {
 } from "./provider.js";
 import { type ClaudeRunner, defaultClaudeRunner } from "./claudeRunner.js";
 import { extractJsonText } from "../analysis/extractJson.js";
+import { effortForBudget } from "./claudeEffort.js";
 
 export interface ClaudeCodeOptions {
   model: string; // maps to --model (alias like "haiku" or a full id); "" → omit the flag
@@ -106,11 +107,15 @@ function pickResolvedModel(modelUsage: ClaudeResultEvent["modelUsage"]): string 
 // Isolation flags: replace the default system prompt, load NO settings/hooks/CLAUDE.md, no MCP,
 // and NO tools. The empty tool allowlist also strips tool schemas that otherwise cost ~15k input
 // tokens per call, and guarantees a single-turn call can't hang on a tool-permission prompt.
+// A side effect of `--setting-sources ""`: the user's own `effort` setting never loads either, so
+// deep reasoning (#1468) must arrive as an explicit `--effort` flag — see claudeEffort.ts.
 const ISOLATION_ARGS = ["--strict-mcp-config", "--setting-sources", "", "--allowed-tools", ""];
 
 export class ClaudeCodeProvider implements AIProvider {
   readonly name = "claude-code";
   readonly model: string;
+  // The thinking budget maps to the CLI's `--effort` tier (#1468) — see claudeEffort.ts.
+  readonly supportsThinking = true;
   private readonly bin: string;
   private readonly timeoutMs: number;
   private readonly runner: ClaudeRunner;
@@ -129,6 +134,9 @@ export class ClaudeCodeProvider implements AIProvider {
     }
     const stdin = JSON.stringify({ type: "user", message: { role: "user", content } }) + "\n";
 
+    // The 🧠 deep-reasoning budget becomes a coarse `--effort` tier; absent/too-small → no flag,
+    // which leaves the CLI at its own default rather than forcing it down.
+    const effort = effortForBudget(req.thinkingTokens);
     const args = [
       "-p",
       "--input-format",
@@ -137,6 +145,7 @@ export class ClaudeCodeProvider implements AIProvider {
       "stream-json",
       "--verbose",
       ...(this.model ? ["--model", this.model] : []),
+      ...(effort ? ["--effort", effort] : []),
       "--system-prompt",
       req.systemPrompt,
       ...ISOLATION_ARGS,

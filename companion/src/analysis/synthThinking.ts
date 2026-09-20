@@ -20,14 +20,34 @@ export interface SynthThinkingInput {
   deepReasoning?: boolean; // per-run toggle (Synthesize button / 2nd opinion); off by default
 }
 
+// Where the budget came from (#1468). Recorded on every synthesis run so "did deep reasoning help
+// this case?" can be answered from the run records afterwards:
+//   - "toggle": a per-run choice — the 🧠 checkbox, or an explicit per-run budget;
+//   - "env":    the global DFIR_AI_SYNTH_THINKING_TOKENS default, with no per-run input;
+//   - "off":    thinking was off for this run, whatever asked for it.
+export type SynthThinkingSource = "toggle" | "env" | "off";
+
+export interface SynthThinking {
+  tokens: number;
+  source: SynthThinkingSource;
+}
+
 // envBudget is the resolved DFIR_AI_SYNTH_THINKING_TOKENS value (any number; <min counts as 0).
-export function resolveSynthThinkingBudget(opts: SynthThinkingInput, envBudget: number): number {
+export function resolveSynthThinking(opts: SynthThinkingInput, envBudget: number): SynthThinking {
   const env =
     Number.isFinite(envBudget) && envBudget >= MIN_SYNTH_THINKING_TOKENS ? Math.floor(envBudget) : 0;
   if (opts.thinkingTokens !== undefined) {
     const n = Math.floor(opts.thinkingTokens);
-    return n >= MIN_SYNTH_THINKING_TOKENS ? n : 0; // explicit per-run value (0/low = off)
+    // explicit per-run value (0/low = off); a per-run value is a per-run choice, so "toggle"
+    return n >= MIN_SYNTH_THINKING_TOKENS ? { tokens: n, source: "toggle" } : { tokens: 0, source: "off" };
   }
-  if (opts.deepReasoning) return env || DEFAULT_SYNTH_THINKING_TOKENS; // toggle: env budget, else default
-  return env; // global env default (every synthesis), 0 when unset/too-low
+  // toggle: env budget, else default
+  if (opts.deepReasoning) return { tokens: env || DEFAULT_SYNTH_THINKING_TOKENS, source: "toggle" };
+  // global env default (every synthesis), off when unset/too-low
+  return env > 0 ? { tokens: env, source: "env" } : { tokens: 0, source: "off" };
+}
+
+// Token count only — kept for callers that do not record the source.
+export function resolveSynthThinkingBudget(opts: SynthThinkingInput, envBudget: number): number {
+  return resolveSynthThinking(opts, envBudget).tokens;
 }

@@ -279,6 +279,7 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     correlationProfileStore,
     secondOpinionStore,
     secondOpinionEnabled: Boolean(secondOpinionProvider),
+    secondOpinionThinking: Boolean(secondOpinionProvider?.supportsThinking),
     onSecondOpinion: (caseId) => hub.broadcastTo(caseId, { type: "second_opinion_changed" }),
     importMetaStore,
     onImportMeta: (caseId) => hub.broadcastTo(caseId, { type: "import_meta_changed" }),

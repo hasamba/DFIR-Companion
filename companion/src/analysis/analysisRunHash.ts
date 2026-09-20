@@ -13,8 +13,15 @@ function sanitizedString(value: string): string {
     .replace(OPENAI_STYLE_KEY, "[REDACTED]");
 }
 
-/** Remove credentials defensively even if a caller accidentally includes a provider config object. */
+/**
+ * Remove credentials defensively even if a caller accidentally includes a provider config object.
+ *
+ * A credential is a string. A number or a boolean under a credential-shaped key is a count or a
+ * flag (`thinkingTokens`, `maxTokens`, `tokensUsed`), so it is kept as is (#1468): without this,
+ * every synthesis run's thinking budget landed on disk as "[REDACTED]".
+ */
 export function sanitizeManifestValue(value: ManifestValue, key = ""): ManifestValue {
+  if (typeof value === "number" || typeof value === "boolean") return value;
   if (SENSITIVE_KEY.test(key)) return "[REDACTED]";
   if (typeof value === "string") return sanitizedString(value);
   if (Array.isArray(value)) return value.map((item) => sanitizeManifestValue(item));

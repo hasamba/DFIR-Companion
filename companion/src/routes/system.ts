@@ -87,6 +87,17 @@ async function walkCaseFiles(
  * - Keep domain-local helpers (e.g. walkCaseFiles, currentUpdateMode, the preflight cache) private
  *   to this file — module scope for stateless helpers, closure scope for per-app state.
  */
+// The 🧠 deep-reasoning box (#1468) only does something on a provider that ACTS on thinkingTokens.
+// Deep reasoning runs on the TEXT provider (synthesis, else vision) and on model B for a second
+// opinion, so either one supporting it keeps the box live. The pipeline names its text provider
+// and resolves it back to the instance; pipeline.ts is at the size ledger, so the lookup sits here.
+function deepReasoningSupported(options: RouteContext["options"]): boolean {
+  if (options.secondOpinionThinking) return true;
+  const text = options.pipeline?.analysisTextProviderModel();
+  const provider = text ? options.pipeline?.analysisProvider(text.provider, text.model) : undefined;
+  return provider?.supportsThinking === true;
+}
+
 export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
   const { store, options, serverLogger, hasAiProvider } = ctx;
 
@@ -103,6 +114,9 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
       ok: true,
       service: "dfir-companion",
       aiEnabled: hasAiProvider(),
+      // The TEXT provider's name — the one deep reasoning would run on — so the dashboard can say
+      // WHICH provider does not support the 🧠 box (#1468). null when no AI is configured.
+      aiProvider: options.pipeline?.analysisTextProviderModel()?.provider ?? null,
       synthesisEnabled: !!options.pipeline?.hasSynthesisProvider(),
       enrichEnabled: (options.enrichmentProviders?.length ?? 0) > 0,
       customerExposureEnabled: (options.customerExposureProviders?.length ?? 0) > 0,
@@ -120,6 +134,7 @@ export function registerSystemRoutes(app: Express, ctx: RouteContext): void {
       logLevel: serverLogger.getLevel(),
       kevEnabled: !!options.kevStore,
       secondOpinionEnabled: !!options.secondOpinionEnabled,
+      deepReasoningSupported: deepReasoningSupported(options),
       dropEnabled: dropWatchEnabled && !!options.dropStatusStore,
       toolsEnabled: !!options.toolRunner,
       customImporters: importerRegistry.importers.size,

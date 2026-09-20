@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  resolveSynthThinking,
   resolveSynthThinkingBudget,
   DEFAULT_SYNTH_THINKING_TOKENS,
   MIN_SYNTH_THINKING_TOKENS,
@@ -37,5 +38,55 @@ describe("resolveSynthThinkingBudget (#121 per-run deep-reasoning toggle)", () =
 
   it("floors fractional budgets", () => {
     expect(resolveSynthThinkingBudget({ thinkingTokens: 2048.9 }, 0)).toBe(2048);
+  });
+});
+
+describe("resolveSynthThinking (#1468 records where the budget came from)", () => {
+  it("names the env as the source when only the global default is set", () => {
+    expect(resolveSynthThinking({}, 8000)).toEqual({ tokens: 8000, source: "env" });
+  });
+
+  it("is off when nothing sets a budget", () => {
+    expect(resolveSynthThinking({}, 0)).toEqual({ tokens: 0, source: "off" });
+    expect(resolveSynthThinking({ deepReasoning: false }, 500)).toEqual({ tokens: 0, source: "off" });
+  });
+
+  it("names the toggle when the per-run deep-reasoning checkbox is on, with or without an env budget", () => {
+    expect(resolveSynthThinking({ deepReasoning: true }, 12000)).toEqual({ tokens: 12000, source: "toggle" });
+    expect(resolveSynthThinking({ deepReasoning: true }, 0)).toEqual({
+      tokens: DEFAULT_SYNTH_THINKING_TOKENS,
+      source: "toggle",
+    });
+  });
+
+  it("an explicit per-run budget is a per-run choice, so its source is the toggle", () => {
+    expect(resolveSynthThinking({ thinkingTokens: 5000 }, 0)).toEqual({ tokens: 5000, source: "toggle" });
+    expect(resolveSynthThinking({ thinkingTokens: 5000, deepReasoning: true }, 8000)).toEqual({
+      tokens: 5000,
+      source: "toggle",
+    });
+  });
+
+  it("an explicit 0 forces off for this run, and records off even though the env is set", () => {
+    expect(resolveSynthThinking({ thinkingTokens: 0 }, 8000)).toEqual({ tokens: 0, source: "off" });
+    expect(resolveSynthThinking({ thinkingTokens: 500, deepReasoning: true }, 8000)).toEqual({
+      tokens: 0,
+      source: "off",
+    });
+  });
+
+  it("agrees with resolveSynthThinkingBudget on the token count", () => {
+    const cases: Array<[Parameters<typeof resolveSynthThinking>[0], number]> = [
+      [{}, 8000],
+      [{}, 0],
+      [{ deepReasoning: true }, 0],
+      [{ deepReasoning: true }, 12000],
+      [{ thinkingTokens: 5000 }, 0],
+      [{ thinkingTokens: 0 }, 8000],
+      [{ thinkingTokens: 2048.9 }, 0],
+    ];
+    for (const [opts, env] of cases) {
+      expect(resolveSynthThinking(opts, env).tokens).toBe(resolveSynthThinkingBudget(opts, env));
+    }
   });
 });

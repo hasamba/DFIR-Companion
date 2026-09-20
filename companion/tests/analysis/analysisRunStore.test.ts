@@ -123,6 +123,9 @@ describe("AnalysisRunStore", () => {
           authorization: "Bearer should-never-land",
           endpoint: credentialedEndpoint,
           maxIocs: 100,
+          // #1468: a count or a flag is never a credential, whatever its key says.
+          thinkingTokens: 8000,
+          tokenBudgetEnforced: true,
         },
       },
       output: { entityIds: ["i1"], hashes: [], claims: [] },
@@ -136,7 +139,12 @@ describe("AnalysisRunStore", () => {
       authorization: "[REDACTED]",
       endpoint: "https://[REDACTED]@example.invalid/api",
       maxIocs: 100,
+      thinkingTokens: 8000,
+      tokenBudgetEnforced: true,
     });
+    const onDisk = JSON.parse(persisted) as { configuration: { parameters: Record<string, unknown> } };
+    expect(onDisk.configuration.parameters.thinkingTokens).toBe(8000);
+    expect(onDisk.configuration.parameters.tokenBudgetEnforced).toBe(true);
   });
 
   it("detects a modified historical manifest", async () => {

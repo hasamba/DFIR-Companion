@@ -121,6 +121,9 @@ interface SynthesisRecord {
   prompt: string;
   maxEvents: number;
   thinkingTokens: number;
+  // #1468: where the thinking budget came from. Spelled out here rather than imported from
+  // synthThinking.ts (analysis/ai) — the recorder sits in analysis/case and may not import upward.
+  thinkingSource: "toggle" | "env" | "off";
   correlationWindowSeconds: number;
   anonymizationPolicy: AnonPolicy;
   scope: ScopeWindow;
@@ -159,6 +162,7 @@ export async function recordSynthesisRun(
       parameters: {
         maxEvents: input.maxEvents,
         thinkingTokens: input.thinkingTokens,
+        thinkingSource: input.thinkingSource,
         correlationWindowSeconds: input.correlationWindowSeconds,
       },
       anonymizationPolicy: {

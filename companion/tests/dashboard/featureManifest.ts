@@ -664,9 +664,12 @@ export const FEATURES: Feature[] = [
   {
     // Search bar, time range and scope. 220 lines, nineteen statements, no declarations and nothing
     // published but the initializer — three of the nineteen were self-calling IIFEs.
+    // setDeepReasoningCapability (#1468) crosses as a setter the /health poller writes, the same
+    // shape as the second-opinion capability flags: this module owns the Synthesize click that
+    // reads the 🧠 box, so it owns greying the box out.
     file: "dashboard-search-scope.js",
     initializer: "initSearchAndScope",
-    publish: ["initSearchAndScope"],
+    publish: ["initSearchAndScope", "setDeepReasoningCapability"],
     private: [],
   },
   {

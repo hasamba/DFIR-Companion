@@ -35,6 +35,8 @@ export interface AnthropicOptions {
 export class AnthropicProvider implements AIProvider {
   readonly name = "anthropic";
   readonly model: string;
+  // thinkingTokens → `thinking.budget_tokens` below (#1468).
+  readonly supportsThinking = true;
   private readonly fetchFn: FetchFn;
   private readonly baseUrl: string;
 

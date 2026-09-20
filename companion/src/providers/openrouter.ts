@@ -6,6 +6,9 @@ const MIN_THINKING_TOKENS = 1024;
 
 export class OpenRouterProvider extends OpenAIProvider {
   override readonly name = "openrouter";
+  // thinkingTokens → the unified `reasoning` field in reasoningBody() (#1468). The base
+  // OpenAIProvider leaves this unset on purpose: its reasoningBody() is a no-op.
+  readonly supportsThinking = true;
   constructor(opts: OpenAIOptions) {
     super({ ...opts, baseUrl: opts.baseUrl ?? "https://openrouter.ai/api/v1" });
   }
