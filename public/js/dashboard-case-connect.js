@@ -379,6 +379,10 @@
       // Alongside the two gate chips, and for the same reason they are here: the pill has to be
       // told what this case is doing, because a freshly-loaded page has no event history at all.
       ["aiState", () => refreshAiState(caseId)],
+      // #225 background-jobs badge/popover. FIRST among the case reads (#1453): the IOC-provenance
+      // loaders further down park themselves while this cache reports a running import (#1447),
+      // and a cache that is still empty when they are considered parks nothing.
+      ["jobs", () => loadJobs(caseId)],
       ["confidenceControl", () => loadConfidenceControl(caseId)],
       ["corrProfile", () => loadCorrProfile(caseId)],
       ["reportMeta", () => loadReportMeta(caseId)],
@@ -425,7 +429,6 @@
       ["secondOpinion", () => loadSecondOpinion(caseId)],
       ["importMeta", () => loadImportMeta(caseId)],
       ["dropStatus", () => loadDropStatus(caseId)],
-      ["jobs", () => loadJobs(caseId)], // #225 background-jobs badge/popover
       ["mcpRun", () => loadMcpRun()], // #296 MCP Analysis — servers + this case's evidence paths
       ["undoStack", () => loadUndoStack(caseId)],
       ["customerExposure", () => loadCustomerExposure(caseId)],
@@ -563,7 +566,7 @@
       } else if (msg.type === "second_opinion_changed")
         loadSecondOpinion(caseId);
       else if (msg.type === "ai_status") applyAiStatus(msg);
-      else if (msg.type === "job_changed") scheduleJobUiRefresh(caseId);
+      else if (msg.type === "job_changed") scheduleJobUiRefresh(caseId, msg.jobs);
       else if (msg.type === "capture_ingest") {
         // A capture arrived somewhere. If it's for OUR case, all good (clear any warning);
         // otherwise the extension is feeding a different case than we're viewing — warn.

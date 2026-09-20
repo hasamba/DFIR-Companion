@@ -82,13 +82,32 @@
     _jobsLoadPromise = request;
     return request;
   }
-  function scheduleJobUiRefresh(caseId) {
+  // WHICH CASE THE SOCKET HAS FED (#1453). Once a push has carried a job list for the case on
+  // screen, the refresh stops re-reading it over HTTP: the push IS the answer, and the HTTP read is
+  // the thing that never arrived while an import was running — every lane held by a panel read
+  // waiting on the case worker, "importing" in the header pill, no jobs chip anywhere. A bare push
+  // from an older server (no `jobs` field) leaves this empty and keeps the HTTP read.
+  let _jobsPushCaseId = "";
+  // A `job_changed` push. `jobs` is the case's job list when the server sends one (#1453): it is
+  // applied and drawn synchronously — the chip must not wait on an HTTP lane — and the provenance
+  // hand-off (#1447) runs at once so a finished import releases the parked reloads without a
+  // round trip. The timed refresh still follows for the cockpit (and, without a list, the read).
+  function scheduleJobUiRefresh(caseId, jobs) {
     const cid = caseId || jobsCaseId();
     if (!cid) return;
+    if (Array.isArray(jobs)) applyJobsPush(cid, jobs);
     _jobUiRefreshCaseId = cid;
     _jobUiRefreshQueued = true;
     if (_jobUiRefreshTimer || _jobUiRefreshRunning) return;
     _jobUiRefreshTimer = setTimeout(runJobUiRefresh, JOB_UI_REFRESH_MS);
+  }
+  function applyJobsPush(cid, jobs) {
+    if (cid !== jobsCaseId()) return; // a push for the case the analyst just left
+    _jobsCache = jobs;
+    _jobsCacheCaseId = cid;
+    _jobsPushCaseId = cid;
+    renderJobs();
+    if (typeof flushDeferredIocProvenanceReloads === "function") flushDeferredIocProvenanceReloads();
   }
   async function runJobUiRefresh() {
     _jobUiRefreshTimer = null;
@@ -100,7 +119,8 @@
     _jobUiRefreshQueued = false;
     _jobUiRefreshRunning = true;
     try {
-      await Promise.all([loadJobs(), loadCockpit(cid)]);
+      const jobsRead = _jobsPushCaseId === cid ? Promise.resolve() : loadJobs();
+      await Promise.all([jobsRead, loadCockpit(cid)]);
       // #1447: the IOC-provenance panels park their reloads while an import runs; now that the
       // cache knows the current job set, let them fire if the import is gone.
       if (typeof flushDeferredIocProvenanceReloads === "function") flushDeferredIocProvenanceReloads();
