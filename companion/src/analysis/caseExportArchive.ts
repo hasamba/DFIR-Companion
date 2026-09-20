@@ -25,6 +25,7 @@ import {
   verifyArchiveManifest,
   type CaseArchiveProvenance,
 } from "./caseArchiveManifest.js";
+import { EXPORT_STAGING_DIRNAME } from "./caseArchive.js";
 import { getAppVersion } from "../version.js";
 import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { INVESTIGATION_DB_FILENAME } from "./stateStore.js";
@@ -41,11 +42,6 @@ export const MIN_PASSWORD_LENGTH = 8;
 // cases, so nothing that enumerates the cases root can mistake a half-extracted archive for a case.
 const IMPORT_STAGING_DIRNAME = ".import-staging";
 const IMPORT_STAGING_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-
-// Where an export stages the database snapshot it archives instead of the live file. Dotted and a
-// level above the cases for the same reason import staging is: nothing that enumerates the cases
-// root, and nothing that walks a case, may mistake it for case content.
-const EXPORT_STAGING_DIRNAME = ".export-staging";
 
 export class CaseImportConflictError extends Error {
   constructor(public readonly caseId: string) {
@@ -146,7 +142,7 @@ async function walkDir(dir: string, baseRel = ""): Promise<string[]> {
     // name fixes it at the source: the archive never wanted them, and they would make the manifest
     // differ run to run. What counts as transient (and what deliberately does not) is
     // caseTransientPaths.ts — a path that vanishes without matching there still fails loudly.
-    if (isTransientCasePath(entry.name)) continue;
+    if (isTransientCasePath(rel)) continue;
     // A one-shot export should FAIL LOUDLY on a symlink/hardlink, not silently drop it: this is a
     // security-sensitive export the analyst explicitly requested, and a planted link pointing
     // outside the case directory (e.g. screenshots/loot -> /etc/shadow) is itself a signal worth

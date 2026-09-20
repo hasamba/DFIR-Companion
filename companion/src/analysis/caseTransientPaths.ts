@@ -31,23 +31,38 @@ const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 // appears without being added here.
 export const SQLITE_TEMP_VERBS = ["migrating", "snapshot", "restoring"];
 
-// A SQLite rollback journal, beside either the real database or one of the temps above.
+// The one database name the worker writes. stateStore.ts owns INVESTIGATION_DB_FILENAME; this is a
+// copy for the same reason the verbs are (the drift test compares the two).
+export const INVESTIGATION_DB_BASENAME = "investigation.sqlite";
+const DB_NAME = INVESTIGATION_DB_BASENAME.replace(".", "\\.");
+const SEP = "[\\\\/]";
+// The two places the worker writes that database, as CASE-RELATIVE paths: the live file under
+// state/, and BackupManager's binary sidecar `<manifest>.investigation.sqlite` under state/backups/.
+// Callers pass the path from the case root, never a bare name, so a file an analyst collected —
+// `imports/investigation.sqlite-wal` is a perfectly ordinary artifact — can never match.
+const DB_LOCATIONS = `(?:^state${SEP}${DB_NAME}|^state${SEP}backups${SEP}[^\\\\/]+\\.${DB_NAME})`;
+const DB_TEMP = `\\.(?:${SQLITE_TEMP_VERBS.join("|")})-${UUID}`;
+
+// SQLite's sidecars beside the real database or one of the temps above: the rollback journal, and
+// since #1454 (journal_mode=WAL) the write-ahead log and its shared-memory index.
 //
-// Safe to skip ONLY because openDatabase sets `PRAGMA journal_mode=DELETE`: the journal holds the
-// pages needed to UNDO an open write and is deleted on commit, so committed data is always in the
-// .sqlite file itself. It also has no business in an archive — restoring a database next to a stale
-// journal invites SQLite to roll the copy back. DELETE mode is why there is no -wal/-shm here; if
-// that pragma ever becomes WAL, committed data WOULD live beside the database and this exclusion
-// must be reconsidered rather than widened.
+// The journal holds the pages needed to UNDO an open write and is deleted on commit, so it is never
+// where committed data lives. The WAL is the opposite — committed pages sit in it until a checkpoint
+// folds them into the .sqlite file — which is why NEITHER archive writer copies the live database:
+// both substitute a `VACUUM INTO` snapshot (caseExportArchive.ts, caseArchive.ts), a consistent
+// single file that needs no sidecar. The sidecars themselves would only ever be stale or
+// mid-write in an archive, and restoring a database next to one invites SQLite to replay it.
 const SQLITE_TRANSIENT = new RegExp(
-  `\\.sqlite(?:\\.(?:${SQLITE_TEMP_VERBS.join("|")})-${UUID})?-journal$` +
-    `|\\.sqlite\\.(?:${SQLITE_TEMP_VERBS.join("|")})-${UUID}$`,
+  `${DB_LOCATIONS}(?:${DB_TEMP})?(?:-journal|-wal|-shm)$|${DB_LOCATIONS}${DB_TEMP}$`,
   "i",
 );
 
 /**
  * True when `path` names a write in flight inside a case directory — an atomicWrite temp, a SQLite
- * worker temp database, or a rollback journal — rather than part of the case itself.
+ * worker temp database, or a SQLite sidecar of the case database — rather than part of the case.
+ *
+ * `path` is the CASE-RELATIVE path (`state/investigation.sqlite-wal`), not a bare entry name: the
+ * SQLite rules are anchored on where the worker writes, so the same name elsewhere is evidence.
  */
 export function isTransientCasePath(path: string): boolean {
   return isAtomicWriteTempPath(path) || SQLITE_TRANSIENT.test(path);

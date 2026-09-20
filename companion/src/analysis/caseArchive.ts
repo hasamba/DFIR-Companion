@@ -1,9 +1,17 @@
-import { readdir, readFile, writeFile, rename, unlink } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { deflateRawSync } from "node:zlib";
 import { portableZipEntryPath, portableArchivePaths } from "../storage/portableFilename.js";
+import { caseSqliteWorker } from "./caseSqliteWorker.js";
 import { isTransientCasePath } from "./caseTransientPaths.js";
+import { INVESTIGATION_DB_FILENAME } from "./stateStore.js";
+
+// Where an archive stages the database snapshot it packages instead of the live file. Dotted and a
+// level above the cases for the same reason import staging is: nothing that enumerates the cases
+// root, and nothing that walks a case, may mistake it for case content. Shared with the encrypted
+// export, which stages its snapshot the same way.
+export const EXPORT_STAGING_DIRNAME = ".export-staging";
 
 // ── CRC-32 via lookup table ────────────────────────────────────────────────
 const CRC_TABLE = (() => {
@@ -180,8 +188,8 @@ async function defaultScanFiles(dir: string): Promise<string[]> {
       // with a raw ENOENT 500 (#1442). Same rule, same reason and same list as the encrypted
       // export: what counts as transient (and what deliberately does not) is caseTransientPaths.ts.
       // A path that vanishes without matching there still fails loudly.
-      if (isTransientCasePath(e.name)) continue;
       const childRel = rel ? `${rel}/${e.name}` : e.name;
+      if (isTransientCasePath(childRel)) continue;
       if (e.isDirectory()) {
         await walk(join(abs, e.name), childRel);
       } else {
@@ -250,6 +258,61 @@ export async function archiveCase(
 
   const relPaths = await scan(caseDir);
 
+  // #1454: the live database runs in WAL mode, so its committed rows can sit in the -wal sidecar
+  // (not case content, and never archived) while any reader has the file open. A raw copy of the
+  // .sqlite file alone would be missing them. The archive carries a VACUUM INTO snapshot instead —
+  // one consistent standalone file — exactly as the encrypted export does.
+  const dbRel = `state/${INVESTIGATION_DB_FILENAME}`;
+  const snapshot = relPaths.includes(dbRel) ? await snapshotDatabase(casesRoot, caseId, caseDir) : null;
+  try {
+    return await packageArchive(caseId, caseDir, archivePath, relPaths, read, write, snapshot, dbRel);
+  } finally {
+    if (snapshot) await rm(snapshot.staging, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+interface DatabaseSnapshot {
+  staging: string;
+  path: string;
+}
+
+// The snapshot, or null when the case has no database file (a case never written to, or a test
+// harness whose fake scanner lists a path that is not on disk).
+async function snapshotDatabase(
+  casesRoot: string,
+  caseId: string,
+  caseDir: string,
+): Promise<DatabaseSnapshot | null> {
+  const liveDbPath = join(caseDir, "state", INVESTIGATION_DB_FILENAME);
+  if (!(await stat(liveDbPath).catch(() => null))) return null;
+  const stagingRoot = join(casesRoot, EXPORT_STAGING_DIRNAME);
+  await mkdir(stagingRoot, { recursive: true });
+  const staging = await mkdtemp(join(stagingRoot, `${caseId}-`));
+  const path = join(staging, INVESTIGATION_DB_FILENAME);
+  try {
+    const snapshotted = await caseSqliteWorker.request<boolean>({
+      op: "backupDatabase",
+      dbPath: liveDbPath,
+      targetPath: path,
+    });
+    if (!snapshotted) throw new Error(`case database vanished while archiving: ${liveDbPath}`);
+    return { staging, path };
+  } catch (err) {
+    await rm(staging, { recursive: true, force: true }).catch(() => undefined);
+    throw err;
+  }
+}
+
+async function packageArchive(
+  caseId: string,
+  caseDir: string,
+  archivePath: string,
+  relPaths: string[],
+  read: (path: string) => Promise<Buffer>,
+  write: (path: string, data: Buffer) => Promise<void>,
+  snapshot: DatabaseSnapshot | null,
+  dbRel: string,
+): Promise<ArchiveResult> {
   const zipFiles: Array<{ name: string; data: Buffer }> = [];
   const manifestFiles: Array<{
     path: string;
@@ -276,7 +339,8 @@ export async function archiveCase(
 
   for (const rel of relPaths) {
     // The READ keeps the real on-disk name. Only the name written into the archive is rewritten.
-    const data = await read(join(caseDir, rel));
+    // The database is read from its snapshot, which this process just wrote into its own staging.
+    const data = snapshot && rel === dbRel ? await readFile(snapshot.path) : await read(join(caseDir, rel));
     const sha256 = createHash("sha256").update(data).digest("hex");
     const archivedRel = archivePathByRel.get(rel) ?? rel;
     zipFiles.push({ name: `${entryPrefix}/${archivedRel}`, data });

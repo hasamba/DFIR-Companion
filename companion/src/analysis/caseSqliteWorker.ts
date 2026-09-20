@@ -1,35 +1,75 @@
-import { Worker } from "node:worker_threads";
-import { loadDatabaseSync } from "./sqliteRuntime.js";
+import { CaseSqliteWorkerPool } from "./caseSqliteWorkerPool.js";
 import { CASE_SQLITE_SCHEMA_SQL } from "./caseSqliteSchema.js";
 import { SUPER_WORKER_SOURCE } from "./caseSqliteWorkerSuper.js";
 import { SUPER_QUERY_WORKER_SOURCE } from "./caseSqliteWorkerSuperQuery.js";
 import { TERMS_WORKER_SOURCE } from "./caseSqliteWorkerTerms.js";
 
-// node:sqlite is synchronous. Keeping the entire database lifecycle in this worker prevents a
+// node:sqlite is synchronous. Keeping the entire database lifecycle in worker threads prevents a
 // checkpoint, migration, large import, or integrity check from pinning Express/WebSocket work on
-// the main event loop. The worker opens a database only for one transaction/query and closes it
-// before replying, which also leaves a checkpointed single-file database for backups and exports.
+// the main event loop. A worker opens a database only for one transaction/query and closes it
+// before replying.
+//
+// #1454: the same source runs as ONE writer and a small pool of read-only readers (see
+// caseSqliteWorkerPool.ts, which owns the routing). The database runs in WAL mode so a reader
+// never waits for the writer's transaction and the writer never waits for a reader. A reader opens
+// read-only, runs no schema DDL, and wraps its statements in one deferred transaction so a
+// multi-statement read describes one database version; `close()` rolls that transaction back.
+// It refuses a database the writer has not initialised (still in rollback-journal mode or on an
+// older schema) with DFIR_SQLITE_NEEDS_INIT, and the pool then runs `ensureDatabase` on the writer
+// and retries — that is how a restored, imported, or pre-WAL case file is converted exactly once.
 const WORKER_SOURCE =
   String.raw`
-const { parentPort } = require("node:worker_threads");
+const { parentPort, workerData } = require("node:worker_threads");
 const { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync } = require("node:fs");
 const { dirname } = require("node:path");
 const { randomUUID } = require("node:crypto");
 
 const DatabaseSync = process.getBuiltinModule("node:sqlite").DatabaseSync;
+const READ_ONLY = !!(workerData && workerData.role === "read");
 const ARRAY_KINDS = [
   "findings", "iocs", "openThreads", "timeline", "forensicTimeline", "mitreTechniques",
   "keyQuestions", "nextSteps", "uncertainties", "iocExcludeRules"
 ];
 const SCHEMA_VERSION = 1;
+// After a checkpoint a WAL that grew behind a long read shrinks back to this size (bytes).
+const JOURNAL_SIZE_LIMIT = 64 * 1024 * 1024;
 
 function openDatabase(path) {
+  if (READ_ONLY) return openReadOnlyDatabase(path);
   mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path, { enableForeignKeyConstraints: true });
-  db.exec("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=10000;");
+  db.exec("PRAGMA busy_timeout=10000; PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; " +
+    "PRAGMA journal_size_limit=" + JOURNAL_SIZE_LIMIT + ";");
   db.exec(${JSON.stringify(CASE_SQLITE_SCHEMA_SQL)} + "PRAGMA user_version=" + SCHEMA_VERSION + ";");
   stampEventTermsOnNewDatabase(db); // #1452: a new file never backfills the term index
   return db;
+}
+
+function openReadOnlyDatabase(path) {
+  const db = new DatabaseSync(path, { readOnly: true });
+  try {
+    db.exec("PRAGMA busy_timeout=10000");
+    const mode = String(db.prepare("PRAGMA journal_mode").get().journal_mode);
+    const version = Number(db.prepare("PRAGMA user_version").get().user_version);
+    if (mode !== "wal" || version !== SCHEMA_VERSION) {
+      const error = new Error("case database is not initialised for concurrent reads (" + mode + ", v" + version + ")");
+      error.code = "DFIR_SQLITE_NEEDS_INIT";
+      throw error;
+    }
+    db.exec("BEGIN");
+    return db;
+  } catch (error) {
+    db.close();
+    throw error;
+  }
+}
+
+// Writer-only: open and close once so the schema, user_version, term stamp and WAL conversion are
+// applied before the read pool touches the file. False when there is no database to initialise.
+function ensureDatabase(dbPath) {
+  if (!existsSync(dbPath)) return false;
+  openDatabase(dbPath).close();
+  return true;
 }
 
 function withTransaction(db, fn) {
@@ -523,6 +563,23 @@ function backupDatabase(dbPath, targetPath) {
   }
 }
 
+// #1454. A "-wal" beside a database nobody has open holds committed pages of THAT file (a read-only
+// connection cannot checkpoint on close, and a crash skips it). Replaying it onto a different file
+// renamed into place would corrupt the restore, so the old file absorbs it: opening and closing the
+// old database checkpoints and deletes the sidecars. Only an old file that will not open leaves
+// them to be removed by hand — by then the old file is already beyond recovery.
+function foldLeftoverWal(targetPath) {
+  const sidecars = [targetPath + "-wal", targetPath + "-shm"];
+  if (!sidecars.some((path) => existsSync(path))) return;
+  try {
+    const old = new DatabaseSync(targetPath);
+    try { old.exec("PRAGMA wal_checkpoint(TRUNCATE)"); } finally { old.close(); }
+  } catch {}
+  for (const path of sidecars) {
+    try { rmSync(path, { force: true }); } catch {}
+  }
+}
+
 function restoreDatabase(sourcePath, targetPath) {
   if (!existsSync(sourcePath)) {
     const error = new Error("backup database does not exist");
@@ -541,8 +598,10 @@ function restoreDatabase(sourcePath, targetPath) {
     if (!copyCheck.ok) {
       throw new Error("restored database copy failed integrity_check: " + copyCheck.message);
     }
-    // The worker serializes all case-database operations. Renaming the checked copy over the
-    // destination makes the authoritative file switch atomic without loading it into V8 memory.
+    // The pool runs this op exclusively (no reader holds the file), so renaming the checked copy
+    // over the destination makes the authoritative file switch atomic without loading it into V8
+    // memory. Any WAL beside the destination belongs to the OLD file and is folded in first.
+    foldLeftoverWal(targetPath);
     renameSync(temporary, targetPath);
     return true;
   } catch (error) {
@@ -553,6 +612,7 @@ function restoreDatabase(sourcePath, targetPath) {
 
 async function dispatch(message) {
   switch (message.op) {
+    case "ensureDatabase": return ensureDatabase(message.dbPath);
     case "stateExists": return stateExists(message.dbPath);
     case "migrateState": return migrateState(message.dbPath, message.jsonPath);
     case "loadState": return loadState(message.dbPath, message.excludedKinds);
@@ -599,79 +659,4 @@ parentPort.on("message", async (message) => {
 });
 `;
 
-interface WorkerError {
-  name: string;
-  message: string;
-  code?: string;
-  stack?: string;
-}
-
-interface WorkerReply<T> {
-  requestId: number;
-  value?: T;
-  error?: WorkerError;
-}
-
-type PendingRequest = {
-  resolve: (value: unknown) => void;
-  reject: (error: Error) => void;
-};
-
-class CaseSqliteWorker {
-  private worker: Worker | null = null;
-  private nextId = 1;
-  private readonly pending = new Map<number, PendingRequest>();
-
-  request<T>(message: Record<string, unknown>): Promise<T> {
-    const worker = this.ensureWorker();
-    const id = this.nextId++;
-    worker.ref();
-    return new Promise<T>((resolve, reject) => {
-      this.pending.set(id, {
-        resolve: (value) => resolve(value as T),
-        reject,
-      });
-      worker.postMessage({ ...message, requestId: id });
-    });
-  }
-
-  private ensureWorker(): Worker {
-    if (this.worker) return this.worker;
-    // Validate through the shared runtime accessor before constructing the worker. This keeps the
-    // startup error actionable and preserves the bundler/SEA-safe node:sqlite loading seam.
-    loadDatabaseSync();
-    const worker = new Worker(WORKER_SOURCE, { eval: true });
-    worker.on("message", (reply: WorkerReply<unknown>) => this.onReply(reply));
-    worker.on("error", (error) => this.failAll(error));
-    worker.on("exit", (code) => {
-      if (code !== 0) this.failAll(new Error(`SQLite worker exited with code ${code}`));
-      this.worker = null;
-    });
-    worker.unref();
-    this.worker = worker;
-    return worker;
-  }
-
-  private onReply(reply: WorkerReply<unknown>): void {
-    const pending = this.pending.get(reply.requestId);
-    if (!pending) return;
-    this.pending.delete(reply.requestId);
-    if (reply.error) {
-      const error = new Error(reply.error.message);
-      error.name = reply.error.name;
-      if (reply.error.code) (error as NodeJS.ErrnoException).code = reply.error.code;
-      if (reply.error.stack) error.stack = reply.error.stack;
-      pending.reject(error);
-    } else {
-      pending.resolve(reply.value);
-    }
-    if (this.pending.size === 0) this.worker?.unref();
-  }
-
-  private failAll(error: Error): void {
-    for (const pending of this.pending.values()) pending.reject(error);
-    this.pending.clear();
-  }
-}
-
-export const caseSqliteWorker = new CaseSqliteWorker();
+export const caseSqliteWorker = new CaseSqliteWorkerPool(WORKER_SOURCE);
