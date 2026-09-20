@@ -602,7 +602,7 @@ function mapSigma(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEve
   );
 
   const flat = winRowToFlat(row);
-  const win = flat ? mapWindows(flat.rec, flat.host || host, sink) : null;
+  const win = flat ? mapWindows(flat.rec, host || flat.host, sink) : null;
   if (win) {
     if (sev) win.severity = worst(win.severity, sev);
     for (const m of tags) if (!win.mitre.includes(m)) win.mitre.push(m);
@@ -670,7 +670,7 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
   const label = detectionLabel(artifact);
 
   const flat = winRowToFlat(row);
-  const win = flat ? mapWindows(flat.rec, flat.host || host, sink) : null;
+  const win = flat ? mapWindows(flat.rec, host || flat.host, sink) : null;
   if (win) {
     win.severity = worst(win.severity, severity);
     for (const m of v.mitre) if (!win.mitre.includes(m)) win.mitre.push(m);
@@ -806,7 +806,7 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
 function mapEventlog(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEvent | null {
   const flat = winRowToFlat(row);
   if (!flat) return null;
-  const win = mapWindows(flat.rec, flat.host || host, sink);
+  const win = mapWindows(flat.rec, host || flat.host, sink);
   if (!win) return null;
   win.sources = ["Velociraptor"];
   if (!win.timestamp) win.timestamp = pickTime(row);
@@ -1568,7 +1568,7 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
   // `artifact_` index, so the gate re-opens and the whole collapse/un-flatten walk runs a second
   // time on every row of the import.
   const artifact = artifactName(row) || ctx.fallbackArtifact;
-  const rh = resolveRowHost(row); // collector identity over the record's Computer (#1417)
+  const rh = resolveRowHost(row, undefined, ctx.fallbackHost); // collector (row, else the flow's client) over the record's Computer (#1417, #1458)
   const host = rh.asset || ctx.fallbackHost; // a row's own host always wins; fallback only fills the gap
   if (host) ctx.hostTally.set(host, (ctx.hostTally.get(host) ?? 0) + 1);
   ctx.renames.note(rh, pickTime(row));
