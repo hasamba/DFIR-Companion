@@ -71,7 +71,7 @@ describe("geo map — client-reported IPs are labelled (#1326)", () => {
 // module is exercised for real; renderIocs is pinned only to the call, scoped to that function so
 // a matching string elsewhere in 5,000 lines cannot satisfy it.
 interface ProvApi {
-  iocClientReportedChip(ioc: { provenance?: string }): string;
+  iocClientReportedChip(ioc: { type?: string; provenance?: string }): string;
 }
 const prov = loadDashboardModule<ProvApi>("dashboard-ioc-provenance.js", ["dashboard-escape.js"]);
 
@@ -87,6 +87,35 @@ describe("IOC panel row — client-reported chip (#1326)", () => {
 
   it("never calls itself a 'provenance' badge — that word is the detection/telemetry lens", () => {
     expect(prov.iocClientReportedChip({ provenance: "client-reported" })).not.toMatch(/>provenance</i);
+  });
+
+  // #1471 finding 6: the same chip function (renderIocs must keep its one call) also carries the
+  // `mentioned` mark — the #1461 note for a network value, the #1459 note for a hash — so the
+  // analyst's primary IOC list stops showing a free-text hash as an ordinary verified one.
+  it("marks a mentioned network IOC with the #1461 note (#1471)", () => {
+    const html = prov.iocClientReportedChip({ type: "ip", provenance: "mentioned" });
+    expect(html).toMatch(/class="ioc-note-chip[^"]*"[^>]*>mentioned</);
+    expect(html).toContain("no network record");
+    expect(html).not.toContain("no file with this hash");
+    expect(prov.iocClientReportedChip({ type: "domain", provenance: "mentioned" })).toContain(
+      "no network record",
+    );
+    expect(prov.iocClientReportedChip({ type: "url", provenance: "mentioned" })).toContain(
+      "no network record",
+    );
+  });
+
+  it("marks a mentioned hash with the #1459 note, not the network one (#1471)", () => {
+    const html = prov.iocClientReportedChip({ type: "hash", provenance: "mentioned" });
+    expect(html).toMatch(/class="ioc-note-chip[^"]*"[^>]*>mentioned</);
+    expect(html).toContain("no file with this hash");
+    expect(html).not.toContain("no network record");
+  });
+
+  it("gates the mentioned chip on the exact literal and on a type that has wording", () => {
+    expect(prov.iocClientReportedChip({ type: "ip", provenance: "mentioned-ish" })).toBe("");
+    expect(prov.iocClientReportedChip({ type: "file", provenance: "mentioned" })).toBe("");
+    expect(prov.iocClientReportedChip({ type: "ip" })).toBe("");
   });
 
   it("is what the inline IOC row actually renders", () => {

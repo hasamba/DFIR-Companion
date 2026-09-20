@@ -50,6 +50,9 @@ describe("parsePlasoCsv — dynamic (psort default)", () => {
     expect(kinds).toContain("ip");
     expect(kinds).toContain("file");
     expect(r.iocs.find((i) => i.type === "ip")?.value).toBe("203.0.113.5");
+    // A shell-item row is not network telemetry: everything scraped from it is only mentioned.
+    for (const t of ["hash", "url", "ip"] as const)
+      expect(r.iocs.find((i) => i.type === t)?.provenance).toBe("mentioned");
   });
 
   it("does not mistake a version string for an IP", () => {
@@ -67,6 +70,94 @@ describe("parsePlasoCsv — dynamic (psort default)", () => {
     ]);
     const r = parsePlasoCsv(text);
     expect(r.iocs.filter((i) => i.type === "ip")).toHaveLength(0);
+  });
+});
+
+// #1471 — Plaso's `message` is its STRUCTURED rendering of the artifact, so a Chrome `page_visited`
+// URL or a firewall-log address is a network record, not a string read out of free text. Marking
+// it "mentioned" made every network surface print "no network record" next to a visited C2 URL.
+// The classifier is an allowlist (WEBHIST source, browser history/download parsers, winfirewall):
+// a broad regex would match `bash_history` and the registry NetworkList key.
+describe("parsePlasoCsv — network provenance (#1471)", () => {
+  const header = [
+    "datetime",
+    "timestamp_desc",
+    "source",
+    "source_long",
+    "message",
+    "parser",
+    "display_name",
+    "tag",
+  ];
+  const dyn = (source: string, sourceLong: string, message: string, parser: string): string =>
+    csv(header, [
+      ["2023-08-01T10:00:00+00:00", "Last Visited Time", source, sourceLong, message, parser, "OS:/x", "-"],
+    ]);
+  const hash = "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899";
+
+  it("reads a Chrome History URL as observed", () => {
+    const r = parsePlasoCsv(
+      dyn(
+        "WEBHIST",
+        "Chrome History",
+        "http://evil.test/c2 (C2) [count: 3] Visit from: ...",
+        "sqlite/chrome_27_history",
+      ),
+    );
+    const url = r.iocs.find((i) => i.type === "url");
+    expect(url?.value).toBe("http://evil.test/c2");
+    expect(url).not.toHaveProperty("provenance");
+  });
+
+  it("reads a Firefox downloads URL as observed by parser name when the source is not WEBHIST", () => {
+    const r = parsePlasoCsv(
+      dyn("LOG", "Firefox History", "http://evil.test/dl.exe (dl.exe)", "sqlite/firefox_downloads"),
+    );
+    expect(r.iocs.find((i) => i.type === "url")).not.toHaveProperty("provenance");
+  });
+
+  it("reads a Windows Firewall log address as observed", () => {
+    const r = parsePlasoCsv(
+      dyn("LOG", "Windows Firewall Log", "ALLOW TCP 10.0.0.5 203.0.113.9 49152 443", "winfirewall"),
+    );
+    const ip = r.iocs.find((i) => i.type === "ip" && i.value === "203.0.113.9");
+    expect(ip).toBeDefined();
+    expect(ip).not.toHaveProperty("provenance");
+  });
+
+  it("keeps a hash on a browser-history row as mentioned", () => {
+    const r = parsePlasoCsv(
+      dyn(
+        "WEBHIST",
+        "Chrome History",
+        `http://evil.test/${hash}.exe sha256 ${hash}`,
+        "sqlite/chrome_27_history",
+      ),
+    );
+    expect(r.iocs.find((i) => i.type === "url")).not.toHaveProperty("provenance");
+    expect(r.iocs.find((i) => i.type === "hash")?.provenance).toBe("mentioned");
+  });
+
+  it("marks a URL typed into bash_history as mentioned", () => {
+    const r = parsePlasoCsv(dyn("LOG", "Bash History", "curl http://evil.test/x", "bash_history"));
+    expect(r.iocs.find((i) => i.type === "url")?.provenance).toBe("mentioned");
+  });
+
+  it("marks an IP in the registry NetworkList key as mentioned", () => {
+    const r = parsePlasoCsv(
+      dyn(
+        "REG",
+        "Registry Key: NetworkList",
+        "DefaultGatewayMac: ... DhcpServer: 203.0.113.1",
+        "winreg/networks",
+      ),
+    );
+    expect(r.iocs.find((i) => i.type === "ip")?.provenance).toBe("mentioned");
+  });
+
+  it("marks a URL from an unknown source as mentioned", () => {
+    const r = parsePlasoCsv(dyn("UNKNOWN", "Some parser", "see http://evil.test/x", "custom_thing"));
+    expect(r.iocs.find((i) => i.type === "url")?.provenance).toBe("mentioned");
   });
 });
 
@@ -121,6 +212,34 @@ describe("parsePlasoCsv — l2tcsv (legacy)", () => {
     expect(e.asset).toBe("WS01");
     expect(e.timestamp).toBe("2023-08-01T10:00:00Z");
     expect(e.path).toBe("/Windows/Temp/evil.exe");
+  });
+
+  it("reads a WEBHIST row's URL as observed (#1471)", () => {
+    const text = csv(header, [
+      [
+        "08/01/2023",
+        "10:00:00",
+        "UTC",
+        ".A..",
+        "WEBHIST",
+        "Chrome History",
+        "Last Visited Time",
+        "bob",
+        "WS01",
+        "short",
+        "http://evil.test/c2 (C2) [count: 3]",
+        "2",
+        "OS:/Users/bob/AppData/Local/Google/Chrome/User Data/Default/History",
+        "12345",
+        "-",
+        "sqlite/chrome_27_history",
+        "-",
+      ],
+    ]);
+    const r = parsePlasoCsv(text);
+    const url = r.iocs.find((i) => i.type === "url");
+    expect(url?.value).toBe("http://evil.test/c2");
+    expect(url).not.toHaveProperty("provenance");
   });
 });
 

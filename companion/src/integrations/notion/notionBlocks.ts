@@ -22,6 +22,7 @@ import type {
 import type { ReportMeta } from "../../reports/reportMeta.js";
 import { executiveSummaryMarkdown } from "../iris/irisMap.js";
 import { attackTechniqueUrl } from "../../analysis/attack.js";
+import { iocProvenanceSuffix } from "../../analysis/iocProvenanceLabel.js";
 
 // A Notion block object. Kept loose (index signature) like the IRIS request bodies — the
 // builders below construct the exact shapes Notion expects; consumers read `type`/`table`.
@@ -240,8 +241,9 @@ function iocsBlocks(iocs: readonly IOC[]): NotionBlock[] {
   const rows = iocs.map((i) => [
     i.type,
     // Same suffix as the markdown IOC table (reports/markdown.ts) — a sender-controlled indicator
-    // must not read like a sensor-observed one on a surface the analyst consumes (#1266, #1326).
-    i.provenance === "client-reported" ? `${i.value} (client-reported)` : i.value,
+    // (#1266, #1326) or a value read out of free text (#1459, #1461) must not read like a
+    // sensor-observed one on a surface the analyst consumes. One helper carries all three (#1471).
+    `${i.value}${iocProvenanceSuffix(i)}`,
     i.firstSeen || "",
     worstVerdict(i.enrichments ?? []) ?? "",
     iocSourceLabel(i.enrichments ?? []),

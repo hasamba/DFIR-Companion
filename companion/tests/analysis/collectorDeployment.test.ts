@@ -14,10 +14,12 @@ import {
   isCollectorFootprint,
   isCollectorInstallBinary,
   isCollectorServerDestination,
+  isLocalOrUnspecifiedHost,
   isMsiexecCreationTimeChange,
   loadCollectorInfrastructure,
 } from "../../src/analysis/collectorDeployment.js";
 import { aggregateEvents } from "../../src/analysis/eventAggregate.js";
+import { parseHayabusaTimeline } from "../../src/analysis/hayabusaImport.js";
 import type { MappedEvent } from "../../src/analysis/siemImport.js";
 
 const SERVER = "10.20.30.40";
@@ -64,6 +66,51 @@ const timeChange = () =>
     path: INSTALL_EXE,
   });
 
+// A Velociraptor api_client.yaml naming this api_connection_string, in a temp dir.
+function apiConfig(connection: string): string {
+  const file = join(mkdtempSync(join(tmpdir(), "velo-api-")), "api_client.yaml");
+  writeFileSync(
+    file,
+    `ca_certificate: |\n  -----BEGIN-----\napi_connection_string: ${connection}\nname: api\n`,
+  );
+  return file;
+}
+
+// One Hayabusa csv-timeline row through the REAL importer (#1471), back in the MappedEvent shape the
+// rules read. Hayabusa renders its own key names joined by one space after an em dash and cuts each
+// value at 120 characters — a hand-written ` - Image=` description would test a shape it never
+// produces. The importer's aggregation seam already ran the overlay once with the env's configuration;
+// every rule is idempotent, so the explicit call a test makes on top sees the same row.
+interface HayabusaRow {
+  eid: string;
+  channel: string;
+  title: string;
+  details: string; // the Details cell, " ¦ "-separated `Key: value` pairs
+  level?: string;
+  mitre?: string;
+}
+function hayabusa(row: HayabusaRow): MappedEvent {
+  const esc = (v: string): string => `"${v.replace(/"/g, '""')}"`;
+  const header = "Timestamp,Computer,Channel,EventID,Level,RuleTitle,Details,MitreTags,RecordID";
+  const line = [
+    "2026-03-01 11:29:52.000 +00:00",
+    "WS01",
+    row.channel,
+    row.eid,
+    row.level ?? "high",
+    row.title,
+    row.details,
+    row.mitre ?? "",
+    "77",
+  ]
+    .map(esc)
+    .join(",");
+  const { events } = parseHayabusaTimeline(`${header}\n${line}`);
+  expect(events).toHaveLength(1);
+  const e = events[0];
+  return { ...e, mitre: e.mitreTechniques, aggKey: e.description };
+}
+
 afterEach(() => vi.unstubAllEnvs());
 
 describe("configuredCollectorServers — known infrastructure comes from config only", () => {
@@ -98,6 +145,49 @@ describe("configuredCollectorServers — known infrastructure comes from config 
     vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", "https://velo:8889");
     vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", file);
     expect(configuredCollectorServers()).toEqual(["velo"]);
+  });
+
+  // #1471 finding 1: Velociraptor writes `api_connection_string: 127.0.0.1:8001` by default and the
+  // GUI URL is often https://localhost:8889 when the Companion runs on the server. From a client's
+  // point of view loopback is itself, never the server, so it must not become known infrastructure.
+  it("drops the loopback pair the default server-side setup produces, leaving rule 1 inert", () => {
+    vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", "https://localhost:8889");
+    vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", apiConfig("127.0.0.1:8001"));
+    expect(configuredCollectorServers()).toEqual([]);
+  });
+
+  it("keeps a real address configured next to a loopback one", () => {
+    vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", `https://${SERVER}:8889`);
+    vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", apiConfig("127.0.0.1:8001"));
+    expect(configuredCollectorServers()).toEqual([SERVER]);
+  });
+
+  // Each spelling goes through `new URL`, which canonicalises some of them (`127.1` → 127.0.0.1,
+  // `[0:0:0:0:0:0:0:1]` → ::1, `[::ffff:127.0.0.1]` → ::ffff:7f00:1).
+  it.each([
+    "localhost",
+    "localhost.",
+    "LOCALHOST",
+    "127.0.0.1",
+    "127.1",
+    "127.255.0.9",
+    "[::1]",
+    "[0:0:0:0:0:0:0:1]",
+    "0.0.0.0",
+    "[::]",
+    "[::ffff:127.0.0.1]",
+    "[::ffff:7f00:1]",
+  ])("yields nothing for the loopback / unspecified spelling %s, from either source", (host) => {
+    vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", `https://${host}:8889`);
+    vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", apiConfig(`${host}:8001`));
+    expect(configuredCollectorServers()).toEqual([]);
+  });
+
+  it("isLocalOrUnspecifiedHost reads the raw spellings too, and nothing routable", () => {
+    for (const h of ["::ffff:127.0.0.1", "::ffff:7f00:1", "::1", "::", "127.0.0.1", "localhost."])
+      expect(isLocalOrUnspecifiedHost(h), h).toBe(true);
+    for (const h of ["10.20.30.40", "128.0.0.1", "1270.0.0.1", "localhost.example.com", "velo", ""])
+      expect(isLocalOrUnspecifiedHost(h), h).toBe(false);
   });
 });
 
@@ -223,6 +313,23 @@ describe("isCollectorInstallBinary — the install root, never a bare name", () 
     ).toBe(false);
   });
 
+  // #1471 finding 3: the doc said "the system msiexec.exe" but the code matched the bare name, so a
+  // copy an intruder dropped in Public installing its own velociraptor.msi was graded as the install.
+  it("does NOT match an msiexec.exe outside \\Windows\\ installing a velociraptor MSI", () => {
+    const row = ev({
+      description: `Sysmon Process created (EID 1) - Image=C:\\Users\\Public\\msiexec.exe - CommandLine=/i C:\\Users\\Public\\velociraptor.msi @ WS01`,
+      severity: "High",
+      mitre: ["T1218.007"],
+      processName: "msiexec.exe",
+      commandLine: `C:\\Users\\Public\\msiexec.exe /i C:\\Users\\Public\\velociraptor.msi`,
+    });
+    expect(isCollectorInstallBinary(row)).toBe(false);
+    annotateCollectorDeployment(row, { servers: new Set([SERVER]) });
+    expect(row.severity).toBe("High");
+    expect(row.mitre).toEqual(["T1218.007"]);
+    expect(row.description).not.toMatch(/DFIR collector/);
+  });
+
   it("does NOT match a non-process row, or msiexec with another MSI, or a traversal path", () => {
     expect(isCollectorInstallBinary(timeChange())).toBe(false);
     expect(
@@ -337,14 +444,18 @@ describe("isMsiexecCreationTimeChange — Sysmon EID 2 written by the system msi
     expect(isMsiexecCreationTimeChange(timeChange())).toBe(true);
   });
 
-  it("matches the SysWOW64 msiexec and Hayabusa's EID rendering", () => {
-    expect(
-      isMsiexecCreationTimeChange(
-        ev({
-          description: `Hayabusa: File Creation Time Changed (EID 2 Microsoft-Windows-Sysmon/Operational) - Image=C:\\Windows\\SysWOW64\\msiexec.exe - TargetFilename=C:\\x.exe`,
-        }),
-      ),
-    ).toBe(true);
+  it("matches the SysWOW64 msiexec and Hayabusa's real EID rendering (Proc=, one-space joins)", () => {
+    const row = hayabusa({
+      eid: "2",
+      channel: "Microsoft-Windows-Sysmon/Operational",
+      title: "File Creation Time Changed",
+      details: "Proc: C:\\Windows\\SysWOW64\\msiexec.exe ¦ TgtFile: C:\\x.exe",
+    });
+    // The rendering the reader is built for — and the note the importer's own seam already appended.
+    expect(row.description).toMatch(
+      /^Hayabusa: File Creation Time Changed \(EID 2 Microsoft-Windows-Sysmon\/Operational\) — Proc=C:\\Windows\\SysWOW64\\msiexec\.exe TgtFile=C:\\x\.exe @ WS01 \[MSI install artifact/,
+    );
+    expect(isMsiexecCreationTimeChange(row)).toBe(true);
   });
 
   it("does NOT match a timestomp from another process, or an msiexec outside System32, or another EID", () => {
@@ -430,6 +541,34 @@ describe("applyCollectorDeployment — the f31 sequence", () => {
     expect([stomp, masq]).toEqual(before);
   });
 
+  // #1471 finding 1: with the server configured as loopback, a High 4104 cradle staged from
+  // http://127.0.0.1:8080 and a Medium EID 3 from %TEMP% to 127.0.0.1:4444 came out Info with the
+  // download note — on every host, since every host is its own loopback.
+  it("a loopback server configuration demotes nothing: local staging keeps its grade", () => {
+    vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", "https://localhost:8889");
+    vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", apiConfig("127.0.0.1:8001"));
+    const cradle = ev({
+      description: `PowerShell Script block (EID 4104) - ScriptBlockText=IEX (New-Object Net.WebClient).DownloadString('http://127.0.0.1:8080/stage.ps1') @ WS01`,
+      severity: "High",
+      mitre: ["T1059.001", "T1105"],
+      aggKey: "cradle",
+    });
+    const beacon = ev({
+      description: `Sysmon Network connection (EID 3) - Image=C:\\Users\\a\\AppData\\Local\\Temp\\x.exe - DestinationIp=127.0.0.1 - DestinationPort=4444 @ WS01`,
+      severity: "Medium",
+      mitre: ["T1571"],
+      aggKey: "beacon",
+      dstIp: "127.0.0.1",
+      port: 4444,
+    });
+    const before = [structuredClone(cradle), structuredClone(beacon)];
+    const infra = loadCollectorInfrastructure();
+    expect(infra.servers.size).toBe(0);
+    annotateCollectorDeployment(cradle, infra);
+    annotateCollectorDeployment(beacon, infra);
+    expect([cradle, beacon]).toEqual(before);
+  });
+
   it("with no server configured, the download keeps its grade and the other two rules still run", () => {
     vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", "");
     vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", "");
@@ -474,5 +613,168 @@ describe("aggregateEvents runs the collector-deployment overlay", () => {
     vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", "");
     const { events } = aggregateEvents([download()], { minSeverity: "Low" });
     expect(events).toHaveLength(0);
+  });
+});
+
+// #1471 finding 5: the rules read Hayabusa's OWN rendering — `Proc=`, `Cmdline=`, `SrcProc=`,
+// `TgtIP=`, `Path=` joined by one space — through the real importer, never a hand-written ` - Image=`
+// description Hayabusa does not produce. Rules 1 and 2 read the structured commandLine / dstIp the
+// importer now carries, so the 120-character cut on the rendered subject cannot hide the MSI name or
+// the destination.
+describe("Hayabusa rows — the rules read Hayabusa's rendering", () => {
+  const SYSMON = "Microsoft-Windows-Sysmon/Operational";
+  const infra = { servers: new Set([SERVER]) };
+
+  it("rule 3: EID 2 by the system msiexec loses T1070.006 and gains the MSI note, at its grade", () => {
+    const row = hayabusa({
+      eid: "2",
+      channel: SYSMON,
+      title: "File Creation Time Changed",
+      level: "medium",
+      details: `Proc: ${MSIEXEC} ¦ TgtFile: ${INSTALL_EXE} ¦ PrevTime: 2026-01-01 ¦ NewTime: 2026-02-02 ¦ PID: 12`,
+      mitre: "t1070.006",
+    });
+    expect(isMsiexecCreationTimeChange(row)).toBe(true);
+    // The importer's own aggregation seam already applied the rule to the real row.
+    expect(row.mitre).toEqual([]);
+    expect(row.severity).toBe("Medium");
+    expect(row.description).toMatch(/creation-time change by msiexec.exe is not timestomping\]$/);
+  });
+
+  it("rule 2: EID 1 system msiexec + velociraptor MSI → Info with the install note, even when the MSI name sits past the 120-char cut", () => {
+    const msi = `C:\\Users\\it\\Downloads\\${"deep\\".repeat(30)}velociraptor-0.72.msi`;
+    const row = hayabusa({
+      eid: "1",
+      channel: SYSMON,
+      title: "Msiexec Install",
+      level: "medium",
+      details: `Cmdline: ${MSIEXEC} /i ${msi} /qn ¦ Proc: ${MSIEXEC} ¦ User: SYSTEM ¦ ParentCmdline: x ¦ LID: 1 ¦ PID: 2`,
+      mitre: "t1218.007",
+    });
+    expect(row.description).not.toContain("velociraptor-0.72.msi"); // cut from the subject
+    expect(row.commandLine).toContain("velociraptor-0.72.msi"); // whole in the structured field
+    expect(isCollectorInstallBinary(row)).toBe(true);
+    annotateCollectorDeployment(row, infra);
+    expect(row.severity).toBe("Info");
+    expect(row.description).toMatch(/ \[DFIR collector deployment — Velociraptor client install\]$/);
+  });
+
+  it("rule 1: EID 3 with TgtIP=<server> → Info with the download note", () => {
+    const row = hayabusa({
+      eid: "3",
+      channel: SYSMON,
+      title: "Net conn",
+      details: `Proc: C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe ¦ Proto: tcp ¦ SrcIP: 10.0.0.5 ¦ SrcPort: 5000 ¦ TgtIP: ${SERVER} ¦ TgtPort: 8000`,
+      mitre: "t1105",
+    });
+    expect(row.dstIp).toBe(SERVER);
+    expect(isCollectorServerDestination(row, infra)).toBe(true);
+    annotateCollectorDeployment(row, infra);
+    expect(row.severity).toBe("Info");
+    expect(row.description).toMatch(/download from the configured Velociraptor server\]$/);
+  });
+
+  it("rule 1: the rendered TgtIP field alone matches, with no structured dstIp", () => {
+    const row = hayabusa({
+      eid: "3",
+      channel: SYSMON,
+      title: "Net conn",
+      details: `Proc: C:\\x.exe ¦ TgtIP: ${SERVER} ¦ TgtPort: 8000`,
+    });
+    delete row.dstIp;
+    expect(isCollectorServerDestination(row, infra)).toBe(true);
+  });
+
+  it("rule 1 via the JSON timeline, fields reordered and under the DstIP alias", () => {
+    const { events } = parseHayabusaTimeline(
+      JSON.stringify({
+        Timestamp: "2026-03-01 11:29:52.000 +00:00",
+        Computer: "WS01",
+        Channel: SYSMON,
+        EventID: 3,
+        Level: "high",
+        RuleTitle: "Net conn",
+        Details: { DstIP: SERVER, DstPort: 8000, Proc: "C:\\x.exe" },
+      }),
+    );
+    const row: MappedEvent = { ...events[0], mitre: events[0].mitreTechniques, aggKey: "k" };
+    expect(isCollectorServerDestination(row, infra)).toBe(true);
+    delete row.dstIp;
+    expect(isCollectorServerDestination(row, infra)).toBe(true);
+  });
+
+  it('rule 2: 7045 with Path="<install exe>" service run is the service registration', () => {
+    const row = hayabusa({
+      eid: "7045",
+      channel: "Sys",
+      title: "Svc install",
+      level: "medium",
+      details: `Svc: Velociraptor ¦ Path: "${INSTALL_EXE}" service run ¦ SvcType: user mode ¦ StartType: auto`,
+    });
+    expect(isCollectorInstallBinary(row)).toBe(true);
+    expect(row.severity).toBe("Info");
+    expect(row.description).toMatch(/Velociraptor client install\]$/);
+  });
+
+  it("rule 2b: EID 10 with SrcProc=<THOR under the install root> is the collector's footprint", () => {
+    const row = hayabusa({
+      eid: "10",
+      channel: SYSMON,
+      title: "LSASS Access",
+      details: `SrcProc: ${THOR} ¦ TgtProc: ${LSASS} ¦ GrantedAccess: 0x1010 ¦ CallTrace: x`,
+      mitre: "t1003.001",
+    });
+    expect(isCollectorFootprint(row)).toBe(true);
+    expect(row.severity).toBe("Info");
+    expect(row.description).toMatch(/tool run by the Velociraptor client\]$/);
+  });
+
+  it("NEGATIVE: Proc=C:\\Users\\Public\\msiexec.exe misses rules 2 and 3", () => {
+    const install = hayabusa({
+      eid: "1",
+      channel: SYSMON,
+      title: "Msiexec Install",
+      details: `Cmdline: C:\\Users\\Public\\msiexec.exe /i C:\\Users\\Public\\velociraptor.msi ¦ Proc: C:\\Users\\Public\\msiexec.exe`,
+      mitre: "t1218.007",
+    });
+    expect(isCollectorInstallBinary(install)).toBe(false);
+    annotateCollectorDeployment(install, infra);
+    expect(install.severity).toBe("High");
+    expect(install.mitre).toEqual(["T1218.007"]);
+    const stomp = hayabusa({
+      eid: "2",
+      channel: SYSMON,
+      title: "File Creation Time Changed",
+      details: `Proc: C:\\Users\\Public\\msiexec.exe ¦ TgtFile: C:\\x.exe`,
+      mitre: "t1070.006",
+    });
+    expect(isMsiexecCreationTimeChange(stomp)).toBe(false);
+    expect(stomp.mitre).toEqual(["T1070.006"]);
+  });
+
+  it("NEGATIVE: the server address as free text in a Cmdline is not a destination", () => {
+    const row = hayabusa({
+      eid: "1",
+      channel: SYSMON,
+      title: "Suspicious Echo",
+      details: `Cmdline: cmd.exe /c echo ${SERVER} > note.txt ¦ Proc: C:\\Windows\\System32\\cmd.exe`,
+    });
+    expect(row.description).toContain(SERVER);
+    expect(isCollectorServerDestination(row, infra)).toBe(false);
+    annotateCollectorDeployment(row, infra);
+    expect(row.severity).toBe("High");
+    expect(row.description).not.toMatch(/DFIR collector/);
+  });
+
+  it("NEGATIVE: ParentProc= is not Proc=, so a parent under the root does not make the child the collector", () => {
+    const row = hayabusa({
+      eid: "1",
+      channel: SYSMON,
+      title: "Proc create",
+      details: `Cmdline: evil.exe ¦ Proc: C:\\Users\\Public\\evil.exe ¦ ParentProc: ${INSTALL_EXE}`,
+    });
+    expect(isCollectorFootprint(row)).toBe(false);
+    expect(isCollectorInstallBinary(row)).toBe(false);
+    expect(row.severity).toBe("High");
   });
 });

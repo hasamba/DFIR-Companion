@@ -14,7 +14,12 @@
 //
 //   - Known infrastructure comes from CONFIG ONLY (the GUI URL and the api_client config the
 //     Velociraptor integration already reads), never from event content. A row cannot declare its
-//     own destination to be the DFIR server.
+//     own destination to be the DFIR server. A LOOPBACK or unspecified address in that config is
+//     dropped (#1471): from a client's point of view loopback is itself, never the server, so a
+//     `127.0.0.1:8001` api_connection_string (Velociraptor's default when the Companion runs on the
+//     server) would otherwise demote every local connection on every host — a High 4104 cradle from
+//     `http://127.0.0.1:8080/stage.ps1` and a Medium EID 3 from `%TEMP%\x.exe` to `127.0.0.1:4444`
+//     both came out Info. A loopback-only configuration leaves rule 1 inert, by design.
 //   - The server address is matched only where a row NAMES A DESTINATION — the DestinationIp /
 //     DestinationHostname fields the Windows mapper renders, the structured dstIp, or the host of a
 //     URL — never as free text. A row whose message merely mentions the address is untouched.
@@ -26,6 +31,14 @@
 //     rewrites the creation time of every file it lays down, so an EID 2 whose Image is msiexec.exe
 //     is the installer's ordinary footprint, not T1070.006. The row is kept at its grade; only the
 //     timestomp claim goes, on any MSI, whether or not Velociraptor is configured.
+//   - The rendered fields are read in the shape each importer produces: the Windows mapper's
+//     ` - Key=value` and Hayabusa's `— Proc=value Cmdline=value … @ host` under Hayabusa's own key
+//     names (#1471). The command line and destination of a Hayabusa row come from the STRUCTURED
+//     fields its importer sets, so the 120-character cut on its rendered subject cannot hide the MSI
+//     name or the address. Accepted residual risk: the ACTING IMAGE still comes from the rendered
+//     subject, which keeps only the first six detail fields — Proc/SrcProc is the first or second
+//     field in every Hayabusa default profile for EID 1/2/3/10/11/22/4688/7045, so the cap does not
+//     reach it.
 //
 // Runs once per mapped row at the shared aggregation seam (eventAggregate.ts), in place like the
 // other mapper overlays, BEFORE the severity floor so a demoted row is floored as Info.
@@ -51,7 +64,6 @@ const CREATION_TIME_CHANGED_EID = /\(EID 2[\s)]/;
 // The system installer, under either bitness. Anchored to \Windows\ so a copy an intruder dropped
 // elsewhere and named msiexec.exe is not the installer.
 const SYSTEM_MSIEXEC = /^[a-z]:[\\/]windows[\\/](?:system32|syswow64)[\\/]msiexec\.exe$/i;
-const MSIEXEC_NAME = /(?:^|[\\/])msiexec\.exe$/i;
 // The collector's own install root — the path component an intruder cannot supply — holding the
 // client exe. Traversal is refused separately: a prefix match on a path holding `..` proves nothing.
 const COLLECTOR_INSTALL_ROOT = /^[a-z]:[\\/]program files(?: \(x86\))?[\\/]velociraptor[\\/]/i;
@@ -63,6 +75,24 @@ const COLLECTOR_MSI = /(?:^|[\\/\s"'])velociraptor(?:-[^\s"'\\/]*)?\.msi(?=$|[\s
 const URL_HOST = /\bhttps?:\/\/(?:[^\s/?#@"']*@)?(\[[^\]\s]+\]|[^\s/?#:"']+)/gi;
 // The api_client.yaml line the Velociraptor integration connects with. A YAML scalar; quotes optional.
 const API_CONNECTION_STRING = /^\s*api_connection_string:\s*["']?([^\s"'#]+)/m;
+// Addresses that name the host itself or no host at all. `new URL` has already canonicalised the
+// configured spelling (`127.1` → 127.0.0.1, `[0:0:0:0:0:0:0:1]` → ::1, `[::ffff:127.0.0.1]` →
+// ::ffff:7f00:1); the raw IPv4-mapped form is listed as well for a caller that skipped that step.
+const LOCAL_HOST_NAMES = new Set(["localhost", "localhost.", "::1", "::", "0.0.0.0", "::ffff:7f00:1"]);
+const LOOPBACK_V4 = /^(?:::ffff:)?127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/i;
+// Hayabusa's key for each Windows-mapper key this file reads (hayabusaImport.ts renders the detail
+// fields under Hayabusa's own aliases). A key with no entry is looked up under its own name.
+const HAYABUSA_PREFIX = /^Hayabusa: /;
+const HAYABUSA_KEY: Readonly<Record<string, readonly string[]>> = {
+  Image: ["Proc"],
+  NewProcessName: ["Proc"],
+  SourceImage: ["SrcProc"],
+  CommandLine: ["Cmdline"],
+  ImagePath: ["Path"],
+  ServiceFileName: ["Path"],
+  DestinationIp: ["TgtIP", "DstIP"],
+  DestinationHostname: ["TgtHost", "DstHost"],
+};
 
 // ───────────────────────────── configuration ─────────────────────────────
 
@@ -96,16 +126,31 @@ function apiConfigHost(path: string): string {
 }
 
 /**
+ * Is this host the machine itself (loopback) or no machine at all (unspecified)? Such an address in
+ * the configuration names where the Companion runs, not where the clients connect, so it is never
+ * the collector server (#1471). Brackets and case are ignored.
+ */
+export function isLocalOrUnspecifiedHost(host: string): boolean {
+  const h = host
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "");
+  return LOCAL_HOST_NAMES.has(h) || LOOPBACK_V4.test(h);
+}
+
+/**
  * The configured Velociraptor server host(s), from `DFIR_VELOCIRAPTOR_GUI_URL` and the
  * `api_connection_string` in the file `DFIR_VELOCIRAPTOR_API_CONFIG` names. Read at call time, so a
- * settings reload (or a test's stubbed env) is seen without a restart. Lower-cased, de-duplicated.
+ * settings reload (or a test's stubbed env) is seen without a restart. Lower-cased, de-duplicated,
+ * and never loopback: a `localhost` GUI URL or a `127.0.0.1:8001` api_connection_string yields
+ * nothing, so rule 1 stays inert instead of matching every host's own loopback traffic.
  */
 export function configuredCollectorServers(env: NodeJS.ProcessEnv = process.env): string[] {
   const hosts = [
     urlHost(env.DFIR_VELOCIRAPTOR_GUI_URL ?? ""),
     apiConfigHost(env.DFIR_VELOCIRAPTOR_API_CONFIG ?? ""),
   ];
-  return [...new Set(hosts.filter(Boolean))];
+  return [...new Set(hosts.filter((h) => h && !isLocalOrUnspecifiedHost(h)))];
 }
 
 export function loadCollectorInfrastructure(env: NodeJS.ProcessEnv = process.env): CollectorInfrastructure {
@@ -115,11 +160,30 @@ export function loadCollectorInfrastructure(env: NodeJS.ProcessEnv = process.env
 // ───────────────────────────── description fields ─────────────────────────────
 
 // One `Key=value` field as the Windows mapper renders it: fields joined by " - ", the value running
-// to the next ` - Key=` field or to the ` @ host` tail. Case-insensitive on the key.
-function descriptionField(description: string, key: string): string {
+// to the next ` - Key=` field or to the ` @ host` tail. Case-insensitive on the key. A `foo=bar`
+// inside a command line is not a field boundary — only the " - " join is.
+function mapperField(description: string, key: string): string {
   const re = new RegExp(`(?:^|\\s-\\s)${key}=(.*?)(?=\\s-\\s[A-Z][A-Za-z]*=|\\s@\\s\\S+$|$)`, "i");
   const m = re.exec(description);
   return m ? m[1].trim() : "";
+}
+
+// The same field as Hayabusa renders it (#1471): `— Key=value Key=value … @ host`, joined by ONE
+// space under Hayabusa's own key names, so the value runs to the next ` Key=` token or the tail. A
+// `Key=` token inside a value does cut it, which is why rules 1 and 2 prefer the structured
+// commandLine / dstIp the Hayabusa importer sets; the acting image is a path and holds no such token.
+function hayabusaField(description: string, key: string): string {
+  for (const alias of HAYABUSA_KEY[key] ?? [key]) {
+    const re = new RegExp(`(?:^|\\s)${alias}=(.*?)(?=\\s[A-Za-z]+=|\\s@\\s\\S+$|$)`, "i");
+    const m = re.exec(description);
+    if (m) return m[1].trim();
+  }
+  return "";
+}
+
+// A rendered field by its Windows-mapper key, read in the shape the row's importer produced.
+function descriptionField(description: string, key: string): string {
+  return HAYABUSA_PREFIX.test(description) ? hayabusaField(description, key) : mapperField(description, key);
 }
 
 // The process a row is about, by its two spellings (Sysmon Image, Security 4688 NewProcessName).
@@ -185,8 +249,11 @@ export function isCollectorServerDestination(m: MappedEvent, infra: CollectorInf
  * Rule 2 — is this a process-creation row for the collector's own install?
  *
  * Either the client exe under its install root (the service start the MSI performs, the client
- * itself), or the system `msiexec.exe` installing a `velociraptor*.msi`. A `velociraptor.exe` anywhere
- * else is a name an intruder picks, and misses.
+ * itself), or the SYSTEM `msiexec.exe` — under \Windows\System32 or \SysWOW64, the same anchor rule 3
+ * uses — installing a `velociraptor*.msi`. A `velociraptor.exe` anywhere else is a name an intruder
+ * picks, and so is an `msiexec.exe` anywhere else (#1471): a copy in `C:\Users\Public\` installing
+ * its own `velociraptor.msi` is T1218.007, not the collector arriving. The MSI path itself is not
+ * anchored — an analyst downloads it anywhere; the installer is what an intruder cannot supply.
  */
 export function isCollectorInstallBinary(m: MappedEvent): boolean {
   if (isCollectorServiceInstall(m)) return true;
@@ -194,7 +261,7 @@ export function isCollectorInstallBinary(m: MappedEvent): boolean {
   const image = imagePath(m);
   if (PATH_TRAVERSAL.test(image)) return false;
   if (COLLECTOR_INSTALL_EXE.test(image)) return true;
-  if (!MSIEXEC_NAME.test(image)) return false;
+  if (!SYSTEM_MSIEXEC.test(image)) return false;
   const cmd = m.commandLine || descriptionField(m.description, "CommandLine");
   return COLLECTOR_MSI.test(cmd);
 }
