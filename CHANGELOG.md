@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Deep pass says when it has nothing new to read** — the pre-flight preview reports what the last synthesis read; if it dropped no event for the size limit, the panel says a deep pass would read the same or fewer and Run is off unless the analyst ticks *Run anyway*; a timeline changed since is called stale (closes #1457)
+
 ### Fixed
 - **Every import logs start, progress, outcome and failure** — one `[import]` prefix in the session log and the case log, so a crash mid-import always names the file and how far it got (closes #1438)
 - **Batched Velociraptor import** — a large export (a full `$MFT`) is imported one batch of rows at a time, tagged and gated per batch, with one log line per batch, instead of expanded whole in memory and OOM-killed (closes #1439)

@@ -9,7 +9,9 @@ import {
   digestFitsBudget,
   planCondenseRounds,
   MAX_CONDENSE_ROUNDS,
+  judgeDeepPassWorth,
 } from "../../src/analysis/deepPass.js";
+import { buildSynthesisCoverage } from "../../src/analysis/synthMeta.js";
 import type { ForensicEvent, Severity } from "../../src/analysis/stateTypes.js";
 
 function ev(id: string, t: string, sev: Severity, desc = id, asset?: string): ForensicEvent {
@@ -92,6 +94,61 @@ describe("previewFloors", () => {
       "Medium",
       "Low",
     ]);
+  });
+});
+
+// #1457: the preview tells the analyst whether a deep pass can read anything the last synthesis did
+// not. On a small case synthesis already read every graded event; a deep pass then re-reads the same
+// rows (or fewer, at a Critical+/High+ floor) and spends AI calls for nothing.
+describe("judgeDeepPassWorth", () => {
+  const AT = "2026-09-20T10:00:00Z";
+  const cov = (o: Partial<Parameters<typeof buildSynthesisCoverage>[0]> = {}) =>
+    buildSynthesisCoverage({
+      totalEvents: 300,
+      inWindow: 300,
+      scoped: 290,
+      considered: 290,
+      omittedHighSeverity: 0,
+      promptTokensEstimate: 1000,
+      ...o,
+    });
+
+  it("is unknown when no synthesis has recorded a coverage audit", () => {
+    expect(judgeDeepPassWorth(undefined, "", 300)).toEqual({ verdict: "unknown" });
+    expect(judgeDeepPassWorth(null, AT, 300)).toEqual({ verdict: "unknown" });
+  });
+
+  it("reports nothing-new when synthesis dropped no event for the size limit", () => {
+    expect(judgeDeepPassWorth(cov(), AT, 300)).toEqual({ verdict: "nothing-new", at: AT, considered: 290 });
+  });
+
+  it("reports how many events a deep pass would recover when the size limit cut the prompt", () => {
+    expect(judgeDeepPassWorth(cov({ considered: 200 }), AT, 300)).toEqual({
+      verdict: "gains",
+      at: AT,
+      unread: 90,
+    });
+  });
+
+  it("does not count Info exclusions as unread — Info never reaches a deep pass either", () => {
+    // 290 scoped, 40 of them Info: the model read the other 250 and dropped nothing for size.
+    expect(judgeDeepPassWorth(cov({ considered: 250, omittedInfo: 40 }), AT, 300)).toMatchObject({
+      verdict: "nothing-new",
+    });
+  });
+
+  it("reports stale when the timeline changed since that synthesis, whatever it read", () => {
+    // 300 events then (inWindow 300 + 0 outside scope), 420 now: an import landed after the run.
+    expect(judgeDeepPassWorth(cov(), AT, 420)).toEqual({
+      verdict: "stale",
+      at: AT,
+      eventsThen: 300,
+      eventsNow: 420,
+    });
+    // Out-of-window events still count toward "then": scope narrows the prompt, not the timeline.
+    expect(judgeDeepPassWorth(cov({ totalEvents: 420, inWindow: 300 }), AT, 420)).toMatchObject({
+      verdict: "nothing-new",
+    });
   });
 });
 

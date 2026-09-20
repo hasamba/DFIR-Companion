@@ -46,7 +46,7 @@ import type { SynthesisContext } from "./ai/synthesis.js";
 import * as deepPassRun from "./ai/deepPassRun.js";
 import type { SecondOpinionContext } from "./ai/secondOpinionRun.js";
 import * as secondOpinionRun from "./ai/secondOpinionRun.js";
-import type { DeepPassResult } from "./ai/deepPassRun.js";
+import type { DeepPassPreview, DeepPassResult } from "./ai/deepPassRun.js";
 export type { DeepPassResult } from "./ai/deepPassRun.js";
 import * as hunts from "./ai/hunts.js";
 import * as nextSteps from "./ai/nextSteps.js";
@@ -56,7 +56,6 @@ import { safeAiErrorKind, safeAiPhase } from "./operationalMetrics.js";
 import { type SecondOpinion } from "./secondOpinion.js";
 import { type AggregateStats } from "./logAggregate.js";
 import { persistCloudCoverage, type CloudCoverageSummary } from "./cloudCoverage.js";
-import { type FloorOption } from "./deepPass.js";
 import { type KevCatalog } from "./kev.js";
 import { type HuntSuggestion } from "./huntSuggest.js";
 import { type PlaybookHuntSuggestion } from "./playbookHunt.js";
@@ -757,7 +756,7 @@ export class AnalysisPipeline {
     );
   }
 
-  deepPassPreview(caseId: string): Promise<{ cap: number; floors: FloorOption[] }> {
+  deepPassPreview(caseId: string): Promise<DeepPassPreview> {
     return deepPassRun.deepPassPreview(this.aiCtx, caseId);
   }
 

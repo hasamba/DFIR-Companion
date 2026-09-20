@@ -3224,6 +3224,7 @@
       <p data-safe-style="font-size:12px;color:var(--text-muted);margin:0 0 10px">Normal synthesis shows the model <em>one prompt's worth</em> of events, and prompt rows scale with the number of hosts — so on a multi-host case most graded detections are never read. A deep pass reads <strong>every</strong> graded event at or above the floor you choose, in as many batches as it takes, and folds the result into one final synthesis that replaces the current conclusions. Pick the floor against the real numbers below: there is no default that is right for every case. The pre-flight costs nothing; the run is slow and expensive, and can be cancelled.</p>
       <div id="deepPassGuidance" class="dp-guidance" data-safe-style="display:none"></div>
       <div id="deepPassFloors" class="dp-note">Open this section to measure the case.</div>
+      <div id="deepPassWorth"></div>
       <div class="dp-run-row">
         <button id="deepPassRun" type="button" disabled title="Run the deep pass at the selected floor">▶ Run deep pass</button>
         <button id="deepPassCancel" type="button" data-safe-style="display:none" title="Cancel the running deep pass — nothing is written to the case">■ Cancel</button>

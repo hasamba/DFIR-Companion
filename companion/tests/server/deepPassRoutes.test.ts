@@ -6,6 +6,7 @@ import request from "supertest";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { ActivityLogStore } from "../../src/analysis/activityLog.js";
+import { SynthMetaStore, buildSynthesisCoverage } from "../../src/analysis/synthMeta.js";
 import { awaitActivityEntry } from "../helpers/activityLog.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { emptyState, type ForensicEvent, type Severity } from "../../src/analysis/stateTypes.js";
@@ -93,7 +94,25 @@ async function makeApp(opts: { aiConfigured?: boolean; failBatches?: boolean } =
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
   await stateStore.save({ ...emptyState("c1"), forensicTimeline: events() });
-  return { app, stateStore, aiStatus };
+  return { app, stateStore, aiStatus, synthMeta: new SynthMetaStore(store) };
+}
+
+// #1457: what the last synthesis read, written the way pipeline.synthesize records it.
+async function recordSynthesis(synthMeta: SynthMetaStore, considered: number, totalEvents = 220) {
+  await synthMeta.record("c1", { added: [], removed: [], severityChanged: [] }, "2026-09-20T10:00:00Z", {
+    durationMs: 1,
+    eventCount: totalEvents,
+    iocCount: 0,
+    coverage: buildSynthesisCoverage({
+      totalEvents,
+      inWindow: totalEvents,
+      scoped: totalEvents,
+      considered,
+      omittedHighSeverity: 0,
+      promptTokensEstimate: 100,
+      omittedInfo: 20,
+    }),
+  });
 }
 
 describe("deep-pass routes", () => {
@@ -129,6 +148,50 @@ describe("deep-pass routes", () => {
 
     const low = res.body.floors.find((f: { floor: string }) => f.floor === "Low");
     expect(low.events).toBe(200); // 10 + 40 + 60 + 90, the 20 Info excluded
+  });
+
+  it("preview says it does not know what synthesis read when none has run", async () => {
+    const { app } = await makeApp();
+
+    const res = await request(app).get("/cases/c1/deep-pass/preview");
+
+    expect(res.body.synthesisRead).toEqual({ verdict: "unknown" });
+  });
+
+  it("preview says a deep pass has nothing new to read when synthesis read every graded event", async () => {
+    const { app, synthMeta } = await makeApp();
+    await recordSynthesis(synthMeta, 200); // 220 events, 20 Info never sent, the other 200 all read
+
+    const res = await request(app).get("/cases/c1/deep-pass/preview");
+
+    expect(res.body.synthesisRead).toEqual({
+      verdict: "nothing-new",
+      at: "2026-09-20T10:00:00Z",
+      considered: 200,
+    });
+  });
+
+  it("preview counts what a deep pass would recover when the size limit cut the synthesis prompt", async () => {
+    const { app, synthMeta } = await makeApp();
+    await recordSynthesis(synthMeta, 100);
+
+    const res = await request(app).get("/cases/c1/deep-pass/preview");
+
+    expect(res.body.synthesisRead).toEqual({ verdict: "gains", at: "2026-09-20T10:00:00Z", unread: 100 });
+  });
+
+  it("preview says the audit is stale when the timeline changed since that synthesis", async () => {
+    const { app, synthMeta } = await makeApp();
+    await recordSynthesis(synthMeta, 150, 150); // recorded against a 150-event timeline; the case now has 220
+
+    const res = await request(app).get("/cases/c1/deep-pass/preview");
+
+    expect(res.body.synthesisRead).toEqual({
+      verdict: "stale",
+      at: "2026-09-20T10:00:00Z",
+      eventsThen: 150,
+      eventsNow: 220,
+    });
   });
 
   it("POST .../deep-pass rejects an unparseable minSeverity rather than defaulting", async () => {

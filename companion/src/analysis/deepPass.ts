@@ -14,6 +14,7 @@
 // Everything here is pure and deterministic: no I/O, no AI, no state mutation.
 
 import type { ForensicEvent, Severity } from "./stateTypes.js";
+import type { SynthesisCoverage } from "./synthMeta.js";
 import { z } from "zod";
 import { SEVERITY_RANK } from "./stateTypes.js";
 import { applySeverityFloor } from "./severityFloor.js";
@@ -69,6 +70,40 @@ export function previewFloors(events: readonly ForensicEvent[], opts: PreviewOpt
       estimatedInputTokens: rows.reduce((sum, e) => sum + estimateRow(e), 0),
     };
   });
+}
+
+/**
+ * Whether a deep pass can read anything the last synthesis did not (#1457). Ordinary synthesis
+ * already reads every graded event on a small case; a deep pass then re-reads the same rows — or
+ * fewer, at a Critical+/High+ floor — and spends AI calls for nothing. The analyst is told before
+ * choosing a floor, from the coverage audit (#62) synthesis records, not from a guess.
+ *
+ *  - `unknown`     no synthesis has recorded a coverage audit yet.
+ *  - `stale`       the timeline changed since that synthesis (an import landed), so the audit no
+ *                  longer describes this case; synthesis should run again before deciding.
+ *  - `nothing-new` synthesis dropped nothing for the size limit — every floor reads a subset of what
+ *                  it already saw. Info exclusions are not counted: Info never reaches a deep pass.
+ *  - `gains`       the size limit cut `unread` events from the prompt; a deep pass at Low+ reads them.
+ */
+export type DeepPassWorth =
+  | { verdict: "unknown" }
+  | { verdict: "stale"; at: string; eventsThen: number; eventsNow: number }
+  | { verdict: "nothing-new"; at: string; considered: number }
+  | { verdict: "gains"; at: string; unread: number };
+
+export function judgeDeepPassWorth(
+  coverage: SynthesisCoverage | null | undefined,
+  lastSynthesizedAt: string,
+  timelineEventsNow: number,
+): DeepPassWorth {
+  if (!coverage || !lastSynthesizedAt) return { verdict: "unknown" };
+  const at = lastSynthesizedAt;
+  // inWindow + omittedScope is the whole forensic timeline as synthesis saw it (buildSynthesisCoverage).
+  const eventsThen = coverage.inWindow + coverage.omittedScope;
+  if (eventsThen !== timelineEventsNow)
+    return { verdict: "stale", at, eventsThen, eventsNow: timelineEventsNow };
+  if (coverage.omittedBudget > 0) return { verdict: "gains", at, unread: coverage.omittedBudget };
+  return { verdict: "nothing-new", at, considered: coverage.considered };
 }
 
 /**
