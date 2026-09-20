@@ -40,6 +40,13 @@
 //     field in every Hayabusa default profile for EID 1/2/3/10/11/22/4688/7045, so the cap does not
 //     reach it.
 //
+//   - A process the client itself SPAWNED (rule 2c, #1477) needs both the collector exe as its parent
+//     — a path Sysmon recorded, not one the child chose — and a Tools-tree file on its command line.
+//     Either alone keeps the grade. Children of that process are not covered.
+//   - Every demotion here also sets `origin: "collector"`, the structured mark the post-import tagger
+//     honours (tagger.ts): the tagger matches the retained raw message, so without it a row graded
+//     Info here came back High when PersistenceSniper's `Add-Type … AdjPriv` met the bundled rule.
+//
 // Runs once per mapped row at the shared aggregation seam (eventAggregate.ts), in place like the
 // other mapper overlays, BEFORE the severity floor so a demoted row is floored as Info.
 
@@ -55,6 +62,7 @@ const DEPLOYMENT_DOWNLOAD_NOTE =
   " [DFIR collector deployment — download from the configured Velociraptor server]";
 const DEPLOYMENT_INSTALL_NOTE = " [DFIR collector deployment — Velociraptor client install]";
 const FOOTPRINT_NOTE = " [DFIR collector footprint — tool run by the Velociraptor client]";
+const SPAWN_NOTE = " [DFIR collector footprint — spawned by the Velociraptor client]";
 const MSI_TIME_CHANGE_NOTE =
   " [MSI install artifact — creation-time change by msiexec.exe is not timestomping]";
 const TIMESTOMP_TECHNIQUE = "T1070.006";
@@ -68,6 +76,12 @@ const SYSTEM_MSIEXEC = /^[a-z]:[\\/]windows[\\/](?:system32|syswow64)[\\/]msiexe
 // client exe. Traversal is refused separately: a prefix match on a path holding `..` proves nothing.
 const COLLECTOR_INSTALL_ROOT = /^[a-z]:[\\/]program files(?: \(x86\))?[\\/]velociraptor[\\/]/i;
 const COLLECTOR_INSTALL_EXE = new RegExp(`${COLLECTOR_INSTALL_ROOT.source}velociraptor\\.exe$`, "i");
+// The tree the client unpacks an artifact's tools into (`\Tools\tmp<digits>\…`), as a token INSIDE a
+// command line: preceded by a quote, a space or the start, so `import-module "C:\Program Files\
+// Velociraptor\Tools\tmp…\PersistenceSniper.psm1"` is found and `C:\ProgramData\Velociraptor\Tools\`
+// is not (rule 2c). Runs to the closing quote / whitespace so traversal inside the token is visible.
+const COLLECTOR_TOOLS_ARG =
+  /(?:^|[\s"'])([a-z]:[\\/]program files(?: \(x86\))?[\\/]velociraptor[\\/]tools[\\/][^"'\s]*)/gi;
 const PATH_TRAVERSAL = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
 // The client MSI as Velociraptor publishes it: `velociraptor-<version>[-suffix].msi`, or the bare
 // `velociraptor.msi` an analyst renamed it to.
@@ -301,6 +315,38 @@ export function isCollectorFootprint(m: MappedEvent): boolean {
 }
 
 /**
+ * Rule 2c — is this a process the Velociraptor client ITSELF started to run one of its artifacts?
+ *
+ * Windows.Forensics.PersistenceSniper makes the client spawn the SYSTEM `powershell.exe` with
+ * `import-module "<install root>\Tools\tmp…\PersistenceSniper\PersistenceSniper.psm1"`. The
+ * acting image is System32\powershell.exe, so rule 2b never sees it, and on a real collection the
+ * Sigma "Change PowerShell Policies" / "Non Interactive PowerShell" hits on that one launch became a
+ * High finding that the collector had been hijacked (#1477). Two facts, BOTH required:
+ *
+ *   - the PARENT executable is the collector exe under its install root — Sysmon recorded that path
+ *     from the parent's own image, so the child could not choose it (read from the canonical
+ *     envelope the Windows mapper builds, else the rendered ParentImage field); and
+ *   - the COMMAND LINE names a file under the collector's Tools tree, root-anchored like rule 2b and
+ *     with traversal refused.
+ *
+ * Parent alone is provenance, not enough: an artifact the analyst did not intend, or a server that
+ * is not theirs, can make the client run anything, so a collector child with an ordinary command
+ * line keeps its grade (the ParentProc negative in the tests). A Tools path alone is a string anyone
+ * can type. Children of the spawned process are NOT covered — that needs process-GUID lineage across
+ * rows, which this per-row seam does not have. Never lowers a Critical, the bound
+ * isDetectionToolScript keeps for the same module's script blocks.
+ */
+export function isCollectorSpawn(m: MappedEvent): boolean {
+  if (!isProcessRow(m)) return false;
+  const parent =
+    m.canonical?.process?.parent?.executable?.trim() || descriptionField(m.description, "ParentImage");
+  if (!parent || PATH_TRAVERSAL.test(parent) || !COLLECTOR_INSTALL_EXE.test(parent)) return false;
+  const cmd = m.commandLine || descriptionField(m.description, "CommandLine");
+  for (const hit of cmd.matchAll(COLLECTOR_TOOLS_ARG)) if (!PATH_TRAVERSAL.test(hit[1])) return true;
+  return false;
+}
+
+/**
  * Rule 3 — is this a Sysmon EID 2 (file creation time changed) written by the system msiexec.exe?
  *
  * Windows Installer sets the creation time of every file it lays down to the time recorded in the
@@ -326,20 +372,23 @@ export function annotateCollectorDeployment(m: MappedEvent, infra: CollectorInfr
     appendNote(m, MSI_TIME_CHANGE_NOTE);
     return;
   }
-  if (isCollectorInstallBinary(m)) {
-    m.severity = "Info";
-    appendNote(m, DEPLOYMENT_INSTALL_NOTE);
+  if (isCollectorInstallBinary(m)) return gradeAsCollector(m, DEPLOYMENT_INSTALL_NOTE);
+  if (isCollectorSpawn(m)) {
+    if (m.severity !== "Critical") gradeAsCollector(m, SPAWN_NOTE);
     return;
   }
-  if (isCollectorFootprint(m)) {
-    m.severity = "Info";
-    appendNote(m, FOOTPRINT_NOTE);
-    return;
-  }
-  if (isCollectorServerDestination(m, infra)) {
-    m.severity = "Info";
-    appendNote(m, DEPLOYMENT_DOWNLOAD_NOTE);
-  }
+  if (isCollectorFootprint(m)) return gradeAsCollector(m, FOOTPRINT_NOTE);
+  if (isCollectorServerDestination(m, infra)) gradeAsCollector(m, DEPLOYMENT_DOWNLOAD_NOTE);
+}
+
+// Info, the note, and the structured origin the rest of the pipeline reads (#1477): the post-import
+// tagger never raises a collector-origin row, so a demotion made here survives the tagger's own
+// match on the same message — which is how THOR's lsass access and this file's other demotions
+// used to come back as High.
+function gradeAsCollector(m: MappedEvent, note: string): void {
+  m.severity = "Info";
+  m.origin = "collector";
+  appendNote(m, note);
 }
 
 /** Apply the rules to every row, in place, reading the configuration once. */

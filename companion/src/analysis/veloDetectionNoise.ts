@@ -16,7 +16,7 @@
 // ones that read a Velociraptor ROW stay here. That line is where the layering falls: a path test
 // needs nothing, a row test needs the importer.
 
-import { getCI, getPath, isObject, str } from "./siemImport.js";
+import { getCI, getPath, isObject, str, type MappedEvent } from "./siemImport.js";
 import { tradecraftSignal } from "./tradecraftRules.js";
 
 type Row = Record<string, unknown>;
@@ -80,6 +80,11 @@ const GENERATED_MARKERS: RegExp[] = [
 ];
 
 const SCRIPT_BLOCK_EID = 4104;
+// The other two records the engine writes for the SAME running script: module logging (4103) and
+// legacy pipeline execution details (800). PersistenceSniper's `Add-Type … AdjPriv` lands in both.
+const MODULE_LOGGING_EID = 4103;
+const PIPELINE_EID = 800;
+const COLLECTOR_SCRIPT_EIDS = new Set([SCRIPT_BLOCK_EID, MODULE_LOGGING_EID, PIPELINE_EID]);
 const EVENT_WRAPPERS = ["Event", "_Event"] as const;
 
 // An EventID as Windows/Velociraptor variously writes it: a bare number, a numeric string, or an
@@ -143,20 +148,59 @@ export function isGeneratedModuleScript(row: Row): boolean {
   return tradecraftSignal("", text)?.weight !== "strong";
 }
 
-// The script FILE a 4104 event was compiled from. PowerShell writes it into `EventData.Path` from
-// the engine's own view of what it loaded, so unlike the script text it is not a string the script
-// can talk about — a payload cannot claim to live somewhere it does not.
-function scriptPath(row: Row): string {
+// The script FILE a PowerShell record was compiled from, as the ENGINE wrote it — so unlike the
+// script text it is not a string the script can talk about; a payload cannot claim to live somewhere
+// it does not. Per event id (#1477): 4104 logs it as `EventData.Path`; 4103 (module logging) as the
+// `Script Name = …` line of `ContextInfo`; 800 (pipeline execution) as `ScriptName=…` inside `Data`,
+// which the rendered Message repeats. NEVER `Host Application` / `HostApplication` — that is the host
+// PROCESS's command line, a string whoever launched PowerShell chose, and an intruder who starts
+// `powershell -c "'<tools path>'; <payload>"` puts the genuine path there on every record.
+const SCRIPT_NAME_4103 = /^\s*Script Name\s*=\s*(.*?)\s*$/im;
+const SCRIPT_NAME_800 = /^\s*ScriptName=(.*?)\s*$/im;
+function eventData(row: Row): Row | null {
   let ed = getCI(row, "EventData");
   for (const w of EVENT_WRAPPERS) {
     if (isObject(ed)) break;
     ed = getPath(row, `${w}.EventData`);
   }
-  return isObject(ed) ? str(getCI(ed, "Path")).trim() : "";
+  return isObject(ed) ? ed : null;
+}
+// An 800's `Data` is the three <Data> elements as the parser left them — a list (Velociraptor), or
+// one string (a flattened export) — and the rendered Message repeats them when EventData is absent.
+function pipelineBlob(row: Row): string {
+  const data = eventData(row)?.Data;
+  const joined = Array.isArray(data) ? data.map((d) => str(d)).join("\n") : str(data);
+  return joined || str(getCI(row, "Message"));
+}
+function scriptPath(row: Row): string {
+  const ed = eventData(row);
+  switch (eventId(row)) {
+    case SCRIPT_BLOCK_EID:
+      return ed ? str(getCI(ed, "Path")).trim() : "";
+    case MODULE_LOGGING_EID:
+      return (ed && SCRIPT_NAME_4103.exec(str(getCI(ed, "ContextInfo")))?.[1]) ?? "";
+    case PIPELINE_EID:
+      return SCRIPT_NAME_800.exec(pipelineBlob(row))?.[1] ?? "";
+    default:
+      return "";
+  }
+}
+
+// The classic "Windows PowerShell" channel an 800 lands on records NO Security.UserID, so the SID
+// reader below finds nothing for it. The engine writes the identity it ran under into the record's
+// own context instead — `UserId=WORKGROUP\SYSTEM` on a workgroup host, `NT AUTHORITY\SYSTEM` on a
+// domain-joined one — the same engine-recorded fact the SID is, and the only spelling of SYSTEM the
+// token can produce (SYSTEM is a reserved account name; no user or domain account can be given it).
+const PIPELINE_SYSTEM_USER = /^\s*UserId=(?:NT AUTHORITY|WORKGROUP)\\SYSTEM\s*$/im;
+function ranAsSystem(row: Row): boolean {
+  const sid = logonSid(row);
+  if (sid) return sid === SYSTEM_SID;
+  return eventId(row) === PIPELINE_EID && PIPELINE_SYSTEM_USER.test(pipelineBlob(row));
 }
 
 /**
- * Is this a script block the COLLECTOR ran, out of its own tool tree?
+ * Is this a script block — or the 4103 / 800 record of the same running script (#1477) — the
+ * COLLECTOR ran, out of its own tool tree?
  *
  * Velociraptor artifacts shell out to PowerShell modules unpacked under
  * `\Program Files\Velociraptor\Tools\tmp*\` — Windows.Forensics.PersistenceSniper runs
@@ -221,8 +265,25 @@ function logonSid(row: Row): string {
 }
 
 export function isDetectionToolScript(row: Row): boolean {
-  if (eventId(row) !== SCRIPT_BLOCK_EID) return false;
-  if (logonSid(row) !== SYSTEM_SID) return false;
+  if (!COLLECTOR_SCRIPT_EIDS.has(eventId(row))) return false;
+  if (!ranAsSystem(row)) return false;
   const path = scriptPath(row);
   return COLLECTOR_TOOL_TREE.test(path) && !PATH_TRAVERSAL.test(path);
+}
+
+/**
+ * Apply isDetectionToolScript to the events one row produced, in place: Info, never lowering a
+ * Critical (the bound the header above argues for), and `origin: "collector"` beside it (#1477). The
+ * origin is the part the rest of the pipeline reads. The post-import tagger matches the retained raw
+ * message — PersistenceSniper's `Add-Type … AdjPriv` is exactly what the bundled token-manipulation
+ * rule looks for — and used to raise the forensic copy of a row this had just graded Info back to
+ * High; with the origin set the tagger tags the row and leaves its grade alone (tagger.ts).
+ */
+export function demoteDetectionToolScript(row: Row, events: readonly (MappedEvent | null)[]): void {
+  if (!isDetectionToolScript(row)) return;
+  for (const m of events) {
+    if (!m || m.severity === "Critical") continue;
+    m.severity = "Info";
+    m.origin = "collector";
+  }
 }

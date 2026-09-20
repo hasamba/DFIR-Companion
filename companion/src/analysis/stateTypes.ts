@@ -64,7 +64,12 @@ export type OutcomeSource = "analyst" | "machine";
 // "lab": a sandbox detonation (never unioned with a host observation, correlate.ts). "wire": a
 // network sensor's record of bytes in flight — a web request or a transfer (#993); a transfer
 // never unions with the endpoint file that carries the same hash, the two stay side by side.
-export type EvidenceOrigin = "lab" | "wire";
+// `collector` = the case's OWN DFIR collector produced it on the host (#1477): the Velociraptor
+// client's install, the tools it unpacks and runs, the PowerShell modules its artifacts execute. Set
+// only by the deterministic collector rules (collectorDeployment.ts, veloDetectionNoise.ts) beside
+// the Info grade they assign; the tagger never raises a row that carries it (tagger.ts), which is
+// what keeps a collector-run `Add-Type … AdjPriv` from coming back as a High after import.
+export type EvidenceOrigin = "lab" | "wire" | "collector";
 
 // One sandbox detonation of one sample, as recorded in `InvestigationState.labIntel` and rendered on
 // each incident event that carries the same sha256. Keyed by (sha256, source, runId).

@@ -14,13 +14,14 @@ import {
   isCollectorFootprint,
   isCollectorInstallBinary,
   isCollectorServerDestination,
+  isCollectorSpawn,
   isLocalOrUnspecifiedHost,
   isMsiexecCreationTimeChange,
   loadCollectorInfrastructure,
 } from "../../src/analysis/collectorDeployment.js";
 import { aggregateEvents } from "../../src/analysis/eventAggregate.js";
 import { parseHayabusaTimeline } from "../../src/analysis/hayabusaImport.js";
-import type { MappedEvent } from "../../src/analysis/siemImport.js";
+import { mapWindows, type MappedEvent } from "../../src/analysis/siemImport.js";
 
 const SERVER = "10.20.30.40";
 const INSTALL_EXE = "C:\\Program Files\\Velociraptor\\Velociraptor.exe";
@@ -795,5 +796,112 @@ describe("Hayabusa rows — the rules read Hayabusa's rendering", () => {
     expect(isCollectorFootprint(row)).toBe(false);
     expect(isCollectorInstallBinary(row)).toBe(false);
     expect(row.severity).toBe("High");
+  });
+});
+
+// #1477: the process the collector ITSELF spawned. Windows.Forensics.PersistenceSniper makes the
+// Velociraptor client start the SYSTEM powershell.exe with `import-module "<install root>\Tools\
+// tmp…\PersistenceSniper\PersistenceSniper.psm1"`. The acting image is System32\powershell.exe, so
+// rule 2b (acting image under the root) never fires, and the Sigma "Change PowerShell Policies" /
+// "Non Interactive PowerShell" hits on it became finding f18 (High) on the real case. Two facts,
+// BOTH required: the parent executable is the collector exe under its install root (canonical
+// process.parent.executable — a path Sysmon recorded, not a string the child chose), and the
+// command line names a file under the collector's Tools root. Parent alone is provenance, not
+// enough (see the ParentProc= negative above); a Tools path alone is a string anyone can type.
+describe("isCollectorSpawn — a process the Velociraptor client itself started", () => {
+  const SYSMON = "Microsoft-Windows-Sysmon/Operational";
+  const PWSH = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+  const TOOLS_PSM1 =
+    "C:\\Program Files\\Velociraptor\\Tools\\tmp2712975309\\PersistenceSniper\\PersistenceSniper.psm1";
+  const SNIPER_CMD = `powershell -ExecutionPolicy bypass -command "import-module \\"${TOOLS_PSM1}\\"; Find-AllPersistence -IncludeHighFalsePositivesChecks"`;
+
+  // The Sysmon EID 1 as the Windows mapper renders it (the Chainsaw importer reuses mapWindows).
+  const spawn = (
+    over: { parent?: string; cmd?: string; image?: string; severity?: MappedEvent["severity"] } = {},
+  ) => {
+    const m = mapWindows(
+      {
+        event_id: 1,
+        channel: SYSMON,
+        "@timestamp": "2026-09-20T19:34:56Z",
+        event_data: {
+          Image: over.image ?? PWSH,
+          CommandLine: over.cmd ?? SNIPER_CMD,
+          ParentImage: over.parent ?? INSTALL_EXE,
+          ParentCommandLine: `"${INSTALL_EXE}" service run`,
+          User: "NT AUTHORITY\\SYSTEM",
+          ProcessId: "4711",
+        },
+      },
+      "WS01",
+      new Map(),
+    )!;
+    // Sigma graded the real row Medium; the rule must work whatever grade the row arrived with.
+    m.severity = over.severity ?? "Medium";
+    return m;
+  };
+
+  it("matches the PersistenceSniper launch: collector parent AND a Tools-root module", () => {
+    const m = spawn();
+    expect(m.canonical?.process?.parent?.executable).toBe(INSTALL_EXE);
+    expect(isCollectorSpawn(m)).toBe(true);
+    annotateCollectorDeployment(m, { servers: new Set() });
+    expect(m.severity).toBe("Info");
+    expect(m.origin).toBe("collector");
+    expect(m.description).toMatch(/\[DFIR collector footprint — spawned by the Velociraptor client\]$/);
+  });
+
+  it("does NOT match the same command line under a parent outside the install root", () => {
+    for (const parent of [
+      "C:\\Users\\Public\\Velociraptor.exe",
+      "C:\\ProgramData\\Velociraptor\\Velociraptor.exe",
+      "C:\\Program Files\\Velociraptor\\..\\..\\Users\\v\\Velociraptor.exe",
+      PWSH,
+    ]) {
+      const m = spawn({ parent });
+      expect(isCollectorSpawn(m)).toBe(false);
+      annotateCollectorDeployment(m, { servers: new Set() });
+      expect(m.severity).toBe("Medium");
+      expect(m.origin).toBeUndefined();
+    }
+  });
+
+  it("does NOT match a collector parent whose command line names no Tools-root file", () => {
+    for (const cmd of [
+      "powershell -ExecutionPolicy bypass -command Invoke-Mimikatz -DumpCreds",
+      'powershell -c "import-module C:\\ProgramData\\Velociraptor\\Tools\\tmp1\\x.psm1"',
+      "powershell -c \"import-module 'C:\\Program Files\\Velociraptor\\Tools\\..\\..\\evil.psm1'\"",
+    ]) {
+      const m = spawn({ cmd });
+      expect(isCollectorSpawn(m)).toBe(false);
+      annotateCollectorDeployment(m, { servers: new Set() });
+      expect(m.severity).toBe("Medium");
+    }
+  });
+
+  it("never lowers a Critical — the same bound the script rule keeps", () => {
+    const m = spawn({ severity: "Critical" });
+    expect(isCollectorSpawn(m)).toBe(true);
+    annotateCollectorDeployment(m, { servers: new Set() });
+    expect(m.severity).toBe("Critical");
+    expect(m.origin).toBeUndefined();
+  });
+
+  it("a non-process row naming both paths is untouched", () => {
+    const m = ev({
+      description: `Sysmon File created (EID 11) - Image=${INSTALL_EXE} - TargetFilename=${TOOLS_PSM1} @ WS01`,
+    });
+    expect(isCollectorSpawn(m)).toBe(false);
+  });
+
+  it("the earlier collector rules stamp origin:collector too, so the tagger cannot re-raise them", () => {
+    vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", `https://${SERVER}:8889`);
+    vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", "");
+    const rows = [download(), install()];
+    applyCollectorDeployment(rows);
+    for (const r of rows) {
+      expect(r.severity).toBe("Info");
+      expect(r.origin).toBe("collector");
+    }
   });
 });
