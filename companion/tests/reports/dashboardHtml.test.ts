@@ -776,6 +776,22 @@ describe("dashboard.html — deep pass", () => {
     expect(has(html, "Deep pass will not help."), "states the no-benefit verdict outright").toBe(true);
     expect(has(html, "Deep pass will help."), "states the benefit verdict outright").toBe(true);
     expect(has(html, "Deep pass: benefit unknown."), "states the stale verdict outright").toBe(true);
+  });
+
+  it("keeps 'should I run one?' and 'what did the last one do?' together, each labelled", async () => {
+    const html = await load();
+    // The result card sits under the verdict line, above Run, so the two questions read as a pair.
+    expect(
+      matches(html, /id="deepPassWorth"[\s\S]{0,200}id="deepPassResult"[\s\S]{0,800}id="deepPassRun"/),
+      "verdict, then result card, then Run",
+    ).toBe(true);
+    expect(has(html, "What did my last deep pass do?"), "the card names its question").toBe(true);
+    // A synthesis that ran after the deep pass replaced its conclusions; the card must say so
+    // instead of letting "N observations folded in" read as the current state.
+    expect(
+      matches(html, /function renderDeepPassResult[\s\S]{0,900}A synthesis ran after this deep pass/),
+      "flags a superseded run",
+    ).toBe(true);
     expect(
       matches(html, /function applyDeepPassGate[\s\S]{0,900}deepPassRunAnyway/),
       "the gate reads the override",
