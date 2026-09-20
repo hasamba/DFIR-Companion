@@ -314,6 +314,13 @@ describe("buildReconcilePrompt — cited events under each delta (#1466)", () =>
     expect(fp).toMatch(/event budget/i);
   });
 
+  it("an explicit scoped event set replaces the raw timeline, so filtered events are never shown", () => {
+    const scoped = timeline.filter((e) => e.id !== "e3"); // e3 marked false positive / out of window
+    const p = buildReconcilePrompt(a, b, deltas, scoped);
+    expect(p).not.toContain("[e3]");
+    expect(p).toContain("[e1]");
+  });
+
   it("reads only the forensic timeline — the builder takes no super-timeline input", async () => {
     const { readFile } = await import("node:fs/promises");
     const src = await readFile(new URL("../../src/analysis/secondOpinion.ts", import.meta.url), "utf8");

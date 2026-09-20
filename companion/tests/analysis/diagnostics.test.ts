@@ -87,6 +87,13 @@ describe("buildAiDiagnostics", () => {
       "model B (gpt)",
     );
     expect(buildAiDiagnostics({ ...base, DFIR_AI_RECONCILE_MODEL: "o3" }).refereeModel).toBe("o3");
+    // A custom model with no provider anywhere is never built — the run uses model A, so say so.
+    const noProvider = {
+      DFIR_AI_MODEL: "claude",
+      DFIR_AI_SECOND_OPINION_MODEL: "gpt",
+      DFIR_AI_RECONCILE_MODEL: "o3",
+    };
+    expect(buildAiDiagnostics(noProvider).refereeModel).toMatch(/^model A \(claude\) — "o3" has no provider/);
     expect(
       buildAiDiagnostics({ DFIR_AI_PROVIDER: "anthropic", DFIR_AI_MODEL: "claude" }).refereeModel,
     ).toBeNull();

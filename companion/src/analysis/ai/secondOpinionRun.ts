@@ -13,7 +13,7 @@ import type { SynthThinkingInput } from "../synthThinking.js";
 import { getReconcilePrompt } from "./prompts/index.js";
 import type { AIProvider } from "../../providers/provider.js";
 import type { RefereeModel } from "./providerRoster.js";
-import { callAiJson } from "./aiContext.js";
+import { callAiJson, loadScopedEvents } from "./aiContext.js";
 import { synthesize, type SynthesisContext } from "./synthesis.js";
 
 /**
@@ -87,16 +87,11 @@ export async function secondOpinion(
     ctx.opts.synthesisModelLabel ?? (ctx.opts.synthesisProvider ?? ctx.opts.provider)?.name ?? "model A";
   const modelB = ctx.opts.secondOpinionModelLabel ?? provider.name;
   const referee = pickReferee(ctx.opts, modelA);
-  let record = buildSecondOpinion({
-    a,
-    b,
-    modelA,
-    modelB,
-    referee: referee?.label ?? "",
-    now: () => new Date().toISOString(),
-  });
+  // `referee` stays "" until the verdict pass actually succeeds (reconcileDeltas stamps it), so a
+  // failed or skipped pass never shows a referee that wrote nothing.
+  let record = buildSecondOpinion({ a, b, modelA, modelB, now: () => new Date().toISOString() });
 
-  if (referee) record = await reconcileDeltas(ctx, caseId, referee.provider, { a, b, record });
+  if (referee) record = await reconcileDeltas(ctx, caseId, referee, { a, b, record });
 
   await ctx.opts.secondOpinionStore.save(caseId, record);
   await recordAgreementRate(ctx, caseId, record, modelA, modelB);
@@ -113,24 +108,27 @@ export async function secondOpinion(
 async function reconcileDeltas(
   ctx: SecondOpinionContext,
   caseId: string,
-  provider: AIProvider,
+  referee: RefereeModel,
   input: { a: InvestigationState; b: InvestigationState; record: SecondOpinion },
 ): Promise<SecondOpinion> {
   const { a, b, record } = input;
   if (record.deltas.length === 0) return record;
-  const userPrompt = buildReconcilePrompt(a, b, record.deltas);
+  // The cited events the referee sees are the scoped set synthesis read — never an out-of-window
+  // event or an analyst-marked false positive (#1466 review).
+  const { scoped } = await loadScopedEvents(ctx, caseId, a);
+  const userPrompt = buildReconcilePrompt(a, b, record.deltas, scoped);
   try {
     const parsed = await callAiJson(
       ctx,
       caseId,
       a,
-      provider,
+      referee.provider,
       "second-opinion-reconcile",
       getReconcilePrompt,
       userPrompt,
       (raw) => reconcileResponseSchema.parse(raw),
     );
-    return mergeReconcileVerdicts(record, parsed);
+    return { ...mergeReconcileVerdicts(record, parsed), referee: referee.label };
   } catch (err) {
     ctx.log.warn(`[second-opinion] reconcile pass failed: ${(err as Error).message}`, { caseId });
     return record;

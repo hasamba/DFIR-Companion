@@ -86,6 +86,10 @@ function refereeModelLabel(env: NodeJS.ProcessEnv, modelA: string | null): strin
   const alias = choice.toLowerCase();
   if (!choice || alias === "same-as-a") return `model A (${modelA ?? "?"})`;
   if (alias === "same-as-b") return `model B (${modelB})`;
+  // A custom model with no provider anywhere cannot be built (composition/aiProviders.ts
+  // resolveRefereeModel → undefined) and the run falls back to model A — say so here too.
+  const provider = env.DFIR_AI_RECONCILE_PROVIDER?.trim() || visionEnv(env, "PROVIDER");
+  if (!provider) return `model A (${modelA ?? "?"}) — "${choice}" has no provider, so it is not used`;
   return choice;
 }
 

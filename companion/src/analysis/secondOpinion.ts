@@ -339,16 +339,19 @@ function renderDeltaWithEvents(
 }
 
 // Build the reconcile USER prompt: the two case summaries + every disagreement, each tagged with its id
-// and followed by the forensic events it cites. A and B ran over the same current timeline, so A's
-// forensic timeline serves both sides' citations.
+// and followed by the forensic events it cites. `events` is the SAME scoped set both syntheses read
+// (scope window applied, analyst-marked false positives removed — aiContext.loadScopedEvents), so the
+// referee cannot be handed an event neither model saw. Defaults to A's forensic timeline for callers
+// with no scope (tests, CLI).
 export function buildReconcilePrompt(
   a: InvestigationState,
   b: InvestigationState,
   deltas: readonly SecondOpinionDelta[],
+  events?: readonly ForensicEvent[],
 ): string {
   const aSummary = a.lastSummary?.trim() || a.attackerPath?.trim() || "(no summary)";
   const bSummary = b.lastSummary?.trim() || b.attackerPath?.trim() || "(no summary)";
-  const timeline = a.forensicTimeline.length ? a.forensicTimeline : b.forensicTimeline;
+  const timeline = events ?? (a.forensicTimeline.length ? a.forensicTimeline : b.forensicTimeline);
   const byId = new Map(timeline.map((e) => [e.id, e]));
   let budget = RECONCILE_EVENTS_TOTAL;
   const rendered = deltas.map((d) => {

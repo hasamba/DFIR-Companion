@@ -8,6 +8,7 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { SecondOpinionStore } from "../../src/analysis/secondOpinionStore.js";
+import { FalsePositiveStore } from "../../src/analysis/falsePositive.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
 import { emptyState, type InvestigationState } from "../../src/analysis/stateTypes.js";
 
@@ -17,6 +18,7 @@ class ScriptedProvider implements AIProvider {
   readonly name = "scripted";
   reconcileCalls = 0; // how many times THIS provider was asked to referee (#1466)
   lastReconcilePrompt = "";
+  failReconcile = false;
   constructor(
     private readonly synth: string,
     private readonly reconcile: string,
@@ -26,6 +28,7 @@ class ScriptedProvider implements AIProvider {
     if (/RECONCILING/i.test(req.systemPrompt)) {
       this.reconcileCalls += 1;
       this.lastReconcilePrompt = req.userPrompt;
+      if (this.failReconcile) throw new Error("referee down");
       return { rawText: this.reconcile };
     }
     return { rawText: this.synth };
@@ -168,7 +171,7 @@ async function makeApp(opts: { enabled: boolean; referee?: "b" | "c" }) {
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
   await stateStore.save(seededState());
-  return { app, stateStore, aProvider, bProvider, cProvider };
+  return { app, stateStore, store, aProvider, bProvider, cProvider };
 }
 
 // The AI limiter is process-wide (20 calls / 60 s); this file now runs enough second opinions to
@@ -206,6 +209,34 @@ describe("who referees the verdicts (#1466)", () => {
     await request(app).post("/cases/c1/second-opinion").send({});
     // SYNTH_B's B-only finding cites e1; the seeded timeline holds e1's description.
     expect(aProvider.lastReconcilePrompt).toMatch(/\[e1\] .*\[(Critical|High|Medium|Low|Info)\]/);
+  });
+
+  it("an analyst-marked false positive never reaches the referee, even when a finding cites it", async () => {
+    const { app, store, aProvider } = await makeApp({ enabled: true });
+    await new FalsePositiveStore(store).save("c1", [
+      {
+        id: "event:e1",
+        kind: "event",
+        ref: "e1",
+        reason: "known-good-tool",
+        note: "",
+        markedAt: "2026-06-11T00:00:00.000Z",
+        markedBy: "analyst",
+      },
+    ]);
+    await request(app).post("/cases/c1/second-opinion").send({});
+    expect(aProvider.reconcileCalls).toBe(1);
+    expect(aProvider.lastReconcilePrompt).not.toContain("[e1]");
+    expect(aProvider.lastReconcilePrompt).toMatch(/no cited events/);
+  });
+
+  it("a failed verdict pass leaves referee '' — nobody is credited with verdicts that were never written", async () => {
+    const { app, aProvider } = await makeApp({ enabled: true });
+    aProvider.failReconcile = true;
+    const res = await request(app).post("/cases/c1/second-opinion").send({});
+    expect(res.status).toBe(200);
+    expect(res.body.referee).toBe("");
+    expect(res.body.deltas.every((d: { rationale: string }) => d.rationale === "")).toBe(true);
   });
 });
 
