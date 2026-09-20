@@ -212,6 +212,61 @@ describe("archiveCase", () => {
     });
   });
 
+  // The app keeps writing to a case while it is being archived — a status change lands a SQLite
+  // commit, and the rollback journal beside the database is deleted on that commit. The default
+  // walker listed the journal, then the read found it gone and the whole archive died with a raw
+  // ENOENT 500 (#1442). The encrypted export skips these names by caseTransientPaths.ts; the plain
+  // archive must apply the same rule, and for the same reason: a journal is a write in flight, not
+  // case content.
+  describe("default scan (real fs) skips in-flight writes", () => {
+    it("leaves a SQLite rollback journal and an atomicWrite temp out of the archive", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "dfir-archive-transient-"));
+      try {
+        await mkdir(join(dir, "c1", "state"), { recursive: true });
+        await writeFile(join(dir, "c1", "case.json"), '{"caseId":"c1"}');
+        await writeFile(join(dir, "c1", "state", "investigation.sqlite"), "db");
+        await writeFile(join(dir, "c1", "state", "investigation.sqlite-journal"), "undo");
+        await writeFile(
+          join(dir, "c1", "state", "case.json.0f0f0f0f-0f0f-0f0f-0f0f-0f0f0f0f0f0f.tmp"),
+          "partial",
+        );
+        // A name that merely LOOKS transient by extension is evidence and stays (rule 1 of
+        // caseTransientPaths.ts) — an analyst can import a sample called anything.
+        await writeFile(join(dir, "c1", "notes-journal"), "evidence");
+
+        const result = await archiveCase(dir, "c1");
+        const paths = result.manifest.files.map((f) => f.path).sort();
+        expect(paths).toEqual(["case.json", "notes-journal", "state/investigation.sqlite"]);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("a journal deleted between the listing and the read no longer fails the archive", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "dfir-archive-race-"));
+      try {
+        await mkdir(join(dir, "c1", "state"), { recursive: true });
+        await writeFile(join(dir, "c1", "state", "investigation.sqlite"), "db");
+        const journal = join(dir, "c1", "state", "investigation.sqlite-journal");
+        await writeFile(journal, "undo");
+        // The commit that deletes the journal lands after readdir and before the per-file read.
+        let first = true;
+        const result = await archiveCase(dir, "c1", {
+          readFile: async (p: string) => {
+            if (first) {
+              first = false;
+              await rm(journal, { force: true });
+            }
+            return readFile(p);
+          },
+        });
+        expect(result.manifest.files.map((f) => f.path)).toEqual(["state/investigation.sqlite"]);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+  });
+
   // A case directory routinely holds names Windows refuses. drop/_processed/ keeps a dropped file's
   // original name forever, and analysts drop files straight out of Windows collections.
   describe("entry names are safe to extract on Windows", () => {

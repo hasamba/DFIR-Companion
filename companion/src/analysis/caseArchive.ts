@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { deflateRawSync } from "node:zlib";
 import { portableZipEntryPath, portableArchivePaths } from "../storage/portableFilename.js";
+import { isTransientCasePath } from "./caseTransientPaths.js";
 
 // ── CRC-32 via lookup table ────────────────────────────────────────────────
 const CRC_TABLE = (() => {
@@ -173,6 +174,13 @@ async function defaultScanFiles(dir: string): Promise<string[]> {
   async function walk(abs: string, rel: string): Promise<void> {
     const entries = await readdir(abs, { withFileTypes: true });
     for (const e of entries) {
+      // A write in progress, not case content. The app keeps writing to a case while it is being
+      // archived — closing it lands a SQLite commit that deletes the rollback journal — so readdir
+      // routinely lists a name the read below no longer finds, which took the whole archive down
+      // with a raw ENOENT 500 (#1442). Same rule, same reason and same list as the encrypted
+      // export: what counts as transient (and what deliberately does not) is caseTransientPaths.ts.
+      // A path that vanishes without matching there still fails loudly.
+      if (isTransientCasePath(e.name)) continue;
       const childRel = rel ? `${rel}/${e.name}` : e.name;
       if (e.isDirectory()) {
         await walk(join(abs, e.name), childRel);
