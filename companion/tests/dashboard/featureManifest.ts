@@ -1395,6 +1395,7 @@ export const FEATURES: Feature[] = [
       "scheduleIocProvenanceReload",
       "loadIocProvenanceChains",
       "scheduleIocProvenanceChainReload",
+      "flushDeferredIocProvenanceReloads",
       "loadIocRisk",
       "scheduleIocRiskReload",
       "iocProvenanceOf",

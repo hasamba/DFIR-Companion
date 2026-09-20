@@ -101,6 +101,9 @@
     _jobUiRefreshRunning = true;
     try {
       await Promise.all([loadJobs(), loadCockpit(cid)]);
+      // #1447: the IOC-provenance panels park their reloads while an import runs; now that the
+      // cache knows the current job set, let them fire if the import is gone.
+      if (typeof flushDeferredIocProvenanceReloads === "function") flushDeferredIocProvenanceReloads();
     } finally {
       _jobUiRefreshRunning = false;
       if (_jobUiRefreshQueued && _jobUiRefreshCaseId === jobsCaseId()) {
