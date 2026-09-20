@@ -43,6 +43,7 @@ const RECORD_KEYS = [
   "ComputerName",
   "System.Computer",
   "Event.System.Computer",
+  "_Event.System.Computer",
   "SystemData.Computer",
   "Host",
 ];
