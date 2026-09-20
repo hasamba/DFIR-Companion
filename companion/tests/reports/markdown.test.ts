@@ -1053,6 +1053,7 @@ describe("renderMarkdownReport", () => {
         secondOpinionPerf: {
           modelA: "anthropic/claude-sonnet-5",
           modelB: "openai/gpt-5",
+          referee: "",
           agreementCount: 8,
           deltaCount: 2,
           agreementRate: 0.8,

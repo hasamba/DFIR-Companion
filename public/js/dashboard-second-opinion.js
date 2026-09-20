@@ -55,7 +55,10 @@
     el.style.display = "block";
     const toggle = `<button type="button" class="so-toggle" data-so-toggle title="${soCollapsed ? "Expand" : "Collapse"} the 2nd opinion panel">${soCollapsed ? "▸" : "▾"}</button>`;
     const head =
-      `<div class="so-head">${toggle}<span class="so-models">🔁 2nd opinion · ${esc(rec.modelB || "model B")} vs ${esc(rec.modelA || "model A")}</span>` +
+      `<div class="so-head">${toggle}<span class="so-models">🔁 2nd opinion · A: ${esc(rec.modelA || "model A")} vs B: ${esc(rec.modelB || "model B")}</span>` +
+      (typeof rec.referee === "string" && rec.referee
+        ? `<span data-safe-style="color:var(--text-dim)" title="The model that wrote the 'referee suggests' line on each disagreement">· referee: ${esc(rec.referee)}</span>`
+        : "") +
       `<span class="so-agree">✓ ${rec.agreementCount | 0} agreed</span>` +
       `<span data-safe-style="color:var(--text-dim)">${esc(relTime(rec.generatedAt))}</span></div>`;
     if (soCollapsed) {
@@ -91,7 +94,7 @@
           : "";
         const suggest =
           d.recommendation === "accept_b" || d.recommendation === "keep_a"
-            ? `<div class="so-rec so-${esc(d.recommendation)}">model suggests: ${d.recommendation === "accept_b" ? "accept" : "reject"}</div>`
+            ? `<div class="so-rec so-${esc(d.recommendation)}">referee suggests: ${d.recommendation === "accept_b" ? "accept B" : "keep A"}</div>`
             : "";
         let acts;
         if (d.status === "accepted")

@@ -219,7 +219,7 @@
     const so = m.secondOpinionPerf;
     if (so && (so.modelA || so.modelB)) {
       const pct = Math.round((so.agreementRate || 0) * 100);
-      modelPerf += `<div class="sm-perf" data-safe-style="margin-top:4px" title="How often the second-opinion model agreed with the primary synthesis model on this case (#74)">🆚 <strong>${esc(so.modelB)}</strong> vs <strong>${esc(so.modelA)}</strong>: ${so.agreementCount} agreed, ${so.deltaCount} disagreed (${pct}%)</div>`;
+      modelPerf += `<div class="sm-perf" data-safe-style="margin-top:4px" title="How often the second-opinion model agreed with the primary synthesis model on this case (#74)">🆚 A: <strong>${esc(so.modelA)}</strong> vs B: <strong>${esc(so.modelB)}</strong>: ${so.agreementCount} agreed, ${so.deltaCount} disagreed (${pct}%)${typeof so.referee === "string" && so.referee ? ` · referee: ${esc(so.referee)}` : ""}</div>`;
     }
     el.innerHTML = `<div class="sm-line"><span>🧠 Last synthesized <strong>${esc(relTime(m.lastSynthesizedAt))}</strong></span>${perfSpan}<span>${summary}</span></div>${coverage}${modelPerf}${evidenceMix}${detail}${secondLook}${largeAdvisory}`;
   }

@@ -35,6 +35,7 @@ import type { PresidioPendingStore } from "../presidioPending.js";
 import type { PlaybookStore } from "../playbookStore.js";
 import type { ScopeStore } from "../scope.js";
 import type { SecondOpinionStore } from "../secondOpinionStore.js";
+import type { RefereeModel } from "./providerRoster.js";
 import type { SourceTrustStore } from "../sourceTrustStore.js";
 import type { StateLock } from "../stateLock.js";
 import type { StateStore } from "../stateStore.js";
@@ -177,6 +178,9 @@ export interface PipelineOptions {
   // vs "gpt-4o"). Fall back to the provider name when absent.
   synthesisModelLabel?: string;
   secondOpinionModelLabel?: string;
+  // Referee for the second-opinion verdicts (#1466). Absent → model A (synthesisProvider ?? provider)
+  // referees; the run resolves that itself so the record can name whoever actually judged.
+  referee?: RefereeModel;
   // Per-case mutex serializing load->save critical sections (manual adds, background
   // enrichment, synthesis) so concurrent state writes cannot clobber each other (lost update).
   // Absent -> no locking (CLI scripts/tests).

@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
+import { resetLimiters } from "../../src/http/rateLimiter.js";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +8,7 @@ import { CaseStore } from "../../src/storage/caseStore.js";
 import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { SecondOpinionStore } from "../../src/analysis/secondOpinionStore.js";
+import { FalsePositiveStore } from "../../src/analysis/falsePositive.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
 import { emptyState, type InvestigationState } from "../../src/analysis/stateTypes.js";
 
@@ -14,13 +16,22 @@ import { emptyState, type InvestigationState } from "../../src/analysis/stateTyp
 // JSON for the Pass-2 (reconcile) call — distinguished by the RECONCILE system prompt marker.
 class ScriptedProvider implements AIProvider {
   readonly name = "scripted";
-  readonly model = "mock-model";
+  reconcileCalls = 0; // how many times THIS provider was asked to referee (#1466)
+  lastReconcilePrompt = "";
+  failReconcile = false;
   constructor(
     private readonly synth: string,
     private readonly reconcile: string,
+    readonly model = "mock-model",
   ) {}
   async analyze(req: AnalyzeRequest): Promise<AnalyzeResult> {
-    return { rawText: /RECONCILING/i.test(req.systemPrompt) ? this.reconcile : this.synth };
+    if (/RECONCILING/i.test(req.systemPrompt)) {
+      this.reconcileCalls += 1;
+      this.lastReconcilePrompt = req.userPrompt;
+      if (this.failReconcile) throw new Error("referee down");
+      return { rawText: this.reconcile };
+    }
+    return { rawText: this.synth };
   }
 }
 
@@ -123,13 +134,22 @@ function seededState(): InvestigationState {
   return s;
 }
 
-async function makeApp(opts: { enabled: boolean }) {
+// Every provider can answer a reconcile call, so which one ACTUALLY referees is observable (#1466):
+// model A by default, model B or a third model when `referee` says so.
+async function makeApp(opts: { enabled: boolean; referee?: "b" | "c" }) {
   const root = await mkdtemp(join(tmpdir(), "dfir-secopinion-"));
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
   const secondOpinionStore = new SecondOpinionStore(store);
-  const aProvider = new ScriptedProvider(SYNTH_A, SYNTH_A); // primary synth (reconcile string unused)
-  const bProvider = new ScriptedProvider(SYNTH_B, RECONCILE); // second opinion: dry-run synth + reconcile
+  const aProvider = new ScriptedProvider(SYNTH_A, RECONCILE, "model-a");
+  const bProvider = new ScriptedProvider(SYNTH_B, RECONCILE, "model-b");
+  const cProvider = new ScriptedProvider(SYNTH_A, RECONCILE, "model-c");
+  const referee =
+    opts.referee === "b"
+      ? { provider: bProvider, label: "model-B" }
+      : opts.referee === "c"
+        ? { provider: cProvider, label: "model-C" }
+        : undefined;
   const pipeline = buildRuntimePipeline({
     provider: aProvider,
     synthesisProvider: aProvider,
@@ -139,6 +159,7 @@ async function makeApp(opts: { enabled: boolean }) {
     secondOpinionStore,
     synthesisModelLabel: "model-A",
     secondOpinionModelLabel: "model-B",
+    referee,
     imageLoader: async () => ({ base64: "AAAA", mimeType: "image/webp" }),
   });
   const app = createApp(store, {
@@ -150,8 +171,74 @@ async function makeApp(opts: { enabled: boolean }) {
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
   await stateStore.save(seededState());
-  return { app, stateStore };
+  return { app, stateStore, store, aProvider, bProvider, cProvider };
 }
+
+// The AI limiter is process-wide (20 calls / 60 s); this file now runs enough second opinions to
+// trip it, so each test starts from a clean window.
+beforeEach(() => resetLimiters());
+
+describe("who referees the verdicts (#1466)", () => {
+  it("model A referees by default — model B never judges its own disagreements", async () => {
+    const { app, aProvider, bProvider } = await makeApp({ enabled: true });
+    const res = await request(app).post("/cases/c1/second-opinion").send({});
+    expect(res.status).toBe(200);
+    expect(res.body.referee).toBe("model-A");
+    expect(aProvider.reconcileCalls).toBe(1);
+    expect(bProvider.reconcileCalls).toBe(0);
+  });
+
+  it("'same-as-b' hands the whistle to model B", async () => {
+    const { app, aProvider, bProvider } = await makeApp({ enabled: true, referee: "b" });
+    const res = await request(app).post("/cases/c1/second-opinion").send({});
+    expect(res.body.referee).toBe("model-B");
+    expect(bProvider.reconcileCalls).toBe(1);
+    expect(aProvider.reconcileCalls).toBe(0);
+  });
+
+  it("a third model referees when configured, and neither A nor B is asked", async () => {
+    const { app, aProvider, bProvider, cProvider } = await makeApp({ enabled: true, referee: "c" });
+    const res = await request(app).post("/cases/c1/second-opinion").send({});
+    expect(res.body.referee).toBe("model-C");
+    expect(cProvider.reconcileCalls).toBe(1);
+    expect(aProvider.reconcileCalls + bProvider.reconcileCalls).toBe(0);
+  });
+
+  it("the referee is shown the forensic events the disputed finding cites", async () => {
+    const { app, aProvider } = await makeApp({ enabled: true });
+    await request(app).post("/cases/c1/second-opinion").send({});
+    // SYNTH_B's B-only finding cites e1; the seeded timeline holds e1's description.
+    expect(aProvider.lastReconcilePrompt).toMatch(/\[e1\] .*\[(Critical|High|Medium|Low|Info)\]/);
+  });
+
+  it("an analyst-marked false positive never reaches the referee, even when a finding cites it", async () => {
+    const { app, store, aProvider } = await makeApp({ enabled: true });
+    await new FalsePositiveStore(store).save("c1", [
+      {
+        id: "event:e1",
+        kind: "event",
+        ref: "e1",
+        reason: "known-good-tool",
+        note: "",
+        markedAt: "2026-06-11T00:00:00.000Z",
+        markedBy: "analyst",
+      },
+    ]);
+    await request(app).post("/cases/c1/second-opinion").send({});
+    expect(aProvider.reconcileCalls).toBe(1);
+    expect(aProvider.lastReconcilePrompt).not.toContain("[e1]");
+    expect(aProvider.lastReconcilePrompt).toMatch(/no cited events/);
+  });
+
+  it("a failed verdict pass leaves referee '' — nobody is credited with verdicts that were never written", async () => {
+    const { app, aProvider } = await makeApp({ enabled: true });
+    aProvider.failReconcile = true;
+    const res = await request(app).post("/cases/c1/second-opinion").send({});
+    expect(res.status).toBe(200);
+    expect(res.body.referee).toBe("");
+    expect(res.body.deltas.every((d: { rationale: string }) => d.rationale === "")).toBe(true);
+  });
+});
 
 describe("Second opinion routes (#116)", () => {
   it("runs an independent re-synthesis + reconcile and returns the disagreement deltas", async () => {

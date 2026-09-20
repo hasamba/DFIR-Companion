@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   emptyState,
   type Finding,
+  type ForensicEvent,
   type InvestigationState,
   type Technique,
 } from "../../src/analysis/stateTypes.js";
@@ -14,6 +15,9 @@ import {
   buildReconcilePrompt,
   reconcileResponseSchema,
   setAllPendingStatus,
+  RECONCILE_PROMPT,
+  RECONCILE_EVENTS_PER_DELTA,
+  RECONCILE_EVENTS_TOTAL,
 } from "../../src/analysis/secondOpinion.js";
 
 function finding(over: Partial<Finding> & Pick<Finding, "id" | "title" | "severity">): Finding {
@@ -26,6 +30,19 @@ function finding(over: Partial<Finding> & Pick<Finding, "id" | "title" | "severi
     firstSeen: "2026-06-01T00:00:00.000Z",
     lastUpdated: "2026-06-01T00:00:00.000Z",
     status: "open",
+    ...over,
+  };
+}
+
+function event(id: string, over: Partial<ForensicEvent> = {}): ForensicEvent {
+  return {
+    id,
+    timestamp: "2026-06-01T10:00:00.000Z",
+    description: `${id} happened`,
+    severity: "Medium",
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    sourceScreenshots: [],
     ...over,
   };
 }
@@ -116,6 +133,19 @@ describe("buildSecondOpinion + mergeReconcileVerdicts", () => {
     expect(so.generatedAt).toBe("2026-06-15T00:00:00.000Z");
   });
 
+  it("stamps the referee label on the record, empty when no referee ran (#1466)", () => {
+    const base = { a: A, b: B, modelA: "claude", modelB: "gpt", now: () => "t" };
+    expect(buildSecondOpinion({ ...base, referee: "claude" }).referee).toBe("claude");
+    expect(buildSecondOpinion(base).referee).toBe("");
+  });
+
+  it("carries B's copy of a severity-disagreement finding so the referee sees both citations (#1466)", () => {
+    const so = buildSecondOpinion({ a: A, b: B, modelA: "a", modelB: "b", now: () => "t" });
+    const sev = so.deltas.find((d) => d.kind === "severity")!;
+    expect(sev.finding?.id).toBe("f3");
+    expect(sev.bFinding?.id).toBe("g2");
+  });
+
   it("merges reconcile verdicts (rationale + recommendation) onto the matching deltas by id", () => {
     const so = buildSecondOpinion({ a: A, b: B, modelA: "a", modelB: "b", now: () => "t" });
     const target = so.deltas.find((d) => d.kind === "b_only")!;
@@ -148,6 +178,154 @@ describe("buildSecondOpinion + mergeReconcileVerdicts", () => {
     expect(prompt).toContain("Cobalt Strike C2 beacon");
     expect(prompt).toContain(so.deltas[0].id);
     expect(prompt.toLowerCase()).toContain("json");
+  });
+
+  it("the reconcile system prompt treats A and B as peers and tells the referee to weigh cited events (#1466)", () => {
+    expect(RECONCILE_PROMPT).not.toMatch(/primary/i);
+    expect(RECONCILE_PROMPT).toMatch(/RECONCILING/); // the server test's scripted provider keys on this word
+    expect(RECONCILE_PROMPT).toMatch(/cited forensic events/i);
+    expect(RECONCILE_PROMPT).toMatch(/one of the two models/i);
+  });
+});
+
+// The referee is shown the forensic events each disputed finding cites (#1466). The list comes from
+// the FORENSIC timeline only — never the super-timeline (CLAUDE.md §7).
+describe("buildReconcilePrompt — cited events under each delta (#1466)", () => {
+  const timeline = [
+    event("e1", { severity: "Critical", description: "lsass.exe read by mimikatz.exe", asset: "WS01" }),
+    event("e2", {
+      severity: "Low",
+      description: "scheduled task listed",
+      timestamp: "2026-06-01T09:00:00.000Z",
+    }),
+    event("e3", {
+      severity: "High",
+      description: "beacon to 10.0.0.9:443 every 60s",
+      mitreTechniques: ["T1071"],
+    }),
+    event("e4", { severity: "Info", description: "unrelated logon", mitreTechniques: ["T1078"] }),
+  ];
+  const a = stateWith({
+    forensicTimeline: timeline,
+    findings: [
+      finding({ id: "f1", title: "Suspicious logon", severity: "Medium", relatedEventIds: ["e2"] }),
+      finding({ id: "f2", title: "Ungrounded claim", severity: "High" }),
+    ],
+    mitreTechniques: [tech("T1078")],
+  });
+  const b = stateWith({
+    forensicTimeline: timeline,
+    findings: [
+      finding({ id: "g1", title: "Suspicious logon", severity: "High", relatedEventIds: ["e1"] }),
+      finding({
+        id: "g3",
+        title: "Cobalt Strike C2 beacon",
+        severity: "High",
+        relatedEventIds: ["e3", "missing"],
+      }),
+    ],
+    mitreTechniques: [tech("T1071")],
+  });
+  const deltas = buildSecondOpinionDeltas(a, b);
+  const prompt = buildReconcilePrompt(a, b, deltas);
+
+  it("renders a b_only finding's cited events (id, time, severity, description) and skips unknown ids", () => {
+    expect(prompt).toMatch(/\[e3\] 2026-06-01T10:00:00.000Z \[High\] beacon to 10\.0\.0\.9:443/);
+    expect(prompt).not.toContain("[missing]");
+  });
+
+  it("renders the UNION of A's and B's citations on a severity disagreement, highest severity first", () => {
+    const sevBlock = prompt.slice(
+      prompt.indexOf("(severity disagreement)"),
+      prompt.indexOf("(A-only finding)"),
+    );
+    expect(sevBlock.indexOf("[e1]")).toBeGreaterThan(-1);
+    expect(sevBlock.indexOf("[e2]")).toBeGreaterThan(sevBlock.indexOf("[e1]"));
+    expect(sevBlock).toContain("<WS01>");
+  });
+
+  it("says when a finding cites no events — that is itself a signal", () => {
+    const aOnly = prompt.slice(prompt.indexOf("(A-only finding)"), prompt.indexOf("(ATT&CK technique)"));
+    expect(aOnly).toMatch(/no cited events/i);
+  });
+
+  it("gives a technique delta the events tagged with that technique", () => {
+    const tail = prompt.slice(prompt.indexOf("(ATT&CK technique)"));
+    expect(tail).toContain("[e3]"); // T1071 added by B
+    expect(tail).toContain("[e4]"); // T1078 dropped by B
+  });
+
+  it("caps events per delta and in total, and says how many were left out", () => {
+    const many = Array.from({ length: RECONCILE_EVENTS_PER_DELTA + 3 }, (_, i) =>
+      event(`m${i}`, { timestamp: `2026-06-01T10:${String(i).padStart(2, "0")}:00.000Z` }),
+    );
+    const ids = many.map((e) => e.id);
+    const big = stateWith({ forensicTimeline: many, findings: [] });
+    const bigB = stateWith({
+      forensicTimeline: many,
+      findings: [finding({ id: "g9", title: "Bulk", severity: "High", relatedEventIds: ids })],
+    });
+    const p = buildReconcilePrompt(big, bigB, buildSecondOpinionDeltas(big, bigB));
+    expect(p.match(/\[m\d+\]/g)?.length).toBe(RECONCILE_EVENTS_PER_DELTA);
+    expect(p).toContain("+3 more cited events");
+
+    // Total cap: many deltas each citing PER_DELTA events must not exceed the run-wide budget.
+    const deltaCount = Math.ceil(RECONCILE_EVENTS_TOTAL / RECONCILE_EVENTS_PER_DELTA) + 2;
+    const flood = Array.from({ length: deltaCount * RECONCILE_EVENTS_PER_DELTA }, (_, i) => event(`x${i}`));
+    // Distinct WORDS per title — the semantic key drops digits, so "Flood 1"/"Flood 2" would collapse.
+    const words = [
+      "alpha",
+      "bravo",
+      "charlie",
+      "delta",
+      "echo",
+      "foxtrot",
+      "golf",
+      "hotel",
+      "india",
+      "juliet",
+      "kilo",
+      "lima",
+      "mike",
+      "november",
+      "oscar",
+      "papa",
+      "quebec",
+      "romeo",
+      "sierra",
+      "tango",
+    ];
+    const floodB = stateWith({
+      forensicTimeline: flood,
+      findings: Array.from({ length: deltaCount }, (_, d) =>
+        finding({
+          id: `h${d}`,
+          title: `${words[d]} tool executed`,
+          severity: "High",
+          relatedEventIds: flood
+            .slice(d * RECONCILE_EVENTS_PER_DELTA, (d + 1) * RECONCILE_EVENTS_PER_DELTA)
+            .map((e) => e.id),
+        }),
+      ),
+    });
+    const floodA = stateWith({ forensicTimeline: flood, findings: [] });
+    const fp = buildReconcilePrompt(floodA, floodB, buildSecondOpinionDeltas(floodA, floodB));
+    expect(fp.match(/\[x\d+\]/g)?.length ?? 0).toBeLessThanOrEqual(RECONCILE_EVENTS_TOTAL);
+    expect(fp).toMatch(/event budget/i);
+  });
+
+  it("an explicit scoped event set replaces the raw timeline, so filtered events are never shown", () => {
+    const scoped = timeline.filter((e) => e.id !== "e3"); // e3 marked false positive / out of window
+    const p = buildReconcilePrompt(a, b, deltas, scoped);
+    expect(p).not.toContain("[e3]");
+    expect(p).toContain("[e1]");
+  });
+
+  it("reads only the forensic timeline — the builder takes no super-timeline input", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const src = await readFile(new URL("../../src/analysis/secondOpinion.ts", import.meta.url), "utf8");
+    expect(src).not.toMatch(/superTimeline|SuperTimelineStore/);
+    expect(src).toMatch(/forensicTimeline/);
   });
 });
 

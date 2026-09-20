@@ -121,6 +121,7 @@ describe("SynthMetaStore", () => {
     const perf = {
       modelA: "anthropic/claude-sonnet-5",
       modelB: "openai/gpt-5",
+      referee: "",
       agreementCount: 8,
       deltaCount: 2,
       agreementRate: 0.8,
@@ -136,6 +137,7 @@ describe("SynthMetaStore", () => {
     const perf = {
       modelA: "a",
       modelB: "b",
+      referee: "",
       agreementCount: 1,
       deltaCount: 1,
       agreementRate: 0.5,
@@ -151,6 +153,7 @@ describe("SynthMetaStore", () => {
     const perf = {
       modelA: "a",
       modelB: "b",
+      referee: "",
       agreementCount: 1,
       deltaCount: 1,
       agreementRate: 0.5,
@@ -197,6 +200,7 @@ describe("modelPerfLabel", () => {
       secondOpinionPerf: {
         modelA: "anthropic/claude-sonnet-5",
         modelB: "openai/gpt-5",
+        referee: "",
         agreementCount: 8,
         deltaCount: 2,
         agreementRate: 0.8,

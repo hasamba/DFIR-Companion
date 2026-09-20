@@ -76,6 +76,29 @@ describe("buildAiDiagnostics", () => {
     expect(d.synthModel).toBe("claude");
   });
 
+  it("names the 2nd-opinion referee: model A unless DFIR_AI_RECONCILE_MODEL says otherwise (#1466)", () => {
+    const base = {
+      DFIR_AI_PROVIDER: "anthropic",
+      DFIR_AI_MODEL: "claude",
+      DFIR_AI_SECOND_OPINION_MODEL: "gpt",
+    };
+    expect(buildAiDiagnostics(base).refereeModel).toBe("model A (claude)");
+    expect(buildAiDiagnostics({ ...base, DFIR_AI_RECONCILE_MODEL: "same-as-b" }).refereeModel).toBe(
+      "model B (gpt)",
+    );
+    expect(buildAiDiagnostics({ ...base, DFIR_AI_RECONCILE_MODEL: "o3" }).refereeModel).toBe("o3");
+    // A custom model with no provider anywhere is never built — the run uses model A, so say so.
+    const noProvider = {
+      DFIR_AI_MODEL: "claude",
+      DFIR_AI_SECOND_OPINION_MODEL: "gpt",
+      DFIR_AI_RECONCILE_MODEL: "o3",
+    };
+    expect(buildAiDiagnostics(noProvider).refereeModel).toMatch(/^model A \(claude\) — "o3" has no provider/);
+    expect(
+      buildAiDiagnostics({ DFIR_AI_PROVIDER: "anthropic", DFIR_AI_MODEL: "claude" }).refereeModel,
+    ).toBeNull();
+  });
+
   it("NEVER surfaces an API key, even if one is present in the env", () => {
     const d = buildAiDiagnostics({
       DFIR_AI_PROVIDER: "openai",
@@ -186,6 +209,7 @@ function sampleReport(): DiagnosticsReport {
       model: "claude-x",
       synthModel: "claude-x",
       secondOpinionModel: null,
+      refereeModel: null,
       velociraptorModel: null,
       baseUrl: null,
       imageDetail: "high",

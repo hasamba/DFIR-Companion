@@ -35,6 +35,7 @@ const deltaSchema = z.object({
   aSeverity: severity.optional(),
   bSeverity: severity.optional(),
   finding: findingSchema.optional(),
+  bFinding: findingSchema.optional(),
   techniqueName: z.string().optional(),
   rationale: z.string().catch(""),
   recommendation: z.enum(["accept_b", "keep_a", "review"]).catch("review"),
@@ -45,6 +46,7 @@ export const secondOpinionSchema = z.object({
   generatedAt: z.string().catch(""),
   modelA: z.string().catch(""),
   modelB: z.string().catch(""),
+  referee: z.string().catch(""), // #1466 — records saved before the field existed load as ""
   summary: z.string().catch(""),
   agreementCount: z.number().catch(0),
   deltas: z.array(deltaSchema).catch([]),

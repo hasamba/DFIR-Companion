@@ -64,7 +64,7 @@ import { type MemoryNextStep } from "./memoryNextStep.js";
 import { type QueryTranslationResult } from "./queryTranslate.js";
 import { type HuntPlatform } from "./huntPlatforms.js";
 import type { PlaybookTask } from "./playbook.js";
-import { uniqueProviderModels } from "./analysisRunRecorders.js";
+import { analysisProviderModels, findAnalysisProvider } from "./ai/providerRoster.js";
 import { type HypothesisReviewItem } from "./hypothesis.js";
 
 export class AnalysisPipeline {
@@ -193,6 +193,9 @@ export class AnalysisPipeline {
         get secondOpinionModelLabel() {
           return opts.secondOpinionModelLabel;
         },
+        get referee() {
+          return opts.referee;
+        },
         get synthesisModelLabel() {
           return opts.synthesisModelLabel;
         },
@@ -310,11 +313,7 @@ export class AnalysisPipeline {
   }
 
   analysisProviderModels(): Array<{ provider: string; model: string }> {
-    return uniqueProviderModels([
-      this.opts.provider,
-      this.opts.synthesisProvider,
-      this.opts.secondOpinionProvider,
-    ]);
+    return analysisProviderModels(this.opts);
   }
 
   analysisTextProviderModel(): { provider: string; model: string } | null {
@@ -322,9 +321,7 @@ export class AnalysisPipeline {
     return provider ? { provider: provider.name, model: provider.model } : null;
   }
   analysisProvider(providerName: string, model: string): AIProvider | undefined {
-    return [this.opts.provider, this.opts.synthesisProvider, this.opts.secondOpinionProvider].find(
-      (provider) => provider?.name === providerName && provider.model === model,
-    );
+    return findAnalysisProvider(this.opts, providerName, model);
   }
 
   private requireProvider(purpose: string): AIProvider {

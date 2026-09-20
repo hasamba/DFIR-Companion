@@ -40,6 +40,7 @@ export type SecondLookMeta = z.infer<typeof secondLookSchema>;
 const secondOpinionPerfSchema = z.object({
   modelA: z.string().catch(""), // primary synthesis model label
   modelB: z.string().catch(""), // second-opinion model label
+  referee: z.string().catch(""), // who wrote the verdicts (#1466); "" on records from before the field
   agreementCount: z.number().catch(0), // findings BOTH models independently raised
   deltaCount: z.number().catch(0), // points where they disagreed (b_only/a_only/severity/mitre_*)
   agreementRate: z.number().catch(0), // agreementCount / (agreementCount + deltaCount); 0 when both are 0
@@ -202,9 +203,9 @@ export function modelPerfLabel(m: ModelPerfSnapshot): string | null {
   const so = m.secondOpinionPerf;
   if (so && (so.modelA || so.modelB)) {
     parts.push(
-      `Second opinion (**${so.modelB || "model B"}**) vs primary (**${so.modelA || "model A"}**): agreed on ` +
+      `Second opinion — model A (**${so.modelA || "model A"}**) vs model B (**${so.modelB || "model B"}**): agreed on ` +
         `${so.agreementCount} finding${so.agreementCount === 1 ? "" : "s"}, ${so.deltaCount} disagreement${so.deltaCount === 1 ? "" : "s"} ` +
-        `(${Math.round(so.agreementRate * 100)}% agreement).`,
+        `(${Math.round(so.agreementRate * 100)}% agreement)${so.referee ? `; referee **${so.referee}**` : ""}.`,
     );
   }
   return parts.length ? parts.join(" ") : null;

@@ -113,6 +113,7 @@ identities, emergency access, and the one-writer deployment model.
 - Provider, model, API key, base URL (extraction)
 - Synthesis model (optional separate model for findings/attacker path) — also configurable directly in the first-run **setup wizard**'s AI step, not just here
 - VQL-generation model (optional dedicated model — many general models struggle with VQL syntax)
+- Second-opinion model (optional rival model for the **2nd opinion** button) and the **referee** that judges each A-vs-B disagreement (blank = model A)
 - Timeout, max tokens, context window size
 - Chain-of-Thought (synthesis thinking tokens)
 - **Anonymisation** on/off and per-category toggles — IPs (internal *and* public), hostnames, usernames, domains, emails, paths, encoded commands, SIDs, credit cards, phone numbers, national ID numbers; see [AI Analysis → What the AI Sees](ai-analysis.md#what-the-ai-sees-anonymization) for exactly what each one catches, the redacted-export exception for public IPs, and known limitations (the narrow IPv4/IPv6 masking gaps, screenshot IP loss, national-ID false positives)
@@ -122,6 +123,10 @@ identities, emergency access, and the one-writer deployment model.
 - **Live AI test** — confirms the current key works right now
 
 **Screenshot/vision provider** — `DFIR_VISION_PROVIDER`/`_MODEL`/`_KEY`/`_BASE_URL`/`_IMAGE_DETAIL` configure the screenshot-OCR-only model, renamed from `DFIR_AI_*` (legacy names still work as a fallback). Text-only AI features run off the synthesis provider and never need a vision provider configured.
+
+**Second opinion** — `DFIR_AI_SECOND_OPINION_MODEL`/`_PROVIDER`/`_KEY`/`_BASE_URL` configure model B, the rival model behind the **2nd opinion** button. Setting `_MODEL` turns the feature on; the other three fall back to the vision provider settings when blank.
+
+**Referee for 2nd-opinion verdicts** — `DFIR_AI_RECONCILE_MODEL`/`_PROVIDER`/`_KEY`/`_BASE_URL` choose the model that writes the *referee suggests* line on each disagreement. Leave `_MODEL` blank and model A (the synthesis model) referees. Set it to `same-as-b` and model B referees its own findings. Set it to any other model ID for a neutral third referee. The other three fall back to the vision provider settings when blank. See [AI Analysis → Second opinion](ai-analysis.md#6-second-opinion-a-rival-model).
 
 **Deep pass** — `DFIR_DEEP_PASS_MAX_BATCHES` (default 30) caps how many batches a [deep pass](dashboard.md#deep-pass) run may take, refusing oversized runs up front; `DFIR_AI_OBSERVE_PROMPT_FILE` is an ejectable override of its batch-observation prompt.
 
