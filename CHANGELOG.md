@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Every import logs start, progress, outcome and failure** — one `[import]` prefix in the session log and the case log, so a crash mid-import always names the file and how far it got (closes #1438)
 - **Batched Velociraptor import** — a large export (a full `$MFT`) is imported one batch of rows at a time, tagged and gated per batch, with one log line per batch, instead of expanded whole in memory and OOM-killed (closes #1439)
 - **No route loads the whole super-timeline** — IOC provenance, TLS graph, host identity, tagger run/preview/replay, attestation matches and the Timesketch super push stream it batch by batch (the Timesketch push as chunked uploads), so a capped 900k-event case no longer OOM-kills the server after every import (closes #1444)
+- **Archiving a case no longer fails on an in-flight write** — the plain archive skips a SQLite journal or atomicWrite temp that vanishes mid-walk, the same rule the encrypted export already applied; the `import-binary` nightly contract entry names the field the route reads (closes #1442)
+- **Nightly `import-aws` story no longer races the demote pass** — the fixture is a failed console login (Medium), so the forensic-timeline check is deterministic instead of catching a 100 ms window (closes #1445)
 
 ## [0.37.0] - 2026-09-20
 

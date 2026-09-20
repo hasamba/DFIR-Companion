@@ -125,6 +125,11 @@ const M365 = [
   .map((r) => JSON.stringify(r))
   .join("\n");
 
+// A FAILED console login, on purpose. The story checks the forensic timeline, and a successful
+// IAM-user ConsoleLogin grades Info (awsImport.ts) — the demote pass that settles every import
+// moves Info rows to the super-timeline, so the needle was visible only for the ~100 ms between
+// the importer's save and the demote. The poll caught that window on an idle box and missed it
+// under nightly load (#1445). A failure grades Medium (T1110) and stays where the test looks.
 const AWS = JSON.stringify({
   Records: [
     {
@@ -134,6 +139,7 @@ const AWS = JSON.stringify({
       sourceIPAddress: "185.220.101.47",
       awsRegion: "us-east-1",
       userIdentity: { type: "IAMUser", userName: "svc-backup" },
+      responseElements: { ConsoleLogin: "Failure" },
       additionalEventData: { MFAUsed: "No" },
     },
   ],
