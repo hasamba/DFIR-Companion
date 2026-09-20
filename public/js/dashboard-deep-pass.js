@@ -1,8 +1,8 @@
 // Deep pass (#282) — the re-analysis sweep that re-reads evidence at a lower confidence floor.
 //
-// IIFE-WRAPPED BECAUSE IT OWNS STATE. Four mutable bindings: the synthesis gate read from /health,
+// IIFE-WRAPPED BECAUSE IT OWNS STATE. Five mutable bindings: the synthesis gate read from /health,
 // the lazily-fetched preview flag, a sequence guard that lets a superseded preview retire itself,
-// and the in-flight POST flag.
+// the in-flight POST flag, and the "last synthesis already read everything" verdict (#1457).
 //
 // TWO OF THOSE USED TO ESCAPE, and both were closed rather than published:
 //   - deepPassPreviewLoaded was read by two collapse/expand handlers deciding whether to call
@@ -35,6 +35,7 @@
   let deepPassPreviewLoaded = false;      // the preview is fetched lazily; this is the "already have it" flag
   let deepPassPreviewSeq = 0;             // guards against an out-of-order preview from a rapid case switch
   let deepPassPosting = false;            // the POST is in flight (the job may not exist yet)
+  let deepPassNothingNew = false;         // #1457: the last synthesis already read every graded event
 
   function deepPassCaseId() { const el = document.getElementById("caseId"); return el && typeof el.value === "string" ? el.value.trim() : ""; }
   function deepPassGuidance(msg) {
@@ -49,7 +50,10 @@
     deepPassPreviewLoaded = false;
     deepPassPreviewSeq++;
     deepPassGuidance("");
+    deepPassNothingNew = false;
     document.getElementById("deepPassFloors").innerHTML = "Open this section to measure the case.";
+    const worth = document.getElementById("deepPassWorth");
+    if (worth) worth.innerHTML = "";
     document.getElementById("deepPassProgress").textContent = "";
     const run = document.getElementById("deepPassRun");
     if (run) run.disabled = true;
@@ -94,6 +98,7 @@
         }
         deepPassPreviewLoaded = true;
         renderDeepPassFloors(j.cap, Array.isArray(j.floors) ? j.floors : []);
+        renderDeepPassWorth(j.synthesisRead);
       })
       .catch(e => { if (mySeq === deepPassPreviewSeq) { host.innerHTML = ""; deepPassGuidance("Couldn't measure this case: " + e.message); } });
   }
@@ -129,6 +134,35 @@
     applyDeepPassGate();
   }
 
+  // #1457: what the last synthesis read, judged server-side from its coverage audit (#62). On a
+  // small case synthesis already read every graded event, so a deep pass re-reads the same rows
+  // — or fewer, at a Critical+/High+ floor — for nothing. Say so BEFORE the analyst spends, and
+  // take Run off by default; the override stays for the legitimate re-read (a model change).
+  function renderDeepPassWorth(w) {
+    const host = document.getElementById("deepPassWorth");
+    if (!host) return;
+    deepPassNothingNew = !!w && w.verdict === "nothing-new";
+    const when = (at) => (at ? ` (${esc(String(at).replace("T", " ").slice(0, 16))})` : "");
+    let html = "";
+    if (deepPassNothingNew) {
+      html = `<div class="dp-guidance">⚠ The last synthesis${when(w.at)} already read all `
+        + `<b>${Number(w.considered).toLocaleString()}</b> graded events — nothing was dropped for the size limit. `
+        + `A deep pass would read the same events or fewer, and gain nothing. `
+        + `<label><input type="checkbox" id="deepPassRunAnyway"> Run anyway</label></div>`;
+    } else if (w && w.verdict === "stale") {
+      html = `<div class="dp-note">The last synthesis${when(w.at)} read a timeline of `
+        + `${Number(w.eventsThen).toLocaleString()} events; it now has ${Number(w.eventsNow).toLocaleString()}. `
+        + `Run synthesis again before deciding whether a deep pass is worth it.</div>`;
+    } else if (w && w.verdict === "gains") {
+      html = `<div class="dp-note">The last synthesis${when(w.at)} dropped `
+        + `<b>${Number(w.unread).toLocaleString()}</b> graded events for the size limit. A deep pass at Low+ reads all of them.</div>`;
+    }
+    host.innerHTML = html;
+    const anyway = document.getElementById("deepPassRunAnyway");
+    if (anyway) anyway.addEventListener("change", applyDeepPassGate);
+    applyDeepPassGate();
+  }
+
   function selectedDeepPassFloor() {
     const el = document.querySelector('input[name="dpFloor"]:checked');
     return el ? el.value : "";
@@ -146,6 +180,12 @@
       return;
     }
     if (deepPassBusy()) { run.disabled = true; run.title = "A heavy AI job is already running for this case."; return; }
+    const anyway = document.getElementById("deepPassRunAnyway");
+    if (deepPassNothingNew && !(anyway && anyway.checked)) {
+      run.disabled = true;
+      run.title = "The last synthesis already read every graded event — tick 'Run anyway' to override.";
+      return;
+    }
     run.disabled = !floor;
     run.title = floor ? `Run the deep pass at ${floor}+` : "Pick a severity floor above first.";
   }

@@ -6,8 +6,10 @@ import {
   planBatches,
   floorsWithinBudget,
   renderObservationDigest,
+  judgeDeepPassWorth,
   DEFAULT_MAX_BATCHES,
   type DeepPassCheckpoint,
+  type DeepPassWorth,
   type FloorOption,
   type Observation,
 } from "../deepPass.js";
@@ -66,11 +68,19 @@ function renderBatchRows(rows: readonly ForensicEvent[]): string {
 export async function deepPassPreview(
   ctx: DeepPassContext,
   caseId: string,
-): Promise<{ cap: number; floors: FloorOption[] }> {
+): Promise<{ cap: number; floors: FloorOption[]; synthesisRead: DeepPassWorth }> {
   const state = await ctx.opts.stateStore.load(caseId);
   const { scopedEvents } = await scopeForDeepPass(ctx, caseId, state);
   const cap = maxPromptEvents();
-  return { cap, floors: previewFloors(scopedEvents, { cap }) };
+  // #1457: what the last synthesis read, so the analyst learns BEFORE spending whether a deep pass
+  // can reach anything it did not. No synth-meta store, or none recorded yet, is an honest "unknown".
+  const meta = await ctx.opts.synthMetaStore?.load(caseId);
+  const synthesisRead = judgeDeepPassWorth(
+    meta?.coverage,
+    meta?.lastSynthesizedAt ?? "",
+    state.forensicTimeline.length,
+  );
+  return { cap, floors: previewFloors(scopedEvents, { cap }), synthesisRead };
 }
 
 /** The in-scope, non-false-positive events a deep pass may look at. Shared by preview and run. */

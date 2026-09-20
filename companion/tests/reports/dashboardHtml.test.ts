@@ -760,6 +760,24 @@ describe("dashboard.html — deep pass", () => {
     ).toBe(true);
   });
 
+  it("tells the analyst when the last synthesis already read everything a deep pass could (#1457)", async () => {
+    const html = await load();
+    // The preview carries what the last synthesis read. When it dropped nothing for the size limit,
+    // a deep pass re-reads the same rows or fewer: the panel says so and Run is off unless the
+    // analyst ticks the override. A stale audit (timeline changed since) says so instead of guessing.
+    expect(
+      matches(html, /function renderDeepPassWorth[\s\S]{0,1200}nothing-new/),
+      "handles nothing-new",
+    ).toBe(true);
+    expect(matches(html, /function renderDeepPassWorth[\s\S]{0,1600}stale/), "handles stale").toBe(true);
+    expect(matches(html, /function renderDeepPassWorth[\s\S]{0,1600}gains/), "handles gains").toBe(true);
+    expect(has(html, 'id="deepPassRunAnyway"'), "has a run-anyway override").toBe(true);
+    expect(
+      matches(html, /function applyDeepPassGate[\s\S]{0,900}deepPassRunAnyway/),
+      "the gate reads the override",
+    ).toBe(true);
+  });
+
   it("loads the preview lazily rather than on every state push", async () => {
     const html = await load();
     // AI-free but NOT CPU-free — it groups the whole graded timeline four times, so it is fetched
