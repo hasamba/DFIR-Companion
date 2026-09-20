@@ -25,7 +25,8 @@ import { settleForensicImport } from "../routes/importSettle.js";
 import { diffTimeline, type TimelineDiff } from "../analysis/timelineDiff.js";
 import { diffIocs, type IocsDiff } from "../analysis/iocsDiff.js";
 import type { InvestigationState, Severity, ForensicEvent } from "../analysis/stateTypes.js";
-import { logLine } from "../logging/serverLogger.js";
+import { logLine, getServerLogger } from "../logging/serverLogger.js";
+import { formatImportSettled } from "../logging/importLog.js";
 
 export interface VeloExternalIngestDeps {
   options: AppOptions;
@@ -193,6 +194,9 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
           ...(e.md5 ? { md5: e.md5 } : {}),
         }));
         const superAdded = await options.superTimelineStore.append(caseId, events);
+        getServerLogger().info(`[import] ${caseId} ${storedName}: done — super +${superAdded} (super-only)`, {
+          caseId,
+        });
         options.onSuperTimeline?.(caseId);
         await autoTagImported(caseId, events);
         // Super-only imports never touch the forensic timeline, so the forensic diff below is always 0 —
@@ -223,9 +227,23 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
                 { ...settleDeps, stateStore: options.stateStore },
                 caseId,
                 stateBefore,
+                storedName,
               );
           addedEvents = tDiff.added.length;
           addedIocs = iDiff.added.length;
+          // settle logs its own done line; this branch bypassed it (#1438).
+          if (opts.superOnly)
+            getServerLogger().info(
+              formatImportSettled({
+                caseId,
+                label: storedName,
+                forensicAdded: addedEvents,
+                forensicRemoved: tDiff.removed.length,
+                superAdded: 0,
+                iocsAdded: addedIocs,
+              }),
+              { caseId },
+            );
           if (
             (addedEvents || addedIocs || tDiff.removed.length || iDiff.removed.length) &&
             options.importMetaStore
@@ -324,6 +342,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
             { ...settleDeps, stateStore: options.stateStore },
             caseId,
             stateBefore,
+            lastStoredName,
           );
           addedEvents = tDiff.added.length;
           addedIocs = iDiff.added.length;

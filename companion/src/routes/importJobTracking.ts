@@ -29,6 +29,8 @@ export function createImportJobTracking(
         });
       }
     },
+    // Parse progress stays on the job only: the dashboard bar reads every "import — N/M" status as
+    // commit progress, so broadcasting the read phase made the bar climb to 95% and fall back (#1438).
     onParseProgress: (done: number, total: number, detail = "reading Windows events"): void => {
       if (job) manager?.progress(job.jobId, done, total, detail);
     },

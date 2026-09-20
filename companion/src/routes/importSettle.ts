@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { ForensicEvent, InvestigationState } from "../analysis/stateTypes.js";
 import { diffTimeline, type TimelineDiff } from "../analysis/timelineDiff.js";
 import { diffIocs, type IocsDiff } from "../analysis/iocsDiff.js";
+import { getServerLogger } from "../logging/serverLogger.js";
+import { formatImportSettled } from "../logging/importLog.js";
 
 /**
  * The forensic / super-timeline seam that every import must cross after the importer has merged
@@ -22,6 +24,12 @@ import { diffIocs, type IocsDiff } from "../analysis/iocsDiff.js";
  *
  * `stateBefore` is the state captured under the import lock BEFORE the importer ran
  * (routes/importSection.ts) — the diff is only honest against that snapshot.
+ *
+ * The post-demote diffs are also the one place that knows what an import left behind, so this is
+ * where the `[import] … done — forensic +N, super +M, IOCs +K` log line is written (#1438), with
+ * `{ caseId }` so it lands in the case's own log too; `label` names the file when the caller has
+ * it. An all-zero settle logs at DEBUG: the Velociraptor monitors settle on every poll, and an empty
+ * poll must not fill the session log.
  */
 export interface SettleDeps {
   stateStore: {
@@ -53,6 +61,7 @@ export async function settleForensicImport(
   deps: SettleDeps,
   caseId: string,
   stateBefore: InvestigationState,
+  label?: string,
 ): Promise<SettledImport> {
   let imported = await deps.stateStore.load(caseId);
   // Select the added rows BY ID — exact. The time+description diff below is case-folded, so two
@@ -98,10 +107,34 @@ export async function settleForensicImport(
     await deps.autoTagImported(caseId, added);
   }
   const state = await deps.demoteForensicForCase(caseId);
-  return {
-    state,
-    superTimelineAddedCount,
-    timelineDiff: diffTimeline(stateBefore.forensicTimeline, state.forensicTimeline),
-    iocsDiff: diffIocs(stateBefore.iocs, state.iocs),
-  };
+  const timelineDiff = diffTimeline(stateBefore.forensicTimeline, state.forensicTimeline);
+  const iocsDiff = diffIocs(stateBefore.iocs, state.iocs);
+  logImportSettled(caseId, label, {
+    forensicAdded: timelineDiff.added.length,
+    forensicRemoved: timelineDiff.removed.length,
+    superAdded: superTimelineAddedCount,
+    iocsAdded: iocsDiff.added.length,
+    iocsRemoved: iocsDiff.removed.length,
+  });
+  return { state, superTimelineAddedCount, timelineDiff, iocsDiff };
+}
+
+export interface SettledCounts {
+  forensicAdded: number;
+  forensicRemoved: number;
+  superAdded: number;
+  iocsAdded: number;
+  iocsRemoved: number;
+}
+
+/**
+ * The outcome line, shared with the two seams that settle inline instead of calling
+ * settleForensicImport (the job resume handler, the analysis-run replay). INFO when anything
+ * changed; DEBUG when every count is zero (an empty monitor poll).
+ */
+export function logImportSettled(caseId: string, label: string | undefined, counts: SettledCounts): void {
+  const line = formatImportSettled({ caseId, label, ...counts });
+  const empty = Object.values(counts).every((n) => n === 0);
+  if (empty) getServerLogger().debug(line, { caseId });
+  else getServerLogger().info(line, { caseId });
 }

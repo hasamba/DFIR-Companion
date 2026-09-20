@@ -34,6 +34,7 @@ import { parseWazuhAlerts, type WazuhImportOptions } from "../analysis/wazuhImpo
 import { parseMinSeverity } from "../analysis/severityFloor.js";
 import { buildImportBase } from "./importBase.js";
 import { settleForensicImport, type SettleDeps } from "./importSettle.js";
+import { importPlasoFileLogged } from "./importPlasoStream.js";
 import { commitDedicatedImport, importerParameter, persistImportEvidence } from "./importCommit.js";
 import { autoTagNewEvents } from "../analysis/taggerAuto.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
@@ -393,7 +394,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
                 superTimelineAddedCount,
                 timelineDiff: tDiff,
                 iocsDiff: iDiff,
-              } = await settleForensicImport(settleDeps, caseId, stateBefore);
+              } = await settleForensicImport(settleDeps, caseId, stateBefore, storedName);
               // Proactive FP-pattern propagation (#15b): does this import re-arrive with events matching a
               // known false-positive pattern? Match the NEW forensic events against the FP markers'
               // fingerprints and surface a one-click bulk-mark suggestion on the banner (never auto-mark).
@@ -614,7 +615,6 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
           .json({ accepted: true, kind, file: storedName, minSeverity, analyzed: false, reason: "ai-off" });
       }
 
-      const pipeline = options.pipeline;
       const job = options.jobManager?.register({
         caseId,
         kind: "import",
@@ -659,7 +659,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         section = await beginImportSection(importLock, caseId, options.stateStore);
         stateBefore = section.stateBefore;
         return streaming
-          ? pipeline.importPlasoFile(caseId, join(store.importsDir(caseId), storedName), base)
+          ? importPlasoFileLogged(ctx, caseId, join(store.importsDir(caseId), storedName), storedName, base)
           : dispatchImport(kind, caseId, text, base);
       };
 
@@ -675,7 +675,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
                 superTimelineAddedCount,
                 timelineDiff: tDiff,
                 iocsDiff: iDiff,
-              } = await settleForensicImport(settleDeps, caseId, stateBefore);
+              } = await settleForensicImport(settleDeps, caseId, stateBefore, storedName);
               // Proactive FP-pattern propagation (#15b): does this import re-arrive with events matching a
               // known false-positive pattern? Match the NEW forensic events against the FP markers'
               // fingerprints and surface a one-click bulk-mark suggestion on the banner (never auto-mark).

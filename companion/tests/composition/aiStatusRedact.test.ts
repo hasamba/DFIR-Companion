@@ -58,11 +58,17 @@ describe("redactAiStatusEvent", () => {
 describe("appWiring routes onAiStatus through the redactor", () => {
   // A contract on the wiring line itself: the seam is one arrow function, and a future edit that
   // spreads the raw event again would silently reopen the leak with every unit test still green.
+  // Since #1438 the seam is createAiStatusHandler: the handler redacts once and hands the
+  // redacted event to `broadcast`; the wiring block must still name the redactor, and the
+  // broadcast line must still spread the redacted value, never the raw event.
   it("the ai_status broadcast spreads the redacted event, not the raw one", () => {
     const src = readFileSync(join(import.meta.dirname, "../../src/composition/appWiring.ts"), "utf8");
-    const line = src.split("\n").find((l) => l.includes('type: "ai_status"'));
+    const start = src.indexOf("onAiStatus: createAiStatusHandler(");
+    expect(start).toBeGreaterThan(-1);
+    const block = src.slice(start, src.indexOf("onCapture:", start));
+    expect(block).toContain("redact: (event) => redactAiStatusEvent(event, [store.casesRoot])");
+    const line = block.split("\n").find((l) => l.includes('type: "ai_status"'));
     expect(line).toBeDefined();
-    expect(line).toContain("redactAiStatusEvent(");
     expect(line).not.toMatch(/\.\.\.event\b/);
   });
 });

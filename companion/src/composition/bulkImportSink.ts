@@ -35,7 +35,7 @@ export interface BulkImportSinkDeps {
   tagsStore?: TagsStore;
   forensicGateControlStore?: ForensicGateControlStore;
   analysisRunStore?: AnalysisRunStore;
-  log: (msg: string) => void;
+  log: (msg: string, caseId?: string) => void;
   onSuperTimeline?: (caseId: string) => void;
   onTags?: (caseId: string) => void;
   env?: NodeJS.ProcessEnv;
@@ -58,7 +58,7 @@ export function buildBulkImportSink(deps: BulkImportSinkDeps): BulkImportSink | 
       ruleset = await taggerStore.load(); // throws on an invalid hand-edited file → skip, as autoTagNewEvents does
       rulesHash = hashManifestValue(active.text);
     } catch (err) {
-      deps.log(`[tagger] ${caseId} bulk auto-tag skipped: ${(err as Error).message}`);
+      deps.log(`[tagger] ${caseId} bulk auto-tag skipped: ${(err as Error).message}`, caseId);
       return null;
     }
     if (!ruleset.rules.length) return null;
@@ -120,7 +120,7 @@ export function buildBulkImportSink(deps: BulkImportSinkDeps): BulkImportSink | 
         output: { entityIds: [], hashes: [], claims: [] },
       });
     } catch (err) {
-      deps.log(`[import] ${caseId} bulk run record skipped: ${(err as Error).message}`);
+      deps.log(`[import] ${caseId} bulk run record skipped: ${(err as Error).message}`, caseId);
     }
   };
 

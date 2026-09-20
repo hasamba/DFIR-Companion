@@ -8,11 +8,14 @@ import { checkReplayAvailability, type ReplayEnvironment } from "../analysis/ana
 import { investigationOutput } from "../analysis/analysisRunSnapshot.js";
 import type { AnalysisRunManifest } from "../analysis/analysisRunTypes.js";
 import { IMPORT_KINDS } from "../analysis/importerSpec.js";
+import { diffIocs } from "../analysis/iocsDiff.js";
 import { getCsvPrompt, getLogPrompt, getObservePrompt, getSynthesisPrompt } from "../analysis/pipeline.js";
 import { selectScopedEvents } from "../analysis/tagger.js";
 import { runAndApplyTagger, type TaggerScope } from "../analysis/taggerRun.js";
+import { diffTimeline } from "../analysis/timelineDiff.js";
 import { defaultReportTemplate } from "../reports/reportTemplate.js";
 import type { RouteContext } from "./context.js";
+import { logImportSettled } from "./importSettle.js";
 
 // The replay-preflight inventory of every builtin importer's own pinned version. Derived from
 // `IMPORT_KINDS` — the SAME single source of truth `importDetect.ts`'s own `ImportKind` union and
@@ -134,7 +137,19 @@ async function replayImport(ctx: RouteContext, run: AnalysisRunManifest): Promis
     idPrefix: `replay-${Date.now()}`,
     importedAt: startedAt,
   });
+  // The replay settles inline: demote is its only super-timeline append, so the rows the demote
+  // moved are what "super +N" reports; the done line is the seam's (#1438).
+  const merged = await options.stateStore.load(run.caseId);
   const after = await ctx.demoteForensicForCase(run.caseId);
+  const replayDiff = diffTimeline(before.forensicTimeline, after.forensicTimeline);
+  const replayIocs = diffIocs(before.iocs, after.iocs);
+  logImportSettled(run.caseId, `replay-${run.id}`, {
+    forensicAdded: replayDiff.added.length,
+    forensicRemoved: replayDiff.removed.length,
+    superAdded: diffTimeline(after.forensicTimeline, merged.forensicTimeline).added.length,
+    iocsAdded: replayIocs.added.length,
+    iocsRemoved: replayIocs.removed.length,
+  });
   await options.analysisRunStore.record(run.caseId, {
     kind: "import",
     parentRunId: run.id,
@@ -308,6 +323,7 @@ export function registerAnalysisRunRoutes(app: Express, ctx: RouteContext): void
       const status = await executeReplay(ctx, run);
       return res.status(status === "accepted" ? 202 : 200).json({ accepted: true, parentRunId: run.id });
     } catch (err) {
+      ctx.recordImportFailure(run.caseId, "replay", `replay-${run.id}`, err); // the [import] FAILED line (#1438)
       return res.status(500).json({ error: (err as Error).message });
     }
   });

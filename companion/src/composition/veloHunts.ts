@@ -55,7 +55,7 @@ import {
 import type { InvestigationState, ForensicEvent } from "../analysis/stateTypes.js";
 import type { ImportLock } from "../analysis/importLock.js";
 import type { RegisteredJob } from "../analysis/jobManager.js";
-import { logLine } from "../logging/serverLogger.js";
+import { logLine, getServerLogger } from "../logging/serverLogger.js";
 import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -77,6 +77,8 @@ export interface VeloHuntsDeps {
   getControl: (caseId: string) => Promise<AiControl>;
   pushImportCheckpoint: (caseId: string, beforeState: InvestigationState, label: string) => Promise<void>;
   resynthesizeInBackground: (caseId: string) => void;
+  /** The diagnostics ring + FAILED log line (#1438); a collect that dies is otherwise only a job status. */
+  recordImportFailure?: (caseId: string, kind: string, filename: string, err: unknown) => void;
 }
 
 export interface VeloHunts {
@@ -117,6 +119,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
     getControl,
     pushImportCheckpoint,
     resynthesizeInBackground,
+    recordImportFailure,
   } = deps;
 
   // In-memory auto-collect timers, keyed by HUNT id (globally unique) so concurrent hunts each get
@@ -473,6 +476,9 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
           const added = await options.superTimelineStore!.append(caseId, events);
           superTimelineAddedCount += added;
           superEventBudgetRemaining -= added;
+          getServerLogger().info(`[import] ${caseId} ${storedName}: done — super +${added} (super-only)`, {
+            caseId,
+          });
           options.onSuperTimeline?.(caseId); // live dashboards refresh as super-only events stream in
           await autoTagImported(caseId, events);
           importedAny = true; // report success even though nothing hit the forensic timeline
@@ -547,6 +553,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
           importedAny = true;
         } catch (e) {
           logLine(`[velociraptor] upload import failed (${up.name}): ${(e as Error).message}`);
+          recordImportFailure?.(caseId, `velociraptor-upload:${upKind}`, up.name, e); // the [import] FAILED line (#1438)
         }
       }
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
@@ -568,6 +575,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
             },
             caseId,
             stateBefore,
+            `hunt ${job.huntId}`,
           );
           superTimelineAddedCount += settled.superTimelineAddedCount;
           const { timelineDiff: diff, iocsDiff } = settled;
@@ -674,6 +682,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       options.onVeloHunt?.(caseId);
       if (importedAny) resynthesizeInBackground(caseId);
     } catch (err) {
+      recordImportFailure?.(caseId, "velociraptor-hunt", `hunt ${huntId}`, err);
       try {
         const cur = await huntStore.get(caseId, huntId);
         if (cur)

@@ -38,7 +38,8 @@ import { observeImport } from "../analysis/operationalImport.js";
 import { demoteBelowSeverity, resolveForensicMinSeverity } from "../analysis/forensicGate.js";
 import { settleForensicImport } from "../routes/importSettle.js";
 import type { InvestigationState, Severity, ForensicEvent } from "../analysis/stateTypes.js";
-import { logLine } from "../logging/serverLogger.js";
+import { getServerLogger, logLine } from "../logging/serverLogger.js";
+import { formatImportCancelled, formatImportMerged, formatImportStart } from "../logging/importLog.js";
 import { parseMacLoginItemBtm } from "../analysis/macLoginItemImport.js";
 
 export interface ImportIngestDeps {
@@ -171,14 +172,45 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
       ? "unknown"
       : detectImportWithCustom(filename, text, registry.importers, precedence);
 
+  // The import log's start/merged/cancelled lines (#1438), written with `{ caseId }` so they land in
+  // the session log AND the case's own log. This is the seam every text import crosses on the way
+  // in, so the last line before a crash always names the file and its size. A rejection other than
+  // the analyst's own cancel is rethrown UNLOGGED: recordImportFailure owns the FAILED line, and a
+  // second one here would double every failure in both logs.
+  async function logImportOutcome<T>(
+    caseId: string,
+    label: string,
+    startedAt: number,
+    work: Promise<T>,
+  ): Promise<T> {
+    try {
+      const result = await work;
+      getServerLogger().info(formatImportMerged(caseId, label, Date.now() - startedAt), { caseId });
+      return result;
+    } catch (err) {
+      if ((err as { name?: unknown } | null)?.name === "AbortError")
+        getServerLogger().info(formatImportCancelled(caseId, label, Date.now() - startedAt), { caseId });
+      throw err;
+    }
+  }
+
   // Dispatch a detected import kind to the matching pipeline importer. Shared by the unified /import
   // route and the Velociraptor bundle collector (which ingests uploaded JSON reports the same way).
   function dispatchImport(kind: string, caseId: string, text: string, base: ImportBase): Promise<unknown> {
     const pipeline = options.pipeline;
     if (!pipeline) return Promise.reject(new Error("AI pipeline not configured"));
     const startedAt = Date.now();
+    getServerLogger().info(
+      formatImportStart({ caseId, label: base.label, kind, bytes: Buffer.byteLength(text, "utf8") }),
+      { caseId },
+    );
     const observe = <T>(work: Promise<T>): Promise<T> =>
-      observeImport(options.operationalMetrics, { kind, idPrefix: base.idPrefix, text, startedAt }, work);
+      logImportOutcome(
+        caseId,
+        base.label,
+        startedAt,
+        observeImport(options.operationalMetrics, { kind, idPrefix: base.idPrefix, text, startedAt }, work),
+      );
     // A user-authored declarative importer takes the matching kind first (its id is the kind).
     const custom = registry.importers.get(kind);
     if (custom) {
@@ -507,6 +539,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
             },
             caseId,
             stateBefore,
+            storedName,
           );
           addedEvents = tDiff.added.length;
           addedIocs = iDiff.added.length;
@@ -619,12 +652,22 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
       }
 
       // Same call routes/importMacLoginItem.ts makes; it applies its own state (mergeWithAliases +
-      // save) internally rather than returning a delta this caller would apply.
-      await pipeline.importMacLoginItem(caseId, bytes, {
-        label: storedName,
-        idPrefix: `bt${seq}`,
-        importedAt,
-      });
+      // save) internally rather than returning a delta this caller would apply. Bypasses
+      // dispatchImport, so it writes its own start/merged lines (#1438).
+      getServerLogger().info(
+        formatImportStart({ caseId, label: storedName, kind: "macloginitem", bytes: bytes.length }),
+        { caseId },
+      );
+      await logImportOutcome(
+        caseId,
+        storedName,
+        Date.now(),
+        pipeline.importMacLoginItem(caseId, bytes, {
+          label: storedName,
+          idPrefix: `bt${seq}`,
+          importedAt,
+        }),
+      );
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
 
       let addedEvents = 0,
@@ -642,6 +685,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
             },
             caseId,
             stateBefore,
+            storedName,
           );
           addedEvents = tDiff.added.length;
           addedIocs = iDiff.added.length;

@@ -78,14 +78,16 @@ export function registerPushNotifyRoutes(app: Express, ctx: RouteContext): void 
     const minSeverity = parseMinSeverity(req.body?.minSeverity);
     logLine(`[push] case ${caseId}: received "${source}" → ${kind}`);
     res.status(202).json({ accepted: true, kind, source });
-    // Import in the background; the 202 already went out.
-    ingestStreamed(caseId, kind, text, filename, minSeverity).catch((err) =>
+    // Import in the background; the 202 already went out. The failure ring is the one place a
+    // failed import is logged (#1438), so a push that dies after the 202 still leaves a line.
+    ingestStreamed(caseId, kind, text, filename, minSeverity).catch((err) => {
+      ctx.recordImportFailure(caseId, kind, filename, err);
       options.onAiStatus?.(caseId, {
         status: "error",
         at: new Date().toISOString(),
         detail: `push import failed: ${(err as Error).message}`,
-      }),
-    );
+      });
+    });
   });
 
   // Per-case push token management (#84). GET returns the case token's EXISTENCE (never the secret —

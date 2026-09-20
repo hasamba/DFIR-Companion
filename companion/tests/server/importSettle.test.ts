@@ -1,6 +1,8 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { settleForensicImport } from "../../src/routes/importSettle.js";
 import type { ForensicEvent, InvestigationState } from "../../src/analysis/stateTypes.js";
+import { LoggerImpl, type LogWriter } from "../../src/logging/logger.js";
+import { getServerLogger, setServerLogger } from "../../src/logging/serverLogger.js";
 
 // The one seam every import crosses: dual-write the ADDED rows → tag them → demote → diff against
 // the post-demote state. Pinned here so a route can neither skip a step nor run them out of order.
@@ -262,5 +264,72 @@ describe("settleForensicImport — importedAt / importBatchId (#1157)", () => {
     await settleForensicImport(deps, "c1", before);
     expect(appendedEvents[0].importedAt).toEqual(expect.any(String));
     expect(taggedEvents[0].importedAt).toEqual(expect.any(String));
+  });
+});
+
+// ── #1438: the "done" log line ──────────────────────────────────────────────────────────────────
+describe("settleForensicImport — the [import] done line (#1438)", () => {
+  const previous = getServerLogger();
+  afterEach(() => setServerLogger(previous));
+
+  // A LogWriter that records every (path, line) pair: the session log and the case log both show up.
+  function captureLogger(level: "info" | "debug") {
+    const lines: { path: string; line: string }[] = [];
+    const writer: LogWriter = {
+      write: (path, line) => lines.push({ path, line }),
+      close: async () => {},
+    };
+    setServerLogger(
+      new LoggerImpl({
+        level,
+        sessionLogPath: "/session.log",
+        caseLogPath: (caseId) => `/cases/${caseId}.log`,
+        console: false,
+        writer,
+        now: () => "T",
+      }),
+    );
+    return lines;
+  }
+
+  it("logs what landed at INFO, with the label, in the session log and the case log", async () => {
+    const lines = captureLogger("info");
+    const ioc = (value: string) =>
+      ({ id: value, type: "ip", value }) as unknown as InvestigationState["iocs"][number];
+    const before = state([ev("old", "High")], [ioc("10.0.0.1")]);
+    const merged = state([ev("old", "High"), ev("info", "Info"), ev("high", "High")]);
+    const afterDemote = state([ev("old", "High"), ev("high", "High")], [ioc("10.0.0.1"), ioc("10.0.0.2")]);
+    const deps = {
+      stateStore: { load: async () => merged, save: async () => {} },
+      superTimelineStore: { append: async (_c: string, events: ForensicEvent[]) => events.length },
+      autoTagImported: async () => {},
+      demoteForensicForCase: async () => afterDemote,
+    };
+    await settleForensicImport(deps, "c1", before, "0007_x.json");
+    const expected = "T INFO  [c1] [import] c1 0007_x.json: done — forensic +1, super +2, IOCs +1";
+    expect(lines).toEqual([
+      { path: "/session.log", line: expected },
+      { path: "/cases/c1.log", line: expected },
+    ]);
+  });
+
+  it("logs an all-zero settle at DEBUG only, so an empty monitor poll does not fill the log", async () => {
+    const lines = captureLogger("info");
+    const unchanged = state([ev("old", "High")]);
+    const deps = {
+      stateStore: { load: async () => unchanged, save: async () => {} },
+      superTimelineStore: { append: async () => 0 },
+      autoTagImported: async () => {},
+      demoteForensicForCase: async () => unchanged,
+    };
+    await settleForensicImport(deps, "c1", unchanged);
+    expect(lines).toEqual([]);
+
+    const debugLines = captureLogger("debug");
+    await settleForensicImport(deps, "c1", unchanged);
+    expect(debugLines.map((l) => l.line)).toEqual([
+      "T DEBUG [c1] [import] c1: done — forensic +0, super +0, IOCs +0",
+      "T DEBUG [c1] [import] c1: done — forensic +0, super +0, IOCs +0",
+    ]);
   });
 });

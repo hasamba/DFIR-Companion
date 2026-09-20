@@ -8,12 +8,20 @@
  * /diagnostics JSON report AND as the copy-to-clipboard text blob an analyst pastes into a bug
  * report — so redacting at each read is two chances to forget. Node's fs errors carry the full
  * path, and the cases root is the one thing that must not travel in a pasted diagnostic, so the
- * message is redacted once here, at the only door into the ring. The RAW message still reaches
- * serverLogger at every call site, so the operator's own console keeps full paths.
+ * message is redacted once here, at the only door into the ring.
+ *
+ * `recordImportFailure` is also where every failed import's log line is written (#1438): the ring
+ * and the log carry the SAME redacted message, and the log line names the file by its basename,
+ * so an operator's absolute path never lands in the case log — that file travels with a case
+ * export. It is the one FAILED line per failure; the import seams log start/merged/cancelled and
+ * never FAILED, so a failure is not doubled.
  */
+import { basename } from "node:path";
 import { ProviderError } from "../providers/provider.js";
 import { redactedErrorMessage } from "../analysis/redactPaths.js";
 import type { ImporterFailure, AiError, ImporterRunStat } from "../analysis/diagnostics.js";
+import { getServerLogger } from "../logging/serverLogger.js";
+import { formatImportFailed } from "../logging/importLog.js";
 
 /** How many entries each error ring keeps. Old entries fall off the end. */
 const DIAG_RING = 50;
@@ -51,14 +59,18 @@ export function createDiagnosticsRings(casesRoot: string): DiagnosticsRings {
     importerRunStats,
     redactErr,
     recordImportFailure(caseId, kind, filename, err) {
+      const message = redactErr(err);
       recentImportFailures.unshift({
         at: new Date().toISOString(),
         caseId,
         kind,
         filename,
-        error: redactErr(err),
+        error: message,
       });
       if (recentImportFailures.length > DIAG_RING) recentImportFailures.length = DIAG_RING;
+      getServerLogger().warn(formatImportFailed({ caseId, label: basename(filename), kind, message }), {
+        caseId,
+      });
     },
     recordAiError(caseId, phase, err) {
       const kind = err instanceof ProviderError ? err.kind : "other";

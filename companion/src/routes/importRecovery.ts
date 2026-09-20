@@ -8,7 +8,9 @@ import { parseMinSeverity } from "../analysis/severityFloor.js";
 import { addedForensicEvents, diffTimeline } from "../analysis/timelineDiff.js";
 import type { ImportBase, RouteContext } from "./context.js";
 import { hasParseProgress } from "./importKinds.js";
+import { importPlasoFileLogged } from "./importPlasoStream.js";
 import { recordImportRun } from "./importRunRecorder.js";
+import { logImportSettled } from "./importSettle.js";
 
 const importParametersSchema = z.object({
   kind: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/),
@@ -27,6 +29,7 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
       if (!job.caseId || !options.pipeline || !options.stateStore) {
         throw new Error("saved import can no longer reach its case pipeline");
       }
+      const caseId = job.caseId;
       const parameters = importParametersSchema.parse(job.parameters);
       const minSeverity = parseMinSeverity(parameters.minSeverity);
       const warn = async (action: string, error: unknown): Promise<void> => {
@@ -47,6 +50,14 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
         ...(signal ? { signal } : {}),
         startBatch,
         onProgress: async (done, total) => {
+          // The same status every live import route emits, so a resumed import gets the throttled
+          // `[import]` progress line through the shared onAiStatus handler (#1438).
+          options.onAiStatus?.(caseId, {
+            status: "analyzing",
+            phase: "extracting",
+            at: new Date().toISOString(),
+            detail: `${parameters.kind} import — ${done}/${total}`,
+          });
           await options.jobManager?.checkpoint(job.id, {
             done,
             total,
@@ -67,7 +78,7 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
       try {
         let text: string | undefined;
         if (parameters.streaming && parameters.kind === "plaso") {
-          await options.pipeline.importPlasoFile(job.caseId, artifactPath, base);
+          await importPlasoFileLogged(ctx, job.caseId, artifactPath, parameters.storedName, base);
         } else {
           text = await readFile(artifactPath, "utf8");
           await ctx.dispatchImport(parameters.kind, job.caseId, text, base);
@@ -113,6 +124,15 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
         const finalState = await ctx.demoteForensicForCase(job.caseId);
         const timelineDiff = diffTimeline(before.forensicTimeline, finalState.forensicTimeline);
         const iocDiff = diffIocs(before.iocs, finalState.iocs);
+        // This handler settles inline rather than through settleForensicImport; the done line is
+        // the same one (#1438).
+        logImportSettled(job.caseId, parameters.storedName, {
+          forensicAdded: timelineDiff.added.length,
+          forensicRemoved: timelineDiff.removed.length,
+          superAdded: superTimelineAddedCount,
+          iocsAdded: iocDiff.added.length,
+          iocsRemoved: iocDiff.removed.length,
+        });
         if (options.importMetaStore) {
           try {
             await options.importMetaStore.record(job.caseId, {
@@ -165,6 +185,10 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
         });
       } catch (error) {
         const cancelled = signal?.aborted || (error as Error).name === "AbortError";
+        // A resumed import fails the way a live one does: the FAILED line and the diagnostics ring
+        // entry come from recordImportFailure, once (#1438). A cancel already logged its own line
+        // inside dispatchImport / importPlasoFileLogged, so it is not repeated here.
+        if (!cancelled) ctx.recordImportFailure(job.caseId, parameters.kind, parameters.storedName, error);
         options.onAiStatus?.(
           job.caseId,
           cancelled
