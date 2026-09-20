@@ -107,13 +107,16 @@ function epoch(ts: string): number | undefined {
   return Number.isNaN(t) ? undefined : t;
 }
 
-// Union-find over event indices, with the two facts a merged row must never contradict (#1476).
+// Union-find over event indices, with the three facts a merged row must never contradict (#1476).
 //
-// Every component carries the set of STRUCTURED paths and the set of EXECUTION identities (see
-// chainSignature.ts executionIdentity) its members recorded. A union that would put two different
-// paths, or two different launches, into one row is refused — at the union, not pairwise in one
-// step, so the refusal holds transitively: an execution cannot reach a second execution through a
-// file-write row they both touch, and a file cannot reach a second file through a hash-only hit.
+// Every component carries the set of STRUCTURED paths, the set of EXECUTION identities (see
+// chainSignature.ts executionIdentity) and the set of LOG RECORD identities (sourceRecordId) its
+// members recorded. A union that would put two different paths, two different launches, or two
+// different log records into one row is refused — at the union, not pairwise in one step, so the
+// refusal holds transitively: an execution cannot reach a second execution through a file-write
+// row they both touch, a file cannot reach a second file through a hash-only hit, and two records
+// of the SAME command a second apart (a repeated launch) stay two rows even when each record was
+// read by two parsers.
 //
 // Before this, four renamed copies of one binary (one hash, four paths, no pid) became one row that
 // named one of them, and three launches of one binary 1 s apart (same path, three command lines)
@@ -126,6 +129,7 @@ class DSU {
   private parent: number[];
   private paths: Array<Set<string> | undefined>;
   private execs: Array<Set<string> | undefined>;
+  private records: Array<Set<string> | undefined>;
   constructor(evs: readonly ForensicEvent[]) {
     this.parent = evs.map((_, i) => i);
     this.paths = evs.map((e) => {
@@ -135,6 +139,10 @@ class DSU {
     this.execs = evs.map((e) => {
       const x = executionIdentity(e);
       return x ? new Set([x]) : undefined;
+    });
+    this.records = evs.map((e) => {
+      const r = e.sourceRecordId?.trim();
+      return r ? new Set([r]) : undefined;
     });
   }
   find(x: number): number {
@@ -150,7 +158,11 @@ class DSU {
     const ra = this.find(a),
       rb = this.find(b);
     if (ra === rb) return true;
-    return agree(this.paths[ra], this.paths[rb]) && agree(this.execs[ra], this.execs[rb]);
+    return (
+      agree(this.paths[ra], this.paths[rb]) &&
+      agree(this.execs[ra], this.execs[rb]) &&
+      agree(this.records[ra], this.records[rb])
+    );
   }
   /** Merge when compatible; returns whether the two now share a component. */
   union(a: number, b: number): boolean {
@@ -163,6 +175,7 @@ class DSU {
     this.parent[drop] = keep;
     this.paths[keep] = mergeSets(this.paths[keep], this.paths[drop]);
     this.execs[keep] = mergeSets(this.execs[keep], this.execs[drop]);
+    this.records[keep] = mergeSets(this.records[keep], this.records[drop]);
     return true;
   }
 }

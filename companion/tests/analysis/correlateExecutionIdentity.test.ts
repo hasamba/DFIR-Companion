@@ -211,6 +211,36 @@ describe("correlateEvents — same path, different executions (#1476)", () => {
     expect(out[0].sources).toEqual(expect.arrayContaining(["Velociraptor", "Chainsaw"]));
   });
 
+  it("two records of the SAME command a second apart stay two rows, even read by two parsers", () => {
+    // A repeated launch: identical command line, two Sysmon records (1170, 1171), each seen by
+    // Hayabusa and by Chainsaw. Step 0b pairs each record's two readings; nothing may then chain the
+    // two records together through the shared path and identical arguments.
+    const rec = (id: string, t: string, recordId: string, tool: "Velociraptor" | "Chainsaw", pid: number) =>
+      ev({
+        id,
+        timestamp: t,
+        description:
+          tool === "Velociraptor"
+            ? `Velociraptor [Windows.Sigma.Base] Sigma: Helper Launch - Cmdline: "${ROOT}tools\\helper.exe" /d /c echo LAB same ¦ Proc: ${ROOT}tools\\helper.exe`
+            : `[Windows.EventLogs.Chainsaw] Chainsaw/Sigma: Helper Launch - Sysmon Process create (EID 1) - Image=${ROOT}tools\\helper.exe - CommandLine="${ROOT}tools\\helper.exe" /d /c echo LAB same`,
+        path: `${ROOT}tools\\helper.exe`,
+        pid,
+        sourceRecordId: `evtx:microsoft-windows-sysmon/operational:${recordId}`,
+        sources: [tool],
+      });
+    const rows = [
+      rec("h1", T[0], "1170", "Velociraptor", 416),
+      rec("c1", T[0], "1170", "Chainsaw", 416),
+      rec("h2", T[1], "1171", "Velociraptor", 11404),
+      rec("c2", T[1], "1171", "Chainsaw", 11404),
+    ];
+    for (const input of [rows, [...rows].reverse()]) {
+      const out = correlateEvents(input);
+      expect(out).toHaveLength(2);
+      for (const o of out) expect(o.sources).toEqual(expect.arrayContaining(["Velociraptor", "Chainsaw"]));
+    }
+  });
+
   it("keeps the cross-tool same-command different-pid merge (#68)", () => {
     const sysmon = ev({
       id: "sm",

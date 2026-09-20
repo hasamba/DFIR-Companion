@@ -86,3 +86,33 @@ describe("parseVelociraptorJson — Hayabusa row with the event under _Event (#1
     expect(new Set(r.events.map((e) => e.pid))).toEqual(new Set([416, 11404, 3568]));
   });
 });
+
+describe("BinaryRename rename note survives a long row (#1476)", () => {
+  it("keeps the complete [renamed binary: …] note when name, original and path are all long", () => {
+    const longName = "a".repeat(110) + ".exe";
+    const longOriginal = "B".repeat(110) + ".Exe";
+    const longPath = "C:\\Users\\lab\\AppData\\Local\\Temp\\" + "sub\\".repeat(30) + longName;
+    const row = {
+      OSPath: longPath,
+      Name: longName,
+      Size: "344064",
+      VersionInformation: {
+        CompanyName: "V".repeat(80),
+        FileDescription: "x",
+        OriginalFilename: longOriginal,
+      },
+      Hash: { MD5: "c8b5d63042bc4bbb7f5c0f9e15b61f16", SHA256: SHA.toLowerCase() },
+      Mtime: "2025-12-05T02:54:10Z",
+      Btime: "2026-09-20T19:29:08Z",
+      Fqdn: "WS-01.example.com",
+    };
+    const e = parseVelociraptorJson(JSON.stringify([row]), {
+      artifact: "DetectRaptor.Windows.Detection.BinaryRename",
+    }).events[0];
+    const m = /\[renamed binary: ([^\]]+)\]$/.exec(e.description);
+    expect(m, e.description).not.toBeNull();
+    expect(m![1]).toContain(longName.slice(0, 40));
+    expect(m![1]).toContain("is really");
+    expect(m![1]).toContain(longOriginal.slice(0, 40));
+  });
+});

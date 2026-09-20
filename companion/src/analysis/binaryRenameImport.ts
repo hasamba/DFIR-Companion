@@ -180,11 +180,16 @@ function describeRename(f: RenameFacts): string {
   if (f.path) out += ` at ${oneLine(f.path).slice(0, 200)}`;
   if (f.renamed && f.systemUtility) out += " [renamed system utility]";
   if (f.staged) out += " [staged: temp/appdata]";
-  if (f.renamed) {
-    const note = `${oneLine(f.onDisk).slice(0, 120)} is really ${oneLine(f.original).slice(0, 120)}`;
-    return appendDerivedNote(out, RENAMED_BINARY_MARKER, note);
-  }
   return out;
+}
+
+// The row's shown text: host suffix and length clip on the BASE, then the rename note, so the note
+// is never cut through its middle by the clip (derivedNote.ts is built for exactly that order).
+function renameDescription(f: RenameFacts, host: string): string {
+  const base = withHostSuffix(describeRename(f), host).slice(0, 600);
+  if (!f.renamed) return base;
+  const note = `${oneLine(f.onDisk).slice(0, 120)} is really ${oneLine(f.original).slice(0, 120)}`;
+  return appendDerivedNote(base, RENAMED_BINARY_MARKER, note, 600);
 }
 
 // The PATH is in the key, and digits are NOT stripped. Both were wrong in the first version: the key
@@ -251,7 +256,7 @@ export function mapBinaryRename(
 
   return {
     timestamp: dropTime(row, timestamp),
-    description: withHostSuffix(describeRename(f), host).slice(0, 600),
+    description: renameDescription(f, host),
     severity: gradeRename(f),
     // T1036.003 Rename System Utility when it is one, else plain T1036 Masquerading. A row that
     // proves no rename carries no masquerading technique.
