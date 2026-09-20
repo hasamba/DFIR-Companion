@@ -3,7 +3,7 @@ import { WebSocketServer } from "ws";
 import type { CaseStore } from "../storage/caseStore.js";
 import { parseCookieHeader, unlockCookieName, verifyUnlockToken } from "../analysis/casePassword.js";
 import { isRequestAllowed, type GuardConfig } from "../http/originGuard.js";
-import type { LiveHub, SocketLike } from "./hub.js";
+import { jobsChangedMessage, type LiveHub, type SocketLike } from "./hub.js";
 import type { TeamAuth } from "../auth/teamAuth.js";
 import type { OperationalMetricsStore } from "../analysis/operationalMetrics.js";
 
@@ -36,6 +36,13 @@ export interface WsUpgradeDeps extends GuardConfig {
   secret: Buffer;
   teamAuth?: TeamAuth;
   operationalMetrics?: OperationalMetricsStore;
+  /**
+   * The case's current job list, sent as a `job_changed` push right after subscribe (#1453). A
+   * dashboard that connects — or reconnects — during an import draws the jobs chip from it at
+   * once, instead of waiting on an HTTP read it may not get a lane for. Absent in the minimal
+   * wirings and tests; a reader that throws sends nothing.
+   */
+  jobsFor?: (caseId: string) => Promise<readonly unknown[]> | readonly unknown[];
 }
 
 // Mirrors the id shape CaseStore is willing to create, so a traversal-flavoured id is refused
@@ -93,6 +100,21 @@ export async function authorizeWsUpgrade(
  * broadcasts it just connected for. Here the handshake completes only for a socket that is already
  * authorized, and the subscribe happens before the socket is handed out.
  */
+// The subscribe-time jobs snapshot (#1453). Contained like a broadcast: the socket may already be
+// gone by the time the reader answers, and a failed read means nothing to send, not a dead socket.
+function sendJobsSnapshot(sock: SocketLike, caseId: string, jobsFor: WsUpgradeDeps["jobsFor"]): void {
+  if (!jobsFor) return;
+  void Promise.resolve()
+    .then(() => jobsFor(caseId))
+    .then((jobs) => {
+      if (sock.readyState !== sock.OPEN) return;
+      sock.send(JSON.stringify(jobsChangedMessage(jobs)));
+    })
+    .catch(() => {
+      /* the next job_changed broadcast carries the list */
+    });
+}
+
 export function attachLiveSocket(server: Server, hub: LiveHub, deps: WsUpgradeDeps): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true });
   let lastDisconnectAt = 0;
@@ -159,6 +181,7 @@ export function attachLiveSocket(server: Server, hub: LiveHub, deps: WsUpgradeDe
             sock.isAlive = true;
           });
           hub.subscribe(caseId, sock);
+          sendJobsSnapshot(sock, caseId, deps.jobsFor);
           ws.on("close", () => {
             hub.unsubscribe(caseId, sock);
             lastDisconnectAt = Date.now();

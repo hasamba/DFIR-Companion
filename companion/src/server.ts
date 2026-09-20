@@ -609,6 +609,11 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     store,
     teamAuth,
     operationalMetrics,
+    // #1453: the jobs chip on a fresh socket, without an HTTP read.
+    jobsFor: async (caseId) => {
+      await rt.jobManager.ready();
+      return rt.jobManager.list(caseId);
+    },
     secret: loadOrCreateInstanceSecret(store.casesRoot),
     allowedOrigins: parseAllowedOrigins(process.env.DFIR_ALLOWED_ORIGINS),
     allowedHosts: parseAllowedHosts(process.env.DFIR_ALLOWED_HOSTS),

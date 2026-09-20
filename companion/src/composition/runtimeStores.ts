@@ -299,7 +299,8 @@ export function createRuntimeStores({ casesRoot, host, port, logDir }: RuntimeSt
   const hub = new LiveHub();
   const jobManager = new JobManager({
     onJob: (caseId) => {
-      if (caseId) hub.broadcastTo(caseId, { type: "job_changed" });
+      // The push carries the list (#1453); `jobManager` is assigned by the time any job emits.
+      if (caseId) hub.broadcastJobs(caseId, jobManager.list(caseId));
     },
     onError: (error) => logLine(`[jobs] durable ledger error: ${error.message}`),
     ledger: new JobLedgerStore(store),

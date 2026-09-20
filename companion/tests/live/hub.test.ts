@@ -166,3 +166,24 @@ describe("LiveHub", () => {
     expect(hub.connectionCount()).toBe(1);
   });
 });
+
+// #1453: the jobs chip used to learn about jobs over HTTP after a bare `job_changed` nudge. During
+// a big import every HTTP lane is held by a panel read waiting on the case worker, so that fetch
+// never left the browser and the chip stayed hidden while the header pill said "importing". The
+// socket is its own connection: the push carries the case's job list, so the chip needs no lane.
+describe("LiveHub.broadcastJobs (#1453)", () => {
+  it("sends a job_changed message that carries the job list, to that case only", () => {
+    const hub = new LiveHub();
+    const a = fakeSocket();
+    const b = fakeSocket();
+    hub.subscribe("c1", a);
+    hub.subscribe("c2", b);
+    hub.broadcastJobs("c1", [{ id: "job_1", status: "running", kind: "import" }]);
+    expect(b.sent).toHaveLength(0);
+    expect(a.sent).toHaveLength(1);
+    expect(JSON.parse(a.sent[0])).toEqual({
+      type: "job_changed",
+      jobs: [{ id: "job_1", status: "running", kind: "import" }],
+    });
+  });
+});

@@ -64,11 +64,15 @@ function renderBatchRows(rows: readonly ForensicEvent[]): string {
     .join("\n");
 }
 
+/** The pre-flight table plus what the last synthesis read (#1457). */
+export interface DeepPassPreview {
+  cap: number;
+  floors: FloorOption[];
+  synthesisRead: DeepPassWorth;
+}
+
 /** Estimate each Deep Pass severity floor against this case before the analyst spends credits. */
-export async function deepPassPreview(
-  ctx: DeepPassContext,
-  caseId: string,
-): Promise<{ cap: number; floors: FloorOption[]; synthesisRead: DeepPassWorth }> {
+export async function deepPassPreview(ctx: DeepPassContext, caseId: string): Promise<DeepPassPreview> {
   const state = await ctx.opts.stateStore.load(caseId);
   const { scopedEvents } = await scopeForDeepPass(ctx, caseId, state);
   const cap = maxPromptEvents();

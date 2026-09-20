@@ -13,6 +13,14 @@ export interface SocketLike {
   isAlive?: boolean;
 }
 
+/** The `job_changed` push, with the case's job list on board (#1453). */
+export function jobsChangedMessage(jobs: readonly unknown[]): {
+  type: "job_changed";
+  jobs: readonly unknown[];
+} {
+  return { type: "job_changed", jobs };
+}
+
 export class LiveHub {
   private subs = new Map<string, Set<SocketLike>>();
 
@@ -72,6 +80,15 @@ export class LiveHub {
   broadcast(state: InvestigationState): void {
     const techniqueNames = techniqueNamesFor(state.mitreTechniques ?? [], state.forensicTimeline ?? []);
     this.broadcastTo(state.caseId, { type: "state", state: { ...state, techniqueNames } });
+  }
+
+  // The jobs push carries the case's job list (#1453). It used to be a bare nudge that sent the
+  // dashboard back over HTTP for the list — and during a big import every HTTP lane is held by a
+  // panel read waiting on the case worker, so that fetch never left the browser and the jobs chip
+  // stayed hidden for the whole import. The socket is its own connection; a push that carries the
+  // list needs no lane. `jobsChangedMessage` is shared with the subscribe-time snapshot (wsGate).
+  broadcastJobs(caseId: string, jobs: readonly unknown[]): void {
+    this.broadcastTo(caseId, jobsChangedMessage(jobs));
   }
 
   // Send an arbitrary JSON message to all live subscribers of a case.
