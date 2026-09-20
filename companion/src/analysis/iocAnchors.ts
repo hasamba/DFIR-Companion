@@ -14,6 +14,7 @@ import { buildAssetGraph } from "./assetGraph.js";
 import { deriveIocSources } from "./iocCorroboration.js";
 import type { HostAliasIndex } from "./hostAlias.js";
 import { intelOrigins, type LineageInput } from "./intelLineage.js";
+import { MENTIONED_NOTE } from "./iocMentioned.js";
 
 export interface IocAnchor {
   value: string;
@@ -24,6 +25,7 @@ export interface IocAnchor {
   malicious: boolean; // a third-party threat-intel verdict marked it malicious/suspicious
   suspicious: boolean; // offline heuristic flagged it (risky TLD / DGA-ish)
   internalConflict: boolean; // this value IS ALSO one of the case's own host assets (see below)
+  mentioned?: boolean; // #1461: read out of free text — a reference the host was told about, not a peer it reached
   score: number;
 }
 
@@ -187,6 +189,7 @@ export function rankConnectiveIocs(
       malicious,
       suspicious,
       internalConflict,
+      mentioned: Boolean(gi.mentioned),
       score,
     });
   }
@@ -217,7 +220,9 @@ export function buildConnectiveIocDigest(anchors: IocAnchor[]): string {
     const conflict = a.internalConflict
       ? " ⚠ CONFLICT: this is ALSO one of the case's OWN host assets — a third-party verdict here may be stale/wrong; do NOT treat it as a confirmed external C2 backbone without independent corroborating timeline evidence"
       : "";
-    return `- ${a.value}${parts.length ? ` [${parts.join(" | ")}]` : ""}${flags ? ` ⚠ ${flags}` : ""}${conflict}`;
+    // #1461: a value that only ever appeared in a command line is a lead, never "outbound contact".
+    const ref = a.mentioned ? ` — ${MENTIONED_NOTE}` : "";
+    return `- ${a.value}${parts.length ? ` [${parts.join(" | ")}]` : ""}${flags ? ` ⚠ ${flags}` : ""}${ref}${conflict}`;
   });
   return `CONNECTIVE INDICATORS (cross-host / multi-tool — likely the attack backbone, weigh heavily):\n${lines.join("\n")}\n\n`;
 }

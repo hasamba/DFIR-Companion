@@ -173,17 +173,18 @@ const TEXT_URL = /\bhttps?:\/\/(?:[^\s"'<>}(]|(?<!\])\()+/gi;
 const TEXT_IPV4 = /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g;
 const TEXT_HASH = /\b[a-f0-9]{64}\b|\b[a-f0-9]{40}\b|\b[a-f0-9]{32}\b/gi;
 
+// Free text, so every value is "mentioned" (#1459) — a structured sighting elsewhere clears the mark.
 function harvestText(text: string, sink: Map<string, SiemIoc>): void {
   if (!text) return;
   // Shared with the Velociraptor scraper, so one C2 URL is one indicator whichever importer
   // read it — the disagreement #744 was filed about.
   for (const m of text.matchAll(TEXT_URL))
-    addIoc(sink, "url", trimSentencePunctuation(m[0], text, m.index ?? 0).slice(0, 300));
+    addIoc(sink, "url", trimSentencePunctuation(m[0], text, m.index ?? 0).slice(0, 300), "mentioned");
   for (const m of text.matchAll(TEXT_IPV4)) {
     const ip = cleanIp(m[0]);
-    if (ip && !ip.startsWith("127.")) addIoc(sink, "ip", ip);
+    if (ip && !ip.startsWith("127.")) addIoc(sink, "ip", ip, "mentioned");
   }
-  for (const m of text.matchAll(TEXT_HASH)) addIoc(sink, "hash", m[0].toLowerCase());
+  for (const m of text.matchAll(TEXT_HASH)) addIoc(sink, "hash", m[0].toLowerCase(), "mentioned");
 }
 
 function looksLikePath(p: string): boolean {

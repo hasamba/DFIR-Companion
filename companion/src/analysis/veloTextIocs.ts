@@ -67,10 +67,17 @@ const TEXT_S3_URI = /\bs3:\/\/[a-z0-9][a-z0-9.\-]{1,61}[a-z0-9](?:\/[^\s"'<>}]*)
 // address, and until `extractDomains` ran here those names were simply lost (#648). The last three
 // are the same lesson from the Bissa eval — a script block also names the vulnerability it exploits,
 // the channel it reports hits on, and the bucket it ships them to, all in plain text.
+//
+// Every value this reads is "mentioned" (#1459): it was written in free text, not read from a
+// structured indicator column or computed by the collector. A `Hashes: SHA256=…` column is a file
+// the collector hashed; `$primaryHash = '…'` inside a script block is a string the author knew.
+// INC-2026-028 called a Mimic sample "present in the toolkit directory" on the strength of the
+// latter. addIoc keeps the rule order-independent: a plain sighting anywhere clears the mark.
+const MENTIONED = "mentioned";
 export function scrapeText(text: string, sink: Map<string, SiemIoc>): void {
   if (!text) return;
   for (const m of text.matchAll(TEXT_URL))
-    addIoc(sink, "url", trimSentencePunctuation(m[0], text, m.index ?? 0).slice(0, 300));
+    addIoc(sink, "url", trimSentencePunctuation(m[0], text, m.index ?? 0).slice(0, 300), MENTIONED);
   for (const m of text.matchAll(TEXT_IPV4)) {
     // A dotted quad written right after a version marker is a version string, not an address:
     // `choco install openssh --version 8.0.0.1`, `$script:ModuleVersion = '1.0.0.0'`. Octet bounds
@@ -78,21 +85,21 @@ export function scrapeText(text: string, sink: Map<string, SiemIoc>): void {
     const pre = text.slice(Math.max(0, (m.index ?? 0) - 14), m.index ?? 0).toLowerCase();
     if (/version\s*['"=:\s]*$/.test(pre)) continue;
     const ip = cleanIp(m[0]);
-    if (ip) addIoc(sink, "ip", ip);
+    if (ip) addIoc(sink, "ip", ip, MENTIONED);
   }
-  for (const m of text.matchAll(TEXT_HASH)) addIoc(sink, "hash", m[0].toLowerCase());
-  for (const d of extractDomains(text)) addIoc(sink, "domain", d);
+  for (const m of text.matchAll(TEXT_HASH)) addIoc(sink, "hash", m[0].toLowerCase(), MENTIONED);
+  for (const d of extractDomains(text)) addIoc(sink, "domain", d, MENTIONED);
   // Canonical upper case, so `cve-2025-55182` and `CVE-2025-55182` are one indicator, not two.
-  for (const m of text.matchAll(TEXT_CVE)) addIoc(sink, "other", m[0].toUpperCase());
+  for (const m of text.matchAll(TEXT_CVE)) addIoc(sink, "other", m[0].toUpperCase(), MENTIONED);
   // Both forms normalize to `@handle`, so a script that names the same bot twice — once assigned,
   // once written out — yields one indicator rather than two spellings of it.
-  for (const m of text.matchAll(TEXT_BOT_HANDLE)) addIoc(sink, "other", m[0]);
-  for (const m of text.matchAll(TEXT_BOT_ASSIGNED)) addIoc(sink, "other", `@${m[1]}`);
+  for (const m of text.matchAll(TEXT_BOT_HANDLE)) addIoc(sink, "other", m[0], MENTIONED);
+  for (const m of text.matchAll(TEXT_BOT_ASSIGNED)) addIoc(sink, "other", `@${m[1]}`, MENTIONED);
   // The same trim the URL pass runs, by the same function: a bucket named mid-sentence would
   // otherwise be stored as "s3://b/prefix," — not a usable URI, and a second indicator for a
   // destination already recorded without the comma (#744).
   for (const m of text.matchAll(TEXT_S3_URI))
-    addIoc(sink, "other", trimSentencePunctuation(m[0], text, m.index ?? 0).slice(0, 300));
+    addIoc(sink, "other", trimSentencePunctuation(m[0], text, m.index ?? 0).slice(0, 300), MENTIONED);
 }
 
 // The free-text fields that carry a detection's evidence (and its embedded IOCs). `ScriptBlockText`

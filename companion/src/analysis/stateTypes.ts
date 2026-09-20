@@ -289,7 +289,12 @@ export interface IntelRetirementDecision {
 // rule is a one-way ratchet: once a value has an ordinary sighting, no later marked sighting or
 // analyst merge can re-attach the marker — "unmarked" means "at least one ordinary sighting
 // exists", so that is correct, but it is the least obvious consequence of the asymmetry.
-export type IocProvenance = "client-reported";
+//
+// #1459: "mentioned" — the value was read out of FREE TEXT (a script block, a command line, a
+// message, a `Line`/`Content` column), not from a structured indicator column or a hash the
+// collector computed. A sha256 a script assigns to a variable is evidence the author knew the hash,
+// not that the file was on the host. Same ratchet: a structured (plain) sighting clears it.
+export type IocProvenance = "client-reported" | "mentioned";
 
 export interface IOC {
   id: string;

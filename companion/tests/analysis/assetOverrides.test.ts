@@ -234,3 +234,59 @@ describe("applyAssetOverrides", () => {
     expect(result.edges.some((e) => e.asset === win02.id && e.ioc === "i2")).toBe(false);
   });
 });
+
+// #1461: overrides rebuild the edge list from scratch, so the `referenced` flag that assetGraph.ts
+// puts on an edge from a mentioned IoC must survive the rebuild — including a merge that redirects
+// the edge, and an analyst-added link to a mentioned IoC, which is a reference too.
+describe("applyAssetOverrides keeps the #1461 reference marking", () => {
+  function graphWithMentioned() {
+    const s = emptyState("c1");
+    s.iocs.push(
+      { id: "i-plain", type: "ip", value: "203.0.113.5", firstSeen: "" },
+      { id: "i-ment", type: "ip", value: "91.191.209.46", firstSeen: "", provenance: "mentioned" },
+    );
+    const ev = (id: string, asset: string, description: string) => ({
+      id,
+      timestamp: "2026-01-01T00:00:00Z",
+      description,
+      severity: "High" as const,
+      mitreTechniques: [],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      asset,
+    });
+    s.forensicTimeline.push(
+      ev("e1", "WIN-01", "EID 3 to 203.0.113.5"),
+      ev("e2", "WIN-01", "loader --reported-meterpreter-stage 91.191.209.46:12385"),
+      ev("e3", "WIN-02", "nothing here"),
+    );
+    return buildAssetGraph(s);
+  }
+
+  it("carries `referenced` through an untouched rebuild and through a host merge", () => {
+    const g = graphWithMentioned();
+    const plain = applyAssetOverrides(g, emptyOverrides());
+    expect(plain.edges.find((e) => e.ioc === "i-ment")?.referenced).toBe(true);
+    expect(plain.edges.find((e) => e.ioc === "i-plain")?.referenced).toBeUndefined();
+    expect(plain.iocs.find((i) => i.id === "i-ment")?.mentioned).toBe(true);
+
+    const merged = applyAssetOverrides(g, { ...emptyOverrides(), merges: { "host:win-01": "host:win-02" } });
+    const e = merged.edges.find((x) => x.ioc === "i-ment");
+    expect(e?.asset).toBe("host:win-02");
+    expect(e?.referenced).toBe(true);
+  });
+
+  it("an analyst-added link to a mentioned IoC is a reference as well", () => {
+    const g = graphWithMentioned();
+    const out = applyAssetOverrides(g, {
+      ...emptyOverrides(),
+      addedLinks: [
+        { asset: "host:win-02", ioc: "i-ment" },
+        { asset: "host:win-02", ioc: "i-plain" },
+      ],
+    });
+    const added = out.edges.filter((e) => e.asset === "host:win-02");
+    expect(added.find((e) => e.ioc === "i-ment")?.referenced).toBe(true);
+    expect(added.find((e) => e.ioc === "i-plain")?.referenced).toBeUndefined();
+  });
+});
