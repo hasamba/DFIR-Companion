@@ -1223,3 +1223,52 @@ describe("#1461 -- a mentioned network IOC reads as a reference on every report 
     expect(geoSection).toContain("| 203.0.113.5 | BG |");
   });
 });
+
+// #1474: the Sources cell's "(⊕ N)" is the corroboration marker. A mentioned IOC referenced by two
+// importers is not corroborated by two tools — both parsed the same script — so the cell keeps the
+// tool names and says "referenced" instead of "⊕".
+describe("#1474 -- the IOC table never marks a mention as corroborated", () => {
+  function twoTools(provenance?: "mentioned") {
+    const state = emptyState("c1");
+    state.iocs.push({
+      id: "i1",
+      type: "ip",
+      value: "91.191.209.46",
+      firstSeen: "2026-05-28T09:00:00.000Z",
+      enrichments: [
+        { source: "VT", verdict: "malicious", score: "12/90", fetchedAt: "2026-02-11T00:00:00Z" },
+      ],
+      ...(provenance ? { provenance } : {}),
+    });
+    for (const [id, source] of [
+      ["e1", "Hayabusa"],
+      ["e2", "Chainsaw"],
+    ] as const) {
+      state.forensicTimeline.push({
+        id,
+        timestamp: "2026-05-28T09:01:00.000Z",
+        description: "loader.exe --reported-meterpreter-stage 91.191.209.46 --port 12385",
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset: "WIN-01",
+        sources: [source],
+      });
+    }
+    return state;
+  }
+
+  it("a mentioned IOC lists its tools as references, with no ⊕", () => {
+    const md = renderMarkdownReport(twoTools("mentioned"));
+    const row = md.split("\n").find((l) => l.startsWith("| i1 |")) ?? "";
+    expect(row).toContain("| Chainsaw, Hayabusa (referenced in 2) |");
+    expect(row).not.toContain("⊕");
+  });
+
+  it("the same IOC from a network record keeps the ⊕ marker (the control)", () => {
+    const md = renderMarkdownReport(twoTools());
+    const row = md.split("\n").find((l) => l.startsWith("| i1 |")) ?? "";
+    expect(row).toContain("| Chainsaw, Hayabusa (⊕ 2) |");
+  });
+});
