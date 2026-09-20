@@ -144,18 +144,19 @@
     deepPassNothingNew = !!w && w.verdict === "nothing-new";
     const when = (at) => (at ? ` (${esc(String(at).replace("T", " ").slice(0, 16))})` : "");
     let html = "";
+    // Lead with the verdict in the analyst's words; the numbers that justify it follow.
     if (deepPassNothingNew) {
-      html = `<div class="dp-guidance">⚠ The last synthesis${when(w.at)} already read all `
-        + `<b>${Number(w.considered).toLocaleString()}</b> graded events — nothing was dropped for the size limit. `
-        + `A deep pass would read the same events or fewer, and gain nothing. `
+      html = `<div class="dp-guidance"><b>⚠ Deep pass will not help.</b> The last synthesis${when(w.at)} already read all `
+        + `<b>${Number(w.considered).toLocaleString()}</b> graded events — nothing was dropped for the size limit, `
+        + `so a deep pass would read the same events or fewer. `
         + `<label><input type="checkbox" id="deepPassRunAnyway"> Run anyway</label></div>`;
     } else if (w && w.verdict === "stale") {
-      html = `<div class="dp-note">The last synthesis${when(w.at)} read a timeline of `
-        + `${Number(w.eventsThen).toLocaleString()} events; it now has ${Number(w.eventsNow).toLocaleString()}. `
-        + `Run synthesis again before deciding whether a deep pass is worth it.</div>`;
+      html = `<div class="dp-note"><b>Deep pass: benefit unknown.</b> The last synthesis${when(w.at)} ran on `
+        + `${Number(w.eventsThen).toLocaleString()} events; the timeline now has ${Number(w.eventsNow).toLocaleString()}. `
+        + `Run synthesis again first, then re-measure.</div>`;
     } else if (w && w.verdict === "gains") {
-      html = `<div class="dp-note">The last synthesis${when(w.at)} dropped `
-        + `<b>${Number(w.unread).toLocaleString()}</b> graded events for the size limit. A deep pass at Low+ reads all of them.</div>`;
+      html = `<div class="dp-note"><b>Deep pass will help.</b> The last synthesis${when(w.at)} dropped `
+        + `<b>${Number(w.unread).toLocaleString()}</b> graded events for the size limit; a deep pass at Low+ reads all of them.</div>`;
     }
     host.innerHTML = html;
     const anyway = document.getElementById("deepPassRunAnyway");

@@ -772,6 +772,10 @@ describe("dashboard.html — deep pass", () => {
     expect(matches(html, /function renderDeepPassWorth[\s\S]{0,1600}stale/), "handles stale").toBe(true);
     expect(matches(html, /function renderDeepPassWorth[\s\S]{0,1600}gains/), "handles gains").toBe(true);
     expect(has(html, 'id="deepPassRunAnyway"'), "has a run-anyway override").toBe(true);
+    // The verdict leads, in the analyst's words — the numbers only justify it.
+    expect(has(html, "Deep pass will not help."), "states the no-benefit verdict outright").toBe(true);
+    expect(has(html, "Deep pass will help."), "states the benefit verdict outright").toBe(true);
+    expect(has(html, "Deep pass: benefit unknown."), "states the stale verdict outright").toBe(true);
     expect(
       matches(html, /function applyDeepPassGate[\s\S]{0,900}deepPassRunAnyway/),
       "the gate reads the override",
