@@ -198,11 +198,14 @@
       });
     }
     for (const i of iocs) {
+      // #1461: an IoC read out of free text is a reference the asset was told about, not a peer it
+      // reached — the detail panel says so in the report's words.
+      const ref = i.mentioned ? " — referenced in free text; no network record" : "";
       els.push({
         data: {
           id: i.id,
           name: truncate(i.value, 40),
-          full: `${i.value} (${i.type})`,
+          full: `${i.value} (${i.type})${ref}`,
           kind: "ioc",
           glyph: glyphDataUri(
             `<circle cx="11" cy="11" r="6" fill="${iocColor(i.verdict)}" stroke="#0f1115" stroke-width="1.5"/>`,
@@ -213,6 +216,7 @@
     for (const e of edges)
       els.push({
         data: { id: `ae:${e.asset}|${e.ioc}`, source: e.asset, target: e.ioc },
+        classes: e.referenced ? "referenced" : "", // #1461: dashed, see ASSET_STYLE
       });
     return els;
   }
@@ -245,6 +249,8 @@
         "target-arrow-shape": "none",
       },
     },
+    // #1461: a referenced edge (the IoC came from a command line) never looks like a connection.
+    { selector: "edge.referenced", style: { "line-style": "dashed", "line-dash-pattern": [3, 3] } },
     { selector: ".gv-dim", style: { opacity: 0.1 } },
   ];
 

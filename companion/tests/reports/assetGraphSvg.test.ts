@@ -143,3 +143,36 @@ describe("renderAssetGraphSvg", () => {
     expect(svg).not.toContain("9.9.9.9");
   });
 });
+
+// #1461: a `mentioned` IoC reached the asset through a command line, not a connection. The SVG
+// draws that edge dashed and names the node as a reference; a plain edge and node stay as they are.
+describe("#1461 -- a referenced edge is dashed and the node says so", () => {
+  const graph: AssetGraph = {
+    assets: [{ ...host("host:w1", "WIN-01", true), iocIds: ["i-plain", "i-ment"] }],
+    iocs: [
+      { ...ioc("i-plain", "203.0.113.5"), assetIds: ["host:w1"] },
+      { ...ioc("i-ment", "91.191.209.46"), assetIds: ["host:w1"], mentioned: true },
+    ],
+    edges: [
+      { asset: "host:w1", ioc: "i-plain" },
+      { asset: "host:w1", ioc: "i-ment", referenced: true },
+    ],
+  };
+
+  it("dashes exactly the referenced edge", () => {
+    const svg = renderAssetGraphSvg(graph);
+    const paths = svg.match(/<path [^>]*>/g) ?? [];
+    expect(paths).toHaveLength(2);
+    expect(paths.filter((p) => p.includes("stroke-dasharray"))).toHaveLength(1);
+  });
+
+  it("labels the mentioned node (referenced), carries the full note as its tooltip, dashes its box", () => {
+    const svg = renderAssetGraphSvg(graph);
+    expect(svg).toContain(">91.191.209.46 (referenced)<");
+    expect(svg).toContain("<title>91.191.209.46 (referenced in free text; no network record)</title>");
+    expect(svg).toMatch(/>203\.0\.113\.5</);
+    const rects = svg.match(/<rect [^>]*x="462"[^>]*>/g) ?? []; // the two IoC boxes
+    expect(rects).toHaveLength(2);
+    expect(rects.filter((r) => r.includes("stroke-dasharray"))).toHaveLength(1);
+  });
+});

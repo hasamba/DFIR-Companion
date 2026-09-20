@@ -1,5 +1,6 @@
 import { SEVERITY_RANK, type Severity } from "./stateTypes.js";
 import type { MappedEvent, SiemEvent } from "./siemImport.js";
+import { annotateCollectorDeployment, loadCollectorInfrastructure } from "./collectorDeployment.js";
 import { combineMarkings } from "./tlp.js";
 
 /**
@@ -88,9 +89,15 @@ export function createEventAggregator(
 
   const byKey = new Map<string, SiemEvent>();
   const order: string[] = [];
+  // The case's own DFIR infrastructure, read once per aggregator (collectorDeployment.ts, #1460).
+  const collector = loadCollectorInfrastructure();
 
   return {
     add(m: MappedEvent): void {
+      // Every importer ends here, so this is the one seam where the collector's own deployment
+      // (download from the configured server, msiexec install, the MSI's creation-time change) is
+      // recognised for every source at once. Before the floor, so a demoted row is floored as Info.
+      annotateCollectorDeployment(m, collector);
       if (SEVERITY_RANK[m.severity] > floorRank) return; // below the severity floor
       const key = aggregate ? m.aggKey : `${order.length}`; // no-agg ⇒ unique key per row
       const existing = byKey.get(key);

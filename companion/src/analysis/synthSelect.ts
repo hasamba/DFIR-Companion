@@ -16,6 +16,7 @@ import { buildIocProvenanceChains } from "./iocProvenanceChain.js";
 import { caseTime, intelTimeTag } from "./intelTemporal.js";
 import { intelOrigins, originsTag } from "./intelLineage.js";
 import { rankHosts, buildSignalConcentrationDigest } from "./hostRanking.js";
+import { isMentionedHash, mentionedHashNote } from "./iocMentionedHash.js";
 
 // Widened to string keys: severity values reaching the selectors are not all statically Severity.
 const SEV_RANK: Record<string, number> = SEVERITY_RANK;
@@ -390,19 +391,25 @@ export function buildSynthesisContext(
     if (!hit) continue;
     chains ??= buildIocProvenanceChains(state.iocs, scopedEvents, state.findings);
     const when = intelTimeTag(i.enrichments ?? [], caseTime(i, chains[i.id]), nowIso);
+    // #1459: a hash read out of a script block / command line is a string the author knew, not a
+    // file the collector hashed. The event that "carries the value" is the one that MENTIONS it, so
+    // it is not behavioral corroboration — the tag stays lone-intel / multi-origin and the line says
+    // where the string sits and that no file with the hash was observed.
+    const mentioned = isMentionedHash(i);
     const cls = classifyVerdict(i, {
-      hasBehavioralEvent: iocHasBehavioralEvent(i.value, scopedEvents),
+      hasBehavioralEvent: !mentioned && iocHasBehavioralEvent(i.value, scopedEvents),
       hostNames,
     });
     if (cls === "none") continue;
     const base = `${i.value} = ${hit.verdict}${hit.source ? ` (${hit.source}${hit.score ? ` ${hit.score}` : ""})` : ""}`;
     const tag = cls === "conflicted" ? "" : originsTag(intelOrigins(i.enrichments), cls);
+    const note = mentioned ? ` — ${mentionedHashNote(i, scopedEvents)}` : "";
     if (cls === "conflicted") {
       conflictVerdicts.push(
         `- ${base} ⚠ CONFLICT: also one of this case's OWN host assets or an internal address — this verdict is most likely stale/wrong; do NOT treat it as confirmed malicious or as external C2${when ? ` ${when}` : ""}`,
       );
     } else {
-      trustedVerdicts.push(`- ${base} ${tag}${when ? ` ${when}` : ""}`);
+      trustedVerdicts.push(`- ${base} ${tag}${when ? ` ${when}` : ""}${note}`);
     }
     if (trustedVerdicts.length + conflictVerdicts.length >= 25) break;
   }

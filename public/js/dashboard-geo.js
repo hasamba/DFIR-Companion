@@ -78,7 +78,7 @@
     const topIps = geoFilteredMarkers().slice(0, 10).map(m =>
       `<li data-safe-style="cursor:pointer" data-geo-ip="${escAttr(m.ip)}" title="focus on map"><span data-safe-style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${GEO_COLOR[m.color] || GEO_COLOR.gray};margin-right:6px"></span>${esc(m.ip)}${geoIpFlags(m)} <span data-safe-style="color:var(--text-muted)">${esc([m.city, m.country].filter(Boolean).join(", ") || "—")} · ${esc(m.eventCount)} ev</span></li>`).join("");
     statsEl.innerHTML =
-      `<div data-safe-style="margin-bottom:4px">${esc(s.resolved)} mapped / ${esc(s.totalIps)} IPs · ${esc(s.external)} external · ${esc(s.internal)} internal · ${esc(s.distinctCountries)} countries · ${esc(s.distinctAsns)} ASNs${s.markerCap ? ` · showing first ${esc(s.markerCap)}` : ""}<span data-safe-style="color:var(--text-muted)"> · dashed = country-level (approx) · long-dashed hollow = client-reported</span></div>` +
+      `<div data-safe-style="margin-bottom:4px">${esc(s.resolved)} mapped / ${esc(s.totalIps)} IPs · ${esc(s.external)} external · ${esc(s.internal)} internal · ${esc(s.distinctCountries)} countries · ${esc(s.distinctAsns)} ASNs${s.markerCap ? ` · showing first ${esc(s.markerCap)}` : ""}<span data-safe-style="color:var(--text-muted)"> · dashed = country-level (approx) · long-dashed hollow = client-reported · dotted hollow = referenced in free text (no network record)</span></div>` +
       (countries ? `<div data-safe-style="margin-bottom:4px"><b>Top countries:</b> ${countries}</div>` : "") +
       (topIps ? `<div><b>Top IPs:</b><ul data-safe-style="margin:4px 0;padding-left:18px">${topIps}</ul></div>` : "");
     if (geoMap) renderGeoMarkers();
@@ -121,8 +121,10 @@
   // so a marked marker never looks identical to an unmarked one on either surface. Same wording as
   // the markdown report's geographic table. `clientReported` is the server's boolean for
   // `IOC.provenance === "client-reported"` (#1266): a sender-controlled address, not a sighting.
+  // `mentioned` is the same for `provenance === "mentioned"` (#1461): an address read out of a
+  // command line or a script — the host was told about it; no network record says it went there.
   function geoIpFlags(m) {
-    return `${m.falsePositive ? " (false positive)" : ""}${m.clientReported ? " (client-reported)" : ""}`;
+    return `${m.falsePositive ? " (false positive)" : ""}${m.clientReported ? " (client-reported)" : ""}${m.mentioned ? " (referenced in free text; no network record)" : ""}`;
   }
   // Pure: the popup body for one marker, kept apart from Leaflet so it can be asserted on.
   function geoPopupHtml(m) {
@@ -141,6 +143,8 @@
       // #1326: a pin placed from a sender-controlled header is hollow and long-dashed, so it never
       // reads as a sensor-observed peer at a glance — the same de-emphasis approximate gets.
       if (m.clientReported) { opts.dashArray = "6,3"; opts.fillOpacity = 0.3; }
+      // #1461: a pin the host was only TOLD about is dotted and hollow — never a sighted peer.
+      if (m.mentioned) { opts.dashArray = "1,3"; opts.fillOpacity = 0.3; }
       const cm = L.circleMarker([m.lat, m.lon], opts);
       cm.bindPopup(geoPopupHtml(m));
       cm.addTo(geoLayer);

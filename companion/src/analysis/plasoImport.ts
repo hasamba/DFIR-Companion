@@ -52,14 +52,15 @@ const RE_HASH = /\b[a-f0-9]{64}\b|\b[a-f0-9]{40}\b|\b[a-f0-9]{32}\b/gi;
 const RE_URL = /\bhttps?:\/\/[^\s"'<>)\]]+/gi;
 const RE_IPV4 = /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g;
 
-// Scrape IOCs out of a free-text Plaso message (bounded by the IOC cap downstream).
+// Scrape IOCs out of a free-text Plaso message (bounded by the IOC cap downstream). Free text, so
+// every value is "mentioned" (#1459) — a structured sighting elsewhere clears the mark.
 function textIocs(msg: string, sink: Map<string, SiemIoc>): void {
   if (!msg) return;
-  for (const m of msg.matchAll(RE_HASH)) addIoc(sink, "hash", m[0].toLowerCase());
-  for (const m of msg.matchAll(RE_URL)) addIoc(sink, "url", m[0].slice(0, 300));
+  for (const m of msg.matchAll(RE_HASH)) addIoc(sink, "hash", m[0].toLowerCase(), "mentioned");
+  for (const m of msg.matchAll(RE_URL)) addIoc(sink, "url", m[0].slice(0, 300), "mentioned");
   for (const m of msg.matchAll(RE_IPV4)) {
     const ip = cleanIp(m[0]);
-    if (ip) addIoc(sink, "ip", ip);
+    if (ip) addIoc(sink, "ip", ip, "mentioned");
   }
 }
 

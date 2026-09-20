@@ -102,9 +102,10 @@ export const deltaSchema = z.object({
       // Authoritative source-event links (set by the deterministic importers via pipeline.ts, never
       // by AI synthesis). Optional — absent for every existing caller.
       extractedFrom: z.array(z.string()).optional(),
-      // #1266: extraction-time provenance, set only by deterministic importers (emailImport.ts's
-      // originatingIp today); stripped from every model response below, same as extractedFrom.
-      provenance: z.literal("client-reported").optional(),
+      // #1266 / #1459: extraction-time provenance, set only by deterministic importers (emailImport.ts's
+      // originatingIp; every free-text scraper); stripped from every model response below, same as
+      // extractedFrom.
+      provenance: z.enum(["client-reported", "mentioned"]).optional(),
     }),
   ),
   mitreTechniques: z.array(

@@ -24,6 +24,7 @@ import { buildEvidenceGraph, buildLateralPaths, type LateralPath } from "../anal
 import { buildAttackPhases, DEFAULT_GAP_SECONDS } from "../analysis/burstDetect.js";
 import { detectBeacons, beaconEnvOptions, BEACON_CAVEAT } from "../analysis/beaconDetect.js";
 import { buildGeoMap } from "../analysis/geoMap.js";
+import { iocValueLabel, mentionedLabel } from "../analysis/iocMentioned.js";
 import { gapEnvOptions, GAP_CAVEAT } from "../analysis/gapDetect.js";
 import { detectGapsWithWaves } from "../analysis/activityWaves.js";
 import { buildKnownUnknownItems } from "../analysis/knownUnknowns.js";
@@ -741,7 +742,7 @@ function investigation(
   if (compromised.length === 0) {
     lines.push("_No compromised assets identified yet._", "");
   } else {
-    const iocValue = new Map(graph.iocs.map((i) => [i.id, i.value] as const));
+    const iocValue = new Map(graph.iocs.map((i) => [i.id, mentionedLabel(i.value, i.mentioned)] as const));
     lines.push("| Asset | Type | Max severity | Related IoCs |", "| --- | --- | --- | --- |");
     for (const a of compromised) {
       const iocs = a.iocIds.map((id) => iocValue.get(id) ?? id).join(", ") || "—";
@@ -817,8 +818,7 @@ function investigation(
   if (state.iocs.length === 0) {
     lines.push("_No IOCs extracted yet._", "");
   } else {
-    // Corroboration: tools that observed each indicator (derived from the events' sources).
-    const iocSrc = deriveIocSources(state.iocs, state.forensicTimeline);
+    const iocSrc = deriveIocSources(state.iocs, state.forensicTimeline); // corroboration: tools that saw it
     const iocRisk = scoreIocsFromState(state); // composite risk (#63); role splits indicator vs observation
     const indicators = state.iocs.filter((i) => iocRisk[i.id]?.role !== "observation");
     lines.push(
@@ -831,7 +831,7 @@ function investigation(
         src && src.length ? `${src.join(", ")}${src.length > 1 ? ` (⊕ ${src.length})` : ""}` : "—";
       const r = iocRisk[i.id];
       const riskCell = r ? `**${r.score}**${r.factors.length ? ` — ${r.factors[0]}` : ""}` : "—";
-      const valueCell = i.provenance === "client-reported" ? `${i.value} (client-reported)` : i.value; // #1266
+      const valueCell = iocValueLabel(i); // #1266 "(client-reported)"; #1461 "referenced …; no network record"
       lines.push(
         `| ${cellMd(i.id)} | ${cellMd(i.type)} | ${cellMd(valueCell)} | ${cellMd(i.firstSeen)} | ${cellMd(srcCell)} | ${cellMd(riskCell)} |`,
       );
@@ -941,7 +941,7 @@ function geographicDistribution(state: InvestigationState, lines: string[]): voi
   lines.push("| IP | Country | City | ASN | Severity | Verdict |", "| --- | --- | --- | --- | --- | --- |");
   for (const m of geo.markers) {
     lines.push(
-      `| ${cellMd(m.clientReported ? `${m.ip} (client-reported)` : m.ip)} | ${cellMd(m.country ?? "—")} | ${cellMd(m.city ?? (m.approximate ? "— (country-level)" : "—"))} | ` +
+      `| ${cellMd(m.clientReported ? `${m.ip} (client-reported)` : mentionedLabel(m.ip, m.mentioned))} | ${cellMd(m.country ?? "—")} | ${cellMd(m.city ?? (m.approximate ? "— (country-level)" : "—"))} | ` +
         `${cellMd(m.asn ?? "—")} | ${m.severity}${m.falsePositive ? " (false positive)" : ""} | ${cellMd(m.verdict ?? "—")} |`,
     );
   }

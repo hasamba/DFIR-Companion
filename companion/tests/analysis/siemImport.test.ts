@@ -1169,7 +1169,12 @@ describe("textIocs — Windows account SID extraction (#221)", () => {
 
   it("extracts a domain/account SID (S-1-5-21-…-RID) as a `sid` IOC, upper-cased", () => {
     const iocs = scrape("Logon by S-1-5-21-1004336348-1177238915-682003330-1107 succeeded");
-    expect(iocs).toContainEqual({ type: "sid", value: "S-1-5-21-1004336348-1177238915-682003330-1107" });
+    // #1459: a value scraped from free text carries provenance "mentioned".
+    expect(iocs).toContainEqual({
+      type: "sid",
+      value: "S-1-5-21-1004336348-1177238915-682003330-1107",
+      provenance: "mentioned",
+    });
   });
 
   it("normalizes case so a lower-case rendering dedupes with the canonical form", () => {
@@ -1304,14 +1309,18 @@ describe("textIocs — ReDoS guard (#249)", () => {
   it("still extracts a domain that sits past where the old 10 KB input cap fell", () => {
     const sink = new Map<string, SiemIoc>();
     textIocs(`${"filler word ".repeat(2000)} beacon.evil.com`, sink); // ~24 KB of prefix
-    expect([...sink.values()]).toContainEqual({ type: "domain", value: "beacon.evil.com" });
+    expect([...sink.values()]).toContainEqual({
+      type: "domain",
+      value: "beacon.evil.com",
+      provenance: "mentioned", // #1459: read from free text
+    });
   });
 
   it("extracts a domain whose label count is within the DNS limit", () => {
     const sink = new Map<string, SiemIoc>();
     const deep = `${"a.".repeat(120)}com`; // 121 labels — legal, if unusual
     textIocs(deep, sink);
-    expect([...sink.values()]).toContainEqual({ type: "domain", value: deep });
+    expect([...sink.values()]).toContainEqual({ type: "domain", value: deep, provenance: "mentioned" });
   });
 });
 

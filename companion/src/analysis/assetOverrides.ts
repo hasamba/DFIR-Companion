@@ -111,13 +111,17 @@ export function applyAssetOverrides(graph: AssetGraph, overrides: AssetOverrides
   const removedSet = new Set(overrides.removedLinks.map((r) => `${r.asset}|${r.ioc}`));
   const edgeSet = new Set<string>();
   const edges: AssetGraphEdge[] = [];
+  // #1461: an edge from a mentioned IoC is a reference, whoever drew it — the rebuilt edge keeps
+  // the flag, and an analyst link to such an IoC gets it too.
+  const referenced = (iocId: string): Pick<AssetGraphEdge, "referenced"> =>
+    iocById.get(iocId)?.mentioned ? { referenced: true } : {};
 
   for (const e of graph.edges) {
     const asset = redirect(e.asset);
     const key = `${e.asset}|${e.ioc}`;
     if (!removedSet.has(key) && assetMap.has(asset) && !edgeSet.has(`${asset}|${e.ioc}`)) {
       edgeSet.add(`${asset}|${e.ioc}`);
-      edges.push({ asset, ioc: e.ioc });
+      edges.push({ asset, ioc: e.ioc, ...referenced(e.ioc) });
     }
   }
   for (const link of overrides.addedLinks) {
@@ -125,7 +129,7 @@ export function applyAssetOverrides(graph: AssetGraph, overrides: AssetOverrides
     const key = `${asset}|${link.ioc}`;
     if (!edgeSet.has(key) && assetMap.has(asset) && iocById.has(link.ioc)) {
       edgeSet.add(key);
-      edges.push({ asset, ioc: link.ioc });
+      edges.push({ asset, ioc: link.ioc, ...referenced(link.ioc) });
     }
   }
 

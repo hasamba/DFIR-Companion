@@ -8,6 +8,7 @@ import {
 } from "./stateTypes.js";
 import { escapeRegExp } from "./regexEscape.js";
 import { resolveHost, type HostAliasIndex } from "./hostAlias.js";
+import { isMentionedIoc } from "./iocMentioned.js";
 
 // Derives the asset ↔ IoC graph from the investigation state. An "asset" is a victim
 // entity an event happened on: a HOST (from each event's `asset` field — populated by THOR,
@@ -36,11 +37,15 @@ export interface GraphIoc {
   value: string;
   verdict?: string; // worst threat-intel verdict, if enriched
   assetIds: string[]; // connected asset ids
+  // #1461: the value was read out of free text (a command line) — every edge from it is a
+  // reference the asset was told about, never a connection it made. Absent = observed.
+  mentioned?: true;
 }
 
 export interface AssetGraphEdge {
   asset: string;
   ioc: string;
+  referenced?: true; // #1461: the IoC is `mentioned` — draw as a reference, not a connection
 }
 
 export interface AssetGraph {
@@ -228,7 +233,7 @@ export function buildAssetGraph(
     const key = `${a.id}|${ioc.id}`;
     if (edgeSet.has(key)) return;
     edgeSet.add(key);
-    edges.push({ asset: a.id, ioc: ioc.id });
+    edges.push({ asset: a.id, ioc: ioc.id, ...(isMentionedIoc(ioc) ? { referenced: true } : {}) });
     a.iocIds.push(ioc.id);
   }
 
@@ -290,7 +295,15 @@ export function buildAssetGraph(
   const graphIocs: GraphIoc[] = [];
   for (const [iid, assetIds] of iocAssetIds) {
     const i = byId.get(iid);
-    if (i) graphIocs.push({ id: i.id, type: i.type, value: i.value, verdict: worstVerdict(i), assetIds });
+    if (!i) continue;
+    graphIocs.push({
+      id: i.id,
+      type: i.type,
+      value: i.value,
+      verdict: worstVerdict(i),
+      assetIds,
+      ...(isMentionedIoc(i) ? { mentioned: true } : {}),
+    });
   }
 
   const assets = [...assetMap.values()].sort(

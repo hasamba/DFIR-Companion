@@ -251,3 +251,34 @@ describe("#1266 -- a client-reported IP pin says so", () => {
     expect(byIp["9.9.9.9"]).toBeUndefined();
   });
 });
+
+// #1461: an IP read out of a command line (`--reported-meterpreter-stage 91.191.209.46:12385`) is
+// an address the loader was TOLD about. It may pin the map as a lead, but it is not a peer the
+// host reached, so it never anchors a flow line — a flow IS the "outbound contact" claim.
+describe("#1461 -- a mentioned IP is a pin, never a flow endpoint", () => {
+  const plain = ip("i-plain", "203.0.113.5", { lat: 48.8, lon: 2.3, country: "FR" }); // Sysmon EID 3 dstIp
+  const mentioned = {
+    ...ip("i-ment", "91.191.209.46", { lat: 42.7, lon: 23.3, country: "BG" }),
+    provenance: "mentioned" as const,
+  };
+  const victim = ip("i-victim", "10.0.0.7", { lat: 51.5, lon: -0.1, country: "GB" });
+
+  it("marks the marker `mentioned` only for the mentioned IOC", () => {
+    const g = buildGeoMap(state([plain, mentioned]));
+    const byIp = Object.fromEntries(g.markers.map((m) => [m.ip, m.mentioned]));
+    expect(byIp["91.191.209.46"]).toBe(true);
+    expect(byIp["203.0.113.5"]).toBeUndefined();
+  });
+
+  it("draws a flow to the plain IP and none to the mentioned one, even from identical rows", () => {
+    const rows = [
+      ev({ id: "e1", srcIp: "10.0.0.7", dstIp: "203.0.113.5", severity: "High", sources: ["Sysmon"] }),
+      ev({ id: "e2", srcIp: "10.0.0.7", dstIp: "91.191.209.46", severity: "High", sources: ["Sysmon"] }),
+    ];
+    const g = buildGeoMap(state([victim, plain, mentioned], rows));
+    expect(g.flows.map((f) => f.dstIp)).toEqual(["203.0.113.5"]);
+    // The mentioned pin is still on the map and still counts the event that named it.
+    const m = g.markers.find((x) => x.ip === "91.191.209.46");
+    expect(m?.eventCount).toBe(1);
+  });
+});
