@@ -3501,7 +3501,9 @@ describe("parseVelociraptorJson — generated PowerShell module bodies", () => {
   it("does not demote on a pasted begin-marker with no closing block", () => {
     const body = "# SIG # Begin signature block\r\nInvoke-Mimikatz -DumpCreds\r\n";
     const r = parseVelociraptorJson(JSON.stringify([pwshRow(body)]));
-    expect(r.events[0].severity).toBe("Medium");
+    // The parsed event now reaches mapWindows (#1476), whose script-block grade may raise the Sigma
+    // verdict; what this pins is that the half-signature never LOWERS it.
+    expect(["Medium", "High", "Critical"]).toContain(r.events[0].severity);
   });
 
   it("never demotes a High verdict, whatever the script block is wrapped in", () => {

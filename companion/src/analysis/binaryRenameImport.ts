@@ -25,6 +25,7 @@ import {
 } from "./siemImport.js";
 import { type Severity } from "./stateTypes.js";
 import { boundedAggKey } from "./aggKey.js";
+import { appendDerivedNote } from "./derivedNote.js";
 import { isStagedPath } from "./stagingPaths.js";
 import { withHostSuffix } from "./velociraptorTitle.js";
 
@@ -157,6 +158,15 @@ function gradeRename(f: RenameFacts): Severity {
 
 // Lead with the fact an analyst needs and no other field states: the binary this file really is. A
 // title naming only the on-disk file repeats the attacker's chosen label back to the reader.
+// The rename fact as a registered derived note (derivedNote.ts), appended to the row's own text.
+// Correlation keeps ONE member's description when two tools describe one file, and it carries
+// every registered note from every member onto it (correlate.ts mergeGroup). Before this the fact
+// lived only in the base text: a Sysmon process-create for `nxc.exe` that out-ranked this row on
+// trust became the survivor, and "nxc.exe is really Cmd.Exe" left the timeline with the loser —
+// four renamed copies of one binary in INC-2026-031, none of them named in the forensic record
+// (#1476). As a note it rides along whichever row wins.
+export const RENAMED_BINARY_MARKER = "[renamed binary:";
+
 function describeRename(f: RenameFacts): string {
   let out: string;
   if (f.renamed) {
@@ -170,6 +180,10 @@ function describeRename(f: RenameFacts): string {
   if (f.path) out += ` at ${oneLine(f.path).slice(0, 200)}`;
   if (f.renamed && f.systemUtility) out += " [renamed system utility]";
   if (f.staged) out += " [staged: temp/appdata]";
+  if (f.renamed) {
+    const note = `${oneLine(f.onDisk).slice(0, 120)} is really ${oneLine(f.original).slice(0, 120)}`;
+    return appendDerivedNote(out, RENAMED_BINARY_MARKER, note);
+  }
   return out;
 }
 

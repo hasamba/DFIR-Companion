@@ -325,13 +325,29 @@ function collectRowIocs(row: Row, sink: Map<string, SiemIoc>): { sha256?: string
 // for artifacts that flatten the event (e.g. DetectRaptor's Windows.Detection.Evtx) — top-level
 // `Channel`/`EventID`/`EventData`. Reshape either to the flat record `mapWindows` consumes,
 // normalizing the EventID (number or `{ Value }`/`{ #text }`) to a bare value, plus the host.
+// The parsed Windows event a Velociraptor row carries, in any of the three places the artifacts put
+// it: `System`/`EventData` at the top level (Windows.EventLogs.Evtx), under `Event` (Sigma), or under
+// `_Event` (Windows.Hayabusa.Rules / Windows.Sigma.Base hunt output, #1476). A Hayabusa row whose
+// event was not read here came through text-only — no pid, command line, path or record identity —
+// and correlation, left with only the file path, folded distinct executions of one binary into one row.
+function nestedWinEvent(row: Row): { sys: Row | null; ed: unknown; message: string } {
+  for (const wrap of [null, "Event", "_Event"]) {
+    const base = wrap === null ? row : getCI(row, wrap);
+    if (!isObject(base)) continue;
+    const sys = getCI(base, "System");
+    if (isObject(sys)) {
+      return {
+        sys,
+        ed: getCI(base, "EventData"),
+        message: str(getCI(base, "Message")) || str(getCI(row, "Message")),
+      };
+    }
+  }
+  return { sys: null, ed: getCI(row, "EventData"), message: str(getCI(row, "Message")) };
+}
+
 function winRowToFlat(row: Row): { rec: Row; host: string } | null {
-  const sys = isObject(getCI(row, "System"))
-    ? (getCI(row, "System") as Row)
-    : isObject(getPath(row, "Event.System"))
-      ? (getPath(row, "Event.System") as Row)
-      : null;
-  const edRaw = getCI(row, "EventData") ?? getPath(row, "Event.EventData");
+  const { sys, ed: edRaw, message } = nestedWinEvent(row);
 
   if (sys) {
     let eid: unknown = getCI(sys, "EventID");
@@ -340,6 +356,10 @@ function winRowToFlat(row: Row): { rec: Row; host: string } | null {
       str(getCI(sys, "Channel")) ||
       str(getPath(sys, "Provider.Name")) ||
       str(getPath(sys, "Provider.#attributes.Name"));
+    // The record number rides along so mapWindows can mint the record identity two parsers of one
+    // log share (correlate.ts step 0b). Without it a Hayabusa and a Chainsaw reading of one record
+    // never met, and the path step was left to guess.
+    const recordId = getCI(sys, "EventRecordID");
     return {
       host: resolveRowHost(row).asset, // collector identity first; System.Computer only when no Fqdn (#1417)
       rec: {
@@ -347,7 +367,8 @@ function winRowToFlat(row: Row): { rec: Row; host: string } | null {
         channel,
         event_data: isObject(edRaw) ? edRaw : {},
         "@timestamp": vrTime(getCI(sys, "TimeCreated")),
-        message: str(getCI(row, "Message")),
+        message,
+        ...(recordId != null && str(recordId).trim() ? { EventRecordID: recordId } : {}),
       },
     };
   }
@@ -449,7 +470,12 @@ function classify(row: Row, artifact: string): Kind {
   // that also carries a parsed Windows event (DetectRaptor's Evtx) is overlaid, not flattened.
   if (rowVerdict(row)) return "detection";
 
-  if (getCI(row, "System") || getCI(row, "EventData") || getPath(row, "Event.System")) {
+  if (
+    getCI(row, "System") ||
+    getCI(row, "EventData") ||
+    getPath(row, "Event.System") ||
+    getPath(row, "_Event.System")
+  ) {
     if (firstStr(row, ["Level"]) && firstStr(row, ["Title", "SigmaTitle", "RuleTitle"])) return "sigma";
     return "eventlog";
   }

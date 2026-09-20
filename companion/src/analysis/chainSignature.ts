@@ -60,6 +60,24 @@ export function eventCommandLine(e: ForensicEvent): string {
 
 // A stable signature for a process creation, or undefined when no command line can be determined
 // (so non-process rows and creations with no captured command never get a bogus key).
+// What one process-creation observation IS, for the purpose of refusing a merge (#1476): the
+// normalized command line's ARGUMENTS. The image token is dropped because a parser that truncates
+// long command lines from the head leaves "…" where the image was (Chainsaw's Sysmon rendering), and
+// the same launch then read as two different commands. Two observations whose identities differ
+// describe two launches, whatever path, hash or pid they share; an observation with no command line
+// has no identity and never blocks a merge.
+export function executionIdentity(e: ForensicEvent): string {
+  const cmd = eventCommandLine(e);
+  if (!cmd) return "";
+  const sp = cmd.indexOf(" ");
+  const image = sp === -1 ? cmd : cmd.slice(0, sp);
+  const args = sp === -1 ? "" : cmd.slice(sp + 1).trim();
+  const truncated = /^(?:…|\.{3})$/.test(image);
+  // Arguments alone identify a launch when present; a bare image (no arguments) keeps the image so
+  // "helper.exe" and "other.exe" launched with nothing stay distinct.
+  return args || (truncated ? "" : image);
+}
+
 export function computeChainSignature(e: ForensicEvent): string | undefined {
   const cmd = eventCommandLine(e);
   if (!cmd) return undefined;
