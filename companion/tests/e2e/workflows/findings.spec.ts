@@ -136,19 +136,40 @@ test("the finding-origin lenses persist across a reload", async ({ page, demoCas
 // control and dropping window.scrollY to 0: one click on a filter and the analyst was back at the
 // top of a 50-section page, hunting for the findings list again.
 //
-// The scroll assertion needs a page long enough to scroll, hence the extra revealed sections, and it
-// is deliberately NOT `toBe(before)`. Panels above the findings list finish loading on their own
-// schedule, so the exact offset can legitimately drift a few pixels; what must never happen is the
-// jump to the top. Focus is asserted too because it is the same defect seen from the other side and
-// it is exact — the checkbox either survived the re-render still focused or it did not.
+// The scroll assertion needs the checkbox well BELOW the fold, and the page must not borrow that
+// geometry from a panel that is still loading. In the Triage profile the only section above
+// Findings is the NOW cockpit, which is ~100 px while it reads "Loading the current decisions…"
+// and ~2900 px once loaded; with just the sections below Findings revealed, the checkbox sat at
+// y≈400 in a 720 px viewport until the cockpit landed, `scrollIntoViewIfNeeded` had nothing to do
+// and `before` was 0 — a load race, red in the nightly and green on retry (#1448). Revealing the
+// seeded sections ABOVE Findings puts the checkbox a few viewports down whatever the cockpit is
+// doing, which also makes a jump to the top take the checkbox off screen instead of leaving it
+// visible where the assertion could not tell the regression from a pass.
+//
+// The offset assertion is deliberately NOT `toBe(before)`. Panels above the findings list finish
+// loading on their own schedule, so the exact offset can legitimately drift; what must never happen
+// is the jump to the top. Focus is asserted too because it is the same defect seen from the other
+// side and it is exact — the checkbox either survived the re-render still focused or it did not.
 test("ticking an origin lens leaves the analyst where they were", async ({ page, demoCase }) => {
   await openCase(page, demoCase);
-  await revealSections(page, "sec-timeline", "sec-iocs");
+  await revealSections(
+    page,
+    "sec-exec",
+    "sec-attack-path",
+    "sec-narrative",
+    "sec-next-steps",
+    "sec-host-scope",
+    "sec-timeline",
+    "sec-iocs",
+  );
 
   const hideAuto = page.locator("#hideAutoFindings");
   await hideAuto.scrollIntoViewIfNeeded();
   const before = await page.evaluate(() => window.scrollY);
-  expect(before).toBeGreaterThan(0);
+  expect(
+    before,
+    "the checkbox was visible without scrolling — the revealed sections above Findings no longer push it below the fold",
+  ).toBeGreaterThan(0);
 
   await hideAuto.click();
 
