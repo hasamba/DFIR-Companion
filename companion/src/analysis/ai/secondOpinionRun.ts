@@ -12,6 +12,7 @@ import type { InvestigationState } from "../stateTypes.js";
 import type { SynthThinkingInput } from "../synthThinking.js";
 import { getReconcilePrompt } from "./prompts/index.js";
 import type { AIProvider } from "../../providers/provider.js";
+import type { RefereeModel } from "./providerRoster.js";
 import { callAiJson } from "./aiContext.js";
 import { synthesize, type SynthesisContext } from "./synthesis.js";
 
@@ -28,12 +29,24 @@ import { synthesize, type SynthesisContext } from "./synthesis.js";
  * a confirmed model-B finding survives every later re-synthesis.
  */
 
-/** Both passes run through synthesis, plus the model B this feature exists for. */
+/** Both passes run through synthesis, plus the model B this feature exists for and its referee. */
 export interface SecondOpinionContext extends SynthesisContext {
   readonly opts: SynthesisContext["opts"] & {
     secondOpinionProvider?: AIProvider;
     secondOpinionModelLabel?: string;
+    referee?: RefereeModel;
   };
+}
+
+/**
+ * Who judges the A-vs-B disagreements (#1466). Model B used to referee its own findings; now the
+ * default is model A, and `opts.referee` (from DFIR_AI_RECONCILE_MODEL) overrides it with B or a
+ * third model. Pure so the choice is testable without a run.
+ */
+export function pickReferee(opts: SecondOpinionContext["opts"], modelA: string): RefereeModel | undefined {
+  if (opts.referee) return opts.referee;
+  const provider = opts.synthesisProvider ?? opts.provider;
+  return provider ? { provider, label: modelA } : undefined;
 }
 
 export async function secondOpinion(
@@ -73,9 +86,17 @@ export async function secondOpinion(
   const modelA =
     ctx.opts.synthesisModelLabel ?? (ctx.opts.synthesisProvider ?? ctx.opts.provider)?.name ?? "model A";
   const modelB = ctx.opts.secondOpinionModelLabel ?? provider.name;
-  let record = buildSecondOpinion({ a, b, modelA, modelB, now: () => new Date().toISOString() });
+  const referee = pickReferee(ctx.opts, modelA);
+  let record = buildSecondOpinion({
+    a,
+    b,
+    modelA,
+    modelB,
+    referee: referee?.label ?? "",
+    now: () => new Date().toISOString(),
+  });
 
-  record = await reconcileDeltas(ctx, caseId, provider, { a, b, record });
+  if (referee) record = await reconcileDeltas(ctx, caseId, referee.provider, { a, b, record });
 
   await ctx.opts.secondOpinionStore.save(caseId, record);
   await recordAgreementRate(ctx, caseId, record, modelA, modelB);
@@ -132,6 +153,7 @@ async function recordAgreementRate(
   await ctx.opts.synthMetaStore?.recordSecondOpinionPerf(caseId, {
     modelA,
     modelB,
+    referee: record.referee,
     agreementCount: record.agreementCount,
     deltaCount,
     agreementRate: denom > 0 ? record.agreementCount / denom : 0,

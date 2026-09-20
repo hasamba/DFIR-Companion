@@ -46,6 +46,7 @@ export interface AiDiagnostics {
   model: string | null;
   synthModel: string | null;
   secondOpinionModel: string | null;
+  refereeModel: string | null; // who judges the 2nd-opinion deltas (#1466); null when 2nd opinion is off
   velociraptorModel: string | null;
   baseUrl: string | null;
   imageDetail: string;
@@ -76,6 +77,18 @@ function orNull(v: string | undefined): string | null {
  * `configured` mirrors how startServer decides whether a provider exists: a provider name
  * AND a model are the minimum (a key may legitimately be absent for a local Ollama).
  */
+// The 2nd-opinion referee as the analyst reads it (#1466): blank/same-as-a → model A, same-as-b →
+// model B, anything else → that model. Null when the feature itself is off.
+function refereeModelLabel(env: NodeJS.ProcessEnv, modelA: string | null): string | null {
+  const modelB = orNull(env.DFIR_AI_SECOND_OPINION_MODEL);
+  if (!modelB) return null;
+  const choice = (env.DFIR_AI_RECONCILE_MODEL ?? "").trim();
+  const alias = choice.toLowerCase();
+  if (!choice || alias === "same-as-a") return `model A (${modelA ?? "?"})`;
+  if (alias === "same-as-b") return `model B (${modelB})`;
+  return choice;
+}
+
 export function buildAiDiagnostics(env: EnvLike): AiDiagnostics {
   // Vision/screenshot config: DFIR_VISION_* (legacy DFIR_AI_* honored as a fallback via visionEnv).
   const provider = orNull(visionEnv(env, "PROVIDER"));
@@ -87,6 +100,7 @@ export function buildAiDiagnostics(env: EnvLike): AiDiagnostics {
     model,
     synthModel: orNull(env.DFIR_AI_SYNTH_MODEL) ?? model,
     secondOpinionModel: orNull(env.DFIR_AI_SECOND_OPINION_MODEL),
+    refereeModel: refereeModelLabel(env, orNull(env.DFIR_AI_SYNTH_MODEL) ?? model),
     velociraptorModel: orNull(env.DFIR_AI_VELO_MODEL),
     baseUrl,
     imageDetail: orNull(visionEnv(env, "IMAGE_DETAIL")) ?? "high",
@@ -337,6 +351,7 @@ export function buildDiagnosticsText(r: DiagnosticsReport): string {
     lines.push(`  model:    ${r.ai.model}`);
     if (r.ai.synthModel && r.ai.synthModel !== r.ai.model) lines.push(`  synth:    ${r.ai.synthModel}`);
     if (r.ai.secondOpinionModel) lines.push(`  2nd-op:   ${r.ai.secondOpinionModel}`);
+    if (r.ai.refereeModel) lines.push(`  referee:  ${r.ai.refereeModel}`);
     if (r.ai.baseUrl) lines.push(`  base URL: ${r.ai.baseUrl}`);
     lines.push(
       `  timeout:  ${r.ai.timeoutMs}ms · max tokens: ${r.ai.maxTokens} · context: ${r.ai.contextTokens}`,

@@ -165,6 +165,49 @@ export function buildSecondOpinionProvider(): AnalyzeProvider | undefined {
   });
 }
 
+// Referee for the second-opinion verdicts (#1466). The reconcile pass used to run on model B, so B
+// judged its own disagreements with A. Now: blank/"same-as-a" → model A referees (the default —
+// resolved by the run, which owns the A provider); "same-as-b" → model B; any other value → a third
+// model built like the other roles, with vision-config fallbacks. Pure in the env so it is testable.
+export type ReconcileReferee =
+  { kind: "a" } | { kind: "b" } | { kind: "custom"; label: string; provider: AnalyzeProvider | undefined };
+
+export const RECONCILE_SAME_AS_A = "same-as-a";
+export const RECONCILE_SAME_AS_B = "same-as-b";
+
+export function resolveReconcileReferee(env: NodeJS.ProcessEnv): ReconcileReferee {
+  const model = env.DFIR_AI_RECONCILE_MODEL?.trim() ?? "";
+  const alias = model.toLowerCase();
+  if (!model || alias === RECONCILE_SAME_AS_A) return { kind: "a" };
+  if (alias === RECONCILE_SAME_AS_B) return { kind: "b" };
+  return {
+    kind: "custom",
+    label: model,
+    provider: buildProviderFrom({
+      provider: env.DFIR_AI_RECONCILE_PROVIDER?.trim() || visionEnv(env, "PROVIDER"),
+      model,
+      apiKey: env.DFIR_AI_RECONCILE_KEY ?? visionEnv(env, "KEY"),
+      baseUrl: env.DFIR_AI_RECONCILE_BASE_URL ?? visionEnv(env, "BASE_URL"),
+    }),
+  };
+}
+
+// Turn the env choice into the pipeline's `referee` option. "a" → undefined (the run picks model A
+// and its label); "b" → the second-opinion model; "custom" with no buildable provider → undefined
+// too, so a half-configured referee degrades to the default instead of killing the feature.
+export function resolveRefereeModel(
+  choice: ReconcileReferee,
+  modelB: { provider: AnalyzeProvider | undefined; label: string | undefined },
+): { provider: AnalyzeProvider; label: string } | undefined {
+  if (choice.kind === "b") {
+    return modelB.provider
+      ? { provider: modelB.provider, label: modelB.label ?? modelB.provider.name }
+      : undefined;
+  }
+  if (choice.kind === "custom" && choice.provider) return { provider: choice.provider, label: choice.label };
+  return undefined;
+}
+
 // Velociraptor-hunt model (issue #70): a DEDICATED model just for generating Velociraptor VQL hunts
 // (suggestPlaybookHunts + suggestHunts), since many models botch VQL. Defaults to openrouter /
 // anthropic/claude-haiku-latest regardless of the main/synth provider; the key falls back to the main
@@ -216,6 +259,7 @@ export interface RuntimePipelineParams {
   secondOpinionStore?: SecondOpinionStore;
   synthesisModelLabel?: string;
   secondOpinionModelLabel?: string;
+  referee?: { provider: AnalyzeProvider; label: string };
   stateLock?: StateLock;
   analysisRunStore?: AnalysisRunStore;
   operationalMetrics?: OperationalMetricsStore;
@@ -239,6 +283,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     secondOpinionStore: params.secondOpinionStore,
     synthesisModelLabel: params.synthesisModelLabel,
     secondOpinionModelLabel: params.secondOpinionModelLabel,
+    referee: params.referee,
     stateLock: params.stateLock,
     stateStore: params.stateStore,
     bulkImportSink: params.bulkImportSink,

@@ -46,6 +46,13 @@
       keyId: "env-DFIR_AI_SECOND_OPINION_KEY",
       baseUrlId: "env-DFIR_AI_SECOND_OPINION_BASE_URL",
     },
+    {
+      role: "reconcile",
+      providerId: "env-DFIR_AI_RECONCILE_PROVIDER",
+      modelId: "env-DFIR_AI_RECONCILE_MODEL",
+      keyId: "env-DFIR_AI_RECONCILE_KEY",
+      baseUrlId: "env-DFIR_AI_RECONCILE_BASE_URL",
+    },
   ];
 
   function fieldValue(id) {

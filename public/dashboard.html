@@ -496,7 +496,7 @@
     <button id="anonToggle" class="toggle-btn" data-tip="Anonymize sensitive victim data (internal IPs, usernames, hostnames, internal domains, emails, user paths) and redact secrets before sending text to the AI; the real values are restored in the dashboard. View what's anonymized and add missed entities. Default ON.">Anon: …</button>
     <button id="aiToggle" class="toggle-btn" data-tip="Turn AI analysis on/off for this case">AI: …</button>
     <button id="synthesize" data-tip="Re-derive the case conclusions — findings, MITRE ATT&CK, attacker path, narrative, key questions and next steps — from the in-scope forensic timeline. Replaces the previous conclusions but keeps the timeline, IOCs and threads.">AI Re-synthesize</button>
-    <button id="secondOpinion" data-safe-style="display:none" data-tip="Second LLM opinion: refreshes the primary synthesis (only if the timeline changed), then runs a DIFFERENT model over the same case as an independent QA cross-check, and shows where it disagrees with the primary (findings it adds/drops, severity, ATT&CK technique) for you to accept or reject each. On-demand; non-destructive until you accept. Needs DFIR_AI_SECOND_OPINION_MODEL — ideally a different provider.">2nd opinion</button>
+    <button id="secondOpinion" data-safe-style="display:none" data-tip="Second LLM opinion: refreshes the primary synthesis (only if the timeline changed), then runs a DIFFERENT model over the same case as an independent QA cross-check, and shows where it disagrees with the primary (findings it adds/drops, severity, ATT&CK technique) for you to accept or reject each. A referee model (model A, the synthesis model, by default) reads the events each disputed finding cites and annotates every disagreement with accept B / keep A / review. On-demand; non-destructive until you accept. Needs DFIR_AI_SECOND_OPINION_MODEL — ideally a different provider.">2nd opinion</button>
     <button id="deepPassBtn" data-tip="Deep pass: read EVERY graded event at or above a severity floor you choose, in as many batches as it takes, then fold the result into one final synthesis. Normal synthesis shows the model one prompt's worth of events — on a multi-host case that leaves most of the timeline unread. Opens the pre-flight table showing what each floor would cost before anything is spent. Slow and expensive; cancellable.">Deep pass</button>
     <label id="deepReasoningLabel" data-safe-style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--text-muted);cursor:pointer;white-space:nowrap" data-tip="Deep reasoning (Chain-of-Thought): have the model think step-by-step (extended thinking) before writing findings — better on complex multi-hop cases, but slower and costs extra output tokens. Applies to the NEXT AI Re-synthesize and 2nd opinion on this case only. Off by default; no .env edit or restart needed. Needs an Anthropic or OpenRouter reasoning-capable synthesis model.">
       <input type="checkbox" id="deepReasoning" data-safe-style="margin:0;cursor:pointer" />🧠
@@ -1640,7 +1640,7 @@
           <div class="sfield"><label for="env-DFIR_AI_VELO_BASE_URL">Velo base URL<span class="sfield-hint">DFIR_AI_VELO_BASE_URL</span></label><input id="env-DFIR_AI_VELO_BASE_URL" /></div>
         </div>
         <div class="settings-group-head" data-essential>Second opinion model (optional — a DIFFERENT model for the on-demand QA cross-check)</div>
-        <p class="rm-hint" data-essential data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 8px">Powers the <strong>2nd opinion</strong> button: a second model independently re-synthesizes the case and you review where it disagrees with the primary synthesis. <strong>The feature is OFF until a model is set here</strong> (the button stays hidden otherwise). For a genuinely independent opinion, pick a <strong>different provider</strong> than your synthesis model — same-provider models share blind spots. Leave the key blank to reuse the main AI key.</p>
+        <p class="rm-hint" data-essential data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 8px">Powers the <strong>2nd opinion</strong> button: a second model independently re-synthesizes the case and you review where it disagrees with the primary synthesis. <strong>The feature is OFF until a model is set here</strong> (the button stays hidden otherwise). For a genuinely independent opinion, pick a <strong>different provider</strong> than your synthesis model — same-provider models share blind spots. Leave the key blank to reuse the main AI key. Model B does not judge its own findings: a separate referee (model A by default — set below) annotates each disagreement.</p>
         <div class="sfield-row" data-essential>
           <div class="sfield" data-essential>
             <label for="env-DFIR_AI_SECOND_OPINION_PROVIDER">2nd-opinion provider<span class="sfield-hint">DFIR_AI_SECOND_OPINION_PROVIDER</span></label>
@@ -1661,6 +1661,29 @@
         <div class="sfield-row" data-essential>
           <div class="sfield" data-essential><label for="env-DFIR_AI_SECOND_OPINION_KEY">2nd-opinion API key<span class="sfield-hint">DFIR_AI_SECOND_OPINION_KEY</span></label><input id="env-DFIR_AI_SECOND_OPINION_KEY" type="password" placeholder="(reuses main AI key)" autocomplete="new-password" /></div>
           <div class="sfield" data-essential><label for="env-DFIR_AI_SECOND_OPINION_BASE_URL">2nd-opinion base URL<span class="sfield-hint">DFIR_AI_SECOND_OPINION_BASE_URL</span></label><input id="env-DFIR_AI_SECOND_OPINION_BASE_URL" /></div>
+        </div>
+        <div class="settings-group-head">Referee for 2nd-opinion verdicts (optional — who judges each A-vs-B disagreement)</div>
+        <p class="rm-hint" data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 8px">The referee writes the <strong>referee suggests</strong> line on every disagreement. It is shown the forensic events each disputed finding cites, so it judges from evidence, not from the two summaries alone. <strong>Leave the model blank</strong> to let model A (the synthesis model) referee — the default. Enter <code>same-as-b</code> to let the 2nd-opinion model referee (it then judges its own findings). Or pick a third model for a neutral referee. Provider, key and base URL fall back to the main AI settings when blank.</p>
+        <div class="sfield-row">
+          <div class="sfield">
+            <label for="env-DFIR_AI_RECONCILE_PROVIDER">Referee provider<span class="sfield-hint">DFIR_AI_RECONCILE_PROVIDER</span></label>
+            <select id="env-DFIR_AI_RECONCILE_PROVIDER">
+              <option value="">— same as main —</option>
+              <option value="openai">openai</option>
+              <option value="openrouter">openrouter</option>
+              <option value="ollama">ollama</option>
+              <option value="litellm">litellm</option>
+              <option value="gemini">gemini</option>
+              <option value="anthropic">anthropic</option>
+              <option value="claude-code">claude code (subscription, no key)</option>
+              <option value="codex">codex (text-only, no key)</option>
+            </select>
+          </div>
+          <div class="sfield"><label>Referee model<span class="sfield-hint">DFIR_AI_RECONCILE_MODEL</span></label><div data-safe-style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><select id="ai-model-picker-reconcile" aria-label="Available referee models" aria-describedby="ai-model-status-reconcile" data-safe-style="flex:1 1 0;min-width:0"><option value="">Loading models…</option><option value="__custom__">Enter model ID manually…</option></select><input id="env-DFIR_AI_RECONCILE_MODEL" aria-label="Manually entered referee model ID" aria-describedby="ai-model-status-reconcile" data-safe-style="display:none;flex:1 1 0;min-width:0" placeholder="blank = model A · same-as-b · or a model ID" /><button type="button" id="load-ai-models-reconcile" class="btn-mini" data-safe-style="white-space:nowrap;margin-left:auto;order:1">Refresh</button></div><span id="ai-model-status-reconcile" class="sfield-hint" role="status"></span></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label for="env-DFIR_AI_RECONCILE_KEY">Referee API key<span class="sfield-hint">DFIR_AI_RECONCILE_KEY</span></label><input id="env-DFIR_AI_RECONCILE_KEY" type="password" placeholder="(reuses main AI key)" autocomplete="new-password" /></div>
+          <div class="sfield"><label for="env-DFIR_AI_RECONCILE_BASE_URL">Referee base URL<span class="sfield-hint">DFIR_AI_RECONCILE_BASE_URL</span></label><input id="env-DFIR_AI_RECONCILE_BASE_URL" /></div>
         </div>
         <div class="settings-group-head">Synthesis detection-burst grouping</div>
         <div class="sfield-row3">

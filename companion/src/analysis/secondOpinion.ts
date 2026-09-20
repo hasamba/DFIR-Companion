@@ -1,6 +1,15 @@
 import { z } from "zod";
-import type { Finding, InvestigationState, Severity, Technique } from "./stateTypes.js";
+import {
+  SEVERITY_RANK,
+  type Finding,
+  type ForensicEvent,
+  type InvestigationState,
+  type Severity,
+  type Technique,
+} from "./stateTypes.js";
 import { deriveSemanticKey } from "./semanticKey.js";
+import { byEventTime } from "./forensicSort.js";
+import { renderEventLine } from "./ai/eventLine.js";
 
 // Second LLM opinion (issue #116). A QA control: a DIFFERENT model independently re-synthesizes
 // the same case, and we surface where it disagrees with the primary synthesis so the analyst can
@@ -23,6 +32,7 @@ export interface SecondOpinionDelta {
   aSeverity?: Severity; // severity/ a_only: model A's severity
   bSeverity?: Severity; // severity / b_only: model B's severity
   finding?: Finding; // b_only: B's finding (merged on accept); a_only/severity: A's finding (edited in place)
+  bFinding?: Finding; // severity: B's copy, so the referee sees BOTH sides' cited events (#1466)
   techniqueName?: string; // mitre_added: the technique name, so accept can add a labelled Technique
   rationale: string; // one-line reconcile-AI judgement (default "")
   recommendation: DeltaRecommendation; // reconcile-AI suggestion (default "review")
@@ -33,6 +43,7 @@ export interface SecondOpinion {
   generatedAt: string;
   modelA: string; // primary synthesis model label
   modelB: string; // second-opinion model label
+  referee: string; // label of the model that wrote the verdicts (#1466); "" when no reconcile pass ran
   summary: string; // reconcile-AI overall assessment (default "")
   agreementCount: number; // findings BOTH models share (by matchKey — semanticKey or title)
   deltas: SecondOpinionDelta[];
@@ -116,6 +127,7 @@ export function buildSecondOpinionDeltas(a: InvestigationState, b: Investigation
         deltas.push(
           delta("severity", matchKey(af), af.title, {
             finding: af,
+            bFinding: bf,
             aSeverity: af.severity,
             bSeverity: bf.severity,
           }),
@@ -178,6 +190,7 @@ export interface BuildSecondOpinionInput {
   b: InvestigationState;
   modelA: string;
   modelB: string;
+  referee?: string; // set by the run once it knows who will (or did) referee; "" until then
   now: () => string;
 }
 
@@ -187,6 +200,7 @@ export function buildSecondOpinion(input: BuildSecondOpinionInput): SecondOpinio
     generatedAt: input.now(),
     modelA: input.modelA,
     modelB: input.modelB,
+    referee: input.referee ?? "",
     summary: "",
     agreementCount: agreementCount(input.a, input.b),
     deltas: buildSecondOpinionDeltas(input.a, input.b),
@@ -214,14 +228,19 @@ export type ReconcileResponse = z.infer<typeof reconcileResponseSchema>;
 // System prompt for the reconcile call (overridable via DFIR_AI_RECONCILE_PROMPT[_FILE]).
 export const RECONCILE_PROMPT = [
   "You are a senior DFIR analyst RECONCILING two INDEPENDENT analyses of the SAME investigation:",
-  "Model A (the primary synthesis) and Model B (an independent second opinion run by a different model).",
-  "You are given the points where they DISAGREE. For EACH numbered delta, judge which call is better",
-  "supported by standard DFIR reasoning and give a one-line rationale plus a recommendation:",
+  "Model A and Model B — two different models that each read the same forensic timeline. Neither is",
+  "the authority. You may yourself be one of the two models; judge every delta on its merits, never",
+  "on authorship. You are given the points where they DISAGREE. Under each delta you are shown the",
+  "forensic events the disputed finding cites. An event list is evidence; a description is a claim.",
+  "Prefer the evidence. A finding that cites no events is a hypothesis, not a fact — weigh that.",
+  "For EACH numbered delta, judge which call is better supported and give a one-line rationale plus",
+  "a recommendation:",
   "- accept_b: Model B is right — adopt B's call (add B's finding, take B's severity, add/remove the technique).",
   "- keep_a:   Model A is right — keep A as-is and reject B's change.",
   "- review:   genuinely ambiguous — the analyst must decide.",
   "Be decisive but honest: prefer 'review' only when the evidence truly doesn't settle it. Do NOT invent",
-  "evidence; reason only from the finding titles, severities, descriptions, and the case summaries shown.",
+  "evidence; reason only from the finding titles, severities, descriptions, the cited forensic events",
+  "shown under each delta, and the case summaries shown.",
   "Also write a 1-2 sentence 'summary' of how the two analyses compare overall.",
   "",
   "Return ONLY raw JSON (no markdown fences) with EXACTLY this shape — echo each delta's id verbatim:",
@@ -260,7 +279,68 @@ function renderDelta(d: SecondOpinionDelta): string {
   }
 }
 
-// Build the reconcile USER prompt: the two case summaries + every disagreement, each tagged with its id.
+// --- Cited events for the referee (#1466) -----------------------------------------------------
+//
+// The referee used to judge from a one-line delta and routinely rejected findings it had no way to
+// weigh. Now each delta carries the FORENSIC-timeline events the disputed finding cites (both sides'
+// citations on a severity delta; technique-tagged events on a mitre delta). Two caps keep a
+// 50-delta run inside one prompt: per delta, and a run-wide budget. Both truncations are stated so
+// the referee knows it saw a sample. Reads `forensicTimeline` only — never the super-timeline.
+export const RECONCILE_EVENTS_PER_DELTA = 8;
+export const RECONCILE_EVENTS_TOTAL = 120;
+
+const EVENT_INDENT = "  · ";
+
+const bySeverityThenTime = (x: ForensicEvent, y: ForensicEvent): number =>
+  SEVERITY_RANK[x.severity] - SEVERITY_RANK[y.severity] || byEventTime(x, y);
+
+// The events one delta puts in front of the referee, ranked highest severity first, then by time.
+function citedEvents(
+  d: SecondOpinionDelta,
+  byId: Map<string, ForensicEvent>,
+  timeline: readonly ForensicEvent[],
+): ForensicEvent[] {
+  if (d.kind === "mitre_added" || d.kind === "mitre_removed") {
+    return timeline.filter((e) => e.mitreTechniques.includes(d.title)).sort(bySeverityThenTime);
+  }
+  const ids = [...(d.finding?.relatedEventIds ?? []), ...(d.bFinding?.relatedEventIds ?? [])];
+  const seen = new Set<string>();
+  const events: ForensicEvent[] = [];
+  for (const id of ids) {
+    const e = byId.get(id);
+    if (e && !seen.has(id)) {
+      seen.add(id);
+      events.push(e);
+    }
+  }
+  return events.sort(bySeverityThenTime);
+}
+
+// A delta line plus its cited events, honouring both caps. `budget` is the run-wide remainder and
+// is decremented in place by the caller's loop through the returned `used` count.
+function renderDeltaWithEvents(
+  d: SecondOpinionDelta,
+  events: readonly ForensicEvent[],
+  budget: number,
+): { text: string; used: number } {
+  const lines = [renderDelta(d)];
+  if (events.length === 0) {
+    lines.push(`${EVENT_INDENT}(no cited events — this finding is ungrounded)`);
+    return { text: lines.join("\n"), used: 0 };
+  }
+  const shown = events.slice(0, Math.max(0, Math.min(RECONCILE_EVENTS_PER_DELTA, budget)));
+  for (const e of shown) lines.push(`${EVENT_INDENT}${renderEventLine(e)}`);
+  const left = events.length - shown.length;
+  if (left > 0) {
+    const why = shown.length < RECONCILE_EVENTS_PER_DELTA ? " (run-wide event budget reached)" : "";
+    lines.push(`${EVENT_INDENT}… +${left} more cited events${why}`);
+  }
+  return { text: lines.join("\n"), used: shown.length };
+}
+
+// Build the reconcile USER prompt: the two case summaries + every disagreement, each tagged with its id
+// and followed by the forensic events it cites. A and B ran over the same current timeline, so A's
+// forensic timeline serves both sides' citations.
 export function buildReconcilePrompt(
   a: InvestigationState,
   b: InvestigationState,
@@ -268,13 +348,21 @@ export function buildReconcilePrompt(
 ): string {
   const aSummary = a.lastSummary?.trim() || a.attackerPath?.trim() || "(no summary)";
   const bSummary = b.lastSummary?.trim() || b.attackerPath?.trim() || "(no summary)";
+  const timeline = a.forensicTimeline.length ? a.forensicTimeline : b.forensicTimeline;
+  const byId = new Map(timeline.map((e) => [e.id, e]));
+  let budget = RECONCILE_EVENTS_TOTAL;
+  const rendered = deltas.map((d) => {
+    const out = renderDeltaWithEvents(d, citedEvents(d, byId, timeline), budget);
+    budget -= out.used;
+    return out.text;
+  });
   return [
-    `MODEL A (primary) summary: ${aSummary}`,
+    `MODEL A summary: ${aSummary}`,
     "",
-    `MODEL B (second opinion) summary: ${bSummary}`,
+    `MODEL B summary: ${bSummary}`,
     "",
-    `DISAGREEMENTS (${deltas.length}):`,
-    ...deltas.map(renderDelta),
+    `DISAGREEMENTS (${deltas.length}) — each followed by the forensic events the finding cites:`,
+    ...rendered,
     "",
     "Return your reconciliation as raw JSON in the required shape — one verdict object per delta id above.",
   ].join("\n");

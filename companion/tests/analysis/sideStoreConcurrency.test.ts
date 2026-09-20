@@ -679,6 +679,7 @@ describe("side store concurrency (#682)", () => {
         store.recordSecondOpinionPerf(CASE, {
           modelA: "a",
           modelB: "b",
+          referee: "",
           agreementCount: 8,
           deltaCount: 2,
           agreementRate: 0.8,
@@ -708,6 +709,7 @@ describe("side store concurrency (#682)", () => {
         synthesis.recordSecondOpinionPerf(CASE, {
           modelA: "a",
           modelB: "b",
+          referee: "",
           agreementCount: 91,
           deltaCount: 9,
           agreementRate: 0.91,

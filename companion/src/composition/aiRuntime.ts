@@ -44,6 +44,8 @@ import {
   buildVelociraptorProvider,
   buildSecondOpinionProvider,
   buildRuntimePipeline,
+  resolveReconcileReferee,
+  resolveRefereeModel,
 } from "./aiProviders.js";
 import { logLine } from "../logging/serverLogger.js";
 
@@ -92,6 +94,14 @@ export function buildAiRuntime(deps: AiRuntimeDeps) {
   const secondOpinionModelLabel = process.env.DFIR_AI_SECOND_OPINION_MODEL?.trim() || undefined;
   if (secondOpinionProvider)
     logLine(`[second-opinion] enabled — model "${secondOpinionModelLabel}" (${secondOpinionProvider.name})`);
+  // Referee for the verdicts (#1466): "b" resolves to the second-opinion provider here; "a" stays
+  // undefined so the run picks model A itself (it owns the synthesis provider and its label).
+  const referee = resolveRefereeModel(resolveReconcileReferee(process.env), {
+    provider: secondOpinionProvider,
+    label: secondOpinionModelLabel,
+  });
+  if (secondOpinionProvider)
+    logLine(`[second-opinion] referee — ${referee?.label ?? "model A (synthesis model)"}`);
   // Provide the Tesseract OCR runner only when the vision model is on an external (cloud)
   // provider — if the model is local, screenshots never leave the machine so redaction is
   // optional. Evidence-first: the runner only redacts the in-memory copy sent to the model.
@@ -142,6 +152,7 @@ export function buildAiRuntime(deps: AiRuntimeDeps) {
     secondOpinionStore,
     synthesisModelLabel,
     secondOpinionModelLabel,
+    referee,
     // After a real synthesis, page the matching channels for each new/escalated finding (#58).
     // Fully guarded — notifications are a side channel and must NEVER break synthesis.
     onSynth: (caseId, diff, state) => {

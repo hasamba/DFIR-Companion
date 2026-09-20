@@ -216,6 +216,7 @@ describe("per-model performance telemetry (#74)", () => {
     expect(meta.secondOpinionPerf).toEqual({
       modelA: "primary/sonnet-5",
       modelB: "second/gpt-5",
+      referee: "primary/sonnet-5",
       agreementCount: 1,
       deltaCount: 1,
       agreementRate: 0.5,

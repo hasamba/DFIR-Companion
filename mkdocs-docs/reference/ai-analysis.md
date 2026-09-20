@@ -73,9 +73,11 @@ DFIR Companion never makes "one big AI call". The work is split into separate ru
 
 **What it's good for.** Quality assurance before you commit to a report, and any finding you would be uncomfortable defending to a client.
 
-**When to use it.** Click **2nd opinion** when the case is essentially done. It runs up to three calls: it first refreshes the primary synthesis if the timeline moved (so you compare two *current* views, not a stale one against a fresh one), then re-analyzes the case with the second model **without writing anything**, then diffs the two and annotates each disagreement with a rationale and a recommendation. See [Second AI Opinion](#second-ai-opinion) below for the accept/reject workflow.
+**When to use it.** Click **2nd opinion** when the case is essentially done. It runs up to three calls: it first refreshes the primary synthesis if the timeline moved (so you compare two *current* views, not a stale one against a fresh one), then re-analyzes the case with the second model **without writing anything**, then diffs the two and hands each disagreement to a **referee**, which annotates it with a rationale and a recommendation. See [Second AI Opinion](#second-ai-opinion) below for the accept/reject workflow.
 
-**Settings.** `DFIR_AI_SECOND_OPINION_MODEL` — required; the button stays hidden until it is set. Prefer a model from a **different provider**. `DFIR_AI_RECONCILE_PROMPT_FILE` overrides the comparison prompt.
+**Who is who.** Model **A** is the synthesis model that wrote the current findings. Model **B** is the second-opinion model that re-analyzes the case. The **referee** judges each disagreement between A and B. It sees the forensic events each disputed finding cites, so it judges from evidence rather than from the two summaries alone. By default the referee is model A. Set it to `same-as-b` and model B judges its own findings. Set it to a third model for a neutral referee. The panel header names all three.
+
+**Settings.** `DFIR_AI_SECOND_OPINION_MODEL` — required; the button stays hidden until it is set. Prefer a model from a **different provider**. `DFIR_AI_RECONCILE_MODEL` (with `_PROVIDER`/`_KEY`/`_BASE_URL`) picks the referee — blank = model A, `same-as-b` = model B, anything else = that model. In the dashboard: **Settings → AI → Referee for 2nd-opinion verdicts**. `DFIR_AI_RECONCILE_PROMPT_FILE` overrides the referee prompt.
 
 ### 7. Deep pass — read everything
 
@@ -194,12 +196,14 @@ The AI control panel lets you:
 
 ## Second AI Opinion
 
-Click **2nd Opinion** in the toolbar (requires `DFIR_AI_SECOND_OPINION_MODEL` to be configured). A different model re-synthesizes the case independently. The dashboard shows where the two models disagree:
+Click **2nd Opinion** in the toolbar (requires `DFIR_AI_SECOND_OPINION_MODEL` to be configured). A different model (**B**) re-synthesizes the case independently of the synthesis model (**A**). The panel header reads `A: <model> vs B: <model> · referee: <model>`. The dashboard shows where the two models disagree:
 
 - Added findings (model B found something model A missed)
 - Removed findings (model B did not confirm something model A concluded)
 - Severity differences
 - MITRE technique additions/removals
+
+A **referee** model reads each disagreement together with the forensic events the disputed finding cites, and writes a *referee suggests: accept B* or *referee suggests: keep A* line under it. The referee is model A unless you change it under **Settings → AI → Referee for 2nd-opinion verdicts** (`same-as-b` lets model B judge its own findings; any other model ID names a neutral third referee).
 
 For each delta you can **Accept** (adopt the second model's view) or **Keep A** (keep the original). Accepted deltas survive future re-syntheses.
 

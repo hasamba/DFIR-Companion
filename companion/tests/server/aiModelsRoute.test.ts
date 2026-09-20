@@ -8,6 +8,7 @@ import { createApp } from "../../src/server.js";
 import { fetchMock, jsonResponse } from "../helpers/fetchMock.js";
 
 const originalSynthKey = process.env.DFIR_AI_SYNTH_KEY;
+const originalReconcileKey = process.env.DFIR_AI_RECONCILE_KEY;
 
 async function harness() {
   const root = await mkdtemp(join(tmpdir(), "dfir-ai-models-route-"));
@@ -18,6 +19,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
   if (originalSynthKey === undefined) delete process.env.DFIR_AI_SYNTH_KEY;
   else process.env.DFIR_AI_SYNTH_KEY = originalSynthKey;
+  if (originalReconcileKey === undefined) delete process.env.DFIR_AI_RECONCILE_KEY;
+  else process.env.DFIR_AI_RECONCILE_KEY = originalReconcileKey;
 });
 
 describe("POST /settings/ai-models", () => {
@@ -43,6 +46,23 @@ describe("POST /settings/ai-models", () => {
     expect(res.body.models).toEqual(["gpt-4o"]);
     expect((fetchFn.mock.calls[0][1]?.headers as Record<string, string>).authorization).toBe(
       "Bearer saved-synth-secret",
+    );
+  });
+
+  it("lists models for the 2nd-opinion referee role with its own saved key (#1466)", async () => {
+    process.env.DFIR_AI_RECONCILE_KEY = "saved-referee-secret";
+    const fetchFn = fetchMock(async () => jsonResponse({ data: [{ id: "o3" }] }));
+    vi.stubGlobal("fetch", fetchFn);
+    const app = await harness();
+
+    const res = await request(app)
+      .post("/settings/ai-models")
+      .send({ provider: "openai", role: "reconcile" });
+
+    expect(res.status).toBe(200);
+    expect(res.body.models).toEqual(["o3"]);
+    expect((fetchFn.mock.calls[0][1]?.headers as Record<string, string>).authorization).toBe(
+      "Bearer saved-referee-secret",
     );
   });
 });

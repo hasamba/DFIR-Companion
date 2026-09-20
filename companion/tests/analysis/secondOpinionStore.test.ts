@@ -10,6 +10,7 @@ const SO: SecondOpinion = {
   generatedAt: "2026-06-15T00:00:00.000Z",
   modelA: "claude-opus",
   modelB: "gpt-4o",
+  referee: "claude-opus",
   summary: "B is more thorough on C2.",
   agreementCount: 3,
   deltas: [
@@ -89,5 +90,13 @@ describe("SecondOpinionStore", () => {
     const loaded = await store.load("c1");
     expect(loaded!.deltas[0].recommendation).toBe("review");
     expect(loaded!.deltas[0].status).toBe("pending");
+  });
+
+  it("loads a record saved before the referee field existed as referee '' (#1466)", async () => {
+    const { referee: _dropped, ...legacy } = SO;
+    await store.save("c1", legacy as SecondOpinion);
+    const loaded = await store.load("c1");
+    expect(loaded!.referee).toBe("");
+    expect(loaded!.modelA).toBe("claude-opus");
   });
 });

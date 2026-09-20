@@ -61,6 +61,33 @@ describe("Settings modal group placement", () => {
     expect(synthesisGrouping).toBeGreaterThan(secondOpinion);
   });
 
+  // The referee (#1466) is its own role with its own four keys. It sits right after the
+  // second-opinion block it judges and before the synthesis tuning knobs, and the picker ids it
+  // renders must match what dashboard-env-settings.js derives from role "reconcile".
+  it("places the 2nd-opinion referee between the second-opinion block and synthesis grouping", async () => {
+    const ai = settingsPane(await dashboardHtml(), "ai");
+    const secondOpinion = ai.indexOf('id="env-DFIR_AI_SECOND_OPINION_BASE_URL"');
+    const synthesisGrouping = ai.indexOf("Synthesis detection-burst grouping");
+    const refereeKeys = [
+      "DFIR_AI_RECONCILE_PROVIDER",
+      "DFIR_AI_RECONCILE_MODEL",
+      "DFIR_AI_RECONCILE_KEY",
+      "DFIR_AI_RECONCILE_BASE_URL",
+    ];
+    for (const key of refereeKeys) {
+      const at = ai.indexOf(`id="env-${key}"`);
+      expect(at, key).toBeGreaterThan(secondOpinion);
+      expect(at, key).toBeLessThan(synthesisGrouping);
+    }
+    for (const id of ["ai-model-picker-reconcile", "load-ai-models-reconcile", "ai-model-status-reconcile"]) {
+      expect(ai).toContain(`id="${id}"`);
+    }
+
+    const example = await readFile(new URL("../../.env.example", import.meta.url), "utf8");
+    const documented = documentedEnvKeys(example);
+    expect(refereeKeys.filter((key) => !documented.has(key))).toEqual([]);
+  });
+
   it("places the Presidio integration outside the AI pane", async () => {
     const html = await dashboardHtml();
     expect(settingsPane(html, "ai")).not.toContain('id="env-DFIR_PRESIDIO_URL"');

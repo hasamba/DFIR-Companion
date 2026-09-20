@@ -7,7 +7,7 @@ import {
 } from "../providers/modelCatalog.js";
 import type { RouteContext } from "./context.js";
 
-type ModelRole = "vision" | "synthesis" | "velociraptor" | "second-opinion";
+type ModelRole = "vision" | "synthesis" | "velociraptor" | "second-opinion" | "reconcile";
 
 interface ModelListRequest {
   provider: ModelCatalogProvider;
@@ -26,7 +26,7 @@ const PROVIDERS = new Set<ModelCatalogProvider>([
   "claude-code",
   "codex",
 ]);
-const ROLES = new Set<ModelRole>(["vision", "synthesis", "velociraptor", "second-opinion"]);
+const ROLES = new Set<ModelRole>(["vision", "synthesis", "velociraptor", "second-opinion", "reconcile"]);
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -78,6 +78,12 @@ function savedCredentials(role: ModelRole): { apiKey?: string; baseUrl?: string 
     return {
       apiKey: process.env.DFIR_AI_VELO_KEY ?? visionKey,
       baseUrl: process.env.DFIR_AI_VELO_BASE_URL ?? visionUrl,
+    };
+  }
+  if (role === "reconcile") {
+    return {
+      apiKey: process.env.DFIR_AI_RECONCILE_KEY ?? visionKey,
+      baseUrl: process.env.DFIR_AI_RECONCILE_BASE_URL ?? visionUrl,
     };
   }
   return {
