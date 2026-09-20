@@ -1,8 +1,9 @@
 // Deep pass (#282) — the re-analysis sweep that re-reads evidence at a lower confidence floor.
 //
-// IIFE-WRAPPED BECAUSE IT OWNS STATE. Five mutable bindings: the synthesis gate read from /health,
+// IIFE-WRAPPED BECAUSE IT OWNS STATE. Six mutable bindings: the synthesis gate read from /health,
 // the lazily-fetched preview flag, a sequence guard that lets a superseded preview retire itself,
-// the in-flight POST flag, and the "last synthesis already read everything" verdict (#1457).
+// the in-flight POST flag, the "last synthesis already read everything" verdict (#1457), and the
+// last synthesis time that tells a stale result card it has been superseded.
 //
 // TWO OF THOSE USED TO ESCAPE, and both were closed rather than published:
 //   - deepPassPreviewLoaded was read by two collapse/expand handlers deciding whether to call
@@ -36,6 +37,7 @@
   let deepPassPreviewSeq = 0;             // guards against an out-of-order preview from a rapid case switch
   let deepPassPosting = false;            // the POST is in flight (the job may not exist yet)
   let deepPassNothingNew = false;         // #1457: the last synthesis already read every graded event
+  let deepPassLastSynthAt = "";           // when the last synthesis ran — a result card older than it is superseded
 
   function deepPassCaseId() { const el = document.getElementById("caseId"); return el && typeof el.value === "string" ? el.value.trim() : ""; }
   function deepPassGuidance(msg) {
@@ -51,6 +53,7 @@
     deepPassPreviewSeq++;
     deepPassGuidance("");
     deepPassNothingNew = false;
+    deepPassLastSynthAt = "";
     document.getElementById("deepPassFloors").innerHTML = "Open this section to measure the case.";
     const worth = document.getElementById("deepPassWorth");
     if (worth) worth.innerHTML = "";
@@ -142,6 +145,8 @@
     const host = document.getElementById("deepPassWorth");
     if (!host) return;
     deepPassNothingNew = !!w && w.verdict === "nothing-new";
+    deepPassLastSynthAt = w && w.verdict !== "unknown" && w.at ? String(w.at) : "";
+    renderDeepPassResult(loadStoredDeepPassResult(deepPassCaseId()));
     const when = (at) => (at ? ` (${esc(String(at).replace("T", " ").slice(0, 16))})` : "");
     let html = "";
     // Lead with the verdict in the analyst's words; the numbers that justify it follow.
@@ -253,15 +258,23 @@
     cancelJob(job.id, document.getElementById("deepPassCancel"));
   }
 
+  // The card answers "what did my last deep pass do?" — the verdict line above it answers "should
+  // I run one now?". Both stay on screen together, each labelled, because they are about different
+  // runs: a synthesis that ran AFTER the deep pass replaced its conclusions, and the card says so
+  // rather than letting a stale "14 observations folded in" read as the current state.
   function renderDeepPassResult(r) {
     const host = document.getElementById("deepPassResult");
     if (!host) return;
     if (!r || typeof r !== "object") { host.innerHTML = ""; return; }
+    const label = `<b>What did my last deep pass do?</b> `;
     const when = r.at ? ` <span data-safe-style="color:var(--text-dim)">(${esc(r.at)})</span>` : "";
+    const superseded = !r.aborted && r.at && deepPassLastSynthAt && String(r.at) < deepPassLastSynthAt
+      ? `<br><span data-safe-style="color:var(--text-muted)">A synthesis ran after this deep pass — the current conclusions no longer come from it.</span>`
+      : "";
     // A cancelled run persisted NOTHING — the case is exactly as it was. Saying "read N events"
     // without that would imply conclusions changed.
     if (r.aborted) {
-      host.innerHTML = `<div class="dp-result">Last deep pass (${esc(r.floor)}+) was <b>cancelled</b> after ${Number(r.batches || 0).toLocaleString()} planned batch(es) — nothing was written to the case.${when}</div>`;
+      host.innerHTML = `<div class="dp-result">${label}Floor <b>${esc(r.floor)}+</b> was <b>cancelled</b> after ${Number(r.batches || 0).toLocaleString()} planned batch(es) — nothing was written to the case.${when}</div>`;
       return;
     }
     const partial = Number(r.batchesFailed) > 0;
@@ -269,10 +282,10 @@
       ? `<span class="dp-partial-hd">⚠ Partial coverage — ${Number(r.batchesFailed).toLocaleString()} of ${Number(r.batches).toLocaleString()} batch(es) failed</span><br>`
         + `This run read LESS of the case than the numbers below suggest; the failed batches contributed no observations. Re-run to cover them.<br>`
       : "";
-    host.innerHTML = `<div class="dp-result${partial ? " dp-partial" : ""}">${head}`
+    host.innerHTML = `<div class="dp-result${partial ? " dp-partial" : ""}">${head}${label}`
       + `Floor <b>${esc(r.floor)}+</b> · read <b>${Number(r.events || 0).toLocaleString()}</b> event(s) `
       + `as <b>${Number(r.rows || 0).toLocaleString()}</b> prompt row(s) in <b>${Number(r.batches || 0).toLocaleString()}</b> batch(es) · `
-      + `<b>${Number(r.observations || 0).toLocaleString()}</b> observation(s) folded into the synthesis.${when}</div>`;
+      + `<b>${Number(r.observations || 0).toLocaleString()}</b> observation(s) folded into the synthesis.${when}${superseded}</div>`;
   }
 
   window.runDeepPass = runDeepPass;
