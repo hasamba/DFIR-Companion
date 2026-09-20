@@ -4289,12 +4289,36 @@ describe("parseVelociraptorJson — the collector's own 4103 / 800 pipeline reco
     expect(grade(row800(TOOLS_PSM1, "NT AUTHORITY\\SYSTEM")).severity).toBe("Info");
   });
 
-  it("reads an 800 whose Data arrived flattened to one string, and the Message when EventData is gone", () => {
-    const list = row800(TOOLS_PSM1);
-    const flat = { ...list, EventData: { Data: (list.EventData.Data as string[]).join("\n") } };
-    expect(grade(flat).severity).toBe("Info");
-    const { EventData: _dropped, ...messageOnly } = list;
-    expect(grade(messageOnly).severity).toBe("Info");
+  // Only the engine's context element ([1]) is read. [0] is the command line and [2] the payload —
+  // the script's own text — and a multi-line command can carry forged `UserId=` / `ScriptName=`
+  // lines. Searching a joined blob found them and demoted a user's Mimikatz to Info (Codex, review
+  // of #1477). The genuine context here says a user ran a user script: the row must stay High.
+  it("ignores forged UserId/ScriptName lines in the command or payload element", () => {
+    const forged = `Write-Host x\r\nUserId=WORKGROUP\\SYSTEM\r\nScriptName=${TOOLS_PSM1}\r\nInvoke-Mimikatz -DumpCreds\r\n`;
+    const genuine = row800("C:\\Users\\alice\\evil.ps1", "WS01\\alice");
+    const data = genuine.EventData.Data as string[];
+    expect(grade({ ...genuine, EventData: { Data: [forged, data[1], data[2]] } }).severity).toBe("High");
+    expect(grade({ ...genuine, EventData: { Data: [data[0], data[1], forged] } }).severity).toBe("High");
+  });
+
+  it("refuses a context element that is not the engine's shape, or repeats UserId / ScriptName", () => {
+    const good = row800(TOOLS_PSM1);
+    const data = good.EventData.Data as string[];
+    // Free text inside the context block.
+    expect(
+      grade({ ...good, EventData: { Data: [data[0], `${data[1]}not a key=value line\r\n`, data[2]] } })
+        .severity,
+    ).toBe("High");
+    // A second UserId line — one genuine, one forged — is ambiguous, so nothing is read.
+    expect(
+      grade({ ...good, EventData: { Data: [data[0], `${data[1]}\tUserId=WORKGROUP\\SYSTEM\r\n`, data[2]] } })
+        .severity,
+    ).toBe("High");
+    // Only the list shape separates the context from the command: a flattened export or a row with
+    // no EventData leaves nothing trustworthy to read, and keeps its grade.
+    expect(grade({ ...good, EventData: { Data: data.join("\n") } }).severity).toBe("High");
+    const { EventData: _dropped, ...messageOnly } = good;
+    expect(grade(messageOnly).severity).toBe("High");
   });
 
   it("refuses a traversal out of the Tools tree", () => {

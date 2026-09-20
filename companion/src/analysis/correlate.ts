@@ -309,13 +309,27 @@ function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): Forensi
     undefined,
   );
 
+  // ONE physical log record read by several parsers (step 0b) is one observation: if any parser's
+  // reading recognised it as the case's own collector at work (`origin: "collector"`, #1477), that
+  // holds for the record whichever reading's text won primary — the fact came from the engine's
+  // own fields on that record, not from the parser's wording. So the merged row keeps the Info the
+  // collector rule assigned instead of the worst member's grade, and keeps the origin the tagger
+  // honours. Only for a same-record group: a group joined on hash / path / pid holds DIFFERENT
+  // records, and a collector row's grade says nothing about the others' (sourceRecordId is stripped
+  // from any aggregated member, so a group with one absent is never same-record).
+  const sameRecord =
+    Boolean(primary.sourceRecordId) && events.every((e) => e.sourceRecordId === primary.sourceRecordId);
+  const collector = sameRecord && events.some((e) => e.origin === "collector");
   const merged: ForensicEvent = {
     ...primary,
     description: notes.length
       ? `${cleanDescription(primary.description)} ${notes.join(" ")}`.trim()
       : primary.description,
     ...(fileModified ? { fileModified } : {}),
-    severity: events.reduce<Severity>((acc, e) => worstSeverity(acc, e.severity), "Info"),
+    ...(collector ? { origin: "collector" as const } : {}),
+    severity: collector
+      ? "Info"
+      : events.reduce<Severity>((acc, e) => worstSeverity(acc, e.severity), "Info"),
     timestamp: times[0] ?? primary.timestamp,
     mitreTechniques: uniq(events.flatMap((e) => e.mitreTechniques)),
     relatedFindingIds: uniq(events.flatMap((e) => e.relatedFindingIds)),

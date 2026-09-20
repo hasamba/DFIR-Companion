@@ -817,7 +817,13 @@ describe("isCollectorSpawn — a process the Velociraptor client itself started"
 
   // The Sysmon EID 1 as the Windows mapper renders it (the Chainsaw importer reuses mapWindows).
   const spawn = (
-    over: { parent?: string; cmd?: string; image?: string; severity?: MappedEvent["severity"] } = {},
+    over: {
+      parent?: string;
+      cmd?: string;
+      image?: string;
+      user?: string;
+      severity?: MappedEvent["severity"];
+    } = {},
   ) => {
     const m = mapWindows(
       {
@@ -829,7 +835,7 @@ describe("isCollectorSpawn — a process the Velociraptor client itself started"
           CommandLine: over.cmd ?? SNIPER_CMD,
           ParentImage: over.parent ?? INSTALL_EXE,
           ParentCommandLine: `"${INSTALL_EXE}" service run`,
-          User: "NT AUTHORITY\\SYSTEM",
+          User: over.user ?? "NT AUTHORITY\\SYSTEM",
           ProcessId: "4711",
         },
       },
@@ -877,6 +883,26 @@ describe("isCollectorSpawn — a process the Velociraptor client itself started"
       annotateCollectorDeployment(m, { servers: new Set() });
       expect(m.severity).toBe("Medium");
     }
+  });
+
+  // A parent can be CHOSEN (PROC_THREAD_ATTRIBUTE_PARENT_PROCESS) and Sysmon records the chosen
+  // one — but only a SYSTEM caller can name the collector's SYSTEM process. The client runs its
+  // artifacts as SYSTEM, so the row must say so; the same command under any other account is an
+  // intruder wearing the collector's parent, and keeps its grade.
+  it("does NOT match the genuine parent and command line when the process did not run as SYSTEM", () => {
+    for (const user of [
+      "WS01\\vagrant",
+      "CORP\\Administrator",
+      "EVIL\\SYSTEM",
+      "NT AUTHORITY\\LOCAL SERVICE",
+      "",
+    ]) {
+      const m = spawn({ user });
+      expect(isCollectorSpawn(m)).toBe(false);
+      annotateCollectorDeployment(m, { servers: new Set() });
+      expect(m.severity).toBe("Medium");
+    }
+    expect(isCollectorSpawn(spawn({ user: "WORKGROUP\\SYSTEM" }))).toBe(true);
   });
 
   it("never lowers a Critical — the same bound the script rule keeps", () => {

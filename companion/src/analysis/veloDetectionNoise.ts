@@ -156,7 +156,7 @@ export function isGeneratedModuleScript(row: Row): boolean {
 // PROCESS's command line, a string whoever launched PowerShell chose, and an intruder who starts
 // `powershell -c "'<tools path>'; <payload>"` puts the genuine path there on every record.
 const SCRIPT_NAME_4103 = /^\s*Script Name\s*=\s*(.*?)\s*$/im;
-const SCRIPT_NAME_800 = /^\s*ScriptName=(.*?)\s*$/im;
+const SCRIPT_NAME_800 = /^\t?ScriptName=(.*?)\s*$/im;
 function eventData(row: Row): Row | null {
   let ed = getCI(row, "EventData");
   for (const w of EVENT_WRAPPERS) {
@@ -165,12 +165,21 @@ function eventData(row: Row): Row | null {
   }
   return isObject(ed) ? ed : null;
 }
-// An 800's `Data` is the three <Data> elements as the parser left them — a list (Velociraptor), or
-// one string (a flattened export) — and the rendered Message repeats them when EventData is absent.
-function pipelineBlob(row: Row): string {
+// An 800 record's `Data` is three <Data> elements: [0] the command line, [1] the engine's context
+// block, [2] the pipeline details/payload. ONLY [1] is read, and only when it has the shape the
+// engine writes — every line `\t<Key>=<value>`, one UserId and one ScriptName. [0] and [2] are the
+// script's own text; a multi-line command can carry a forged `UserId=WORKGROUP\SYSTEM` line, and
+// searching a joined blob would find it (Codex, review of #1477). A flattened export (one string) or
+// a row whose EventData is gone leaves nothing that separates the context from the command, so it is
+// not read at all — the row keeps its grade, which is the direction a wrong answer must fall.
+const CONTEXT_LINE = /^\t?[A-Za-z]+=.*$/;
+function pipelineContext(row: Row): string {
   const data = eventData(row)?.Data;
-  const joined = Array.isArray(data) ? data.map((d) => str(d)).join("\n") : str(data);
-  return joined || str(getCI(row, "Message"));
+  if (!Array.isArray(data) || data.length < 2 || typeof data[1] !== "string") return "";
+  const lines = data[1].split(/\r?\n/).filter((l) => l.trim() !== "");
+  if (lines.length === 0 || !lines.every((l) => CONTEXT_LINE.test(l))) return "";
+  const count = (key: string) => lines.filter((l) => new RegExp(`^\\t?${key}=`).test(l)).length;
+  return count("UserId") === 1 && count("ScriptName") === 1 ? data[1] : "";
 }
 function scriptPath(row: Row): string {
   const ed = eventData(row);
@@ -180,7 +189,7 @@ function scriptPath(row: Row): string {
     case MODULE_LOGGING_EID:
       return (ed && SCRIPT_NAME_4103.exec(str(getCI(ed, "ContextInfo")))?.[1]) ?? "";
     case PIPELINE_EID:
-      return SCRIPT_NAME_800.exec(pipelineBlob(row))?.[1] ?? "";
+      return SCRIPT_NAME_800.exec(pipelineContext(row))?.[1] ?? "";
     default:
       return "";
   }
@@ -188,14 +197,15 @@ function scriptPath(row: Row): string {
 
 // The classic "Windows PowerShell" channel an 800 lands on records NO Security.UserID, so the SID
 // reader below finds nothing for it. The engine writes the identity it ran under into the record's
-// own context instead — `UserId=WORKGROUP\SYSTEM` on a workgroup host, `NT AUTHORITY\SYSTEM` on a
-// domain-joined one — the same engine-recorded fact the SID is, and the only spelling of SYSTEM the
-// token can produce (SYSTEM is a reserved account name; no user or domain account can be given it).
-const PIPELINE_SYSTEM_USER = /^\s*UserId=(?:NT AUTHORITY|WORKGROUP)\\SYSTEM\s*$/im;
+// own context block instead — `UserId=WORKGROUP\SYSTEM` on a workgroup host, `NT AUTHORITY\SYSTEM`
+// on a domain-joined one — the same engine-recorded fact the SID is, and the only spelling of SYSTEM
+// the token can produce (SYSTEM is a reserved account name; no user or domain account can be given
+// it). Read from the validated context block only, never from the command or payload elements.
+const PIPELINE_SYSTEM_USER = /^\t?UserId=(?:NT AUTHORITY|WORKGROUP)\\SYSTEM\s*$/im;
 function ranAsSystem(row: Row): boolean {
   const sid = logonSid(row);
   if (sid) return sid === SYSTEM_SID;
-  return eventId(row) === PIPELINE_EID && PIPELINE_SYSTEM_USER.test(pipelineBlob(row));
+  return eventId(row) === PIPELINE_EID && PIPELINE_SYSTEM_USER.test(pipelineContext(row));
 }
 
 /**

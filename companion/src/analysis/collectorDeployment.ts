@@ -83,6 +83,9 @@ const COLLECTOR_INSTALL_EXE = new RegExp(`${COLLECTOR_INSTALL_ROOT.source}veloci
 const COLLECTOR_TOOLS_ARG =
   /(?:^|[\s"'])([a-z]:[\\/]program files(?: \(x86\))?[\\/]velociraptor[\\/]tools[\\/][^"'\s]*)/gi;
 const PATH_TRAVERSAL = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
+// The identity the client runs its artifacts under, as Sysmon renders the token's account: the only
+// two spellings LocalSystem produces (SYSTEM is a reserved name no user or domain account can take).
+const SYSTEM_ACCOUNT = /^(?:NT AUTHORITY|WORKGROUP)\\SYSTEM$/i;
 // The client MSI as Velociraptor publishes it: `velociraptor-<version>[-suffix].msi`, or the bare
 // `velociraptor.msi` an analyst renamed it to.
 const COLLECTOR_MSI = /(?:^|[\\/\s"'])velociraptor(?:-[^\s"'\\/]*)?\.msi(?=$|[\s"'])/i;
@@ -332,12 +335,19 @@ export function isCollectorFootprint(m: MappedEvent): boolean {
  * Parent alone is provenance, not enough: an artifact the analyst did not intend, or a server that
  * is not theirs, can make the client run anything, so a collector child with an ordinary command
  * line keeps its grade (the ParentProc negative in the tests). A Tools path alone is a string anyone
- * can type. Children of the spawned process are NOT covered — that needs process-GUID lineage across
- * rows, which this per-row seam does not have. Never lowers a Critical, the bound
- * isDetectionToolScript keeps for the same module's script blocks.
+ * can type. And a parent can be CHOSEN: Windows lets a creator name another process as the parent
+ * (PROC_THREAD_ATTRIBUTE_PARENT_PROCESS) and Sysmon records the chosen one — but naming the
+ * collector's SYSTEM process as parent needs a handle to it, which needs SYSTEM. So the row must
+ * also run as SYSTEM (the Sysmon `User` field, read from the canonical actor), the identity the
+ * client runs its artifacts under — the same bound isDetectionToolScript rests on: an intruder
+ * already at SYSTEM can satisfy every predicate, and has better ways to be quiet than this.
+ * Children of the spawned process are NOT covered — that needs process-GUID lineage across rows,
+ * which this per-row seam does not have. Never lowers a Critical, the bound isDetectionToolScript
+ * keeps for the same module's script blocks.
  */
 export function isCollectorSpawn(m: MappedEvent): boolean {
   if (!isProcessRow(m)) return false;
+  if (!SYSTEM_ACCOUNT.test(m.canonical?.actor?.name ?? descriptionField(m.description, "User"))) return false;
   const parent =
     m.canonical?.process?.parent?.executable?.trim() || descriptionField(m.description, "ParentImage");
   if (!parent || PATH_TRAVERSAL.test(parent) || !COLLECTOR_INSTALL_EXE.test(parent)) return false;

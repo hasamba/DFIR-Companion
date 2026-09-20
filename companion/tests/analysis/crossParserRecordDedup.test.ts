@@ -130,6 +130,75 @@ describe("correlateEvents folds one record read by two parsers into one row (#68
     expect(merged[0].mitreTechniques.sort()).toEqual(["T1021", "T1078"]);
   });
 
+  // #1477: the Velociraptor importer recognised this record as the case's own collector at work
+  // (SYSTEM, engine-written script path under the Tools tree) and graded it Info with
+  // origin:collector; Chainsaw read the SAME record and graded the AdjPriv text High. One physical
+  // record is one observation, and the collector fact came from the record's own engine fields, so
+  // the merged row keeps the Info and the origin whichever reading's text wins primary. Otherwise
+  // the High reading became primary, the origin was dropped, and the row reached synthesis.
+  it("keeps a collector-origin Info when another parser's High reading of the SAME record wins primary", () => {
+    const velo = ev({
+      id: "v1e1",
+      description:
+        "Velociraptor [Windows.Sigma.Base] Sigma: Potential WinAPI Calls — ScriptBlock: Add-Type AdjPriv",
+      severity: "Info",
+      origin: "collector",
+      asset: HOST,
+      sources: ["Velociraptor"],
+      sourceRecordId: identity,
+    });
+    const chainsaw = ev({
+      id: "c2e1",
+      description:
+        "[Windows.EventLogs.Chainsaw] Chainsaw/Sigma: Potential WinAPI Calls Via PowerShell Scripts - PowerShell Script block logged (EID 4104) - ScriptBlockText=Add-Type -MemberDefinition $signature -Name AdjPriv",
+      severity: "High",
+      asset: HOST,
+      sources: ["Chainsaw"],
+      sourceRecordId: identity,
+      mitreTechniques: ["T1134.001"],
+    });
+    for (const order of [
+      [velo, chainsaw],
+      [chainsaw, velo],
+    ]) {
+      const merged = correlateEvents(order);
+      expect(merged).toHaveLength(1);
+      expect(merged[0].severity).toBe("Info");
+      expect(merged[0].origin).toBe("collector");
+      expect(merged[0].sources?.sort()).toEqual(["Chainsaw", "Velociraptor"]);
+      expect(merged[0].mitreTechniques).toEqual(["T1134.001"]); // still described, just not graded
+    }
+  });
+
+  // A group joined on anything OTHER than the record identity holds different records, and one
+  // collector row says nothing about the others' grade.
+  it("does NOT lower a High that merged with a collector row on a shared hash rather than the record", () => {
+    const sha = "a".repeat(64);
+    const collector = ev({
+      id: "v1",
+      description: "Velociraptor [Windows.Sigma.Base] Sigma: tool run — thor64-lite.exe",
+      severity: "Info",
+      origin: "collector",
+      asset: HOST,
+      sources: ["Velociraptor"],
+      sha256: sha,
+      timestamp: "2026-05-26T12:00:00Z",
+    });
+    const intruder = ev({
+      id: "c1",
+      description: "Sigma - Suspicious process: C:\\Users\\Public\\thor64-lite.exe",
+      severity: "High",
+      asset: HOST,
+      sources: ["Chainsaw"],
+      sha256: sha,
+      timestamp: "2026-05-26T12:00:01Z",
+    });
+    const merged = correlateEvents([collector, intruder]);
+    const high = merged.find((e) => e.severity === "High");
+    expect(high).toBeDefined();
+    expect(merged.every((e) => e.origin !== "collector" || e.severity === "Info")).toBe(true);
+  });
+
   it("keeps the SAME record on two hosts as two events", () => {
     const a = ev({ id: "h1", asset: "WS-01", sources: ["Hayabusa"], sourceRecordId: identity });
     const b = ev({ id: "c1", asset: "WS-02", sources: ["Chainsaw"], sourceRecordId: identity });
