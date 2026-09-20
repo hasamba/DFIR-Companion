@@ -164,3 +164,10 @@ describe("AnthropicProvider", () => {
     expect(p.model).toBe("claude-sonnet-4-6");
   });
 });
+
+describe("AnthropicProvider — supportsThinking (#1468)", () => {
+  it("declares that it acts on thinkingTokens (budget_tokens)", () => {
+    const p = new AnthropicProvider({ apiKey: "k", model: "claude-sonnet-4-6" });
+    expect(p.supportsThinking).toBe(true);
+  });
+});

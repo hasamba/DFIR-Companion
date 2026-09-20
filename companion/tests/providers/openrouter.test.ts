@@ -57,3 +57,10 @@ describe("OpenRouterProvider — reasoning / Chain-of-Thought (#121)", () => {
     expect(result.usage).toEqual({ inputTokens: 200, outputTokens: 80 });
   });
 });
+
+describe("OpenRouterProvider — supportsThinking (#1468)", () => {
+  it("declares that it acts on thinkingTokens (unified `reasoning`)", () => {
+    const p = new OpenRouterProvider({ apiKey: "k", model: "m" });
+    expect(p.supportsThinking).toBe(true);
+  });
+});

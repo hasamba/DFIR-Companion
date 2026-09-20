@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
@@ -77,5 +77,92 @@ describe("analysis pipeline run manifests", () => {
     expect(run.configuration?.model).toBe("mock-model");
     expect(run.configuration?.promptHash).toMatch(/^[a-f0-9]{64}$/);
     expect(run.output.claims[0].evidenceEventIds).toContain("evidence-1");
+  });
+
+  // #1468: the thinking budget is a count, not a credential, so it must survive the manifest
+  // sanitizer on disk, and the record must say where the budget came from.
+  it("persists the thinking budget and its source on the synthesis record", async () => {
+    const seeded = emptyState("c1");
+    seeded.forensicTimeline.push({
+      id: "evidence-1",
+      timestamp: "2026-07-31T10:00:00.000Z",
+      description: "PowerShell launched an encoded command",
+      severity: "High",
+      mitreTechniques: ["T1059.001"],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    });
+    await stateStore.save(seeded);
+    const response = JSON.stringify({
+      findings: [],
+      iocs: [],
+      mitreTechniques: [],
+      attackerPath: "",
+      forensicEvents: [],
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: "",
+      summary: "PowerShell activity.",
+    });
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock-provider", response, "mock-model"),
+      stateStore,
+      analysisRunStore: runStore,
+      imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
+    });
+
+    await pipeline.synthesize("c1", { force: true, thinkingTokens: 8000 });
+
+    const run = (await runStore.list("c1"))[0];
+    expect(run.kind).toBe("synthesis");
+    expect(run.configuration?.parameters?.thinkingTokens).toBe(8000);
+    expect(run.configuration?.parameters?.thinkingSource).toBe("toggle");
+    const onDisk = JSON.parse(
+      await readFile(join(cases.stateDir("c1"), "analysis-runs", `${run.id}.json`), "utf8"),
+    ) as { configuration: { parameters: Record<string, unknown> } };
+    expect(onDisk.configuration.parameters.thinkingTokens).toBe(8000);
+    expect(onDisk.configuration.parameters.thinkingSource).toBe("toggle");
+  });
+
+  it("records the source as off when no run input and no env budget set a thinking budget", async () => {
+    const seeded = emptyState("c1");
+    seeded.forensicTimeline.push({
+      id: "evidence-1",
+      timestamp: "2026-07-31T10:00:00.000Z",
+      description: "PowerShell launched an encoded command",
+      severity: "High",
+      mitreTechniques: ["T1059.001"],
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+    });
+    await stateStore.save(seeded);
+    const response = JSON.stringify({
+      findings: [],
+      iocs: [],
+      mitreTechniques: [],
+      attackerPath: "",
+      forensicEvents: [],
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: "",
+      summary: "PowerShell activity.",
+    });
+    const pipeline = new AnalysisPipeline({
+      provider: new MockProvider("mock-provider", response, "mock-model"),
+      stateStore,
+      analysisRunStore: runStore,
+      imageLoader: async () => ({ base64: "A", mimeType: "image/webp" }),
+    });
+    const saved = process.env.DFIR_AI_SYNTH_THINKING_TOKENS;
+    delete process.env.DFIR_AI_SYNTH_THINKING_TOKENS;
+    try {
+      await pipeline.synthesize("c1", { force: true });
+    } finally {
+      if (saved !== undefined) process.env.DFIR_AI_SYNTH_THINKING_TOKENS = saved;
+    }
+
+    const run = (await runStore.list("c1"))[0];
+    expect(run.configuration?.parameters?.thinkingTokens).toBe(0);
+    expect(run.configuration?.parameters?.thinkingSource).toBe("off");
   });
 });

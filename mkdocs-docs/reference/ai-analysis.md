@@ -63,7 +63,7 @@ DFIR Companion never makes "one big AI call". The work is split into separate ru
 
 **What it's good for.** Complex, multi-host, multi-stage cases; findings that look thin or that miss the link between two hosts.
 
-**When to use it.** Tick 🧠 in the toolbar *before* clicking **AI Re-synthesize** or **2nd opinion** — it applies to the next run on this case only, no `.env` edit and no restart. It is slower and costs extra output tokens, so leave it off for routine re-syntheses. It needs a reasoning-capable synthesis model (e.g. Anthropic or OpenRouter).
+**When to use it.** Tick 🧠 in the toolbar *before* clicking **AI Re-synthesize** or **2nd opinion** — it applies to the next run on this case only, no `.env` edit and no restart. It is slower and costs extra output tokens, so leave it off for routine re-syntheses. It needs a synthesis (or second-opinion) model on Anthropic, OpenRouter or Claude Code; on any other provider the box is greyed out and its tooltip names the provider that does not support it.
 
 **Settings.** `DFIR_AI_SYNTH_THINKING_TOKENS` — the global default budget for *every* synthesis (unset = off). The checkbox is the per-run override; when you tick it without setting the variable, it uses 8000 thinking tokens.
 

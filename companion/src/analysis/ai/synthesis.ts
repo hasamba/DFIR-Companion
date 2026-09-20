@@ -42,7 +42,7 @@ import { mergeDelta, type WindowContext } from "../stateMerge.js";
 import type { ForensicEvent, InvestigationState } from "../stateTypes.js";
 import type { SuperTimelineStore } from "../superTimelineStore.js";
 import type { SecondLookMeta, SynthMetaStore } from "../synthMeta.js";
-import { resolveSynthThinkingBudget, type SynthThinkingInput } from "../synthThinking.js";
+import { resolveSynthThinking, type SynthThinkingInput, type SynthThinkingSource } from "../synthThinking.js";
 import { getSynthesisPrompt } from "./prompts/index.js";
 import type { AiCallContext } from "./aiContext.js";
 import { type HuntContext } from "./hunts.js";
@@ -312,6 +312,7 @@ async function recordSynthesisOutcome(
     prompt: getSynthesisPrompt(),
     maxEvents: o.prompt.maxEvents,
     thinkingTokens: o.call.thinkingTokens,
+    thinkingSource: o.call.thinkingSource,
     correlationWindowSeconds: o.run.windowSeconds,
     anonymizationPolicy: anonPolicy,
     scope: o.run.scope,
@@ -375,6 +376,7 @@ async function correlateForSynthesis(
 interface SynthesisCall {
   delta: ReturnType<typeof stripAiExtractedFrom>;
   thinkingTokens: number;
+  thinkingSource: SynthThinkingSource; // #1468: toggle / env / off, recorded on the run
   parseRetries: number;
 }
 
@@ -386,7 +388,7 @@ async function callSynthesisModel(
   userPrompt: string,
   opts: { signal?: AbortSignal } & SynthThinkingInput,
 ): Promise<SynthesisCall> {
-  const thinkingTokens = resolveSynthThinkingBudget(
+  const { tokens: thinkingTokens, source: thinkingSource } = resolveSynthThinking(
     opts,
     Number(process.env.DFIR_AI_SYNTH_THINKING_TOKENS) || 0,
   );
@@ -418,7 +420,7 @@ async function callSynthesisModel(
     ctx.opts.retries ?? 3,
     ctx.opts.backoffMs ?? 500,
   );
-  return { delta, thinkingTokens, parseRetries };
+  return { delta, thinkingTokens, thinkingSource, parseRetries };
 }
 
 // The pre-synthesis merge gate. Runs before the prompt is built so a blocked run spends no tokens

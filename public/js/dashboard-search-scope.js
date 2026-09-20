@@ -333,5 +333,30 @@
     });
   }
 
+  // The 🧠 deep-reasoning box (#1468). Written by the page's /health poller. Only a provider that
+  // ACTS on thinkingTokens (Anthropic, OpenRouter, Claude Code) earns the box; elsewhere it is
+  // greyed out and unticked, and its tooltip names the provider that ignores it. The original tip
+  // is stashed on first use so a settings reload that brings a supporting provider can put it back.
+  // Lives here because this module owns the Synthesize click that reads the box.
+  function setDeepReasoningCapability(supported, providerName) {
+    const box = document.getElementById("deepReasoning");
+    const label = document.getElementById("deepReasoningLabel");
+    if (!box) return;
+    box.disabled = !supported;
+    if (!supported) box.checked = false;
+    if (!label) return;
+    if (!label.hasAttribute("data-tip-default"))
+      label.setAttribute("data-tip-default", label.getAttribute("data-tip") || "");
+    label.setAttribute(
+      "data-tip",
+      supported
+        ? label.getAttribute("data-tip-default")
+        : `Deep reasoning is not supported by the configured AI provider (${
+            providerName || "none configured"
+          }). It needs Anthropic, OpenRouter or Claude Code.`,
+    );
+  }
+
   window.initSearchAndScope = initSearchAndScope;
+  window.setDeepReasoningCapability = setDeepReasoningCapability;
 })();

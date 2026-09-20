@@ -257,3 +257,43 @@ describe("ClaudeCodeProvider", () => {
     await expect(p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] })).rejects.toThrow("boom");
   });
 });
+
+// The 🧠 deep-reasoning toggle sets `thinkingTokens`; the API providers spend it as a budget, but
+// the claude CLI only takes a coarse `--effort` tier — and with `--setting-sources ""` the user's
+// own effort setting never loads. Before #1468 the provider ignored the field: a silent no-op.
+describe("ClaudeCodeProvider — thinking budget → --effort (#1468)", () => {
+  async function argsFor(req: { thinkingTokens?: number }): Promise<string[]> {
+    let captured: ClaudeRunOptions | undefined;
+    const runner = fakeRunner({ stdout: resultLine({ result: "x" }) }, (o) => {
+      captured = o;
+    });
+    await new ClaudeCodeProvider({ model: "sonnet", runner }).analyze({
+      systemPrompt: "SYS",
+      userPrompt: "u",
+      images: [],
+      ...req,
+    });
+    return captured!.args;
+  }
+
+  it("declares that it acts on thinkingTokens", () => {
+    const p = new ClaudeCodeProvider({ model: "sonnet", runner: fakeRunner({}) });
+    expect(p.supportsThinking).toBe(true);
+  });
+
+  it("passes `--effort high` for the toggle's default 8000-token budget, before --system-prompt", async () => {
+    const a = await argsFor({ thinkingTokens: 8000 });
+    const i = a.indexOf("--effort");
+    expect(i).toBeGreaterThan(-1);
+    expect(a[i + 1]).toBe("high");
+    expect(i).toBeLessThan(a.indexOf("--system-prompt"));
+  });
+
+  it("omits --effort when no budget is set", async () => {
+    expect(await argsFor({})).not.toContain("--effort");
+  });
+
+  it("omits --effort when the budget is 0 (thinking forced off for this run)", async () => {
+    expect(await argsFor({ thinkingTokens: 0 })).not.toContain("--effort");
+  });
+});

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { fetchMock, jsonResponse } from "../helpers/fetchMock.js";
 import { OpenAIProvider } from "../../src/providers/openai.js";
-import { ProviderError } from "../../src/providers/provider.js";
+import { ProviderError, type AIProvider } from "../../src/providers/provider.js";
 
 describe("OpenAIProvider — base URL validation (#246)", () => {
   // validateBaseUrl() has its own unit tests (urlValidation.test.ts); these confirm it's actually
@@ -185,5 +185,13 @@ describe("OpenAIProvider", () => {
     const p = new OpenAIProvider({ apiKey: "k", model: "gpt-4o", fetchFn });
     const result = await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] });
     expect(result.usage).toBeUndefined();
+  });
+});
+
+describe("OpenAIProvider — supportsThinking (#1468)", () => {
+  it("does NOT claim thinking support — reasoningBody() is a no-op on the base class", () => {
+    // Read through the interface: the class does not declare the field, and that is the point.
+    const p: AIProvider = new OpenAIProvider({ apiKey: "k", model: "gpt-4o" });
+    expect(p.supportsThinking).toBeFalsy();
   });
 });

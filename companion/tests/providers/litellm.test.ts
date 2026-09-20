@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { fetchMock, jsonResponse } from "../helpers/fetchMock.js";
 import { LiteLlmProvider } from "../../src/providers/litellm.js";
+import type { AIProvider } from "../../src/providers/provider.js";
 import { buildProviderFrom } from "../../src/server.js";
 
 describe("LiteLlmProvider", () => {
@@ -53,5 +54,13 @@ describe("buildProviderFrom — litellm wiring", () => {
 
   it("returns undefined when no provider is set", () => {
     expect(buildProviderFrom({ provider: undefined })).toBeUndefined();
+  });
+});
+
+describe("LiteLlmProvider — supportsThinking (#1468)", () => {
+  it("inherits no thinking claim from OpenAIProvider", () => {
+    // Read through the interface: the class does not declare the field, and that is the point.
+    const p: AIProvider = new LiteLlmProvider({ apiKey: "k", model: "m" });
+    expect(p.supportsThinking).toBeFalsy();
   });
 });
