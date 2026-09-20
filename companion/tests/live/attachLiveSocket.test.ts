@@ -74,3 +74,74 @@ describe("attachLiveSocket (#212)", () => {
     expect(saw).toBe(true);
   });
 });
+
+// #1453: a dashboard that connects (or reconnects) during an import must draw the jobs chip at
+// once, without an HTTP read it may not get a lane for. The gate sends the case's current job
+// list on subscribe when the server hands it a `jobsFor` reader.
+describe("attachLiveSocket sends the job list on subscribe (#1453)", () => {
+  async function openAndCollect(port: number, caseId: string): Promise<string[]> {
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/ws?caseId=${caseId}`, {
+      headers: { origin: `http://127.0.0.1:${port}` },
+    });
+    const received: string[] = [];
+    socket.on("message", (data) => received.push(String(data)));
+    await new Promise<void>((resolve) => {
+      socket.on("open", () => resolve());
+      socket.on("close", () => resolve());
+      socket.on("error", () => resolve());
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    socket.close();
+    return received;
+  }
+
+  it("pushes job_changed with the case's jobs right after the handshake", async () => {
+    const localStore = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-wsjobs-")));
+    await localStore.createCase({ caseId: "open", name: "n", investigator: "i", aiProvider: null });
+    const localHub = new LiveHub();
+    const localServer = createServer();
+    const asked: string[] = [];
+    attachLiveSocket(localServer, localHub, {
+      store: localStore,
+      secret: randomBytes(32),
+      allowedOrigins: [],
+      jobsFor: async (caseId) => {
+        asked.push(caseId);
+        return [{ id: "job_9", caseId, kind: "import", status: "running" }];
+      },
+    });
+    await new Promise<void>((resolve) => localServer.listen(0, "127.0.0.1", resolve));
+    const localPort = (localServer.address() as { port: number }).port;
+    try {
+      const received = await openAndCollect(localPort, "open");
+      expect(asked).toEqual(["open"]);
+      const pushes = received.map((m) => JSON.parse(m) as { type: string; jobs?: unknown[] });
+      expect(pushes).toEqual([
+        { type: "job_changed", jobs: [{ id: "job_9", caseId: "open", kind: "import", status: "running" }] },
+      ]);
+    } finally {
+      await new Promise<void>((resolve) => localServer.close(() => resolve()));
+    }
+  });
+
+  it("sends nothing extra when no jobs reader is wired, and survives a reader that throws", async () => {
+    const localStore = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-wsjobs-")));
+    await localStore.createCase({ caseId: "open", name: "n", investigator: "i", aiProvider: null });
+    const localHub = new LiveHub();
+    const localServer = createServer();
+    attachLiveSocket(localServer, localHub, {
+      store: localStore,
+      secret: randomBytes(32),
+      allowedOrigins: [],
+      jobsFor: () => Promise.reject(new Error("ledger down")),
+    });
+    await new Promise<void>((resolve) => localServer.listen(0, "127.0.0.1", resolve));
+    const localPort = (localServer.address() as { port: number }).port;
+    try {
+      expect(await openAndCollect(localPort, "open")).toEqual([]);
+      expect(await openAndCollect(port, "locked")).toEqual([]); // the shared gate has no reader
+    } finally {
+      await new Promise<void>((resolve) => localServer.close(() => resolve()));
+    }
+  });
+});
