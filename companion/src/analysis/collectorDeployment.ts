@@ -79,7 +79,8 @@ const API_CONNECTION_STRING = /^\s*api_connection_string:\s*["']?([^\s"'#]+)/m;
 // configured spelling (`127.1` → 127.0.0.1, `[0:0:0:0:0:0:0:1]` → ::1, `[::ffff:127.0.0.1]` →
 // ::ffff:7f00:1); the raw IPv4-mapped form is listed as well for a caller that skipped that step.
 const LOCAL_HOST_NAMES = new Set(["localhost", "localhost.", "::1", "::", "0.0.0.0", "::ffff:7f00:1"]);
-const LOOPBACK_V4 = /^(?:::ffff:)?127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/i;
+// Both spellings of IPv4-mapped 127/8: dotted, and the hex form `new URL` canonicalises it to (`::ffff:7f00:2`).
+const LOOPBACK_V4 = /^(?:::ffff:)?127\.\d{1,3}\.\d{1,3}\.\d{1,3}$|^::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}$/i;
 // Hayabusa's key for each Windows-mapper key this file reads (hayabusaImport.ts renders the detail
 // fields under Hayabusa's own aliases). A key with no entry is looked up under its own name.
 const HAYABUSA_PREFIX = /^Hayabusa: /;

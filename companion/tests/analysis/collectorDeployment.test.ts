@@ -177,6 +177,9 @@ describe("configuredCollectorServers — known infrastructure comes from config 
     "[::]",
     "[::ffff:127.0.0.1]",
     "[::ffff:7f00:1]",
+    "[::ffff:127.0.0.2]",
+    "[::ffff:127.1.2.3]",
+    "[::ffff:7f01:203]",
   ])("yields nothing for the loopback / unspecified spelling %s, from either source", (host) => {
     vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", `https://${host}:8889`);
     vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", apiConfig(`${host}:8001`));
@@ -184,9 +187,25 @@ describe("configuredCollectorServers — known infrastructure comes from config 
   });
 
   it("isLocalOrUnspecifiedHost reads the raw spellings too, and nothing routable", () => {
-    for (const h of ["::ffff:127.0.0.1", "::ffff:7f00:1", "::1", "::", "127.0.0.1", "localhost."])
+    for (const h of [
+      "::ffff:127.0.0.1",
+      "::ffff:7f00:1",
+      "::ffff:7f01:203",
+      "::1",
+      "::",
+      "127.0.0.1",
+      "localhost.",
+    ])
       expect(isLocalOrUnspecifiedHost(h), h).toBe(true);
-    for (const h of ["10.20.30.40", "128.0.0.1", "1270.0.0.1", "localhost.example.com", "velo", ""])
+    for (const h of [
+      "10.20.30.40",
+      "128.0.0.1",
+      "1270.0.0.1",
+      "::ffff:8000:1",
+      "localhost.example.com",
+      "velo",
+      "",
+    ])
       expect(isLocalOrUnspecifiedHost(h), h).toBe(false);
   });
 });

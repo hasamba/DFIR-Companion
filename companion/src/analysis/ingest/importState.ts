@@ -2,8 +2,9 @@ import type { PlasoParseResult } from "../plasoImport.js";
 import { deltaSchema } from "../responseSchema.js";
 import { applySeverityFloor } from "../severityFloor.js";
 import { describeFloor } from "./floorNote.js";
-import type { InvestigationState, Severity } from "../stateTypes.js";
+import type { InvestigationState, IocProvenance, Severity } from "../stateTypes.js";
 import type { SiemEvent } from "../siemImport.js";
+import type { SiemIoc } from "../iocSink.js";
 import { aggregateEvents } from "../eventAggregate.js";
 import {
   passwordSprayPatterns,
@@ -75,6 +76,25 @@ export async function commitDelta(
   });
 }
 
+/**
+ * The IOC rows of a delta from a parser's sink: a stable id per import, and the sink's provenance
+ * marker (#1266 client-reported, #1459/#1461 mentioned) carried across. This field whitelist is the
+ * only seam between a parser and mergeDelta, and the pasted one-liner it replaces dropped the marker
+ * silently (#1471): every Cyber Triage / Plaso / Hayabusa value reached the case unmarked while the
+ * parser tests stayed green. platformImports.ts fixed its own copies for #1266; this is the shared one.
+ */
+export function deltaIocs(
+  iocs: readonly SiemIoc[],
+  idPrefix: string,
+): { id: string; type: SiemIoc["type"]; value: string; provenance?: IocProvenance }[] {
+  return iocs.map((c, i) => ({
+    id: `${idPrefix}i${i + 1}`,
+    type: c.type,
+    value: c.value,
+    ...(c.provenance ? { provenance: c.provenance } : {}),
+  }));
+}
+
 // Record an import that parsed cleanly but contributed nothing.
 //
 // Every deterministic importer guards on "no events (and no IOCs) → return the state unchanged".
@@ -136,7 +156,7 @@ export async function persistPlasoParsed(
 
   const raw = {
     findings: [],
-    iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+    iocs: deltaIocs(parsed.iocs, opts.idPrefix),
     mitreTechniques: [],
     forensicEvents: parsed.events.map((e, i) => ({
       ...e,
