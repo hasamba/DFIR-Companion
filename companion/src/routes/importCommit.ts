@@ -8,6 +8,7 @@ import { recordImportRun } from "./importRunRecorder.js";
 import { FalsePositiveStore } from "../analysis/falsePositive.js";
 import { matchFpPropagation } from "../analysis/fpPropagation.js";
 import type { ManifestValue } from "../analysis/analysisRunTypes.js";
+import { formatImportMerged, formatImportStart } from "../logging/importLog.js";
 
 /**
  * The commit spine every dedicated `import-*` route runs after it has answered 202 (#956).
@@ -112,7 +113,14 @@ export function commitDedicatedImport(
   const run = async (): Promise<void> => {
     section = await beginImportSection(importLock, caseId, options.stateStore);
     stateBefore = section.stateBefore;
+    // #1438: the start line is the last thing in the log before a crash mid-parse; the merged line
+    // carries the wall time. The FAILED line is recordImportFailure's (the `.catch` below), once.
+    ctx.serverLogger.info(formatImportStart({ caseId, label: storedName, kind, lines: commit.linesIn }), {
+      caseId,
+    });
+    const startedAt = Date.now();
     await commit.run();
+    ctx.serverLogger.info(formatImportMerged(caseId, storedName, Date.now() - startedAt), { caseId });
   };
 
   void run()
@@ -122,7 +130,7 @@ export function commitDedicatedImport(
         // forensic timeline and none in the super-timeline — the defect these routes existed with.
         // So it is not caught; it reaches the failure handler below. Only the record, the activity
         // line and the checkpoint after it are best-effort.
-        const settled = await settleForensicImport(settleDeps, caseId, stateBefore);
+        const settled = await settleForensicImport(settleDeps, caseId, stateBefore, storedName);
         const { timelineDiff: tDiff, iocsDiff: iDiff } = settled;
         options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
         try {

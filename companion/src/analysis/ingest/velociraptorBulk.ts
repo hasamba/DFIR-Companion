@@ -90,7 +90,8 @@ export interface BulkImportSink {
   appendSuper(caseId: string, events: ForensicEvent[]): Promise<number>;
   openTagger(caseId: string, mode: "forensic" | "super-only"): Promise<BatchTagger | null>;
   forensicMinSeverity(caseId: string): Promise<Severity>;
-  log(msg: string): void;
+  /** With `caseId` the line also lands in the case's own log (#1438). */
+  log(msg: string, caseId?: string): void;
   onSuperTimeline?(caseId: string): void;
   onTags?(caseId: string): void;
   recordRun?(caseId: string, summary: BulkRunSummary): Promise<void>;
@@ -278,6 +279,7 @@ export async function runVelociraptorBulk(
 
   sink.log(
     `[import] ${caseId} ${opts.label}: bulk path (${mode}), ${mb(text.length)} MB, ${stream.format}, batches of ${sink.batchRows} rows`,
+    caseId,
   );
 
   const flush = async (rows: Row[], offset: number, extra?: ForensicEvent[]): Promise<void> => {
@@ -315,6 +317,7 @@ export async function runVelociraptorBulk(
     const rss = process.memoryUsage().rss;
     sink.log(
       `[import] ${caseId} ${opts.label}: batch ${totals.batches} rows ${from}–${totals.rows} → ${events.length} event(s); forensic +${kept}, super +${superAdded} (${Math.round(performance.now() - tb)} ms, rss ${mb(rss)} MB)`,
+      caseId,
     );
     // Rows done over an estimate of rows total from the bytes consumed so far — refines each batch.
     const estimate =
@@ -354,6 +357,7 @@ export async function runVelociraptorBulk(
   const finishedAt = new Date().toISOString();
   sink.log(
     `[import] ${caseId} ${opts.label}: bulk done — ${totals.rows} row(s) → ${totals.events} event(s) in ${totals.batches} batch(es); forensic +${totals.forensicKept}, super +${totals.superAppended}, tagger matched ${totals.tagged}${totals.dropped ? `, ${totals.dropped} graded row(s) over the event cap` : ""} (${Math.round((performance.now() - t0) / 1000)} s)`,
+    caseId,
   );
   if (totals.tagged > 0) sink.onTags?.(caseId);
   await sink.recordRun?.(caseId, {

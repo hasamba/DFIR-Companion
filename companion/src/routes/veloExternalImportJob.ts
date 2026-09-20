@@ -15,6 +15,9 @@
 // duration of its reads too. The analyst started it on purpose; the wait shows in the popover.
 
 import type { JobManager } from "../analysis/jobManager.js";
+import { getServerLogger } from "../logging/serverLogger.js";
+import { formatImportCancelled, formatImportFailed } from "../logging/importLog.js";
+import { redactedErrorMessage } from "../analysis/redactPaths.js";
 
 // The slice of the server's AiStatusEvent this loop emits, spelled out here: routes may not import
 // composition types (check:boundaries), and the server's own callback accepts this subset.
@@ -29,6 +32,8 @@ export interface ExternalImportDeps {
   jobManager?: JobManager;
   onAiStatus?: (caseId: string, event: ExternalImportStatus) => void;
   logLine: (msg: string) => void;
+  /** The diagnostics ring, which logs the FAILED line itself (#1438); without it the loop logs one. */
+  recordImportFailure?: (caseId: string, kind: string, filename: string, err: unknown) => void;
 }
 
 export interface ArtifactIngestResult {
@@ -58,6 +63,7 @@ export async function importArtifactsUnderJob(
   ingest: (artifact: string, rows: unknown[]) => Promise<ArtifactIngestResult>,
 ): Promise<ExternalImportOutcome> {
   const label = `velociraptor: ${what}`;
+  const startedAt = performance.now();
   const job = deps.jobManager?.register({
     caseId,
     kind: "import",
@@ -81,7 +87,8 @@ export async function importArtifactsUnderJob(
     for (const [index, artifact] of artifacts.entries()) {
       // The popover's ✕ Cancel. Checked between artifacts — the one in flight finishes, so the
       // timeline never holds half an artifact — and surfaced as the request's error.
-      if (job?.signal?.aborted) throw new Error("import cancelled by the analyst");
+      if (job?.signal?.aborted)
+        throw Object.assign(new Error("import cancelled by the analyst"), { name: "AbortError" });
       let rows: unknown[];
       try {
         rows = await readRows(artifact);
@@ -109,6 +116,20 @@ export async function importArtifactsUnderJob(
     if (job) await deps.jobManager?.finish(job.jobId);
     deps.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
   } catch (err) {
+    // A cancel is the analyst's decision, not a failure: one "cancelled" line, no ring entry.
+    if ((err as Error).name === "AbortError")
+      getServerLogger().info(formatImportCancelled(caseId, what, performance.now() - startedAt), { caseId });
+    else if (deps.recordImportFailure) deps.recordImportFailure(caseId, "velociraptor-external", what, err);
+    else
+      getServerLogger().warn(
+        formatImportFailed({
+          caseId,
+          label: what,
+          kind: "velociraptor-external",
+          message: redactedErrorMessage(err),
+        }),
+        { caseId },
+      );
     if (job) await deps.jobManager?.fail(job.jobId, err);
     deps.onAiStatus?.(caseId, {
       status: "error",

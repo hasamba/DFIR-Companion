@@ -8,11 +8,14 @@ import { checkReplayAvailability, type ReplayEnvironment } from "../analysis/ana
 import { investigationOutput } from "../analysis/analysisRunSnapshot.js";
 import type { AnalysisRunManifest } from "../analysis/analysisRunTypes.js";
 import { IMPORT_KINDS } from "../analysis/importerSpec.js";
+import { diffIocs } from "../analysis/iocsDiff.js";
 import { getCsvPrompt, getLogPrompt, getObservePrompt, getSynthesisPrompt } from "../analysis/pipeline.js";
 import { selectScopedEvents } from "../analysis/tagger.js";
 import { runAndApplyTagger, type TaggerScope } from "../analysis/taggerRun.js";
+import { diffTimeline } from "../analysis/timelineDiff.js";
 import { defaultReportTemplate } from "../reports/reportTemplate.js";
 import type { RouteContext } from "./context.js";
+import { logImportSettled } from "./importSettle.js";
 
 // The replay-preflight inventory of every builtin importer's own pinned version. Derived from
 // `IMPORT_KINDS` — the SAME single source of truth `importDetect.ts`'s own `ImportKind` union and
@@ -135,6 +138,16 @@ async function replayImport(ctx: RouteContext, run: AnalysisRunManifest): Promis
     importedAt: startedAt,
   });
   const after = await ctx.demoteForensicForCase(run.caseId);
+  // The replay settles inline (no dual-write, so super +0); the done line is the seam's (#1438).
+  const replayDiff = diffTimeline(before.forensicTimeline, after.forensicTimeline);
+  const replayIocs = diffIocs(before.iocs, after.iocs);
+  logImportSettled(run.caseId, `replay-${run.id}`, {
+    forensicAdded: replayDiff.added.length,
+    forensicRemoved: replayDiff.removed.length,
+    superAdded: 0,
+    iocsAdded: replayIocs.added.length,
+    iocsRemoved: replayIocs.removed.length,
+  });
   await options.analysisRunStore.record(run.caseId, {
     kind: "import",
     parentRunId: run.id,

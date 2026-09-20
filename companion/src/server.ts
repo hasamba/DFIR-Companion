@@ -236,6 +236,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     getControl,
     pushImportCheckpoint: appliers.pushImportCheckpoint,
     resynthesizeInBackground: analysis.resynthesizeInBackground,
+    recordImportFailure,
   });
   // The external hunt/flow import paths (POST .../import-external) — hunts the Companion did not
   // launch, so no job record, outcome ledger or checkpoint. See composition/veloExternalIngest.ts.
@@ -462,7 +463,8 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     tagsStore: rt.tagsStore,
     forensicGateControlStore: rt.forensicGateControlStore,
     analysisRunStore,
-    log: logLine,
+    // With the caseId the batch lines also land in the case's own log (#1438).
+    log: (msg, caseId) => getServerLogger().info(msg, caseId ? { caseId } : undefined),
     onSuperTimeline: (caseId) => hub.broadcastTo(caseId, { type: "super_timeline_changed" }),
     onTags: (caseId) => hub.broadcastTo(caseId, { type: "tags_changed" }),
   });

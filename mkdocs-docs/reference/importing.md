@@ -2344,6 +2344,32 @@ shown to be prepared or downloaded`); failed or canceled with no download → Lo
 named "Takeout" or an uploaded archive is never a stage. 256 rows per export (the rest counted);
 the row's identity is (tenant, job id), so a re-import folds.
 
+## What the log says about an import
+
+Every import — the Import button, a server path, the drop folder, a push, an external tool, MCP, a
+Velociraptor hunt, flow or monitor — writes to the session log (`companion/logs/session-*.log`) and
+to the case's own log, under one prefix you can grep for: `[import]`.
+
+```
+[import] CASE-1 0018_velo-flow_Windows.NTFS.MFT.json: start — velociraptor, 104 MB
+[import] CASE-1: velociraptor import — 5000/100000
+[import] CASE-1 0018_velo-flow_Windows.NTFS.MFT.json: parsed and merged in 31 s
+[import] CASE-1 0018_velo-flow_Windows.NTFS.MFT.json: done — forensic +3, super +99997, IOCs +5
+[import] CASE-1 0019_x.json: FAILED (velociraptor) — Invalid string length
+```
+
+- **start** names the file, the format and the size, before any work happens.
+- **progress** lines are throttled to one every ten seconds per case, so a long import stays
+  visible without flooding the log. A batched Velociraptor import logs one line per batch instead.
+- **parsed and merged** is the wall time the importer took.
+- **done** is what the analyst will find after the demote pass: rows that reached the forensic
+  timeline, rows that reached the super-timeline, and IOCs. An import that changed nothing (a live
+  monitor poll with no new rows) logs this line at `debug` only.
+- **FAILED** carries the error, with any absolute path redacted. A cancelled import says
+  `cancelled … stored evidence retained` instead.
+
+If the server dies mid-import, the last `[import]` line names the file and how far it got.
+
 ## Evidence Drop Folder (Auto-Import Inbox)
 
 Every case gets a `cases/<id>/drop/` folder on creation. Copy any file into it — at any depth, subfolders included — and a background poller picks it up once the file size/mtime is stable (safe for Dropbox/OneDrive sync), then imports it through the same detection + import chain as the **Import** button. Screenshots are ingested as capture evidence; everything else is imported as an artifact.

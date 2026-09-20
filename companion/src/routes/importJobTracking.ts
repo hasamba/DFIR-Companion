@@ -29,7 +29,10 @@ export function createImportJobTracking(
         });
       }
     },
+    // Parse progress (EVTX-XML, syslog) reaches the status broadcast too, so the throttled
+    // `[import]` progress line covers the read phase, not only the committed batches (#1438).
     onParseProgress: (done: number, total: number, detail = "reading Windows events"): void => {
+      reportStatus(done, total);
       if (job) manager?.progress(job.jobId, done, total, detail);
     },
   };
