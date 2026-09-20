@@ -276,7 +276,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 | **Okta** | System Log export | IdP tradecraft table (MFA disabled, admin grant, API token minted, session impersonated) — not the vendor's operational grade |
 | **Google Workspace** | Admin + login audit | IdP tradecraft table (2SV disabled, role granted, OAuth consented, mail monitor added) |
 | **Hindsight (browser)** | Chrome/Edge/Brave history, downloads, interpretations (JSON or CSV) | — (Info events: browser artifacts are evidence, not verdicts) |
-| **macOS** | Unified log (`log show --style json`), LSQuarantine download provenance | Quarantine rows carry the data URL **and** the referring origin |
+| **macOS** | Unified log (`log show --style json`), LSQuarantine download events, `com.apple.quarantine` attributes, launchd plists, login items (classic plist, `.sfl2`, BTM) | Quarantine record ↔ file attribute ↔ browser visit ↔ process start joined by identifier; a plist reads as configuration, never as a run |
 | **iLEAPP / ALEAPP** | iOS + Android extraction artifacts from LEAPP TSV exports | — (Info events; generic parser keyed on the timestamp column) |
 | **AWS CloudTrail** | Records JSON, NDJSON, Athena | API action table (IAM/logging/S3/secrets) |
 | **GCP / Azure** | Cloud Audit Logs, Azure Activity Log | Action table (IAM/logging/secrets) |
@@ -284,11 +284,12 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 | **osquery** | scheduled-query result log (differential `columns` + `snapshot`) | Info telemetry; conservative tradecraft bump on a command-line column |
 | **Plaso** | `psort` CSV (dynamic + l2tcsv) | — (Info events) |
 | **Sandbox reports** | CAPEv2 `report.json`, Falcon Sandbox summary | Sample verdict + behavioural signatures |
-| **Memory forensics** | Volatility 3 (`-r json`) + Rekall: pslist/pstree, netscan, malfind, cmdline, svcscan | malfind injected code → High (T1055); listings → Info/Low evidence |
+| **Memory forensics** | Volatility 3 (`-r json`) + Rekall: pslist/pstree, netscan, malfind, cmdline, svcscan; a JSON run envelope (command, exit status, stderr) imports beside the export | malfind injected code → High (T1055); listings → Info/Low; a zero-row or failed run says what it establishes |
 | **Intact (trimmed VolWeb)** | `memory_payload.json` plugin tables + `yarascan_results.jsonl` | Same plugin mapping; memory YARA hits → Low, a dense many-rule cluster → Info; row caps disclosed |
 | **TheHive** | Case / alert JSON export, observable list (TheHive 5) | TheHive severity 1–4; MITRE from ATT&CK-tagged tags |
 | **Email** | `.eml` (RFC 2822), best-effort `.msg` | SPF/DKIM/DMARC fail → sender spoof heuristics (T1566 Phishing) |
 | **Shell history** | `.bash_history` / `.zsh_history` (bash `HISTTIMEFORMAT` `#epoch` + zsh extended history) | Info by default; conservative bump on tradecraft (reverse shell, download-and-exec, cred access, log/history tampering, lateral SSH) |
+| **Linux persistence** | SSH authorized keys, cron, systemd units, shell profiles, SUID listings and PATH from one collection | World-writable payloads, root running user-writable files, setuid interpreters; nothing graded for merely existing |
 | **Linux auditd** | raw `audit.log` / `ausearch` records, `aureport` tables | Record-type table (logins, account mgmt, sudo, SELinux, audit tampering) |
 | **systemd journald** | `journalctl -o json` / `-o json-pretty` | syslog PRIORITY + tradecraft bumps (sshd, sudo, useradd) |
 | **sysdig / Falco** | Falco alert JSON, sysdig `-j` event JSON | Falco rule priority; raw syscalls → Info telemetry |
@@ -305,6 +306,13 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **RDP lateral-movement detection** (T1021.001) — grades explicit-credential RDP logons to a genuinely remote target as Medium; local session-manager noise stays Info
 - **Drive-by download and cloud-exfil tool detection** (T1189 / T1567.002) — internet-zone runnable downloads and `rclone`/`restic`/`megasync`/`megacmd` execution in Prefetch
 - **Contextual YARA severity** — grades a hit by where and what it matched (self-scan → Info, page-file string → Low, named malware on a real path → High) instead of a flat High
+- **Injection and hollowing sequences** — Sysmon 10 / 8 / 25 / 1 joined only through a matching process GUID; access-then-thread and create-replace-thread shapes → High + T1055
+- **Download mark corroborated by execution** — a `Zone.Identifier` mark is read against Prefetch, process starts and presence records of the same file and raised only when execution is dated after it; a hidden-stream payload is graded by content, not name
+- **Defender episodes** — a process start from a path Defender acted on, dated after that action, is annotated and raised; a same-digest start after remediation is a High finding
+- **Copied-binary lead** — an MFT row whose modified time predates its created time was copied here (a renamed `cmd.exe`, a dropped tool)
+- **Cloud lifecycle summaries** — one row per AWS credential lineage, EC2 instance lifecycle, Workspace OAuth client, Exchange mailbox chain and Entra application privilege path whose records form one inside an upload; each says what its records establish and what they do not
+- **Network relationships** — TLS (Zeek `ssl`/`x509`, Suricata `tls`) becomes one row per relationship and per certificate; DNS answers are joined to the same client's later connections inside the TTL; web request chains join only through identifiers both records carry
+- **Mobile origin tags** — every iLEAPP / ALEAPP row says whether its content was recorded on this device, synced or received, from a registry pinned to upstream
 
 ### AI analysis
 - **Guided AI setup** — the Setup wizard's first step picks provider → model (cheap/strong suggestions) → key → optional base URL, then runs a live connectivity test before you leave
@@ -339,6 +347,13 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Ask the case (GraphRAG)** — free-form Q&A grounded in timeline + deterministic evidence-chain graph; multi-hop questions answered via real relationships
 - **Hypothesis-driven mode** — status-tracked hypotheses (open/supported/refuted/unknown), auto-generated + analyst-authored, with evidence/technique links + a report section; open ones steer synthesis, notebook notes promote in, survive synthesis + case archive exports; ACH-style ranking tracks contradicting evidence, a discriminator, and hunt-exhaustion so a red herring can't win unopposed
 - **On-demand hypothesis falsification review** — a "Review" button runs a focused for/against pass over open hypotheses without re-running full synthesis
+- **Distinguishing evidence** — every observation says whether it separates a hypothesis from its alternatives or fits them all; a frozen judgment whose footing changes is flagged for review
+- **Attack outcome on two axes** — each finding records execution (observed / not) and control (blocked / remediated / failed / allowed / none) separately, analyst-set and synthesis-proof; a blocked attack is neither dismissed nor left open at High
+- **Finding tasks** — each Critical/High finding becomes an imperative, evidence-named playbook task with numbered steps and a Done-when line
+- **Handoff Brief** — a shift-change panel: findings by owner, open questions and hypotheses, next steps, unchecked IOCs, the last import, the outgoing analyst's note; copy as Markdown, opt-in report section
+- **Declared-scope analyses** — declare what matters and read what the rows establish, stage by stage: **Phishing campaign scope** (who was addressed, what was delivered, per host execution and control), **Served exposure** (a web root: suspected exposure → retrieval requested → size recorded → corroborated disclosure), **Kerberoast chain** (per service account: requests, baseline, later use), **Sensitive access** (4663 / 4656 / 5145 per object with process and session as candidates); each a panel and a default-off report section
+- **Post-remediation recurrence checks** — declare a remediation boundary; **Verify** returns facts with coverage stated, never a negative verdict; the residual-risk status is the analyst's, recorded against an immutable receipt
+- **Attribution gap leads** — beside each attribution assertion, the techniques that ATT&CK group is documented to use that this case has not shown, as hunt leads
 - **Case memory** — synthesis logs each run to a durable, never-wiped Investigation Log; a *known unknowns* block (timeline gaps, uncovered ATT&CK phases, lookalike actors' next techniques) grounds synthesis + hunt suggestions; opt-in candidate-actor hypotheses (`DFIR_SYNTH_ADVERSARY_HINTS`)
 - **Structured, deployable collection directives** — "collect X" recommendations carry a machine-actionable target; one-click deploy on a known host, with auto-detected import satisfaction
 - **Evidence Gaps panel** — uncovered kill-chain phases render as structured items with a deployable collection directive, in a dashboard panel and report §4.6.3
@@ -372,6 +387,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **IOC list pagination** — pages client-side like the timelines, default 100/page
 - **Exclude filter** — chip-list control (beside the toolbar search) hides timeline events / IOCs / findings matching any of several exclude terms; per-browser
 - **Hunt-pivot generator** — one-click emits Velociraptor VQL, KQL, ES|QL, SPL, Sigma, YARA, Suricata queries
+- **Sigma → VQL hunts** — paste a Sigma rule, compile it deterministically (one fixed template per logsource category, every unsupported line refused by name), launch it as a recorded fleet hunt; `process_creation` rules also hunt Sysmon / 4688 history
 - **Query Translator** — plain English → runnable queries (NL: "PowerShell downloading then executing") across all enabled platforms; one-click-deploy VQL hunts
 - **Internal Hunt Workbench** — typed field queries over an explicit forensic/super-timeline dataset with Boolean logic, ranges, safe regex, time windows, grouping/stats/rare values, indexed cursor paging, saved parameterized hunts, charts/timeline views and one-click entity pivots; raw super-timeline hits stay out of AI until individually promoted
 - **Velociraptor triage bundles** — browse artifacts → save bundles → run as hunts (label/OS/min-severity, relative hunt expiry 1h/1d/1w, default 1h) → auto-collect + import, with live hunt-status polling (a deleted hunt is reflected on the dashboard within 30s, and results auto-collect as soon as the hunt finishes)
@@ -400,6 +416,7 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Lookalike / typosquat domain detection** — offline provider flags domains impersonating common brands (T1566/T1583.001); on by default
 - **IP infrastructure** — Reverse DNS (PTR hostnames), WHOIS over RDAP (netblock/ASN/abuse-contact), GeoIP (country/city/ASN/org), Shodan host (hosted domains/ports/services/CVEs); the "where from / who owns it / what's hosted" context layer — Reverse DNS/WHOIS/GeoIP are keyless, Shodan reuses `DFIR_SHODAN_KEY`
 - **Local vs external** — MISP/YETI/OpenCTI on-box; third-party SaaS opt-in per case; enabling source re-checks all existing IOCs
+- **Dated, sourced verdicts** — every hit is an assertion with the provider's own dates compared with the case time, its origin (first-party, aggregate or relay) and creator; expired and revoked assertions are marked and kept; the **Intel Retirement Review** panel lists findings whose intel is no longer actionable for a Keep / Retire decision
 - **Reachability gate** — health-probe self-hosted instances; auto-resume when online
 
 ### Customer exposure (separate from IOC enrichment)
@@ -419,6 +436,8 @@ All importers are **deterministic (no AI call)**, read the artifact's own timest
 - **Asset ↔ IoC graph, Evidence Chain, and Login graph** — share one interactive Cytoscape view (5 layouts, live filter, fullscreen, PNG export), each with its own node glyphs/edge styling (host/account/service toggles, process lineage, risk-colored logons)
 - **Timeline Swimlane** — severity/tactic × time; click details, Shift-select for bulk action, PNG export
 - **Reports** — Markdown + HTML + PDF (one-click) + Word (.docx) + CSVs (findings/IOCs/timeline) + JSON state
+- **Pre-export evidence-safety check** — every human-readable export is checked against the case's own indicators and evidence text; a live indicator or unescaped evidence still ships, with a banner in the document and a dashboard warning
+- **Related Cases** — a panel listing other investigations that share an indicator with this one, ranked so a flagged hash outweighs a private address; off unless `DFIR_CROSS_CASE=on`
 - **ATT&CK Navigator layer** — techniques colored by severity; upload to [Navigator](https://mitre-attack.github.io/attack-navigator/)
 - **STIX 2.1 bundle** — for OpenCTI, MISP, Anomali, etc.
 - **IOC block-list** — TXT/CSV/STIX-only; filters by severity/type/verdict

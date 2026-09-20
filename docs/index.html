@@ -497,7 +497,7 @@
       <div class="hero-text">
         <div class="hero-badge animate">
           <span class="pulse"></span>
-          v0.36.0 — open source, AGPL-3.0 · Second pair of (A)eyes
+          v0.37.0 — open source, AGPL-3.0 · Second pair of (A)eyes
         </div>
         <h1 class="animate animate-d1">
           Second pair of<br>
@@ -522,7 +522,7 @@
           <div class="terminal-body">
             <span class="comment"># Start the companion</span><br>
             <span class="prompt">$</span> <span class="cmd">cd</span> companion && <span class="cmd">npm</span> run dev<br><br>
-            <span class="output">[DFIR] companion v0.36.0 — localhost only</span><br>
+            <span class="output">[DFIR] companion v0.37.0 — localhost only</span><br>
             <span class="output">[DFIR] cases root: ./cases</span><br>
             <span class="success">[DFIR] listening on http://127.0.0.1:4773</span><br>
             <span class="success">[DFIR] dashboard: http://127.0.0.1:4773/dashboard</span><br><br>
@@ -864,6 +864,18 @@
           <h3>Ransomware Detection</h3>
           <p>A ransom-note filename or a file renamed with a known family's extension is flagged as T1486, aggregated per host so a mass-renamed share reads as one finding, and graded above Info so it survives the event cap instead of drowning in MFT/USN noise.</p>
           <span class="tag">v0.36.0 — the note doesn't get buried</span>
+        </div>
+        <div class="feature-card animate">
+          <div class="feature-icon green">🤝</div>
+          <h3>Handoff Brief</h3>
+          <p>One panel for shift change: findings by owner, the questions still unanswered, open hypotheses, the critical next steps, the IOCs nobody checked and the last import — derived from the case as it stands, plus the outgoing analyst's note. Copy it as Markdown or ship it as a report section. The next analyst starts where you stopped.</p>
+          <span class="tag">v0.37.0 — nothing lost between shifts</span>
+        </div>
+        <div class="feature-card animate">
+          <div class="feature-icon cyan">⚖️</div>
+          <h3>Attack Outcome on Two Axes</h3>
+          <p>Every finding records what happened on two separate axes — was the malicious action observed, and what did a security control do: blocked, remediated, failed, allowed, none seen. A blocked attack is no longer dismissed as a false positive or left open at High, and the report prints both axes with their attribution.</p>
+          <span class="tag">v0.37.0 — detected is not the same as succeeded</span>
         </div>
       </div>
     </div>
