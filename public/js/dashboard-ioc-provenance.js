@@ -53,6 +53,7 @@
   // "All" (default) / "detection" / "telemetry" — client-side lens over the rendered IOC rows.
   let iocProvenanceFilter = "all";
   function loadIocProvenance(caseId) {
+    iocProvenanceDeferred = false;
     fetch(`/cases/${caseId}/ioc-provenance`)
       .then((r) => r.json())
       .then((m) => {
@@ -62,10 +63,26 @@
       })
       .catch(() => {});
   }
+  // #1447: both reloads answer a `state` push, and an import pushes one after EVERY artifact.
+  // Each reload is a full super-timeline scan on the server (~75 s on a capped case), queued on
+  // the same worker the import writes through. While an import job is running for the case on
+  // screen, a scheduled reload is parked here instead of armed; the jobs module calls
+  // flushDeferredIocProvenanceReloads() after each refresh, and the first one that sees no
+  // import fires each parked reload once. A direct load (the connect fan-out) clears its flag —
+  // a real answer supersedes a parked request. Without the jobs module nothing is ever parked.
+  let iocProvenanceDeferred = false;
+  let iocProvenanceChainDeferred = false;
+  function importRunning() {
+    return typeof runningJob === "function" && !!runningJob("import");
+  }
   function scheduleIocProvenanceReload() {
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
     clearTimeout(iocProvenanceTimer);
+    if (importRunning()) {
+      iocProvenanceDeferred = true;
+      return;
+    }
     iocProvenanceTimer = setTimeout(() => loadIocProvenance(caseId), 800);
   }
   let iocProvenanceChainTimer = null;
@@ -73,10 +90,25 @@
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
     clearTimeout(iocProvenanceChainTimer);
+    if (importRunning()) {
+      iocProvenanceChainDeferred = true;
+      return;
+    }
     iocProvenanceChainTimer = setTimeout(
       () => loadIocProvenanceChains(caseId),
       800,
     );
+  }
+  function flushDeferredIocProvenanceReloads() {
+    if (importRunning()) return;
+    if (iocProvenanceDeferred) {
+      iocProvenanceDeferred = false;
+      scheduleIocProvenanceReload();
+    }
+    if (iocProvenanceChainDeferred) {
+      iocProvenanceChainDeferred = false;
+      scheduleIocProvenanceChainReload();
+    }
   }
   // Provenance for an IOC — absent from the map = telemetry (safe default: recede, don't over-signal).
   function iocProvenanceOf(iocId) {
@@ -149,6 +181,7 @@
   // (same bulk-fetch shape as loadIocSources/loadIocProvenance); the panel itself only reads from it.
   let iocProvenanceChains = {};
   function loadIocProvenanceChains(caseId) {
+    iocProvenanceChainDeferred = false;
     fetch(`/cases/${caseId}/ioc-provenance-chain`)
       .then((r) => r.json())
       .then((m) => {
@@ -484,6 +517,7 @@
   window.scheduleIocProvenanceReload = scheduleIocProvenanceReload;
   window.loadIocProvenanceChains = loadIocProvenanceChains;
   window.scheduleIocProvenanceChainReload = scheduleIocProvenanceChainReload;
+  window.flushDeferredIocProvenanceReloads = flushDeferredIocProvenanceReloads;
   window.loadIocRisk = loadIocRisk;
   window.scheduleIocRiskReload = scheduleIocRiskReload;
   window.iocProvenanceOf = iocProvenanceOf;

@@ -5,9 +5,8 @@ import { logActivity } from "../analysis/activityLog.js";
 import { EnrichControlStore, resolveEnabledProviders } from "../enrichment/enrichControl.js";
 import { enrichIocs } from "../enrichment/enrichService.js";
 import { mergeEnrichedSubset } from "../analysis/iocBulkOps.js";
-import { classifyIocProvenance, createIocSeverityRankIndex } from "../analysis/iocProvenance.js";
 import { scoreIocsFromState } from "../analysis/iocRiskScore.js";
-import { createIocProvenanceChainBuilder } from "../analysis/iocProvenanceChain.js";
+import { createIocProvenanceReads, type IocProvenanceReads } from "../analysis/iocProvenanceRead.js";
 import { parseWhitelistText, toWhitelistCsv, sanitizeRuleInput } from "../analysis/iocWhitelist.js";
 import { sanitizeExcludeRuleInput, matchIocToExclude, type IocExcludeRule } from "../analysis/iocExclude.js";
 import { ingestNsrlFiles, splitNsrlPaths } from "../analysis/nsrlStore.js";
@@ -63,6 +62,13 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   // Module-private wrapper mirroring createApp's logLine (serverLogger.info), so the moved handler
   // bodies keep their original `logLine(...)` calls verbatim.
   const logLine = (msg: string): void => ctx.serverLogger.info(msg);
+  // The two provenance reads, built once the stores are known (#1447 coalesces in-flight scans).
+  let reads: IocProvenanceReads | null = null;
+  const provenanceReads = (): IocProvenanceReads =>
+    (reads ??= createIocProvenanceReads({
+      stateStore: options.stateStore!,
+      superTimelineStore: options.superTimelineStore,
+    }));
   // Serialize the load->save critical section for a case's investigation state (module-private copy of
   // createApp's non-exported helper; no-op when no StateLock is wired, e.g. tests).
   const runStateExclusive = <T>(caseId: string, fn: () => Promise<T>): Promise<T> =>
@@ -129,14 +135,8 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
       if (!(await store.caseExists(req.params.id))) {
         return res.status(404).json({ error: `case ${req.params.id} does not exist` });
       }
-      const state = await options.stateStore.load(req.params.id);
-      // The index sees EVERY super event, one batch at a time (#1444), and keeps one number per
-      // IOC — never the whole-array read that took the server down on a capped case.
-      const index = createIocSeverityRankIndex(state.iocs);
-      index.add(state.forensicTimeline);
-      if (options.superTimelineStore)
-        for await (const batch of options.superTimelineStore.eventBatches(req.params.id)) index.add(batch);
-      return res.status(200).json(classifyIocProvenance(state.iocs, index.finish()));
+      // Streamed (#1444) and shared between concurrent requests for the same case (#1447).
+      return res.status(200).json(await provenanceReads().provenance(req.params.id));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -173,13 +173,7 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
       if (!(await store.caseExists(req.params.id))) {
         return res.status(404).json({ error: `case ${req.params.id} does not exist` });
       }
-      const state = await options.stateStore.load(req.params.id);
-      // Streamed like /ioc-provenance above (#1444): only events an IOC names are retained.
-      const builder = createIocProvenanceChainBuilder(state.iocs, state.findings);
-      builder.add(state.forensicTimeline);
-      if (options.superTimelineStore)
-        for await (const batch of options.superTimelineStore.eventBatches(req.params.id)) builder.add(batch);
-      return res.status(200).json(builder.finish());
+      return res.status(200).json(await provenanceReads().chains(req.params.id));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
