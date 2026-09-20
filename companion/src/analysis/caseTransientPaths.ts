@@ -32,13 +32,16 @@ const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 export const SQLITE_TEMP_VERBS = ["migrating", "snapshot", "restoring"];
 
 // The one database name the worker writes. stateStore.ts owns INVESTIGATION_DB_FILENAME; this is a
-// copy for the same reason the verbs are (the drift test compares the two). Anchoring on it is what
-// keeps the rule from ever classifying an imported database — `imports/evidence.sqlite-wal` is
-// evidence an analyst collected and stays in every archive. The name may follow a path separator
-// or a dot: BackupManager's binary sidecar is `<manifest>.investigation.sqlite` and its snapshot
-// temp and journal sit beside it under state/backups/.
+// copy for the same reason the verbs are (the drift test compares the two).
 export const INVESTIGATION_DB_BASENAME = "investigation.sqlite";
-const DB_NAME_PATTERN = `(?:^|[\\/.])${INVESTIGATION_DB_BASENAME.replace(".", "\\.")}`;
+const DB_NAME = INVESTIGATION_DB_BASENAME.replace(".", "\\.");
+const SEP = "[\\\\/]";
+// The two places the worker writes that database, as CASE-RELATIVE paths: the live file under
+// state/, and BackupManager's binary sidecar `<manifest>.investigation.sqlite` under state/backups/.
+// Callers pass the path from the case root, never a bare name, so a file an analyst collected —
+// `imports/investigation.sqlite-wal` is a perfectly ordinary artifact — can never match.
+const DB_LOCATIONS = `(?:^state${SEP}${DB_NAME}|^state${SEP}backups${SEP}[^\\\\/]+\\.${DB_NAME})`;
+const DB_TEMP = `\\.(?:${SQLITE_TEMP_VERBS.join("|")})-${UUID}`;
 
 // SQLite's sidecars beside the real database or one of the temps above: the rollback journal, and
 // since #1454 (journal_mode=WAL) the write-ahead log and its shared-memory index.
@@ -50,14 +53,16 @@ const DB_NAME_PATTERN = `(?:^|[\\/.])${INVESTIGATION_DB_BASENAME.replace(".", "\
 // single file that needs no sidecar. The sidecars themselves would only ever be stale or
 // mid-write in an archive, and restoring a database next to one invites SQLite to replay it.
 const SQLITE_TRANSIENT = new RegExp(
-  `${DB_NAME_PATTERN}(?:\\.(?:${SQLITE_TEMP_VERBS.join("|")})-${UUID})?(?:-journal|-wal|-shm)$` +
-    `|${DB_NAME_PATTERN}\\.(?:${SQLITE_TEMP_VERBS.join("|")})-${UUID}$`,
+  `${DB_LOCATIONS}(?:${DB_TEMP})?(?:-journal|-wal|-shm)$|${DB_LOCATIONS}${DB_TEMP}$`,
   "i",
 );
 
 /**
  * True when `path` names a write in flight inside a case directory — an atomicWrite temp, a SQLite
  * worker temp database, or a SQLite sidecar of the case database — rather than part of the case.
+ *
+ * `path` is the CASE-RELATIVE path (`state/investigation.sqlite-wal`), not a bare entry name: the
+ * SQLite rules are anchored on where the worker writes, so the same name elsewhere is evidence.
  */
 export function isTransientCasePath(path: string): boolean {
   return isAtomicWriteTempPath(path) || SQLITE_TRANSIENT.test(path);

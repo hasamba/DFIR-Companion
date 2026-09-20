@@ -267,12 +267,24 @@ describe("archiveCase", () => {
           "partial",
         );
         // A name that merely LOOKS transient by extension is evidence and stays (rule 1 of
-        // caseTransientPaths.ts) — an analyst can import a sample called anything.
+        // caseTransientPaths.ts) — an analyst can import a sample called anything, including the
+        // case database's own sidecar names outside state/.
         await writeFile(join(dir, "c1", "notes-journal"), "evidence");
+        await mkdir(join(dir, "c1", "imports"), { recursive: true });
+        await writeFile(join(dir, "c1", "imports", "investigation.sqlite-wal"), "evidence");
+        await writeFile(join(dir, "c1", "imports", "investigation.sqlite-shm"), "evidence");
+        await writeFile(join(dir, "c1", "imports", "investigation.sqlite-journal"), "evidence");
 
         const result = await archiveCase(dir, "c1");
         const paths = result.manifest.files.map((f) => f.path).sort();
-        expect(paths).toEqual(["case.json", "notes-journal", "state/investigation.sqlite"]);
+        expect(paths).toEqual([
+          "case.json",
+          "imports/investigation.sqlite-journal",
+          "imports/investigation.sqlite-shm",
+          "imports/investigation.sqlite-wal",
+          "notes-journal",
+          "state/investigation.sqlite",
+        ]);
       } finally {
         await rm(dir, { recursive: true, force: true });
       }

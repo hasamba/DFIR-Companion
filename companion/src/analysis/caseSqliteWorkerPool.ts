@@ -14,9 +14,11 @@ import { loadDatabaseSync } from "./sqliteRuntime.js";
 //     finds a file the writer has not initialised — a restore, an imported archive, a pre-WAL case
 //     — it answers DFIR_SQLITE_NEEDS_INIT; the pool then asks the writer to open and close the file
 //     once (`ensureDatabase`: schema, user_version, WAL conversion) and retries the read once.
-//  3. Exclusive ops drain the readers. `restoreDatabase` renames a file over the live database; it
-//     waits for every read in flight to settle, holds new reads, runs on the writer, then releases
-//     — in `finally`, so a failure cannot leave reads blocked.
+//  3. Exclusive ops drain the readers and hold everything posted after them. `restoreDatabase`
+//     renames a file over the live database: it waits for every read in flight to settle, holds
+//     every read AND write posted after it (a later write must land in the restored file, as it
+//     did in FIFO order, never in the file about to be replaced), runs on the writer, then
+//     releases — in `finally`, so a failure cannot leave the pool blocked.
 //
 // The pool size is a constant, not a setting: nothing an analyst could tune.
 const READ_WORKER_COUNT = 2;
@@ -143,7 +145,8 @@ export class CaseSqliteWorkerPool {
   private readonly ensuring = new Map<string, Promise<boolean>>();
   private readonly inflightReads = new Set<Promise<undefined>>();
   private exclusiveChain: Promise<unknown> = Promise.resolve();
-  private readsHeld: Promise<void> = Promise.resolve();
+  // Resolved while no exclusive op is pending; every read and write posted after one waits on it.
+  private held: Promise<void> = Promise.resolve();
 
   constructor(source: string) {
     this.writer = new WorkerLane(source, "write");
@@ -158,7 +161,10 @@ export class CaseSqliteWorkerPool {
   }
 
   private writeRequest<T>(message: WorkerMessage): Promise<T> {
-    const promise = this.writer.request<T>(message);
+    // The tail is recorded now, at submission, so a read posted next waits for this write even
+    // while both sit behind an exclusive op.
+    const held = this.held;
+    const promise = held.then(() => this.writer.request<T>(message));
     this.trackWriteTail(message, promise);
     return promise;
   }
@@ -186,7 +192,7 @@ export class CaseSqliteWorkerPool {
   private async runRead<T>(message: WorkerMessage): Promise<T> {
     const key = pathKey(message);
     const tail = key ? this.writeTails.get(key) : undefined;
-    await this.readsHeld;
+    await this.held;
     await tail;
     try {
       return await this.leastBusyReader().request<T>(message);
@@ -214,16 +220,18 @@ export class CaseSqliteWorkerPool {
   }
 
   private exclusiveRequest<T>(message: WorkerMessage): Promise<T> {
-    // Snapshot and hold in the same tick as the request: a read posted after this point waits on
-    // `readsHeld`, and every read posted before it is in the snapshot — no read can slip between.
+    // Snapshot and hold in the same tick as the request: a read or write posted after this point
+    // waits on `held`, and every read posted before it is in the snapshot — nothing slips between.
+    // A write posted before it is already in the writer's FIFO queue, ahead of this op.
     const draining = [...this.inflightReads];
+    const previousHold = this.held;
     let release: () => void = () => undefined;
-    this.readsHeld = new Promise<void>((resolve) => {
+    this.held = new Promise<void>((resolve) => {
       release = resolve;
     });
     const run = this.exclusiveChain.then(async () => {
       try {
-        await Promise.all(draining);
+        await Promise.all([previousHold, ...draining]);
         const promise = this.writer.request<T>(message);
         this.trackWriteTail(message, promise);
         return await promise;

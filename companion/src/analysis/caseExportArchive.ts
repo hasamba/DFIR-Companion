@@ -142,7 +142,7 @@ async function walkDir(dir: string, baseRel = ""): Promise<string[]> {
     // name fixes it at the source: the archive never wanted them, and they would make the manifest
     // differ run to run. What counts as transient (and what deliberately does not) is
     // caseTransientPaths.ts — a path that vanishes without matching there still fails loudly.
-    if (isTransientCasePath(entry.name)) continue;
+    if (isTransientCasePath(rel)) continue;
     // A one-shot export should FAIL LOUDLY on a symlink/hardlink, not silently drop it: this is a
     // security-sensitive export the analyst explicitly requested, and a planted link pointing
     // outside the case directory (e.g. screenshots/loot -> /etc/shadow) is itself a signal worth

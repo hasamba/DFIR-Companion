@@ -158,6 +158,32 @@ describe("caseSqliteWorker — reads beside writes (#1454)", () => {
     expect(journalMode(dbPath)).toBe("wal");
   });
 
+  it("a write posted after a restore lands in the restored database, never in the old one", async () => {
+    const dbPath = join(dir, "a.sqlite");
+    const backupPath = join(dir, "backup.sqlite");
+    await append(dbPath, events(3, "kept"));
+    await caseSqliteWorker.request({ op: "backupDatabase", dbPath, targetPath: backupPath });
+    await append(dbPath, events(2, "after"));
+    // A read in flight makes the restore wait; without the gate a write posted meanwhile would run
+    // against the old file first and be thrown away by the rename.
+    const readBefore = caseSqliteWorker.request({
+      op: "queryEntities",
+      dbPath,
+      kind: "forensicTimeline",
+      query: {},
+    });
+    const restore = caseSqliteWorker.request({
+      op: "restoreDatabase",
+      sourcePath: backupPath,
+      targetPath: dbPath,
+    });
+    const writeAfter = append(dbPath, events(1, "late"));
+    const readAfter = count(dbPath);
+    await Promise.all([readBefore, restore, writeAfter]);
+    expect(await readAfter).toEqual({ forensicTimeline: 4 });
+    expect(await count(dbPath)).toEqual({ forensicTimeline: 4 });
+  });
+
   it("a backup written while a read holds a snapshot is complete and standalone", async () => {
     const dbPath = join(dir, "a.sqlite");
     const backupPath = join(dir, "backup.sqlite");

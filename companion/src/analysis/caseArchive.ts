@@ -188,8 +188,8 @@ async function defaultScanFiles(dir: string): Promise<string[]> {
       // with a raw ENOENT 500 (#1442). Same rule, same reason and same list as the encrypted
       // export: what counts as transient (and what deliberately does not) is caseTransientPaths.ts.
       // A path that vanishes without matching there still fails loudly.
-      if (isTransientCasePath(e.name)) continue;
       const childRel = rel ? `${rel}/${e.name}` : e.name;
+      if (isTransientCasePath(childRel)) continue;
       if (e.isDirectory()) {
         await walk(join(abs, e.name), childRel);
       } else {
