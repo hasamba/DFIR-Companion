@@ -221,11 +221,11 @@ export function registerCasePushRoutes(app: Express, ctx: RouteContext): void {
     if (!options.superTimelineStore) return res.status(501).json({ error: "super-timeline not configured" });
     const caseId = req.params.id;
     try {
-      const events = await options.superTimelineStore.all(caseId);
       logLine(`[timesketch] ${caseId} super-timeline push START`);
+      // Streamed in store batches and uploaded in chunks (#1444) — never the whole timeline at once.
       const result = await pushSuperTimelineToTimesketch(
         options.timesketchClient,
-        { sketchName: caseId, events },
+        { sketchName: caseId, events: options.superTimelineStore.eventBatches(caseId) },
         options.timesketchOptions,
       );
       logLine(

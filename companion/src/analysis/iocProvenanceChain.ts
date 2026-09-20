@@ -96,13 +96,29 @@ function eventShowsValue(e: ForensicEvent, needle: string): boolean {
 // Build the chain for every IOC in one pass: index events + findings ONCE (O(events + findings)),
 // then look each IOC up (O(iocs)) — same shape as deriveIocSources, so it scales to a real case's
 // IOC count without re-scanning the timeline per IOC.
-export function buildIocProvenanceChains(
+//
+// Incremental (#1444): the builder knows the IOC values and the authoritative `extractedFrom` ids
+// up front and retains ONLY the events that hit one of them, so a 900k-row super-timeline fed
+// batch by batch costs the matches, never the case. `buildIocProvenanceChains` is this builder
+// fed once.
+export interface IocProvenanceChainBuilder {
+  add(events: readonly ForensicEvent[]): void;
+  finish(): Record<string, IocProvenanceChain>;
+  /** Distinct events held so far — the memory bound, for tests. */
+  retainedEvents(): number;
+}
+
+export function createIocProvenanceChainBuilder(
   iocs: readonly IOC[],
-  events: readonly ForensicEvent[],
   findings: readonly Finding[],
-): Record<string, IocProvenanceChain> {
-  const out: Record<string, IocProvenanceChain> = {};
-  if (iocs.length === 0) return out;
+): IocProvenanceChainBuilder {
+  const wantedKeys = new Set<string>();
+  const wantedIds = new Set<string>();
+  for (const ioc of iocs) {
+    const key = ioc.value.trim().toLowerCase();
+    if (key.length >= 3) wantedKeys.add(key);
+    for (const id of ioc.extractedFrom ?? []) wantedIds.add(id);
+  }
 
   const eventIndex = new Map<string, ForensicEvent[]>();
   // The STRUCTURED-field matches on their own: a hash or a path an importer set as a field, not a
@@ -110,29 +126,66 @@ export function buildIocProvenanceChains(
   // with these (never with description tokens), so a transfer row that names the hash IOC as its
   // own (#993) cannot hide the endpoint event that carries the same hash as a field.
   const structuredIndex = new Map<string, ForensicEvent[]>();
+  const eventById = new Map<string, ForensicEvent>();
+  const retained = new Set<string>();
   const addTo = (index: Map<string, ForensicEvent[]>, raw: string | undefined, e: ForensicEvent): void => {
     if (!raw) return;
     const key = raw.trim().toLowerCase();
-    if (key.length < 3) return;
+    if (key.length < 3 || !wantedKeys.has(key)) return;
     let list = index.get(key);
     if (!list) {
       list = [];
       index.set(key, list);
     }
     list.push(e);
+    retained.add(e.id);
   };
   const addEvent = (raw: string | undefined, e: ForensicEvent): void => addTo(eventIndex, raw, e);
-  for (const e of events) {
-    for (const structured of [e.sha256, e.md5, e.srcIp, e.dstIp, e.path]) {
-      addEvent(structured, e);
-      addTo(structuredIndex, structured, e);
-    }
-    const tokens = (e.description || "").match(TOKEN_RE);
-    if (tokens) for (const t of tokens) addEvent(t, e);
-  }
 
-  const eventById = new Map<string, ForensicEvent>();
-  for (const e of events) eventById.set(e.id, e);
+  const add = (events: readonly ForensicEvent[]): void => {
+    if (iocs.length === 0) return;
+    for (const e of events) {
+      for (const structured of [e.sha256, e.md5, e.srcIp, e.dstIp, e.path]) {
+        addEvent(structured, e);
+        addTo(structuredIndex, structured, e);
+      }
+      if (wantedKeys.size) {
+        const tokens = (e.description || "").match(TOKEN_RE);
+        if (tokens) for (const t of tokens) addEvent(t, e);
+      }
+      if (wantedIds.has(e.id)) {
+        eventById.set(e.id, e);
+        retained.add(e.id);
+      }
+    }
+  };
+
+  return {
+    add,
+    finish: () => finishChains(iocs, findings, eventIndex, structuredIndex, eventById),
+    retainedEvents: () => retained.size,
+  };
+}
+
+export function buildIocProvenanceChains(
+  iocs: readonly IOC[],
+  events: readonly ForensicEvent[],
+  findings: readonly Finding[],
+): Record<string, IocProvenanceChain> {
+  const builder = createIocProvenanceChainBuilder(iocs, findings);
+  builder.add(events);
+  return builder.finish();
+}
+
+function finishChains(
+  iocs: readonly IOC[],
+  findings: readonly Finding[],
+  eventIndex: ReadonlyMap<string, ForensicEvent[]>,
+  structuredIndex: ReadonlyMap<string, ForensicEvent[]>,
+  eventById: ReadonlyMap<string, ForensicEvent>,
+): Record<string, IocProvenanceChain> {
+  const out: Record<string, IocProvenanceChain> = {};
+  if (iocs.length === 0) return out;
 
   const findingIndex = new Map<string, Finding[]>();
   for (const f of findings) {

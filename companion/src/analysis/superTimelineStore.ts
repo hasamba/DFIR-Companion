@@ -280,12 +280,24 @@ export class SuperTimelineStore {
     return result;
   }
 
-  // Compatibility method for the tagger and targeted AI lookup. New large-case consumers should
-  // iterate eventBatches() so their working set stays bounded.
-  async all(caseId: string): Promise<ForensicEvent[]> {
-    const events: ForensicEvent[] = [];
-    for await (const batch of this.eventBatches(caseId)) events.push(...batch);
-    return events;
+  // The bounded whole-timeline read (#1444). `pick` sees every event once, in scan order, and
+  // only what it returns is kept — a projection, a match, or nothing — so the working set is the
+  // consumer's RESULT, never the case. A capped case is 900k events and ~5.6 GB materialized; the
+  // whole-array `all()` this replaces took the server down twice per import on such a case. There
+  // is deliberately no way to get the full array back from this store.
+  async collect<T>(
+    caseId: string,
+    pick: (event: ForensicEvent) => T | undefined,
+    batchSize = SCAN_BATCH_SIZE,
+  ): Promise<T[]> {
+    const out: T[] = [];
+    for await (const batch of this.eventBatches(caseId, batchSize)) {
+      for (const event of batch) {
+        const kept = pick(event);
+        if (kept !== undefined) out.push(kept);
+      }
+    }
+    return out;
   }
 
   async *eventBatches(caseId: string, batchSize = SCAN_BATCH_SIZE): AsyncGenerator<ForensicEvent[]> {

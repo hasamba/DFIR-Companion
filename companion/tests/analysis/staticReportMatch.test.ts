@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   staticReportMatches,
+  staticReportEventProjection,
   reportEventsByFingerprint,
   isAnalystSideRow,
   STATIC_REPORT_ATTESTATION_CAVEAT,
@@ -492,5 +493,73 @@ describe("staticReportMatches — record annotations", () => {
     expect(out.diagnostics.reportPresent).toBe(false);
     expect(out.diagnostics.subjectHostKnown).toBe(false);
     expect(out.path.rows).toHaveLength(0);
+  });
+});
+
+describe("staticReportEventProjection (#1444)", () => {
+  it("keeps every field the matcher reads and drops the rest, so a streamed super-timeline row costs a few fields, not the event", () => {
+    const fat = {
+      id: "e-fat",
+      timestamp: "2026-09-18T00:00:00Z",
+      description: "x".repeat(4000),
+      message: "y".repeat(4000),
+      severity: "Info" as const,
+      mitreTechniques: ["T1204"],
+      relatedFindingIds: ["f1"],
+      sourceScreenshots: ["shot.png"],
+      asset: "ws-01",
+      path: "C:\\Users\\bob\\invoice.docm",
+      sha256: "a".repeat(64),
+      md5: "b".repeat(32),
+      sources: ["Sysmon"],
+      commandLine: "cmd /c whoami",
+      canonical: {
+        event: { category: "file", type: "observation" },
+        file: { path: "C:\\Users\\bob\\invoice.docm", name: "invoice.docm" },
+        olevbaCompoundLead: { reportFingerprint: FP, documentPath: "E:\\Users\\bob\\invoice.docm" },
+      },
+    };
+    const lean = staticReportEventProjection(fat);
+    expect(lean).toEqual({
+      id: "e-fat",
+      timestamp: "2026-09-18T00:00:00Z",
+      asset: "ws-01",
+      path: "C:\\Users\\bob\\invoice.docm",
+      sha256: "a".repeat(64),
+      md5: "b".repeat(32),
+      sources: ["Sysmon"],
+      canonical: {
+        olevbaCompoundLead: { reportFingerprint: FP, documentPath: "E:\\Users\\bob\\invoice.docm" },
+      },
+    });
+    expect("description" in lean).toBe(false);
+    expect("message" in lean).toBe(false);
+  });
+
+  it("the matcher gives the same answer over projected rows as over the full rows", () => {
+    const victim = ev({ asset: "ws-01", path: "C:\\Users\\bob\\invoice.docm", sha256: "c".repeat(64) });
+    const events = [
+      olevbaLead("C:\\Users\\bob\\invoice.docm"),
+      victim,
+      ev({ asset: "ws-01", md5: "d".repeat(32) }),
+    ];
+    const att = attestation({ documentSha256: "c".repeat(64) });
+    const full = staticReportMatches({ attestation: att, events, aliasIndex: index });
+    const lean = staticReportMatches({
+      attestation: att,
+      events: events.map((e) => staticReportEventProjection(e)),
+      aliasIndex: index,
+    });
+    expect(lean).toEqual(full);
+    expect(full.path.rows).toHaveLength(1);
+  });
+
+  it("a row with no canonical block projects with no canonical at all", () => {
+    const lean = staticReportEventProjection({
+      id: "e",
+      timestamp: "",
+      canonical: { event: { category: "file" } },
+    });
+    expect(lean.canonical).toBeUndefined();
   });
 });

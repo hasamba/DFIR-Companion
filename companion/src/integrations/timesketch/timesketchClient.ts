@@ -299,15 +299,57 @@ export class TimesketchClient {
   // mishandled by some Timesketch deployments (proxy/WSGI), which then see no fields and abort with
   // "Unable to upload data without supplying a sketch to associate it with".
   async uploadEvents(sketchId: number, timelineName: string, jsonl: string): Promise<void> {
-    const form = new URLSearchParams();
-    form.set("sketch_id", String(sketchId));
-    form.set("name", timelineName.slice(0, 255));
-    form.set("events", jsonl);
-    form.set("provider", "DFIR Companion");
-    form.set("context", "DFIR Companion forensic timeline");
-    form.set("data_label", "dfir-companion");
-    form.set("enable_stream", "false");
-    const res = await this.send("POST", `${this.apiRoot}/upload/`, { body: form });
+    const res = await this.send("POST", `${this.apiRoot}/upload/`, {
+      body: uploadForm(sketchId, timelineName, jsonl, { last: true }),
+    });
     if (!res.ok) throw await this.errorFor(res, "upload events");
   }
+
+  // One chunk of a streamed upload (#1444) — the official importer's own protocol: every chunk but
+  // the last sends `enable_stream=true`, every chunk after the first sends back the `index_name`
+  // the first one opened, and the last chunk (`enable_stream=false`, possibly empty) closes the
+  // stream so Timesketch indexes the timeline. Same form encoding as uploadEvents, same reason.
+  async uploadEventsChunk(
+    sketchId: number,
+    timelineName: string,
+    jsonl: string,
+    chunk: { indexName?: string; last: boolean },
+  ): Promise<{ indexName: string }> {
+    const res = await this.send("POST", `${this.apiRoot}/upload/`, {
+      body: uploadForm(sketchId, timelineName, jsonl, chunk),
+    });
+    if (!res.ok) throw await this.errorFor(res, "upload events (chunk)");
+    const obj = firstObject(
+      await readBoundedJson(res, { maxBytes: RESPONSE_SIZE_LIMITS.json, context: "Timesketch" }).catch(
+        (err) => rethrowIfTooLarge(err, {}),
+      ),
+    );
+    const searchindex = obj?.searchindex as Record<string, unknown> | undefined;
+    const indexName = typeof searchindex?.index_name === "string" ? searchindex.index_name : chunk.indexName;
+    if (!indexName)
+      throw new TimesketchApiError(
+        "Timesketch upload: no index name in the first chunk's response",
+        res.status,
+        "http",
+      );
+    return { indexName };
+  }
+}
+
+function uploadForm(
+  sketchId: number,
+  timelineName: string,
+  jsonl: string,
+  chunk: { indexName?: string; last: boolean },
+): URLSearchParams {
+  const form = new URLSearchParams();
+  form.set("sketch_id", String(sketchId));
+  form.set("name", timelineName.slice(0, 255));
+  form.set("events", jsonl);
+  form.set("provider", "DFIR Companion");
+  form.set("context", "DFIR Companion forensic timeline");
+  form.set("data_label", "dfir-companion");
+  form.set("enable_stream", chunk.last ? "false" : "true");
+  if (chunk.indexName) form.set("index_name", chunk.indexName);
+  return form;
 }

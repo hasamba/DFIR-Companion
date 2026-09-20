@@ -278,6 +278,16 @@ class MockTimesketch implements TimesketchClientLike {
   async uploadEvents(sketchId: number, timelineName: string, jsonl: string) {
     this.uploads.push({ sketchId, timelineName, jsonl });
   }
+  chunks: { sketchId: number; timelineName: string; jsonl: string; indexName?: string; last: boolean }[] = [];
+  async uploadEventsChunk(
+    sketchId: number,
+    timelineName: string,
+    jsonl: string,
+    chunk: { indexName?: string; last: boolean },
+  ) {
+    this.chunks.push({ sketchId, timelineName, jsonl, ...chunk });
+    return { indexName: chunk.indexName ?? `idx-${this.chunks.length}` };
+  }
 }
 
 function sampleState(): InvestigationState {
@@ -384,9 +394,16 @@ describe("pushSuperTimelineToTimesketch", () => {
     ];
   }
 
+  async function* batches(events: ForensicEvent[], size = 1): AsyncGenerator<ForensicEvent[]> {
+    for (let i = 0; i < events.length; i += size) yield events.slice(i, i + size);
+  }
+
   it("pushes to a DIFFERENT default timeline name than the forensic push, in the same sketch", async () => {
     const m = new MockTimesketch();
-    const res = await pushSuperTimelineToTimesketch(m, { sketchName: "Case Alpha", events: superEvents() });
+    const res = await pushSuperTimelineToTimesketch(m, {
+      sketchName: "Case Alpha",
+      events: batches(superEvents()),
+    });
     expect(res.created).toBe(true);
     expect(res.sketchId).toBe(1);
     expect(res.events).toBe(2);
@@ -399,7 +416,10 @@ describe("pushSuperTimelineToTimesketch", () => {
     // Simulate a prior forensic push: same sketch, forensic timeline already present.
     m.sketches.push({ id: 42, name: "Case Alpha" });
     m.timelines.push({ id: 7, name: "DFIR-Companion Forensic Timeline" });
-    const res = await pushSuperTimelineToTimesketch(m, { sketchName: "Case Alpha", events: superEvents() });
+    const res = await pushSuperTimelineToTimesketch(m, {
+      sketchName: "Case Alpha",
+      events: batches(superEvents()),
+    });
     expect(res.sketchId).toBe(42); // same sketch
     expect(res.created).toBe(false);
     expect(res.replacedTimeline).toBe(false); // no super timeline existed yet, nothing replaced
@@ -412,7 +432,10 @@ describe("pushSuperTimelineToTimesketch", () => {
     m.sketches.push({ id: 42, name: "Case Alpha" });
     m.timelines.push({ id: 7, name: "DFIR-Companion Forensic Timeline" });
     m.timelines.push({ id: 8, name: "DFIR-Companion Super Timeline" });
-    const res = await pushSuperTimelineToTimesketch(m, { sketchName: "Case Alpha", events: superEvents() });
+    const res = await pushSuperTimelineToTimesketch(m, {
+      sketchName: "Case Alpha",
+      events: batches(superEvents()),
+    });
     expect(res.replacedTimeline).toBe(true);
     expect(m.deletedTimelines).toEqual([8]);
     expect(m.deletedTimelines).not.toContain(7);
@@ -420,12 +443,95 @@ describe("pushSuperTimelineToTimesketch", () => {
 
   it("warns and skips the upload when there are no events with a parseable timestamp", async () => {
     const m = new MockTimesketch();
+    m.timelines.push({ id: 8, name: "DFIR-Companion Super Timeline" });
     const res = await pushSuperTimelineToTimesketch(m, {
       sketchName: "Case Beta",
-      events: [event({ timestamp: "bad", description: "x" })],
+      events: batches([event({ timestamp: "bad", description: "x" })]),
     });
     expect(res.events).toBe(0);
+    expect(res.omitted).toBe(1);
     expect(m.uploads).toHaveLength(0);
+    expect(m.chunks).toHaveLength(0);
+    expect(m.deletedTimelines).toEqual([]); // nothing to replace it with → the old timeline stays
     expect(res.warnings.some((w) => w.includes("no events with a parseable timestamp"))).toBe(true);
+  });
+
+  // #1444: a capped super-timeline is 900k events — never one array, never one JSONL string.
+  it("streams the batches as chunked uploads: first opens the index, later chunks reuse it, the last closes it", async () => {
+    const m = new MockTimesketch();
+    m.sketches.push({ id: 42, name: "Case Alpha" });
+    m.timelines.push({ id: 8, name: "DFIR-Companion Super Timeline" });
+    const events = Array.from({ length: 5 }, (_, i) =>
+      event({ timestamp: `2026-06-04T08:0${i}:00Z`, description: `row ${i}`, asset: "DC01" }),
+    );
+    const res = await pushSuperTimelineToTimesketch(
+      m,
+      { sketchName: "Case Alpha", events: batches(events, 2) },
+      {
+        chunkEvents: 2,
+      },
+    );
+    expect(m.uploads).toHaveLength(0);
+    expect(
+      m.chunks.map((c) => ({ n: c.jsonl.trim().split("\n").length, indexName: c.indexName, last: c.last })),
+    ).toEqual([
+      { n: 2, indexName: undefined, last: false },
+      { n: 2, indexName: "idx-1", last: false },
+      { n: 1, indexName: "idx-1", last: true },
+    ]);
+    expect(
+      m.chunks.every((c) => c.sketchId === 42 && c.timelineName === "DFIR-Companion Super Timeline"),
+    ).toBe(true);
+    expect(m.deletedTimelines).toEqual([8]); // clean-replaced once, before the first chunk
+    expect(res.events).toBe(5);
+    expect(res.omitted).toBe(0);
+    expect(res.replacedTimeline).toBe(true);
+    // Row order is the store's scan order (dated ascending) — no whole-list sort is possible.
+    expect(
+      m.chunks.flatMap((c) =>
+        c.jsonl
+          .trim()
+          .split("\n")
+          .map((l) => JSON.parse(l).message),
+      ),
+    ).toEqual(events.map((e) => e.description));
+  });
+
+  it("rows ending exactly on a chunk boundary still close the stream, with an empty final chunk", async () => {
+    const m = new MockTimesketch();
+    const events = Array.from({ length: 4 }, (_, i) =>
+      event({ timestamp: `2026-06-04T08:0${i}:00Z`, description: `row ${i}` }),
+    );
+    const res = await pushSuperTimelineToTimesketch(
+      m,
+      { sketchName: "Case Alpha", events: batches(events, 4) },
+      {
+        chunkEvents: 2,
+      },
+    );
+    expect(m.chunks.map((c) => ({ jsonl: c.jsonl === "" ? "" : "rows", last: c.last }))).toEqual([
+      { jsonl: "rows", last: false },
+      { jsonl: "rows", last: false },
+      { jsonl: "", last: true },
+    ]);
+    expect(res.events).toBe(4);
+  });
+
+  it("counts rows without a parseable time across every batch and names them once in the warnings", async () => {
+    const m = new MockTimesketch();
+    const events = [
+      event({ timestamp: "2026-06-04T08:00:00Z", description: "ok" }),
+      event({ timestamp: "bad", description: "x" }),
+      event({ timestamp: "", description: "y" }),
+    ];
+    const res = await pushSuperTimelineToTimesketch(m, {
+      sketchName: "Case Alpha",
+      events: batches(events, 1),
+    });
+    expect(res.events).toBe(1);
+    expect(res.omitted).toBe(2);
+    expect(m.chunks).toHaveLength(1);
+    expect(m.chunks[0].last).toBe(true);
+    expect(res.warnings.filter((w) => w.includes("2"))).toHaveLength(1);
   });
 });

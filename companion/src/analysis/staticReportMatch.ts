@@ -52,6 +52,29 @@ const BLOCKS: ReadonlyArray<[keyof NonNullable<StaticReportEventShape["canonical
   ["mobileRequestedPermission", "mobsf"],
 ];
 
+/**
+ * The fields staticReportMatches reads, and nothing else (#1444). The attestation-matches route
+ * streams the super-timeline through this, so a capped case costs a handful of short fields per
+ * row instead of the whole event (description, message, canonical file/process blocks …) — the
+ * matcher gives the same answer over these rows, which tests/analysis/staticReportMatch.test.ts
+ * pins. Only the seven fingerprint blocks survive on `canonical`; a row with none has none.
+ */
+export function staticReportEventProjection(e: StaticReportEventShape): StaticReportEventShape {
+  const out: StaticReportEventShape = { id: e.id, timestamp: e.timestamp };
+  if (e.asset !== undefined) out.asset = e.asset;
+  if (e.path !== undefined) out.path = e.path;
+  if (e.sha256 !== undefined) out.sha256 = e.sha256;
+  if (e.md5 !== undefined) out.md5 = e.md5;
+  if (e.sources !== undefined) out.sources = e.sources;
+  let canonical: StaticReportEventShape["canonical"];
+  for (const [key] of BLOCKS) {
+    const block = e.canonical?.[key];
+    if (block) canonical = { ...(canonical ?? {}), [key]: block };
+  }
+  if (canonical) out.canonical = canonical;
+  return out;
+}
+
 function reportBlock(e: StaticReportEventShape): { block: FingerprintBlock; tool: StaticReportTool } | null {
   for (const [key, tool] of BLOCKS) {
     const block = e.canonical?.[key] as FingerprintBlock | undefined;

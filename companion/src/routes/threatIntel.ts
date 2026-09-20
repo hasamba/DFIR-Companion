@@ -5,9 +5,9 @@ import { logActivity } from "../analysis/activityLog.js";
 import { EnrichControlStore, resolveEnabledProviders } from "../enrichment/enrichControl.js";
 import { enrichIocs } from "../enrichment/enrichService.js";
 import { mergeEnrichedSubset } from "../analysis/iocBulkOps.js";
-import { deriveIocProvenance } from "../analysis/iocProvenance.js";
+import { classifyIocProvenance, createIocSeverityRankIndex } from "../analysis/iocProvenance.js";
 import { scoreIocsFromState } from "../analysis/iocRiskScore.js";
-import { buildIocProvenanceChains } from "../analysis/iocProvenanceChain.js";
+import { createIocProvenanceChainBuilder } from "../analysis/iocProvenanceChain.js";
 import { parseWhitelistText, toWhitelistCsv, sanitizeRuleInput } from "../analysis/iocWhitelist.js";
 import { sanitizeExcludeRuleInput, matchIocToExclude, type IocExcludeRule } from "../analysis/iocExclude.js";
 import { ingestNsrlFiles, splitNsrlPaths } from "../analysis/nsrlStore.js";
@@ -23,7 +23,6 @@ import {
 } from "../analysis/customerExposure.js";
 import { FalsePositiveStore } from "../analysis/falsePositive.js";
 import type { Tag } from "../analysis/tags.js";
-import type { ForensicEvent } from "../analysis/stateTypes.js";
 import type { EnrichmentProvider } from "../enrichment/provider.js";
 import type { CustomerExposureProvider } from "../analysis/customerExposure.js";
 import type { RouteContext } from "./context.js";
@@ -131,15 +130,13 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
         return res.status(404).json({ error: `case ${req.params.id} does not exist` });
       }
       const state = await options.stateStore.load(req.params.id);
-      // The provenance index must see EVERY super event, not one page — query with no filters and a
-      // limit past the store cap so pagination returns the full set.
-      let superEvents: ForensicEvent[] = [];
-      if (options.superTimelineStore) {
-        superEvents = await options.superTimelineStore.all(req.params.id);
-      }
-      return res
-        .status(200)
-        .json(deriveIocProvenance(state.iocs, [...state.forensicTimeline, ...superEvents]));
+      // The index sees EVERY super event, one batch at a time (#1444), and keeps one number per
+      // IOC — never the whole-array read that took the server down on a capped case.
+      const index = createIocSeverityRankIndex(state.iocs);
+      index.add(state.forensicTimeline);
+      if (options.superTimelineStore)
+        for await (const batch of options.superTimelineStore.eventBatches(req.params.id)) index.add(batch);
+      return res.status(200).json(classifyIocProvenance(state.iocs, index.finish()));
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }
@@ -177,15 +174,12 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
         return res.status(404).json({ error: `case ${req.params.id} does not exist` });
       }
       const state = await options.stateStore.load(req.params.id);
-      let superEvents: ForensicEvent[] = [];
-      if (options.superTimelineStore) {
-        superEvents = await options.superTimelineStore.all(req.params.id);
-      }
-      return res
-        .status(200)
-        .json(
-          buildIocProvenanceChains(state.iocs, [...state.forensicTimeline, ...superEvents], state.findings),
-        );
+      // Streamed like /ioc-provenance above (#1444): only events an IOC names are retained.
+      const builder = createIocProvenanceChainBuilder(state.iocs, state.findings);
+      builder.add(state.forensicTimeline);
+      if (options.superTimelineStore)
+        for await (const batch of options.superTimelineStore.eventBatches(req.params.id)) builder.add(batch);
+      return res.status(200).json(builder.finish());
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

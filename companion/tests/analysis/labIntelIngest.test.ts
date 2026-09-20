@@ -95,7 +95,7 @@ describe("sandbox import is lab evidence", () => {
     await importSandbox();
     const state = await stateStore.load("c1");
     expect(state.forensicTimeline).toEqual([]);
-    const rows = await superTimelineStore.all("c1");
+    const rows = await superTimelineStore.collect("c1", (e) => e);
     expect(rows.length).toBeGreaterThan(0);
     for (const r of rows) expect(r.origin).toBe("lab");
     expect(rows.some((r) => r.description.startsWith("CAPE sandbox:"))).toBe(true);
@@ -119,7 +119,7 @@ describe("sandbox import is lab evidence", () => {
   // High-severity backfill into minting an incident finding from capability evidence.
   it("stores every lab row at Info, whatever the sandbox scored", async () => {
     await importSandbox();
-    for (const r of await superTimelineStore.all("c1")) expect(r.severity).toBe("Info");
+    for (const r of await superTimelineStore.collect("c1", (e) => e)) expect(r.severity).toBe("Info");
   });
 
   // The store dedupes on (timestamp, description, host). Two runs with an identical start time and
@@ -133,7 +133,7 @@ describe("sandbox import is lab evidence", () => {
       idPrefix: "sb2",
       importedAt: "2026-09-11T11:00:00Z",
     });
-    const verdicts = (await superTimelineStore.all("c1")).filter((r) =>
+    const verdicts = (await superTimelineStore.collect("c1", (e) => e)).filter((r) =>
       r.description.startsWith("CAPE sandbox:"),
     );
     expect(verdicts).toHaveLength(2);
@@ -153,7 +153,7 @@ describe("sandbox import is lab evidence", () => {
       sandbox: { minSeverity: "Critical" },
       minSeverity: "Critical",
     });
-    const rows = await superTimelineStore.all("c1");
+    const rows = await superTimelineStore.collect("c1", (e) => e);
     expect(rows.length).toBeGreaterThan(0);
     for (const r of rows) expect(r.severity).toBe("Info");
     expect((await stateStore.load("c1")).labIntel).toHaveLength(1);
@@ -168,7 +168,7 @@ describe("sandbox import is lab evidence", () => {
       idPrefix: "sb1",
       importedAt: "2026-09-10T11:00:00Z",
     });
-    const verdict = (await superTimelineStore.all("c1")).find((r) =>
+    const verdict = (await superTimelineStore.collect("c1", (e) => e)).find((r) =>
       r.description.startsWith("CAPE sandbox:"),
     );
     expect(verdict?.description.startsWith("CAPE sandbox: [run 42] ")).toBe(true);
