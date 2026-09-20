@@ -752,6 +752,7 @@
     "veloRowNormalize.ts": "analysis/ingest",
     "veloRowTime.ts": "analysis/ingest",
     "veloTextIocs.ts": "analysis/ingest",
+    "veloWinRow.ts": "analysis/ingest",
     "veloTimeScope.ts": "analysis/timeline",
     "velociraptorClientStore.ts": "analysis/case",
     "velociraptorDownload.ts": "analysis/case",

@@ -92,6 +92,7 @@ import { mapHijackLib } from "./hijackLibImport.js";
 import { decodeHitContext } from "./yaraHitContext.js";
 import { amcacheMasquerade } from "./amcacheMasquerade.js";
 import { MAX_TIME_MS, MIN_TIME_MS, pickTime, vrTime } from "./veloRowTime.js";
+import { winRowToFlat } from "./veloWinRow.js";
 import { prefetchSignal } from "./prefetchExecution.js";
 import { isSamAccountRow, mapSamAccount } from "./samAccountImport.js";
 
@@ -319,54 +320,7 @@ function collectRowIocs(row: Row, sink: Map<string, SiemIoc>): { sha256?: string
   return { sha256, md5 };
 }
 
-// ───────────────────────────── EVTX-row normalization ─────────────────────────────
-
-// A Velociraptor parsed-evtx row carries `System` + `EventData` (sometimes under `Event`), or —
-// for artifacts that flatten the event (e.g. DetectRaptor's Windows.Detection.Evtx) — top-level
-// `Channel`/`EventID`/`EventData`. Reshape either to the flat record `mapWindows` consumes,
-// normalizing the EventID (number or `{ Value }`/`{ #text }`) to a bare value, plus the host.
-function winRowToFlat(row: Row): { rec: Row; host: string } | null {
-  const sys = isObject(getCI(row, "System"))
-    ? (getCI(row, "System") as Row)
-    : isObject(getPath(row, "Event.System"))
-      ? (getPath(row, "Event.System") as Row)
-      : null;
-  const edRaw = getCI(row, "EventData") ?? getPath(row, "Event.EventData");
-
-  if (sys) {
-    let eid: unknown = getCI(sys, "EventID");
-    if (isObject(eid)) eid = getCI(eid, "Value") ?? getCI(eid, "#text");
-    const channel =
-      str(getCI(sys, "Channel")) ||
-      str(getPath(sys, "Provider.Name")) ||
-      str(getPath(sys, "Provider.#attributes.Name"));
-    return {
-      host: resolveRowHost(row).asset, // collector identity first; System.Computer only when no Fqdn (#1417)
-      rec: {
-        event_id: eid,
-        channel,
-        event_data: isObject(edRaw) ? edRaw : {},
-        "@timestamp": vrTime(getCI(sys, "TimeCreated")),
-        message: str(getCI(row, "Message")),
-      },
-    };
-  }
-
-  // Flat shape: top-level Channel/EventID/EventData with no System wrapper.
-  let eidFlat: unknown = getCI(row, "EventID") ?? getCI(row, "EventId");
-  if (eidFlat == null && !isObject(edRaw)) return null;
-  if (isObject(eidFlat)) eidFlat = getCI(eidFlat, "Value") ?? getCI(eidFlat, "#text");
-  return {
-    host: resolveRowHost(row).asset,
-    rec: {
-      event_id: eidFlat,
-      channel: str(getCI(row, "Channel")),
-      event_data: isObject(edRaw) ? edRaw : {},
-      "@timestamp": pickTime(row),
-      message: str(getCI(row, "Message")),
-    },
-  };
-}
+// EVTX-row normalization (winRowToFlat) lives in veloWinRow.ts — imported above.
 
 // ───────────────────────────── per-row mapping ─────────────────────────────
 
@@ -449,7 +403,12 @@ function classify(row: Row, artifact: string): Kind {
   // that also carries a parsed Windows event (DetectRaptor's Evtx) is overlaid, not flattened.
   if (rowVerdict(row)) return "detection";
 
-  if (getCI(row, "System") || getCI(row, "EventData") || getPath(row, "Event.System")) {
+  if (
+    getCI(row, "System") ||
+    getCI(row, "EventData") ||
+    getPath(row, "Event.System") ||
+    getPath(row, "_Event.System")
+  ) {
     if (firstStr(row, ["Level"]) && firstStr(row, ["Title", "SigmaTitle", "RuleTitle"])) return "sigma";
     return "eventlog";
   }
