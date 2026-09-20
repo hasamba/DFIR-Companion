@@ -164,6 +164,12 @@ function detailObj(v: unknown): Row {
 const PROC_KEYS = ["Proc", "Image", "Process", "NewProc", "NewProcessName", "ProcessName"];
 const PARENT_KEYS = ["ParentProc", "ParentImage", "ParentProcessName", "PProc", "ParentProcess"];
 const PATH_KEYS = ["TgtFile", "TargetFilename", "Path", "File", "FilePath", "Image", "ImageLoaded"];
+// The command line and the destination address, under Hayabusa's aliases and the raw Windows names a
+// custom profile may keep. Carried as STRUCTURED fields because the rendered subject below cuts every
+// value at 120 characters, and the collector-deployment rules (collectorDeployment.ts) must read the
+// whole command line to find the MSI name and the whole destination to match the server (#1471).
+const CMDLINE_KEYS = ["Cmdline", "CommandLine", "CmdLine"];
+const DST_IP_KEYS = ["TgtIP", "DstIP", "DestinationIp"];
 
 // Map one Hayabusa record (already field-merged: top-level fields + the parsed details map)
 // to a forensic event, pulling IOCs into the sink. Verdict-first; null only if there is no
@@ -221,6 +227,8 @@ function mapRecord(
   const processName = procRaw ? baseName(procRaw) : undefined;
   const parentName = parentRaw ? baseName(parentRaw) : undefined;
   if (processName) addIoc(iocSink, "process", processName);
+  const commandLine = firstStr(details, CMDLINE_KEYS);
+  const dstIp = cleanIp(firstStr(details, DST_IP_KEYS)); // loopback and noise addresses are dropped
 
   // A compact subject from the first few rendered detail fields.
   const subject = pairs
@@ -265,6 +273,8 @@ function mapRecord(
     ...(host ? { asset: host } : {}),
     ...(processName ? { processName } : {}),
     ...(parentName ? { parentName } : {}),
+    ...(commandLine ? { commandLine } : {}),
+    ...(dstIp ? { dstIp } : {}),
     ...(recordIdentity ? { sourceRecordId: recordIdentity } : {}),
   };
   // A sample-corpus host (veloDetectionNoise.ts) is demoted to Info — but only when the row has NO

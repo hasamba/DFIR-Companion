@@ -24,7 +24,7 @@ import {
 } from "../rcloneImport.js";
 import { parseVelociraptorJsonProgress, type VelociraptorImportOptions } from "../velociraptorImport.js";
 import { describeFloor } from "./floorNote.js";
-import { noteEmptyImport } from "./importState.js";
+import { deltaIocs, noteEmptyImport } from "./importState.js";
 import { bulkPathApplies, importVelociraptorBulk } from "./velociraptorBulk.js";
 import type { ImportContext } from "./importContext.js";
 
@@ -63,7 +63,7 @@ export async function importThor(
   // (fills defaults like relatedFindingIds). No model call — purely structural.
   const raw = {
     findings: [],
-    iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+    iocs: deltaIocs(parsed.iocs, opts.idPrefix),
     mitreTechniques: [],
     forensicEvents: parsed.events.map((e, i) => ({ ...e, id: `${opts.idPrefix}e${i + 1}` })),
     threadsOpened: [],
@@ -116,7 +116,7 @@ export async function importChainsaw(
   const fallback = parsed.detections > 0 ? "Chainsaw" : "EVTX";
   const raw = {
     findings: [],
-    iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+    iocs: deltaIocs(parsed.iocs, opts.idPrefix),
     mitreTechniques: [],
     forensicEvents: parsed.events.map((e, i) => ({
       ...e,
@@ -176,7 +176,7 @@ export async function importHayabusa(
 
   const raw = {
     findings: [],
-    iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+    iocs: deltaIocs(parsed.iocs, opts.idPrefix),
     mitreTechniques: [],
     forensicEvents: parsed.events.map((e, i) => ({
       ...e,
@@ -346,7 +346,7 @@ export async function importKape(
 
   const raw = {
     findings: [],
-    iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+    iocs: deltaIocs(parsed.iocs, opts.idPrefix),
     mitreTechniques: [],
     forensicEvents: parsed.events.map((e, i) => ({
       ...e,
@@ -437,7 +437,7 @@ export async function importWer(
 
     const delta = deltaSchema.parse({
       findings: [],
-      iocs: iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      iocs: deltaIocs(iocs, opts.idPrefix),
       mitreTechniques: [],
       forensicEvents: events,
       threadsOpened: [],
@@ -485,7 +485,7 @@ export async function importCybertriage(
 
   const raw = {
     findings: [],
-    iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+    iocs: deltaIocs(parsed.iocs, opts.idPrefix),
     mitreTechniques: [],
     forensicEvents: parsed.events.map((e, i) => ({
       ...e,
@@ -560,7 +560,7 @@ export async function importLinuxPersist(
 
     const delta = deltaSchema.parse({
       findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      iocs: deltaIocs(parsed.iocs, opts.idPrefix),
       mitreTechniques: [],
       forensicEvents: events,
       threadsOpened: [],
@@ -622,7 +622,7 @@ export async function importMacosPersist(
 
     const delta = deltaSchema.parse({
       findings: [],
-      iocs: parsed.iocs.map((c, i) => ({ id: `${opts.idPrefix}i${i + 1}`, type: c.type, value: c.value })),
+      iocs: deltaIocs(parsed.iocs, opts.idPrefix),
       mitreTechniques: [],
       forensicEvents: events,
       threadsOpened: [],

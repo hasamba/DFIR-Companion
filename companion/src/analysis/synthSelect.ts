@@ -17,6 +17,7 @@ import { caseTime, intelTimeTag } from "./intelTemporal.js";
 import { intelOrigins, originsTag } from "./intelLineage.js";
 import { rankHosts, buildSignalConcentrationDigest } from "./hostRanking.js";
 import { isMentionedHash, mentionedHashNote } from "./iocMentionedHash.js";
+import { isMentionedIoc, mentionedNote } from "./iocMentioned.js";
 
 // Widened to string keys: severity values reaching the selectors are not all statically Severity.
 const SEV_RANK: Record<string, number> = SEVERITY_RANK;
@@ -395,7 +396,12 @@ export function buildSynthesisContext(
     // file the collector hashed. The event that "carries the value" is the one that MENTIONS it, so
     // it is not behavioral corroboration — the tag stays lone-intel / multi-origin and the line says
     // where the string sits and that no file with the hash was observed.
-    const mentioned = isMentionedHash(i);
+    // #1471: a mentioned NETWORK IOC (ip / domain / url, #1461) gets the same treatment, for the
+    // same reason: iocHasBehavioralEvent matches by description substring, so the Medium/High
+    // command line that names the address was its own corroboration and the line read
+    // "[corroborated]" with nothing saying the host was only TOLD about it. Its note is the
+    // network one ("referenced in free text; no network record").
+    const mentioned = isMentionedHash(i) || isMentionedIoc(i);
     const cls = classifyVerdict(i, {
       hasBehavioralEvent: !mentioned && iocHasBehavioralEvent(i.value, scopedEvents),
       hostNames,
@@ -403,7 +409,7 @@ export function buildSynthesisContext(
     if (cls === "none") continue;
     const base = `${i.value} = ${hit.verdict}${hit.source ? ` (${hit.source}${hit.score ? ` ${hit.score}` : ""})` : ""}`;
     const tag = cls === "conflicted" ? "" : originsTag(intelOrigins(i.enrichments), cls);
-    const note = mentioned ? ` — ${mentionedHashNote(i, scopedEvents)}` : "";
+    const note = mentioned ? ` — ${mentionedHashNote(i, scopedEvents) || mentionedNote(i)}` : "";
     if (cls === "conflicted") {
       conflictVerdicts.push(
         `- ${base} ⚠ CONFLICT: also one of this case's OWN host assets or an internal address — this verdict is most likely stale/wrong; do NOT treat it as confirmed malicious or as external C2${when ? ` ${when}` : ""}`,

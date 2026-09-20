@@ -7,6 +7,7 @@ import {
   mapNextStepTask,
   buildNotes,
   executiveSummaryMarkdown,
+  MENTIONED_LINE,
 } from "../../src/integrations/iris/irisMap.js";
 import { tacticForTechniques } from "../../src/analysis/mitreTactics.js";
 import { pushCaseToIris, type IrisClientLike } from "../../src/integrations/iris/irisPush.js";
@@ -760,5 +761,41 @@ describe("#1266 -- irisMap.mapIoc says client-reported first, on both descriptio
     const body = mapIoc(ioc({ value: "8.8.8.8", type: "ip" }), IOC_TYPES, NO_EVENTS)!;
     expect(body.ioc_description).not.toContain("Client-reported");
     expect(String(body.ioc_tags)).not.toContain("client-reported");
+    expect(body.ioc_description).not.toContain("Mentioned");
+    expect(String(body.ioc_tags).split(",")).not.toContain("mentioned");
+  });
+});
+
+// #1471 finding 6. A value read out of free text (#1461 network, #1459 hash) said "Observed by
+// DFIR Companion" — the exact claim the provenance denies. The mentioned line leads, the tag is
+// added, and the plain-branch sentence says "Mentioned in free text" instead of "Observed by".
+describe("#1471 -- irisMap.mapIoc says mentioned first, and never 'Observed by' for it", () => {
+  const NO_EVENTS = new Map<string, ForensicEvent>();
+  it("plain branch: the mentioned line leads, the Observed-by sentence is gone, the tag is added", () => {
+    const body = mapIoc(
+      ioc({ value: "91.191.209.46", type: "ip", provenance: "mentioned" }),
+      IOC_TYPES,
+      NO_EVENTS,
+    )!;
+    expect(String(body.ioc_description).startsWith(MENTIONED_LINE)).toBe(true);
+    expect(body.ioc_description).not.toContain("Observed by");
+    expect(body.ioc_description).toContain("Mentioned in free text (first seen");
+    expect(String(body.ioc_tags).split(",")).toContain("mentioned");
+    expect(String(body.ioc_tags).split(",")).not.toContain("client-reported");
+  });
+  it("enrichment branch: the mentioned line still leads the intel block", () => {
+    const body = mapIoc(
+      ioc({
+        value: "c".repeat(64),
+        type: "hash",
+        provenance: "mentioned",
+        enrichments: [{ source: "VirusTotal", verdict: "malicious", score: "5/70", fetchedAt: "t" }],
+      }),
+      IOC_TYPES,
+      NO_EVENTS,
+    )!;
+    expect(String(body.ioc_description).startsWith(MENTIONED_LINE)).toBe(true);
+    expect(body.ioc_description).toContain("Threat intel:");
+    expect(body.ioc_description).not.toContain("Observed by");
   });
 });

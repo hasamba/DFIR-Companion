@@ -24,7 +24,7 @@
 // process chain; `threat_level` carries "<verdict>. <reason>"). All events are tagged
 // "Cyber Triage" for cross-source correlation.
 
-import type { Severity } from "./stateTypes.js";
+import type { IocProvenance, Severity } from "./stateTypes.js";
 import { parseCsv } from "./csvImport.js";
 import { trimSentencePunctuation } from "../ingest/textUriTrim.js";
 import {
@@ -173,16 +173,26 @@ const TEXT_URL = /\bhttps?:\/\/(?:[^\s"'<>}(]|(?<!\])\()+/gi;
 const TEXT_IPV4 = /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g;
 const TEXT_HASH = /\b[a-f0-9]{64}\b|\b[a-f0-9]{40}\b|\b[a-f0-9]{32}\b/gi;
 
-// Free text, so every value is "mentioned" (#1459) — a structured sighting elsewhere clears the mark.
-function harvestText(text: string, sink: Map<string, SiemIoc>): void {
+// Free text, so every value is "mentioned" (#1459) — a structured sighting elsewhere clears the
+// mark — EXCEPT that `networkProvenance` decides the mark for the url + ip values. The Active
+// Connection caller passes none (observed): its `To <ip>:<port>` message IS the socket record,
+// and "mentioned" there made every network surface print "no network record" next to a live
+// connection (#1471). A hash stays "mentioned" on every call — a hash-shaped token in a
+// connection message is still just text. (Required, not defaulted: a default would swallow an
+// explicit `undefined`.)
+function harvestText(
+  text: string,
+  sink: Map<string, SiemIoc>,
+  networkProvenance: IocProvenance | undefined,
+): void {
   if (!text) return;
   // Shared with the Velociraptor scraper, so one C2 URL is one indicator whichever importer
   // read it — the disagreement #744 was filed about.
   for (const m of text.matchAll(TEXT_URL))
-    addIoc(sink, "url", trimSentencePunctuation(m[0], text, m.index ?? 0).slice(0, 300), "mentioned");
+    addIoc(sink, "url", trimSentencePunctuation(m[0], text, m.index ?? 0).slice(0, 300), networkProvenance);
   for (const m of text.matchAll(TEXT_IPV4)) {
     const ip = cleanIp(m[0]);
-    if (ip && !ip.startsWith("127.")) addIoc(sink, "ip", ip, "mentioned");
+    if (ip && !ip.startsWith("127.")) addIoc(sink, "ip", ip, networkProvenance);
   }
   for (const m of text.matchAll(TEXT_HASH)) addIoc(sink, "hash", m[0].toLowerCase(), "mentioned");
 }
@@ -224,8 +234,9 @@ function mapRow(
   const message = oneLine(firstStr(rec, ["message"]));
 
   // Network: telemetry → IOC only (Active Connection carries "To <ip>:<port>"); never an event.
+  // The address is observed (no provenance mark): this row is the socket record itself (#1471).
   if (kind === "network") {
-    harvestText(message, sink);
+    harvestText(message, sink, undefined);
     return null;
   }
 
@@ -241,7 +252,7 @@ function mapRow(
   // IOCs (scored items + the process/task evidence we keep; not the bulk file telemetry).
   if (verdict !== "none" || kind !== "file") {
     if (path && looksLikePath(path)) addIoc(sink, "file", path.slice(0, 300));
-    harvestText(`${message} ${args}`, sink);
+    harvestText(`${message} ${args}`, sink, "mentioned");
   }
   let processName: string | undefined;
   let parentName: string | undefined;

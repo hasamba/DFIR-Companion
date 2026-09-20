@@ -141,6 +141,34 @@ describe("notionBlocks", () => {
     const values = rows.slice(1).map((row) => cellText(row, 1));
     expect(values).toEqual(["8.8.8.8", "203.0.113.9 (client-reported)"]);
   });
+
+  // #1471 finding 6: the table carried only the client-reported suffix. A value read out of free
+  // text — a network IOC (#1461) or a hash (#1459) — now carries its own note, through the same
+  // helper the other surfaces use, so the Notion page cannot drift from the markdown report.
+  it("suffixes a mentioned network IOC and a mentioned hash with their own notes (#1471)", () => {
+    const state: InvestigationState = {
+      ...sampleState(),
+      iocs: [
+        { id: "i1", type: "ip", value: "91.191.209.46", firstSeen: AT, provenance: "mentioned" },
+        { id: "i2", type: "hash", value: "a".repeat(64), firstSeen: AT, provenance: "mentioned" },
+        { id: "i3", type: "ip", value: "203.0.113.9", firstSeen: AT, provenance: "client-reported" },
+      ],
+    };
+    const blocks = buildCompanionBlocks(state, emptyReportMeta(), { caseId: "c1", exportedAt: AT });
+    const heading = blocks.findIndex(
+      (b) => b.type === "heading_2" && plainTextOf(b) === "Indicators of Compromise",
+    );
+    const rows = (blocks[heading + 1].table as { children: NotionBlock[] }).children;
+    const cellText = (row: NotionBlock, col: number): string =>
+      (row.table_row as { cells: Array<Array<{ text: { content: string } }>> }).cells[col]
+        .map((r) => r.text.content)
+        .join("");
+    expect(rows.slice(1).map((row) => cellText(row, 1))).toEqual([
+      "91.191.209.46 (referenced in free text; no network record)",
+      `${"a".repeat(64)} (mentioned in free text; no file with this hash was observed)`,
+      "203.0.113.9 (client-reported)",
+    ]);
+  });
 });
 
 // ---- orchestrator with a recording in-memory mock --------------------------
