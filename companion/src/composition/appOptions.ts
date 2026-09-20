@@ -41,6 +41,7 @@ import type { SourceTrustStore } from "../analysis/sourceTrustStore.js";
 import type { ClockSkewStore } from "../analysis/clockSkewStore.js";
 import type { DwellWindowStore } from "../analysis/dwellWindowStore.js";
 import type { SuperTimelineStore } from "../analysis/superTimelineStore.js";
+import type { BulkImportSink } from "../analysis/ingest/velociraptorBulk.js";
 import type { AuthObservationStore } from "../analysis/authObservationStore.js";
 import type { StarredReportStore } from "../analysis/starredReportStore.js";
 import type { TaggerStore } from "../analysis/taggerStore.js";
@@ -281,6 +282,9 @@ export interface AppOptions {
   // the forensic timeline so the AI only synthesizes graded signal. onForensicGate pings live dashboard
   // clients over the WS to re-fetch after the per-case threshold changes.
   forensicGateControlStore?: ForensicGateControlStore;
+  // The batched Velociraptor driver's stores (#1439) — the super-only ingest paths take it for a
+  // large collection; the forensic path reaches it through the pipeline's ImportContext.
+  bulkImportSink?: BulkImportSink;
   onForensicGate?: (caseId: string) => void;
   custodyStore?: CustodyStore;
   integrityMonitor?: EvidenceIntegrityMonitor;

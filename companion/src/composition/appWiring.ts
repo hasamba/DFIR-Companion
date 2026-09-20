@@ -18,6 +18,7 @@ import type { AppOptions } from "./appOptions.js";
 import type { RuntimeStores } from "./runtimeStores.js";
 import type { TeamAuth } from "../auth/teamAuth.js";
 import type { AnalysisPipeline } from "../analysis/pipeline.js";
+import type { BulkImportSink } from "../analysis/ingest/velociraptorBulk.js";
 import type { AIProvider } from "../providers/provider.js";
 import type { OcrRunner } from "../analysis/ocrRedact.js";
 import type { BackupManager } from "../storage/backupManager.js";
@@ -62,6 +63,7 @@ export interface AppWiringDeps {
   secondOpinionProvider?: AIProvider;
   /** The pipeline's OCR runner — undefined when the vision model is local. See aiRuntime.ts. */
   ocrRunner?: OcrRunner;
+  bulkImportSink?: BulkImportSink;
   backupManager: BackupManager;
   integrityMonitor: EvidenceIntegrityMonitor;
   /** Called once by createApp with the preflight runner; startServer fires it after listen(). */
@@ -250,6 +252,7 @@ export function buildAppOptions(rt: RuntimeStores, deps: AppWiringDeps): AppOpti
     starredReportStore,
     forensicGateControlStore,
     onForensicGate: (caseId) => hub.broadcastTo(caseId, { type: "forensic_gate_changed" }),
+    bulkImportSink: deps.bulkImportSink,
     custodyStore,
     integrityMonitor,
     confidenceControlStore,

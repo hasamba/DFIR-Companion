@@ -25,6 +25,7 @@ import {
 import { parseVelociraptorJsonProgress, type VelociraptorImportOptions } from "../velociraptorImport.js";
 import { describeFloor } from "./floorNote.js";
 import { noteEmptyImport } from "./importState.js";
+import { bulkPathApplies, importVelociraptorBulk } from "./velociraptorBulk.js";
 import type { ImportContext } from "./importContext.js";
 
 /**
@@ -236,6 +237,22 @@ export async function importVelociraptor(
     artifact = decodeURIComponent(rawArtifact);
   } catch {
     /* malformed %xx — keep the raw label */
+  }
+  // A large export takes the batched driver when its stores are wired (#1439): rows in batches,
+  // tag → gate → append per batch, nothing held for the whole file. It returns null for a shape
+  // its row reader cannot stream, and the whole-file path below then runs unchanged.
+  const bulk = ctx.opts.bulkImportSink;
+  if (bulkPathApplies(bulk, text)) {
+    const done = await importVelociraptorBulk(ctx, bulk, caseId, text, {
+      label: opts.label,
+      idPrefix: opts.idPrefix,
+      importedAt: opts.importedAt,
+      velociraptor: { artifact, ...opts.velociraptor },
+      minSeverity: opts.minSeverity,
+      veloUrl: opts.veloUrl,
+      onProgress: opts.onProgress,
+    });
+    if (done) return done;
   }
   // Chunked async parse: reports (rowsDone, rowsTotal) as it goes (→ the import job's progress bar
   // and the "importing X/Y" status) and yields to the event loop between chunks, so a huge MFT/USN

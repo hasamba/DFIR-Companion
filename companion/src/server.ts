@@ -30,6 +30,7 @@ import { registerAllRoutes } from "./composition/routeRegistry.js";
 import { createRuntimeStores } from "./composition/runtimeStores.js";
 import { startMaintenanceTasks, startPostListenTasks } from "./composition/maintenanceTasks.js";
 import { buildAiRuntime } from "./composition/aiRuntime.js";
+import { buildBulkImportSink } from "./composition/bulkImportSink.js";
 import { buildAppOptions } from "./composition/appWiring.js";
 import { createDiagnosticsRings } from "./composition/diagnosticsRings.js";
 import { createCaseAppliers } from "./composition/caseAppliers.js";
@@ -452,11 +453,26 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
     authStore: teamAuth?.store,
   });
 
+  // The batched Velociraptor driver's stores (#1439): a large export is imported one batch at a
+  // time through the indexed appends, with one log line per batch. See composition/bulkImportSink.ts.
+  const bulkImportSink = buildBulkImportSink({
+    stateStore,
+    superTimelineStore: rt.superTimelineStore,
+    taggerStore: rt.taggerStore,
+    tagsStore: rt.tagsStore,
+    forensicGateControlStore: rt.forensicGateControlStore,
+    analysisRunStore,
+    log: logLine,
+    onSuperTimeline: (caseId) => hub.broadcastTo(caseId, { type: "super_timeline_changed" }),
+    onTags: (caseId) => hub.broadcastTo(caseId, { type: "tags_changed" }),
+  });
+
   // Model providers, the optional Presidio gate, the OCR runner and the pipeline that binds them to
   // the stores. See composition/aiRuntime.ts.
   const { provider, secondOpinionProvider, ocrRunner, wiredPipeline } = buildAiRuntime({
     store,
     stateStore,
+    bulkImportSink,
     stateLock,
     logger,
     kevStore,
@@ -485,6 +501,7 @@ export function startServer(casesRoot: string, port = 4773, host = "127.0.0.1", 
       provider,
       secondOpinionProvider,
       ocrRunner,
+      bulkImportSink,
       backupManager,
       integrityMonitor,
       onPreflightReady: (run) => {

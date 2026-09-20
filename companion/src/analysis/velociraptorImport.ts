@@ -1855,3 +1855,8 @@ export async function parseVelociraptorJsonProgress(
   onProgress?.(total, total);
   return finalizeVrParse(mapped, ctx, total, format, detections, opts);
 }
+
+// The per-row mapping the bulk (batched) driver reuses (ingest/velociraptorBulk.ts, #1439), so a
+// batched import maps every row byte-for-byte as the two drivers above do. Not a parse API.
+export const vrBulkInternals = { mapRowToEvents, newVrCtx };
+export type { VrParseCtx };

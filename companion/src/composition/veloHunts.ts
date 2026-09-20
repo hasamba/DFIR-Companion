@@ -31,6 +31,7 @@ import { isHuntStoppedEarly } from "../integrations/velociraptor/huntStatusPolle
 import { createVeloHuntStatusTimers } from "./veloHuntStatusTimers.js";
 import type { HuntUpload, SkippedArtifact } from "../integrations/velociraptor/velociraptorApi.js";
 import { parseVelociraptorJson } from "../analysis/velociraptorImport.js";
+import { bulkPathApplies, runVelociraptorBulk } from "../analysis/ingest/velociraptorBulk.js";
 import { maxEventsDefault } from "../analysis/siemImport.js";
 import { applySeverityFloor } from "../analysis/severityFloor.js";
 import { diffTimeline } from "../analysis/timelineDiff.js";
@@ -410,6 +411,29 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
             logLine(
               `[velociraptor] hunt ${job.huntId}: super-timeline event cap (${Number(process.env.DFIR_SUPERTIMELINE_MAX) || 100000}) reached — remaining artifacts' rows are persisted as evidence but not further appended to the super-timeline (raise DFIR_SUPERTIMELINE_MAX to lift it)`,
             );
+          }
+        } else if (superOnly && bulkPathApplies(options.bulkImportSink, json)) {
+          // A large artifact takes the batched driver (#1439): the same super-only mapping, one batch
+          // at a time. The hunt-wide budget is charged with what landed; the store's own cap bounds the
+          // artifact that crosses it, and the next artifact sees the budget spent.
+          const res = await runVelociraptorBulk(
+            options.bulkImportSink,
+            caseId,
+            json,
+            {
+              label: storedName,
+              idPrefix: `${jobHuntId}-${name}`,
+              importedAt,
+              velociraptor: { artifact: name },
+              minSeverity,
+              veloUrl,
+            },
+            "super-only",
+          );
+          if (res) {
+            superTimelineAddedCount += res.superAppended;
+            superEventBudgetRemaining -= res.superAppended;
+            importedAny = true;
           }
         } else if (superOnly) {
           // Parse WITHOUT merging into forensic; append the mapped events to the super-timeline only.

@@ -19,6 +19,7 @@ import type { ImportBase } from "../routes/context.js";
 import type { AiControl } from "../analysis/aiControl.js";
 import type { HuntUpload } from "../integrations/velociraptor/velociraptorApi.js";
 import { parseVelociraptorJson } from "../analysis/velociraptorImport.js";
+import { bulkPathApplies, runVelociraptorBulk } from "../analysis/ingest/velociraptorBulk.js";
 import { applySeverityFloor } from "../analysis/severityFloor.js";
 import { settleForensicImport } from "../routes/importSettle.js";
 import { diffTimeline, type TimelineDiff } from "../analysis/timelineDiff.js";
@@ -139,6 +140,29 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
 
       if (opts.superOnly && options.superTimelineStore) {
         const artifact = storedName.replace(/^\d+_/, "").replace(/\.(json|jsonl|ndjson|csv)$/i, "");
+        // A large collection takes the batched driver (#1439): the same super-only mapping, one
+        // batch at a time, tagged per batch, logged per batch — never the whole map in memory.
+        const bulk = options.bulkImportSink;
+        if (bulkPathApplies(bulk, mapJson)) {
+          const res = await runVelociraptorBulk(
+            bulk,
+            caseId,
+            mapJson,
+            {
+              label: storedName,
+              idPrefix: opts.idBase,
+              importedAt,
+              velociraptor: { artifact, hostFallback: opts.hostFallback },
+              minSeverity: opts.minSeverity,
+              veloUrl: opts.veloUrl,
+            },
+            "super-only",
+          );
+          if (res) {
+            resynthesizeInBackground(caseId);
+            return { addedEvents: res.superAppended, addedIocs: 0, storedName };
+          }
+        }
         // The super-timeline is the COMPLETE record — do NOT aggregate near-identical rows (which would
         // collapse e.g. 221 collected rows to ~141), and lift the default 2000-event cap to the super
         // store's cap so a big collection isn't silently truncated.

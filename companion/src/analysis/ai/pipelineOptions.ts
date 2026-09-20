@@ -40,6 +40,7 @@ import type { StateLock } from "../stateLock.js";
 import type { StateStore } from "../stateStore.js";
 import type { InvestigationState } from "../stateTypes.js";
 import type { SuperTimelineStore } from "../superTimelineStore.js";
+import type { BulkImportSink } from "../ingest/velociraptorBulk.js";
 import type { AuthObservationStore } from "../authObservationStore.js";
 import type { SynthMetaStore } from "../synthMeta.js";
 
@@ -87,6 +88,10 @@ export interface PipelineOptions {
   // spray whose attempts split across two uploads can still cross the threshold. Server-only
   // (absent in scripts/*) → the cross-upload pass is simply off, same as superTimelineStore.
   authObservationStore?: AuthObservationStore;
+  // The batched Velociraptor driver's stores (#1439): a large export is imported one batch at a
+  // time through the indexed appends instead of the whole-state merge. Server-only (absent in
+  // scripts/* and most tests) → every import takes the whole-file path, exactly as before.
+  bulkImportSink?: BulkImportSink;
   // Client-confirmed false-positive findings/IOCs to exclude from synthesis.
   falsePositiveStore?: FalsePositiveStore;
   // Learned dismissal patterns (issue #65): recurring reasoned dismissals distilled into a per-case

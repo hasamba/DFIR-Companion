@@ -47,6 +47,22 @@ Before importing, you can set a **minimum severity** filter. Events below the fl
 
 All of the above except CSV/log/DFIR-IRIS are **fully deterministic — no AI call** — they map the tool's own verdict/fields, not re-detect threats.
 
+### Large Velociraptor exports are imported in batches
+
+A Velociraptor export at or above 8 MB (`DFIR_IMPORT_BULK_MIN_MB`) — a full `$MFT`, a USN journal, a
+big Amcache — is imported one batch of rows at a time (`DFIR_IMPORT_BATCH_ROWS`, default 5000) instead
+of being expanded whole in memory. Each batch is mapped, run through the deterministic content
+tagger, gated, and written: rows the tagger raised above Info (or that arrived graded) go to the
+forensic timeline; every row goes to the super-timeline. The session log gets one line per batch —
+which rows, how many events, how many landed where, how long it took, and the process memory — so a
+crash mid-import always says how far it got. The import's timeline note names the path ("bulk path:
+N batches") and the counts.
+
+Two things differ from a small import, on purpose: repeat collapsing and PowerShell script-block
+re-joining work within a batch, not across the file. A repeat that straddles a batch boundary shows as
+two counted rows; script-block fragments more than a batch apart are not re-joined. Neither affects what
+the tagger sees. Set `DFIR_IMPORT_BULK_MIN_MB=0` to batch every Velociraptor import.
+
 Deterministic imports also retain a [versioned canonical event envelope](canonical-events.md) with
 structured identities and field-level provenance. This lets graphs and cross-source correlation use
 the source facts rather than parsing the displayed description back into data.

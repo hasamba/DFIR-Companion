@@ -1,0 +1,443 @@
+import { randomUUID } from "node:crypto";
+import type { ForensicEvent, InvestigationState, Severity } from "../stateTypes.js";
+import { demoteBelowSeverity } from "../forensicGate.js";
+import type { MappedEvent, SiemEvent } from "../siemImport.js";
+import { aggregateEvents } from "../eventAggregate.js";
+import type { SiemIoc } from "../iocSink.js";
+import { applySeverityFloor } from "../severityFloor.js";
+import { toUtcIso } from "../timeUtc.js";
+import { deltaSchema } from "../responseSchema.js";
+import { prepareRows, vrBulkInternals, type VelociraptorImportOptions } from "../velociraptorImport.js";
+import { openVelociraptorRowStream, type Row } from "../velociraptorRowStream.js";
+import type { ImportContext } from "./importContext.js";
+
+/**
+ * The bounded Velociraptor import (#1439): rows in, one batch at a time; events out, one batch at a
+ * time; nothing held for the whole file.
+ *
+ * The whole-file driver (`importVelociraptor`) parses every row, maps every event, aggregates,
+ * merges the lot into the in-memory case state and saves; the settle seam then loads, stamps, saves,
+ * dual-writes, tags, saves, demotes and saves again. For a 100k-row MFT (~800k MACB events) that
+ * is ten live copies of the expansion and four full-table rewrites — 17 GB, and the OOM killer.
+ *
+ * This driver keeps the ORDER the seam guarantees (merge-all → deterministic tagger → demote,
+ * CLAUDE.md §7) but runs it per batch, and turns "write everything to the forensic table, then
+ * delete what is Info" into "tag first, then write only what the gate keeps": a row the tagger
+ * raises out of Info is kept, exactly as demote-after-tag would have kept it; a row still Info after
+ * the tagger goes to the super-timeline only, exactly where demote would have moved it. Every row
+ * reaches the super-timeline (the dual-write), so the raw record is as complete as before.
+ *
+ * What differs from the whole-file driver, on purpose and stated in the timeline note: repeat
+ * collapsing (`aggregate`) and PowerShell script-block consolidation are per batch, so a repeat
+ * straddling a batch boundary counts as two rows, and fragments more than a batch apart are not
+ * re-joined. The event cap (DFIR_MAX_EVENTS) bounds what enters the FORENSIC table — graded rows —
+ * not the raw record, whose own cap (DFIR_SUPERTIMELINE_MAX) the super store enforces itself.
+ */
+
+// Rows per batch when DFIR_IMPORT_BATCH_ROWS is unset or invalid.
+export const DEFAULT_BULK_BATCH_ROWS = 5000;
+// Inputs at or above this many bytes take the bulk path when a sink is wired (DFIR_IMPORT_BULK_MIN_MB).
+export const DEFAULT_BULK_MIN_MB = 8;
+// Most an IOC's extractedFrom list grows to on this path — a hash seen in 100k rows links to the
+// first 200; the approximate matcher covers the rest, as it does for a capped event today.
+const MAX_EXTRACTED_FROM = 200;
+const DEFAULT_MAX_IOCS = 5000;
+
+export function readBulkBatchRows(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.DFIR_IMPORT_BATCH_ROWS);
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : DEFAULT_BULK_BATCH_ROWS;
+}
+
+export function readBulkMinBytes(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.DFIR_IMPORT_BULK_MIN_MB;
+  if (raw === undefined || raw.trim() === "") return DEFAULT_BULK_MIN_MB * 1024 * 1024;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n * 1024 * 1024) : DEFAULT_BULK_MIN_MB * 1024 * 1024;
+}
+
+/** One batch's tagger pass: the same events back, severity/MITRE raised where a rule matched. */
+export interface BatchTagger {
+  apply(caseId: string, events: ForensicEvent[]): Promise<{ events: ForensicEvent[]; matched: number }>;
+  rulesHash: string;
+}
+
+export interface BulkRunSummary {
+  label: string;
+  path: "bulk";
+  mode: "forensic" | "super-only";
+  rows: number;
+  events: number;
+  forensicKept: number;
+  superAppended: number;
+  batches: number;
+  tagged: number;
+  rulesHash: string | null;
+  startedAt: string;
+  finishedAt: string;
+}
+
+/**
+ * What the bulk driver needs from the composition layer, and nothing else. `appendForensic` and
+ * `appendSuper` are the stores' indexed appends (no whole-state load) — `appendForensic` also owns
+ * the analyst-work-log guard mergeDelta applies at the forensic door, which lives above this layer;
+ * `openTagger` loads the ruleset once per import and returns null when the automatic tagger is off;
+ * `forensicMinSeverity` is the case's gate as demote resolves it.
+ */
+export interface BulkImportSink {
+  minBytes: number;
+  batchRows: number;
+  appendForensic(caseId: string, events: ForensicEvent[]): Promise<number>;
+  appendSuper(caseId: string, events: ForensicEvent[]): Promise<number>;
+  openTagger(caseId: string, mode: "forensic" | "super-only"): Promise<BatchTagger | null>;
+  forensicMinSeverity(caseId: string): Promise<Severity>;
+  log(msg: string): void;
+  onSuperTimeline?(caseId: string): void;
+  onTags?(caseId: string): void;
+  recordRun?(caseId: string, summary: BulkRunSummary): Promise<void>;
+}
+
+export interface BulkImportOpts {
+  label: string;
+  /** Forensic ids are `${idPrefix}e${n}`; super-only ids are `${idPrefix}-e${n}` (the stable idBase). */
+  idPrefix: string;
+  importedAt: string;
+  velociraptor?: VelociraptorImportOptions;
+  minSeverity?: Severity;
+  veloUrl?: string;
+  onProgress?: (done: number, total: number) => void;
+}
+
+export interface BulkImportResult {
+  rows: number;
+  events: number;
+  forensicKept: number;
+  superAppended: number;
+  batches: number;
+  dropped: number; // rows not represented (below floor / over the forensic cap)
+  hostname: string;
+  format: string;
+  iocs: SiemIoc[];
+  eventIdByAggKey: Map<string, string>; // only keys an IOC references — bounded by the IOC sink
+  detections: number;
+}
+
+/** True when the sink is wired and the input is big enough to take the bulk path. */
+export function bulkPathApplies(sink: BulkImportSink | undefined, text: string): sink is BulkImportSink {
+  return !!sink && text.length >= sink.minBytes;
+}
+
+// The whole-file driver's SiemEvent → ForensicEvent shape (importVelociraptor + mergeDelta's
+// `created` branch), applied per event here because nothing downstream re-shapes a bulk row.
+function toForensicEvent(
+  e: SiemEvent,
+  id: string,
+  opts: BulkImportOpts,
+  stamp: { importedAt: string; importBatchId: string },
+): ForensicEvent {
+  const { aggKey: _aggKey, ...rest } = e;
+  const endTs = e.endTimestamp !== undefined ? toUtcIso(e.endTimestamp) : undefined;
+  return {
+    ...rest,
+    id,
+    timestamp: toUtcIso(e.timestamp),
+    ...(endTs !== undefined ? { endTimestamp: endTs } : {}),
+    mitreTechniques: [...new Set(e.mitreTechniques)],
+    relatedFindingIds: [],
+    sourceScreenshots: [opts.label],
+    sources: e.sources?.length ? [...new Set(e.sources)] : ["Velociraptor"],
+    ...(opts.veloUrl ? { veloUrl: opts.veloUrl } : {}),
+    importedAt: stamp.importedAt,
+    importBatchId: stamp.importBatchId,
+  };
+}
+
+// Keep the first `max` entries (Map insertion order) — the same rows `finalizeVrParse`'s
+// `.slice(0, maxIocs)` keeps — so the sink cannot grow with the row count.
+function trimIocSink(sink: Map<string, SiemIoc>, max: number): void {
+  if (sink.size <= max) return;
+  let i = 0;
+  for (const key of sink.keys()) {
+    if (i++ >= max) sink.delete(key);
+  }
+}
+
+// Resolve, for every IOC in the sink, the aggKeys THIS batch minted ids for. Batch-local lookup, so
+// the id map never outlives the batch; only the resolved (aggKey → id) pairs are kept, at most
+// MAX_EXTRACTED_FROM per IOC.
+function resolveBatchIocLinks(
+  sink: Map<string, SiemIoc>,
+  batchIdByAggKey: Map<string, string>,
+  resolved: Map<string, string>,
+): void {
+  if (!batchIdByAggKey.size) return;
+  for (const ioc of sink.values()) {
+    const keys = ioc.sourceAggKeys;
+    if (!keys?.length) continue;
+    let linked = 0;
+    for (const k of keys) {
+      if (resolved.has(k)) {
+        if (++linked >= MAX_EXTRACTED_FROM) break;
+        continue;
+      }
+      const id = batchIdByAggKey.get(k);
+      if (id) {
+        resolved.set(k, id);
+        if (++linked >= MAX_EXTRACTED_FROM) break;
+      }
+    }
+  }
+}
+
+function yieldToLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+function mb(bytes: number): string {
+  return (bytes / (1024 * 1024)).toFixed(0);
+}
+
+interface BatchOutcome {
+  events: ForensicEvent[];
+  rowsIn: number;
+  detections: number;
+}
+
+// Normalize + consolidate + map + aggregate ONE batch of rows into forensic-shaped events with ids
+// continuing from `nextIndex`. Pure apart from the shared parse context (IOC sink, host tally,
+// rename ledger), which the whole-file driver shares across its rows the same way.
+function mapBatch(
+  rows: Row[],
+  vrCtx: ReturnType<typeof vrBulkInternals.newVrCtx>,
+  opts: BulkImportOpts,
+  mode: "forensic" | "super-only",
+  nextIndex: { n: number },
+  stamp: { importedAt: string; importBatchId: string },
+  batchIdByAggKey: Map<string, string>,
+): BatchOutcome {
+  const prepared = prepareRows(rows);
+  const mapped: MappedEvent[] = [];
+  let detections = 0;
+  for (const row of prepared) {
+    const r = vrBulkInternals.mapRowToEvents(row, vrCtx);
+    for (const m of r.events) mapped.push(m);
+    detections += r.detections;
+  }
+  const vr = opts.velociraptor ?? {};
+  const { events: grouped } = aggregateEvents(mapped, {
+    aggregate: mode === "super-only" ? false : vr.aggregate,
+    minSeverity: vr.minSeverity,
+    maxEvents: Number.MAX_SAFE_INTEGER,
+  });
+  const floored = applySeverityFloor(grouped, opts.minSeverity);
+  const events: ForensicEvent[] = [];
+  for (const e of floored) {
+    nextIndex.n++;
+    const id = mode === "forensic" ? `${opts.idPrefix}e${nextIndex.n}` : `${opts.idPrefix}-e${nextIndex.n}`;
+    if (e.aggKey) batchIdByAggKey.set(e.aggKey, id);
+    events.push(toForensicEvent(e, id, opts, stamp));
+  }
+  return { events, rowsIn: rows.length, detections };
+}
+
+/**
+ * Run the batched import. Returns null when the text is not a shape the row reader streams, so the
+ * caller falls back to the whole-file driver. In "forensic" mode the caller must hold the case's
+ * state lock for the whole run: a concurrent whole-state save truncates the forensic table to its
+ * own array length and would drop rows these batches appended.
+ */
+export async function runVelociraptorBulk(
+  sink: BulkImportSink,
+  caseId: string,
+  text: string,
+  opts: BulkImportOpts,
+  mode: "forensic" | "super-only",
+): Promise<BulkImportResult | null> {
+  const stream = openVelociraptorRowStream(text);
+  if (!stream) return null;
+  const startedAt = new Date().toISOString();
+  const t0 = performance.now();
+  const stamp = { importedAt: opts.importedAt, importBatchId: randomUUID() };
+  const vr = opts.velociraptor ?? {};
+  const vrCtx = vrBulkInternals.newVrCtx(vr);
+  const maxIocs = vr.maxIocs ?? DEFAULT_MAX_IOCS;
+  const forensicBudget = mode === "forensic" ? (vr.maxEvents ?? Number.MAX_SAFE_INTEGER) : 0;
+  const gate = mode === "forensic" ? await sink.forensicMinSeverity(caseId) : null;
+  const tagger = await sink.openTagger(caseId, mode);
+  const nextIndex = { n: 0 };
+  const resolvedLinks = new Map<string, string>();
+  const totals = {
+    rows: 0,
+    events: 0,
+    forensicKept: 0,
+    superAppended: 0,
+    batches: 0,
+    tagged: 0,
+    detections: 0,
+    dropped: 0,
+  };
+
+  sink.log(
+    `[import] ${caseId} ${opts.label}: bulk path (${mode}), ${mb(text.length)} MB, ${stream.format}, batches of ${sink.batchRows} rows`,
+  );
+
+  const flush = async (rows: Row[], offset: number, extra?: ForensicEvent[]): Promise<void> => {
+    const tb = performance.now();
+    const batchIdByAggKey = new Map<string, string>();
+    const out = mapBatch(rows, vrCtx, opts, mode, nextIndex, stamp, batchIdByAggKey);
+    let events = extra ? [...out.events, ...extra] : out.events;
+    totals.detections += out.detections;
+    if (tagger && events.length) {
+      const tagged = await tagger.apply(caseId, events);
+      events = tagged.events;
+      totals.tagged += tagged.matched;
+    }
+    let kept = 0;
+    if (mode === "forensic" && events.length && gate) {
+      const room = forensicBudget - totals.forensicKept;
+      const { kept: graded } = demoteBelowSeverity(events, gate); // the demote pass's own cut
+      const keep = room > 0 ? graded.slice(0, room) : [];
+      totals.dropped += graded.length - keep.length;
+      if (keep.length) kept = await sink.appendForensic(caseId, keep);
+    }
+    let superAdded = 0;
+    if (events.length) {
+      superAdded = await sink.appendSuper(caseId, events);
+      sink.onSuperTimeline?.(caseId);
+    }
+    resolveBatchIocLinks(vrCtx.iocSink, batchIdByAggKey, resolvedLinks);
+    trimIocSink(vrCtx.iocSink, maxIocs);
+    const from = totals.rows + 1;
+    totals.rows += out.rowsIn;
+    totals.events += events.length;
+    totals.forensicKept += kept;
+    totals.superAppended += superAdded;
+    totals.batches++;
+    const rss = process.memoryUsage().rss;
+    sink.log(
+      `[import] ${caseId} ${opts.label}: batch ${totals.batches} rows ${from}–${totals.rows} → ${events.length} event(s); forensic +${kept}, super +${superAdded} (${Math.round(performance.now() - tb)} ms, rss ${mb(rss)} MB)`,
+    );
+    // Rows done over an estimate of rows total from the bytes consumed so far — refines each batch.
+    const estimate =
+      offset > 0 ? Math.max(totals.rows, Math.round((totals.rows * text.length) / offset)) : totals.rows;
+    opts.onProgress?.(totals.rows, estimate);
+  };
+
+  let batch: Row[] = [];
+  let lastOffset = 0;
+  for (const item of stream.rows) {
+    batch.push(item.row);
+    lastOffset = item.offset;
+    if (batch.length >= sink.batchRows) {
+      await flush(batch, lastOffset);
+      batch = [];
+      await yieldToLoop();
+    }
+  }
+  // The rename ledger's Info markers join the tail batch, as finalizeVrParse appends them last.
+  const renameEvents = vrCtx.renames.events();
+  const tail: ForensicEvent[] = [];
+  if (renameEvents.length) {
+    const { events } = aggregateEvents(renameEvents, {
+      aggregate: false,
+      maxEvents: Number.MAX_SAFE_INTEGER,
+    });
+    for (const e of events) {
+      nextIndex.n++;
+      const id = mode === "forensic" ? `${opts.idPrefix}e${nextIndex.n}` : `${opts.idPrefix}-e${nextIndex.n}`;
+      tail.push(toForensicEvent(e, id, opts, stamp));
+    }
+  }
+  if (batch.length || tail.length) await flush(batch, text.length, tail);
+  opts.onProgress?.(totals.rows, totals.rows);
+
+  const hostname = [...vrCtx.hostTally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+  const finishedAt = new Date().toISOString();
+  sink.log(
+    `[import] ${caseId} ${opts.label}: bulk done — ${totals.rows} row(s) → ${totals.events} event(s) in ${totals.batches} batch(es); forensic +${totals.forensicKept}, super +${totals.superAppended}, tagger matched ${totals.tagged}${totals.dropped ? `, ${totals.dropped} graded row(s) over the event cap` : ""} (${Math.round((performance.now() - t0) / 1000)} s)`,
+  );
+  if (totals.tagged > 0) sink.onTags?.(caseId);
+  await sink.recordRun?.(caseId, {
+    label: opts.label,
+    path: "bulk",
+    mode,
+    rows: totals.rows,
+    events: totals.events,
+    forensicKept: totals.forensicKept,
+    superAppended: totals.superAppended,
+    batches: totals.batches,
+    tagged: totals.tagged,
+    rulesHash: tagger?.rulesHash ?? null,
+    startedAt,
+    finishedAt,
+  });
+  return {
+    rows: totals.rows,
+    events: totals.events,
+    forensicKept: totals.forensicKept,
+    superAppended: totals.superAppended,
+    batches: totals.batches,
+    dropped: totals.dropped,
+    hostname,
+    format: stream.format,
+    iocs: [...vrCtx.iocSink.values()].map((c) => {
+      const ids = c.sourceAggKeys
+        ? [...new Set(c.sourceAggKeys.map((k) => resolvedLinks.get(k)).filter((x): x is string => !!x))]
+        : [];
+      const { sourceAggKeys: _keys, ...rest } = c;
+      return ids.length ? { ...rest, extractedFrom: ids.slice(0, MAX_EXTRACTED_FROM) } : rest;
+    }),
+    eventIdByAggKey: resolvedLinks,
+    detections: totals.detections,
+  };
+}
+
+/**
+ * Forensic-mode entry, the drop-in for `importVelociraptor` on a large input. Holds the state lock
+ * for the whole run (see runVelociraptorBulk), then records the import's IOCs and timeline note with
+ * ONE small whole-state merge — the forensic table holds only graded rows now, so that load is small,
+ * and the merge gives the appended rows the same post-merge passes (year re-anchor, correlation,
+ * sort) every merged event gets.
+ */
+export async function importVelociraptorBulk(
+  ctx: ImportContext,
+  sink: BulkImportSink,
+  caseId: string,
+  text: string,
+  opts: BulkImportOpts,
+): Promise<InvestigationState | null> {
+  return ctx.withStateLock(caseId, async () => {
+    const result = await runVelociraptorBulk(sink, caseId, text, opts, "forensic");
+    if (!result) return null;
+    const delta = deltaSchema.parse({
+      findings: [],
+      iocs: result.iocs.map((c, i) => ({
+        id: `${opts.idPrefix}i${i + 1}`,
+        type: c.type,
+        value: c.value,
+        ...(c.extractedFrom ? { extractedFrom: c.extractedFrom } : {}),
+      })),
+      mitreTechniques: [],
+      forensicEvents: [],
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote:
+        `Velociraptor import (${result.format}, bulk path: ${result.batches} batch(es) of ${sink.batchRows} rows): ` +
+        `${result.events} event(s) from ${result.rows} row(s); ${result.forensicKept} kept in the forensic timeline, ` +
+        `${result.superAppended} in the super-timeline` +
+        (result.detections > 0 ? `, ${result.detections} detection(s)` : "") +
+        (result.dropped > 0 ? `, ${result.dropped} graded row(s) omitted at the event cap` : "") +
+        (result.hostname ? ` (host ${result.hostname})` : ""),
+      summary: "",
+    });
+    let state = await ctx.opts.stateStore.load(caseId);
+    state = await ctx.mergeWithAliases(state, delta, {
+      windowSequence: -1,
+      timestamp: opts.importedAt,
+      sourceScreenshots: [opts.label],
+    });
+    await ctx.opts.stateStore.save(state);
+    ctx.opts.onState?.(state);
+    opts.onProgress?.(1, 1);
+    return state;
+  });
+}
