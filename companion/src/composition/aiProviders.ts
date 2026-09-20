@@ -53,6 +53,7 @@ import { CommentsStore } from "../analysis/comments.js";
 import { HostScopeStore } from "../analysis/hostScopeStore.js";
 import { DwellWindowStore } from "../analysis/dwellWindowStore.js";
 import { SuperTimelineStore } from "../analysis/superTimelineStore.js";
+import type { BulkImportSink } from "../analysis/ingest/velociraptorBulk.js";
 import { AuthObservationStore } from "../analysis/authObservationStore.js";
 import { IocAliasStore } from "../analysis/iocAlias.js";
 import type { KevStore } from "../analysis/kevStore.js";
@@ -187,6 +188,8 @@ export interface RuntimePipelineParams {
   velociraptorProvider?: AnalyzeProvider;
   stateStore: StateStoreImpl;
   store: CaseStore;
+  // The batched Velociraptor driver's stores (#1439); undefined in scripts and most tests.
+  bulkImportSink?: BulkImportSink;
   imageLoader?: ConstructorParameters<typeof AnalysisPipelineImpl>[0]["imageLoader"];
   onState?: (state: InvestigationState) => void;
   // Fired after a real synthesis run with the findings diff + new state (issue #58 notifications).
@@ -238,6 +241,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     secondOpinionModelLabel: params.secondOpinionModelLabel,
     stateLock: params.stateLock,
     stateStore: params.stateStore,
+    bulkImportSink: params.bulkImportSink,
     falsePositiveStore: new FalsePositiveStore(params.store),
     scopeStore: new ScopeStore(params.store),
     assetOverridesStore: new AssetOverridesStore(params.store),

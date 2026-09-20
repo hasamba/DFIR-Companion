@@ -16,6 +16,7 @@
  */
 import type { CaseStore } from "../storage/caseStore.js";
 import type { StateStore } from "../analysis/stateStore.js";
+import type { BulkImportSink } from "../analysis/ingest/velociraptorBulk.js";
 import type { StateLock } from "../analysis/stateLock.js";
 import type { Logger } from "../logging/logger.js";
 import type { KevStore } from "../analysis/kevStore.js";
@@ -58,6 +59,7 @@ export interface AiRuntimeDeps {
   operationalMetrics: OperationalMetricsStore;
   secondOpinionStore: SecondOpinionStore;
   velociraptorClientStore?: VelociraptorClientStore;
+  bulkImportSink?: BulkImportSink;
   notifier: Notifier;
   dashboardBaseUrl: string;
   /** Broadcast a fresh state to live dashboards (the LiveHub's broadcast). */
@@ -133,6 +135,7 @@ export function buildAiRuntime(deps: AiRuntimeDeps) {
     analysisRunStore,
     operationalMetrics,
     velociraptorClientStore,
+    bulkImportSink: deps.bulkImportSink,
     presidio,
     presidioPendingStore: new PresidioPendingStore(store),
     secondOpinionProvider,

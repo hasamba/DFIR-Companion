@@ -3,6 +3,7 @@ import type { InvestigationState } from "../stateTypes.js";
 import type { StateStore } from "../stateStore.js";
 import type { SuperTimelineStore } from "../superTimelineStore.js";
 import type { AuthObservationStore } from "../authObservationStore.js";
+import type { BulkImportSink } from "./velociraptorBulk.js";
 
 /**
  * What an importer needs from the pipeline, and nothing else (#384).
@@ -49,6 +50,9 @@ export interface ImportContext {
     // then skip the cross-upload pass entirely — exactly today's within-upload-only behavior, no
     // regression for a caller that doesn't wire it.
     authObservationStore?: AuthObservationStore;
+    // The batched Velociraptor driver's stores (#1439). Optional for the same reason: minimal/test
+    // wirings have none, and importVelociraptor then takes the whole-file path for every size.
+    bulkImportSink?: BulkImportSink;
   };
 
   /**
@@ -77,6 +81,7 @@ export function buildImportOpts(source: {
   readonly onState?: (state: InvestigationState) => void;
   readonly superTimelineStore?: SuperTimelineStore;
   readonly authObservationStore?: AuthObservationStore;
+  readonly bulkImportSink?: BulkImportSink;
 }): ImportContext["opts"] {
   return {
     get stateStore() {
@@ -90,6 +95,9 @@ export function buildImportOpts(source: {
     },
     get authObservationStore() {
       return source.authObservationStore;
+    },
+    get bulkImportSink() {
+      return source.bulkImportSink;
     },
   };
 }

@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Batched Velociraptor import** — a large export (a full `$MFT`) is imported one batch of rows at a time, tagged and gated per batch, with one log line per batch, instead of expanded whole in memory and OOM-killed (closes #1439)
+
 ## [0.37.0] - 2026-09-20
 
 ### Added
