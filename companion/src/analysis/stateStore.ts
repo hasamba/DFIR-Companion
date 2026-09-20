@@ -78,8 +78,27 @@ export interface InvestigationStateStorage {
     caseId: string,
     query?: Omit<EntityQuery, "cursor">,
   ): AsyncGenerator<ForensicEvent[]>;
+  iocProvenanceCandidates(
+    caseId: string,
+    keys: readonly string[],
+    ids: readonly string[],
+  ): Promise<IocProvenanceCandidates>;
   integrityCheck(caseId: string): Promise<{ ok: boolean; message: string }>;
 }
+
+/**
+ * The rows the worker's FTS term index names for a set of IOC keys plus every authoritative
+ * `extractedFrom` id (#1452): forensic rows in ordinal order, super rows in the streaming order,
+ * so the provenance builders see them exactly as the streaming path fed them.
+ */
+export interface IocProvenanceCandidates {
+  forensic: ForensicEvent[];
+  super: ForensicEvent[];
+  /** Distinct rows fetched — for logs and tests. */
+  candidates: number;
+}
+
+const NO_IOC_CANDIDATES: IocProvenanceCandidates = { forensic: [], super: [], candidates: 0 };
 
 interface WorkerEntityPage<T> {
   entities: T[];
@@ -303,6 +322,26 @@ export class StateStore implements InvestigationStateStorage {
       if (page.entities.length) yield page.entities;
       cursor = page.nextCursor;
     } while (cursor !== null);
+  }
+
+  // `keys` are already trimmed + lowercased and at least 3 characters long — the caller filters.
+  async iocProvenanceCandidates(
+    caseId: string,
+    keys: readonly string[],
+    ids: readonly string[],
+  ): Promise<IocProvenanceCandidates> {
+    if (!(await this.ensureMigrated(caseId))) return { ...NO_IOC_CANDIDATES };
+    const found = await caseSqliteWorker.request<IocProvenanceCandidates>({
+      op: "iocCandidates",
+      dbPath: this.databasePath(caseId),
+      keys: [...keys],
+      ids: [...ids],
+    });
+    return {
+      forensic: found.forensic.map(upgradeForensicEvent),
+      super: found.super.map(upgradeForensicEvent),
+      candidates: found.candidates,
+    };
   }
 
   async integrityCheck(caseId: string): Promise<{ ok: boolean; message: string }> {

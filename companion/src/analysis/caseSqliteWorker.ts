@@ -3,6 +3,7 @@ import { loadDatabaseSync } from "./sqliteRuntime.js";
 import { CASE_SQLITE_SCHEMA_SQL } from "./caseSqliteSchema.js";
 import { SUPER_WORKER_SOURCE } from "./caseSqliteWorkerSuper.js";
 import { SUPER_QUERY_WORKER_SOURCE } from "./caseSqliteWorkerSuperQuery.js";
+import { TERMS_WORKER_SOURCE } from "./caseSqliteWorkerTerms.js";
 
 // node:sqlite is synchronous. Keeping the entire database lifecycle in this worker prevents a
 // checkpoint, migration, large import, or integrity check from pinning Express/WebSocket work on
@@ -27,6 +28,7 @@ function openDatabase(path) {
   const db = new DatabaseSync(path, { enableForeignKeyConstraints: true });
   db.exec("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=10000;");
   db.exec(${JSON.stringify(CASE_SQLITE_SCHEMA_SQL)} + "PRAGMA user_version=" + SCHEMA_VERSION + ";");
+  stampEventTermsOnNewDatabase(db); // #1452: a new file never backfills the term index
   return db;
 }
 
@@ -104,6 +106,7 @@ function createEntityWriter(db) {
     "source=?, severity=?, content_key=?, payload=? WHERE row_id=?"
   );
   const deleteValuesStatement = db.prepare("DELETE FROM entity_values WHERE row_id=?");
+  const terms = createTermsWriter(db); // #1452: the term index follows every timeline row
   return {
     insert(projection, entity) {
       const result = insertStatement.run(
@@ -117,6 +120,7 @@ function createEntityWriter(db) {
           rowId, name, value, projection.kind, projection.host, projection.ordinal
         );
       }
+      terms.insert(projection.kind, rowId, entity);
       return rowId;
     },
     update(rowId, projection, entity) {
@@ -130,6 +134,7 @@ function createEntityWriter(db) {
           rowId, name, value, projection.kind, projection.host, projection.ordinal
         );
       }
+      terms.update(projection.kind, rowId, entity);
     },
   };
 }
@@ -468,6 +473,7 @@ function pruneEntitiesBefore(dbPath, kind, beforeMs) {
 ` +
   SUPER_WORKER_SOURCE +
   SUPER_QUERY_WORKER_SOURCE +
+  TERMS_WORKER_SOURCE +
   String.raw`
 
 function integrity(dbPath) {
@@ -568,6 +574,7 @@ async function dispatch(message) {
     case "unprotectSuper": return unprotectSuper(message.dbPath, message.eventId, message.max);
     case "listSuperProtected": return listSuperProtected(message.dbPath);
     case "superMeta": return superMeta(message.dbPath, message.hosts);
+    case "iocCandidates": return iocCandidates(message.dbPath, message.keys, message.ids);
     case "integrity": return integrity(message.dbPath);
     case "backupDatabase": return backupDatabase(message.dbPath, message.targetPath);
     case "restoreDatabase": return restoreDatabase(message.sourcePath, message.targetPath);
