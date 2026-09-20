@@ -1,0 +1,283 @@
+// The collector's own deployment on the case host is not evidence (#1460).
+//
+// INC-2026-028 finding f31 (High, T1070.006) was built from three rows that describe the Companion's
+// OWN Velociraptor client arriving on the host: `Velociraptor.exe` fetched from the Velociraptor
+// server this Companion is configured against, the `msiexec` install, and the Sysmon EID 2 (file
+// creation time changed) an MSI install leaves on the file it wrote. Nothing told the pipeline that
+// this is the case's own DFIR infrastructure, so the rows graded like any other download + install +
+// timestamp change and synthesis read them as an intrusion.
+//
+// This is the same mistake veloDetectionNoise.ts exists for — a detection stack finding its own
+// reflection — seen from the deployment side rather than the scanning side, and it follows the same
+// discipline. EVERY PREDICATE HERE LOWERS A GRADE OR STRIPS A TECHNIQUE, so every one is a place an
+// intruder would like to reach:
+//
+//   - Known infrastructure comes from CONFIG ONLY (the GUI URL and the api_client config the
+//     Velociraptor integration already reads), never from event content. A row cannot declare its
+//     own destination to be the DFIR server.
+//   - The server address is matched only where a row NAMES A DESTINATION — the DestinationIp /
+//     DestinationHostname fields the Windows mapper renders, the structured dstIp, or the host of a
+//     URL — never as free text. A row whose message merely mentions the address is untouched.
+//   - The collector binary is recognised only under its INSTALL ROOT (`\Program Files\Velociraptor\`),
+//     the one location an intruder cannot supply — the reasoning isDetectionToolLocation records. A
+//     bare `velociraptor.exe` in `C:\Users\Public\` is exactly the masquerade an attacker would pick,
+//     and it keeps whatever grade it earned.
+//   - The EID 2 rule reads the CREATING PROCESS, and only the system `msiexec.exe`. Windows Installer
+//     rewrites the creation time of every file it lays down, so an EID 2 whose Image is msiexec.exe
+//     is the installer's ordinary footprint, not T1070.006. The row is kept at its grade; only the
+//     timestomp claim goes, on any MSI, whether or not Velociraptor is configured.
+//
+// Runs once per mapped row at the shared aggregation seam (eventAggregate.ts), in place like the
+// other mapper overlays, BEFORE the severity floor so a demoted row is floored as Info.
+
+import { readFileSync } from "node:fs";
+import type { MappedEvent } from "./siemImport.js";
+
+export interface CollectorInfrastructure {
+  /** Lower-cased hostnames / IPs of the configured Velociraptor server(s). Empty ⇒ rule 1 is inert. */
+  servers: ReadonlySet<string>;
+}
+
+const DEPLOYMENT_DOWNLOAD_NOTE =
+  " [DFIR collector deployment — download from the configured Velociraptor server]";
+const DEPLOYMENT_INSTALL_NOTE = " [DFIR collector deployment — Velociraptor client install]";
+const FOOTPRINT_NOTE = " [DFIR collector footprint — tool run by the Velociraptor client]";
+const MSI_TIME_CHANGE_NOTE =
+  " [MSI install artifact — creation-time change by msiexec.exe is not timestomping]";
+const TIMESTOMP_TECHNIQUE = "T1070.006";
+
+// The Windows mapper renders `(EID N)`; Hayabusa renders `(EID N <channel>)`. Both end the number.
+const CREATION_TIME_CHANGED_EID = /\(EID 2[\s)]/;
+// The system installer, under either bitness. Anchored to \Windows\ so a copy an intruder dropped
+// elsewhere and named msiexec.exe is not the installer.
+const SYSTEM_MSIEXEC = /^[a-z]:[\\/]windows[\\/](?:system32|syswow64)[\\/]msiexec\.exe$/i;
+const MSIEXEC_NAME = /(?:^|[\\/])msiexec\.exe$/i;
+// The collector's own install root — the path component an intruder cannot supply — holding the
+// client exe. Traversal is refused separately: a prefix match on a path holding `..` proves nothing.
+const COLLECTOR_INSTALL_ROOT = /^[a-z]:[\\/]program files(?: \(x86\))?[\\/]velociraptor[\\/]/i;
+const COLLECTOR_INSTALL_EXE = new RegExp(`${COLLECTOR_INSTALL_ROOT.source}velociraptor\\.exe$`, "i");
+const PATH_TRAVERSAL = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
+// The client MSI as Velociraptor publishes it: `velociraptor-<version>[-suffix].msi`, or the bare
+// `velociraptor.msi` an analyst renamed it to.
+const COLLECTOR_MSI = /(?:^|[\\/\s"'])velociraptor(?:-[^\s"'\\/]*)?\.msi(?=$|[\s"'])/i;
+const URL_HOST = /\bhttps?:\/\/(?:[^\s/?#@"']*@)?(\[[^\]\s]+\]|[^\s/?#:"']+)/gi;
+// The api_client.yaml line the Velociraptor integration connects with. A YAML scalar; quotes optional.
+const API_CONNECTION_STRING = /^\s*api_connection_string:\s*["']?([^\s"'#]+)/m;
+
+// ───────────────────────────── configuration ─────────────────────────────
+
+// The host of a URL as configured or written, lower-cased, brackets off an IPv6 literal. A value
+// without a scheme (`velo:8889`) is read as a host:port. Returns "" for anything unparseable.
+function urlHost(value: string): string {
+  const s = value.trim();
+  if (!s) return "";
+  for (const candidate of [s, `https://${s}`]) {
+    try {
+      const host = new URL(candidate).hostname.toLowerCase();
+      if (host) return host.replace(/^\[|\]$/g, "");
+    } catch {
+      /* try the next spelling */
+    }
+  }
+  return "";
+}
+
+// api_connection_string from the api_client config, when the file is named and readable. A missing
+// or unreadable file is not an error here — the integration reports that on its own surface.
+function apiConfigHost(path: string): string {
+  if (!path.trim()) return "";
+  try {
+    const text = readFileSync(path.trim(), "utf8");
+    const m = API_CONNECTION_STRING.exec(text);
+    return m ? urlHost(m[1]) : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * The configured Velociraptor server host(s), from `DFIR_VELOCIRAPTOR_GUI_URL` and the
+ * `api_connection_string` in the file `DFIR_VELOCIRAPTOR_API_CONFIG` names. Read at call time, so a
+ * settings reload (or a test's stubbed env) is seen without a restart. Lower-cased, de-duplicated.
+ */
+export function configuredCollectorServers(env: NodeJS.ProcessEnv = process.env): string[] {
+  const hosts = [
+    urlHost(env.DFIR_VELOCIRAPTOR_GUI_URL ?? ""),
+    apiConfigHost(env.DFIR_VELOCIRAPTOR_API_CONFIG ?? ""),
+  ];
+  return [...new Set(hosts.filter(Boolean))];
+}
+
+export function loadCollectorInfrastructure(env: NodeJS.ProcessEnv = process.env): CollectorInfrastructure {
+  return { servers: new Set(configuredCollectorServers(env)) };
+}
+
+// ───────────────────────────── description fields ─────────────────────────────
+
+// One `Key=value` field as the Windows mapper renders it: fields joined by " - ", the value running
+// to the next ` - Key=` field or to the ` @ host` tail. Case-insensitive on the key.
+function descriptionField(description: string, key: string): string {
+  const re = new RegExp(`(?:^|\\s-\\s)${key}=(.*?)(?=\\s-\\s[A-Z][A-Za-z]*=|\\s@\\s\\S+$|$)`, "i");
+  const m = re.exec(description);
+  return m ? m[1].trim() : "";
+}
+
+// The process a row is about, by its two spellings (Sysmon Image, Security 4688 NewProcessName).
+function imagePath(m: MappedEvent): string {
+  return descriptionField(m.description, "Image") || descriptionField(m.description, "NewProcessName");
+}
+
+// A process-creation row: the mapper sets commandLine / processName only for a process row; a row
+// from another importer shows the same fact by rendering a CommandLine field or the process EID
+// (Sysmon 1, Security 4688).
+const PROCESS_CREATE_EID = /\(EID (?:1|4688)[\s)]/;
+function isProcessRow(m: MappedEvent): boolean {
+  return (
+    Boolean(m.commandLine || m.processName) ||
+    /(?:^|\s-\s)CommandLine=/i.test(m.description) ||
+    PROCESS_CREATE_EID.test(m.description)
+  );
+}
+
+// A process-SHAPED row — one whose Image is the process that acted: process create (1 / 4688),
+// network connection (3), process access (10), file create (11). The Image of a file or registry
+// event is still the acting process, but those are read by other overlays; this list is what the
+// real collection showed graded High.
+const PROCESS_SHAPED_EID = /\(EID (?:1|3|10|11|22|4688)[\s)]/;
+function isProcessShapedRow(m: MappedEvent): boolean {
+  return isProcessRow(m) || PROCESS_SHAPED_EID.test(m.description);
+}
+
+// The ACTING process of a process-shaped row: Image (Sysmon 1/3/11/22), SourceImage (Sysmon 10) or
+// NewProcessName (4688). Never TargetImage — that is the process acted UPON, and an intruder's tool
+// opening lsass is not the collector because lsass is not under the collector's root either way.
+function actingImagePath(m: MappedEvent): string {
+  return imagePath(m) || descriptionField(m.description, "SourceImage");
+}
+
+// ───────────────────────────── rules ─────────────────────────────
+
+/**
+ * Rule 1 — does this row's DESTINATION name the configured Velociraptor server?
+ *
+ * Destinations: the structured `dstIp`, the rendered `DestinationIp` / `DestinationHostname` fields,
+ * and the host of any URL in the description (the download command names the server there). Never
+ * the address as free text — the same digits in a message body are not a destination claim.
+ */
+export function isCollectorServerDestination(m: MappedEvent, infra: CollectorInfrastructure): boolean {
+  if (infra.servers.size === 0) return false;
+  const candidates = [
+    m.dstIp ?? "",
+    descriptionField(m.description, "DestinationIp"),
+    descriptionField(m.description, "DestinationHostname"),
+  ];
+  for (const u of m.description.matchAll(URL_HOST)) candidates.push(u[1]);
+  return candidates.some((c) => {
+    const host = c
+      .trim()
+      .toLowerCase()
+      .replace(/^\[|\]$/g, "");
+    return host !== "" && infra.servers.has(host);
+  });
+}
+
+/**
+ * Rule 2 — is this a process-creation row for the collector's own install?
+ *
+ * Either the client exe under its install root (the service start the MSI performs, the client
+ * itself), or the system `msiexec.exe` installing a `velociraptor*.msi`. A `velociraptor.exe` anywhere
+ * else is a name an intruder picks, and misses.
+ */
+export function isCollectorInstallBinary(m: MappedEvent): boolean {
+  if (isCollectorServiceInstall(m)) return true;
+  if (!isProcessRow(m)) return false;
+  const image = imagePath(m);
+  if (PATH_TRAVERSAL.test(image)) return false;
+  if (COLLECTOR_INSTALL_EXE.test(image)) return true;
+  if (!MSIEXEC_NAME.test(image)) return false;
+  const cmd = m.commandLine || descriptionField(m.description, "CommandLine");
+  return COLLECTOR_MSI.test(cmd);
+}
+
+// The MSI registers the client as a service, which Windows logs as System 7045 (or Security 4697)
+// with the binary in ImagePath — quoted, as the installer writes it. The PATH is the test, never the
+// service name: "Velociraptor Service" is a string anyone can register.
+const SERVICE_INSTALL_EID = /\(EID (?:7045|4697)[\s)]/;
+function isCollectorServiceInstall(m: MappedEvent): boolean {
+  if (!SERVICE_INSTALL_EID.test(m.description)) return false;
+  const raw =
+    descriptionField(m.description, "ImagePath") || descriptionField(m.description, "ServiceFileName");
+  const image = raw.replace(/^"([^"]*)".*$/, "$1").trim();
+  return !PATH_TRAVERSAL.test(image) && COLLECTOR_INSTALL_EXE.test(image);
+}
+
+/**
+ * Rule 2b — is this the collector's own FOOTPRINT: a tool the Velociraptor client ran out of its
+ * install root?
+ *
+ * Velociraptor unpacks the tools an artifact needs under `\Program Files\Velociraptor\Tools\tmp*\`
+ * and runs them as SYSTEM — THOR opens every process including lsass (Sysmon EID 10, SeDebugPrivilege),
+ * Hayabusa reads every log, both connect out. On a real collection 24 of those rows graded High and
+ * became an "LSASS access" lead the AI later had to dismiss. The ACTING image is what is tested,
+ * root-anchored like isDetectionToolLocation and with traversal refused: `thor64-lite.exe` under
+ * `C:\Users\Public\` is a name an intruder picks, and so is a `\Velociraptor\` directory anywhere
+ * but Program Files. The client exe's own process-create and service registration are rule 2's
+ * (install note, applied first); its other rows — the DNS query for its server (EID 22), its
+ * connections, the files it writes — land here with everything else under the root.
+ */
+export function isCollectorFootprint(m: MappedEvent): boolean {
+  if (!isProcessShapedRow(m)) return false;
+  const image = actingImagePath(m);
+  if (!image || PATH_TRAVERSAL.test(image)) return false;
+  return COLLECTOR_INSTALL_ROOT.test(image);
+}
+
+/**
+ * Rule 3 — is this a Sysmon EID 2 (file creation time changed) written by the system msiexec.exe?
+ *
+ * Windows Installer sets the creation time of every file it lays down to the time recorded in the
+ * package, so this event is the installer's ordinary footprint on ANY MSI install — not timestomping.
+ * Independent of Velociraptor being configured. The creating process is the whole test: the same
+ * event from powershell.exe, or from an msiexec.exe outside \Windows\System32\, is untouched.
+ */
+export function isMsiexecCreationTimeChange(m: MappedEvent): boolean {
+  if (!CREATION_TIME_CHANGED_EID.test(m.description)) return false;
+  return SYSTEM_MSIEXEC.test(imagePath(m));
+}
+
+// ───────────────────────────── application ─────────────────────────────
+
+function appendNote(m: MappedEvent, note: string): void {
+  if (!m.description.endsWith(note)) m.description = `${m.description}${note}`;
+}
+
+/** Apply the rules to ONE mapped row, in place. Idempotent. */
+export function annotateCollectorDeployment(m: MappedEvent, infra: CollectorInfrastructure): void {
+  if (isMsiexecCreationTimeChange(m)) {
+    m.mitre = m.mitre.filter((t) => t !== TIMESTOMP_TECHNIQUE);
+    appendNote(m, MSI_TIME_CHANGE_NOTE);
+    return;
+  }
+  if (isCollectorInstallBinary(m)) {
+    m.severity = "Info";
+    appendNote(m, DEPLOYMENT_INSTALL_NOTE);
+    return;
+  }
+  if (isCollectorFootprint(m)) {
+    m.severity = "Info";
+    appendNote(m, FOOTPRINT_NOTE);
+    return;
+  }
+  if (isCollectorServerDestination(m, infra)) {
+    m.severity = "Info";
+    appendNote(m, DEPLOYMENT_DOWNLOAD_NOTE);
+  }
+}
+
+/** Apply the rules to every row, in place, reading the configuration once. */
+export function applyCollectorDeployment(
+  events: MappedEvent[],
+  infra: CollectorInfrastructure = loadCollectorInfrastructure(),
+): void {
+  for (const m of events) annotateCollectorDeployment(m, infra);
+}

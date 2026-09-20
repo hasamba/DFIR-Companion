@@ -1350,25 +1350,24 @@ const TEXT_HASH_RE = /\b[a-f0-9]{64}\b|\b[a-f0-9]{40}\b|\b[a-f0-9]{32}\b/gi;
 // event and would flood the IOC list, exactly the signal-to-noise trap the analyst wants avoided.
 const TEXT_SID_RE = /\bS-1-5-21(?:-\d{1,10}){4}\b/gi;
 
-export function textIocs(text: string, sink: Map<string, SiemIoc>): void {
+// #1459: free text ⇒ "mentioned" (a value the text quotes, not a structured column); a rendering of
+// structured columns (mapGeneric's key=value summary, freeText=false) ⇒ plain — the values came from
+// columns. Every regex is linear in `text` (TEXT_DOMAIN_RE's label bound), so the WHOLE message is
+// scanned: an input cap would silently drop indicators past it, the failure that matters (#249).
+export function textIocs(text: string, sink: Map<string, SiemIoc>, freeText = true): void {
   if (!text) return;
-  // Every regex here is linear in the length of `text` (see TEXT_DOMAIN_RE's label bound), so this
-  // runs on the WHOLE message. An input cap would be the wrong tool: it bounds one call but not the
-  // total, since this runs per record and maxEvents only caps the events finally EMITTED — and it
-  // would silently drop indicators past the cap, which for a DFIR tool is the failure that matters.
-  // The SHARED rule, not a private copy. This scraper kept its own unconditional strip and had
-  // already drifted from the four #752 unified: it cut a quoted URL's trailing dot and a path's
-  // own balanced `)`, so one C2 URL became two indicators depending on whether a Velociraptor row
-  // or a Windows 4104 row carried it (#756).
+  const p = freeText ? "mentioned" : undefined;
+  // trimSentencePunctuation is the SHARED rule (#752/#756): a private strip once cut a quoted URL's
+  // trailing dot and a path's own balanced `)`, so one C2 URL became two indicators by importer.
   for (const m of text.matchAll(TEXT_URL_RE))
-    addIoc(sink, "url", trimSentencePunctuation(m[0], text, m.index ?? 0).slice(0, 300));
-  for (const m of text.match(TEXT_SID_RE) ?? []) addIoc(sink, "sid", m.toUpperCase());
-  for (const m of text.match(TEXT_HASH_RE) ?? []) addIoc(sink, "hash", m.toLowerCase());
+    addIoc(sink, "url", trimSentencePunctuation(m[0], text, m.index ?? 0).slice(0, 300), p);
+  for (const m of text.match(TEXT_SID_RE) ?? []) addIoc(sink, "sid", m.toUpperCase(), p);
+  for (const m of text.match(TEXT_HASH_RE) ?? []) addIoc(sink, "hash", m.toLowerCase(), p);
   for (const m of text.match(TEXT_IPV4_RE) ?? []) {
     const ip = cleanIp(m);
-    if (ip) addIoc(sink, "ip", ip);
+    if (ip) addIoc(sink, "ip", ip, p);
   }
-  for (const d of extractDomains(text)) addIoc(sink, "domain", d);
+  for (const d of extractDomains(text)) addIoc(sink, "domain", d, p);
 }
 
 // Document/transport metadata that carries no investigative signal — excluded from the fallback
@@ -1412,7 +1411,7 @@ export function mapGeneric(rec: Row, host: string, iocSink: Map<string, SiemIoc>
   genericIocs(pairs, iocSink);
 
   const base = msg ? oneLine(msg) : summarizePairs(pairs);
-  textIocs(base, iocSink); // scrape indicators embedded in the free-text message (not in a named field)
+  textIocs(base, iocSink, !!msg); // a message is free text; a pair summary renders columns (#1459)
   let description = `${vendor ?? "SIEM event"}: ${base}`.slice(0, 600);
   if (host && !description.toLowerCase().includes(host.toLowerCase()))
     description = `${description} @ ${host}`.slice(0, 600);

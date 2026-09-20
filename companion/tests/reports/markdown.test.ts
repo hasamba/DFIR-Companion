@@ -1148,3 +1148,78 @@ describe("#1266 -- the geo table suffixes the IP, not the severity", () => {
     expect(geoSection).toContain("| 198.51.100.23 (client-reported) | US |");
   });
 });
+
+// #1461: an IP that three loader command lines named is a lead the loader was TOLD about, not a
+// peer the host reached. Wherever the report renders a network IOC it says so; a plain IOC (a
+// Sysmon EID 3 DestinationIp) keeps today's wording.
+describe("#1461 -- a mentioned network IOC reads as a reference on every report surface", () => {
+  const NOTE = "referenced in free text; no network record";
+  function twoIps() {
+    const state = emptyState("c1");
+    state.iocs.push(
+      { id: "i-plain", type: "ip", value: "203.0.113.5", firstSeen: "2026-05-28T09:00:00.000Z" },
+      {
+        id: "i-ment",
+        type: "ip",
+        value: "91.191.209.46",
+        firstSeen: "2026-05-28T09:00:00.000Z",
+        provenance: "mentioned",
+      },
+    );
+    return state;
+  }
+
+  it("4.4 IOC table suffixes the mentioned value only", () => {
+    const md = renderMarkdownReport(twoIps());
+    expect(md).toContain(`| i-ment | ip | 91.191.209.46 (${NOTE}) |`);
+    expect(md).toContain("| i-plain | ip | 203.0.113.5 |");
+  });
+
+  it("4.2 compromised-assets cell suffixes the mentioned IoC only", () => {
+    const state = twoIps();
+    state.forensicTimeline.push(
+      {
+        id: "e1",
+        timestamp: "2026-05-28T09:00:00.000Z",
+        description: "Sysmon EID 3 to 203.0.113.5:443",
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset: "WIN-01",
+        dstIp: "203.0.113.5",
+      },
+      {
+        id: "e2",
+        timestamp: "2026-05-28T09:01:00.000Z",
+        description: "loader.exe --reported-meterpreter-stage 91.191.209.46:12385",
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset: "WIN-01",
+      },
+    );
+    const md = renderMarkdownReport(state);
+    const assets = md.slice(md.indexOf("### 4.2 Compromised assets"), md.indexOf("### 4.3 Findings"));
+    expect(assets).toContain(`91.191.209.46 (${NOTE})`);
+    expect(assets).toMatch(/203\.0\.113\.5(?! \()/);
+  });
+
+  it("4.10 geo table suffixes the IP cell of a mentioned pin only", () => {
+    const state = twoIps();
+    const geo = {
+      source: "GeoIP",
+      verdict: "unknown" as const,
+      fetchedAt: "t",
+      lat: 42.7,
+      lon: 23.3,
+      country: "BG",
+    };
+    state.iocs = state.iocs.map((i) => ({ ...i, enrichments: [geo] }));
+    const md = renderMarkdownReport(state);
+    const geoSection = md.slice(md.indexOf("### 4.10 Geographic distribution"));
+    expect(geoSection).toContain(`| 91.191.209.46 (${NOTE}) | BG |`);
+    expect(geoSection).toContain("| 203.0.113.5 | BG |");
+  });
+});

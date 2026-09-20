@@ -268,3 +268,46 @@ describe("buildAssetGraph — time window (#83)", () => {
     expect(g.assets.map((a) => a.name)).toEqual(["WIN-01"]); // undated → can't prove out of range → kept
   });
 });
+
+// #1461: a loader was TOLD an address on its command line. The graph still links it to the host
+// that ran the loader — "seen in an event on this asset" holds — but the IoC node and the edge say
+// `referenced`, so no renderer draws it as a connection the host made.
+describe("#1461 -- a mentioned network IoC links as a reference, not a connection", () => {
+  function graphWith(events: Array<{ id: string; description: string; dstIp?: string }>) {
+    const s = emptyState("c1");
+    s.iocs.push(
+      { id: "i-plain", type: "ip", value: "203.0.113.5", firstSeen: "" },
+      { id: "i-ment", type: "ip", value: "91.191.209.46", firstSeen: "", provenance: "mentioned" },
+    );
+    for (const e of events) {
+      s.forensicTimeline.push({
+        id: e.id,
+        timestamp: "2026-05-20T09:00:00Z",
+        description: e.description,
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+        asset: "WIN-01",
+        ...(e.dstIp ? { dstIp: e.dstIp } : {}),
+      });
+    }
+    return buildAssetGraph(s);
+  }
+
+  it("flags the IoC node and its edge, and leaves the plain IoC untouched", () => {
+    const g = graphWith([
+      { id: "e1", description: "Sysmon EID 3 to 203.0.113.5:443", dstIp: "203.0.113.5" },
+      { id: "e2", description: "loader.exe --reported-meterpreter-stage 91.191.209.46:12385" },
+    ]);
+    const byId = Object.fromEntries(g.iocs.map((i) => [i.id, i]));
+    expect(byId["i-ment"].mentioned).toBe(true);
+    expect(byId["i-plain"].mentioned).toBeUndefined();
+    const edgeFor = (ioc: string) => g.edges.find((e) => e.ioc === ioc);
+    expect(edgeFor("i-ment")?.referenced).toBe(true);
+    expect(edgeFor("i-plain")?.referenced).toBeUndefined();
+    // Both still reach the host — the reference is a lead on WIN-01, not nothing.
+    expect(byId["i-ment"].assetIds).toEqual(["host:win-01"]);
+    expect(byId["i-plain"].assetIds).toEqual(["host:win-01"]);
+  });
+});

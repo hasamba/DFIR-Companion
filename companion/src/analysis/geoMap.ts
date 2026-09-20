@@ -9,6 +9,7 @@ import {
 import { escapeRegExp } from "./regexEscape.js";
 import { isInternalIp } from "./anonymize.js";
 import { countryCentroid } from "./countryCentroids.js";
+import { isMentionedIoc } from "./iocMentioned.js";
 
 // Geographic IP map (#133): derived ON READ from the (filtered) case state — never persisted.
 // Markers come from IP IOCs that carry GeoIP coordinates (set by GeoIpProvider). Severity is the
@@ -31,6 +32,7 @@ export interface GeoMarker {
   internal: boolean;
   falsePositive: boolean;
   clientReported?: boolean; // #1266: the IOC was read from a sender-controlled header — a pin, not an observation
+  mentioned?: boolean; // #1461: the IOC was read out of free text (a command line) — a lead, never a flow endpoint
   eventCount: number;
   sources: string[];
   firstSeen?: string;
@@ -232,13 +234,16 @@ export function buildGeoMap(state: InvestigationState, opts: GeoMapOptions = {})
       internal: isInternalIp(i.value),
       falsePositive: isLegit,
       ...(i.provenance === "client-reported" ? { clientReported: true } : {}),
+      ...(isMentionedIoc(i) ? { mentioned: true } : {}),
       eventCount: a?.count ?? 0,
       sources: a ? [...a.sources].sort() : [],
       firstSeen: a?.first,
       lastSeen: a?.last,
       approximate: geo.approximate,
     });
-    coordsByIp.set(i.value.trim().toLowerCase(), { lat: geo.lat, lon: geo.lon });
+    // #1461: a mentioned address pins the map as a lead but never anchors a flow — a flow line IS
+    // the "this host reached that peer" claim, and free text does not establish it.
+    if (!isMentionedIoc(i)) coordsByIp.set(i.value.trim().toLowerCase(), { lat: geo.lat, lon: geo.lon });
   }
   all.sort(
     (x, y) =>

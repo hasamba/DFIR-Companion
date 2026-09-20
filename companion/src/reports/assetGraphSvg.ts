@@ -1,5 +1,6 @@
 import type { AssetGraph } from "../analysis/assetGraph.js";
 import { escapeHtml } from "./escapeHtml.js";
+import { MENTIONED_NOTE } from "../analysis/iocMentioned.js";
 
 // Self-contained SVG rendering of the asset ↔ IoC bipartite graph.
 // Pure and dependency-free — no JavaScript in the output, safe to embed in
@@ -75,8 +76,11 @@ export function renderAssetGraphSvg(graph: AssetGraph): string {
     if (ay === undefined || iy === undefined) continue;
     const y1 = ay + NODE_H / 2;
     const y2 = iy + NODE_H / 2;
+    // #1461: a referenced edge (the IoC was read out of a command line) is dashed — it is not a
+    // connection the asset made, and the report must not draw it like one.
+    const dash = e.referenced ? ' stroke-dasharray="4,3"' : "";
     parts.push(
-      `<path d="M${ex1},${y1} C${cpx},${y1} ${cpx},${y2} ${ex2},${y2}" fill="none" stroke="#b0b8c8" stroke-width="1" opacity="0.7"/>`,
+      `<path d="M${ex1},${y1} C${cpx},${y1} ${cpx},${y2} ${ex2},${y2}" fill="none" stroke="#b0b8c8" stroke-width="1" opacity="0.7"${dash}/>`,
     );
   }
 
@@ -108,12 +112,18 @@ export function renderAssetGraphSvg(graph: AssetGraph): string {
     const stroke =
       ioc.verdict === "malicious" ? "#d0511a" : ioc.verdict === "suspicious" ? "#b8860b" : "#8d9aac";
     const badge = IOC_BADGE[ioc.type] ?? ioc.type.slice(0, 2).toUpperCase();
+    // #1461: a mentioned IoC is a reference, not a peer — dashed box, "(referenced)" on the label,
+    // and the full note as the node's tooltip. The plain node keeps its solid box and bare value.
+    const label = ioc.mentioned ? `${trunc(ioc.value)} (referenced)` : trunc(ioc.value);
+    const nodeDash = ioc.mentioned ? ' stroke-dasharray="4,3"' : "";
 
     parts.push(
-      `<rect x="${RIGHT_X}" y="${y}" width="${NODE_W}" height="${NODE_H}" rx="4" fill="${fill}" stroke="${stroke}" stroke-width="1.5"/>`,
+      ...(ioc.mentioned ? [`<g><title>${esc(`${ioc.value} (${MENTIONED_NOTE})`)}</title>`] : []),
+      `<rect x="${RIGHT_X}" y="${y}" width="${NODE_W}" height="${NODE_H}" rx="4" fill="${fill}" stroke="${stroke}" stroke-width="1.5"${nodeDash}/>`,
       `<rect x="${RIGHT_X + 2}" y="${y + 2}" width="${BADGE_W}" height="${NODE_H - 4}" rx="2" fill="${stroke}"/>`,
       `<text x="${RIGHT_X + 2 + BADGE_W / 2}" y="${ty}" text-anchor="middle" font-size="8" font-weight="bold" fill="white" font-family="monospace">${badge}</text>`,
-      `<text x="${RIGHT_X + LABEL_X}" y="${ty}" ${mf}>${esc(trunc(ioc.value))}</text>`,
+      `<text x="${RIGHT_X + LABEL_X}" y="${ty}" ${mf}>${esc(label)}</text>`,
+      ...(ioc.mentioned ? ["</g>"] : []),
     );
   }
 

@@ -141,6 +141,12 @@ const VERDICT_RANK: Record<IocEnrichment["verdict"], number> = {
 export const CLIENT_REPORTED_LINE =
   "Client-reported: value read from a sender-controlled header (X-Originating-IP / Received hop), not an observed network fact.";
 const CLIENT_REPORTED_LABEL = "client-reported";
+// #1459: the same treatment for a value read out of free text. A TIP that ingests this bundle
+// must be able to tell a hash the collector computed from a hash a script block quotes — the
+// second is a string the author knew, not a file that was on the host.
+export const MENTIONED_LINE =
+  "Mentioned: value read from free text (a script block, command line, message or file content), not from a structured indicator column or a collector-computed hash; no file or connection carrying it was observed.";
+const MENTIONED_LABEL = "mentioned";
 
 const INDICATOR_TYPE: Record<IocEnrichment["verdict"], string> = {
   malicious: "malicious-activity",
@@ -262,6 +268,9 @@ export function buildStixBundle(state: InvestigationState, opts: StixExportOptio
       ? `Threat-intel verdict: ${verdict} — ${summary}`
       : "Indicator observed during the investigation (no threat-intel enrichment).";
     const clientReported = ioc.provenance === "client-reported";
+    const mentioned = ioc.provenance === "mentioned";
+    const label = clientReported ? CLIENT_REPORTED_LABEL : mentioned ? MENTIONED_LABEL : undefined;
+    const line = clientReported ? CLIENT_REPORTED_LINE : mentioned ? MENTIONED_LINE : undefined;
     objects.push(
       sdo("indicator", id, {
         name: ioc.value,
@@ -272,10 +281,8 @@ export function buildStixBundle(state: InvestigationState, opts: StixExportOptio
         indicator_types: [INDICATOR_TYPE[verdict ?? "unknown"]],
         // The label is what a TIP shows a human; the x_ property (STIX 2.1 §11 custom properties)
         // is what a pipeline that never reads labels can gate enforcement on.
-        ...(clientReported
-          ? { labels: [CLIENT_REPORTED_LABEL], x_dfir_companion_provenance: CLIENT_REPORTED_LABEL }
-          : {}),
-        description: clientReported ? `${CLIENT_REPORTED_LINE}\n${base}` : base,
+        ...(label ? { labels: [label], x_dfir_companion_provenance: label } : {}),
+        description: line ? `${line}\n${base}` : base,
       }),
     );
   }

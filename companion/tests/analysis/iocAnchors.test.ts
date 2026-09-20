@@ -141,3 +141,36 @@ describe("rankConnectiveIocs — internal-infra conflict dampener", () => {
     expect(buildConnectiveIocDigest(anchors)).not.toContain("CONFLICT");
   });
 });
+
+// #1461: the digest tells the model which indicators are "likely the attack backbone". An IP that
+// three loader command lines named (`--reported-meterpreter-stage 91.191.209.46:12385`) can reach
+// that list on tool count alone — and the model then wrote "Outbound contact with 91.191.209.46".
+// The anchor carries the provenance and the digest line says what the value is, so the model has
+// no reason to invent a connection.
+describe("#1461 -- a mentioned indicator is named as a reference in the digest", () => {
+  function twoIps() {
+    const s = emptyState("c");
+    s.iocs.push(
+      { id: "i-plain", type: "ip", value: "203.0.113.5", firstSeen: "" },
+      { id: "i-ment", type: "ip", value: "91.191.209.46", firstSeen: "", provenance: "mentioned" },
+    );
+    s.forensicTimeline.push(
+      ev("e1", "WIN-01", ["Sysmon"], "EID 3 connection to 203.0.113.5:443"),
+      ev("e2", "DB-01", ["Zeek"], "conn to 203.0.113.5:443"),
+      ev("e3", "WIN-01", ["Sysmon"], "loader.exe --reported-meterpreter-stage 91.191.209.46 port 12385"),
+      ev("e4", "WIN-01", ["Hayabusa"], "loader.exe --reported-meterpreter-stage 91.191.209.46 port 12385"),
+    );
+    return s;
+  }
+
+  it("carries `mentioned` on the anchor and appends the note only to that line", () => {
+    const anchors = rankConnectiveIocs(twoIps());
+    const byValue = Object.fromEntries(anchors.map((a) => [a.value, a]));
+    expect(byValue["91.191.209.46"]?.mentioned).toBe(true);
+    expect(byValue["203.0.113.5"]?.mentioned).toBe(false);
+    const digest = buildConnectiveIocDigest(anchors);
+    const line = (v: string) => digest.split("\n").find((l) => l.includes(v)) ?? "";
+    expect(line("91.191.209.46")).toContain("referenced in free text; no network record");
+    expect(line("203.0.113.5")).not.toContain("no network record");
+  });
+});
