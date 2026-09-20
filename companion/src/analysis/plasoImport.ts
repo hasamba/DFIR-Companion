@@ -13,7 +13,7 @@
 //   • l2tcsv (legacy `-o l2tcsv`) — `date,time,timezone,MACB,source,sourcetype,type,user,host,
 //     short,desc,version,filename,inode,notes,format,extra` (date MM/DD/YYYY + time + timezone).
 
-import type { Severity } from "./stateTypes.js";
+import type { IocProvenance, Severity } from "./stateTypes.js";
 import { parseCsvRecords, parseCsvRecordsFromLines } from "./csvImport.js";
 import {
   aggregateEvents,
@@ -52,16 +52,58 @@ const RE_HASH = /\b[a-f0-9]{64}\b|\b[a-f0-9]{40}\b|\b[a-f0-9]{32}\b/gi;
 const RE_URL = /\bhttps?:\/\/[^\s"'<>)\]]+/gi;
 const RE_IPV4 = /\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b/g;
 
-// Scrape IOCs out of a free-text Plaso message (bounded by the IOC cap downstream). Free text, so
-// every value is "mentioned" (#1459) — a structured sighting elsewhere clears the mark.
-function textIocs(msg: string, sink: Map<string, SiemIoc>): void {
+// ───────────────────────────── network provenance (#1471) ─────────────────────────────
+//
+// Plaso's `message` is its STRUCTURED rendering of the artifact, so on a browser-history or
+// network-log row a URL / IP is the network record itself, not a string read out of free text.
+// Marking it "mentioned" made every network surface print "no network record" next to a visited
+// C2 URL. Those rows get observed (unmarked) url + ip values; every other row stays "mentioned".
+//
+// This is an ALLOWLIST, not a keyword match: `history` would also match the `bash_history`
+// parser (a URL somebody typed) and `network` the registry NetworkList key (a gateway the host was
+// configured with) — neither is a connection. A hash is "mentioned" on every row: Plaso's
+// prefetch "hash" is a path hash, not a file hash.
+
+// The short `source` both flavours carry for browser history (Chrome/Firefox/Safari/IE/Edge).
+const WEBHIST_SOURCE = "WEBHIST";
+// Dynamic `parser` values (an optional `sqlite/` / `esedb/` plugin prefix is stripped first):
+// the browser history / download sqlite plugins, IE's index.dat + WebCache, the Windows Firewall log.
+const NETWORK_PARSERS: readonly RegExp[] = [
+  /^(?:chrome|chromium|firefox|safari|opera)_[a-z0-9_]*(?:history|downloads)$/,
+  /^msiecf$/,
+  /^msie_webcache$/,
+  /^winfirewall$/,
+];
+
+function isNetworkRow(source: string, parser: string): boolean {
+  if (source.trim().toUpperCase() === WEBHIST_SOURCE) return true;
+  const p = parser
+    .trim()
+    .toLowerCase()
+    .replace(/^[a-z0-9]+\//, "");
+  return NETWORK_PARSERS.some((re) => re.test(p));
+}
+
+// Scrape IOCs out of a Plaso message (bounded by the IOC cap downstream). Free text, so every
+// value is "mentioned" (#1459) — a structured sighting elsewhere clears the mark — except the url
+// + ip values of a network row, which `networkProvenance` leaves unmarked (see above).
+function textIocs(
+  msg: string,
+  sink: Map<string, SiemIoc>,
+  networkProvenance: IocProvenance | undefined,
+): void {
   if (!msg) return;
   for (const m of msg.matchAll(RE_HASH)) addIoc(sink, "hash", m[0].toLowerCase(), "mentioned");
-  for (const m of msg.matchAll(RE_URL)) addIoc(sink, "url", m[0].slice(0, 300), "mentioned");
+  for (const m of msg.matchAll(RE_URL)) addIoc(sink, "url", m[0].slice(0, 300), networkProvenance);
   for (const m of msg.matchAll(RE_IPV4)) {
     const ip = cleanIp(m[0]);
-    if (ip) addIoc(sink, "ip", ip, "mentioned");
+    if (ip) addIoc(sink, "ip", ip, networkProvenance);
   }
+}
+
+// The mark textIocs gives a row's url + ip values: none for network telemetry, else "mentioned".
+function networkProvenanceFor(source: string, parser: string): IocProvenance | undefined {
+  return isNetworkRow(source, parser) ? undefined : "mentioned";
 }
 
 // Plaso `display_name`/`filename` carries a "TYPE:path" prefix (TSK:/OS:/GZIP:…); strip it and
@@ -105,7 +147,7 @@ function detectFlavor(headers: Set<string>): Flavor | null {
         const tdesc = firstStr(row, ["timestamp_desc"]);
         const display = firstStr(row, ["display_name"]);
         if (!message) return null;
-        textIocs(message, sink);
+        textIocs(message, sink, networkProvenanceFor(firstStr(row, ["source"]), firstStr(row, ["parser"])));
         const path = pathFrom(display);
         if (path) addIoc(sink, "file", path);
         let description = `Plaso${source ? ` [${source}]` : ""}: ${oneLine(message)}`;
@@ -133,7 +175,7 @@ function detectFlavor(headers: Set<string>): Flavor | null {
         const host = firstStr(row, ["host"]);
         const display = firstStr(row, ["filename"]);
         if (!message) return null;
-        textIocs(message, sink);
+        textIocs(message, sink, networkProvenanceFor(firstStr(row, ["source"]), firstStr(row, ["format"])));
         const path = pathFrom(display);
         if (path) addIoc(sink, "file", path);
         let description = `Plaso${source ? ` [${source}]` : ""}: ${oneLine(message)}`;

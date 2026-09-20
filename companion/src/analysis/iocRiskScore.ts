@@ -31,6 +31,7 @@ import { deriveIocSeverityRank } from "./iocProvenance.js";
 import { extractCveIds, type KevCatalog } from "./kev.js";
 import { normalizeHash } from "./nsrl.js";
 import { isMentionedHash, MENTIONED_HASH_NOTE } from "./iocMentionedHash.js";
+import { isMentionedIoc, MENTIONED_NOTE } from "./iocMentioned.js";
 import { matchIocToWhitelist, type IocWhitelistRule } from "./iocWhitelist.js";
 
 export type IocRiskTier = "critical" | "high" | "medium" | "low" | "benign";
@@ -64,6 +65,9 @@ export interface IocRiskSignals {
   // #1459: a hash read out of free text (a script block, a command line) — the event that carries it
   // MENTIONS it, so scoreIocs never passes a behavioral event for it, and the factors say why.
   mentionedHash?: boolean;
+  // #1471: the network half (ip / domain / url, #1461) — the command line that names the address
+  // is the event that carries it, so it is not corroboration either; the factors say so.
+  mentionedNetwork?: boolean;
   // When the reputation behind `verdictClass` was measured (#933 item 19): the latest scan date a
   // provider reported, else the latest lookup time. Words only — the score never reads it.
   reputationMeasuredAt?: string;
@@ -124,6 +128,7 @@ export function scoreIoc(s: IocRiskSignals): IocRisk {
   // A mentioned hash keeps its verdict points (the string IS a known-bad hash) but never the
   // corroboration ones, and the reader is told the event only mentions it.
   if (s.mentionedHash) factors.push(`hash mentioned in free text; ${MENTIONED_HASH_NOTE}`);
+  if (s.mentionedNetwork) factors.push(`address mentioned in free text; ${MENTIONED_NOTE}`);
 
   // 3. Internal severity: the worst graded event the indicator appears in.
   if (s.maxSeverityRank >= Critical) {
@@ -189,8 +194,9 @@ export function scoreIocs(
   const out: Record<string, IocRisk> = {};
   for (const ioc of iocs) {
     const mentionedHash = isMentionedHash(ioc);
+    const mentionedNetwork = isMentionedIoc(ioc);
     const verdictClass = classifyVerdict(ioc, {
-      hasBehavioralEvent: !mentionedHash && iocHasBehavioralEvent(ioc.value, events),
+      hasBehavioralEvent: !mentionedHash && !mentionedNetwork && iocHasBehavioralEvent(ioc.value, events),
       hostNames: ctx.hostNames,
     });
     const norm = normalizeHash(ioc.value);
@@ -215,6 +221,7 @@ export function scoreIocs(
       suspiciousDomain: (ioc.type === "domain" || ioc.type === "url") && looksSuspiciousDomain(ioc.value),
       reputationMeasuredAt: reputationMeasuredAt(ioc),
       ...(mentionedHash ? { mentionedHash } : {}),
+      ...(mentionedNetwork ? { mentionedNetwork } : {}),
     });
     risk.role = iocRole(ioc, risk.score);
     out[ioc.id] = risk;

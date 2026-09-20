@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { pushCaseToMisp, CLIENT_REPORTED_COMMENT } from "../../src/integrations/misp/mispPush.js";
+import {
+  pushCaseToMisp,
+  CLIENT_REPORTED_COMMENT,
+  MENTIONED_COMMENT,
+} from "../../src/integrations/misp/mispPush.js";
 import type {} from "../../src/integrations/misp/mispPush.js";
 import type {
   MispPushClientLike,
@@ -450,6 +454,34 @@ describe("#1266 -- pushCaseToMisp never flags a client-reported value for automa
     expect(byValue["203.0.113.9"].to_ids).toBe(false);
     expect(byValue["203.0.113.9"].comment).toBe(CLIENT_REPORTED_COMMENT);
     expect(byValue["8.8.8.8"].to_ids).toBe(true);
+    expect(byValue["8.8.8.8"].comment).toBeUndefined();
+  });
+});
+
+// #1471 finding 6. A value read out of free text (#1459 hash, #1461 network) rides along with a
+// comment that says so, composed with an existing note the same way client-reported is. The
+// to_ids policy is NOT changed for it (recorded decision in the #1471 plan): a mentioned value
+// keeps exactly the flag a plain value of its type gets. As with client-reported, an attribute
+// already present in the MISP event is skipped before the comment is built, so only a newly
+// created attribute carries it.
+describe("#1471 -- pushCaseToMisp comments a mentioned value, and leaves its to_ids alone", () => {
+  it("a mentioned ip and hash carry MENTIONED_COMMENT and the same to_ids as a plain one", async () => {
+    const m = new MockMispClient();
+    const hash = "b".repeat(64);
+    const state = {
+      ...sampleState(),
+      iocs: [
+        ioc({ value: "91.191.209.46", type: "ip", provenance: "mentioned", note: "loader argument" }),
+        ioc({ value: hash, type: "hash", provenance: "mentioned" }),
+        ioc({ value: "8.8.8.8", type: "ip" }),
+      ],
+    };
+    await pushCaseToMisp(m, { caseId: "case-alpha", state });
+    const byValue = Object.fromEntries(m.addedAttributes.map((a) => [a.body.value, a.body]));
+    expect(byValue["91.191.209.46"].comment).toBe(`${MENTIONED_COMMENT} — loader argument`);
+    expect(byValue["91.191.209.46"].to_ids).toBe(byValue["8.8.8.8"].to_ids);
+    expect(byValue[hash].comment).toBe(MENTIONED_COMMENT);
+    expect(byValue[hash].to_ids).toBe(true);
     expect(byValue["8.8.8.8"].comment).toBeUndefined();
   });
 });

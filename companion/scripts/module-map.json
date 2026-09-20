@@ -458,6 +458,7 @@
     "iocMerge.ts": "analysis/findings",
     "iocMentioned.ts": "shared",
     "iocMentionedHash.ts": "analysis/findings",
+    "iocProvenanceLabel.ts": "analysis/findings",
     "iocProvenance.ts": "analysis/findings",
     "iocProvenanceChain.ts": "analysis/findings",
     "iocProvenanceRead.ts": "analysis/findings",

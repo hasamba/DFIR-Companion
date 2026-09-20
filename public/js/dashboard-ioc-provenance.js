@@ -123,13 +123,36 @@
     return ` <span class="ioc-prov-badge ioc-prov-telemetry" title="Telemetry-only: this IOC appears only in Info telemetry, not in any graded detection event">telemetry-only</span>`;
   }
 
+  // The browser cannot import the TS constants, so the two mentioned notes are mirrored here
+  // (#1471). Keep each in step with its source — the reports read those constants directly.
+  // Mirrors MENTIONED_NOTE in companion/src/analysis/iocMentioned.ts (#1461).
+  const MENTIONED_NETWORK_NOTE = "referenced in free text; no network record";
+  // Mirrors MENTIONED_HASH_NOTE in companion/src/analysis/iocMentionedHash.ts (#1459).
+  const MENTIONED_HASH_NOTE = "no file with this hash was observed";
+  const MENTIONED_NETWORK_TYPES = ["ip", "domain", "url"];
+
   // A sender-controlled indicator (#1266) — an X-Originating-IP header, a Received hop — must not
   // sit beside sensor-observed peers at identical weight (#1326). Same wording as the report; NOT
   // "provenance", which this row already uses for the detection/telemetry lens above. Strict
   // compare: absent means an ordinary sighting.
+  //
+  // The same chip carries the `mentioned` mark (#1471 finding 6): a network value read out of free
+  // text (#1461) or a hash read out of free text (#1459). The name stays — renderIocs in the page
+  // calls it once, and the page sits at its size ledger. Same strict compare on the literal; a
+  // mentioned IOC of a type with no wording yet gets no chip rather than a note written for a
+  // different claim.
   function iocClientReportedChip(ioc) {
-    if (ioc.provenance !== "client-reported") return "";
-    return ` <span class="ioc-note-chip" title="Reported by the client side of the conversation (e.g. a mail header the sender controls) — not observed by a sensor">client-reported</span>`;
+    if (ioc.provenance === "client-reported") {
+      return ` <span class="ioc-note-chip" title="Reported by the client side of the conversation (e.g. a mail header the sender controls) — not observed by a sensor">client-reported</span>`;
+    }
+    if (ioc.provenance !== "mentioned") return "";
+    const note = MENTIONED_NETWORK_TYPES.includes(ioc.type)
+      ? `Referenced in free text (a command line, a script block, a message) — ${MENTIONED_NETWORK_NOTE}`
+      : ioc.type === "hash"
+        ? `Mentioned in free text (a script block, a command line, a message) — ${MENTIONED_HASH_NOTE}`
+        : "";
+    if (!note) return "";
+    return ` <span class="ioc-note-chip" title="${escAttr(note)}">mentioned</span>`;
   }
 
   // Composite IOC risk (#63): { iocId: { score, factors } }, derived server-side from verdict +

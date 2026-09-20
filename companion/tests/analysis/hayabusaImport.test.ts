@@ -320,3 +320,54 @@ describe("parseHayabusaTimeline — PowerShell 4104 script-block fragments", () 
     expect(r.events[0].message).toBeUndefined();
   });
 });
+
+// The rendered subject cuts every detail value at 120 characters, and the collector-deployment
+// rules (collectorDeployment.ts) read the command line and the destination to recognise the case's
+// own Velociraptor install. So the row carries both as STRUCTURED fields, whole (#1471).
+describe("parseHayabusaTimeline — structured commandLine and dstIp", () => {
+  const LONG_MSI = `C:\\Users\\it\\Downloads\\${"a".repeat(130)}\\velociraptor-0.72.msi`;
+  const CMD = `C:\\Windows\\System32\\msiexec.exe /i ${LONG_MSI} /qn`;
+
+  it("CSV: Cmdline arrives whole past the 120-char subject cut, and TgtIP becomes dstIp", () => {
+    const text = csvTimeline([
+      [
+        "2026-01-01 09:00:00.000 +00:00",
+        "WS01",
+        "Sysmon",
+        "1",
+        "medium",
+        "Msiexec Install",
+        `Cmdline: ${CMD} ¦ Proc: C:\\Windows\\System32\\msiexec.exe ¦ TgtIP: 10.20.30.40`,
+        "t1218.007",
+      ],
+    ]);
+    const e = parseHayabusaTimeline(text).events[0];
+    expect(e.commandLine).toBe(CMD);
+    expect(e.commandLine!.length).toBeGreaterThan(120);
+    expect(e.description).not.toContain("velociraptor-0.72.msi"); // the subject is cut; the field is not
+    expect(e.dstIp).toBe("10.20.30.40");
+  });
+
+  it("JSON: CommandLine / DstIP aliases set the same fields; loopback and a missing key set nothing", () => {
+    const row = (details: object): object => ({
+      ...jsonProc(),
+      Details: details,
+      ExtraFieldInfo: {},
+    });
+    const r = parseHayabusaTimeline(
+      [
+        JSON.stringify({
+          ...row({ Proc: "C:\\x.exe", CommandLine: CMD, DstIP: "10.20.30.40" }),
+          RuleTitle: "A",
+        }),
+        JSON.stringify({ ...row({ Proc: "C:\\x.exe", DestinationIp: "127.0.0.1" }), RuleTitle: "B" }),
+      ].join("\n"),
+    );
+    const a = r.events.find((e) => e.description.includes("Hayabusa: A"))!;
+    expect(a.commandLine).toBe(CMD);
+    expect(a.dstIp).toBe("10.20.30.40");
+    const b = r.events.find((e) => e.description.includes("Hayabusa: B"))!;
+    expect(b.commandLine).toBeUndefined();
+    expect(b.dstIp).toBeUndefined();
+  });
+});

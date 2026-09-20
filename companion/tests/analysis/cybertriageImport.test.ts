@@ -161,6 +161,48 @@ describe("parseCybertriage — telemetry split", () => {
     expect(r.iocs.some((i) => i.type === "ip" && i.value === "192.168.128.134")).toBe(true);
   });
 
+  // #1471 — an Active Connection is live socket telemetry, not a string somebody typed. Marking
+  // its address "mentioned" made every network surface print "no network record" next to an IP
+  // the host was actually connected to.
+  it("reads the Active Connection address as observed, not mentioned", () => {
+    const r = parseCybertriage(jsonl(activeConnRow()));
+    const ip = r.iocs.find((i) => i.type === "ip" && i.value === "192.168.128.134");
+    expect(ip).toBeDefined();
+    expect(ip).not.toHaveProperty("provenance");
+  });
+
+  it("still marks an IP that a process's args merely mention", () => {
+    const r = parseCybertriage(jsonl({ ...suspProcRow(), args: "-c ping 198.51.100.7" }));
+    const ip = r.iocs.find((i) => i.type === "ip" && i.value === "198.51.100.7");
+    expect(ip?.provenance).toBe("mentioned");
+  });
+
+  it("keeps a hash-shaped token in a connection message as mentioned while the IP is observed", () => {
+    const hash = "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899";
+    const r = parseCybertriage(
+      jsonl({ ...activeConnRow(), message: `To 192.168.128.134:8000 sha256 ${hash}` }),
+    );
+    expect(r.iocs.find((i) => i.type === "ip" && i.value === "192.168.128.134")).not.toHaveProperty(
+      "provenance",
+    );
+    expect(r.iocs.find((i) => i.type === "hash" && i.value === hash)?.provenance).toBe("mentioned");
+  });
+
+  // The sink ratchet (#1266): the observed sighting wins whichever row arrives first.
+  it("lets the observed connection un-mark an IP a process row mentioned earlier", () => {
+    const procFirst = parseCybertriage(
+      jsonl({ ...suspProcRow(), args: "-c ping 192.168.128.134" }, activeConnRow()),
+    );
+    const connFirst = parseCybertriage(
+      jsonl(activeConnRow(), { ...suspProcRow(), args: "-c ping 192.168.128.134" }),
+    );
+    for (const r of [procFirst, connFirst]) {
+      const ip = r.iocs.find((i) => i.type === "ip" && i.value === "192.168.128.134");
+      expect(ip).toBeDefined();
+      expect(ip).not.toHaveProperty("provenance");
+    }
+  });
+
   it("counts notable vs total and reports the host", () => {
     const r = parseCybertriage(jsonl(lsassRow(), suspProcRow(), telemetryProcRow(), fileTelemetryRow()));
     expect(r.total).toBe(4);

@@ -26,6 +26,10 @@ import type { TlpLabel } from "../../analysis/stateTypes.js";
 
 export const CLIENT_REPORTED_LINE =
   "Client-reported: value read from a sender-controlled header (X-Originating-IP / Received hop), not an observed network fact.";
+// #1471 finding 6: a value read out of free text (#1461 network, #1459 hash). One line for both
+// types — the IRIS IOC type sits beside it, so the reader knows which half applies.
+export const MENTIONED_LINE =
+  "Mentioned: value read from free text (a command line, a script block, a log message), not observed by a sensor — no network record / no file with this hash.";
 
 const TAG = "dfir-companion";
 
@@ -125,21 +129,12 @@ export function mapIoc(
 
   const enr = ioc.enrichments ?? [];
   const verdict = worstVerdict(enr);
-  const intelLines = enr.map(
-    (e) => `- ${e.source}: ${e.verdict}${e.score ? ` (${e.score})` : ""}${e.link ? ` ${e.link}` : ""}`,
-  );
-  const base = intelLines.length
-    ? `Threat intel:\n${intelLines.join("\n")}`
-    : `Observed by DFIR Companion (first seen ${ioc.firstSeen}).`;
-  // #1266: said first, on both branches — "Observed by" would otherwise be exactly the wrong
-  // claim for a value read from a sender-controlled header.
-  const clientReported = ioc.provenance === "client-reported";
-  const description = clientReported ? `${CLIENT_REPORTED_LINE}\n${base}` : base;
   const enrichTags = [...new Set(enr.flatMap((e) => e.tags ?? []))].slice(0, 5);
   const tags = [
     TAG,
     ioc.type,
-    ...(clientReported ? ["client-reported"] : []),
+    ...(ioc.provenance === "client-reported" ? ["client-reported"] : []),
+    ...(ioc.provenance === "mentioned" ? ["mentioned"] : []),
     ...(verdict ? [verdict] : []),
     ...enrichTags,
   ];
@@ -148,9 +143,28 @@ export function mapIoc(
     ioc_value: ioc.value,
     ioc_type_id: typeId,
     ioc_tlp_id: resolveIocTlpId(ioc, eventById),
-    ioc_description: description,
+    ioc_description: iocDescription(ioc, enr),
     ioc_tags: [...new Set(tags)].join(","),
   };
+}
+
+// The IOC description: the intel block when there is one, else a one-line sighting. The
+// provenance line is said FIRST on both branches (#1266) — "Observed by" would otherwise be
+// exactly the wrong claim for a value read from a sender-controlled header. A mentioned value
+// (#1471) goes further: the sighting sentence itself says "Mentioned in free text", because
+// "Observed by DFIR Companion" under a line that denies observation contradicts itself.
+function iocDescription(ioc: IOC, enr: readonly IocEnrichment[]): string {
+  const intelLines = enr.map(
+    (e) => `- ${e.source}: ${e.verdict}${e.score ? ` (${e.score})` : ""}${e.link ? ` ${e.link}` : ""}`,
+  );
+  const mentioned = ioc.provenance === "mentioned";
+  const base = intelLines.length
+    ? `Threat intel:\n${intelLines.join("\n")}`
+    : mentioned
+      ? `Mentioned in free text (first seen ${ioc.firstSeen}).`
+      : `Observed by DFIR Companion (first seen ${ioc.firstSeen}).`;
+  if (ioc.provenance === "client-reported") return `${CLIENT_REPORTED_LINE}\n${base}`;
+  return mentioned ? `${MENTIONED_LINE}\n${base}` : base;
 }
 
 // ---- assets ----------------------------------------------------------------

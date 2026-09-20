@@ -14,6 +14,10 @@ import { repairIocValue, isWellFormedIocValue } from "../../analysis/iocValue.js
 
 export const CLIENT_REPORTED_COMMENT =
   "client-reported (sender-controlled header), not an observed network fact";
+// #1471 finding 6: a value read out of free text (#1459 hash, #1461 network). One comment for
+// both types — MISP shows it beside the attribute type, so the reader knows which half applies.
+export const MENTIONED_COMMENT =
+  "mentioned in free text only (a command line, a script block, a log message) — not observed by a sensor; no network record / no file with this hash";
 
 export interface MispPushInput {
   caseId: string; // Companion case id — used for idempotency tag and event title
@@ -222,8 +226,16 @@ export async function pushCaseToMisp(
     // #1266: a client-reported value (a sender-controlled header, never an observed network fact)
     // is still worth sharing as context, but never flagged for automated blocking — to_ids off,
     // and the comment says why so the receiving analyst sees the qualification, not just a bare IP.
+    // #1471: a mentioned value gets the same kind of comment; its to_ids is deliberately left as
+    // for a plain value of its type (recorded decision). Both comments reach only an attribute
+    // created by this push — an attribute already in the event was skipped above, before this.
     const clientReported = ioc.provenance === "client-reported";
-    const comment = clientReported ? `${CLIENT_REPORTED_COMMENT}${note ? ` — ${note}` : ""}` : note;
+    const qualifier = clientReported
+      ? CLIENT_REPORTED_COMMENT
+      : ioc.provenance === "mentioned"
+        ? MENTIONED_COMMENT
+        : undefined;
+    const comment = qualifier ? `${qualifier}${note ? ` — ${note}` : ""}` : note;
     const body: MispAttrBody = {
       type: mapped.type,
       value,
