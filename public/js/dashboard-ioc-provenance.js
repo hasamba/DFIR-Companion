@@ -453,11 +453,42 @@
     }
     return rows.join("");
   }
+  // The IOC's provenance mark ("mentioned", "client-reported", …) or undefined, read from the
+  // case state the page already holds (#1474). Cached as a Map keyed on the state OBJECT: a
+  // page with thousands of IOCs renders one badge per row, and an O(n) scan per row would make
+  // the panel quadratic. The map is rebuilt only when DfirState.lastState() is a new object,
+  // which is the only time a mark can change.
+  let iocMarkState = null;
+  let iocMarkById = new Map();
+  function iocProvenanceMarkOf(iocId) {
+    const state =
+      typeof DfirState !== "undefined" && DfirState.lastState
+        ? DfirState.lastState()
+        : null;
+    if (!state) return undefined;
+    if (state !== iocMarkState) {
+      iocMarkState = state;
+      iocMarkById = new Map();
+      for (const i of state.iocs || []) {
+        if (i && i.id && i.provenance) iocMarkById.set(i.id, i.provenance);
+      }
+    }
+    return iocMarkById.get(iocId);
+  }
   // "⊕ N" corroboration badge for an IOC seen by 2+ tools (mirrors the forensic-timeline badge).
+  //
+  // A `mentioned` IOC (#1459 hash, #1461 network) was read out of free text, and the import/merge
+  // invariant means it had no structured sighting — so every event that "contains" its value is
+  // one that merely mentions it. Two tools parsing the same script block is not two sightings.
+  // Those draw a neutral "↗ N" chip instead, and the title says what it is (#1474).
   function iocCorroBadge(iocId) {
     const src = iocSourcesById[iocId];
     if (!src || src.length < 2) return "";
-    return ` <span title="Corroborated by ${src.length} sources: ${escAttr(src.join(", "))}" data-safe-style="background:var(--success-bg);color:var(--sev-low);border:1px solid var(--success-border);border-radius:4px;padding:0 5px;font-size:10px;font-weight:bold">⊕ ${esc(src.length)}</span>`;
+    const list = escAttr(src.join(", "));
+    if (iocProvenanceMarkOf(iocId) === "mentioned") {
+      return ` <span title="Referenced in events from ${src.length} sources: ${list} — not corroboration; the value was read out of free text" data-safe-style="background:transparent;color:var(--text-muted);border:1px solid var(--text-muted);border-radius:4px;padding:0 5px;font-size:10px;font-weight:bold">↗ ${esc(src.length)}</span>`;
+    }
+    return ` <span title="Corroborated by ${src.length} sources: ${list}" data-safe-style="background:var(--success-bg);color:var(--sev-low);border:1px solid var(--success-border);border-radius:4px;padding:0 5px;font-size:10px;font-weight:bold">⊕ ${esc(src.length)}</span>`;
   }
 
   // Beacons, evidence gaps, playbook match and ATT&CK mitigations moved to
@@ -471,7 +502,12 @@
   // Memory Next Steps (#101) moved to js/dashboard-memory-next-steps.js (#415 tier 3).
 
   // ---- what renderIocs asks ----
+  // Feeds the "⊕ 2+/3+ src" lens and Signal-only, which treat 2+ as corroboration. A mention
+  // corroborates nothing, so a `mentioned` IOC answers 0 and drops out of both (#1474). This is
+  // a real zero from a present function; the page's `_iocCorrob` defaults to a non-excluding
+  // value only when this function is ABSENT (see the header comment), and that contract holds.
   function iocCorroborationCount(iocId) {
+    if (iocProvenanceMarkOf(iocId) === "mentioned") return 0;
     return (iocSourcesById[iocId] || []).length;
   }
   // Provenance + risk, applied together. Returns the list unchanged when neither is engaged.
