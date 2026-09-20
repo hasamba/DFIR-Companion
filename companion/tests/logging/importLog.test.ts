@@ -21,22 +21,16 @@ describe("import log formatters", () => {
     expect(describeMb(108_646_243)).toBe("104 MB");
   });
 
-  it("formats the start line with bytes, lines, or neither, and an optional source", () => {
+  it("formats the start line with bytes, lines, or neither", () => {
     expect(
       formatImportStart({ caseId: "c1", label: "0018_x.json", kind: "velociraptor", bytes: 108_646_243 }),
     ).toBe("[import] c1 0018_x.json: start — velociraptor, 104 MB");
     expect(formatImportStart({ caseId: "c1", label: "0003_t.jsonl", kind: "thor", lines: 1200 })).toBe(
       "[import] c1 0003_t.jsonl: start — thor, 1200 line(s)",
     );
-    expect(
-      formatImportStart({
-        caseId: "c1",
-        label: "f.json",
-        kind: "velociraptor",
-        bytes: 10,
-        source: "drop folder",
-      }),
-    ).toBe("[import] c1 f.json: start — velociraptor, 0.0 MB via drop folder");
+    expect(formatImportStart({ caseId: "c1", label: "f.json", kind: "velociraptor", bytes: 10 })).toBe(
+      "[import] c1 f.json: start — velociraptor, 0.0 MB",
+    );
   });
 
   it("formats merged, settled and failed lines", () => {
@@ -91,6 +85,10 @@ describe("label hygiene and the progress-detail gate", () => {
     expect(formatImportFailed({ caseId: "c1", label: "f", kind: "thor", message: "bad\nline" })).toBe(
       "[import] c1 f: FAILED (thor) — bad line",
     );
+    // `kind` can carry an MCP tool name from the request body — it is a label too.
+    expect(formatImportFailed({ caseId: "c1", label: "f", kind: "mcp:s/x\nforged", message: "m" })).toBe(
+      "[import] c1 f: FAILED (mcp:s/x forged) — m",
+    );
     expect(formatImportCancelled("c1", "f.json", 2500)).toBe(
       "[import] c1 f.json: cancelled after 2.5 s — stored evidence retained",
     );
@@ -101,6 +99,8 @@ describe("label hygiene and the progress-detail gate", () => {
       "THOR import — 5000/12000",
       "velociraptor import — committed batch 2/7",
       "csv import — 1/1",
+      "CSV import — batch 1/3", // the dedicated AI routes' shape
+      "log import — batch 2/3",
     ])
       expect(IMPORT_PROGRESS_DETAIL.test(ok)).toBe(true);
     for (const no of [

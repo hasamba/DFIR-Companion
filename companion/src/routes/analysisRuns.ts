@@ -137,14 +137,16 @@ async function replayImport(ctx: RouteContext, run: AnalysisRunManifest): Promis
     idPrefix: `replay-${Date.now()}`,
     importedAt: startedAt,
   });
+  // The replay settles inline: demote is its only super-timeline append, so the rows the demote
+  // moved are what "super +N" reports; the done line is the seam's (#1438).
+  const merged = await options.stateStore.load(run.caseId);
   const after = await ctx.demoteForensicForCase(run.caseId);
-  // The replay settles inline (no dual-write, so super +0); the done line is the seam's (#1438).
   const replayDiff = diffTimeline(before.forensicTimeline, after.forensicTimeline);
   const replayIocs = diffIocs(before.iocs, after.iocs);
   logImportSettled(run.caseId, `replay-${run.id}`, {
     forensicAdded: replayDiff.added.length,
     forensicRemoved: replayDiff.removed.length,
-    superAdded: 0,
+    superAdded: diffTimeline(after.forensicTimeline, merged.forensicTimeline).added.length,
     iocsAdded: replayIocs.added.length,
     iocsRemoved: replayIocs.removed.length,
   });
@@ -321,6 +323,7 @@ export function registerAnalysisRunRoutes(app: Express, ctx: RouteContext): void
       const status = await executeReplay(ctx, run);
       return res.status(status === "accepted" ? 202 : 200).json({ accepted: true, parentRunId: run.id });
     } catch (err) {
+      ctx.recordImportFailure(run.caseId, "replay", `replay-${run.id}`, err); // the [import] FAILED line (#1438)
       return res.status(500).json({ error: (err as Error).message });
     }
   });

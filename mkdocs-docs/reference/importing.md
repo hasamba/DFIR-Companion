@@ -2347,7 +2347,7 @@ the row's identity is (tenant, job id), so a re-import folds.
 ## What the log says about an import
 
 Every import — the Import button, a server path, the drop folder, a push, an external tool, MCP, a
-Velociraptor hunt, flow or monitor — writes to the session log (`companion/logs/session-*.log`) and
+Velociraptor hunt, flow or monitor — writes to the session log (`logs/session-*.log` beside the cases root, or `DFIR_LOG_DIR`) and
 to the case's own log, under one prefix you can grep for: `[import]`.
 
 ```
@@ -2364,7 +2364,8 @@ to the case's own log, under one prefix you can grep for: `[import]`.
 - **parsed and merged** is the wall time the importer took.
 - **done** is what the analyst will find after the demote pass: rows that reached the forensic
   timeline, rows that reached the super-timeline, and IOCs. An import that changed nothing (a live
-  monitor poll with no new rows) logs this line at `debug` only.
+  monitor poll with no new rows, or a re-import of a file the case already holds) logs this line
+  at `debug` only.
 - **FAILED** carries the error, with any absolute path redacted. A cancelled import says
   `cancelled … stored evidence retained` instead.
 

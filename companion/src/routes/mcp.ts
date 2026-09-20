@@ -397,7 +397,8 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
         });
       } catch (err) {
         if (job) await options.jobManager?.fail(job.jobId, err);
-        recordImportFailure(caseId, `mcp:${server.id}/${tool}`, label, err);
+        // A cancel is the analyst's decision, not a failure — no FAILED line, no ring entry (#1438).
+        if (!job?.signal?.aborted) recordImportFailure(caseId, `mcp:${server.id}/${tool}`, label, err);
         void logActivity(options.activityLogStore, options.onActivity, caseId, {
           category: "import",
           action: "mcp-run",
@@ -481,11 +482,9 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
       return res.status(404).json({ error: `case ${req.params.id} does not exist` });
     const p = await readPreview(req.params.id, req.params.jobId);
     if (!p)
-      return res
-        .status(404)
-        .json({
-          error: "no preview for that run — it may have been imported, discarded, or lost to a restart",
-        });
+      return res.status(404).json({
+        error: "no preview for that run — it may have been imported, discarded, or lost to a restart",
+      });
     const displayText = p.reportText ?? p.text;
     return res.status(200).json({
       server: p.server,
@@ -514,11 +513,9 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
     }
     const p = await readPreview(caseId, req.params.jobId);
     if (!p)
-      return res
-        .status(404)
-        .json({
-          error: "no preview for that run — it may have been imported, discarded, or lost to a restart",
-        });
+      return res.status(404).json({
+        error: "no preview for that run — it may have been imported, discarded, or lost to a restart",
+      });
     if (p.importedAt)
       return res.status(409).json({ error: "this analysis was already imported", reportId: p.reportId });
     try {
@@ -666,11 +663,9 @@ export function registerMcpRoutes(app: Express, ctx: RouteContext): void {
     const caseMeta = await store.getCaseMeta(caseId).catch(() => null);
     if (caseMeta?.status === "closed" || caseMeta?.status === "archived") {
       const action = caseMeta.status === "archived" ? "restore it" : "reopen it";
-      res
-        .status(423)
-        .json({
-          error: `Case "${caseId}" is ${caseMeta.status} — ${action} before running the investigation`,
-        });
+      res.status(423).json({
+        error: `Case "${caseId}" is ${caseMeta.status} — ${action} before running the investigation`,
+      });
       return null;
     }
     const prompt = typeof req.body?.prompt === "string" ? req.body.prompt.trim() : "";

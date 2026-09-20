@@ -31,7 +31,7 @@ export function sanitizeLabel(label: string): string {
 // done/total" shape every import path emits (createImportJobTracking, ingestStreamed, the dedicated
 // routes' inline callbacks). Enrichment, screenshot and exposure-check statuses share the phase but
 // not the shape, so they never print under the [import] prefix.
-export const IMPORT_PROGRESS_DETAIL = /\bimport — (?:committed batch )?\d+\/\d+$/;
+export const IMPORT_PROGRESS_DETAIL = /\bimport — (?:committed batch |batch )?\d+\/\d+$/;
 
 export function describeMb(bytes: number): string {
   const mb = bytes / (1024 * 1024);
@@ -48,7 +48,6 @@ export interface ImportStartInfo {
   kind: string;
   bytes?: number;
   lines?: number;
-  source?: string; // where the file came from: "drop folder", "push", "hunt H.1", …
 }
 
 export function formatImportStart(info: ImportStartInfo): string {
@@ -58,8 +57,7 @@ export function formatImportStart(info: ImportStartInfo): string {
       : info.lines !== undefined
         ? `, ${info.lines} line(s)`
         : "";
-  const via = info.source ? ` via ${info.source}` : "";
-  return `${IMPORT_LOG_PREFIX} ${info.caseId} ${sanitizeLabel(info.label)}: start — ${info.kind}${size}${via}`;
+  return `${IMPORT_LOG_PREFIX} ${info.caseId} ${sanitizeLabel(info.label)}: start — ${sanitizeLabel(info.kind)}${size}`;
 }
 
 export function formatImportMerged(caseId: string, label: string, elapsedMs: number): string {
@@ -100,7 +98,7 @@ export function formatImportCancelled(caseId: string, label: string, elapsedMs: 
 
 export function formatImportFailed(info: ImportFailedInfo): string {
   const took = info.elapsedMs !== undefined ? ` after ${seconds(info.elapsedMs)}` : "";
-  return `${IMPORT_LOG_PREFIX} ${info.caseId} ${sanitizeLabel(info.label)}: FAILED (${info.kind})${took} — ${sanitizeLabel(info.message)}`;
+  return `${IMPORT_LOG_PREFIX} ${info.caseId} ${sanitizeLabel(info.label)}: FAILED (${sanitizeLabel(info.kind)})${took} — ${sanitizeLabel(info.message)}`;
 }
 
 export interface ImportProgressThrottle {

@@ -553,6 +553,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
           importedAny = true;
         } catch (e) {
           logLine(`[velociraptor] upload import failed (${up.name}): ${(e as Error).message}`);
+          recordImportFailure?.(caseId, `velociraptor-upload:${upKind}`, up.name, e); // the [import] FAILED line (#1438)
         }
       }
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
