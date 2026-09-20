@@ -1,7 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { isTransientCasePath, SQLITE_TEMP_VERBS } from "../../src/analysis/caseTransientPaths.js";
+import {
+  INVESTIGATION_DB_BASENAME,
+  isTransientCasePath,
+  SQLITE_TEMP_VERBS,
+} from "../../src/analysis/caseTransientPaths.js";
+import { INVESTIGATION_DB_FILENAME } from "../../src/analysis/stateStore.js";
 
 const WORKER_SOURCE_FILE = join(
   import.meta.dirname,
@@ -38,11 +43,52 @@ describe("isTransientCasePath — SQLite worker temporaries", () => {
     }
   });
 
-  // journal_mode=DELETE: the journal holds pages to UNDO an open write and is deleted on commit, so
-  // it races the export and is never where committed data lives. The database itself must stay.
+  // The rollback journal holds pages to UNDO an open write and is deleted on commit, so it races
+  // the export and is never where committed data lives. The database itself must stay.
   it("skips the live database's rollback journal but keeps the database", () => {
     expect(isTransientCasePath("state/investigation.sqlite-journal")).toBe(true);
     expect(isTransientCasePath("state/investigation.sqlite")).toBe(false);
+  });
+
+  // #1454: journal_mode=WAL. Committed pages DO live in the -wal file until a checkpoint folds them
+  // in, so a raw copy of the database alone can be stale — which is why both archive writers copy a
+  // VACUUM INTO snapshot instead of the live file. The sidecars themselves are never case content.
+  it("skips the live database's WAL and shared-memory sidecars", () => {
+    expect(isTransientCasePath("state/investigation.sqlite-wal")).toBe(true);
+    expect(isTransientCasePath("state/investigation.sqlite-shm")).toBe(true);
+    expect(isTransientCasePath("investigation.sqlite-wal")).toBe(true);
+    for (const verb of SQLITE_TEMP_VERBS) {
+      const temp = `investigation.sqlite.${verb}-3fe4927a-44f6-4c7b-9972-8592d781cbd7`;
+      expect(isTransientCasePath(`${temp}-wal`)).toBe(true);
+      expect(isTransientCasePath(`${temp}-shm`)).toBe(true);
+    }
+  });
+
+  // BackupManager snapshots the database to `<manifest>.investigation.sqlite` under state/backups/,
+  // through the same worker temp; its temp and sidecars are as transient as the live database's.
+  it("covers the backup sidecar's temp and journal too", () => {
+    const sidecar = "2026-09-20T10-00-00-000Z_auto.investigation.sqlite";
+    expect(isTransientCasePath(sidecar)).toBe(false);
+    expect(isTransientCasePath(`${sidecar}.snapshot-3fe4927a-44f6-4c7b-9972-8592d781cbd7`)).toBe(true);
+    expect(isTransientCasePath(`${sidecar}-journal`)).toBe(true);
+    expect(isTransientCasePath(`${sidecar}-wal`)).toBe(true);
+  });
+
+  // The rule is anchored on the one database name the worker writes. The sidecar suffixes alone
+  // must not classify a file: an analyst can import a collected SQLite database with its WAL.
+  it("matches only the case database's own name, never an imported one", () => {
+    expect(INVESTIGATION_DB_BASENAME).toBe(INVESTIGATION_DB_FILENAME);
+    for (const path of [
+      "imports/evidence.sqlite-journal",
+      "imports/evidence.sqlite-wal",
+      "imports/evidence.sqlite-shm",
+      "imports/history.sqlite.migrating-3fe4927a-44f6-4c7b-9972-8592d781cbd7",
+      "imports/xinvestigation.sqlite-wal",
+      "imports/evidence-investigation.sqlite-wal",
+      "imports/investigation.sqlite.bak-wal",
+    ]) {
+      expect(isTransientCasePath(path), `${path} is case content and must be exported`).toBe(false);
+    }
   });
 });
 
