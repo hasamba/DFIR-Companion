@@ -332,3 +332,60 @@ describe("a verdict factor says it is current reputation and when it was measure
     ).toBe("2026-04-30T10:00:00.000Z");
   });
 });
+
+// #1474: a mentioned IOC (#1459 hash, #1461/#1471 network) has no structured sighting — the
+// import/merge ratchet clears the mark on the first one — so the worst event it "appears in" and the
+// tools that "observed" it are the mention itself. Neither earns points; both are reworded so the
+// analyst keeps the fact without the credit. The plain IOC keeps every branch as it was.
+describe("scoreIoc — a mentioned IOC earns nothing from the event that mentions it (#1474)", () => {
+  const flags: Array<Partial<IocRiskSignals>> = [{ mentionedHash: true }, { mentionedNetwork: true }];
+
+  it.each(flags)("severity: no points, reworded, at every tier (%o)", (flag) => {
+    const crit = scoreIoc(sig({ ...flag, maxSeverityRank: 4 }));
+    const high = scoreIoc(sig({ ...flag, maxSeverityRank: 3 }));
+    const med = scoreIoc(sig({ ...flag, maxSeverityRank: 2 }));
+    expect(crit.factors).toContain("mentioned in a Critical event");
+    expect(high.factors).toContain("mentioned in a High-severity event");
+    expect(med.factors).toContain("mentioned in a Medium-severity event");
+    for (const r of [crit, high, med]) {
+      expect(r.score).toBe("low");
+      expect(r.factors.join(" | ")).not.toMatch(/seen in/);
+    }
+  });
+
+  it.each(flags)("tools: no points, reworded, for 2 and for 3+ (%o)", (flag) => {
+    const two = scoreIoc(sig({ ...flag, distinctTools: 2 }));
+    const three = scoreIoc(sig({ ...flag, distinctTools: 3 }));
+    expect(two.factors).toContain("referenced in events from 2 tools");
+    expect(three.factors).toContain("referenced in events from 3 tools");
+    for (const r of [two, three]) {
+      expect(r.score).toBe("low");
+      expect(r.factors.join(" | ")).not.toMatch(/observed by/);
+    }
+  });
+
+  it.each(flags)("the intel, KEV and domain signals still count (%o)", (flag) => {
+    // lone-intel 2 + KEV 3 + risky TLD 1 = 6 → high; the High event and 3 tools add nothing.
+    const r = scoreIoc(
+      sig({
+        ...flag,
+        verdictClass: "lone-intel",
+        kevMatch: true,
+        suspiciousDomain: true,
+        maxSeverityRank: 3,
+        distinctTools: 3,
+      }),
+    );
+    expect(r.score).toBe("high");
+  });
+
+  it("the plain IOC keeps every severity and tool branch (the control)", () => {
+    expect(scoreIoc(sig({ maxSeverityRank: 4 })).factors).toContain("seen in a Critical event");
+    expect(scoreIoc(sig({ maxSeverityRank: 3 })).factors).toContain("seen in a High-severity event");
+    expect(scoreIoc(sig({ maxSeverityRank: 2 })).factors).toContain("seen in a Medium-severity event");
+    expect(scoreIoc(sig({ distinctTools: 2 })).factors).toContain("observed by 2 tools");
+    expect(scoreIoc(sig({ distinctTools: 3 })).factors).toContain("observed by 3 tools");
+    // Critical (3) + 3 tools (2) = 5 → high, exactly as before.
+    expect(scoreIoc(sig({ maxSeverityRank: 4, distinctTools: 3 })).score).toBe("high");
+  });
+});

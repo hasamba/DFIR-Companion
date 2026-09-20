@@ -131,24 +131,35 @@ export function scoreIoc(s: IocRiskSignals): IocRisk {
   if (s.mentionedNetwork) factors.push(`address mentioned in free text; ${MENTIONED_NOTE}`);
 
   // 3. Internal severity: the worst graded event the indicator appears in.
+  //
+  // #1474: for a MENTIONED IOC that event is the one that mentions it — the import/merge ratchet
+  // clears the mark on the first structured sighting, so a marked value in persisted state has
+  // none — and a scary sentence is not a scary address. No points; the factor keeps the fact
+  // ("mentioned in", never "seen in") so the reader still knows where the string sits.
+  const mentioned = Boolean(s.mentionedHash || s.mentionedNetwork);
+  const seen = mentioned ? "mentioned in" : "seen in";
   if (s.maxSeverityRank >= Critical) {
-    points += 3;
-    factors.push("seen in a Critical event");
+    if (!mentioned) points += 3;
+    factors.push(`${seen} a Critical event`);
   } else if (s.maxSeverityRank >= High) {
-    points += 2;
-    factors.push("seen in a High-severity event");
+    if (!mentioned) points += 2;
+    factors.push(`${seen} a High-severity event`);
   } else if (s.maxSeverityRank >= Medium) {
-    points += 1;
-    factors.push("seen in a Medium-severity event");
+    if (!mentioned) points += 1;
+    factors.push(`${seen} a Medium-severity event`);
   }
 
-  // 4. Cross-tool corroboration (distinct from intel corroboration).
-  if (s.distinctTools >= 3) {
-    points += 2;
-    factors.push(`observed by ${s.distinctTools} tools`);
-  } else if (s.distinctTools === 2) {
-    points += 1;
-    factors.push("observed by 2 tools");
+  // 4. Cross-tool corroboration (distinct from intel corroboration). Same rule for a mentioned
+  // IOC (#1474): two importers that parsed the same script are not two observations. Worded
+  // "referenced in events from N tools", not "mentioned by N tools" — a canonical event's sources
+  // are a union, and one description does not prove each tool mentioned the value on its own.
+  if (s.distinctTools >= 2) {
+    const n = s.distinctTools;
+    if (mentioned) factors.push(`referenced in events from ${n} tools`);
+    else {
+      points += n >= 3 ? 2 : 1;
+      factors.push(`observed by ${n} tools`);
+    }
   }
 
   // 5. KEV bump (minor, mostly CVE-typed IOCs).

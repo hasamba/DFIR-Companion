@@ -130,16 +130,28 @@ describe("#1471 -- a mentioned network IOC does not corroborate itself", () => {
     const { state } = mentionedNetworkCase();
     const risk = scoreIocs(state.iocs, state.forensicTimeline, { hostNames: new Set() })["i1"];
     expect(risk.factors.join(" | ")).not.toMatch(/carried by a Medium\+ event|corroborated/);
-    // Pinned: lone-intel (2) + High event (2) = 4 → high. The self-corroborated read scored 6 —
-    // the same tier, one short of critical — so the factor list is what makes a later change
-    // visible. The severity factor keeps its wording for a mentioned IOC on purpose: the #1459
-    // mentioned hash reads the same way, so rewording both belongs to one later change.
-    expect(risk.score).toBe("high");
+    // Pinned: lone-intel (2) only = 2 → medium. The High event that carries the address is the one
+    // that MENTIONS it, so it earns no points (#1474); before, the same row scored 4 → high and
+    // entered the synthesis "act on these first" block.
+    expect(risk.score).toBe("medium");
     expect(risk.factors).toEqual([
       "1 hit with lineage not recorded (VT) — not counted as an origin; re-check with force to record the creator (current reputation, measured 2026-02-11)",
       `address mentioned in free text; ${MENTIONED_NOTE}`,
-      "seen in a High-severity event",
+      "mentioned in a High-severity event",
     ]);
+  });
+
+  it("two importers that both parsed the mention are not two observations (#1474)", () => {
+    const { state } = mentionedNetworkCase();
+    const [ev] = state.forensicTimeline;
+    state.forensicTimeline = [
+      { ...ev, sources: ["Hayabusa"] },
+      { ...ev, id: "e2", sources: ["Chainsaw"] },
+    ];
+    const risk = scoreIocs(state.iocs, state.forensicTimeline, { hostNames: new Set() })["i1"];
+    expect(risk.factors).toContain("referenced in events from 2 tools");
+    expect(risk.factors.join(" | ")).not.toMatch(/observed by|seen in/);
+    expect(risk.score).toBe("medium");
   });
 
   it("a mentioned domain and url get the same note", () => {

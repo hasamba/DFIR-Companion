@@ -354,7 +354,11 @@ describe("#1459 -- consumers read a mentioned hash as a mention, not a file on t
     const risk = scoreIocs(state.iocs, state.forensicTimeline, { hostNames: new Set() })["i1"];
     expect(risk.factors.join(" | ")).not.toMatch(/carried by a Medium\+ event|corroborated/);
     expect(risk.factors.join(" | ")).toContain("no file with this hash was observed");
-    expect(risk.score).not.toBe("critical");
+    // #1474: the Critical script block that carries the hash MENTIONS it — no points from it.
+    // lone-intel (2) only = 2 → medium; the factor keeps the fact without the credit.
+    expect(risk.score).toBe("medium");
+    expect(risk.factors).toContain("mentioned in a Critical event");
+    expect(risk.factors.join(" | ")).not.toMatch(/seen in|observed by/);
   });
 
   it("a STIX indicator carries a `mentioned` label, custom property and leading description line", () => {
