@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { iocProvenanceSuffix } from "../../src/analysis/iocProvenanceLabel.js";
+import { iocProvenanceSuffix, iocSourcesLabel } from "../../src/analysis/iocProvenanceLabel.js";
 import { MENTIONED_NOTE } from "../../src/analysis/iocMentioned.js";
 import { MENTIONED_HASH_NOTE } from "../../src/analysis/iocMentionedHash.js";
 import type { IOC } from "../../src/analysis/stateTypes.js";
@@ -43,5 +43,23 @@ describe("iocProvenanceSuffix (#1471)", () => {
     expect(iocProvenanceSuffix(ioc({}))).toBe("");
     expect(iocProvenanceSuffix(ioc({ type: "file", provenance: "mentioned" }))).toBe("");
     expect(iocProvenanceSuffix(ioc({ provenance: "mentioned-ish" as IOC["provenance"] }))).toBe("");
+  });
+});
+
+describe("iocSourcesLabel — the IOC table's Sources cell (#1474)", () => {
+  it("marks 2+ tools ⊕ for a plain value and 'referenced in' for a mentioned one", () => {
+    expect(iocSourcesLabel({ type: "ip" }, ["Chainsaw", "Hayabusa"])).toBe("Chainsaw, Hayabusa (⊕ 2)");
+    expect(iocSourcesLabel({ type: "ip", provenance: "mentioned" }, ["Chainsaw", "Hayabusa"])).toBe(
+      "Chainsaw, Hayabusa (referenced in 2)",
+    );
+    expect(iocSourcesLabel({ type: "hash", provenance: "mentioned" }, ["A", "B", "C"])).toBe(
+      "A, B, C (referenced in 3)",
+    );
+  });
+
+  it("one tool is just the name; none is a dash", () => {
+    expect(iocSourcesLabel({ type: "ip", provenance: "mentioned" }, ["Hayabusa"])).toBe("Hayabusa");
+    expect(iocSourcesLabel({ type: "ip" }, [])).toBe("—");
+    expect(iocSourcesLabel({ type: "ip" }, undefined)).toBe("—");
   });
 });

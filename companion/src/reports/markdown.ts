@@ -25,6 +25,7 @@ import { buildAttackPhases, DEFAULT_GAP_SECONDS } from "../analysis/burstDetect.
 import { detectBeacons, beaconEnvOptions, BEACON_CAVEAT } from "../analysis/beaconDetect.js";
 import { buildGeoMap } from "../analysis/geoMap.js";
 import { iocValueLabel, mentionedLabel } from "../analysis/iocMentioned.js";
+import { iocSourcesLabel } from "../analysis/iocProvenanceLabel.js";
 import { gapEnvOptions, GAP_CAVEAT } from "../analysis/gapDetect.js";
 import { detectGapsWithWaves } from "../analysis/activityWaves.js";
 import { buildKnownUnknownItems } from "../analysis/knownUnknowns.js";
@@ -826,12 +827,7 @@ function investigation(
       "| --- | --- | --- | --- | --- | --- |",
     );
     for (const i of indicators) {
-      const src = iocSrc[i.id];
-      // "(⊕ N)" is the corroboration marker. A mentioned value (#1459/#1461) has no structured
-      // sighting, so N tools that carry it all parsed the same text: referenced, never ⊕ (#1474).
-      const mark = i.provenance === "mentioned" ? "referenced in" : "⊕";
-      const srcCell =
-        src && src.length ? `${src.join(", ")}${src.length > 1 ? ` (${mark} ${src.length})` : ""}` : "—";
+      const srcCell = iocSourcesLabel(i, iocSrc[i.id]); // "(⊕ N)" is corroboration; a mention is "(referenced in N)" (#1474)
       const r = iocRisk[i.id];
       const riskCell = r ? `**${r.score}**${r.factors.length ? ` — ${r.factors[0]}` : ""}` : "—";
       const valueCell = iocValueLabel(i); // #1266 "(client-reported)"; #1461 "referenced …; no network record"

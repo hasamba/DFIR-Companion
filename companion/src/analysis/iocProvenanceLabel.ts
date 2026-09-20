@@ -34,3 +34,16 @@ export function iocProvenanceSuffix(ioc: ProvenanceInput): string {
   if (isMentionedHash(ioc)) return ` (mentioned in free text; ${MENTIONED_HASH_NOTE})`;
   return "";
 }
+
+/**
+ * The IOC table's Sources cell: the tool names, and for 2+ tools the corroboration marker "(⊕ N)".
+ * A mentioned value (#1459 hash, #1461 network) has no structured sighting, so N tools that carry
+ * it all parsed the same text — the cell says "(referenced in N)" and never ⊕ (#1474). "—" when
+ * no sourced event references the value.
+ */
+export function iocSourcesLabel(ioc: ProvenanceInput, sources: readonly string[] | undefined): string {
+  if (!sources || sources.length === 0) return "—";
+  if (sources.length === 1) return sources[0];
+  const mark = ioc.provenance === "mentioned" ? "referenced in" : "⊕";
+  return `${sources.join(", ")} (${mark} ${sources.length})`;
+}
