@@ -1643,13 +1643,24 @@ describe("parseVelociraptorJson — hostFallback (single-client flow attribution
     expect(r.events.every((e) => e.asset === "DESKTOP-01")).toBe(true);
   });
 
-  it("keeps a row's own host over hostFallback", () => {
+  it("keeps a row's own collector identity (Fqdn) over hostFallback", () => {
     const text = JSON.stringify({
-      "Windows.NTFS.MFT": [{ OSPath: "C:\\x", Created0x10: "2026-06-01T00:00:00Z", Computer: "SERVER-9" }],
+      "Windows.NTFS.MFT": [{ OSPath: "C:\\x", Created0x10: "2026-06-01T00:00:00Z", Fqdn: "SERVER-9" }],
     });
     const r = parseVelociraptorJson(text, { artifact: "Windows.NTFS.MFT", hostFallback: "DESKTOP-01" });
     const withHost = r.events.find((e) => e.asset);
     expect(withHost?.asset).toBe("SERVER-9");
+  });
+
+  // #1458: a flow is one client. A row that names only a different `Computer` (the name written INTO
+  // the record) is that client's older history under a former hostname, not a second machine.
+  it("reads a differing Computer under hostFallback as the client's former name", () => {
+    const text = JSON.stringify({
+      "Windows.NTFS.MFT": [{ OSPath: "C:\\x", Created0x10: "2026-06-01T00:00:00Z", Computer: "SERVER-9" }],
+    });
+    const r = parseVelociraptorJson(text, { artifact: "Windows.NTFS.MFT", hostFallback: "DESKTOP-01" });
+    expect(r.events.every((e) => !e.asset || e.asset === "DESKTOP-01")).toBe(true);
+    expect(r.events.some((e) => e.description.includes("former hostname SERVER-9"))).toBe(true);
   });
 });
 

@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Deep pass says when it has nothing new to read** — the pre-flight preview reports what the last synthesis read; if it dropped no event for the size limit, the panel says a deep pass would read the same or fewer and Run is off unless the analyst ticks *Run anyway*; a timeline changed since is called stale (closes #1457)
 
 ### Fixed
+- **Flow exports: a renamed host is one host too** — a Velociraptor flow row carries no `Fqdn`, so the import's client (the flow's hostname) now stands in as the collector identity; an older `Computer` on such a row is the machine's former name, noted on the row, not a second asset (closes #1458)
 - **Every import logs start, progress, outcome and failure** — one `[import]` prefix in the session log and the case log, so a crash mid-import always names the file and how far it got (closes #1438)
 - **Batched Velociraptor import** — a large export (a full `$MFT`) is imported one batch of rows at a time, tagged and gated per batch, with one log line per batch, instead of expanded whole in memory and OOM-killed (closes #1439)
 - **No route loads the whole super-timeline** — IOC provenance, TLS graph, host identity, tagger run/preview/replay, attestation matches and the Timesketch super push stream it batch by batch (the Timesketch push as chunked uploads), so a capped 900k-event case no longer OOM-kills the server after every import (closes #1444)

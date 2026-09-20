@@ -74,8 +74,11 @@ function channelOf(row: Row): string {
 
 // `recordName` lets a caller that already unwrapped the event (Chainsaw's `document.data.Event`)
 // hand in the name it found there; otherwise the record keys above are read from `row` itself.
-export function resolveRowHost(row: Row, recordName?: string): RowHost {
-  const collector = firstKey(row, COLLECTOR_KEYS);
+// `collectorFallback` is the IMPORT's client — a Velociraptor flow export carries no Fqdn per row,
+// but a flow is one client by definition and the route knows its hostname (#1458). A per-row
+// collector key still wins; the fallback only stands in when the row names none.
+export function resolveRowHost(row: Row, recordName?: string, collectorFallback = ""): RowHost {
+  const collector = firstKey(row, COLLECTOR_KEYS) || collectorFallback.trim();
   const record = (recordName ?? "").trim() || firstKey(row, RECORD_KEYS);
   if (!collector) return { asset: record, collectorIdentity: false };
   if (!record || shortHostName(record) === shortHostName(collector))

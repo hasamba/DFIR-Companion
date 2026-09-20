@@ -332,3 +332,103 @@ describe("Hayabusa import — a row that names both the collector and a former C
     expect(r.events[0].asset).toBe(FORMER);
   });
 });
+
+// A Velociraptor FLOW export (the super-timeline bundle) carries no Fqdn/ClientId per row — a row is
+// `{System:{Computer}, EventData}`. The import knows the client anyway (`hostFallback`, the client's
+// hostname from the server), so that is the collector identity and an older `Computer` is a former
+// name — not a second asset (#1458).
+const FLOW_HOST = "DESKTOP-16OJFO6";
+const BUILD_NAME = "WIN-0NNTB2RTNB1";
+
+function flowEvtxRow(computer: string, over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    System: {
+      Provider: { Name: "Microsoft-Windows-Security-Auditing" },
+      EventID: { Value: 4624 },
+      Level: 0,
+      TimeCreated: { SystemTime: 1756213808.06 },
+      EventRecordID: 5150,
+      Channel: "Security",
+      Computer: computer,
+    },
+    EventData: {
+      TargetUserName: "vagrant",
+      TargetDomainName: computer,
+      LogonType: 2,
+      IpAddress: "127.0.0.1",
+    },
+    Message: "An account was successfully logged on.",
+    _Source: "Windows.EventLogs.Evtx",
+    ...over,
+  };
+}
+
+describe("resolveRowHost — an import-level collector stands in when the row has none (#1458)", () => {
+  it("uses the fallback as the collector and reads a differing Computer as the former name", () => {
+    expect(resolveRowHost({ System: { Computer: BUILD_NAME } }, undefined, FLOW_HOST)).toEqual({
+      asset: FLOW_HOST,
+      formerName: BUILD_NAME,
+      collectorIdentity: true,
+    });
+  });
+
+  it("a matching Computer is not a former name; a per-row Fqdn still beats the fallback", () => {
+    expect(resolveRowHost({ System: { Computer: "desktop-16ojfo6" } }, undefined, FLOW_HOST)).toEqual({
+      asset: FLOW_HOST,
+      collectorIdentity: true,
+    });
+    expect(resolveRowHost({ Fqdn: COLLECTOR, Computer: FORMER }, undefined, "OTHER-BOX")).toEqual({
+      asset: COLLECTOR,
+      formerName: FORMER,
+      collectorIdentity: true,
+    });
+  });
+
+  it("no fallback and no Fqdn keeps today's behaviour", () => {
+    expect(resolveRowHost({ System: { Computer: BUILD_NAME } }, undefined, "")).toEqual({
+      asset: BUILD_NAME,
+      collectorIdentity: false,
+    });
+  });
+});
+
+describe("Velociraptor flow import — old build names stay on the one client (#1458)", () => {
+  it("event-log rows under an old Computer land on the flow's client with the former-name note", () => {
+    const r = parseVelociraptorJson(JSON.stringify([flowEvtxRow(BUILD_NAME), flowEvtxRow(FLOW_HOST)]), {
+      hostFallback: FLOW_HOST,
+    });
+    const assets = new Set(r.events.map((e) => e.asset));
+    expect(assets.has(BUILD_NAME)).toBe(false);
+    expect(assets.has(FLOW_HOST)).toBe(true);
+    const old = r.events.find((e) => e.description.includes("former hostname"));
+    expect(old?.asset).toBe(FLOW_HOST);
+    expect(old?.description).toContain(`[logged under former hostname ${BUILD_NAME}]`);
+    expect(r.events.some((e) => e.description.startsWith(`Host ${FLOW_HOST} was named ${BUILD_NAME}`))).toBe(
+      true,
+    );
+  });
+
+  it("a DetectRaptor Evtx detection row (the winRowToFlat path) follows the same rule", () => {
+    const row = {
+      _Source: "DetectRaptor.Windows.Detection.Evtx",
+      EventTime: "2025-12-05T03:02:24Z",
+      Computer: BUILD_NAME,
+      Detection: { Name: "T1059.001-PowerShell Web Request", EventId: "^4104$", Regex: ".", Ignore: "" },
+      Channel: "Microsoft-Windows-PowerShell/Operational",
+      EventID: 4104,
+      EventData: { ScriptBlockText: "Invoke-WebRequest https://community.chocolatey.org/install.ps1" },
+      Message: "Creating Scriptblock text (1 of 1)",
+      OSPath: "C:\\Windows\\System32\\winevt\\Logs\\Microsoft-Windows-PowerShell%4Operational.evtx",
+    };
+    const r = parseVelociraptorJson(JSON.stringify([row]), { hostFallback: FLOW_HOST });
+    expect(r.events.length).toBeGreaterThan(0);
+    for (const e of r.events) expect(e.asset).toBe(FLOW_HOST);
+    expect(r.events.some((e) => e.description.includes(`former hostname ${BUILD_NAME}`))).toBe(true);
+  });
+
+  it("without a fallback the same rows still stand on their own Computer (bare file)", () => {
+    const r = parseVelociraptorJson(JSON.stringify([flowEvtxRow(BUILD_NAME)]));
+    expect(r.events.every((e) => e.asset === BUILD_NAME)).toBe(true);
+    expect(r.events.some((e) => e.description.includes("former hostname"))).toBe(false);
+  });
+});
