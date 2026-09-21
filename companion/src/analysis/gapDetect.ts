@@ -7,6 +7,7 @@ import {
   type Severity,
 } from "./stateTypes.js";
 import { byEventTime } from "./forensicSort.js";
+import { dropCollectorBoundedGaps } from "./gapCollectorEdges.js";
 import type { HostHistoryMarker } from "./gapHostHistory.js";
 
 // Log gap analysis (issue #83).
@@ -297,7 +298,7 @@ export function detectTimelineGaps(events: readonly ForensicEvent[], opts: GapOp
     return { active: [...set].sort(), any: times.length > 0, darkFrom, darkTo };
   };
 
-  const gaps: TimelineGap[] = [];
+  const candidates: TimelineGap[] = [];
 
   // Pass A — COMPLETE silence on the full timeline. Walk chronologically, tracking the running END of
   // activity so a long aggregated event doesn't open a false gap. A qualifying window between the
@@ -310,7 +311,7 @@ export function detectTimelineGaps(events: readonly ForensicEvent[], opts: GapOp
     const sMs = starts[i];
     if (sMs > prevEndMs && qualifies(prevEndMs, sMs)) {
       const durationSeconds = Math.round((sMs - prevEndMs) / 1000);
-      gaps.push({
+      candidates.push({
         id: "",
         startTimestamp: prevEndTs,
         endTimestamp: e.timestamp,
@@ -349,7 +350,7 @@ export function detectTimelineGaps(events: readonly ForensicEvent[], opts: GapOp
         if (!any) continue; // total darkness — Pass A owns this window
         if (qualifies(darkFrom, darkTo)) continue; // window hides a complete-silence sub-gap → Pass A territory
         const durationSeconds = Math.round((bStart - fromMs) / 1000);
-        gaps.push({
+        candidates.push({
           id: "",
           startTimestamp: endTsStr(a),
           endTimestamp: b.timestamp,
@@ -365,6 +366,10 @@ export function detectTimelineGaps(events: readonly ForensicEvent[], opts: GapOp
       }
     }
   }
+
+  // A complete silence bounded on both sides by the collector's own rows is idle time between two of
+  // our visits, not missing telemetry — gapCollectorEdges.ts (#1500).
+  const gaps = dropCollectorBoundedGaps(candidates, dated);
 
   // Worst-first: complete (High) above partial (Medium), then the longest silence, then the earliest
   // start, then by bounding event id for a deterministic, stable order.

@@ -56,15 +56,8 @@ import {
 } from "./hostIdentity.js";
 import { HostRenameMap } from "./hostRenameEvidence.js";
 import { mergeHostRenameRecords, type HostRenameRecord } from "./hostRenameRecord.js";
-import {
-  demoteDetectionToolScript,
-  engineScriptPath,
-  gradeScriptAsCollector,
-  isSystemScriptRow,
-  scriptHostPid,
-} from "./veloDetectionNoise.js";
 import { loadCollectorInfrastructure } from "./collectorDeployment.js";
-import { CollectorSpawnLineage, SPAWNED_SCRIPT_NOTE } from "./collectorLineage.js";
+import { CollectorFootprintLedger } from "./collectorChildren.js";
 
 type Row = Record<string, unknown>;
 
@@ -369,22 +362,18 @@ export function parseChainsawReport(text: string, opts: ChainsawImportOptions = 
   for (const rec of records)
     aliases.learn(isFlatChainsawRow(rec) ? [rec] : eventDocs(rec).map((event) => ({ Event: event })));
 
-  // The collector's own PowerShell (#1488). `raw` is the Windows record the event came from, in the
-  // shape veloDetectionNoise reads: the flat row itself, or the embedded `Event` document. A script
-  // block the SYSTEM engine compiled from the collector's tool tree is graded here, as the
-  // Velociraptor path grades it (#1477). A SYSTEM block that names NO path is held until the whole
-  // file has been read, then attributed by process id if the collector's spawn (rule 2c) held that
-  // pid on that host when the block was logged — collectorLineage.ts has the bound.
-  const lineage = new CollectorSpawnLineage(loadCollectorInfrastructure());
-  const pathless: { raw: Row; ev: MappedEvent }[] = [];
+  // The collector's own PowerShell and what it did (#1488, #1500). `raw` is the Windows record the
+  // event came from, in the shape veloDetectionNoise reads: the flat row itself, or the embedded
+  // `Event` document. A script block the SYSTEM engine compiled from the collector's tool tree is
+  // graded at once (#1477); a SYSTEM block that names NO path, and the Sysmon children and file
+  // drops of the spawned process, are held until the whole file has been read and then attributed
+  // by process GUID / id — collectorChildren.ts has the bound.
+  const ledger = new CollectorFootprintLedger(loadCollectorInfrastructure());
   const push = (ev: MappedEvent, host: RowHost, raw: Row): void => {
     ev.description = withFormerHostSuffix(ev.description, host.formerName);
     if (host.assetRecord) ev.assetRecord = host.assetRecord; // a bare row's own name, for a rename learned later (#1495)
     demoteSampleHost(ev, host);
-    demoteDetectionToolScript(raw, [ev]);
-    lineage.note(ev);
-    if (ev.origin !== "collector" && isSystemScriptRow(raw) && !engineScriptPath(raw))
-      pathless.push({ raw, ev });
+    ledger.offer(raw, [ev]);
     renames.note(host, ev.timestamp);
     mapped.push(ev);
   };
@@ -434,11 +423,7 @@ export function parseChainsawReport(text: string, opts: ChainsawImportOptions = 
       }
     }
   }
-  for (const { raw, ev } of pathless) {
-    const pid = scriptHostPid(raw);
-    if (pid !== undefined && lineage.claims(ev.asset ?? "", pid, ev.timestamp))
-      gradeScriptAsCollector(ev, SPAWNED_SCRIPT_NOTE);
-  }
+  ledger.resolve();
 
   const { events, groups } = aggregateEvents([...mapped, ...renames.events()], {
     aggregate: opts.aggregate,

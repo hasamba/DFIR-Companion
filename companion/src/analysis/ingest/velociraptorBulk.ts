@@ -9,6 +9,7 @@ import { toUtcIso } from "../timeUtc.js";
 import { deltaSchema } from "../responseSchema.js";
 import { mergeHostRenameRecords, type HostRenameRecord } from "../hostRenameRecord.js";
 import { prepareRows, vrBulkInternals, type VelociraptorImportOptions } from "../velociraptorImport.js";
+import { isProcessCreateRow } from "../collectorChildren.js";
 import { openVelociraptorRowStream, type Row } from "../velociraptorRowStream.js";
 import type { ImportContext } from "./importContext.js";
 
@@ -293,6 +294,7 @@ function mapBatch(
     for (const m of r.events) mapped.push(m);
     detections += r.detections;
   }
+  vrCtx.lineage.resolve(); // every spawn was primed before the first batch, so per-batch resolution is complete (#1500)
   const vr = opts.velociraptor ?? {};
   const { events: grouped } = aggregateEvents(mapped, {
     aggregate: mode === "super-only" ? false : vr.aggregate,
@@ -410,8 +412,18 @@ export async function runVelociraptorBulk(
     // keeps what it learned and lets that pass be the one that fails.
     try {
       let seen = 0;
+      // A scratch context for the process rows: the spawn ledger needs the MAPPED row (rule 2c reads
+      // the rendered parent and command line), and mapping through the real context would count the
+      // row's IOCs and host twice. Only process creations are mapped here (#1500). It shares the
+      // real alias map, and the ledger also files every claim under the record's own Computer, so a
+      // rename learned after a spawn was primed still lets its children meet it.
+      const scratch = { ...vrBulkInternals.newVrCtx(vr), aliases: vrCtx.aliases };
       for (const item of evidence.rows) {
-        vrCtx.aliases.learn(prepareRows([item.row]));
+        const rows = prepareRows([item.row]);
+        vrCtx.aliases.learn(rows);
+        for (const row of rows)
+          if (isProcessCreateRow(row))
+            vrCtx.lineage.prime(row, vrBulkInternals.mapRowToEvents(row, scratch).events);
         if (++seen % sink.batchRows === 0) await yieldToLoop();
       }
     } catch {

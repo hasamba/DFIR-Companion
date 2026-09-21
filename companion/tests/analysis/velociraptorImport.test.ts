@@ -217,6 +217,69 @@ describe("parseVelociraptorJson — Elastic-indexed Velociraptor (Kibana push)",
     expect(e.sources).toEqual(["Velociraptor"]);
     expect(r.iocs.some((i) => i.type === "file" && i.value.toLowerCase().endsWith(".yms"))).toBe(false);
   });
+
+  // The Info grade alone did not hold (#1500): the post-import tagger read `winpwn` in the rule's
+  // filename and raised the row back to High. The origin is what the tagger respects.
+  it("a detection-content hit carries the collector origin, so the tagger cannot re-raise it", () => {
+    const row = {
+      _Source: "DetectRaptor.Windows.Detection.MFT",
+      Detection: {
+        Name: "Privilege Escalation Tool",
+        KeywordRegex: "winPEAS|winpwn",
+        StringHit: "winpwn",
+        Criticality: "High",
+      },
+      EntryNumber: 143070,
+      InUse: true,
+      OSPath:
+        "\\\\.\\C:\\Program Files\\Velociraptor\\Tools\\tmp3355780499\\signatures\\sigma\\windows\\powershell\\powershell_script\\posh_ps_hktl_winpwn.yms",
+      SITimestamps: { Created0x10: "2026-09-21T15:47:04.924523Z" },
+      Fqdn: "DESKTOP-16OJFO6.localdomain",
+    };
+    const r = parseVelociraptorJson(JSON.stringify([row]));
+    expect(r.events.length).toBeGreaterThan(0);
+    for (const e of r.events) {
+      expect(e.severity).toBe("Info");
+      expect(e.origin).toBe("collector");
+    }
+  });
+
+  // `.yms` alone still demotes (the extension exists nowhere but inside the collector's tree), but an
+  // extension is a name an intruder can pick, so it does not make the row tagger-immune: only the
+  // anchored tool tree carries the origin (Codex, review of #1500).
+  it("a .yms under a user profile is Info but carries NO origin, so the tagger may still raise it", () => {
+    const row = {
+      _Source: "DetectRaptor.Windows.Detection.MFT",
+      Detection: {
+        Name: "Privilege Escalation Tool",
+        KeywordRegex: "winPEAS|winpwn",
+        StringHit: "winpwn",
+        Criticality: "High",
+      },
+      OSPath: "\\\\.\\C:\\Users\\Public\\winpwn.yms",
+      Fqdn: "DESKTOP-16OJFO6.localdomain",
+    };
+    const e = parseVelociraptorJson(JSON.stringify([row])).events[0];
+    expect(e.severity).toBe("Info");
+    expect(e.origin).toBeUndefined();
+  });
+
+  it("a real file hit under a user profile carries no origin", () => {
+    const row = {
+      _Source: "DetectRaptor.Windows.Detection.MFT",
+      Detection: {
+        Name: "Privilege Escalation Tool",
+        KeywordRegex: "winPEAS|winpwn",
+        StringHit: "winpwn",
+        Criticality: "High",
+      },
+      OSPath: "\\\\.\\C:\\Users\\v\\Downloads\\winpwn.ps1",
+      Fqdn: "DESKTOP-16OJFO6.localdomain",
+    };
+    const e = parseVelociraptorJson(JSON.stringify([row])).events[0];
+    expect(e.severity).toBe("High");
+    expect(e.origin).toBeUndefined();
+  });
 });
 
 // The Elastic-indexed push arrives from the browser over POST /cases/:id/import, so its column names
@@ -3632,6 +3695,26 @@ describe("parseVelociraptorJson — YARA volatile-container grading", () => {
   it("does not extract the page file as a threat file IOC", () => {
     const r = parseVelociraptorJson(JSON.stringify([pagefileHit("MALWARE_X")]));
     expect(r.iocs.some((i) => i.type === "file" && i.value.includes("pagefile"))).toBe(false);
+  });
+
+  it("a self-scan of the collector's own tool tree carries the collector origin (#1500)", () => {
+    const row = {
+      _Source: "DetectRaptor.Generic.Detection.YaraFile",
+      OSPath: "C:\\Program Files\\Velociraptor\\Tools\\tmp1\\signatures\\yara\\gen_mimikatz.yar",
+      Mtime: "2026-08-26T13:52:04Z",
+      Rule: "HKTL_Mimikatz",
+    };
+    const e = parseVelociraptorJson(JSON.stringify([row])).events[0];
+    expect(e.severity).toBe("Info");
+    expect(e.origin).toBe("collector");
+    const real = parseVelociraptorJson(JSON.stringify([{ ...row, OSPath: "C:\\Users\\v\\mimi.exe" }]))
+      .events[0];
+    expect(real.origin).toBeUndefined();
+    // A `\Velociraptor\` folder anywhere else is a name an intruder can pick: demoted as before, no origin.
+    const chosen = parseVelociraptorJson(
+      JSON.stringify([{ ...row, OSPath: "C:\\Users\\v\\Velociraptor\\Tools\\tmp1\\gen_mimikatz.yar" }]),
+    ).events[0];
+    expect(chosen.origin).toBeUndefined();
   });
 });
 
