@@ -15,6 +15,7 @@ import {
   isCollectorInstallBinary,
   isCollectorServerDestination,
   isCollectorSpawn,
+  isForeignDestination,
   isLocalOrUnspecifiedHost,
   isMsiexecCreationTimeChange,
   loadCollectorInfrastructure,
@@ -280,13 +281,26 @@ describe("isCollectorInstallBinary — the install root, never a bare name", () 
         }),
       ),
     ).toBe(true);
+  });
+
+  // #1486: the fleet ships only the 64-bit MSI, which installs to Program Files. A client under
+  // the (x86) folder is a second copy someone else put there.
+  it("does NOT match the collector exe under Program Files (x86)", () => {
     expect(
       isCollectorInstallBinary(
         ev({
-          description: `Sysmon Process created (EID 1) - Image=C:\\Program Files (x86)\\Velociraptor\\velociraptor.exe`,
+          description: `Sysmon Process created (EID 1) - Image=C:\\Program Files (x86)\\Velociraptor\\velociraptor.exe - CommandLine=service run`,
+          processName: "velociraptor.exe",
         }),
       ),
-    ).toBe(true);
+    ).toBe(false);
+    expect(
+      isCollectorInstallBinary(
+        ev({
+          description: `Windows System Service installed (EID 7045) - ServiceName=Velociraptor Service - ImagePath="C:\\Program Files (x86)\\Velociraptor\\velociraptor.exe" service run @ WS01`,
+        }),
+      ),
+    ).toBe(false);
   });
 
   it("matches the service registration (7045) whose ImagePath is the collector exe, quoted or bare", () => {
@@ -399,10 +413,20 @@ describe("isCollectorFootprint — a tool the client ran out of its install root
     ],
     [
       "4688",
-      `Security Process created (EID 4688) - NewProcessName=C:\\Program Files (x86)\\Velociraptor\\Tools\\tmp1\\hayabusa.exe`,
+      `Security Process created (EID 4688) - NewProcessName=C:\\Program Files\\Velociraptor\\Tools\\tmp1\\hayabusa.exe`,
     ],
   ])("matches a %s row whose acting image is under the root", (_label, description) => {
     expect(isCollectorFootprint(ev({ description }))).toBe(true);
+  });
+
+  it("does NOT match a tool under Program Files (x86)\\Velociraptor (#1486)", () => {
+    expect(
+      isCollectorFootprint(
+        ev({
+          description: `Security Process created (EID 4688) - NewProcessName=C:\\Program Files (x86)\\Velociraptor\\Tools\\tmp1\\hayabusa.exe`,
+        }),
+      ),
+    ).toBe(false);
   });
 
   it("the client exe's own process-create takes the install note, not the footprint note", () => {
@@ -610,6 +634,200 @@ describe("applyCollectorDeployment — the f31 sequence", () => {
     annotateCollectorDeployment(row, infra);
     expect(row.mitre).toEqual(["T1036"]);
     expect(row.description.match(/MSI install artifact/g)).toHaveLength(1);
+  });
+});
+
+// #1486: the install root is an anchor an intruder with admin CAN supply — the genuine MSI dropped
+// into the same folder, before ours arrived or beside it, or a case another team collected. Their
+// copy phones THEIR server. Where a folder-anchored row names a destination the configuration can
+// be compared with, and it is not ours, the folder does not vouch for it.
+describe("isForeignDestination — a comparable destination that is not the configured server", () => {
+  const infra = { servers: new Set([SERVER]) };
+  const FOREIGN = "203.0.113.9";
+  const conn = (dst: string, host?: string) =>
+    ev({
+      description: `Sysmon Network connection (EID 3) - Image=${INSTALL_EXE} - DestinationIp=${dst} - DestinationPort=8000${host ? ` - DestinationHostname=${host}` : ""} @ WS01`,
+      severity: "High",
+      dstIp: dst,
+      port: 8000,
+    });
+
+  it("is inert with no server configured", () => {
+    expect(isForeignDestination(conn(FOREIGN), { servers: new Set() })).toBe(false);
+  });
+
+  it("is false for a row that names no destination", () => {
+    expect(isForeignDestination(thorAccess(), infra)).toBe(false);
+    expect(
+      isForeignDestination(
+        ev({
+          description: `Sysmon Process created (EID 1) - Image=${INSTALL_EXE} - CommandLine=service run`,
+        }),
+        infra,
+      ),
+    ).toBe(false);
+  });
+
+  it("is true for a connection to an address that is not the configured server", () => {
+    expect(isForeignDestination(conn(FOREIGN), infra)).toBe(true);
+    expect(isForeignDestination(ev({ description: "x - DestinationIp=10.20.30.41" }), infra)).toBe(true);
+  });
+
+  it("is false when the connection names the server by IP or by reverse name", () => {
+    expect(isForeignDestination(conn(SERVER), infra)).toBe(false);
+    // One connection, two spellings: the reverse name is the server even when the IP is not listed.
+    expect(
+      isForeignDestination(conn(FOREIGN, "velo.example.com"), { servers: new Set(["velo.example.com"]) }),
+    ).toBe(false);
+  });
+
+  it("fails closed: a name-configured server does not vouch for an IP-only row, nor an IP for a named URL", () => {
+    expect(isForeignDestination(conn(FOREIGN), { servers: new Set(["velo.example.com"]) })).toBe(true);
+    expect(
+      isForeignDestination(
+        ev({
+          description: `Sysmon Process created (EID 1) - Image=${MSIEXEC} - CommandLine=/i http://velo.example.com/velociraptor.msi /qn`,
+        }),
+        infra,
+      ),
+    ).toBe(true);
+  });
+
+  it("compares canonical forms: compressed vs expanded IPv6, brackets, case, trailing dot", () => {
+    const v6 = { servers: new Set(["2001:db8::1"]) };
+    expect(isForeignDestination(conn("[2001:0db8:0:0:0:0:0:1]"), v6)).toBe(false);
+    expect(isForeignDestination(conn("2001:0DB8::1"), v6)).toBe(false);
+    expect(isForeignDestination(conn("2001:db8::2"), v6)).toBe(true);
+    const named = { servers: new Set(["velo.example.com"]) };
+    expect(isForeignDestination(conn(FOREIGN, "VELO.EXAMPLE.COM."), named)).toBe(false);
+    expect(isForeignDestination(conn(FOREIGN, "other.example.com"), named)).toBe(true);
+  });
+
+  it("judges every URL on its own: the configured URL beside a foreign one does not launder it", () => {
+    const both = ev({
+      description: `Sysmon Process created (EID 1) - Image=${MSIEXEC} - CommandLine=/i http://${FOREIGN}/velociraptor.msi /qn`,
+      commandLine: `msiexec /i http://${FOREIGN}/velociraptor.msi /qn REM http://${SERVER}:8000/`,
+    });
+    expect(isForeignDestination(both, infra)).toBe(true);
+    const ours = ev({
+      description: `Sysmon Process created (EID 1) - Image=${MSIEXEC} - CommandLine=/i http://${SERVER}:8000/velociraptor.msi /qn`,
+      commandLine: `msiexec /i http://${SERVER}:8000/velociraptor.msi /qn`,
+    });
+    expect(isForeignDestination(ours, infra)).toBe(false);
+  });
+
+  it("drops the empty and '-' spellings", () => {
+    expect(isForeignDestination(ev({ description: "x - DestinationHostname=-", dstIp: "" }), infra)).toBe(
+      false,
+    );
+  });
+
+  it("reads a Hayabusa row's structured dstIp, and a URL past the 120-char cut of its rendering", () => {
+    const SYSMON = "Microsoft-Windows-Sysmon/Operational";
+    const net = hayabusa({
+      eid: "3",
+      channel: SYSMON,
+      title: "Net conn",
+      details: `Proc: ${INSTALL_EXE} ¦ Proto: tcp ¦ SrcIP: 10.0.0.5 ¦ SrcPort: 5000 ¦ TgtIP: ${FOREIGN} ¦ TgtPort: 8000`,
+    });
+    expect(net.dstIp).toBe(FOREIGN);
+    expect(isForeignDestination(net, infra)).toBe(true);
+    const msi = `${"deep\\".repeat(30)}velociraptor.msi`;
+    const fetch = hayabusa({
+      eid: "1",
+      channel: SYSMON,
+      title: "Msiexec Install",
+      level: "medium",
+      details: `Cmdline: ${MSIEXEC} /i C:\\Users\\it\\${msi} /qn /log http://${FOREIGN}/x ¦ Proc: ${MSIEXEC} ¦ User: SYSTEM ¦ ParentCmdline: x ¦ LID: 1 ¦ PID: 2`,
+    });
+    expect(fetch.description).not.toContain(FOREIGN);
+    expect(fetch.commandLine).toContain(FOREIGN);
+    expect(isForeignDestination(fetch, infra)).toBe(true);
+  });
+});
+
+describe("applyCollectorDeployment — a foreign destination refuses the folder-anchored demotion (#1486)", () => {
+  const FOREIGN = "203.0.113.9";
+  const clientConn = (dst: string) =>
+    ev({
+      description: `Sysmon Network connection (EID 3) - Image=${INSTALL_EXE} - DestinationIp=${dst} - DestinationPort=8000 @ WS01`,
+      severity: "High",
+      mitre: ["T1571"],
+      aggKey: `conn-${dst}`,
+      dstIp: dst,
+      port: 8000,
+    });
+  const msiFrom = (host: string) =>
+    ev({
+      description: `Sysmon Process created (EID 1) - Image=${MSIEXEC} - CommandLine=/i http://${host}/velociraptor.msi /qn @ WS01`,
+      severity: "Medium",
+      mitre: ["T1218.007"],
+      aggKey: `msi-${host}`,
+      processName: "msiexec.exe",
+      commandLine: `"${MSIEXEC}" /i http://${host}/velociraptor.msi /qn`,
+    });
+
+  it("with a server configured: the client's connection to another server keeps its grade, to ours is Info", () => {
+    vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", `https://${SERVER}:8889`);
+    vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", "");
+    const foreign = clientConn(FOREIGN);
+    const before = structuredClone(foreign);
+    const ours = clientConn(SERVER);
+    applyCollectorDeployment([foreign, ours]);
+    expect(foreign).toEqual(before);
+    expect(ours.severity).toBe("Info");
+    expect(ours.origin).toBe("collector");
+    expect(ours.description).toMatch(/\[DFIR collector footprint — tool run by the Velociraptor client\]$/);
+  });
+
+  it("with a server configured: the MSI fetched from another server keeps its grade, from ours is Info", () => {
+    vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", `https://${SERVER}:8889`);
+    vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", "");
+    const foreign = msiFrom(FOREIGN);
+    const before = structuredClone(foreign);
+    const ours = msiFrom(SERVER);
+    applyCollectorDeployment([foreign, ours]);
+    expect(foreign).toEqual(before);
+    expect(ours.severity).toBe("Info");
+    expect(ours.description).toMatch(/\[DFIR collector deployment — Velociraptor client install\]$/);
+  });
+
+  it("with no server, or loopback only, both connections are demoted as before", () => {
+    for (const [gui, api] of [
+      ["", ""],
+      ["https://localhost:8889", apiConfig("127.0.0.1:8001")],
+    ]) {
+      vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", gui);
+      vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", api);
+      const rows = [clientConn(FOREIGN), clientConn(SERVER)];
+      applyCollectorDeployment(rows);
+      expect(rows.map((r) => r.severity)).toEqual(["Info", "Info"]);
+    }
+  });
+
+  it("rows that name no destination are untouched by the check: the #1460 lsass access stays Info", () => {
+    vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", `https://${SERVER}:8889`);
+    vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", "");
+    const rows = [thorAccess(), install()];
+    applyCollectorDeployment(rows);
+    expect(rows.map((r) => r.severity)).toEqual(["Info", "Info"]);
+  });
+
+  it("a name-configured server does not vouch for an IP-only connection: the row keeps its grade", () => {
+    vi.stubEnv("DFIR_VELOCIRAPTOR_GUI_URL", "https://velo.example.com:8889");
+    vi.stubEnv("DFIR_VELOCIRAPTOR_API_CONFIG", "");
+    const row = clientConn(FOREIGN);
+    applyCollectorDeployment([row]);
+    expect(row.severity).toBe("High");
+    expect(row.description).not.toMatch(/DFIR collector/);
+  });
+
+  it("a refused row never falls through to rule 1", () => {
+    const row = clientConn(FOREIGN);
+    annotateCollectorDeployment(row, { servers: new Set([SERVER]) });
+    expect(row.severity).toBe("High");
+    expect(row.description).not.toMatch(/DFIR collector/);
+    expect(row.origin).toBeUndefined();
   });
 });
 
@@ -846,6 +1064,28 @@ describe("isCollectorSpawn — a process the Velociraptor client itself started"
     m.severity = over.severity ?? "Medium";
     return m;
   };
+
+  it("does NOT match a module under Program Files (x86)\\Velociraptor\\Tools, nor a parent there (#1486)", () => {
+    const x86 = TOOLS_PSM1.replace("Program Files\\", "Program Files (x86)\\");
+    expect(isCollectorSpawn(spawn({ cmd: SNIPER_CMD.replace(TOOLS_PSM1, x86) }))).toBe(false);
+    expect(
+      isCollectorSpawn(spawn({ parent: INSTALL_EXE.replace("Program Files\\", "Program Files (x86)\\") })),
+    ).toBe(false);
+  });
+
+  it("a foreign URL on the child's command line refuses the demotion, with a server configured (#1486)", () => {
+    const m = spawn({ cmd: `${SNIPER_CMD.slice(0, -1)} -Uri http://203.0.113.9/iocs.txt"` });
+    expect(isCollectorSpawn(m)).toBe(true);
+    annotateCollectorDeployment(m, { servers: new Set([SERVER]) });
+    expect(m.severity).toBe("Medium");
+    expect(m.origin).toBeUndefined();
+    // …and still demotes with nothing configured, or when the URL is the configured server.
+    annotateCollectorDeployment(m, { servers: new Set() });
+    expect(m.severity).toBe("Info");
+    const ours = spawn({ cmd: `${SNIPER_CMD.slice(0, -1)} -Uri http://${SERVER}:8000/iocs.txt"` });
+    annotateCollectorDeployment(ours, { servers: new Set([SERVER]) });
+    expect(ours.severity).toBe("Info");
+  });
 
   it("matches the PersistenceSniper launch: collector parent AND a Tools-root module", () => {
     const m = spawn();
