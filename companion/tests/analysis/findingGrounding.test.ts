@@ -9,6 +9,8 @@ import {
   CONTENT_MISMATCH_SEVERITY_FLOOR,
   LATERAL_UNCONFIRMED_CONFIDENCE_CAP,
   LATERAL_UNCONFIRMED_SEVERITY_FLOOR,
+  DECOY_BINARY_CONFIDENCE_CAP,
+  DECOY_BINARY_SEVERITY_FLOOR,
 } from "../../src/analysis/findingGrounding.js";
 import type { Finding, ForensicEvent, IOC } from "../../src/analysis/stateTypes.js";
 
@@ -523,5 +525,87 @@ describe("groundAndScoreFindings — verdict-first / hunt-artifact / KEV signals
       kevCveIds: new Set(["CVE-2024-38094"]),
     });
     expect(notInKev[0].corroboration?.kevLinked).toBe(false);
+  });
+});
+
+describe("groundAndScoreFindings — decoy binary gate (#1502)", () => {
+  const MIMI_DESC =
+    "Chainsaw/Sigma: Binary Rename - Sysmon Process create (EID 1) - Image=C:\\T\\mimikatz.exe - CommandLine=mimikatz.exe privilege::debug sekurlsa::logonpasswords [renamed binary: mimikatz.exe is really Cmd.Exe]";
+  const decoy = ev({
+    id: "d",
+    description: MIMI_DESC,
+    processName: "mimikatz.exe",
+    commandLine: "mimikatz.exe privilege::debug",
+    sources: ["Velociraptor", "Chainsaw"],
+    mitreTechniques: ["T1036.003", "T1003"],
+  });
+  const mft = ev({
+    id: "m",
+    description: "DetectRaptor MFT detection: Mimikatz Tools — mimikatz.exe",
+    path: "\\\\.\\C:\\T\\mimikatz.exe",
+    sources: ["Velociraptor"],
+    artifactName: "DetectRaptor.Windows.Detection.MFT",
+  });
+  const prefetch = ev({
+    id: "p",
+    description: "MIMIKATZ.EXE-A84515FA.pf",
+    path: "\\\\.\\C:\\Windows\\Prefetch\\MIMIKATZ.EXE-A84515FA.pf",
+    sources: ["Velociraptor"],
+    artifactName: "DetectRaptor.Windows.Detection.MFT",
+  });
+  const base = { iocs: [], graphLinkedEventIds: new Set<string>(["d", "m"]) };
+
+  it("floors a Critical/92 'LSASS dump' built only on the renamed cmd.exe and its file traces", () => {
+    const out = groundAndScoreFindings({
+      ...base,
+      findings: [f({ id: "f1", severity: "Critical", confidence: 92, relatedEventIds: ["d", "m", "p"] })],
+      scopedEvents: [decoy, mft, prefetch],
+    });
+    expect(out[0].severity).toBe(DECOY_BINARY_SEVERITY_FLOOR);
+    expect(out[0].confidence).toBe(DECOY_BINARY_CONFIDENCE_CAP);
+    expect(out[0].decoyBinary).toBe(true);
+    expect(out[0].confidenceReason).toMatch(/mimikatz\.exe is a renamed Cmd\.Exe/);
+    expect(out[0].execution).toBeUndefined();
+  });
+
+  it("leaves a finding alone when an independent behavioral row backs it", () => {
+    const lsass = ev({
+      id: "l",
+      description: "Sysmon EID 10: mimikatz.exe → lsass.exe",
+      processName: "mimikatz.exe",
+      pid: 7,
+      sources: ["Sysmon"],
+    });
+    const out = groundAndScoreFindings({
+      ...base,
+      findings: [f({ id: "f1", severity: "Critical", confidence: 92, relatedEventIds: ["d", "l"] })],
+      scopedEvents: [decoy, lsass],
+    });
+    expect(out[0].severity).toBe("Critical");
+    expect(out[0].confidence).toBe(92);
+    expect(out[0].decoyBinary).toBeUndefined();
+  });
+
+  it("records the flag on an already-Medium finding without raising anything", () => {
+    const out = groundAndScoreFindings({
+      ...base,
+      findings: [f({ id: "f1", severity: "Medium", confidence: 30, relatedEventIds: ["d"] })],
+      scopedEvents: [decoy],
+    });
+    expect(out[0].severity).toBe("Medium");
+    expect(out[0].confidence).toBe(30);
+    expect(out[0].decoyBinary).toBe(true);
+  });
+
+  it("clears a stale flag when the evidence no longer is decoy-only", () => {
+    const lsass = ev({ id: "l", description: "EID 10", processName: "mimikatz.exe", pid: 7 });
+    const out = groundAndScoreFindings({
+      ...base,
+      findings: [
+        f({ id: "f1", severity: "High", confidence: 80, decoyBinary: true, relatedEventIds: ["d", "l"] }),
+      ],
+      scopedEvents: [decoy, lsass],
+    });
+    expect(out[0].decoyBinary).toBeUndefined();
   });
 });
