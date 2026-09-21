@@ -10,7 +10,7 @@ import {
   type TimelineGap,
 } from "./gapDetect.js";
 import { attackerGradedInterval, classifyGapEdges, severeAssetsOf } from "./gapEdgeClass.js";
-import { splitHostHistory } from "./gapHostHistory.js";
+import { hostHistoryIds } from "./gapHostHistory.js";
 
 // The options builder that belongs with the entry point below: every consumer that holds the state
 // passes gapOptionsFor(state), so the host-history cut is the same on every surface (#1503).
@@ -226,20 +226,21 @@ export function detectActivityWaves(
 // Callers that need the pattern itself (to emit the cadence finding) take it from the second field;
 // callers that only render gaps can ignore it and still get the right labels.
 //
-// Three more decisions live here for the same reason (#1503): a renamed host's build history is set
-// aside before either step runs, every gap's edges are classified once, and a silence between two
-// servicing events is dropped outright — it is idle time, and a surface that still listed it as
-// "complete silence" would contradict the finding pass that ignores it.
+// Three more decisions live here for the same reason (#1503): every gap's edges are classified once,
+// a silence that opens on a renamed host's build history is dropped, and so is a silence between two
+// servicing events — both are measured on the WHOLE timeline first (so no reported gap ever spans a
+// row that exists) and removed afterwards, because a surface that still listed one as "complete
+// silence" would contradict the finding pass that ignores it.
 export function detectGapsWithWaves(
   events: readonly ForensicEvent[],
   gapOpts?: GapOptions,
   waveOpts?: WaveOptions,
 ): { gaps: TimelineGap[]; pattern: WavePattern | null } {
-  const analysed = splitHostHistory(events, gapOpts?.hostHistory).kept;
-  const raw = detectTimelineGaps(analysed, gapOpts);
-  const pattern = detectActivityWaves(analysed, raw, waveOpts ?? waveEnvOptions());
-  const classified = classifyGapEdges(markWaveBoundaries(raw, pattern), analysed, pattern);
-  return { gaps: classified.filter((g) => !g.provisioningEdges), pattern };
+  const raw = detectTimelineGaps(events, gapOpts);
+  const pattern = detectActivityWaves(events, raw, waveOpts ?? waveEnvOptions());
+  const history = hostHistoryIds(events, gapOpts?.hostHistory);
+  const classified = classifyGapEdges(markWaveBoundaries(raw, pattern), events, pattern, history);
+  return { gaps: classified.filter((g) => !g.provisioningEdges && !g.hostHistory), pattern };
 }
 
 // Thresholds resolved from the environment so synthesis, the report, and any route agree:
@@ -268,19 +269,46 @@ export function markWaveBoundaries(gaps: readonly TimelineGap[], pattern: WavePa
   );
 }
 
+// The attacker-graded part of a pattern: the intervals whose two waves both hold a High/Critical
+// row on a common asset, and only the waves those intervals touch. Null when no interval
+// qualifies. Wave indexes keep their original numbering so the text still matches the panel.
+export function attackerGradedPattern(pattern: WavePattern | null): WavePattern | null {
+  if (!pattern) return null;
+  const intervals = pattern.intervals.filter((iv) => iv.attackerGraded);
+  if (intervals.length === 0) return null;
+  const keep = new Set(intervals.flatMap((iv) => [iv.fromWave, iv.toWave]));
+  const waves = pattern.waves.filter((w) => keep.has(w.index));
+  const longestIntervalSeconds = intervals.reduce((m, iv) => Math.max(m, iv.durationSeconds), 0);
+  const totalSpanSeconds = Math.max(
+    0,
+    Math.round(
+      (Date.parse(waves[waves.length - 1].endTimestamp) - Date.parse(waves[0].startTimestamp)) / 1000,
+    ),
+  );
+  return {
+    waves,
+    intervals,
+    longestIntervalSeconds,
+    longestIntervalLabel: formatDuration(longestIntervalSeconds),
+    totalSpanSeconds,
+    totalSpanLabel: formatDuration(totalSpanSeconds),
+  };
+}
+
 // One finding for the whole pattern, not one per boundary. The cadence is a single fact about the
 // intrusion: it was staged across N visits spanning X. Idempotent — the id is fixed, so re-running
 // synthesis over an unchanged timeline refreshes rather than duplicates.
 export function backfillActivityWaveFinding(
   state: InvestigationState,
-  pattern: WavePattern | null,
+  fullPattern: WavePattern | null,
   timestamp: string,
 ): InvestigationState {
+  // The cadence is an intrusion fact only between attacker-graded waves (#1503). The finding is
+  // built from those wave pairs alone: a benign burst — an image build, an admin session months
+  // apart — is neither counted, spanned nor back-linked, so the host's history cannot re-enter the
+  // narrative through this finding after the gap findings stopped telling it.
+  const pattern = attackerGradedPattern(fullPattern);
   if (!pattern) return state;
-  // The cadence is an intrusion fact only when at least one interval separates two attacker-graded
-  // waves (#1503). A pattern made of benign bursts — an image build, sessions months apart — is a
-  // shape, not a staged intrusion, and must not become a High finding about returning operators.
-  if (!pattern.intervals.some((iv) => iv.attackerGraded)) return state;
   const id = WAVES_FINDING_ID;
   if (state.findings.some((f) => f.id === id)) return state;
 

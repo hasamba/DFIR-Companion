@@ -56,9 +56,12 @@ export interface TimelineGap {
   //     A dwell interval between two benign bursts stays a panel row.
   //   • `provisioningEdges` — both bounding rows are OS servicing / image-build artifacts, so the
   //     silence is idle time; detectGapsWithWaves drops such a gap from every surface.
+  //   • `hostHistory` — the silence opens on a renamed host's pre-provisioning row
+  //     (gapHostHistory.ts); detectGapsWithWaves drops such a gap from every surface too.
   attackerEdges?: boolean;
   provisioningEdges?: boolean;
   provisioningReason?: string;
+  hostHistory?: boolean;
   silentSources: string[]; // sources that produced no events during the window (sorted)
   activeSources: string[]; // sources that DID keep logging during the window (sorted; empty when complete)
   beforeEventId: string; // forensic-event id bounding the start of the gap (last activity before)
@@ -91,10 +94,9 @@ export interface GapOptions {
   // thousands× it — so a substantial cluster (≥2.5% of events, hence inside the percentile core) and any
   // plausibly-real gap survive, but year-scale strays are removed. Default 5. Set 0 to disable.
   outlierSpanFactor?: number;
-  // Per-host provisioning boundaries from the rename ledger (#1503, gapHostHistory.ts). Rows of a
-  // renamed host dated before its earliest rename bound are that machine's build history and are
-  // set aside from gap AND wave analysis (they stay in the timeline). Applied by detectGapsWithWaves;
-  // build it with gapOptionsFor(state), never by hand.
+  // Per-host provisioning boundaries from the rename ledger (#1503, gapHostHistory.ts). A silence
+  // that opens on a renamed host's row dated before its earliest rename bound is that machine's
+  // build history, not a gap. Applied by detectGapsWithWaves; build it with gapOptionsFor(state).
   hostHistory?: HostHistoryMarker[];
 }
 
@@ -440,7 +442,7 @@ export function backfillSilenceGapFindings(
     // bursts around a quiet stretch — a lab box between sessions, admin work months apart — are a
     // fact for the coverage panel, not a Medium finding with a "returning operator" brief.
     if (gap.betweenWaves && !gap.attackerEdges) continue;
-    if (gap.provisioningEdges) continue; // idle time between two servicing events
+    if (gap.provisioningEdges || gap.hostHistory) continue; // idle time / the host's own history
     if (newFindings.length >= cap) break;
     // Idempotency key derived from the bounding events — stable across synthesis runs over the same
     // gap (so re-synthesis refreshes rather than duplicates), and unique per distinct gap.

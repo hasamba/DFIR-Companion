@@ -140,14 +140,43 @@ describe("splitHostHistory", () => {
     expect(kept).toHaveLength(events.length);
   });
 
-  it("uses the filtered set as-is, however small", () => {
+  it("also leaves a host whole when a pre-bound row already backs a real finding", () => {
+    const events = [
+      ...burst("pre-", "2025-06-01T00:00:00Z", 4, { asset: HOST }),
+      ev("cited", "2025-06-02T00:00:00Z", { asset: HOST, relatedFindingIds: ["f3"] }),
+    ];
+    expect(splitHostHistory(events, hostBuildMarkers(renames)).history).toEqual([]);
+    // A link to a gap finding from an earlier run is not evidence and does not block the cut.
+    const gapLinked = [
+      ...burst("pre-", "2025-06-01T00:00:00Z", 4, { asset: HOST }),
+      ev("g", "2025-06-02T00:00:00Z", { asset: HOST, relatedFindingIds: ["f-gap-a-b"] }),
+    ];
+    expect(splitHostHistory(gapLinked, hostBuildMarkers(renames)).history[0].events).toHaveLength(5);
+  });
+
+  it("drops a gap that opens on a history row, and only that gap", () => {
     const events = [
       ...burst("iso-", "2024-04-01T00:00:00Z", 5, { asset: HOST }),
       ev("only", "2026-08-17T10:00:00Z", { asset: HOST }),
     ];
-    const { kept } = splitHostHistory(events, hostBuildMarkers(renames));
-    expect(kept.map((e) => e.id)).toEqual(["only"]);
+    expect(detectGapsWithWaves(events).gaps).toHaveLength(1); // without the ledger: a 2-year silence
     expect(detectGapsWithWaves(events, { hostHistory: hostBuildMarkers(renames) }).gaps).toEqual([]);
+  });
+
+  it("never manufactures a silence across rows that exist", () => {
+    // An asset-less row BEFORE the host's history: measured on the whole timeline, the only silence
+    // that survives opens on that row and ends at the first history row — never one that spans the
+    // history to the first post-provisioning row.
+    const events = [
+      ev("bare", "2024-01-01T00:00:00Z"),
+      ...burst("iso-", "2024-04-01T00:00:00Z", 5, { asset: HOST }),
+      ...burst("prov-", "2025-12-05T09:00:00Z", 8, { asset: HOST }),
+      ...burst("use-", "2026-08-17T10:00:00Z", 6, { asset: HOST }),
+    ];
+    const { gaps } = detectGapsWithWaves(events, { hostHistory: hostBuildMarkers(renames) });
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0].beforeEventId).toBe("bare");
+    expect(gaps[0].afterEventId).toBe("iso-0");
   });
 
   it("is a no-op without markers", () => {

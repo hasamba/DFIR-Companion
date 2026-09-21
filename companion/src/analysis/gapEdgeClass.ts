@@ -41,7 +41,7 @@ const PROVISIONING_PATTERNS: ReadonlyArray<{ reason: string; re: RegExp }> = [
 
 // A finding minted BY gap analysis (a gap or waves finding from an earlier run) must not stop a
 // row from reading as provisioning on the next run — that would let a wrong finding defend itself.
-function hasOwnFinding(e: ForensicEvent): boolean {
+export function hasOwnFinding(e: ForensicEvent): boolean {
   return e.relatedFindingIds.some((id) => id !== WAVES_FINDING_ID && !id.startsWith(GAP_FINDING_ID_PREFIX));
 }
 
@@ -86,13 +86,18 @@ export function attackerGradedInterval(before: ReadonlySet<string>, after: Reado
 }
 
 // Classify every gap's edges. Pure: returns new gap objects.
-//   • `provisioningEdges` / `provisioningReason` — both bounding rows are servicing artifacts.
+//   • `hostHistory` — the silence opens on a row of a renamed host's pre-provisioning history
+//     (gapHostHistory.ts); `historyIds` are those rows.
 //   • `attackerEdges` — set on a `betweenWaves` gap when the interval it marks is attacker-graded
 //     (activityWaves.ts computes that per interval from the wave contents).
+//   • `provisioningEdges` / `provisioningReason` — both bounding rows are servicing artifacts.
+//     Two High waves around two idle edge rows are still two visits: attackerEdges wins, so the
+//     dwell finding and the waves finding never disagree about the same window.
 export function classifyGapEdges(
   gaps: readonly TimelineGap[],
   events: readonly ForensicEvent[],
   pattern: WavePattern | null,
+  historyIds: ReadonlySet<string> = new Set(),
 ): TimelineGap[] {
   const byId = new Map(events.map((e) => [e.id, e]));
   // A between-waves gap resumes at wave k's first event; the interval before it is intervals[k-1].
@@ -108,12 +113,13 @@ export function classifyGapEdges(
     const reasonBefore = before ? provisioningReason(before) : null;
     const reasonAfter = after ? provisioningReason(after) : null;
     const next: TimelineGap = { ...g };
-    if (reasonBefore && reasonAfter) {
+    if (historyIds.has(g.beforeEventId)) next.hostHistory = true;
+    if (g.betweenWaves) next.attackerEdges = gradedByResume.get(g.afterEventId) === true;
+    if (reasonBefore && reasonAfter && !next.attackerEdges) {
       next.provisioningEdges = true;
       next.provisioningReason =
         reasonBefore === reasonAfter ? reasonBefore : `${reasonBefore} → ${reasonAfter}`;
     }
-    if (g.betweenWaves) next.attackerEdges = gradedByResume.get(g.afterEventId) === true;
     return next;
   });
 }

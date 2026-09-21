@@ -2,7 +2,7 @@ import { GAP_FINDING_ID_PREFIX } from "./responseSchema.js";
 import { SEVERITY_RANK, type Finding, type ForensicEvent, type InvestigationState } from "./stateTypes.js";
 import type { HostRenameRecord } from "./hostRenameRecord.js";
 import { gapEnvOptions, type GapOptions } from "./gapDetect.js";
-import { assetKey } from "./gapEdgeClass.js";
+import { assetKey, hasOwnFinding } from "./gapEdgeClass.js";
 import { byEventTime } from "./forensicSort.js";
 
 // A host's own history is not dwell time (#1503).
@@ -15,17 +15,27 @@ import { byEventTime } from "./forensicSort.js";
 // The case already holds the one marker that separates that history from the host's working life:
 // the rename ledger (`state.hostRenames`, #1495). A machine provisioned under WIN-UK1GV882OK6 and
 // renamed to DESKTOP-16OJFO6 was not yet the host under investigation while it wore the old name.
-// So rows dated before a host's EARLIEST observed rename bound are set aside FROM GAP ANALYSIS ONLY
-// — they stay in the timeline — and one Info finding tells the analyst what was set aside.
+// So rows dated before a host's EARLIEST observed rename bound are that machine's history: a
+// silence that OPENS on one of them is not reported, and one Info finding says what was set aside.
 //
-// A rename bound is identity evidence, not a build date, so the cut is hedged three ways:
-//   • PER HOST — only rows whose asset is the renamed machine (any name in its chain) move; another
-//     host's rows, and rows naming no asset, never do.
+// The rows are never removed from detection. Gaps are still measured on the whole timeline and the
+// history gaps are dropped afterwards — filtering the rows first would let the next kept row open
+// a silence that spans evidence which exists (an asset-less row before the history, say), and that
+// would come back as a High "cleared logs" finding, worse than the Medium ones this replaces.
+//
+// A rename bound is identity evidence, not a build date, so the rule is hedged three ways:
+//   • PER HOST — only rows whose asset is the renamed machine (any name in its chain) count;
+//     another host's rows, and rows naming no asset, never do.
 //   • OBSERVED bases only — `analyst` records are one import's manual attribution, not something
-//     the machine or a collector wrote, so they never mark a boundary.
-//   • NO CUT PAST A GRADE — if any pre-marker row of that host is High/Critical (a rename during
-//     an intrusion, or a tagger-flagged setup binary), that host is left whole and the edge rules
-//     in gapEdgeClass.ts decide alone. The intrusion is never the thing set aside.
+//     the machine or a collector wrote, so they never mark a boundary. A `collector` bound is the
+//     last sight of the OLD name — a lower bound on the rename — so a row before it was certainly
+//     still under the old name; the evidence bases are the first sight of the new name, an upper
+//     bound. Before either, the machine had not (yet) become the host under investigation.
+//   • NO CUT PAST A GRADE — if any pre-marker row of that host is High/Critical, or already backs
+//     a real finding (a rename during an intrusion, or a tagger-flagged setup binary), that host is
+//     left whole and the edge rules in gapEdgeClass.ts decide alone. Medium rows and bare ATT&CK
+//     tags do not count: the tagger stamps both on ordinary process rows (CLAUDE.md §7), so they
+//     would cancel the rule on every build. The intrusion is never the thing set aside.
 
 export interface HostHistoryMarker {
   host: string; // the host's current short name, for the Info row
@@ -75,8 +85,9 @@ export function hostBuildMarkers(records: readonly HostRenameRecord[] = []): Hos
   }));
 }
 
-// Split a timeline into the rows gap analysis keeps and the per-host history it sets aside. Pure.
-// The filtered set is used as-is, however small: 0 or 1 remaining rows simply means no gaps.
+// Split a timeline into the rows that are not host history and the per-host history. Pure. The
+// caller decides what to do with each half: detectGapsWithWaves drops the gaps that OPEN on a
+// history row, backfillHostHistoryNote writes the Info row.
 export function splitHostHistory(
   events: readonly ForensicEvent[],
   markers: readonly HostHistoryMarker[] = [],
@@ -91,11 +102,19 @@ export function splitHostHistory(
       .filter((e) => names.has(assetKey(e)) && Date.parse(e.timestamp) < beforeMs)
       .sort(byEventTime);
     if (rows.length === 0) continue;
-    if (rows.some((e) => SEVERITY_RANK[e.severity] <= SEVERITY_RANK.High)) continue; // graded → left whole
+    if (rows.some((e) => SEVERITY_RANK[e.severity] <= SEVERITY_RANK.High || hasOwnFinding(e))) continue; // graded → left whole
     for (const e of rows) setAside.add(e.id);
     history.push({ marker, events: rows });
   }
   return { kept: events.filter((e) => !setAside.has(e.id)), history };
+}
+
+// The ids of every history row — the gaps that open on one are the host's history, not silence.
+export function hostHistoryIds(
+  events: readonly ForensicEvent[],
+  markers: readonly HostHistoryMarker[] = [],
+): Set<string> {
+  return new Set(splitHostHistory(events, markers).history.flatMap((h) => h.events.map((e) => e.id)));
 }
 
 // Thresholds from the environment PLUS the case's own host markers — the options every consumer

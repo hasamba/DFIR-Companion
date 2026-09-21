@@ -179,6 +179,23 @@ describe("classifyGapEdges", () => {
   });
 });
 
+describe("classifyGapEdges precedence", () => {
+  it("lets attacker-graded waves win over two idle edge rows", () => {
+    const svc = { path: "c:\\windows\\softwaredistribution\\download\\a.cab" };
+    const events = [
+      ev("h1", "2026-08-07T14:29:00Z", { asset: "HOST-A", severity: "High" }),
+      ...burst("w1-", "2026-08-07T14:30:00Z", 4, { asset: "HOST-A", ...svc }),
+      ...burst("w2-", "2026-08-25T17:30:00Z", 4, { asset: "HOST-A", ...svc }),
+      ev("h2", "2026-08-25T17:34:00Z", { asset: "HOST-A", severity: "Critical" }),
+    ];
+    const { gaps, pattern } = detectGapsWithWaves(events);
+    expect(pattern!.intervals[0].attackerGraded).toBe(true);
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0].attackerEdges).toBe(true);
+    expect(gaps[0].provisioningEdges).toBeUndefined();
+  });
+});
+
 describe("findings from classified gaps", () => {
   it("emits no dwell finding and no waves finding for benign bursts months apart", () => {
     // The scenario 017 shape: install media → base image → provisioning → first session, all Info.
@@ -225,6 +242,33 @@ describe("findings from classified gaps", () => {
     const dwell = state.findings.find((f) => f.id.startsWith("f-gap-"))!;
     expect(dwell.title).toContain("Dwell interval");
     expect(dwell.severity).toBe("Medium");
+  });
+
+  it("builds the waves finding from attacker-graded wave pairs only", () => {
+    // Two benign build bursts, then two attacker waves: the finding counts, spans and links the
+    // attacker pair alone.
+    const events = [
+      ...burst("b1-", "2025-09-15T08:00:00Z", 5, { asset: "HOST-A" }),
+      ...burst("b2-", "2025-12-05T09:00:00Z", 5, { asset: "HOST-A" }),
+      ...burst("a1-", "2026-08-07T14:30:00Z", 6, { asset: "HOST-A", severity: "High" }),
+      ...burst("a2-", "2026-08-25T17:30:00Z", 6, { asset: "HOST-A", severity: "High" }),
+    ];
+    const { pattern } = detectGapsWithWaves(events);
+    expect(pattern!.waves).toHaveLength(4);
+    const state = backfillActivityWaveFinding(
+      { ...emptyState("INC-TEST"), forensicTimeline: events },
+      pattern,
+      "2026-08-26T20:00:00Z",
+    );
+    const f = state.findings.find((x) => x.id === "f-waves")!;
+    expect(f.title).toContain("2 separate waves");
+    expect(f.title).toContain("spanning 18d");
+    expect(f.description).not.toContain("2025-09-15");
+    expect(f.description).toContain("wave 3");
+    const linked = state.forensicTimeline
+      .filter((e) => e.relatedFindingIds.includes("f-waves"))
+      .map((e) => e.id);
+    expect(linked).toEqual(["a1-0", "a1-5", "a2-0", "a2-5"]);
   });
 
   it("still escalates an unexplained complete silence between two ordinary rows", () => {
