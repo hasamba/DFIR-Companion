@@ -23,6 +23,7 @@ import {
 import { combineMarkings } from "./tlp.js";
 import { trustForSources, type SourceTrustMap } from "./sourceTrust.js";
 import { computeChainSignature, executionIdentity } from "./chainSignature.js";
+import { DSU, unionEligible, type UnionFacts } from "./correlateUnion.js";
 import { isLabProduced } from "./labIntel.js";
 import { mergeGroupCanonical } from "./canonicalMerge.js";
 import { DERIVED_NOTE_NAMES } from "./derivedNote.js";
@@ -108,93 +109,14 @@ function epoch(ts: string): number | undefined {
   return Number.isNaN(t) ? undefined : t;
 }
 
-// Union-find over event indices, with the three facts a merged row must never contradict (#1476).
-//
-// Every component carries the set of STRUCTURED paths, the set of EXECUTION identities (see
-// chainSignature.ts executionIdentity) and the set of LOG RECORD identities (sourceRecordId) its
-// members recorded. A union that would put two different paths, two different launches, or two
-// different log records into one row is refused — at the union, not pairwise in one step, so the
-// refusal holds transitively: an execution cannot reach a second execution through a file-write
-// row they both touch, a file cannot reach a second file through a hash-only hit, and two records
-// of the SAME command a second apart (a repeated launch) stay two rows even when each record was
-// read by two parsers.
-//
-// Before this, four renamed copies of one binary (one hash, four paths, no pid) became one row that
-// named one of them, and three launches of one binary 1 s apart (same path, three command lines)
-// became one row — the other files and launches simply left the forensic timeline.
-//
-// A member with no structured path, or no command line, constrains nothing and joins freely; a
-// pathless hash-only hit that could belong to either of two files stays on its own (that ambiguity
-// is real, and picking one would be the guess this refuses to make).
-class DSU {
-  private parent: number[];
-  private paths: Array<Set<string> | undefined>;
-  private execs: Array<Set<string> | undefined>;
-  private records: Array<Set<string> | undefined>;
-  constructor(evs: readonly ForensicEvent[]) {
-    this.parent = evs.map((_, i) => i);
-    this.paths = evs.map((e) => {
-      const p = e.path?.trim().toLowerCase();
-      return p ? new Set([p]) : undefined;
-    });
-    this.execs = evs.map((e) => {
-      const x = executionIdentity(e);
-      return x ? new Set([x]) : undefined;
-    });
-    this.records = evs.map((e) => {
-      const r = e.sourceRecordId?.trim();
-      return r ? new Set([r]) : undefined;
-    });
-  }
-  find(x: number): number {
-    let i = x;
-    while (this.parent[i] !== i) {
-      this.parent[i] = this.parent[this.parent[i]];
-      i = this.parent[i];
-    }
-    return i;
-  }
-  /** True when the two components agree on every fact both of them record. */
-  compatible(a: number, b: number): boolean {
-    const ra = this.find(a),
-      rb = this.find(b);
-    if (ra === rb) return true;
-    return (
-      agree(this.paths[ra], this.paths[rb]) &&
-      agree(this.execs[ra], this.execs[rb]) &&
-      agree(this.records[ra], this.records[rb])
-    );
-  }
-  /** Merge when compatible; returns whether the two now share a component. */
-  union(a: number, b: number): boolean {
-    const ra = this.find(a),
-      rb = this.find(b);
-    if (ra === rb) return true;
-    if (!this.compatible(ra, rb)) return false;
-    const keep = Math.min(ra, rb),
-      drop = Math.max(ra, rb);
-    this.parent[drop] = keep;
-    this.paths[keep] = mergeSets(this.paths[keep], this.paths[drop]);
-    this.execs[keep] = mergeSets(this.execs[keep], this.execs[drop]);
-    this.records[keep] = mergeSets(this.records[keep], this.records[drop]);
-    return true;
-  }
-}
-
-// Two recorded fact sets agree when either side recorded nothing, or both recorded the same one
-// thing. A component that already holds two distinct values can only have got them through a member
-// that recorded neither (impossible by construction) — so "same single value" is the whole test.
-function agree(a: Set<string> | undefined, b: Set<string> | undefined): boolean {
-  if (!a || !b) return true;
-  if (a.size !== b.size) return false;
-  for (const v of a) if (!b.has(v)) return false;
-  return true;
-}
-
-function mergeSets(a: Set<string> | undefined, b: Set<string> | undefined): Set<string> | undefined {
-  if (!a) return b;
-  if (!b) return a;
-  return new Set([...a, ...b]);
+// The guarded union-find (the three facts a merged row must never contradict, #1476) and the
+// bucketed pair walk that feeds it (#1483) live in correlateUnion.ts; the facts are read here.
+function unionFactsOf(e: ForensicEvent): UnionFacts {
+  return {
+    path: e.path?.trim().toLowerCase() || undefined,
+    exec: executionIdentity(e) || undefined,
+    record: e.sourceRecordId?.trim() || undefined,
+  };
 }
 
 // Match on the SHORT hostname: an EDR reports `FILE-BO-01` while the Windows log records the FQDN
@@ -258,9 +180,41 @@ function splitByDated(
   evs: ForensicEvent[],
   timeOf: (e: ForensicEvent) => number | undefined,
 ): number[][] {
+  return partitionByDated(indices, evs, timeOf).filter((half) => half.length > 1);
+}
+
+function partitionByDated(
+  indices: number[],
+  evs: ForensicEvent[],
+  timeOf: (e: ForensicEvent) => number | undefined,
+): [number[], number[]] {
   const dated = indices.filter((i) => timeOf(evs[i]) !== undefined);
   const undated = indices.filter((i) => timeOf(evs[i]) === undefined);
-  return [dated, undated].filter((half) => half.length > 1);
+  return [dated, undated];
+}
+
+// One hash on several structured paths is several files (#1476): the guard refuses every cross-path
+// pair, so each path's rows walk on their own (#1483). With one path (or none) the group is whole.
+function splitByPath(indices: number[], evs: ForensicEvent[], severalPaths: boolean): number[][] {
+  if (!severalPaths) return [indices];
+  const byPath = new Map<string, number[]>();
+  for (const i of indices) {
+    const p = evs[i].path?.trim().toLowerCase() ?? "";
+    (byPath.get(p) ?? byPath.set(p, []).get(p)!).push(i);
+  }
+  return [...byPath.values()];
+}
+
+// The pairwise conditions of the two bucket walks (#1483), on the members' immutable signatures.
+const SIG_SEP = "\u0002";
+const sameClass = (a: string, b: string): boolean => a === b;
+// Undated path pairs: same class, at least one structured path, corroborating sources.
+function pathPairEligible(a: string, b: string): boolean {
+  const [ka, sa, srcA] = a.split(SIG_SEP);
+  const [kb, sb, srcB] = b.split(SIG_SEP);
+  if (ka !== kb) return false;
+  if (sa !== "s" && sb !== "s") return false;
+  return corroboratingKeys(srcA, srcB);
 }
 
 // The pairwise form of the same rule, for the steps that walk a time-sorted chain (path, pid,
@@ -278,10 +232,19 @@ function sameDatedness(a: number | undefined, b: number | undefined, windowMs: n
 // So a path merge requires the two events to add corroboration: one carries a source the other lacks.
 // Unknown-source events keep the old behavior (back-compat). Hash/exact-dup merges are unaffected.
 function corroborates(a: ForensicEvent, b: ForensicEvent): boolean {
-  const sa = (a.sources ?? []).filter((s) => s && s !== "unknown source");
-  const sb = (b.sources ?? []).filter((s) => s && s !== "unknown source");
-  if (!sa.length || !sb.length) return true;
-  return sa.some((s) => !sb.includes(s)) || sb.some((s) => !sa.includes(s));
+  return corroboratingKeys(sourcesKey(a), sourcesKey(b));
+}
+
+// The real sources of an event as one canonical string ("" when it names none): blanks and
+// "unknown source" dropped, de-duplicated, sorted. corroborates() and the undated path walk's
+// bucket signature (#1483) both read it, so the two cannot drift.
+function sourcesKey(e: ForensicEvent): string {
+  const real = new Set((e.sources ?? []).filter((s) => s && s !== "unknown source"));
+  return [...real].sort().join("\u0001");
+}
+
+function corroboratingKeys(a: string, b: string): boolean {
+  return !a || !b || a !== b;
 }
 
 // A legacy "[corroborated by N sources: …]" suffix an earlier build appended to the
@@ -484,7 +447,7 @@ function groupEvents(
   // Work over a copy with chainSignature populated so step 4 can key on it and every emitted
   // process-creation event carries the field (satisfying the importer-agnostic path).
   const evs = events.map(withSignature);
-  const dsu = new DSU(evs);
+  const dsu = new DSU(evs.map(unionFactsOf));
   // A LAB row (a sandbox detonation) is never unioned with a HOST observation, whatever they share
   // (#932 item 5). The hash step below groups on `sha256:action` with no time bound, and mergeGroup
   // makes the most severe member primary — so a CAPE "injects into explorer.exe" at High used to
@@ -616,11 +579,18 @@ function groupEvents(
       // belong to any of them, so it stays on its own rather than joining whichever came first.
       const paths = new Set(group.map((i) => evs[i].path?.trim().toLowerCase()).filter(Boolean));
       const members = paths.size > 1 ? group.filter((i) => evs[i].path?.trim()) : group;
-      for (const half of splitByDated(members, evs, timeOf)) {
-        // Every member against every other: the union guard refuses a cross-path pair, and a chain
-        // anchored on one member would otherwise leave same-path pairs behind it un-compared.
-        for (let a = 0; a < half.length; a++)
-          for (let b = a + 1; b < half.length; b++) union(half[a], half[b]);
+      // Every compatible pair is reached, never enumerated (#1483): each path's rows on their own
+      // (a cross-path pair is refused anyway), then unionEligible over each datedness half, with
+      // the correlation class as the one pairwise condition the guard does not carry.
+      for (const perPath of splitByPath(members, evs, paths.size > 1)) {
+        for (const half of splitByDated(perPath, evs, timeOf)) {
+          unionEligible(
+            half.map((i) => ({ i, sig: klass[i] })),
+            dsu,
+            sameClass,
+            "forward",
+          );
+        }
       }
     }
   }
@@ -646,27 +616,41 @@ function groupEvents(
       crossHostArtifacts,
     )) {
       if (group.length < 2) continue;
-      const dated = group
-        .map((i) => ({ i, structured: structuredBy.get(i) === true, t: timeOf(evs[i]) }))
-        .sort((a, b) => (a.t ?? Infinity) - (b.t ?? Infinity));
-      // Each member against every earlier member still inside the window — not only its neighbour.
-      // The union guard (DSU) refuses two different launches of the file, and with a neighbour-only
-      // walk a refused pair stopped the chain so a compatible pair beyond it was never compared (a
-      // parser's row order then decided the result, #1476).
+      // A dated and an undated member never merge on a path alone (#957), so the two halves walk
+      // apart. Undated members have no time to disprove a pair, so every eligible pair among them
+      // is reached through the bucket walk (#1483) — the signature carries what the pairwise checks
+      // below read: the class, whether the path is structured, and the real sources.
+      const [datedMembers, undatedMembers] = partitionByDated(group, evs, timeOf);
+      unionEligible(
+        undatedMembers.map((i) => ({
+          i,
+          sig: `${klass[i]}${SIG_SEP}${structuredBy.get(i) === true ? "s" : "t"}${SIG_SEP}${sourcesKey(evs[i])}`,
+        })),
+        dsu,
+        pathPairEligible,
+        "nearest", // the tie-break of the time-sorted walk below: a wildcard joins the latest earlier row
+      );
+      const dated = datedMembers
+        .map((i) => ({
+          i,
+          structured: structuredBy.get(i) === true,
+          t: timeOf(evs[i]) as number,
+          sources: sourcesKey(evs[i]),
+        }))
+        .sort((a, b) => a.t - b.t);
+      // Each dated member against every earlier member still inside the window — not only its
+      // neighbour. The union guard (DSU) refuses two different launches of the file, and with a
+      // neighbour-only walk a refused pair stopped the chain so a compatible pair beyond it was never
+      // compared (a parser's row order then decided the result, #1476). The window is a temporal
+      // filter, not a bound: rows that all fall inside one window still pair in full, so the
+      // per-pair checks read precomputed keys.
       for (let k = 1; k < dated.length; k++) {
         const b = dated[k];
         for (let j = k - 1; j >= 0; j--) {
           const a = dated[j];
-          // Two undated events on the same path correlate (no time to disprove); two dated ones must
-          // be within the window. A dated and an undated one never do — see splitByDated (#957). The
-          // sort above puts every undated member after every dated one, so the mixed pair is one
-          // boundary and each side still chains among itself.
-          if (!sameDatedness(a.t, b.t, windowMs)) {
-            if (a.t !== undefined && b.t !== undefined) break; // sorted: everything earlier is further away
-            continue;
-          }
+          if (b.t - a.t > windowMs) break; // sorted: everything earlier is further away
           if (!a.structured && !b.structured) continue; // both free-text → too weak to merge
-          if (!corroborates(evs[a.i], evs[b.i])) continue; // same tool sharing a container path → keep distinct
+          if (!corroboratingKeys(a.sources, b.sources)) continue; // same tool sharing a container path → keep distinct
           union(a.i, b.i);
         }
       }
