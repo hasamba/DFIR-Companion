@@ -7,6 +7,7 @@ import {
   type Severity,
 } from "./stateTypes.js";
 import { byEventTime } from "./forensicSort.js";
+import type { HostHistoryMarker } from "./gapHostHistory.js";
 
 // Log gap analysis (issue #83).
 //
@@ -49,6 +50,18 @@ export interface TimelineGap {
   // activity, so it is accounted-for dwell time rather than suspected missing data. Absent until
   // wave analysis runs — detectTimelineGaps() alone never sets it.
   betweenWaves?: boolean;
+  // Set by gapEdgeClass.ts classifyGapEdges() (#1503), never by detectTimelineGaps() alone:
+  //   • `attackerEdges` — on a betweenWaves gap, both adjacent waves hold a High/Critical row on a
+  //     common asset, so the interval separates two visits and earns the Medium dwell finding.
+  //     A dwell interval between two benign bursts stays a panel row.
+  //   • `provisioningEdges` — both bounding rows are OS servicing / image-build artifacts, so the
+  //     silence is idle time; detectGapsWithWaves drops such a gap from every surface.
+  //   • `hostHistory` — the silence opens on a renamed host's pre-provisioning row
+  //     (gapHostHistory.ts); detectGapsWithWaves drops such a gap from every surface too.
+  attackerEdges?: boolean;
+  provisioningEdges?: boolean;
+  provisioningReason?: string;
+  hostHistory?: boolean;
   silentSources: string[]; // sources that produced no events during the window (sorted)
   activeSources: string[]; // sources that DID keep logging during the window (sorted; empty when complete)
   beforeEventId: string; // forensic-event id bounding the start of the gap (last activity before)
@@ -81,6 +94,10 @@ export interface GapOptions {
   // thousands× it — so a substantial cluster (≥2.5% of events, hence inside the percentile core) and any
   // plausibly-real gap survive, but year-scale strays are removed. Default 5. Set 0 to disable.
   outlierSpanFactor?: number;
+  // Per-host provisioning boundaries from the rename ledger (#1503, gapHostHistory.ts). A silence
+  // that opens on a renamed host's row dated before its earliest rename bound is that machine's
+  // build history, not a gap. Applied by detectGapsWithWaves; build it with gapOptionsFor(state).
+  hostHistory?: HostHistoryMarker[];
 }
 
 export const DEFAULT_GAP_MIN_MINUTES = 30;
@@ -421,6 +438,11 @@ export function backfillSilenceGapFindings(
   // `gaps` is sorted worst-first, so the complete gaps stream out longest-first — keep the worst `cap`.
   for (const gap of gaps) {
     if (!gap.complete) continue;
+    // A dwell interval earns a finding only between two attacker-graded waves (#1503). Two benign
+    // bursts around a quiet stretch — a lab box between sessions, admin work months apart — are a
+    // fact for the coverage panel, not a Medium finding with a "returning operator" brief.
+    if (gap.betweenWaves && !gap.attackerEdges) continue;
+    if (gap.provisioningEdges || gap.hostHistory) continue; // idle time / the host's own history
     if (newFindings.length >= cap) break;
     // Idempotency key derived from the bounding events — stable across synthesis runs over the same
     // gap (so re-synthesis refreshes rather than duplicates), and unique per distinct gap.

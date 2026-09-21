@@ -319,7 +319,11 @@ export function buildKnownUnknownItems(
   // 2. Coverage gaps — silent windows (complete = every source dark, the strongest log-tampering
   //    lead). No `collect` here: the dashboard links these to the existing Timeline Gaps panel, which
   //    already owns the shadow-artifact deploy UI.
-  const gaps = detectGapsWithWaves(scopedEvents, opts.gapOptions).gaps;
+  // A dwell interval between two benign bursts is a panel row, not an unknown to chase (#1503):
+  // listed here it reads "collection gap or cleared logs?" straight into the synthesis prompt.
+  const gaps = detectGapsWithWaves(scopedEvents, opts.gapOptions).gaps.filter(
+    (g) => !g.betweenWaves || g.attackerEdges,
+  );
   const maxGaps = Math.max(0, opts.maxGaps ?? DEFAULT_MAX_GAPS);
   const orderedGaps = [...gaps.filter((g) => g.complete), ...gaps.filter((g) => !g.complete)].slice(
     0,

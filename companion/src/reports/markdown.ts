@@ -26,8 +26,8 @@ import { detectBeacons, beaconEnvOptions, BEACON_CAVEAT } from "../analysis/beac
 import { buildGeoMap } from "../analysis/geoMap.js";
 import { iocValueLabel, mentionedLabel } from "../analysis/iocMentioned.js";
 import { iocSourcesLabel } from "../analysis/iocProvenanceLabel.js";
-import { gapEnvOptions, GAP_CAVEAT } from "../analysis/gapDetect.js";
-import { detectGapsWithWaves } from "../analysis/activityWaves.js";
+import { GAP_CAVEAT } from "../analysis/gapDetect.js";
+import { detectGapsWithWaves, gapOptionsFor } from "../analysis/activityWaves.js";
 import { buildKnownUnknownItems } from "../analysis/knownUnknowns.js";
 import { detectTimelineAnomalies, anomalyEnvOptions } from "../analysis/timelineAnomalies.js";
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
@@ -374,7 +374,7 @@ function modelPerformanceNote(modelPerf: ModelPerfSnapshot | null | undefined, l
 function timelineCoverage(state: InvestigationState, lines: string[]): void {
   lines.push("### 3.3 Timeline coverage", "");
   lines.push(`_${GAP_CAVEAT}_`, "");
-  const gaps = detectGapsWithWaves(state.forensicTimeline, gapEnvOptions()).gaps;
+  const gaps = detectGapsWithWaves(state.forensicTimeline, gapOptionsFor(state)).gaps;
   if (gaps.length === 0) {
     lines.push("_No suspicious silent periods detected in the forensic timeline._", "");
     return;
