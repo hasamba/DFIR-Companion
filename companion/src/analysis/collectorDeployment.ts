@@ -24,9 +24,26 @@
 //     DestinationHostname fields the Windows mapper renders, the structured dstIp, or the host of a
 //     URL — never as free text. A row whose message merely mentions the address is untouched.
 //   - The collector binary is recognised only under its INSTALL ROOT (`\Program Files\Velociraptor\`),
-//     the one location an intruder cannot supply — the reasoning isDetectionToolLocation records. A
-//     bare `velociraptor.exe` in `C:\Users\Public\` is exactly the masquerade an attacker would pick,
-//     and it keeps whatever grade it earned.
+//     the location the 64-bit MSI writes and one an intruder cannot supply without admin — the
+//     reasoning isDetectionToolLocation records. A bare `velociraptor.exe` in `C:\Users\Public\` is
+//     exactly the masquerade an attacker would pick, and it keeps whatever grade it earned. The
+//     `Program Files (x86)` folder is NOT the root (#1486): the fleet ships only the 64-bit MSI, so a
+//     client there is a second copy someone else installed.
+//   - The root is not the whole identity (#1486). An intruder WITH admin can drop the genuine MSI into
+//     that same folder — before our client arrived (the import carries the host's whole log window),
+//     beside it, or in a case another team collected — and attackers do ship the real Velociraptor
+//     as their remote-control tool. Their copy phones THEIR server, the one fact they cannot make
+//     match our configuration. So where a folder-anchored row (rules 2 / 2b) NAMES A DESTINATION the
+//     configuration holds, and it is not a configured server, the folder does not
+//     vouch for it and the row keeps its grade. This FAILS CLOSED: a name-configured server against
+//     an IP-only row is not proven ours, so the row keeps its grade — configure the server by the
+//     address the clients use. The connection's own fields (DestinationIp / DestinationHostname /
+//     dstIp) are one endpoint and match if either spelling is ours; each URL on a command line is
+//     judged alone, so the configured URL pasted beside a foreign one does not launder it. No
+//     server configured, or loopback only: nothing to compare with, unchanged. A DNS QueryName is
+//     not a destination and is not read. Rule 2c (a child the client spawned) is vetoed the same
+//     way; per-row, this seam cannot follow a foreign client's lineage to a child that names no
+//     destination of its own.
 //   - The EID 2 rule reads the CREATING PROCESS, and only the system `msiexec.exe`. Windows Installer
 //     rewrites the creation time of every file it lays down, so an EID 2 whose Image is msiexec.exe
 //     is the installer's ordinary footprint, not T1070.006. The row is kept at its grade; only the
@@ -51,6 +68,7 @@
 // other mapper overlays, BEFORE the severity floor so a demoted row is floored as Info.
 
 import { readFileSync } from "node:fs";
+import { isIP } from "node:net";
 import type { MappedEvent } from "./siemImport.js";
 
 export interface CollectorInfrastructure {
@@ -72,16 +90,17 @@ const CREATION_TIME_CHANGED_EID = /\(EID 2[\s)]/;
 // The system installer, under either bitness. Anchored to \Windows\ so a copy an intruder dropped
 // elsewhere and named msiexec.exe is not the installer.
 const SYSTEM_MSIEXEC = /^[a-z]:[\\/]windows[\\/](?:system32|syswow64)[\\/]msiexec\.exe$/i;
-// The collector's own install root — the path component an intruder cannot supply — holding the
-// client exe. Traversal is refused separately: a prefix match on a path holding `..` proves nothing.
-const COLLECTOR_INSTALL_ROOT = /^[a-z]:[\\/]program files(?: \(x86\))?[\\/]velociraptor[\\/]/i;
+// The collector's own install root — the 64-bit MSI's folder, which an intruder cannot supply
+// without admin (#1486: never the (x86) folder) — holding the client exe. Traversal is refused
+// separately: a prefix match on a path holding `..` proves nothing.
+const COLLECTOR_INSTALL_ROOT = /^[a-z]:[\\/]program files[\\/]velociraptor[\\/]/i;
 const COLLECTOR_INSTALL_EXE = new RegExp(`${COLLECTOR_INSTALL_ROOT.source}velociraptor\\.exe$`, "i");
 // The tree the client unpacks an artifact's tools into (`\Tools\tmp<digits>\…`), as a token INSIDE a
 // command line: preceded by a quote, a space or the start, so `import-module "C:\Program Files\
 // Velociraptor\Tools\tmp…\PersistenceSniper.psm1"` is found and `C:\ProgramData\Velociraptor\Tools\`
 // is not (rule 2c). Runs to the closing quote / whitespace so traversal inside the token is visible.
 const COLLECTOR_TOOLS_ARG =
-  /(?:^|[\s"'])([a-z]:[\\/]program files(?: \(x86\))?[\\/]velociraptor[\\/]tools[\\/][^"'\s]*)/gi;
+  /(?:^|[\s"'])([a-z]:[\\/]program files[\\/]velociraptor[\\/]tools[\\/][^"'\s]*)/gi;
 const PATH_TRAVERSAL = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
 // The identity the client runs its artifacts under, as Sysmon renders the token's account: the only
 // two spellings LocalSystem produces (SYSTEM is a reserved name no user or domain account can take).
@@ -114,15 +133,18 @@ const HAYABUSA_KEY: Readonly<Record<string, readonly string[]>> = {
 
 // ───────────────────────────── configuration ─────────────────────────────
 
-// The host of a URL as configured or written, lower-cased, brackets off an IPv6 literal. A value
-// without a scheme (`velo:8889`) is read as a host:port. Returns "" for anything unparseable.
+// The host of a URL as configured or written, lower-cased, brackets off an IPv6 literal, trailing
+// dot off a name, IPv6 compressed the way `new URL` does it — so a configured host and an event's
+// spelling of the same host compare equal. A value without a scheme (`velo:8889`) is read as a
+// host:port. Returns "" for anything unparseable.
 function urlHost(value: string): string {
   const s = value.trim();
   if (!s) return "";
-  for (const candidate of [s, `https://${s}`]) {
+  // A bare IPv6 literal (Sysmon renders DestinationIp without brackets) must be bracketed to parse.
+  for (const candidate of isIP(s) === 6 ? [`https://[${s}]`] : [s, `https://${s}`]) {
     try {
       const host = new URL(candidate).hostname.toLowerCase();
-      if (host) return host.replace(/^\[|\]$/g, "");
+      if (host) return host.replace(/^\[|\]$/g, "").replace(/\.$/, "");
     } catch {
       /* try the next spelling */
     }
@@ -239,28 +261,73 @@ function actingImagePath(m: MappedEvent): string {
 
 // ───────────────────────────── rules ─────────────────────────────
 
+// The connection a row names, as ONE endpoint in up to three spellings: the structured `dstIp` and
+// the rendered `DestinationIp` / `DestinationHostname` fields. Canonicalised like the configuration;
+// the empty and `-` spellings dropped.
+function endpointHosts(m: MappedEvent): string[] {
+  return [
+    m.dstIp ?? "",
+    descriptionField(m.description, "DestinationIp"),
+    descriptionField(m.description, "DestinationHostname"),
+  ]
+    .map(canonicalHost)
+    .filter((h) => h !== "");
+}
+
+// The host of every URL the row carries — the structured command line (whole, where the importer
+// keeps it: Hayabusa renders six fields cut at 120 chars) and the rendered description.
+function urlHosts(m: MappedEvent): string[] {
+  const hosts = new Set<string>();
+  for (const text of [m.commandLine ?? "", m.description])
+    for (const u of text.matchAll(URL_HOST)) {
+      const h = canonicalHost(u[1]);
+      if (h) hosts.add(h);
+    }
+  return [...hosts];
+}
+
+function canonicalHost(value: string): string {
+  const s = value.trim();
+  return s === "" || s === "-" ? "" : urlHost(s);
+}
+
 /**
  * Rule 1 — does this row's DESTINATION name the configured Velociraptor server?
  *
  * Destinations: the structured `dstIp`, the rendered `DestinationIp` / `DestinationHostname` fields,
- * and the host of any URL in the description (the download command names the server there). Never
- * the address as free text — the same digits in a message body are not a destination claim.
+ * and the host of any URL in the command line or description (the download command names the server
+ * there). Never the address as free text — the same digits in a message body are not a destination
+ * claim.
  */
 export function isCollectorServerDestination(m: MappedEvent, infra: CollectorInfrastructure): boolean {
   if (infra.servers.size === 0) return false;
-  const candidates = [
-    m.dstIp ?? "",
-    descriptionField(m.description, "DestinationIp"),
-    descriptionField(m.description, "DestinationHostname"),
-  ];
-  for (const u of m.description.matchAll(URL_HOST)) candidates.push(u[1]);
-  return candidates.some((c) => {
-    const host = c
-      .trim()
-      .toLowerCase()
-      .replace(/^\[|\]$/g, "");
-    return host !== "" && infra.servers.has(host);
-  });
+  return [...endpointHosts(m), ...urlHosts(m)].some((h) => infra.servers.has(h));
+}
+
+/**
+ * Rule 1b — does this row name a destination that is NOT a configured server (#1486)? A refusal,
+ * never a demotion: `annotateCollectorDeployment` lets it veto rules 2, 2b and 2c, so a genuine
+ * Velociraptor an intruder put under the install root — which phones their server, not ours —
+ * keeps its grade.
+ *
+ *   - Nothing configured ⇒ false: nothing to compare with (loopback-only counts as nothing, #1471).
+ *   - The connection's own fields are one endpoint: foreign when none of its spellings is a
+ *     configured server (Sysmon renders the IP and its reverse name for the same connection — if
+ *     either is ours, the connection is ours).
+ *   - Each URL is judged alone: one foreign URL makes the row foreign, whatever else sits beside it.
+ *   - A row that names no destination (EID 1/10/11, a file write, a DNS query) ⇒ false.
+ *
+ * FAILS CLOSED: a name-configured server against an IP-only row is not proven ours, so the row
+ * keeps its grade. That can leave a legitimate collector's connections at their grade on a
+ * network with no reverse DNS; the fix is to configure the server by the address the clients use.
+ * The alternative — demoting whatever the folder holds when the address cannot be checked — is
+ * exactly the gap this rule closes.
+ */
+export function isForeignDestination(m: MappedEvent, infra: CollectorInfrastructure): boolean {
+  if (infra.servers.size === 0) return false;
+  const ours = (h: string): boolean => infra.servers.has(h);
+  const endpoint = endpointHosts(m);
+  return (endpoint.length > 0 && !endpoint.some(ours)) || urlHosts(m).some((h) => !ours(h));
 }
 
 /**
@@ -382,12 +449,22 @@ export function annotateCollectorDeployment(m: MappedEvent, infra: CollectorInfr
     appendNote(m, MSI_TIME_CHANGE_NOTE);
     return;
   }
-  if (isCollectorInstallBinary(m)) return gradeAsCollector(m, DEPLOYMENT_INSTALL_NOTE);
-  if (isCollectorSpawn(m)) {
-    if (m.severity !== "Critical") gradeAsCollector(m, SPAWN_NOTE);
+  // Rules 2, 2b and 2c rest on the install root; a destination that is not ours overrides the
+  // root (#1486). A row refused here cannot then match rule 1: rule 1 needs a configured host in
+  // the row, the refusal needs one that is not.
+  const foreign = isForeignDestination(m, infra);
+  if (isCollectorInstallBinary(m)) {
+    if (!foreign) gradeAsCollector(m, DEPLOYMENT_INSTALL_NOTE);
     return;
   }
-  if (isCollectorFootprint(m)) return gradeAsCollector(m, FOOTPRINT_NOTE);
+  if (isCollectorSpawn(m)) {
+    if (!foreign && m.severity !== "Critical") gradeAsCollector(m, SPAWN_NOTE);
+    return;
+  }
+  if (isCollectorFootprint(m)) {
+    if (!foreign) gradeAsCollector(m, FOOTPRINT_NOTE);
+    return;
+  }
   if (isCollectorServerDestination(m, infra)) gradeAsCollector(m, DEPLOYMENT_DOWNLOAD_NOTE);
 }
 
