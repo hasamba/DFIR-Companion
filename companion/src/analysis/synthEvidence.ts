@@ -14,6 +14,8 @@ import { BEACON_CAVEAT } from "./beaconDetect.js";
 import type { AttackPhase } from "./burstDetect.js";
 import { resolveHost, type HostAliasIndex } from "./hostAlias.js";
 import { labIntelTag } from "./labIntel.js";
+import { renderDestinationTags } from "./destinationFacts.js";
+import { renderDecoyTag } from "./renamedBinaryNote.js";
 
 const MAX_TAG_VALUE = 48; // keep one field from bloating a line; hostnames/paths can be long
 
@@ -56,6 +58,13 @@ export function renderStructuredTags(e: ForensicEvent, aliasIndex?: HostAliasInd
   // so it joins like the others.
   const lab = labIntelTag(e.labIntel).trim();
   if (lab) tags.push(lab);
+
+  // The facts the 240-char render cuts out of a long command line or never reads from `message`
+  // (#1502): the rclone destination, the fetched URL, an ip:port a script block names — and the
+  // renamed-binary note as a flag, not as prose at the end of the line.
+  tags.push(...renderDestinationTags(e));
+  const decoy = renderDecoyTag(e);
+  if (decoy) tags.push(decoy);
 
   return tags.length ? " " + tags.join(" ") : "";
 }

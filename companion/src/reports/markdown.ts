@@ -32,7 +32,8 @@ import { buildKnownUnknownItems } from "../analysis/knownUnknowns.js";
 import { detectTimelineAnomalies, anomalyEnvOptions } from "../analysis/timelineAnomalies.js";
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { scoreIocsFromState } from "../analysis/iocRiskScore.js";
-import { corroborationLabel, findingHeadingSuffix } from "../analysis/findingGrounding.js";
+import { findingHeadingSuffix } from "../analysis/findingGrounding.js";
+import { findingCautionLine } from "./findingCaution.js";
 import {
   coverageLabel,
   modelPerfLabel,
@@ -778,20 +779,9 @@ function investigation(
       const confLabel = findingHeadingSuffix(f);
       lines.push(`#### [${f.severity}]${confLabel} ${oneLineMd(f.title)} (${f.id})`);
       // Corroboration/grounding badge (investigation-guidance #6): "2 tools / 3 hosts / intel ✓" or a
-      // prominent "⚠️ no cited evidence" for an ungrounded finding, so a hypothesis never reads as fact.
-      if (f.ungrounded) {
-        lines.push(`> ⚠️ **No cited evidence** — treat as a hypothesis, not a fact (confidence capped).`);
-      } else if (f.contentMismatch) {
-        lines.push(
-          `> ⚠️ **Citation mismatch** — a claimed detail (e.g. an IP) never appears in the cited events; severity floored and confidence capped pending verification.`,
-        );
-      } else if (f.lateralUnconfirmed) {
-        lines.push(
-          `> ⚠️ **Unconfirmed lateral movement** — the destination host has no confirmed malicious activity of its own; the cited logon may be a legitimate session by a reused account. Severity floored and confidence capped until the source is tied to a compromised node.`,
-        );
-      } else if (f.corroboration) {
-        lines.push(`- Corroboration: ${corroborationLabel(f)}`);
-      }
+      // prominent "⚠️ …" caution for a finding a gate lowered, so a hypothesis never reads as fact.
+      const caution = findingCautionLine(f);
+      if (caution) lines.push(caution);
       lines.push(blockMd(f.description) || "_no description_");
       if (f.relatedIocs.length) lines.push(`- IOCs: ${f.relatedIocs.join(", ")}`);
       if (f.mitreTechniques.length)

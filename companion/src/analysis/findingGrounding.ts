@@ -31,6 +31,7 @@ import { trustForSources, type SourceTrustMap } from "./sourceTrust.js";
 import { deriveSemanticKey } from "./semanticKey.js";
 import { resolveHost, type HostAliasIndex } from "./hostAlias.js";
 import { outcomeLabel } from "./findingOutcome.js";
+import { decoyOnlyEvidence } from "./renamedBinaryNote.js";
 
 // A finding with no cited in-scope evidence is a hypothesis — cap hard so it can't outrank grounded work.
 export const UNGROUNDED_CONFIDENCE_CAP = 45;
@@ -58,6 +59,14 @@ export const LOW_TRUST_CONFIDENCE_CAP = 55;
 // IP-only by design — concrete, regex-extractable, and the exact entity type that produced that false
 // positive — not a general fact-checker.
 export const CONTENT_MISMATCH_CONFIDENCE_CAP = 40;
+// A High/Critical finding whose EVERY cited event is a renamed plain shell (`mimikatz.exe is really
+// Cmd.Exe`) or a file trace of that same decoy (its MFT / Amcache / Prefetch rows) rests on a command
+// line a shell echoed, not on the named tool running. INC-2026-033 (#1502) graded exactly that
+// Critical/92 "canonical LSASS credential-dumping command" with the importer's note beside it. The
+// gate states what the evidence proves — the file identifies as a shell — and only lowers; one
+// independent behavioral row (an LSASS access, a dump write with a process) and it does not fire.
+export const DECOY_BINARY_CONFIDENCE_CAP = 40;
+export const DECOY_BINARY_SEVERITY_FLOOR: Severity = "Medium";
 export const CONTENT_MISMATCH_SEVERITY_FLOOR: Severity = "Medium";
 
 // Actor-provenance gate for lateral-movement findings (meridian-tax-ransomware benchmark 2026-07-23).
@@ -333,8 +342,30 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
       }
     }
 
+    // Decoy-binary gate (#1502). Runs on every grounded finding, whatever the gates above already
+    // floored, so the flag is recorded even on a finding that is already Medium; it never raises.
+    let decoyBinary = false;
+    if (supporting.length > 0) {
+      const decoys = decoyOnlyEvidence(supporting);
+      if (decoys.length) {
+        decoyBinary = true;
+        if (severity === "Critical" || severity === "High") severity = DECOY_BINARY_SEVERITY_FLOOR;
+        if ((confidence ?? 100) > DECOY_BINARY_CONFIDENCE_CAP) confidence = DECOY_BINARY_CONFIDENCE_CAP;
+        confidenceReason = appendReason(
+          confidenceReason,
+          `capped: ${decoys.map((d) => `${d.onDisk} is a renamed ${d.original}`).join(", ")} — the file identifies as a shell, so the cited evidence does not substantiate execution of the named tool; the command line is a label, not a run`,
+        );
+      }
+    }
+
     // Clean the old flags first so a since-corrected finding loses them (idempotent recompute).
-    const { ungrounded: _prev, contentMismatch: _prevCm, lateralUnconfirmed: _prevLu, ...rest } = f;
+    const {
+      ungrounded: _prev,
+      contentMismatch: _prevCm,
+      lateralUnconfirmed: _prevLu,
+      decoyBinary: _prevDb,
+      ...rest
+    } = f;
     return {
       ...rest,
       severity,
@@ -346,6 +377,7 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
       ...(ungrounded ? { ungrounded: true } : {}),
       ...(contentMismatch ? { contentMismatch: true } : {}),
       ...(lateralUnconfirmed ? { lateralUnconfirmed: true } : {}),
+      ...(decoyBinary ? { decoyBinary: true } : {}),
       ...(confidence !== undefined ? { confidence } : {}),
       ...(confidenceReason !== undefined ? { confidenceReason } : {}),
     };
