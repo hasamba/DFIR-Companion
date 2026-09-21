@@ -29,8 +29,8 @@ import {
 import type { ClockSkewStore } from "../analysis/clockSkewStore.js";
 import { buildAttackPhases, DEFAULT_GAP_SECONDS, type AttackPhase } from "../analysis/burstDetect.js";
 import { detectBeacons, beaconEnvOptions, type BeaconCandidate } from "../analysis/beaconDetect.js";
-import { gapEnvOptions, type TimelineGap } from "../analysis/gapDetect.js";
-import { detectGapsWithWaves } from "../analysis/activityWaves.js";
+import type { TimelineGap } from "../analysis/gapDetect.js";
+import { detectGapsWithWaves, gapOptionsFor } from "../analysis/activityWaves.js";
 import { buildSwimlaneData, type SwimlaneData, type SwimlaneGroupBy } from "../analysis/swimlane.js";
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { buildAdversaryHintsResult, type AdversaryHintsResult } from "../analysis/adversaryHints.js";
@@ -411,7 +411,7 @@ export class ReportWriter {
   // detectGapsWithWaves so this panel labels a window exactly as the finding about it does.
   async timelineGaps(caseId: string): Promise<TimelineGap[]> {
     const state = await this.loadFilteredState(caseId);
-    return detectGapsWithWaves(state.forensicTimeline, gapEnvOptions()).gaps;
+    return detectGapsWithWaves(state.forensicTimeline, gapOptionsFor(state)).gaps;
   }
 
   // Timeline anomalies (#175): per-asset event-rate spikes relative to the per-bucket median.

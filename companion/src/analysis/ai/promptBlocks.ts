@@ -1,6 +1,6 @@
 import { buildAdversaryHintsResult } from "../adversaryHints.js";
 import { loadAdversaryGroupsDataset, adversaryHintEnvOptions } from "../adversaryGroupsData.js";
-import { gapEnvOptions } from "../gapDetect.js";
+import { gapOptionsFor } from "../gapHostHistory.js";
 import type { HostAliasIndex } from "../hostAlias.js";
 import { classifyImportYield, type ImportMetaStore, type ImportYieldWarning } from "../importMeta.js";
 import {
@@ -51,7 +51,7 @@ export function knownUnknownItems(
     // becomes a named gap. Scored over the SCOPED events, exactly as the panel and report see them.
     const playbook = buildPlaybookMatchResult(scopedEvents, loadKnownPlaybooks(), playbookMatchEnvOptions());
     return buildKnownUnknownItems(state, scopedEvents, {
-      gapOptions: gapEnvOptions(),
+      gapOptions: gapOptionsFor(state),
       nextTechniques: hints.nextTechniques,
       playbookMatch: playbook.matches[0] ?? null,
       yieldWarning,
