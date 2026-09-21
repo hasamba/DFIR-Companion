@@ -1088,6 +1088,14 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // "Story so far" rendering + the plain-text brief (#1487, #1493). Split from the cockpit when
+    // the shape strip, the missing-stage cards and the brief pushed it past 650 lines. No
+    // initializer: nothing here runs at load; renderCockpit calls cockpitStoryHtml at paint time.
+    file: "dashboard-cockpit-story.js",
+    publish: ["cockpitStoryCopy", "cockpitStoryHtml"],
+    private: [],
+  },
+  {
     // "Now" investigator cockpit. Its 440-line banner read as core only because render() sat at the
     // end of it; the cockpit itself is 187 lines with zero escapes.
     file: "dashboard-cockpit.js",

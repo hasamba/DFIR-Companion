@@ -682,6 +682,7 @@
     "ROUTE GET /js/dashboard-facet-filters.js",
     "ROUTE GET /js/dashboard-hunts-jumps.js",
     "ROUTE GET /js/dashboard-timeline-controls.js",
+    "ROUTE GET /js/dashboard-cockpit-story.js",
     "ROUTE GET /js/dashboard-cockpit.js",
     "ROUTE GET /js/dashboard-exposure-fp.js",
     "ROUTE GET /js/dashboard-kill-chain.js",

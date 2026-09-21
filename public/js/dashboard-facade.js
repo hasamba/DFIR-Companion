@@ -358,6 +358,10 @@
     "jumpToQuestion",
     "renderEvIdFilterChip",
     "renderVeloHuntSuggest",
+    // "Story so far" rendering + brief (#1493). No sentinel — the block has no initializer.
+    // cockpitStoryHtml stubs to undefined, which renderCockpit paints as an empty string.
+    "cockpitStoryCopy",
+    "cockpitStoryHtml",
     // "Now" investigator cockpit. `initCockpit` is the sentinel.
     "cockpitAction",
     "cockpitJumpEvent",
