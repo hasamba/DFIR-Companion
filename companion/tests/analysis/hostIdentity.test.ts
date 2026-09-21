@@ -378,6 +378,7 @@ describe("resolveRowHost — an import-level collector stands in when the row ha
       asset: FLOW_HOST,
       formerName: BUILD_NAME,
       collectorIdentity: true,
+      fallbackBasis: "collector", // the flow's client said so (#1458); an analyst's declaration says "analyst" (#1496)
     });
   });
 
@@ -385,6 +386,7 @@ describe("resolveRowHost — an import-level collector stands in when the row ha
     expect(resolveRowHost({ System: { Computer: "desktop-16ojfo6" } }, undefined, FLOW_HOST)).toEqual({
       asset: FLOW_HOST,
       collectorIdentity: true,
+      fallbackBasis: "collector",
     });
     expect(resolveRowHost({ Fqdn: COLLECTOR, Computer: FORMER }, undefined, "OTHER-BOX")).toEqual({
       asset: COLLECTOR,
@@ -777,5 +779,41 @@ describe("HostRenameLedger — what the case remembers (#1495)", () => {
     );
     expect(ledger.records()).toEqual([]);
     expect(ledger.events()).toHaveLength(1);
+  });
+});
+
+// The analyst's "asset for this import" (#1496) resolves exactly like a flow's client — but the
+// ledger must be able to tell the two apart, so the basis rides on the RowHost and into the record.
+describe("resolveRowHost / HostRenameLedger — an analyst-declared host (#1496)", () => {
+  it("resolves like a collector fallback, marked analyst; a per-row Fqdn still wins and carries no basis", () => {
+    const rh = resolveRowHost(
+      { Computer: FORMER, EventTime: "2025-12-05T03:02:24Z" },
+      undefined,
+      FLOW_HOST,
+      undefined,
+      "analyst",
+    );
+    expect(rh).toEqual({
+      asset: FLOW_HOST,
+      formerName: FORMER,
+      collectorIdentity: true,
+      fallbackBasis: "analyst",
+    });
+    expect(
+      resolveRowHost({ Fqdn: COLLECTOR, Computer: FORMER }, undefined, FLOW_HOST, undefined, "analyst")
+        .fallbackBasis,
+    ).toBeUndefined();
+  });
+
+  it("the ledger records the declared rename with basis analyst and the declared name as a collector", () => {
+    const ledger = new HostRenameLedger();
+    ledger.note(
+      resolveRowHost({ Computer: FORMER }, undefined, FLOW_HOST, undefined, "analyst"),
+      "2025-12-05T03:02:24Z",
+    );
+    expect(ledger.records()).toEqual([
+      { formerName: FORMER, currentName: FLOW_HOST, until: "2025-12-05T03:02:24.000Z", basis: "analyst" },
+    ]);
+    expect(ledger.collectorHostnames()).toEqual([FLOW_HOST]);
   });
 });

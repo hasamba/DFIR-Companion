@@ -144,7 +144,7 @@ export const deltaSchema = z.object({
         formerName: z.string().min(1),
         currentName: z.string().min(1),
         until: z.string().min(1),
-        basis: z.enum(["6011", "machine-account", "sam-domain", "collector"]),
+        basis: z.enum(["6011", "machine-account", "sam-domain", "collector", "analyst"]),
       }),
     )
     .optional(),

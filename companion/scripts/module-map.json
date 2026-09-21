@@ -156,6 +156,7 @@
     "applyDeobfuscation.ts": "analysis/privacy",
     "artifactBundleStore.ts": "analysis/ingest",
     "askHistory.ts": "analysis/ai",
+    "assetHost.ts": "shared",
     "assetGraph.ts": "analysis/detect",
     "assetOverrides.ts": "analysis/detect",
     "attack.ts": "analysis/intel",

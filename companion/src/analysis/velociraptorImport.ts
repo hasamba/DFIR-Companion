@@ -5,16 +5,14 @@
 // ingest its OUTPUT — we do not run VQL/Sigma/YARA ourselves. The richest rows for the
 // timeline are its DETECTION artifacts, so each row is classified and mapped accordingly:
 //
-//   • Sigma     (`*.Detection.Sigma`, or a `Rule:{Title,Level}` + parsed event) — verdict
-//                first: the matched rule's Level drives severity, its Title leads the
-//                description, its tags become MITRE; the parsed EVTX event underneath is
-//                mapped with the SAME per-EID logic the SIEM/Chainsaw paths use (reused).
+//   • Sigma     (`*.Detection.Sigma`, or a `Rule:{Title,Level}` + parsed event) — verdict first:
+//                the rule's Level drives severity, its Title leads the description, its tags become
+//                MITRE; the parsed EVTX event underneath takes the SAME per-EID logic as SIEM/Chainsaw.
 //   • YARA      (`*.Detection.Yara.*`, or a string `Rule` + Strings/Meta/Namespace) — a
 //                real detection ⇒ High; rule name + scanned file/process + hash → event+IOCs.
 //   • EventLog  (a parsed evtx row: `System`+`EventData`) — reuse `mapWindows` per-EID.
-//   • Generic   (pslist / netstat / file listing / any other artifact) — auto-detect the
-//                artifact's own time (NOT the `_ts` collection time unless nothing better),
-//                host, and message; pull IOCs from every column.
+//   • Generic   (pslist / netstat / file listing / any other artifact) — the artifact's own time
+//                (NOT the `_ts` collection time unless nothing better), host, message; IOCs from every column.
 //
 // Inputs accepted: a JSON array, JSONL/NDJSON (the native collection-results form), a single
 // object, an Elastic-style wrapper, or a Velociraptor multi-artifact map { "Artifact.Name":
@@ -105,6 +103,7 @@ export interface VelociraptorImportOptions {
   maxIocs?: number;
   artifact?: string; // fallback artifact/source label (e.g. the filename) when rows carry no _Source
   hostFallback?: string; // asset to stamp on events whose row carries no host (single-client flow import)
+  hostFallbackBasis?: "collector" | "analyst"; // who supplied it: the flow's client, or the analyst (#1496)
   knownRenames?: readonly HostRenameRecord[]; // renames the case learned earlier (#1495), seeded before any row
   collectorHostnames?: readonly string[]; // collector identities the case has seen — never a former name
 }
@@ -1513,6 +1512,7 @@ export function extractRows(text: string): { rows: Row[]; format: string } {
 interface VrParseCtx {
   fallbackArtifact: string;
   fallbackHost: string;
+  fallbackBasis: "collector" | "analyst";
   iocSink: Map<string, SiemIoc>;
   hostTally: Map<string, number>;
   renames: HostRenameLedger; // one Info marker per (host, former name) seen this import (#1417)
@@ -1526,7 +1526,7 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
   // both drivers run first. Normalizing again is not free: an Elastic row keeps its `artifact_`
   // index, so the gate re-opens and the whole collapse/un-flatten walk runs again on every row.
   const artifact = artifactName(row) || ctx.fallbackArtifact;
-  const rh = resolveRowHost(row, undefined, ctx.fallbackHost, ctx.aliases); // collector (row, else the flow's client) over the record's Computer (#1417, #1458), else the file's rename evidence (#1489)
+  const rh = resolveRowHost(row, undefined, ctx.fallbackHost, ctx.aliases, ctx.fallbackBasis); // collector (row, else the flow's client) over the record's Computer (#1417, #1458), else the file's rename evidence (#1489)
   const host = rh.asset || ctx.fallbackHost; // a row's own host always wins; fallback only fills the gap
   if (host) ctx.hostTally.set(host, (ctx.hostTally.get(host) ?? 0) + 1);
   ctx.renames.note(rh, pickTime(row));
@@ -1732,6 +1732,7 @@ function newVrCtx(opts: VelociraptorImportOptions): VrParseCtx {
     // A single-client FLOW export has no per-row host column (one client by definition), so the
     // resolved hostname is threaded in to attribute rows that carry no host.
     fallbackHost: (opts.hostFallback ?? "").trim(),
+    fallbackBasis: opts.hostFallbackBasis ?? "collector",
     iocSink: new Map<string, SiemIoc>(),
     hostTally: new Map<string, number>(),
     renames: new HostRenameLedger(),

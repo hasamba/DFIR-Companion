@@ -8,6 +8,7 @@ import { parseMinSeverity } from "../analysis/severityFloor.js";
 import { addedForensicEvents, diffTimeline } from "../analysis/timelineDiff.js";
 import type { ImportBase, RouteContext } from "./context.js";
 import { hasParseProgress } from "./importKinds.js";
+import { parseAssetHost } from "../analysis/assetHost.js";
 import { importPlasoFileLogged } from "./importPlasoStream.js";
 import { recordImportRun } from "./importRunRecorder.js";
 import { logImportSettled } from "./importSettle.js";
@@ -19,6 +20,9 @@ const importParametersSchema = z.object({
   importedAt: z.string().datetime(),
   minSeverity: z.enum(["Critical", "High", "Medium", "Low", "Info"]).nullable(),
   streaming: z.boolean(),
+  // The analyst-declared host (#1496); absent on jobs saved before it existed. Re-validated on
+  // resume: the saved file is data, and a malformed value is dropped, never applied.
+  assetHost: z.string().nullable().optional(),
 });
 
 export function registerImportResumeHandler(ctx: RouteContext): void {
@@ -32,6 +36,8 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
       const caseId = job.caseId;
       const parameters = importParametersSchema.parse(job.parameters);
       const minSeverity = parseMinSeverity(parameters.minSeverity);
+      const declared = parseAssetHost(parameters.assetHost ?? undefined);
+      const assetHost = declared.ok ? declared.host : "";
       const warn = async (action: string, error: unknown): Promise<void> => {
         const message = error instanceof Error ? error.message : String(error);
         await options.jobManager?.warn(job.id, `${action}: ${message}`);
@@ -47,6 +53,7 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
         idPrefix: String(parameters.sequence),
         importedAt: parameters.importedAt,
         ...(minSeverity ? { minSeverity } : {}),
+        ...(assetHost ? { assetHost } : {}), // the same declaration the interrupted import ran with (#1496)
         ...(signal ? { signal } : {}),
         startBatch,
         onProgress: async (done, total) => {
@@ -158,6 +165,7 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
           startedAt: parameters.importedAt,
           stateBefore: before,
           minSeverity,
+          ...(assetHost ? { assetHost } : {}),
           path: parameters.kind === "csv" || parameters.kind === "log" ? "ai" : "deterministic",
         });
         try {

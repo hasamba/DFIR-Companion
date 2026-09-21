@@ -32,7 +32,7 @@ import { parseJournald, type JournaldImportOptions } from "../analysis/journaldI
 import { parseSysdig, type SysdigImportOptions } from "../analysis/sysdigImport.js";
 import { parseWazuhAlerts, type WazuhImportOptions } from "../analysis/wazuhImport.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
-import { buildImportBase } from "./importBase.js";
+import { buildImportBase, importJobParameters } from "./importBase.js";
 import { settleForensicImport, type SettleDeps } from "./importSettle.js";
 import { importPlasoFileLogged } from "./importPlasoStream.js";
 import { commitDedicatedImport, importerParameter, persistImportEvidence } from "./importCommit.js";
@@ -55,7 +55,7 @@ import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
 import { recordImportRun } from "./importRunRecorder.js";
 import { registerImportResumeHandler } from "./importRecovery.js";
-import { registerImportCaseGuard } from "./importCaseGuard.js";
+import { registerImportAssetHostGuard, registerImportCaseGuard } from "./importCaseGuard.js";
 import { hasParseProgress, isAiDependent, rejectIfAiImportOverBudget } from "./importKinds.js";
 import { createImportJobTracking, IMPORT_JOB_PENDING_DETAIL } from "./importJobTracking.js";
 import { beginImportSection, type ImportSection } from "./importSection.js";
@@ -85,6 +85,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
   } = ctx;
   registerImportResumeHandler(ctx);
   registerImportCaseGuard(app, store); // 404 an unknown case before ANY import route touches disk
+  registerImportAssetHostGuard(app); // 400 a malformed "asset for this import" before either generic route runs (#1496)
 
   // Auto-tag only newly imported super-timeline events; best-effort and TAGGER_AUTO-gated.
   const autoTagImported = (caseId: string, added: ForensicEvent[]): Promise<void> =>
@@ -341,14 +342,15 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         cancellable: aiDependent || hasParseProgress(kind),
         resumable: true,
         maxRetries: 2,
-        parameters: {
+        parameters: importJobParameters({
           kind,
           storedName,
-          sequence: seq,
+          seq,
           importedAt,
-          minSeverity: minSeverity ?? null,
+          minSeverity,
           streaming: false,
-        },
+          req,
+        }),
       });
       await job?.durable;
       res.status(202).json({ accepted: true, kind, file: storedName, minSeverity });
@@ -447,6 +449,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
             startedAt: importedAt,
             stateBefore,
             minSeverity,
+            assetHost: base.assetHost,
             path: aiDependent ? "ai" : "deterministic",
           });
           // Phase 2 (#35): auto-mark IOCs that match the global whitelist as legitimate BEFORE
@@ -623,14 +626,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
         cancellable: aiDependent || hasParseProgress(kind),
         resumable: true,
         maxRetries: 2,
-        parameters: {
-          kind,
-          storedName,
-          sequence: seq,
-          importedAt,
-          minSeverity: minSeverity ?? null,
-          streaming,
-        },
+        parameters: importJobParameters({ kind, storedName, seq, importedAt, minSeverity, streaming, req }),
       });
       await job?.durable;
       res.status(202).json({ accepted: true, kind, file: storedName, minSeverity });
@@ -721,6 +717,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
             startedAt: importedAt,
             stateBefore,
             minSeverity,
+            assetHost: base.assetHost,
             path: aiDependent ? "ai" : "deterministic",
           });
           try {

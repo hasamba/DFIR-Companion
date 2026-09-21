@@ -27,7 +27,7 @@ import { getCI, getPath, str } from "./siemImport.js";
 import type { MappedEvent } from "./siemImport.js";
 import { isDetectionSampleHost } from "./veloDetectionNoise.js";
 import type { HostRenameMap } from "./hostRenameEvidence.js";
-import type { HostRenameRecord } from "./hostRenameRecord.js";
+import type { HostRenameRecord, RenameBasis } from "./hostRenameRecord.js";
 
 type Row = Record<string, unknown>;
 
@@ -47,6 +47,9 @@ export interface RowHost {
   assetRecord?: string;
   // With `viaRenameEvidence`: the bound the fold rests on (the earliest evidence along the chain).
   renameBound?: string;
+  // With `collectorIdentity` from the IMPORT's fallback: who asserted it — the collector (a flow's
+  // client, #1458) or the analyst (#1496). Absent when a per-row key named the collector.
+  fallbackBasis?: "collector" | "analyst";
 }
 
 // The collector's identity, in order of trust. `Hostname` is Velociraptor's client hostname (and
@@ -118,13 +121,18 @@ function isForwarded(row: Row): boolean {
 // `aliases` is the file's own rename evidence (#1489), consulted only when nothing names a
 // collector: a record dated before the rename lands on the current name with the old one as its
 // former name. A ForwardedEvents record names another machine on purpose and is never re-resolved.
+// `fallbackBasis` says who supplied `collectorFallback` (#1496): the ledger keeps an analyst's
+// declaration apart from a collector's own identity.
 export function resolveRowHost(
   row: Row,
   recordName?: string,
   collectorFallback = "",
   aliases?: HostRenameMap,
+  fallbackBasis: "collector" | "analyst" = "collector",
 ): RowHost {
-  const collector = firstKey(row, COLLECTOR_KEYS) || collectorFallback.trim();
+  const fromRow = firstKey(row, COLLECTOR_KEYS);
+  const collector = fromRow || collectorFallback.trim();
+  const basis = fromRow ? {} : { fallbackBasis };
   const record = (recordName ?? "").trim() || firstKey(row, RECORD_KEYS);
   if (!collector) {
     if (!record) return { asset: record, collectorIdentity: false };
@@ -142,9 +150,9 @@ export function resolveRowHost(
     };
   }
   if (!record || shortHostName(record) === shortHostName(collector))
-    return { asset: collector, collectorIdentity: true };
-  if (isForwarded(row)) return { asset: record, collectorIdentity: true };
-  return { asset: collector, formerName: record, collectorIdentity: true };
+    return { asset: collector, collectorIdentity: true, ...basis };
+  if (isForwarded(row)) return { asset: record, collectorIdentity: true, ...basis };
+  return { asset: collector, formerName: record, collectorIdentity: true, ...basis };
 }
 
 export function withFormerHostSuffix(description: string, formerName?: string): string {
@@ -173,7 +181,7 @@ export function demoteSampleHost(ev: MappedEvent, host: RowHost): void {
 export class HostRenameLedger {
   private readonly seen = new Map<
     string,
-    { asset: string; formerName: string; last: string; bound: string; evidence: boolean }
+    { asset: string; formerName: string; last: string; bound: string; evidence: boolean; basis: RenameBasis }
   >();
   private readonly collectors = new Set<string>();
 
@@ -189,6 +197,7 @@ export class HostRenameLedger {
         last: timestamp,
         bound: host.renameBound ?? "",
         evidence: host.viaRenameEvidence === true,
+        basis: host.fallbackBasis ?? "collector",
       });
     else if (timestamp > cur.last) cur.last = timestamp;
   }
@@ -213,7 +222,7 @@ export class HostRenameLedger {
         formerName: r.formerName,
         currentName: r.asset,
         until: new Date(Date.parse(r.last)).toISOString(),
-        basis: "collector" as const,
+        basis: r.basis,
       }));
   }
 

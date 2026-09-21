@@ -697,6 +697,8 @@ export const FEATURES: Feature[] = [
     file: "dashboard-import-severity.js",
     publish: [
       "askMinSeverity",
+      "probeBareWindowsExport",
+      "askImportAssetHost",
       "setImportSevPref",
       "syncImportSevDefaultSelect",
       "getWebTrailerProfile",

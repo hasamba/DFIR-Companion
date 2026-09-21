@@ -16,6 +16,28 @@ Before importing, you can set a **minimum severity** filter. Events below the fl
 !!! tip "Remember this choice"
     Check **Remember this choice — don't ask again** on the prompt to skip it on future imports and reuse the saved floor. Manage or clear the saved choice in **Settings → General → Import severity**. Per-browser, no server round-trip.
 
+## Which host did this file come from?
+
+A Windows log export downloaded from the Velociraptor GUI, a notebook or a triage ZIP names no
+collector inside it — only the `Computer` each record was written under. A machine that was renamed
+(every Vagrant-built lab, most re-imaged hosts) then shows up as two or three hosts, and its own
+provisioning reads as lateral movement between them.
+
+When the Import button reads such a file, it asks once **for that file**: *Which host did this file
+come from?* The prompt lists the machine names it saw inside the records.
+
+- **Import as this host** — every record lands on the host you name. A record written under an
+  older name keeps a `[logged under former hostname …]` note, and the case remembers the rename,
+  so later files from the same machine fold on their own.
+- **Import as-is** — the records keep the names inside them (the previous behaviour).
+- **Skip this file** — the file is not imported.
+
+A record that names its own collector (`Fqdn` / `Hostname` — a companion-launched hunt) is never
+overridden. Large files imported by path and binary uploads are not asked. A host name must be a
+valid computer name or FQDN; anything else is refused with the reason. The declaration is
+recorded on the import's analysis run and in the case's rename ledger as an **analyst** assertion,
+kept apart from what a collector or the machine itself wrote.
+
 ## Supported Formats
 
 | Category | Formats |
@@ -2376,6 +2398,13 @@ If the server dies mid-import, the last `[import]` line names the file and how f
 Every case gets a `cases/<id>/drop/` folder on creation. Copy any file into it — at any depth, subfolders included — and a background poller picks it up once the file size/mtime is stable (safe for Dropbox/OneDrive sync), then imports it through the same detection + import chain as the **Import** button. Screenshots are ingested as capture evidence; everything else is imported as an artifact.
 
 Processed files move to `drop/_processed/`; failures move to `drop/_failed/` and are reported in the dashboard **📥 Drop** banner and any configured notification channel.
+
+A subfolder named `asset=<HOST>` at the top of `drop/` (for example `drop/asset=DESKTOP-01/`)
+declares the host every file under it came from — the drop-folder form of the Import button's
+*Which host did this file come from?* prompt (above). It applies to Windows log exports with no
+collector name inside (Chainsaw, Hayabusa, Velociraptor GUI downloads), including a raw `.evtx`
+handed to an external tool; a file that names its own collector is never overridden, and any other
+kind of file ignores it. An invalid host name declares nothing.
 
 Every auto-processed file's outcome (imported / failed / pending, with reason) is appended to a
 running `drop-log.txt` in the same `drop/` folder — including the terminal outcome once a

