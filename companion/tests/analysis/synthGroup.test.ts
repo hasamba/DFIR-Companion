@@ -337,3 +337,51 @@ describe("grouping + selection end to end", () => {
     expect(selection.omitted).toBeGreaterThan(1600);
   });
 });
+
+// #1501: six process creations of ONE renamed binary share a hash, so they group — and the grouped
+// row used to say "6× identical detection" while showing only the representative's `whoami`. The
+// other five discovery commands never reached the model as attributable rows. The suffix now names
+// each member whose command differs, with its id so the model can cite it and the linker attach it.
+describe("renderGroupSuffix — members with distinct command lines (#1501)", () => {
+  const IMAGE = "C:\\Confluence\\tomcat9.exe";
+  const proc = (id: string, sec: number, args: string): ForensicEvent => ({
+    ...ev(
+      id,
+      `2026-09-21T15:00:${String(sec).padStart(2, "0")}Z`,
+      "Medium",
+      `Chainsaw/Sigma: Potential Defense Evasion Via Binary Rename - Sysmon Process create (EID 1) - Image=${IMAGE} - CommandLine=… ${args}`,
+      "CONFLUENCE01",
+    ),
+    sha256: "9695cf4566ddf878a69c3d419e0da4eea87b0f24261ad8e79a3a9c4a9885429c",
+    path: IMAGE,
+    commandLine: `"${IMAGE}" ${args}`,
+  });
+
+  it("lists every distinct member command with its id, and stops calling the burst identical", () => {
+    const events = [
+      "whoami",
+      "query user",
+      "tasklist",
+      "taskkill /f /im powershell.exe",
+      "hostname",
+      "ipconfig",
+    ].map((c, i) => proc(`e${i}`, 50 + i, `/c ${c}`));
+    const [g] = groupDetections(events);
+    expect(g.memberIds).toHaveLength(6);
+    const s = renderGroupSuffix(g);
+    expect(s).toContain("6× same detection");
+    expect(s).not.toContain("identical");
+    expect(s).toContain("6 distinct command lines");
+    for (const id of ["e1", "e2", "e3", "e4", "e5"]) expect(s).toContain(`[${id} 15:00:`);
+    expect(s).toContain("/c taskkill /f /im powershell.exe");
+    expect(s).toContain("/c ipconfig");
+    expect(s).not.toContain("[e0 "); // the representative's own command is on its row already
+  });
+
+  it("renders an identical burst exactly as before", () => {
+    const [g] = groupDetections([0, 1, 2, 3].map((i) => proc(`i${i}`, i, "/c whoami")));
+    const s = renderGroupSuffix(g);
+    expect(s).toContain("4× identical detection");
+    expect(s).not.toContain("distinct command lines");
+  });
+});

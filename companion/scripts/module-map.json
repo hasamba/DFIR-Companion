@@ -695,6 +695,7 @@
     "swimlane.ts": "analysis/detect",
     "synthEvidence.ts": "analysis/ai",
     "synthGroup.ts": "analysis/ai",
+    "synthGroupMembers.ts": "analysis/ai",
     "synthMeta.ts": "analysis/ai",
     "synthSelect.ts": "analysis/ai",
     "synthThinking.ts": "analysis/ai",

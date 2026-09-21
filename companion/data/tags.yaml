@@ -23,9 +23,9 @@
 #   exists:   true | false          # field present-and-non-empty / absent
 #
 # Matchable fields are the real ForensicEvent fields — an UNKNOWN field is a load error, never a
-# silent no-op:  description, message, asset, path, artifactName, processName, parentName, sha256,
-# md5, srcIp, dstIp, veloUrl, severity, action, sources, mitreTechniques, relatedFindingIds,
-# provenance, port, pid, count.
+# silent no-op:  description, message, asset, path, artifactName, processName, parentName,
+# commandLine, sha256, md5, srcIp, dstIp, veloUrl, severity, action, sources, mitreTechniques,
+# relatedFindingIds, provenance, port, pid, count.
 #
 # DESIGN NOTE — this default set is COMPLEMENTARY to the built-in deterministic grader
 # (analysis/tradecraftRules.ts), which already scores Defender/AV tampering, BYOVD, UAC bypass,
@@ -176,6 +176,40 @@ win_suspicious_child:
   mitre: ['T1059', 'T1566.001']
   severity: High
   view: 'Office-spawned shells'
+
+# A web-server worker spawning a command shell or a discovery binary is the textbook web-application
+# exploitation / webshell signal (#1501). Graded High with T1190 HERE, before the AI reads the row,
+# because at Medium the seven such rows of a Confluence case were not anchors, earned no backfill
+# finding, and the synthesis wrote "no initial-access vector" with the chain in plain sight.
+# Windows-only on purpose (`.exe` on both names): on Linux, httpd or php-fpm spawning `sh`/perl is
+# ordinary CGI. java/node parents are NOT listed — Jenkins, Bamboo and npm spawn shells by design,
+# and a product name in the rendered description does not prove which binary was the parent.
+web_server_shell_child:
+  description: Web-server worker (Tomcat, IIS, Apache, nginx, PHP) spawning a shell or a discovery command
+  all:
+    - { field: parentName, regex: '^(?:tomcat\d*|w3wp|httpd|apache\d*|nginx|php-cgi|caddy)\.exe$', flags: 'i' }
+    - { field: processName, regex: '^(?:cmd|powershell|pwsh|wscript|cscript|mshta|certutil|bitsadmin|rundll32|regsvr32|whoami|net1?|ipconfig|tasklist|hostname|systeminfo|nltest|quser|query)\.exe$', flags: 'i' }
+  tags: ['web-server-shell', 'initial-access']
+  mitre: ['T1190', 'T1059']
+  severity: High
+  view: 'Web-server spawned shells'
+
+# The renamed shape of the same chain: the IMAGE carries the web server's name and takes a command
+# shell's `/c` or `/k` switch. No Tomcat, IIS or Apache worker takes one; a cmd.exe renamed to
+# tomcat9.exe does. Keyed on the structured command line (not the rendered description) so a change
+# in how `CommandLine=` is rendered cannot silently retire the rule. The switch must sit where cmd.exe
+# reads it — right after the image, behind at most cmd's own modifiers (/d /a /u /q /s /t:xx /e:on
+# /f:off /v:on) — not anywhere in the arguments: `httpd.exe -c "Redirect /c /new"` is an Apache
+# directive, not a shell. An image path with spaces is expected quoted, as Sysmon records it.
+web_server_named_shell:
+  description: A web-server-named image running with a command-shell switch (renamed cmd.exe masquerading as the web server)
+  all:
+    - { field: processName, regex: '^(?:tomcat\d*|w3wp|httpd|apache\d*|nginx|php-cgi|caddy)\.exe$', flags: 'i' }
+    - { field: commandLine, regex: '^(?:"[^"]*"|[^\s"]+)(?: /(?:[adqsu]|[efv]:o(?:n|ff)|t:[0-9a-f]{2}))* /[ck]\s', flags: 'i' }
+  tags: ['web-server-shell', 'initial-access', 'masquerading']
+  mitre: ['T1190', 'T1036.003', 'T1059']
+  severity: High
+  view: 'Web-server spawned shells'
 
 # ─────────────────────────── Impact — ransomware precursors ───────────────────────────
 win_shadow_copy_delete:

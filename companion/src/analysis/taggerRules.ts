@@ -25,6 +25,7 @@ const STRING_FIELDS = [
   "artifactName",
   "processName",
   "parentName",
+  "commandLine", // the structured command line of a process creation (#1501)
   "sha256",
   "md5",
   "srcIp",
