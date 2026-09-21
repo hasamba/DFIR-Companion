@@ -14,11 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Story so far in the Now cockpit** — one card per kill-chain stage with first seen, host, headline event and top finding (click to filter the timeline or open the finding) plus the two-sentence synthesis conclusion and a stale-since-synthesis tag, derived, no AI (closes #1487)
 - **2nd-opinion referee** — the panel labels model A/B, a configurable referee (default: model A) judges each disagreement from the cited events (closes #1466)
 - **Deep pass says when it has nothing new to read** — the pre-flight preview reports what the last synthesis read; if it dropped no event for the size limit, the panel says a deep pass would read the same or fewer and Run is off unless the analyst ticks *Run anyway*; a timeline changed since is called stale (closes #1457)
 
 ### Fixed
 - **A bare Windows log export folds a renamed host's former names into one asset** — a GUI/notebook JSONL file with no collector column reads the machine's own rename evidence (System 6011, its machine account under the SYSTEM session, the SAM domain of a local account) and lands records under the old names on the current host with the former-name note, in the Chainsaw, Velociraptor (whole-file and bulk) and Hayabusa importers (addresses #1489)
+- **The collector PowerShell's own script blocks stay out of the record on a Chainsaw export too** — a SYSTEM script block from the Velociraptor tool tree, and a path-less block the collector-spawned process logged while it held that pid, grade Info with a collector-footprint note in the Chainsaw importer as they already did on the hunt path; a tool tree under `(x86)` no longer counts (closes #1488)
 - **A Velociraptor that phones another server is not our collector** — a row from the install root that names a destination other than the configured server keeps its grade; `Program Files (x86)\Velociraptor\` is no longer the install root (closes #1486)
 - **Correlation stays linear on big hash and path groups** — 20k same-hash rows on one host correlate in a fraction of a second instead of 5–19 s, on every merge and every synthesis (closes #1483)
 - **A failed bulk Velociraptor import leaves nothing behind** — the batches it had already written to both timelines and the tagger tags on them are removed, the FAILED line says how many, and a retry no longer duplicates them (closes #1480)

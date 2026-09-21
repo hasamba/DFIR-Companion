@@ -87,11 +87,11 @@ const PIPELINE_EID = 800;
 const COLLECTOR_SCRIPT_EIDS = new Set([SCRIPT_BLOCK_EID, MODULE_LOGGING_EID, PIPELINE_EID]);
 const EVENT_WRAPPERS = ["Event", "_Event"] as const;
 
-// An EventID as Windows/Velociraptor variously writes it: a bare number, a numeric string, or an
-// object with a `Value`.
+// An EventID as Windows/Velociraptor variously writes it: a bare number, a numeric string, an
+// object with a `Value`, or the evtx crate's `{ "#text": N }` a nested Chainsaw document carries.
 function toEventId(value: unknown): number {
   if (typeof value === "number") return value;
-  if (isObject(value)) return toEventId(getCI(value, "Value"));
+  if (isObject(value)) return toEventId(getCI(value, "Value") ?? getCI(value, "#text"));
   const n = Number(str(value).trim());
   return Number.isFinite(n) ? n : 0;
 }
@@ -181,7 +181,7 @@ function pipelineContext(row: Row): string {
   const count = (key: string) => lines.filter((l) => new RegExp(`^\\t?${key}=`).test(l)).length;
   return count("UserId") === 1 && count("ScriptName") === 1 ? data[1] : "";
 }
-function scriptPath(row: Row): string {
+export function engineScriptPath(row: Row): string {
   const ed = eventData(row);
   switch (eventId(row)) {
     case SCRIPT_BLOCK_EID:
@@ -250,7 +250,9 @@ function ranAsSystem(row: Row): boolean {
  * A claim about WHO ran the script and WHERE it lived, never about what it contains: the identical
  * body run from a user's Desktop keeps whatever grade it earned.
  */
-const COLLECTOR_TOOL_TREE = /^[a-z]:[\\/]program files(?: \(x86\))?[\\/]velociraptor[\\/]tools[\\/]/i;
+// Never the `(x86)` folder (#1486): the fleet ships only the 64-bit MSI, so a tool tree there belongs
+// to a second copy someone else installed.
+const COLLECTOR_TOOL_TREE = /^[a-z]:[\\/]program files[\\/]velociraptor[\\/]tools[\\/]/i;
 const PATH_TRAVERSAL = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
 const SYSTEM_SID = "S-1-5-18";
 
@@ -264,6 +266,7 @@ function logonSid(row: Row): string {
     "SystemData.Security_attributes.UserID",
     "System.Security.UserID",
     "System.Security_attributes.UserID",
+    "System.Security.#attributes.UserID", // the evtx crate's spelling in a nested Chainsaw document
   ];
   for (const w of ["", ...EVENT_WRAPPERS]) {
     for (const path of paths) {
@@ -277,7 +280,7 @@ function logonSid(row: Row): string {
 export function isDetectionToolScript(row: Row): boolean {
   if (!COLLECTOR_SCRIPT_EIDS.has(eventId(row))) return false;
   if (!ranAsSystem(row)) return false;
-  const path = scriptPath(row);
+  const path = engineScriptPath(row);
   return COLLECTOR_TOOL_TREE.test(path) && !PATH_TRAVERSAL.test(path);
 }
 
@@ -291,9 +294,51 @@ export function isDetectionToolScript(row: Row): boolean {
  */
 export function demoteDetectionToolScript(row: Row, events: readonly (MappedEvent | null)[]): void {
   if (!isDetectionToolScript(row)) return;
-  for (const m of events) {
-    if (!m || m.severity === "Critical") continue;
-    m.severity = "Info";
-    m.origin = "collector";
+  for (const m of events) gradeScriptAsCollector(m, TOOL_TREE_SCRIPT_NOTE);
+}
+
+// Why the row reads Info, in the row itself — the same courtesy every other collector demotion
+// pays (collectorDeployment.ts). Without it an analyst sees a High-looking script block at Info and
+// nothing that says the collector ran it.
+export const TOOL_TREE_SCRIPT_NOTE =
+  " [DFIR collector footprint — script the Velociraptor client ran from its tool tree]";
+
+/** Info + the collector origin + the note, never lowering a Critical. Idempotent. */
+export function gradeScriptAsCollector(m: MappedEvent | null, note: string): void {
+  if (!m || m.severity === "Critical") return;
+  m.severity = "Info";
+  m.origin = "collector";
+  if (!m.description.endsWith(note)) m.description = `${m.description}${note}`;
+}
+
+/**
+ * Is this a script record (4104 / 4103 / 800) the engine logged under SYSTEM? The first two facts
+ * isDetectionToolScript rests on, without the path — for a caller that has another fact tying the
+ * record to the collector (its process id, collectorLineage.ts, #1488).
+ */
+export function isSystemScriptRow(row: Row): boolean {
+  return COLLECTOR_SCRIPT_EIDS.has(eventId(row)) && ranAsSystem(row);
+}
+
+// The process id the ENGINE wrote into the record's System block (`Execution ProcessID`): the
+// PowerShell host process that compiled the script. Like the SID and the path, a fact about the
+// process, not a string the script controls. The three spellings the importers see: Chainsaw's flat
+// `SystemData.Execution_attributes`, the evtx crate's `System.Execution.#attributes`, and the native
+// `System.Execution`, the last two with or without an Event wrapper. Undefined when absent or not a
+// positive integer.
+const EXECUTION_PID_PATHS = [
+  "SystemData.Execution_attributes.ProcessID",
+  "System.Execution.#attributes.ProcessID",
+  "System.Execution.ProcessID",
+];
+export function scriptHostPid(row: Row): number | undefined {
+  for (const w of ["", ...EVENT_WRAPPERS]) {
+    for (const path of EXECUTION_PID_PATHS) {
+      const raw = getPath(row, w ? `${w}.${path}` : path);
+      if (raw === undefined || raw === null || raw === "") continue;
+      const n = Number(raw);
+      return Number.isInteger(n) && n > 0 ? n : undefined;
+    }
   }
+  return undefined;
 }
