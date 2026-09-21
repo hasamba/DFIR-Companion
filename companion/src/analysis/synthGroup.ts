@@ -28,6 +28,7 @@ import type { ForensicEvent, Severity } from "./stateTypes.js";
 import { patternKey, commandShape } from "./prevalence.js";
 import { byEventTime } from "./forensicSort.js";
 import { resolveHost, type HostAliasIndex } from "./hostAlias.js";
+import { groupMemberLines, renderGroupMembers } from "./synthGroupMembers.js";
 
 // Default ceiling on how many forensic events (after burst grouping) reach a prompt, overridable with
 // DFIR_AI_SYNTH_MAX_EVENTS. Raised from 300 to 600 when grouping landed: collapsing repeated detections
@@ -75,6 +76,7 @@ export interface DetectionGroup {
   key: string; // "<severity>|<patternKey>" — the bucket this burst came from
   representative: ForensicEvent; // the EARLIEST member; its id anchors the prompt row
   memberIds: string[]; // every event this group represents (incl. the representative)
+  members: ForensicEvent[]; // the same events, chronological, representative first (#1501 — no copies)
   count: number; // memberIds.length
   hosts: string[]; // distinct assets, first-seen order
   first: string; // earliest member timestamp (ISO)
@@ -160,6 +162,7 @@ function toGroup(key: string, run: readonly ForensicEvent[], aliasIndex?: HostAl
     key,
     representative: first,
     memberIds: run.map((e) => e.id),
+    members: [...run],
     count: run.length,
     hosts,
     first: first.timestamp,
@@ -242,6 +245,8 @@ export function collapseForPrompt(
 /**
  * The suffix appended to a grouped row in the prompt, e.g.
  * " ⟨grouped: 412× identical detection on 6 hosts (dc-01, ws-14, ws-15, +3 more) between … and …⟩".
+ * A burst whose members ran DIFFERENT commands (one binary, six discovery commands — #1501) is not
+ * identical: it says so and names each member's command with its id (synthGroupMembers.ts).
  */
 export function renderGroupSuffix(g: DetectionGroup, maxHostsNamed = DEFAULT_MAX_HOSTS_NAMED): string {
   const cap = Math.max(1, maxHostsNamed);
@@ -251,7 +256,9 @@ export function renderGroupSuffix(g: DetectionGroup, maxHostsNamed = DEFAULT_MAX
     ? ` on ${g.hosts.length} host${g.hosts.length === 1 ? "" : "s"} (${named}${more})`
     : "";
   const span = g.last && g.last !== g.first ? ` between ${g.first} and ${g.last}` : "";
-  return ` ⟨grouped: ${g.count}× identical detection${where}${span}⟩`;
+  const members = renderGroupMembers(groupMemberLines(g.members));
+  const sameness = members ? "same detection" : "identical detection";
+  return ` ⟨grouped: ${g.count}× ${sameness}${where}${span}${members}⟩`;
 }
 
 /** Grouping is ON unless explicitly disabled, so existing deployments get the fix without config. */
