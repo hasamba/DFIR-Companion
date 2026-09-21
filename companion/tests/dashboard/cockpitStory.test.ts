@@ -1,5 +1,6 @@
-// "Story so far" in the Now cockpit (#1487): the attack chain, the freshness tag and the two-sentence
-// conclusion the server derives from the forensic timeline, rendered above the workspaces row.
+// "Story so far" in the Now cockpit (#1487): one card per kill-chain stage, the freshness tag and the
+// two-sentence conclusion the server derives from the forensic timeline, rendered above the
+// workspaces row.
 //
 // Runs js/dashboard-cockpit.js in the vm harness with a fake `document`, a fake `fetch` and the
 // page globals it reads by bare name, so these assertions are about the markup the browser gets —
@@ -9,12 +10,25 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { loadDashboardModule } from "../helpers/dashboardModule.js";
 
+type Severity = "Critical" | "High" | "Medium" | "Low" | "Info";
+interface Headline {
+  eventId: string;
+  description: string;
+}
+interface Finding {
+  id: string;
+  title: string;
+  severity: Severity;
+}
 interface Stage {
   tactic: string;
   firstSeenAt: string;
   host: string | null;
   eventCount: number;
   eventIds: string[];
+  worstSeverity: Severity;
+  headline: Headline | null;
+  finding: Finding | null;
 }
 interface Story {
   stages: Stage[];
@@ -39,6 +53,7 @@ interface Api {
   loadCockpit(caseId: string): Promise<void>;
   cockpitStoryStage(el: { dataset: Record<string, string> }): void;
   cockpitStoryOpen(el: { dataset: Record<string, string> }): void;
+  cockpitStoryFinding(el: { dataset: Record<string, string> }): void;
 }
 
 const NOW = new Date("2026-06-10T12:00:00Z");
@@ -50,6 +65,9 @@ function stage(over: Partial<Stage>): Stage {
     host: "WS-01",
     eventCount: 4,
     eventIds: ["e1", "e2"],
+    worstSeverity: "High",
+    headline: { eventId: "e1", description: "Excel spawned powershell.exe -enc (T1059.001)" },
+    finding: { id: "f-2", title: "Macro-launched PowerShell stager", severity: "High" },
     ...over,
   };
 }
@@ -57,13 +75,23 @@ function stage(over: Partial<Stage>): Stage {
 function story(over: Partial<Story> = {}): Story {
   return {
     stages: [
-      stage({ tactic: "Initial Access", firstSeenAt: "2026-06-10T03:12:00Z", host: "WS-01" }),
+      stage({
+        tactic: "Initial Access",
+        firstSeenAt: "2026-06-10T03:12:00Z",
+        host: "WS-01",
+        worstSeverity: "Critical",
+        headline: { eventId: "e0", description: "Spear-phishing email with macro-enabled Invoice_Q2.xlsm" },
+        finding: { id: "f-1", title: "Phishing delivered Cobalt Strike stager", severity: "Critical" },
+      }),
       stage({ tactic: "Execution", firstSeenAt: "2026-06-10T03:15:30Z", host: null, eventCount: 1 }),
       stage({
         tactic: "Lateral Movement",
         firstSeenAt: "2026-06-10T09:40:00Z",
         host: "DC-01",
         eventCount: 12,
+        worstSeverity: "Medium",
+        headline: null,
+        finding: null,
       }),
     ],
     conclusion: "The host was compromised through a phishing macro. The actor moved to the DC.",
@@ -88,7 +116,7 @@ function snapshot(over: Partial<Snapshot> = {}): Snapshot {
 function harness() {
   const body: FakeEl = { innerHTML: "", textContent: "" };
   const caseInput = { value: "" };
-  const calls: Record<string, unknown[][]> = { filter: [], view: [], reveal: [] };
+  const calls: Record<string, unknown[][]> = { filter: [], view: [], reveal: [], finding: [] };
   let next: Snapshot | null = null;
   const api = loadDashboardModule<Api>(
     "dashboard-cockpit.js",
@@ -108,6 +136,7 @@ function harness() {
       applyDashboardView: (view: unknown, opts: unknown) => calls.view.push([view, opts]),
       revealSection: (id: string) => calls.reveal.push([id]),
       filterTimelineToEventIds: (ids: string[], label: string) => calls.filter.push([ids, label]),
+      jumpToFinding: (id: string) => calls.finding.push([id]),
     },
   );
   return {
@@ -129,26 +158,36 @@ beforeEach(() => {
 });
 afterEach(() => vi.useRealTimers());
 
-describe("cockpit story — chain", () => {
-  it("renders the stages in server order, above the workspaces row", async () => {
+describe("cockpit story — stage cards", () => {
+  it("renders one card per stage in server order, above the workspaces row, with no arrows", async () => {
     const h = harness();
     await h.render(snapshot({ story: story() }));
     const html = h.body.innerHTML;
     const names = [...html.matchAll(/class="now-stage-name">([^<]+)</g)].map((m) => m[1]);
     expect(names).toEqual(["Initial Access", "Execution", "Lateral Movement"]);
-    expect(html.indexOf('class="now-story"')).toBeLessThan(html.indexOf('class="now-workspaces"'));
-    // Two arrows join three chips.
-    expect(html.match(/now-stage-arrow/g)).toHaveLength(2);
+    expect(html.indexOf('class="now-story-cards"')).toBeLessThan(html.indexOf('class="now-workspaces"'));
+    expect(html.match(/class="now-stage-card sev-/g)).toHaveLength(3);
+    expect(html).not.toContain("now-stage-arrow");
+    expect(html).not.toContain("now-story-chain");
   });
 
-  it("shows HH:MM UTC when every stage sits on one day, host and count on each chip", async () => {
+  it("colours each card by the stage's worst severity", async () => {
+    const h = harness();
+    await h.render(snapshot({ story: story() }));
+    const sevs = [...h.body.innerHTML.matchAll(/class="now-stage-card sev-(\w+)"/g)].map((m) => m[1]);
+    expect(sevs).toEqual(["Critical", "High", "Medium"]);
+  });
+
+  it("shows HH:MM UTC when every stage sits on one day, the host and the count on each card", async () => {
     const h = harness();
     await h.render(snapshot({ story: story() }));
     const html = h.body.innerHTML;
-    expect(html).toContain('<span class="now-stage-meta">03:12 · WS-01 · 4 ev</span>');
-    expect(html).toContain('<span class="now-stage-meta">09:40 · DC-01 · 12 ev</span>');
+    expect(html).toContain('<div class="now-stage-when">03:12 · WS-01</div>');
+    expect(html).toContain('<div class="now-stage-when">09:40 · DC-01</div>');
+    expect(html).toContain('class="now-stage-count">4 ev ›</button>');
+    expect(html).toContain('class="now-stage-count">12 ev ›</button>');
     // A stage with no host names no host rather than "null".
-    expect(html).toContain('<span class="now-stage-meta">03:15 · 1 ev</span>');
+    expect(html).toContain('<div class="now-stage-when">03:15</div>');
     expect(html).not.toContain("null");
   });
 
@@ -161,17 +200,48 @@ describe("cockpit story — chain", () => {
     expect(h.body.innerHTML).toContain("06-11 00:05 · DC-01");
   });
 
-  it("carries the tactic on the chip so the click can find the stage", async () => {
+  it("carries the tactic on both the name and the count so either click can find the stage", async () => {
     const h = harness();
     await h.render(snapshot({ story: story() }));
-    expect(h.body.innerHTML).toContain('data-act="cockpitStoryStage" data-tactic="Lateral Movement"');
+    const html = h.body.innerHTML;
+    expect(html).toContain(
+      '<button data-act="cockpitStoryStage" data-tactic="Lateral Movement" class="now-stage-name">',
+    );
+    expect(html).toContain(
+      '<button data-act="cockpitStoryStage" data-tactic="Lateral Movement" class="now-stage-count">',
+    );
+  });
+
+  it("shows the headline event in a clamped block, and omits the block when the stage has none", async () => {
+    const h = harness();
+    await h.render(snapshot({ story: story() }));
+    const html = h.body.innerHTML;
+    expect(html).toContain(
+      '<div class="now-stage-headline">Spear-phishing email with macro-enabled Invoice_Q2.xlsm</div>',
+    );
+    expect(html.match(/now-stage-headline/g)).toHaveLength(2);
+    const css = readFileSync(new URL("../../../public/css/dashboard-sections.css", import.meta.url), "utf8");
+    expect(css).toMatch(/\.now-stage-headline\{[^}]*-webkit-line-clamp:2/);
+  });
+
+  it("names the top finding with its severity badge, or says no finding yet", async () => {
+    const h = harness();
+    await h.render(snapshot({ story: story() }));
+    const html = h.body.innerHTML;
+    expect(html).toContain(
+      '<div class="now-stage-finding"><span class="now-sev sev-Critical">Critical</span>' +
+        '<button data-act="cockpitStoryFinding" data-id="f-1">Phishing delivered Cobalt Strike stager</button></div>',
+    );
+    expect(
+      html.match(/<div class="now-stage-finding now-stage-nofinding">no finding yet<\/div>/g),
+    ).toHaveLength(1);
   });
 
   it("replaces an empty chain with the import hint", async () => {
     const h = harness();
     await h.render(snapshot({ story: story({ stages: [] }) }));
     expect(h.body.innerHTML).toContain("No staged activity yet — import evidence to build the chain.");
-    expect(h.body.innerHTML).not.toContain("now-stage-name");
+    expect(h.body.innerHTML).not.toContain("now-stage-card");
   });
 });
 
@@ -207,8 +277,8 @@ describe("cockpit story — freshness and text", () => {
     expect(html).toContain('<span class="now-story-fresh">no synthesis yet</span>');
     expect(html).toContain("No synthesis yet — the conclusion appears after the first analysis run.");
     expect(html).not.toContain("cockpitStoryOpen");
-    // The chain still renders: the stages come from the timeline, not from the synthesis.
-    expect(html).toContain("now-stage-name");
+    // The cards still render: the stages come from the timeline, not from the synthesis.
+    expect(html).toContain("now-stage-card");
   });
 
   it("renders no story block at all on a snapshot from an older server", async () => {
@@ -218,13 +288,20 @@ describe("cockpit story — freshness and text", () => {
     expect(h.body.innerHTML).toContain('class="now-workspaces"');
   });
 
-  it("escapes hostile strings in the tactic, host and prose", async () => {
+  it("escapes hostile strings in the tactic, host, headline, finding and prose", async () => {
     const h = harness();
     const hostile = `<img src=x onerror=alert(1)>" onmouseover="alert(2)'`;
     await h.render(
       snapshot({
         story: story({
-          stages: [stage({ tactic: hostile, host: hostile })],
+          stages: [
+            stage({
+              tactic: hostile,
+              host: hostile,
+              headline: { eventId: "e9", description: hostile },
+              finding: { id: hostile, title: hostile, severity: "High" },
+            }),
+          ],
           conclusion: hostile,
           attackerPath: hostile,
         }),
@@ -235,12 +312,18 @@ describe("cockpit story — freshness and text", () => {
     expect(html).toContain(
       'data-tactic="&lt;img src=x onerror=alert(1)&gt;&quot; onmouseover=&quot;alert(2)&#39;"',
     );
+    expect(html).toContain(
+      'data-id="&lt;img src=x onerror=alert(1)&gt;&quot; onmouseover=&quot;alert(2)&#39;"',
+    );
+    expect(html).toContain(
+      '<div class="now-stage-headline">&lt;img src=x onerror=alert(1)&gt;&quot; onmouseover=&quot;alert(2)&#39;</div>',
+    );
     expect(html).not.toContain("style=");
   });
 });
 
 describe("cockpit story — clicks", () => {
-  it("a chip filters the forensic timeline to exactly that stage's events", async () => {
+  it("a card filters the forensic timeline to exactly that stage's events", async () => {
     const h = harness();
     await h.render(snapshot({ story: story() }));
     h.api.cockpitStoryStage({ dataset: { tactic: "Lateral Movement" } });
@@ -248,11 +331,20 @@ describe("cockpit story — clicks", () => {
     expect(h.calls.reveal).toEqual([["sec-timeline"]]);
   });
 
-  it("a chip for an unknown stage does nothing", async () => {
+  it("a card for an unknown stage does nothing", async () => {
     const h = harness();
     await h.render(snapshot({ story: story() }));
     h.api.cockpitStoryStage({ dataset: { tactic: "Impact" } });
     expect(h.calls.filter).toEqual([]);
+  });
+
+  it("a card's finding opens the Findings panel on that finding", async () => {
+    const h = harness();
+    await h.render(snapshot({ story: story() }));
+    h.api.cockpitStoryFinding({ dataset: { id: "f-1" } });
+    expect(h.calls.view.map((c) => (c[0] as { id: string }).id)).toEqual(["lead"]);
+    expect(h.calls.reveal).toEqual([["sec-findings"]]);
+    expect(h.calls.finding).toEqual([["f-1"]]);
   });
 
   it("the prose links open the attack path and the executive summary through the shared panel table", async () => {
@@ -267,14 +359,16 @@ describe("cockpit story — clicks", () => {
 describe("cockpit story — wiring", () => {
   const read = (file: string) => readFileSync(new URL(`../../../public/js/${file}`, import.meta.url), "utf8");
 
-  it("dispatches both handlers through ACTIONS", async () => {
+  it("dispatches all three handlers through ACTIONS", async () => {
     const src = read("dashboard-data-act.js");
     expect(src).toContain("cockpitStoryStage: (el) => cockpitStoryStage(el),");
     expect(src).toContain("cockpitStoryOpen: (el) => cockpitStoryOpen(el),");
+    expect(src).toContain("cockpitStoryFinding: (el) => cockpitStoryFinding(el),");
   });
 
-  it("stubs both handlers in the facade so a failed module load cannot throw on click", async () => {
+  it("stubs all three handlers in the facade so a failed module load cannot throw on click", async () => {
     const src = read("dashboard-facade.js");
+    expect(src).toContain('"cockpitStoryFinding",');
     expect(src).toContain('"cockpitStoryOpen",');
     expect(src).toContain('"cockpitStoryStage",');
   });
@@ -295,13 +389,22 @@ describe("cockpit story — wiring", () => {
       ".now-story{",
       ".now-story-head{",
       ".now-story-stale{",
-      ".now-story-chain{",
-      ".now-stage{",
-      ".now-stage-meta{",
-      ".now-stage-arrow{",
+      ".now-story-cards{",
+      ".now-stage-card{",
+      ".now-stage-card.sev-Critical{",
+      ".now-stage-card-head{",
+      ".now-stage-when{",
+      ".now-stage-headline{",
+      ".now-stage-finding{",
+      ".now-stage-nofinding{",
+      ".now-sev{",
       ".now-story-text p{",
     ]) {
       expect(css).toContain(cls);
+    }
+    // The chip chain is gone for good: no dead rules left behind.
+    for (const cls of [".now-story-chain{", ".now-stage{", ".now-stage-meta{", ".now-stage-arrow{"]) {
+      expect(css).not.toContain(cls);
     }
   });
 });

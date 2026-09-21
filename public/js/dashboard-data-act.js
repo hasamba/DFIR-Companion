@@ -34,6 +34,7 @@
     cockpitWorkspace: (el) => cockpitWorkspace(el),
     cockpitStoryStage: (el) => cockpitStoryStage(el),
     cockpitStoryOpen: (el) => cockpitStoryOpen(el),
+    cockpitStoryFinding: (el) => cockpitStoryFinding(el),
     cockpitRetry: (el) => loadCockpit(),
     // Geo map
     renderGeoView: (el) => renderGeoView(),

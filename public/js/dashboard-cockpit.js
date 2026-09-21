@@ -80,9 +80,9 @@
     return `<div class="now-group${wide ? " now-wide" : ""}"><div class="now-group-head">${esc(label)}<span class="now-group-count">${cards.length}</span></div>${body}</div>`;
   }
 
-  // "Story so far" (#1487): the attack chain at one glance, above the workspaces row. The server
-  // derives it from the forensic timeline only (never the super-timeline) and trims the synthesis
-  // prose to two sentences; the client formats and escapes, nothing more.
+  // "Story so far" (#1487): the attack chain as one card per stage, above the workspaces row. The
+  // server derives it from the forensic timeline only (never the super-timeline) and trims the
+  // synthesis prose to two sentences; the client formats and escapes, nothing more.
   const STORY_EMPTY_CHAIN =
     "No staged activity yet — import evidence to build the chain.";
   const STORY_EMPTY_TEXT =
@@ -94,7 +94,7 @@
   }
 
   // `HH:MM` while every stage sits on one UTC day, `MM-DD HH:MM` once the chain spans days. Always
-  // UTC — the timeline is UTC, and a chip that disagrees with the row it filters to is a trap.
+  // UTC — the timeline is UTC, and a card that disagrees with the row it filters to is a trap.
   function storyStageTime(ms, withDay) {
     if (ms === null) return "—";
     const iso = new Date(ms).toISOString();
@@ -123,23 +123,47 @@
     return { text: `synthesis ${cockpitAge(story.synthesizedAt)}`, stale: false };
   }
 
-  function storyStageHtml(stage, withDay) {
-    const meta = [storyStageTime(storyStageMs(stage), withDay)];
-    if (stage.host) meta.push(stage.host);
-    meta.push(`${stage.eventCount || 0} ev`);
+  function storyStageWhen(stage, withDay) {
+    const when = storyStageTime(storyStageMs(stage), withDay);
+    return stage.host ? `${when} · ${stage.host}` : when;
+  }
+
+  // The stage's top finding, or the "no finding yet" row so every card keeps the same height.
+  // `.now-sev` leans on the page-wide `.sev-<Severity>` colour rule the Findings panel uses.
+  function storyFindingHtml(finding) {
+    if (!finding)
+      return `<div class="now-stage-finding now-stage-nofinding">no finding yet</div>`;
     return (
-      `<button data-act="cockpitStoryStage" data-tactic="${escAttr(stage.tactic)}" class="now-stage">` +
-      `<span class="now-stage-name">${esc(stage.tactic)}</span>` +
-      `<span class="now-stage-meta">${esc(meta.join(" · "))}</span></button>`
+      `<div class="now-stage-finding">` +
+      `<span class="now-sev sev-${escAttr(finding.severity)}">${esc(finding.severity)}</span>` +
+      `<button data-act="cockpitStoryFinding" data-id="${escAttr(finding.id)}">${esc(finding.title)}</button></div>`
     );
   }
 
-  function storyChainHtml(stages) {
+  // One card per stage: name and count both open the stage's events, the top border carries the
+  // worst severity, the headline is the stage's most severe event (CSS clamps it to two lines).
+  function storyStageHtml(stage, withDay) {
+    const open = `data-act="cockpitStoryStage" data-tactic="${escAttr(stage.tactic)}"`;
+    const sev = stage.worstSeverity ? ` sev-${escAttr(stage.worstSeverity)}` : "";
+    const headline = stage.headline
+      ? `<div class="now-stage-headline">${esc(stage.headline.description)}</div>`
+      : "";
+    return (
+      `<div class="now-stage-card${sev}"><div class="now-stage-card-head">` +
+      `<button ${open} class="now-stage-name">${esc(stage.tactic)}</button>` +
+      `<button ${open} class="now-stage-count">${esc(String(stage.eventCount || 0))} ev ›</button></div>` +
+      `<div class="now-stage-when">${esc(storyStageWhen(stage, withDay))}</div>` +
+      `${headline}${storyFindingHtml(stage.finding)}</div>`
+    );
+  }
+
+  // Kill-chain order is the server's order; the grid wraps, so no arrows join the cards.
+  function storyCardsHtml(stages) {
     if (!stages.length) return `<div class="now-empty">${esc(STORY_EMPTY_CHAIN)}</div>`;
     const withDay = storySpansDays(stages);
-    return `<div class="now-story-chain">${stages
+    return `<div class="now-story-cards">${stages
       .map((stage) => storyStageHtml(stage, withDay))
-      .join(`<span class="now-stage-arrow">▶</span>`)}</div>`;
+      .join("")}</div>`;
   }
 
   function storyTextHtml(story) {
@@ -167,7 +191,7 @@
     return (
       `<div class="now-story"><div class="now-story-head">Story so far ` +
       `<span class="${freshClass}">${esc(fresh.text)}</span></div>` +
-      `${storyChainHtml(story.stages || [])}${storyTextHtml(story)}</div>`
+      `${storyCardsHtml(story.stages || [])}${storyTextHtml(story)}</div>`
     );
   }
 
@@ -352,7 +376,7 @@
     else if (target.eventId) setTimeout(() => jumpToEvent(target.eventId), 0);
   }
 
-  // A story chip filters the forensic timeline to exactly that stage's events. The section is
+  // A stage card filters the forensic timeline to exactly that stage's events. The section is
   // revealed first so a profile that hides the timeline still shows the filtered rows.
   function cockpitStoryStage(el) {
     const stages =
@@ -365,6 +389,12 @@
 
   function cockpitStoryOpen(el) {
     cockpitRevealPanel(el.dataset.panel);
+  }
+
+  // A card's finding opens the Findings panel on that finding, the way a cockpit card target does.
+  function cockpitStoryFinding(el) {
+    cockpitRevealPanel("findings");
+    setTimeout(() => jumpToFinding(el.dataset.id), 0);
   }
 
   function cockpitWorkspace(el) {
@@ -418,6 +448,7 @@
   window.cockpitAction = cockpitAction;
   window.cockpitJumpEvent = cockpitJumpEvent;
   window.cockpitOpenTarget = cockpitOpenTarget;
+  window.cockpitStoryFinding = cockpitStoryFinding;
   window.cockpitStoryOpen = cockpitStoryOpen;
   window.cockpitStoryStage = cockpitStoryStage;
   window.cockpitWorkspace = cockpitWorkspace;

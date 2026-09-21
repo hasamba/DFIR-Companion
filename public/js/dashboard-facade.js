@@ -362,6 +362,7 @@
     "cockpitAction",
     "cockpitJumpEvent",
     "cockpitOpenTarget",
+    "cockpitStoryFinding",
     "cockpitStoryOpen",
     "cockpitStoryStage",
     "cockpitWorkspace",

@@ -11,10 +11,12 @@ next-decision questions before exposing the full panel inventory.
 
 **Story so far** sits at the top of the cockpit and answers "what happened?" in one glance:
 
-- a **stage chain** — one chip per kill-chain stage the case has evidence for, in attack order
-  (Initial Access → Execution → … → Impact), each showing the first time and host it was seen and
-  how many events sit behind it. Stages with no evidence are skipped; Info events do not count.
-  Click a chip to filter the Forensic Timeline to exactly that stage's events;
+- **stage cards** — one card per kill-chain stage the case has evidence for, in attack order
+  (Initial Access → Execution → … → Impact). Each card shows when and where the stage was first
+  seen, its most severe event, and the top finding it backs; the card's top edge is coloured by the
+  worst severity in the stage. Stages with no evidence are skipped; Info events do not count. Click
+  the stage name or event count to filter the Forensic Timeline to that stage; click the finding to
+  open it;
 - the synthesis **conclusion** and **attacker path**, each trimmed to two sentences, with links to
   the full Executive Summary and Attack Path panels;
 - a **freshness tag** — when the last synthesis ran, or *stale — N events since synthesis* when

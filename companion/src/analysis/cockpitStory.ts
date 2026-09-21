@@ -1,5 +1,11 @@
 import { tacticForTechniques, type IrisTactic } from "./mitreTactics.js";
-import type { ForensicEvent, InvestigationState } from "./stateTypes.js";
+import {
+  SEVERITY_RANK,
+  type Finding,
+  type ForensicEvent,
+  type InvestigationState,
+  type Severity,
+} from "./stateTypes.js";
 
 // The cockpit's "Story so far" strip (#1487): the attack chain as the forensic timeline shows it,
 // stage by stage in kill-chain order, plus the synthesis's two-sentence conclusion and how fresh
@@ -26,6 +32,8 @@ export const STORY_STAGE_EVENT_LIMIT = 200;
 // The conclusion and attacker path are teasers — the full text lives in their own panels.
 const STORY_SENTENCE_LIMIT = 2;
 const STORY_TEXT_MAX_CHARS = 320;
+// The stage card's headline is one event's raw description; the client clamps it further.
+const STORY_HEADLINE_MAX_CHARS = 400;
 const ELLIPSIS = "…";
 
 // The one synthMeta field the story reads. Structural on purpose: importing SynthMeta would add a
@@ -34,12 +42,26 @@ export interface StorySynthesisMeta {
   lastSynthesizedAt?: string;
 }
 
+export interface CockpitStoryHeadline {
+  eventId: string;
+  description: string;
+}
+
+export interface CockpitStoryFinding {
+  id: string;
+  title: string;
+  severity: Severity;
+}
+
 export interface CockpitStoryStage {
   tactic: IrisTactic;
   firstSeenAt: string;
   host: string | null;
   eventCount: number;
   eventIds: string[];
+  worstSeverity: Severity;
+  headline: CockpitStoryHeadline | null;
+  finding: CockpitStoryFinding | null;
 }
 
 export interface CockpitStory {
@@ -69,19 +91,82 @@ function chronological(events: readonly ForensicEvent[]): ForensicEvent[] {
     .map((item) => item.event);
 }
 
-function buildStage(tactic: IrisTactic, events: readonly ForensicEvent[]): CockpitStoryStage {
+function capText(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1)}${ELLIPSIS}` : text;
+}
+
+// The stage's most severe event. `ordered` is chronological with undated rows last, so on a
+// severity tie the first hit is the earliest — and on a time tie, the earliest in the timeline.
+function stageHeadline(ordered: readonly ForensicEvent[]): CockpitStoryHeadline | null {
+  let top: ForensicEvent | undefined;
+  for (const event of ordered) {
+    if (!top || SEVERITY_RANK[event.severity] < SEVERITY_RANK[top.severity]) top = event;
+  }
+  const description = top?.description?.trim() ?? "";
+  if (!top || !description) return null;
+  return { eventId: top.id, description: capText(description, STORY_HEADLINE_MAX_CHARS) };
+}
+
+function linkedToStage(finding: Finding, events: readonly ForensicEvent[], eventIds: Set<string>): boolean {
+  if ((finding.relatedEventIds ?? []).some((id) => eventIds.has(id))) return true;
+  return events.some((event) => (event.relatedFindingIds ?? []).includes(finding.id));
+}
+
+// Worst severity first; a confirmed finding beats an open one; then the one seen first; then the
+// id, so two findings that tie on everything else still pick the same card every render.
+function compareFindings(a: Finding, b: Finding): number {
+  return (
+    SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] ||
+    Number(b.status === "confirmed") - Number(a.status === "confirmed") ||
+    compareTimes(parseTime(a.firstSeen), parseTime(b.firstSeen)) ||
+    a.id.localeCompare(b.id)
+  );
+}
+
+function compareTimes(a: number | null, b: number | null): number {
+  if (a === null || b === null) return Number(a === null) - Number(b === null);
+  return a - b;
+}
+
+// The finding the card names for this stage: linked to any of the stage's events in either
+// direction (the finding cites the event, or the event cites the finding). A dismissed finding is
+// an analyst's "no" — it never fronts a stage, whatever its severity.
+function stageFinding(
+  events: readonly ForensicEvent[],
+  findings: readonly Finding[],
+): CockpitStoryFinding | null {
+  const eventIds = new Set(events.map((event) => event.id));
+  const linked = findings
+    .filter((finding) => finding.status !== "dismissed" && linkedToStage(finding, events, eventIds))
+    .sort(compareFindings);
+  const top = linked[0];
+  return top ? { id: top.id, title: top.title, severity: top.severity } : null;
+}
+
+function buildStage(
+  tactic: IrisTactic,
+  events: readonly ForensicEvent[],
+  findings: readonly Finding[],
+): CockpitStoryStage {
   const ordered = chronological(events);
   const earliest = ordered.find((event) => parseTime(event.timestamp) !== null);
+  const headline = stageHeadline(ordered);
   return {
     tactic,
     firstSeenAt: earliest?.timestamp ?? "",
     host: earliest?.asset?.trim() || null,
     eventCount: ordered.length,
     eventIds: ordered.slice(0, STORY_STAGE_EVENT_LIMIT).map((event) => event.id),
+    worstSeverity: ordered.reduce<Severity>(
+      (worst, event) => (SEVERITY_RANK[event.severity] < SEVERITY_RANK[worst] ? event.severity : worst),
+      "Info",
+    ),
+    headline,
+    finding: stageFinding(ordered, findings),
   };
 }
 
-function storyStages(events: readonly ForensicEvent[]): CockpitStoryStage[] {
+function storyStages(events: readonly ForensicEvent[], findings: readonly Finding[]): CockpitStoryStage[] {
   const byTactic = new Map<IrisTactic, ForensicEvent[]>();
   for (const event of events) {
     if (event.severity === "Info") continue;
@@ -90,7 +175,7 @@ function storyStages(events: readonly ForensicEvent[]): CockpitStoryStage[] {
     byTactic.set(tactic, [...(byTactic.get(tactic) ?? []), event]);
   }
   return STORY_STAGE_ORDER.filter((tactic) => byTactic.has(tactic)).map((tactic) =>
-    buildStage(tactic, byTactic.get(tactic) ?? []),
+    buildStage(tactic, byTactic.get(tactic) ?? [], findings),
   );
 }
 
@@ -113,7 +198,7 @@ function leadSentences(text: string): string {
     .split(/(?<=[.!?])\s+/)
     .slice(0, STORY_SENTENCE_LIMIT)
     .join(" ");
-  return lead.length > STORY_TEXT_MAX_CHARS ? `${lead.slice(0, STORY_TEXT_MAX_CHARS - 1)}${ELLIPSIS}` : lead;
+  return capText(lead, STORY_TEXT_MAX_CHARS);
 }
 
 // Rows this case received AFTER the conclusion was written — the conclusion cannot know them.
@@ -131,7 +216,7 @@ function staleEventCount(events: readonly ForensicEvent[], synthesizedAt: string
 export function deriveCockpitStory(state: InvestigationState, synthMeta?: StorySynthesisMeta): CockpitStory {
   const synthesizedAt = synthMeta?.lastSynthesizedAt?.trim() || null;
   return {
-    stages: storyStages(state.forensicTimeline),
+    stages: storyStages(state.forensicTimeline, state.findings),
     conclusion: leadSentences(state.lastSummary),
     attackerPath: leadSentences(state.attackerPath),
     synthesizedAt,

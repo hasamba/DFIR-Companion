@@ -653,6 +653,9 @@ describe("deriveCockpit — story so far (#1487)", () => {
         host: "WS-01",
         eventCount: 1,
         eventIds: ["e-phish"],
+        worstSeverity: "High",
+        headline: { eventId: "e-phish", description: "Phishing attachment opened on WS-01" },
+        finding: null,
       },
     ]);
     expect(result.story.conclusion).toBe("An admin was phished. LSASS was dumped.");
