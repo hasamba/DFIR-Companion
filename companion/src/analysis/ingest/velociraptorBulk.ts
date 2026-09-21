@@ -86,6 +86,13 @@ export interface BulkRunSummary {
 export interface BulkImportSink {
   minBytes: number;
   batchRows: number;
+  /** The case database's rollback fence, read before the first batch (#1480). */
+  beginRun(caseId: string): Promise<number>;
+  /**
+   * Remove every row `run` appended above its fence — both timelines in one transaction — then
+   * the tagger tags written for them (#1480). Throws only when the rows could not be removed.
+   */
+  rollback(caseId: string, run: BulkRunHandle): Promise<BulkRollbackSummary>;
   appendForensic(caseId: string, events: ForensicEvent[]): Promise<number>;
   appendSuper(caseId: string, events: ForensicEvent[]): Promise<number>;
   openTagger(caseId: string, mode: "forensic" | "super-only"): Promise<BatchTagger | null>;
@@ -95,6 +102,27 @@ export interface BulkImportSink {
   onSuperTimeline?(caseId: string): void;
   onTags?(caseId: string): void;
   recordRun?(caseId: string, summary: BulkRunSummary): Promise<void>;
+}
+
+/**
+ * What a rollback needs to find one run's rows (#1480): the run's own `importBatchId` — stamped
+ * on every event it wrote, the ownership test — and the fence (the case database's highest row id
+ * before the run) that bounds the scan to rows appended after the run began. Neither alone is
+ * enough: a super-only re-run reuses stable ids (its append dedups rows an earlier run owns), and
+ * another run can append after the same fence.
+ */
+export interface BulkRunHandle {
+  importBatchId: string;
+  fence: number;
+  mode: "forensic" | "super-only";
+}
+
+export interface BulkRollbackSummary {
+  forensic: number;
+  super: number;
+  tags: number;
+  /** The rows are gone but the tagger tags on them could not be removed — set when that step failed. */
+  tagsError?: string;
 }
 
 export interface BulkImportOpts {
@@ -120,6 +148,45 @@ export interface BulkImportResult {
   iocs: SiemIoc[];
   eventIdByAggKey: Map<string, string>; // only keys an IOC references — bounded by the IOC sink
   detections: number;
+  /** For the caller's own commit point: what to roll back if its merge/save fails (#1480). */
+  run: BulkRunHandle;
+}
+
+/**
+ * A failed run leaves nothing behind (#1480). Before this, the batches already flushed stayed in
+ * both stores after the FAILED line: the truncated export that is the ordinary failure input
+ * throws on its last row, and a retry mints a new id prefix and lands the same rows twice. The
+ * rollback removes only this run's rows (see BulkRunHandle) and the tagger tags written for them;
+ * what the super cap already evicted to make room is gone before the failure and is not restored.
+ * The ORIGINAL error is always the one the caller sees — a rollback failure is logged beside it.
+ */
+export async function rollbackBulkRun(
+  sink: BulkImportSink,
+  caseId: string,
+  label: string,
+  run: BulkRunHandle,
+  err: unknown,
+  where: string,
+): Promise<void> {
+  const reason = err instanceof Error ? err.message : String(err);
+  try {
+    const undone = await sink.rollback(caseId, run);
+    sink.log(
+      `[import] ${caseId} ${label}: bulk FAILED ${where}: ${reason} — rolled back ${undone.forensic} forensic / ${undone.super} super row(s)` +
+        (undone.tags ? `, ${undone.tags} tag(s)` : "") +
+        (undone.tagsError
+          ? `; tag cleanup FAILED: ${undone.tagsError} — the tagger's tags on the removed rows remain (Clear tagger tags removes them)`
+          : ""),
+      caseId,
+    );
+    if (undone.super) sink.onSuperTimeline?.(caseId);
+  } catch (rollbackErr) {
+    const detail = rollbackErr instanceof Error ? rollbackErr.message : String(rollbackErr);
+    sink.log(
+      `[import] ${caseId} ${label}: bulk FAILED ${where}: ${reason}; rollback FAILED: ${detail} — the run's rows remain (importBatchId ${run.importBatchId})`,
+      caseId,
+    );
+  }
 }
 
 /** True when the sink is wired and the input is big enough to take the bulk path. */
@@ -258,6 +325,7 @@ export async function runVelociraptorBulk(
   const startedAt = new Date().toISOString();
   const t0 = performance.now();
   const stamp = { importedAt: opts.importedAt, importBatchId: randomUUID() };
+  const run: BulkRunHandle = { importBatchId: stamp.importBatchId, fence: await sink.beginRun(caseId), mode };
   const vr = opts.velociraptor ?? {};
   const vrCtx = vrBulkInternals.newVrCtx(vr);
   const maxIocs = vr.maxIocs ?? DEFAULT_MAX_IOCS;
@@ -327,30 +395,46 @@ export async function runVelociraptorBulk(
 
   let batch: Row[] = [];
   let lastOffset = 0;
-  for (const item of stream.rows) {
-    batch.push(item.row);
-    lastOffset = item.offset;
-    if (batch.length >= sink.batchRows) {
-      await flush(batch, lastOffset);
-      batch = [];
-      await yieldToLoop();
+  try {
+    for (const item of stream.rows) {
+      batch.push(item.row);
+      lastOffset = item.offset;
+      if (batch.length >= sink.batchRows) {
+        await flush(batch, lastOffset);
+        batch = [];
+        await yieldToLoop();
+      }
     }
-  }
-  // The rename ledger's Info markers join the tail batch, as finalizeVrParse appends them last.
-  const renameEvents = vrCtx.renames.events();
-  const tail: ForensicEvent[] = [];
-  if (renameEvents.length) {
-    const { events } = aggregateEvents(renameEvents, {
-      aggregate: false,
-      maxEvents: Number.MAX_SAFE_INTEGER,
-    });
-    for (const e of events) {
-      nextIndex.n++;
-      const id = mode === "forensic" ? `${opts.idPrefix}e${nextIndex.n}` : `${opts.idPrefix}-e${nextIndex.n}`;
-      tail.push(toForensicEvent(e, id, opts, stamp));
+    // The rename ledger's Info markers join the tail batch, as finalizeVrParse appends them last.
+    const renameEvents = vrCtx.renames.events();
+    const tail: ForensicEvent[] = [];
+    if (renameEvents.length) {
+      const { events } = aggregateEvents(renameEvents, {
+        aggregate: false,
+        maxEvents: Number.MAX_SAFE_INTEGER,
+      });
+      for (const e of events) {
+        nextIndex.n++;
+        const id =
+          mode === "forensic" ? `${opts.idPrefix}e${nextIndex.n}` : `${opts.idPrefix}-e${nextIndex.n}`;
+        tail.push(toForensicEvent(e, id, opts, stamp));
+      }
     }
+    if (batch.length || tail.length) await flush(batch, text.length, tail);
+  } catch (err) {
+    // The batch that failed is the one after the last that flushed; `batch` holds its rows so far.
+    const from = totals.rows + 1;
+    const to = totals.rows + Math.max(batch.length, 1);
+    await rollbackBulkRun(
+      sink,
+      caseId,
+      opts.label,
+      run,
+      err,
+      `at batch ${totals.batches + 1} (rows ${from}–${to})`,
+    );
+    throw err;
   }
-  if (batch.length || tail.length) await flush(batch, text.length, tail);
   opts.onProgress?.(totals.rows, totals.rows);
 
   const hostname = [...vrCtx.hostTally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
@@ -392,6 +476,7 @@ export async function runVelociraptorBulk(
     }),
     eventIdByAggKey: resolvedLinks,
     detections: totals.detections,
+    run,
   };
 }
 
@@ -433,13 +518,27 @@ export async function importVelociraptorBulk(
         (result.hostname ? ` (host ${result.hostname})` : ""),
       summary: "",
     });
-    let state = await ctx.opts.stateStore.load(caseId);
-    state = await ctx.mergeWithAliases(state, delta, {
-      windowSequence: -1,
-      timestamp: opts.importedAt,
-      sourceScreenshots: [opts.label],
-    });
-    await ctx.opts.stateStore.save(state);
+    // The run's commit point (#1480): the appended rows are only kept once this merge has saved.
+    let state: InvestigationState;
+    try {
+      state = await ctx.opts.stateStore.load(caseId);
+      state = await ctx.mergeWithAliases(state, delta, {
+        windowSequence: -1,
+        timestamp: opts.importedAt,
+        sourceScreenshots: [opts.label],
+      });
+      await ctx.opts.stateStore.save(state);
+    } catch (err) {
+      await rollbackBulkRun(
+        sink,
+        caseId,
+        opts.label,
+        result.run,
+        err,
+        "after the batches, in the final merge",
+      );
+      throw err;
+    }
     ctx.opts.onState?.(state);
     opts.onProgress?.(1, 1);
     return state;

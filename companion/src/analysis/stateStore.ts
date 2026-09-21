@@ -73,6 +73,18 @@ export interface InvestigationStateStorage {
   save(state: InvestigationState): Promise<void>;
   queryForensicTimeline(caseId: string, query?: EntityQuery): Promise<EntityPage<ForensicEvent>>;
   appendForensicEvents(caseId: string, events: readonly ForensicEvent[]): Promise<number>;
+  /** The case database's rollback fence before a bulk run (#1480); 0 when the case has no database yet. */
+  importRowIdMark(caseId: string): Promise<number>;
+  /**
+   * Remove the rows one bulk run appended above its fence, by the run's `importBatchId`, for the
+   * kinds named — both timelines in one transaction (#1480).
+   */
+  rollbackImportBatch(
+    caseId: string,
+    afterRowId: number,
+    importBatchId: string,
+    kinds: readonly ImportRollbackKind[],
+  ): Promise<Record<ImportRollbackKind, ImportRollback>>;
   hasForensicEventIds(caseId: string, ids: readonly string[]): Promise<Set<string>>;
   forensicTimelineBatches(
     caseId: string,
@@ -91,6 +103,13 @@ export interface InvestigationStateStorage {
  * `extractedFrom` id (#1452): forensic rows in ordinal order, super rows in the streaming order,
  * so the provenance builders see them exactly as the streaming path fed them.
  */
+/** What a bulk-run rollback removed for one kind (#1480): the row count and the ids, for the tags written to them. */
+export interface ImportRollback {
+  deleted: number;
+  ids: string[];
+}
+export type ImportRollbackKind = "forensicTimeline" | "superTimeline";
+
 export interface IocProvenanceCandidates {
   forensic: ForensicEvent[];
   super: ForensicEvent[];
@@ -295,6 +314,40 @@ export class StateStore implements InvestigationStateStorage {
     });
     this.recordQuery("event_append", "entity", startedAt, appended);
     return appended;
+  }
+
+  async importRowIdMark(caseId: string): Promise<number> {
+    if (!(await this.ensureMigrated(caseId))) return 0;
+    return caseSqliteWorker.request<number>({ op: "entityRowIdMark", dbPath: this.databasePath(caseId) });
+  }
+
+  // The super-timeline lives in the same database (superTimelineStore.ts), which is what lets one
+  // transaction cover both kinds; its migration, if it ran after the fence, inserted rows without
+  // this run's batch id, so they are never touched.
+  async rollbackImportBatch(
+    caseId: string,
+    afterRowId: number,
+    importBatchId: string,
+    kinds: readonly ImportRollbackKind[],
+  ): Promise<Record<ImportRollbackKind, ImportRollback>> {
+    const empty = { forensicTimeline: { deleted: 0, ids: [] }, superTimeline: { deleted: 0, ids: [] } };
+    if (!kinds.length || !(await this.ensureMigrated(caseId))) return empty;
+    const startedAt = performance.now();
+    const out = await caseSqliteWorker.request<Partial<Record<ImportRollbackKind, ImportRollback>>>({
+      op: "rollbackImportBatch",
+      dbPath: this.databasePath(caseId),
+      kinds: [...kinds],
+      afterRowId,
+      importBatchId,
+    });
+    const result = { ...empty, ...out };
+    this.recordQuery(
+      "event_rollback",
+      "entity",
+      startedAt,
+      result.forensicTimeline.deleted + result.superTimeline.deleted,
+    );
+    return result;
   }
 
   async hasForensicEventIds(caseId: string, ids: readonly string[]): Promise<Set<string>> {

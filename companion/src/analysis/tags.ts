@@ -155,6 +155,24 @@ export class TagsStore {
     });
   }
 
+  // Remove the automatic tagger's tags on `targetIds` — the tags a failed bulk import wrote for the
+  // rows it then rolled back (#1480). Analyst-authored tags on the same ids are never touched. The
+  // caller passes only ids of rows that run inserted, so a stable-id row an earlier run owns keeps
+  // its tags. Returns how many were removed; no-op write when nothing matches.
+  async removeTaggerTagsFor(caseId: string, targetIds: readonly string[]): Promise<number> {
+    const targets = new Set(targetIds);
+    if (!targets.size) return 0;
+    return this.lock.runExclusive(caseId, async () => {
+      const tags = await this.load(caseId);
+      const gone = (t: Tag) =>
+        t.targetType === "event" && t.author.startsWith(TAGGER_AUTHOR_PREFIX) && targets.has(t.targetId);
+      const next = tags.filter((t) => !gone(t));
+      const removed = tags.length - next.length;
+      if (removed) await this.save(caseId, next);
+      return removed;
+    });
+  }
+
   // Remove every tag whose author starts with `prefix` in a single load+save; returns how many were
   // removed. Backs the tagger's "Clear tagger tags" (prefix "tagger:") so a noisy ruleset is fully
   // reversible WITHOUT touching analyst-authored tags. No-op write when nothing matches.

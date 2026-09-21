@@ -14,6 +14,8 @@ import {
   readBulkMinBytes,
   runVelociraptorBulk,
   type BulkImportSink,
+  type BulkRollbackSummary,
+  type BulkRunHandle,
   type BulkRunSummary,
 } from "../../src/analysis/ingest/velociraptorBulk.js";
 
@@ -46,6 +48,16 @@ function mftRow(n: number, path = `\\\\.\\C:\\Users\\u\\${name(n)}.txt`) {
   };
 }
 
+function mftEvent(id: string): ForensicEvent {
+  return {
+    id,
+    timestamp: "2026-01-01T00:00:00.000Z",
+    description: `row ${id}`,
+    severity: "Info",
+    sources: ["Velociraptor"],
+  } as ForensicEvent;
+}
+
 function artifactMap(rows: object[]): string {
   return JSON.stringify({ "Windows.NTFS.MFT": rows });
 }
@@ -56,6 +68,7 @@ interface MemorySink extends BulkImportSink {
   logs: string[];
   runs: BulkRunSummary[];
   taggerOpened: number;
+  rollbacks: BulkRunHandle[];
 }
 
 // `promote` names the paths the stub tagger raises to High — the deterministic content tagger's
@@ -69,6 +82,8 @@ function memorySink(
     taggerOff?: boolean;
   } = {},
 ): MemorySink {
+  let seq = 0;
+  const seqOf = new WeakMap<ForensicEvent, number>();
   const sink: MemorySink = {
     minBytes: opts.minBytes ?? 0,
     batchRows: opts.batchRows ?? 5000,
@@ -77,13 +92,35 @@ function memorySink(
     logs: [],
     runs: [],
     taggerOpened: 0,
+    rollbacks: [],
+    // The fence is an append sequence number; a rollback keeps every row at or below it and every
+    // row above it that another run stamped — the worker op's contract (#1480), in memory.
+    async beginRun() {
+      return seq;
+    },
+    async rollback(_caseId, run) {
+      sink.rollbacks.push(run);
+      const forensicBefore = sink.forensic.length;
+      const superBefore = sink.superRows.length;
+      const keep = (e: ForensicEvent) =>
+        (seqOf.get(e) ?? 0) <= run.fence || e.importBatchId !== run.importBatchId;
+      if (run.mode === "forensic") sink.forensic = sink.forensic.filter(keep);
+      sink.superRows = sink.superRows.filter(keep);
+      return {
+        forensic: forensicBefore - sink.forensic.length,
+        super: superBefore - sink.superRows.length,
+        tags: 0,
+      } satisfies BulkRollbackSummary;
+    },
     async appendForensic(_caseId, events) {
+      for (const e of events) seqOf.set(e, ++seq);
       sink.forensic.push(...events);
       return events.length;
     },
     async appendSuper(_caseId, events) {
       const seen = new Set(sink.superRows.map((e) => e.id));
       const fresh = events.filter((e) => !seen.has(e.id));
+      for (const e of fresh) seqOf.set(e, ++seq);
       sink.superRows.push(...fresh);
       return fresh.length;
     },
@@ -324,6 +361,135 @@ describe("importVelociraptorBulk — the forensic entry", () => {
     const note = reloaded.timeline.at(-1)?.description ?? "";
     expect(note).toMatch(
       /Velociraptor import \(artifact-map, bulk path: 4 batch\(es\) of 10 rows\): 40 event\(s\) from 40 row\(s\); 1 kept in the forensic timeline, 40 in the super-timeline/,
+    );
+  });
+});
+
+describe("runVelociraptorBulk — a failed run rolls back its own rows (#1480)", () => {
+  // A JSON array export cut short: the row reader throws on the unterminated last element after
+  // every earlier batch has landed.
+  function truncatedArray(n: number): string {
+    const full = JSON.stringify(Array.from({ length: n }, (_, i) => mftRow(i + 1)));
+    return full.slice(0, full.length - 40);
+  }
+
+  it("a truncated array throws after batches landed, and the run's rows are gone", async () => {
+    // Batch 3 holds rows 21–29 when row 30 fails to parse; the message names the row.
+    const sink = memorySink({ batchRows: 10, gate: "Info" });
+    await expect(
+      runVelociraptorBulk(
+        sink,
+        "c1",
+        truncatedArray(30),
+        baseOpts("0018_velo-flow_Windows.NTFS.MFT.json"),
+        "forensic",
+      ),
+    ).rejects.toThrow(/row 30: unterminated array element/);
+    expect(sink.rollbacks).toHaveLength(1);
+    expect(sink.rollbacks[0].mode).toBe("forensic");
+    expect(sink.forensic).toEqual([]);
+    expect(sink.superRows).toEqual([]);
+    expect(sink.logs.at(-1)).toMatch(
+      /bulk FAILED at batch 3 \(rows 21–29\): row 30: unterminated array element — rolled back 20 forensic \/ 20 super row\(s\)/,
+    );
+    expect(sink.runs).toEqual([]); // no run record for a run that did not finish
+  });
+
+  it("rows another run owns, and rows from before the fence, survive the rollback", async () => {
+    const sink = memorySink({ batchRows: 10, gate: "Info" });
+    sink.superRows.push({ ...mftEvent("older"), importBatchId: "run-old" });
+    // Another run's row above the fence, appended while this one ran (simulated by the first append).
+    let injected = false;
+    const append = sink.appendSuper;
+    sink.appendSuper = async (caseId, events) => {
+      const n = await append(caseId, events);
+      if (!injected) {
+        injected = true;
+        sink.superRows.push({ ...mftEvent("theirs"), importBatchId: "run-theirs" });
+      }
+      return n;
+    };
+    await expect(
+      runVelociraptorBulk(sink, "c1", truncatedArray(30), baseOpts(), "forensic"),
+    ).rejects.toThrow();
+    expect(sink.superRows.map((e) => e.id)).toEqual(["older", "theirs"]);
+  });
+
+  it("super-only mode rolls back the super-timeline only", async () => {
+    const sink = memorySink({ batchRows: 10 });
+    await expect(
+      runVelociraptorBulk(
+        sink,
+        "c1",
+        truncatedArray(30),
+        { ...baseOpts(), idPrefix: "H.1-Windows.NTFS.MFT" },
+        "super-only",
+      ),
+    ).rejects.toThrow();
+    expect(sink.rollbacks[0].mode).toBe("super-only");
+    expect(sink.rollbacks[0].fence).toBe(0);
+    expect(sink.superRows).toEqual([]);
+    expect(sink.logs.at(-1)).toMatch(/rolled back 0 forensic \/ 20 super row\(s\)/);
+  });
+
+  it("an append that throws after the forensic write still rolls back the forensic rows", async () => {
+    const sink = memorySink({ batchRows: 10, gate: "Info" });
+    let calls = 0;
+    sink.appendSuper = async () => {
+      if (++calls === 2) throw new Error("disk full");
+      return 0;
+    };
+    await expect(
+      runVelociraptorBulk(
+        sink,
+        "c1",
+        artifactMap(Array.from({ length: 30 }, (_, i) => mftRow(i + 1))),
+        baseOpts(),
+        "forensic",
+      ),
+    ).rejects.toThrow(/disk full/);
+    expect(sink.forensic).toEqual([]);
+    expect(sink.logs.at(-1)).toMatch(
+      /bulk FAILED at batch 2 \(rows 11–20\): disk full — rolled back 20 forensic/,
+    );
+  });
+
+  it("a rollback that itself fails is logged and the original error still surfaces", async () => {
+    const sink = memorySink({ batchRows: 10, gate: "Info" });
+    sink.rollback = async () => {
+      throw new Error("worker gone");
+    };
+    await expect(runVelociraptorBulk(sink, "c1", truncatedArray(30), baseOpts(), "forensic")).rejects.toThrow(
+      /unterminated array element/,
+    );
+    expect(sink.logs.at(-1)).toMatch(/rollback FAILED: worker gone — the run's rows remain/);
+  });
+
+  it("the forensic entry rolls back when the final merge or save fails", async () => {
+    const { ctx, stateStore } = await contextWithStore();
+    const rows = Array.from({ length: 40 }, (_, i) => mftRow(i + 1));
+    rows[10] = mftRow(11, PROMOTED_PATH);
+    const sink = memorySink({ batchRows: 10, promote: (e) => (e.path ?? "").endsWith("dropper.ps1") });
+    sink.appendForensic = (caseId, events) => stateStore.appendForensicEvents(caseId, events);
+    sink.beginRun = () => stateStore.importRowIdMark("c1");
+    sink.rollback = async (caseId, run) => {
+      sink.rollbacks.push(run);
+      const undone = await stateStore.rollbackImportBatch(caseId, run.fence, run.importBatchId, [
+        "forensicTimeline",
+      ]);
+      sink.superRows = [];
+      return { forensic: undone.forensicTimeline.deleted, super: 0, tags: 0 };
+    };
+    ctx.mergeWithAliases = async () => {
+      throw new Error("merge exploded");
+    };
+    await expect(importVelociraptorBulk(ctx, sink, "c1", artifactMap(rows), baseOpts())).rejects.toThrow(
+      /merge exploded/,
+    );
+    expect(sink.rollbacks).toHaveLength(1);
+    expect((await stateStore.load("c1")).forensicTimeline).toEqual([]);
+    expect(sink.logs.at(-1)).toMatch(
+      /bulk FAILED after the batches, in the final merge: merge exploded — rolled back 1 forensic/,
     );
   });
 });

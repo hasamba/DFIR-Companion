@@ -186,6 +186,80 @@ describe("importVelociraptor on the bulk path with real stores", () => {
     expect((await superStore.query("c1", { limit: 1000 })).total).toBe(60);
   });
 
+  // #1480: a JSON array cut short throws on its last row after the earlier batches landed. With
+  // the real stores, the failed run must leave no forensic row, no super row and no tagger tag
+  // behind — and must not touch what the case held before.
+  it("a failed run leaves nothing behind in either store or the tags", async () => {
+    const sink = sinkWith({ DFIR_IMPORT_BULK_MIN_MB: "0", DFIR_IMPORT_BATCH_ROWS: "10" })!;
+    const pipeline = pipelineWith(sink);
+    // What the case held before: one raw row and one analyst tag on it.
+    await superStore.append("c1", [
+      {
+        id: "old-1",
+        timestamp: IMPORTED_AT,
+        description: "earlier evidence",
+        severity: "Info",
+        sources: ["x"],
+        importBatchId: "run-old",
+      } as never,
+    ]);
+    await tagsStore.add("c1", {
+      targetType: "event",
+      targetId: "old-1",
+      author: "alice",
+      label: "key-evidence",
+    });
+    const rows = Array.from({ length: 30 }, (_, i) => mftRow(i + 1));
+    rows[5] = mftRow(6, PROMOTED_PATH); // batch 1 promotes one row and writes its tag
+    const full = JSON.stringify(rows);
+    const text = full.slice(0, full.length - 40);
+
+    await expect(
+      pipeline.importVelociraptor("c1", text, {
+        label: "0019_velo-flow_Windows.NTFS.MFT.json",
+        idPrefix: "19",
+        importedAt: IMPORTED_AT,
+      }),
+    ).rejects.toThrow(/row 30: unterminated array element/);
+
+    expect((await stateStore.load("c1")).forensicTimeline).toEqual([]);
+    const superRows = await superStore.query("c1", { limit: 1000 });
+    expect(superRows.events.map((r) => r.id)).toEqual(["old-1"]);
+    const tags = await tagsStore.load("c1");
+    expect(tags.map((t) => [t.targetId, t.label])).toEqual([["old-1", "key-evidence"]]);
+    expect(logs.at(-1)).toMatch(
+      /bulk FAILED at batch 3 \(rows 21–29\): row 30: unterminated array element — rolled back 1 forensic \/ 20 super row\(s\), 1 tag\(s\)/,
+    );
+    // No timeline note: the merge that writes it never ran.
+    expect(
+      (await stateStore.load("c1")).timeline.some((t) => /Velociraptor import/.test(t.description)),
+    ).toBe(false);
+  });
+
+  it("when the tag cleanup fails, the rows are still gone and the line says which tags remain", async () => {
+    const sink = sinkWith({ DFIR_IMPORT_BULK_MIN_MB: "0", DFIR_IMPORT_BATCH_ROWS: "10" })!;
+    const pipeline = pipelineWith(sink);
+    tagsStore.removeTaggerTagsFor = async () => {
+      throw new Error("tags.json locked");
+    };
+    const rows = Array.from({ length: 30 }, (_, i) => mftRow(i + 1));
+    rows[5] = mftRow(6, PROMOTED_PATH);
+    const full = JSON.stringify(rows);
+    await expect(
+      pipeline.importVelociraptor("c1", full.slice(0, full.length - 40), {
+        label: "0019_velo-flow_Windows.NTFS.MFT.json",
+        idPrefix: "19",
+        importedAt: IMPORTED_AT,
+      }),
+    ).rejects.toThrow(/unterminated array element/);
+    expect((await stateStore.load("c1")).forensicTimeline).toEqual([]);
+    expect((await superStore.query("c1", { limit: 1000 })).total).toBe(0);
+    expect(logs.at(-1)).toMatch(
+      /rolled back 1 forensic \/ 20 super row\(s\); tag cleanup FAILED: tags.json locked — the tagger's tags on the removed rows remain/,
+    );
+    expect((await tagsStore.load("c1")).map((t) => t.targetId)).toEqual(["19e6"]);
+  });
+
   it("stays on the whole-file path under the threshold", async () => {
     const sink = sinkWith({ DFIR_IMPORT_BULK_MIN_MB: "1" })!; // 1 MB; the fixture is a few KB
     const pipeline = pipelineWith(sink);
