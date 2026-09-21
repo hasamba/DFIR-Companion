@@ -16,10 +16,17 @@
 // A hunt row that says Fqdn=DESKTOP-X and Computer=WIN-UK1GV882OK6 is DESKTOP-X's own history, not
 // a foreign sample corpus; a bare Chainsaw/Hayabusa file that names only WIN-UK1GV882OK6 keeps the
 // demotion, because nothing else says which machine the file came from.
+//
+// A file with NO collector identity can still say so itself (#1489): the System 6011 rename event,
+// the machine's own account under the SYSTEM session, and the SAM domain of a local account are
+// facts the machine wrote about its own former names (hostRenameEvidence.ts). An importer learns
+// them in a pre-pass over the file and hands the map in; a record under a former name then lands on
+// the current name exactly as a hunt row does, and is not a sample corpus either.
 
 import { getCI, getPath, str } from "./siemImport.js";
 import type { MappedEvent } from "./siemImport.js";
 import { isDetectionSampleHost } from "./veloDetectionNoise.js";
+import type { HostRenameMap } from "./hostRenameEvidence.js";
 
 type Row = Record<string, unknown>;
 
@@ -28,8 +35,11 @@ export interface RowHost {
   asset: string;
   // The name the record itself carries, when it is not the collector's — a former hostname.
   formerName?: string;
-  // True when `asset` came from the collector (Fqdn/Hostname), not from the record.
+  // True when `asset` came from the collector (Fqdn/Hostname or the import's client), not from the record.
   collectorIdentity: boolean;
+  // True when `asset` is the record's own name resolved through the file's rename evidence (#1489):
+  // not a collector identity, but a claim the machine made about itself, and no sample corpus.
+  viaRenameEvidence?: true;
 }
 
 // The collector's identity, in order of trust. `Hostname` is Velociraptor's client hostname (and
@@ -69,8 +79,23 @@ export function shortHostName(name: string): string {
   return name.trim().split(".")[0].toUpperCase();
 }
 
-function channelOf(row: Row): string {
-  return readKey(row, "Channel") || readKey(row, "System.Channel") || readKey(row, "Event.System.Channel");
+/** The name written INTO the record (its Computer), in any shape the importers accept; "" if none. */
+export function recordComputer(row: Row): string {
+  return firstKey(row, RECORD_KEYS);
+}
+
+// Every spelling of the channel across the shapes RECORD_KEYS covers. A ForwardedEvents test must
+// see the EMBEDDED event's channel too: an outer detection wrapper may carry its own Channel while the
+// record inside came through Windows Event Forwarding.
+const CHANNEL_KEYS = [
+  "Channel",
+  "System.Channel",
+  "Event.System.Channel",
+  "_Event.System.Channel",
+  "SystemData.Channel",
+];
+function isForwarded(row: Row): boolean {
+  return CHANNEL_KEYS.some((k) => FORWARDED_CHANNEL.test(readKey(row, k)));
 }
 
 // `recordName` lets a caller that already unwrapped the event (Chainsaw's `document.data.Event`)
@@ -78,13 +103,26 @@ function channelOf(row: Row): string {
 // `collectorFallback` is the IMPORT's client — a Velociraptor flow export carries no Fqdn per row,
 // but a flow is one client by definition and the route knows its hostname (#1458). A per-row
 // collector key still wins; the fallback only stands in when the row names none.
-export function resolveRowHost(row: Row, recordName?: string, collectorFallback = ""): RowHost {
+// `aliases` is the file's own rename evidence (#1489), consulted only when nothing names a
+// collector: a record dated before the rename lands on the current name with the old one as its
+// former name. A ForwardedEvents record names another machine on purpose and is never re-resolved.
+export function resolveRowHost(
+  row: Row,
+  recordName?: string,
+  collectorFallback = "",
+  aliases?: HostRenameMap,
+): RowHost {
   const collector = firstKey(row, COLLECTOR_KEYS) || collectorFallback.trim();
   const record = (recordName ?? "").trim() || firstKey(row, RECORD_KEYS);
-  if (!collector) return { asset: record, collectorIdentity: false };
+  if (!collector) {
+    if (!aliases || !record || isForwarded(row)) return { asset: record, collectorIdentity: false };
+    const current = aliases.currentNameForRow(record, row);
+    if (shortHostName(current) === shortHostName(record)) return { asset: record, collectorIdentity: false };
+    return { asset: current, formerName: record, collectorIdentity: false, viaRenameEvidence: true };
+  }
   if (!record || shortHostName(record) === shortHostName(collector))
     return { asset: collector, collectorIdentity: true };
-  if (FORWARDED_CHANNEL.test(channelOf(row))) return { asset: record, collectorIdentity: true };
+  if (isForwarded(row)) return { asset: record, collectorIdentity: true };
   return { asset: collector, formerName: record, collectorIdentity: true };
 }
 
@@ -94,10 +132,11 @@ export function withFormerHostSuffix(description: string, formerName?: string): 
 }
 
 // Demote a detection that fired on a public sample corpus's host — only when the row names no
-// collector, so a renamed host's own history is never mistaken for that corpus. Mutates in place,
-// as the importers' other overlays do.
+// collector and no rename evidence resolved it, so a renamed host's own history is never mistaken
+// for that corpus. Mutates in place, as the importers' other overlays do.
 export function demoteSampleHost(ev: MappedEvent, host: RowHost): void {
-  if (host.collectorIdentity || ev.severity === "Info" || !isDetectionSampleHost(ev.asset ?? "")) return;
+  if (host.collectorIdentity || host.viaRenameEvidence) return;
+  if (ev.severity === "Info" || !isDetectionSampleHost(ev.asset ?? "")) return;
   ev.severity = "Info";
   ev.description =
     `${ev.description} [detection sample corpus — ${ev.asset} is not a host in this collection]`.slice(
