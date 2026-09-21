@@ -272,6 +272,7 @@
     "handoffBrief.ts": "analysis/workflow",
     "cockpitStore.ts": "analysis/workflow",
     "cockpitStory.ts": "analysis/workflow",
+    "cockpitStoryShape.ts": "analysis/workflow",
     "collectDirective.ts": "analysis/workflow",
     "collectDirectiveResolve.ts": "analysis/workflow",
     "collectSatisfaction.ts": "analysis/workflow",

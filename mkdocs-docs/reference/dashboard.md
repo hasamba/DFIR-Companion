@@ -11,12 +11,18 @@ next-decision questions before exposing the full panel inventory.
 
 **Story so far** sits at the top of the cockpit and answers "what happened?" in one glance:
 
+- the **shape of the intrusion** — first activity → last activity, dwell time, the hosts touched in
+  order of first contact, and the accounts seen in the staged events;
+
 - **stage cards** — one card per kill-chain stage the case has evidence for, in attack order
   (Initial Access → Execution → … → Impact). Each card shows when and where the stage was first
   seen, its most severe event, and the top finding it backs; the card's top edge is coloured by the
   worst severity in the stage. Stages with no evidence are skipped; Info events do not count. Click
   the stage name or event count to filter the Forensic Timeline to that stage; click the finding to
-  open it;
+  open it. A stage with no evidence gets a greyed card in its place — *no evidence yet* — linking to
+  the Evidence Gaps panel, so "did not happen" and "not collected" never look the same;
+- **Copy as brief** — copies the whole block as plain text (shape, numbered stages with time, host,
+  headline event and finding, missing stages, conclusion) for a status update;
 - the synthesis **conclusion** and **attacker path**, each trimmed to two sentences, with links to
   the full Executive Summary and Attack Path panels;
 - a **freshness tag** — when the last synthesis ran, or *stale — N events since synthesis* when

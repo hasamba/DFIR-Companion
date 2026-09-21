@@ -411,6 +411,140 @@ describe("deriveCockpitStory — synthesis freshness", () => {
   });
 });
 
+describe("deriveCockpitStory — shape (#1493)", () => {
+  it("spans the staged events only — an Info or untagged event outside the window never widens it", () => {
+    const story = deriveCockpitStory(
+      state({
+        forensicTimeline: [
+          event("info-early", {
+            severity: "Info",
+            mitreTechniques: ["T1566"],
+            timestamp: "2026-07-29T00:00:00.000Z",
+            asset: "IGNORED-A",
+            description: "Noise for CORP\\ignored",
+          }),
+          event("untagged-late", {
+            description: "plain row on CORP\\alsoignored",
+            mitreTechniques: [],
+            timestamp: "2026-08-02T00:00:00.000Z",
+            asset: "IGNORED-B",
+          }),
+          event("exec", {
+            mitreTechniques: ["T1059"],
+            timestamp: "2026-07-30T10:00:00.000Z",
+            asset: "WKSTN-JSMITH",
+            description: "PowerShell run by CORP\\jsmith",
+          }),
+          event("phish", {
+            mitreTechniques: ["T1566"],
+            timestamp: "2026-07-30T08:00:00.000Z",
+            asset: "WEB01",
+            description: "Phish opened by CORP\\jsmith",
+          }),
+        ],
+      }),
+    );
+
+    expect(story.shape).toEqual({
+      firstAt: "2026-07-30T08:00:00.000Z",
+      lastAt: "2026-07-30T10:00:00.000Z",
+      dwellMs: 2 * 60 * 60 * 1000,
+      hosts: ["WEB01", "WKSTN-JSMITH"],
+      hostsTotal: 2,
+      accounts: ["CORP\\jsmith"],
+      accountsTotal: 1,
+    });
+  });
+
+  it("uses a later endTimestamp for lastAt", () => {
+    const story = deriveCockpitStory(
+      state({
+        forensicTimeline: [
+          event("agg", {
+            mitreTechniques: ["T1059"],
+            timestamp: "2026-07-30T08:00:00.000Z",
+            endTimestamp: "2026-07-30T12:00:00.000Z",
+          }),
+        ],
+      }),
+    );
+
+    expect(story.shape.lastAt).toBe("2026-07-30T12:00:00.000Z");
+    expect(story.shape.dwellMs).toBe(4 * 60 * 60 * 1000);
+  });
+
+  it("is all nulls and empties for an empty timeline", () => {
+    expect(deriveCockpitStory(state()).shape).toEqual({
+      firstAt: null,
+      lastAt: null,
+      dwellMs: null,
+      hosts: [],
+      hostsTotal: 0,
+      accounts: [],
+      accountsTotal: 0,
+    });
+  });
+});
+
+describe("deriveCockpitStory — missing stages (#1493)", () => {
+  it("lists the stages with no card, in STORY_STAGE_ORDER, as the complement of the stages", () => {
+    const story = deriveCockpitStory(
+      state({
+        forensicTimeline: [
+          event("exfil", { mitreTechniques: ["T1041"] }),
+          event("phish", { mitreTechniques: ["T1566"] }),
+        ],
+      }),
+    );
+
+    expect(story.stages.map((stage) => stage.tactic)).toEqual(["Initial Access", "Exfiltration"]);
+    expect(story.missingStages).toEqual([
+      "Execution",
+      "Persistence",
+      "Privilege Escalation",
+      "Defense Evasion",
+      "Credential Access",
+      "Discovery",
+      "Lateral Movement",
+      "Collection",
+      "Command and Control",
+      "Impact",
+    ]);
+    expect([...story.stages.map((stage) => stage.tactic), ...story.missingStages]).toHaveLength(
+      STORY_STAGE_ORDER.length,
+    );
+  });
+
+  it("names all twelve stages when nothing is staged, and none when every stage has a card", () => {
+    const techniques: Record<string, string> = {
+      "Initial Access": "T1566",
+      Execution: "T1059",
+      Persistence: "T1547",
+      "Privilege Escalation": "T1068",
+      "Defense Evasion": "T1070",
+      "Credential Access": "T1003",
+      Discovery: "T1087",
+      "Lateral Movement": "T1021",
+      Collection: "T1560",
+      "Command and Control": "T1071",
+      Exfiltration: "T1041",
+      Impact: "T1486",
+    };
+    const full = deriveCockpitStory(
+      state({
+        forensicTimeline: STORY_STAGE_ORDER.map((tactic) =>
+          event(tactic, { mitreTechniques: [techniques[tactic]] }),
+        ),
+      }),
+    );
+
+    expect(deriveCockpitStory(state()).missingStages).toEqual([...STORY_STAGE_ORDER]);
+    expect(deriveCockpitStory(state()).missingStages).toHaveLength(12);
+    expect(full.stages.map((stage) => stage.tactic)).toEqual([...STORY_STAGE_ORDER]);
+    expect(full.missingStages).toEqual([]);
+  });
+});
+
 describe("deriveCockpitStory — immutability", () => {
   it("never mutates the input state", () => {
     const investigation = state({

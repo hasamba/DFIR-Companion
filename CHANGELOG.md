@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Story so far: intrusion shape, missing stages, copy as brief** — span/dwell/hosts/accounts strip, greyed cards for stages with no evidence linking to Evidence Gaps, and a one-click plain-text brief (closes #1493)
 - **Story so far in the Now cockpit** — one card per kill-chain stage with first seen, host, headline event and top finding (click to filter the timeline or open the finding) plus the two-sentence synthesis conclusion and a stale-since-synthesis tag, derived, no AI (closes #1487)
 - **2nd-opinion referee** — the panel labels model A/B, a configurable referee (default: model A) judges each disagreement from the cited events (closes #1466)
 - **Deep pass says when it has nothing new to read** — the pre-flight preview reports what the last synthesis read; if it dropped no event for the size limit, the panel says a deep pass would read the same or fewer and Run is off unless the analyst ticks *Run anyway*; a timeline changed since is called stale (closes #1457)

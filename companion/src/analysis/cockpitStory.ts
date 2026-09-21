@@ -1,3 +1,4 @@
+import { chronological, deriveStoryShape, parseTime, type CockpitStoryShape } from "./cockpitStoryShape.js";
 import { tacticForTechniques, type IrisTactic } from "./mitreTactics.js";
 import {
   SEVERITY_RANK,
@@ -9,7 +10,9 @@ import {
 
 // The cockpit's "Story so far" strip (#1487): the attack chain as the forensic timeline shows it,
 // stage by stage in kill-chain order, plus the synthesis's two-sentence conclusion and how fresh
-// that conclusion is. Reads the forensic timeline ONLY — never the super-timeline (CLAUDE.md §7).
+// that conclusion is. #1493 adds the chain's shape (span, dwell, hosts, accounts — see
+// cockpitStoryShape.ts) and the stages the chain has no evidence for yet. Reads the forensic
+// timeline ONLY — never the super-timeline (CLAUDE.md §7).
 
 // Kill-chain order for the stage chips. Not the priority order mitreTactics.ts uses to pick ONE
 // tactic per event — that one puts impact first; here the analyst reads left to right in time.
@@ -66,29 +69,13 @@ export interface CockpitStoryStage {
 
 export interface CockpitStory {
   stages: CockpitStoryStage[];
+  // STORY_STAGE_ORDER minus the stages that have a card, in STORY_STAGE_ORDER order.
+  missingStages: IrisTactic[];
+  shape: CockpitStoryShape;
   conclusion: string;
   attackerPath: string;
   synthesizedAt: string | null;
   staleEventCount: number;
-}
-
-function parseTime(value: string | undefined): number | null {
-  if (!value) return null;
-  const time = Date.parse(value);
-  return Number.isFinite(time) ? time : null;
-}
-
-// Timestamped events first, oldest first; undated events keep their timeline order at the end so
-// they count and can be filtered to, but never decide firstSeenAt.
-function chronological(events: readonly ForensicEvent[]): ForensicEvent[] {
-  return events
-    .map((event, index) => ({ event, index, time: parseTime(event.timestamp) }))
-    .sort((a, b) => {
-      if (a.time === null || b.time === null)
-        return Number(a.time === null) - Number(b.time === null) || a.index - b.index;
-      return a.time - b.time || a.index - b.index;
-    })
-    .map((item) => item.event);
 }
 
 function capText(text: string, max: number): string {
@@ -166,17 +153,34 @@ function buildStage(
   };
 }
 
-function storyStages(events: readonly ForensicEvent[], findings: readonly Finding[]): CockpitStoryStage[] {
-  const byTactic = new Map<IrisTactic, ForensicEvent[]>();
+interface StagedEvent {
+  event: ForensicEvent;
+  tactic: IrisTactic;
+}
+
+// The events the story is made of: graded above Info and mapped to a tactic. Timeline order kept.
+// One filter feeds both the stage cards and the shape, so the two can never disagree on the set.
+function stagedEvents(events: readonly ForensicEvent[]): StagedEvent[] {
+  const staged: StagedEvent[] = [];
   for (const event of events) {
     if (event.severity === "Info") continue;
     const tactic = tacticForTechniques(event.mitreTechniques ?? [], event.description ?? "");
-    if (!tactic) continue;
-    byTactic.set(tactic, [...(byTactic.get(tactic) ?? []), event]);
+    if (tactic) staged.push({ event, tactic });
   }
+  return staged;
+}
+
+function storyStages(staged: readonly StagedEvent[], findings: readonly Finding[]): CockpitStoryStage[] {
+  const byTactic = new Map<IrisTactic, ForensicEvent[]>();
+  for (const { event, tactic } of staged) byTactic.set(tactic, [...(byTactic.get(tactic) ?? []), event]);
   return STORY_STAGE_ORDER.filter((tactic) => byTactic.has(tactic)).map((tactic) =>
     buildStage(tactic, byTactic.get(tactic) ?? [], findings),
   );
+}
+
+function missingStages(stages: readonly CockpitStoryStage[]): IrisTactic[] {
+  const present = new Set(stages.map((stage) => stage.tactic));
+  return STORY_STAGE_ORDER.filter((tactic) => !present.has(tactic));
 }
 
 // Synthesis writes the attacker path as a Markdown list ("1. **Initial Access** — …"). A teaser
@@ -215,8 +219,12 @@ function staleEventCount(events: readonly ForensicEvent[], synthesizedAt: string
 
 export function deriveCockpitStory(state: InvestigationState, synthMeta?: StorySynthesisMeta): CockpitStory {
   const synthesizedAt = synthMeta?.lastSynthesizedAt?.trim() || null;
+  const staged = stagedEvents(state.forensicTimeline);
+  const stages = storyStages(staged, state.findings);
   return {
-    stages: storyStages(state.forensicTimeline, state.findings),
+    stages,
+    missingStages: missingStages(stages),
+    shape: deriveStoryShape(staged.map((item) => item.event)),
     conclusion: leadSentences(state.lastSummary),
     attackerPath: leadSentences(state.attackerPath),
     synthesizedAt,
