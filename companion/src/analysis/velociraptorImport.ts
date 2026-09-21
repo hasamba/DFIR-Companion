@@ -68,9 +68,10 @@ import { withHostSuffix, titleSafe, demangleUtf16Noise } from "./velociraptorTit
 import {
   isDetectionContentPath,
   isGeneratedModuleScript,
-  demoteDetectionToolScript,
   isDetectionToolLocation,
 } from "./veloDetectionNoise.js";
+import { isCollectorToolTreePath } from "./detectionStackPaths.js";
+import { CollectorFootprintLedger } from "./collectorChildren.js";
 import { HostRenameLedger, demoteSampleHost, resolveRowHost, withFormerHostSuffix } from "./hostIdentity.js";
 import { HostRenameMap } from "./hostRenameEvidence.js";
 import { mergeHostRenameRecords, type HostRenameRecord } from "./hostRenameRecord.js";
@@ -544,6 +545,7 @@ function mapYara(row: Row, artifact: string, host: string, sink: Map<string, Sie
     ...(path ? { path } : {}),
     ...(host ? { asset: host } : {}),
     ...(procName ? { processName: baseName(procName) } : {}),
+    ...(isCollectorToolTreePath(path) ? { origin: "collector" as const } : {}), // the tagger keeps a self-scan at Info (#1500)
   };
 }
 
@@ -667,11 +669,7 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
     ]) ||
     str(getPath(row, "FileInfo.OSPath")).trim() ||
     str(getPath(row, "Detection.PathName"));
-  // The matched file IS detection content — a Sigma/YARA rule, or a sample log a rule was written
-  // against. The "hit" is a keyword match against the rule's own text (tool names, MITRE ids) or
-  // against the name of a captured attack log, not against attacker-controlled content on this
-  // host. Treat as Info regardless of what keyword tripped detectionSeverity, so running detection
-  // tooling does not itself read as a Critical/High finding. See veloDetectionNoise.
+  // A rule file / sample attack log: the hit is a keyword in the rule's own text, not host content — Info (#720).
   if (isDetectionContentPath(path)) severity = "Info";
   // The matched CONTENT/evidence: the full matched line/Content the analyst needs to read, falling
   // back to the rule's own HitString (the substring it matched). Track the source field name so
@@ -756,6 +754,7 @@ function mapDetection(row: Row, artifact: string, host: string, sink: Map<string
     ...(host ? { asset: host } : {}),
     ...(processName ? { processName } : {}),
     ...(parentName ? { parentName } : {}),
+    ...(isCollectorToolTreePath(path) ? { origin: "collector" as const } : {}), // anchored tree only: the tagger keeps it at Info (#1500)
   };
   applyMftTimeHints(row, m); // DetectRaptor *.Detection.MFT rows carry $SI/$FN stamps too
   return m;
@@ -1517,6 +1516,7 @@ interface VrParseCtx {
   hostTally: Map<string, number>;
   renames: HostRenameLedger; // one Info marker per (host, former name) seen this import (#1417)
   aliases: HostRenameMap; // the file's own rename evidence, learned before any row is mapped (#1489)
+  lineage: CollectorFootprintLedger; // the collector's spawn and what it did, resolved in finalizeVrParse (#1477, #1488, #1500)
 }
 
 // Map ONE raw row to its forensic event(s) — one per row, or one per distinct MACB timestamp for an
@@ -1621,9 +1621,7 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
     if (isGeneratedModuleScript(row))
       for (const m of ms) if (m && m.severity !== "High" && m.severity !== "Critical") m.severity = "Info";
 
-    // A script block (or its 4103 / 800 twin) SYSTEM ran from the collector's tool tree: Info with the
-    // collector origin the post-import tagger honours, never a Critical — demoteDetectionToolScript (#1477).
-    demoteDetectionToolScript(row, ms);
+    ctx.lineage.offer(row, ms); // tool-tree scripts now (#1477); the spawn's children after the whole file (#1500)
 
     // Row-level values shared by every event this row produced (computed once, not per MACB event).
     const realArtifact = artifactName(row);
@@ -1690,6 +1688,7 @@ function finalizeVrParse(
   opts: VelociraptorImportOptions,
 ): VelociraptorParseResult {
   const maxIocs = opts.maxIocs ?? 5000;
+  ctx.lineage.resolve(); // the whole file has been read: attribute the spawn's children (#1500)
   // Sample-host demotion happens per row in mapRowToEvents (hostIdentity.ts); the rename markers join here.
   const { events, groups } = aggregateEvents([...mapped, ...ctx.renames.events()], {
     aggregate: opts.aggregate,
@@ -1737,6 +1736,7 @@ function newVrCtx(opts: VelociraptorImportOptions): VrParseCtx {
     hostTally: new Map<string, number>(),
     renames: new HostRenameLedger(),
     aliases: HostRenameMap.from(opts.knownRenames, opts.collectorHostnames, opts.hostFallback), // the case's ledger, and the flow's client is a collector (#1495)
+    lineage: new CollectorFootprintLedger(),
   };
 }
 

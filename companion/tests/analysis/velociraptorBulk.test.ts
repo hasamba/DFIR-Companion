@@ -588,3 +588,115 @@ describe("runVelociraptorBulk — host identity does not depend on row order or 
     expect(sink.superRows.filter((e) => / was named .* until /.test(e.description))).toHaveLength(2);
   });
 });
+
+describe("runVelociraptorBulk — the collector's children do not depend on row order or batch size (#1500)", () => {
+  // The Chainsaw artifact lists the spawned PowerShell's `net.exe users` child BEFORE the spawn
+  // itself. With one row per batch the child is written before the spawn is ever mapped — so the
+  // evidence-only pass primes the spawn ledger first, as it does for hostnames (#1489).
+  const SYSTEM = "NT AUTHORITY\\SYSTEM";
+  const SPAWN_GUID = "6FEF6725-4856-6AB1-F501-000000000A00";
+  const sysmon = (
+    eid: number,
+    time: string,
+    detection: string,
+    severity: string,
+    ed: Record<string, unknown>,
+  ) => ({
+    EventTime: time,
+    Detection: detection,
+    Severity: severity,
+    "Rule Group": "Sigma",
+    Computer: "DESKTOP-16OJFO6",
+    Channel: "Microsoft-Windows-Sysmon/Operational",
+    EventID: eid,
+    SystemData: {
+      Channel: "Microsoft-Windows-Sysmon/Operational",
+      Computer: "DESKTOP-16OJFO6",
+      EventID: eid,
+      Execution_attributes: { ProcessID: 3556, ThreadID: 1 },
+      Security_attributes: { UserID: "S-1-5-18" },
+    },
+    EventData: ed,
+  });
+  const child = sysmon(1, "2026-09-21T15:08:18.264Z", "Local Accounts Discovery", "low", {
+    CommandLine: '"C:\\WINDOWS\\system32\\net.exe" users',
+    Image: "C:\\Windows\\System32\\net.exe",
+    ParentImage: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+    ParentProcessId: 5580,
+    ProcessGuid: "6FEF6725-4862-6AB1-FC01-000000000A00",
+    ParentProcessGuid: SPAWN_GUID,
+    ProcessId: 6012,
+    User: SYSTEM,
+  });
+  const spawn = sysmon(
+    1,
+    "2026-09-21T15:08:06.679Z",
+    "Non Interactive PowerShell Process Spawned",
+    "medium",
+    {
+      CommandLine:
+        'powershell -ExecutionPolicy bypass -command "import-module \\"C:\\Program Files\\Velociraptor\\Tools\\tmp15148342\\PersistenceSniper\\PersistenceSniper.psm1\\""',
+      Image: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      ParentImage: "C:\\Program Files\\Velociraptor\\Velociraptor.exe",
+      ParentProcessId: 8420,
+      ProcessGuid: SPAWN_GUID,
+      ProcessId: 5580,
+      User: SYSTEM,
+    },
+  );
+
+  it("a child in batch 1 is graded as the collector's when its spawn only arrives in batch 2", async () => {
+    const sink = memorySink({ batchRows: 1, gate: "Info" });
+    await runVelociraptorBulk(
+      sink,
+      "c1",
+      JSON.stringify({ "Windows.EventLogs.Chainsaw": [child, spawn] }),
+      baseOpts("0014_Windows.EventLogs.Chainsaw.json"),
+      "super-only",
+    );
+    const net = sink.superRows.find((e) => e.description.includes("net.exe"));
+    expect(net?.severity).toBe("Info");
+    expect(net?.origin).toBe("collector");
+    // The evidence pass mapped the spawn through a scratch context: no duplicate host tally or IOCs.
+    expect(sink.superRows.filter((e) => e.description.includes("(EID 1)"))).toHaveLength(2);
+  });
+
+  // The rename evidence comes LAST: the spawn is primed while the box still resolves to its old
+  // name and the child is mapped after the 6011 re-homed everything. The claim is filed under the
+  // record's own Computer too, so the two still meet (Codex, review of #1500).
+  it("a rename learned after the spawn was primed does not lose its children", async () => {
+    const under = (row: ReturnType<typeof sysmon>, computer: string) => ({
+      ...row,
+      Computer: computer,
+      SystemData: { ...row.SystemData, Computer: computer },
+    });
+    const rename = {
+      System: {
+        Provider: { Name: "EventLog" },
+        EventID: { Value: 6011 },
+        TimeCreated: { SystemTime: "2026-09-21T15:09:00Z" },
+        Channel: "System",
+        Computer: "DESKTOP-16OJFO6",
+      },
+      EventData: { Data: ["WIN-0NNTB2RTNB1", "DESKTOP-16OJFO6"] },
+    };
+    const sink = memorySink({ batchRows: 1, gate: "Info" });
+    await runVelociraptorBulk(
+      sink,
+      "c1",
+      JSON.stringify({
+        "Windows.EventLogs.Chainsaw": [
+          under(child, "WIN-0NNTB2RTNB1"),
+          under(spawn, "WIN-0NNTB2RTNB1"),
+          rename,
+        ],
+      }),
+      baseOpts("0014_Windows.EventLogs.Chainsaw.json"),
+      "super-only",
+    );
+    const net = sink.superRows.find((e) => e.description.includes("net.exe"));
+    expect(net?.asset).toBe("DESKTOP-16OJFO6");
+    expect(net?.severity).toBe("Info");
+    expect(net?.origin).toBe("collector");
+  });
+});

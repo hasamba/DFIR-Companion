@@ -27,6 +27,7 @@ export {
   isDetectionContentPath,
   isDetectionToolLocation,
   isCollectorOwnedLocation,
+  isCollectorToolTreePath,
   isVolatileContainer,
 } from "./detectionStackPaths.js";
 
@@ -97,8 +98,9 @@ function toEventId(value: unknown): number {
 }
 
 // The row's EID, from every shape this importer already accepts: flat (`EID`, Hayabusa), the native
-// parsed-EVTX `System.EventID`, and the same under an `Event`/`_Event` wrapper.
-function eventId(row: Row): number {
+// parsed-EVTX `System.EventID`, and the same under an `Event`/`_Event` wrapper. Exported for
+// collectorChildren.ts, which reads the same row shapes.
+export function eventId(row: Row): number {
   const flat = toEventId(getCI(row, "EID") ?? getCI(row, "EventID"));
   if (flat) return flat;
   const native = toEventId(getPath(row, "System.EventID"));
@@ -157,7 +159,7 @@ export function isGeneratedModuleScript(row: Row): boolean {
 // `powershell -c "'<tools path>'; <payload>"` puts the genuine path there on every record.
 const SCRIPT_NAME_4103 = /^\s*Script Name\s*=\s*(.*?)\s*$/im;
 const SCRIPT_NAME_800 = /^\t?ScriptName=(.*?)\s*$/im;
-function eventData(row: Row): Row | null {
+export function eventData(row: Row): Row | null {
   let ed = getCI(row, "EventData");
   for (const w of EVENT_WRAPPERS) {
     if (isObject(ed)) break;

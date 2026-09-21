@@ -126,3 +126,18 @@ export function isVolatileContainer(value: string): boolean {
   if (!v) return false;
   return VOLATILE_CONTAINER.test(v);
 }
+
+// The collector's UNPACKED TOOL TREE, anchored the way isDetectionToolScript anchors it (#1500): the
+// 64-bit MSI's install root under Program Files, then `Tools\`, traversal refused, with the `\\.\`
+// / `\\?\` device prefix an MFT walk puts in front of the drive letter stripped first. This is the
+// one path-based claim strong enough to carry `origin: "collector"` — which makes the row immune to
+// the post-import tagger — so it is deliberately narrower than isDetectionContentPath: a `.yms`
+// under a user profile is still demoted to Info by the extension, but the tagger may raise it back.
+const DEVICE_PREFIX = /^[\\/]{2}[.?][\\/]/;
+const COLLECTOR_TOOL_TREE = /^[a-z]:[\\/]program files[\\/]velociraptor[\\/]tools[\\/]/i;
+const PATH_TRAVERSAL = /(?:^|[\\/])\.\.(?:[\\/]|$)/;
+
+export function isCollectorToolTreePath(value: string): boolean {
+  const v = (value || "").trim().replace(DEVICE_PREFIX, "");
+  return COLLECTOR_TOOL_TREE.test(v) && !PATH_TRAVERSAL.test(v);
+}
