@@ -26,6 +26,7 @@ import {
 import { type Severity } from "./stateTypes.js";
 import { boundedAggKey } from "./aggKey.js";
 import { appendDerivedNote } from "./derivedNote.js";
+import { RENAMED_BINARY_MARKER } from "./renamedBinaryNote.js";
 import { isStagedPath } from "./stagingPaths.js";
 import { withHostSuffix } from "./velociraptorTitle.js";
 
@@ -164,8 +165,8 @@ function gradeRename(f: RenameFacts): Severity {
 // lived only in the base text: a Sysmon process-create for `nxc.exe` that out-ranked this row on
 // trust became the survivor, and "nxc.exe is really Cmd.Exe" left the timeline with the loser —
 // four renamed copies of one binary in INC-2026-031, none of them named in the forensic record
-// (#1476). As a note it rides along whichever row wins.
-export const RENAMED_BINARY_MARKER = "[renamed binary:";
+// (#1476). As a note it rides along whichever row wins. The marker and its parser live in
+// renamedBinaryNote.ts (#1502) so the readers that turn the note into a flag share one owner.
 
 function describeRename(f: RenameFacts): string {
   let out: string;

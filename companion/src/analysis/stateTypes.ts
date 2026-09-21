@@ -370,6 +370,10 @@ export interface Finding {
   // uninvolved user's WS-09 logon were both fabricated into "RDP lateral movement"; the deep pass then
   // HARDENED the WS-17 one from confidence 45 → 82 by citing the real-but-benign logon).
   lateralUnconfirmed?: boolean;
+  // Every cited event is a renamed plain shell (`mimikatz.exe is really Cmd.Exe`) or a file trace of
+  // that same decoy — the command line is a label, not a run. Set post-synthesis by
+  // groundAndScoreFindings (#1502); High/Critical floored to Medium and confidence capped.
+  decoyBinary?: boolean;
   corroboration?: FindingCorroboration;
   // Rabbit-hole detection (investigation-guidance #13). `relevance` places the finding relative to the
   // corroborated main attack path: 'connected' (on it) → a lead; 'disconnected' (evidence sits in a
