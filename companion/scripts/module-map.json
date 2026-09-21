@@ -375,6 +375,8 @@
     "fpCascade.ts": "analysis/findings",
     "fpPropagation.ts": "analysis/findings",
     "gapDetect.ts": "analysis/detect",
+    "gapEdgeClass.ts": "analysis/detect",
+    "gapHostHistory.ts": "analysis/detect",
     "gapHypothesis.ts": "analysis/ai",
     "geoMap.ts": "analysis/intel",
     "googleWorkspaceImport.ts": "analysis/ingest",

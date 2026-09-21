@@ -14,6 +14,7 @@
 // and would also run every test in it twice.
 import { backfillActivityWaveFinding, detectGapsWithWaves } from "../../src/analysis/activityWaves.js";
 import { backfillSilenceGapFindings, detectTimelineGaps } from "../../src/analysis/gapDetect.js";
+import { backfillHostHistoryNote, hostBuildMarkers } from "../../src/analysis/gapHostHistory.js";
 import { backfillHighSeverityFindings } from "../../src/analysis/highSeverityFindings.js";
 import { backfillDefenderEpisodeFindings } from "../../src/analysis/defenderEpisodeFindings.js";
 import { corroborateDefenderEpisodes } from "../../src/analysis/defenderEpisodes.js";
@@ -38,6 +39,30 @@ export const burstEvents: ForensicEvent[] = [
 
 const stamp = "2026-01-21T00:00:00.000Z";
 const seed = (): InvestigationState => ({ ...emptyState("c1"), forensicTimeline: burstEvents });
+
+// A renamed host with Info rows before its rename bound (#1503): the host-history note sets those
+// rows aside from gap analysis and links its one Info finding to the first and last of them.
+const historyRenames = [
+  {
+    formerName: "WIN-OLD",
+    currentName: "HOST-A",
+    until: "2025-12-05T18:00:00.000Z",
+    basis: "collector" as const,
+  },
+];
+const historyEvents: ForensicEvent[] = [
+  ...[0, 1, 2].map((i) => ({
+    ...event(`h${i}`, `2025-06-01T00:0${i}:00.000Z`),
+    severity: "Info" as const,
+    asset: "HOST-A",
+  })),
+  ...burstEvents.map((e) => ({ ...e, asset: "HOST-A" })),
+];
+const historySeed = (): InvestigationState => ({
+  ...emptyState("c1"),
+  forensicTimeline: historyEvents,
+  hostRenames: historyRenames,
+});
 
 // A Defender record that allowed a file, carrying the file's own digest, then a start of the same
 // digest on the same host an hour later — the pair the Defender episode pass mints for (#964).
@@ -124,6 +149,7 @@ export const BACKFILLS = [
   pass(backfillHighSeverityFindings)(() => [seed(), new Set(burstEvents.map((e) => e.id)), stamp]),
   pass(backfillSilenceGapFindings)(() => [seed(), detectTimelineGaps(burstEvents), stamp]),
   pass(backfillActivityWaveFinding)(() => [seed(), detectGapsWithWaves(burstEvents).pattern, stamp]),
+  pass(backfillHostHistoryNote)(() => [historySeed(), hostBuildMarkers(historyRenames), stamp]),
   pass(backfillDefenderEpisodeFindings)(() => [
     defenderSeed(),
     new Set(defenderEvents.map((e) => e.id)),

@@ -1,5 +1,4 @@
-import { gapEnvOptions } from "../gapDetect.js";
-import { detectGapsWithWaves } from "../activityWaves.js";
+import { detectGapsWithWaves, gapOptionsFor } from "../activityWaves.js";
 import {
   gapHypothesesResponseSchema,
   sanitizeGapHypotheses,
@@ -108,7 +107,7 @@ export async function hypothesizeGaps(ctx: AiCallContext, caseId: string): Promi
 
   // Use the SAME gap detection (and thresholds) the panel/report use, so the analyst hypothesises
   // about exactly the gaps they see flagged.
-  const gaps = detectGapsWithWaves(scoped, gapEnvOptions()).gaps;
+  const gaps = detectGapsWithWaves(scoped, gapOptionsFor(loaded)).gaps;
   if (!hasGapMaterial(gaps)) return { hypotheses: [], caveat: GAP_HYPOTHESIS_CAVEAT };
 
   const cap = Number(process.env.DFIR_GAP_HYPOTHESIS_MAX) || GAP_HYPOTHESIS_MAX_DEFAULT;

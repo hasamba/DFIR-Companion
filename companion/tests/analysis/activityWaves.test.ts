@@ -8,6 +8,7 @@ import {
   DEFAULT_MIN_WAVE_INTERVAL_HOURS,
 } from "../../src/analysis/activityWaves.js";
 import { detectTimelineGaps, backfillSilenceGapFindings } from "../../src/analysis/gapDetect.js";
+import { classifyGapEdges } from "../../src/analysis/gapEdgeClass.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 
 function ev(id: string, timestamp: string, extra: Partial<ForensicEvent> = {}): ForensicEvent {
@@ -23,12 +24,20 @@ function ev(id: string, timestamp: string, extra: Partial<ForensicEvent> = {}): 
   };
 }
 
-// `count` events one minute apart starting at `startISO`.
-function burst(prefix: string, startISO: string, count: number): ForensicEvent[] {
+// `count` events one minute apart starting at `startISO`. The first row of every burst is graded
+// High on one host: since #1503 a dwell interval is a finding only between two attacker-graded
+// waves, so the fixtures carry the grade the real intrusion rows would.
+function burst(
+  prefix: string,
+  startISO: string,
+  count: number,
+  extra: Partial<ForensicEvent> = {},
+): ForensicEvent[] {
   const out: ForensicEvent[] = [];
   let ms = Date.parse(startISO);
   for (let i = 0; i < count; i++) {
-    out.push(ev(`${prefix}${i}`, new Date(ms).toISOString(), { sources: ["velo"] }));
+    const grade: Partial<ForensicEvent> = i === 0 ? { severity: "High", asset: "HOST-A" } : {};
+    out.push(ev(`${prefix}${i}`, new Date(ms).toISOString(), { sources: ["velo"], ...grade, ...extra }));
     ms += 60_000;
   }
   return out;
@@ -160,7 +169,7 @@ describe("gap findings for wave boundaries", () => {
     const pattern = detectActivityWaves(events, gaps)!;
     const state = backfillSilenceGapFindings(
       { ...emptyState("INC-TEST"), forensicTimeline: events },
-      markWaveBoundaries(gaps, pattern),
+      classifyGapEdges(markWaveBoundaries(gaps, pattern), events, pattern),
       "2026-08-26T20:00:00.000Z",
     );
     expect(state.findings).toHaveLength(2);
@@ -265,11 +274,30 @@ describe("detectGapsWithWaves", () => {
     expect(gaps.filter((g) => g.betweenWaves)).toHaveLength(2);
   });
 
-  it("agrees exactly with running the two steps by hand", () => {
+  it("agrees exactly with running the steps by hand", () => {
     const events = twoWaveTimeline();
     const raw = detectTimelineGaps(events);
-    const byHand = markWaveBoundaries(raw, detectActivityWaves(events, raw));
+    const pattern = detectActivityWaves(events, raw);
+    const byHand = classifyGapEdges(markWaveBoundaries(raw, pattern), events, pattern);
     expect(detectGapsWithWaves(events).gaps).toEqual(byHand);
+  });
+
+  it("emits neither a dwell finding nor a waves finding for benign bursts (#1503)", () => {
+    const benign = { severity: "Info" as const, asset: "HOST-A" };
+    const events = [
+      ...burst("w1-", "2026-08-07T14:30:00.000Z", 6, benign),
+      ...burst("w2-", "2026-08-25T17:30:00.000Z", 6, benign),
+    ];
+    const { gaps, pattern } = detectGapsWithWaves(events);
+    expect(pattern!.intervals[0].attackerGraded).toBe(false);
+    expect(gaps[0].betweenWaves).toBe(true); // still a dwell interval on the panel and in the report
+    const base = { ...emptyState("INC-TEST"), forensicTimeline: events };
+    const state = backfillSilenceGapFindings(
+      backfillActivityWaveFinding(base, pattern, "2026-08-26T20:00:00.000Z"),
+      gaps,
+      "2026-08-26T20:00:00.000Z",
+    );
+    expect(state.findings).toEqual([]);
   });
 
   it("marks nothing when there is no pattern", () => {

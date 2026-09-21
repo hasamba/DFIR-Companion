@@ -9,7 +9,8 @@ import {
 } from "../findingGrounding.js";
 import { scoreFindingsRelevance } from "../findingRelevance.js";
 import { reconsiderKeyQuestions } from "../fpCascade.js";
-import { backfillSilenceGapFindings, gapEnvOptions } from "../gapDetect.js";
+import { backfillSilenceGapFindings } from "../gapDetect.js";
+import { backfillHostHistoryNote, gapOptionsFor } from "../gapHostHistory.js";
 import { backfillActivityWaveFinding, detectGapsWithWaves } from "../activityWaves.js";
 import { backfillHighSeverityFindings } from "../highSeverityFindings.js";
 import { backfillDefenderEpisodeFindings } from "../defenderEpisodeFindings.js";
@@ -375,11 +376,13 @@ function applyBackfills(
   const withDefender = backfillDefenderEpisodeFindings(linked, eligibleIds, ts);
   const backfilled = backfillHighSeverityFindings(withDefender, eligibleIds, ts);
   const highSeverityBackfillCount = backfilled.findings.length - withDefender.findings.length;
-  const gapOpts = gapEnvOptions();
+  const gapOpts = gapOptionsFor(linked);
   const { gaps, pattern } = detectGapsWithWaves(scopedEvents, gapOpts);
   const withWaves = backfillActivityWaveFinding(backfilled, pattern, ts);
+  // A renamed host's build history was set aside above (#1503); one Info row says what and why.
+  const withHistory = backfillHostHistoryNote(withWaves, gapOpts.hostHistory, ts);
   return {
-    state: backfillSilenceGapFindings(withWaves, gaps, ts, gapOpts.maxFindings),
+    state: backfillSilenceGapFindings(withHistory, gaps, ts, gapOpts.maxFindings),
     highSeverityBackfillCount,
   };
 }
