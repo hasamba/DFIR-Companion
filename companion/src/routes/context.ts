@@ -53,6 +53,9 @@ export type ImportBase = {
   // Analyst-declared web-log trailer profile (#993) — read only by the "combinedlog" importer;
   // every other kind ignores it.
   combinedLog?: CombinedLogImportOptions;
+  // Analyst-declared host for this import (#1496) — read only by the Windows-log importers
+  // (Chainsaw, Hayabusa, Velociraptor) as the collector fallback; every other kind ignores it.
+  assetHost?: string;
 };
 
 export interface RouteContext {

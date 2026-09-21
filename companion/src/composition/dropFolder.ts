@@ -56,6 +56,7 @@ import {
 } from "../analysis/dropScan.js";
 import { formatDropLogLines, appendDropLog, buildSweepLogEntries } from "../analysis/dropLog.js";
 import type { DropFailure, PendingRawInput } from "../analysis/dropStatus.js";
+import { assetHostFromDropRelpath } from "../analysis/assetHost.js";
 import { milestoneEvent, type NotificationEvent } from "../analysis/notifications.js";
 import type { RegisteredJob } from "../analysis/jobManager.js";
 import { logLine } from "../logging/serverLogger.js";
@@ -74,6 +75,9 @@ const DROP_README_TEXT = [
   "Each file is auto-detected and imported into this case, exactly like the dashboard Import button.",
   "Images (.png/.jpg/...) are ingested as screenshot evidence.",
   "",
+  "A subfolder named asset=<HOST> (e.g. asset=DESKTOP-01) declares the host its files came from —",
+  "for Windows log exports with no client name inside (a GUI/notebook download); records under",
+  "an older machine name are then shown as that host's history.",
   "After processing, files move to _processed/ (success) or _failed/ (error).",
   "Failures are reported in the dashboard (📥 Drop banner) and any configured notification channel.",
   "A running history of every file processed (imported/failed/pending, with reasons) is kept in",
@@ -97,6 +101,8 @@ export interface DropFolderDeps {
     text: string,
     originalName: string,
     minSeverity?: undefined,
+    provenance?: undefined,
+    assetHost?: string, // the declared host of a file under drop/asset=<HOST>/ (#1496)
   ) => Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
   // The one binary import kind this codebase natively decodes (#1013's own macOS Background Task
   // Management parser) — consulted BEFORE the raw-tool-input routing below claims a matching file,
@@ -454,7 +460,9 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
           reason:
             unknownImportHintFor(name, text) ?? "unrecognized file type (not a supported import format)",
         };
-      const r = await ingestStreamed(caseId, kind, text, name, undefined);
+      // A file under drop/asset=<HOST>/ imports with that host declared (#1496).
+      const assetHost = assetHostFromDropRelpath(file.relpath);
+      const r = await ingestStreamed(caseId, kind, text, name, undefined, undefined, assetHost || undefined);
       if (!r.analyzed)
         return {
           ok: false,

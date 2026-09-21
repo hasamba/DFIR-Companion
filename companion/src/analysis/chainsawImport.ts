@@ -81,6 +81,11 @@ export interface ChainsawImportOptions {
   // the collector identities seen — seeded into this file's rename map before any row is read.
   knownRenames?: readonly HostRenameRecord[];
   collectorHostnames?: readonly string[];
+  // The host this file came from, when nothing in it says so (#1496): stands in for a row that
+  // names no collector, exactly as a flow's client does (#1458) — a per-row Fqdn still wins, a
+  // differing Computer becomes a former name. `hostFallbackBasis` records who said so.
+  hostFallback?: string;
+  hostFallbackBasis?: "collector" | "analyst";
 }
 
 export interface ChainsawParseResult {
@@ -356,7 +361,11 @@ export function parseChainsawReport(text: string, opts: ChainsawImportOptions = 
   // (#1489): the pre-pass below reads the rename evidence every record carries — the flat row as-is,
   // a nested detection through its embedded event(s) — so a record under the old name lands on the
   // current one with the former-name note, and is not a sample corpus either.
-  const aliases = HostRenameMap.from(opts.knownRenames, opts.collectorHostnames);
+  const aliases = HostRenameMap.from(opts.knownRenames, opts.collectorHostnames, opts.hostFallback);
+  const fallback = (opts.hostFallback ?? "").trim();
+  const basis = opts.hostFallbackBasis ?? "collector";
+  const hostOf = (row: Row, recordName?: string): RowHost =>
+    resolveRowHost(row, recordName, fallback, aliases, basis);
   for (const rec of records)
     aliases.learn(isFlatChainsawRow(rec) ? [rec] : eventDocs(rec).map((event) => ({ Event: event })));
 
@@ -383,7 +392,7 @@ export function parseChainsawReport(text: string, opts: ChainsawImportOptions = 
   for (const rec of records) {
     if (isFlatChainsawRow(rec)) {
       detections++;
-      const rh = resolveRowHost(rec, undefined, "", aliases);
+      const rh = hostOf(rec);
       if (rh.asset) hostTally.set(rh.asset, (hostTally.get(rh.asset) ?? 0) + 1);
       sawEvtx = true; // this shape always has EventID/Channel/EventData, i.e. a real EVTX row
       push(mapFlatChainsawRow(rec, rh.asset, iocSink), rh, rec);
@@ -395,15 +404,20 @@ export function parseChainsawReport(text: string, opts: ChainsawImportOptions = 
     if (docs.length === 0) {
       // A detection with no embedded event → keep the verdict; a non-Windows/empty raw
       // record → nothing to map, counts toward `dropped`.
-      if (detection)
-        mapped.push(genericDetection(readSigmaMeta(rec), resolveRowHost(rec, undefined, "", aliases).asset));
+      if (detection) {
+        // Through push, like every other row: the former-name note, the rename marker and the
+        // ledger apply to a verdict-only detection too (Codex, review of #1496).
+        const rh = hostOf(rec);
+        if (rh.asset) hostTally.set(rh.asset, (hostTally.get(rh.asset) ?? 0) + 1);
+        push(genericDetection(readSigmaMeta(rec), rh.asset), rh, rec);
+      }
       continue;
     }
     const meta = detection ? readSigmaMeta(rec) : null;
     for (const event of docs) {
       const { rec: flat, host: recordName } = toFlatRecord(event);
       // The embedded event dates the record; `rec` (the detection) carries the collector keys.
-      const rh = resolveRowHost({ ...rec, Event: event }, recordName, "", aliases);
+      const rh = hostOf({ ...rec, Event: event }, recordName);
       const host = rh.asset;
       if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
       const win = mapWindows(flat, host, iocSink);

@@ -244,12 +244,16 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         return observe(pipeline.importSiem(caseId, text, base));
       case "evtxxml":
         return observe(pipeline.importEvtxXml(caseId, text, base));
+      // The analyst-declared host (#1496) reaches only the Windows-log importers, as their collector
+      // fallback with basis "analyst"; every other kind ignores base.assetHost.
       case "chainsaw":
-        return observe(pipeline.importChainsaw(caseId, text, base));
+        return observe(pipeline.importChainsaw(caseId, text, { ...base, chainsaw: declaredHost(base) }));
       case "hayabusa":
-        return observe(pipeline.importHayabusa(caseId, text, base));
+        return observe(pipeline.importHayabusa(caseId, text, { ...base, hayabusa: declaredHost(base) }));
       case "velociraptor":
-        return observe(pipeline.importVelociraptor(caseId, text, base));
+        return observe(
+          pipeline.importVelociraptor(caseId, text, { ...base, velociraptor: declaredHost(base) }),
+        );
       case "securityonion":
         return observe(pipeline.importSecurityOnion(caseId, text, base));
       case "socrates":
@@ -465,6 +469,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     originalName: string,
     minSeverity?: Severity,
     provenance?: ArtifactProvenance,
+    assetHost?: string, // the analyst-declared host (#1496): a drop subfolder named asset=<HOST>
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }> {
     const pipeline = options.pipeline;
     if (!pipeline) throw new Error("AI pipeline not configured");
@@ -520,6 +525,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         importedAt,
         onProgress,
         minSeverity,
+        ...(assetHost ? { assetHost } : {}),
       });
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
 
@@ -726,4 +732,9 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     ingestStreamed,
     ingestMacLoginItemStreamed,
   };
+}
+
+// The Windows-log importers' option for an analyst-declared host (#1496); undefined when none.
+function declaredHost(base: ImportBase): { hostFallback: string; hostFallbackBasis: "analyst" } | undefined {
+  return base.assetHost ? { hostFallback: base.assetHost, hostFallbackBasis: "analyst" } : undefined;
 }

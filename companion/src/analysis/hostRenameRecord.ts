@@ -3,13 +3,15 @@
 // stateMerge unions the records; the evidence that produces them lives in analysis/ingest
 // (hostRenameEvidence.ts), which imports this and never the other way round.
 
-export type RenameBasis = "6011" | "machine-account" | "sam-domain" | "collector";
+export type RenameBasis = "6011" | "machine-account" | "sam-domain" | "collector" | "analyst";
 
 /**
  * `until` is the bound a record must be dated at or before to fold: for an evidence basis the
  * earliest observation of the renamed machine (an upper bound on the rename); for `collector` (a
  * hunt row whose Fqdn differed from its Computer, #1417) the last time the old name was seen — a
- * lower bound, so a record after it is NOT folded, the safe direction.
+ * lower bound, so a record after it is NOT folded, the safe direction. `analyst` is the same bound
+ * on an identity the ANALYST declared for an import (#1496), never something a collector or the
+ * machine wrote — kept apart so a later reviewer can tell observed identity from manual attribution.
  */
 export interface HostRenameRecord {
   formerName: string;

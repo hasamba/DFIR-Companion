@@ -12,6 +12,7 @@ export interface ImportRunRecord {
   startedAt: string;
   stateBefore: InvestigationState | null;
   minSeverity: Severity | undefined;
+  assetHost?: string; // the analyst-declared host for this import (#1496) — part of what shaped the run
   path: "ai" | "deterministic";
   /**
    * The importer options the route parsed beyond the severity floor (THOR `minLevel`, Cyber
@@ -55,6 +56,7 @@ export async function recordImportRun(ctx: RouteContext, input: ImportRunRecord)
       parameters: {
         importPath: input.path,
         minSeverity: input.minSeverity ?? null,
+        ...(input.assetHost ? { assetHost: input.assetHost } : {}), // the analyst's declaration is on the record (#1496)
         ...(input.parameters ?? {}),
       },
       filteringPolicy: {

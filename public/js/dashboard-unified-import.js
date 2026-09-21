@@ -130,11 +130,25 @@
           } else {
             // Small file: read in browser with progress (0→40%), then upload (bar holds at 40% until server N/M).
             const text = await readFileTextWithProgress(f);
+            // A Windows log export that names no collector (#1496): ask which host THIS file came
+            // from — per file, never carried to the next one. Blank keeps the record names; the
+            // third button skips the file. Large and binary uploads above are never probed.
+            let assetHost = "";
+            const probe = typeof probeBareWindowsExport === "function" ? probeBareWindowsExport(text) : null;
+            if (probe && probe.bare) {
+              const ans = await askImportAssetHost(f.name, probe.computers);
+              if (ans === null) {
+                dataFail++;
+                refused.push(`${f.name}: skipped by you`);
+                continue;
+              }
+              assetHost = ans;
+            }
             showImportProgress(40);
             r = await fetch(`/cases/${caseId}/import`, {
               method: "POST",
               headers: { "content-type": "application/json" },
-              body: JSON.stringify({ filename: f.name, text, minSeverity, webLogFormat }),
+              body: JSON.stringify({ filename: f.name, text, minSeverity, webLogFormat, ...(assetHost ? { assetHost } : {}) }),
             });
           }
           const jr = await r.json().catch(() => ({}));

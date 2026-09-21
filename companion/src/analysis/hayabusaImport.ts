@@ -62,6 +62,9 @@ export interface HayabusaImportOptions {
   // What the case already knows about its hosts (#1495) — see ChainsawImportOptions.
   knownRenames?: readonly HostRenameRecord[];
   collectorHostnames?: readonly string[];
+  // The host this file came from, when nothing in it says so (#1496) — see ChainsawImportOptions.
+  hostFallback?: string;
+  hostFallbackBasis?: "collector" | "analyst";
 }
 
 export interface HayabusaParseResult {
@@ -188,6 +191,7 @@ function mapRecord(
   fullMessage?: string,
   aliases?: HostRenameMap,
   renames?: HostRenameLedger,
+  fallback: { host: string; basis: "collector" | "analyst" } = { host: "", basis: "collector" },
 ): { mapped: MappedEvent; host: string } | null {
   const ruleTitle = firstStr(rec, ["RuleTitle", "Rule Title", "RuleName", "Title"]);
   const channel = firstStr(rec, ["Channel"]);
@@ -197,7 +201,7 @@ function mapRecord(
   // The collector's identity when the row carries one (a hunt export), else the record's Computer;
   // a record written under a former hostname says so instead of becoming a second host (#1417).
   // A bare timeline resolves the record's Computer through the file's own rename evidence (#1489).
-  const rh = resolveRowHost(rec, undefined, "", aliases);
+  const rh = resolveRowHost(rec, undefined, fallback.host, aliases, fallback.basis);
   const host = rh.asset;
   const level = firstStr(rec, ["Level"]).toLowerCase();
   const severity: Severity = LEVEL[level] ?? "Medium";
@@ -360,12 +364,13 @@ export function parseHayabusaTimeline(text: string, opts: HayabusaImportOptions 
   // The file's own rename evidence, read before any record is attributed (#1489). Only a
   // Velociraptor-wrapped row carries the raw `_Event` the rules read; a plain Hayabusa timeline
   // yields no evidence but still consumes what the wrapped rows of the same file establish.
-  const aliases = HostRenameMap.from(opts.knownRenames, opts.collectorHostnames);
+  const aliases = HostRenameMap.from(opts.knownRenames, opts.collectorHostnames, opts.hostFallback);
   aliases.learn(records.map((r) => r.rec));
+  const fallback = { host: (opts.hostFallback ?? "").trim(), basis: opts.hostFallbackBasis ?? "collector" };
   const renames = new HostRenameLedger(); // one Info marker per (host, former name), as Chainsaw does
 
   for (const { rec, details, fullMessage } of records) {
-    const r = mapRecord(rec, details, iocSink, fullMessage, aliases, renames);
+    const r = mapRecord(rec, details, iocSink, fullMessage, aliases, renames, fallback);
     if (!r) continue;
     if (r.host) hostTally.set(r.host, (hostTally.get(r.host) ?? 0) + 1);
     mapped.push(r.mapped);

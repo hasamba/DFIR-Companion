@@ -29,6 +29,7 @@ import type { Buffer } from "node:buffer";
 import type { ArtifactProvenance, CaseStore } from "../storage/caseStore.js";
 import type { AppOptions } from "./appOptions.js";
 import { dropDirOf } from "./dropFolder.js";
+import { assetHostFromDropRelpath } from "../analysis/assetHost.js";
 import {
   loadAllToolConfigs,
   toolForExtension,
@@ -65,6 +66,7 @@ export interface ExternalToolsDeps {
     originalName: string,
     minSeverity?: Severity,
     provenance?: ArtifactProvenance,
+    assetHost?: string, // the analyst-declared host for the output (#1496)
   ) => Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
   /** Persist a binary original verbatim as evidence (see ImportIngest.persistRawEvidence). */
   persistRawEvidence: (
@@ -244,7 +246,10 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
       await startSocratesAnalysis(caseId, { data, filename: name, dropRelpath });
       return true;
     }
-    const r = await runToolAndIngest(caseId, toolId, target, { cache });
+    // A raw file under drop/asset=<HOST>/ carries the analyst's declared host through the tool run
+    // (#1496); derived from the validated relpath, never stored beside it, so "Run pending" agrees.
+    const assetHost = dropRelpath !== undefined ? assetHostFromDropRelpath(dropRelpath) : "";
+    const r = await runToolAndIngest(caseId, toolId, target, { cache, ...(assetHost ? { assetHost } : {}) });
     if (!r.analyzed)
       throw new Error(`${toolId} ran but AI is off — output saved as evidence but not analyzed`);
     return false;
@@ -263,6 +268,7 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
       undoLabel?: string;
       preserveOriginal?: { bytes: Buffer; originalName: string };
       cache?: ToolRunCache;
+      assetHost?: string; // the analyst-declared host for the tool's output (#1496)
     } = {},
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }> {
     const cfg = liveToolConfigs().get(toolId);
@@ -322,11 +328,19 @@ export function createExternalTools(deps: ExternalToolsDeps): ExternalTools {
     }
     // The stored output's custody record now states HOW it was produced — parser version, argv,
     // rule-set hash, exit code, stderr tail, output hash — rather than a bare "companion" (#688).
-    const r = await ingestStreamed(caseId, kind, outputText, outName, undefined, {
-      collectedBy: "companion",
-      trigger: `tool:${toolId}`,
-      source: describeToolRun(provenance) + (preservedName ? ` | original ${preservedName}` : ""),
-    });
+    const r = await ingestStreamed(
+      caseId,
+      kind,
+      outputText,
+      outName,
+      undefined,
+      {
+        collectedBy: "companion",
+        trigger: `tool:${toolId}`,
+        source: describeToolRun(provenance) + (preservedName ? ` | original ${preservedName}` : ""),
+      },
+      opts.assetHost,
+    );
     if (before && opts.undoLabel && (r.addedEvents > 0 || r.addedIocs > 0)) {
       await pushImportCheckpoint(caseId, before, opts.undoLabel);
     }

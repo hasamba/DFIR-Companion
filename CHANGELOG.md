@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **"Which host did this file come from?"** — a Windows log export that names no collector (a GUI/notebook download) is asked, per file, which host it came from; its records land on that host with old names as former names, the case remembers the rename as an analyst assertion, and the drop folder takes the same through an `asset=<HOST>` subfolder (closes #1496)
 - **Story so far: intrusion shape, missing stages, copy as brief** — span/dwell/hosts/accounts strip, greyed cards for stages with no evidence linking to Evidence Gaps, and a one-click plain-text brief (closes #1493)
 - **Story so far in the Now cockpit** — one card per kill-chain stage with first seen, host, headline event and top finding (click to filter the timeline or open the finding) plus the two-sentence synthesis conclusion and a stale-since-synthesis tag, derived, no AI (closes #1487)
 - **2nd-opinion referee** — the panel labels model A/B, a configurable referee (default: model A) judges each disagreement from the cited events (closes #1466)

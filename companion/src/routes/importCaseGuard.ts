@@ -1,5 +1,6 @@
 import type { Express, NextFunction, Request, Response } from "express";
 import type { CaseStore } from "../storage/caseStore.js";
+import { parseAssetHost } from "../analysis/assetHost.js";
 
 // Every POST route that ingests evidence into a case: the unified sniffing import, the server-side
 // file import, and each per-format importer. Kept as ONE list so the existence guard below is
@@ -67,4 +68,23 @@ export function registerImportCaseGuard(app: Express, store: CaseStore): void {
       .status(404)
       .json({ error: `case ${caseId} does not exist — create it in the dashboard first` });
   });
+}
+
+/**
+ * The analyst's "asset for this import" (#1496) is validated AHEAD of the two generic routes, so a
+ * present-but-malformed value is refused with its reason instead of being ignored — an analyst who
+ * declared a host and got a 202 would believe every record landed on it. The normalised value is
+ * written back onto the body for buildImportBase to read; an absent or blank value passes through
+ * as no declaration. Mounted after the case-existence guard, on the same path list.
+ */
+export function registerImportAssetHostGuard(app: Express): void {
+  app.post(
+    ["/cases/:id/import", "/cases/:id/import-file"],
+    (req: Request, res: Response, next: NextFunction) => {
+      const parsed = parseAssetHost(req.body?.assetHost);
+      if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+      if (req.body && typeof req.body === "object") req.body.assetHost = parsed.host || undefined;
+      return next();
+    },
+  );
 }
