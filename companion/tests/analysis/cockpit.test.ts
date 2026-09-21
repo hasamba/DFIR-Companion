@@ -621,3 +621,46 @@ describe("deriveCockpit — next recommended step (#1424)", () => {
     expect(result.parked.map((card) => card.id)).toContain("step:s-1");
   });
 });
+
+describe("deriveCockpit — story so far (#1487)", () => {
+  it("carries the stage chain and the trimmed conclusion in the snapshot", () => {
+    const result = deriveCockpit({
+      state: state({
+        lastSummary: "An admin was phished. LSASS was dumped. The rest is unknown.",
+        attackerPath: "Phish, then dump.",
+        forensicTimeline: [
+          {
+            id: "e-phish",
+            timestamp: "2026-07-30T08:00:00.000Z",
+            description: "Phishing attachment opened on WS-01",
+            severity: "High",
+            mitreTechniques: ["T1566"],
+            relatedFindingIds: [],
+            sourceScreenshots: [],
+            asset: "WS-01",
+            importedAt: "2026-07-30T11:45:00.000Z",
+          },
+        ],
+      }),
+      synthMeta: { lastSynthesizedAt: "2026-07-30T11:00:00.000Z", lastDiff: null },
+      now: NOW,
+    });
+
+    expect(result.story.stages).toEqual([
+      {
+        tactic: "Initial Access",
+        firstSeenAt: "2026-07-30T08:00:00.000Z",
+        host: "WS-01",
+        eventCount: 1,
+        eventIds: ["e-phish"],
+        worstSeverity: "High",
+        headline: { eventId: "e-phish", description: "Phishing attachment opened on WS-01" },
+        finding: null,
+      },
+    ]);
+    expect(result.story.conclusion).toBe("An admin was phished. LSASS was dumped.");
+    expect(result.story.attackerPath).toBe("Phish, then dump.");
+    expect(result.story.synthesizedAt).toBe("2026-07-30T11:00:00.000Z");
+    expect(result.story.staleEventCount).toBe(1);
+  });
+});
