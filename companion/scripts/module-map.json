@@ -275,6 +275,7 @@
     "collectDirectiveResolve.ts": "analysis/workflow",
     "collectSatisfaction.ts": "analysis/workflow",
     "collectorDeployment.ts": "analysis/ingest",
+    "collectorLineage.ts": "analysis/ingest",
     "collectorMerge.ts": "analysis/timeline",
     "collectionPlan.ts": "analysis/workflow",
     "collectionPlanStore.ts": "analysis/workflow",

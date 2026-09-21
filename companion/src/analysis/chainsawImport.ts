@@ -54,6 +54,15 @@ import {
   withFormerHostSuffix,
   type RowHost,
 } from "./hostIdentity.js";
+import {
+  demoteDetectionToolScript,
+  engineScriptPath,
+  gradeScriptAsCollector,
+  isSystemScriptRow,
+  scriptHostPid,
+} from "./veloDetectionNoise.js";
+import { loadCollectorInfrastructure } from "./collectorDeployment.js";
+import { CollectorSpawnLineage, SPAWNED_SCRIPT_NOTE } from "./collectorLineage.js";
 
 type Row = Record<string, unknown>;
 
@@ -331,9 +340,22 @@ export function parseChainsawReport(text: string, opts: ChainsawImportOptions = 
   // sample set it unpacked next to its own binaries, and a bare Chainsaw file names no other machine
   // than the one inside the record — demoted to Info so it stays in the super-timeline for reference
   // but leaves the forensic view. See hostIdentity.ts and veloDetectionNoise.ts.
-  const push = (ev: MappedEvent, host: RowHost): void => {
+  //
+  // The collector's own PowerShell (#1488). `raw` is the Windows record the event came from, in the
+  // shape veloDetectionNoise reads: the flat row itself, or the embedded `Event` document. A script
+  // block the SYSTEM engine compiled from the collector's tool tree is graded here, as the
+  // Velociraptor path grades it (#1477). A SYSTEM block that names NO path is held until the whole
+  // file has been read, then attributed by process id if the collector's spawn (rule 2c) held that
+  // pid on that host when the block was logged — collectorLineage.ts has the bound.
+  const lineage = new CollectorSpawnLineage(loadCollectorInfrastructure());
+  const pathless: { raw: Row; ev: MappedEvent }[] = [];
+  const push = (ev: MappedEvent, host: RowHost, raw: Row): void => {
     ev.description = withFormerHostSuffix(ev.description, host.formerName);
     demoteSampleHost(ev, host);
+    demoteDetectionToolScript(raw, [ev]);
+    lineage.note(ev);
+    if (ev.origin !== "collector" && isSystemScriptRow(raw) && !engineScriptPath(raw))
+      pathless.push({ raw, ev });
     renames.note(host, ev.timestamp);
     mapped.push(ev);
   };
@@ -344,7 +366,7 @@ export function parseChainsawReport(text: string, opts: ChainsawImportOptions = 
       const rh = resolveRowHost(rec);
       if (rh.asset) hostTally.set(rh.asset, (hostTally.get(rh.asset) ?? 0) + 1);
       sawEvtx = true; // this shape always has EventID/Channel/EventData, i.e. a real EVTX row
-      push(mapFlatChainsawRow(rec, rh.asset, iocSink), rh);
+      push(mapFlatChainsawRow(rec, rh.asset, iocSink), rh, rec);
       continue;
     }
     const detection = isDetection(rec);
@@ -363,17 +385,23 @@ export function parseChainsawReport(text: string, opts: ChainsawImportOptions = 
       const host = rh.asset;
       if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
       const win = mapWindows(flat, host, iocSink);
+      const raw: Row = { Event: event };
       if (!win) {
-        if (meta) push(genericDetection(meta, host), rh);
+        if (meta) push(genericDetection(meta, host), rh, raw);
         continue;
       }
       sawEvtx = true;
-      if (meta) push(applySigma(win, meta), rh);
+      if (meta) push(applySigma(win, meta), rh, raw);
       else {
         win.sources = ["EVTX"];
-        push(win, rh);
+        push(win, rh, raw);
       }
     }
+  }
+  for (const { raw, ev } of pathless) {
+    const pid = scriptHostPid(raw);
+    if (pid !== undefined && lineage.claims(ev.asset ?? "", pid, ev.timestamp))
+      gradeScriptAsCollector(ev, SPAWNED_SCRIPT_NOTE);
   }
 
   const { events, groups } = aggregateEvents([...mapped, ...renames.events()], {
