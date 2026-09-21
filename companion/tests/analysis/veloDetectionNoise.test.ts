@@ -68,3 +68,62 @@ describe("mapYara self-scan — grades down without deleting indicators", () => 
     expect(r.iocs.some((i) => i.type === "process")).toBe(false);
   });
 });
+
+// The facts the engine writes about a script record, across the spellings the importers see (#1488).
+import { engineScriptPath, isSystemScriptRow, scriptHostPid } from "../../src/analysis/veloDetectionNoise.js";
+
+describe("scriptHostPid / isSystemScriptRow / engineScriptPath — the record's own facts", () => {
+  const flat = {
+    EventID: 4104,
+    SystemData: { Execution_attributes: { ProcessID: 10932 }, Security_attributes: { UserID: "S-1-5-18" } },
+    EventData: { Path: "C:\\x\\a.ps1", ScriptBlockText: "x" },
+  };
+  const crate = {
+    Event: {
+      System: {
+        EventID: { "#text": 4104 },
+        Execution: { "#attributes": { ProcessID: "4340" } },
+        Security: { "#attributes": { UserID: "S-1-5-18" } },
+      },
+      EventData: { ScriptBlockText: "x" },
+    },
+  };
+  const native = {
+    _Event: {
+      System: {
+        EventID: { Value: 4104 },
+        Execution: { ProcessID: 8044 },
+        Security: { UserID: "S-1-5-21-1-2-3-1001" },
+      },
+      EventData: { ScriptBlockText: "x" },
+    },
+  };
+
+  it("reads the engine pid from the flat Chainsaw, evtx-crate and native spellings", () => {
+    expect(scriptHostPid(flat)).toBe(10932);
+    expect(scriptHostPid(crate)).toBe(4340);
+    expect(scriptHostPid(native)).toBe(8044);
+  });
+
+  it("returns undefined for a missing or invalid pid", () => {
+    expect(scriptHostPid({ EventID: 4104 })).toBeUndefined();
+    expect(
+      scriptHostPid({ EventID: 4104, SystemData: { Execution_attributes: { ProcessID: 0 } } }),
+    ).toBeUndefined();
+    expect(
+      scriptHostPid({ EventID: 4104, SystemData: { Execution_attributes: { ProcessID: "abc" } } }),
+    ).toBeUndefined();
+  });
+
+  it("reads the SYSTEM SID from the evtx crate's #attributes and the #text event id", () => {
+    expect(isSystemScriptRow(crate)).toBe(true);
+    expect(isSystemScriptRow(flat)).toBe(true);
+    expect(isSystemScriptRow(native)).toBe(false); // a user SID
+    expect(isSystemScriptRow({ ...flat, EventID: 4688 })).toBe(false); // not a script record
+  });
+
+  it("names the script path only where the engine wrote one", () => {
+    expect(engineScriptPath(flat)).toBe("C:\\x\\a.ps1");
+    expect(engineScriptPath(crate)).toBe("");
+  });
+});
