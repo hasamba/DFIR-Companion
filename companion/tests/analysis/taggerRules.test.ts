@@ -35,6 +35,9 @@ describe("compileRuleset — validation", () => {
     expect(MATCHABLE_FIELDS).toContain("message");
     expect(MATCHABLE_FIELDS).toContain("sources");
     expect(MATCHABLE_FIELDS).toContain("port");
+    // The structured command line a process creation carries (#1501) — a rule that reads it does not
+    // depend on how the description happens to render `CommandLine=` this release.
+    expect(MATCHABLE_FIELDS).toContain("commandLine");
   });
 
   it("rejects a rule with no condition block", () => {

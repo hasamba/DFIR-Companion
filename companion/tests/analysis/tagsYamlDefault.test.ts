@@ -276,3 +276,156 @@ describe("bundled data/tags.yaml — privilege escalation", () => {
     }
   });
 });
+
+// A web-server process spawning a shell is the textbook web-app exploitation signal (#1501). Scenario
+// 017 had seven such rows in the forensic timeline at Medium and the synthesis still wrote "no
+// initial-access vector": Medium rows are not anchors and earn no backfill finding. Two rules grade
+// the chain High with T1190 before the AI sees it. Both are Windows-only (`.exe` on both names): on
+// Linux, httpd/php spawning `sh` or perl is ordinary CGI. The lab's shape is the RENAMED one — the
+// image is `tomcat9.exe` (really cmd.exe) running `/c <discovery>` under a PowerShell parent — so the
+// parent-name rule alone would have missed the very case that motivated it.
+describe("bundled data/tags.yaml — web-server spawned shells (#1501)", () => {
+  const RULES = compileText(
+    readFileSync(fileURLToPath(new URL("../../data/tags.yaml", import.meta.url)), "utf8"),
+  );
+
+  function tagged(rec: Record<string, unknown>): { severity: string; ruleIds: string[]; mitre: string[] } {
+    const mapped = parseSiemExport(JSON.stringify([{ "@timestamp": "2026-09-21T15:00:56Z", ...rec }]));
+    const event = {
+      ...mapped.events[0],
+      id: "e1",
+      relatedFindingIds: [],
+      sourceScreenshots: [],
+      mitreTechniques: mapped.events[0].mitreTechniques ?? [],
+    } as unknown as ForensicEvent;
+    const proposal = runTagger([event], RULES).perEvent[0];
+    const after = proposal ? applyToForensicEvent(event, proposal) : event;
+    return { severity: after.severity, ruleIds: proposal?.ruleIds ?? [], mitre: after.mitreTechniques };
+  }
+
+  const create = (data: Record<string, string>) => ({
+    channel: "Microsoft-Windows-Sysmon/Operational",
+    computer_name: "CONFLUENCE01",
+    event_id: 1,
+    message: `Process Create:\nImage: ${data.Image}\nCommandLine: ${data.CommandLine}`,
+    event_data: { ProcessId: "6928", ParentProcessId: "5892", ...data },
+  });
+
+  const TOMCAT = "C:\\Program Files\\Atlassian\\Confluence\\tomcat9.exe";
+
+  it("grades the lab shape High + T1190: a tomcat9.exe image running `/c whoami` under PowerShell", () => {
+    const r = tagged(
+      create({
+        Image: "C:\\Users\\Public\\Sim\\hosts\\CONFLUENCE01\\Confluence\\tomcat9.exe",
+        CommandLine:
+          '"C:\\Users\\Public\\Sim\\hosts\\CONFLUENCE01\\Confluence\\tomcat9.exe" /d /v:off /c echo CANARY tomcat9.exe -^> cmd.exe /c whoami',
+        ParentImage: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        ParentCommandLine: "powershell.exe",
+      }),
+    );
+    expect(r.ruleIds).toContain("web_server_named_shell");
+    expect(r.severity).toBe("High");
+    expect(r.mitre).toContain("T1190");
+    expect(r.mitre).toContain("T1036.003");
+  });
+
+  it("still fires with cmd's own modifiers before /k and a quoted image path with spaces", () => {
+    const r = tagged(
+      create({
+        Image: "C:\\Program Files\\Apache\\httpd.exe",
+        CommandLine: '"C:\\Program Files\\Apache\\httpd.exe" /q /v:on /e:on /t:0a /k whoami',
+        ParentImage: "C:\\Windows\\System32\\cmd.exe",
+        ParentCommandLine: "cmd.exe",
+      }),
+    );
+    expect(r.ruleIds).toContain("web_server_named_shell");
+    expect(r.severity).toBe("High");
+  });
+
+  it("grades the real shape High + T1190: tomcat9.exe spawning cmd.exe /c net user", () => {
+    const r = tagged(
+      create({
+        Image: "C:\\Windows\\System32\\cmd.exe",
+        CommandLine: "cmd.exe /c net user",
+        ParentImage: TOMCAT,
+        ParentCommandLine: `"${TOMCAT}" //RS//Tomcat9`,
+      }),
+    );
+    expect(r.ruleIds).toContain("web_server_shell_child");
+    expect(r.ruleIds).not.toContain("web_server_named_shell");
+    expect(r.severity).toBe("High");
+    expect(r.mitre).toContain("T1190");
+  });
+
+  it("grades an IIS worker spawning whoami.exe directly", () => {
+    const r = tagged(
+      create({
+        Image: "C:\\Windows\\System32\\whoami.exe",
+        CommandLine: "whoami",
+        ParentImage: "C:\\Windows\\System32\\inetsrv\\w3wp.exe",
+        ParentCommandLine: 'c:\\windows\\system32\\inetsrv\\w3wp.exe -ap "DefaultAppPool"',
+      }),
+    );
+    expect(r.ruleIds).toContain("web_server_shell_child");
+    expect(r.severity).toBe("High");
+  });
+
+  // ── the benign half ────────────────────────────────────────────────────────────────────────────
+  const untouched = (name: string, data: Record<string, string>) => {
+    it(`leaves ${name} alone`, () => {
+      const r = tagged(create(data));
+      expect(r.ruleIds, name).not.toContain("web_server_shell_child");
+      expect(r.ruleIds, name).not.toContain("web_server_named_shell");
+      expect(r.mitre, name).not.toContain("T1190");
+    });
+  };
+
+  untouched("a Jenkins build step (java spawning cmd.exe is by design)", {
+    Image: "C:\\Windows\\System32\\cmd.exe",
+    CommandLine: 'cmd.exe /c call "C:\\Jenkins\\workspace\\build.bat"',
+    ParentImage: "C:\\Program Files\\Jenkins\\jre\\bin\\java.exe",
+    ParentCommandLine: "java -jar jenkins.war",
+  });
+
+  untouched("an npm lifecycle script (node spawning cmd.exe)", {
+    Image: "C:\\Windows\\System32\\cmd.exe",
+    CommandLine: "cmd.exe /d /s /c tsc -p .",
+    ParentImage: "C:\\Program Files\\nodejs\\node.exe",
+    ParentCommandLine: "node C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npm-cli.js run build",
+  });
+
+  untouched("an IIS worker's console host", {
+    Image: "C:\\Windows\\System32\\conhost.exe",
+    CommandLine: "\\??\\C:\\Windows\\system32\\conhost.exe 0xffffffff -ForceV1",
+    ParentImage: "C:\\Windows\\System32\\inetsrv\\w3wp.exe",
+    ParentCommandLine: 'w3wp.exe -ap "DefaultAppPool"',
+  });
+
+  untouched("a genuine Tomcat service start (no shell switch)", {
+    Image: TOMCAT,
+    CommandLine: `"${TOMCAT}" //RS//Tomcat9`,
+    ParentImage: "C:\\Windows\\System32\\services.exe",
+    ParentCommandLine: "C:\\Windows\\system32\\services.exe",
+  });
+
+  untouched("Linux CGI — httpd spawning sh has no .exe and is ordinary", {
+    Image: "/bin/sh",
+    CommandLine: "sh -c /var/www/cgi-bin/report.pl",
+    ParentImage: "/usr/sbin/httpd",
+    ParentCommandLine: "/usr/sbin/httpd -DFOREGROUND",
+  });
+
+  untouched("an Apache directive that happens to contain ` /c ` — not a shell switch", {
+    Image: "C:\\Apache24\\bin\\httpd.exe",
+    CommandLine: 'httpd.exe -c "Redirect /c /new" -k start',
+    ParentImage: "C:\\Windows\\System32\\services.exe",
+    ParentCommandLine: "C:\\Windows\\system32\\services.exe",
+  });
+
+  untouched("cmd.exe /c under an ordinary parent", {
+    Image: "C:\\Windows\\System32\\cmd.exe",
+    CommandLine: "cmd.exe /c dir",
+    ParentImage: "C:\\Windows\\explorer.exe",
+    ParentCommandLine: "C:\\Windows\\Explorer.EXE",
+  });
+});
