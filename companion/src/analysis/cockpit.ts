@@ -1,3 +1,4 @@
+import { deriveCockpitStory, type CockpitStory } from "./cockpitStory.js";
 import type { FindingWorkflow } from "./findingWorkflow.js";
 import type { NearDuplicate } from "./hostAlias.js";
 import type { Hypothesis } from "./hypothesis.js";
@@ -97,6 +98,8 @@ export interface CockpitSnapshot {
     ready: boolean;
     blockers: CockpitCard[];
   };
+  // The "Story so far" strip (#1487): stage chain + two-sentence conclusion, forensic timeline only.
+  story: CockpitStory;
 }
 
 export interface CockpitInput {
@@ -697,5 +700,6 @@ export function deriveCockpit(input: CockpitInput): CockpitSnapshot {
     sections,
     parked: prioritize(parked),
     readiness: { ready: readinessReady, blockers: sections.blockers },
+    story: deriveCockpitStory(input.state, input.synthMeta),
   };
 }

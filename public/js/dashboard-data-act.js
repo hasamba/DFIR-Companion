@@ -32,6 +32,8 @@
     cockpitOpenTarget: (el) => cockpitOpenTarget(el),
     cockpitJumpEvent: (el) => cockpitJumpEvent(el.dataset.id),
     cockpitWorkspace: (el) => cockpitWorkspace(el),
+    cockpitStoryStage: (el) => cockpitStoryStage(el),
+    cockpitStoryOpen: (el) => cockpitStoryOpen(el),
     cockpitRetry: (el) => loadCockpit(),
     // Geo map
     renderGeoView: (el) => renderGeoView(),

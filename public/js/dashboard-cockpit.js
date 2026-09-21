@@ -80,6 +80,97 @@
     return `<div class="now-group${wide ? " now-wide" : ""}"><div class="now-group-head">${esc(label)}<span class="now-group-count">${cards.length}</span></div>${body}</div>`;
   }
 
+  // "Story so far" (#1487): the attack chain at one glance, above the workspaces row. The server
+  // derives it from the forensic timeline only (never the super-timeline) and trims the synthesis
+  // prose to two sentences; the client formats and escapes, nothing more.
+  const STORY_EMPTY_CHAIN =
+    "No staged activity yet — import evidence to build the chain.";
+  const STORY_EMPTY_TEXT =
+    "No synthesis yet — the conclusion appears after the first analysis run.";
+
+  function storyStageMs(stage) {
+    const t = Date.parse(stage && stage.firstSeenAt);
+    return Number.isFinite(t) ? t : null;
+  }
+
+  // `HH:MM` while every stage sits on one UTC day, `MM-DD HH:MM` once the chain spans days. Always
+  // UTC — the timeline is UTC, and a chip that disagrees with the row it filters to is a trap.
+  function storyStageTime(ms, withDay) {
+    if (ms === null) return "—";
+    const iso = new Date(ms).toISOString();
+    const clock = iso.slice(11, 16);
+    return withDay ? `${iso.slice(5, 10)} ${clock}` : clock;
+  }
+
+  function storySpansDays(stages) {
+    const days = new Set(
+      stages
+        .map(storyStageMs)
+        .filter((ms) => ms !== null)
+        .map((ms) => new Date(ms).toISOString().slice(0, 10)),
+    );
+    return days.size > 1;
+  }
+
+  function storyFreshness(story) {
+    if (!story.synthesizedAt) return { text: "no synthesis yet", stale: false };
+    const n = story.staleEventCount || 0;
+    if (n > 0)
+      return {
+        text: `stale — ${n} event${n === 1 ? "" : "s"} since synthesis`,
+        stale: true,
+      };
+    return { text: `synthesis ${cockpitAge(story.synthesizedAt)}`, stale: false };
+  }
+
+  function storyStageHtml(stage, withDay) {
+    const meta = [storyStageTime(storyStageMs(stage), withDay)];
+    if (stage.host) meta.push(stage.host);
+    meta.push(`${stage.eventCount || 0} ev`);
+    return (
+      `<button data-act="cockpitStoryStage" data-tactic="${escAttr(stage.tactic)}" class="now-stage">` +
+      `<span class="now-stage-name">${esc(stage.tactic)}</span>` +
+      `<span class="now-stage-meta">${esc(meta.join(" · "))}</span></button>`
+    );
+  }
+
+  function storyChainHtml(stages) {
+    if (!stages.length) return `<div class="now-empty">${esc(STORY_EMPTY_CHAIN)}</div>`;
+    const withDay = storySpansDays(stages);
+    return `<div class="now-story-chain">${stages
+      .map((stage) => storyStageHtml(stage, withDay))
+      .join(`<span class="now-stage-arrow">▶</span>`)}</div>`;
+  }
+
+  function storyTextHtml(story) {
+    if (!story.synthesizedAt)
+      return `<div class="now-empty">${esc(STORY_EMPTY_TEXT)}</div>`;
+    const conclusion = story.conclusion
+      ? `<p>${esc(story.conclusion)}</p>`
+      : "";
+    const path = story.attackerPath ? `${esc(story.attackerPath)} ` : "";
+    return (
+      `<div class="now-story-text">${conclusion}<p>${path}` +
+      `<button data-act="cockpitStoryOpen" data-panel="attack-path">Full path ↗</button> ` +
+      `<button data-act="cockpitStoryOpen" data-panel="summary">Executive summary ↗</button></p></div>`
+    );
+  }
+
+  // Empty string on an old server whose snapshot has no `story`, so the rest of the cockpit still
+  // paints.
+  function cockpitStoryHtml(story) {
+    if (!story) return "";
+    const fresh = storyFreshness(story);
+    const freshClass = fresh.stale
+      ? "now-story-fresh now-story-stale"
+      : "now-story-fresh";
+    return (
+      `<div class="now-story"><div class="now-story-head">Story so far ` +
+      `<span class="${freshClass}">${esc(fresh.text)}</span></div>` +
+      `${storyChainHtml(story.stages || [])}${storyTextHtml(story)}</div>`
+    );
+  }
+
   function renderCockpit(snapshot) {
     const { generatedAt: _generatedAt, ...stableSnapshot } = snapshot;
     const signature = JSON.stringify(stableSnapshot);
@@ -120,7 +211,7 @@
       `<button data-act="cockpitWorkspace" data-view="deep-dive" data-panel="sec-evidence">Evidence</button>` +
       `<button data-act="cockpitWorkspace" data-view="hunt-prep" data-panel="sec-iocs">Intelligence</button>` +
       `<button data-act="cockpitWorkspace" data-view="report" data-panel="sec-exec">Report</button></div>`;
-    body.innerHTML = `${workspaces}<div class="now-grid">${groups}${parked}</div>`;
+    body.innerHTML = `${cockpitStoryHtml(snapshot.story)}${workspaces}<div class="now-grid">${groups}${parked}</div>`;
   }
 
   async function loadCockpit(caseId) {
@@ -205,6 +296,28 @@
     }
   }
 
+  // Cockpit panel key → the view that shows it and the section to reveal. One table for the card
+  // targets (cockpitOpenTarget) and the story links (cockpitStoryOpen), so the two cannot drift.
+  const COCKPIT_PANELS = {
+    findings: ["lead", "sec-findings"],
+    hypotheses: ["deep-dive", "sec-hypotheses"],
+    questions: ["lead", "sec-questions"],
+    uncertainties: ["deep-dive", "sec-uncertainties"],
+    timeline: ["triage", "sec-timeline"],
+    playbook: ["hunt-prep", "sec-playbook"],
+    "super-timeline": ["deep-dive", "sec-super-timeline"],
+    summary: ["lead", "sec-exec"],
+    "attack-path": ["lead", "sec-attack-path"],
+    report: ["report", "sec-case-details"],
+  };
+
+  function cockpitRevealPanel(panelKey) {
+    const [viewId, sectionId] = COCKPIT_PANELS[panelKey] || [];
+    const view = DASHBOARD_VIEWS.find((item) => item.id === viewId);
+    if (view) applyDashboardView(view, { persist: true, rerender: true });
+    if (sectionId) setTimeout(() => revealSection(sectionId), 0);
+  }
+
   function cockpitOpenTarget(el) {
     if (!lastCockpit) return;
     const cards = [
@@ -222,7 +335,7 @@
       document.getElementById("jobsBadge").click();
       return;
     }
-    // Deliberately NOT in the panelIds/panelViews tables below: those switch the analyst into
+    // Deliberately NOT in COCKPIT_PANELS: those entries switch the analyst into
     // another view first, and the duplicate-host panel is reachable from the one they are already
     // in — it is data-gated, and its own module opens the gate. Sending them to Analyst to answer a
     // yes/no question would throw away the cockpit they are working in.
@@ -230,42 +343,28 @@
       revealHostDuplicates();
       return;
     }
-    const panelIds = {
-      findings: "sec-findings",
-      hypotheses: "sec-hypotheses",
-      questions: "sec-questions",
-      uncertainties: "sec-uncertainties",
-      timeline: "sec-timeline",
-      playbook: "sec-playbook",
-      "super-timeline": "sec-super-timeline",
-      summary: "sec-exec",
-      "attack-path": "sec-attack-path",
-      report: "sec-case-details",
-    };
-    const sectionId = panelIds[target.panel];
-    const panelViews = {
-      findings: "lead",
-      hypotheses: "deep-dive",
-      questions: "lead",
-      uncertainties: "deep-dive",
-      timeline: "triage",
-      playbook: "hunt-prep",
-      "super-timeline": "deep-dive",
-      summary: "lead",
-      "attack-path": "lead",
-      report: "report",
-    };
-    const view = DASHBOARD_VIEWS.find(
-      (item) => item.id === panelViews[target.panel],
-    );
-    if (view) applyDashboardView(view, { persist: true, rerender: true });
-    if (sectionId) setTimeout(() => revealSection(sectionId), 0);
+    cockpitRevealPanel(target.panel);
     if (target.findingId) setTimeout(() => jumpToFinding(target.findingId), 0);
     else if (target.hypothesisId)
       setTimeout(() => jumpToHypothesis(target.hypothesisId), 0);
     else if (target.questionId)
       setTimeout(() => jumpToQuestion(target.questionId), 0);
     else if (target.eventId) setTimeout(() => jumpToEvent(target.eventId), 0);
+  }
+
+  // A story chip filters the forensic timeline to exactly that stage's events. The section is
+  // revealed first so a profile that hides the timeline still shows the filtered rows.
+  function cockpitStoryStage(el) {
+    const stages =
+      (lastCockpit && lastCockpit.story && lastCockpit.story.stages) || [];
+    const stage = stages.find((item) => item.tactic === el.dataset.tactic);
+    if (!stage || !(stage.eventIds || []).length) return;
+    revealSection("sec-timeline");
+    filterTimelineToEventIds(stage.eventIds, `${stage.tactic} stage`);
+  }
+
+  function cockpitStoryOpen(el) {
+    cockpitRevealPanel(el.dataset.panel);
   }
 
   function cockpitWorkspace(el) {
@@ -319,6 +418,8 @@
   window.cockpitAction = cockpitAction;
   window.cockpitJumpEvent = cockpitJumpEvent;
   window.cockpitOpenTarget = cockpitOpenTarget;
+  window.cockpitStoryOpen = cockpitStoryOpen;
+  window.cockpitStoryStage = cockpitStoryStage;
   window.cockpitWorkspace = cockpitWorkspace;
   window.loadCockpit = loadCockpit;
 })();

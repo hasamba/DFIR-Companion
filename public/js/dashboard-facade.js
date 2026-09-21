@@ -362,6 +362,8 @@
     "cockpitAction",
     "cockpitJumpEvent",
     "cockpitOpenTarget",
+    "cockpitStoryOpen",
+    "cockpitStoryStage",
     "cockpitWorkspace",
     "loadCockpit",
     // Customer exposure + false positives. `initExposureFp` is the sentinel.
