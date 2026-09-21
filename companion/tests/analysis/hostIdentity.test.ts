@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { resolveRowHost, withFormerHostSuffix } from "../../src/analysis/hostIdentity.js";
-import { parseVelociraptorJson } from "../../src/analysis/velociraptorImport.js";
+import {
+  parseVelociraptorJson,
+  parseVelociraptorJsonProgress,
+} from "../../src/analysis/velociraptorImport.js";
 import { parseChainsawReport } from "../../src/analysis/chainsawImport.js";
 import { parseHayabusaTimeline } from "../../src/analysis/hayabusaImport.js";
 
@@ -430,5 +433,281 @@ describe("Velociraptor flow import — old build names stay on the one client (#
     const r = parseVelociraptorJson(JSON.stringify([flowEvtxRow(BUILD_NAME)]));
     expect(r.events.every((e) => e.asset === BUILD_NAME)).toBe(true);
     expect(r.events.some((e) => e.description.includes("former hostname"))).toBe(false);
+  });
+});
+
+// #1489 — the same machine exported from the Velociraptor GUI as JSONL: no Fqdn / ClientId / FlowId
+// on any row, so nothing names the collector. INC-2026-032 came out as THREE hosts (the Vagrant box
+// name, the post-sysprep name, the provisioned name) and synthesis read the provisioning as a
+// backdoor account plus lateral movement — the same events 031 (a hunt, with Fqdn) graded Low. The
+// file itself says the machine was renamed: the machine's own account under the SYSTEM session, the
+// SAM domain of a local account, the System 6011 event. hostRenameEvidence.ts reads those; the
+// importers learn them in a pre-pass and resolve a former name to the current one.
+const MID_NAME = "WIN-0NNTB2RTNB1";
+const FINAL_NAME = "DESKTOP-16OJFO6";
+
+// Windows.EventLogs.CondensedAccountUsage rows, as the real 032 export carries them.
+function condensedRow(over: Record<string, unknown>): Record<string, unknown> {
+  return {
+    EventTime: "2026-08-26T13:49:52Z",
+    EventID: 4648,
+    Description: "LOGON_ATTEMPT_EXPLICIT_CREDENTIALS",
+    DomainName: "WORKGROUP",
+    LogonId: 999,
+    CredentialsUsedFor4648: "Font Driver Host\\UMFD-0",
+    LogonType: "-",
+    IpAddress: "-",
+    ClientName: "-",
+    ...over,
+  };
+}
+
+describe("Velociraptor import — a bare export learns the machine's former names from its own rows (#1489)", () => {
+  const rows = [
+    // Provisioning under the base-image name (would be a sample-corpus demotion on its own).
+    { ...detectRaptorEvtxRow(), Fqdn: undefined, ClientId: undefined, FlowId: undefined },
+    condensedRow({ Computer: MID_NAME, UserName: `${FORMER}$` }),
+    condensedRow({ EventTime: "2026-08-26T13:52:06Z", Computer: FINAL_NAME, UserName: `${MID_NAME}$` }),
+    condensedRow({
+      EventTime: "2026-08-26T13:52:52Z",
+      Computer: FINAL_NAME,
+      EventID: 4624,
+      DomainName: FINAL_NAME,
+      UserName: "vagrant",
+      LogonId: 757245,
+      LogonType: 2,
+      ClientName: MID_NAME,
+    }),
+  ];
+  const r = parseVelociraptorJson(JSON.stringify(rows), { aggregate: false, minSeverity: "Info" });
+  const events = r.events.filter((e) => !isRenameMark(e));
+
+  it("every row lands on the current name; the older ones say which name they were logged under", () => {
+    expect(new Set(events.map((e) => e.asset))).toEqual(new Set([FINAL_NAME]));
+    expect(events.filter((e) => e.description.includes(`former hostname ${FORMER}`))).toHaveLength(1);
+    expect(events.filter((e) => e.description.includes(`former hostname ${MID_NAME}`))).toHaveLength(1);
+  });
+  it("the base-image rows are the machine's own history, not a sample corpus", () => {
+    const provisioning = events.find((e) => e.description.includes(`former hostname ${FORMER}`))!;
+    expect(provisioning.severity).not.toBe("Info");
+    expect(provisioning.description).not.toContain("sample corpus");
+  });
+  it("one rename marker per former name, on the current host", () => {
+    const marks = r.events.filter(isRenameMark);
+    expect(marks.map((m) => m.asset)).toEqual([FINAL_NAME, FINAL_NAME]);
+    expect(marks.some((m) => m.description.includes(`was named ${FORMER}`))).toBe(true);
+    expect(marks.some((m) => m.description.includes(`was named ${MID_NAME}`))).toBe(true);
+  });
+  it("a record under the old name dated AFTER the evidence is a different machine reusing it", () => {
+    const later = condensedRow({
+      EventTime: "2026-09-30T10:00:00Z",
+      Computer: FORMER,
+      EventID: 4624,
+      DomainName: FORMER,
+      UserName: "svc",
+      LogonId: 4242,
+    });
+    const r2 = parseVelociraptorJson(JSON.stringify([...rows, later]), {
+      aggregate: false,
+      minSeverity: "Info",
+    });
+    expect(r2.events.some((e) => e.asset === FORMER && e.timestamp.startsWith("2026-09-30"))).toBe(true);
+  });
+  it("the sync and progress drivers agree", async () => {
+    const p = await parseVelociraptorJsonProgress(JSON.stringify(rows), {
+      aggregate: false,
+      minSeverity: "Info",
+    });
+    expect(p.events.map((e) => [e.asset, e.description])).toEqual(
+      r.events.map((e) => [e.asset, e.description]),
+    );
+  });
+});
+
+describe("Chainsaw import — a bare flat file folds the SAM's lagging name into the current host (#1489)", () => {
+  const bare = (over: Record<string, unknown>): Record<string, unknown> => ({
+    ...chainsawFlatRow(over),
+    Fqdn: undefined,
+    ClientId: undefined,
+    FlowId: undefined,
+    _OrgId: undefined,
+  });
+  const rows = [
+    // The old name is seen as a Computer in the same file (a service row from just before the rename).
+    bare({
+      EventTime: "2026-08-26T13:50:08Z",
+      Detection: "Suspicious Paths Service Installation",
+      Severity: "medium",
+      Computer: MID_NAME,
+      Channel: "System",
+      EventID: "7045",
+      SystemData: { EventID: 7045, Computer: MID_NAME, Channel: "System" },
+      EventData: { ImagePath: "\\SystemRoot\\System32\\drivers\\e1i68x64.sys", ServiceName: "Intel NIC" },
+    }),
+    // The account creation, written as DESKTOP while the SAM still answered to the old name.
+    bare({
+      EventTime: "2026-08-26T13:52:13Z",
+      Detection: "New User Created",
+      Severity: "medium",
+      Computer: FINAL_NAME,
+      EventID: "4720",
+      SystemData: { EventID: 4720, Computer: FINAL_NAME, Channel: "Security" },
+      EventData: {
+        TargetUserName: "vagrant",
+        TargetDomainName: MID_NAME,
+        TargetSid: "S-1-5-21-908230818-3748298786-230204725-1001",
+        SubjectUserSid: "S-1-5-18",
+        SubjectUserName: `${FINAL_NAME}$`,
+        SubjectDomainName: "WORKGROUP",
+      },
+    }),
+  ];
+  const r = parseChainsawReport(JSON.stringify(rows), { aggregate: false, minSeverity: "Info" });
+
+  it("both rows are one host; the service row carries the former-name note and keeps its grade", () => {
+    const events = r.events.filter((e) => !isRenameMark(e));
+    expect(new Set(events.map((e) => e.asset))).toEqual(new Set([FINAL_NAME]));
+    const service = events.find((e) => e.description.includes("7045"))!;
+    expect(service.description).toContain(`[logged under former hostname ${MID_NAME}]`);
+    expect(service.severity).toBe("Medium");
+    expect(r.events.filter(isRenameMark)).toHaveLength(1);
+  });
+  it("a domain controller's account management never renames the DC", () => {
+    const dc = bare({
+      Computer: "DC01",
+      EventID: "4720",
+      SystemData: { EventID: 4720, Computer: "DC01", Channel: "Security" },
+      EventData: {
+        TargetUserName: "bob",
+        TargetDomainName: "CONTOSO",
+        SubjectUserName: "admin",
+        SubjectDomainName: "CONTOSO",
+      },
+    });
+    const r2 = parseChainsawReport(JSON.stringify([dc]), { aggregate: false, minSeverity: "Info" });
+    expect(r2.events.map((e) => e.asset)).toEqual(["DC01"]);
+    expect(r2.events.filter(isRenameMark)).toHaveLength(0);
+  });
+});
+
+describe("Hayabusa import — a Velociraptor-wrapped timeline resolves through the same evidence (#1489)", () => {
+  const wrapped = (over: Record<string, unknown>): Record<string, unknown> => ({
+    Channel: "Sec",
+    Level: "med",
+    _Source: "Windows.Hayabusa.Rules",
+    ...over,
+  });
+  const rows = [
+    wrapped({
+      Timestamp: "2026-08-26 13:49:52.000 +00:00",
+      Computer: MID_NAME,
+      EID: 4648,
+      RuleTitle: "Explicit Credentials Logon",
+      Details: { User: `${FORMER}$` },
+      _Event: {
+        System: {
+          EventID: 4648,
+          Computer: MID_NAME,
+          Channel: "Security",
+          TimeCreated: { SystemTime: "2026-08-26T13:49:52Z" },
+        },
+        EventData: { SubjectUserName: `${FORMER}$`, SubjectDomainName: "WORKGROUP", SubjectLogonId: "0x3e7" },
+      },
+    }),
+    wrapped({
+      Timestamp: "2025-12-05 03:02:24.000 +00:00",
+      Computer: FORMER,
+      Channel: "PwSh",
+      EID: 4104,
+      Level: "high",
+      RuleTitle: "PowerShell Web Download",
+      Details: { ScriptBlock: "Invoke-WebRequest https://community.chocolatey.org/install.ps1" },
+    }),
+  ];
+  const r = parseHayabusaTimeline(JSON.stringify(rows), { aggregate: false, minSeverity: "Info" });
+
+  it("the Vagrant-name row is the renamed host's own history: current name, note, grade kept", () => {
+    const events = r.events.filter((e) => !isRenameMark(e));
+    expect(new Set(events.map((e) => e.asset))).toEqual(new Set([MID_NAME]));
+    const dl = events.find((e) => e.description.includes("PowerShell Web Download"))!;
+    expect(dl.description).toContain(`[logged under former hostname ${FORMER}]`);
+    expect(dl.severity).toBe("High");
+    expect(r.events.filter(isRenameMark)).toHaveLength(1);
+  });
+});
+
+describe("resolveRowHost — a ForwardedEvents record is never re-homed, in any shape (#1489)", () => {
+  const evidence = condensedRow({ Computer: FINAL_NAME, UserName: `${MID_NAME}$` });
+  it("flat Chainsaw with the channel only under SystemData, and a Velociraptor-wrapped _Event", () => {
+    const flat = {
+      EventTime: "2026-08-26T13:00:00Z",
+      Computer: MID_NAME,
+      EventID: 4624,
+      SystemData: { EventID: 4624, Computer: MID_NAME, Channel: "ForwardedEvents" },
+      EventData: {},
+    };
+    const wrapped = {
+      Timestamp: "2026-08-26T13:00:00Z",
+      Computer: MID_NAME,
+      _Event: {
+        System: {
+          EventID: 4624,
+          Channel: "ForwardedEvents",
+          Computer: MID_NAME,
+          TimeCreated: { SystemTime: "2026-08-26T13:00:00Z" },
+        },
+        EventData: {},
+      },
+    };
+    const r = parseVelociraptorJson(JSON.stringify([evidence, flat, wrapped]), {
+      aggregate: false,
+      minSeverity: "Info",
+    });
+    const forwarded = r.events.filter((e) => !isRenameMark(e) && e.timestamp.startsWith("2026-08-26T13:00"));
+    expect(forwarded).toHaveLength(2);
+    expect(forwarded.map((e) => e.asset)).toEqual([MID_NAME, MID_NAME]);
+    expect(forwarded.some((e) => e.description.includes("former hostname"))).toBe(false);
+  });
+  it("nested Chainsaw: the embedded event's channel decides, not the wrapper's", () => {
+    const rows = [
+      {
+        ...chainsawFlatRow({
+          Computer: FINAL_NAME,
+          EventID: "4648",
+          SystemData: { EventID: 4648, Computer: FINAL_NAME, Channel: "Security" },
+          EventData: {
+            SubjectUserName: `${MID_NAME}$`,
+            SubjectDomainName: "WORKGROUP",
+            SubjectLogonId: "0x3e7",
+          },
+        }),
+        Fqdn: undefined,
+        ClientId: undefined,
+        FlowId: undefined,
+        _OrgId: undefined,
+      },
+      {
+        timestamp: "2026-08-26T13:00:00Z",
+        Channel: "Security", // the detection wrapper's own field
+        rule: { name: "Some Rule", level: "medium" },
+        document: {
+          data: {
+            Event: {
+              System: {
+                EventID: 4624,
+                Channel: "ForwardedEvents",
+                Computer: MID_NAME,
+                TimeCreated: { "#attributes": { SystemTime: "2026-08-26T13:00:00Z" } },
+              },
+              EventData: { TargetUserName: "vagrant", LogonType: 3 },
+            },
+          },
+        },
+      },
+    ];
+    const r = parseChainsawReport(JSON.stringify(rows), { aggregate: false, minSeverity: "Info" });
+    const fwd = r.events.find((e) => e.description.includes("Some Rule"))!;
+    expect(fwd.asset).toBe(MID_NAME);
+    expect(fwd.description).not.toContain("former hostname");
   });
 });

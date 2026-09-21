@@ -76,6 +76,7 @@ import {
   isDetectionToolLocation,
 } from "./veloDetectionNoise.js";
 import { HostRenameLedger, demoteSampleHost, resolveRowHost, withFormerHostSuffix } from "./hostIdentity.js";
+import { HostRenameMap } from "./hostRenameEvidence.js";
 import { gradeYaraHit, yaraHitAggKey } from "./yaraGrade.js";
 import {
   sigmaAggKey,
@@ -1508,26 +1509,25 @@ export function extractRows(text: string): { rows: Row[]; format: string } {
 
 // ───────────────────────────── top-level parse ─────────────────────────────
 
-// Shared mutable accumulators + fallbacks for one parse run. Threaded into mapRowToEvents so the
-// per-row dispatch is identical whether the driver is the synchronous loop or the chunked async one.
+// Shared mutable accumulators + fallbacks for one parse run, threaded into mapRowToEvents so the
+// per-row dispatch is identical under the synchronous loop, the chunked async one and the bulk driver.
 interface VrParseCtx {
   fallbackArtifact: string;
   fallbackHost: string;
   iocSink: Map<string, SiemIoc>;
   hostTally: Map<string, number>;
   renames: HostRenameLedger; // one Info marker per (host, former name) seen this import (#1417)
+  aliases: HostRenameMap; // the file's own rename evidence, learned before any row is mapped (#1489)
 }
 
-// Map ONE raw row to its forensic event(s). Most rows yield a single event; an MFT row yields one per
-// distinct MACB timestamp. Returns the events plus how many detections it produced (so the driver can
-// tally). Pure w.r.t. control flow — no yielding — so both parse drivers share this exact logic.
+// Map ONE raw row to its forensic event(s) — one per row, or one per distinct MACB timestamp for an
+// MFT row — plus how many detections it produced. No yielding, so every parse driver shares it.
 function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; detections: number } {
-  // `row` is ALREADY normalized (`Line` payload unwrap + ES-indexed push reshape) — see prepareRows,
-  // which both drivers run first. Normalizing again here is not free: an Elastic row keeps its
-  // `artifact_` index, so the gate re-opens and the whole collapse/un-flatten walk runs a second
-  // time on every row of the import.
+  // `row` is ALREADY normalized (`Line` unwrap + ES-indexed push reshape) — see prepareRows, which
+  // both drivers run first. Normalizing again is not free: an Elastic row keeps its `artifact_`
+  // index, so the gate re-opens and the whole collapse/un-flatten walk runs again on every row.
   const artifact = artifactName(row) || ctx.fallbackArtifact;
-  const rh = resolveRowHost(row, undefined, ctx.fallbackHost); // collector (row, else the flow's client) over the record's Computer (#1417, #1458)
+  const rh = resolveRowHost(row, undefined, ctx.fallbackHost, ctx.aliases); // collector (row, else the flow's client) over the record's Computer (#1417, #1458), else the file's rename evidence (#1489)
   const host = rh.asset || ctx.fallbackHost; // a row's own host always wins; fallback only fills the gap
   if (host) ctx.hostTally.set(host, (ctx.hostTally.get(host) ?? 0) + 1);
   ctx.renames.note(rh, pickTime(row));
@@ -1730,31 +1730,30 @@ function emptyVrResult(): VelociraptorParseResult {
 function newVrCtx(opts: VelociraptorImportOptions): VrParseCtx {
   return {
     fallbackArtifact: (opts.artifact ?? "").trim(),
-    // A single-client FLOW export has no per-row host column — the whole collection is implicitly for one
-    // client — so the resolved hostname is threaded in here to attribute rows that carry no host.
+    // A single-client FLOW export has no per-row host column — the whole collection is implicitly
+    // for one client — so the resolved hostname is threaded in to attribute rows that carry no host.
     fallbackHost: (opts.hostFallback ?? "").trim(),
     iocSink: new Map<string, SiemIoc>(),
     hostTally: new Map<string, number>(),
     renames: new HostRenameLedger(),
+    aliases: new HostRenameMap(),
   };
 }
 
 // Normalize every row, then rejoin any PowerShell 4104 script block that Windows split across
 // several events. Shared by both parse drivers so they stay byte-for-byte identical. Normalizing
-// here (rather than only per-row inside mapRowToEvents) is what lets the fragment reader see the
-// native nested `EventData`; mapRowToEvents still normalizes, which is a no-op on these rows.
+// here (not only per-row inside mapRowToEvents) is what lets the fragment reader see the native
+// nested `EventData`; mapRowToEvents still normalizes, which is a no-op on these rows.
 export function prepareRows(rows: Row[]): Row[] {
   return consolidateVeloScriptBlocks(rows.map(normalizeRow));
 }
 
-// Rows per event-loop turn — big enough that the per-chunk yield overhead is negligible.
-const CHUNK = 5000;
+const CHUNK = 5000; // rows per event-loop turn — big enough that the per-chunk yield overhead is negligible
 
 // The async twin of prepareRows. Normalization is the expensive half and is per-row, so it is
 // chunked and yields between chunks; consolidation needs the whole file at once (fragments of one
-// block can sit anywhere in it) but only scans rows, which is cheap next to normalizing them.
-// Without this the "streams progress instead of freezing" contract broke on the FIRST call: every
-// row was normalized up front with no yield and no progress report.
+// block can sit anywhere in it) but only scans rows, which is cheap next to normalizing them. Without
+// it every row was normalized up front with no yield — the progress contract broke on the first call.
 async function prepareRowsAsync(rows: Row[]): Promise<Row[]> {
   const normalized: Row[] = [];
   for (let i = 0; i < rows.length; i++) {
@@ -1764,8 +1763,8 @@ async function prepareRowsAsync(rows: Row[]): Promise<Row[]> {
   return consolidateVeloScriptBlocks(normalized);
 }
 
-// Synchronous parse (unchanged behaviour) — used by the many callers that need a result inline (import
-// preview, detection routing, tests). For a large import prefer parseVelociraptorJsonProgress.
+// Synchronous parse — for callers needing a result inline (preview, detection routing, tests). For a
+// large import prefer parseVelociraptorJsonProgress.
 export function parseVelociraptorJson(
   text: string,
   opts: VelociraptorImportOptions = {},
@@ -1774,6 +1773,7 @@ export function parseVelociraptorJson(
   const rows = prepareRows(rawRows);
   if (rows.length === 0) return emptyVrResult();
   const ctx = newVrCtx(opts);
+  ctx.aliases.learn(rows); // the whole file's rename evidence before any row is attributed (#1489)
   const mapped: MappedEvent[] = [];
   let detections = 0;
   for (const rawRow of rows) {
@@ -1784,9 +1784,8 @@ export function parseVelociraptorJson(
   return finalizeVrParse(mapped, ctx, rows.length, format, detections, opts);
 }
 
-// Async parse for large imports: byte-for-byte the same result as parseVelociraptorJson, but it maps
-// rows in chunks, reports (rowsDone, rowsTotal) after each chunk, and yields to the event loop between
-// chunks — so a multi-hundred-thousand-row parse streams live progress instead of freezing the server.
+// Async parse for large imports: byte-for-byte the same result as parseVelociraptorJson, but maps rows
+// in chunks, reporting (rowsDone, rowsTotal) and yielding to the event loop between chunks.
 export async function parseVelociraptorJsonProgress(
   text: string,
   opts: VelociraptorImportOptions = {},
@@ -1800,6 +1799,7 @@ export async function parseVelociraptorJsonProgress(
   const rows = await prepareRowsAsync(rawRows);
   const total = rows.length;
   const ctx = newVrCtx(opts);
+  ctx.aliases.learn(rows); // as the synchronous driver: the whole file first (#1489)
   const mapped: MappedEvent[] = [];
   let detections = 0;
   for (let i = 0; i < total; i++) {
@@ -1815,7 +1815,7 @@ export async function parseVelociraptorJsonProgress(
   return finalizeVrParse(mapped, ctx, total, format, detections, opts);
 }
 
-// The per-row mapping the bulk (batched) driver reuses (ingest/velociraptorBulk.ts, #1439), so a
-// batched import maps every row byte-for-byte as the two drivers above do. Not a parse API.
+// The per-row mapping the bulk driver reuses (ingest/velociraptorBulk.ts, #1439) — every row mapped
+// byte-for-byte as the two drivers above do. Not a parse API.
 export const vrBulkInternals = { mapRowToEvents, newVrCtx };
 export type { VrParseCtx };

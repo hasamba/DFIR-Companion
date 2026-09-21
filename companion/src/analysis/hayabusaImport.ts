@@ -47,7 +47,8 @@ import {
   isScriptBlockTextKey,
   type HayabusaRecord,
 } from "./scriptBlockFragments.js";
-import { demoteSampleHost, resolveRowHost, withFormerHostSuffix } from "./hostIdentity.js";
+import { HostRenameLedger, demoteSampleHost, resolveRowHost, withFormerHostSuffix } from "./hostIdentity.js";
+import { HostRenameMap } from "./hostRenameEvidence.js";
 import { evtxRecordIdentity } from "./evtxRecordId.js";
 
 type Row = Record<string, unknown>;
@@ -179,6 +180,8 @@ function mapRecord(
   details: Row,
   iocSink: Map<string, SiemIoc>,
   fullMessage?: string,
+  aliases?: HostRenameMap,
+  renames?: HostRenameLedger,
 ): { mapped: MappedEvent; host: string } | null {
   const ruleTitle = firstStr(rec, ["RuleTitle", "Rule Title", "RuleName", "Title"]);
   const channel = firstStr(rec, ["Channel"]);
@@ -187,7 +190,8 @@ function mapRecord(
 
   // The collector's identity when the row carries one (a hunt export), else the record's Computer;
   // a record written under a former hostname says so instead of becoming a second host (#1417).
-  const rh = resolveRowHost(rec);
+  // A bare timeline resolves the record's Computer through the file's own rename evidence (#1489).
+  const rh = resolveRowHost(rec, undefined, "", aliases);
   const host = rh.asset;
   const level = firstStr(rec, ["Level"]).toLowerCase();
   const severity: Severity = LEVEL[level] ?? "Medium";
@@ -242,6 +246,7 @@ function mapRecord(
   description = withFormerHostSuffix(description.slice(0, 600), rh.formerName);
 
   const timestamp = hayaTime(firstStr(rec, ["Timestamp", "@timestamp", "datetime"]));
+  renames?.note(rh, timestamp);
   // Identity of the Windows record this detection fired on (#688), so the SAME record read later by
   // Chainsaw (or by the native EVTX path) merges with this row instead of doubling the timeline.
   // Hayabusa emits `RecordID` in its standard/verbose profiles; a profile without it simply mints
@@ -334,15 +339,21 @@ export function parseHayabusaTimeline(text: string, opts: HayabusaImportOptions 
   const iocSink = new Map<string, SiemIoc>();
   const hostTally = new Map<string, number>();
   const mapped: MappedEvent[] = [];
+  // The file's own rename evidence, read before any record is attributed (#1489). Only a
+  // Velociraptor-wrapped row carries the raw `_Event` the rules read; a plain Hayabusa timeline
+  // yields no evidence but still consumes what the wrapped rows of the same file establish.
+  const aliases = new HostRenameMap();
+  aliases.learn(records.map((r) => r.rec));
+  const renames = new HostRenameLedger(); // one Info marker per (host, former name), as Chainsaw does
 
   for (const { rec, details, fullMessage } of records) {
-    const r = mapRecord(rec, details, iocSink, fullMessage);
+    const r = mapRecord(rec, details, iocSink, fullMessage, aliases, renames);
     if (!r) continue;
     if (r.host) hostTally.set(r.host, (hostTally.get(r.host) ?? 0) + 1);
     mapped.push(r.mapped);
   }
 
-  const { events, groups } = aggregateEvents(mapped, {
+  const { events, groups } = aggregateEvents([...mapped, ...renames.events()], {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? maxEventsDefault(),

@@ -54,6 +54,7 @@ import {
   withFormerHostSuffix,
   type RowHost,
 } from "./hostIdentity.js";
+import { HostRenameMap } from "./hostRenameEvidence.js";
 import {
   demoteDetectionToolScript,
   engineScriptPath,
@@ -341,6 +342,14 @@ export function parseChainsawReport(text: string, opts: ChainsawImportOptions = 
   // than the one inside the record — demoted to Info so it stays in the super-timeline for reference
   // but leaves the forensic view. See hostIdentity.ts and veloDetectionNoise.ts.
   //
+  // A bare file (a GUI/notebook export, no Fqdn on any row) can still name its own former hostnames
+  // (#1489): the pre-pass below reads the rename evidence every record carries — the flat row as-is,
+  // a nested detection through its embedded event(s) — so a record under the old name lands on the
+  // current one with the former-name note, and is not a sample corpus either.
+  const aliases = new HostRenameMap();
+  for (const rec of records)
+    aliases.learn(isFlatChainsawRow(rec) ? [rec] : eventDocs(rec).map((event) => ({ Event: event })));
+
   // The collector's own PowerShell (#1488). `raw` is the Windows record the event came from, in the
   // shape veloDetectionNoise reads: the flat row itself, or the embedded `Event` document. A script
   // block the SYSTEM engine compiled from the collector's tool tree is graded here, as the
@@ -363,7 +372,7 @@ export function parseChainsawReport(text: string, opts: ChainsawImportOptions = 
   for (const rec of records) {
     if (isFlatChainsawRow(rec)) {
       detections++;
-      const rh = resolveRowHost(rec);
+      const rh = resolveRowHost(rec, undefined, "", aliases);
       if (rh.asset) hostTally.set(rh.asset, (hostTally.get(rh.asset) ?? 0) + 1);
       sawEvtx = true; // this shape always has EventID/Channel/EventData, i.e. a real EVTX row
       push(mapFlatChainsawRow(rec, rh.asset, iocSink), rh, rec);
@@ -375,13 +384,15 @@ export function parseChainsawReport(text: string, opts: ChainsawImportOptions = 
     if (docs.length === 0) {
       // A detection with no embedded event → keep the verdict; a non-Windows/empty raw
       // record → nothing to map, counts toward `dropped`.
-      if (detection) mapped.push(genericDetection(readSigmaMeta(rec), resolveRowHost(rec).asset));
+      if (detection)
+        mapped.push(genericDetection(readSigmaMeta(rec), resolveRowHost(rec, undefined, "", aliases).asset));
       continue;
     }
     const meta = detection ? readSigmaMeta(rec) : null;
     for (const event of docs) {
       const { rec: flat, host: recordName } = toFlatRecord(event);
-      const rh = resolveRowHost(rec, recordName);
+      // The embedded event dates the record; `rec` (the detection) carries the collector keys.
+      const rh = resolveRowHost({ ...rec, Event: event }, recordName, "", aliases);
       const host = rh.asset;
       if (host) hostTally.set(host, (hostTally.get(host) ?? 0) + 1);
       const win = mapWindows(flat, host, iocSink);

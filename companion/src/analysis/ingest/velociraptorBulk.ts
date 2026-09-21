@@ -323,6 +323,12 @@ export async function runVelociraptorBulk(
   const stream = openVelociraptorRowStream(text);
   if (!stream) return null;
   const startedAt = new Date().toISOString();
+  // The file's own rename evidence must be complete BEFORE the first batch is attributed and written
+  // (#1489): a batch already appended cannot be re-homed when the 6011 row turns up later, so an
+  // evidence-only pass streams the rows once more, mapping nothing. This is what keeps the bulk and
+  // whole-file drivers byte-for-byte identical on host identity, whatever the row order or batch size.
+  const evidence = openVelociraptorRowStream(text);
+  if (!evidence) return null;
   const t0 = performance.now();
   const stamp = { importedAt: opts.importedAt, importBatchId: randomUUID() };
   const run: BulkRunHandle = { importBatchId: stamp.importBatchId, fence: await sink.beginRun(caseId), mode };
@@ -396,6 +402,18 @@ export async function runVelociraptorBulk(
   let batch: Row[] = [];
   let lastOffset = 0;
   try {
+    // Best-effort: a malformed file throws here first, but the mapping pass below hits the same row
+    // and reports it with its batch context, rolling the run back as before — so this pass only
+    // keeps what it learned and lets that pass be the one that fails.
+    try {
+      let seen = 0;
+      for (const item of evidence.rows) {
+        vrCtx.aliases.learn(prepareRows([item.row]));
+        if (++seen % sink.batchRows === 0) await yieldToLoop();
+      }
+    } catch {
+      /* reported by the mapping pass */
+    }
     for (const item of stream.rows) {
       batch.push(item.row);
       lastOffset = item.offset;

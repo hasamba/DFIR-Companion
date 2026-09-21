@@ -537,3 +537,54 @@ describe("memory bound", () => {
     expect(peak - before).toBeLessThan(300 * 1024 * 1024);
   }, 60_000);
 });
+
+describe("runVelociraptorBulk — host identity does not depend on row order or batch size (#1489)", () => {
+  // A GUI export of Windows.EventLogs.CondensedAccountUsage: the rows written under the machine's
+  // old name come FIRST and the rows that prove the rename come last — after the first batch would
+  // already have been written. The evidence-only pass runs before any batch, so both drivers agree.
+  const condensed = (over: Record<string, unknown>) => ({
+    EventTime: "2026-08-26T13:49:52Z",
+    EventID: 4648,
+    Description: "LOGON_ATTEMPT_EXPLICIT_CREDENTIALS",
+    DomainName: "WORKGROUP",
+    LogonId: 999,
+    CredentialsUsedFor4648: "Font Driver Host\\UMFD-0",
+    LogonType: "-",
+    IpAddress: "-",
+    ClientName: "-",
+    ...over,
+  });
+  const rows = [
+    condensed({
+      EventTime: "2025-12-05T03:27:45Z",
+      Computer: "WIN-UK1GV882OK6",
+      EventID: 4647,
+      Description: "ACCOUNT_INITITATED_LOGOFF",
+      DomainName: "WIN-UK1GV882OK6",
+      UserName: "Administrator",
+      LogonId: 359797,
+    }),
+    condensed({ Computer: "WIN-0NNTB2RTNB1", UserName: "WIN-UK1GV882OK6$" }),
+    condensed({
+      EventTime: "2026-08-26T13:52:06Z",
+      Computer: "DESKTOP-16OJFO6",
+      UserName: "WIN-0NNTB2RTNB1$",
+    }),
+  ];
+
+  it("a row under the old name in batch 1 lands on the current host, with the note", async () => {
+    const sink = memorySink({ batchRows: 1, gate: "Info" });
+    await runVelociraptorBulk(
+      sink,
+      "c1",
+      JSON.stringify({ "Windows.EventLogs.CondensedAccountUsage": rows }),
+      baseOpts("0010_Windows.EventLogs.CondensedAccountUsage.json"),
+      "super-only",
+    );
+    const events = sink.superRows.filter((e) => !/ was named .* until /.test(e.description));
+    expect(events).toHaveLength(3);
+    expect(new Set(events.map((e) => e.asset))).toEqual(new Set(["DESKTOP-16OJFO6"]));
+    expect(events[0].description).toContain("[logged under former hostname WIN-UK1GV882OK6]");
+    expect(sink.superRows.filter((e) => / was named .* until /.test(e.description))).toHaveLength(2);
+  });
+});

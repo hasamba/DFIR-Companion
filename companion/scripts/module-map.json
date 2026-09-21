@@ -397,6 +397,7 @@
     "hindsightImport.ts": "analysis/ingest",
     "hostAlias.ts": "analysis/timeline",
     "hostIdentity.ts": "analysis/ingest",
+    "hostRenameEvidence.ts": "analysis/ingest",
     "mftTimeHints.ts": "analysis/ingest",
     "hostBinding.ts": "analysis/timeline",
     "hostDuplicateDismissals.ts": "analysis/timeline",
