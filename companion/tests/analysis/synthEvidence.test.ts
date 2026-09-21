@@ -139,7 +139,7 @@ describe("renderStructuredTags — destination facts and the renamed-binary flag
         message: "function Invoke-Sim { Invoke-LoopbackPort 4321 '203.0.113.22:4321 Metasploit C2' }",
       }),
     );
-    expect(t).toBe(" <endpoint:203.0.113.22:4321 (labelled c2)>");
+    expect(t).toBe(" <mentions-endpoint:203.0.113.22:4321 (labelled c2)>");
   });
 
   it("adds nothing to a bare row", () => {

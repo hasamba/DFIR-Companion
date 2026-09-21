@@ -536,19 +536,22 @@ describe("groundAndScoreFindings — decoy binary gate (#1502)", () => {
     description: MIMI_DESC,
     processName: "mimikatz.exe",
     commandLine: "mimikatz.exe privilege::debug",
-    sources: ["Chainsaw"],
+    sources: ["Velociraptor", "Chainsaw"],
+    mitreTechniques: ["T1036.003", "T1003"],
   });
   const mft = ev({
     id: "m",
     description: "DetectRaptor MFT detection: Mimikatz Tools — mimikatz.exe",
     path: "\\\\.\\C:\\T\\mimikatz.exe",
     sources: ["Velociraptor"],
+    artifactName: "DetectRaptor.Windows.Detection.MFT",
   });
   const prefetch = ev({
     id: "p",
     description: "MIMIKATZ.EXE-A84515FA.pf",
     path: "\\\\.\\C:\\Windows\\Prefetch\\MIMIKATZ.EXE-A84515FA.pf",
     sources: ["Velociraptor"],
+    artifactName: "DetectRaptor.Windows.Detection.MFT",
   });
   const base = { iocs: [], graphLinkedEventIds: new Set<string>(["d", "m"]) };
 

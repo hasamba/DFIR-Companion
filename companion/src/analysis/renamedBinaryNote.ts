@@ -66,11 +66,31 @@ export function renderDecoyTag(e: Pick<ForensicEvent, "description">): string {
   return `<renamed-binary:${pair} — the file identifies as ${shell}, so this row does not substantiate execution of the named tool>`;
 }
 
-// A file-presence artifact ABOUT the decoy file: no process identity, no network fields, and a path
-// whose leaf is the decoy's name or its prefetch (`MIMIKATZ.EXE-A84515FA.pf`). MFT, Amcache and
-// Prefetch rows for the dropped file are this. A row with a process identity is behavioral evidence
-// in its own right — Sysmon EID 10 on lsass, an EDR verdict — and is never folded in by name.
+// The note is TRUSTED for grading only on a row the rename importer produced or correlation merged
+// its note onto: a Velociraptor source and the T1036 masquerading tag the mapper stamps. The note
+// text alone is not enough — a command line is adversary-controlled and is copied into
+// descriptions, so a literal `[renamed binary: x is really cmd.exe]` typed as an argument must not
+// make a genuine execution row look like a decoy (Codex code review, #1502). The prompt tag still
+// renders from the text: the model already reads that text, the tag only makes it legible.
+const RENAME_SOURCE = "velociraptor";
+const RENAME_TECHNIQUES = new Set(["T1036", "T1036.003"]);
+function isTrustedRenameRow(e: ForensicEvent): boolean {
+  const fromCollector = (e.sources ?? []).some((s) => s.toLowerCase() === RENAME_SOURCE);
+  return fromCollector && (e.mitreTechniques ?? []).some((t) => RENAME_TECHNIQUES.has(t));
+}
+
+// The artifacts that record a file's PRESENCE and nothing about what it did: MFT, Amcache,
+// Shimcache, Prefetch, USN. A row from any other artifact — a YARA hit on the content, an EDR or
+// AV verdict, a THOR filescan — is adjudication of its own and stays independent even when it
+// carries no process fields (Codex code review).
+const PRESENCE_ARTIFACT_RE = /\b(MFT|Amcache|Shimcache|AppCompatCache|Prefetch|USN|NTFS)\b/iu;
+
+// A file-presence artifact ABOUT the decoy file: a presence artifact, no process identity, no
+// network fields, and a path whose leaf is the decoy's name or its prefetch
+// (`MIMIKATZ.EXE-A84515FA.pf`). A row with a process identity is behavioral evidence in its own
+// right — Sysmon EID 10 on lsass, an EDR verdict — and is never folded in by name.
 function isFileTraceOf(e: ForensicEvent, decoyLeaves: ReadonlySet<string>): boolean {
+  if (!PRESENCE_ARTIFACT_RE.test(e.artifactName ?? "")) return false;
   if (e.processName || e.commandLine || e.pid !== undefined) return false;
   if (e.srcIp || e.dstIp || e.port !== undefined) return false;
   if (!e.path) return false;
@@ -87,22 +107,25 @@ export interface DecoyBinary {
 }
 
 /**
- * The decoy file names a finding rests on, when it rests on NOTHING else: every supporting event is
- * either a decoy-shell row or a file trace of one of those decoys. Any other event — behavioral,
- * network, or simply unrelated — returns [] and the finding keeps its grading. The gate lowers only
- * when it is certain; a wrongly cited row is the content-mismatch class, not this one.
+ * The decoys a finding rests on, when it rests on NOTHING else: every supporting event is either a
+ * trusted decoy-shell row or a presence-artifact trace of one of those decoys. Any other event —
+ * behavioral, network, an adjudicated detection, or simply unrelated — returns [] and the finding
+ * keeps its grading. The gate lowers only when it is certain; a wrongly cited row is the
+ * content-mismatch class, not this one.
  */
 export function decoyOnlyEvidence(supporting: readonly ForensicEvent[]): DecoyBinary[] {
   const decoys = new Map<string, DecoyBinary>(); // lowercased on-disk leaf → the pair
+  const isDecoyRow = (e: ForensicEvent): boolean => !!decoyShellOf(e) && isTrustedRenameRow(e);
   for (const e of supporting) {
-    const onDisk = decoyShellOf(e);
-    const note = onDisk ? parseRenamedBinaryNote(e.description) : null;
-    if (onDisk && note) decoys.set(onDisk.toLowerCase(), { onDisk, original: leaf(note.original) });
+    if (!isDecoyRow(e)) continue;
+    const onDisk = decoyShellOf(e) as string;
+    const note = parseRenamedBinaryNote(e.description);
+    if (note) decoys.set(onDisk.toLowerCase(), { onDisk, original: leaf(note.original) });
   }
   if (decoys.size === 0) return [];
   const leaves = new Set(decoys.keys());
   for (const e of supporting) {
-    if (decoyShellOf(e)) continue;
+    if (isDecoyRow(e)) continue;
     if (!isFileTraceOf(e, leaves)) return [];
   }
   return [...decoys.values()];

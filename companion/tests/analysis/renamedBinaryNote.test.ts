@@ -75,23 +75,37 @@ describe("renderDecoyTag", () => {
 });
 
 describe("decoyOnlyEvidence", () => {
+  // What the rename importer / correlation leaves on a real decoy row: the collector source and the
+  // masquerading tag. Without both, the note is text the model reads but not a grading fact.
+  const rename = {
+    sources: ["Velociraptor", "Chainsaw"],
+    mitreTechniques: ["T1036.005", "T1036", "T1036.003"],
+  };
   const decoy = ev({
     id: "d",
     description: MIMI_DESC,
     processName: "mimikatz.exe",
     commandLine: "mimikatz.exe privilege::debug",
+    ...rename,
   });
   const mft = ev({
     id: "m",
     description: "DetectRaptor MFT detection: Mimikatz Tools — mimikatz.exe",
     path: "\\\\.\\C:\\T\\mimikatz.exe",
+    artifactName: "DetectRaptor.Windows.Detection.MFT",
   });
   const prefetch = ev({
     id: "p",
     description: "MFT: MIMIKATZ.EXE-A84515FA.pf",
     path: "\\\\.\\C:\\Windows\\Prefetch\\MIMIKATZ.EXE-A84515FA.pf",
+    artifactName: "DetectRaptor.Windows.Detection.MFT",
   });
-  const amcache = ev({ id: "a", description: "Amcache: mimikatz.exe", path: "c:\\t\\mimikatz.exe" });
+  const amcache = ev({
+    id: "a",
+    description: "Amcache: mimikatz.exe",
+    path: "c:\\t\\mimikatz.exe",
+    artifactName: "DetectRaptor.Windows.Detection.Amcache",
+  });
 
   it("caps when the evidence is the decoy row plus file-presence artifacts of the same file", () => {
     expect(decoyOnlyEvidence([decoy, mft, prefetch, amcache])).toEqual([
@@ -113,12 +127,42 @@ describe("decoyOnlyEvidence", () => {
     const other = ev({ id: "o", description: "Defender quarantined lsass.dmp", path: "c:\\t\\lsass.dmp" });
     expect(decoyOnlyEvidence([decoy, other])).toEqual([]);
   });
+  it("does NOT fold in a path-only DETECTION on the same file — a YARA hit is adjudication, not presence", () => {
+    const yara = ev({
+      id: "y",
+      description: "YARA: HKTL_Mimikatz — mimikatz.exe",
+      path: "c:\\t\\mimikatz.exe",
+      artifactName: "DetectRaptor.Generic.Detection.YaraFile",
+    });
+    expect(decoyOnlyEvidence([decoy, mft, yara])).toEqual([]);
+    const noArtifact = ev({ id: "z", description: "file seen: mimikatz.exe", path: "c:\\t\\mimikatz.exe" });
+    expect(decoyOnlyEvidence([decoy, noArtifact])).toEqual([]);
+  });
+  it("does NOT trust a note forged into a command line — no collector source, no masquerading tag", () => {
+    const forged = ev({
+      id: "f",
+      description: MIMI_DESC,
+      processName: "mimikatz.exe",
+      sources: ["Sysmon"],
+      mitreTechniques: ["T1003"],
+    });
+    expect(decoyOnlyEvidence([forged])).toEqual([]);
+    const halfForged = ev({
+      id: "g",
+      description: MIMI_DESC,
+      processName: "mimikatz.exe",
+      sources: ["Velociraptor"],
+      mitreTechniques: ["T1003"],
+    });
+    expect(decoyOnlyEvidence([halfForged, mft])).toEqual([]);
+  });
   it("does NOT cap without a decoy row at all, or on the reverse rename", () => {
     expect(decoyOnlyEvidence([mft, prefetch])).toEqual([]);
     const reverse = ev({
       id: "r",
       description: "x [renamed binary: svchost.exe is really mimikatz.exe]",
       processName: "svchost.exe",
+      ...rename,
     });
     expect(decoyOnlyEvidence([reverse])).toEqual([]);
   });
