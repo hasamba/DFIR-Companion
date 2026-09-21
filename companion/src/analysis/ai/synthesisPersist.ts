@@ -5,6 +5,8 @@ import type { StateStore } from "../stateStore.js";
 import type { IntelRetirementDecision, InvestigationState, TimelineEntry } from "../stateTypes.js";
 import { mergeIntelState } from "../intelHistory.js";
 import { annotateSightingsWithLabIntel, upsertLabIntel } from "../labIntel.js";
+import { mergeHostRenameRecords } from "../hostRenameRecord.js";
+import { carryHostRenames } from "../hostRenameCarry.js";
 
 /**
  * The synthesis write, and the lost-update guard that makes it safe (#453, split from `synthesize`).
@@ -119,24 +121,40 @@ export function mergeConcurrentAdditions(
 
   // Re-annotate over the WHOLE merged state at the end: a sandbox import that annotated a sighting
   // while synthesis ran would otherwise have its registry record kept and its annotation lost,
-  // because the sighting itself is taken from `next` (the pre-import snapshot) (#932 item 5).
-  return annotateSightingsWithLabIntel({
-    ...next,
-    forensicTimeline: addedEvents.length
-      ? sortByEventTime([...next.forensicTimeline, ...addedEvents])
-      : next.forensicTimeline,
-    iocs: mergedIocs,
-    openThreads: addedThreads.length ? [...next.openThreads, ...addedThreads] : next.openThreads,
-    timeline: addedTimeline.length ? [...next.timeline, ...addedTimeline] : next.timeline,
-    // The sandbox registry is keyed, so two writers cannot conflict: union everything the snapshot
-    // did not have with everything this synthesis kept (#932 item 5).
-    labIntel: upsertLabIntel(next.labIntel, latest.labIntel ?? []),
-    // Analyst decisions recorded while synthesis ran are kept: keyed by finding id, newest wins.
-    intelRetirementDecisions: mergeRetirementDecisions(
-      next.intelRetirementDecisions,
-      latest.intelRetirementDecisions,
-    ),
-  });
+  // because the sighting itself is taken from `next` (the pre-import snapshot) (#932 item 5). The
+  // rename carry is re-run for the same reason (#1495): a row an import re-homed while synthesis
+  // ran is taken from `next` too, and the unioned ledger below would otherwise be saved beside the
+  // old asset — the pass recomputes every eligible row from its record name, so it lands the same.
+  return carryHostRenames(
+    annotateSightingsWithLabIntel({
+      ...next,
+      forensicTimeline: addedEvents.length
+        ? sortByEventTime([...next.forensicTimeline, ...addedEvents])
+        : next.forensicTimeline,
+      iocs: mergedIocs,
+      openThreads: addedThreads.length ? [...next.openThreads, ...addedThreads] : next.openThreads,
+      timeline: addedTimeline.length ? [...next.timeline, ...addedTimeline] : next.timeline,
+      // The sandbox registry is keyed, so two writers cannot conflict: union everything the snapshot
+      // did not have with everything this synthesis kept (#932 item 5).
+      labIntel: upsertLabIntel(next.labIntel, latest.labIntel ?? []),
+      // The rename ledger an import wrote while synthesis ran is kept (#1495): keyed unions, no conflict.
+      ...(mergeHostRenameRecords(next.hostRenames, latest.hostRenames).length
+        ? { hostRenames: mergeHostRenameRecords(next.hostRenames, latest.hostRenames) }
+        : {}),
+      ...(next.collectorHostnames?.length || latest.collectorHostnames?.length
+        ? {
+            collectorHostnames: [
+              ...new Set([...(next.collectorHostnames ?? []), ...(latest.collectorHostnames ?? [])]),
+            ],
+          }
+        : {}),
+      // Analyst decisions recorded while synthesis ran are kept: keyed by finding id, newest wins.
+      intelRetirementDecisions: mergeRetirementDecisions(
+        next.intelRetirementDecisions,
+        latest.intelRetirementDecisions,
+      ),
+    }),
+  ).state;
 }
 
 /** Union two decision lists by finding id, the newest `decidedAt` winning. */

@@ -58,6 +58,8 @@ function applyEventIdentity(target: SiemEvent, m: MappedEvent): void {
   else delete target.fileModified;
   if (m.asset) target.asset = m.asset;
   else delete target.asset;
+  if (m.assetRecord) target.assetRecord = m.assetRecord;
+  else delete target.assetRecord;
   if (m.processName) target.processName = m.processName;
   else delete target.processName;
   if (m.parentName) target.parentName = m.parentName;

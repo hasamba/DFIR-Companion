@@ -49,6 +49,7 @@ import {
 } from "./scriptBlockFragments.js";
 import { HostRenameLedger, demoteSampleHost, resolveRowHost, withFormerHostSuffix } from "./hostIdentity.js";
 import { HostRenameMap } from "./hostRenameEvidence.js";
+import { mergeHostRenameRecords, type HostRenameRecord } from "./hostRenameRecord.js";
 import { evtxRecordIdentity } from "./evtxRecordId.js";
 
 type Row = Record<string, unknown>;
@@ -58,6 +59,9 @@ export interface HayabusaImportOptions {
   minSeverity?: Severity;
   maxEvents?: number;
   maxIocs?: number;
+  // What the case already knows about its hosts (#1495) — see ChainsawImportOptions.
+  knownRenames?: readonly HostRenameRecord[];
+  collectorHostnames?: readonly string[];
 }
 
 export interface HayabusaParseResult {
@@ -69,6 +73,8 @@ export interface HayabusaParseResult {
   groups: number; // distinct event groups before the cap
   format: string; // "json" | "csv" | "empty"
   hostname: string;
+  hostRenames: HostRenameRecord[]; // what this file taught the case (#1495)
+  collectorHostnames: string[];
 }
 
 // Hayabusa level vocabulary → our Severity. Hayabusa abbreviates in some versions
@@ -276,6 +282,7 @@ function mapRecord(
     ...(md5 && !sha256 ? { md5 } : {}),
     ...(pathRaw ? { path: pathRaw } : {}),
     ...(host ? { asset: host } : {}),
+    ...(rh.assetRecord ? { assetRecord: rh.assetRecord } : {}), // a bare row's own name (#1495)
     ...(processName ? { processName } : {}),
     ...(parentName ? { parentName } : {}),
     ...(commandLine ? { commandLine } : {}),
@@ -333,7 +340,18 @@ export function parseHayabusaTimeline(text: string, opts: HayabusaImportOptions 
   const { records, format } = extractHayabusaRecords(text);
   const total = records.length;
   if (total === 0) {
-    return { events: [], iocs: [], total: 0, kept: 0, dropped: 0, groups: 0, format: "empty", hostname: "" };
+    return {
+      events: [],
+      iocs: [],
+      total: 0,
+      kept: 0,
+      dropped: 0,
+      groups: 0,
+      format: "empty",
+      hostname: "",
+      hostRenames: [],
+      collectorHostnames: [],
+    };
   }
 
   const iocSink = new Map<string, SiemIoc>();
@@ -342,7 +360,7 @@ export function parseHayabusaTimeline(text: string, opts: HayabusaImportOptions 
   // The file's own rename evidence, read before any record is attributed (#1489). Only a
   // Velociraptor-wrapped row carries the raw `_Event` the rules read; a plain Hayabusa timeline
   // yields no evidence but still consumes what the wrapped rows of the same file establish.
-  const aliases = new HostRenameMap();
+  const aliases = HostRenameMap.from(opts.knownRenames, opts.collectorHostnames);
   aliases.learn(records.map((r) => r.rec));
   const renames = new HostRenameLedger(); // one Info marker per (host, former name), as Chainsaw does
 
@@ -371,5 +389,7 @@ export function parseHayabusaTimeline(text: string, opts: HayabusaImportOptions 
     groups,
     format,
     hostname,
+    hostRenames: mergeHostRenameRecords(aliases.records(), renames.records()),
+    collectorHostnames: renames.collectorHostnames(),
   };
 }

@@ -136,6 +136,19 @@ export const deltaSchema = z.object({
       }),
     )
     .optional(),
+  // The renames a Windows-log import learned and the collector identities it saw (#1495) —
+  // written by the deterministic importers, never by the model (stripped in stripAiExtractedFrom).
+  hostRenames: z
+    .array(
+      z.object({
+        formerName: z.string().min(1),
+        currentName: z.string().min(1),
+        until: z.string().min(1),
+        basis: z.enum(["6011", "machine-account", "sam-domain", "collector"]),
+      }),
+    )
+    .optional(),
+  collectorHostnames: z.array(z.string().min(1)).optional(),
   // Real incident events with their actual timestamps, extracted from the evidence.
   forensicEvents: z
     .array(
@@ -144,6 +157,8 @@ export const deltaSchema = z.object({
         // Evidence origin (#932 item 5). Promotion parses through this schema; without the field
         // a promoted lab row would arrive in the forensic timeline as a host observation.
         origin: z.enum(["lab", "collector"]).optional().catch(undefined),
+        // The name the record wrote (#1495); importer-only provenance, stripped from a model response.
+        assetRecord: z.string().optional().catch(undefined),
         // Event's real time as shown in the artifact. A model that returns a NAIVE stamp (no "Z", no
         // offset) is tagged UTC here, at the one boundary every AI event crosses (#757) — otherwise
         // each downstream Date.parse reads it in the server's own zone, and the same delta yields a
@@ -460,8 +475,9 @@ export function renameForgedFindingIds(delta: AnalysisDelta, known: ReadonlySet<
 // extraction/synthesis call site (never at the deterministic-importer call sites, which build
 // their delta objects field-by-field and set extractedFrom themselves via resolveExtractedFrom).
 export function stripAiExtractedFrom(delta: AnalysisDelta): AnalysisDelta {
+  const { hostRenames: _renames, collectorHostnames: _collectors, ...rest } = delta; // #1495: a model never asserts a rename or a collector
   return {
-    ...delta,
+    ...rest,
     // #1266: `provenance` is stripped with it. A model can neither MARK an IOC (a false "weak
     // evidence" claim) nor un-mark one — and because stateMerge.ts clears a marker only on an
     // incoming sighting that carries extractedFrom, a model restating a marked value cannot
@@ -472,7 +488,7 @@ export function stripAiExtractedFrom(delta: AnalysisDelta): AnalysisDelta {
     // a model must never be able to assert it on a host observation — a prompt-injected or merely
     // weak response saying origin:"lab" would silently misclassify real evidence. Same reason
     // extractedFrom is stripped above: provenance is not the model's to claim.
-    forensicEvents: (delta.forensicEvents ?? []).map(({ origin, ...rest }) => rest),
+    forensicEvents: (delta.forensicEvents ?? []).map(({ origin, assetRecord, ...rest }) => rest),
   };
 }
 

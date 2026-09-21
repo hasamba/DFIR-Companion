@@ -32,16 +32,19 @@
 // no timestamp is not aliased. Names compare by shortHostName, as hostIdentity does. Pure.
 
 import { getCI, getPath, isObject, str } from "./siemImport.js";
-import { recordComputer, shortHostName } from "./hostIdentity.js";
+import { recordCollector, recordComputer, shortHostName } from "./hostIdentity.js";
+import type { HostRenameRecord, RenameBasis } from "./hostRenameRecord.js";
 import { vrTime } from "./veloRowTime.js";
 
 type Row = Record<string, unknown>;
+
+export type { HostRenameRecord, RenameBasis } from "./hostRenameRecord.js";
 
 export interface RenameEvidence {
   formerName: string;
   currentName: string;
   timestamp: string; // UTC ISO; "" when the record carries no time (the edge is then never applied)
-  rule: "6011" | "machine-account" | "sam-domain";
+  rule: RenameBasis;
   // Rule c: honoured only once `formerName` was seen as a record's Computer.
   needsFormerSeen?: true;
 }
@@ -202,6 +205,7 @@ interface Edge {
   currentKey: string;
   ts: number; // epoch ms of the evidence; NaN when the record carried no time
   needsFormerSeen: boolean;
+  rule: RenameBasis;
 }
 
 interface Hop {
@@ -217,13 +221,50 @@ interface Hop {
  */
 export class HostRenameMap {
   private readonly seen = new Set<string>();
+  private readonly collectors = new Set<string>();
   private readonly edges: Edge[] = [];
   private hops: Map<string, Hop> | null = null;
+
+  /**
+   * A map seeded with what the case already knows (#1495): every persisted record is one more
+   * edge, dated by its bound, and every collector identity the case has seen is a name this map
+   * will never treat as a former one. A file's own evidence is then learned on top.
+   */
+  static from(
+    records: readonly HostRenameRecord[] = [],
+    collectorHostnames: readonly string[] = [],
+    importCollector = "", // the import's own client (a flow export's hostFallback): a collector too
+  ): HostRenameMap {
+    const m = new HostRenameMap();
+    for (const r of records)
+      m.add({ formerName: r.formerName, currentName: r.currentName, timestamp: r.until, rule: r.basis });
+    for (const h of [...collectorHostnames, importCollector]) if (h.trim()) m.markCollector(h);
+    return m;
+  }
+
+  /**
+   * A live collector identity (an Fqdn / Hostname / flow client the case collected from) is never a
+   * former name: two machines that genuinely share a name — a base-image clone next to the original,
+   * a re-imaged host — must stay two hosts. Refused at resolve time, so it also covers edges learned
+   * before the name was marked.
+   */
+  markCollector(name: string): void {
+    const key = shortHostName(name);
+    if (key) {
+      this.collectors.add(key);
+      this.hops = null;
+    }
+  }
 
   learn(rows: Iterable<Row>): void {
     for (const row of rows) {
       const computer = recordComputer(row);
       if (computer) this.seen.add(shortHostName(computer));
+      // A collector this FILE names is marked before any row is resolved (Codex, review of #1495):
+      // in a multi-host export a live client's own name must not fold into a rename another row
+      // supplies, and the map cannot wait for the ledger to learn it after the fact.
+      const collector = recordCollector(row);
+      if (collector) this.markCollector(collector);
       const ev = renameEvidence(row);
       if (ev) this.add(ev);
     }
@@ -237,6 +278,7 @@ export class HostRenameMap {
       currentKey: shortHostName(ev.currentName),
       ts: ev.timestamp ? Date.parse(ev.timestamp) : NaN,
       needsFormerSeen: ev.needsFormerSeen === true,
+      rule: ev.rule,
     });
     this.hops = null;
   }
@@ -260,9 +302,52 @@ export class HostRenameMap {
     return out;
   }
 
+  /**
+   * The bound a record dated `at` folded under: the EARLIEST evidence time along the chain from
+   * `name` to its current name (each hop is an upper bound on its own rename; the chain holds only
+   * while every hop does). "" when the map vouches for nothing at `at`.
+   */
+  boundFor(name: string, at: string): string {
+    if (this.currentNameOf(name, at) === name) return "";
+    const hops = this.resolve();
+    let key = shortHostName(name);
+    let bound = Infinity;
+    const visited = new Set<string>();
+    while (hops.has(key) && !visited.has(key)) {
+      visited.add(key);
+      const hop = hops.get(key)!;
+      bound = Math.min(bound, hop.ts);
+      key = hop.currentKey;
+    }
+    return Number.isFinite(bound) ? new Date(bound).toISOString() : "";
+  }
+
+  /**
+   * Every dated edge this map learned that passed its own validity bound (rule c's "former name
+   * seen"), one per (former, current) pair at the earliest time — RAW, not resolved: a conflicting
+   * pair is handed out with both sides, so the case that stores them fails it closed too (#1495).
+   */
+  records(): HostRenameRecord[] {
+    const out = new Map<string, HostRenameRecord>();
+    for (const e of this.edges) {
+      if (Number.isNaN(e.ts) || (e.needsFormerSeen && !this.seen.has(e.key))) continue;
+      const key = `${e.key}|${e.currentKey}`;
+      const cur = out.get(key);
+      const until = new Date(e.ts).toISOString();
+      if (!cur) out.set(key, { formerName: e.former, currentName: e.current, until, basis: e.rule });
+      else if (e.ts < Date.parse(cur.until)) out.set(key, { ...cur, until, basis: e.rule });
+    }
+    return [...out.values()];
+  }
+
   /** `currentNameOf` for a raw row: the name it wrote, dated by the row itself. */
   currentNameForRow(name: string, row: Row): string {
     return this.currentNameOf(name, recordTime(row));
+  }
+
+  /** `boundFor` for a raw row, dated by the row itself. */
+  boundForRow(name: string, row: Row): string {
+    return this.boundFor(name, recordTime(row));
   }
 
   /** Every (former → current) pair the map will honour, for tests and diagnostics. */
@@ -282,6 +367,7 @@ export class HostRenameMap {
     const byFormer = new Map<string, Map<string, Hop>>();
     for (const e of this.edges) {
       if (e.needsFormerSeen && !this.seen.has(e.key)) continue;
+      if (this.collectors.has(e.key)) continue; // a live collector identity is nobody's former name
       const targets = byFormer.get(e.key) ?? new Map<string, Hop>();
       // Every rule observes the machine AFTER it was renamed (the 6011 is logged under the new name;
       // the account and SAM names lag until a reboot), so each observation is an upper bound on the

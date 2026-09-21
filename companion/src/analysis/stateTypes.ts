@@ -1,4 +1,5 @@
 import type { IocExcludeRule } from "./iocExclude.js";
+import type { HostRenameRecord } from "./hostRenameRecord.js";
 import type { CanonicalEventEnvelope } from "./canonicalEvent.js";
 
 export type Severity = "Critical" | "High" | "Medium" | "Low" | "Info";
@@ -489,6 +490,10 @@ export interface ForensicEvent {
   md5?: string;
   path?: string; // file path the event concerns (normalized lowercased for matching)
   asset?: string; // host/computer/FQDN this event pertains to (the affected asset)
+  // The host name the record itself wrote, kept only on a Windows-log row that named no collector
+  // and is not a forwarded event (#1495): the provenance a rename the case learns LATER may re-home
+  // from, and re-home back if the rename is later contradicted. Never set by a model.
+  assetRecord?: string;
   sources?: string[]; // distinct tools/imports that reported this event (corroboration)
   // The specific artifact/source-tool identifier that produced this event, at a finer grain than
   // `sources` (e.g. "Windows.NTFS.MFT" vs "Windows.Detection.Sigma" — both would otherwise show as
@@ -719,6 +724,13 @@ export interface InvestigationState {
   // key in mergeConcurrentAdditions — a reducer that rebuilds the state object drops what it does not
   // name, which is how an earlier draft of this would have silently lost every record.
   labIntel?: LabIntelRecord[];
+  // The renames the case has learned (#1495): every (former → current) edge a Windows-log import
+  // found — from a collector identity that differed from the record's name (#1417) or from the
+  // machine's own rename evidence (#1489) — with the bound each rests on, plus every collector
+  // identity seen, which no rename may fold. Unioned by mergeHostRenameRecords on every merge;
+  // consumed by every later import and by the settle-time carry pass. Optional so old state loads.
+  hostRenames?: HostRenameRecord[];
+  collectorHostnames?: string[];
   // Analyst decisions on the intel retirement review (#1024), keyed by finding id; newest wins.
   intelRetirementDecisions?: IntelRetirementDecision[];
   // READ-TIME projection only (#969): the case's remediation boundaries, loaded from their side

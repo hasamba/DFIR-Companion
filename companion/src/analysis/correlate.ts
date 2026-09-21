@@ -381,6 +381,12 @@ function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): Forensi
     // merged on hash/path can hold members from different records, and claiming a borrowed one
     // would let a later import correlate onto a record this row never came from.
     sourceRecordId: primary.sourceRecordId,
+    // The name the record wrote (#1495) follows the shown row, else the first member that kept it
+    // for the SAME asset — a legacy row re-imported beside its own re-read must not lose the
+    // provenance a later rename recomputes from; a member on another asset never lends it.
+    assetRecord:
+      primary.assetRecord ??
+      events.find((e) => e.assetRecord && (e.asset ?? "") === (primary.asset ?? ""))?.assetRecord,
     message: primary.message ?? events.find((e) => e.message)?.message,
     veloUrl: primary.veloUrl ?? events.find((e) => e.veloUrl)?.veloUrl,
     sha256: events.find((e) => e.sha256)?.sha256,

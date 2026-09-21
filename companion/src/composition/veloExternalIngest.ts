@@ -28,6 +28,16 @@ import type { InvestigationState, Severity, ForensicEvent } from "../analysis/st
 import { logLine, getServerLogger } from "../logging/serverLogger.js";
 import { formatImportSettled } from "../logging/importLog.js";
 
+// The case's rename ledger for a super-only parse (#1495): what the forensic path reads through
+// importState.ts knownHostIdentity, from the snapshot this path already holds. Nothing when the
+// state could not be read — the parse then runs as before.
+function knownHostIdentityOf(state: InvestigationState | null): {
+  knownRenames: InvestigationState["hostRenames"];
+  collectorHostnames: InvestigationState["collectorHostnames"];
+} {
+  return { knownRenames: state?.hostRenames ?? [], collectorHostnames: state?.collectorHostnames ?? [] };
+}
+
 export interface VeloExternalIngestDeps {
   options: AppOptions;
   /** One import writer per case, across every import path (see analysis/importLock.ts). */
@@ -153,7 +163,11 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
               label: storedName,
               idPrefix: opts.idBase,
               importedAt,
-              velociraptor: { artifact, hostFallback: opts.hostFallback },
+              velociraptor: {
+                artifact,
+                hostFallback: opts.hostFallback,
+                ...knownHostIdentityOf(stateBefore),
+              },
               minSeverity: opts.minSeverity,
               veloUrl: opts.veloUrl,
             },
@@ -170,6 +184,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
         const parsed = parseVelociraptorJson(mapJson, {
           artifact,
           hostFallback: opts.hostFallback,
+          ...knownHostIdentityOf(stateBefore), // the case's rename ledger seeds this parse too (#1495)
           aggregate: false,
           maxEvents: Number(process.env.DFIR_SUPERTIMELINE_MAX) || 100000,
         });

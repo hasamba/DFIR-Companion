@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { HostRenameMap, renameEvidence } from "../../src/analysis/hostRenameEvidence.js";
+import { mergeHostRenameRecords } from "../../src/analysis/hostRenameRecord.js";
 
 type Row = Record<string, unknown>;
 
@@ -254,5 +255,170 @@ describe("HostRenameMap — the time bound is the EARLIEST observation, never wi
     expect(m.currentNameOf(BOX, "2026-08-26T13:00:00Z")).toBe(MID);
     expect(m.currentNameOf(BOX, "2026-08-26T20:00:00Z")).toBe(BOX); // a machine reusing the name
     expect(m.currentNameOf(BOX, "2026-08-28T00:00:00Z")).toBe(BOX);
+  });
+});
+
+// The case-wide ledger (#1495): what a map hands to the case and what a map seeded from the case
+// honours. Every edge is persisted as it was learned, so a later file's contradiction fails the
+// pair closed everywhere; a name that is a live collector identity is never a former name.
+describe("HostRenameMap — records() and from(): the carried ledger", () => {
+  const ev = (
+    formerName: string,
+    currentName: string,
+    timestamp: string,
+    rule: "6011" | "machine-account" = "6011",
+  ) => ({
+    formerName,
+    currentName,
+    timestamp,
+    rule,
+  });
+
+  it("hands out every dated edge it learned, deduped to the earliest time per pair", () => {
+    const m = new HostRenameMap();
+    m.add(ev("OLD", "NEW", "2026-08-26T13:52:00Z"));
+    m.add(ev("old", "new", "2026-08-26T13:50:00Z", "machine-account"));
+    m.add(ev("OLD", "NEW", ""));
+    expect(m.records()).toEqual([
+      { formerName: "OLD", currentName: "NEW", until: "2026-08-26T13:50:00.000Z", basis: "machine-account" },
+    ]);
+  });
+
+  it("does not hand out a rule-c edge whose former name was never seen as a Computer", () => {
+    const m = new HostRenameMap();
+    m.add({
+      formerName: "CORP",
+      currentName: "DC01",
+      timestamp: "2026-08-26T13:52:00Z",
+      rule: "sam-domain",
+      needsFormerSeen: true,
+    });
+    expect(m.records()).toEqual([]);
+  });
+
+  it("hands out BOTH sides of a conflict, so the case learns the pair is ambiguous", () => {
+    const m = new HostRenameMap();
+    m.add(ev("BASE", "HOST-A", "2026-08-26T13:52:00Z"));
+    m.add(ev("BASE", "HOST-B", "2026-08-27T13:52:00Z"));
+    expect(m.currentNameOf("BASE", "2026-01-01T00:00:00Z")).toBe("BASE");
+    expect(
+      m
+        .records()
+        .map((r) => r.currentName)
+        .sort(),
+    ).toEqual(["HOST-A", "HOST-B"]);
+  });
+
+  it("a map seeded from records resolves like the file that taught it, and keeps the bound", () => {
+    const seeded = HostRenameMap.from([
+      {
+        formerName: "WIN-UK1GV882OK6",
+        currentName: "WIN-0NNTB2RTNB1",
+        until: "2026-08-26T13:49:52Z",
+        basis: "machine-account",
+      },
+      {
+        formerName: "WIN-0NNTB2RTNB1",
+        currentName: "DESKTOP-16OJFO6",
+        until: "2026-08-26T13:52:06Z",
+        basis: "machine-account",
+      },
+    ]);
+    expect(seeded.currentNameOf("win-uk1gv882ok6", "2025-12-05T03:02:24Z")).toBe("DESKTOP-16OJFO6");
+    expect(seeded.currentNameOf("WIN-UK1GV882OK6", "2026-09-01T00:00:00Z")).toBe("WIN-UK1GV882OK6"); // after the bound
+    expect(seeded.boundFor("WIN-UK1GV882OK6", "2025-12-05T03:02:24Z")).toBe("2026-08-26T13:49:52.000Z");
+  });
+
+  it("a seeded pair plus a file's contradicting evidence fails closed", () => {
+    const m = HostRenameMap.from([
+      { formerName: "BASE", currentName: "HOST-A", until: "2026-08-26T13:52:00Z", basis: "6011" },
+    ]);
+    m.add(ev("BASE", "HOST-B", "2026-08-27T13:52:00Z"));
+    expect(m.currentNameOf("BASE", "2026-01-01T00:00:00Z")).toBe("BASE");
+  });
+
+  it("never aliases a former name that is a live collector identity in the case", () => {
+    const m = HostRenameMap.from(
+      [
+        {
+          formerName: "WIN-A",
+          currentName: "DESKTOP-B",
+          until: "2026-08-26T13:52:00Z",
+          basis: "machine-account",
+        },
+      ],
+      ["win-a.example.com"],
+    );
+    expect(m.currentNameOf("WIN-A", "2026-01-01T00:00:00Z")).toBe("WIN-A");
+    const late = new HostRenameMap();
+    late.add(ev("WIN-A", "DESKTOP-B", "2026-08-26T13:52:00Z"));
+    late.markCollector("WIN-A");
+    expect(late.currentNameOf("WIN-A", "2026-01-01T00:00:00Z")).toBe("WIN-A");
+  });
+
+  it("boundFor is empty when the map vouches for nothing", () => {
+    expect(new HostRenameMap().boundFor("X", "2026-01-01T00:00:00Z")).toBe("");
+  });
+});
+
+describe("mergeHostRenameRecords — the case's ledger grows, never loses a pair", () => {
+  it("unions by (former, current) short-name key and keeps the earliest bound", () => {
+    const merged = mergeHostRenameRecords(
+      [{ formerName: "OLD", currentName: "NEW", until: "2026-08-26T13:52:00.000Z", basis: "6011" }],
+      [
+        {
+          formerName: "old.example.com",
+          currentName: "NEW",
+          until: "2026-08-26T13:50:00.000Z",
+          basis: "machine-account",
+        },
+        { formerName: "OLD", currentName: "OTHER", until: "2026-08-27T00:00:00.000Z", basis: "collector" },
+      ],
+    );
+    expect(merged).toEqual([
+      { formerName: "OLD", currentName: "NEW", until: "2026-08-26T13:50:00.000Z", basis: "machine-account" },
+      { formerName: "OLD", currentName: "OTHER", until: "2026-08-27T00:00:00.000Z", basis: "collector" },
+    ]);
+  });
+});
+
+// A collector THIS file names is marked before any row is resolved: in a multi-host export a live
+// client's own name never folds into a rename another row supplies (Codex, review of #1495).
+describe("HostRenameMap.learn — a collector named in the same file guards the map", () => {
+  const evidenceRow = {
+    Computer: "DESKTOP-B",
+    EventTime: "2026-08-26T13:52:06Z",
+    EventID: 4648,
+    DomainName: "WORKGROUP",
+    UserName: "WIN-A$",
+    LogonId: 999,
+  };
+
+  it("refuses to fold a name that is a live Fqdn elsewhere in the file", () => {
+    const m = new HostRenameMap();
+    m.learn([evidenceRow, { Fqdn: "win-a.example.com", Computer: "WIN-A", EventID: 4624 }]);
+    expect(m.currentNameOf("WIN-A", "2026-01-01T00:00:00Z")).toBe("WIN-A");
+  });
+
+  it("folds when no row names that collector", () => {
+    const m = new HostRenameMap();
+    m.learn([evidenceRow]);
+    expect(m.currentNameOf("WIN-A", "2026-01-01T00:00:00Z")).toBe("DESKTOP-B");
+  });
+
+  it("a flow import's own client is a collector too", () => {
+    const m = HostRenameMap.from(
+      [
+        {
+          formerName: "WIN-A",
+          currentName: "DESKTOP-B",
+          until: "2026-08-26T13:52:06.000Z",
+          basis: "machine-account",
+        },
+      ],
+      [],
+      "win-a",
+    );
+    expect(m.currentNameOf("WIN-A", "2026-01-01T00:00:00Z")).toBe("WIN-A");
   });
 });

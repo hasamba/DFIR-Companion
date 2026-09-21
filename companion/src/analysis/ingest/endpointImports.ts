@@ -24,7 +24,7 @@ import {
 } from "../rcloneImport.js";
 import { parseVelociraptorJsonProgress, type VelociraptorImportOptions } from "../velociraptorImport.js";
 import { describeFloor } from "./floorNote.js";
-import { deltaIocs, noteEmptyImport } from "./importState.js";
+import { deltaIocs, hostIdentityDelta, knownHostIdentity, noteEmptyImport } from "./importState.js";
 import { bulkPathApplies, importVelociraptorBulk } from "./velociraptorBulk.js";
 import type { ImportContext } from "./importContext.js";
 
@@ -108,9 +108,10 @@ export async function importChainsaw(
     onProgress?: (done: number, total: number) => void;
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseChainsawReport(jsonText, opts.chainsaw);
+  const known = await knownHostIdentity(ctx, caseId); // the case's rename ledger seeds the parse (#1495)
+  const parsedRaw = parseChainsawReport(jsonText, { ...known, ...opts.chainsaw });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0 && parsed.iocs.length === 0)
+  if (parsed.events.length === 0 && parsed.iocs.length === 0 && parsed.hostRenames.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "Chainsaw", parsed.total);
 
   const fallback = parsed.detections > 0 ? "Chainsaw" : "EVTX";
@@ -118,6 +119,7 @@ export async function importChainsaw(
     findings: [],
     iocs: deltaIocs(parsed.iocs, opts.idPrefix),
     mitreTechniques: [],
+    ...hostIdentityDelta(parsed),
     forensicEvents: parsed.events.map((e, i) => ({
       ...e,
       id: `${opts.idPrefix}e${i + 1}`,
@@ -169,15 +171,17 @@ export async function importHayabusa(
     onProgress?: (done: number, total: number) => void;
   },
 ): Promise<InvestigationState> {
-  const parsedRaw = parseHayabusaTimeline(text, opts.hayabusa);
+  const known = await knownHostIdentity(ctx, caseId); // the case's rename ledger seeds the parse (#1495)
+  const parsedRaw = parseHayabusaTimeline(text, { ...known, ...opts.hayabusa });
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0 && parsed.iocs.length === 0)
+  if (parsed.events.length === 0 && parsed.iocs.length === 0 && parsed.hostRenames.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "Hayabusa", parsed.total);
 
   const raw = {
     findings: [],
     iocs: deltaIocs(parsed.iocs, opts.idPrefix),
     mitreTechniques: [],
+    ...hostIdentityDelta(parsed),
     forensicEvents: parsed.events.map((e, i) => ({
       ...e,
       id: `${opts.idPrefix}e${i + 1}`,
@@ -241,13 +245,14 @@ export async function importVelociraptor(
   // A large export takes the batched driver when its stores are wired (#1439): rows in batches,
   // tag → gate → append per batch, nothing held for the whole file. It returns null for a shape
   // its row reader cannot stream, and the whole-file path below then runs unchanged.
+  const known = await knownHostIdentity(ctx, caseId); // the case's rename ledger seeds the parse (#1495)
   const bulk = ctx.opts.bulkImportSink;
   if (bulkPathApplies(bulk, text)) {
     const done = await importVelociraptorBulk(ctx, bulk, caseId, text, {
       label: opts.label,
       idPrefix: opts.idPrefix,
       importedAt: opts.importedAt,
-      velociraptor: { artifact, ...opts.velociraptor },
+      velociraptor: { artifact, ...known, ...opts.velociraptor },
       minSeverity: opts.minSeverity,
       veloUrl: opts.veloUrl,
       onProgress: opts.onProgress,
@@ -259,11 +264,11 @@ export async function importVelociraptor(
   // import streams live progress instead of freezing the server on one synchronous pass.
   const parsedRaw = await parseVelociraptorJsonProgress(
     text,
-    { artifact, ...opts.velociraptor },
+    { artifact, ...known, ...opts.velociraptor },
     opts.onProgress,
   );
   const parsed = { ...parsedRaw, events: applySeverityFloor(parsedRaw.events, opts.minSeverity) };
-  if (parsed.events.length === 0 && parsed.iocs.length === 0)
+  if (parsed.events.length === 0 && parsed.iocs.length === 0 && parsed.hostRenames.length === 0)
     return noteEmptyImport(ctx, caseId, opts, "Velociraptor", parsed.total);
 
   const eventIdByAggKey = new Map<string, string>();
@@ -288,6 +293,7 @@ export async function importVelociraptor(
       ...(c.extractedFrom ? { extractedFrom: c.extractedFrom } : {}),
     })),
     mitreTechniques: [],
+    ...hostIdentityDelta(parsed),
     forensicEvents,
     threadsOpened: [],
     threadsClosed: [],

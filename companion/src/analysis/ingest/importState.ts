@@ -3,6 +3,7 @@ import { deltaSchema } from "../responseSchema.js";
 import { applySeverityFloor } from "../severityFloor.js";
 import { describeFloor } from "./floorNote.js";
 import type { InvestigationState, IocProvenance, Severity } from "../stateTypes.js";
+import type { HostRenameRecord } from "../hostRenameRecord.js";
 import type { SiemEvent } from "../siemImport.js";
 import type { SiemIoc } from "../iocSink.js";
 import { aggregateEvents } from "../eventAggregate.js";
@@ -107,6 +108,35 @@ export function deltaIocs(
 // `total` is the importer's own parsed-record count, so the note says how much was READ, not just
 // that nothing came out — "0 events from 0 records" (wrong format) and "0 events from 75,951
 // records" (understood but uninteresting) are very different problems.
+/**
+ * What the case already knows about its hosts (#1495), for a Windows-log parser to seed its rename
+ * map with: the renames earlier imports learned and the collector identities seen. Read before the
+ * parse — every import path holds the per-case import lock, so no other import can move the ledger
+ * between this read and the merge. A missing case or state yields nothing, never an error here.
+ */
+export async function knownHostIdentity(
+  ctx: ImportContext,
+  caseId: string,
+): Promise<{ knownRenames: HostRenameRecord[]; collectorHostnames: string[] }> {
+  try {
+    const state = await ctx.opts.stateStore.load(caseId);
+    return { knownRenames: state.hostRenames ?? [], collectorHostnames: state.collectorHostnames ?? [] };
+  } catch {
+    return { knownRenames: [], collectorHostnames: [] };
+  }
+}
+
+/** The ledger fields a Windows-log parse result hands to its delta (#1495); absent when empty. */
+export function hostIdentityDelta(parsed: {
+  hostRenames: readonly HostRenameRecord[];
+  collectorHostnames: readonly string[];
+}): { hostRenames?: HostRenameRecord[]; collectorHostnames?: string[] } {
+  return {
+    ...(parsed.hostRenames.length ? { hostRenames: [...parsed.hostRenames] } : {}),
+    ...(parsed.collectorHostnames.length ? { collectorHostnames: [...parsed.collectorHostnames] } : {}),
+  };
+}
+
 export async function noteEmptyImport(
   ctx: ImportContext,
   caseId: string,

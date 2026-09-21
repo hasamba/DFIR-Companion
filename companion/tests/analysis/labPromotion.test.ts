@@ -154,3 +154,37 @@ describe("the promotion marker survives correlation", () => {
     expect(isPendingLabRow(out[0])).toBe(false);
   });
 });
+
+// #1495: a model may neither assert a rename, name a collector, nor claim a row's record name.
+describe("stripAiExtractedFrom — the rename ledger and assetRecord are the importers' alone (#1495)", () => {
+  it("drops hostRenames, collectorHostnames and every event's assetRecord", async () => {
+    const { deltaSchema, stripAiExtractedFrom } = await import("../../src/analysis/responseSchema.js");
+    const delta = deltaSchema.parse({
+      findings: [],
+      iocs: [],
+      mitreTechniques: [],
+      forensicEvents: [
+        {
+          id: "e1",
+          timestamp: "2026-01-01T00:00:00Z",
+          description: "x",
+          severity: "Low",
+          mitreTechniques: [],
+          asset: "A",
+          assetRecord: "A",
+        },
+      ],
+      threadsOpened: [],
+      threadsClosed: [],
+      timelineNote: "",
+      summary: "",
+      hostRenames: [{ formerName: "A", currentName: "B", until: "2026-01-01T00:00:00Z", basis: "6011" }],
+      collectorHostnames: ["B"],
+    });
+    expect(delta.hostRenames).toHaveLength(1); // the schema carries it for the importers …
+    const stripped = stripAiExtractedFrom(delta);
+    expect(stripped.hostRenames).toBeUndefined(); // … the AI guard drops it
+    expect(stripped.collectorHostnames).toBeUndefined();
+    expect(stripped.forensicEvents?.[0]?.assetRecord).toBeUndefined();
+  });
+});

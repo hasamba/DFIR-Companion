@@ -45,6 +45,7 @@ import { repairIocValue } from "./iocValue.js";
 import { sanitizeUncertainties } from "./uncertainty.js";
 import { mergeCanonicalEvents } from "./canonicalMerge.js";
 import { annotateSightingsWithLabIntel, upsertLabIntel } from "./labIntel.js";
+import { mergeHostRenameRecords } from "./hostRenameRecord.js";
 
 // Trim a raw collect directive (investigation-guidance #8) to its non-empty string fields; returns
 // undefined when nothing useful is present, so an all-blank object isn't persisted.
@@ -303,6 +304,7 @@ export function mergeDelta(
       if (incoming.md5) existing.md5 = incoming.md5;
       if (incoming.path) existing.path = incoming.path;
       if (incoming.asset) existing.asset = incoming.asset;
+      if (incoming.assetRecord) existing.assetRecord = incoming.assetRecord; // #1495: a re-read backfills the provenance
       if (incoming.sources?.length)
         existing.sources = uniq([...(existing.sources ?? []), ...incoming.sources]);
       if (incoming.artifactName) existing.artifactName = incoming.artifactName;
@@ -344,6 +346,7 @@ export function mergeDelta(
         ...(incoming.md5 ? { md5: incoming.md5 } : {}),
         ...(incoming.path ? { path: incoming.path } : {}),
         ...(incoming.asset ? { asset: incoming.asset } : {}),
+        ...(incoming.assetRecord ? { assetRecord: incoming.assetRecord } : {}),
         ...(incoming.sources?.length ? { sources: uniq(incoming.sources) } : {}),
         ...(incoming.artifactName ? { artifactName: incoming.artifactName } : {}),
         ...(incoming.sourceRecordId ? { sourceRecordId: incoming.sourceRecordId } : {}),
@@ -500,6 +503,12 @@ export function mergeDelta(
   // this delta and a report imported last week annotate the same way regardless of order. Derived
   // data: cleared and recomputed here every time. A lab row never gets one (it never gets here).
   const labIntel = upsertLabIntel(state.labIntel, delta.labIntel ?? []);
+  // The case's rename ledger and collector identities only grow (#1495): keyed unions, like labIntel.
+  const hostRenames = mergeHostRenameRecords(state.hostRenames, delta.hostRenames);
+  const collectorHostnames = uniqCaseless([
+    ...(state.collectorHostnames ?? []),
+    ...(delta.collectorHostnames ?? []),
+  ]);
   const correlated = annotateSightingsWithLabIntel({
     ...state,
     forensicTimeline: correlatedOnly,
@@ -576,9 +585,19 @@ export function mergeDelta(
     // Union by (sha256, source, runId). Named here on purpose: this literal is what a reducer keeps,
     // and a field it does not name is gone after the first merge (#932 item 5).
     labIntel,
+    // Named here for the same reason as labIntel (#1495); empty lists stay absent so old state files
+    // round-trip unchanged.
+    ...(hostRenames.length ? { hostRenames } : {}),
+    ...(collectorHostnames.length ? { collectorHostnames } : {}),
     // Analyst decisions on the intel retirement review (#1024): kept across every merge, keyed by
     // finding id, newest wins — a field this literal does not name is gone after the first merge.
     intelRetirementDecisions: state.intelRetirementDecisions ?? [],
     updatedAt: ctx.timestamp,
   };
+}
+
+function uniqCaseless(names: readonly string[]): string[] {
+  const out = new Map<string, string>();
+  for (const n of names) if (n.trim() && !out.has(n.toLowerCase())) out.set(n.toLowerCase(), n);
+  return [...out.values()];
 }
