@@ -26,6 +26,7 @@ import { computeChainSignature, executionIdentity } from "./chainSignature.js";
 import { isLabProduced } from "./labIntel.js";
 import { mergeGroupCanonical } from "./canonicalMerge.js";
 import { DERIVED_NOTE_NAMES } from "./derivedNote.js";
+import { collectorRecordGrade } from "./collectorMerge.js";
 
 export interface CorrelateOptions {
   windowSeconds?: number; // path+time match tolerance (default 2)
@@ -382,13 +383,16 @@ function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): Forensi
     undefined,
   );
 
+  const collector = collectorRecordGrade(primary, events); // #1477, collectorMerge.ts
   const merged: ForensicEvent = {
     ...primary,
     description: notes.length
       ? `${cleanDescription(primary.description)} ${notes.join(" ")}`.trim()
       : primary.description,
     ...(fileModified ? { fileModified } : {}),
-    severity: events.reduce<Severity>((acc, e) => worstSeverity(acc, e.severity), "Info"),
+    severity:
+      collector?.severity ?? events.reduce<Severity>((acc, e) => worstSeverity(acc, e.severity), "Info"),
+    ...(collector ? { origin: collector.origin } : {}),
     timestamp: times[0] ?? primary.timestamp,
     mitreTechniques: uniq(events.flatMap((e) => e.mitreTechniques)),
     relatedFindingIds: uniq(events.flatMap((e) => e.relatedFindingIds)),

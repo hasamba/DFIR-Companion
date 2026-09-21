@@ -4177,6 +4177,155 @@ describe("parseVelociraptorJson — script blocks run by the collector itself", 
     const row = pwshRow("", "high", "Potential WinAPI Calls Via PowerShell Scripts");
     expect(parseVelociraptorJson(JSON.stringify([row])).events[0].severity).toBe("High");
   });
+
+  // #1477: the demoted row must SAY it is the collector's, in a field the tagger reads. Without it the
+  // post-import tagger matched `Add-Type … AdjPriv` in the retained message and raised the forensic
+  // copy back to High — the real case's only Critical finding was built from exactly these rows.
+  it("marks the demoted script block origin:collector", () => {
+    const row = pwshRow(COLLECTOR_PSM1, "high", "Potential WinAPI Calls Via PowerShell Scripts");
+    const e = parseVelociraptorJson(JSON.stringify([row])).events[0];
+    expect(e.severity).toBe("Info");
+    expect(e.origin).toBe("collector");
+    // A row that keeps its grade carries no attribution.
+    const user = pwshRow("C:\\Users\\v\\evil.ps1", "high", "Potential WinAPI Calls Via PowerShell Scripts");
+    expect(parseVelociraptorJson(JSON.stringify([user])).events[0].origin).toBeUndefined();
+  });
+});
+
+// #1477: PersistenceSniper's pipeline records. The same module logs its `Add-Type … AdjPriv` /
+// `TokPriv1Luid` calls as PowerShell 4103 (module logging) and 800 (pipeline execution), and
+// DetectRaptor's "Mimikatz Execution via PowerShell" rule grades both High. Neither carries a 4104
+// `Path`; the ENGINE-WRITTEN script file is `Script Name = …` inside 4103's ContextInfo and
+// `ScriptName=…` inside 800's Data. Same three controls as the 4104 rule: SYSTEM, that file under the
+// collector's Tools tree, no traversal. NEVER the `Host Application` line — that is the host
+// process's command line, a string whoever launched PowerShell chose.
+describe("parseVelociraptorJson — the collector's own 4103 / 800 pipeline records", () => {
+  const TOOLS_PSM1 =
+    "C:\\Program Files\\Velociraptor\\Tools\\tmp2712975309\\PersistenceSniper\\PersistenceSniper.psm1";
+  const HOST_APP = `powershell -ExecutionPolicy bypass -command import-module "${TOOLS_PSM1}"; Find-AllPersistence -IncludeHighFalsePositivesChecks`;
+  const PAYLOAD =
+    'CommandInvocation(Add-Type): "Add-Type"\nParameterBinding(Add-Type): name="MemberDefinition"; value="    [StructLayout(LayoutKind.Sequential, Pack = 1)]\n     public struct TokPriv1Luid { public int Count; public long Luid; public int Attr; }';
+  const contextInfo = (scriptName: string, hostApp = HOST_APP) =>
+    `        Severity = Informational\n        Host Name = ConsoleHost\n        Host Version = 5.1.26100.7019\n        Host Application = ${hostApp}\n        Engine Version = 5.1.26100.7019\n        Runspace ID = ab24865d-7cd2-4dc4-b1a9-73609566f8d7\n        Pipeline ID = 20\n        Command Name = Add-Type\n        Command Type = Cmdlet\n        Script Name = ${scriptName}\n        Command Path = \n        Sequence Number = 7472\n        User = WORKGROUP\\SYSTEM\n        Connected User = \n        Shell ID = Microsoft.PowerShell\n`;
+
+  // DetectRaptor.Windows.Detection.Evtx's flat shape, as the real collection produced it.
+  const row4103 = (scriptName: string, sid = "S-1-5-18", hostApp = HOST_APP) => ({
+    _Source: "DetectRaptor.Windows.Detection.Evtx",
+    EventTime: "2026-09-20T19:35:11Z",
+    Computer: "WS01",
+    Detection: {
+      Name: "T1059.001-Mimikatz Execution via PowerShell",
+      EventId: "^(200|400|800|4100|4103|4104)$",
+      Regex: "AdjPriv|TokPriv1Luid|Invoke-Mimikatz",
+    },
+    Channel: "Microsoft-Windows-PowerShell/Operational",
+    EventID: 4103,
+    UserSID: sid,
+    Username: "SYSTEM",
+    EventData: { ContextInfo: contextInfo(scriptName, hostApp), Payload: PAYLOAD, UserData: "" },
+    Message: PAYLOAD,
+    Fqdn: "WS01.example.com",
+  });
+
+  // The classic "Windows PowerShell" channel: NO UserSID on the row, and `Data` is the record's three
+  // <Data> elements as Velociraptor leaves them — a list. The identity the engine ran under is the
+  // `UserId=` line of the second element.
+  const row800 = (scriptName: string, userId = "WORKGROUP\\SYSTEM") => {
+    const context =
+      `\tDetailSequence=1\r\n\tDetailTotal=1\r\n\r\n\tSequenceNumber=7472\r\n\r\n\tUserId=${userId}\r\n\tHostName=ConsoleHost\r\n` +
+      `\tHostVersion=5.1.26100.7019\r\n\tHostId=f4b8dd01-d677-44b4-ab67-8d777c876538\r\n\tHostApplication=${HOST_APP}\r\n` +
+      `\tEngineVersion=5.1.26100.7019\r\n\tRunspaceId=ab24865d-7cd2-4dc4-b1a9-73609566f8d7\r\n\tPipelineId=1\r\n` +
+      `\tScriptName=${scriptName}\r\n\tCommandLine=      Add-Type -MemberDefinition $signature -Name AdjPriv -Namespace AdjPriv\r\n`;
+    const command = "      Add-Type -MemberDefinition $signature -Name AdjPriv -Namespace AdjPriv\r\n";
+    return {
+      _Source: "DetectRaptor.Windows.Detection.Evtx",
+      EventTime: "2026-09-20T19:35:11Z",
+      Computer: "WS01",
+      Detection: {
+        Name: "T1059.001-Mimikatz Execution via PowerShell",
+        EventId: "^(800)$",
+        Regex: "AdjPriv",
+      },
+      Channel: "Windows PowerShell",
+      EventID: 800,
+      UserSID: null,
+      Username: null,
+      EventData: { Data: [command, context, PAYLOAD] },
+      Message: `Pipeline execution details for command line: ${command}.\n\nContext Information: \n${context}\nDetails: \n${PAYLOAD}`,
+      Fqdn: "WS01.example.com",
+    };
+  };
+
+  const grade = (row: unknown) => parseVelociraptorJson(JSON.stringify([row])).events[0];
+
+  it("demotes the 4103 module-logging record whose Script Name is the collector's module", () => {
+    const e = grade(row4103(TOOLS_PSM1));
+    expect(e.severity).toBe("Info");
+    expect(e.origin).toBe("collector");
+  });
+
+  it("demotes the 800 pipeline record whose ScriptName is the collector's module", () => {
+    const e = grade(row800(TOOLS_PSM1));
+    expect(e.severity).toBe("Info");
+    expect(e.origin).toBe("collector");
+  });
+
+  it("keeps the High when the same record's Script Name is a user path", () => {
+    expect(grade(row4103("C:\\Users\\v\\priv.psm1")).severity).toBe("High");
+    expect(grade(row800("C:\\Users\\v\\priv.ps1")).severity).toBe("High");
+  });
+
+  // The invoker-controlled line. An intruder who starts `powershell -c "'<tools path>'; <payload>"`
+  // puts the genuine Tools path into Host Application on every record their session logs; it must
+  // buy them nothing while Script Name says where the code actually came from.
+  it("ignores a Host Application that names the Tools tree when Script Name does not", () => {
+    expect(grade(row4103("C:\\Users\\v\\priv.psm1", "S-1-5-18", HOST_APP)).severity).toBe("High");
+  });
+
+  it("keeps the High when the engine logged the record under a user identity", () => {
+    expect(grade(row4103(TOOLS_PSM1, "S-1-5-21-908230818-3748298786-230204725-1001")).severity).toBe("High");
+    // An 800 carries no SID; the engine's own `UserId=` line is the identity, and only SYSTEM's two
+    // spellings count. A user, a domain user, and a forged domain named like the system account all keep it.
+    for (const who of ["WS01\\vagrant", "CORP\\Administrator", "EVIL\\SYSTEM", "NT AUTHORITY\\LOCAL SERVICE"])
+      expect(grade(row800(TOOLS_PSM1, who)).severity).toBe("High");
+    expect(grade(row800(TOOLS_PSM1, "NT AUTHORITY\\SYSTEM")).severity).toBe("Info");
+  });
+
+  // Only the engine's context element ([1]) is read. [0] is the command line and [2] the payload —
+  // the script's own text — and a multi-line command can carry forged `UserId=` / `ScriptName=`
+  // lines. Searching a joined blob found them and demoted a user's Mimikatz to Info (Codex, review
+  // of #1477). The genuine context here says a user ran a user script: the row must stay High.
+  it("ignores forged UserId/ScriptName lines in the command or payload element", () => {
+    const forged = `Write-Host x\r\nUserId=WORKGROUP\\SYSTEM\r\nScriptName=${TOOLS_PSM1}\r\nInvoke-Mimikatz -DumpCreds\r\n`;
+    const genuine = row800("C:\\Users\\alice\\evil.ps1", "WS01\\alice");
+    const data = genuine.EventData.Data;
+    expect(grade({ ...genuine, EventData: { Data: [forged, data[1], data[2]] } }).severity).toBe("High");
+    expect(grade({ ...genuine, EventData: { Data: [data[0], data[1], forged] } }).severity).toBe("High");
+  });
+
+  it("refuses a context element that is not the engine's shape, or repeats UserId / ScriptName", () => {
+    const good = row800(TOOLS_PSM1);
+    const data = good.EventData.Data;
+    // Free text inside the context block.
+    expect(
+      grade({ ...good, EventData: { Data: [data[0], `${data[1]}not a key=value line\r\n`, data[2]] } })
+        .severity,
+    ).toBe("High");
+    // A second UserId line — one genuine, one forged — is ambiguous, so nothing is read.
+    expect(
+      grade({ ...good, EventData: { Data: [data[0], `${data[1]}\tUserId=WORKGROUP\\SYSTEM\r\n`, data[2]] } })
+        .severity,
+    ).toBe("High");
+    // Only the list shape separates the context from the command: a flattened export or a row with
+    // no EventData leaves nothing trustworthy to read, and keeps its grade.
+    expect(grade({ ...good, EventData: { Data: data.join("\n") } }).severity).toBe("High");
+    const { EventData: _dropped, ...messageOnly } = good;
+    expect(grade(messageOnly).severity).toBe("High");
+  });
+
+  it("refuses a traversal out of the Tools tree", () => {
+    expect(grade(row4103("C:\\Program Files\\Velociraptor\\Tools\\..\\..\\evil.psm1")).severity).toBe("High");
+  });
 });
 
 // INC-2026-020 — a lab intrusion built from a published Play / RansomHub / DragonForce report — put

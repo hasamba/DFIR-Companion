@@ -135,7 +135,13 @@ export function createTaggerAccumulator(ruleset: CompiledRuleset, sampleSize = 0
  * re-applying the same result yields an equal event.
  */
 export function applyToForensicEvent(event: ForensicEvent, result: EventTagResult): ForensicEvent {
-  const severity = raiseSeverity(event.severity, result.severity);
+  // A row the import attributed to the case's OWN collector keeps its import grade (#1477). The
+  // rules that graded it Info read facts the tagger cannot see — the SYSTEM logon, the engine-written
+  // script path under the collector's tool tree, the collector exe as parent — while the tagger reads
+  // the retained raw message, where PersistenceSniper's `Add-Type … AdjPriv` matches the bundled
+  // token-manipulation rule exactly as an intruder's would. Tags and MITRE still describe the row.
+  const severity =
+    event.origin === "collector" ? event.severity : raiseSeverity(event.severity, result.severity);
   const seen = new Set(event.mitreTechniques);
   const mitreTechniques = [...event.mitreTechniques];
   for (const t of result.mitre)

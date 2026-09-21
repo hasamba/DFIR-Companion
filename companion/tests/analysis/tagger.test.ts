@@ -114,6 +114,31 @@ describe("applyToForensicEvent", () => {
     const result = { eventId: "e1", tags: [], mitre: [], severity: "Low" as const, ruleIds: ["x"] };
     expect(applyToForensicEvent(original, result).severity).toBe("Critical");
   });
+
+  // #1477: a row the import graded Info because the case's OWN collector produced it (PersistenceSniper's
+  // `Add-Type … AdjPriv` run by the Velociraptor client as SYSTEM) matched the bundled
+  // privesc_token_manipulation rule on its retained raw message, and the tagger raised the forensic
+  // copy straight back to High — the rule had no way to know the row was collector-graded. The
+  // structured `origin: "collector"` is that way. MITRE and tags still describe the row; they never
+  // re-grade it.
+  it("never raises a collector-origin row, but still unions its MITRE", () => {
+    const original = ev({ id: "e1", severity: "Info", origin: "collector", mitreTechniques: ["T1059.001"] });
+    const result = {
+      eventId: "e1",
+      tags: ["token-manipulation"],
+      mitre: ["T1134.001"],
+      severity: "High" as const,
+      ruleIds: ["privesc_token_manipulation"],
+    };
+    const next = applyToForensicEvent(original, result);
+    expect(next.severity).toBe("Info");
+    expect(next.mitreTechniques.sort()).toEqual(["T1059.001", "T1134.001"]);
+    expect(next.origin).toBe("collector");
+    // The identical row WITHOUT the attribution is raised as before — the origin is the whole test.
+    expect(
+      applyToForensicEvent(ev({ id: "e2", severity: "Info" }), { ...result, eventId: "e2" }).severity,
+    ).toBe("High");
+  });
 });
 
 describe("selectScopedEvents", () => {

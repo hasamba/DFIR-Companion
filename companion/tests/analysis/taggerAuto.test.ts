@@ -74,6 +74,21 @@ describe("autoTagNewEvents", () => {
     expect(st.forensicTimeline[0].mitreTechniques).toContain("T1543");
   });
 
+  // #1477: the import graded PersistenceSniper's `Add-Type … AdjPriv` rows Info because the case's own
+  // collector ran them, dual-wrote them, and THEN this hook matched the bundled token-manipulation
+  // rule on the retained message and raised the forensic copy to High. Demote kept it, synthesis made
+  // it the Critical. The structured origin is what the import writes and what this seam must honour.
+  it("leaves a collector-origin row at its import grade while still tagging it", async () => {
+    const st0 = await stateStore.load("c1");
+    const row = ev({ id: "e1", message: "service 7045", severity: "Info", origin: "collector" });
+    await stateStore.save({ ...st0, forensicTimeline: [row] });
+    await autoTagNewEvents(deps(), "c1", [row]);
+    expect((await tagsStore.load("c1")).map((t) => t.label)).toContain("win-service");
+    const st = await stateStore.load("c1");
+    expect(st.forensicTimeline[0].severity).toBe("Info");
+    expect(st.forensicTimeline[0].mitreTechniques).toContain("T1543");
+  });
+
   it("does nothing when TAGGER_AUTO=false", async () => {
     process.env.TAGGER_AUTO = "false";
     await autoTagNewEvents(deps(), "c1", [ev({ id: "e1", message: "service 7045" })]);

@@ -72,7 +72,7 @@ import { withHostSuffix, titleSafe, demangleUtf16Noise } from "./velociraptorTit
 import {
   isDetectionContentPath,
   isGeneratedModuleScript,
-  isDetectionToolScript,
+  demoteDetectionToolScript,
   isDetectionToolLocation,
 } from "./veloDetectionNoise.js";
 import { HostRenameLedger, demoteSampleHost, resolveRowHost, withFormerHostSuffix } from "./hostIdentity.js";
@@ -1622,9 +1622,9 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
     if (isGeneratedModuleScript(row))
       for (const m of ms) if (m && m.severity !== "High" && m.severity !== "Critical") m.severity = "Info";
 
-    // A script block SYSTEM ran from the collector's tool tree. Never a Critical — isDetectionToolScript.
-    if (isDetectionToolScript(row))
-      for (const m of ms) if (m && m.severity !== "Critical") m.severity = "Info";
+    // A script block (or its 4103 / 800 twin) SYSTEM ran from the collector's tool tree: Info with the
+    // collector origin the post-import tagger honours, never a Critical — demoteDetectionToolScript (#1477).
+    demoteDetectionToolScript(row, ms);
 
     // Row-level values shared by every event this row produced (computed once, not per MACB event).
     const realArtifact = artifactName(row);
