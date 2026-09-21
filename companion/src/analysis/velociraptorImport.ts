@@ -54,12 +54,10 @@ import {
   type SiemIoc,
   maxEventsDefault,
 } from "./siemImport.js";
-// A row from a Velociraptor artifact that shells out to Chainsaw and streams its rows back as
-// VQL (e.g. a custom "run chainsaw" artifact) carries Chainsaw's flat Sigma-mapping shape
-// (Detection/Severity/Rule Group siblings), not Velociraptor's own DetectRaptor {Detection:{Name,
-// Criticality}} convention — reuse chainsawImport's shape check + mapper so it isn't misclassified
-// as a generic detection() row, which would read no severity from a sibling field and silently
-// downgrade a real Critical (e.g. "Security Audit Logs Cleared") to a keyword-guessed Medium.
+// A Velociraptor artifact that shells out to Chainsaw streams Chainsaw's flat Sigma shape (Detection/
+// Severity/Rule Group siblings), not DetectRaptor's {Detection:{Name, Criticality}} — reuse
+// chainsawImport's shape check + mapper, or a generic detection() read would find no severity and
+// downgrade a real Critical ("Security Audit Logs Cleared") to a keyword-guessed Medium.
 import { isFlatChainsawRow, mapFlatChainsawRow } from "./chainsawImport.js";
 import { mapPersistenceSniper, isPersistenceSniperRow } from "./persistenceSniperImport.js";
 import { mapBinaryRename } from "./binaryRenameImport.js";
@@ -77,6 +75,7 @@ import {
 } from "./veloDetectionNoise.js";
 import { HostRenameLedger, demoteSampleHost, resolveRowHost, withFormerHostSuffix } from "./hostIdentity.js";
 import { HostRenameMap } from "./hostRenameEvidence.js";
+import { mergeHostRenameRecords, type HostRenameRecord } from "./hostRenameRecord.js";
 import { gradeYaraHit, yaraHitAggKey } from "./yaraGrade.js";
 import {
   sigmaAggKey,
@@ -106,6 +105,8 @@ export interface VelociraptorImportOptions {
   maxIocs?: number;
   artifact?: string; // fallback artifact/source label (e.g. the filename) when rows carry no _Source
   hostFallback?: string; // asset to stamp on events whose row carries no host (single-client flow import)
+  knownRenames?: readonly HostRenameRecord[]; // renames the case learned earlier (#1495), seeded before any row
+  collectorHostnames?: readonly string[]; // collector identities the case has seen — never a former name
 }
 
 export interface VelociraptorParseResult {
@@ -118,6 +119,8 @@ export interface VelociraptorParseResult {
   detections: number; // Sigma + YARA detection rows seen
   format: string; // "array" | "jsonl" | "artifact-map" | "single" | …
   hostname: string;
+  hostRenames: HostRenameRecord[]; // what this file taught the case (#1495)
+  collectorHostnames: string[];
 }
 
 const IPV4 = /^(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
@@ -183,13 +186,11 @@ function hashStr(s: string): string {
   return (h >>> 0).toString(36);
 }
 
-// Fingerprint a message for aggregation: normalize away VOLATILE bits (GUIDs, any digits — PIDs,
-// thread/record ids, counters) but keep the words AND every network address, then hash the WHOLE
-// thing. So two detections that differ only in a PID collapse, while two that name different tools
-// (HackTool:Passview vs HackTool:Mimikatz) or different peers stay separate — the message, not just
-// the rule title, decides identity. The hash (not a prefix) means a distinguishing token anywhere
-// in a long, boilerplate-heavy message still separates the events, and keeps the folded key a fixed
-// length however many addresses one message names.
+// Fingerprint a message for aggregation: strip VOLATILE bits (GUIDs, digits — PIDs, record ids,
+// counters), keep the words AND every network address, then hash the WHOLE thing: two detections
+// differing only by PID collapse; two naming different tools (HackTool:Passview vs Mimikatz) or
+// peers stay apart. Hashing (not a prefix) lets a token anywhere in a long boilerplate message
+// separate events and keeps the key a fixed length however many addresses one message names.
 function msgFingerprint(msg: string): string {
   const line = oneLine(msg)
     .toLowerCase()
@@ -592,12 +593,10 @@ function mapSigma(row: Row, host: string, sink: Map<string, SiemIoc>): MappedEve
   };
 }
 
-// DetectRaptor ships many distinct "*.Detection.*" rule packs (MFT, Amcache, LolDrivers,
-// PSReadline, ...) that all flow through rowVerdict()/mapDetection() — folding them all under the
-// generic "Velociraptor detection" bucket hides WHICH rule pack actually fired. When the artifact
-// names a DetectRaptor pack, lead with its specific technique name instead (e.g. "DetectRaptor MFT
-// detection"); any other Velociraptor-hosted rule pack (Custom.*, Chainsaw, etc.) keeps the
-// generic "Velociraptor detection" label.
+// DetectRaptor's many "*.Detection.*" packs (MFT, Amcache, LolDrivers, PSReadline, …) all flow
+// through rowVerdict()/mapDetection(); one "Velociraptor detection" bucket hides WHICH pack fired.
+// A DetectRaptor artifact leads with its pack ("DetectRaptor MFT detection"); any other
+// Velociraptor-hosted pack (Custom.*, Chainsaw, …) keeps the generic label.
 function detectionLabel(artifact: string): string {
   const a = artifact.trim();
   if (/^DetectRaptor\./i.test(a)) {
@@ -1632,12 +1631,11 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
     for (const m of ms) {
       if (!m) continue;
       m.description = withFormerHostSuffix(m.description, rh.formerName);
+      if (rh.assetRecord) m.assetRecord = rh.assetRecord; // a bare row's own name, for a rename learned later (#1495)
       demoteSampleHost(m, rh); // only a row with NO collector identity can be a sample-corpus host
-      // Stamp the produced event with the VQL artifact that emitted it. Done once here (rather than in
-      // each map* function) because `artifact` is already resolved in this dispatch loop and every
-      // mapper's result flows through — so downstream (dwell-time window, evidence graph) can tell
-      // "from the MFT" apart from "a Sigma detection". Uses the resolved `artifact` (the row's
-      // _Source/_Artifact, or the filename fallback) so telemetry rows without _Source still carry it.
+      // Stamp the event with the VQL artifact that emitted it — once here, since every mapper's result
+      // flows through with `artifact` resolved (the row's _Source/_Artifact, else the filename), so
+      // downstream (dwell-time window, evidence graph) tells "from the MFT" from "a Sigma detection".
       if (artifact) m.artifactName = artifact;
       // Carry the FULL untruncated event message so the super-timeline row can reveal it expandably,
       // when it adds detail beyond the truncated `description`. Stamped here (like artifactName) so
@@ -1710,33 +1708,34 @@ function finalizeVrParse(
     detections,
     format,
     hostname,
+    hostRenames: mergeHostRenameRecords(ctx.aliases.records(), ctx.renames.records()),
+    collectorHostnames: ctx.renames.collectorHostnames(),
   };
 }
 
 function emptyVrResult(): VelociraptorParseResult {
+  const zero = { total: 0, kept: 0, dropped: 0, groups: 0, detections: 0 };
   return {
     events: [],
     iocs: [],
-    total: 0,
-    kept: 0,
-    dropped: 0,
-    groups: 0,
-    detections: 0,
+    ...zero,
     format: "empty",
     hostname: "",
+    hostRenames: [],
+    collectorHostnames: [],
   };
 }
 
 function newVrCtx(opts: VelociraptorImportOptions): VrParseCtx {
   return {
     fallbackArtifact: (opts.artifact ?? "").trim(),
-    // A single-client FLOW export has no per-row host column — the whole collection is implicitly
-    // for one client — so the resolved hostname is threaded in to attribute rows that carry no host.
+    // A single-client FLOW export has no per-row host column (one client by definition), so the
+    // resolved hostname is threaded in to attribute rows that carry no host.
     fallbackHost: (opts.hostFallback ?? "").trim(),
     iocSink: new Map<string, SiemIoc>(),
     hostTally: new Map<string, number>(),
     renames: new HostRenameLedger(),
-    aliases: new HostRenameMap(),
+    aliases: HostRenameMap.from(opts.knownRenames, opts.collectorHostnames, opts.hostFallback), // the case's ledger, and the flow's client is a collector (#1495)
   };
 }
 

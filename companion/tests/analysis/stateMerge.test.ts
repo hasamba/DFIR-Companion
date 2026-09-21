@@ -1124,3 +1124,118 @@ describe("#1266 -- re-import idempotency and a marked duplicate", () => {
     expect(s2.iocs[0].provenance).toBe("client-reported");
   });
 });
+
+// The case's rename ledger (#1495) rides the delta like labIntel: named in the merged literal,
+// unioned by pair, and the row-level provenance survives the merge.
+describe("mergeDelta — hostRenames / collectorHostnames / assetRecord (#1495)", () => {
+  const rename = (formerName: string, currentName: string, until: string) => ({
+    formerName,
+    currentName,
+    until,
+    basis: "machine-account" as const,
+  });
+  const ctx = { windowSequence: 1, timestamp: "2026-09-21T12:00:00.000Z", sourceScreenshots: [] };
+
+  it("stores the ledger, unions it by pair keeping the earliest bound, and keeps it across a delta that names none", () => {
+    const one = mergeDelta(
+      emptyState("c1"),
+      {
+        ...baseDelta,
+        hostRenames: [rename("OLD", "NEW", "2026-08-26T13:52:00.000Z")],
+        collectorHostnames: ["ws01.example.com"],
+      },
+      ctx,
+    );
+    expect(one.hostRenames).toEqual([rename("OLD", "NEW", "2026-08-26T13:52:00.000Z")]);
+    expect(one.collectorHostnames).toEqual(["ws01.example.com"]);
+    const two = mergeDelta(
+      one,
+      {
+        ...baseDelta,
+        hostRenames: [
+          rename("old", "new", "2026-08-26T13:50:00.000Z"),
+          rename("OLD", "OTHER", "2026-08-27T00:00:00.000Z"),
+        ],
+        collectorHostnames: ["WS01.example.com", "ws02"],
+      },
+      ctx,
+    );
+    expect(two.hostRenames).toEqual([
+      rename("OLD", "NEW", "2026-08-26T13:50:00.000Z"),
+      rename("OLD", "OTHER", "2026-08-27T00:00:00.000Z"),
+    ]);
+    expect(two.collectorHostnames).toEqual(["ws01.example.com", "ws02"]);
+    const three = mergeDelta(two, baseDelta, ctx);
+    expect(three.hostRenames).toEqual(two.hostRenames);
+    expect(three.collectorHostnames).toEqual(two.collectorHostnames);
+  });
+
+  it("an empty ledger stays absent, so old state files round-trip unchanged", () => {
+    const next = mergeDelta(emptyState("c1"), baseDelta, ctx);
+    expect("hostRenames" in next).toBe(false);
+    expect("collectorHostnames" in next).toBe(false);
+  });
+
+  it("carries assetRecord onto a new forensic row", () => {
+    const next = mergeDelta(
+      emptyState("c1"),
+      {
+        ...baseDelta,
+        forensicEvents: [
+          {
+            id: "e1",
+            timestamp: "2025-12-05T03:02:24.000Z",
+            description: "x @ OLD",
+            severity: "High",
+            mitreTechniques: [],
+            relatedFindingIds: [],
+            asset: "OLD",
+            assetRecord: "OLD",
+          },
+        ],
+      },
+      ctx,
+    );
+    expect(next.forensicTimeline[0].assetRecord).toBe("OLD");
+  });
+});
+
+// A row imported before the field existed is backfilled when its own re-read arrives (#1495): the
+// existing-id branch copies assetRecord, and correlation keeps it beside a legacy primary.
+describe("mergeDelta — assetRecord backfills a legacy row (#1495)", () => {
+  const ctx = { windowSequence: 1, timestamp: "2026-09-21T12:00:00.000Z", sourceScreenshots: [] };
+  const row = (assetRecord?: string) => ({
+    id: "e1",
+    timestamp: "2025-12-05T03:02:24.000Z",
+    description: "x @ OLD",
+    severity: "High" as const,
+    mitreTechniques: [],
+    relatedFindingIds: [],
+    asset: "OLD",
+    ...(assetRecord ? { assetRecord } : {}),
+  });
+
+  it("the same id re-imported with assetRecord gains it", () => {
+    const legacy = mergeDelta(emptyState("c1"), { ...baseDelta, forensicEvents: [row()] }, ctx);
+    expect(legacy.forensicTimeline[0].assetRecord).toBeUndefined();
+    const reread = mergeDelta(legacy, { ...baseDelta, forensicEvents: [row("OLD")] }, ctx);
+    expect(reread.forensicTimeline[0].assetRecord).toBe("OLD");
+  });
+
+  it("a correlated duplicate under a new id lends its assetRecord to the legacy primary, same asset only", () => {
+    const legacy = mergeDelta(emptyState("c1"), { ...baseDelta, forensicEvents: [row()] }, ctx);
+    const reread = mergeDelta(legacy, { ...baseDelta, forensicEvents: [{ ...row("OLD"), id: "e2" }] }, ctx);
+    expect(reread.forensicTimeline).toHaveLength(1);
+    expect(reread.forensicTimeline[0].assetRecord).toBe("OLD");
+    const other = mergeDelta(
+      legacy,
+      {
+        ...baseDelta,
+        forensicEvents: [{ ...row("OTHER"), id: "e3", asset: "OTHER", description: "x @ OTHER" }],
+      },
+      ctx,
+    );
+    const primary = other.forensicTimeline.find((e) => e.id === "e1");
+    expect(primary?.assetRecord).toBeUndefined();
+  });
+});

@@ -7,6 +7,7 @@ import type { SiemIoc } from "../iocSink.js";
 import { applySeverityFloor } from "../severityFloor.js";
 import { toUtcIso } from "../timeUtc.js";
 import { deltaSchema } from "../responseSchema.js";
+import { mergeHostRenameRecords, type HostRenameRecord } from "../hostRenameRecord.js";
 import { prepareRows, vrBulkInternals, type VelociraptorImportOptions } from "../velociraptorImport.js";
 import { openVelociraptorRowStream, type Row } from "../velociraptorRowStream.js";
 import type { ImportContext } from "./importContext.js";
@@ -148,6 +149,8 @@ export interface BulkImportResult {
   iocs: SiemIoc[];
   eventIdByAggKey: Map<string, string>; // only keys an IOC references — bounded by the IOC sink
   detections: number;
+  hostRenames: HostRenameRecord[]; // what this file taught the case (#1495), seeded from what it knew
+  collectorHostnames: string[];
   /** For the caller's own commit point: what to roll back if its merge/save fails (#1480). */
   run: BulkRunHandle;
 }
@@ -484,6 +487,8 @@ export async function runVelociraptorBulk(
     batches: totals.batches,
     dropped: totals.dropped,
     hostname,
+    hostRenames: mergeHostRenameRecords(vrCtx.aliases.records(), vrCtx.renames.records()),
+    collectorHostnames: vrCtx.renames.collectorHostnames(),
     format: stream.format,
     iocs: [...vrCtx.iocSink.values()].map((c) => {
       const ids = c.sourceAggKeys
@@ -527,6 +532,9 @@ export async function importVelociraptorBulk(
       forensicEvents: [],
       threadsOpened: [],
       threadsClosed: [],
+      // The case's rename ledger grows through the same merge as every other import's (#1495).
+      ...(result.hostRenames.length ? { hostRenames: result.hostRenames } : {}),
+      ...(result.collectorHostnames.length ? { collectorHostnames: result.collectorHostnames } : {}),
       timelineNote:
         `Velociraptor import (${result.format}, bulk path: ${result.batches} batch(es) of ${sink.batchRows} rows): ` +
         `${result.events} event(s) from ${result.rows} row(s); ${result.forensicKept} kept in the forensic timeline, ` +

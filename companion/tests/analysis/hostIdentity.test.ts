@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { resolveRowHost, withFormerHostSuffix } from "../../src/analysis/hostIdentity.js";
+import { HostRenameLedger, resolveRowHost, withFormerHostSuffix } from "../../src/analysis/hostIdentity.js";
+import { HostRenameMap } from "../../src/analysis/hostRenameEvidence.js";
 import {
   parseVelociraptorJson,
   parseVelociraptorJsonProgress,
@@ -106,14 +107,17 @@ describe("resolveRowHost — collector identity vs. the name inside the record",
     expect(resolveRowHost({ Computer: "DESKTOP-LAB01", ClientName: "-" })).toEqual({
       asset: "DESKTOP-LAB01",
       collectorIdentity: false,
+      assetRecord: "DESKTOP-LAB01",
     });
     expect(resolveRowHost({ Computer: "DESKTOP-LAB01", ClientName: "ATTACKER-PC" })).toEqual({
       asset: "DESKTOP-LAB01",
       collectorIdentity: false,
+      assetRecord: "DESKTOP-LAB01",
     });
     expect(resolveRowHost({ Fqdn: "-", Computer: "DESKTOP-LAB01" })).toEqual({
       asset: "DESKTOP-LAB01",
       collectorIdentity: false,
+      assetRecord: "DESKTOP-LAB01",
     });
   });
 
@@ -121,10 +125,12 @@ describe("resolveRowHost — collector identity vs. the name inside the record",
     expect(resolveRowHost({ Computer: FORMER, Channel: "Security" })).toEqual({
       asset: FORMER,
       collectorIdentity: false,
+      assetRecord: FORMER, // a bare row keeps the name it wrote, for a rename the case learns later (#1495)
     });
     expect(resolveRowHost({ System: { Computer: "WS05" } })).toEqual({
       asset: "WS05",
       collectorIdentity: false,
+      assetRecord: "WS05",
     });
     expect(resolveRowHost({ OSPath: "C:\\x" })).toEqual({ asset: "", collectorIdentity: false });
   });
@@ -391,6 +397,7 @@ describe("resolveRowHost — an import-level collector stands in when the row ha
     expect(resolveRowHost({ System: { Computer: BUILD_NAME } }, undefined, "")).toEqual({
       asset: BUILD_NAME,
       collectorIdentity: false,
+      assetRecord: BUILD_NAME,
     });
   });
 });
@@ -709,5 +716,66 @@ describe("resolveRowHost — a ForwardedEvents record is never re-homed, in any 
     const fwd = r.events.find((e) => e.description.includes("Some Rule"))!;
     expect(fwd.asset).toBe(MID_NAME);
     expect(fwd.description).not.toContain("former hostname");
+  });
+});
+
+// Durable provenance for the case-wide ledger (#1495): only a bare, non-forwarded row keeps the name
+// it wrote; a collector-identified or forwarded row carries none, so no later rename can re-home it.
+describe("resolveRowHost — assetRecord and renameBound (#1495)", () => {
+  it("a ForwardedEvents row and a collector-identified row carry no assetRecord", () => {
+    expect(resolveRowHost({ Computer: "REMOTE-01", Channel: "ForwardedEvents" }).assetRecord).toBeUndefined();
+    expect(resolveRowHost({ Fqdn: COLLECTOR, Computer: FORMER }).assetRecord).toBeUndefined();
+    expect(resolveRowHost({ Computer: FORMER }, undefined, FLOW_HOST).assetRecord).toBeUndefined();
+  });
+
+  it("a row folded by rename evidence keeps the record name and the bound it folded under", () => {
+    const aliases = HostRenameMap.from([
+      {
+        formerName: FORMER,
+        currentName: COLLECTOR,
+        until: "2026-08-26T13:52:06.000Z",
+        basis: "machine-account",
+      },
+    ]);
+    const rh = resolveRowHost(
+      { Computer: FORMER, EventTime: "2025-12-05T03:02:24Z" },
+      undefined,
+      "",
+      aliases,
+    );
+    expect(rh).toMatchObject({
+      asset: COLLECTOR,
+      formerName: FORMER,
+      viaRenameEvidence: true,
+      assetRecord: FORMER,
+      renameBound: "2026-08-26T13:52:06.000Z",
+    });
+  });
+});
+
+describe("HostRenameLedger — what the case remembers (#1495)", () => {
+  it("records a collector rename bounded by the last record under the old name, and the collector names", () => {
+    const ledger = new HostRenameLedger();
+    ledger.note(resolveRowHost({ Fqdn: COLLECTOR, Computer: FORMER }), "2025-12-05T03:02:24Z");
+    ledger.note(resolveRowHost({ Fqdn: COLLECTOR, Computer: FORMER }), "2025-12-05T03:41:26Z");
+    ledger.note(resolveRowHost({ Fqdn: COLLECTOR, Computer: COLLECTOR }), "2026-09-20T19:34:56Z");
+    ledger.note(resolveRowHost({ Fqdn: "ws02.example.com", Computer: "WS02" }), "2026-09-20T19:34:56Z");
+    expect(ledger.records()).toEqual([
+      { formerName: FORMER, currentName: COLLECTOR, until: "2025-12-05T03:41:26.000Z", basis: "collector" },
+    ]);
+    expect(ledger.collectorHostnames()).toEqual([COLLECTOR, "ws02.example.com"]);
+  });
+
+  it("an evidence rename is the map's to report, not the ledger's", () => {
+    const aliases = HostRenameMap.from([
+      { formerName: FORMER, currentName: COLLECTOR, until: "2026-08-26T13:52:06.000Z", basis: "6011" },
+    ]);
+    const ledger = new HostRenameLedger();
+    ledger.note(
+      resolveRowHost({ Computer: FORMER, EventTime: "2025-12-05T03:02:24Z" }, undefined, "", aliases),
+      "2025-12-05T03:02:24Z",
+    );
+    expect(ledger.records()).toEqual([]);
+    expect(ledger.events()).toHaveLength(1);
   });
 });

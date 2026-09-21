@@ -4,6 +4,7 @@ import { diffTimeline, type TimelineDiff } from "../analysis/timelineDiff.js";
 import { diffIocs, type IocsDiff } from "../analysis/iocsDiff.js";
 import { getServerLogger } from "../logging/serverLogger.js";
 import { formatImportSettled } from "../logging/importLog.js";
+import { carryHostRenames } from "../analysis/hostRenameCarry.js";
 
 /**
  * The forensic / super-timeline seam that every import must cross after the importer has merged
@@ -64,6 +65,12 @@ export async function settleForensicImport(
   label?: string,
 ): Promise<SettledImport> {
   let imported = await deps.stateStore.load(caseId);
+  // Rows the case already held under a name this (or any earlier) import taught it was a former
+  // one are re-homed here, before they are stamped, dual-written and tagged (#1495). A pure
+  // recomputation from each row's own record name against the whole ledger, so it is safe to run
+  // on every settle; it returns the same object when nothing differs.
+  const carried = carryHostRenames(imported);
+  imported = carried.state;
   // Select the added rows BY ID — exact. The time+description diff below is case-folded, so two
   // rows that differ only by case (two paths on a case-sensitive filesystem) counted as one there,
   // and the second was neither dual-written nor offered to the tagger. Ids are exact: a re-import
@@ -88,6 +95,10 @@ export async function settleForensicImport(
       ),
     };
     added = imported.forensicTimeline.filter((e) => addedIds.has(e.id));
+  }
+  // Saved when anything above changed the state: new rows stamped, or older rows re-homed by a
+  // rename this import taught the case (a carry-only settle still has to persist and broadcast).
+  if (added.length || carried.changed) {
     await deps.stateStore.save(imported);
     deps.onState?.(imported);
   }

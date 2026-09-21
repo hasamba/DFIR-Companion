@@ -333,3 +333,66 @@ describe("settleForensicImport — the [import] done line (#1438)", () => {
     ]);
   });
 });
+
+// Older rows under a name this import taught the case was a former one are re-homed at this seam,
+// before they are stamped/dual-written/tagged, and the carry-only change is still saved (#1495).
+describe("settleForensicImport — carries learned renames onto rows already in the case (#1495)", () => {
+  const OLD = "WIN-UK1GV882OK6";
+  const NEW = "DESKTOP-16OJFO6";
+  const ledger = (events: ForensicEvent[]): InvestigationState =>
+    ({
+      forensicTimeline: events,
+      iocs: [],
+      hostRenames: [
+        { formerName: OLD, currentName: NEW, until: "2026-08-26T13:49:52.000Z", basis: "machine-account" },
+      ],
+    }) as unknown as InvestigationState;
+
+  it("re-homes an older bare row, saves and broadcasts even when this import added no row", async () => {
+    const older: ForensicEvent = {
+      ...ev("older", "High", `x @ ${OLD}`),
+      asset: OLD,
+      assetRecord: OLD,
+      timestamp: "2025-12-05T03:02:24Z",
+    };
+    const before = state([older]);
+    const merged = ledger([older]);
+    const save = vi.fn(async (_s: InvestigationState) => {});
+    const onState = vi.fn();
+    let demoted: InvestigationState | null = null;
+    const deps = {
+      stateStore: { load: async () => merged, save },
+      onState,
+      autoTagImported: async () => {},
+      demoteForensicForCase: async () => demoted ?? merged,
+    };
+    await settleForensicImport(deps, "c1", before);
+    expect(save).toHaveBeenCalledOnce();
+    const saved = save.mock.calls[0][0];
+    expect(saved.forensicTimeline[0].asset).toBe(NEW);
+    expect(saved.forensicTimeline[0].description).toContain(`[logged under former hostname ${OLD}]`);
+    expect(onState).toHaveBeenCalledWith(saved);
+    demoted = saved;
+  });
+
+  it("the re-homed older row is not counted as added (not dual-written twice)", async () => {
+    const older: ForensicEvent = {
+      ...ev("older", "High", `x @ ${OLD}`),
+      asset: OLD,
+      assetRecord: OLD,
+      timestamp: "2025-12-05T03:02:24Z",
+    };
+    const fresh = ev("new", "High");
+    const before = state([older]);
+    const merged = ledger([older, fresh]);
+    const append = vi.fn(async (_c: string, rows: ForensicEvent[]) => rows.length);
+    const deps = {
+      stateStore: { load: async () => merged, save: async () => {} },
+      superTimelineStore: { append },
+      autoTagImported: async () => {},
+      demoteForensicForCase: async () => merged,
+    };
+    await settleForensicImport(deps, "c1", before);
+    expect(append.mock.calls[0][1].map((e) => e.id)).toEqual(["new"]);
+  });
+});

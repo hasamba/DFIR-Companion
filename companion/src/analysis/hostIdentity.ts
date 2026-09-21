@@ -27,6 +27,7 @@ import { getCI, getPath, str } from "./siemImport.js";
 import type { MappedEvent } from "./siemImport.js";
 import { isDetectionSampleHost } from "./veloDetectionNoise.js";
 import type { HostRenameMap } from "./hostRenameEvidence.js";
+import type { HostRenameRecord } from "./hostRenameRecord.js";
 
 type Row = Record<string, unknown>;
 
@@ -40,6 +41,12 @@ export interface RowHost {
   // True when `asset` is the record's own name resolved through the file's rename evidence (#1489):
   // not a collector identity, but a claim the machine made about itself, and no sample corpus.
   viaRenameEvidence?: true;
+  // The name the record wrote, kept as durable provenance on a row that named NO collector and is
+  // not a forwarded event — the only rows a later rename the case learns may re-home (#1495). Absent
+  // on a collector-identified or ForwardedEvents row, which no ledger ever touches.
+  assetRecord?: string;
+  // With `viaRenameEvidence`: the bound the fold rests on (the earliest evidence along the chain).
+  renameBound?: string;
 }
 
 // The collector's identity, in order of trust. `Hostname` is Velociraptor's client hostname (and
@@ -84,6 +91,11 @@ export function recordComputer(row: Row): string {
   return firstKey(row, RECORD_KEYS);
 }
 
+/** The collector identity a row names (Fqdn / Hostname), "" when it names none. */
+export function recordCollector(row: Row): string {
+  return firstKey(row, COLLECTOR_KEYS);
+}
+
 // Every spelling of the channel across the shapes RECORD_KEYS covers. A ForwardedEvents test must
 // see the EMBEDDED event's channel too: an outer detection wrapper may carry its own Channel while the
 // record inside came through Windows Event Forwarding.
@@ -115,10 +127,19 @@ export function resolveRowHost(
   const collector = firstKey(row, COLLECTOR_KEYS) || collectorFallback.trim();
   const record = (recordName ?? "").trim() || firstKey(row, RECORD_KEYS);
   if (!collector) {
-    if (!aliases || !record || isForwarded(row)) return { asset: record, collectorIdentity: false };
+    if (!record) return { asset: record, collectorIdentity: false };
+    if (isForwarded(row)) return { asset: record, collectorIdentity: false };
+    const bare: RowHost = { asset: record, collectorIdentity: false, assetRecord: record };
+    if (!aliases) return bare;
     const current = aliases.currentNameForRow(record, row);
-    if (shortHostName(current) === shortHostName(record)) return { asset: record, collectorIdentity: false };
-    return { asset: current, formerName: record, collectorIdentity: false, viaRenameEvidence: true };
+    if (shortHostName(current) === shortHostName(record)) return bare;
+    return {
+      ...bare,
+      asset: current,
+      formerName: record,
+      viaRenameEvidence: true,
+      renameBound: aliases.boundForRow(record, row),
+    };
   }
   if (!record || shortHostName(record) === shortHostName(collector))
     return { asset: collector, collectorIdentity: true };
@@ -146,16 +167,54 @@ export function demoteSampleHost(ev: MappedEvent, host: RowHost): void {
 }
 
 // Per-import ledger of renames: one Info marker per (asset, former name) pair, stamped with the last
-// time the old name was seen, so the analyst reads the rename once instead of inferring it.
+// time the old name was seen, so the analyst reads the rename once instead of inferring it. It also
+// keeps what the CASE must remember (#1495): the collector-identified renames as records, with the
+// bound each rests on, and every collector identity seen — the names no later import may fold.
 export class HostRenameLedger {
-  private readonly seen = new Map<string, { asset: string; formerName: string; last: string }>();
+  private readonly seen = new Map<
+    string,
+    { asset: string; formerName: string; last: string; bound: string; evidence: boolean }
+  >();
+  private readonly collectors = new Set<string>();
 
   note(host: RowHost, timestamp: string): void {
+    if (host.collectorIdentity && host.asset) this.collectors.add(host.asset);
     if (!host.formerName) return;
     const key = `${host.asset}|${host.formerName}`.toLowerCase();
     const cur = this.seen.get(key);
-    if (!cur) this.seen.set(key, { asset: host.asset, formerName: host.formerName, last: timestamp });
+    if (!cur)
+      this.seen.set(key, {
+        asset: host.asset,
+        formerName: host.formerName,
+        last: timestamp,
+        bound: host.renameBound ?? "",
+        evidence: host.viaRenameEvidence === true,
+      });
     else if (timestamp > cur.last) cur.last = timestamp;
+  }
+
+  /** Every collector identity this import attributed rows to, as written (deduped case-insensitively). */
+  collectorHostnames(): string[] {
+    const out = new Map<string, string>();
+    for (const h of this.collectors) if (!out.has(h.toLowerCase())) out.set(h.toLowerCase(), h);
+    return [...out.values()];
+  }
+
+  /**
+   * The COLLECTOR renames this import saw (Fqdn ≠ Computer, #1417), for the case's ledger. Bounded
+   * by the last record seen under the old name — the machine was still called that then, so a
+   * record after it is never folded on this evidence. Evidence renames are not repeated here: the
+   * map that found them hands out its own raw edges (HostRenameMap.records()).
+   */
+  records(): HostRenameRecord[] {
+    return [...this.seen.values()]
+      .filter((r) => !r.evidence && r.last && !Number.isNaN(Date.parse(r.last)))
+      .map((r) => ({
+        formerName: r.formerName,
+        currentName: r.asset,
+        until: new Date(Date.parse(r.last)).toISOString(),
+        basis: "collector" as const,
+      }));
   }
 
   events(): MappedEvent[] {

@@ -55,6 +55,7 @@ import {
   type RowHost,
 } from "./hostIdentity.js";
 import { HostRenameMap } from "./hostRenameEvidence.js";
+import { mergeHostRenameRecords, type HostRenameRecord } from "./hostRenameRecord.js";
 import {
   demoteDetectionToolScript,
   engineScriptPath,
@@ -76,6 +77,10 @@ export interface ChainsawImportOptions {
   maxEvents?: number;
   // Safety cap on emitted IOCs. Default 5000.
   maxIocs?: number;
+  // What the case already knows about its hosts (#1495): renames learned by earlier imports, and
+  // the collector identities seen — seeded into this file's rename map before any row is read.
+  knownRenames?: readonly HostRenameRecord[];
+  collectorHostnames?: readonly string[];
 }
 
 export interface ChainsawParseResult {
@@ -88,6 +93,9 @@ export interface ChainsawParseResult {
   detections: number; // Chainsaw rule detections seen (0 ⇒ a pure raw-EVTX dump)
   format: string; // "chainsaw" | "evtx" | "mixed" | "empty"
   hostname: string; // best-effort dominant host
+  // What this file taught the case (#1495): every rename edge it found and every collector it saw.
+  hostRenames: HostRenameRecord[];
+  collectorHostnames: string[];
 }
 
 // Sigma severity vocabulary → our Severity. Chainsaw passes the rule's level straight
@@ -324,6 +332,8 @@ export function parseChainsawReport(text: string, opts: ChainsawImportOptions = 
       detections: 0,
       format: "empty",
       hostname: "",
+      hostRenames: [],
+      collectorHostnames: [],
     };
   }
 
@@ -346,7 +356,7 @@ export function parseChainsawReport(text: string, opts: ChainsawImportOptions = 
   // (#1489): the pre-pass below reads the rename evidence every record carries — the flat row as-is,
   // a nested detection through its embedded event(s) — so a record under the old name lands on the
   // current one with the former-name note, and is not a sample corpus either.
-  const aliases = new HostRenameMap();
+  const aliases = HostRenameMap.from(opts.knownRenames, opts.collectorHostnames);
   for (const rec of records)
     aliases.learn(isFlatChainsawRow(rec) ? [rec] : eventDocs(rec).map((event) => ({ Event: event })));
 
@@ -360,6 +370,7 @@ export function parseChainsawReport(text: string, opts: ChainsawImportOptions = 
   const pathless: { raw: Row; ev: MappedEvent }[] = [];
   const push = (ev: MappedEvent, host: RowHost, raw: Row): void => {
     ev.description = withFormerHostSuffix(ev.description, host.formerName);
+    if (host.assetRecord) ev.assetRecord = host.assetRecord; // a bare row's own name, for a rename learned later (#1495)
     demoteSampleHost(ev, host);
     demoteDetectionToolScript(raw, [ev]);
     lineage.note(ev);
@@ -437,5 +448,7 @@ export function parseChainsawReport(text: string, opts: ChainsawImportOptions = 
     detections,
     format,
     hostname,
+    hostRenames: mergeHostRenameRecords(aliases.records(), renames.records()),
+    collectorHostnames: renames.collectorHostnames(),
   };
 }
