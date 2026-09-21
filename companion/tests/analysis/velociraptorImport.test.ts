@@ -4118,13 +4118,15 @@ describe("parseVelociraptorJson — script blocks run by the collector itself", 
     expect(parseVelociraptorJson(JSON.stringify([row])).events[0].severity).toBe("High");
   });
 
-  it("demotes from the 32-bit install root as well", () => {
+  // The fleet ships only the 64-bit MSI, so a tool tree under (x86) belongs to a second copy someone
+  // else installed (#1486) — the same line collectorDeployment draws for the install root.
+  it("keeps the grade from a tool tree under the (x86) folder", () => {
     const row = pwshRow(
       "C:\\Program Files (x86)\\Velociraptor\\Tools\\tmp1\\PersistenceSniper\\PersistenceSniper.psm1",
       "high",
       "Potential WinAPI Calls Via PowerShell Scripts",
     );
-    expect(parseVelociraptorJson(JSON.stringify([row])).events[0].severity).toBe("Info");
+    expect(parseVelociraptorJson(JSON.stringify([row])).events[0].severity).toBe("High");
   });
 
   // Program Files alone is not enough: collector-run modules always land in the unpacked \Tools\

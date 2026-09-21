@@ -235,7 +235,7 @@ function imagePath(m: MappedEvent): string {
 // from another importer shows the same fact by rendering a CommandLine field or the process EID
 // (Sysmon 1, Security 4688).
 const PROCESS_CREATE_EID = /\(EID (?:1|4688)[\s)]/;
-function isProcessRow(m: MappedEvent): boolean {
+export function isProcessRow(m: MappedEvent): boolean {
   return (
     Boolean(m.commandLine || m.processName) ||
     /(?:^|\s-\s)CommandLine=/i.test(m.description) ||
