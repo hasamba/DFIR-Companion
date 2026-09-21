@@ -22,6 +22,21 @@ describe("TagsStore", () => {
     store = new TagsStore(cases);
   });
 
+  // #1480: a rolled-back bulk import takes the tagger's tags on its rows with it, and nothing else.
+  it("removeTaggerTagsFor drops only tagger-authored tags on the named ids", async () => {
+    await store.add("c1", { targetType: "event", targetId: "e1", author: "tagger:rule-a", label: "x" });
+    await store.add("c1", { targetType: "event", targetId: "e1", author: "alice", label: "key-evidence" });
+    await store.add("c1", { targetType: "event", targetId: "e2", author: "tagger:rule-a", label: "x" });
+    await store.add("c1", { targetType: "ioc", targetId: "e1", author: "tagger:rule-a", label: "x" });
+    expect(await store.removeTaggerTagsFor("c1", ["e1", "e9"])).toBe(1);
+    expect((await store.load("c1")).map((t) => [t.targetType, t.targetId, t.author])).toEqual([
+      ["event", "e1", "alice"],
+      ["event", "e2", "tagger:rule-a"],
+      ["ioc", "e1", "tagger:rule-a"],
+    ]);
+    expect(await store.removeTaggerTagsFor("c1", [])).toBe(0);
+  });
+
   it("returns [] when no tags exist", async () => {
     expect(await store.load("c1")).toEqual([]);
   });

@@ -14,6 +14,8 @@ import {
   readBulkMinBytes,
   type BatchTagger,
   type BulkImportSink,
+  type BulkRollbackSummary,
+  type BulkRunHandle,
   type BulkRunSummary,
 } from "../analysis/ingest/velociraptorBulk.js";
 
@@ -124,9 +126,38 @@ export function buildBulkImportSink(deps: BulkImportSinkDeps): BulkImportSink | 
     }
   };
 
+  // The rollback fence (#1480): one row-id watermark covers both timelines, which share the database.
+  const beginRun = (caseId: string): Promise<number> => deps.stateStore.importRowIdMark(caseId);
+
+  // Both kinds in one transaction, by the run's own batch id; then the tagger tags on exactly the
+  // ids that came out (in forensic mode the two stores hold the same ids, hence the set). The tags
+  // step is kept apart on purpose: the rows are already gone when it runs, and a failure there is
+  // reported, not thrown — tagger tags on missing rows are inert and "Clear tagger tags" removes them.
+  const rollback = async (caseId: string, run: BulkRunHandle): Promise<BulkRollbackSummary> => {
+    const kinds =
+      run.mode === "forensic"
+        ? (["forensicTimeline", "superTimeline"] as const)
+        : (["superTimeline"] as const);
+    const undone = await deps.stateStore.rollbackImportBatch(caseId, run.fence, run.importBatchId, kinds);
+    const ids = [...new Set([...undone.forensicTimeline.ids, ...undone.superTimeline.ids])];
+    const summary: BulkRollbackSummary = {
+      forensic: undone.forensicTimeline.deleted,
+      super: undone.superTimeline.deleted,
+      tags: 0,
+    };
+    if (!deps.tagsStore || !ids.length) return summary;
+    try {
+      return { ...summary, tags: await deps.tagsStore.removeTaggerTagsFor(caseId, ids) };
+    } catch (err) {
+      return { ...summary, tagsError: (err as Error).message };
+    }
+  };
+
   return {
     minBytes: readBulkMinBytes(env),
     batchRows: readBulkBatchRows(env),
+    beginRun,
+    rollback,
     // The same door guard mergeDelta applies: tool-usage narration never enters the forensic timeline.
     appendForensic: (caseId: string, events: ForensicEvent[]) =>
       deps.stateStore.appendForensicEvents(

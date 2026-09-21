@@ -510,6 +510,61 @@ function pruneEntitiesBefore(dbPath, kind, beforeMs) {
     db.close();
   }
 }
+
+// #1480: the bulk import's rollback fence. row_id is one sequence for the whole entities table,
+// so the fence holds for every kind a run writes: its rows are the ones above it — an index range,
+// never a scan.
+function entityRowIdMark(dbPath) {
+  if (!existsSync(dbPath)) return 0;
+  const db = openDatabase(dbPath);
+  try {
+    return Number(db.prepare("SELECT coalesce(max(row_id), 0) AS n FROM entities").get().n);
+  } finally {
+    db.close();
+  }
+}
+
+// #1480: remove the rows ONE failed bulk run appended, every kind in ONE transaction, so a
+// rollback is whole or not at all. Ownership is the run's own importBatchId, stamped on every event
+// it wrote — never the id (a super-only re-run reuses stable ids, and its append deduped rows an
+// earlier run owns) and never the position alone (another run can append after the same fence).
+// The fence only bounds the scan. Returns, per kind, the ids removed so the caller can clear the
+// tags written for them. Super rows take their labels and protection with them (a removed id has
+// no other row, ids being unique per kind) and bump the store's generation, as every other super
+// mutation does. entity_values cascades; the terms trigger drops the FTS row.
+function rollbackImportBatch(dbPath, kinds, afterRowId, importBatchId) {
+  const out = {};
+  for (const kind of kinds || []) out[kind] = { deleted: 0, ids: [] };
+  if (!existsSync(dbPath) || typeof importBatchId !== "string" || !importBatchId) return out;
+  const db = openDatabase(dbPath);
+  try {
+    return withTransaction(db, () => {
+      const owned = db.prepare(
+        "SELECT row_id, entity_id FROM entities WHERE kind=? AND row_id>? " +
+        "AND json_extract(payload, '$.importBatchId')=? ORDER BY row_id"
+      );
+      const remove = db.prepare("DELETE FROM entities WHERE kind=? AND row_id IN (SELECT value FROM json_each(?))");
+      const recount = db.prepare("UPDATE entity_counts SET count=max(count-?, 0) WHERE kind=?");
+      for (const kind of kinds || []) {
+        const rows = owned.all(kind, Number(afterRowId) || 0, importBatchId);
+        if (!rows.length) continue;
+        const ids = rows.map((row) => row.entity_id).filter((id) => typeof id === "string" && id);
+        const deleted = Number(remove.run(kind, JSON.stringify(rows.map((row) => row.row_id))).changes || 0);
+        recount.run(deleted, kind);
+        if (kind === "superTimeline") {
+          const idsJson = JSON.stringify(ids);
+          db.prepare("DELETE FROM super_labels WHERE event_id IN (SELECT value FROM json_each(?))").run(idsJson);
+          db.prepare("DELETE FROM super_protected WHERE event_id IN (SELECT value FROM json_each(?))").run(idsJson);
+          bumpSuperGeneration(db);
+        }
+        out[kind] = { deleted, ids };
+      }
+      return out;
+    });
+  } finally {
+    db.close();
+  }
+}
 ` +
   SUPER_WORKER_SOURCE +
   SUPER_QUERY_WORKER_SOURCE +
@@ -624,6 +679,8 @@ async function dispatch(message) {
     case "appendEntities": return appendEntities(message.dbPath, message.kind, message.entities);
     case "queryAuthObservationsWindow": return queryAuthObservationsWindow(message.dbPath, message.sinceMs, message.limit);
     case "pruneEntitiesBefore": return pruneEntitiesBefore(message.dbPath, message.kind, message.beforeMs);
+    case "entityRowIdMark": return entityRowIdMark(message.dbPath);
+    case "rollbackImportBatch": return rollbackImportBatch(message.dbPath, message.kinds, message.afterRowId, message.importBatchId);
     case "migrateSuper": return migrateSuper(message.dbPath, message.eventsPath, message.labelsPath, message.tagsPath, message.excludeAuthorPrefix, message.max);
     case "appendSuper": return appendSuper(message.dbPath, message.events, message.max);
     case "scanSuper": return scanSuper(message.dbPath, message.query || {});

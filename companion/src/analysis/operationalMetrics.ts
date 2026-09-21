@@ -53,6 +53,7 @@ export const QUERY_OPERATIONS = [
   "state_load",
   "state_save",
   "event_append",
+  "event_rollback", // #1480 a failed bulk import removing its own rows
   "auth_observation", // #1104 cross-upload password-spray observation store
 ] as const;
 export type QueryOperation = (typeof QUERY_OPERATIONS)[number];

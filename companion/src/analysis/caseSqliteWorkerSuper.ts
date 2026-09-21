@@ -60,14 +60,19 @@ function enforceSuperCap(db, max) {
     "INSERT INTO entity_counts(kind, count) VALUES('superTimeline', ?) " +
     "ON CONFLICT(kind) DO UPDATE SET count=excluded.count"
   ).run(count - deleted);
-  // The store's mutation generation (#969): bumped on every append, eviction and migration, since
-  // each of them runs this cap. A row count and a latest timestamp cannot tell an append-with-
-  // eviction at the cap from no change; a reader that captured the generation can.
+  bumpSuperGeneration(db);
+  return deleted;
+}
+
+// The store's mutation generation (#969): bumped on every append, eviction and migration, since
+// each of them runs the cap above — and on a bulk-import rollback (#1480), which deletes rows the
+// cap never saw. A row count and a latest timestamp cannot tell an append-with-eviction at the cap
+// from no change; a reader that captured the generation can.
+function bumpSuperGeneration(db) {
   db.prepare(
     "INSERT INTO storage_meta(key, value) VALUES('super_generation', '1') " +
     "ON CONFLICT(key) DO UPDATE SET value=CAST(CAST(value AS INTEGER)+1 AS TEXT)"
   ).run();
-  return deleted;
 }
 
 // The store's row count and mutation generation, and its distinct host spellings as stored —
