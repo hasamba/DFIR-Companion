@@ -57,7 +57,21 @@ const FS_TOP_LEVEL = [
   "run",
 ];
 
-const POSIX_FS_PATH_RE = new RegExp(String.raw`/(?:${FS_TOP_LEVEL.join("|")})(?:/${SEG})*/?`, "g");
+/** A single non-path character, as a lookahead: the allowlisted name must END at the segment
+ * boundary, or "srv" matches inside "/srv2/…" and the output is `<path>2/…` — mangled and still
+ * leaking (#1512). */
+const SEG_END = String.raw`(?![^\s/\\:*?"'<>|])`;
+
+const POSIX_FS_PATH_RE = new RegExp(String.raw`/(?:${FS_TOP_LEVEL.join("|")})${SEG_END}(?:/${SEG})*/?`, "g");
+
+/**
+ * A QUOTED absolute POSIX path with two or more segments, whatever its first segment (#1512).
+ * The allowlist above cannot know every install location (/work/evidence/…), but Node's fs errors
+ * always quote the path — `open '/x/y'` — and no message in this codebase quotes a route, so the
+ * quotes are the signal that this is a filesystem path and not an endpoint. Two segments minimum:
+ * a quoted fraction or a lone `'/x'` is prose. The closing quote must match the opening one.
+ */
+const QUOTED_POSIX_PATH_RE = new RegExp(String.raw`(['"])/${SEG}(?:/${SEG})+/?\1`, "g");
 
 /** `C:\dir\file` and UNC `\\host\share\file`. Both require at least one segment, so a bare "C:" in
  * prose is left alone. */
@@ -78,7 +92,13 @@ function redactOutsideUrls(text: string, roots: readonly string[]): string {
   for (const root of roots) {
     out = out.replace(new RegExp(`${escapeRegExp(root)}(?:[/\\\\]${SEG})*[/\\\\]?`, "g"), PLACEHOLDER);
   }
-  return out.replace(WINDOWS_FS_PATH_RE, PLACEHOLDER).replace(POSIX_FS_PATH_RE, PLACEHOLDER);
+  // Quoted paths BEFORE the allowlist rules. The other order turns `'/work/evidence/mnt/x'` into
+  // `'/work/evidence<path>'` — the allowlist eats the `/mnt/…` tail, and the `<path>` it leaves
+  // behind is not a path character, so the quoted rule can no longer see one path inside the quotes.
+  return out
+    .replace(QUOTED_POSIX_PATH_RE, `$1${PLACEHOLDER}$1`)
+    .replace(WINDOWS_FS_PATH_RE, PLACEHOLDER)
+    .replace(POSIX_FS_PATH_RE, PLACEHOLDER);
 }
 
 /**
