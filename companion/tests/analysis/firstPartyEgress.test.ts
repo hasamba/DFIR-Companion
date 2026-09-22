@@ -100,8 +100,8 @@ describe("firstPartyEgressNote — the clauses that lower the grade", () => {
     );
   });
 
-  it("lowers the same client's Akamai fetch on 80", () => {
-    expect(firstPartyEgressNote(netRow({ dst: "23.221.30.94", port: 80 }))).toContain("Akamai");
+  it("lowers a Microsoft fetch on 80 as well as 443", () => {
+    expect(firstPartyEgressNote(netRow({ dst: "13.107.4.50", port: 80 }))).toContain("Microsoft");
   });
 });
 
@@ -111,6 +111,7 @@ describe("firstPartyEgressNote — the clauses that keep the rule's grade", () =
     ["an internal destination", { dst: "10.0.0.162" }],
     ["rentable Azure compute", { dst: "20.40.1.1" }],
     ["a Cloudflare edge, which anyone can front C2 behind", { dst: "104.16.1.1" }],
+    ["an Akamai edge, which can front a compromised origin", { dst: "23.221.30.94" }],
     ["a port no updater fetches over", { port: 4444 }],
     ["a High verdict", { severity: "High" as const }],
     ["a Critical verdict", { severity: "Critical" as const }],

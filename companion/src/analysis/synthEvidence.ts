@@ -51,8 +51,15 @@ export function renderStructuredTags(e: ForensicEvent, aliasIndex?: HostAliasInd
   // `DestinationIp=…` out of the middle and truncated the image path. The model then had six
   // unattributed addresses to reason about, and fused them into a C2 finding (INC-2026-001 f13).
   // Same lesson as #1502: a fact the cut can reach is a fact that goes missing.
-  const cf = canonicalFile(e);
-  const cn = canonicalNetwork(e);
+  //
+  // Both fallbacks are for a NETWORK row only, and that bound matters twice. On a network record
+  // the canonical file block is the connecting image; on a file record it is the file that was
+  // WRITTEN, and reading that as the process would put `<proc:invoice.xlsm>` on the row — a process
+  // that never ran. And a logon record carries a network block too (the source address), so reading
+  // it here would put a `<net:…→?>` connection tag on every 4624 in the product.
+  const networkRow = e.canonical?.event?.category === "network";
+  const cn = networkRow ? canonicalNetwork(e) : undefined;
+  const cf = cn ? canonicalFile(e) : undefined;
   const image = e.processName || cf?.name || baseName(cf?.path ?? "");
   if (image || e.parentName) {
     const child = image ? clip(image) : "";

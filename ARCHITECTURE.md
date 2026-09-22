@@ -130,7 +130,8 @@ forensic cut in the first place.
 
 The seam has a second deterministic step, and its position is part of the rule. `firstPartyEgress.ts`
 drops one narrow class of row to `Info` at import: a first-party Windows updater (OneDrive, the Edge
-updater, Defender) connecting on 80/443 to an address inside a vendor range nobody can rent. The
+updater, Defender) connecting on 80/443 to an address inside a vendor range nobody can rent —
+Microsoft's own service edges, never a CDN edge, which can front a compromised origin. The
 Velociraptor Sigma pack grades "Net Conn (Sysmon Alert)" medium on every Sysmon EID 3, so OneDrive's
 update traffic entered the record as graded signal and was read as C2 (#1530).
 

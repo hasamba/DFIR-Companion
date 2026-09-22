@@ -16,8 +16,6 @@ describe("vendorForIp — published single-tenant ranges", () => {
     ["a second address in the same block", "52.123.242.240", "Microsoft"],
     ["Microsoft 365 service space", "52.110.19.195", "Microsoft"],
     ["the 150.171 block", "150.171.109.82", "Microsoft"],
-    ["an Akamai deploy node", "23.221.30.94", "Akamai"],
-    ["the low Akamai block", "23.11.40.157", "Akamai"],
   ])("names %s", (_label, ip, vendor) => {
     expect(vendorForIp(ip)).toEqual({ vendor, tier: "single-tenant" });
     expect(isNonIndicatorVendorIp(ip)).toBe(true);
@@ -38,10 +36,15 @@ describe("vendorForIp — space an intruder can occupy stays an indicator", () =
     expect(isNonIndicatorVendorIp(ip)).toBe(false);
   });
 
-  it("names a Cloudflare edge but keeps it an indicator", () => {
-    expect(vendorForIp("104.16.1.1")).toEqual({ vendor: "Cloudflare", tier: "open-cdn" });
-    expect(isNonIndicatorVendorIp("104.16.1.1")).toBe(false);
-    expect(vendorNote("104.16.1.1")).toContain("the edge is not the origin");
+  // A CDN edge fronts other people's origins, so naming the owner is context, never exoneration.
+  it.each([
+    ["a Cloudflare edge", "104.16.1.1", "Cloudflare"],
+    ["an Akamai deploy node", "23.221.30.94", "Akamai"],
+    ["the low Akamai block", "23.11.40.157", "Akamai"],
+  ])("names %s but keeps it an indicator", (_label, ip, vendor) => {
+    expect(vendorForIp(ip)).toEqual({ vendor, tier: "open-cdn" });
+    expect(isNonIndicatorVendorIp(ip)).toBe(false);
+    expect(vendorNote(ip)).toContain("the edge is not the origin");
   });
 
   it("explains a single-tenant hit in the note", () => {

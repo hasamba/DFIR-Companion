@@ -195,3 +195,21 @@ describe("renderStructuredTags — canonical fallback for network rows", () => {
     expect(renderStructuredTags(ev({ description: "x" }))).toBe("");
   });
 });
+
+// The image fallback must not read a file row's TARGET file as the process that ran (#1530).
+describe("renderStructuredTags — the canonical image fallback is network-only", () => {
+  it("does not call a written file a process", () => {
+    const t = renderStructuredTags(
+      ev({
+        description: "file created",
+        canonical: {
+          schemaVersion: "1.0.0",
+          event: { category: "file", type: "create" },
+          file: { path: "C:\\Users\\a\\Desktop\\invoice.xlsm", name: "invoice.xlsm" },
+          time: { observed: "2026-05-02 10:00:00", normalized: "2026-05-02T10:00:00Z" },
+        },
+      } as Partial<ForensicEvent>),
+    );
+    expect(t).not.toContain("<proc:");
+  });
+});

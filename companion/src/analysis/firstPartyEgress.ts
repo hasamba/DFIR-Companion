@@ -17,11 +17,13 @@
 // alone is enough has been rejected in this codebase before (veloDetectionNoise.ts); it is rejected
 // here too.
 //
-// The DESTINATION is the control. The connection must land in a vendor range nobody can rent:
-// Microsoft's own service edges, or Akamai's (a contract, not a signup form) — ipHygiene.ts's
-// `single-tenant` tier. Azure, AWS and GCP compute space is excluded there for exactly this reason,
-// and so is Cloudflare, whose free tier fronts C2 every day. An intruder would have to both plant
-// the binary AND serve their C2 from inside Microsoft's or Akamai's own infrastructure.
+// The DESTINATION is the control. The connection must land in a vendor range nobody can rent —
+// ipHygiene.ts's `single-tenant` tier, which today is Microsoft's own service edges and nothing
+// else. Azure, AWS and GCP compute space is excluded there, and so is every CDN edge, Akamai's
+// included: an edge that fronts other people's origins can front a compromised one. So an intruder
+// would have to both plant the binary AND serve their C2 from inside Microsoft's own
+// infrastructure. The price of that strictness is visible in the case this came from: the OneDrive
+// updater's fetch from an Akamai node keeps the rule's Medium grade, and the analyst still sees it.
 //
 // Four more bounds keep the blast radius at the generic verdict this exists to quiet:
 //   • ≤ Medium only. A High or Critical keeps its grade whatever the image is.
@@ -121,6 +123,9 @@ export function firstPartyEgressNote(event: ForensicEvent): string {
   if (!LOWERABLE.has(event.severity)) return "";
   if (event.mitreTechniques?.length) return "";
 
+  // A network record, read from the envelope: a logon record also carries a network block (its
+  // source address), and this pass must never touch one.
+  if (event.canonical?.event?.category !== "network") return "";
   const net = canonicalNetwork(event);
   const destination = net?.destination?.address ?? event.dstIp ?? "";
   const port = net?.destination?.port ?? event.port;

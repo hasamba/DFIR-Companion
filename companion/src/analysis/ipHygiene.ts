@@ -10,14 +10,17 @@
 //
 // SINGLE-TENANT vendor service space only. An address inside Microsoft's own service edges serves
 // Microsoft's own services; nobody can rent a host there, so an address in it cannot be an
-// intruder's. Akamai is the same shape one step removed: its edge fronts other people's content,
-// but becoming an Akamai customer is a contract, not a signup form.
+// intruder's.
 //
 // Cloud COMPUTE space is deliberately NOT here — 13.64/11, 20.33/11, 40.74/15 and 172.179/16 are
 // Azure ranges where anyone with a credit card can stand up a VM, so a C2 server in them is
-// ordinary. Neither is Cloudflare: its free tier fronts arbitrary origins, and C2 behind it is
-// routine. Cloudflare and its kind are classified `open-cdn` — the analyst gets told whose edge it
-// is, and the address stays a full indicator.
+// ordinary. Neither is any CDN. Akamai was in the single-tenant tier for one draft, on the argument
+// that its customers sign contracts; the code review was right to refuse it (#1530). An edge that
+// fronts other people's origins can front a compromised one, and retyping the whole allocation
+// would have taken every Akamai-delivered payload out of the IP indicator list, out of enrichment
+// and out of a MISP push — for every case, not just the updater rows this fix is about. Akamai and
+// Cloudflare are `open-cdn`: the analyst is told whose edge it is, and the address stays a full
+// indicator.
 //
 // So `vendorForIp` answers two different questions with one table, and the caller must respect the
 // difference: `tier: "single-tenant"` means the address is not an indicator; `tier: "open-cdn"`
@@ -49,15 +52,16 @@ export const VENDOR_RANGES: readonly VendorRange[] = [
   { vendor: "Microsoft", tier: "single-tenant", cidr: "52.120.0.0/14" },
   { vendor: "Microsoft", tier: "single-tenant", cidr: "150.171.0.0/16" },
   { vendor: "Microsoft", tier: "single-tenant", cidr: "204.79.197.0/24" },
-  // Akamai edge. Microsoft ships OneDrive and Windows Update content through it, which is why an
-  // updater's connection lands here as often as in Microsoft's own space.
-  { vendor: "Akamai", tier: "single-tenant", cidr: "23.0.0.0/12" },
-  { vendor: "Akamai", tier: "single-tenant", cidr: "23.192.0.0/11" },
-  { vendor: "Akamai", tier: "single-tenant", cidr: "2.16.0.0/13" },
-  { vendor: "Akamai", tier: "single-tenant", cidr: "96.16.0.0/15" },
-  { vendor: "Akamai", tier: "single-tenant", cidr: "104.64.0.0/10" },
-  { vendor: "Akamai", tier: "single-tenant", cidr: "184.24.0.0/13" },
-  // Cloudflare edge — named, never excused. See the header.
+  // Akamai edge. Microsoft ships OneDrive and Windows Update content through it, so an updater's
+  // connection lands here as often as in Microsoft's own space — but so does a payload from a
+  // compromised Akamai-fronted origin. Named, never excused.
+  { vendor: "Akamai", tier: "open-cdn", cidr: "23.0.0.0/12" },
+  { vendor: "Akamai", tier: "open-cdn", cidr: "23.192.0.0/11" },
+  { vendor: "Akamai", tier: "open-cdn", cidr: "2.16.0.0/13" },
+  { vendor: "Akamai", tier: "open-cdn", cidr: "96.16.0.0/15" },
+  { vendor: "Akamai", tier: "open-cdn", cidr: "104.64.0.0/10" },
+  { vendor: "Akamai", tier: "open-cdn", cidr: "184.24.0.0/13" },
+  // Cloudflare edge — the same, and its free tier makes it the routine C2 front. See the header.
   { vendor: "Cloudflare", tier: "open-cdn", cidr: "104.16.0.0/13" },
   { vendor: "Cloudflare", tier: "open-cdn", cidr: "172.64.0.0/13" },
   { vendor: "Cloudflare", tier: "open-cdn", cidr: "162.158.0.0/15" },
