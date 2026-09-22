@@ -471,3 +471,39 @@ section#sec-sessions.ses-collapsed .ses-body { display: none; }
 .rc-ioc-mal { border-color: var(--sev-high); }
 .rc-ioc-int { color: var(--text-muted); }
 .rc-more { font-size: 12px; color: var(--text-muted); align-self: center; }
+
+/* Missed evidence review (#1540) — an analyst-pressed re-grade of the Info-graded super-timeline
+   rows the AI never reads. It promotes nothing and writes nothing, so the panel says so in its own
+   first line rather than leaving an analyst to infer it from the absence of a save button.
+   The grade reuses the .sev-* colours the timeline already teaches; the dot repeats the colour as
+   a shape so the grade is never carried by hue alone. */
+.jev-note { font-size: 12px; color: var(--text-muted); margin: 0 0 10px; }
+.jev-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 8px; }
+.jev-tooling { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
+.jev-status { font-size: 12px; color: var(--text-muted); margin: 4px 0; }
+.jev-caption { font-size: 12px; color: var(--text-primary); margin: 6px 0 2px; }
+.jev-truncated { color: var(--sev-high); font-weight: 600; }
+.jev-meta { font-size: 11px; color: var(--text-muted); margin: 0 0 8px; }
+.jev-error { font-size: 12px; color: var(--sev-high); margin: 6px 0; }
+.jev-table { width: 100%; font-size: 12px; }
+.jev-table td { vertical-align: top; }
+.jev-desc { word-break: break-word; }
+.jev-grade { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; font-weight: 600; }
+.jev-grade .sev-dot { width: 9px; height: 9px; border-radius: 2px; background: currentColor; }
+.jev-conf { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.jev-tool-score { color: var(--text-muted); font-size: 11px; }
+/* The uncapped read is the secondary action of the pair: outlined rather than filled, so the
+   difference is a shape as well as a colour. */
+.jev-secondary { background: transparent; border: 1px solid var(--border-strong); }
+/* Confirmation before a long, paid, uncapped run (#1540). Inline markup, never confirm() — a
+   browser modal blocks the automation harness and cannot show the row count and the estimate.
+   Bordered and headed, so it reads as a question without relying on its colour. */
+.jev-confirm { border: 1px solid var(--sev-high); border-radius: 4px; padding: 10px 12px;
+  margin: 8px 0; background: var(--bg-elevated); }
+.jev-confirm-head { font-size: 13px; font-weight: 600; color: var(--text-primary); margin: 0 0 4px; }
+.jev-confirm-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 0; }
+/* Offered only after a run the cap really truncated, so it is not a standing nag. */
+.jev-offer { font-size: 12px; color: var(--text-primary); margin: 6px 0; display: flex;
+  flex-wrap: wrap; align-items: center; gap: 8px; }
+/* Elapsed time while a run is in flight. No bar and no percentage: the server reports neither. */
+.jev-progress { font-size: 12px; color: var(--text-muted); margin: 6px 0; }

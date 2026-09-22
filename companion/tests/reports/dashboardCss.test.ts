@@ -27,6 +27,15 @@ const linked = [...html.matchAll(/<link[^>]+href="(\/css\/[^"]+)"/g)].map((m) =>
 const css = linked.map((h) => readFileSync(url(h), "utf8")).join("\n");
 
 describe("the split stylesheet is wired the way the cascade needs", () => {
+  it("drops the cluster separators wherever the grouping itself is dissolved", () => {
+    const css = readFileSync(new URL("../../../public/css/dashboard-toolbar.css", import.meta.url), "utf8");
+    // Below the narrow breakpoint .tb-group becomes display:contents, so a separator left behind
+    // would float between controls that no longer read as clusters.
+    const narrow = css.slice(css.indexOf("@media (max-width: 900px)"));
+    expect(narrow).toMatch(/\.tb-sep\s*\{[^}]*display:\s*none/);
+    expect(css).toMatch(/\.tb-sep\s*\{[^}]*width:\s*1px/);
+  });
+
   it("links at least the eight dashboard parts plus a11y", () => {
     // Guards the guard: every assertion below is vacuous if the extraction found nothing.
     expect(linked.length, "no /css/ links found — the regex or the markup moved").toBeGreaterThan(8);
@@ -128,5 +137,39 @@ describe("compacting the toolbar does not blank the view menu", () => {
     const m = css.match(rule);
     expect(m, "the icons-only font-size:0 rule was not found").not.toBeNull();
     expect(m![0]).toContain(":not(.dv-item)");
+  });
+});
+
+// The group labels (#1540) were approved on one condition: the toolbar gets no taller. Measured
+// before and after, .toolbar-main stays 38px at 2560px and the header stays 116px — because the
+// label is out of flow and draws into the gap the header already leaves above the scope row.
+// Put the label back in flow and every one of those numbers grows by its line box.
+describe("the toolbar group labels cost the row no height", () => {
+  it("takes the label out of flow", () => {
+    const rule = css.match(/\.tb-group-label\s*\{[^}]*\}/);
+    expect(rule, ".tb-group-label has no rule").not.toBeNull();
+    expect(rule![0], "an in-flow label makes the toolbar taller").toMatch(/position:\s*absolute/);
+  });
+
+  it("anchors the label to the group's centre, which every group shares", () => {
+    // .toolbar-main centres its items, so a group holding a 38px <select> and one holding 31px
+    // buttons only put their labels on the same line if the offset is measured from the centre.
+    expect(css).toMatch(/\.tb-group-label\s*\{[^}]*top:\s*calc\(50%/);
+  });
+
+  it("lets a group wrap inside itself rather than stack the row", () => {
+    // A .tb-group is atomic to flex line-breaking. Without an internal wrap a group that does not
+    // fit moves to the next row whole, and a narrow window gets a tall stack of near-empty rows.
+    expect(css).toMatch(/\.tb-group\s*\{[^}]*flex-wrap:\s*wrap/);
+  });
+
+  it("dissolves the grouping below the page's narrow breakpoint", () => {
+    // Atomic groups cost a phone real height (measured: +11px at 700px, +40px at 375px). Below
+    // 900px the grouping is undone with display:contents, which restores the pre-#1540 reflow.
+    expect(css).toMatch(/@media[^{]*max-width:\s*900px[^{]*\{[^}]*\.tb-group\s*\{[^}]*display:\s*contents/);
+  });
+
+  it("never leaves a label drawn over an empty group", () => {
+    expect(css).toMatch(/\.tb-group:not\(:has\(> :not\(\.tb-group-label\)\)\)\s*\{[^}]*display:\s*none/);
   });
 });

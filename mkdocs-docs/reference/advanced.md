@@ -247,3 +247,57 @@ Add it to your phone's home screen for a quick-glance view of the active investi
 - Severity and entity counts
 
 Lists are capped for mobile performance but the totals are shown. No editing, no AI calls — read only.
+
+---
+
+## Missed Evidence Review
+
+The deterministic content tagger gets one chance to raise an imported row above `Info`, and it only
+raises what its rule set names. Anything it does not recognise stays `Info`, leaves the forensic
+timeline, and never reaches the AI — and a tagger rule written next week cannot reach back for it.
+
+This review grades those left-behind rows with **Jev**, a decision model that returns a grade and a
+confidence instead of prose. It is fast and cheap enough to read a whole case's archive: about a
+thousand rows in a few seconds, for roughly a penny.
+
+**It promotes nothing.** No row is written back, no severity changes, no case state moves. The panel
+is a reading surface, and the run's cost is the only thing it records.
+
+**Run it:** the *Missed evidence review* panel. The table is ranked by grade, highest first.
+
+**Read it with the confidence column.** The grade says what; the confidence says whether to trust it.
+A Medium at 0.9 is worth your time; a Medium at 0.3 is the model telling you it is guessing.
+
+**Filter the tooling.** The most common false positive is your own collection kit: the agent's
+binary and service, and the detection packs' rule files, whose names read like the tools they hunt
+(`proc_access_win_pypykatz_cred_dump_lsass_access.yml` is a rule, not Mimikatz). The panel scores
+each row for this and hides the obvious ones by default.
+
+**Coverage is always stated.** The caption gives the true number of matching rows, how many were
+read, how many were skipped as already analysed, and how many were graded. Each is a separate fact,
+because only some of them have a single cause — a shortfall is not evidence the cap was reached.
+
+**Read every row** when you want a full pass. An ordinary press stops at `DFIR_JEV_MAX_ROWS`; the
+panel offers an uncapped run that pages through the whole archive and says so in the caption. On a
+large case that costs more and takes longer, so the panel estimates both before it starts.
+
+!!! note "Masking applies"
+    Row text goes through the same anonymisation gate as every other model call. There is no
+    un-masking step and none is needed — a Jev answer is a number, so no real value can travel back
+    inside it. Tokenising paths and addresses barely affects the grades, because what makes a row
+    suspicious is the action, not the hostname.
+
+### Settings
+
+| Setting | Default | What it does |
+|---|---|---|
+| `DFIR_JEV_ENABLED` | off | Turns the panel on. |
+| `DFIR_JEV_PROVIDER` | `openrouter` | `openrouter` or `typesafe`. |
+| `DFIR_JEV_MODEL` | `typesafe/jev-1.13` | `jev-latest` on the `typesafe` provider. |
+| `DFIR_JEV_KEY` | blank | Blank on OpenRouter inherits your existing OpenRouter key. Required on `typesafe`. |
+| `DFIR_JEV_MAX_ROWS` | 2000 | Rows one ordinary press reads. A default, not a ceiling — the panel can read every row. |
+| `DFIR_JEV_BATCH_SIZE` | 40 | Rows per request. |
+
+!!! warning "The model id is versioned"
+    On OpenRouter the id is `typesafe/jev-1.13`. `typesafe/jev-latest` does not exist there and
+    returns a 400 — the `latest` alias only works against TypeSafe's own endpoint.

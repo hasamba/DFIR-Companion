@@ -8,6 +8,12 @@ import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
+import {
+  JEV_REVIEW_DEFAULT_ROWS,
+  gradeEvents,
+  type JevGraderDeps,
+} from "../../src/analysis/ai/jev/jevGrader.js";
+import type { JevAnswer } from "../../src/analysis/ai/jev/jevClient.js";
 
 // THE FORENSIC / SUPER-TIMELINE RULE, made executable (#384).
 //
@@ -181,4 +187,75 @@ describe("viewSummary is the documented exception", () => {
     expect(result.usedEvents).toBe(2);
     expect(result.truncated).toBe(false);
   });
+});
+
+// The Jev second grader (#1540) is the fourth path that touches the raw record, and the second
+// that reads it without promoting. viewSummary earned that exception because promoting thousands
+// of filtered Info rows would permanently drown the record the rule protects; this one reads the
+// same pile for the same reason, so it carries the same three bounds — analyst-pressed, ephemeral,
+// capped with the truncation disclosed. These assertions are what stop "ephemeral" being a comment.
+describe("the Jev review reads the raw record but never writes to it", () => {
+  const rawRows = [
+    ev({ id: "raw1", description: "certutil -urlcache -split -f http://h/a.txt" }),
+    ev({ id: "raw2", description: "routine OS update check" }),
+  ];
+
+  const stubDeps = (scores: number[]): JevGraderDeps => ({
+    mask: (t) => t,
+    ask: async (_state, questions) => {
+      const answers: Record<string, JevAnswer> = {};
+      Object.keys(questions).forEach((qid) => {
+        answers[qid] = qid.endsWith("_tool")
+          ? { type: "noul", noul: 0 }
+          : {
+              type: "score",
+              score: scores[Number(qid.slice(1))] ?? 0,
+              legend: {},
+              probabilities: {},
+              confidence: 0.9,
+            };
+      });
+      return { model: "jev-test", answers, usage: { inputTokens: 1, outputTokens: 1 } };
+    },
+  });
+
+  it("promotes nothing: the forensic timeline is still empty after a review", async () => {
+    const { stateStore } = await harness(rawRows);
+    await gradeEvents(stubDeps([4, 0]), rawRows, { batchSize: 10 });
+    const after = await stateStore.load("c1");
+    expect(after.forensicTimeline).toEqual([]);
+  });
+
+  it("leaves the raw record itself untouched — no severity is written back", async () => {
+    const { superTimelineStore } = await harness(rawRows);
+    await gradeEvents(stubDeps([4, 0]), rawRows, { batchSize: 10 });
+    const { events } = await superTimelineStore.query("c1", { offset: 0, limit: 100 });
+    expect(events.every((e) => e.severity === "Info")).toBe(true);
+    expect(events.every((e) => !e.promotedAt)).toBe(true);
+  });
+
+  it("grades a row Critical without that grade reaching the case", async () => {
+    const { stateStore } = await harness(rawRows);
+    const result = await gradeEvents(stubDeps([4, 0]), rawRows, { batchSize: 10 });
+    expect(result.rows[0].grade).toBe("Critical");
+    expect((await stateStore.load("c1")).forensicTimeline).toEqual([]);
+  });
+
+  it("reads a bounded number of rows by default", () => {
+    // A DEFAULT, not a ceiling: the analyst can ask for every row, because nothing is written and
+    // a review that silently covers a slice answers a different question. What the boundary needs
+    // is that a full read still promotes nothing — the clause above — not that a full read is
+    // impossible. The route pins the uncapped path in tests/server/jevReviewRoute.test.ts.
+    expect(JEV_REVIEW_DEFAULT_ROWS).toBeLessThanOrEqual(2000);
+  });
+
+  it("promotes nothing even on an uncapped read of the whole raw record", async () => {
+    const many = Array.from({ length: 50 }, (_, i) => ev({ id: `bulk${i}`, description: `row ${i}` }));
+    const { stateStore } = await harness(many);
+    await gradeEvents(stubDeps(many.map(() => 4)), many, { batchSize: 10 });
+    expect((await stateStore.load("c1")).forensicTimeline).toEqual([]);
+  });
+
+  // Coverage disclosure itself is asserted at the route, in tests/server/jevReviewRoute.test.ts:
+  // only the route can tell a row the cap dropped from a row that was already analyzed.
 });

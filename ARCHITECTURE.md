@@ -285,12 +285,65 @@ a coverage fact; the residual-risk status is the analyst's, recorded against the
 `tests/server/remediationRoutes.test.ts` asserts the receipt on disk holds ids and counts and no
 raw text, and that a verify leaves both stores unchanged.
 
+### The Jev second grader is the third exception (#1540)
+
+The content tagger gets **one** promotion window per import and only promotes what its rule set
+names. Everything else is graded Info, leaves at demote, and no rule written later can reach back
+for it — so an attack class with no matching rule is invisible for the life of the case. Measured
+against a synthetic collection, twelve techniques with no matching rule (Kerberoasting, DCSync, AD
+CS abuse, BYOVD, cloud credential theft, rclone exfil, Linux cron and systemd persistence,
+named-pipe lateral movement, OAuth consent grant, LOLBIN download, cleartext AMSI bypass) all
+graded Medium or above; twelve deliberately similar benign rows all stayed below Low.
+
+So a decision model grades the left-behind rows and hands the analyst a ranked list. Promotion is
+unavailable to it for `viewSummary`'s reason, at `viewSummary`'s scale — a real case's archive runs
+to thousands of Info rows, and promoting them would drown the record. The same three constraints:
+
+1. **Analyst-initiated only.** A button. Nothing automatic reaches it, and it is off by default.
+2. **Ephemeral.** It promotes nothing, writes no case state, and never mutates an event. The only
+   thing it persists is the run's cost, into the existing per-case cost store.
+3. **Bounded by default, never silently.** An ordinary press reads `JEV_REVIEW_DEFAULT_ROWS`
+   (2000) rows; the analyst can ask for every matching row instead, and the route pages to get
+   them. That is a weaker bound than `viewSummary`'s and deliberately so: `viewSummary`'s cap
+   protects the *record*, because summarising or promoting thousands of rows is the harm there.
+   Nothing is written here, so a cap protects only money and wall-clock, which are the analyst's
+   to spend — and a review whose whole question is "what did the grading miss?" answers a
+   different question quietly if it can only ever see a slice. Coverage is reported as separate
+   facts —
+   how many matched, how many were read, how many were skipped as already analyzed, how many were
+   graded — with `capped` true only when the cap itself held rows back, and `readAll` true when the
+   analyst asked for the whole archive.
+
+   The first version collapsed those into one `truncated` flag, inferred from "graded < matched".
+   On a real case that made the panel say *the row cap stopped the read* when 1,344 rows matched a
+   2,000 cap and the shortfall was 366 rows already in the forensic timeline. Naming a cause the
+   code cannot distinguish is worse than stating the fact — the same failure `viewSummary`'s
+   caption made when it blamed the AI input budget for rows the row cap had dropped. The route owns
+   the disclosure now, because only the route can tell the two apart.
+
+Two properties specific to this path:
+
+- **It masks like every other model call.** Row text goes through the same anonymizer the chat
+  models sit behind. There is no restore step and none is needed: a Jev answer is a number and an
+  option key the caller chose, so no masked value can ride home inside it. Masking costs almost
+  nothing here — graded with paths, addresses and domains tokenized, all twelve attacks above were
+  still caught and the mean grade moved 3.01 to 2.98, because the verb survives tokenization.
+- **It does not write back, deliberately.** Grading at import time — a second tagger inside the one
+  legal promotion window, raise-only — is the obvious next step and is **not** this. It waits until
+  the read-only report has earned trust on real cases, because the measured false-positive class is
+  the collection tooling itself: on a real archive, 39 of 45 Medium+ rows were Velociraptor's own
+  binary and service, or detection-pack rule FILES whose names read like the tools they hunt
+  (`…pypykatz_cred_dump_lsass_access.yml`). A companion question that asks whether a row is about
+  the investigator's own tooling removes most of them, and the panel filters on it.
+
 ### How it is enforced
 
 `tests/analysis/forensicBoundary.test.ts` asserts each half: that `starredReport` promotes exactly
 the starred events and records why, that `viewSummary` promotes **nothing**, that the cap holds, and
 that truncation is disclosed. Each was mutation-tested — removing the promotion or restoring the
-10,000 cap fails.
+10,000 cap fails. The Jev review is pinned in the same file: that a row graded Critical leaves the
+forensic timeline empty, that the raw record keeps its `Info` severity and gains no `promotedAt`,
+that the cap holds, and that truncation is disclosed both ways.
 
 Fixing `explainEvent` also closed [#406](https://github.com/hasamba/DFIR-Companion/issues/406): its
 old paged lookup searched only the first 500 rows, so explaining an event past that threw

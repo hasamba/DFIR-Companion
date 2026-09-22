@@ -22,7 +22,8 @@
    collapse to font-size:0 and only the icon remains, so the toolbar fits one line; the
    hover tooltips (data-tip) keep every icon discoverable. */
 #connect::before, #newCaseBtn::before, #enrichToggle::before, #anonToggle::before,
-#aiToggle::before, #synthesize::before, #secondOpinion::before, #deepPassBtn::before, #importBtn::before, #importCaseBtn::before,
+#aiToggle::before, #synthesize::before, #jevReviewBtn::before, #secondOpinion::before, #deepPassBtn::before,
+#importBtn::before, #importCaseBtn::before,
 #importUndoBtn::before, #importRedoBtn::before, #presentBtn::before,
 #toggleAll::before, #toggleSearchBar::before {
   content: ""; display: inline-block; width: 15px; height: 15px; vertical-align: middle;
@@ -35,6 +36,10 @@
 #synthesize::before  { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M21 12a9 9 0 1 1-2.64-6.36'/><path d='M21 3v6h-6'/></svg>"); }
 /* Presentation mode (#177) — a "play" triangle inside a slide frame (projector/slideshow). */
 #presentBtn::before  { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23cbd3df' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect x='2' y='3' width='20' height='14' rx='2'/><path d='M10 8l4 2.5-4 2.5z' fill='%23cbd3df'/><path d='M12 17v4M8 21h8'/></svg>"); }
+/* Missed evidence review (#1540) — a magnifier over a list whose rows run short: the rows the
+   forensic timeline left out, being read after all. Distinct from the Enrich magnifier (a bare
+   lens) and from Deep pass (stacked layers). */
+#jevReviewBtn::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M4 5h16'/><path d='M4 10h8'/><path d='M4 15h5'/><circle cx='16' cy='15' r='4'/><path d='M19 18l3 3'/></svg>"); }
 /* Second opinion (#116) — balance scales = weighing an independent opinion against the primary. */
 #secondOpinion::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3v18'/><path d='M5 7h14'/><path d='M5 7l-3 6a3 3 0 0 0 6 0z'/><path d='M19 7l-3 6a3 3 0 0 0 6 0z'/><path d='M8 21h8'/></svg>"); }
 /* Deep pass (#204) — stacked layers under a magnifier: reading EVERY layer of the timeline, not
@@ -90,6 +95,66 @@
 .toolbar-main.icons-only { gap: 8px 7px; }               /* tighter column gap suits an icon row and buys ~55px to stay on one line */
 #casePicker { width: 160px; }                              /* sized for a short case name; content scrolls for longer ones */
 .toolbar-main.icons-only #casePicker { width: 120px; }        /* narrow further when tight */
+
+/* ── Toolbar groups (#1540) ───────────────────────────────────────────────
+   Each run of related controls sits in a .tb-group, so the strip reads as six named clusters
+   instead of one undifferentiated row. The group wraps INTERNALLY (flex-wrap) — without that a
+   narrow window would have to break between groups only, and the row would stack tall.
+
+   The label costs the toolbar no height. It is taken out of flow and drawn into the gap the
+   header already leaves between this row and the scope row's border-top divider. Anchoring it
+   at `calc(50% + 17px)` measures from the group's vertical CENTRE, which every group shares
+   because .toolbar-main centres its items — so a group holding a 38px <select> and one holding
+   31px buttons put their labels on the same line.
+
+   That offset is also a budget. fitToolbar() collapses the row to .icons-only once
+   tb.scrollHeight passes the first button's height x 1.6 (measured: 31 -> 49.6), and an
+   absolutely positioned descendant still counts toward that scroll extent. 17px + an 8px line
+   box puts the label's bottom at 44 in a 38px row: ~6px of headroom before the label alone
+   could trip the collapse. Raising the offset spends that headroom. */
+.tb-group { position: relative; display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.toolbar-main.icons-only .tb-group { gap: 8px 6px; }
+/* Decorative grouping, never a control: aria-hidden in the markup, and no pointer target here. */
+.tb-group-label { position: absolute; left: 0; right: 0; top: calc(50% + 17px);
+  text-align: center; text-transform: uppercase; font-size: 8px; font-weight: 600;
+  letter-spacing: .14em; line-height: 1; white-space: nowrap; color: var(--text-faint);
+  pointer-events: none; user-select: none; }
+/* A group left with nothing but its own label draws that label over empty space. This catches
+   the structural case — a later edit that moves every control out. It cannot catch a group
+   whose controls are all hidden at RUNTIME: safe-dom.js rewrites `style.display` into a
+   generated class and strips data-safe-style, so :has() has nothing left to match. That case
+   is held shut in tests/reports/dashboardHtml.test.ts instead — every group keeps a member
+   with no hide path at all. */
+.tb-group:not(:has(> :not(.tb-group-label))) { display: none; }
+/* Two themes miss AA for this label and only these two: --text-faint is derived from the ground,
+   and in `white` (4.49:1) and `matte-black` (4.48:1) it lands just under the 4.5 floor. Both
+   define --text-dim as the SAME value as --text-muted, which passes (4.55 and 5.06), so the label
+   borrows it there rather than bumping a shared token and dulling the other 22 themes. Ratios
+   measured with axe-core over #toolbarMain, not estimated. */
+/* Between the named clusters. Same look as the scope row's .toolbar-sep (1px, 16px) but its own
+   class, because this row has two things that one does not: it collapses to icons, where the
+   margin tightens, and its grouping dissolves below 900px, where these go with it. Five of them
+   cost ~35px of row width, which comes out of fitToolbar's budget before the labels' ~4.6px does.
+   The colour is mixed, not a border token: measured against this header, --border-color gives a
+   1px line at 1.68:1 and --border-strong barely more — the first build shipped that and the
+   separators simply could not be seen. A 60% mix of --text-muted into the ground reads 3.14:1,
+   which is the 3:1 floor for a non-text interface element, and it re-mixes per theme rather than
+   pinning one grey that only works on this one. */
+.tb-sep { width: 1px; height: 20px; background: color-mix(in oklab, var(--text-muted) 60%, var(--bg-secondary)); margin: 0 3px;
+  flex-shrink: 0; align-self: center; }
+.toolbar-main.icons-only .tb-sep { margin: 0 1px; }
+@media (max-width: 900px) { .tb-sep { display: none; } }
+:root[data-theme="white"] .tb-group-label,
+:root[data-theme="matte-black"] .tb-group-label { color: var(--text-dim); }
+/* Below the layout's own narrow breakpoint the grouping is dissolved and the labels drop. A
+   .tb-group is ATOMIC to flex line-breaking: it moves to the next row whole instead of splitting
+   where the old flat row could, which costs a phone 11px at 700px and 40px at 375px. Nothing else
+   on this screen reads as six clusters anyway — the row is already four stacks of bare icons — so
+   `display: contents` hands those pixels back and restores the pre-grouping reflow exactly. */
+@media (max-width: 900px) {
+  .tb-group { display: contents; }
+  .tb-group-label { display: none; }
+}
 /* Custom tooltip — uniform styling for [data-tip] controls. Native `title` tooltips can't be
    CSS-styled (their first line rendered brighter than the rest); this gives one flat color. */
 .tip { position: fixed; z-index: 1000; max-width: 360px; background: var(--bg-primary); color: var(--text-primary);

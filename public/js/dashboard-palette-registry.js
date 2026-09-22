@@ -61,6 +61,13 @@
       keywords: ["deep", "pass", "reasoning"],
     },
     {
+      id: "act.jevReview",
+      btn: "jevReviewBtn",
+      category: "Actions",
+      label: "Missed evidence review",
+      keywords: ["missed", "evidence", "review", "jev", "graded", "info", "super-timeline"],
+    },
+    {
       id: "act.secondOpinion",
       btn: "secondOpinion",
       category: "Actions",

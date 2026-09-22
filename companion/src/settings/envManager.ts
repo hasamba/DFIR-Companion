@@ -89,6 +89,9 @@ export const RELOADABLE_ENV_PREFIXES = new Set([
   // captured at startup, so the reload is the whole change — without it the dashboard tells the
   // analyst to restart for a label list the next import would have picked up anyway (#1317).
   "DFIR_SQLITE_HIGH_VALUE_LABELS",
+  // Missed evidence review (#1540). resolveJevSettings() reads process.env on every status
+  // probe and every run, so a saved key decides behaviour as soon as it is reloaded.
+  "DFIR_JEV_",
 ]);
 
 /**
@@ -117,6 +120,10 @@ export const LIVE_FROM_ENV_PREFIXES = new Set([
   // (#1317). Its tuning siblings DFIR_RANSOM_EXTS / DFIR_SAMPLE_HOSTS are module-scope sets built
   // once at import and stay off: calling them live would be #760 in the other direction.
   "DFIR_SQLITE_HIGH_VALUE_LABELS",
+  // Missed evidence review (#1540). Both routes call resolveJevSettings() per request and it reads
+  // process.env, with nothing captured at startup — so loading the env IS the change. Without this
+  // the dashboard would tell an analyst to restart for a review the very next click would have run.
+  "DFIR_JEV_",
 ]);
 
 // Only keys starting with one of these prefixes may be written via POST /settings/env. The
@@ -211,6 +218,10 @@ const WRITABLE_ENV_PREFIXES = [
   "DFIR_VISION_IMAGE_DETAIL",
   "DFIR_AI_",
   "DFIR_VISION_",
+  // Missed evidence review (#1540) — the Jev role's own provider/model/key/limits. A separate
+  // family from DFIR_AI_ because it is not one of the analysis roles: it grades super-timeline
+  // rows for an analyst to read and writes no case state.
+  "DFIR_JEV_",
   "DFIR_PRESIDIO_",
   // Tuning knobs the Settings modal has always rendered as editable fields but the original
   // allowlist (#240) never covered, so a save carrying them was rejected wholesale. All of them are
