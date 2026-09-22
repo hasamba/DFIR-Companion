@@ -504,12 +504,13 @@ export const FEATURES: Feature[] = [
     private: ["enrichProviders", "enrichAvailable", "enrichOnCount"],
   },
   {
-    // Unified import. No declarations and no state — the block was two statements of listener
-    // wiring, so the module publishes only its initializer.
+    // Unified import. The block was two statements of listener wiring, so the module publishes
+    // only its initializer; its one piece of state is the in-flight flag that keeps two batches
+    // from interleaving (#1511).
     file: "dashboard-unified-import.js",
     initializer: "initUnifiedImport",
     publish: ["initUnifiedImport"],
-    private: [],
+    private: ["importInFlight", "IMPORT_BUSY_MESSAGE"],
   },
   {
     // Asset overrides. Same shape: six statements of wiring, nothing else, nothing published but

@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Super-timeline follows a learned rename** — rows dual-written or demoted under a former hostname are re-homed with the forensic ones, so both records show one host (closes #1508)
+- **`assetHost` refused where it is ignored** — the dedicated per-format import routes now 400 a declared host instead of silently dropping it (closes #1509)
+- **Path redaction closes two leaks** — a quoted absolute path outside the known roots, and a top-level name matched mid-word (`/srv2`) (closes #1512)
 - **The collector's footprint follows the process it spawned** — the `Add-Type` DLL drops, `net.exe`/`net1.exe` children and path-less script blocks of the PowerShell the Velociraptor client spawned grade Info with the collector origin on both the Chainsaw and Velociraptor paths (by Sysmon process GUID, pid lifetime as the fallback); a DetectRaptor MFT/YARA hit on the collector's own rule tree carries that origin too so the tagger cannot re-raise it; a complete silence between two collector rows is not a coverage gap (closes #1500)
 - **The facts a finding calls "unknown" ride on the row as tags** — the rclone destination (`<dest:mega:exfil>`), a fetched URL and an `ip:port` a script block names (read from the message the description clipped) reach the synthesis and deep-pass prompts as structured tags beside `<host:>` / `<proc:>`, so the 240-char cut cannot drop them; a renamed plain shell (`mimikatz.exe is really Cmd.Exe`) is a structured flag on the row, and a finding built on nothing but that decoy and its file traces is floored to Medium / confidence 40 with a report caution (closes #1502)
 - **Web-server → shell chain graded High with T1190 at import** — a Tomcat/IIS/Apache worker spawning a shell, or a web-server-named image taking `/c`, becomes an anchor before the AI reads it; a grouped prompt row whose members ran different commands names every member and its command line instead of calling them identical (closes #1501)
@@ -52,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Archiving a case no longer fails on an in-flight write** — the plain archive skips a SQLite journal or atomicWrite temp that vanishes mid-walk, the same rule the encrypted export already applied; the `import-binary` nightly contract entry names the field the route reads (closes #1442)
 - **Nightly `import-aws` story no longer races the demote pass** — the fixture is a failed console login (Medium), so the forensic-timeline check is deterministic instead of catching a 100 ms window (closes #1445)
 - **Nightly origin-lens scroll test no longer rides the cockpit's load race** — it reveals the seeded sections above Findings so the checkbox is below the fold whatever the NOW panel is doing (closes #1448)
+- **One import run at a time** — a second file pick while a run waits on a prompt is refused with a status line instead of orphaning the first run (closes #1511)
 
 ## [0.37.0] - 2026-09-20
 

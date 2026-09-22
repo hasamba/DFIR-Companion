@@ -9,6 +9,7 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { ImportMetaStore } from "../../src/analysis/importMeta.js";
 import { POLL_TIMEOUT_MS } from "../helpers/poll.js";
 import { waitForEvents } from "../helpers/caseWaits.js";
+import { EVIDENCE_IMPORT_ROUTES } from "../../src/routes/importCaseGuard.js";
 
 // #1496: the analyst's "asset for this import" on POST /cases/:id/import. A malformed value is a
 // 400 with its reason (a silently ignored declaration would leave the analyst believing every
@@ -89,3 +90,64 @@ describe("POST /cases/:id/import — assetHost (#1496)", { timeout: POLL_TIMEOUT
     expect(state.forensicTimeline.find((e) => e.description.startsWith("Chainsaw"))?.asset).toBe(OLD);
   });
 });
+
+// #1509: the guard's own premise — a silently ignored declaration is the failure it exists to
+// prevent — held on the two generic routes only. Every dedicated per-format route dropped an
+// assetHost on the floor and 202'd. Now a present declaration is refused with the two routes that
+// accept it; an absent or blank one still passes through to the route.
+describe(
+  "dedicated import routes — assetHost is refused, not ignored (#1509)",
+  { timeout: POLL_TIMEOUT_MS * 2 },
+  () => {
+    const DEDICATED = EVIDENCE_IMPORT_ROUTES.filter((r) => r !== "import" && r !== "import-file");
+
+    it("400s a declared host on /import-chainsaw and names the routes that accept it", async () => {
+      const { app } = await makeApp();
+      const res = await request(app)
+        .post("/cases/c1/import-chainsaw")
+        .send({ filename: "chainsaw.json", json: JSON.stringify(BARE_CHAINSAW), assetHost: "WS01" });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain("/cases/:id/import");
+      expect(res.body.error).toContain("/cases/:id/import-file");
+      const meta = await request(app).get("/cases/c1/import-meta");
+      expect(JSON.stringify(meta.body)).not.toContain("chainsaw.json");
+    });
+
+    it("400s a declared host on every dedicated route, before the route's own body parsing", async () => {
+      const { app } = await makeApp();
+      for (const route of DEDICATED) {
+        const res = await request(app).post(`/cases/c1/${route}`).send({ assetHost: "WS01" });
+        expect(res.status, route).toBe(400);
+        expect(res.body.error, route).toContain("/cases/:id/import-file");
+      }
+    });
+
+    it("an absent host reaches the chainsaw route and the import lands", async () => {
+      const { app, stateStore } = await makeApp();
+      const res = await request(app)
+        .post("/cases/c1/import-chainsaw")
+        .send({ filename: "chainsaw.json", json: JSON.stringify(BARE_CHAINSAW) });
+      expect(res.status).toBe(202);
+      expect(await waitForEvents(stateStore, "c1")).toBeGreaterThan(0);
+    });
+
+    it("a blank host is no declaration on a dedicated route either", async () => {
+      const { app, stateStore } = await makeApp();
+      const res = await request(app)
+        .post("/cases/c1/import-chainsaw")
+        .send({ filename: "chainsaw.json", json: JSON.stringify(BARE_CHAINSAW), assetHost: "   " });
+      expect(res.status).toBe(202);
+      expect(await waitForEvents(stateStore, "c1")).toBeGreaterThan(0);
+    });
+
+    it("the two generic routes still validate and normalise a declared host", async () => {
+      const { app } = await makeApp();
+      const res = await request(app)
+        .post("/cases/c1/import-file")
+        .send({ path: "/nonexistent/example.json", assetHost: "-bad.host" });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/asset host/i);
+      expect(res.body.error).not.toContain("this route ignores it");
+    });
+  },
+);

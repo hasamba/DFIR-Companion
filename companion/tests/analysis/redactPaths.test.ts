@@ -54,6 +54,30 @@ describe("redactPaths", () => {
     expect(redactPaths("bad JSON at row 3")).toBe("bad JSON at row 3");
   });
 
+  it("stops a top-level name at its segment boundary — /srv is not /srv2 (#1512)", () => {
+    // Before the fix the allowlisted "srv" matched inside "/srv2", so the output was
+    // "'<path>2/dfir/incoming/a.json'": mangled AND still leaking the rest of the path.
+    const msg = "EACCES: permission denied, open '/srv2/dfir/incoming/a.json'";
+    expect(redactPaths(msg)).toBe("EACCES: permission denied, open '<path>'");
+    expect(redactPaths("saw /srv2/dfir/a.json")).not.toContain("<path>2");
+    // The bare allowlisted name still redacts.
+    expect(redactPaths("cannot read /srv/dfir/a.json")).toBe("cannot read <path>");
+  });
+
+  it("redacts a quoted absolute path whose first segment no allowlist knows (#1512)", () => {
+    // Node fs errors always quote the path, so a quoted multi-segment absolute is a filesystem
+    // path regardless of its first segment — an install under /work/evidence must not leak.
+    const single = "ENOENT: no such file or directory, open '/work/evidence/mnt/share/file.evtx'";
+    expect(redactPaths(single)).toBe("ENOENT: no such file or directory, open '<path>'");
+    expect(redactPaths(single)).not.toContain("evidence");
+    expect(redactPaths('cannot stat "/work/evidence/mnt/share/file.evtx"')).toBe('cannot stat "<path>"');
+  });
+
+  it("the quoted-path rule leaves a quoted single segment and an unquoted route alone (#1512)", () => {
+    expect(redactPaths("ratio '1/2' kept")).toBe("ratio '1/2' kept");
+    expect(redactPaths("expected /cases/:id/import")).toBe("expected /cases/:id/import");
+  });
+
   it("does not choke on empty or non-Error throwables", () => {
     expect(redactPaths("")).toBe("");
     expect(redactedErrorMessage(new Error("/home/alice/x/y.json is bad"))).toBe("<path> is bad");

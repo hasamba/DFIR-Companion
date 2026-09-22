@@ -109,4 +109,24 @@ describe("GET /cases/:id/export/redacted", () => {
     const res = await request(bare).get("/cases/c1/export/redacted");
     expect(res.status).toBe(501);
   });
+
+  it("redacts an fs error path outside every known root out of the 500 body (#1512)", async () => {
+    // The route hands err.message to the client; the errorPathRedactor middleware must strip a
+    // quoted absolute path even when its first segment is in no allowlist and under no known root.
+    const leak = "/work/evidence/mnt/share/file.evtx";
+    const throwingWriter = {
+      redactedReportContents: async () => {
+        throw new Error(`ENOENT: no such file or directory, open '${leak}'`);
+      },
+    } as unknown as ReportWriter;
+    const failing = createApp(cases, {
+      stateStore: new StateStore(cases),
+      reportWriter: throwingWriter,
+      ocrRunner: stubOcr,
+    });
+    const res = await request(failing).get("/cases/c1/export/redacted");
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("ENOENT: no such file or directory, open '<path>'");
+    expect(JSON.stringify(res.body)).not.toContain("evidence");
+  });
 });
