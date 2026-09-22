@@ -6,6 +6,7 @@ import { getServerLogger } from "../logging/serverLogger.js";
 import { formatImportSettled } from "../logging/importLog.js";
 import { carryHostRenames } from "../analysis/hostRenameCarry.js";
 import { capBuildTimeRows } from "../analysis/buildTimeWindow.js";
+import { downgradeFirstPartyEgress } from "../analysis/firstPartyEgress.js";
 import {
   rehomeSuperTimeline,
   renameLedgerChanged,
@@ -98,17 +99,34 @@ export async function settleForensicImport(
   // batch id, shared by every row this import added. Persisted BEFORE dual-write/tag/demote below:
   // both `autoTagImported` and `demoteForensicForCase` independently reload state from the store,
   // so an in-memory-only stamp would be silently discarded by their own reload/save cycles.
+  //
+  // #1530: the first-party-egress downgrade rides in the same pass, and where it sits is the whole
+  // argument. BEFORE the dual-write, so the super-timeline keeps the Info copy the forensic record
+  // is about to lose; BEFORE the tagger, so a tagger rule that matches the row raises it straight
+  // back out of Info — lower, then one chance to raise, then demote, the order ARCHITECTURE.md
+  // documents. Gated on the super-timeline store for the same reason the dual-write is: demote
+  // removes a sub-threshold row from the forensic timeline whether or not a capture store exists
+  // (composition/importIngest.ts), so lowering a grade with no store wired would delete evidence.
   if (added.length) {
     const importedAt = new Date().toISOString();
     const importBatchId = randomUUID();
     const addedIds = new Set(added.map((e) => e.id));
+    const lowered = deps.superTimelineStore
+      ? downgradeFirstPartyEgress(added)
+      : { events: [] as ForensicEvent[], downgraded: [] as string[] };
+    const loweredById = new Map(lowered.events.map((e) => [e.id, e]));
     imported = {
       ...imported,
       forensicTimeline: imported.forensicTimeline.map((e) =>
-        addedIds.has(e.id) ? { ...e, importedAt, importBatchId } : e,
+        addedIds.has(e.id) ? { ...(loweredById.get(e.id) ?? e), importedAt, importBatchId } : e,
       ),
     };
     added = imported.forensicTimeline.filter((e) => addedIds.has(e.id));
+    if (lowered.downgraded.length)
+      getServerLogger().info(
+        `[import] ${caseId}: ${lowered.downgraded.length} first-party update connection(s) graded Info`,
+        { caseId },
+      );
   }
   // Saved when anything above changed the state: new rows stamped, or older rows re-homed by a
   // rename this import taught the case (a carry-only settle still has to persist and broadcast).

@@ -18,8 +18,15 @@ import { renderDestinationTags } from "./destinationFacts.js";
 import { renderDecoyTag } from "./renamedBinaryNote.js";
 import { renderScriptCommandTags } from "./scriptBlockCommands.js";
 import { renderBuildTimeTag } from "./buildTimeWindow.js";
+import { canonicalFile, canonicalNetwork } from "./canonicalEvent.js";
 
 const MAX_TAG_VALUE = 48; // keep one field from bloating a line; hostnames/paths can be long
+
+/** The file name at the end of a Windows or POSIX path. */
+function baseName(p: string): string {
+  const cut = Math.max(p.lastIndexOf("\\"), p.lastIndexOf("/"));
+  return cut >= 0 ? p.slice(cut + 1) : p;
+}
 
 function clip(v: string): string {
   const s = String(v ?? "")
@@ -39,16 +46,36 @@ export function renderStructuredTags(e: ForensicEvent, aliasIndex?: HostAliasInd
   // what the derived context blocks say.
   if (e.asset) tags.push(`<host:${clip(aliasIndex ? resolveHost(aliasIndex, e.asset) : e.asset)}>`);
 
-  if (e.processName || e.parentName) {
-    const child = e.processName ? clip(e.processName) : "";
+  // The flat fields lead; each missing one is filled from the canonical envelope, independently
+  // (#1530). A Sysmon EID 3 row sets NEITHER — the mapper records a process name only for
+  // process-kind events and never sets dstIp/port — so an OneDrive update connection reached the
+  // model with no image and no destination as facts, while the 240-character description render cut
+  // `DestinationIp=…` out of the middle and truncated the image path. The model then had six
+  // unattributed addresses to reason about, and fused them into a C2 finding (INC-2026-001 f13).
+  // Same lesson as #1502: a fact the cut can reach is a fact that goes missing.
+  //
+  // Both fallbacks are for a NETWORK row only, and that bound matters twice. On a network record
+  // the canonical file block is the connecting image; on a file record it is the file that was
+  // WRITTEN, and reading that as the process would put `<proc:invoice.xlsm>` on the row — a process
+  // that never ran. And a logon record carries a network block too (the source address), so reading
+  // it here would put a `<net:…→?>` connection tag on every 4624 in the product.
+  const networkRow = e.canonical?.event?.category === "network";
+  const cn = networkRow ? canonicalNetwork(e) : undefined;
+  const cf = cn ? canonicalFile(e) : undefined;
+  const image = e.processName || cf?.name || baseName(cf?.path ?? "");
+  if (image || e.parentName) {
+    const child = image ? clip(image) : "";
     const parent = e.parentName ? clip(e.parentName) : "";
     tags.push(`<proc:${child}${parent ? `←${parent}` : ""}>`);
   }
 
-  if (e.srcIp || e.dstIp) {
-    const src = e.srcIp ? clip(e.srcIp) : "?";
-    const dst = e.dstIp ? clip(e.dstIp) : "?";
-    const port = typeof e.port === "number" && Number.isFinite(e.port) ? `:${e.port}` : "";
+  const srcIp = e.srcIp || cn?.source?.address || "";
+  const dstIp = e.dstIp || cn?.destination?.address || "";
+  const dstPort = typeof e.port === "number" ? e.port : cn?.destination?.port;
+  if (srcIp || dstIp) {
+    const src = srcIp ? clip(srcIp) : "?";
+    const dst = dstIp ? clip(dstIp) : "?";
+    const port = typeof dstPort === "number" && Number.isFinite(dstPort) ? `:${dstPort}` : "";
     tags.push(`<net:${src}→${dst}${port}>`);
   }
 

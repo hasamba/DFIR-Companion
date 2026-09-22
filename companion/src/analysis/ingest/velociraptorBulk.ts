@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ForensicEvent, InvestigationState, Severity } from "../stateTypes.js";
 import { demoteBelowSeverity } from "../forensicGate.js";
+import { downgradeFirstPartyEgress } from "../firstPartyEgress.js";
 import type { MappedEvent, SiemEvent } from "../siemImport.js";
 import { aggregateEvents } from "../eventAggregate.js";
 import type { SiemIoc } from "../iocSink.js";
@@ -366,6 +367,10 @@ export async function runVelociraptorBulk(
     const batchIdByAggKey = new Map<string, string>();
     const out = mapBatch(rows, vrCtx, opts, mode, nextIndex, stamp, batchIdByAggKey);
     let events = extra ? [...out.events, ...extra] : out.events;
+    // #1530, in the same position the whole-file seam uses (routes/importSettle.ts): first-party
+    // update traffic drops to Info BEFORE the tagger, so a tagger rule can still raise it and the
+    // super-timeline receives the graded copy.
+    events = downgradeFirstPartyEgress(events).events;
     totals.detections += out.detections;
     if (tagger && events.length) {
       const tagged = await tagger.apply(caseId, events);

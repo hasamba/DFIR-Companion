@@ -6,6 +6,7 @@
 // `Line`, a collected file `Content`, a YARA `HitString` or a PowerShell script block — very often
 // the exact thing the rule fired on — is otherwise missed entirely.
 import { addIoc, cleanIp, str, getCI, type SiemIoc } from "./siemImport.js";
+import { looksLikeVersionString } from "./ipHygiene.js";
 import { extractDomains } from "./textDomains.js";
 import { trimSentencePunctuation } from "../ingest/textUriTrim.js";
 
@@ -80,10 +81,9 @@ export function scrapeText(text: string, sink: Map<string, SiemIoc>): void {
     addIoc(sink, "url", trimSentencePunctuation(m[0], text, m.index ?? 0).slice(0, 300), MENTIONED);
   for (const m of text.matchAll(TEXT_IPV4)) {
     // A dotted quad written right after a version marker is a version string, not an address:
-    // `choco install openssh --version 8.0.0.1`, `$script:ModuleVersion = '1.0.0.0'`. Octet bounds
-    // alone cannot tell these apart (their octets are all ≤ 255), so read the ~14 chars before it.
-    const pre = text.slice(Math.max(0, (m.index ?? 0) - 14), m.index ?? 0).toLowerCase();
-    if (/version\s*['"=:\s]*$/.test(pre)) continue;
+    // `choco install openssh --version 8.0.0.1`, `$script:ModuleVersion = '1.0.0.0'`. The guard
+    // moved to ipHygiene.ts (#1530) — siemImport's own text scraper needs the same one.
+    if (looksLikeVersionString(text, m.index ?? 0)) continue;
     const ip = cleanIp(m[0]);
     if (ip) addIoc(sink, "ip", ip, MENTIONED);
   }
