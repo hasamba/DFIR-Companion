@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { ForensicEvent, InvestigationState } from "../analysis/stateTypes.js";
+import type { SuperEviction } from "../analysis/superTimelineStore.js";
 import { diffTimeline, type TimelineDiff } from "../analysis/timelineDiff.js";
 import { diffIocs, type IocsDiff } from "../analysis/iocsDiff.js";
 import { getServerLogger } from "../logging/serverLogger.js";
@@ -52,6 +53,12 @@ export interface SettleDeps {
   };
   superTimelineStore?: {
     append(caseId: string, events: ForensicEvent[]): Promise<number>;
+    /** #1535 — the retained count AND what the cap dropped, from one atomic write. Optional so a
+     * test fake that only implements `append` keeps working; the eviction then reports nothing. */
+    appendReporting?(
+      caseId: string,
+      events: ForensicEvent[],
+    ): Promise<{ retained: number; evicted: SuperEviction }>;
   } & Partial<SuperRehomeStore>;
   onSuperTimeline?: (caseId: string) => void;
   // Fired right after the importedAt/importBatchId stamp save below (#1174) — without it, dashboard
@@ -68,6 +75,13 @@ export interface SettledImport {
   state: InvestigationState;
   /** Rows the super-timeline RETAINED from this import (0 when no store is wired). */
   superTimelineAddedCount: number;
+  /**
+   * What the super-timeline's cap dropped to make room for this import (#1535). Undefined when no
+   * store is wired or the store cannot report it; `count: 0` when the cap took nothing. This is
+   * per-import; a case's complete eviction record is `SuperTimelineStore.meta().evictedTotal`,
+   * which also covers evictions no import caused (unstarring a row releases protection).
+   */
+  superTimelineEvicted?: SuperEviction;
   /** Forensic-timeline diff against `stateBefore`, computed post-demote. */
   timelineDiff: TimelineDiff;
   iocsDiff: IocsDiff;
@@ -144,9 +158,17 @@ export async function settleForensicImport(
 
   // Dual-write FIRST, from the pre-demote (now stamped) state.
   let superTimelineAddedCount = 0;
+  let superTimelineEvicted: SuperEviction | undefined;
   if (deps.superTimelineStore && added.length) {
     try {
-      superTimelineAddedCount = await deps.superTimelineStore.append(caseId, added);
+      const store = deps.superTimelineStore;
+      if (store.appendReporting) {
+        const result = await store.appendReporting(caseId, added);
+        superTimelineAddedCount = result.retained;
+        superTimelineEvicted = result.evicted;
+      } else {
+        superTimelineAddedCount = await store.append(caseId, added);
+      }
       deps.onSuperTimeline?.(caseId);
     } catch {
       // Non-fatal by design: demote captures every row it removes into the super-timeline in
@@ -173,10 +195,11 @@ export async function settleForensicImport(
     forensicAdded: timelineDiff.added.length,
     forensicRemoved: timelineDiff.removed.length,
     superAdded: superTimelineAddedCount,
+    superEvicted: superTimelineEvicted?.count ?? 0,
     iocsAdded: iocsDiff.added.length,
     iocsRemoved: iocsDiff.removed.length,
   });
-  return { state, superTimelineAddedCount, timelineDiff, iocsDiff };
+  return { state, superTimelineAddedCount, superTimelineEvicted, timelineDiff, iocsDiff };
 }
 
 // Non-fatal by design, like the dual-write above: the forensic re-home is already saved, and a
@@ -200,6 +223,8 @@ export interface SettledCounts {
   forensicAdded: number;
   forensicRemoved: number;
   superAdded: number;
+  /** Rows the super-timeline's cap had to drop to make room for this import (#1535). */
+  superEvicted?: number;
   iocsAdded: number;
   iocsRemoved: number;
 }
@@ -211,7 +236,7 @@ export interface SettledCounts {
  */
 export function logImportSettled(caseId: string, label: string | undefined, counts: SettledCounts): void {
   const line = formatImportSettled({ caseId, label, ...counts });
-  const empty = Object.values(counts).every((n) => n === 0);
+  const empty = Object.values(counts).every((n) => !n);
   if (empty) getServerLogger().debug(line, { caseId });
   else getServerLogger().info(line, { caseId });
 }

@@ -120,6 +120,10 @@ describe("caseSqliteWorker — reads beside writes (#1454)", () => {
       generation: 0,
       hosts: [],
       hostsTruncated: false,
+      // A case with no store has lost nothing to the cap — the same empty answer the
+      // read gives for every other field, not a missing one (#1535).
+      evictedTotal: 0,
+      lastEviction: null,
     });
     expect(existsSync(dbPath)).toBe(false);
     expect(existsSync(dbPath + "-wal")).toBe(false);

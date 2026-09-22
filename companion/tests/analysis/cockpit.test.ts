@@ -327,6 +327,56 @@ describe("deriveCockpit — review and card decisions", () => {
     );
   });
 
+  // #1535 — an Info row lives only in the super-timeline, so a row its cap evicted has left the
+  // case. The card says so instead of leaving the analyst to find out.
+  it("says what the super-timeline cap dropped to make room for the import", () => {
+    const result = deriveCockpit({
+      state: state(),
+      importMeta: {
+        ...RECENT_IMPORT,
+        superTimelineAddedCount: 17,
+        superTimelineEvicted: {
+          count: 1200,
+          setAside: 40,
+          from: "2026-05-01T00:00:00Z",
+          to: "2026-05-09T00:00:00Z",
+        },
+      },
+      investigator: "Alice",
+      now: NOW,
+    });
+    const summary = result.sections.changes[0].summary;
+    expect(summary).toContain("super-timeline cap dropped 1200 earlier-imported raw rows");
+    expect(summary).toContain("40 of them set aside by a rule");
+    expect(summary).toContain("spanning 2026-05-01T00:00:00Z – 2026-05-09T00:00:00Z");
+  });
+
+  it("says nothing about the cap when it dropped nothing", () => {
+    const result = deriveCockpit({
+      state: state(),
+      importMeta: { ...RECENT_IMPORT, superTimelineEvicted: null },
+      investigator: "Alice",
+      now: NOW,
+    });
+    expect(result.sections.changes[0].summary).not.toContain("cap dropped");
+  });
+
+  it("reports an all-undated eviction as a count with no span", () => {
+    const result = deriveCockpit({
+      state: state(),
+      importMeta: {
+        ...RECENT_IMPORT,
+        superTimelineEvicted: { count: 3, setAside: 0, from: "", to: "" },
+      },
+      investigator: "Alice",
+      now: NOW,
+    });
+    const summary = result.sections.changes[0].summary;
+    expect(summary).toContain("cap dropped 3 earlier-imported raw rows");
+    expect(summary).not.toContain("spanning");
+    expect(summary).not.toContain("set aside");
+  });
+
   it("names what produced a multi-artifact import instead of one artifact filename", () => {
     // A Velociraptor hunt collects DOZENS of artifacts under a single hunt id, and the card used to
     // be labelled with `lastImportFile` — whichever artifact the import loop happened to finish on.

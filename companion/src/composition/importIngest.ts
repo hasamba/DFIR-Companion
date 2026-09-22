@@ -534,7 +534,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
       if (options.stateStore && stateBefore) {
         try {
           // The one seam (routes/importSettle.ts): dual-write, tag, demote, diff post-demote.
-          const { timelineDiff: tDiff, iocsDiff: iDiff } = await settleForensicImport(
+          const settled = await settleForensicImport(
             {
               stateStore: options.stateStore,
               superTimelineStore: options.superTimelineStore,
@@ -547,6 +547,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
             stateBefore,
             storedName,
           );
+          const { timelineDiff: tDiff, iocsDiff: iDiff } = settled;
           addedEvents = tDiff.added.length;
           addedIocs = iDiff.added.length;
           if (
@@ -557,6 +558,8 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
               kind,
               file: storedName,
               diff: tDiff,
+              superTimelineAddedCount: settled.superTimelineAddedCount,
+              superTimelineEvicted: settled.superTimelineEvicted,
               iocsDiff: iDiff,
             });
             options.onImportMeta?.(caseId);
@@ -680,7 +683,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         addedIocs = 0;
       if (options.stateStore && stateBefore) {
         try {
-          const { timelineDiff: tDiff, iocsDiff: iDiff } = await settleForensicImport(
+          const settled = await settleForensicImport(
             {
               stateStore: options.stateStore,
               superTimelineStore: options.superTimelineStore,
@@ -693,6 +696,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
             stateBefore,
             storedName,
           );
+          const { timelineDiff: tDiff, iocsDiff: iDiff } = settled;
           addedEvents = tDiff.added.length;
           addedIocs = iDiff.added.length;
           if (
@@ -703,6 +707,8 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
               kind: "macloginitem",
               file: storedName,
               diff: tDiff,
+              superTimelineAddedCount: settled.superTimelineAddedCount,
+              superTimelineEvicted: settled.superTimelineEvicted,
               iocsDiff: iDiff,
             });
             options.onImportMeta?.(caseId);

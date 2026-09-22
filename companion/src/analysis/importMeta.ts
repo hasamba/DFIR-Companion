@@ -38,6 +38,21 @@ export const importMetaSchema = z.object({
   // Actual rows appended to the super-timeline after its own id/content deduplication.
   // Keep this optional: older metadata cannot truthfully reconstruct the historical count.
   superTimelineAddedCount: z.number().optional().catch(undefined),
+  // What the super-timeline's CAP dropped to make room for this import (#1535). An Info row lives
+  // only in that store, so a row it evicts leaves the case; the analyst is told rather than left to
+  // discover it. `from`/`to` are the evicted rows' event-time span and are "" when all were undated
+  // — a span, not a window: nothing says every row between them went. Optional/lenient: older
+  // import-meta.json files predate it and load as "not recorded".
+  superTimelineEvicted: z
+    .object({
+      count: z.number().catch(0),
+      setAside: z.number().catch(0),
+      from: z.string().catch(""),
+      to: z.string().catch(""),
+    })
+    .nullable()
+    .optional()
+    .catch(undefined),
   removedCount: z.number().catch(0), // true total absorbed/merged by correlation
   lastDiff: z
     .object({
@@ -101,6 +116,7 @@ const EMPTY: ImportMeta = {
   lastImportSource: "",
   addedCount: 0,
   superTimelineAddedCount: 0,
+  superTimelineEvicted: null,
   removedCount: 0,
   lastDiff: null,
   iocsAddedCount: 0,
@@ -123,6 +139,7 @@ export interface ImportRecord {
   source?: string; // human label for what produced the import (hunt/bundle) when it spans many files
   diff: TimelineDiff; // forensic-timeline diff
   superTimelineAddedCount?: number; // rows actually appended to the super-timeline
+  superTimelineEvicted?: ImportMeta["superTimelineEvicted"]; // rows the cap dropped (#1535)
   iocsDiff: IocsDiff; // IOC diff
   linesIn?: number; // raw input lines/rows the import read (#10)
   path?: "deterministic" | "ai"; // which extraction path ran (#10)
@@ -192,6 +209,7 @@ export class ImportMetaStore {
       lastImportSource: rec.source ?? "",
       addedCount: rec.diff.added.length,
       superTimelineAddedCount: Math.max(0, Math.floor(rec.superTimelineAddedCount ?? 0)),
+      superTimelineEvicted: rec.superTimelineEvicted?.count ? rec.superTimelineEvicted : null,
       removedCount: rec.diff.removed.length,
       lastDiff: {
         added: rec.diff.added.slice(0, MAX_LISTED),

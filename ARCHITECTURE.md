@@ -143,6 +143,54 @@ lowers a High or Critical, never touches a row that carries an ATT&CK technique 
 promotion, and is skipped entirely when no super-timeline store is wired, because demote would then
 delete the row rather than move it.
 
+### The raw record has a cap, and it evicts in three tiers
+
+An `Info` row never reaches the forensic timeline, so the super-timeline is its ONLY home. That
+store is capped (`DFIR_SUPERTIMELINE_MAX`, 100,000 by default) and the cap evicts — which means a
+row it drops has left the case. The forensic timeline has no cap and evicts nothing, so this
+exposure is the raw record's alone.
+
+Eviction order, oldest imported first WITHIN a tier and never across one:
+
+1. **Everything ordinary**, at any severity. A `Low`-or-above row is here because it was
+   dual-written and the forensic timeline still holds it; losing the raw copy loses no evidence. An
+   ordinary `Info` row is here too, and keeps the behaviour it always had: oldest out first,
+   re-import to recover.
+2. **Rows a named rule deliberately graded `Info`** — the collector footprint (#1500), first-party
+   update egress (#1530), a build-time window (#1529). This is evidence the case decided to set
+   aside, not bulk telemetry, so it goes behind everything above (#1535).
+3. **Protected** — starred or analyst-tagged (#958). Never evicted.
+
+`analysis/setAsideRows.ts` decides tier 2, from the stored row itself: the row must read `Info`
+**and** carry the stated reason its rule wrote into its description. Both halves matter —
+`veloDetectionNoise.ts` appends the collector note to a `Critical` row it refuses to demote, and
+`buildTimeWindow.ts` caps at `Low`. No pass can pin a row: `append` takes no new argument from its
+callers, and the store derives the relation, so every named demoter qualifies on the same footing
+and a new one qualifies for rows the case ALREADY holds (the relation is re-derived whenever the
+marker registry changes).
+
+**Tier 2 is bounded and tier 3 is not.** A protected row does not count against the cap, so
+protection can only grow the store; a set-aside row does count, so a store whose cap had filled with
+them would put every newly imported ordinary row at the head of the order and evict it on arrival —
+the store would stop taking evidence. The tier stops at the cap minus a tenth of it: 90,000 rows of
+priority and 10,000 rows of guaranteed forward progress at the default cap.
+
+**"Evicted last" is not "never evicted."** A case large enough still loses these rows, and the
+answer is still to re-import the artifact. What the cap owes the analyst instead is to say what it
+took: the import card reports the count, how many were set aside and the evicted rows' event-time
+span (a span, not a window — eviction age is insertion order, deliberately independent of event
+time). That number comes from the seam's own append, atomically: `appendReporting` returns the
+retained count and the eviction together, so nothing has to read a "last append" side channel that
+a concurrent append could overwrite. `append` still returns only the retained count, unchanged for
+every caller that does not report.
+
+The bulk Velociraptor driver — the path most likely to hit the cap — accumulates the summaries
+across its batches and prints them on its `bulk done` line. A case's COMPLETE record is
+`SuperTimelineStore.meta().evictedTotal` / `.lastEviction`, which also covers evictions no import
+caused: unstarring a row releases protection and enforces the cap at once, and a couple of
+super-only direct-append paths (`veloExternalIngest`'s super-only branch, `platformImports`) write
+no import card at all.
+
 ### The content tagger's promotion window is the import that collected the event
 
 The deterministic content tagger is what lifts high-value telemetry out of `Info` — but it can only

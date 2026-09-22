@@ -13,7 +13,7 @@
   "routes/aiSynthesis.ts": 846,
   "routes/caseLifecycle.ts": 829,
   "routes/findings.ts": 833,
-  "routes/import.ts": 2890,
+  "routes/import.ts": 2886,
   "routes/mcp.ts": 908,
   "routes/threatIntel.ts": 863,
   "routes/velociraptor.ts": 1049

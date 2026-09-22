@@ -19,6 +19,8 @@ import {
   type BulkRunSummary,
 } from "../../src/analysis/ingest/velociraptorBulk.js";
 
+const NO_EVICTION = { count: 0, setAside: 0, from: "", to: "" };
+
 // The batched Velociraptor driver (#1439). Every fixture is synthetic; the sink is in memory so the
 // assertions are about the driver's contract — what it writes where, in what order, and what it
 // says about it — not about sqlite.
@@ -122,7 +124,7 @@ function memorySink(
       const fresh = events.filter((e) => !seen.has(e.id));
       for (const e of fresh) seqOf.set(e, ++seq);
       sink.superRows.push(...fresh);
-      return fresh.length;
+      return { retained: fresh.length, evicted: NO_EVICTION };
     },
     async openTagger() {
       sink.taggerOpened++;
@@ -437,7 +439,7 @@ describe("runVelociraptorBulk — a failed run rolls back its own rows (#1480)",
     let calls = 0;
     sink.appendSuper = async () => {
       if (++calls === 2) throw new Error("disk full");
-      return 0;
+      return { retained: 0, evicted: NO_EVICTION };
     };
     await expect(
       runVelociraptorBulk(
@@ -522,7 +524,8 @@ describe("memory bound", () => {
     const text = artifactMap(rows);
     rows.length = 0;
     const sink = memorySink({ batchRows: 5000, taggerOff: true });
-    sink.appendSuper = async (_c, events) => events.length; // do not retain: the store would not either
+    // do not retain: the store would not either
+    sink.appendSuper = async (_c, events) => ({ retained: events.length, evicted: NO_EVICTION });
     global.gc?.();
     const before = process.memoryUsage().heapUsed;
     let peak = before;

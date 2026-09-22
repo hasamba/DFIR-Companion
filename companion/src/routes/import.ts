@@ -391,12 +391,9 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
             try {
               // The seam every import crosses (routes/importSettle.ts): dual-write → tag → demote,
               // diffs from the POST-demote state so "+N events" counts only graded signal.
-              const {
-                state: s,
-                superTimelineAddedCount,
-                timelineDiff: tDiff,
-                iocsDiff: iDiff,
-              } = await settleForensicImport(settleDeps, caseId, stateBefore, storedName);
+              const settled = await settleForensicImport(settleDeps, caseId, stateBefore, storedName);
+              const { state: s, superTimelineAddedCount, superTimelineEvicted } = settled;
+              const { timelineDiff: tDiff, iocsDiff: iDiff } = settled;
               // Proactive FP-pattern propagation (#15b): does this import re-arrive with events matching a
               // known false-positive pattern? Match the NEW forensic events against the FP markers'
               // fingerprints and surface a one-click bulk-mark suggestion on the banner (never auto-mark).
@@ -420,6 +417,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
                   file: storedName,
                   diff: tDiff,
                   superTimelineAddedCount,
+                  superTimelineEvicted,
                   iocsDiff: iDiff,
                   linesIn: text.split(/\r?\n/).length,
                   path: aiDependent ? "ai" : "deterministic",
@@ -666,12 +664,9 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
             try {
               // The seam every import crosses (routes/importSettle.ts): dual-write → tag → demote,
               // diffs from the POST-demote state so "+N events" counts only graded signal.
-              const {
-                state: s,
-                superTimelineAddedCount,
-                timelineDiff: tDiff,
-                iocsDiff: iDiff,
-              } = await settleForensicImport(settleDeps, caseId, stateBefore, storedName);
+              const settled = await settleForensicImport(settleDeps, caseId, stateBefore, storedName);
+              const { state: s, superTimelineAddedCount, superTimelineEvicted } = settled;
+              const { timelineDiff: tDiff, iocsDiff: iDiff } = settled;
               // Proactive FP-pattern propagation (#15b): does this import re-arrive with events matching a
               // known false-positive pattern? Match the NEW forensic events against the FP markers'
               // fingerprints and surface a one-click bulk-mark suggestion on the banner (never auto-mark).
@@ -695,6 +690,7 @@ export function registerImportRoutes(app: Express, ctx: RouteContext): void {
                   file: storedName,
                   diff: tDiff,
                   superTimelineAddedCount,
+                  superTimelineEvicted,
                   iocsDiff: iDiff,
                   linesIn: text.split(/\r?\n/).length,
                   path: aiDependent ? "ai" : "deterministic",

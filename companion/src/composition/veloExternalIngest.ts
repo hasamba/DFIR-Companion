@@ -22,6 +22,7 @@ import { parseVelociraptorJson } from "../analysis/velociraptorImport.js";
 import { bulkPathApplies, runVelociraptorBulk } from "../analysis/ingest/velociraptorBulk.js";
 import { applySeverityFloor } from "../analysis/severityFloor.js";
 import { settleForensicImport } from "../routes/importSettle.js";
+import type { SuperEviction } from "../analysis/superTimelineStore.js";
 import { diffTimeline, type TimelineDiff } from "../analysis/timelineDiff.js";
 import { diffIocs, type IocsDiff } from "../analysis/iocsDiff.js";
 import type { InvestigationState, Severity, ForensicEvent } from "../analysis/stateTypes.js";
@@ -236,14 +237,26 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
           // request with NO store falls through to the forensic importer and must not demote — there
           // is nowhere for a demoted row to go. Every other case is the forensic path through the one
           // seam (routes/importSettle.ts): dual-write, tag, demote, diff post-demote.
-          const { timelineDiff: tDiff, iocsDiff: iDiff } = opts.superOnly
-            ? await diffWithoutDemote(options.stateStore, caseId, stateBefore)
-            : await settleForensicImport(
-                { ...settleDeps, stateStore: options.stateStore },
-                caseId,
-                stateBefore,
-                storedName,
-              );
+          // The super-only branch appends to the store itself, above, and reports there; only the
+          // forensic branch crosses the seam that knows what the cap dropped (#1535).
+          let superTimelineEvicted: SuperEviction | undefined;
+          let tDiff, iDiff;
+          if (opts.superOnly) {
+            ({ timelineDiff: tDiff, iocsDiff: iDiff } = await diffWithoutDemote(
+              options.stateStore,
+              caseId,
+              stateBefore,
+            ));
+          } else {
+            const settled = await settleForensicImport(
+              { ...settleDeps, stateStore: options.stateStore },
+              caseId,
+              stateBefore,
+              storedName,
+            );
+            ({ timelineDiff: tDiff, iocsDiff: iDiff } = settled);
+            superTimelineEvicted = settled.superTimelineEvicted;
+          }
           addedEvents = tDiff.added.length;
           addedIocs = iDiff.added.length;
           // settle logs its own done line; this branch bypassed it (#1438).
@@ -267,6 +280,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
               kind: "velociraptor",
               file: storedName,
               diff: tDiff,
+              superTimelineEvicted,
               iocsDiff: iDiff,
             });
             options.onImportMeta?.(caseId);
@@ -353,12 +367,13 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
         addedIocs = 0;
       if (imported.length && options.stateStore && stateBefore) {
         try {
-          const { timelineDiff: tDiff, iocsDiff: iDiff } = await settleForensicImport(
+          const settled = await settleForensicImport(
             { ...settleDeps, stateStore: options.stateStore },
             caseId,
             stateBefore,
             lastStoredName,
           );
+          const { timelineDiff: tDiff, iocsDiff: iDiff } = settled;
           addedEvents = tDiff.added.length;
           addedIocs = iDiff.added.length;
           if (
@@ -370,6 +385,8 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
               kind: "velociraptor",
               file: lastStoredName,
               diff: tDiff,
+              superTimelineAddedCount: settled.superTimelineAddedCount,
+              superTimelineEvicted: settled.superTimelineEvicted,
               iocsDiff: iDiff,
             });
             options.onImportMeta?.(caseId);

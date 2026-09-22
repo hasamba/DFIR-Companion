@@ -62,6 +62,7 @@ describe("ImportMetaStore", () => {
       lastImportSource: "",
       addedCount: 0,
       superTimelineAddedCount: 0,
+      superTimelineEvicted: null,
       removedCount: 0,
       lastDiff: null,
       iocsAddedCount: 0,
@@ -72,6 +73,45 @@ describe("ImportMetaStore", () => {
       fpPropagation: [],
       truncation: null,
     });
+  });
+
+  // #1535 — an Info row lives only in the super-timeline, so what its cap dropped is part of what
+  // the import did to the record, not a log detail.
+  it("records what the super-timeline cap dropped, and nothing when it dropped nothing", async () => {
+    await store.record("c1", {
+      kind: "velociraptor",
+      file: "f.json",
+      diff: { added: [], removed: [] },
+      iocsDiff: { added: [], removed: [] },
+      superTimelineAddedCount: 10,
+      superTimelineEvicted: {
+        count: 4,
+        setAside: 1,
+        from: "2026-05-01T00:00:00Z",
+        to: "2026-05-02T00:00:00Z",
+      },
+    });
+    expect((await store.load("c1")).superTimelineEvicted).toEqual({
+      count: 4,
+      setAside: 1,
+      from: "2026-05-01T00:00:00Z",
+      to: "2026-05-02T00:00:00Z",
+    });
+
+    await store.record("c1", {
+      kind: "velociraptor",
+      file: "f.json",
+      diff: { added: [], removed: [] },
+      iocsDiff: { added: [], removed: [] },
+      superTimelineEvicted: { count: 0, setAside: 0, from: "", to: "" },
+    });
+    expect((await store.load("c1")).superTimelineEvicted).toBeNull();
+  });
+
+  it("loads legacy metadata that predates the eviction record as 'not recorded'", () => {
+    expect(
+      importMetaSchema.parse({ lastImportedAt: "2026-06-01T00:00:00.000Z" }).superTimelineEvicted,
+    ).toBeUndefined();
   });
 
   it("keeps the super-timeline count unknown when loading legacy metadata", () => {
@@ -169,6 +209,7 @@ describe("ImportMetaStore", () => {
       lastImportSource: "",
       addedCount: 0,
       superTimelineAddedCount: 0,
+      superTimelineEvicted: null,
       removedCount: 0,
       lastDiff: null,
       iocsAddedCount: 0,

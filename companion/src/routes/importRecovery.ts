@@ -12,6 +12,7 @@ import { parseAssetHost } from "../analysis/assetHost.js";
 import { importPlasoFileLogged } from "./importPlasoStream.js";
 import { recordImportRun } from "./importRunRecorder.js";
 import { logImportSettled } from "./importSettle.js";
+import type { SuperEviction } from "../analysis/superTimelineStore.js";
 
 const importParametersSchema = z.object({
   kind: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/),
@@ -96,13 +97,16 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
           event.sourceScreenshots.includes(parameters.storedName),
         );
         let superTimelineAddedCount = 0;
+        let superTimelineEvicted: SuperEviction | undefined;
         if (options.superTimelineStore) {
           if (allArtifactEvents.length) {
             try {
-              superTimelineAddedCount = await options.superTimelineStore.append(
+              const appended = await options.superTimelineStore.appendReporting(
                 job.caseId,
                 allArtifactEvents,
               );
+              superTimelineAddedCount = appended.retained;
+              superTimelineEvicted = appended.evicted;
               options.onSuperTimeline?.(job.caseId);
             } catch (error) {
               await warn("super-timeline copy failed", error);
@@ -137,6 +141,7 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
           forensicAdded: timelineDiff.added.length,
           forensicRemoved: timelineDiff.removed.length,
           superAdded: superTimelineAddedCount,
+          superEvicted: superTimelineEvicted?.count ?? 0,
           iocsAdded: iocDiff.added.length,
           iocsRemoved: iocDiff.removed.length,
         });
@@ -147,6 +152,7 @@ export function registerImportResumeHandler(ctx: RouteContext): void {
               file: parameters.storedName,
               diff: timelineDiff,
               superTimelineAddedCount,
+              superTimelineEvicted,
               iocsDiff: iocDiff,
               linesIn: text ? text.split(/\r?\n/).length : 0,
               path: parameters.kind === "csv" || parameters.kind === "log" ? "ai" : "deterministic",

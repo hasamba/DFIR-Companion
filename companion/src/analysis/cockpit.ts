@@ -404,6 +404,22 @@ function gapCards(state: InvestigationState): CockpitCard[] {
   return [...questions, ...uncertainties, ...nextSteps];
 }
 
+/**
+ * What the super-timeline's cap dropped to make room for this import (#1535), as one clause on the
+ * import card. An Info row lives only in that store, so an evicted row has left the case — the
+ * analyst is told, not left to find out. "Earlier-imported", never "older": eviction age is
+ * insertion order, deliberately independent of event time (superTimelineStore.ts "Retention"). The
+ * event-time span is a span, not a window — nothing says every row inside it went.
+ */
+function capDropped(meta: ImportMeta): string {
+  const evicted = meta.superTimelineEvicted;
+  if (!evicted?.count) return "";
+  const rows = `${evicted.count} earlier-imported raw row${evicted.count === 1 ? "" : "s"}`;
+  const aside = evicted.setAside ? `, ${evicted.setAside} of them set aside by a rule` : "";
+  const span = evicted.from && evicted.to ? `, spanning ${evicted.from} – ${evicted.to}` : "";
+  return ` · super-timeline cap dropped ${rows}${aside}${span}`;
+}
+
 function changeCards(input: CockpitInput, lastReviewedAt: string | null): CockpitCard[] {
   const cards: CockpitCard[] = [];
   for (const finding of input.state.findings) {
@@ -440,7 +456,7 @@ function changeCards(input: CockpitInput, lastReviewedAt: string | null): Cockpi
       // Name the SOURCE first — the hunt or bundle the analyst launched. `lastImportFile` is one
       // evidence file, and a Velociraptor hunt writes dozens; showing the last of them made a full
       // super-timeline triage read as a lone EVTX import and get attributed to the wrong hunt.
-      summary: `${meta.lastImportKind || "Evidence"} · ${meta.lastImportSource || meta.lastImportFile || "latest import"}`,
+      summary: `${meta.lastImportKind || "Evidence"} · ${meta.lastImportSource || meta.lastImportFile || "latest import"}${capDropped(meta)}`,
       severity: forensicCount > 0 || superTimelineCount > 0 ? "Medium" : "Low",
       occurredAt: meta.lastImportedAt,
       evidenceIds: [],
