@@ -613,7 +613,10 @@
     const el = document.getElementById("jevKeyHint");
     if (!el) return;
     el.textContent = jevHintText();
-    el.classList.toggle(
+    // `classList?.` is not defensive noise: the settings test harness hands back a stub element
+    // that has textContent and no classList, so a bare .toggle threw AFTER the test had passed
+    // and surfaced as an unhandled rejection — 3,954 green tests and a red shard (#1547).
+    el.classList?.toggle(
       "sfield-hint-warn",
       !!jevKeySource && !jevKeySource.ownKeySet && !jevKeySource.inheritable,
     );
@@ -626,9 +629,15 @@
     } catch {
       jevKeySource = null;
     }
-    // A failed probe leaves the hint on its neutral "checking" line rather than guessing either way:
-    // promising an inheritance that may not exist is the bug this replaced.
-    paintJevKeyHint();
+    try {
+      // A failed probe leaves the hint on its neutral "checking" line rather than guessing either
+      // way: promising an inheritance that may not exist is the bug this replaced. The paint is
+      // inside the guard too — this function is called as a floated promise from the initializer,
+      // so anything it throws becomes an unhandled rejection that fails a run nothing else failed.
+      paintJevKeyHint();
+    } catch {
+      /* a hint that cannot paint is not worth failing the page for */
+    }
   }
 
 
