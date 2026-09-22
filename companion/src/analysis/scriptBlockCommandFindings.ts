@@ -26,7 +26,7 @@
 // Pure: returns a new state, never mutates. Idempotent: the id is derived from the lex-first event
 // id in each group, and a second run reads its own finding as coverage.
 
-import { SCRIPT_COMMAND_FINDING_ID_PREFIX } from "./responseSchema.js";
+import { AUTO_FINDING_ID_PREFIX, SCRIPT_COMMAND_FINDING_ID_PREFIX } from "./responseSchema.js";
 import { scriptCommandFacts, type ScriptCommandMatch } from "./scriptBlockCommands.js";
 import type { Finding, ForensicEvent, InvestigationState } from "./stateTypes.js";
 
@@ -125,6 +125,9 @@ export function backfillScriptCommandFindings(
 ): InvestigationState {
   const findingById = new Map(state.findings.map((f) => [f.id, f] as const));
   const groups = new Map<string, Group>();
+  // Techniques to fold into a finding the HIGH backfill just minted for the same row, instead of
+  // minting a second one beside it.
+  const enrich = new Map<string, Set<string>>();
   for (const e of state.forensicTimeline) {
     if (!eligibleIds.has(e.id)) continue;
     const facts = scriptCommandFacts(e);
@@ -132,6 +135,18 @@ export function backfillScriptCommandFindings(
     const covered = coveredTechniques(e, findingById);
     const uncovered = new Set(facts.flatMap((f) => f.techniques).filter((t) => !covered.has(t)));
     if (!worthAFinding(facts, uncovered)) continue;
+    // A row imported BEFORE this feature carries none of the new techniques, so the f-auto finding
+    // the High backfill built from it a moment ago does not carry them either — and the rule above
+    // would then read them as uncovered and raise a Medium finding on a row that already has one.
+    // Two findings for one script block is noise, so the techniques go INTO the f-auto finding,
+    // which is machine-owned and rebuilt on every run (highSeverityFindings.ts).
+    const autoId = e.relatedFindingIds.find((id) => id.startsWith(AUTO_FINDING_ID_PREFIX));
+    if (autoId && findingById.has(autoId)) {
+      const set = enrich.get(autoId) ?? new Set<string>();
+      for (const t of uncovered) set.add(t);
+      enrich.set(autoId, set);
+      continue;
+    }
     const key = groupKey(e, facts);
     const group = groups.get(key);
     if (!group) {
@@ -143,7 +158,7 @@ export function backfillScriptCommandFindings(
     // finding already carries is covered for that row, and the group must not re-assert it.
     for (const t of [...group.uncovered]) if (!uncovered.has(t)) group.uncovered.delete(t);
   }
-  if (!groups.size) return state;
+  if (!groups.size && !enrich.size) return state;
 
   const existingIds = new Set(state.findings.map((f) => f.id));
   const newFindings: Finding[] = [];
@@ -177,11 +192,18 @@ export function backfillScriptCommandFindings(
       status: "open",
     });
   }
-  if (!linkByEvent.size) return state;
+  if (!linkByEvent.size && !enrich.size) return state;
+
+  const enriched = state.findings.map((f) => {
+    const add = enrich.get(f.id);
+    if (!add?.size) return f;
+    const mitreTechniques = [...new Set([...f.mitreTechniques, ...add])];
+    return mitreTechniques.length === f.mitreTechniques.length ? f : { ...f, mitreTechniques };
+  });
 
   return {
     ...state,
-    findings: [...state.findings, ...newFindings],
+    findings: [...enriched, ...newFindings],
     forensicTimeline: state.forensicTimeline.map((e) => {
       const id = linkByEvent.get(e.id);
       return id && !e.relatedFindingIds.includes(id)

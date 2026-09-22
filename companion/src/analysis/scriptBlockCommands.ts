@@ -59,8 +59,14 @@ const CONTEXT_WINDOW = 120;
 export const SCRIPT_COMMAND_TAGS_MAX = 220;
 /** One command never eats the whole budget. */
 const COMMAND_MAX = 60;
-/** Commands reported per row: enough for a full discovery sweep, bounded for a 40 KB block. */
-const MAX_COMMANDS = 8;
+// Two DIFFERENT limits, and conflating them was a review finding: a row that matched eight ordinary
+// discovery commands stopped the scan before the ntdsutil rule was ever evaluated, so the strongest
+// command in the script decided nothing. DETECTION reads the whole bounded text; only the EVIDENCE
+// rendered to a prompt or a finding is trimmed, high-specificity first.
+/** Commands rendered as evidence — the row itself holds the rest. */
+const MAX_COMMANDS_SHOWN = 8;
+/** Hard stop on matches kept from one text, so a pathological block cannot grow unbounded. */
+const MAX_MATCHES = 40;
 /** A script block can run to tens of KB; scanning the head bounds the cost of a pathological row. */
 const TEXT_SCAN = 20000;
 
@@ -129,7 +135,10 @@ const COMMAND_RULES: CommandRule[] = [
   },
   // T1021.006 Remote Services: Windows Remote Management — an EXPLICIT remote target only.
   {
-    re: /\benter-pssession\b(?:\s+-?\w+(?:\s+[^\s;|)'"{]{1,40})?){0,2}|\b(?:invoke-command|new-pssession)\b[^\n]{0,60}?-computername\s+[^\s;|)'"{]{1,40}|\bwinrs\b\s+-r:[^\s]{1,40}/i,
+    // Enter-PSSession needs a target too: the switch form anywhere in its arguments, or a positional
+    // host right after it. A bare `Enter-PSSession` (or one carrying only -Credential) opens nothing
+    // and proves no remote host — the plan review caught that reading.
+    re: /\benter-pssession\b[^\n]{0,60}?-(?:computername|connectionuri|vmname|containerid|hostname|session)\s+[^\s;|)'"{}]{1,40}|\benter-pssession\s+[^\s;|)'"{}-][^\s;|)'"{}]{0,40}|\b(?:invoke-command|new-pssession)\b[^\n]{0,60}?-computername\s+[^\s;|)'"{}]{1,40}|\bwinrs\b\s+-r:[^\s]{1,40}/i,
     ids: ["T1021.006"],
     specificity: "low",
   },
@@ -190,7 +199,7 @@ export function scriptCommandMatches(text: string): ScriptCommandMatch[] {
         techniques: ok ? [...rule.ids] : [],
         specificity: ok ? rule.specificity : "low",
       });
-      if (out.length >= MAX_COMMANDS) return out;
+      if (out.length >= MAX_MATCHES) return out;
     }
   }
   return out;
@@ -242,6 +251,16 @@ export function scriptCommandFacts(e: ForensicEvent): ScriptCommandMatch[] {
 }
 
 /**
+ * The commands worth SHOWING, high-specificity first and otherwise in table order, capped at
+ * MAX_COMMANDS_SHOWN. Detection has already read every match; this only decides what is printed.
+ */
+export function commandsToShow(facts: readonly ScriptCommandMatch[]): ScriptCommandMatch[] {
+  const high = facts.filter((f) => f.specificity === "high");
+  const low = facts.filter((f) => f.specificity !== "high");
+  return [...high, ...low].slice(0, MAX_COMMANDS_SHOWN);
+}
+
+/**
  * The prompt row's whole tags: `<script-commands:…>` (the literal commands, `; `-separated) and
  * `<script-techniques:…>` (their ids). Named for what they are — commands PRESENT in logged script
  * content — so the model cannot read them as a process that ran. [] when the row names nothing.
@@ -252,7 +271,7 @@ export function renderScriptCommandTags(e: ForensicEvent): string[] {
   const ids = [...new Set(facts.flatMap((f) => f.techniques))];
   const commands: string[] = [];
   let used = "<script-commands:>".length;
-  for (const f of facts) {
+  for (const f of commandsToShow(facts)) {
     const cost = f.command.length + (commands.length ? 2 : 0);
     if (used + cost > SCRIPT_COMMAND_TAGS_MAX) break;
     commands.push(f.command);

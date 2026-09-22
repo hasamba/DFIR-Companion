@@ -122,6 +122,20 @@ describe("backfillScriptCommandFindings", () => {
     expect(mint.mitreTechniques).not.toContain("T1615");
   });
 
+  it("folds the techniques into the High backfill's own finding instead of a second one (Codex review)", () => {
+    // A row imported before this feature carries none of the new techniques, so the f-auto finding
+    // the High backfill just built from it does not either.
+    const auto = finding({ id: "f-auto-7e2", mitreTechniques: ["T1059.001"] });
+    const s = state([ev({ id: "7e2", relatedFindingIds: ["f-auto-7e2"] })], [auto]);
+    const next = backfillScriptCommandFindings(s, all(s), ts);
+    expect(next.findings).toHaveLength(1);
+    expect(next.findings[0].id).toBe("f-auto-7e2");
+    expect(next.findings[0].mitreTechniques).toEqual(
+      expect.arrayContaining(["T1059.001", "T1069.002", "T1003.003", "T1482"]),
+    );
+    expect(next.forensicTimeline[0].relatedFindingIds).toEqual(["f-auto-7e2"]);
+  });
+
   it("never mints for one routine low-specificity command on its own", () => {
     const s = state([
       ev({ message: "Creating Scriptblock text (1 of 1):\nGet-Process | Sort-Object CPU -Descending" }),

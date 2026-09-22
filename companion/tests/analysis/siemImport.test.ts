@@ -1556,10 +1556,12 @@ describe("PowerShell module/pipeline logging (EID 4103)", () => {
     expect(r.events).toHaveLength(2);
   });
 
-  it("leaves an ordinary pipeline record at Info", () => {
+  it("leaves an ordinary pipeline record at Info, tagged with what it did", () => {
     const r = parseSiemExport(elastic(pipeline('CommandInvocation(Get-Process): "Get-Process"')));
     expect(r.events[0].severity).toBe("Info");
-    expect(r.events[0].mitreTechniques).toEqual([]);
+    // Process discovery is TAGGED, never promoted (#1531) — and Info never reaches the forensic
+    // timeline, so the id describes the row without putting it in front of the model.
+    expect(r.events[0].mitreTechniques).toEqual(["T1057"]);
   });
 
   it("grades a download cradle in the payload the same way it grades a script block", () => {

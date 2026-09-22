@@ -9,6 +9,7 @@ import {
   SCRIPT_COMMAND_TAGS_MAX,
 } from "../../src/analysis/scriptBlockCommands.js";
 import { reconTechniques } from "../../src/analysis/reconTechniques.js";
+import { gradeScriptAsCollector, TOOL_TREE_SCRIPT_NOTE } from "../../src/analysis/veloDetectionNoise.js";
 import { scriptBlockSignal } from "../../src/analysis/tradecraftRules.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 
@@ -80,6 +81,23 @@ describe("scriptCommandMatches", () => {
     expect(scriptCommandTechniques("nltest /domain_trusts /all_trusts")).toEqual(["T1482"]);
   });
 
+  it("needs a target before calling Enter-PSSession remoting (Codex review)", () => {
+    expect(scriptCommandTechniques("Enter-PSSession dc01.example.com")).toContain("T1021.006");
+    expect(scriptCommandTechniques("Enter-PSSession -ComputerName dc01.example.com")).toContain("T1021.006");
+    expect(scriptCommandTechniques("Enter-PSSession")).toEqual([]);
+    expect(scriptCommandTechniques("Enter-PSSession | Out-Null")).toEqual([]);
+    expect(scriptCommandTechniques("Enter-PSSession -Credential $c")).toEqual([]);
+  });
+
+  it("keeps detecting past the evidence cap, so a later high-specificity command still counts", () => {
+    const noisy = [
+      "Get-Process; tasklist; gpresult /r; Get-GPO -All; Get-ADUser -Filter *; Get-ADGroupMember ops;",
+      "Get-ADDomain; Get-ADForest; Get-ADTrust; nltest /dclist:LAB.INVALID; dsquery user;",
+      "ntdsutil.exe ac in ntds ifm cr fu C:\\Users\\Public\\Music\\1",
+    ].join("\n");
+    expect(scriptCommandTechniques(noisy)).toContain("T1003.003");
+  });
+
   it("needs an explicit remote target before calling Invoke-Command remoting", () => {
     expect(scriptCommandTechniques("Invoke-Command -ComputerName dc01.example.com { whoami }")).toContain(
       "T1021.006",
@@ -122,6 +140,20 @@ describe("the guards", () => {
     expect(scriptCommandFacts(byOrigin)).toEqual([]);
     expect(scriptCommandFacts(byNote)).toEqual([]);
     expect(renderScriptCommandTags(byNote)).toEqual([]);
+  });
+
+  // The seam the note guard rests on. gradeScriptAsCollector keeps a Critical row's grade and leaves
+  // its origin unset (the #1477 bound), so before #1531 a Critical tool-tree script carried NO mark
+  // at all and this module could not tell it from an intruder's.
+  it("a Critical collector script still carries the footprint note the guard reads", () => {
+    const m = {
+      severity: "Critical",
+      description: "Sigma: Potential WinAPI Calls Via PowerShell (EID 4104)",
+    } as Parameters<typeof gradeScriptAsCollector>[0] & { severity: string; description: string };
+    gradeScriptAsCollector(m, TOOL_TREE_SCRIPT_NOTE);
+    expect(m.severity).toBe("Critical");
+    expect(m.origin).toBeUndefined();
+    expect(isCollectorRow({ description: m.description })).toBe(true);
   });
 
   it("refuses a row that is not a PowerShell script record", () => {
@@ -169,6 +201,14 @@ describe("renderScriptCommandTags", () => {
       expect(tag.slice(1, -1)).not.toMatch(/[<>\u0000-\u001f]/);
       expect(tag.length).toBeLessThanOrEqual(SCRIPT_COMMAND_TAGS_MAX + 24);
     }
+  });
+
+  it("shows the high-specificity commands first when the evidence cap bites", () => {
+    const noisy =
+      "Get-Process; tasklist; gpresult /r; Get-GPO -All; Get-ADUser -Filter *; Get-ADGroupMember ops; " +
+      "Get-ADDomain; nltest /dclist:LAB.INVALID; dsquery user; ntdsutil.exe ac in ntds ifm cr fu C:\\t";
+    const tags = renderScriptCommandTags(ev({ message: `Creating Scriptblock text (1 of 1):\n${noisy}` }));
+    expect(tags[0]).toContain("ntdsutil.exe ac in ntds ifm");
   });
 
   it("emits nothing for a row that names no command", () => {
