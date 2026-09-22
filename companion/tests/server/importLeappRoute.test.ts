@@ -267,7 +267,11 @@ describe("POST /cases/:id/import-leapp", () => {
     // the forensic timeline when that capture fails too. So a broken super-timeline store costs the
     // count, never the evidence.
     const { app, stateStore, superTimelineStore } = await makeApp();
-    superTimelineStore.append = async () => {
+    // Break `appendReporting`, not `append`: since #1535 the store has two entry points and
+    // `append` is the thin wrapper that delegates to this one, so a fake outage installed on the
+    // wrapper is simply not on the write path any more. Breaking the real one fails BOTH, which
+    // is what a store that is genuinely offline does.
+    superTimelineStore.appendReporting = async () => {
       throw new Error("super-timeline offline");
     };
     const res = await request(app)
