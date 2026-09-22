@@ -193,6 +193,10 @@ const READERS: Record<string, { kind: ReaderKind; why: string }> = {
     kind: "agnostic",
     why: "reads the address only as the presence test for the #1352 re-stamp and never names a host; the trust decision is the importer allowlist, not the value",
   },
+  "synthEvidence.ts": {
+    kind: "agnostic",
+    why: "renders the address into the prompt row's <net:src->dst:port> display tag, and only after the flat e.srcIp fallback — the model reads what the record says about a connection, never a host name; a gate would blank the tag for every legacy sensor row and put the model back to reasoning about an unattributed address, which is the #1530 failure this tag exists to fix",
+  },
 };
 
 /** Fail-closed reader gate, as proxyWorkstationChain.ts writes it. */
