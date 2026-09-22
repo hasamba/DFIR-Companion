@@ -88,8 +88,8 @@
   white-space: nowrap; }  /* compact, never hidden — the colored pill still shows the state */
 .toolbar-main.icons-only .cc-label { display: none; }
 .toolbar-main.icons-only { gap: 8px 7px; }               /* tighter column gap suits an icon row and buys ~55px to stay on one line */
-#caseId { width: 120px; }                                  /* sized for INC-YYYY-NNN; content scrolls for longer ids */
-.toolbar-main.icons-only #caseId { width: 100px; }        /* narrow further when tight */
+#casePicker { width: 160px; }                              /* sized for a short case name; content scrolls for longer ones */
+.toolbar-main.icons-only #casePicker { width: 120px; }        /* narrow further when tight */
 /* Custom tooltip — uniform styling for [data-tip] controls. Native `title` tooltips can't be
    CSS-styled (their first line rendered brighter than the rest); this gives one flat color. */
 .tip { position: fixed; z-index: 1000; max-width: 360px; background: var(--bg-primary); color: var(--text-primary);

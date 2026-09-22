@@ -976,6 +976,15 @@ export const FEATURES: Feature[] = [
     private: [],
   },
   {
+    // Case picker (#1523). The visible box shows the case NAME; #caseId is hidden and keeps the id.
+    // loadCaseList() moved here from the inline block, where it was page machinery; the two maps
+    // that translate between a name and an id are the state the closure keeps.
+    file: "dashboard-case-picker.js",
+    initializer: "initCasePicker",
+    publish: ["initCasePicker", "loadCaseList", "syncCasePicker"],
+    private: ["byId", "byText"],
+  },
+  {
     // New case creation. Its banner is 692 lines and 595 of them are the page's shared wiring run
     // with nineteen guard stanzas threaded through it — only this feature's own eight lines moved.
     file: "dashboard-new-case.js",

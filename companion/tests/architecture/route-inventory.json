@@ -671,6 +671,7 @@
     "ROUTE GET /js/dashboard-bulk-select.js",
     "ROUTE GET /js/dashboard-bulk-ioc.js",
     "ROUTE GET /js/dashboard-case-unlock.js",
+    "ROUTE GET /js/dashboard-case-picker.js",
     "ROUTE GET /js/dashboard-new-case.js",
     "ROUTE GET /js/dashboard-case-templates.js",
     "ROUTE GET /js/dashboard-velo-case.js",

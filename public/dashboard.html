@@ -357,6 +357,7 @@
   <script src="/js/dashboard-bulk-ioc.js"></script>
   <!-- Case unlock prompt. initCaseUnlock() wires its four controls. -->
   <script src="/js/dashboard-case-unlock.js"></script>
+  <script src="/js/dashboard-case-picker.js"></script>
   <!-- New case creation. initNewCase() wires its eight controls. -->
   <script src="/js/dashboard-new-case.js"></script>
   <!-- Case templates and incident types. Owns the caches the saver invalidates. -->
@@ -475,7 +476,10 @@
   <header>
     <div id="toolbarMain" class="toolbar-main">
     <strong>DFIR Companion</strong>
-    <input id="caseId" placeholder="caseId" list="caseList" autocomplete="off" />
+    <!-- The analyst sees and types the case NAME; #caseId (hidden) keeps holding the id every
+         module reads. js/dashboard-case-picker.js keeps the two in step (#1523). -->
+    <input id="casePicker" placeholder="Case name" aria-label="Case" list="caseList" autocomplete="off" />
+    <input id="caseId" type="hidden" />
     <datalist id="caseList"></datalist>
     <label data-safe-style="display:inline-flex;align-items:center;gap:2px;color:var(--text-muted);cursor:pointer;white-space:nowrap" data-tip="Include archived cases in the case picker above (prefixed '[Archived]')">
       <input type="checkbox" id="showArchivedToggle" data-safe-style="margin:0;cursor:pointer" />
@@ -5521,17 +5525,10 @@
     // Guarded: connect() moved to js/dashboard-case-connect.js and this reads it at LOAD. The
     // facade reports the module missing on its banner; binding nothing here is the quiet half.
     if (typeof connect === "function") document.getElementById("connect").onclick = connect;
-    document.getElementById("caseId").addEventListener("keydown", (e) => { if (e.key === "Enter") typeof connect === "function" && connect(); });
-    // A <datalist> filters its suggestions by the field's current text, so a pre-filled case id
-    // (e.g. "test9") hides every other case. On focus: refresh the list and clear the field so the
-    // FULL dropdown shows; on blur, restore the prior id if the user didn't pick or type one. Also
-    // picks up cases added since page load (moved into the cases folder, created elsewhere).
-    (function () {
-      const el = document.getElementById("caseId");
-      let prev = "";
-      el.addEventListener("focus", () => { loadCaseList(); prev = el.value; el.value = ""; });
-      el.addEventListener("blur", () => { if (!el.value.trim()) el.value = prev; });
-    })();
+    // The case picker (name box, Enter-to-connect, focus/blur list refresh) and loadCaseList()
+    // moved to js/dashboard-case-picker.js (#1523).
+    if (typeof initCasePicker !== "undefined") initCasePicker();
+    else dfirFeatureUnavailable("Case picker");
     if (typeof initNewCase !== "undefined") initNewCase();
     else dfirFeatureUnavailable("New case creation");
     if (typeof initSaveTemplate !== "undefined") initSaveTemplate();
@@ -5817,36 +5814,6 @@
 
     if (typeof applySectionsVis === "function") applySectionsVis();
 
-    // Populate the case-ID combo box (datalist) with existing cases from the server, so the field
-    // shows a dropdown of available cases while still accepting free text. Safe on older servers /
-    // offline — it just leaves the field as free-text.
-    function loadCaseList() {
-      fetch("/cases")
-        .then(r => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-        .then(cases => {
-          const showArchived = document.getElementById("showArchivedToggle")?.checked;
-          const dl = document.getElementById("caseList");
-          dl.innerHTML = "";
-          for (const c of cases) {
-            if (c.status === "archived" && !showArchived) continue;
-            const o = document.createElement("option");
-            o.value = c.caseId;
-            // shown as a hint beside the id; a lock prefix marks password-protected cases,
-            // an [Archived] prefix marks cases moved to _archived/ (both can apply at once)
-            const lockPrefix = c.hasPassword ? "\u{1F512} " : "";
-            const name = c.name && c.name !== c.caseId ? c.name : "";
-            if (c.status === "archived") o.label = `[Archived] ${lockPrefix}${name || c.caseId}`;
-            else if (name) o.label = lockPrefix + name;
-            else if (c.hasPassword) o.label = lockPrefix + c.caseId;
-            dl.appendChild(o);
-          }
-          // The "Demo case" button is an onboarding affordance — show it only on an empty instance.
-          const demoBtn = document.getElementById("seedDemoBtn");
-          if (demoBtn) demoBtn.style.display = cases.length === 0 ? "" : "none";
-        })
-        .catch(() => {});
-    }
-    document.getElementById("showArchivedToggle")?.addEventListener("change", loadCaseList);
 
     // Disk-space warning (#1) moved to js/dashboard-disk-warning.js (#415 tier 3).
     if (typeof initDiskWarning !== "undefined") initDiskWarning();
@@ -5869,7 +5836,7 @@
     // On load, populate the case picker, then open a case ONLY if the URL asked for one — a bare
     // /dashboard leaves the choice to the analyst. Lives in js/dashboard-case-connect.js beside
     // connect(), which is the decision it makes.
-    loadCaseList();
+    if (typeof loadCaseList === "function") loadCaseList();
     if (typeof loadDiskStats === "function") loadDiskStats();
     if (typeof restoreCaseFromUrl !== "undefined") restoreCaseFromUrl();
     else dfirFeatureUnavailable("Case restore");
