@@ -70,21 +70,54 @@ export function registerImportCaseGuard(app: Express, store: CaseStore): void {
   });
 }
 
+// The two routes that consume the analyst's "asset for this import" (#1496): the unified sniffing
+// import and the server-side file import both thread it through buildImportBase. Every other route
+// in EVIDENCE_IMPORT_ROUTES builds its options from its own body fields and never reads it.
+const ASSET_HOST_ROUTES = ["import", "import-file"] as const;
+type AssetHostRoute = (typeof ASSET_HOST_ROUTES)[number];
+
+const ASSET_HOST_ACCEPTED_ON = ASSET_HOST_ROUTES.map((route) => `/cases/:id/${route}`).join(" and ");
+
+const isAssetHostRoute = (route: (typeof EVIDENCE_IMPORT_ROUTES)[number]): route is AssetHostRoute =>
+  (ASSET_HOST_ROUTES as readonly string[]).includes(route);
+
 /**
  * The analyst's "asset for this import" (#1496) is validated AHEAD of the two generic routes, so a
  * present-but-malformed value is refused with its reason instead of being ignored — an analyst who
  * declared a host and got a 202 would believe every record landed on it. The normalised value is
  * written back onto the body for buildImportBase to read; an absent or blank value passes through
- * as no declaration. Mounted after the case-existence guard, on the same path list.
+ * as no declaration.
+ *
+ * On every OTHER route in EVIDENCE_IMPORT_ROUTES a present, non-blank declaration is refused with
+ * a 400 that names the two routes that accept it (#1509). Those dedicated per-format routes never
+ * read the field, and the alternative — a 202 that quietly dropped the declared host — is exactly
+ * the failure this guard exists to prevent. The generic /import route already sniffs every format
+ * the dedicated routes take and threads the declaration, so the caller has a route that honours it.
+ * An absent or blank value passes through unchanged.
+ *
+ * Mounted after the case-existence guard, on the same path list, and ahead of the dedicated route
+ * handlers so the refusal runs before any route's own body parsing.
  */
 export function registerImportAssetHostGuard(app: Express): void {
-  app.post(
-    ["/cases/:id/import", "/cases/:id/import-file"],
-    (req: Request, res: Response, next: NextFunction) => {
-      const parsed = parseAssetHost(req.body?.assetHost);
-      if (!parsed.ok) return res.status(400).json({ error: parsed.error });
-      if (req.body && typeof req.body === "object") req.body.assetHost = parsed.host || undefined;
-      return next();
-    },
-  );
+  const accepting: string[] = [];
+  const refusing: string[] = [];
+  for (const route of EVIDENCE_IMPORT_ROUTES) {
+    (isAssetHostRoute(route) ? accepting : refusing).push(`/cases/:id/${route}`);
+  }
+
+  app.post(accepting, (req: Request, res: Response, next: NextFunction) => {
+    const parsed = parseAssetHost(req.body?.assetHost);
+    if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+    if (req.body && typeof req.body === "object") req.body.assetHost = parsed.host || undefined;
+    return next();
+  });
+
+  app.post(refusing, (req: Request, res: Response, next: NextFunction) => {
+    const raw = req.body?.assetHost;
+    const declared = typeof raw === "string" ? raw.trim() !== "" : raw !== undefined && raw !== null;
+    if (!declared) return next();
+    return res.status(400).json({
+      error: `assetHost is accepted only by ${ASSET_HOST_ACCEPTED_ON} — this route ignores it; send the file to one of those routes to land it on the declared host`,
+    });
+  });
 }
