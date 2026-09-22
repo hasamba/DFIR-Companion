@@ -9,9 +9,10 @@ name: CI
 # "Companion lint + format + structure" failing means it is untidy. Merging those into one step
 # would make every failure look equally alarming and train people to skim past them.
 #
-# The companion suite runs SHARDED across four runners (#1536) — see the comment above
-# `companion-test`. "Companion build + test" is an aggregate job that exists to keep the required
-# check name stable; the shard jobs are where the actual failures are.
+# The companion suite runs SHARDED across six runners per platform (#1536, #1542) — see the
+# comment above `companion-test`. "Companion build + test" and "Companion test (Windows)" are
+# aggregate jobs that exist to keep the required check names stable; the shard jobs are where the
+# actual failures are.
 #
 # Node 22 to match release-artifacts.yml / docker-publish.yml and the Node 22.5+ case-storage floor.
 
@@ -101,15 +102,21 @@ jobs:
 
   # The companion suite is 1076 files and ~10 minutes on a single runner, and that WAS the cost of
   # a PR gate: of the 11 minutes this job took, `npm test` was 10 of them. Sharding splits the test
-  # FILES across four runners (#1536), so the test phase is ~2.5 minutes and the gate lands in about
-  # four. Free here — the repo is public, so the extra runners are not billed.
+  # FILES across runners (#1536). Free here — the repo is public, so the extra runners are not billed.
+  #
+  # SIX and not eight (#1542). Four shards measured 3m25s of tests plus ~50s of build and type-check;
+  # six puts the test phase near 2m20s. Eight would not pay: roughly a third of a shard is now
+  # vitest's collect and transform, which does not shrink with the test time, and GitHub's free tier
+  # allows 20 concurrent jobs. Eight per platform is 16 test jobs plus 4 others here plus 3 from the
+  # scanners and the AI review — over the limit, where jobs queue and the gain is spent waiting. Six
+  # per platform is 16 in total, inside it. Raising this number again means checking that ceiling.
   #
   # Build and type-check run on every shard rather than once in a job of their own. They cost ~50s
-  # against the shard's ~2.5 minutes of tests and all four shards run at the same time, so the
+  # against the shard's couple of minutes of tests and every shard runs at the same time, so the
   # redundancy never shows up in wall clock — and it keeps each shard a complete verification of its
   # own slice rather than something that only means anything alongside three other jobs.
   companion-test:
-    name: Companion build + test (shard ${{ matrix.shard }}/4)
+    name: Companion build + test (shard ${{ matrix.shard }}/6)
     runs-on: ubuntu-latest
     # ~4 min observed for the whole unsharded suite. The generous multiple is deliberate: #408 moved
     # per-test timeouts from vitest's 15s default to 20-30s, so a systemic break (the background
@@ -122,7 +129,7 @@ jobs:
       # push into several rounds of "fix it and find out what else broke".
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -152,10 +159,10 @@ jobs:
 
       - name: Test (vitest)
         working-directory: companion
-        run: npm test -- --shard=${{ matrix.shard }}/4
+        run: npm test -- --shard=${{ matrix.shard }}/6
 
   # The branch ruleset requires a check named exactly "Companion build + test", and a matrix renames
-  # its jobs to "… (shard N/4)". This job keeps that name attached to something real, so sharding
+  # its jobs to "… (shard N/6)". This job keeps that name attached to something real, so sharding
   # needed no change to branch protection — and changing the shard count later needs none either.
   #
   # `if: always()` is load-bearing. Without it a failed shard SKIPS this job instead of failing it,
@@ -175,7 +182,7 @@ jobs:
         run: |
           echo "companion-test shards: $SHARDS"
           if [ "$SHARDS" != "success" ]; then
-            echo "::error::One or more companion test shards did not pass. Open the 'Companion build + test (shard N/4)' checks to see which."
+            echo "::error::One or more companion test shards did not pass. Open the 'Companion build + test (shard N/6)' checks to see which."
             exit 1
           fi
 
@@ -195,13 +202,13 @@ jobs:
   # Sharded for the same reason as the Linux job (#1536): it is not in the ruleset, but it ran the
   # same ~10 minutes of tests and so it set the wall clock for anyone waiting on all four checks.
   companion-windows:
-    name: Companion test (Windows, shard ${{ matrix.shard }}/4)
+    name: Companion test (Windows, shard ${{ matrix.shard }}/6)
     runs-on: windows-latest
     timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -223,7 +230,34 @@ jobs:
 
       - name: Test (vitest)
         working-directory: companion
-        run: npm test -- --shard=${{ matrix.shard }}/4
+        run: npm test -- --shard=${{ matrix.shard }}/6
+
+  # The same aggregate trick as `companion` above, for the same reason and one more (#1542): a
+  # matrix has no single check name, and a check the branch ruleset can require must have one.
+  #
+  # The comment above `companion-windows` has claimed since it was written that the Windows suite
+  # "is a gate now". It was not — the ruleset required only "Companion build + test" and "Extension
+  # build + test", so Windows was advisory and a Windows-only break could land on master. That is
+  # also what makes `gh pr merge --auto` unsafe without it: auto-merge fires the moment the REQUIRED
+  # checks pass, which today is before the Windows shards have finished. This job gives the ruleset
+  # a name to require, and the name does not change when the shard count does.
+  companion-windows-all:
+    name: Companion test (Windows)
+    runs-on: ubuntu-latest
+    needs: companion-windows
+    if: always()
+    timeout-minutes: 5
+    steps:
+      # A matrix dependency reports ONE aggregate result, "success" only when every shard succeeded.
+      - name: Verify every Windows shard passed
+        env:
+          SHARDS: ${{ needs.companion-windows.result }}
+        run: |
+          echo "companion-windows shards: $SHARDS"
+          if [ "$SHARDS" != "success" ]; then
+            echo "::error::One or more Windows test shards did not pass. Open the 'Companion test (Windows, shard N/6)' checks to see which."
+            exit 1
+          fi
 
   extension:
     name: Extension build + test
