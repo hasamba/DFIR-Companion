@@ -42,13 +42,8 @@
         el.className = "ai-analyzing";
         el.textContent = evt.detail;
         el.title = evt.detail;
-      } else if (isIngest) {
-        const el = document.getElementById("aiStatus");
-        el.className = "ai-analyzing";
-        const label = evt.detail || "importing evidence…";
-        el.textContent = label; // no "AI:" prefix — this is deterministic ingest
-        el.title = label + " (deterministic import — not AI)";
-      } else setAi("analyzing", "processing evidence… " + (evt.detail || ""));
+      } else if (isIngest) paintIngest(evt.detail || "importing evidence…");
+      else setAi("analyzing", "processing evidence… " + (evt.detail || ""));
     } else if (evt.status === "idle") {
       hideImportProgress();
       setAi("idle", "idle — up to date (" + fmtTime(evt.at) + ")");
@@ -132,6 +127,16 @@
   // path for live progress; this is what the pill falls back to whenever it needs the truth rather
   // than the latest rumour.
 
+  // Deterministic ingest on the pill: amber (it is work in flight) but no "AI:" prefix, and the
+  // hover says so. Shared by the pushed path above and the derived path below so the two cannot
+  // disagree about what an import is.
+  function paintIngest(label) {
+    const el = document.getElementById("aiStatus");
+    el.className = "ai-analyzing";
+    el.textContent = label; // no "AI:" prefix — this is deterministic ingest
+    el.title = label + " (deterministic import — not AI)";
+  }
+
   /** Render a derived AiState (see companion/src/analysis/aiState.ts) onto the pill. */
   function paintAiState(s) {
     // A hold rides ALONGSIDE the state: a running import is real work even while synthesis is held,
@@ -142,9 +147,16 @@
       setAi("blocked", "on hold — " + (s.detail || "waiting on your decision"));
     else if (s.state === "error")
       setAi("error", "error — " + (s.detail || "see server log"));
-    else if (s.state === "analyzing")
-      setAi("analyzing", (s.detail || "working…") + heldNote);
-    else setAi("idle", s.detail || "up to date");
+    else if (s.state === "analyzing") {
+      // "analyzing" is derived from ANY active job, and the case's import slot is one of them: a
+      // Velociraptor hunt collect holds it as an import-kind job for the whole write phase. That is
+      // deterministic ingest, not the model — the same distinction the pushed path draws with
+      // isIngest — so an import job paints the way an import event does. Prefixing it "AI:" read as
+      // "the AI is synthesizing" to an analyst who had live analysis paused (#1525).
+      const first = s.running && s.running[0];
+      if (first && first.kind === "import") paintIngest((s.detail || first.label) + heldNote);
+      else setAi("analyzing", (s.detail || "working…") + heldNote);
+    } else setAi("idle", s.detail || "up to date");
   }
 
   async function refreshAiState(caseId) {

@@ -108,6 +108,16 @@
     _jobsPushCaseId = cid;
     renderJobs();
     if (typeof flushDeferredIocProvenanceReloads === "function") flushDeferredIocProvenanceReloads();
+    // The last job ending is the one moment no ai_status event covers (#1525): a hunt collect
+    // pushes "idle" BEFORE it releases the import slot, so the pill's re-read on that event still
+    // finds the slot running and paints it — and the release itself arrives only as this push.
+    // Re-derive here, and only at rest: while a job runs, the pushed detail ("evtx import — 3/10")
+    // is richer than the derived label and must not be overwritten. Not gated on "the cache saw it
+    // running" — a reload mid-hunt never did, and the pill still has to clear.
+    if (!jobs.some(isActiveJob)) window.refreshAiState?.(cid);
+  }
+  function isActiveJob(j) {
+    return j.status === "running" || j.status === "queued";
   }
   async function runJobUiRefresh() {
     _jobUiRefreshTimer = null;
@@ -328,10 +338,7 @@
 
   // What dashboard-deep-pass.js asks: the running/queued job of a kind, if any.
   function runningJob(kind) {
-    return jobsForCurrentCase().find(
-      (j) =>
-        j.kind === kind && (j.status === "running" || j.status === "queued"),
-    );
+    return jobsForCurrentCase().find((j) => j.kind === kind && isActiveJob(j));
   }
 
   // The badge and the outside-click close. Both bind to markup.
