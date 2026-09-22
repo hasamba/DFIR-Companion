@@ -641,6 +641,8 @@
     "savedHuntStore.ts": "analysis/hunt",
     "scope.ts": "analysis/workflow",
     "scopeProject.ts": "analysis/workflow",
+    "scriptBlockCommandFindings.ts": "analysis/findings",
+    "scriptBlockCommands.ts": "analysis/intel",
     "scriptBlockFragments.ts": "analysis/ingest",
     "forensicSearch.ts": "analysis/timeline",
     "searchFilter.ts": "analysis/timeline",

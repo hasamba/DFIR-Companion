@@ -14,6 +14,7 @@ import { backfillHostHistoryNote, gapOptionsFor } from "../gapHostHistory.js";
 import { backfillActivityWaveFinding, detectGapsWithWaves } from "../activityWaves.js";
 import { backfillHighSeverityFindings } from "../highSeverityFindings.js";
 import { backfillDefenderEpisodeFindings } from "../defenderEpisodeFindings.js";
+import { backfillScriptCommandFindings } from "../scriptBlockCommandFindings.js";
 import type { HostAliasIndex } from "../hostAlias.js";
 import { shortHost } from "../iocAnchors.js";
 import { extractCveIds, matchKevEntries, type KevCatalog } from "../kev.js";
@@ -376,9 +377,14 @@ function applyBackfills(
   const withDefender = backfillDefenderEpisodeFindings(linked, eligibleIds, ts);
   const backfilled = backfillHighSeverityFindings(withDefender, eligibleIds, ts);
   const highSeverityBackfillCount = backfilled.findings.length - withDefender.findings.length;
+  // Commands in a logged script block that NO finding on the row accounts for (#1531). After the
+  // High backfill on purpose: that one links an uncovered High row to a finding carrying the row's
+  // own techniques, which this pass then reads as coverage — so a High row keeps its High finding
+  // and only a genuine leftover earns the Medium one.
+  const withCommands = backfillScriptCommandFindings(backfilled, eligibleIds, ts);
   const gapOpts = gapOptionsFor(linked);
   const { gaps, pattern } = detectGapsWithWaves(scopedEvents, gapOpts);
-  const withWaves = backfillActivityWaveFinding(backfilled, pattern, ts);
+  const withWaves = backfillActivityWaveFinding(withCommands, pattern, ts);
   // A renamed host's build history was set aside above (#1503); one Info row says what and why.
   const withHistory = backfillHostHistoryNote(withWaves, gapOpts.hostHistory, ts);
   return {

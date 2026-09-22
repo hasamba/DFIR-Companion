@@ -16,6 +16,7 @@ import { resolveHost, type HostAliasIndex } from "./hostAlias.js";
 import { labIntelTag } from "./labIntel.js";
 import { renderDestinationTags } from "./destinationFacts.js";
 import { renderDecoyTag } from "./renamedBinaryNote.js";
+import { renderScriptCommandTags } from "./scriptBlockCommands.js";
 import { renderBuildTimeTag } from "./buildTimeWindow.js";
 
 const MAX_TAG_VALUE = 48; // keep one field from bloating a line; hostnames/paths can be long
@@ -66,6 +67,12 @@ export function renderStructuredTags(e: ForensicEvent, aliasIndex?: HostAliasInd
   tags.push(...renderDestinationTags(e));
   const decoy = renderDecoyTag(e);
   if (decoy) tags.push(decoy);
+
+  // The discovery / credential commands a logged script block names (#1531). Same reason as above:
+  // on INC-2026-001 they sat 120-350 characters into a 3.4 KB block, inside the render's cut, and
+  // the model wrote a credential-access finding that never mentioned one of them. Tagged as SCRIPT
+  // content, never as a process that ran, and never for a row the case's own collector produced.
+  tags.push(...renderScriptCommandTags(e));
 
   // The host building itself (#1529). A tag, not prose: the row's own note sits past the 240-char
   // render cut, and this is the one fact that stops a provisioning-day log clear from opening the

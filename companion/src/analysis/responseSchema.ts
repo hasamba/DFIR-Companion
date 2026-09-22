@@ -38,11 +38,14 @@ export const GAP_FINDING_ID_PREFIX = "f-gap-";
 export const WAVES_FINDING_ID = "f-waves";
 /** A Defender action followed by a start of the same file (defenderEpisodeFindings.ts, #964). */
 export const DEFENDER_FINDING_ID_PREFIX = "f-defender-";
+/** Commands present in a logged PowerShell script record that no finding accounts for (#1531). */
+export const SCRIPT_COMMAND_FINDING_ID_PREFIX = "f-cmd-";
 
 const RESERVED_FINDING_ID_PREFIXES = [
   AUTO_FINDING_ID_PREFIX,
   GAP_FINDING_ID_PREFIX,
   DEFENDER_FINDING_ID_PREFIX,
+  SCRIPT_COMMAND_FINDING_ID_PREFIX,
 ];
 
 /** True for an id only a deterministic backfill is allowed to mint. */

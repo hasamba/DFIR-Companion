@@ -24,6 +24,7 @@
 import { secretSpillSignal } from "./secretSpillRules.js";
 import { commandCandidates } from "./commandNormalize.js";
 import { reconTechniques } from "./reconTechniques.js";
+import { scriptCommandTechniques } from "./scriptBlockCommands.js";
 
 export interface TradecraftRule {
   re: RegExp;
@@ -549,7 +550,11 @@ export function scriptBlockSignal(
 ): { weight: "strong" | "weak" | null; mitre: string[] } | null {
   const script = String(text ?? "").trim();
   if (!script) return null;
-  const mitre = new Set<string>(reconTechniques("", script));
+  // reconTechniques plus the discovery/credential families it does not cover (#1531): the AD group
+  // and GPO cmdlets, process enumeration, PowerShell remoting with an explicit target, the IFM dump,
+  // and a named pipe or shadow copy WITH its corroborating context. Techniques only — a discovery
+  // command is tagged, never promoted, exactly as the recon branch treats one.
+  const mitre = new Set<string>([...reconTechniques("", script), ...scriptCommandTechniques(script)]);
   let weight: "strong" | "weak" | null = null;
   if (STRONG_CMD.test(script)) {
     weight = "strong";

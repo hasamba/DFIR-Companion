@@ -17,6 +17,7 @@ import { backfillSilenceGapFindings, detectTimelineGaps } from "../../src/analys
 import { backfillHostHistoryNote, hostBuildMarkers } from "../../src/analysis/gapHostHistory.js";
 import { backfillHighSeverityFindings } from "../../src/analysis/highSeverityFindings.js";
 import { backfillDefenderEpisodeFindings } from "../../src/analysis/defenderEpisodeFindings.js";
+import { backfillScriptCommandFindings } from "../../src/analysis/scriptBlockCommandFindings.js";
 import { corroborateDefenderEpisodes } from "../../src/analysis/defenderEpisodes.js";
 import { emptyState, type ForensicEvent, type InvestigationState } from "../../src/analysis/stateTypes.js";
 
@@ -102,6 +103,22 @@ export const defenderEvents: ForensicEvent[] = corroborateDefenderEpisodes([
 ]);
 const defenderSeed = (): InvestigationState => ({ ...emptyState("c1"), forensicTimeline: defenderEvents });
 
+// One logged PowerShell script record whose discovery / credential commands no finding accounts
+// for — the row shape the command pass mints on (#1531).
+export const scriptCommandEvents: ForensicEvent[] = [
+  {
+    ...event("sc1", "2026-01-01T00:00:00.000Z"),
+    asset: "ws07.example.com",
+    description: "DetectRaptor Evtx detection: Suspicious Powershell Commandlets (EID 4104)",
+    message:
+      "Creating Scriptblock text (1 of 1):\nnltest /domain_trusts; Get-ADGroupMember 'Domain Admins'; ntdsutil.exe ac in ntds ifm cr fu C:\\t",
+  },
+];
+const scriptCommandSeed = (): InvestigationState => ({
+  ...emptyState("c1"),
+  forensicTimeline: scriptCommandEvents,
+});
+
 /**
  * One entry: the pass itself, plus the arguments to call it with.
  *
@@ -153,6 +170,11 @@ export const BACKFILLS = [
   pass(backfillDefenderEpisodeFindings)(() => [
     defenderSeed(),
     new Set(defenderEvents.map((e) => e.id)),
+    stamp,
+  ]),
+  pass(backfillScriptCommandFindings)(() => [
+    scriptCommandSeed(),
+    new Set(scriptCommandEvents.map((e) => e.id)),
     stamp,
   ]),
 ];

@@ -305,12 +305,22 @@ export function demoteDetectionToolScript(row: Row, events: readonly (MappedEven
 export const TOOL_TREE_SCRIPT_NOTE =
   " [DFIR collector footprint — script the Velociraptor client ran from its tool tree]";
 
-/** Info + the collector origin + the note, never lowering a Critical. Idempotent. */
+/**
+ * Info + the collector origin + the note, never lowering a Critical. Idempotent.
+ *
+ * A CRITICAL row keeps its grade AND its unset origin — that bound is the whole safety argument of
+ * the header above, and collectorMerge.ts would read an origin here as licence to demote the merged
+ * row. It does get the NOTE (#1531): without it nothing on the row says the collector's tool tree
+ * ran the script, so every later reader that must not build on the collector's own activity — the
+ * script-command tagger among them — is blind to exactly the row that most looks like an intrusion.
+ * The note is prose the analyst and those readers can see; it grades nothing.
+ */
 export function gradeScriptAsCollector(m: MappedEvent | null, note: string): void {
-  if (!m || m.severity === "Critical") return;
+  if (!m) return;
+  if (!m.description.endsWith(note)) m.description = `${m.description}${note}`;
+  if (m.severity === "Critical") return;
   m.severity = "Info";
   m.origin = "collector";
-  if (!m.description.endsWith(note)) m.description = `${m.description}${note}`;
 }
 
 /**
