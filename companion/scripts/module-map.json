@@ -661,6 +661,7 @@
     "serviceAccountBrowsing.ts": "analysis/timeline",
     "sessionSegmentation.ts": "analysis/detect",
     "severityFloor.ts": "analysis/findings",
+    "setAsideRows.ts": "analysis/timeline",
     "shadowArtifacts.ts": "analysis/detect",
     "siemBuildProgress.ts": "analysis/ingest",
     "siemDnsConnJoin.ts": "analysis/ingest",

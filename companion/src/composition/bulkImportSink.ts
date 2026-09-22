@@ -164,7 +164,8 @@ export function buildBulkImportSink(deps: BulkImportSinkDeps): BulkImportSink | 
         caseId,
         events.filter((e) => !isAnalystWorkLog(e)),
       ),
-    appendSuper: (caseId: string, events: ForensicEvent[]) => superTimelineStore.append(caseId, events),
+    appendSuper: (caseId: string, events: ForensicEvent[]) =>
+      superTimelineStore.appendReporting(caseId, events),
     openTagger,
     forensicMinSeverity,
     log: deps.log,

@@ -70,6 +70,8 @@ export interface ImportSettledInfo {
   forensicAdded: number;
   forensicRemoved: number;
   superAdded: number;
+  /** Rows the super-timeline's cap dropped to make room (#1535). Omitted / 0 prints nothing. */
+  superEvicted?: number;
   iocsAdded: number;
   iocsRemoved?: number;
   elapsedMs?: number;
@@ -81,7 +83,8 @@ export function formatImportSettled(info: ImportSettledInfo): string {
   const forensic = `forensic +${info.forensicAdded}${info.forensicRemoved ? `/-${info.forensicRemoved}` : ""}`;
   const iocs = `IOCs +${info.iocsAdded}${info.iocsRemoved ? `/-${info.iocsRemoved}` : ""}`;
   const took = info.elapsedMs !== undefined ? ` (${seconds(info.elapsedMs)})` : "";
-  return `${IMPORT_LOG_PREFIX} ${who}: done — ${forensic}, super +${info.superAdded}, ${iocs}${took}`;
+  const evicted = info.superEvicted ? `/-${info.superEvicted} at cap` : "";
+  return `${IMPORT_LOG_PREFIX} ${who}: done — ${forensic}, super +${info.superAdded}${evicted}, ${iocs}${took}`;
 }
 
 export interface ImportFailedInfo {

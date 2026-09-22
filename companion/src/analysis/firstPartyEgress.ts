@@ -39,6 +39,10 @@
 // PURE — no I/O, returns new events, never mutates its input.
 
 import { canonicalFile, canonicalNetwork } from "./canonicalEvent.js";
+// The stated reason this pass writes into the row lives in the retention registry, not here: it is
+// what makes a row this pass demoted outlive ordinary bulk Info telemetry at the super-timeline cap
+// (#1535), and the store that enforces the cap may not import upward into this layer.
+import { FIRST_PARTY_EGRESS_MARKER } from "./setAsideRows.js";
 import { isNonIndicatorVendorIp, vendorForIp } from "./ipHygiene.js";
 import type { ForensicEvent } from "./stateTypes.js";
 
@@ -117,6 +121,9 @@ export function firstPartyClientProduct(imagePath: string): string {
   return "";
 }
 
+/** The longest description this pass leaves behind. The NOTE is never what the clip removes. */
+const DESCRIPTION_MAX = 1200;
+
 /** Why a row reads Info, written into the row itself so the record explains its own grade. */
 export function firstPartyEgressNote(event: ForensicEvent): string {
   if (!event || event.promotedAt || event.origin) return "";
@@ -137,7 +144,7 @@ export function firstPartyEgressNote(event: ForensicEvent): string {
   if (!product) return "";
 
   const vendor = vendorForIp(destination)?.vendor ?? "the vendor";
-  return ` [first-party update traffic — ${product} to a ${vendor} service address on ${port}]`;
+  return `${FIRST_PARTY_EGRESS_MARKER} ${product} to a ${vendor} service address on ${port}]`;
 }
 
 export interface FirstPartyEgressResult {
@@ -156,7 +163,12 @@ export function downgradeFirstPartyEgress(events: readonly ForensicEvent[]): Fir
     const note = firstPartyEgressNote(e);
     if (!note || e.description.includes(note)) return e;
     downgraded.push(e.id);
-    return { ...e, severity: "Info" as const, description: `${e.description}${note}`.slice(0, 1200) };
+    // Clip the BASE, never the note (#1535). Slicing the joined string took the stated reason off a
+    // 1,200-character description while the downgrade still applied — a row graded Info with
+    // nothing saying why, and one the super-timeline cap could then no longer tell from bulk
+    // telemetry. Same rule as derivedNote.ts, without adopting its `[name: …]` syntax.
+    const base = e.description.slice(0, Math.max(0, DESCRIPTION_MAX - note.length)).trimEnd();
+    return { ...e, severity: "Info" as const, description: `${base}${note}` };
   });
   return { events: downgraded.length ? out : [...events], downgraded };
 }

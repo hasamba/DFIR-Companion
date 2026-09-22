@@ -59,6 +59,7 @@ import { logLine, getServerLogger } from "../logging/serverLogger.js";
 import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { mergeEvictions, type SuperEviction } from "../analysis/superTimelineStore.js";
 
 export interface VeloHuntsDeps {
   store: CaseStore;
@@ -251,6 +252,9 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       // import-meta so the cockpit card can cross-check "+N forensic" against it — the mismatch that
       // exposed a mis-attributed count on the /import path was invisible here for want of this number.
       let superTimelineAddedCount = 0;
+      // What the super-timeline's cap dropped across EVERY append this hunt made (#1535) — a hunt
+      // writes one evidence file per artifact and reports one import card for the collection.
+      let superTimelineEvicted: SuperEviction | undefined;
 
       // A bundle flagged superTimelineOnly (the built-in super-timeline-triage) collects raw host
       // artifacts (MFT/USN/Prefetch) whose only purpose is the super-timeline — routing them through the
@@ -473,7 +477,9 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
             ...(e.sha256 ? { sha256: e.sha256 } : {}),
             ...(e.md5 ? { md5: e.md5 } : {}),
           }));
-          const added = await options.superTimelineStore!.append(caseId, events);
+          const appended = await options.superTimelineStore!.appendReporting(caseId, events);
+          const added = appended.retained;
+          superTimelineEvicted = mergeEvictions(superTimelineEvicted, appended.evicted);
           superTimelineAddedCount += added;
           superEventBudgetRemaining -= added;
           getServerLogger().info(`[import] ${caseId} ${storedName}: done — super +${added} (super-only)`, {
@@ -578,6 +584,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
             `hunt ${job.huntId}`,
           );
           superTimelineAddedCount += settled.superTimelineAddedCount;
+          superTimelineEvicted = mergeEvictions(superTimelineEvicted, settled.superTimelineEvicted);
           const { timelineDiff: diff, iocsDiff } = settled;
           addedEvents = diff.added.length;
           addedIocs = iocsDiff.added.length;
@@ -594,6 +601,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
               }),
               diff,
               superTimelineAddedCount,
+              superTimelineEvicted,
               iocsDiff,
             });
             options.onImportMeta?.(caseId);

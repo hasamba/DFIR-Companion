@@ -59,6 +59,16 @@ export const DERIVED_NOTE_NAMES: readonly string[] = [
   "build-time",
 ];
 
+/**
+ * The subset of the names above whose pass LOWERS a grade rather than raising one (#1535).
+ *
+ * The super-timeline's cap evicts a row that a named rule deliberately graded Info AFTER ordinary
+ * bulk Info telemetry (analysis/setAsideRows.ts), and this is how a pass that states its reason
+ * through the shared helper qualifies without the store learning its name. If you are adding a
+ * `*_MARKER` above and your pass lowers a severity, add the name here too.
+ */
+export const DERIVED_NOTE_DOWNGRADES: readonly string[] = ["build-time"];
+
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 // The first registered note, and everything after it. Anchored to a registered NAME so an
 // importer's own bracket — "[risk: high]", "[DENIED: …]" — stays base text and is clipped with it.

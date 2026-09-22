@@ -158,6 +158,7 @@ export function commitDedicatedImport(
               file: storedName,
               diff: tDiff,
               superTimelineAddedCount: settled.superTimelineAddedCount,
+              superTimelineEvicted: settled.superTimelineEvicted,
               iocsDiff: iDiff,
               linesIn: commit.linesIn,
               path: commit.path,

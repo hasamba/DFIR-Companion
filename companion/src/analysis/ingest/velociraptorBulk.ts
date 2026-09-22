@@ -9,6 +9,7 @@ import { applySeverityFloor } from "../severityFloor.js";
 import { toUtcIso } from "../timeUtc.js";
 import { deltaSchema } from "../responseSchema.js";
 import { mergeHostRenameRecords, type HostRenameRecord } from "../hostRenameRecord.js";
+import { mergeEvictions, type SuperEviction } from "../superTimelineStore.js";
 import { prepareRows, vrBulkInternals, type VelociraptorImportOptions } from "../velociraptorImport.js";
 import { isProcessCreateRow } from "../collectorChildren.js";
 import { openVelociraptorRowStream, type Row } from "../velociraptorRowStream.js";
@@ -97,7 +98,9 @@ export interface BulkImportSink {
    */
   rollback(caseId: string, run: BulkRunHandle): Promise<BulkRollbackSummary>;
   appendForensic(caseId: string, events: ForensicEvent[]): Promise<number>;
-  appendSuper(caseId: string, events: ForensicEvent[]): Promise<number>;
+  /** Retained rows AND what the cap dropped to make room (#1535) — the bulk path is the one most
+   * likely to hit the cap, so it must not be the one that reports nothing. */
+  appendSuper(caseId: string, events: ForensicEvent[]): Promise<{ retained: number; evicted: SuperEviction }>;
   openTagger(caseId: string, mode: "forensic" | "super-only"): Promise<BatchTagger | null>;
   forensicMinSeverity(caseId: string): Promise<Severity>;
   /** With `caseId` the line also lands in the case's own log (#1438). */
@@ -144,6 +147,8 @@ export interface BulkImportResult {
   events: number;
   forensicKept: number;
   superAppended: number;
+  /** What the super-timeline's cap dropped across every batch (#1535); undefined when nothing went. */
+  superEvicted?: SuperEviction;
   batches: number;
   dropped: number; // rows not represented (below floor / over the forensic cap)
   hostname: string;
@@ -351,6 +356,7 @@ export async function runVelociraptorBulk(
     events: 0,
     forensicKept: 0,
     superAppended: 0,
+    superEvicted: undefined as SuperEviction | undefined,
     batches: 0,
     tagged: 0,
     detections: 0,
@@ -387,7 +393,9 @@ export async function runVelociraptorBulk(
     }
     let superAdded = 0;
     if (events.length) {
-      superAdded = await sink.appendSuper(caseId, events);
+      const appended = await sink.appendSuper(caseId, events);
+      superAdded = appended.retained;
+      totals.superEvicted = mergeEvictions(totals.superEvicted, appended.evicted);
       sink.onSuperTimeline?.(caseId);
     }
     resolveBatchIocLinks(vrCtx.iocSink, batchIdByAggKey, resolvedLinks);
@@ -478,7 +486,7 @@ export async function runVelociraptorBulk(
   const hostname = [...vrCtx.hostTally.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
   const finishedAt = new Date().toISOString();
   sink.log(
-    `[import] ${caseId} ${opts.label}: bulk done — ${totals.rows} row(s) → ${totals.events} event(s) in ${totals.batches} batch(es); forensic +${totals.forensicKept}, super +${totals.superAppended}, tagger matched ${totals.tagged}${totals.dropped ? `, ${totals.dropped} graded row(s) over the event cap` : ""} (${Math.round((performance.now() - t0) / 1000)} s)`,
+    `[import] ${caseId} ${opts.label}: bulk done — ${totals.rows} row(s) → ${totals.events} event(s) in ${totals.batches} batch(es); forensic +${totals.forensicKept}, super +${totals.superAppended}${totals.superEvicted?.count ? `/-${totals.superEvicted.count} at the super-timeline cap (${totals.superEvicted.setAside} set aside by a rule)` : ""}, tagger matched ${totals.tagged}${totals.dropped ? `, ${totals.dropped} graded row(s) over the event cap` : ""} (${Math.round((performance.now() - t0) / 1000)} s)`,
     caseId,
   );
   if (totals.tagged > 0) sink.onTags?.(caseId);
@@ -501,6 +509,7 @@ export async function runVelociraptorBulk(
     events: totals.events,
     forensicKept: totals.forensicKept,
     superAppended: totals.superAppended,
+    superEvicted: totals.superEvicted,
     batches: totals.batches,
     dropped: totals.dropped,
     hostname,

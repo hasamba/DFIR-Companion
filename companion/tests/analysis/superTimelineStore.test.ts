@@ -5,6 +5,10 @@ import { join } from "node:path";
 import { CaseStore } from "../../src/storage/caseStore.js";
 import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { SPAWNED_CHILD_NOTE } from "../../src/analysis/collectorChildren.js";
+import { loadDatabaseSync } from "../../src/analysis/sqliteRuntime.js";
+
+const DatabaseSync = loadDatabaseSync();
 
 function ev(p: Partial<ForensicEvent> & { id: string; timestamp: string }): ForensicEvent {
   return {
@@ -149,6 +153,240 @@ describe("SuperTimelineStore", () => {
     expect(r.events.map((e) => e.id)).toEqual(["n2", "n3", "n4", "n5"]);
     // A batch that is entirely a re-import inserts nothing and reports nothing.
     expect(await small.append("c1", [ev({ id: "n5", timestamp: "2026-07-05T00:00:00Z" })])).toBe(0);
+  });
+
+  // #1535 — a row a NAMED rule deliberately graded Info is evidence the case set aside, and an Info
+  // row lives ONLY here. It goes behind ordinary telemetry in the eviction order. "Behind", not
+  // "never", and not unboundedly: the tests below pin all three clauses.
+  describe("set-aside rows are evicted last", () => {
+    const aside = (id: string, timestamp: string) =>
+      ev({ id, timestamp, description: `${id}: net.exe users${SPAWNED_CHILD_NOTE}` });
+
+    it("evicts ordinary Info first and keeps the set-aside row behind it", async () => {
+      const small = new SuperTimelineStore(cases, 2);
+      await small.append("c1", [
+        ev({ id: "bulk1", timestamp: "2026-06-01T00:00:00Z", description: "b1" }),
+        aside("kept", "2026-06-02T00:00:00Z"),
+        ev({ id: "bulk2", timestamp: "2026-06-03T00:00:00Z", description: "b2" }),
+        ev({ id: "bulk3", timestamp: "2026-06-04T00:00:00Z", description: "b3" }),
+      ]);
+      const r = await small.query("c1", {});
+      expect(new Set(r.events.map((e) => e.id))).toEqual(new Set(["kept", "bulk3"]));
+    });
+
+    it("evicts a set-aside row once they fill the tier — evicted last, not never", async () => {
+      const small = new SuperTimelineStore(cases, 2);
+      await small.append("c1", [
+        aside("aside-old", "2026-06-01T00:00:00Z"),
+        aside("aside-new", "2026-06-02T00:00:00Z"),
+        ev({ id: "bulk", timestamp: "2026-06-03T00:00:00Z", description: "b" }),
+      ]);
+      const r = await small.query("c1", {});
+      // A cap of 2 reserves one row of headroom, so the tier holds one; the earlier-imported
+      // set-aside row went with the ordinary rows.
+      expect(new Set(r.events.map((e) => e.id))).toEqual(new Set(["aside-new", "bulk"]));
+    });
+
+    it("never lets set-aside rows freeze the store against new telemetry", async () => {
+      const small = new SuperTimelineStore(cases, 4);
+      await small.append(
+        "c1",
+        [1, 2, 3, 4].map((n) => aside(`a${n}`, `2026-06-0${n}T00:00:00Z`)),
+      );
+      // The cap is full of set-aside rows. A fresh ordinary row must still land.
+      const retained = await small.append("c1", [
+        ev({ id: "fresh", timestamp: "2026-07-01T00:00:00Z", description: "fresh" }),
+      ]);
+      expect(retained).toBe(1);
+      expect((await small.query("c1", {})).events.map((e) => e.id)).toContain("fresh");
+    });
+
+    it("gives a Low-or-above copy no priority: its original is in the forensic timeline", async () => {
+      const small = new SuperTimelineStore(cases, 2);
+      await small.append("c1", [
+        ev({ id: "graded", timestamp: "2026-06-01T00:00:00Z", severity: "High", description: "g" }),
+        aside("kept", "2026-06-02T00:00:00Z"),
+        ev({ id: "bulk", timestamp: "2026-06-03T00:00:00Z", description: "b" }),
+      ]);
+      expect(new Set((await small.query("c1", {})).events.map((e) => e.id))).toEqual(
+        new Set(["kept", "bulk"]),
+      );
+    });
+
+    it("refuses a row that carries the note but was never demoted (Critical keeps its grade)", async () => {
+      const small = new SuperTimelineStore(cases, 2);
+      await small.append("c1", [
+        ev({
+          id: "critical-note",
+          timestamp: "2026-06-01T00:00:00Z",
+          severity: "Critical",
+          description: `crit${SPAWNED_CHILD_NOTE}`,
+        }),
+        ev({ id: "bulk1", timestamp: "2026-06-02T00:00:00Z", description: "b1" }),
+        ev({ id: "bulk2", timestamp: "2026-06-03T00:00:00Z", description: "b2" }),
+      ]);
+      expect(new Set((await small.query("c1", {})).events.map((e) => e.id))).toEqual(
+        new Set(["bulk1", "bulk2"]),
+      );
+    });
+
+    it("reads the DESCRIPTION, not the whole payload — a marker in the raw message buys nothing", async () => {
+      const small = new SuperTimelineStore(cases, 2);
+      await small.append("c1", [
+        ev({
+          id: "quoted",
+          timestamp: "2026-06-01T00:00:00Z",
+          description: "q",
+          message: `raw${SPAWNED_CHILD_NOTE}`,
+        }),
+        ev({ id: "bulk1", timestamp: "2026-06-02T00:00:00Z", description: "b1" }),
+        ev({ id: "bulk2", timestamp: "2026-06-03T00:00:00Z", description: "b2" }),
+      ]);
+      expect(new Set((await small.query("c1", {})).events.map((e) => e.id))).toEqual(
+        new Set(["bulk1", "bulk2"]),
+      );
+    });
+
+    it("derives the relation before a protection reconcile can enforce the cap on upgrade", async () => {
+      // The open that upgrades a case runs both reconciles. Protection's enforces the cap as soon
+      // as it releases a row, so if set-aside membership were derived after it, the legacy rows the
+      // backfill is about to claim would already be gone.
+      const big = new SuperTimelineStore(cases, 10);
+      await big.append("c1", [
+        aside("legacy", "2026-06-01T00:00:00Z"),
+        ev({ id: "bulk1", timestamp: "2026-06-02T00:00:00Z", description: "b1" }),
+        ev({ id: "bulk2", timestamp: "2026-06-03T00:00:00Z", description: "b2" }),
+      ]);
+      // Star two rows, then rewind the case: the relation and both sync stamps go, so the next open
+      // re-derives protection (releasing the stars, which enforces the cap) and set-aside together.
+      expect(await big.protect("c1", "bulk1")).toBe(true);
+      const db = new DatabaseSync(join(cases.stateDir("c1"), "investigation.sqlite"));
+      db.exec(
+        "DELETE FROM super_set_aside; DELETE FROM super_protected; " +
+          "DELETE FROM storage_meta WHERE key IN ('super_set_aside_sync','super_protected_sync');",
+      );
+      db.close();
+      const small = new SuperTimelineStore(cases, 2);
+      expect(await small.query("c1", { limit: 0 })).toBeTruthy(); // one read is enough to migrate
+      expect((await small.query("c1", {})).events.map((e) => e.id)).toContain("legacy");
+    });
+
+    it("re-derives the relation for rows a case already held when the registry changes", async () => {
+      const big = new SuperTimelineStore(cases, 10);
+      await big.append("c1", [
+        aside("legacy", "2026-06-01T00:00:00Z"),
+        ev({ id: "bulk1", timestamp: "2026-06-02T00:00:00Z", description: "b1" }),
+      ]);
+      // Rewind the case to how it looks before a new demoter ships: the relation is empty and the
+      // registry fingerprint is gone, exactly as an upgraded case opens.
+      const db = new DatabaseSync(join(cases.stateDir("c1"), "investigation.sqlite"));
+      db.exec("DELETE FROM super_set_aside; DELETE FROM storage_meta WHERE key='super_set_aside_sync';");
+      db.close();
+      const small = new SuperTimelineStore(cases, 2);
+      await small.append("c1", [ev({ id: "bulk2", timestamp: "2026-06-03T00:00:00Z", description: "b2" })]);
+      // Without the re-derive "legacy" is the oldest row and goes first; with it, bulk1 goes.
+      expect(new Set((await small.query("c1", {})).events.map((e) => e.id))).toEqual(
+        new Set(["legacy", "bulk2"]),
+      );
+    });
+
+    it("a protected set-aside row does not consume the tier", async () => {
+      const small = new SuperTimelineStore(cases, 2);
+      await small.append("c1", [aside("starred-aside", "2026-06-01T00:00:00Z")]);
+      expect(await small.protect("c1", "starred-aside")).toBe(true);
+      // The tier holds one row and the protected one must not be it: the unprotected set-aside row
+      // still outranks the ordinary rows.
+      await small.append("c1", [
+        aside("kept", "2026-06-02T00:00:00Z"),
+        ev({ id: "bulk1", timestamp: "2026-06-03T00:00:00Z", description: "b1" }),
+        ev({ id: "bulk2", timestamp: "2026-06-04T00:00:00Z", description: "b2" }),
+      ]);
+      const ids = new Set((await small.query("c1", {})).events.map((e) => e.id));
+      expect(ids).toEqual(new Set(["starred-aside", "kept", "bulk2"]));
+    });
+
+    it("a starred row still outranks a set-aside row", async () => {
+      const small = new SuperTimelineStore(cases, 2);
+      await small.append("c1", [ev({ id: "starred", timestamp: "2026-06-01T00:00:00Z", description: "s" })]);
+      expect(await small.protect("c1", "starred")).toBe(true);
+      await small.append("c1", [
+        aside("aside", "2026-06-02T00:00:00Z"),
+        ev({ id: "bulk1", timestamp: "2026-06-03T00:00:00Z", description: "b1" }),
+        ev({ id: "bulk2", timestamp: "2026-06-04T00:00:00Z", description: "b2" }),
+      ]);
+      const ids = new Set((await small.query("c1", {})).events.map((e) => e.id));
+      expect(ids).toEqual(new Set(["starred", "aside", "bulk2"]));
+    });
+  });
+
+  describe("the cap says what it dropped", () => {
+    const aside = (id: string, timestamp: string) =>
+      ev({ id, timestamp, description: `${id}: net.exe users${SPAWNED_CHILD_NOTE}` });
+
+    it("append still returns only the retained count", async () => {
+      const small = new SuperTimelineStore(cases, 2);
+      const retained = await small.append("c1", [
+        ev({ id: "a", timestamp: "2026-06-01T00:00:00Z", description: "a" }),
+        ev({ id: "b", timestamp: "2026-06-02T00:00:00Z", description: "b" }),
+        ev({ id: "c", timestamp: "2026-06-03T00:00:00Z", description: "c" }),
+      ]);
+      expect(retained).toBe(2);
+    });
+
+    it("appendReporting reports the count, the set-aside share and the evicted event-time span", async () => {
+      const small = new SuperTimelineStore(cases, 2);
+      await small.append("c1", [aside("x1", "2026-06-01T00:00:00Z"), aside("x2", "2026-06-05T00:00:00Z")]);
+      const result = await small.appendReporting("c1", [aside("x3", "2026-06-09T00:00:00Z")]);
+      expect(result.retained).toBe(1);
+      expect(result.evicted.count).toBe(1);
+      // It lost the tier to the headroom, but it is still a row a rule set aside, and the analyst
+      // is told that. Reporting the ORDERING flag would have called this loss ordinary telemetry.
+      expect(result.evicted.setAside).toBe(1);
+      expect(result.evicted.from).toBe("2026-06-01T00:00:00Z");
+      expect(result.evicted.to).toBe("2026-06-01T00:00:00Z");
+    });
+
+    it("counts the set-aside rows the cap had to take", async () => {
+      const small = new SuperTimelineStore(cases, 2);
+      await small.append("c1", [aside("x1", "2026-06-01T00:00:00Z"), aside("x2", "2026-06-05T00:00:00Z")]);
+      // Two fresh ordinary rows plus the two above is four against a cap of two: one ordinary row
+      // and one over-share set-aside row go.
+      const result = await small.appendReporting("c1", [
+        ev({ id: "n1", timestamp: "2026-06-09T00:00:00Z", description: "n1" }),
+        ev({ id: "n2", timestamp: "2026-06-10T00:00:00Z", description: "n2" }),
+      ]);
+      expect(result.evicted.count).toBe(2);
+      expect(result.evicted.setAside).toBe(1);
+      expect(result.evicted.from).toBe("2026-06-01T00:00:00Z");
+      expect(result.evicted.to).toBe("2026-06-09T00:00:00Z");
+    });
+
+    it("reports no eviction when the cap took nothing", async () => {
+      const result = await store.appendReporting("c1", [ev({ id: "a", timestamp: "2026-06-01T00:00:00Z" })]);
+      expect(result.evicted).toEqual({ count: 0, setAside: 0, from: "", to: "" });
+    });
+
+    it("keeps a durable per-case total that survives the append it came from", async () => {
+      const small = new SuperTimelineStore(cases, 1);
+      await small.append("c1", [
+        ev({ id: "a", timestamp: "2026-06-01T00:00:00Z", description: "a" }),
+        ev({ id: "b", timestamp: "2026-06-02T00:00:00Z", description: "b" }),
+      ]);
+      await small.append("c1", [ev({ id: "c", timestamp: "2026-06-03T00:00:00Z", description: "c" })]);
+      const meta = await small.meta("c1");
+      expect(meta.evictedTotal).toBe(2);
+      expect(meta.lastEviction?.count).toBe(1);
+      expect(meta.lastEviction?.at).toMatch(/^\d{4}-/);
+    });
+
+    it("reports an all-undated eviction as a count with no span", async () => {
+      const small = new SuperTimelineStore(cases, 1);
+      await small.append("c1", [ev({ id: "u1", timestamp: "", description: "u1" })]);
+      const result = await small.appendReporting("c1", [ev({ id: "u2", timestamp: "", description: "u2" })]);
+      expect(result.evicted.count).toBe(1);
+      expect(result.evicted.from).toBe("");
+      expect(result.evicted.to).toBe("");
+    });
   });
 
   it("keeps labels for events retained after a cap append", async () => {
