@@ -384,6 +384,7 @@
     "ROUTE PUT /cases/:id/confidence-control",
     "ROUTE GET /cases/:id/deep-pass/preview",
     "ROUTE POST /cases/:id/deep-pass",
+    "ROUTE GET /settings/jev/key-source",
     "ROUTE GET /cases/:id/jev/status",
     "ROUTE POST /cases/:id/jev/review",
     "ROUTE GET /cases/:id/report/interactive",

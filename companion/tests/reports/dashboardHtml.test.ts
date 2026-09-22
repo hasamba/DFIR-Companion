@@ -7,6 +7,16 @@ import { dashboardClientSource } from "../helpers/dashboardModule.js";
 // this", not "is this string in that file". Markup assertions still hold — the HTML is the
 // first thing dashboardClientSource() concatenates.
 describe("dashboard.html", () => {
+  it("does not promise an inherited Jev key in static markup (#1547)", async () => {
+    // The hint is server-told now, because only the server knows whether any AI role holds a key.
+    // A static sentence here would be a promise the page cannot keep — which is the bug: a setup
+    // running claude-code for vision and synthesis has no OpenRouter key to inherit at all.
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    expect(html).not.toMatch(/key you already configured for the other AI roles/i);
+    expect(html).not.toMatch(/blank = inherit the OpenRouter key/i);
+    expect(html).toContain('id="jevKeyHint"');
+  });
+
   it("draws a separator between every pair of toolbar clusters, and none before the first", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
     const row = html.slice(html.indexOf('id="toolbarMain"'), html.indexOf('<span id="status"'));

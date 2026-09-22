@@ -507,3 +507,6 @@ section#sec-sessions.ses-collapsed .ses-body { display: none; }
   flex-wrap: wrap; align-items: center; gap: 8px; }
 /* Elapsed time while a run is in flight. No bar and no percentage: the server reports neither. */
 .jev-progress { font-size: 12px; color: var(--text-muted); margin: 6px 0; }
+
+/* A settings hint that is telling the analyst something is missing, not just describing a field. */
+.sfield-hint.sfield-hint-warn { color: var(--sev-medium); }
