@@ -138,6 +138,22 @@ export class SuperTimelineStore {
   }
 
   /**
+   * Rewrite rows the store already holds, by id, once the case learned a hostname rename (#1508):
+   * the payload, the host facet and the content key follow together. Ids the store does not hold
+   * are skipped; returns the count rewritten. The caller hands in rows already re-homed
+   * (analysis/hostRenameCarry.ts rehomeEvents) — this store knows nothing about the ledger.
+   */
+  async rehome(caseId: string, events: ForensicEvent[]): Promise<number> {
+    if (!events.length) return 0;
+    await this.ensureMigrated(caseId);
+    return caseSqliteWorker.request<number>({
+      op: "rehomeSuper",
+      dbPath: this.databasePath(caseId),
+      events: events.map(upgradeForensicEvent),
+    });
+  }
+
+  /**
    * Filter, facet, and paginate. Facets keep their semantics (time-window only, independent of
    * origin/label selection) on both paths below.
    *
