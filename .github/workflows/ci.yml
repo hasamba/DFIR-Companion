@@ -9,6 +9,10 @@ name: CI
 # "Companion lint + format + structure" failing means it is untidy. Merging those into one step
 # would make every failure look equally alarming and train people to skim past them.
 #
+# The companion suite runs SHARDED across four runners (#1536) — see the comment above
+# `companion-test`. "Companion build + test" is an aggregate job that exists to keep the required
+# check name stable; the shard jobs are where the actual failures are.
+#
 # Node 22 to match release-artifacts.yml / docker-publish.yml and the Node 22.5+ case-storage floor.
 
 on:
@@ -95,14 +99,30 @@ jobs:
         working-directory: companion
         run: npm run check:us-map
 
-  companion:
-    name: Companion build + test
+  # The companion suite is 1076 files and ~10 minutes on a single runner, and that WAS the cost of
+  # a PR gate: of the 11 minutes this job took, `npm test` was 10 of them. Sharding splits the test
+  # FILES across four runners (#1536), so the test phase is ~2.5 minutes and the gate lands in about
+  # four. Free here — the repo is public, so the extra runners are not billed.
+  #
+  # Build and type-check run on every shard rather than once in a job of their own. They cost ~50s
+  # against the shard's ~2.5 minutes of tests and all four shards run at the same time, so the
+  # redundancy never shows up in wall clock — and it keeps each shard a complete verification of its
+  # own slice rather than something that only means anything alongside three other jobs.
+  companion-test:
+    name: Companion build + test (shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
-    # ~4 min observed. The generous multiple is deliberate: #408 moved per-test
-    # timeouts from vitest's 15s default to 20-30s, so a systemic break (the background
+    # ~4 min observed for the whole unsharded suite. The generous multiple is deliberate: #408 moved
+    # per-test timeouts from vitest's 15s default to 20-30s, so a systemic break (the background
     # pipeline not running at all) now reddens the suite in roughly twice the wall-clock
     # it used to. This bounds that without being tight enough to fail a merely slow runner.
     timeout-minutes: 25
+    strategy:
+      # Each shard reports its own failures. Cancelling the other three on the first red one would
+      # hide the rest of the damage behind whichever shard happened to fail first, and turn one
+      # push into several rounds of "fix it and find out what else broke".
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -132,7 +152,32 @@ jobs:
 
       - name: Test (vitest)
         working-directory: companion
-        run: npm test
+        run: npm test -- --shard=${{ matrix.shard }}/4
+
+  # The branch ruleset requires a check named exactly "Companion build + test", and a matrix renames
+  # its jobs to "… (shard N/4)". This job keeps that name attached to something real, so sharding
+  # needed no change to branch protection — and changing the shard count later needs none either.
+  #
+  # `if: always()` is load-bearing. Without it a failed shard SKIPS this job instead of failing it,
+  # and a skipped required check does not block a merge.
+  companion:
+    name: Companion build + test
+    runs-on: ubuntu-latest
+    needs: companion-test
+    if: always()
+    timeout-minutes: 5
+    steps:
+      # A matrix dependency reports ONE aggregate result, and it is "success" only when every shard
+      # succeeded — so this is the whole check, not a sample of it.
+      - name: Verify every shard passed
+        env:
+          SHARDS: ${{ needs.companion-test.result }}
+        run: |
+          echo "companion-test shards: $SHARDS"
+          if [ "$SHARDS" != "success" ]; then
+            echo "::error::One or more companion test shards did not pass. Open the 'Companion build + test (shard N/4)' checks to see which."
+            exit 1
+          fi
 
   # Windows is a first-class target — the release ships a Windows EXE — but until now the suite ran
   # on Windows ONLY in the tag-triggered release workflow. It rotted across the 423 commits between
@@ -146,10 +191,17 @@ jobs:
   # fallback can hit) and a timeout calibrated on Linux hardware. It is a gate now: a permanently
   # red check teaches everyone to ignore CI, which is the same blindness that let Windows rot in
   # the first place.
+  #
+  # Sharded for the same reason as the Linux job (#1536): it is not in the ruleset, but it ran the
+  # same ~10 minutes of tests and so it set the wall clock for anyone waiting on all four checks.
   companion-windows:
-    name: Companion test (Windows)
+    name: Companion test (Windows, shard ${{ matrix.shard }}/4)
     runs-on: windows-latest
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -171,7 +223,7 @@ jobs:
 
       - name: Test (vitest)
         working-directory: companion
-        run: npm test
+        run: npm test -- --shard=${{ matrix.shard }}/4
 
   extension:
     name: Extension build + test
