@@ -5,6 +5,11 @@ import { diffIocs, type IocsDiff } from "../analysis/iocsDiff.js";
 import { getServerLogger } from "../logging/serverLogger.js";
 import { formatImportSettled } from "../logging/importLog.js";
 import { carryHostRenames } from "../analysis/hostRenameCarry.js";
+import {
+  rehomeSuperTimeline,
+  renameLedgerChanged,
+  type SuperRehomeStore,
+} from "./importSettleRehomeSuper.js";
 
 /**
  * The forensic / super-timeline seam that every import must cross after the importer has merged
@@ -26,6 +31,12 @@ import { carryHostRenames } from "../analysis/hostRenameCarry.js";
  * `stateBefore` is the state captured under the import lock BEFORE the importer ran
  * (routes/importSection.ts) — the diff is only honest against that snapshot.
  *
+ * A hostname rename the import taught the case re-homes the rows the case already held (#1495),
+ * and the super-timeline's own copies of them — dual-written earlier, or Info rows that live only
+ * there — are re-homed from the store's rows in the same settle (#1508), so both records show one
+ * host. That pass is non-fatal like the dual-write: it changes which host a row is filed under,
+ * never whether the row is in a record.
+ *
  * The post-demote diffs are also the one place that knows what an import left behind, so this is
  * where the `[import] … done — forensic +N, super +M, IOCs +K` log line is written (#1438), with
  * `{ caseId }` so it lands in the case's own log too; `label` names the file when the caller has
@@ -37,7 +48,9 @@ export interface SettleDeps {
     load(caseId: string): Promise<InvestigationState>;
     save(state: InvestigationState): Promise<void>;
   };
-  superTimelineStore?: { append(caseId: string, events: ForensicEvent[]): Promise<number> };
+  superTimelineStore?: {
+    append(caseId: string, events: ForensicEvent[]): Promise<number>;
+  } & Partial<SuperRehomeStore>;
   onSuperTimeline?: (caseId: string) => void;
   // Fired right after the importedAt/importBatchId stamp save below (#1174) — without it, dashboard
   // subscribers only learn about the new stamps whenever a LATER broadcast happens to fire (the
@@ -103,6 +116,13 @@ export async function settleForensicImport(
     deps.onState?.(imported);
   }
 
+  // The super-timeline's own copies follow the ledger (#1508). Either signal triggers it: a rename
+  // whose old-name rows were all Info changes the ledger but moves no forensic row, and a forensic
+  // row the carry moved has a copy in the store that must move with it.
+  if (deps.superTimelineStore && (carried.changed || renameLedgerChanged(stateBefore, imported))) {
+    await rehomeSuperCopies(deps, caseId, imported);
+  }
+
   // Dual-write FIRST, from the pre-demote (now stamped) state.
   let superTimelineAddedCount = 0;
   if (deps.superTimelineStore && added.length) {
@@ -128,6 +148,23 @@ export async function settleForensicImport(
     iocsRemoved: iocsDiff.removed.length,
   });
   return { state, superTimelineAddedCount, timelineDiff, iocsDiff };
+}
+
+// Non-fatal by design, like the dual-write above: the forensic re-home is already saved, and a
+// row the pass could not rewrite is still in the record under its former name — the next settle
+// that changes the ledger tries again. A store without the method (a test fake) is skipped.
+async function rehomeSuperCopies(deps: SettleDeps, caseId: string, state: InvestigationState): Promise<void> {
+  const store = deps.superTimelineStore;
+  if (!store?.rehome || !store.eventBatches) return;
+  try {
+    const rewritten = await rehomeSuperTimeline(store as SuperRehomeStore, caseId, state);
+    if (rewritten) deps.onSuperTimeline?.(caseId);
+  } catch (error) {
+    getServerLogger().warn(
+      `[import] ${caseId}: super-timeline rename re-home failed — ${error instanceof Error ? error.message : String(error)}`,
+      { caseId },
+    );
+  }
 }
 
 export interface SettledCounts {
