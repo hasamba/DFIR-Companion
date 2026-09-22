@@ -6,6 +6,14 @@ Toolbar → **+ New case**. Fill in Case ID, name, and investigator.
 
 Cases live in the `cases/` folder (location configured by `DFIR_CASES_ROOT`).
 
+## Opening a Case
+
+The toolbar box lists cases by **name**. Pick one and press **Connect** (or Enter). The box shows
+the open case's name; the case id stays in the page URL (`?caseId=`) and in every export. Two
+cases with the same name are listed as `name (id)`. Password-protected cases carry a 🔒 prefix
+and archived ones an `[Archived]` prefix, the latter only when the archive toggle beside the box
+is on. Typing a name that matches no case creates a case with that text as its id.
+
 ## Incident Types
 
 The **Incident type** dropdown on the New case dialog pre-configures the investigation for a

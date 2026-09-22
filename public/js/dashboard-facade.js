@@ -58,6 +58,9 @@
     // you have to remember.
     "loadBeacons",
     "scheduleBeaconsReload",
+    // #1523: loadCaseList() left the inline block for js/dashboard-case-picker.js; a dozen
+    // modules call it bare after creating, importing, deleting or archiving a case.
+    "loadCaseList",
     "loadEvidenceGaps",
     "scheduleEvidenceGapsReload",
     "loadCloudCoverage",

@@ -248,6 +248,7 @@
     }
     // Remember the case so a page refresh reconnects automatically.
     localStorage.setItem("dfir.caseId", caseId);
+    if (typeof syncCasePicker === "function") syncCasePicker();
     history.replaceState(
       null,
       "",
@@ -677,6 +678,8 @@
     } else if (remembered) {
       el.value = remembered;
     }
+    // The visible box shows the case's NAME; #caseId only holds the id (#1523).
+    if (typeof syncCasePicker === "function") syncCasePicker();
   }
 
   // The loading overlay's Cancel button, the cross-case warning's two buttons and the pagehide
@@ -691,6 +694,7 @@
     document.getElementById("caseMismatchSwitch").onclick = () => {
       if (!foreignCaptureCase) return;
       document.getElementById("caseId").value = foreignCaptureCase;
+      if (typeof syncCasePicker === "function") syncCasePicker();
       mismatchDismissed = "";
       hideCaseMismatch();
       connect();
