@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { logActivity } from "../analysis/activityLog.js";
 import { buildImportAnonContext } from "../analysis/ai/providerCall.js";
 import { askJev } from "../analysis/ai/jev/jevClient.js";
-import { resolveJevSettings } from "../analysis/ai/jev/jevConfig.js";
+import { describeJevKeySource, resolveJevSettings } from "../analysis/ai/jev/jevConfig.js";
 import { gradeEvents } from "../analysis/ai/jev/jevGrader.js";
 import { getServerLogger } from "../logging/serverLogger.js";
 import type { SuperQuery } from "../analysis/superTimeline.js";
@@ -50,6 +50,11 @@ async function readMatchingRows(
 
 export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
   const { options } = ctx;
+
+  // Not case-scoped: the settings screen asks this before any case is open, so it can say whether
+  // the key field may be left blank instead of promising an inheritance that may not exist (#1547).
+  // It answers with the NAME of the setting a key would come from and never with a key.
+  app.get("/settings/jev/key-source", (_req: Request, res: Response) => res.json(describeJevKeySource()));
 
   app.get("/cases/:id/jev/status", (_req: Request, res: Response) => {
     const resolved = resolveJevSettings();

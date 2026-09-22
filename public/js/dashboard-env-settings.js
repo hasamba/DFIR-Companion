@@ -549,6 +549,13 @@
   // The statements the inline block ran at module scope, in order.
   function initEnvSettings() {
     wireAiModelPickers();
+    // The Jev key hint is repainted on anything that changes its answer, and the probe runs once.
+    // This belongs here, not at module scope: a DOM read that runs before the markup exists finds
+    // nothing, attaches to nothing, and reports no error — which is what dashboardFeatureLifecycle
+    // refuses, and it refused this on the first attempt.
+    document.getElementById("env-DFIR_JEV_PROVIDER")?.addEventListener("change", paintJevKeyHint);
+    document.getElementById("env-DFIR_JEV_KEY")?.addEventListener("input", paintJevKeyHint);
+    void refreshJevKeySource();
     document
       .getElementById("env-DFIR_PRESIDIO_URL")
       ?.addEventListener("input", renderPresidioLocalWarning);
@@ -561,4 +568,68 @@
   window.saveSettings = saveSettings;
   window.wireAiModelPicker = wireAiModelPicker;
   window.initEnvSettings = initEnvSettings;
+
+  // The Jev key hint, told by the server rather than assumed (#1547).
+  //
+  // It used to read "the OpenRouter key you already configured for the other AI roles is used",
+  // which is only true when one of those four settings holds a value. A setup whose vision and
+  // synthesis roles run on claude-code has none of them — that provider needs no key — so the
+  // promise was false, and the only way to find out was to enable the review and press the button.
+  // The server answers with the NAME of the setting a key would come from, never a key.
+  const JEV_HINT_PREFIX = "DFIR_JEV_KEY \u2014 ";
+  let jevKeySource = null;
+
+  function jevHintText() {
+    const providerEl = document.getElementById("env-DFIR_JEV_PROVIDER");
+    const provider = (providerEl && providerEl.value) || "";
+    const typesafe = provider === "typesafe";
+    if (!jevKeySource) return JEV_HINT_PREFIX + "checking whether a key can be inherited\u2026";
+    if (typesafe) {
+      return (
+        JEV_HINT_PREFIX +
+        "the typesafe provider talks to TypeSafe directly, so a key here is required. " +
+        "An OpenRouter key is never sent there."
+      );
+    }
+    if (jevKeySource.ownKeySet) {
+      return JEV_HINT_PREFIX + "a key is set here and will be used.";
+    }
+    if (jevKeySource.inheritable) {
+      return (
+        JEV_HINT_PREFIX +
+        "leaving this blank is fine \u2014 the key from " +
+        jevKeySource.inheritedFrom +
+        " will be used."
+      );
+    }
+    return (
+      JEV_HINT_PREFIX +
+      "a key is required here: no OpenRouter key is set for any other AI role, so there is " +
+      "nothing to inherit. Get one at openrouter.ai/keys."
+    );
+  }
+
+  function paintJevKeyHint() {
+    const el = document.getElementById("jevKeyHint");
+    if (!el) return;
+    el.textContent = jevHintText();
+    el.classList.toggle(
+      "sfield-hint-warn",
+      !!jevKeySource && !jevKeySource.ownKeySet && !jevKeySource.inheritable,
+    );
+  }
+
+  async function refreshJevKeySource() {
+    try {
+      const res = await fetch("/settings/jev/key-source");
+      jevKeySource = res.ok ? await res.json() : null;
+    } catch {
+      jevKeySource = null;
+    }
+    // A failed probe leaves the hint on its neutral "checking" line rather than guessing either way:
+    // promising an inheritance that may not exist is the bug this replaced.
+    paintJevKeyHint();
+  }
+
+
 })();

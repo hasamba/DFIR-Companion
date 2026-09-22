@@ -83,13 +83,51 @@ function positiveInt(raw: string | undefined, fallback: number): number {
  * shadow a real DFIR_AI_KEY. Walking both names with the blank-is-unset rule is the same order and
  * the kinder answer.
  */
+export const JEV_KEY_INHERIT_CHAIN = [
+  "DFIR_AI_VELO_KEY",
+  "DFIR_AI_SYNTH_KEY",
+  "DFIR_VISION_KEY",
+  "DFIR_AI_KEY",
+] as const;
+
+function inheritedOpenRouterKeyNamed(env: NodeJS.ProcessEnv): { name: string; value: string } | undefined {
+  for (const name of JEV_KEY_INHERIT_CHAIN) {
+    const value = text(env, name);
+    if (value) return { name, value };
+  }
+  return undefined;
+}
+
 function inheritedOpenRouterKey(env: NodeJS.ProcessEnv): string | undefined {
-  return (
-    text(env, "DFIR_AI_VELO_KEY") ??
-    text(env, "DFIR_AI_SYNTH_KEY") ??
-    text(env, "DFIR_VISION_KEY") ??
-    text(env, "DFIR_AI_KEY")
-  );
+  return inheritedOpenRouterKeyNamed(env)?.value;
+}
+
+/** Where a key would come from — the NAME of a setting, never a value. */
+export interface JevKeySource {
+  /** DFIR_JEV_KEY itself carries a value. */
+  readonly ownKeySet: boolean;
+  /** A DFIR_AI_* key is available for the openrouter route to inherit. */
+  readonly inheritable: boolean;
+  /** Which setting that key would come from. Absent when nothing is inheritable. */
+  readonly inheritedFrom?: string;
+}
+
+/**
+ * Answers "may this field be left blank?" BEFORE the analyst finds out by pressing the button.
+ *
+ * The settings hint used to promise the OpenRouter key "you already configured for the other AI
+ * roles", which is only true when one of those four actually holds a value. A setup whose vision
+ * and synthesis roles run on claude-code has none — that provider needs no key — so the promise
+ * was false and the only way to learn it was the error from a run (#1547).
+ *
+ * It returns names, never values, and a test asserts that for every source at once.
+ */
+export function describeJevKeySource(env: NodeJS.ProcessEnv = process.env): JevKeySource {
+  if (text(env, "DFIR_JEV_KEY")) return { ownKeySet: true, inheritable: false };
+  const inherited = inheritedOpenRouterKeyNamed(env);
+  return inherited
+    ? { ownKeySet: false, inheritable: true, inheritedFrom: inherited.name }
+    : { ownKeySet: false, inheritable: false };
 }
 
 /** Returns null with a reason when Jev is not usable (disabled, or no key resolvable). */

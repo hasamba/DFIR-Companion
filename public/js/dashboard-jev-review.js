@@ -177,12 +177,22 @@
     const total = Array.isArray(result.rows) ? result.rows.length : 0;
     const hidden = total - shown.length;
 
-    let line = `${num(graded)} of ${num(matched)} matching super-timeline row(s) were graded.`;
+    // SAY THE SUM OUT LOUD. The first wording read "848 of 1,308 matching super-timeline row(s)
+    // were graded. 460 were already in the forensic timeline" — and an analyst whose forensic
+    // timeline PANEL showed 182 rows could not reconcile it, because the panel filters what it
+    // draws and the stored timeline is bigger than the view. So the caption no longer invites a
+    // comparison with a number on another screen: it accounts for the rows it read, and states
+    // the total it is accounting for, so the arithmetic closes here (#1547).
+    let line = `Graded ${num(graded)} archive row(s).`;
     if (analyzed > 0) {
-      line += ` ${num(analyzed)} were already in the forensic timeline, where the AI can already see them.`;
+      line +=
+        ` Another ${num(analyzed)} were skipped because the case has already analysed them` +
+        ` — the AI can see those. That accounts for all ${num(matched)} row(s) that matched.`;
+    } else {
+      line += ` That is every row that matched, out of ${num(matched)}.`;
     }
     if (result.readAll === true && result.capped !== true && unread === 0) {
-      line += " This was a full read: every matching row was read, with no cap in force.";
+      line += " Nothing was left unread: no cap was in force.";
     } else if (result.readAll === true && result.capped !== true && unread > 0) {
       // The cap was not in force and rows are still missing. The panel does not know why, so it
       // reports the shortfall and stops there.
@@ -199,9 +209,23 @@
       line += " Nothing was left for this review to grade.";
     }
 
-    let second = `Showing ${num(Math.min(shown.length, MAX_SHOWN))} of ${num(total)} graded row(s).`;
-    if (hidden > 0) second += ` ${num(hidden)} hidden as our own collection tooling.`;
-    if (shown.length > MAX_SHOWN) second += ` ${num(shown.length - MAX_SHOWN)} more are not drawn.`;
+    // The display line subtracts in the order the analyst sees: the tooling filter takes rows out
+    // first, then the draw cap shows the top of what is left. The first version listed shown,
+    // hidden and undrawn as three flat numbers that happened to sum to the total, which reads as
+    // three unrelated facts rather than one subtraction.
+    const passing = total - hidden;
+    const drawn = Math.min(shown.length, MAX_SHOWN);
+    let second = "";
+    if (hidden > 0) {
+      second += `${num(hidden)} of the ${num(total)} graded row(s) look like our own collection tooling and are hidden. `;
+      second += `Of the ${num(passing)} left, `;
+    } else {
+      second += `Of the ${num(total)} graded row(s), `;
+    }
+    second +=
+      drawn >= passing
+        ? `all ${num(drawn)} are shown.`
+        : `the top ${num(drawn)} are shown — ${num(passing - drawn)} more are not drawn.`;
     return `<p class="jev-caption">${line}</p><p class="jev-caption">${esc(second)}</p>`;
   }
 
