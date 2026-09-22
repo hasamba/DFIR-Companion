@@ -365,6 +365,9 @@
       ["tlsGraph", () => loadTlsGraph(caseId)],
       ["handoff", () => loadHandoff(caseId)],
       ["sensitiveAccess", () => loadSensitiveAccess(caseId)],
+      // #1540 — the configuration probe ONLY, never the review itself. The review costs money and
+      // is analyst-pressed; the load decides whether to offer the button or the reason it is off.
+      ["jevReview", () => loadJevReview(caseId)],
       ["count", () => pollCount(caseId)],
       ["aiToggle", () => loadAiToggle(caseId)],
       ["enrichToggle", () => loadEnrichToggle(caseId)],

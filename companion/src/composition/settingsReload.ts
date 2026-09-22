@@ -20,6 +20,8 @@
  *   DFIR_TOOL_               the runner is stateless — the next liveToolConfigs() sees the new env.
  *   DFIR_NSRL_               a live SQLite handle, with its own connect/disconnect routes.
  *   DFIR_PUSH_TOKEN          a store, not env-derived config.
+ *   DFIR_JEV_                resolveJevSettings() reads env on every request and the review holds
+ *                            no client, so there is nothing to rebuild — a Settings save is live.
  */
 import type { AppOptions } from "./appOptions.js";
 import type { EnrichmentProvider } from "../enrichment/provider.js";

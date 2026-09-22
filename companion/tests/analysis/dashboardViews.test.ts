@@ -104,6 +104,7 @@ describe("dashboardViews — seed integrity", () => {
       "sec-fleet-collection",
       "sec-velohunts",
       "sec-super-timeline",
+      "sec-jev-review",
       "sec-iocs",
       "sec-playbook",
       "sec-playbook-match",
@@ -293,6 +294,30 @@ describe("sec-collection-generation-diff registration (#1128)", () => {
       expect(view.sections, `${id} is missing sec-collection-generation-diff`).toContain(
         "sec-collection-generation-diff",
       );
+    }
+  });
+});
+
+describe("sec-jev-review registration (#1540)", () => {
+  it("is a registered dashboard section", () => {
+    expect(DASHBOARD_SECTION_IDS).toContain("sec-jev-review");
+  });
+
+  // An investigative, analyst-facing surface: it re-grades the Info-graded super-timeline rows the
+  // forensic timeline leaves out. That is bench work, hypothesis work and hunt-lead work — not a
+  // lead's severity digest, not an executive brief, and not part of a written report, so it is in
+  // those three profiles and no others.
+  it("appears in the Analyst, Deep-Dive and Hunt Prep profiles", () => {
+    for (const id of ["analyst", "deep-dive", "hunt-prep"]) {
+      const view = BUILT_IN_DASHBOARD_VIEWS.find((v) => v.id === id)!;
+      expect(view.sections, `${id} is missing sec-jev-review`).toContain("sec-jev-review");
+    }
+  });
+
+  it("stays out of the Executive and Report profiles", () => {
+    for (const id of ["executive", "report"]) {
+      const view = BUILT_IN_DASHBOARD_VIEWS.find((v) => v.id === id)!;
+      expect(view.sections, `${id} should not carry sec-jev-review`).not.toContain("sec-jev-review");
     }
   });
 });

@@ -153,6 +153,26 @@ export const FEATURES: Feature[] = [
     publish: ["loadSensitiveAccess"],
     private: ["reading", "currentCaseId", "loadGen", "status", "mutationError"],
   },
+  {
+    // #1540. The busy flag is listed as private on purpose: it is the flag whose wedging this
+    // feature exists to avoid, and a version of it reachable from outside the closure is a flag
+    // another module can leave on.
+    file: "dashboard-jev-review.js",
+    publish: ["loadJevReview", "initJevReview"],
+    initializer: "initJevReview",
+    private: [
+      "currentCaseId",
+      "loadGen",
+      "status",
+      "statusState",
+      "statusError",
+      "result",
+      "reviewError",
+      "busy",
+      "hideTooling",
+      "wired",
+    ],
+  },
   { file: "dashboard-backup.js", publish: ["loadCaseBackups", "restoreCaseBackup"], private: [] },
   {
     // The load-time-heavy one: everything it does on load is wrapped in initTicketIntegrations(),

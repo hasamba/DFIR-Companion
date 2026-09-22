@@ -204,6 +204,7 @@
   <script src="/js/dashboard-tls-graph.js"></script>
   <script src="/js/dashboard-handoff.js"></script>
   <script src="/js/dashboard-sensitive-access.js"></script>
+  <script src="/js/dashboard-jev-review.js"></script>
   <script src="/js/dashboard-backup.js"></script>
   <script src="/js/dashboard-collection-plan.js"></script>
   <script src="/js/dashboard-host-scope.js"></script>
@@ -485,10 +486,11 @@
       <input type="checkbox" id="showArchivedToggle" data-safe-style="margin:0;cursor:pointer" />
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9"/><path d="M10 13h4"/></svg>
     </label>
+    <input id="encryptedImportFile" type="file" accept=".dfircase" data-safe-style="display:none" />
+    <span class="tb-group" data-tb-group="Case">
     <button id="connect" data-tip="Connect to (or create) the case named in the box, then load its dashboard">Connect</button>
     <button id="newCaseBtn" data-tip="Create a new case, then attach the capture extension to it">+ New case</button>
     <button id="seedDemoBtn" data-safe-style="display:none" data-tip="Load a pre-populated demo case (GlobalTech BEC &amp; Ransomware Precursor) to explore all dashboard features without importing real evidence">Demo case</button>
-    <input id="encryptedImportFile" type="file" accept=".dfircase" data-safe-style="display:none" />
     <button id="importCaseBtn" type="button" data-tip="Import a whole case — an encrypted case archive (.dfircase) shared by a teammate, or pull an existing DFIR-IRIS case. Opens a chooser; the DFIR-IRIS option appears only when configured.">Import case</button>
     <button id="lifecycleBtn" data-safe-style="display:none" data-tip="Case lifecycle — close, reopen, archive (ZIP or encrypted), or restore this case">
       <!-- unlocked padlock = active (green) -->
@@ -498,19 +500,40 @@
       <!-- box = archived (gray) -->
       <svg class="lc-icon-archived" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9"/><path d="M10 13h4"/></svg>
     </button>
+      <span class="tb-group-label" aria-hidden="true">Case</span>
+    </span>
+    <span class="tb-sep" aria-hidden="true"></span>
+    <span class="tb-group" data-tb-group="Modes">
     <button id="enrichToggle" class="toggle-btn" data-tip="Threat-intel enrichment — choose which sources to query. Local sources (your own MISP/YETI/OpenCTI) stay on-box (OPSEC-safe) and are on by default; external sources (VirusTotal/AbuseIPDB/Hunting.ch/CrowdStrike/RockyRaccoon) send indicators off-box and are opt-in.">Enrich: …</button>
     <button id="anonToggle" class="toggle-btn" data-tip="Anonymize sensitive victim data (internal IPs, usernames, hostnames, internal domains, emails, user paths) and redact secrets before sending text to the AI; the real values are restored in the dashboard. View what's anonymized and add missed entities. Default ON.">Anon: …</button>
     <button id="aiToggle" class="toggle-btn" data-tip="Turn AI analysis on/off for this case">AI: …</button>
+      <span class="tb-group-label" aria-hidden="true">Modes</span>
+    </span>
+    <span class="tb-sep" aria-hidden="true"></span>
+    <span class="tb-group" data-tb-group="AI">
     <button id="synthesize" data-tip="Re-derive the case conclusions — findings, MITRE ATT&CK, attacker path, narrative, key questions and next steps — from the in-scope forensic timeline. Replaces the previous conclusions but keeps the timeline, IOCs and threads.">AI Re-synthesize</button>
+    <!-- Missed evidence review (#1540) — OPENS the panel, never starts a review: the press that
+         spends money stays inside the panel, next to the row counts and the cost estimate. The
+         ::before icon is not decoration — without one the label collapses to font-size:0 under
+         .icons-only and the button disappears entirely. -->
+    <button id="jevReviewBtn" aria-label="Missed evidence review" data-tip="Missed evidence review: re-grade the Info-graded super-timeline rows the AI never reads, using a fast decision model, and rank what it finds. Opening this costs nothing — the review is a separate press inside the panel. It promotes nothing and changes no case data.">Missed evidence</button>
     <button id="secondOpinion" data-safe-style="display:none" data-tip="Second LLM opinion: refreshes the primary synthesis (only if the timeline changed), then runs a DIFFERENT model over the same case as an independent QA cross-check, and shows where it disagrees with the primary (findings it adds/drops, severity, ATT&CK technique) for you to accept or reject each. A referee model (model A, the synthesis model, by default) reads the events each disputed finding cites and annotates every disagreement with accept B / keep A / review. On-demand; non-destructive until you accept. Needs DFIR_AI_SECOND_OPINION_MODEL — ideally a different provider.">2nd opinion</button>
     <button id="deepPassBtn" data-tip="Deep pass: read EVERY graded event at or above a severity floor you choose, in as many batches as it takes, then fold the result into one final synthesis. Normal synthesis shows the model one prompt's worth of events — on a multi-host case that leaves most of the timeline unread. Opens the pre-flight table showing what each floor would cost before anything is spent. Slow and expensive; cancellable.">Deep pass</button>
     <label id="deepReasoningLabel" data-safe-style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--text-muted);cursor:pointer;white-space:nowrap" data-tip="Deep reasoning (Chain-of-Thought): have the model think step-by-step (extended thinking) before writing findings — better on complex multi-hop cases, but slower and costs extra output tokens. Applies to the NEXT AI Re-synthesize and 2nd opinion on this case only. Off by default; no .env edit or restart needed. Needs a synthesis model on Anthropic, OpenRouter or Claude Code — greyed out on any other provider.">
       <input type="checkbox" id="deepReasoning" data-safe-style="margin:0;cursor:pointer" />🧠
     </label>
+      <span class="tb-group-label" aria-hidden="true">AI</span>
+    </span>
     <input id="importFile" type="file" multiple accept=".json,.jsonl,.ndjson,.csv,.log,.txt,.eve,.xml,.eml,.msg,.bash_history,.zsh_history,.history,.evtx,.evt,.wer,.service,.timer,.socket,.bashrc,.bash_profile,.zshrc,.profile,.plist,.conf,.pcap,.pcapng,message/rfc822,application/vnd.ms-outlook,application/json,text/csv,text/plain,text/xml,application/xml,image/png,image/jpeg,image/webp" data-safe-style="display:none" />
+    <span class="tb-sep" aria-hidden="true"></span>
+    <span class="tb-group" data-tb-group="Evidence">
     <button id="importBtn" data-tip="Import any evidence file — the server auto-detects the type (THOR, SIEM/EDR, Windows Event Log XML, Chainsaw/EVTX, Hayabusa, Velociraptor, Suricata/Zeek, KAPE/EZ, Cyber Triage, M365/Entra, AWS CloudTrail, GCP/Azure, Plaso, CAPEv2/Falcon sandbox reports, Volatility 3 / Rekall memory output, email .eml/.msg, Linux shell history, auditd, journald JSON, sysdig/Falco, CSV, logs) and routes it to the right importer. Select multiple at once; images (PNG/JPEG/WebP) are stored as screenshots.">Import</button>
     <button id="importUndoBtn" type="button" data-safe-style="display:none" disabled data-tip="Undo the latest import — roll the whole case (findings, IOCs, timeline, MITRE, attacker path) back to exactly before that import. Keeps multiple levels.">Undo import</button>
     <button id="importRedoBtn" type="button" data-safe-style="display:none" disabled data-tip="Redo the most-recently-undone import.">Redo</button>
+      <span class="tb-group-label" aria-hidden="true">Evidence</span>
+    </span>
+    <span class="tb-sep" aria-hidden="true"></span>
+    <span class="tb-group" data-tb-group="Report">
     <select id="exportSelect" class="toolbar-select" aria-label="Export this case" data-tip="Export this case (report as Markdown + HTML, PDF, or Word .docx, CSV, ATT&CK Navigator layer, or a Timesketch export)">
 
       <option value="">Export…</option>
@@ -533,7 +556,11 @@
       <option value="">Push to…</option>
     </select>
     <button id="presentBtn" type="button" data-tip="Presentation mode — a read-only, step-through slide deck of the case (cover, summary, key findings, then the timeline one event at a time) for handoff briefings and executive walkthroughs. Respects the current severity filter. Opens in a new tab; export a self-contained offline deck via Export → Presentation deck.">Present</button>
+      <span class="tb-group-label" aria-hidden="true">Report</span>
+    </span>
     <span id="reportLinks" class="report-links"></span>
+    <span class="tb-sep" aria-hidden="true"></span>
+    <span class="tb-group" data-tb-group="View">
     <span id="dashViewWrap" data-safe-style="position:relative;display:inline-flex;align-items:center">
       <button id="dashViewBtn" type="button" aria-haspopup="menu" aria-expanded="false" data-tip="Dashboard view — switch the panel layout + severity filter for a role (Analyst / Lead / Executive) or phase (Triage / Report / Deep-Dive / Hunt-Prep), or edit your own. Remembered per-case.">
         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
@@ -542,6 +569,8 @@
     </span>
     <button id="toggleAll" data-tip="Collapse or expand all sections">Collapse all</button>
     <button id="toggleSearchBar" type="button" aria-label="Filter" aria-expanded="false" aria-controls="searchFilterBar" data-tip="Filter events, findings and IOCs by text and time range (press /)">Filter</button>
+      <span class="tb-group-label" aria-hidden="true">View</span>
+    </span>
     <span id="status">disconnected</span>
     <span id="aiStatus" class="ai-unknown" data-safe-style="margin-left:auto; font-weight:bold;">AI: —</span>
     <button id="presidioPendingBadge" type="button" data-safe-style="display:none;background:#3a2a00;color:#ffcf66;border:1px solid #5a4a1a;padding:2px 8px;border-radius:10px;font-size:11px;cursor:pointer" data-tip="Presidio found value(s) this case hasn't seen before — open Anonymization to decide, per value, whether to hide it from the AI or leave it visible. The AI call that hit this is on hold until you resolve it.">⚠ Presidio: 0</button>
@@ -1706,6 +1735,28 @@
         <div class="sfield-row">
           <div class="sfield"><label for="env-DFIR_AI_RECONCILE_KEY">Referee API key<span class="sfield-hint">DFIR_AI_RECONCILE_KEY</span></label><input id="env-DFIR_AI_RECONCILE_KEY" type="password" placeholder="(reuses main AI key)" autocomplete="new-password" /></div>
           <div class="sfield"><label for="env-DFIR_AI_RECONCILE_BASE_URL">Referee base URL<span class="sfield-hint">DFIR_AI_RECONCILE_BASE_URL</span></label><input id="env-DFIR_AI_RECONCILE_BASE_URL" /></div>
+        </div>
+        <div class="settings-group-head">Missed evidence review (Jev) &mdash; off by default</div>
+        <div class="sfield-row3">
+          <div class="sfield"><label for="env-DFIR_JEV_ENABLED">Enable the review<span class="sfield-hint">DFIR_JEV_ENABLED &mdash; a fast decision model re-grades the Info-graded super-timeline rows the analysis AI never reads, on a button the analyst presses. It promotes nothing and writes no case data. Set <code>1</code> to offer it (default off)</span></label><input id="env-DFIR_JEV_ENABLED" placeholder="0" /></div>
+          <div class="sfield">
+            <label for="env-DFIR_JEV_PROVIDER">Provider<span class="sfield-hint">DFIR_JEV_PROVIDER</span></label>
+            <select id="env-DFIR_JEV_PROVIDER">
+              <option value="">&mdash; default (openrouter) &mdash;</option>
+              <option value="openrouter">openrouter</option>
+              <option value="typesafe">typesafe</option>
+            </select>
+          </div>
+          <div class="sfield"><label for="env-DFIR_JEV_MODEL">Model<span class="sfield-hint">DFIR_JEV_MODEL &mdash; blank uses <code>typesafe/jev-1.13</code> on openrouter, <code>jev-latest</code> on typesafe</span></label><input id="env-DFIR_JEV_MODEL" placeholder="typesafe/jev-1.13" /></div>
+        </div>
+        <div class="sfield-row">
+          <div class="sfield"><label for="env-DFIR_JEV_KEY">Review API key<span class="sfield-hint">DFIR_JEV_KEY &mdash; <b>on openrouter, leaving this blank is a supported choice</b>: the OpenRouter key you already configured for the other AI roles is used. On the typesafe provider a key here is required</span></label><input id="env-DFIR_JEV_KEY" type="password" placeholder="(blank = inherit the OpenRouter key)" autocomplete="new-password" /></div>
+          <div class="sfield"><label for="env-DFIR_JEV_BASE_URL">Review base URL<span class="sfield-hint">DFIR_JEV_BASE_URL &mdash; leave blank for the provider default</span></label><input id="env-DFIR_JEV_BASE_URL" /></div>
+        </div>
+        <div class="sfield-row3">
+          <div class="sfield"><label for="env-DFIR_JEV_MAX_ROWS">Max rows per review<span class="sfield-hint">DFIR_JEV_MAX_ROWS &mdash; ceiling on rows read in one review (default 2000). Hitting it is shown in the panel as incomplete coverage, never passed off as the whole case</span></label><input id="env-DFIR_JEV_MAX_ROWS" placeholder="2000" /></div>
+          <div class="sfield"><label for="env-DFIR_JEV_BATCH_SIZE">Rows per model call<span class="sfield-hint">DFIR_JEV_BATCH_SIZE (default 40)</span></label><input id="env-DFIR_JEV_BATCH_SIZE" placeholder="40" /></div>
+          <div class="sfield"><label for="env-DFIR_JEV_TIMEOUT_MS">Timeout (ms)<span class="sfield-hint">DFIR_JEV_TIMEOUT_MS (default 120000)</span></label><input id="env-DFIR_JEV_TIMEOUT_MS" placeholder="120000" /></div>
         </div>
         <div class="settings-group-head">Synthesis detection-burst grouping</div>
         <div class="sfield-row3">
@@ -3865,6 +3916,23 @@
       </div>
       <div id="superTimelineList">—</div>
     </section>
+    <!-- Missed evidence review (#1540): an analyst-pressed re-grade of the Info-graded
+         super-timeline rows the AI never reads. Ephemeral and read-only — it promotes nothing and
+         writes no case state, which the panel's own first line says. Wiring lives in
+         js/dashboard-jev-review.js. -->
+    <section id="sec-jev-review" data-safe-style="grid-column: 1 / -1" class="collapsed">
+      <h2>Missed Evidence Review<span class="ev-sub">a fast decision model re-grades the Info-graded super-timeline rows the AI never sees, ranked by grade with the model&rsquo;s own confidence &mdash; a lead to look at, never a conclusion</span></h2>
+      <p class="jev-note"><strong>This review promotes nothing and changes no case data.</strong> It reads the rows, grades them and ranks them; the case record, the forensic timeline and the super-timeline are left exactly as they were.</p>
+      <div class="jev-controls">
+        <button type="button" id="jevRunBtn" disabled>Review missed evidence</button>
+        <!-- The uncapped read. Secondary to the capped one on purpose: it can run for minutes and
+             spend real money, so it asks first, inline in the panel, with the numbers from the last run. -->
+        <button type="button" id="jevRunAllBtn" class="jev-secondary" disabled>Read every row</button>
+        <label class="jev-tooling" for="jevHideTooling"><input type="checkbox" id="jevHideTooling" checked /> Hide rows the model reads as our own collection tooling (over 0.5)</label>
+      </div>
+      <div id="jevReviewStatus" class="jev-status" role="status" aria-live="polite"></div>
+      <div id="jevReviewPanel"></div>
+    </section>
     <section id="sec-notebook" data-safe-style="grid-column: 1 / -1" class="collapsed">
       <h2>Analyst Notebook</h2>
       <p data-safe-style="font-size:12px;color:var(--text-muted);margin:0 0 10px">Free-form notes and open questions. Entries survive synthesis and are never wiped. Optionally included in AI synthesis context (opt-in below). Got a testable claim? Use <em>→ Hypothesis</em> to track it in the Hypotheses panel above.</p>
@@ -4197,7 +4265,7 @@
       { id: "sec-inv-log",      label: "Investigation Log" },
       { id: "sec-activity",     label: "Activity Log" },
       { id: "sec-mcp",          label: "MCP Analysis" },
-      { id: "sec-custody",      label: "Chain of Custody" }, { id: "sec-intel-retirement", label: "Intel Retirement Review" }, { id: "sec-remediation", label: "Remediation Checks" }, { id: "sec-campaign-scope", label: "Campaign Scope" }, { id: "sec-served-exposure", label: "Served Exposure" }, { id: "sec-kerberoast-chain", label: "Kerberoast Chain" }, { id: "sec-tls-graph", label: "TLS Relationships" }, { id: "sec-handoff", label: "Handoff Brief" }, { id: "sec-sensitive-access", label: "Sensitive Access" },
+      { id: "sec-custody",      label: "Chain of Custody" }, { id: "sec-intel-retirement", label: "Intel Retirement Review" }, { id: "sec-remediation", label: "Remediation Checks" }, { id: "sec-campaign-scope", label: "Campaign Scope" }, { id: "sec-served-exposure", label: "Served Exposure" }, { id: "sec-kerberoast-chain", label: "Kerberoast Chain" }, { id: "sec-tls-graph", label: "TLS Relationships" }, { id: "sec-handoff", label: "Handoff Brief" }, { id: "sec-sensitive-access", label: "Sensitive Access" }, { id: "sec-jev-review", label: "Missed Evidence Review" },
       { id: "sec-case-details", label: "Case Details" },
     ];
     let DASHBOARD_VIEWS = [];                  // dashboard-view presets (#142), fetched from /dashboard-views
@@ -4621,7 +4689,7 @@
     // (#415) — they were never Background jobs'.
     if (typeof initDeepPass === "function") initDeepPass();
     else dfirFeatureUnavailable("Deep pass");
-    if (typeof initIocQuickActions === "function") initIocQuickActions();
+    if (typeof initIocQuickActions === "function") initIocQuickActions(); if (typeof initJevReview === "function") initJevReview(); else dfirFeatureUnavailable("Missed evidence review");
 
     // --- Screenshot OCR full-text search (#176) ---------------------------------------------
     // Queries GET /cases/:id/ocr-search and links each hit back to the screenshot it came from.

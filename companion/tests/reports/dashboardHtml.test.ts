@@ -7,6 +7,36 @@ import { dashboardClientSource } from "../helpers/dashboardModule.js";
 // this", not "is this string in that file". Markup assertions still hold — the HTML is the
 // first thing dashboardClientSource() concatenates.
 describe("dashboard.html", () => {
+  it("draws a separator between every pair of toolbar clusters, and none before the first", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    const row = html.slice(html.indexOf('id="toolbarMain"'), html.indexOf('<span id="status"'));
+    const marks = [...row.matchAll(/<span class="tb-(group|sep)"/g)].map((m) => m[1]);
+    const groups = marks.filter((m) => m === "group").length;
+    expect(groups).toBeGreaterThanOrEqual(6);
+    // One fewer separator than groups, and the row never opens with one.
+    expect(marks.filter((m) => m === "sep")).toHaveLength(groups - 1);
+    expect(marks[0]).toBe("group");
+    // No two separators in a row — that is what a stranded group would look like.
+    expect(marks.join(",")).not.toContain("sep,sep");
+    // Decorative, like the labels: never announced, never focusable.
+    expect(row).not.toMatch(/<span class="tb-sep"(?![^>]*aria-hidden="true")/);
+  });
+
+  it("never pairs a data-tip with a native title — the browser bubble covers the custom card", async () => {
+    // Found from a screenshot, not a test: the one toolbar button that carried BOTH rendered the
+    // OS title bubble on top of the dashboard's own tooltip card, leaving the text unreadable. The
+    // e2e tooltip spec cannot catch this — browsers do not expose native title bubbles to the DOM,
+    // as that spec's own comment says — so the guard has to be static, on the markup.
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    const offenders = (html.match(/<[a-z]+\b[^>]*>/gi) ?? []).filter(
+      (tag) => /\sdata-tip\s*=/.test(tag) && /\stitle\s*=/.test(tag),
+    );
+    expect(
+      offenders.map((t) => (t.match(/\bid="([^"]+)"/) ?? [])[1] ?? t.slice(0, 80)),
+      "these carry both data-tip and title; drop the title and keep data-tip",
+    ).toEqual([]);
+  });
+
   it("lets the analyst dismiss a lateral chain, and review/restore dismissed ones", async () => {
     const html = dashboardClientSource();
     // Per-row Dismiss, with Restore taking its place once a chain has been dismissed.
@@ -1383,5 +1413,153 @@ describe("dashboard page shell — review follow-ups", () => {
     // The keydown handler is on the menu, so with focus left on the trigger the arrow keys never
     // reach it until the user presses Tab — the menu announces behaviour it does not have.
     expect(src).toMatch(/menu\.style\.display = "block"[\s\S]{0,400}focusFirstDashViewItem\(\)/);
+  });
+});
+
+// Toolbar grouping (#1540). The six clusters are the only structure the analyst has for a row of
+// ~25 controls, and every one of these assertions guards a way the structure can rot while the
+// page still renders: a control drifting between clusters, a label duplicated or renamed away from
+// its group, a label promoted into something focusable, or a cluster left with nothing but its own
+// label to draw.
+describe("the toolbar row is grouped and each group is named", () => {
+  const TOOLBAR_GROUPS: ReadonlyArray<readonly [string, readonly string[]]> = [
+    ["Case", ["connect", "newCaseBtn", "seedDemoBtn", "importCaseBtn", "lifecycleBtn"]],
+    ["Modes", ["enrichToggle", "anonToggle", "aiToggle"]],
+    ["AI", ["synthesize", "jevReviewBtn", "secondOpinion", "deepPassBtn", "deepReasoningLabel"]],
+    ["Evidence", ["importBtn", "importUndoBtn", "importRedoBtn"]],
+    ["Report", ["exportSelect", "pushSelect", "presentBtn"]],
+    ["View", ["dashViewWrap", "toggleAll", "toggleSearchBar"]],
+  ];
+  // Controls that must stay OUTSIDE every group: the case identity fields, the hidden file inputs
+  // and the trailing status/badge cluster. Grouping one of these would put a label over it.
+  const UNGROUPED = [
+    "casePicker",
+    "caseId",
+    "showArchivedToggle",
+    "encryptedImportFile",
+    "importFile",
+    "reportLinks",
+    "status",
+    "aiStatus",
+    "captureCount",
+    "jobsMenu",
+  ];
+
+  const dashboardHtml = () => readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+
+  /** The #toolbarMain row only — the scope row and the trailing gear/help cluster are not it. */
+  function toolbarRow(html: string): string {
+    const start = html.indexOf('<div id="toolbarMain"');
+    const end = html.indexOf('<div id="themeMenu"', start);
+    expect(start, "#toolbarMain not found").toBeGreaterThan(-1);
+    expect(end, "the end of the toolbar row not found").toBeGreaterThan(start);
+    return html.slice(start, end);
+  }
+
+  /** Each .tb-group's label and its inner markup, in document order, span nesting respected. */
+  function groupsOf(row: string): { label: string; inner: string }[] {
+    const found: { label: string; inner: string }[] = [];
+    const open = /<span class="tb-group" data-tb-group="([^"]+)">/g;
+    for (let m = open.exec(row); m; m = open.exec(row)) {
+      const from = open.lastIndex;
+      const token = /<span\b|<\/span>/g;
+      token.lastIndex = from;
+      let depth = 1;
+      let t = token.exec(row);
+      while (t && depth > 0) {
+        depth += t[0] === "</span>" ? -1 : 1;
+        if (depth === 0) break;
+        t = token.exec(row);
+      }
+      expect(t, `the .tb-group for ${m[1]} is never closed`).not.toBeNull();
+      found.push({ label: m[1], inner: row.slice(from, t!.index) });
+    }
+    return found;
+  }
+
+  it("wraps the row in the six named groups, in order", async () => {
+    const groups = groupsOf(toolbarRow(await dashboardHtml()));
+    expect(groups.map((g) => g.label)).toEqual(TOOLBAR_GROUPS.map(([label]) => label));
+  });
+
+  it("puts every listed control inside its own group and no other", async () => {
+    const groups = groupsOf(toolbarRow(await dashboardHtml()));
+    for (const [label, ids] of TOOLBAR_GROUPS) {
+      const mine = groups.find((g) => g.label === label);
+      expect(mine, `no group named ${label}`).toBeDefined();
+      for (const id of ids) {
+        const holders = groups.filter((g) => g.inner.includes(`id="${id}"`)).map((g) => g.label);
+        expect(holders, `#${id} must sit in exactly the ${label} group`).toEqual([label]);
+      }
+    }
+  });
+
+  it("leaves the case fields, hidden inputs and status cluster ungrouped", async () => {
+    const groups = groupsOf(toolbarRow(await dashboardHtml()));
+    for (const id of UNGROUPED) {
+      const holders = groups.filter((g) => g.inner.includes(`id="${id}"`)).map((g) => g.label);
+      expect(holders, `#${id} must not be inside a group — a label would sit under it`).toEqual([]);
+    }
+  });
+
+  it("draws each group's name exactly once, and only names groups that exist", async () => {
+    const row = toolbarRow(await dashboardHtml());
+    const labels = [...row.matchAll(/<span class="tb-group-label"[^>]*>([^<]+)<\/span>/g)].map((m) => m[1]);
+    expect(labels.length, "one label per group, no more").toBe(TOOLBAR_GROUPS.length);
+    expect([...labels].sort()).toEqual(TOOLBAR_GROUPS.map(([l]) => l).sort());
+    // And each label sits in the group it names, rather than merely somewhere in the row.
+    for (const group of groupsOf(row)) {
+      expect(group.inner).toContain(`<span class="tb-group-label" aria-hidden="true">${group.label}</span>`);
+    }
+  });
+
+  it("hides the labels from assistive tech — the buttons carry their own names", async () => {
+    const row = toolbarRow(await dashboardHtml());
+    const tags = [...row.matchAll(/<[a-z]+\b[^>]*class="tb-group-label"[^>]*>/g)].map((m) => m[0]);
+    expect(tags).toHaveLength(6);
+    for (const tag of tags) expect(tag, `${tag} must be aria-hidden`).toContain('aria-hidden="true"');
+  });
+
+  it("never makes a group label interactive", async () => {
+    const row = toolbarRow(await dashboardHtml());
+    const tags = [...row.matchAll(/<([a-z]+)\b[^>]*class="tb-group-label"[^>]*>/g)];
+    expect(tags).toHaveLength(6);
+    for (const [tag, name] of tags) {
+      // A <button>/<a>/<input> label would land in the tab order between two real controls, and
+      // aria-hidden on a focusable element is its own violation.
+      expect(["button", "a", "input", "select", "textarea"]).not.toContain(name);
+      expect(tag).not.toMatch(/\b(?:tabindex|href|onclick|role)=/);
+    }
+  });
+
+  it("gives every group a control that nothing can hide, so no label is left stranded", () => {
+    // A .tb-group-label is centred on its group with left:0/right:0, so a group whose controls
+    // are ALL hidden collapses to zero width and the label's text spills out over its neighbour.
+    // No CSS can see that: js/safe-dom.js turns `el.style.display = "none"` into a generated
+    // class and strips the data-safe-style attribute, so :has() has nothing left to match on.
+    //
+    // The invariant is enforced here instead: every group keeps a member that neither ships
+    // hidden nor has a runtime hide path, so the group is never empty and the case cannot arise.
+    // Add a hide path to the last such member of a group and this test is what says so.
+    const html = dashboardClientSource();
+    /** Controls some module shows and hides. Each is toggled by `style.display` in public/js. */
+    const HIDEABLE = new Set([
+      "seedDemoBtn",
+      "lifecycleBtn",
+      "secondOpinion",
+      "importUndoBtn",
+      "importRedoBtn",
+      "pushSelect",
+    ]);
+    // Guards the guard: a renamed control must not quietly drop out of the set above.
+    for (const id of HIDEABLE) {
+      expect(html, `#${id} is listed as hideable but no longer exists`).toContain(`id="${id}"`);
+    }
+    for (const [label, ids] of TOOLBAR_GROUPS) {
+      expect(
+        ids.filter((id) => !HIDEABLE.has(id)),
+        `every control in the ${label} group can be hidden — its label would strand`,
+      ).not.toEqual([]);
+    }
   });
 });
