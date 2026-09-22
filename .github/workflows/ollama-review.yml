@@ -2,9 +2,23 @@ name: opencode-review
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+
+# A second push to an open PR used to start a SECOND review beside the still-running first — both
+# holding issues:write and an OIDC token, both posting to the same PR. ci.yml has cancelled its own
+# superseded runs since it was written; this workflow never did (#1538). Keyed on the PR's ref, so
+# reviews of different PRs still run side by side.
+concurrency:
+  group: opencode-review-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   review:
     runs-on: ubuntu-latest
+    # Without this the job inherits GitHub's 6-hour default. Across the 15 runs measured in #1538 the
+    # median was ~4 minutes and the tail was 11, 25 and 56 — a review running that long is hung, not
+    # thorough, and it holds a runner until someone happens to look. 15 is roughly 3x the median and
+    # above every run in that sample except the three outliers this exists to cut off.
+    timeout-minutes: 15
     permissions:
       id-token: write
       contents: read
