@@ -31,6 +31,9 @@
   }
   // Resolve the minimum severity for an import batch. Returns a normalized severity string,
   // or null if the user cancelled the whole import. A remembered choice skips the dialog.
+  // ONE AT A TIME: the handlers are assigned on a single shared overlay, so a second call while one
+  // is open orphans the first promise. The only caller (the unified import loop) is serialized by
+  // its in-flight guard (#1511); this is a page global, so a future caller must keep that rule.
   function askMinSeverity() {
     return new Promise((resolve) => {
       const pref = getImportSevPref();
@@ -253,6 +256,9 @@
   }
   // Ask which host ONE bare file came from. Resolves the host name ("" = leave the names inside
   // the records), or null when the analyst cancelled this file.
+  // ONE AT A TIME, same as askMinSeverity: one shared overlay, handlers overwritten by a second
+  // call. The unified import loop serializes its calls with an in-flight guard (#1511); a future
+  // caller must not open this while another prompt is open.
   function askImportAssetHost(fileName, computers) {
     return new Promise((resolve) => {
       const overlay = document.getElementById("importAssetOverlay");

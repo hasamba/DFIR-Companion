@@ -53,6 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Archiving a case no longer fails on an in-flight write** — the plain archive skips a SQLite journal or atomicWrite temp that vanishes mid-walk, the same rule the encrypted export already applied; the `import-binary` nightly contract entry names the field the route reads (closes #1442)
 - **Nightly `import-aws` story no longer races the demote pass** — the fixture is a failed console login (Medium), so the forensic-timeline check is deterministic instead of catching a 100 ms window (closes #1445)
 - **Nightly origin-lens scroll test no longer rides the cockpit's load race** — it reveals the seeded sections above Findings so the checkbox is below the fold whatever the NOW panel is doing (closes #1448)
+- **One import run at a time** — a second file pick while a run waits on a prompt is refused with a status line instead of orphaning the first run (closes #1511)
 
 ## [0.37.0] - 2026-09-20
 
