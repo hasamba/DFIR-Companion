@@ -26,6 +26,7 @@ describe("findingCautionLine", () => {
   });
   it("orders the badges: ungrounded wins, then decoy, then mismatch, then lateral, then corroboration", () => {
     expect(findingCautionLine(f({ ungrounded: true, decoyBinary: true }))).toMatch(/No cited evidence/);
+    expect(findingCautionLine(f({ buildBaseline: true, decoyBinary: true }))).toMatch(/Build baseline/);
     expect(findingCautionLine(f({ decoyBinary: true, contentMismatch: true }))).toMatch(/Renamed shell/);
     expect(findingCautionLine(f({ contentMismatch: true, lateralUnconfirmed: true }))).toMatch(
       /Citation mismatch/,

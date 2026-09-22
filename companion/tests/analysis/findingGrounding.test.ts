@@ -11,6 +11,8 @@ import {
   LATERAL_UNCONFIRMED_SEVERITY_FLOOR,
   DECOY_BINARY_CONFIDENCE_CAP,
   DECOY_BINARY_SEVERITY_FLOOR,
+  BUILD_BASELINE_CONFIDENCE_CAP,
+  BUILD_BASELINE_SEVERITY_FLOOR,
 } from "../../src/analysis/findingGrounding.js";
 import type { Finding, ForensicEvent, IOC } from "../../src/analysis/stateTypes.js";
 
@@ -607,5 +609,98 @@ describe("groundAndScoreFindings — decoy binary gate (#1502)", () => {
       scopedEvents: [decoy, lsass],
     });
     expect(out[0].decoyBinary).toBeUndefined();
+  });
+});
+
+describe("groundAndScoreFindings — build baseline gate (#1529)", () => {
+  // Rows the import seam already capped: scenario 018's provisioning-day log clear and the Packer
+  // account burst, both carrying the build-time mark.
+  const build = { marker: "packer", window: "2025-12-05T02:13:39Z/2025-12-05T03:57:07Z" };
+  const logClear = ev({
+    id: "b1",
+    timestamp: "2025-12-05T03:26:42Z",
+    severity: "Low",
+    description: "Security audit log cleared (EID 1102) [build-time: packer, 2025-12-05T02:13Z–03:57Z]",
+    buildTime: build,
+    sources: ["Chainsaw", "Velociraptor"],
+  });
+  const vagrant = ev({
+    id: "b2",
+    timestamp: "2026-08-26T13:52:14Z",
+    severity: "Low",
+    description:
+      "Member added to local security group (EID 4732) - Builtin\\Administrators, WORKGROUP\\WIN-0NNTB2RTNB1$ [build-time: packer, 2026-08-26T13:20Z–14:23Z]",
+    buildTime: {
+      marker: "machine-account provisioning",
+      window: "2026-08-26T13:20:08Z/2026-08-26T14:23:10Z",
+    },
+    sources: ["Chainsaw", "Velociraptor"],
+  });
+  const beacon = ev({
+    id: "s1",
+    timestamp: "2026-09-22T08:32:10Z",
+    severity: "High",
+    description: "Cobalt Strike beacon to 203.0.113.10:443",
+    sources: ["Velociraptor"],
+  });
+  const base = { iocs: [], graphLinkedEventIds: new Set<string>() };
+
+  it("floors the Critical 'logs cleared' finding whose every cited row is the build", () => {
+    const out = groundAndScoreFindings({
+      ...base,
+      findings: [
+        f({
+          id: "f1",
+          severity: "Critical",
+          confidence: 92,
+          firstSeen: "2025-12-05T03:26:42Z",
+          relatedEventIds: ["b1", "b2"],
+        }),
+      ],
+      scopedEvents: [logClear, vagrant],
+    });
+    expect(out[0].severity).toBe(BUILD_BASELINE_SEVERITY_FLOOR);
+    expect(out[0].confidence).toBe(BUILD_BASELINE_CONFIDENCE_CAP);
+    expect(out[0].buildBaseline).toBe(true);
+    expect(out[0].confidenceReason).toMatch(/provisioning window/i);
+  });
+
+  it("keeps a mixed finding graded but dates it from the first row outside the build", () => {
+    const out = groundAndScoreFindings({
+      ...base,
+      findings: [
+        f({
+          id: "f3",
+          severity: "High",
+          confidence: 80,
+          firstSeen: "2025-12-05T03:26:42Z",
+          relatedEventIds: ["b1", "s1"],
+        }),
+      ],
+      scopedEvents: [logClear, beacon],
+    });
+    expect(out[0].severity).toBe("High");
+    expect(out[0].buildBaseline).toBeUndefined();
+    expect(out[0].firstSeen).toBe("2026-09-22T08:32:10Z");
+    expect(out[0].confidenceReason).toMatch(/1 of 2 cited events are the host's own provisioning/);
+  });
+
+  it("clears a stale flag when the rows are no longer build-time", () => {
+    const out = groundAndScoreFindings({
+      ...base,
+      findings: [
+        f({
+          id: "f1",
+          severity: "High",
+          confidence: 70,
+          buildBaseline: true,
+          firstSeen: "2026-09-22T08:32:10Z",
+          relatedEventIds: ["s1"],
+        }),
+      ],
+      scopedEvents: [beacon],
+    });
+    expect(out[0].buildBaseline).toBeUndefined();
+    expect(out[0].severity).toBe("High");
   });
 });

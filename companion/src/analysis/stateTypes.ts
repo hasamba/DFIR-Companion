@@ -374,6 +374,11 @@ export interface Finding {
   // that same decoy — the command line is a label, not a run. Set post-synthesis by
   // groundAndScoreFindings (#1502); High/Critical floored to Medium and confidence capped.
   decoyBinary?: boolean;
+  // Every cited event is the host's own provisioning (#1529) — a build-day log clear, the image's
+  // own accounts, the guest-driver services. Set post-synthesis by groundAndScoreFindings; severity
+  // floored to Low and confidence capped. A finding with ANY non-build evidence is not flagged; its
+  // `firstSeen` moves to the earliest cited row that is not build-time instead.
+  buildBaseline?: boolean;
   corroboration?: FindingCorroboration;
   // Rabbit-hole detection (investigation-guidance #13). `relevance` places the finding relative to the
   // corroborated main attack path: 'connected' (on it) → a lead; 'disconnected' (evidence sits in a
@@ -584,6 +589,12 @@ export interface ForensicEvent {
   provenance?: string[];
   // See EvidenceOrigin. Set by the sandbox importer on every row it emits; absent everywhere else.
   origin?: EvidenceOrigin;
+  // The host's own provisioning, not the intrusion (#1529). Set at the import seam by
+  // analysis/buildTimeWindow.ts on a row inside a corroborated build window: `marker` is why that
+  // window reads as a build, `window` is its `<start>/<end>`, and `cappedFrom` is the severity the
+  // row carried before the cap (absent when the cap changed nothing), so the pass is reversible when
+  // the window is later contradicted. Never set by a model.
+  buildTime?: { marker: string; window: string; cappedFrom?: Severity };
   // The lab detonations of THIS event's sample, derived at merge time from InvestigationState.labIntel
   // by sha256 — never stored as a claim of its own, cleared and recomputed on every merge. Rendered to
   // the model as a <sandbox:…> tag beside <host:…>, so it reads "the sample seen here did X in a lab".

@@ -16,6 +16,7 @@ import { resolveHost, type HostAliasIndex } from "./hostAlias.js";
 import { labIntelTag } from "./labIntel.js";
 import { renderDestinationTags } from "./destinationFacts.js";
 import { renderDecoyTag } from "./renamedBinaryNote.js";
+import { renderBuildTimeTag } from "./buildTimeWindow.js";
 import { canonicalFile, canonicalNetwork } from "./canonicalEvent.js";
 
 const MAX_TAG_VALUE = 48; // keep one field from bloating a line; hostnames/paths can be long
@@ -92,6 +93,12 @@ export function renderStructuredTags(e: ForensicEvent, aliasIndex?: HostAliasInd
   tags.push(...renderDestinationTags(e));
   const decoy = renderDecoyTag(e);
   if (decoy) tags.push(decoy);
+
+  // The host building itself (#1529). A tag, not prose: the row's own note sits past the 240-char
+  // render cut, and this is the one fact that stops a provisioning-day log clear from opening the
+  // attacker path.
+  const build = renderBuildTimeTag(e);
+  if (build) tags.push(build);
 
   return tags.length ? " " + tags.join(" ") : "";
 }

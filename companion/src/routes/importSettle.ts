@@ -5,6 +5,7 @@ import { diffIocs, type IocsDiff } from "../analysis/iocsDiff.js";
 import { getServerLogger } from "../logging/serverLogger.js";
 import { formatImportSettled } from "../logging/importLog.js";
 import { carryHostRenames } from "../analysis/hostRenameCarry.js";
+import { capBuildTimeRows } from "../analysis/buildTimeWindow.js";
 import { downgradeFirstPartyEgress } from "../analysis/firstPartyEgress.js";
 import {
   rehomeSuperTimeline,
@@ -154,6 +155,16 @@ export async function settleForensicImport(
       // record. What this failure costs is the count above, which stays 0.
     }
     await deps.autoTagImported(caseId, added);
+  }
+  // Merge-all → tagger → CAP → demote (#1529). The tagger has had its one promotion window above;
+  // now the rows inside a corroborated provisioning window are capped at Low with a stated reason,
+  // before demote decides what leaves the forensic timeline. Reloaded from the store because the
+  // tagger saves its own state, and saved here because demote reloads again.
+  const tagged = await deps.stateStore.load(caseId);
+  const capped = capBuildTimeRows(tagged);
+  if (capped.changed) {
+    await deps.stateStore.save(capped.state);
+    deps.onState?.(capped.state);
   }
   const state = await deps.demoteForensicForCase(caseId);
   const timelineDiff = diffTimeline(stateBefore.forensicTimeline, state.forensicTimeline);
