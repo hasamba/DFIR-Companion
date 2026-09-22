@@ -56,6 +56,7 @@ export const DERIVED_NOTE_NAMES: readonly string[] = [
   "quarantine-marked file used",
   "a quarantine-marked file",
   "renamed binary",
+  "build-time",
 ];
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
