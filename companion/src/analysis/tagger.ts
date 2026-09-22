@@ -140,8 +140,13 @@ export function applyToForensicEvent(event: ForensicEvent, result: EventTagResul
   // script path under the collector's tool tree, the collector exe as parent — while the tagger reads
   // the retained raw message, where PersistenceSniper's `Add-Type … AdjPriv` matches the bundled
   // token-manipulation rule exactly as an intruder's would. Tags and MITRE still describe the row.
+  // A row inside the host's own provisioning window keeps its capped grade too (#1529): the build
+  // window is deterministic evidence the tagger cannot see, and a later manual "Run tagger" would
+  // otherwise raise the provisioning-day log clear straight back to Critical.
   const severity =
-    event.origin === "collector" ? event.severity : raiseSeverity(event.severity, result.severity);
+    event.origin === "collector" || event.buildTime
+      ? event.severity
+      : raiseSeverity(event.severity, result.severity);
   const seen = new Set(event.mitreTechniques);
   const mitreTechniques = [...event.mitreTechniques];
   for (const t of result.mitre)

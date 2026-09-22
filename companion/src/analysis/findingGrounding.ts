@@ -32,9 +32,14 @@ import { deriveSemanticKey } from "./semanticKey.js";
 import { resolveHost, type HostAliasIndex } from "./hostAlias.js";
 import { outcomeLabel } from "./findingOutcome.js";
 import { decoyOnlyEvidence } from "./renamedBinaryNote.js";
+import { buildTimeSupport } from "./buildTimeWindow.js";
 
 // A finding with no cited in-scope evidence is a hypothesis — cap hard so it can't outrank grounded work.
 export const UNGROUNDED_CONFIDENCE_CAP = 45;
+// A finding whose every cited row is the host's own provisioning (#1529) — floored and capped below
+// every other gate, because it is not a weak claim about the incident, it is not about the incident.
+export const BUILD_BASELINE_SEVERITY_FLOOR: Severity = "Low";
+export const BUILD_BASELINE_CONFIDENCE_CAP = 35;
 // A grounded but single-source (one tool, one host, no corroborating IOC/graph) finding is capped here —
 // it may be real, but it can't claim high confidence on one uncorroborated observation.
 export const SINGLE_SOURCE_CONFIDENCE_CAP = 65;
@@ -358,17 +363,44 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
       }
     }
 
+    // Build baseline (#1529). A finding whose EVERY cited row is the host's own provisioning — the
+    // image's log clear, the accounts Packer made, the VMware driver services — is baseline, not the
+    // intrusion; it is floored to Low and capped. A finding with mixed evidence keeps its severity:
+    // the build rows are real, they are simply not where the story starts, so its `firstSeen` moves
+    // forward to the earliest cited row that is not build-time.
+    let buildBaseline = false;
+    let firstSeen = f.firstSeen;
+    const build = buildTimeSupport(supporting);
+    if (build.allBuild) {
+      buildBaseline = true;
+      if (SEV_ORDER[severity] < SEV_ORDER[BUILD_BASELINE_SEVERITY_FLOOR])
+        severity = BUILD_BASELINE_SEVERITY_FLOOR;
+      if ((confidence ?? 100) > BUILD_BASELINE_CONFIDENCE_CAP) confidence = BUILD_BASELINE_CONFIDENCE_CAP;
+      confidenceReason = appendReason(
+        confidenceReason,
+        "capped: every cited event sits inside the host's own provisioning window — this is the machine being built, not the incident",
+      );
+    } else if (build.build > 0 && build.firstOutside) {
+      if (Date.parse(firstSeen) < Date.parse(build.firstOutside)) firstSeen = build.firstOutside;
+      confidenceReason = appendReason(
+        confidenceReason,
+        `${build.build} of ${build.total} cited events are the host's own provisioning — the finding is dated from the first event outside the build window`,
+      );
+    }
+
     // Clean the old flags first so a since-corrected finding loses them (idempotent recompute).
     const {
       ungrounded: _prev,
       contentMismatch: _prevCm,
       lateralUnconfirmed: _prevLu,
       decoyBinary: _prevDb,
+      buildBaseline: _prevBb,
       ...rest
     } = f;
     return {
       ...rest,
       severity,
+      firstSeen,
       relatedEventIds,
       corroboration,
       // Stable cross-run identity (issue #69) — recomputed every synthesis so second-opinion deltas
@@ -378,6 +410,7 @@ export function groundAndScoreFindings(input: GroundingInput): Finding[] {
       ...(contentMismatch ? { contentMismatch: true } : {}),
       ...(lateralUnconfirmed ? { lateralUnconfirmed: true } : {}),
       ...(decoyBinary ? { decoyBinary: true } : {}),
+      ...(buildBaseline ? { buildBaseline: true } : {}),
       ...(confidence !== undefined ? { confidence } : {}),
       ...(confidenceReason !== undefined ? { confidenceReason } : {}),
     };

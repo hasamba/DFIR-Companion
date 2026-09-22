@@ -1,4 +1,5 @@
 import { SEVERITY_RANK, type ForensicEvent, type InvestigationState, type Severity } from "./stateTypes.js";
+import { buildTimeContextBlock } from "./buildTimeWindow.js";
 import { byEventTime } from "./forensicSort.js";
 import { buildAttackPhases } from "./burstDetect.js";
 import { buildAssetGraph } from "./assetGraph.js";
@@ -458,7 +459,12 @@ export function buildSynthesisContext(
         .join("\n")}\n\n`
     : "";
 
+  // The host's own provisioning (#1529) — first, because every other block below describes the
+  // incident and this one says which rows are not part of it.
+  const buildBlock = buildTimeContextBlock(scopedEvents, state.hostRenames ?? []);
+
   let block = "";
+  if (buildBlock) block += buildBlock;
   if (riskBlock) block += riskBlock;
   if (concentrationBlock) block += concentrationBlock;
   if (connectiveBlock) block += connectiveBlock;

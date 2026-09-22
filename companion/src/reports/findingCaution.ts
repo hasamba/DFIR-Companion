@@ -11,6 +11,8 @@ import { corroborationLabel } from "../analysis/findingGrounding.js";
 export function findingCautionLine(f: Finding): string {
   if (f.ungrounded)
     return `> ⚠️ **No cited evidence** — treat as a hypothesis, not a fact (confidence capped).`;
+  if (f.buildBaseline)
+    return `> \u26a0\ufe0f **Build baseline** \u2014 every cited event sits inside the host's own provisioning window (the image being built, not the incident). Severity floored and confidence capped.`;
   if (f.decoyBinary)
     return `> ⚠️ **Renamed shell, not the named tool** — every cited event is a binary that identifies as a plain shell (or a file trace of it); the command line is a label, not a run. Severity floored and confidence capped.`;
   if (f.contentMismatch)
