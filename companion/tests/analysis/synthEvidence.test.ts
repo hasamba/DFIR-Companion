@@ -48,6 +48,33 @@ describe("renderStructuredTags", () => {
     expect(renderStructuredTags(ev({ sources: ["only-one"] }))).toBe("");
   });
 
+  it("carries a script block's discovery commands as tags the 240-char render cannot cut (#1531)", () => {
+    const t = renderStructuredTags(
+      ev({
+        asset: "ws07.example.com",
+        description: "DetectRaptor Evtx detection: Suspicious Powershell Commandlets (EID 4104)",
+        message:
+          "Creating Scriptblock text (1 of 1):\nforeach($cmd in @('nltest /dclist:LAB.INVALID','Get-ADGroupMember \"Domain Admins\"')){ }",
+      }),
+    );
+    expect(t).toContain("<script-commands:");
+    expect(t).toContain("Get-ADGroupMember");
+    expect(t).toContain("<script-techniques:");
+    expect(t).toContain("T1069.002");
+  });
+
+  it("emits no script tags for a row the case's own collector produced (#1500)", () => {
+    const t = renderStructuredTags(
+      ev({
+        origin: "collector",
+        description: "Sigma: Potential WinAPI Calls Via PowerShell (EID 4104)",
+        message:
+          "Creating Scriptblock text (1 of 1):\nGet-Process; Invoke-Command -ComputerName dc01.example.com { }",
+      }),
+    );
+    expect(t).toBe("");
+  });
+
   it("handles a process with no parent and a dst-only connection", () => {
     const t = renderStructuredTags(ev({ processName: "cmd.exe", dstIp: "8.8.8.8" }));
     expect(t).toContain("<proc:cmd.exe>");
