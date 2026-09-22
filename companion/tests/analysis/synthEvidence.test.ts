@@ -146,3 +146,52 @@ describe("renderStructuredTags — destination facts and the renamed-binary flag
     expect(renderStructuredTags(ev({ description: "Logon 4624" }))).toBe("");
   });
 });
+
+// #1530 — a Sysmon EID 3 row sets no processName and no dstIp/port, so the model saw neither the
+// image nor the destination: both live in the canonical envelope, and the 240-character
+// description render cuts `DestinationIp=…` out of the middle of the prose.
+describe("renderStructuredTags — canonical fallback for network rows", () => {
+  const netEvent = (extra: Partial<ForensicEvent> = {}): ForensicEvent =>
+    ev({
+      asset: "DESKTOP-16OJFO6",
+      description: "Velociraptor Sigma: Net Conn (Sysmon Alert) - Sysmon Network connection (EID 3)",
+      canonical: {
+        schemaVersion: "1.0.0",
+        event: { category: "network", type: "connection" },
+        network: {
+          source: { address: "192.168.195.133" },
+          destination: { address: "150.171.109.82", port: 443 },
+        },
+        file: {
+          path: "C:\\Users\\v\\AppData\\Local\\Microsoft\\OneDrive\\StandaloneUpdater\\OneDriveSetup.exe",
+          name: "OneDriveSetup.exe",
+        },
+        time: { observed: "2026-08-30 15:02:40", normalized: "2026-08-30T15:02:40.005Z" },
+      },
+      ...extra,
+    } as Partial<ForensicEvent>);
+
+  it("names the image and the destination the prose render cuts out", () => {
+    const t = renderStructuredTags(netEvent());
+    expect(t).toContain("<proc:OneDriveSetup.exe>");
+    expect(t).toContain("<net:192.168.195.133→150.171.109.82:443>");
+  });
+
+  it("falls back to the path's base name when the envelope carries no file name", () => {
+    const e = netEvent();
+    delete (e.canonical!.file as { name?: string }).name;
+    expect(renderStructuredTags(e)).toContain("<proc:OneDriveSetup.exe>");
+  });
+
+  it("keeps the flat fields in front of the envelope", () => {
+    const t = renderStructuredTags(
+      netEvent({ processName: "rundll32.exe", dstIp: "203.0.113.9", port: 8443 }),
+    );
+    expect(t).toContain("<proc:rundll32.exe>");
+    expect(t).toContain("<net:192.168.195.133→203.0.113.9:8443>");
+  });
+
+  it("adds nothing for an event with neither flat fields nor an envelope", () => {
+    expect(renderStructuredTags(ev({ description: "x" }))).toBe("");
+  });
+});

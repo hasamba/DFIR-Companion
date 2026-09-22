@@ -497,3 +497,70 @@ describe("settleForensicImport — re-homes the super-timeline copies too (#1508
     await expect(settleForensicImport(deps, "c1", before)).resolves.toBeTruthy();
   });
 });
+
+// #1530 — the first-party-egress downgrade runs inside this seam, and WHERE it runs is the point:
+// before the dual-write, so the super-timeline keeps the Info copy, and before the tagger, so a
+// tagger rule can raise the row straight back.
+describe("settleForensicImport — first-party update traffic", () => {
+  function oneDriveRow(id: string): ForensicEvent {
+    return {
+      ...ev(id, "Medium", "Sigma: Net Conn (Sysmon Alert) - Sysmon Network connection (EID 3)"),
+      canonical: {
+        schemaVersion: "1.0.0",
+        event: { category: "network", type: "connection" },
+        network: { source: { address: "192.0.2.10" }, destination: { address: "150.171.109.82", port: 443 } },
+        file: {
+          path: "C:\\Users\\a\\AppData\\Local\\Microsoft\\OneDrive\\StandaloneUpdater\\OneDriveSetup.exe",
+          name: "OneDriveSetup.exe",
+        },
+        time: { observed: "2026-08-30 15:02:40", normalized: "2026-08-30T15:02:40Z" },
+      },
+    } as ForensicEvent;
+  }
+
+  it("lowers the row before the dual-write and the tagger see it", async () => {
+    const seen: Record<string, ForensicEvent[]> = {};
+    let saved: InvestigationState | undefined;
+    const merged = state([ev("old", "High"), oneDriveRow("new")]);
+    const deps = {
+      stateStore: {
+        load: async () => saved ?? merged,
+        save: async (s: InvestigationState) => {
+          saved = s;
+        },
+      },
+      superTimelineStore: {
+        append: async (_c: string, events: ForensicEvent[]) => {
+          seen.super = events;
+          return events.length;
+        },
+      },
+      autoTagImported: async (_c: string, events: ForensicEvent[]) => {
+        seen.tagged = events;
+      },
+      demoteForensicForCase: async () => state([ev("old", "High")]),
+    };
+    await settleForensicImport(deps, "c1", state([ev("old", "High")]));
+    expect(seen.super.map((e) => e.severity)).toEqual(["Info"]);
+    expect(seen.super[0].description).toContain("first-party update traffic");
+    expect(seen.tagged.map((e) => e.severity)).toEqual(["Info"]);
+    expect(saved?.forensicTimeline.find((e) => e.id === "new")?.severity).toBe("Info");
+  });
+
+  it("leaves the grade alone when no super-timeline store is wired — demote would delete the row", async () => {
+    let saved: InvestigationState | undefined;
+    const merged = state([oneDriveRow("new")]);
+    const deps = {
+      stateStore: {
+        load: async () => saved ?? merged,
+        save: async (s: InvestigationState) => {
+          saved = s;
+        },
+      },
+      autoTagImported: async () => {},
+      demoteForensicForCase: async () => saved ?? merged,
+    };
+    await settleForensicImport(deps, "c1", state([]));
+    expect(saved?.forensicTimeline[0].severity).toBe("Medium");
+  });
+});

@@ -126,6 +126,22 @@ The reason is not tidiness. A real case carries tens of thousands of prefetch, a
 rows. Feeding them to a model exhausts the token budget and drowns the signal that earned the
 forensic cut in the first place.
 
+### One pass lowers a grade, and it runs before the tagger
+
+The seam has a second deterministic step, and its position is part of the rule. `firstPartyEgress.ts`
+drops one narrow class of row to `Info` at import: a first-party Windows updater (OneDrive, the Edge
+updater, Defender) connecting on 80/443 to an address inside a vendor range nobody can rent. The
+Velociraptor Sigma pack grades "Net Conn (Sysmon Alert)" medium on every Sysmon EID 3, so OneDrive's
+update traffic entered the record as graded signal and was read as C2 (#1530).
+
+It runs **before** the dual-write and **before** the tagger, in `routes/importSettle.ts` and in the
+bulk driver's per-batch flush. Before the dual-write so the super-timeline keeps the graded copy;
+before the tagger so the order stays **merge-all → lower → tag → demote** — a tagger rule that
+matches the row raises it straight back, which is the only escape hatch this pass needs. It never
+lowers a High or Critical, never touches a row that carries an ATT&CK technique or an analyst
+promotion, and is skipped entirely when no super-timeline store is wired, because demote would then
+delete the row rather than move it.
+
 ### The content tagger's promotion window is the import that collected the event
 
 The deterministic content tagger is what lifts high-value telemetry out of `Info` — but it can only

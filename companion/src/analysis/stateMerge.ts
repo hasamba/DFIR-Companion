@@ -1,5 +1,6 @@
 import { renameForgedFindingIds, type AnalysisDelta } from "./responseSchema.js";
 import { combineMarkings } from "./tlp.js";
+import { vendorNote } from "./ipHygiene.js";
 import type {
   InvestigationState,
   Finding,
@@ -142,6 +143,10 @@ export function mergeDelta(
       (i) => i.value.toLowerCase() === incomingLower || (aliasTarget !== undefined && i.id === aliasTarget),
     );
     const canonical = dup ? dup.id : (aliasTarget ?? padIocId(nextSeq++));
+    // The annotation the value carried, or — with none — what a published vendor range says about
+    // the address (#1530). An analyst reading the IOC list then sees "vendor: Microsoft" beside a
+    // service address instead of a bare quad that reads like a C2 lead.
+    const incomingNote = repaired.note || vendorNote(incoming.value);
     if (dup) {
       // Union (not overwrite): the same value can legitimately be extracted from
       // different source events across separate import runs — preserve every link.
@@ -159,7 +164,7 @@ export function mergeDelta(
       }
       // The annotation the value carried is context the existing row may not have yet — keep the
       // first one seen rather than churning it on every re-import.
-      if (repaired.note && !dup.note) dup.note = repaired.note;
+      if (incomingNote && !dup.note) dup.note = incomingNote;
       // #1266: an unmarked row is never demoted by a later marked sighting; a marked row is cleared
       // only by an EVENT-LINKED ordinary sighting (extractedFrom) — the one signal every model
       // delta has already had stripped (responseSchema.ts), so a model restating the value can't
@@ -172,7 +177,7 @@ export function mergeDelta(
         value: incoming.value,
         firstSeen: ctx.timestamp,
         ...(incoming.provenance ? { provenance: incoming.provenance } : {}),
-        ...(repaired.note ? { note: repaired.note } : {}),
+        ...(incomingNote ? { note: incomingNote } : {}),
         ...(incoming.extractedFrom?.length ? { extractedFrom: [...incoming.extractedFrom] } : {}),
       });
     }
