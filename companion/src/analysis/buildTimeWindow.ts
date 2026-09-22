@@ -39,7 +39,7 @@
 // window is gone gets its recorded severity back and its note removed, so a contradicted ledger or
 // a narrowed pattern set does not leave a permanent downgrade behind.
 
-import { appendDerivedNote, DESCRIPTION_BASE_MAX } from "./derivedNote.js";
+import { appendDerivedNote, splitDerivedNotes, DESCRIPTION_BASE_MAX } from "./derivedNote.js";
 import { hostBuildMarkers, type HostHistoryMarker } from "./gapHostHistory.js";
 import { assetKey } from "./gapEdgeClass.js";
 import type { HostRenameRecord } from "./hostRenameRecord.js";
@@ -90,19 +90,25 @@ const MARKER_PATTERNS: ReadonlyArray<{ kind: string; re: RegExp }> = [
 const ACCOUNT_EID_RE = /\(EID (?:4720|4722|4724|4726|4728|4732|4738)\)/;
 const MACHINE_SUBJECT_RE = /\b[A-Za-z0-9][A-Za-z0-9-]{0,62}\$(?!\w)/;
 
+// The row's own text, WITHOUT the notes earlier passes appended. This pass writes `[build-time:
+// packer, …]` onto the rows it caps, and reading that back would make every capped row a marker on
+// the next settle: the cluster would grow by a margin each import and walk into real activity.
+// splitDerivedNotes is the registry-aware split, so every derived note is excluded, not just ours.
 function haystack(e: ForensicEvent): string {
-  return `${e.path ?? ""} ${e.processName ?? ""} ${e.parentName ?? ""} ${e.commandLine ?? ""} ${e.description} ${e.message ?? ""}`.toLowerCase();
+  const base = splitDerivedNotes(e.description).base;
+  return `${e.path ?? ""} ${e.processName ?? ""} ${e.parentName ?? ""} ${e.commandLine ?? ""} ${base} ${e.message ?? ""}`.toLowerCase();
 }
 
 // Is the SUBJECT of an account-management record the machine's own account? Read from the canonical
 // envelope when the importer built one (the subject is a field there, not prose), else from the
 // rendered `WORKGROUP\WIN-0NNTB2RTNB1$` the Windows mapper writes into the description.
 function machineAccountSubject(e: ForensicEvent): boolean {
-  if (!ACCOUNT_EID_RE.test(e.description)) return false;
+  const base = splitDerivedNotes(e.description).base;
+  if (!ACCOUNT_EID_RE.test(base)) return false;
   const subject = e.canonical?.subject;
   if (subject && typeof subject.name === "string" && subject.name.trim())
     return MACHINE_SUBJECT_RE.test(subject.name.trim());
-  return MACHINE_SUBJECT_RE.test(e.description);
+  return MACHINE_SUBJECT_RE.test(base);
 }
 
 /** Why this row reads as provisioning, or null. Pure string/field tests — no state. */
@@ -131,13 +137,23 @@ const HARD_SIGNAL_PATTERNS: ReadonlyArray<{ reason: string; re: RegExp }> = [
   },
 ];
 
-/** Why this row must keep its grade inside a provisioning window, or null. */
+/**
+ * A signal no build produces, or null. CONTENT ONLY — this is what vetoes a whole window, so it must
+ * name something a provisioning run cannot write. A promoted row is handled separately: promotion is
+ * a decision about ONE row (and the second-look loop makes most of them, on Info telemetry), so it
+ * protects that row's grade without telling us anything about the burst around it. Reading promotion
+ * as a veto emptied every window on the real case — 135 machine-promoted Info rows sat inside them.
+ */
 export function hardAttackerSignal(e: ForensicEvent): string | null {
-  if (e.promotedAt) return "analyst-promoted";
   const hay = haystack(e);
   for (const p of HARD_SIGNAL_PATTERNS) if (p.re.test(hay)) return p.reason;
   if (e.path && ransomwareSignal(e.path)) return "ransomware signal";
   return null;
+}
+
+/** Why this ROW keeps its grade inside a window, or null: a hard signal, or the analyst's own pull. */
+export function protectedFromCap(e: ForensicEvent): string | null {
+  return e.promotedAt ? "promoted row" : hardAttackerSignal(e);
 }
 
 // ───────────────────────────── windows ─────────────────────────────
@@ -169,6 +185,31 @@ function chainOf(chains: readonly HostHistoryMarker[], e: ForensicEvent): HostHi
   return key ? chains.find((c) => c.names.includes(key)) : undefined;
 }
 
+// The rename bounds each chain owns, from OBSERVED bases only. `analyst` is one import's manual
+// attribution, not something the machine or a collector wrote (#1496), so it never corroborates a
+// build window — the same rule gapHostHistory.ts applies to the history cut.
+const shortKey = (name: string): string => name.trim().split(".")[0].toUpperCase();
+
+function observedBoundsByHost(
+  chains: readonly HostHistoryMarker[],
+  renames: readonly HostRenameRecord[],
+): Map<string, number[]> {
+  const out = new Map<string, number[]>();
+  for (const r of renames) {
+    if (r.basis === "analyst") continue;
+    const ms = Date.parse(r.until);
+    if (Number.isNaN(ms)) continue;
+    const chain = chains.find(
+      (c) => c.names.includes(shortKey(r.formerName)) || c.names.includes(shortKey(r.currentName)),
+    );
+    if (!chain) continue;
+    const list = out.get(chain.host);
+    if (list) list.push(ms);
+    else out.set(chain.host, [ms]);
+  }
+  return out;
+}
+
 /**
  * The provisioning windows this case's evidence supports. `chains` comes from the rename ledger
  * (hostBuildMarkers), so a case that never learned a rename has no chain, no host identity to bound
@@ -180,10 +221,7 @@ export function buildTimeWindows(
 ): BuildTimeWindow[] {
   const chains = hostBuildMarkers(renames);
   if (chains.length === 0) return [];
-  const bounds = renames
-    .map((r) => Date.parse(r.until))
-    .filter((ms) => !Number.isNaN(ms))
-    .sort((a, b) => a - b);
+  const bounds = observedBoundsByHost(chains, renames);
 
   // 1–2. Markers, per chain, in time order → clusters.
   const marked = events
@@ -208,7 +246,9 @@ export function buildTimeWindows(
     const start = c.first - WINDOW_MARGIN_MS;
     const end = c.last + WINDOW_MARGIN_MS;
     const count = [...c.kinds.values()].reduce((a, b) => a + b, 0);
-    const hasBound = bounds.some((ms) => ms >= start && ms <= end);
+    // Only THIS host's own observed bounds corroborate it: another machine's rename, or an analyst's
+    // manual attribution, says nothing about what this one was doing.
+    const hasBound = (bounds.get(c.chain.host) ?? []).some((ms) => ms >= start && ms <= end);
     const dense = count >= MIN_MARKERS && c.kinds.size >= MIN_MARKER_KINDS;
     if (!hasBound && !dense) continue;
     windows.push({
@@ -287,13 +327,19 @@ export function capBuildTimeRows(state: InvestigationState): {
   const windows = buildTimeWindows(state.forensicTimeline, state.hostRenames ?? []);
   let changed = 0;
   const forensicTimeline = state.forensicTimeline.map((e) => {
-    const w = windowFor(windows, e);
-    const eligible = !!w && !hardAttackerSignal(e);
-    if (eligible && !e.buildTime) {
+    const found = windowFor(windows, e);
+    const w = found && !protectedFromCap(e) ? found : undefined;
+    if (w && !e.buildTime) {
       changed++;
-      return withNote(e, w!);
+      return withNote(e, w);
     }
-    if (!eligible && e.buildTime) {
+    // The window moved (a later import extended or narrowed the burst): restore first, then re-mark,
+    // so the note and the recorded pre-cap severity describe the window that exists now.
+    if (w && e.buildTime && e.buildTime.window !== `${w.start}/${w.end}`) {
+      changed++;
+      return withNote(withoutNote(e), w);
+    }
+    if (!w && e.buildTime) {
       changed++;
       return withoutNote(e);
     }
@@ -362,17 +408,16 @@ export function buildTimeContextBlock(
       return `- ${start} → ${end}: ${v.marker} (${v.count} row${v.count === 1 ? "" : "s"}, capped at Low)`;
     });
 
+  // Each host is measured against ITS OWN provisioning boundary (#1503). A single case-wide boundary
+  // would let a machine built last month hide an attack that happened on another host before it, and
+  // a row on a host the ledger never renamed is never filtered at all.
   const chains = hostBuildMarkers(renames);
-  const historyBound = chains.length
-    ? Math.max(...chains.map((c) => Date.parse(c.before)).filter((n) => !Number.isNaN(n)))
-    : NaN;
   const real = events
-    .filter(
-      (e) =>
-        !e.buildTime &&
-        SEVERITY_RANK[e.severity] <= SEVERITY_RANK.Medium &&
-        (Number.isNaN(historyBound) || Date.parse(e.timestamp) >= historyBound),
-    )
+    .filter((e) => {
+      if (e.buildTime || SEVERITY_RANK[e.severity] > SEVERITY_RANK.Medium) return false;
+      const bound = Date.parse(chainOf(chains, e)?.before ?? "");
+      return Number.isNaN(bound) || Date.parse(e.timestamp) >= bound;
+    })
     .map((e) => e.timestamp)
     .filter((t) => !Number.isNaN(Date.parse(t)))
     .sort();

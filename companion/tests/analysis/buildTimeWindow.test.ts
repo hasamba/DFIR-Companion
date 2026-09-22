@@ -7,6 +7,7 @@ import {
   buildTimeWindows,
   capBuildTimeRows,
   hardAttackerSignal,
+  protectedFromCap,
   renderBuildTimeTag,
 } from "../../src/analysis/buildTimeWindow.js";
 import { applyToForensicEvent } from "../../src/analysis/tagger.js";
@@ -272,7 +273,11 @@ describe("capBuildTimeRows", () => {
     const row = state.forensicTimeline.find((e) => e.id === "d6")!;
     expect(row.severity).toBe("Critical");
     expect(row.buildTime).toBeUndefined();
-    expect(hardAttackerSignal(row)).toBe("analyst-promoted");
+    expect(protectedFromCap(row)).toBe("promoted row");
+    // …and promotion protects that ROW only: it never vetoes the window around it, or the 135
+    // second-look-promoted Info rows of the real case would empty every window.
+    expect(hardAttackerSignal(row)).toBeNull();
+    expect(state.forensicTimeline.find((e) => e.id === "d7")!.severity).toBe("Low");
   });
 });
 
@@ -324,5 +329,95 @@ describe("what the readers see", () => {
     expect(mixed.allBuild).toBe(false);
     expect(mixed.build).toBe(1);
     expect(mixed.firstOutside).toBe("2026-09-22T08:32:10Z");
+  });
+});
+
+describe("the adversarial cases a code review found (#1529)", () => {
+  it("does not grow the window across repeated settles — the note it writes is not a marker", () => {
+    // A row 45 minutes after the last December marker: outside the first window, and it must stay
+    // outside however many times the pass runs. Before the fix the capped rows' own
+    // "[build-time: packer …]" notes read as packer markers and walked the cluster forward.
+    const later = ev("late", "2025-12-05T04:12:00Z", {
+      severity: "High",
+      description: "Cobalt Strike beacon to 198.51.100.7:443",
+    });
+    let state = stateWith([...decemberBuild(), ...augustBuild(), later]);
+    for (let i = 0; i < 5; i++) state = capBuildTimeRows(state).state;
+    const row = state.forensicTimeline.find((e) => e.id === "late")!;
+    expect(row.severity).toBe("High");
+    expect(row.buildTime).toBeUndefined();
+    expect(capBuildTimeRows(state).changed).toBe(0);
+  });
+
+  it("does not let another host's rename corroborate a lone marker", () => {
+    // One servicing row on FILE-SRV-02, at the very minute DESKTOP-16OJFO6 was renamed.
+    const other: HostRenameRecord[] = [
+      ...renames,
+      {
+        formerName: "WIN-9ABCDEF1234",
+        currentName: "FILE-SRV-02",
+        until: "2027-03-01T00:00:00.000Z",
+        basis: "collector",
+      },
+    ];
+    const lone = [
+      ev("o1", "2026-08-26T13:50:00Z", {
+        severity: "High",
+        asset: "FILE-SRV-02",
+        path: "C:\\Windows\\Installer\\msi9f21.tmp",
+        description: "Installer artifact",
+      }),
+    ];
+    expect(buildTimeWindows(lone, other)).toEqual([]);
+  });
+
+  it("ignores an analyst-declared rename as corroboration", () => {
+    const declared: HostRenameRecord[] = [
+      {
+        formerName: "WIN-UK1GV882OK6",
+        currentName: HOST,
+        until: "2027-05-02T10:00:00.000Z",
+        basis: "analyst",
+      },
+      ...renames,
+    ];
+    const lone = [
+      ev("p1", "2027-05-02T10:01:00Z", {
+        severity: "High",
+        path: "C:\\Windows\\WinSxS\\amd64_x\\f.dll",
+        description: "Servicing artifact",
+      }),
+    ];
+    expect(buildTimeWindows(lone, declared)).toEqual([]);
+  });
+
+  it("measures each host against its own provisioning boundary in the context block", () => {
+    // FILE-SRV-02 was attacked in January; DESKTOP-16OJFO6 was still being built in August. A
+    // single case-wide boundary hid the January row and told the model to start the story later.
+    const multi: HostRenameRecord[] = [
+      {
+        formerName: "WIN-0NNTB2RTNB1",
+        currentName: "DESKTOP-16OJFO6",
+        until: "2026-08-26T13:49:53.000Z",
+        basis: "collector",
+      },
+      {
+        formerName: "WIN-9ABCDEF1234",
+        currentName: "FILE-SRV-02",
+        until: "2025-06-01T09:00:00.000Z",
+        basis: "collector",
+      },
+    ];
+    const attack = ev("f1", "2026-01-15T22:10:00Z", {
+      severity: "High",
+      asset: "FILE-SRV-02",
+      description: "Cobalt Strike beacon to 198.51.100.7:443",
+    });
+    const { state } = capBuildTimeRows({
+      ...stateWith([...decemberBuild(), ...augustBuild(), attack]),
+      hostRenames: multi,
+    });
+    const block = buildTimeContextBlock(state.forensicTimeline, multi);
+    expect(block).toContain("2026-01-15T22:10:00Z");
   });
 });
