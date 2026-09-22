@@ -11,6 +11,8 @@ import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import { MockProvider } from "../../src/providers/provider.js";
 import { createApp } from "../../src/server.js";
 import { CustomToolStore } from "../../src/integrations/tools/customToolStore.js";
+// The log's filename comes from the implementation, so the test cannot drift from it.
+import { DROP_LOG_FILE } from "../../src/analysis/dropLog.js";
 
 // #1153: the evidence drop folder had no notion of "a binary this codebase natively parses" — a
 // BTM file's raw bytes (bplist keyed archive) trip dropScan.ts's own looksBinary() NUL-byte sniff,
@@ -102,6 +104,23 @@ async function waitForCondition(check: () => Promise<boolean>, deadlineMs = 20_0
 async function fileExistsIn(dir: string, name: string): Promise<boolean> {
   const entries = await readdir(dir).catch(() => [] as string[]);
   return entries.includes(name);
+}
+
+// drop-log.txt is appended at the END of a sweep — composition/dropFolder.ts writes it BELOW both
+// the move into _failed/ and the drop-status record. So "the file arrived in _failed" is not a safe
+// wait for an assertion about the LOG: the log line is a later, separate write. On a loaded Windows
+// runner the gap is wide enough to lose, and the miss did not read as a miss — the assertion's
+// `readFile(...).catch(() => "")` turned an ENOENT into an empty string, so a log that had not been
+// written yet failed as `expected '' to contain '2097935 bytes'`, which reads like a content bug
+// (#1544). Wait for the log's own content, and let a genuinely missing file throw.
+async function dropLogMentioning(dropDir: string, relpath: string): Promise<string> {
+  let raw = "";
+  await waitForCondition(async () => {
+    // Only the not-there-yet case is swallowed, and only while polling — the read below is real.
+    raw = await readFile(join(dropDir, DROP_LOG_FILE), "utf8").catch(() => "");
+    return raw.includes(relpath);
+  });
+  return readFile(join(dropDir, DROP_LOG_FILE), "utf8");
 }
 
 describe("drop-folder auto-importer — macOS Background Task Management (#1153)", () => {
@@ -309,7 +328,9 @@ describe("drop-folder auto-importer — macOS Background Task Management (#1153)
       // Asserts the REAL size and the REAL 1 MB cap both appear — a bare /too large/i match would
       // also pass on a broken `${err.size}`/`${err.maxBytes}` interpolation (Ollama code review
       // finding), so this pins the actual numbers, not just the word "large".
-      const raw = await readFile(join(dropDir, "drop-log.txt"), "utf8").catch(() => "");
+      // Waits on the file's own log line, not on the byte counts — so a broken interpolation still
+      // fails the assertions below instead of quietly timing out the wait.
+      const raw = await dropLogMentioning(dropDir, "backgrounditems.btm");
       expect(raw).toContain(`${realSize} bytes`);
       expect(raw).toContain(`${1024 * 1024}-byte cap`);
     } finally {
