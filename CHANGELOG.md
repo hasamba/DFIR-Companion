@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Deep pass says when it has nothing new to read** — the pre-flight preview reports what the last synthesis read; if it dropped no event for the size limit, the panel says a deep pass would read the same or fewer and Run is off unless the analyst ticks *Run anyway*; a timeline changed since is called stale (closes #1457)
 
 ### Fixed
+- **A VM's own provisioning day stops becoming the top findings** — rows inside a corroborated build window (packer/Vagrant/Chocolatey/Autounattend markers, machine-account account changes, OS servicing) are capped at Low with a `build-time` note, a finding built only on them is floored and labelled "build baseline", a mixed finding is dated from its first non-build row, and synthesis is told where the story really starts; NTDS.dit, an LSASS dump, recovery inhibition, coercion tooling, a ransom note and an analyst-promoted row are never capped (closes #1529)
 - **Super-timeline follows a learned rename** — rows dual-written or demoted under a former hostname are re-homed with the forensic ones, so both records show one host (closes #1508)
 - **`assetHost` refused where it is ignored** — the dedicated per-format import routes now 400 a declared host instead of silently dropping it (closes #1509)
 - **Path redaction closes two leaks** — a quoted absolute path outside the known roots, and a top-level name matched mid-word (`/srv2`) (closes #1512)
