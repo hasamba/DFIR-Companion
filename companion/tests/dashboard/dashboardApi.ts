@@ -518,3 +518,11 @@ export interface VeloCollectApi {
   activeCaseId: string | null;
   veloEnabled: boolean;
 }
+
+// public/js/dashboard-case-picker.js — the toolbar box shows the case NAME while the hidden
+// #caseId keeps the id every other module reads (#1523).
+export interface CasePickerApi {
+  initCasePicker(): void;
+  loadCaseList(): Promise<void>;
+  syncCasePicker(): void;
+}

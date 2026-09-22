@@ -244,6 +244,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-bulk-ioc.js": "application/javascript; charset=utf-8",
   // Case unlock prompt — the password a protected case is guarded by.
   "/js/dashboard-case-unlock.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-case-picker.js": "application/javascript; charset=utf-8",
   // New case creation — name a case, pick a template, seed the demo case.
   "/js/dashboard-new-case.js": "application/javascript; charset=utf-8",
   // Case templates and incident types — the new-case template picker and its caches.

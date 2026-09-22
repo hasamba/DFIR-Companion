@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Case picker shows case names** — the toolbar box lists and shows the case name; the id stays in the URL and exports, and same-name cases are listed as `name (id)` (closes #1523)
 - **A host's build history is not dwell time** — a renamed host's rows before its earliest rename bound are set aside from gap analysis and summarised in one Info row; a silence between two servicing artifacts is idle time on every surface; the Medium dwell interval and the waves finding now need attacker-graded (High/Critical) activity on both sides, on the same host (closes #1503)
 - **"Which host did this file come from?"** — a Windows log export that names no collector (a GUI/notebook download) is asked, per file, which host it came from; its records land on that host with old names as former names, the case remembers the rename as an analyst assertion, and the drop folder takes the same through an `asset=<HOST>` subfolder (closes #1496)
 - **Story so far: intrusion shape, missing stages, copy as brief** — span/dwell/hosts/accounts strip, greyed cards for stages with no evidence linking to Evidence Gaps, and a one-click plain-text brief (closes #1493)

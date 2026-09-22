@@ -49,7 +49,7 @@ test("Escape closes the dialog and restores focus to the invoking control", asyn
   await page.goto("/dashboard");
 
   // Focus a real control first, so there is something to restore focus TO.
-  const invoker = page.locator("#caseId");
+  const invoker = page.locator("#casePicker");
   await invoker.focus();
 
   await openOverlay(page, "enrichOverlay");
@@ -64,7 +64,7 @@ test("Escape closes the dialog and restores focus to the invoking control", asyn
 
 test("closing by the app's own class toggle also restores focus", async ({ page }) => {
   await page.goto("/dashboard");
-  const invoker = page.locator("#caseId");
+  const invoker = page.locator("#casePicker");
   await invoker.focus();
 
   await openOverlay(page, "anonOverlay");
