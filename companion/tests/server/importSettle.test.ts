@@ -396,3 +396,104 @@ describe("settleForensicImport — carries learned renames onto rows already in 
     expect(append.mock.calls[0][1].map((e) => e.id)).toEqual(["new"]);
   });
 });
+
+// The super-timeline holds its own copies of every row — dual-written, or Info rows demote captured
+// that live only there — and the carry above never sees them (#1508). When the settle learns a
+// rename, the seam re-homes the super-timeline from its own rows, so both records show one host.
+describe("settleForensicImport — re-homes the super-timeline copies too (#1508)", () => {
+  const OLD = "WIN-UK1GV882OK6";
+  const NEW = "DESKTOP-16OJFO6";
+  const renames: InvestigationState["hostRenames"] = [
+    { formerName: OLD, currentName: NEW, until: "2026-08-26T13:49:52.000Z", basis: "machine-account" },
+  ];
+  const under = (id: string, severity: ForensicEvent["severity"]): ForensicEvent => ({
+    ...ev(id, severity, `x @ ${OLD}`),
+    asset: OLD,
+    assetRecord: OLD,
+    timestamp: "2025-12-05T03:02:24Z",
+  });
+  function fakeSuper(rows: ForensicEvent[]) {
+    const rehome = vi.fn(async (_c: string, events: ForensicEvent[]) => events.length);
+    return {
+      store: {
+        append: vi.fn(async (_c: string, events: ForensicEvent[]) => events.length),
+        rehome,
+        eventBatches: async function* () {
+          yield rows.slice(0, 1);
+          yield rows.slice(1);
+        },
+      },
+      rehome,
+    };
+  }
+
+  it("re-homes the super-only Info row AND the carried row's copy when the ledger is learned", async () => {
+    const carried = under("carried", "High");
+    const before = state([carried]); // no ledger yet
+    const merged = { ...state([carried]), hostRenames: renames } as InvestigationState;
+    const superOnly = under("info-only", "Info");
+    const { store, rehome } = fakeSuper([superOnly, carried]);
+    const onSuperTimeline = vi.fn();
+    const deps = {
+      stateStore: { load: async () => merged, save: async () => {} },
+      superTimelineStore: store,
+      onSuperTimeline,
+      autoTagImported: async () => {},
+      demoteForensicForCase: async () => merged,
+    };
+    await settleForensicImport(deps, "c1", before);
+    const written = rehome.mock.calls.flatMap((c) => c[1]);
+    expect(written.map((e) => e.id).sort()).toEqual(["carried", "info-only"]);
+    for (const e of written) {
+      expect(e.asset).toBe(NEW);
+      expect(e.description).toContain(`[logged under former hostname ${OLD}]`);
+    }
+    expect(written.find((e) => e.id === "info-only")?.severity).toBe("Info");
+    expect(onSuperTimeline).toHaveBeenCalledWith("c1");
+  });
+
+  it("runs when the ledger changed even though no forensic row moved (every old-name row was Info)", async () => {
+    const before = state([ev("unrelated", "High")]);
+    const merged = { ...state([ev("unrelated", "High")]), hostRenames: renames } as InvestigationState;
+    const { store, rehome } = fakeSuper([under("info-only", "Info")]);
+    const deps = {
+      stateStore: { load: async () => merged, save: async () => {} },
+      superTimelineStore: store,
+      autoTagImported: async () => {},
+      demoteForensicForCase: async () => merged,
+    };
+    await settleForensicImport(deps, "c1", before);
+    expect(rehome.mock.calls.flatMap((c) => c[1]).map((e) => e.id)).toEqual(["info-only"]);
+  });
+
+  it("touches nothing when the ledger did not change", async () => {
+    const before = { ...state([ev("a", "High")]), hostRenames: renames } as InvestigationState;
+    const merged = {
+      ...state([ev("a", "High"), ev("b", "High")]),
+      hostRenames: renames,
+    } as InvestigationState;
+    const { store, rehome } = fakeSuper([under("info-only", "Info")]);
+    const deps = {
+      stateStore: { load: async () => merged, save: async () => {} },
+      superTimelineStore: store,
+      autoTagImported: async () => {},
+      demoteForensicForCase: async () => merged,
+    };
+    await settleForensicImport(deps, "c1", before);
+    expect(rehome).not.toHaveBeenCalled();
+  });
+
+  it("a failing super re-home does not fail the import", async () => {
+    const before = state([]);
+    const merged = { ...state([]), hostRenames: renames } as InvestigationState;
+    const { store } = fakeSuper([under("info-only", "Info")]);
+    store.rehome.mockRejectedValue(new Error("disk"));
+    const deps = {
+      stateStore: { load: async () => merged, save: async () => {} },
+      superTimelineStore: store,
+      autoTagImported: async () => {},
+      demoteForensicForCase: async () => merged,
+    };
+    await expect(settleForensicImport(deps, "c1", before)).resolves.toBeTruthy();
+  });
+});

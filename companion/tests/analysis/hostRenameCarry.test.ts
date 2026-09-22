@@ -2,7 +2,7 @@
 // was a former one are re-homed — and re-homed BACK when the case learns the pair is ambiguous.
 // Only a row that kept the name it wrote (`assetRecord`) is ever touched.
 import { describe, it, expect } from "vitest";
-import { carryHostRenames } from "../../src/analysis/hostRenameCarry.js";
+import { carryHostRenames, rehomeEvents } from "../../src/analysis/hostRenameCarry.js";
 import { emptyState, type ForensicEvent, type InvestigationState } from "../../src/analysis/stateTypes.js";
 import { createCanonicalEvent, type CanonicalEntity } from "../../src/analysis/canonicalEvent.js";
 
@@ -177,6 +177,47 @@ describe("carryHostRenames — what it never touches", () => {
     const out = carryHostRenames(state);
     expect(out.changed).toBe(0);
     expect(out.state).toBe(state);
+  });
+});
+
+// The same recomputation over rows the state does not hold — the super-timeline's copies, which
+// carryHostRenames never sees (#1508). Only the rows that differ come back, so the caller writes
+// exactly those and nothing else.
+describe("rehomeEvents — the ledger applied to rows outside the state (#1508)", () => {
+  it("returns only the rows the ledger changes, re-homed", () => {
+    const rows = [
+      ev({ id: "folds", asset: OLD, assetRecord: OLD, canonical: envelope({ kind: "host", name: OLD }) }),
+      ev({ id: "collector", asset: OLD }), // no record name: collector-identified or forwarded
+      ev({ id: "generic", asset: OLD, description: "Zeek conn 10.0.0.5 -> 10.0.0.9" }),
+      ev({ id: "late", asset: OLD, assetRecord: OLD, timestamp: "2026-09-01T00:00:00.000Z" }),
+      ev({
+        id: "done",
+        asset: NEW,
+        assetRecord: OLD,
+        description: `x @ ${OLD} [logged under former hostname ${OLD}]`,
+      }),
+    ];
+    const out = rehomeEvents(rows, withLedger([]));
+    expect(out.map((e) => e.id)).toEqual(["folds"]);
+    expect(out[0].asset).toBe(NEW);
+    expect(out[0].assetRecord).toBe(OLD);
+    expect(out[0].description).toContain(`[logged under former hostname ${OLD}]`);
+    expect(out[0].canonical?.target).toEqual({ kind: "host", name: NEW });
+    expect(rows[0].asset).toBe(OLD); // the input is not mutated
+  });
+
+  it("keeps an Info row's severity: the super-timeline copy is re-homed, never re-graded", () => {
+    const row = ev({ id: "info", asset: OLD, assetRecord: OLD, severity: "Info" });
+    const out = rehomeEvents([row], withLedger([]));
+    expect(out).toHaveLength(1);
+    expect(out[0].severity).toBe("Info");
+    expect(out[0].asset).toBe(NEW);
+  });
+
+  it("returns nothing for a case with no ledger, or for a former name that is a live collector", () => {
+    const row = ev({ id: "e1", asset: OLD, assetRecord: OLD });
+    expect(rehomeEvents([row], emptyState("C1"))).toEqual([]);
+    expect(rehomeEvents([row], withLedger([], { collectorHostnames: [`${OLD}.example.com`] }))).toEqual([]);
   });
 });
 

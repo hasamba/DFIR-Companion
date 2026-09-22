@@ -481,3 +481,65 @@ describe("SuperTimelineStore.collect (#1444)", () => {
     expect((store as unknown as Record<string, unknown>).all).toBeUndefined();
   });
 });
+
+// #1508. A learned hostname rename re-homes the forensic rows at the settle seam, but the
+// super-timeline holds its own copies (dual-written, or Info rows that live only here) and nothing
+// rewrote them: the raw record kept showing the former name beside the current one. `rehome`
+// rewrites a stored row in place — payload, host column and content key together — so the host
+// facet, `get` and the content dedup all follow the new name.
+describe("SuperTimelineStore.rehome (#1508)", () => {
+  const OLD = "WS-OLD";
+  const NEW = "WS-NEW";
+  const TS = "2026-06-01T00:00:00Z";
+  let cases: CaseStore;
+  let store: SuperTimelineStore;
+  beforeEach(async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-super-rehome-"));
+    cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    store = new SuperTimelineStore(cases, 100000);
+  });
+
+  const stored = () => [
+    ev({ id: "e1", timestamp: TS, description: "logon", asset: OLD, assetRecord: OLD }),
+    ev({ id: "e2", timestamp: TS, description: "service start", asset: OLD, assetRecord: OLD }),
+    ev({ id: "other", timestamp: TS, description: "zeek", asset: "WS-THIRD" }),
+  ];
+  const rehomed = (e: ForensicEvent): ForensicEvent => ({
+    ...e,
+    asset: NEW,
+    description: `${e.description} [logged under former hostname ${OLD}]`,
+  });
+
+  it("rewrites the payload, the host facet and the content key of the rows it is given", async () => {
+    await store.append("c1", stored());
+    const before = await store.meta("c1");
+    const updated = await store.rehome("c1", stored().slice(0, 2).map(rehomed));
+    expect(updated).toBe(2);
+
+    const r = await store.query("c1", {});
+    expect(r.hosts).toEqual([NEW, "WS-THIRD"]);
+    expect(r.total).toBe(3);
+    expect((await store.get("c1", "e1"))?.asset).toBe(NEW);
+    expect((await store.get("c1", "e1"))?.description).toBe(`logon [logged under former hostname ${OLD}]`);
+    const meta = await store.meta("c1", { hosts: 10 });
+    expect(meta.hosts).toEqual([NEW, "WS-THIRD"]);
+    expect(meta.generation).toBeGreaterThan(before.generation); // live views refresh
+    // The content key follows: a later row with the re-homed content is a duplicate, and one under
+    // the former name no longer collides with anything.
+    expect(await store.append("c1", [ev({ ...rehomed(stored()[0]), id: "dup" })])).toBe(0);
+    expect(await store.append("c1", [ev({ ...stored()[0], id: "under-old" })])).toBe(1);
+    // The typed read path sees the new host too.
+    const byHost = await store.queryIndexed("c1", { host: NEW });
+    expect(byHost.entities.map((e) => e.id).sort()).toEqual(["e1", "e2"]);
+  });
+
+  it("skips an id the store does not hold, and leaves the generation alone when nothing changed", async () => {
+    await store.append("c1", stored());
+    const before = await store.meta("c1");
+    expect(await store.rehome("c1", [rehomed(ev({ id: "ghost", timestamp: TS, asset: OLD }))])).toBe(0);
+    expect(await store.rehome("c1", [])).toBe(0);
+    expect((await store.meta("c1")).generation).toBe(before.generation);
+    expect((await store.get("c1", "e1"))?.asset).toBe(OLD);
+  });
+});
