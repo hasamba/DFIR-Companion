@@ -683,6 +683,7 @@ async function dispatch(message) {
     case "rollbackImportBatch": return rollbackImportBatch(message.dbPath, message.kinds, message.afterRowId, message.importBatchId);
     case "migrateSuper": return migrateSuper(message.dbPath, message.eventsPath, message.labelsPath, message.tagsPath, message.excludeAuthorPrefix, message.max);
     case "appendSuper": return appendSuper(message.dbPath, message.events, message.max);
+    case "rehomeSuper": return rehomeSuper(message.dbPath, message.events);
     case "scanSuper": return scanSuper(message.dbPath, message.query || {});
     case "querySuper": return querySuper(message.dbPath, message.query || {});
     case "getSuper": return getSuper(message.dbPath, message.id);

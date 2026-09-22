@@ -28,7 +28,8 @@ come from?* The prompt lists the machine names it saw inside the records.
 
 - **Import as this host** — every record lands on the host you name. A record written under an
   older name keeps a `[logged under former hostname …]` note, and the case remembers the rename,
-  so later files from the same machine fold on their own.
+  so later files from the same machine fold on their own. Rows imported earlier under the older
+  name are re-homed at the next import, in the forensic timeline and in the super-timeline alike.
 - **Import as-is** — the records keep the names inside them (the previous behaviour).
 - **Skip this file** — the file is not imported.
 

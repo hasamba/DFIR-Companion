@@ -229,6 +229,38 @@ function appendSuper(dbPath, events, max) {
   try { return writeSuperEvents(db, events, max); } finally { db.close(); }
 }
 
+// Rewrite stored rows in place once the case learned a hostname rename (#1508): the payload, the
+// host column the facet and the typed reads filter on, the content key the dedup compares, and the
+// value/term indexes all follow, because the write goes through the entity writer's update. The
+// row keeps its row_id and ordinal, so retention age and scan order do not move. An id the store
+// does not hold is skipped — appendSuper would have skipped it the other way round. Returns the
+// count rewritten; the generation is bumped only when that is non-zero, so live views refresh.
+function rehomeSuper(dbPath, events) {
+  if (!existsSync(dbPath)) return 0;
+  const db = openDatabase(dbPath);
+  try {
+    return withTransaction(db, () => {
+      const writer = createEntityWriter(db);
+      const find = db.prepare(
+        "SELECT row_id, ordinal FROM entities WHERE kind='superTimeline' AND entity_id=? ORDER BY ordinal LIMIT 1"
+      );
+      let updated = 0;
+      for (const event of events || []) {
+        const id = scalarText(event && event.id);
+        if (!id) continue;
+        const row = find.get(id);
+        if (!row) continue;
+        writer.update(row.row_id, entityProjection("superTimeline", event, row.ordinal, superContentKey(event)), event);
+        updated++;
+      }
+      if (updated) bumpSuperGeneration(db);
+      return updated;
+    });
+  } finally {
+    db.close();
+  }
+}
+
 // One page of the raw record in the store's order: dated rows by timestamp then row_id, undated
 // rows after every dated one by row_id ("Ordering" in superTimelineStore.ts). Two phases, one per
 // kind of row, so each page is a range read of entities_time_idx (kind, timestamp_ms, row_id).

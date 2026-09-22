@@ -23,6 +23,11 @@
 //   - a former name that is a live collector identity in the case (HostRenameMap.markCollector).
 //
 // Pure: returns a new state when anything changed, the same object when nothing did.
+//
+// The super-timeline holds its own copies of these rows (dual-written, or Info rows that live only
+// there) and the state never sees them; `rehomeEvents` is the same recomputation over any row list
+// against the state's ledger, returning only the rows that differ, for the settle seam to write back
+// through the store (#1508).
 
 import type { ForensicEvent, InvestigationState } from "./stateTypes.js";
 import { HostRenameMap } from "./hostRenameEvidence.js";
@@ -45,6 +50,24 @@ export function carryHostRenames(state: InvestigationState): {
     return next;
   });
   return changed ? { state: { ...state, forensicTimeline }, changed } : { state, changed: 0 };
+}
+
+/**
+ * The rows among `events` that the case's ledger re-homes, re-homed — nothing else comes back, so
+ * the caller writes exactly what changed. Empty when the case has no ledger.
+ */
+export function rehomeEvents(
+  events: readonly ForensicEvent[],
+  state: Pick<InvestigationState, "hostRenames" | "collectorHostnames">,
+): ForensicEvent[] {
+  if (!state.hostRenames?.length) return [];
+  const map = HostRenameMap.from(state.hostRenames, state.collectorHostnames);
+  const changed: ForensicEvent[] = [];
+  for (const e of events) {
+    const next = rehome(e, map);
+    if (next !== e) changed.push(next);
+  }
+  return changed;
 }
 
 // The row as the ledger says it should read, or the row itself when nothing differs.
