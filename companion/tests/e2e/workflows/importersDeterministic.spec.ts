@@ -61,6 +61,25 @@ async function awaitSuperEvent(
 }
 
 /** Poll until an event whose description matches lands in the forensic timeline. */
+// Wait until the import of `kind` has SETTLED — merge, dual-write, tagger AND the demote pass that
+// moves Info rows out of the forensic timeline (routes/importSettle.ts). The merged state is saved
+// and readable through /state a few hundred ms before demote runs, so a test that finds a graded
+// row and then asserts an Info sibling is absent can read the pre-demote window and fail for a
+// leak that is not one (#1522). import-meta is recorded only after settle returns, so the kind
+// landing there is the one honest "the seam has run" signal an API client has.
+async function awaitImportSettled(page: Page, caseId: string, kind: string): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const res = await page.request.get(`/cases/${caseId}/import-meta`);
+        const meta = (await res.json()) as { lastImportKind?: string };
+        return meta.lastImportKind;
+      },
+      { timeout: 20_000 },
+    )
+    .toBe(kind);
+}
+
 async function awaitEvent(page: Page, caseId: string, needle: RegExp): Promise<TimelineEvent> {
   await expect
     .poll(async () => (await timelineOf(page, caseId)).some((e) => needle.test(e.description ?? "")), {
@@ -87,6 +106,7 @@ test("US-284: Cisco ASA syslog imports as telemetry and is detected as ASA", asy
   // on the super-timeline at Info, and it did NOT leak into the forensic record.
   const event = await awaitSuperEvent(page, demoCase, "185.143.62.40", /185\.143\.62\.40/);
   expect(event.severity, "plain connection teardown is telemetry, not an alert").toBe("Info");
+  await awaitImportSettled(page, demoCase, "asa");
   expect(
     (await timelineOf(page, demoCase)).some((e) => /185\.143\.62\.40/.test(e.description ?? "")),
     "Info telemetry leaked into the forensic timeline",
@@ -200,7 +220,8 @@ test("US-288 + US-263/US-264: shell history imports timestamped commands, graded
   // Info, and per the forensic/super-timeline boundary an Info event never reaches the forensic
   // timeline. It lives on the analyst-only super-timeline, WITH its discovery technique tag. Both
   // halves are asserted where each actually lives; finding whoami in the forensic timeline would
-  // itself be a boundary regression.
+  // itself be a boundary regression — once the import has settled, which is when demote has run.
+  await awaitImportSettled(page, demoCase, "bashhistory");
   expect(
     (await timelineOf(page, demoCase)).some((e) => /\bwhoami\b/.test(e.description ?? "")),
     "an ungraded recon command leaked into the forensic timeline",
