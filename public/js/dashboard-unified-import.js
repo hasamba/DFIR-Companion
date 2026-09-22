@@ -1,12 +1,22 @@
 // Unified import — one button that takes any evidence file and lets the server work out what it is
 // (#415 tier 3).
 //
-// LIKE THE ASSET OVERRIDES MODULE, THIS IS ONLY AN INITIALIZER: no declarations, no state, two
-// statements of listener wiring that happen to be 149 lines long. Nothing outside calls into it.
+// LIKE THE ASSET OVERRIDES MODULE, THIS IS (ALMOST) ONLY AN INITIALIZER: two statements of
+// listener wiring that happen to be 149 lines long, plus one flag. Nothing outside calls into it.
 //
 // In a <head> script both would run before the import controls exist and bind nothing, which for
 // this feature means the primary import button does nothing and says nothing.
 (function () {
+  // ONE RUN AT A TIME (#1511). askMinSeverity / askImportAssetHost are promise-per-prompt on a
+  // single shared overlay each, so a second batch started while the first waits on a prompt would
+  // overwrite the overlay's handlers and orphan the first promise — the first run never finishes
+  // and its files never land. The overlay stops a click, but not Shift+Tab + Enter onto #importBtn
+  // behind it, and two batches must not interleave even without a prompt open. The guard lives on
+  // the loop, not on the prompts: the button refuses to open the picker, and a second onchange
+  // returns at once. The handler's finally clears the flag on every exit — early return or throw.
+  let importInFlight = false;
+  const IMPORT_BUSY_MESSAGE = "an import is already running — wait for it to finish";
+
   function initUnifiedImport() {
     // ── Unified import: one button, the server auto-detects the file type ─────
     // Images go through the same /captures path the extension uses; a recognized binary
@@ -14,6 +24,10 @@
     // POSTed to /import, where the server sniffs it (JSON/CSV/log + per-format signatures)
     // and routes it to the right importer. Multiple files can be selected at once.
     document.getElementById("importBtn").onclick = () => {
+      if (importInFlight) {
+        document.getElementById("status").textContent = IMPORT_BUSY_MESSAGE;
+        return;
+      }
       const caseId = document.getElementById("caseId").value.trim();
       if (!caseId) {
         document.getElementById("status").textContent =
@@ -28,269 +42,279 @@
       document.getElementById("importFile").click();
     };
     document.getElementById("importFile").onchange = async (e) => {
-      const caseId = document.getElementById("caseId").value.trim();
-      const files = Array.from(e.target.files || []);
-      if (!caseId || !files.length) return;
-      const statusEl = document.getElementById("status");
-      const permissionError = importPermissionMessage(caseId);
-      if (permissionError) {
-        cancelImportProgress();
-        statusEl.textContent = permissionError;
+      if (importInFlight) {
+        document.getElementById("status").textContent = IMPORT_BUSY_MESSAGE;
         e.target.value = "";
         return;
       }
-      const isImage = (f) =>
-        /^image\//.test(f.type) || /\.(png|jpe?g|webp)$/i.test(f.name);
-      // Raw evidence an external tool handles (built-in EVTX/PCAP + any extension a CUSTOM tool claims)
-      // can't be read as text. The set of "raw" extensions comes from /tools/status so custom tools work
-      // too. Ask the analyst (one banner for the batch) whether to run a tool; never send raw through the
-      // text import path. #211
-      const rawExtSet = await fetchRawToolExts();
-      const isRawTool = (f) =>
-        rawExtSet.has(uploadExtOf(f.name));
-      const images = files.filter(isImage);
-      const rawTool = files.filter((f) => !isImage(f) && isRawTool(f));
-      const data = files.filter((f) => !isImage(f) && !isRawTool(f));
-      if (rawTool.length) askRunToolsOnImport(caseId, rawTool);
-      if (!data.length && !images.length) {
-        e.target.value = "";
-        return;
-      }
-
-      // Minimum severity to import — restored across all import types. Asked once for the
-      // whole batch (data files only; screenshots have no severity). Imports that don't grade
-      // severity (e.g. KAPE, Plaso, plain telemetry) are kept in full regardless of this floor;
-      // "info" (or Cancel-then-keep) imports everything. The server normalizes the value.
-      // A remembered choice (askMinSeverity → IMPORT_SEV_KEY) skips the dialog entirely.
-      let minSeverity = "";
-      if (data.length) {
-        const ans = await askMinSeverity();
-        if (ans === null) {
+      importInFlight = true;
+      try {
+        const caseId = document.getElementById("caseId").value.trim();
+        const files = Array.from(e.target.files || []);
+        if (!caseId || !files.length) return;
+        const statusEl = document.getElementById("status");
+        const permissionError = importPermissionMessage(caseId);
+        if (permissionError) {
+          cancelImportProgress();
+          statusEl.textContent = permissionError;
           e.target.value = "";
           return;
-        } // cancelled the whole import
-        minSeverity = ans;
-      }
-      // Declared web-log trailer profile (#993) — only "combinedlog" imports read it; every other
-      // kind's field is ignored server-side, so it's safe to send on every file in the batch.
-      const webLogFormat =
-        typeof getWebTrailerProfile === "function" && getWebTrailerProfile()
-          ? "squid_combined"
-          : "";
-
-      // Data files → the unified /import endpoint (server auto-detects + routes).
-      // Files over 200 MB would OOM the browser tab if read via FileReader, so for those
-      // we prompt for the full local path and let the server read the file directly instead.
-      const LARGE_FILE_MB = 200;
-      const kinds = {};
-      let dataFail = 0,
-        aiOffSkipped = 0;
-      const refused = []; // per-file refusal sentences the analyst must see, not just a count (#1360)
-      if (data.length) showImportProgressIndeterminate();
-      for (let i = 0; i < data.length; i++) {
-        const f = data[i];
-        statusEl.textContent = `importing ${i + 1}/${data.length}: ${f.name}…`;
-        // A container this codebase names but does not decode (#1360): refuse it here, before it is
-        // read as text or sent anywhere, with the same sentence the server's text path would return.
-        const undecoded = undecodedBinaryImportHint(f.name);
-        if (undecoded) {
-          dataFail++;
-          refused.push(undecoded);
-          continue;
         }
-        try {
-          let r;
-          if (f.size > LARGE_FILE_MB * 1024 * 1024) {
-            const filePath = prompt(
-              `"${f.name}" is ${Math.round(f.size / 1024 / 1024)} MB — too large to load in the browser.\n\n` +
-                `Enter the full path to this file on your machine so the server reads it directly\n` +
-                `(e.g. C:\\Users\\you\\Downloads\\${f.name}):`,
-              f.name,
-            );
-            if (!filePath) {
-              dataFail++;
-              continue;
-            }
-            // Large file: server reads from disk — bar stays indeterminate until WebSocket N/M updates arrive.
-            r = await fetch(`/cases/${caseId}/import-file`, {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ path: filePath, minSeverity, webLogFormat }),
-            });
-          } else if (looksLikeBinaryImportName(f.name)) {
-            // A binary plist (macOS login items, #1301): sent as bytes — reading it as text would
-            // corrupt it. Same base64-in-JSON envelope the tool run-upload path uses.
-            const dataBase64 = await fileToBase64(f);
-            showImportProgress(40);
-            r = await fetch(`/cases/${caseId}/import-binary`, {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({ filename: f.name, dataBase64 }),
-            });
-          } else {
-            // Small file: read in browser with progress (0→40%), then upload (bar holds at 40% until server N/M).
-            const text = await readFileTextWithProgress(f);
-            // A Windows log export that names no collector (#1496): ask which host THIS file came
-            // from — per file, never carried to the next one. Blank keeps the record names; the
-            // third button skips the file. Large and binary uploads above are never probed.
-            let assetHost = "";
-            const probe = typeof probeBareWindowsExport === "function" ? probeBareWindowsExport(text) : null;
-            if (probe && probe.bare) {
-              const ans = await askImportAssetHost(f.name, probe.computers);
-              if (ans === null) {
+        const isImage = (f) =>
+          /^image\//.test(f.type) || /\.(png|jpe?g|webp)$/i.test(f.name);
+        // Raw evidence an external tool handles (built-in EVTX/PCAP + any extension a CUSTOM tool claims)
+        // can't be read as text. The set of "raw" extensions comes from /tools/status so custom tools work
+        // too. Ask the analyst (one banner for the batch) whether to run a tool; never send raw through the
+        // text import path. #211
+        const rawExtSet = await fetchRawToolExts();
+        const isRawTool = (f) =>
+          rawExtSet.has(uploadExtOf(f.name));
+        const images = files.filter(isImage);
+        const rawTool = files.filter((f) => !isImage(f) && isRawTool(f));
+        const data = files.filter((f) => !isImage(f) && !isRawTool(f));
+        if (rawTool.length) askRunToolsOnImport(caseId, rawTool);
+        if (!data.length && !images.length) {
+          e.target.value = "";
+          return;
+        }
+
+        // Minimum severity to import — restored across all import types. Asked once for the
+        // whole batch (data files only; screenshots have no severity). Imports that don't grade
+        // severity (e.g. KAPE, Plaso, plain telemetry) are kept in full regardless of this floor;
+        // "info" (or Cancel-then-keep) imports everything. The server normalizes the value.
+        // A remembered choice (askMinSeverity → IMPORT_SEV_KEY) skips the dialog entirely.
+        let minSeverity = "";
+        if (data.length) {
+          const ans = await askMinSeverity();
+          if (ans === null) {
+            e.target.value = "";
+            return;
+          } // cancelled the whole import
+          minSeverity = ans;
+        }
+        // Declared web-log trailer profile (#993) — only "combinedlog" imports read it; every other
+        // kind's field is ignored server-side, so it's safe to send on every file in the batch.
+        const webLogFormat =
+          typeof getWebTrailerProfile === "function" && getWebTrailerProfile()
+            ? "squid_combined"
+            : "";
+
+        // Data files → the unified /import endpoint (server auto-detects + routes).
+        // Files over 200 MB would OOM the browser tab if read via FileReader, so for those
+        // we prompt for the full local path and let the server read the file directly instead.
+        const LARGE_FILE_MB = 200;
+        const kinds = {};
+        let dataFail = 0,
+          aiOffSkipped = 0;
+        const refused = []; // per-file refusal sentences the analyst must see, not just a count (#1360)
+        if (data.length) showImportProgressIndeterminate();
+        for (let i = 0; i < data.length; i++) {
+          const f = data[i];
+          statusEl.textContent = `importing ${i + 1}/${data.length}: ${f.name}…`;
+          // A container this codebase names but does not decode (#1360): refuse it here, before it is
+          // read as text or sent anywhere, with the same sentence the server's text path would return.
+          const undecoded = undecodedBinaryImportHint(f.name);
+          if (undecoded) {
+            dataFail++;
+            refused.push(undecoded);
+            continue;
+          }
+          try {
+            let r;
+            if (f.size > LARGE_FILE_MB * 1024 * 1024) {
+              const filePath = prompt(
+                `"${f.name}" is ${Math.round(f.size / 1024 / 1024)} MB — too large to load in the browser.\n\n` +
+                  `Enter the full path to this file on your machine so the server reads it directly\n` +
+                  `(e.g. C:\\Users\\you\\Downloads\\${f.name}):`,
+                f.name,
+              );
+              if (!filePath) {
                 dataFail++;
-                refused.push(`${f.name}: skipped by you`);
                 continue;
               }
-              assetHost = ans;
+              // Large file: server reads from disk — bar stays indeterminate until WebSocket N/M updates arrive.
+              r = await fetch(`/cases/${caseId}/import-file`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ path: filePath, minSeverity, webLogFormat }),
+              });
+            } else if (looksLikeBinaryImportName(f.name)) {
+              // A binary plist (macOS login items, #1301): sent as bytes — reading it as text would
+              // corrupt it. Same base64-in-JSON envelope the tool run-upload path uses.
+              const dataBase64 = await fileToBase64(f);
+              showImportProgress(40);
+              r = await fetch(`/cases/${caseId}/import-binary`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ filename: f.name, dataBase64 }),
+              });
+            } else {
+              // Small file: read in browser with progress (0→40%), then upload (bar holds at 40% until server N/M).
+              const text = await readFileTextWithProgress(f);
+              // A Windows log export that names no collector (#1496): ask which host THIS file came
+              // from — per file, never carried to the next one. Blank keeps the record names; the
+              // third button skips the file. Large and binary uploads above are never probed.
+              let assetHost = "";
+              const probe = typeof probeBareWindowsExport === "function" ? probeBareWindowsExport(text) : null;
+              if (probe && probe.bare) {
+                const ans = await askImportAssetHost(f.name, probe.computers);
+                if (ans === null) {
+                  dataFail++;
+                  refused.push(`${f.name}: skipped by you`);
+                  continue;
+                }
+                assetHost = ans;
+              }
+              showImportProgress(40);
+              r = await fetch(`/cases/${caseId}/import`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ filename: f.name, text, minSeverity, webLogFormat, ...(assetHost ? { assetHost } : {}) }),
+              });
             }
-            showImportProgress(40);
-            r = await fetch(`/cases/${caseId}/import`, {
+            const jr = await r.json().catch(() => ({}));
+            // The server refused THIS file with a sentence about it — a binary plist that needs the
+            // byte-native route or a plutil conversion, a login-item container sent as text (#1392).
+            // The analyst reads that sentence in the summary, not a bare "failed" count.
+            if (r.status === 400 && jr.refused && jr.error) {
+              dataFail++;
+              refused.push(jr.error);
+              continue;
+            }
+            if (r.status === 403) {
+              cancelImportProgress();
+              statusEl.textContent =
+                importPermissionMessage(caseId) ||
+                jr.error ||
+                "Your current role does not permit importing evidence. Ask a case administrator for the investigator or administrator role.";
+              e.target.value = "";
+              return;
+            }
+            if (r.status === 423) {
+              hideImportProgress();
+              statusEl.textContent =
+                jr.error || "Case is closed — reopen it to import evidence";
+              e.target.value = "";
+              return;
+            }
+            // The case doesn't exist (Connect attaches without creating). All files in the batch would
+            // hit the same wall, so abort with the actionable reason instead of a generic "failed".
+            if (r.status === 404) {
+              hideImportProgress();
+              statusEl.textContent =
+                jr.error ||
+                `Case "${caseId}" does not exist — create it first with “＋ New case”`;
+              e.target.value = "";
+              return;
+            }
+            if (!r.ok) throw new Error(jr.error || "HTTP " + r.status);
+            // CSV/log need the LLM to interpret them; with AI off the server saves the evidence but
+            // skips analysis (jr.analyzed === false). Surface that honestly instead of "analyzing".
+            if (jr.analyzed === false && jr.reason === "ai-off") aiOffSkipped++;
+            else kinds[jr.kind] = (kinds[jr.kind] || 0) + 1;
+          } catch (err) {
+            dataFail++;
+            console.warn("import failed:", f.name, err && err.message);
+          }
+        }
+        if (!data.length) hideImportProgress(); // images-only batch: nothing to track
+
+        // Image files → screenshot ingest (stored as evidence, analyzed when AI is on).
+        let imgOk = 0,
+          imgDup = 0,
+          imgFail = 0,
+          imgAiOff = 0;
+        for (let i = 0; i < images.length; i++) {
+          const f = images[i];
+          statusEl.textContent = `importing screenshot ${i + 1}/${images.length}: ${f.name}…`;
+          try {
+            const imageBase64 = await fileToBase64(f);
+            if (!imageBase64) {
+              imgFail++;
+              continue;
+            }
+            const triggerType = i === images.length - 1 ? "tab_switch" : "timer"; // flush the last window
+            const r = await fetch("/captures", {
               method: "POST",
               headers: { "content-type": "application/json" },
-              body: JSON.stringify({ filename: f.name, text, minSeverity, webLogFormat, ...(assetHost ? { assetHost } : {}) }),
+              body: JSON.stringify({
+                caseId,
+                timestamp: new Date().toISOString(),
+                url: "imported://" + f.name,
+                tabTitle: f.name.replace(/\.[^.]+$/, ""),
+                triggerType,
+                imageBase64,
+              }),
             });
-          }
-          const jr = await r.json().catch(() => ({}));
-          // The server refused THIS file with a sentence about it — a binary plist that needs the
-          // byte-native route or a plutil conversion, a login-item container sent as text (#1392).
-          // The analyst reads that sentence in the summary, not a bare "failed" count.
-          if (r.status === 400 && jr.refused && jr.error) {
-            dataFail++;
-            refused.push(jr.error);
-            continue;
-          }
-          if (r.status === 403) {
-            cancelImportProgress();
-            statusEl.textContent =
-              importPermissionMessage(caseId) ||
-              jr.error ||
-              "Your current role does not permit importing evidence. Ask a case administrator for the investigator or administrator role.";
-            e.target.value = "";
-            return;
-          }
-          if (r.status === 423) {
-            hideImportProgress();
-            statusEl.textContent =
-              jr.error || "Case is closed — reopen it to import evidence";
-            e.target.value = "";
-            return;
-          }
-          // The case doesn't exist (Connect attaches without creating). All files in the batch would
-          // hit the same wall, so abort with the actionable reason instead of a generic "failed".
-          if (r.status === 404) {
-            hideImportProgress();
-            statusEl.textContent =
-              jr.error ||
-              `Case "${caseId}" does not exist — create it first with “＋ New case”`;
-            e.target.value = "";
-            return;
-          }
-          if (!r.ok) throw new Error(jr.error || "HTTP " + r.status);
-          // CSV/log need the LLM to interpret them; with AI off the server saves the evidence but
-          // skips analysis (jr.analyzed === false). Surface that honestly instead of "analyzing".
-          if (jr.analyzed === false && jr.reason === "ai-off") aiOffSkipped++;
-          else kinds[jr.kind] = (kinds[jr.kind] || 0) + 1;
-        } catch (err) {
-          dataFail++;
-          console.warn("import failed:", f.name, err && err.message);
-        }
-      }
-      if (!data.length) hideImportProgress(); // images-only batch: nothing to track
-
-      // Image files → screenshot ingest (stored as evidence, analyzed when AI is on).
-      let imgOk = 0,
-        imgDup = 0,
-        imgFail = 0,
-        imgAiOff = 0;
-      for (let i = 0; i < images.length; i++) {
-        const f = images[i];
-        statusEl.textContent = `importing screenshot ${i + 1}/${images.length}: ${f.name}…`;
-        try {
-          const imageBase64 = await fileToBase64(f);
-          if (!imageBase64) {
+            if (r.status === 403) {
+              const jr = await r.json().catch(() => ({}));
+              cancelImportProgress();
+              statusEl.textContent =
+                importPermissionMessage(caseId) ||
+                jr.error ||
+                "Your current role does not permit importing evidence. Ask a case administrator for the investigator or administrator role.";
+              e.target.value = "";
+              return;
+            }
+            if (r.status === 423) {
+              const jr = await r.json().catch(() => ({}));
+              statusEl.textContent =
+                jr.error || "Case is closed — reopen it to add screenshots";
+              e.target.value = "";
+              return;
+            }
+            if (!r.ok) {
+              imgFail++;
+              continue;
+            }
+            const meta = await r.json();
+            if (meta.isDuplicate) imgDup++;
+            else if (meta.analyzed === false && meta.reason === "ai-off")
+              imgAiOff++;
+            else imgOk++;
+          } catch {
             imgFail++;
-            continue;
           }
-          const triggerType = i === images.length - 1 ? "tab_switch" : "timer"; // flush the last window
-          const r = await fetch("/captures", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              caseId,
-              timestamp: new Date().toISOString(),
-              url: "imported://" + f.name,
-              tabTitle: f.name.replace(/\.[^.]+$/, ""),
-              triggerType,
-              imageBase64,
-            }),
-          });
-          if (r.status === 403) {
-            const jr = await r.json().catch(() => ({}));
-            cancelImportProgress();
-            statusEl.textContent =
-              importPermissionMessage(caseId) ||
-              jr.error ||
-              "Your current role does not permit importing evidence. Ask a case administrator for the investigator or administrator role.";
-            e.target.value = "";
-            return;
-          }
-          if (r.status === 423) {
-            const jr = await r.json().catch(() => ({}));
-            statusEl.textContent =
-              jr.error || "Case is closed — reopen it to add screenshots";
-            e.target.value = "";
-            return;
-          }
-          if (!r.ok) {
-            imgFail++;
-            continue;
-          }
-          const meta = await r.json();
-          if (meta.isDuplicate) imgDup++;
-          else if (meta.analyzed === false && meta.reason === "ai-off")
-            imgAiOff++;
-          else imgOk++;
-        } catch {
-          imgFail++;
         }
-      }
 
-      const parts = [];
-      const kindList = Object.entries(kinds).map(([k, n]) =>
-        n > 1 ? `${n}× ${k}` : k,
-      );
-      const floorNote =
-        minSeverity && minSeverity !== "info"
-          ? ` (min severity ${minSeverity})`
-          : "";
-      if (kindList.length)
-        parts.push(
-          `imported ${kindList.join(", ")}${floorNote} — analyzing (see AI status)`,
+        const parts = [];
+        const kindList = Object.entries(kinds).map(([k, n]) =>
+          n > 1 ? `${n}× ${k}` : k,
         );
-      if (aiOffSkipped)
-        parts.push(
-          `${aiOffSkipped} CSV/log saved as evidence but NOT analyzed — AI is off (turn AI on, then re-import)`,
-        );
-      if (imgOk || imgDup || imgFail)
-        parts.push(
-          `${imgOk} screenshot(s)` +
-            (imgDup ? `, ${imgDup} dup` : "") +
-            (imgFail ? `, ${imgFail} failed` : ""),
-        );
-      if (imgAiOff)
-        parts.push(
-          `${imgAiOff} screenshot(s) saved but NOT analyzed — AI is off (turn AI on, then run: npm run reanalyze -- ${caseId})`,
-        );
-      if (dataFail) parts.push(`${dataFail} file(s) failed / unrecognized`);
-      parts.push(...refused);
-      statusEl.textContent = parts.join(" · ") || "nothing imported";
-      e.target.value = ""; // allow re-selecting the same files
-      // Near-duplicate hosts (e.g. "HOST" vs "HOST.domain") are refreshed off the "idle" AI-status
-      // event (js/dashboard-ai-status.js), not here: /import and /import-file both answer 202 before
-      // the background import job actually lands the new events in the timeline, so a refresh at
-      // this point would read pre-import state. "idle" is emitted once that background run finishes,
-      // for every import kind — including with AI off, which is what this deterministic check needs.
+        const floorNote =
+          minSeverity && minSeverity !== "info"
+            ? ` (min severity ${minSeverity})`
+            : "";
+        if (kindList.length)
+          parts.push(
+            `imported ${kindList.join(", ")}${floorNote} — analyzing (see AI status)`,
+          );
+        if (aiOffSkipped)
+          parts.push(
+            `${aiOffSkipped} CSV/log saved as evidence but NOT analyzed — AI is off (turn AI on, then re-import)`,
+          );
+        if (imgOk || imgDup || imgFail)
+          parts.push(
+            `${imgOk} screenshot(s)` +
+              (imgDup ? `, ${imgDup} dup` : "") +
+              (imgFail ? `, ${imgFail} failed` : ""),
+          );
+        if (imgAiOff)
+          parts.push(
+            `${imgAiOff} screenshot(s) saved but NOT analyzed — AI is off (turn AI on, then run: npm run reanalyze -- ${caseId})`,
+          );
+        if (dataFail) parts.push(`${dataFail} file(s) failed / unrecognized`);
+        parts.push(...refused);
+        statusEl.textContent = parts.join(" · ") || "nothing imported";
+        e.target.value = ""; // allow re-selecting the same files
+        // Near-duplicate hosts (e.g. "HOST" vs "HOST.domain") are refreshed off the "idle" AI-status
+        // event (js/dashboard-ai-status.js), not here: /import and /import-file both answer 202 before
+        // the background import job actually lands the new events in the timeline, so a refresh at
+        // this point would read pre-import state. "idle" is emitted once that background run finishes,
+        // for every import kind — including with AI off, which is what this deterministic check needs.
+      } finally {
+        importInFlight = false;
+      }
     };
   }
 
