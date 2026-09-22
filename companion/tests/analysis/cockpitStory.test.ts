@@ -244,6 +244,45 @@ describe("deriveCockpitStory — stage cards: worst severity and headline", () =
     expect(story.stages[0].headline?.description.endsWith("…")).toBe(true);
   });
 
+  it("drops the importer's artifact and tool labels from the headline — the card has no room for provenance", () => {
+    const cases: Array<[string, string]> = [
+      [
+        "[Windows.EventLogs.Chainsaw] Chainsaw/Sigma: Windows Defender Disabled - EID 5001",
+        "Windows Defender Disabled - EID 5001",
+      ],
+      [
+        "Velociraptor [Windows.Sigma.Base] Sigma: User Added To Local Admin Grp - EID 4732",
+        "User Added To Local Admin Grp - EID 4732",
+      ],
+      [
+        "DetectRaptor Evtx detection: T1059.001-Mimikatz Execution via PowerShell",
+        "T1059.001-Mimikatz Execution via PowerShell",
+      ],
+      [
+        "[Windows.EventLogs.Chainsaw] Chainsaw/Log Tampering: Security Audit Log Cleared",
+        "Security Audit Log Cleared",
+      ],
+      [
+        "Velociraptor detection: HackTool:Mimikatz in C:\\Temp\\m.exe",
+        "HackTool:Mimikatz in C:\\Temp\\m.exe",
+      ],
+      ["THOR Alert [Filescan]: Mimikatz dropped — C:\\Temp\\m.exe", "Mimikatz dropped — C:\\Temp\\m.exe"],
+      ["Hayabusa/Sigma: Suspicious Service Installed", "Suspicious Service Installed"],
+      [
+        "Scheduled task: backup.exe registered by vagrant",
+        "Scheduled task: backup.exe registered by vagrant",
+      ],
+      ["[Custom.Artifact] only a bracket", "only a bracket"],
+      ["[Windows.EventLogs.Chainsaw] Chainsaw/Sigma:", "[Windows.EventLogs.Chainsaw] Chainsaw/Sigma:"],
+    ];
+    for (const [raw, shown] of cases) {
+      const story = deriveCockpitStory(
+        state({ forensicTimeline: [event("e", { mitreTechniques: ["T1059"], description: raw })] }),
+      );
+      expect(story.stages[0].headline?.description, raw).toBe(shown);
+    }
+  });
+
   it("has no headline when the only candidate has a blank description", () => {
     const story = deriveCockpitStory(
       state({ forensicTimeline: [event("blank", { mitreTechniques: ["T1059"], description: "   " })] }),

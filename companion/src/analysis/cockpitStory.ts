@@ -82,6 +82,20 @@ function capText(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}${ELLIPSIS}` : text;
 }
 
+// The importers lead a description with provenance — "Velociraptor [Windows.Sigma.Base] Sigma:",
+// "[Windows.EventLogs.Chainsaw] Chainsaw/Sigma:", "DetectRaptor Evtx detection:", "THOR Alert
+// [Filescan]:" — which the card's two clamped lines cannot afford; the origin facet keeps it. Only
+// the tool labels the importers emit are stripped, so a rule title such as "Scheduled task: …"
+// keeps its own leading words. A description that is nothing but labels stays as it was.
+const HEADLINE_ARTIFACT_PREFIX = /^(?:Velociraptor\s+)?(?:\[[^\]]+\]\s*)+/;
+const HEADLINE_TOOL_LABEL =
+  /^(?:(?:Chainsaw|Hayabusa)(?:\/[^:\n]{1,40})?|Sigma|Velociraptor detection|DetectRaptor \S+ detection|THOR \S+(?: \[[^\]]+\])?):\s*/;
+
+function stripHeadlineProvenance(description: string): string {
+  const bare = description.replace(HEADLINE_ARTIFACT_PREFIX, "").replace(HEADLINE_TOOL_LABEL, "").trim();
+  return bare || description;
+}
+
 // The stage's most severe event. `ordered` is chronological with undated rows last, so on a
 // severity tie the first hit is the earliest — and on a time tie, the earliest in the timeline.
 function stageHeadline(ordered: readonly ForensicEvent[]): CockpitStoryHeadline | null {
@@ -91,7 +105,10 @@ function stageHeadline(ordered: readonly ForensicEvent[]): CockpitStoryHeadline 
   }
   const description = top?.description?.trim() ?? "";
   if (!top || !description) return null;
-  return { eventId: top.id, description: capText(description, STORY_HEADLINE_MAX_CHARS) };
+  return {
+    eventId: top.id,
+    description: capText(stripHeadlineProvenance(description), STORY_HEADLINE_MAX_CHARS),
+  };
 }
 
 function linkedToStage(finding: Finding, events: readonly ForensicEvent[], eventIds: Set<string>): boolean {
