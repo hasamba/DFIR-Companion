@@ -219,10 +219,108 @@ function severityFor(score: number): Severity {
   return SEVERITY_BY_LEVEL[idx];
 }
 
-function chunk<T>(items: readonly T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+/**
+ * The token budget one request may carry, measured against the live service rather than guessed.
+ *
+ * A 30-row batch of a real archive went through at 35,751 input tokens; 40 rows was refused with
+ * `max_tokens_exceeded`. So the ceiling sits near 36k and a fixed ROW COUNT cannot express it —
+ * rows differ by an order of magnitude in size, and each one is sent TWICE (whole for the grade
+ * question, stripped of the collector name for the tooling question), which is the cost that took
+ * the shipped default of 40 over the line on the first real case it met.
+ *
+ * 24k leaves a third of the measured ceiling as headroom, because the estimate below is a
+ * character count and not a tokenizer, and because a case with dense non-ASCII text packs more
+ * tokens into the same characters.
+ */
+const BATCH_TOKEN_BUDGET = 24_000;
+
+/** The repo's own 4-chars-to-a-token heuristic; see analysis/promptBudget.ts. */
+const estimateTokens = (text: string): number => Math.ceil(text.length / 4);
+
+/**
+ * What one row costs a request: its text twice over, plus the two questions asked about it. The
+ * question overhead is the rubric, repeated per question by the API's shape — on a batch of short
+ * rows it is the DOMINANT term, which is why a row count is the wrong unit here.
+ */
+const QUESTION_OVERHEAD_TOKENS = 220;
+
+function rowCost(text: string): number {
+  return estimateTokens(text) * 2 + QUESTION_OVERHEAD_TOKENS;
+}
+
+/**
+ * Split by what a batch will COST, not by how many rows it holds, and never emit an empty batch —
+ * a single row larger than the whole budget still goes on its own rather than being dropped.
+ * `maxRows` remains an upper bound so a case of tiny rows does not build a 500-question request.
+ */
+export function planBatches(
+  texts: readonly string[],
+  maxRows: number,
+  budget: number = BATCH_TOKEN_BUDGET,
+): number[][] {
+  const out: number[][] = [];
+  let cur: number[] = [];
+  let cost = 0;
+  texts.forEach((t, i) => {
+    const c = rowCost(t);
+    if (cur.length && (cost + c > budget || cur.length >= maxRows)) {
+      out.push(cur);
+      cur = [];
+      cost = 0;
+    }
+    cur.push(i);
+    cost += c;
+  });
+  if (cur.length) out.push(cur);
   return out;
+}
+
+/** A size refusal names itself; anything else is a real failure and must not be retried blindly. */
+function isTooLarge(err: unknown): boolean {
+  return /max_tokens_exceeded|too (large|long)|context length/i.test(
+    err instanceof Error ? err.message : String(err),
+  );
+}
+
+/**
+ * One request for the batch, or — if the service refuses it for size — two for its halves, and so
+ * on. Returns a merged result so the caller cannot tell how many requests it took. A single row
+ * that is still refused throws: there is nothing left to halve, and pretending it was graded
+ * would put a row in the output that no model ever read.
+ */
+async function askWithSplit(
+  deps: JevGraderDeps,
+  batch: readonly ForensicEvent[],
+  ids: readonly string[],
+): Promise<JevBatchResult> {
+  const rowText = Object.fromEntries(batch.map((e, i) => [ids[i], renderRowForJev(e, deps.mask)]));
+  const subjectText = Object.fromEntries(
+    batch.map((e, i) => [ids[i], renderRowForToolingQuestion(e, deps.mask)]),
+  );
+  try {
+    return await deps.ask(
+      { note: STATE_NOTE, [ROWS_KEY]: rowText, [SUBJECTS_KEY]: subjectText },
+      buildBatchQuestions([...ids]),
+    );
+  } catch (err) {
+    if (!isTooLarge(err) || batch.length < 2) throw err;
+    const mid = Math.ceil(batch.length / 2);
+    const [a, b] = await Promise.all([
+      askWithSplit(deps, batch.slice(0, mid), ids.slice(0, mid)),
+      askWithSplit(deps, batch.slice(mid), ids.slice(mid)),
+    ]);
+    return {
+      model: a.model || b.model,
+      answers: { ...a.answers, ...b.answers },
+      usage: {
+        inputTokens: a.usage.inputTokens + b.usage.inputTokens,
+        outputTokens: a.usage.outputTokens + b.usage.outputTokens,
+        ...(a.usage.costUSD !== undefined || b.usage.costUSD !== undefined
+          ? { costUSD: (a.usage.costUSD ?? 0) + (b.usage.costUSD ?? 0) }
+          : {}),
+      },
+    };
+  }
 }
 
 /**
@@ -246,7 +344,10 @@ export async function gradeEvents(
   if (!Number.isFinite(opts.batchSize) || opts.batchSize < 1) {
     throw new Error(`Jev batch size must be a positive number, got ${String(opts.batchSize)}`);
   }
-  const batches = chunk(events, Math.floor(opts.batchSize));
+  // Planned by what each batch will COST. `batchSize` survives as an upper bound on rows so a
+  // case of tiny rows cannot build a request of 500 questions; the budget is what actually binds.
+  const rendered = events.map((e) => renderRowForJev(e, deps.mask));
+  const batches = planBatches(rendered, Math.floor(opts.batchSize)).map((idx) => idx.map((i) => events[i]));
   let inputTokens = 0;
   let outputTokens = 0;
   let costUSD: number | undefined;
@@ -265,18 +366,15 @@ export async function gradeEvents(
       if (!next) return;
       const [index, batch] = next;
       const ids = batch.map((_, i) => `R${String(i).padStart(3, "0")}`);
-      // Both views of the batch. They are two keys, not one, on purpose — see ROWS_KEY above.
-      const rowText = Object.fromEntries(batch.map((e, i) => [ids[i], renderRowForJev(e, deps.mask)]));
-      const subjectText = Object.fromEntries(
-        batch.map((e, i) => [ids[i], renderRowForToolingQuestion(e, deps.mask)]),
-      );
       // A batch failure rejects the whole review rather than returning what it has: a review that
       // silently covered half the rows and said nothing is the coverage lie this panel exists to
       // avoid making.
-      const result = await deps.ask(
-        { note: STATE_NOTE, [ROWS_KEY]: rowText, [SUBJECTS_KEY]: subjectText },
-        buildBatchQuestions(ids),
-      );
+      // The budget above is a character estimate, so it can still be wrong on a case whose text
+      // packs more tokens per character. A refusal for size is therefore recoverable: halve the
+      // batch and ask again, down to a single row. Any other failure still rejects the whole
+      // review — a review that silently covered half the rows would be the coverage lie this
+      // panel exists to avoid. Found by a real 40-row batch being refused on the first case it met.
+      const result = await askWithSplit(deps, batch, ids);
       model = result.model;
       inputTokens += result.usage.inputTokens;
       outputTokens += result.usage.outputTokens;

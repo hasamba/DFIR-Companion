@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   JEV_REVIEW_DEFAULT_ROWS,
+  planBatches,
   buildBatchQuestions,
   gradeEvents,
   renderRowForJev,
@@ -305,5 +306,77 @@ describe("gradeEvents", () => {
     for (const bad of [Number.NaN, 0, -5, Number.POSITIVE_INFINITY]) {
       await expect(gradeEvents(stubAsk({}), [ev("a")], { batchSize: bad })).rejects.toThrow(/batch size/i);
     }
+  });
+});
+
+describe("batching is planned by cost, not by row count (#1568 follow-up)", () => {
+  // Found in real use: a 40-row batch of a real archive was refused with `max_tokens_exceeded`.
+  // Measured against the live service, 30 rows went through at 35,751 input tokens and 40 did not,
+  // so the ceiling is near 36k — and a row count cannot express it, because rows differ by an
+  // order of magnitude in size and each one is sent twice.
+  it("puts few large rows in a batch and many small ones", () => {
+    const big = Array.from({ length: 40 }, () => "x".repeat(8000));
+    const small = Array.from({ length: 40 }, () => "x".repeat(60));
+    const bigBatches = planBatches(big, 40);
+    const smallBatches = planBatches(small, 40);
+    expect(bigBatches.length).toBeGreaterThan(smallBatches.length);
+    expect(smallBatches).toHaveLength(1);
+  });
+
+  it("never emits an empty batch, even for a row larger than the whole budget", () => {
+    const plan = planBatches(["y".repeat(500_000), "small"], 40);
+    expect(plan.every((b) => b.length > 0)).toBe(true);
+    expect(plan.flat()).toEqual([0, 1]);
+  });
+
+  it("keeps the row cap as an upper bound when the rows are tiny", () => {
+    const plan = planBatches(
+      Array.from({ length: 30 }, () => "z"),
+      10,
+    );
+    expect(Math.max(...plan.map((b) => b.length))).toBeLessThanOrEqual(10);
+    expect(plan.flat()).toHaveLength(30);
+  });
+
+  it("loses no row, whatever the mix of sizes", () => {
+    const mixed = Array.from({ length: 77 }, (_, i) => "m".repeat((i % 9) * 3000 + 10));
+    expect(planBatches(mixed, 40).flat()).toEqual(mixed.map((_, i) => i));
+  });
+
+  it("splits and retries when the service refuses a batch for size", async () => {
+    // The budget is a character estimate, so it can still be wrong. A size refusal must be
+    // recoverable; anything else must still fail the review.
+    const events = Array.from({ length: 4 }, (_, i) => ev(`e${i}`));
+    let calls = 0;
+    const deps: JevGraderDeps = {
+      mask: (t) => t,
+      ask: async (_state, questions) => {
+        calls += 1;
+        const n = Object.keys(questions).length / 2;
+        if (n > 1) throw new Error('HTTP 400: {"detail":{"error_type":"max_tokens_exceeded"}}');
+        const answers: Record<string, JevAnswer> = {};
+        for (const qid of Object.keys(questions)) {
+          answers[qid] = qid.endsWith("_tool")
+            ? { type: "noul", noul: 0 }
+            : { type: "score", score: 2, legend: {}, probabilities: {}, confidence: 0.5 };
+        }
+        return { model: "m", answers, usage: { inputTokens: 5, outputTokens: 1, costUSD: 0.001 } };
+      },
+    };
+    const r = await gradeEvents(deps, events, { batchSize: 40 });
+    expect(r.rows).toHaveLength(4);
+    expect(r.usage.inputTokens).toBe(20); // one request per row after the splits
+    expect(r.usage.costUSD).toBeCloseTo(0.004);
+    expect(calls).toBeGreaterThan(4); // the refused parents are counted too
+  });
+
+  it("does NOT retry a failure that is not about size", async () => {
+    const deps: JevGraderDeps = {
+      mask: (t) => t,
+      ask: async () => {
+        throw new Error("HTTP 401: bad credentials");
+      },
+    };
+    await expect(gradeEvents(deps, [ev("a"), ev("b")], { batchSize: 40 })).rejects.toThrow(/401/);
   });
 });
