@@ -57,6 +57,7 @@ export const DERIVED_NOTE_NAMES: readonly string[] = [
   "a quarantine-marked file",
   "renamed binary",
   "build-time",
+  "shared source mtime",
 ];
 
 /**
