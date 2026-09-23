@@ -269,6 +269,7 @@
     "cloudCoverage.ts": "analysis/ingest",
     "cloudCoverageBuilders.ts": "analysis/ingest",
     "cloudMetadataAccess.ts": "analysis/timeline",
+    "clrUsageLogNote.ts": "analysis/timeline",
     "coach.ts": "analysis/ai",
     "cockpit.ts": "analysis/workflow",
     "handoffBrief.ts": "analysis/workflow",

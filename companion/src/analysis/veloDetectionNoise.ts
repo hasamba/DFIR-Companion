@@ -85,7 +85,11 @@ const SCRIPT_BLOCK_EID = 4104;
 // legacy pipeline execution details (800). PersistenceSniper's `Add-Type … AdjPriv` lands in both.
 const MODULE_LOGGING_EID = 4103;
 const PIPELINE_EID = 800;
-const COLLECTOR_SCRIPT_EIDS = new Set([SCRIPT_BLOCK_EID, MODULE_LOGGING_EID, PIPELINE_EID]);
+// And the engine ERROR record (4100, #1555): same ContextInfo block as 4103, so it names the script
+// that failed the same engine-written way. PersistenceSniper's `Import-Csv` of a missing
+// false_positives.csv lands here, and DetectRaptor's "-Enc" rule matches `-encoding ASCII` in it.
+const ENGINE_ERROR_EID = 4100;
+const COLLECTOR_SCRIPT_EIDS = new Set([SCRIPT_BLOCK_EID, MODULE_LOGGING_EID, PIPELINE_EID, ENGINE_ERROR_EID]);
 const EVENT_WRAPPERS = ["Event", "_Event"] as const;
 
 // An EventID as Windows/Velociraptor variously writes it: a bare number, a numeric string, an
@@ -157,7 +161,6 @@ export function isGeneratedModuleScript(row: Row): boolean {
 // which the rendered Message repeats. NEVER `Host Application` / `HostApplication` — that is the host
 // PROCESS's command line, a string whoever launched PowerShell chose, and an intruder who starts
 // `powershell -c "'<tools path>'; <payload>"` puts the genuine path there on every record.
-const SCRIPT_NAME_4103 = /^\s*Script Name\s*=\s*(.*?)\s*$/im;
 const SCRIPT_NAME_800 = /^\t?ScriptName=(.*?)\s*$/im;
 export function eventData(row: Row): Row | null {
   let ed = getCI(row, "EventData");
@@ -176,12 +179,30 @@ export function eventData(row: Row): Row | null {
 // not read at all — the row keeps its grade, which is the direction a wrong answer must fall.
 const CONTEXT_LINE = /^\t?[A-Za-z]+=.*$/;
 function pipelineContext(row: Row): string {
+  return engineContext(row, 1, ["UserId", "ScriptName"]);
+}
+// The engine's `\t<Key>=<value>` block at Data[index], when every line has that shape and each named
+// key appears exactly once; else "". Shared by the 800 above and the 400 engine-state record, whose
+// block is Data[2] (#1555).
+function engineContext(row: Row, index: number, unique: readonly string[]): string {
   const data = eventData(row)?.Data;
-  if (!Array.isArray(data) || data.length < 2 || typeof data[1] !== "string") return "";
-  const lines = data[1].split(/\r?\n/).filter((l) => l.trim() !== "");
+  if (!Array.isArray(data) || data.length <= index || typeof data[index] !== "string") return "";
+  const block: string = data[index];
+  const lines = block.split(/\r?\n/).filter((l) => l.trim() !== "");
   if (lines.length === 0 || !lines.every((l) => CONTEXT_LINE.test(l))) return "";
   const count = (key: string) => lines.filter((l) => new RegExp(`^\\t?${key}=`).test(l)).length;
-  return count("UserId") === 1 && count("ScriptName") === 1 ? data[1] : "";
+  return unique.every((key) => count(key) === 1) ? block : "";
+}
+// One `Key = value` line of a 4103 / 4100 ContextInfo, only when exactly one line carries that key.
+// Host Application sits ABOVE Script Name and Runspace ID in the block, and it is the invoker's
+// command line: a newline in it forges a second line that a first-match read finds first (#1555).
+// Two lines for one key are ambiguous, so neither is read — the row keeps its grade.
+function contextInfoField(row: Row, key: string): string {
+  const ed = eventData(row);
+  if (!ed) return "";
+  const re = new RegExp(`^\\s*${key}\\s*=[ \\t]*(.*?)\\s*$`, "gim");
+  const hits = [...str(getCI(ed, "ContextInfo")).matchAll(re)];
+  return hits.length === 1 ? hits[0][1] : "";
 }
 export function engineScriptPath(row: Row): string {
   const ed = eventData(row);
@@ -189,7 +210,8 @@ export function engineScriptPath(row: Row): string {
     case SCRIPT_BLOCK_EID:
       return ed ? str(getCI(ed, "Path")).trim() : "";
     case MODULE_LOGGING_EID:
-      return (ed && SCRIPT_NAME_4103.exec(str(getCI(ed, "ContextInfo")))?.[1]) ?? "";
+    case ENGINE_ERROR_EID:
+      return contextInfoField(row, "Script Name");
     case PIPELINE_EID:
       return SCRIPT_NAME_800.exec(pipelineContext(row))?.[1] ?? "";
     default:
@@ -211,7 +233,7 @@ function ranAsSystem(row: Row): boolean {
 }
 
 /**
- * Is this a script block — or the 4103 / 800 record of the same running script (#1477) — the
+ * Is this a script block — or the 4103 / 800 / 4100 record of the same running script (#1477, #1555) — the
  * COLLECTOR ran, out of its own tool tree?
  *
  * Velociraptor artifacts shell out to PowerShell modules unpacked under
@@ -324,12 +346,77 @@ export function gradeScriptAsCollector(m: MappedEvent | null, note: string): voi
 }
 
 /**
- * Is this a script record (4104 / 4103 / 800) the engine logged under SYSTEM? The first two facts
+ * Is this a script record (4104 / 4103 / 800 / 4100) the engine logged under SYSTEM? The first two facts
  * isDetectionToolScript rests on, without the path — for a caller that has another fact tying the
  * record to the collector (its process id, collectorLineage.ts, #1488).
  */
 export function isSystemScriptRow(row: Row): boolean {
   return COLLECTOR_SCRIPT_EIDS.has(eventId(row)) && ranAsSystem(row);
+}
+
+// ── The runspace link (#1555) ────────────────────────────────────────────────────────────────────
+//
+// PersistenceSniper auto-loads Windows' own BitsTransfer module, and its `Add-Type` P/Invoke lands
+// in 4103 / 800 records whose script is `…\WindowsPowerShell\v1.0\Modules\BitsTransfer\…`. The
+// engine's 400 (engine started) names no script at all. None of them carries a Tools-tree path, so
+// isDetectionToolScript reaches none — but every one carries the Host ID and Runspace ID the ENGINE
+// stamped on the session, the same two GUIDs as the module's own proven records.
+//
+// Those GUIDs are what links them, never the path. A system-Modules path is signed Microsoft code
+// that ANY script can import, so on its own it proves nothing about who ran it; and the 400's Host
+// Application naming the Tools tree is the invoker's command line (see engineScriptPath). The link
+// is order-independent and per import: CollectorFootprintLedger (collectorChildren.ts) records the
+// runspace of each row isDetectionToolScript already proved, and grades a candidate only when its
+// runspace is one of those. An intruder cannot join the collector's runspace without being inside
+// the collector's process; to forge the GUIDs in the log they must already hold SYSTEM, and a
+// Critical is never lowered — the same bounds the Tools-tree rule rests on.
+const ENGINE_STATE_EID = 400;
+const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// The signed system Modules root, anchored like COLLECTOR_TOOL_TREE and refused on traversal.
+const SYSTEM_MODULES_ROOT =
+  /^[a-z]:[\\/]windows[\\/]system32[\\/]windowspowershell[\\/]v1\.0[\\/]modules[\\/]/i;
+
+const engineKey = (hostId: string, runspace: string): string =>
+  GUID.test(hostId) && GUID.test(runspace) ? `${hostId}|${runspace}`.toLowerCase() : "";
+
+// A `\t<Key>=<value>` line of an engine block engineContext already validated.
+function blockField(block: string, key: string): string {
+  return new RegExp(`^\\t?${key}=(.*?)\\s*$`, "im").exec(block)?.[1] ?? "";
+}
+
+/**
+ * The PowerShell session a record belongs to, as `hostId|runspaceId` (lower case), read only where
+ * the ENGINE wrote it and only when each id appears exactly once: 4103 / 4100 `Host ID` + `Runspace
+ * ID` in ContextInfo, 800 `HostId=` + `RunspaceId=` in Data[1], 400 the same in Data[2]. "" for a
+ * 4104 (it carries neither), an ambiguous block, or anything that is not a GUID.
+ */
+export function scriptRunspace(row: Row): string {
+  switch (eventId(row)) {
+    case MODULE_LOGGING_EID:
+    case ENGINE_ERROR_EID:
+      return engineKey(contextInfoField(row, "Host ID"), contextInfoField(row, "Runspace ID"));
+    case PIPELINE_EID:
+    case ENGINE_STATE_EID: {
+      const index = eventId(row) === PIPELINE_EID ? 1 : 2;
+      const block = engineContext(row, index, ["HostId", "RunspaceId"]);
+      return block ? engineKey(blockField(block, "HostId"), blockField(block, "RunspaceId")) : "";
+    }
+    default:
+      return "";
+  }
+}
+
+/**
+ * May this row be linked to the collector by its runspace alone? A 400 engine-state record, or a
+ * SYSTEM script record whose engine-written path is under the signed system Modules root. This is
+ * the CANDIDATE test only: it never demotes by itself (#1555).
+ */
+export function isRunspaceLinkCandidate(row: Row): boolean {
+  const eid = eventId(row);
+  if (eid === ENGINE_STATE_EID) return true;
+  if (!COLLECTOR_SCRIPT_EIDS.has(eid) || !ranAsSystem(row)) return false;
+  const path = engineScriptPath(row);
+  return SYSTEM_MODULES_ROOT.test(path) && !PATH_TRAVERSAL.test(path);
 }
 
 // The process id the ENGINE wrote into the record's System block (`Execution ProcessID`): the

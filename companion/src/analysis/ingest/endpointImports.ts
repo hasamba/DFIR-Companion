@@ -291,6 +291,7 @@ export async function importVelociraptor(
       type: c.type,
       value: c.value,
       ...(c.extractedFrom ? { extractedFrom: c.extractedFrom } : {}),
+      ...(c.provenance ? { provenance: c.provenance } : {}), // "mentioned" survives into the case (#1555)
     })),
     mitreTechniques: [],
     ...hostIdentityDelta(parsed),

@@ -109,14 +109,30 @@ function epoch(ts: string): number | undefined {
   return Number.isNaN(t) ? undefined : t;
 }
 
-// The guarded union-find (the three facts a merged row must never contradict, #1476) and the
+// The guarded union-find (the facts a merged row must never contradict, #1476, #1557) and the
 // bucketed pair walk that feeds it (#1483) live in correlateUnion.ts; the facts are read here.
 function unionFactsOf(e: ForensicEvent): UnionFacts {
   return {
     path: e.path?.trim().toLowerCase() || undefined,
     exec: executionIdentity(e) || undefined,
     record: e.sourceRecordId?.trim() || undefined,
+    act: writeOrLaunch(e),
   };
+}
+
+// The act a typed row records, when it is a write of a file or the start of a process (#1557). The
+// importer's own envelope says which — Sysmon EID 11 maps to file/create, EID 1 to process/start —
+// so the signal is structural, never read from the wording. A Sysmon write of msxsl.exe and the
+// launch of msxsl.exe 42 ms later shared a path and a host, and the path step folded them: the High
+// write's text won the row while the launch's name, pid and command line filled its empty fields, so
+// the launch's own row left the timeline and what the binary ran went with it. An untyped row (a
+// legacy or AI-extracted one, whose envelope reads "observation") records no act and joins as before.
+const FILE_WRITE_TYPES = new Set(["create", "write", "modify"]);
+function writeOrLaunch(e: ForensicEvent): string | undefined {
+  const ev = e.canonical?.event;
+  if (ev?.category === "file" && FILE_WRITE_TYPES.has(ev.type)) return "file-write";
+  if (ev?.category === "process" && ev.type === "start") return "process-start";
+  return undefined;
 }
 
 // Match on the SHORT hostname: an EDR reports `FILE-BO-01` while the Windows log records the FQDN
@@ -309,7 +325,10 @@ function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): Forensi
   // Between members of one severity, a row that states the COMMAND LINE beats one that does not,
   // ahead of tool trust: a file-write and the launch of that file in the same second describe one
   // artifact, and only the launch's text tells the analyst what ran — the write row winning on trust
-  // left three NetExec launches recorded as "file created" (#1476).
+  // left three NetExec launches recorded as "file created" (#1476). That holds only for UNTYPED rows:
+  // a row whose envelope records the write, and one that records the launch, never share a group at
+  // all (#1557, writeOrLaunch above), since a High write outranks a Medium launch before this rule
+  // is ever read and the launch's command line then sat under the write's text.
   const primary = [...events].sort(
     (a, b) =>
       SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] ||
