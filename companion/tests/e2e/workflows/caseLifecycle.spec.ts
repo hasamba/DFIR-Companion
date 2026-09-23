@@ -208,6 +208,34 @@ test("US-220: the archived-cases control is labelled and filters the list", asyn
   });
   expect(name, "the archived-cases control needs an accessible name").not.toBe("");
 
+  // The picker is an <input list="caseList"> backed by a <datalist>, so the cases are option
+  // VALUES — reading textContent off the input returns "" and would pass against anything.
+  const options = () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll("#caseList option")].map((o) => o.getAttribute("value") ?? ""),
+    );
+
+  // The option values are NOT case ids. Since #1524 the toolbar box shows the case NAME, and only
+  // when two cases share a name does it fall back to "Name (id)" (displayTextFor in
+  // public/js/dashboard-case-picker.js). Matching on the bare id made the hidden-by-default check
+  // pass against anything. Recompute the text from /cases on every read: the picker counts
+  // duplicates across ALL cases, and parallel specs seed more cases with the same demo name.
+  const pickerText = async (): Promise<string> => {
+    const res = await page.request.get("/cases");
+    expect(res.status(), await res.text()).toBe(200);
+    const cases = (await res.json()) as { caseId: string; name?: string }[];
+    const nameOf = (c: { name?: string }) => String(c.name ?? "").trim();
+    const mine = cases.find((c) => c.caseId === demoCase);
+    const name = mine ? nameOf(mine) : "";
+    if (!name || name === demoCase) return demoCase;
+    const shared = cases.filter((c) => nameOf(c) === name).length > 1;
+    return shared ? `${name} (${demoCase})` : name;
+  };
+  const listed = async () => (await options()).includes(await pickerText());
+
+  // Prove the predicate can see the case at all; otherwise the "hidden" check below passes vacuously.
+  await expect.poll(listed, { message: "the demo case is listed before it is archived" }).toBe(true);
+
   // Archive a case, then prove the toggle is what brings it back into view.
   await page.request.patch(`/cases/${demoCase}/status`, { data: { status: "closed" } });
   await page.request.post(`/cases/${demoCase}/archive`, { data: { removeFromList: true } });
@@ -215,18 +243,11 @@ test("US-220: the archived-cases control is labelled and filters the list", asyn
   await page.reload();
   await page.waitForLoadState("networkidle");
 
-  // The picker is an <input list="caseList"> backed by a <datalist>, so the case ids are option
-  // VALUES — reading textContent off the input returns "" and would pass against anything.
-  const options = () =>
-    page.evaluate(() =>
-      [...document.querySelectorAll("#caseList option")].map((o) => o.getAttribute("value") ?? ""),
-    );
-
-  expect(await options(), "an archived case is hidden by default").not.toContain(demoCase);
+  expect(await listed(), "an archived case is hidden by default").toBe(false);
 
   await toggle.check();
   // The list re-renders on change; the archived case must reappear without a reload.
-  await expect.poll(options, { timeout: 15_000 }).toContain(demoCase);
+  await expect.poll(listed, { timeout: 15_000 }).toBe(true);
 });
 
 test("the case-loading overlay exists and starts hidden", async ({ page, demoCase }) => {
