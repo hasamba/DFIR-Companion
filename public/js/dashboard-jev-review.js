@@ -37,9 +37,6 @@
   // `proc_access_win_pypykatz_cred_dump_lsass_access.yml`, which read as attacker tooling and are
   // not. Hidden above this by default; the analyst can show them.
   const TOOLING_CUTOFF = 0.5;
-  // The grades the server may send. A class name is built from this value, so it is matched
-  // against the list rather than interpolated — model output is never trusted into markup.
-  const GRADES = ["Critical", "High", "Medium", "Low", "Info"];
   // Ceiling on rendered rows. The server's own cap can be thousands; painting all of them costs
   // more than it tells anyone. Whatever is held back is stated, never silently dropped.
   const MAX_SHOWN = 300;
@@ -56,6 +53,22 @@
   const FULL_READ_CONFIRM_ROWS = 2000;
   // How often the elapsed-time line is repainted while a run is in flight.
   const TICK_MS = 1000;
+  // HOW LONG THE CAPPED REVIEW IS WAITED FOR BEFORE THE PANEL GIVES UP (#1552).
+  //
+  // A request that never settles — a laptop that slept, a proxy that dropped the socket — would
+  // otherwise hold the panel on "Reviewing…" until a case switch. One cap-worth of rows finishes
+  // far inside this, so 15 minutes is generous. The FULL READ gets no limit: a large case can
+  // legitimately run longer, and giving up in the browser does not stop the run on the server.
+  // For that one, and for the analyst who will not wait, there is the "Stop waiting" button.
+  const CAPPED_TIMEOUT_MS = 15 * 60 * 1000;
+  // What happens on the server after the browser stops waiting. The server refuses a second review
+  // of a case while one is still running (#1551), so a press that comes too soon gets a refusal —
+  // this says why before it happens.
+  const STILL_RUNNING = "may still be running on the server; a new review of this case is refused until it ends.";
+  const STOP_MESSAGES = {
+    cancel: `You stopped waiting for this review. It ${STILL_RUNNING}`,
+    timeout: `No answer after ${Math.round(CAPPED_TIMEOUT_MS / 60000)} minutes. The review ${STILL_RUNNING}`,
+  };
 
   let currentCaseId = "";
   let loadGen = 0;
@@ -72,6 +85,8 @@
   let runGen = 0; // whose resolution owns the busy flag
   let runStartedAt = 0;
   let tickTimer = null;
+  let activeRun = null; // { controller, timer } for the review in flight; null when none is
+  let reviewNote = ""; // why the panel stopped waiting — the analyst's own press, or the time limit
   let minGrade = ""; // the write half (#1568). "" = any grade; else the LOWEST grade the table draws
   let minConfidence = 0; // 0..1, the model's own confidence floor
   let picked = new Set(); // row ids the analyst has ticked
@@ -82,25 +97,17 @@
   let promoteError = "";
   let promoteResult = null; // { promoted, skipped, reasons } from the last promote
 
-  const gradeRank = (g) => {
-    const i = GRADES.indexOf(g);
-    return i < 0 ? GRADES.length : i;
-  };
-
-  const gradeClass = (g) => (GRADES.indexOf(g) < 0 ? "sev-Info" : `sev-${g}`);
-
-  const pct = (v) => (typeof v === "number" && isFinite(v) ? `${Math.round(v * 100)}%` : "—");
-
-  const when = (ts) => (ts ? String(ts).slice(0, 19).replace("T", " ") : "—");
-
-  function money(v) {
-    if (typeof v !== "number" || !isFinite(v) || v < 0) return "";
-    // Sub-cent runs are the normal case for a decision model, so a 2-decimal format would print
-    // "$0.00" for every run and say nothing.
-    return v >= 0.01 ? `$${v.toFixed(2)}` : `$${v.toFixed(6)}`;
-  }
-
-  const num = (v) => (typeof v === "number" && isFinite(v) ? v.toLocaleString() : "0");
+  // Pure formatting lives in js/dashboard-jev-review-format.js (#1552 split). Resolved at CALL
+  // time, never at load: this module must still load, and report itself, if that one did not.
+  const grades = () => jevGrades();
+  const gradeRank = (g) => jevGradeRank(g);
+  const gradeClass = (g) => jevGradeClass(g);
+  const pct = (v) => jevPct(v);
+  const when = (ts) => jevWhen(ts);
+  const money = (v) => jevMoney(v);
+  const num = (v) => jevNum(v);
+  const unreadRows = (r) => jevUnreadRows(r);
+  const fullReadPlan = () => jevFullReadPlan(result);
 
   function isTooling(row) {
     return typeof row.tooling === "number" && isFinite(row.tooling) && row.tooling > TOOLING_CUTOFF;
@@ -113,7 +120,7 @@
 
   /** Rows left after the grade floor and the confidence floor, on top of the tooling filter. */
   function filteredRows() {
-    const floor = minGrade && GRADES.indexOf(minGrade) >= 0 ? gradeRank(minGrade) : GRADES.length;
+    const floor = minGrade && grades().indexOf(minGrade) >= 0 ? gradeRank(minGrade) : grades().length;
     return visibleRows().filter((r) => {
       if (gradeRank(r.grade) > floor) return false;
       const c = typeof r.confidence === "number" && isFinite(r.confidence) ? r.confidence : 0;
@@ -138,32 +145,6 @@
   // `picked`: a pruned-on-every-change tick set is one forgotten prune from posting a row nobody saw.
   function selectedRows() {
     return selectableRows().filter((r) => picked.has(r.id));
-  }
-
-  /** Rows the last run matched but never reached. Zero when there is no run to compare against. */
-  function unreadRows(r) {
-    if (!r) return 0;
-    return Math.max(0, (r.matched || 0) - (r.read || 0));
-  }
-
-  // WHAT A FULL READ WOULD COVER, FROM THE LAST RUN'S OWN NUMBERS — never from a guess.
-  //
-  // `matched` is how many rows a full read reads. The cost is the last run's real cost scaled by
-  // rows read (cost x matched / read), because the spend is per row read, not per row matched.
-  // When there is no last run, `known` is false and the panel says it does not know rather than
-  // printing a number it invented. Same when the run reported no cost: `cost` stays null.
-  function fullReadPlan() {
-    if (!result) return { known: false, matched: 0, unread: 0, cost: null };
-    const matched = result.matched || 0;
-    const read = result.read || 0;
-    const usage = result.usage || {};
-    const spent = typeof usage.costUSD === "number" && isFinite(usage.costUSD) ? usage.costUSD : null;
-    return {
-      known: true,
-      matched,
-      unread: unreadRows(result),
-      cost: spent !== null && read > 0 ? (spent * matched) / read : null,
-    };
   }
 
   /** A real elapsed count. The server sends no progress, so no percentage is invented here. */
@@ -200,7 +181,7 @@
   }
 
   function rowHtml(row) {
-    const grade = GRADES.indexOf(row.grade) < 0 ? "Info" : row.grade;
+    const grade = grades().indexOf(row.grade) < 0 ? "Info" : row.grade;
     const sub = [row.asset, row.path].filter(Boolean).map(esc).join(" — ");
     const tool = isTooling(row)
       ? `<div class="jev-tool-score">reads as our own collection tooling (${pct(row.tooling)})</div>`
@@ -215,78 +196,6 @@
     </tr>`;
   }
 
-  function captionHtml() {
-    // STATE FACTS, NAME NO CAUSE YOU CANNOT KNOW. This caption once read "the row cap stopped the
-    // read" on a case where 1,344 rows matched a 2,000 cap: the shortfall was 366 rows already in
-    // the forensic timeline, not the cap. The server now sends the reasons apart — `capped` is true
-    // only when the cap really held rows back — and each fact gets its own clause.
-    //
-    // `readAll` is a third fact, not a fourth guess: the server says the run ignored the cap, and
-    // the shortfall is still checked against the numbers before the panel calls it full coverage.
-    const matched = result.matched || 0;
-    const analyzed = result.alreadyAnalyzed || 0;
-    const graded = result.graded || 0;
-    const unread = unreadRows(result);
-    const shown = visibleRows();
-    const total = Array.isArray(result.rows) ? result.rows.length : 0;
-    const hidden = total - shown.length;
-
-    // SAY THE SUM OUT LOUD. The first wording read "848 of 1,308 matching super-timeline row(s)
-    // were graded. 460 were already in the forensic timeline" — and an analyst whose forensic
-    // timeline PANEL showed 182 rows could not reconcile it, because the panel filters what it
-    // draws and the stored timeline is bigger than the view. So the caption no longer invites a
-    // comparison with a number on another screen: it accounts for the rows it read, and states
-    // the total it is accounting for, so the arithmetic closes here (#1547).
-    let line = `Graded ${num(graded)} archive row(s).`;
-    if (analyzed > 0) {
-      line +=
-        ` Another ${num(analyzed)} were skipped because the case has already analysed them` +
-        ` — the AI can see those. That accounts for all ${num(matched)} row(s) that matched.`;
-    } else {
-      line += ` That is every row that matched, out of ${num(matched)}.`;
-    }
-    if (result.readAll === true && result.capped !== true && unread === 0) {
-      line += " Nothing was left unread: no cap was in force.";
-    } else if (result.readAll === true && result.capped !== true && unread > 0) {
-      // The cap was not in force and rows are still missing. The panel does not know why, so it
-      // reports the shortfall and stops there.
-      line +=
-        ` <span class="jev-truncated">${num(unread)} matching row(s) were not read, ` +
-        `so this is not full coverage of the case.</span>`;
-    }
-    if (result.capped === true && unread > 0) {
-      line +=
-        ` <span class="jev-truncated">The ${num(result.cap || 0)}-row cap stopped the read — ` +
-        `${num(unread)} matching row(s) were never read, so this is not full coverage of the case.</span>`;
-    }
-    if (graded === 0 && analyzed > 0 && result.capped !== true) {
-      line += " Nothing was left for this review to grade.";
-    }
-
-    // The display line subtracts in the order the analyst sees: the tooling filter takes rows out
-    // first, then the grade and confidence floors, then the draw cap shows the top of what is left.
-    // The first version listed shown, hidden and undrawn as three flat numbers that happened to sum
-    // to the total, which reads as three unrelated facts rather than one subtraction. EVERY
-    // subtraction is named, because each one also narrows what a select-all would promote.
-    const passing = total - hidden;
-    const kept = filteredRows().length;
-    const byFilters = passing - kept;
-    const drawn = drawnRows().length;
-    let second = "";
-    if (hidden > 0) {
-      second += `${num(hidden)} of the ${num(total)} graded row(s) look like our own collection tooling and are hidden. `;
-      second += `Of the ${num(passing)} left, `;
-    } else {
-      second += `Of the ${num(total)} graded row(s), `;
-    }
-    if (byFilters > 0) second += `${num(byFilters)} are below the grade or confidence filter. Of the ${num(kept)} left, `;
-    second +=
-      drawn >= kept
-        ? `all ${num(drawn)} are shown.`
-        : `the top ${num(drawn)} are shown — ${num(kept - drawn)} more are not drawn.`;
-    return `<p class="jev-caption">${line}</p><p class="jev-caption">${esc(second)}</p>`;
-  }
-
   // OFFER THE FULL READ ONLY WHEN IT WOULD ADD SOMETHING. The cap really held rows back, so there
   // are rows a full read would reach and this one did not. When nothing was capped this returns
   // nothing at all — a panel that offers the expensive action after every run is a panel whose
@@ -297,36 +206,6 @@
     if (unread <= 0) return "";
     return `<p class="jev-offer"><strong>${num(unread)} matching row(s) went unread.</strong>
       Reading every row covers them. <button type="button" id="jevOfferAll">Read every row</button></p>`;
-  }
-
-  // THE CONFIRMATION, IN THE PANEL — never confirm(), alert() or any other browser modal: they
-  // block the automation harness, and a native dialog cannot show the numbers this one has to.
-  function confirmHtml() {
-    const plan = fullReadPlan();
-    let body;
-    if (!plan.known) {
-      body =
-        "No review has run on this case yet, so this panel cannot say how many rows a full read " +
-        "covers or what it would cost. That is not an estimate of zero — the figures are simply " +
-        "not known until a first run reports them.";
-    } else {
-      const est = money(plan.cost);
-      body =
-        `This reads all ${num(plan.matched)} matching super-timeline row(s), ` +
-        `${num(plan.unread)} of which the last run never reached. ` +
-        (est
-          ? `Estimated cost ${est}, worked out from the last run's own cost per row — an estimate, not a quote.`
-          : "The last run reported no cost, so there is no figure to estimate from.");
-    }
-    return `<div class="jev-confirm" role="group" aria-label="Confirm reading every row">
-      <p class="jev-confirm-head">Read every row, ignoring the cap?</p>
-      <p class="jev-caption">${esc(body)}</p>
-      <p class="jev-caption">It reads only. Nothing is promoted and no case data changes, however long it runs.</p>
-      <p class="jev-confirm-actions">
-        <button type="button" id="jevConfirmRun">Yes — read every row</button>
-        <button type="button" id="jevConfirmCancel">Cancel</button>
-      </p>
-    </div>`;
   }
 
   function metaHtml() {
@@ -418,7 +297,8 @@
     const table = body
       ? `<table class="jev-table"><thead><tr><th scope="col"><span class="visually-hidden">Promote</span></th><th scope="col">Grade</th><th scope="col">Confidence</th><th scope="col">Time (UTC)</th><th scope="col">Artifact</th><th scope="col">What the row says</th></tr></thead><tbody>${body}</tbody></table>`
       : `<p class="jev-status">No row is left to show. ${hideTooling ? "Untick the tooling filter, or lower the grade and confidence filters, to see more." : "Lower the grade and confidence filters, or the model graded nothing here."}</p>`;
-    return captionHtml() + offerHtml() + metaHtml() + promoteResultHtml() + (body ? selectionHtml() : "") + table;
+    const counts = { shown: visibleRows().length, kept: filteredRows().length, drawn: drawnRows().length };
+    return jevCaptionHtml(result, counts) + offerHtml() + metaHtml() + promoteResultHtml() + (body ? selectionHtml() : "") + table;
   }
 
   function progressHtml() {
@@ -444,8 +324,11 @@
     const btn = document.getElementById("jevRunBtn");
     const allBtn = document.getElementById("jevRunAllBtn");
     const chk = document.getElementById("jevHideTooling");
+    const cancelBtn = document.getElementById("jevCancelBtn");
     if (!el) return;
     if (chk) chk.checked = hideTooling;
+    // The one control that must stay live while a run is in flight, and exists only then.
+    if (cancelBtn) cancelBtn.hidden = !busy;
 
     const configured = statusState === "ready" && status && status.configured === true;
     // Every action is locked while a run or a promote is in flight, or a confirmation is waiting.
@@ -496,9 +379,10 @@
     if (statusState === "loading" || !currentCaseId) html = "";
     else if (statusState === "ready" && !configured) html = notConfiguredHtml();
     else if (busy) html = progressHtml();
-    else if (confirming) html = confirmHtml() + (result ? resultHtml() : "");
+    else if (confirming) html = jevFullReadConfirmHtml(fullReadPlan()) + (result ? resultHtml() : "");
     else if (confirmingPromote) html = promoteConfirmHtml() + (result ? resultHtml() : "");
     else if (reviewError) html = `<p class="jev-error">${esc(reviewError)}</p>`;
+    else if (reviewNote) html = `<p class="jev-status">${esc(reviewNote)}</p>`;
     else if (result) html = resultHtml();
     else html = `<p class="jev-status">Nothing reviewed yet for this case. The review reads the Info-graded rows the forensic timeline leaves out, grades them, and ranks them. Nothing enters the case until you tick rows and press Promote.</p>`;
     el.innerHTML = html;
@@ -646,16 +530,30 @@
     runningAll = readAll;
     confirming = false;
     reviewError = "";
+    reviewNote = "";
     result = null;
     // A NEW READING IS A NEW SET OF ROWS: a tick kept from the old one could ride into the new post
     // body on a row nobody saw. The sent set goes with it.
     resetSelection();
+    // Each run owns its controller, so "Stop waiting", the time limit and a case switch abort THIS
+    // request and no other. Only the capped review gets the time limit — see CAPPED_TIMEOUT_MS.
+    const run = {
+      controller: typeof AbortController === "function" ? new AbortController() : null,
+      timer: null,
+    };
+    activeRun = run;
+    if (!readAll && typeof setTimeout === "function") {
+      run.timer = setTimeout(() => {
+        if (runGen === gen) stopWaiting("timeout");
+      }, CAPPED_TIMEOUT_MS);
+    }
     startTick();
     renderJevReview();
     fetch(`/cases/${encodeURIComponent(caseId)}/jev/review`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(readAll ? { all: true } : {}),
+      signal: run.controller ? run.controller.signal : undefined,
     })
       .then((r) => r.json().then((body) => ({ ok: r.ok, status: r.status, body })))
       .then((r) => {
@@ -668,10 +566,16 @@
         if (!result) reviewError = "The review returned nothing this panel can read.";
       })
       .catch((err) => {
+        // An abort this panel made — "Stop waiting", the time limit, a case switch — has already
+        // moved the generation on and said its own piece, so it stops at this check and is never
+        // reported as a network failure. What reaches the line below is an ordinary one.
         if (currentCaseId !== caseId || runGen !== gen) return;
         reviewError = `The review did not run: ${String((err && err.message) || err)}`;
       })
       .finally(() => {
+        // The timer belongs to this run whoever owns the flag now: a limit left armed after the
+        // answer came would fire into a later run.
+        clearRunTimer(run);
         // EVERY exit path clears the flag — a rejected fetch, a 501, an abandoned case. A busy flag
         // that survives one failure wedges the button for the rest of the session.
         //
@@ -680,11 +584,50 @@
         // run this resolution belongs to, and a later run may now own both. Clearing them here
         // would unlock a run that is still in flight — the same wedge, one case along.
         if (runGen !== gen) return;
+        activeRun = null;
         stopTick();
         busy = false;
         runningAll = false;
         renderJevReview();
       });
+  }
+
+  function clearRunTimer(run) {
+    if (run && run.timer !== null && typeof clearTimeout === "function") clearTimeout(run.timer);
+    if (run) run.timer = null;
+  }
+
+  // Abort the request in flight and forget it. The generation moves on FIRST, so the rejection the
+  // abort causes — or a late answer, if the abort does not take — finds the run no longer owns the
+  // panel and paints nothing.
+  function abortRun() {
+    const run = activeRun;
+    activeRun = null;
+    runGen++;
+    if (!run) return;
+    clearRunTimer(run);
+    try {
+      if (run.controller) run.controller.abort();
+    } catch {
+      // Nothing to recover: the generation already moved on, so the request can no longer paint.
+    }
+  }
+
+  // STOP WAITING (#1552): the analyst's press ("cancel") or the capped review's time limit
+  // ("timeout"). The panel lets go HERE rather than in the fetch's `finally`, so it is free again
+  // even if the abort never reaches the request. It says the run may go on — the browser stopped
+  // listening; the server did not stop working.
+  function stopWaiting(kind) {
+    if (!busy || !activeRun) return;
+    abortRun();
+    stopTick();
+    busy = false;
+    runningAll = false;
+    reviewNote = STOP_MESSAGES[kind] || STOP_MESSAGES.cancel;
+    renderJevReview();
+    // The pressed button is hidden now; focus goes to the one that starts the next review.
+    const next = kind === "cancel" ? document.getElementById("jevRunBtn") : null;
+    if (next && typeof next.focus === "function") next.focus();
   }
 
   // Every tick, "Sent" badge and promote outcome belongs to ONE reading.
@@ -699,13 +642,13 @@
     currentCaseId = caseId;
     // A case switch is also an exit path for a run started under the previous case: the flag goes
     // off, the ticker stops and the generation moves on, so the old run's `finally` cannot touch
-    // any of the three again.
+    // any of the three again. The old request is aborted too (#1552): nobody is waiting for it now.
     busy = false;
     runningAll = false;
     confirming = false;
     promoting = false;
     confirmingPromote = false;
-    runGen++;
+    abortRun();
     promoteGen++;
     stopTick();
     status = null;
@@ -713,6 +656,7 @@
     statusError = "";
     result = null;
     reviewError = "";
+    reviewNote = "";
     resetSelection();
     renderJevReview();
     const gen = ++loadGen;
@@ -767,6 +711,8 @@
     btn.addEventListener("click", () => runJevReview(false));
     const allBtn = document.getElementById("jevRunAllBtn");
     if (allBtn) allBtn.addEventListener("click", askFullRead);
+    const cancelBtn = document.getElementById("jevCancelBtn");
+    if (cancelBtn) cancelBtn.addEventListener("click", () => stopWaiting("cancel"));
     const toolbarBtn = document.getElementById("jevReviewBtn");
     if (toolbarBtn) toolbarBtn.addEventListener("click", revealJevReview);
     chk.addEventListener("change", () => {
@@ -778,7 +724,7 @@
     const gradeSel = document.getElementById("jevGradeFilter");
     if (gradeSel)
       gradeSel.addEventListener("change", () => {
-        minGrade = GRADES.indexOf(gradeSel.value) >= 0 ? gradeSel.value : "";
+        minGrade = grades().indexOf(gradeSel.value) >= 0 ? gradeSel.value : "";
         renderJevReview();
       });
     const confSel = document.getElementById("jevMinConfidence");

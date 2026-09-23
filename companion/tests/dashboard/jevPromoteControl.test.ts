@@ -115,7 +115,11 @@ function harness() {
         });
       }),
   };
-  const api = loadDashboardModule<Api>("dashboard-jev-review.js", ["dashboard-escape.js"], globals);
+  const api = loadDashboardModule<Api>(
+    "dashboard-jev-review.js",
+    ["dashboard-escape.js", "dashboard-jev-review-format.js"],
+    globals,
+  );
   const panel = () => el("jevReviewPanel");
   /** Re-read after every paint, exactly as the module does. */
   const inPanel = (sel: string): FakeEl | null => panel().querySelector(sel);
