@@ -117,6 +117,23 @@
         { "technique": "T1048", "name": "Exfiltration Over Alternative Protocol", "alternatives": ["T1567.002"] },
         { "technique": "T1486", "name": "Data Encrypted for Impact" }
       ]
+    },
+    {
+      "name": "Egg-Cellent Resume (more_eggs → Cobalt Strike → Pyramid)",
+      "description": "more_eggs resume-lure intrusion: a ZIP resume lure runs ie4uinit.exe with a malicious .inf, msxsl runs an XSL script, a scheduled task persists more_eggs, regsvr32 loads a numbered Cobalt Strike .ocx, and Cobalt Strike execute-assembly runs Seatbelt and SharpShares, AdFind and NetScan map the domain, VeeamHax exploits Veeam CVE-2023-27532 for credentials and an xp_cmdshell-created account, a cloudflared tunnel holds access, and Pyramid runs Python tooling.",
+      "reference": "https://thedfirreport.com/2024/12/02/the-curious-case-of-an-egg-cellent-resume/",
+      "steps": [
+        { "technique": "T1566.001", "name": "Resume ZIP Lure (Spearphishing Attachment)", "alternatives": ["T1204.002"] },
+        { "technique": "T1218", "name": "ie4uinit.exe + .inf Proxy Execution" },
+        { "technique": "T1220", "name": "msxsl XSL Script Processing" },
+        { "technique": "T1218.010", "name": "regsvr32 Numbered .ocx (Cobalt Strike)" },
+        { "technique": "T1053.005", "name": "Scheduled Task" },
+        { "technique": "T1620", "name": "Cobalt Strike execute-assembly (Seatbelt, SharpShares)" },
+        { "technique": "T1087.002", "name": "AdFind / NetScan Discovery", "alternatives": ["T1018", "T1046"] },
+        { "technique": "T1212", "name": "VeeamHax CVE-2023-27532 + xp_cmdshell Account", "alternatives": ["T1555", "T1136.001"] },
+        { "technique": "T1572", "name": "cloudflared Tunnel" },
+        { "technique": "T1059.006", "name": "Pyramid Python" }
+      ]
     }
   ]
 }
