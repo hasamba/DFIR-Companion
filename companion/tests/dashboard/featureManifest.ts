@@ -171,6 +171,18 @@ export const FEATURES: Feature[] = [
       "busy",
       "hideTooling",
       "wired",
+      // #1568's write half. `promoting` is listed for the same reason as `busy`; `picked` and
+      // `sentIds` because a reachable copy of either would let another module decide what this
+      // panel writes into the forensic timeline.
+      "minGrade",
+      "minConfidence",
+      "picked",
+      "sentIds",
+      "promoting",
+      "promoteGen",
+      "confirmingPromote",
+      "promoteError",
+      "promoteResult",
     ],
   },
   { file: "dashboard-backup.js", publish: ["loadCaseBackups", "restoreCaseBackup"], private: [] },

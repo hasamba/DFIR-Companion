@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Promote what the missed-evidence review finds** — tick rows, filter by grade and confidence, select everything the filters show, and promote; each row enters the forensic timeline carrying the model's grade as its severity, with a note recording the grade, the confidence and which model gave it (closes #1568)
 - **Second look is a button, not something that happens to you** — the only automatic path that wrote into the forensic record now waits to be pressed, shows what it would promote before you press it, and re-runs the conclusions afterwards unless you opt out (closes #1554)
 - **Promoted rows are visible in the forensic timeline** — a row someone pulled in from the archive is shown whatever its severity, wearing a `✓ Promoted` badge, and the timeline count says how many rows the filters are hiding
 - **Toolbar buttons are named by cluster** — a small Case / Modes / AI / Evidence / Report / View label under each run of buttons, drawn in the gap the row already leaves, so the toolbar is no taller at any width; the grouping dissolves below 900px, where it would have cost a phone 40px

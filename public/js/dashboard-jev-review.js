@@ -1,10 +1,15 @@
-// Missed evidence review (#1540).
+// Missed evidence review (#1540), and promoting what it finds (#1568).
 //
 // The analyst presses one button; the server re-grades the Info-graded super-timeline rows with a
-// fast decision model (Jev) and hands back a ranked reading. NOTHING IS PROMOTED AND NO CASE STATE
-// CHANGES — the panel says that in its own first line rather than leaving an analyst to infer it
-// from the absence of a save control, because a ranked list of "missed evidence" reads like a
-// verdict unless it is told otherwise.
+// fast decision model (Jev) and hands back a ranked reading. THE REVIEW ITSELF STILL WRITES
+// NOTHING; promoting does. Ticking rows and pressing "Promote selected" writes them into the
+// FORENSIC timeline carrying THE MODEL'S GRADE AS THEIR SEVERITY — and severity is what decides
+// whether the analysis AI ever reads a row. A model's judgement entering the evidence record, not
+// a bookmark, so it asks first, in the panel, with the count.
+//
+// SELECT-ALL IS SCOPED TO WHAT IS DRAWN, never to everything graded. The tooling filter, the grade
+// floor, the confidence floor and the MAX_SHOWN draw cap each narrow the table, and a row any of
+// them held back is one nobody saw — so the post body is rebuilt from the drawn rows at press time.
 //
 // Two things this panel owes the analyst, both of which it would be easy to get wrong:
 //
@@ -67,6 +72,15 @@
   let runGen = 0; // whose resolution owns the busy flag
   let runStartedAt = 0;
   let tickTimer = null;
+  let minGrade = ""; // the write half (#1568). "" = any grade; else the LOWEST grade the table draws
+  let minConfidence = 0; // 0..1, the model's own confidence floor
+  let picked = new Set(); // row ids the analyst has ticked
+  let sentIds = new Set(); // row ids this panel has already posted to promote
+  let promoting = false; // a promote is in flight — the lock, not the `disabled` attribute
+  let promoteGen = 0; // whose resolution owns the promoting flag
+  let confirmingPromote = false; // the inline "promote these rows?" confirmation is on screen
+  let promoteError = "";
+  let promoteResult = null; // { promoted, skipped, reasons } from the last promote
 
   const gradeRank = (g) => {
     const i = GRADES.indexOf(g);
@@ -95,6 +109,35 @@
   function visibleRows() {
     const rows = result && Array.isArray(result.rows) ? result.rows : [];
     return hideTooling ? rows.filter((r) => !isTooling(r)) : rows;
+  }
+
+  /** Rows left after the grade floor and the confidence floor, on top of the tooling filter. */
+  function filteredRows() {
+    const floor = minGrade && GRADES.indexOf(minGrade) >= 0 ? gradeRank(minGrade) : GRADES.length;
+    return visibleRows().filter((r) => {
+      if (gradeRank(r.grade) > floor) return false;
+      const c = typeof r.confidence === "number" && isFinite(r.confidence) ? r.confidence : 0;
+      return c >= minConfidence;
+    });
+  }
+
+  // EXACTLY THE ROWS ON SCREEN. Every count, the select-all and the POST body derive from it.
+  function drawnRows() {
+    return filteredRows()
+      .slice()
+      .sort((a, b) => gradeRank(a.grade) - gradeRank(b.grade))
+      .slice(0, MAX_SHOWN);
+  }
+
+  /** Drawn rows this panel has not already sent. Sent rows are in the timeline; they are done. */
+  function selectableRows() {
+    return drawnRows().filter((r) => !sentIds.has(r.id));
+  }
+
+  // What a press would write. The intersection is taken HERE, at press time, not kept tidy in
+  // `picked`: a pruned-on-every-change tick set is one forgotten prune from posting a row nobody saw.
+  function selectedRows() {
+    return selectableRows().filter((r) => picked.has(r.id));
   }
 
   /** Rows the last run matched but never reached. Zero when there is no run to compare against. */
@@ -146,13 +189,24 @@
     runStartedAt = 0;
   }
 
+  // The tick, or the badge that replaces it. A native checkbox with a screen-reader label, and
+  // `escAttr` on the id and label — attacker-influenced text going into attribute position.
+  function pickHtml(row, grade) {
+    if (sentIds.has(row.id)) {
+      return `<span class="jev-sent" title="This panel sent this row to the forensic timeline. It is not promotable again from here.">Sent</span>`;
+    }
+    const label = `Promote the ${grade} row: ${String(row.description || "").slice(0, 80)}`;
+    return `<input type="checkbox" class="jev-pick" data-id="${escAttr(row.id)}"${picked.has(row.id) ? " checked" : ""} aria-label="${escAttr(label)}" />`;
+  }
+
   function rowHtml(row) {
     const grade = GRADES.indexOf(row.grade) < 0 ? "Info" : row.grade;
     const sub = [row.asset, row.path].filter(Boolean).map(esc).join(" — ");
     const tool = isTooling(row)
       ? `<div class="jev-tool-score">reads as our own collection tooling (${pct(row.tooling)})</div>`
       : "";
-    return `<tr>
+    return `<tr${sentIds.has(row.id) ? ' class="jev-row-sent"' : ""}>
+      <td class="jev-pick-cell">${pickHtml(row, grade)}</td>
       <td><span class="jev-grade ${gradeClass(grade)}"><span class="sev-dot"></span>${esc(grade)}</span></td>
       <td class="jev-conf">${esc(pct(row.confidence))}</td>
       <td>${esc(when(row.timestamp))}</td>
@@ -210,11 +264,14 @@
     }
 
     // The display line subtracts in the order the analyst sees: the tooling filter takes rows out
-    // first, then the draw cap shows the top of what is left. The first version listed shown,
-    // hidden and undrawn as three flat numbers that happened to sum to the total, which reads as
-    // three unrelated facts rather than one subtraction.
+    // first, then the grade and confidence floors, then the draw cap shows the top of what is left.
+    // The first version listed shown, hidden and undrawn as three flat numbers that happened to sum
+    // to the total, which reads as three unrelated facts rather than one subtraction. EVERY
+    // subtraction is named, because each one also narrows what a select-all would promote.
     const passing = total - hidden;
-    const drawn = Math.min(shown.length, MAX_SHOWN);
+    const kept = filteredRows().length;
+    const byFilters = passing - kept;
+    const drawn = drawnRows().length;
     let second = "";
     if (hidden > 0) {
       second += `${num(hidden)} of the ${num(total)} graded row(s) look like our own collection tooling and are hidden. `;
@@ -222,10 +279,11 @@
     } else {
       second += `Of the ${num(total)} graded row(s), `;
     }
+    if (byFilters > 0) second += `${num(byFilters)} are below the grade or confidence filter. Of the ${num(kept)} left, `;
     second +=
-      drawn >= passing
+      drawn >= kept
         ? `all ${num(drawn)} are shown.`
-        : `the top ${num(drawn)} are shown — ${num(passing - drawn)} more are not drawn.`;
+        : `the top ${num(drawn)} are shown — ${num(kept - drawn)} more are not drawn.`;
     return `<p class="jev-caption">${line}</p><p class="jev-caption">${esc(second)}</p>`;
   }
 
@@ -283,13 +341,84 @@
     return bits.length ? `<p class="jev-meta">${bits.join(" &middot; ")}</p>` : "";
   }
 
+  // The selection bar. THE COUNT IN THE SELECT-ALL LABEL IS THE SCOPE: a bare "Select all" reads as
+  // "everything graded", which it must never mean, so the number counts rows DRAWN BELOW it.
+  function selectionHtml() {
+    const selectable = selectableRows().length;
+    const chosen = selectedRows().length;
+    const off = (cond) => (cond || promoting ? " disabled" : "");
+    const allTip = `Ticks only the rows drawn in the table below. The tooling filter, the grade filter, the confidence filter and the ${MAX_SHOWN}-row draw cap all narrow it — a row you cannot see is never ticked.`;
+    const goTip = "Writes the ticked rows into the forensic timeline with the model's grade as their severity. It asks first.";
+    const note =
+      (chosen === 0
+        ? "Tick a row to promote it. Promoting writes to the case."
+        : `${num(chosen)} of the ${num(selectable)} row(s) shown are ticked.`) +
+      (sentIds.size > 0 ? ` ${num(sentIds.size)} already sent from this panel.` : "");
+    return `<div class="jev-select" role="group" aria-label="Promote reviewed rows">
+      <button type="button" id="jevSelectAll"${off(selectable === 0)} title="${escAttr(allTip)}">Select all ${num(selectable)} shown</button>
+      <button type="button" id="jevClearSel"${off(chosen === 0)}>Clear selection</button>
+      <button type="button" id="jevPromoteBtn" class="jev-promote"${off(chosen === 0)} title="${escAttr(goTip)}">${promoting ? "Promoting…" : `Promote ${num(chosen)} selected row${chosen === 1 ? "" : "s"}`}</button>
+      <span class="jev-select-note">${esc(note)}</span>
+    </div>`;
+  }
+
+  // THE PROMOTE CONFIRMATION, IN THE PANEL — never confirm(): a browser modal blocks the automation
+  // harness and cannot carry the sentence that matters, which is whose judgement is being written.
+  function promoteConfirmHtml() {
+    const n = selectedRows().length;
+    const model = result && result.model ? String(result.model) : "this model";
+    const stake =
+      `Each row enters the case record with the grade ${model} gave it as its severity. Severity is ` +
+      "what decides whether the analysis AI ever reads a row, so this writes a model's judgement into " +
+      "the evidence. It is a reading, not a finding — check the rows before you press. This panel " +
+      "cannot undo it.";
+    const skips =
+      "None of these rows was in the forensic timeline when the review ran — the review only grades " +
+      "rows the case has not analysed. The server checks again and reports anything it skips." +
+      (sentIds.size > 0
+        ? ` ${num(sentIds.size)} row(s) this panel already sent are not in this count and are not sent twice.`
+        : "");
+    return `<div class="jev-confirm" role="group" aria-label="Confirm promoting rows">
+      <p class="jev-confirm-head">Promote ${num(n)} row(s) into the forensic timeline?</p>
+      <p class="jev-caption">${esc(stake)}</p>
+      <p class="jev-caption">${esc(skips)}</p>
+      <p class="jev-confirm-actions">
+        <button type="button" id="jevPromoteGo">Yes — promote ${num(n)} row(s)</button>
+        <button type="button" id="jevPromoteCancel">Cancel</button>
+      </p>
+    </div>`;
+  }
+
+  // What the last promote did. AN INFO ROW IS PROMOTED AND STILL UNREAD BY THE AI — it lands in the
+  // timeline for the analyst, but Info gets no seat in synthesis — so that is said out loud. And
+  // `reasons` is NOTES, not skips: the Info remark rides in it, so "skipped" would be the wrong head.
+  function promoteResultHtml() {
+    if (promoteError) return `<p class="jev-error">${esc(promoteError)}</p>`;
+    if (!promoteResult) return "";
+    const promoted = typeof promoteResult.promoted === "number" ? promoteResult.promoted : 0;
+    const skipped = typeof promoteResult.skipped === "number" ? promoteResult.skipped : 0;
+    const line =
+      (promoted > 0
+        ? `${num(promoted)} row(s) are now in the forensic timeline, each with the grade this review gave it.`
+        : "No row was written into the forensic timeline.") + (skipped > 0 ? ` ${num(skipped)} were skipped.` : "");
+    const atInfo = (result && Array.isArray(result.rows) ? result.rows : []).filter((r) => sentIds.has(r.id) && r.grade === "Info").length;
+    const caveat =
+      atInfo > 0 && promoted > 0
+        ? `<p class="jev-caption jev-truncated">${esc(`${num(atInfo)} of the row(s) you sent were graded Info. An Info row is in the timeline for you to read, but the analysis AI never sees it — only rows above Info reach synthesis. Promoting it changed what you can see, not what the AI reads.`)}</p>`
+        : "";
+    const reasons = Array.isArray(promoteResult.reasons) ? promoteResult.reasons : [];
+    const notes = reasons.length
+      ? `<p class="jev-caption">The server also reported:</p><ul class="jev-reasons">${reasons.slice(0, 20).map((r) => `<li>${esc(String(r))}</li>`).join("")}</ul>`
+      : "";
+    return `<p class="jev-promoted">${esc(line)}</p>${caveat}${notes}`;
+  }
+
   function resultHtml() {
-    const shown = visibleRows().slice().sort((a, b) => gradeRank(a.grade) - gradeRank(b.grade));
-    const body = shown.slice(0, MAX_SHOWN).map(rowHtml).join("");
+    const body = drawnRows().map(rowHtml).join("");
     const table = body
-      ? `<table class="jev-table"><thead><tr><th scope="col">Grade</th><th scope="col">Confidence</th><th scope="col">Time (UTC)</th><th scope="col">Artifact</th><th scope="col">What the row says</th></tr></thead><tbody>${body}</tbody></table>`
-      : `<p class="jev-status">No row is left to show. ${hideTooling ? "Untick the tooling filter to see the rows the model read as our own collection tooling." : "The model graded nothing here."}</p>`;
-    return captionHtml() + offerHtml() + metaHtml() + table;
+      ? `<table class="jev-table"><thead><tr><th scope="col"><span class="visually-hidden">Promote</span></th><th scope="col">Grade</th><th scope="col">Confidence</th><th scope="col">Time (UTC)</th><th scope="col">Artifact</th><th scope="col">What the row says</th></tr></thead><tbody>${body}</tbody></table>`
+      : `<p class="jev-status">No row is left to show. ${hideTooling ? "Untick the tooling filter, or lower the grade and confidence filters, to see more." : "Lower the grade and confidence filters, or the model graded nothing here."}</p>`;
+    return captionHtml() + offerHtml() + metaHtml() + promoteResultHtml() + (body ? selectionHtml() : "") + table;
   }
 
   function progressHtml() {
@@ -319,23 +448,33 @@
     if (chk) chk.checked = hideTooling;
 
     const configured = statusState === "ready" && status && status.configured === true;
-    // Both actions are locked while a run is in flight or a confirmation is waiting. The flag in
-    // runJevReview() is the real gate; this is what the analyst can see of it.
-    const locked = busy || confirming || !currentCaseId || !configured;
+    // Every action is locked while a run or a promote is in flight, or a confirmation is waiting.
+    // The flags in runJevReview() and promoteSelected() are the real gates; this is what the
+    // analyst can see of them.
+    const locked = busy || promoting || confirming || confirmingPromote || !currentCaseId || !configured;
     if (btn) {
       btn.disabled = locked;
       btn.textContent = busy && !runningAll ? "Reviewing…" : "Review missed evidence";
       btn.title = configured
-        ? "Grade the Info-graded super-timeline rows the AI never sees, up to the server's row cap. Reads only; promotes nothing."
+        ? "Grade the Info-graded super-timeline rows the AI never sees, up to the server's row cap. Reads only; nothing is promoted until you tick rows and press Promote."
         : "Jev is not configured — see the note below.";
     }
     if (allBtn) {
       allBtn.disabled = locked;
       allBtn.textContent = busy && runningAll ? "Reading every row…" : "Read every row";
       allBtn.title = configured
-        ? "Ignore the row cap and read every matching super-timeline row. Slower and dearer — it asks first, with the numbers. Reads only; promotes nothing."
+        ? "Ignore the row cap and read every matching super-timeline row. Slower and dearer — it asks first, with the numbers. Reads only; nothing is promoted until you tick rows and press Promote."
         : "Jev is not configured — see the note below.";
     }
+    // The filter controls follow the same lock, and always show the state the render used.
+    const gradeSel = document.getElementById("jevGradeFilter");
+    const confSel = document.getElementById("jevMinConfidence");
+    const confOut = document.getElementById("jevMinConfidenceOut");
+    const confPct = Math.round(minConfidence * 100);
+    if (gradeSel) gradeSel.value = minGrade;
+    if (confSel) confSel.value = String(confPct);
+    if (confOut) confOut.textContent = confPct > 0 ? `${confPct}% and above` : "any";
+    [gradeSel, confSel, chk].forEach((c) => c && (c.disabled = locked));
 
     if (statusEl) {
       let msg = "";
@@ -346,7 +485,9 @@
         msg = runningAll
           ? `Reading every matching super-timeline row and grading it. ${elapsedText()}`
           : `Reading the super-timeline rows and grading them. ${elapsedText()}`;
+      else if (promoting) msg = "Writing the selected rows into the forensic timeline…";
       else if (confirming) msg = "Waiting for you to confirm a full read.";
+      else if (confirmingPromote) msg = "Waiting for you to confirm promoting the selected rows.";
       else if (configured && status.model) msg = `Ready — ${status.model}.`;
       statusEl.textContent = msg;
     }
@@ -356,29 +497,125 @@
     else if (statusState === "ready" && !configured) html = notConfiguredHtml();
     else if (busy) html = progressHtml();
     else if (confirming) html = confirmHtml() + (result ? resultHtml() : "");
+    else if (confirmingPromote) html = promoteConfirmHtml() + (result ? resultHtml() : "");
     else if (reviewError) html = `<p class="jev-error">${esc(reviewError)}</p>`;
     else if (result) html = resultHtml();
-    else html = `<p class="jev-status">Nothing reviewed yet for this case. The review reads the Info-graded rows the forensic timeline leaves out, grades them, and ranks them — it writes nothing back.</p>`;
+    else html = `<p class="jev-status">Nothing reviewed yet for this case. The review reads the Info-graded rows the forensic timeline leaves out, grades them, and ranks them. Nothing enters the case until you tick rows and press Promote.</p>`;
     el.innerHTML = html;
 
-    const open = el.querySelector("#jevOpenSettings");
-    if (open) {
-      open.addEventListener("click", () => {
-        if (typeof openSettingsTab === "function") openSettingsTab("ai");
-        else if (typeof openSettingsModal === "function") openSettingsModal();
-      });
+    // innerHTML is replaced on every paint, so every control below is a NEW element to find and
+    // wire again. One helper, so a missing control is a no-op rather than a throw.
+    const on = (sel, type, fn) => {
+      const node = el.querySelector(sel);
+      if (node) node.addEventListener(type, fn);
+    };
+    on("#jevOpenSettings", "click", () => {
+      if (typeof openSettingsTab === "function") openSettingsTab("ai");
+      else if (typeof openSettingsModal === "function") openSettingsModal();
+    });
+    on("#jevOfferAll", "click", askFullRead);
+    on("#jevConfirmRun", "click", () => runJevReview(true));
+    on("#jevConfirmCancel", "click", () => {
+      confirming = false;
+      renderJevReview();
+    });
+    wireSelection(on);
+  }
+
+  /** The selection and promote controls, re-wired after each paint. */
+  function wireSelection(on) {
+    // ONE delegated listener on the table, not one per row. It reads `data-id` off the tick itself,
+    // so a target that is not a tick is ignored.
+    on(".jev-table", "change", (e) => {
+      const t = e && e.target;
+      const id = t && t.dataset ? t.dataset.id : "";
+      if (!id) return;
+      if (t.checked) picked.add(id);
+      else picked.delete(id);
+      renderJevReview();
+    });
+    // SELECT ALL MEANS WHAT IS DRAWN. selectableRows() is the list the table just painted, so a row
+    // any filter or the draw cap held back is not in it and cannot be ticked by this press.
+    on("#jevSelectAll", "click", () => {
+      selectableRows().forEach((r) => picked.add(r.id));
+      renderJevReview();
+    });
+    on("#jevClearSel", "click", () => {
+      picked = new Set();
+      renderJevReview();
+    });
+    on("#jevPromoteBtn", "click", () => {
+      if (promoting || selectedRows().length === 0) return;
+      confirmingPromote = true;
+      promoteError = "";
+      promoteResult = null;
+      renderJevReview();
+    });
+    on("#jevPromoteGo", "click", promoteSelected);
+    on("#jevPromoteCancel", "click", () => {
+      confirmingPromote = false;
+      renderJevReview();
+    });
+  }
+
+  // Write the ticked rows into the forensic timeline. The body comes from selectedRows() — the drawn
+  // rows, ticked — never from `picked`, so the rule this panel promises holds where it matters. The
+  // grade travels with each row because the grade IS the severity being written. ONE AT A TIME.
+  function promoteSelected() {
+    if (promoting || !currentCaseId) return;
+    const rows = selectedRows();
+    // AN EMPTY SELECTION DOES NOT POST. The server answers 400 to one, and a request that can only
+    // fail is a request not worth the analyst's confusion.
+    if (rows.length === 0) {
+      confirmingPromote = false;
+      promoteError = "Nothing is selected, so nothing was sent.";
+      renderJevReview();
+      return;
     }
-    const offer = el.querySelector("#jevOfferAll");
-    if (offer) offer.addEventListener("click", askFullRead);
-    const go = el.querySelector("#jevConfirmRun");
-    if (go) go.addEventListener("click", () => runJevReview(true));
-    const stop = el.querySelector("#jevConfirmCancel");
-    if (stop) {
-      stop.addEventListener("click", () => {
-        confirming = false;
+    const caseId = currentCaseId;
+    const gen = ++promoteGen;
+    const ids = rows.map((r) => r.id);
+    const body = {
+      rows: rows.map((r) => ({ id: r.id, grade: r.grade, confidence: r.confidence, score: r.score })),
+    };
+    if (result && result.model) body.model = String(result.model);
+    promoting = true;
+    confirmingPromote = false;
+    promoteError = "";
+    promoteResult = null;
+    renderJevReview();
+    fetch(`/cases/${encodeURIComponent(caseId)}/jev/promote`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+      .then((r) => r.json().then((b) => ({ ok: r.ok, status: r.status, body: b })))
+      .then((r) => {
+        if (currentCaseId !== caseId || promoteGen !== gen) return;
+        if (!r.ok) {
+          promoteError = `Nothing was promoted: ${r.body && r.body.error ? r.body.error : `HTTP ${r.status}`}`;
+          return;
+        }
+        promoteResult = r.body && typeof r.body === "object" ? r.body : { promoted: 0, skipped: 0, reasons: [] };
+        // THE ROWS STOP BEING PROMOTABLE AND STAY ON SCREEN. They are in the timeline now, so
+        // offering them again would only produce a second write or a skip; removing them would leave
+        // the analyst unable to see what they just did. Each keeps its place with a "Sent" badge.
+        ids.forEach((id) => {
+          sentIds.add(id);
+          picked.delete(id);
+        });
+      })
+      .catch((err) => {
+        if (currentCaseId !== caseId || promoteGen !== gen) return;
+        promoteError = `Nothing was promoted: ${String((err && err.message) || err)}`;
+      })
+      .finally(() => {
+        // The generation check keeps the rule true across a case switch. No refetch of case state —
+        // the server broadcasts it over the page's WebSocket.
+        if (promoteGen !== gen) return;
+        promoting = false;
         renderJevReview();
       });
-    }
   }
 
   // THE FULL READ ASKS FIRST UNLESS IT CAN SHOW THE RUN IS SMALL.
@@ -410,6 +647,9 @@
     confirming = false;
     reviewError = "";
     result = null;
+    // A NEW READING IS A NEW SET OF ROWS: a tick kept from the old one could ride into the new post
+    // body on a row nobody saw. The sent set goes with it.
+    resetSelection();
     startTick();
     renderJevReview();
     fetch(`/cases/${encodeURIComponent(caseId)}/jev/review`, {
@@ -447,6 +687,14 @@
       });
   }
 
+  // Every tick, "Sent" badge and promote outcome belongs to ONE reading.
+  function resetSelection() {
+    picked = new Set();
+    sentIds = new Set();
+    promoteError = "";
+    promoteResult = null;
+  }
+
   function loadJevReview(caseId) {
     currentCaseId = caseId;
     // A case switch is also an exit path for a run started under the previous case: the flag goes
@@ -455,13 +703,17 @@
     busy = false;
     runningAll = false;
     confirming = false;
+    promoting = false;
+    confirmingPromote = false;
     runGen++;
+    promoteGen++;
     stopTick();
     status = null;
     statusState = "loading";
     statusError = "";
     result = null;
     reviewError = "";
+    resetSelection();
     renderJevReview();
     const gen = ++loadGen;
     return fetch(`/cases/${encodeURIComponent(caseId)}/jev/status`)
@@ -521,6 +773,21 @@
       hideTooling = chk.checked;
       renderJevReview();
     });
+    // The two filters. Native <select> and <input type="range">: tabbable, keyboard-operable, and
+    // they pick up the page's own :focus-visible ring (public/css/a11y.css).
+    const gradeSel = document.getElementById("jevGradeFilter");
+    if (gradeSel)
+      gradeSel.addEventListener("change", () => {
+        minGrade = GRADES.indexOf(gradeSel.value) >= 0 ? gradeSel.value : "";
+        renderJevReview();
+      });
+    const confSel = document.getElementById("jevMinConfidence");
+    if (confSel)
+      confSel.addEventListener("input", () => {
+        const v = Number(confSel.value);
+        minConfidence = isFinite(v) ? Math.min(100, Math.max(0, v)) / 100 : 0;
+        renderJevReview();
+      });
     renderJevReview();
   }
 

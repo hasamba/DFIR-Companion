@@ -516,7 +516,7 @@
          spends money stays inside the panel, next to the row counts and the cost estimate. The
          ::before icon is not decoration — without one the label collapses to font-size:0 under
          .icons-only and the button disappears entirely. -->
-    <button id="jevReviewBtn" aria-label="Missed evidence review" data-tip="Missed evidence review: re-grade the Info-graded super-timeline rows the AI never reads, using a fast decision model, and rank what it finds. Opening this costs nothing — the review is a separate press inside the panel. It promotes nothing and changes no case data.">Missed evidence</button>
+    <button id="jevReviewBtn" aria-label="Missed evidence review" data-tip="Missed evidence review: re-grade the Info-graded super-timeline rows the AI never reads, using a fast decision model, and rank what it finds. Opening this costs nothing — the review is a separate press inside the panel, and promoting what it finds is a third press that asks first.">Missed evidence</button>
     <button id="secondOpinion" data-safe-style="display:none" data-tip="Second LLM opinion: refreshes the primary synthesis (only if the timeline changed), then runs a DIFFERENT model over the same case as an independent QA cross-check, and shows where it disagrees with the primary (findings it adds/drops, severity, ATT&CK technique) for you to accept or reject each. A referee model (model A, the synthesis model, by default) reads the events each disputed finding cites and annotates every disagreement with accept B / keep A / review. On-demand; non-destructive until you accept. Needs DFIR_AI_SECOND_OPINION_MODEL — ideally a different provider.">2nd opinion</button>
     <button id="deepPassBtn" data-tip="Deep pass: read EVERY graded event at or above a severity floor you choose, in as many batches as it takes, then fold the result into one final synthesis. Normal synthesis shows the model one prompt's worth of events — on a multi-host case that leaves most of the timeline unread. Opens the pre-flight table showing what each floor would cost before anything is spent. Slow and expensive; cancellable.">Deep pass</button>
     <label id="deepReasoningLabel" data-safe-style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--text-muted);cursor:pointer;white-space:nowrap" data-tip="Deep reasoning (Chain-of-Thought): have the model think step-by-step (extended thinking) before writing findings — better on complex multi-hop cases, but slower and costs extra output tokens. Applies to the NEXT AI Re-synthesize and 2nd opinion on this case only. Off by default; no .env edit or restart needed. Needs a synthesis model on Anthropic, OpenRouter or Claude Code — greyed out on any other provider.">
@@ -1738,7 +1738,7 @@
         </div>
         <div class="settings-group-head">Missed evidence review (Jev) &mdash; off by default</div>
         <div class="sfield-row3">
-          <div class="sfield"><label for="env-DFIR_JEV_ENABLED">Enable the review<span class="sfield-hint">DFIR_JEV_ENABLED &mdash; a fast decision model re-grades the Info-graded super-timeline rows the analysis AI never reads, on a button the analyst presses. It promotes nothing and writes no case data. Set <code>1</code> to offer it (default off)</span></label><input id="env-DFIR_JEV_ENABLED" placeholder="0" /></div>
+          <div class="sfield"><label for="env-DFIR_JEV_ENABLED">Enable the review<span class="sfield-hint">DFIR_JEV_ENABLED &mdash; a fast decision model re-grades the Info-graded super-timeline rows the analysis AI never reads, on a button the analyst presses. The review writes nothing; promoting a reviewed row into the forensic timeline is a separate press that asks first. Set <code>1</code> to offer it (default off)</span></label><input id="env-DFIR_JEV_ENABLED" placeholder="0" /></div>
           <div class="sfield">
             <label for="env-DFIR_JEV_PROVIDER">Provider<span class="sfield-hint">DFIR_JEV_PROVIDER</span></label>
             <select id="env-DFIR_JEV_PROVIDER">
@@ -3916,19 +3916,36 @@
       </div>
       <div id="superTimelineList">—</div>
     </section>
-    <!-- Missed evidence review (#1540): an analyst-pressed re-grade of the Info-graded
-         super-timeline rows the AI never reads. Ephemeral and read-only — it promotes nothing and
-         writes no case state, which the panel's own first line says. Wiring lives in
+    <!-- Missed evidence review (#1540) and promoting what it finds (#1568): an analyst-pressed
+         re-grade of the Info-graded super-timeline rows the AI never reads. The REVIEW is still
+         read-only. PROMOTING writes the ticked rows into the forensic timeline with the model's
+         grade as their severity, which is the panel's own first line. Wiring lives in
          js/dashboard-jev-review.js. -->
     <section id="sec-jev-review" data-safe-style="grid-column: 1 / -1" class="collapsed">
       <h2>Missed Evidence Review<span class="ev-sub">a fast decision model re-grades the Info-graded super-timeline rows the AI never sees, ranked by grade with the model&rsquo;s own confidence &mdash; a lead to look at, never a conclusion</span></h2>
-      <p class="jev-note"><strong>This review promotes nothing and changes no case data.</strong> It reads the rows, grades them and ranks them; the case record, the forensic timeline and the super-timeline are left exactly as they were.</p>
+      <p class="jev-note"><strong>Reviewing changes nothing. Promoting writes to the case.</strong> The review reads the rows, grades them and ranks them. Nothing moves until you tick rows and press <em>Promote selected</em> &mdash; and then each promoted row enters the forensic timeline carrying the model&rsquo;s grade as its severity, which is what decides whether the AI ever reads it. This panel cannot undo that.</p>
       <div class="jev-controls">
         <button type="button" id="jevRunBtn" disabled>Review missed evidence</button>
         <!-- The uncapped read. Secondary to the capped one on purpose: it can run for minutes and
              spend real money, so it asks first, inline in the panel, with the numbers from the last run. -->
         <button type="button" id="jevRunAllBtn" class="jev-secondary" disabled>Read every row</button>
         <label class="jev-tooling" for="jevHideTooling"><input type="checkbox" id="jevHideTooling" checked /> Hide rows the model reads as our own collection tooling (over 0.5)</label>
+        <!-- The two filters (#1568). They narrow the TABLE, and select-all follows the table, so
+             they also narrow what a promote can write. Native controls: tabbable, keyboard-operable,
+             and they pick up the :focus-visible ring in css/a11y.css. -->
+        <label class="jev-tooling" for="jevGradeFilter">Grade
+          <select id="jevGradeFilter" disabled>
+            <option value="">any</option>
+            <option value="Low">Low and above</option>
+            <option value="Medium">Medium and above</option>
+            <option value="High">High and above</option>
+            <option value="Critical">Critical only</option>
+          </select>
+        </label>
+        <label class="jev-tooling" for="jevMinConfidence">Model confidence at least
+          <input type="range" id="jevMinConfidence" min="0" max="100" step="5" value="0" disabled />
+          <span id="jevMinConfidenceOut" class="jev-conf">any</span>
+        </label>
       </div>
       <div id="jevReviewStatus" class="jev-status" role="status" aria-live="polite"></div>
       <div id="jevReviewPanel"></div>

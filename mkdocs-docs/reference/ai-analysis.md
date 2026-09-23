@@ -13,7 +13,7 @@ DFIR Companion never makes "one big AI call". The work is split into separate ru
 | **Deep reasoning** | 🧠 checkbox, before a run | the same call, plus thinking tokens | the same outputs, reasoned harder |
 | **Second opinion** | **2nd opinion** button | up to three calls | a rival model's disagreements, to accept or reject |
 | **Deep pass** | on demand (dashboard / API / CLI) | many calls — the expensive one | conclusions drawn from *every* graded event |
-| **Missed evidence review** | **Missed evidence** button | about a penny for a whole case's archive | a ranked read of the rows nothing else looks at — writes nothing |
+| **Missed evidence review** | **Missed evidence** button | about a penny for a whole case's archive | a ranked read of the rows nothing else looks at; you tick what to keep |
 
 ### 1. Screenshot OCR
 
@@ -72,7 +72,17 @@ It takes the case's open hypotheses, unanswered key questions, top connecting IO
 
 **When to use it.** Press **Missed evidence** when you want a second read of the rows the AI never sees. It grades them with a decision model — a model that returns a grade and a confidence instead of prose — and ranks them. An ordinary press reads up to 2,000 rows; **Read every row** covers the whole archive and tells you the cost first.
 
-**It writes nothing.** No row is promoted, no severity changes, no case data moves. The only thing it records is what the run cost. Press it as often as you like.
+**Reading it costs you nothing but the run.** Grading changes no case data at all — press it as often as you like. Nothing moves until you tick rows and promote them.
+
+**Promoting a row.** Tick the rows worth keeping and promote them. Each one is copied into the forensic timeline, which is the record the AI reads, so a promoted row can appear in the next synthesis, in findings and in the report. A row you promote carries:
+
+- **The severity the model gave it.** The grade in the table becomes the row's severity. That is the point: an `Info` row is invisible to synthesis, so a promotion that kept the old grade would change nothing.
+- **A note saying a model graded it** — the review it came from, the grade, the confidence and the model's name, on the row itself. Six months later nobody has to guess whether an analyst, a tagger rule or a model set that severity.
+- **Its old severity, if that was higher.** A promotion can only raise a severity, never lower one.
+
+Rows already in the forensic timeline are skipped, not refused — the rest of your selection still goes through, and the reply says what was skipped and why. Sandbox rows are refused: you picked the row, but a model picked the grade, and a model's opinion of sandbox behaviour does not belong in the incident chronology.
+
+Promoting does not re-run the AI. Press **AI Re-synthesize** when you have finished picking.
 
 **Read it with the confidence column.** The grade says what; the confidence says whether to trust it. A Medium at 0.9 is worth your time; a Medium at 0.3 is the model admitting it is guessing.
 

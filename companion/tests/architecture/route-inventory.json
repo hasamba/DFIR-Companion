@@ -387,6 +387,7 @@
     "ROUTE GET /settings/jev/key-source",
     "ROUTE GET /cases/:id/jev/status",
     "ROUTE POST /cases/:id/jev/review",
+    "ROUTE POST /cases/:id/jev/promote",
     "ROUTE GET /cases/:id/second-look/preview",
     "ROUTE POST /cases/:id/second-look",
     "ROUTE GET /cases/:id/report/interactive",
