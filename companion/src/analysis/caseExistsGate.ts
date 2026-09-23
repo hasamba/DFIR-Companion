@@ -29,7 +29,11 @@ import type { CaseStore } from "../storage/caseStore.js";
  * NOT for a prefix whose routes legitimately serve a case that does not exist yet — case creation,
  * and the probes the dashboard uses to decide whether it can create one.
  */
-export function createCaseExistsGate(store: CaseStore) {
+export function createCaseExistsGate(
+  store: CaseStore,
+  notFound: (caseId: string) => string = (caseId) =>
+    `case "${caseId}" not found — create or connect to a case first`,
+) {
   return function caseExistsGate(req: Request, res: Response, next: NextFunction): void {
     const caseId = req.params.id;
     void store
@@ -39,7 +43,7 @@ export function createCaseExistsGate(store: CaseStore) {
           next();
           return;
         }
-        res.status(404).json({ error: `case "${caseId}" not found — create or connect to a case first` });
+        res.status(404).json({ error: notFound(caseId) });
       })
       // Fail CLOSED, as caseLockGate does: caseExists resolves false for a missing case and throws
       // only on an unexpected fs error, and a gate whose whole job is to block must not default to

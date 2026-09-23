@@ -74,6 +74,7 @@ describe("IOC exclude list routes (per-case)", () => {
 
   it("returns 501 when no state store is configured", async () => {
     const store = new CaseStore(await tmp());
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
     const app = createApp(store);
     expect(
       (await request(app).post("/cases/c1/ioc-exclude").send({ match: "exact", pattern: "x" })).status,

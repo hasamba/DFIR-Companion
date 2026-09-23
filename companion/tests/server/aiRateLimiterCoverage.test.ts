@@ -10,8 +10,9 @@ import { resetLimiters } from "../../src/http/rateLimiter.js";
 // The AI rate limiter (20 req/min per case) must cover EVERY AI-cost route and NOT throttle
 // the non-AI undo/redo/undo-stack routes under /import (which a prefix mount would swallow).
 // We assert shape (429 vs non-429) against a real createApp, not the limiter in isolation, so
-// the route-mounting wiring is what's tested. The case never exists, so AI-cost routes return
-// 404/500 — but a 429 means the limiter fired FIRST, which is what we want to detect.
+// the route-mounting wiring is what's tested. The case exists but nothing is configured, so
+// AI-cost routes return 501/500 — a 429 means the limiter fired FIRST, which is what we detect.
+// It has to exist: since #1570 a write to an unknown case is a 404 ahead of the limiter.
 
 let app: ReturnType<typeof createApp>;
 
@@ -19,6 +20,7 @@ beforeEach(async () => {
   resetLimiters();
   const root = await mkdtemp(join(tmpdir(), "dfir-ailimit-"));
   const cases = new CaseStore(root);
+  await cases.createCase({ caseId: "nosuch", name: "n", investigator: "i", aiProvider: null });
   app = createApp(cases, {});
 });
 

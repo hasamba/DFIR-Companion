@@ -13,6 +13,7 @@
     "USE /^\\/cases(?:\\/([^/]+?))\\/?(?=\\/|$)/i caseIdGate/3",
     "USE /^\\/cases(?:\\/([^/]+?))\\/?(?=\\/|$)/i caseLockGate/3",
     "USE /^\\/cases(?:\\/([^/]+?))\\/?(?=\\/|$)/i abandonedCaseReadGate/3",
+    "USE /^\\/cases(?:\\/([^/]+?))\\/?(?=\\/|$)/i caseWriteExistsGate/3",
     "ROUTE GET /health",
     "ROUTE GET /update-check",
     "ROUTE POST /update-check/settings",

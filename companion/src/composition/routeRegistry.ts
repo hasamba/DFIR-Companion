@@ -14,6 +14,7 @@
 import type { Express } from "express";
 import type { RouteContext } from "../routes/context.js";
 import { createCaseExistsGate } from "../analysis/caseExistsGate.js";
+import { mountCaseWriteExistsGate } from "./caseWriteExistsGate.js";
 import { mountAiRateLimit } from "./aiRateLimit.js";
 import { mountCaseWriteGuard } from "./caseWriteGuard.js";
 import { registerSystemRoutes } from "../routes/system.js";
@@ -102,6 +103,9 @@ export interface OutboundTransports {
 export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTransports {
   const { store, options } = ctx;
   const transports: OutboundTransports = {};
+  // FIRST, ahead of every /cases/:id route: a write to a case that was never created is a 404,
+  // never a new directory on disk (#1570). A gate only covers what is registered after it.
+  mountCaseWriteExistsGate(app, store);
   registerSystemRoutes(app, ctx);
   // The basemap under the Geographic Map panel, proxied so the dashboard keeps `img-src 'self'`
   // (see routes/geoTiles.ts). Mounted with the other unauthenticated-cost reads and BEFORE

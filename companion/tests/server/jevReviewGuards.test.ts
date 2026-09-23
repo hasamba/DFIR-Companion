@@ -112,7 +112,8 @@ describe("the Jev review's guards", () => {
     const before = [...(await readdir(root))].sort();
     const res = await request(app).post("/cases/typo-case/jev/review").send({});
     expect(res.status).toBe(404);
-    expect(String(res.body.error)).toMatch(/not found/);
+    // Since #1570 the shared write gate answers before the route's own check, in its wording.
+    expect(String(res.body.error)).toMatch(/does not exist/);
     expect([...(await readdir(root))].sort()).toEqual(before);
     expect(await readdir(root)).not.toContain("typo-case");
     expect(calls).toBe(0);
