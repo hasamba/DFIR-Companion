@@ -260,8 +260,8 @@ This review grades those left-behind rows with **Jev**, a decision model that re
 confidence instead of prose. It is fast and cheap enough to read a whole case's archive: about a
 thousand rows in a few seconds, for roughly a penny.
 
-**It promotes nothing.** No row is written back, no severity changes, no case state moves. The panel
-is a reading surface, and the run's cost is the only thing it records.
+**Grading writes nothing.** Running the review changes no case data; the run's cost is the only
+thing it records. What you tick is another matter — see *Promoting what it finds* below.
 
 **Run it:** the *Missed evidence review* panel. The table is ranked by grade, highest first.
 
@@ -276,6 +276,15 @@ each row for this and hides the obvious ones by default.
 **Coverage is always stated.** The caption gives the true number of matching rows, how many were
 read, how many were skipped as already analysed, and how many were graded. Each is a separate fact,
 because only some of them have a single cause — a shortfall is not evidence the cap was reached.
+
+**Promoting what it finds.** Tick the rows worth keeping and promote them into the forensic
+timeline — the record the AI reads. A promoted row takes **the severity the model gave it**, because
+an `Info` row is invisible to synthesis and a promotion that kept the old grade would change
+nothing. The row is stamped with the review, the grade, the confidence and the model that gave it,
+so a model's severity can never be mistaken for a tagger rule's or an analyst's own. A promotion can
+only raise a severity, never lower one. Rows already in the timeline are skipped rather than
+refused, and the reply says what was skipped and why; sandbox rows are refused outright. Promoting
+does not re-run the AI — press **AI Re-synthesize** when you have finished picking.
 
 **Read every row** when you want a full pass. An ordinary press stops at `DFIR_JEV_MAX_ROWS`; the
 panel offers an uncapped run that pages through the whole archive and says so in the caption. On a

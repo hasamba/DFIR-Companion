@@ -72,19 +72,20 @@ describe("a promoted super-timeline row survives the next import's demote pass",
     expect(demoted).toHaveLength(0);
   });
 
-  it.each<PromotionIntent>(["explain", "starred-report", "second-look", "remediation-check"])(
-    "stamps the %s intent too — every promotion is on purpose",
-    async (intent) => {
-      await superTimelineStore.append("c1", [raw()]);
-      const state = await pipeline.promoteSuperTimeline("c1", [raw()], {
-        importedAt: "2026-09-03T12:00:00.000Z",
-        intent,
-      });
-      expect(state.forensicTimeline.find((e) => e.id === "raw1")?.promotedAt).toBe(
-        "2026-09-03T12:00:00.000Z",
-      );
-    },
-  );
+  it.each<PromotionIntent>([
+    "explain",
+    "starred-report",
+    "second-look",
+    "remediation-check",
+    "missed-evidence",
+  ])("stamps the %s intent too — every promotion is on purpose", async (intent) => {
+    await superTimelineStore.append("c1", [raw()]);
+    const state = await pipeline.promoteSuperTimeline("c1", [raw()], {
+      importedAt: "2026-09-03T12:00:00.000Z",
+      intent,
+    });
+    expect(state.forensicTimeline.find((e) => e.id === "raw1")?.promotedAt).toBe("2026-09-03T12:00:00.000Z");
+  });
 
   it("keeps an earlier stamp when the same row is promoted again", async () => {
     await superTimelineStore.append("c1", [raw()]);

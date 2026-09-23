@@ -91,9 +91,20 @@ export async function importPlasoFile(
 //                 asked for a report, not for a lab row to become incident evidence.
 //   second-look — the automated loop. A lab row is REFUSED here outright, marker or not: the loop
 //                 must never move sandbox behaviour into the incident chronology on its own.
+//   missed-evidence — the analyst ticked rows in the missed-evidence review (#1568), and each row
+//                 arrives carrying a severity a MODEL chose. A lab row is REFUSED, like the loop's:
+//                 the analyst picked the row, but not the grade, and a model's Medium on sandbox
+//                 behaviour is exactly the write that refusal exists to stop.
 // `remediation-check` (#969): a super-timeline row attached as evidence to a remediation boundary
 // enters the case by promotion like any analyst promotion, and is marked like a manual one.
-export type PromotionIntent = "manual" | "explain" | "starred-report" | "second-look" | "remediation-check";
+export type PromotionIntent =
+  "manual" | "explain" | "starred-report" | "second-look" | "remediation-check" | "missed-evidence";
+
+/** The intents for which a sandbox-produced row is DROPPED rather than normalised. See above. */
+const LAB_REFUSING_INTENTS: ReadonlySet<PromotionIntent> = new Set<PromotionIntent>([
+  "second-look",
+  "missed-evidence",
+]);
 
 export async function promoteSuperTimeline(
   ctx: ImportContext,
@@ -102,7 +113,7 @@ export async function promoteSuperTimeline(
   opts: { importedAt: string; intent: PromotionIntent; tagById?: Record<string, string[]>; note?: string },
 ): Promise<InvestigationState> {
   const events = requested
-    .filter((e) => !(opts.intent === "second-look" && isLabProduced(e)))
+    .filter((e) => !(LAB_REFUSING_INTENTS.has(opts.intent) && isLabProduced(e)))
     .map((e) => (isLabProduced(e) ? { ...e, origin: "lab" as const, severity: "Info" as const } : e));
   const marked: Record<string, string[]> = { ...(opts.tagById ?? {}) };
   if (opts.intent === "manual" || opts.intent === "remediation-check")

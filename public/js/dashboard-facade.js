@@ -211,6 +211,14 @@
     "renderTlChecks",
     "applyTlDisplayFromChecks",
     "tlShow",
+    // The promotion rule the display now shares with the server (#1554). Stubbed FALSY on purpose:
+    // isPromotedEvent -> no exemption, which is how the page behaved before the rule existed, and
+    // promotedKeptCount -> an absent number the count label simply omits. promotedBadge is the odd
+    // one out: a stub returns undefined, and `${undefined}` would paint the word "undefined" into
+    // every timeline row, so ITS call site in dashboard.html carries `|| ""`.
+    "isPromotedEvent",
+    "promotedBadge",
+    "promotedKeptCount",
     // The wizard AI step and the disk-space warning. Their initializers are the sentinels.
     "wizResetAiStep",
     "loadDiskStats",

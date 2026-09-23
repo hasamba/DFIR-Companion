@@ -31,6 +31,44 @@ const secondLookSchema = z.object({
 
 export type SecondLookMeta = z.infer<typeof secondLookSchema>;
 
+// The model's OWN evidence requests from the last real synthesis (#1554) — the rows it says it was
+// never shown. They used to be read straight out of the just-parsed delta by the sweep that ran at
+// the end of the same synthesize() call: a live closure value, written nowhere. The sweep is now a
+// button the analyst presses later, so an unpersisted request would simply cease to exist between
+// the two. This is where it survives.
+//
+// MODEL-AUTHORED TEXT IS DATA, not a trusted shape. Each field is best-effort at the source, so the
+// list is parsed ROW BY ROW: a row that is not an object, or that carries no keyword to search for,
+// is dropped on its own instead of taking every sibling request with it — which is what a plain
+// `z.array(objectSchema).catch([])` would do, silently losing the four good requests beside one bad.
+const modelEvidenceRequestSchema = z.object({
+  keywords: z.array(z.string()).catch([]),
+  reason: z.string().catch(""),
+  host: z.string().optional().catch(undefined),
+  timeWindow: z
+    .object({
+      from: z.string().optional().catch(undefined),
+      to: z.string().optional().catch(undefined),
+    })
+    .optional()
+    .catch(undefined),
+});
+
+/** One persisted model evidence request. Structurally a `ModelEvidenceRequest` (secondLook.ts). */
+export type StoredEvidenceRequest = z.infer<typeof modelEvidenceRequestSchema>;
+
+const modelEvidenceRequestsSchema = z
+  .array(z.unknown())
+  .catch([])
+  .transform((rows) =>
+    rows.flatMap((row) => {
+      const parsed = modelEvidenceRequestSchema.safeParse(row);
+      // No keyword means nothing to search for: such a request can never become a second-look
+      // search, and counting it would only inflate the number the analyst reads before pressing.
+      return parsed.success && parsed.data.keywords.length > 0 ? [parsed.data] : [];
+    }),
+  );
+
 // Second-opinion agreement telemetry (issue #74): how often the second-opinion model (DFIR_AI_SECOND_
 // OPINION_MODEL) agrees with the primary synthesis model (DFIR_AI_MODEL / DFIR_AI_SYNTH_MODEL) on the
 // SAME case, so the two can be compared empirically rather than just eyeballed. Recorded by
@@ -145,6 +183,9 @@ export const synthMetaSchema = z.object({
   eventCount: z.number().optional().catch(undefined),
   iocCount: z.number().optional().catch(undefined),
   secondLook: secondLookSchema.nullable().optional().catch(undefined),
+  // #1554: the model's own evidence requests from this run, so the second-look BUTTON can still act
+  // on them once synthesis no longer sweeps for itself. Absent on runs recorded before this existed.
+  modelEvidenceRequests: modelEvidenceRequestsSchema.optional(),
   // Per-class selection counts (investigation-guidance #4): how many events of each selection class the
   // model actually saw this run (anchor / earliest / context / corroborated / technique / rare / spread),
   // so the analyst can see the evidence mix behind the conclusions. Optional/lenient; absent on old files.
@@ -178,6 +219,7 @@ export interface SynthPerfMetrics {
   findingsCount?: number; // #74: total findings after this run
   highSeverityBackfillCount?: number; // #74: of those, how many the deterministic safety net added
   parseRetries?: number; // #74: retries the synthesis JSON parse needed
+  modelEvidenceRequests?: StoredEvidenceRequest[]; // #1554: what the model said it was not shown
 }
 
 export type ModelPerfSnapshot = Pick<

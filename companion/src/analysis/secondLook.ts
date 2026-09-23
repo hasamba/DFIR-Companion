@@ -12,13 +12,22 @@
 //
 // The bounds are strict and everything is deterministic + idempotent: a request that matches nothing is
 // itself surfaced as a collection lead (a blind spot the tool can task around), matches are capped per
-// term and per sweep, and only events NOT already in the analyzed timeline are promotable (re-promoting
-// an event already present is a no-op that must never inflate the count).
+// request, per normalized shape and per sweep, and only events NOT already in the analyzed timeline are
+// promotable (re-promoting an event already present is a no-op that must never inflate the count).
+//
+// Every cap here exists to bound WHAT ENTERS THE FORENSIC RECORD — the record the super-timeline
+// boundary protects — not to ration a budget that ought to be spent in full. Two measurements on a real
+// case set their shape (#1554): the sweep promoted 265 rows and only 15 of the case's 42 findings cited
+// any of them, so promoting MORE is not the goal; and those 265 rows carried only 160 distinct shapes,
+// so 105 of them were near-duplicates of a row already promoted. The budget is therefore spent
+// round-robin, a little to every open request, rather than first-come — coverage, not volume. No
+// scoring and no model ranks anything here: relevance ranking was tried and rejected (#1553).
 
 import type { ForensicEvent, InvestigationQuestion } from "./stateTypes.js";
 import type { Hypothesis } from "./hypothesis.js";
 import type { IocAnchor } from "./iocAnchors.js";
 import { shortHost } from "./iocAnchors.js";
+import { patternKey } from "./prevalence.js";
 
 // A single concrete search issued by the second-look sweep. `keywords` are matched case-insensitively
 // (ANY keyword hits) across the event's searchable fields, optionally restricted to `host` and the
@@ -46,7 +55,10 @@ export interface ModelEvidenceRequest {
 
 export interface SecondLookResolution {
   request: SecondLookRequest;
-  matchedEventIds: string[]; // every matched candidate id (incl. events already in the timeline)
+  // Answers ONE question: did this request find anything at all in the raw record? It therefore still
+  // counts hits that are ALREADY in the forensic timeline — a request whose every hit is already
+  // analyzed found its evidence; it is satisfied, not a blind spot. Never read as a promotion count.
+  matchedEventIds: string[];
   promotable: ForensicEvent[]; // matched events NOT already in the analyzed timeline (the real gain)
 }
 
@@ -56,11 +68,13 @@ export interface SecondLookPlan {
   resolutions: SecondLookResolution[];
   leads: SecondLookRequest[]; // requests that matched nothing anywhere — collection leads
   truncated: boolean; // true when the sweep cap dropped some promotable events
+  shapeCapped: number; // rows withheld because their normalized shape had already had its turn
 }
 
 export interface SecondLookCaps {
-  perTerm?: number; // max events promoted from a single request (default 50)
+  perTerm?: number; // max events one request may offer the sweep (default 12)
   sweep?: number; // max events promoted across the whole sweep (default 200)
+  perShape?: number; // max rows of one normalized shape one sweep promotes (default 3)
   maxHypotheses?: number; // open hypotheses turned into requests (default 6)
   maxQuestions?: number; // unknown/partial collect-bearing questions → requests (default 6)
   maxConnectiveIocs?: number; // top connective IOCs → requests (default 5)
@@ -68,8 +82,20 @@ export interface SecondLookCaps {
   maxKeywordsPerRequest?: number; // keyword count cap per request (default 8)
 }
 
-export const SECOND_LOOK_PER_TERM_DEFAULT = 50;
+// The per-request allowance. It bounds what ENTERS THE FORENSIC RECORD from one search; it is not a
+// ration of a budget to be spent in full. Measured on a real case: the six open questions matched 266,
+// 51, 1308, 244, 148 and 259 archive rows, so an allowance of 50 would have let four questions write
+// 200 rows — a 7x rise in second-look inflow — while "privilege escalation" alone matched the ENTIRE
+// 1308-row archive, where taking 50 is sampling noise, not evidence selection. 12 sits just above the
+// equal share of the sweep budget (200 / the module's 22 possible requests ≈ 9), so a sweep with few
+// live questions still gets depth, and no single request can claim more than 6% of the sweep.
+export const SECOND_LOOK_PER_TERM_DEFAULT = 12;
 export const SECOND_LOOK_SWEEP_DEFAULT = 200;
+// Rows of one normalized shape (same fingerprint, same severity, same host) one sweep may promote.
+// Measured: 265 promoted rows carried only 160 distinct shapes — one Sigma rule accounted for 38 of
+// them — so 105 near-duplicates spent the sweep budget. 3 is deliberately one below synthGroup's
+// DEFAULT_GROUP_MIN_REPEATS (4), the count this repo already judges too small to be worth collapsing.
+export const SECOND_LOOK_PER_SHAPE_DEFAULT = 3;
 const MAX_HYPOTHESES_DEFAULT = 6;
 const MAX_QUESTIONS_DEFAULT = 6;
 const MAX_CONNECTIVE_IOCS_DEFAULT = 5;
@@ -380,10 +406,75 @@ function hostMatches(e: ForensicEvent, host: string | undefined): boolean {
   return shortHost(e.asset).toLowerCase() === host.toLowerCase();
 }
 
+function eventMs(e: ForensicEvent): number {
+  const t = Date.parse(e.timestamp);
+  return Number.isNaN(t) ? Infinity : t;
+}
+
+// The bounded record of what this request hit. It holds the rows the allowance actually selected PLUS
+// the hits that were already analyzed, because emptiness here is the SOLE trigger for a collection
+// lead: a request that matched 200 rows the AI can already see must not be reported as "nothing was
+// found", when something was found and is simply already in hand. Both halves are capped, so a request
+// whose keywords match the whole archive cannot grow this list without limit.
+function matchedIds(
+  matched: readonly ForensicEvent[],
+  selected: readonly ForensicEvent[],
+  forensicEventIds: ReadonlySet<string>,
+  perTerm: number,
+): string[] {
+  const chosen = new Set(selected.map((e) => e.id));
+  const out: string[] = [];
+  let analyzed = 0;
+  for (const e of matched) {
+    if (chosen.has(e.id)) {
+      out.push(e.id);
+      continue;
+    }
+    if (!forensicEventIds.has(e.id) || analyzed >= perTerm) continue;
+    analyzed += 1;
+    out.push(e.id);
+  }
+  return out;
+}
+
+function resolveOne(
+  request: SecondLookRequest,
+  candidates: readonly ForensicEvent[],
+  forensicEventIds: ReadonlySet<string>,
+  hay: Map<string, string>,
+  perTerm: number,
+): SecondLookResolution {
+  const matched: ForensicEvent[] = [];
+  for (const e of candidates) {
+    if (!inWindow(e, request.from, request.to)) continue;
+    if (!hostMatches(e, request.host)) continue;
+    let h = hay.get(e.id);
+    if (h === undefined) {
+      h = eventHaystack(e);
+      hay.set(e.id, h);
+    }
+    if (!request.keywords.some((k) => h.includes(k))) continue;
+    matched.push(e);
+  }
+  // Undated rows sort last (Infinity), so a source with no usable timestamps is the first casualty of
+  // the allowance. That is deliberate and it stays: the sweep exists to put evidence ON the forensic
+  // timeline for a re-synthesis that reasons about sequence, and a row with no time cannot be placed
+  // there or corroborate an ordering claim. Two things blunt the edge — the allowance is no longer
+  // burned by already-analyzed rows, which is what used to exhaust it before any undated row was
+  // reached, and an unpromoted row stays in the super-timeline for the analyst to search.
+  matched.sort((a, b) => eventMs(a) - eventMs(b));
+  // THE FIX (#1554): fill the allowance from rows that can actually be promoted. Capping first and
+  // filtering second spent the allowance on rows already in the forensic timeline — re-promoting one
+  // is a no-op — so on a real case three of six open questions promoted ZERO rows while unseen
+  // evidence sat behind the cap.
+  const promotable = matched.filter((e) => !forensicEventIds.has(e.id)).slice(0, perTerm);
+  return { request, matchedEventIds: matchedIds(matched, promotable, forensicEventIds, perTerm), promotable };
+}
+
 // Resolve each request against the candidate pool (the omitted scoped events + the super-timeline
-// within the window). matchedEventIds records EVERY hit (so a request that only re-finds events already
-// in the timeline is counted as satisfied, not a lead); promotable is the subset whose ids are NOT yet
-// in the analyzed timeline — the genuine recall gain. Per-request matches are capped and time-ordered.
+// within the window). `promotable` is the allowance: up to perTerm matched events, earliest first, that
+// are NOT yet in the analyzed timeline — the genuine recall gain. `matchedEventIds` answers the
+// separate, narrower question of whether the request found anything at all (see matchedIds).
 export function resolveSecondLookRequests(
   requests: readonly SecondLookRequest[],
   candidates: readonly ForensicEvent[],
@@ -393,73 +484,137 @@ export function resolveSecondLookRequests(
   const perTerm = caps.perTerm ?? SECOND_LOOK_PER_TERM_DEFAULT;
   // Precompute haystacks once — a sweep can scan tens of thousands of raw rows per request.
   const hay = new Map<string, string>();
-  const ms = (e: ForensicEvent): number => {
-    const t = Date.parse(e.timestamp);
-    return Number.isNaN(t) ? Infinity : t;
-  };
-  return requests.map((request) => {
-    const matched: ForensicEvent[] = [];
-    for (const e of candidates) {
-      if (!inWindow(e, request.from, request.to)) continue;
-      if (!hostMatches(e, request.host)) continue;
-      let h = hay.get(e.id);
-      if (h === undefined) {
-        h = eventHaystack(e);
-        hay.set(e.id, h);
-      }
-      if (!request.keywords.some((k) => h.includes(k))) continue;
-      matched.push(e);
-    }
-    // Undated rows sort last (Infinity) so a capped request keeps the dated, placeable evidence first.
-    matched.sort((a, b) => ms(a) - ms(b));
-    const capped = matched.slice(0, perTerm);
-    return {
-      request,
-      matchedEventIds: capped.map((e) => e.id),
-      promotable: capped.filter((e) => !forensicEventIds.has(e.id)),
-    };
-  });
+  return requests.map((request) => resolveOne(request, candidates, forensicEventIds, hay, perTerm));
 }
 
-// Turn resolutions into the final promotion plan: dedupe promotable events across requests (an event
-// pulled by two requests carries both provenance tags), enforce the sweep cap, and collect the
-// zero-match requests as collection leads. Deterministic — request order drives which events win the
-// budget, and the first request to claim an event owns its position.
+// The normalized SHAPE of a row, for the per-shape cap. Reuses prevalence.patternKey — the case-wide
+// fingerprint that already folds digits, paths, GUIDs and quoted strings to placeholders, and that the
+// prevalence baseline and the synthesis burst grouping both key on — rather than inventing a second
+// normalizer. A content hash wins inside it, so two distinct binaries matched by one rule never merge.
+//
+// Severity and host join the key. synthGroup groups ACROSS hosts on purpose, but it keeps the row and
+// spells the host spread out on the rendered line; here a capped row is simply absent, so folding hosts
+// together would let one noisy endpoint's repetition erase another endpoint's first occurrence — the
+// lateral-movement signal. A row with no stable fingerprint returns "" and is never capped: no shape,
+// no claim of redundancy.
+function promotionShapeKey(e: ForensicEvent): string {
+  const pattern = patternKey(e);
+  if (!pattern) return "";
+  return `${e.severity}|${pattern}|${(e.asset ?? "").trim().toLowerCase()}`;
+}
+
+interface SweepState {
+  promotions: ForensicEvent[];
+  tagById: Record<string, string[]>;
+  shapeCount: Map<string, number>; // shape key → rows of that shape already promoted this sweep
+  withheld: Set<string>; // distinct rows the shape cap held back (reported to the analyst)
+  truncated: boolean;
+}
+
+// One request's turn in the round-robin. It advances the request's cursor until the request has
+// contributed exactly one row, and returns the new cursor.
+//
+//   * A row an earlier request already claimed SPENDS the turn — the row is in the plan and now carries
+//     this request's tag too, so the request was served.
+//   * A row the shape cap withholds does NOT spend the turn — it contributed nothing, and letting one
+//     repeated Sigma hit eat a question's whole share is exactly what fix B exists to stop.
+//   * A row that needs a slot when the sweep budget is gone ends the sweep and marks it truncated.
+function spendTurn(
+  res: SecondLookResolution,
+  from: number,
+  state: SweepState,
+  caps: Required<Pick<SecondLookCaps, "sweep" | "perShape">>,
+): number {
+  for (let i = from; i < res.promotable.length; i += 1) {
+    const e = res.promotable[i];
+    const tags = state.tagById[e.id];
+    if (tags) {
+      if (!tags.includes(res.request.tag)) tags.push(res.request.tag);
+      return i + 1;
+    }
+    const shape = promotionShapeKey(e);
+    const used = shape ? (state.shapeCount.get(shape) ?? 0) : 0;
+    if (shape && used >= caps.perShape) {
+      state.withheld.add(e.id);
+      continue;
+    }
+    if (state.promotions.length >= caps.sweep) {
+      state.truncated = true;
+      return i;
+    }
+    state.promotions.push(e);
+    state.tagById[e.id] = [res.request.tag];
+    if (shape) state.shapeCount.set(shape, used + 1);
+    return i + 1;
+  }
+  return res.promotable.length;
+}
+
+// Turn resolutions into the final promotion plan: spend the sweep budget ROUND-ROBIN across requests,
+// dedupe promoted events (an event pulled by two requests carries both provenance tags), cap repeats of
+// one normalized shape, and collect the zero-match requests as collection leads.
+//
+// Round-robin, not first-come: the goal is COVERAGE, not volume. Taking each request's rows in order
+// let the first requests take the whole budget, and the model's own "I was not shown this" requests are
+// built LAST, so they starved first. Every request now gets a turn before any request gets a second row.
+//
+// Deterministic: request order decides who moves first in each round, and the first request to claim an
+// event owns its position.
 export function buildSecondLookPlan(
   resolutions: readonly SecondLookResolution[],
   caps: SecondLookCaps = {},
 ): SecondLookPlan {
-  const sweep = caps.sweep ?? SECOND_LOOK_SWEEP_DEFAULT;
-  const promotions: ForensicEvent[] = [];
-  const tagById: Record<string, string[]> = {};
-  const index = new Map<string, number>(); // event id → position in promotions
-  let truncated = false;
+  const limits = {
+    sweep: caps.sweep ?? SECOND_LOOK_SWEEP_DEFAULT,
+    perShape: caps.perShape ?? SECOND_LOOK_PER_SHAPE_DEFAULT,
+  };
+  const state: SweepState = {
+    promotions: [],
+    tagById: {},
+    shapeCount: new Map(),
+    withheld: new Set(),
+    truncated: false,
+  };
+  const cursor = resolutions.map(() => 0);
 
-  for (const res of resolutions) {
-    for (const e of res.promotable) {
-      if (!(e.id in tagById)) {
-        if (promotions.length >= sweep) {
-          truncated = true;
-          continue;
-        }
-        index.set(e.id, promotions.length);
-        promotions.push(e);
-        tagById[e.id] = [res.request.tag];
-      } else if (!tagById[e.id].includes(res.request.tag)) {
-        tagById[e.id].push(res.request.tag);
-      }
+  let spending = true;
+  while (spending && !state.truncated) {
+    spending = false;
+    for (let i = 0; i < resolutions.length; i += 1) {
+      if (cursor[i] >= resolutions[i].promotable.length) continue;
+      cursor[i] = spendTurn(resolutions[i], cursor[i], state, limits);
+      if (state.truncated) break;
+      if (cursor[i] < resolutions[i].promotable.length) spending = true;
     }
   }
 
   const leads = resolutions.filter((r) => r.matchedEventIds.length === 0).map((r) => r.request);
-  return { promotions, tagById, resolutions: [...resolutions], leads, truncated };
+  return {
+    promotions: state.promotions,
+    tagById: state.tagById,
+    resolutions: [...resolutions],
+    leads,
+    truncated: state.truncated,
+    shapeCapped: state.withheld.size,
+  };
+}
+
+// How many rows each request actually put on the forensic timeline, from the plan's own tags — NOT from
+// promotable.length, which is what the request OFFERED before the sweep cap and the shape cap had their
+// say. The summary sentence says "promoted", so the tally has to mean promoted.
+function promotedByTag(plan: SecondLookPlan): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const e of plan.promotions) {
+    for (const tag of plan.tagById[e.id] ?? []) counts.set(tag, (counts.get(tag) ?? 0) + 1);
+  }
+  return counts;
 }
 
 // Compact per-request promotion counts, for the human summary. e.g. "h2 (rsync, nfs-01) +42".
-function requestTally(res: SecondLookResolution): string {
+function requestTally(res: SecondLookResolution, promoted: number): string {
   const idTag = res.request.tag.replace(/^\[second-look:\s*/, "").replace(/\]$/, "");
   const kw = res.request.keywords.slice(0, 3).join(", ");
-  return `${idTag}${kw ? ` (${kw})` : ""} +${res.promotable.length}`;
+  return `${idTag}${kw ? ` (${kw})` : ""} +${promoted}`;
 }
 
 // One-line summary for the synth-meta card. Mirrors the roadmap's example phrasing:
@@ -472,13 +627,20 @@ export function summarizeSecondLook(plan: SecondLookPlan): string {
     }
     return "second look: nothing new to promote";
   }
+  const counts = promotedByTag(plan);
   const tallies = plan.resolutions
-    .filter((r) => r.promotable.length > 0)
-    .map(requestTally)
+    .filter((r) => (counts.get(r.request.tag) ?? 0) > 0)
+    .map((r) => requestTally(r, counts.get(r.request.tag) ?? 0))
     .slice(0, 5)
     .join("; ");
   const more = plan.truncated ? " (sweep cap reached)" : "";
-  return `second look: ${promoted} raw event(s) promoted — ${tallies}${more} — conclusions updated`;
+  // The analyst is entitled to know a row was held back, not just the model (#452's disclosure rule in
+  // spirit). "Held back" is the exact word: the row was never deleted — it stays in the super-timeline,
+  // searchable and promotable by hand, which is what makes capping the forensic record safe at all.
+  const held = plan.shapeCapped
+    ? ` — ${plan.shapeCapped} repeat row(s) of an already-promoted detection held back (still in the super-timeline)`
+    : "";
+  return `second look: ${promoted} raw event(s) promoted — ${tallies}${more}${held} — conclusions updated`;
 }
 
 // Derive the active window from a set of events when the case has no explicit scope: the earliest and

@@ -245,8 +245,40 @@ None of them run on their own — each is a button the analyst presses. Two now 
 Promotion is not a workaround, it is the honest record of what happened: clicking "explain this" or
 starring an event **is** the analyst declaring it interesting, and the forensic timeline is where
 interesting events live. Each promotion carries a note saying which action caused it, so it can be
-told apart from an import six months later. This is the seam `runSecondLook` already used —
+told apart from an import six months later. This is the seam the second look uses too —
 deterministic search, promote with provenance, then re-synthesize.
+
+### The second look became a button (#1554)
+
+It used to run at the end of every synthesis, and it was the one automatic path that WROTE into the
+forensic record — the sentence at the top of this section was true of reads and quietly false of
+writes. It is now analyst-pressed, and `tests/analysis/forensicBoundary.test.ts` asserts both halves
+of what that means: a bare `synthesize()` promotes nothing, AND never queries the raw store at all.
+Either assertion alone can pass while the other is broken, which is why both are written down.
+
+Three things about the sweep were measured on a real case before the change, and each is a cap with
+a reason rather than a number:
+
+- **The per-question allowance is filled from rows that are actually new.** It used to cap first and
+  drop already-analysed rows second, so rows the model could already read consumed the budget and
+  produced nothing. Three of six open questions promoted ZERO rows for that reason.
+- **The budget is spent round-robin, not first-claimed-wins.** Requests are built hypotheses first,
+  questions next, then IOCs, then the model's own evidence requests — so the requests most often
+  starved were the ones where the model had explicitly said it was not shown something.
+- **Repeats of an already-promoted row stop after three.** 40% of one case's promotions were
+  near-duplicates: 38 copies of one Sigma hit, 25 of a rule that describes itself as in development.
+  A held-back row is not deleted — it stays in the super-timeline, searchable.
+
+The allowance is 12 per request, not 50. With at most 22 requests against a 200-row sweep, an equal
+share is about 9; 12 leaves depth for a case with few live questions while stopping any one request
+claiming more than 6% of what enters the record. The measured effect was better coverage with FEWER
+rows promoted, which is the shape to preserve if these numbers are ever revisited.
+
+**Selection by model judgement was tried and rejected — see #1553.** Scoring the rows one real case
+actually promoted, against that case's own open questions, put the rows its findings cite at median
+position 117 of 265 where chance is 132. A relevance floor kept 17 rows and dropped all 15 the
+findings used. The model does separate one question from another; that is not the same as knowing
+which rows will matter, and only the first was true when the work was proposed.
 
 ### `viewSummary` is the one sanctioned exception
 
@@ -295,19 +327,23 @@ CS abuse, BYOVD, cloud credential theft, rclone exfil, Linux cron and systemd pe
 named-pipe lateral movement, OAuth consent grant, LOLBIN download, cleartext AMSI bypass) all
 graded Medium or above; twelve deliberately similar benign rows all stayed below Low.
 
-So a decision model grades the left-behind rows and hands the analyst a ranked list. Promotion is
-unavailable to it for `viewSummary`'s reason, at `viewSummary`'s scale — a real case's archive runs
-to thousands of Info rows, and promoting them would drown the record. The same three constraints:
+So a decision model grades the left-behind rows and hands the analyst a ranked list. The GRADING
+PASS may not promote, for `viewSummary`'s reason at `viewSummary`'s scale — a real case's archive
+runs to thousands of Info rows, and promoting what a pass read would drown the record. The analyst
+may promote what they pick out of that list (#1568), which is a different act; the paragraph after
+the constraints says why. The same three constraints:
 
 1. **Analyst-initiated only.** A button. Nothing automatic reaches it, and it is off by default.
-2. **Ephemeral.** It promotes nothing, writes no case state, and never mutates an event. The only
-   thing it persists is the run's cost, into the existing per-case cost store.
+2. **Ephemeral until an analyst ticks a row.** The grading pass promotes nothing, writes no case
+   state, and never mutates an event; the only thing it persists is the run's cost. Promotion is a
+   second, explicit act on a separate route (`POST /cases/:id/jev/promote`,
+   `routes/jevPromote.ts`), and it moves exactly the rows the analyst selected.
 3. **Bounded by default, never silently.** An ordinary press reads `JEV_REVIEW_DEFAULT_ROWS`
    (2000) rows; the analyst can ask for every matching row instead, and the route pages to get
    them. That is a weaker bound than `viewSummary`'s and deliberately so: `viewSummary`'s cap
    protects the *record*, because summarising or promoting thousands of rows is the harm there.
-   Nothing is written here, so a cap protects only money and wall-clock, which are the analyst's
-   to spend — and a review whose whole question is "what did the grading miss?" answers a
+   The grading pass writes nothing, so its cap protects only money and wall-clock, which are the
+   analyst's to spend — and a review whose whole question is "what did the grading miss?" answers a
    different question quietly if it can only ever see a slice. Coverage is reported as separate
    facts —
    how many matched, how many were read, how many were skipped as already analyzed, how many were
@@ -321,6 +357,34 @@ to thousands of Info rows, and promoting them would drown the record. The same t
    caption made when it blamed the AI input budget for rows the row cap had dropped. The route owns
    the disclosure now, because only the route can tell the two apart.
 
+**Why an analyst-gated promotion is not the thing the boundary forbids.** What the boundary is
+built against is a pass that writes to the evidence record on its own — the analyst never asked for
+those rows, never saw them coming, and cannot tell them from an import's. #1554 removed the last
+one. A promotion the analyst ticks row by row is the opposite: it is a decision being recorded, and
+it has two standing precedents in `starred-report` and `explain`, each of which promotes exactly
+what the analyst picked and nothing else. `tests/analysis/forensicBoundary.test.ts` asserts BOTH
+halves, because either one alone passes while the other is broken: a review that promoted every row
+it graded would still contain the ticked ones, and a promote route that promoted nothing would still
+leave grading clean.
+
+Three rules the promotion carries:
+
+- **The severity is the model's grade, and the row says so.** A promoted row takes the grade the
+  decision model gave it, because a row promoted at Info would be visible to the analyst and still
+  invisible to synthesis (`promptIncludesInfo`, off by default) — the feature would look like it
+  worked and change nothing. The row is stamped
+  `[missed-evidence: <grade> conf <0.00> by <model>]`, so a severity a model chose can be told
+  apart from one the deterministic content tagger set (no provenance at all) and from `[promoted]`,
+  which means an analyst's own judgement. One short bracketed tag, in the shape of the markers
+  beside it, because provenance is read inline on a timeline row.
+- **Raise only.** A promotion takes the more severe of the row's own severity and the model's
+  grade (`worstSeverity`). A model can never demote evidence.
+- **A lab row is refused,** as it is for the automatic loop: the analyst picked the row but not the
+  grade, and a model's Medium on sandbox behaviour must not enter the incident chronology.
+
+A row the analyst ticked that is already in the forensic timeline is a no-op reported in
+`skipped`/`reasons`, not a failed batch.
+
 Two properties specific to this path:
 
 - **It masks like every other model call.** Row text goes through the same anonymizer the chat
@@ -328,8 +392,8 @@ Two properties specific to this path:
   option key the caller chose, so no masked value can ride home inside it. Masking costs almost
   nothing here — graded with paths, addresses and domains tokenized, all twelve attacks above were
   still caught and the mean grade moved 3.01 to 2.98, because the verb survives tokenization.
-- **It does not write back, deliberately.** Grading at import time — a second tagger inside the one
-  legal promotion window, raise-only — is the obvious next step and is **not** this. It waits until
+- **It still does not write back by itself.** Grading at import time — a second tagger inside the
+  one legal promotion window, raise-only — is the obvious next step and is **not** this. It waits until
   the read-only report has earned trust on real cases, because the measured false-positive class is
   the collection tooling itself: on a real archive, 39 of 45 Medium+ rows were Velociraptor's own
   binary and service, or detection-pack rule FILES whose names read like the tools they hunt
@@ -343,7 +407,10 @@ the starred events and records why, that `viewSummary` promotes **nothing**, tha
 that truncation is disclosed. Each was mutation-tested — removing the promotion or restoring the
 10,000 cap fails. The Jev review is pinned in the same file: that a row graded Critical leaves the
 forensic timeline empty, that the raw record keeps its `Info` severity and gains no `promotedAt`,
-that the cap holds, and that truncation is disclosed both ways.
+that the cap holds, and that truncation is disclosed both ways — and, since #1568, that an
+analyst's selection promotes exactly the ticked rows at the model's grade while grading still
+promotes nothing. `tests/server/jevPromoteRoute.test.ts` pins the route: raise-only, the lab-row
+refusal, the already-promoted no-op, and the refusals (400/404/501).
 
 Fixing `explainEvent` also closed [#406](https://github.com/hasamba/DFIR-Companion/issues/406): its
 old paged lookup searched only the first 500 rows, so explaining an event past that threw

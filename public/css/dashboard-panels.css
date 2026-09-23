@@ -508,5 +508,45 @@ section#sec-sessions.ses-collapsed .ses-body { display: none; }
 /* Elapsed time while a run is in flight. No bar and no percentage: the server reports neither. */
 .jev-progress { font-size: 12px; color: var(--text-muted); margin: 6px 0; }
 
+/* Promoting reviewed rows into the forensic timeline (#1568).
+   The selection bar sits between the caption and the table, so the count the analyst reads and the
+   rows they can see are never more than a line apart. */
+.jev-select { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; }
+.jev-select-note { font-size: 12px; color: var(--text-muted); }
+/* The one control in this panel that writes to the case, so it is the one that is filled. */
+.jev-promote { background: var(--sev-high); color: var(--bg-base); border: 1px solid var(--sev-high); }
+.jev-promote[disabled] { opacity: 0.55; }
+.jev-pick-cell { width: 28px; text-align: center; }
+/* The tick target is small by default and this table can run to hundreds of rows. */
+.jev-pick { width: 16px; height: 16px; cursor: pointer; }
+/* A row already written into the timeline: still readable, no longer offered. Dimmed AND badged —
+   opacity alone would read as "loading" to anyone who missed the promote. */
+.jev-row-sent { opacity: 0.7; }
+.jev-sent { font-size: 11px; font-weight: 600; color: var(--sev-medium); white-space: nowrap; }
+/* What the last promote did, and why anything was skipped. */
+.jev-promoted { font-size: 12px; color: var(--text-primary); font-weight: 600; margin: 6px 0 2px; }
+.jev-reasons { font-size: 12px; color: var(--text-muted); margin: 0 0 8px; padding-left: 18px; }
+
 /* A settings hint that is telling the analyst something is missing, not just describing a field. */
 .sfield-hint.sfield-hint-warn { color: var(--sev-medium); }
+
+/* Second look (#1554) — the analyst-pressed sweep, in its own panel beside Missed Evidence Review.
+   It was a bordered block inside the findings card; the analyst could not find it, so it carries a
+   section's own heading now and the .sl-card / .sl-head / .sl-title rules that drew that block are
+   gone with it.
+
+   Every state word is a word. .sl-warn adds a colour to text that already says "not", "NOT" or
+   "did not" on its own, so nothing here is carried by hue alone. */
+/* The panel's standing warning: what costs nothing, and what writes to the case. */
+.sl-note { font-size: 12px; color: var(--text-muted); margin: 0 0 10px; }
+.sl-preview { margin-bottom: 8px; }
+.sl-line { font-size: 12px; color: var(--text-primary); margin: 4px 0; }
+.sl-muted { color: var(--text-muted); }
+.sl-warn { color: var(--sev-medium); }
+.sl-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 8px 0 4px; }
+/* The opt-out is beside the button it qualifies, never behind a disclosure: the analyst has to be
+   able to see that re-synthesis is on before they press, not discover it afterwards. */
+.sl-opt { display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+  color: var(--text-muted); cursor: pointer; }
+.sl-status { font-size: 12px; color: var(--text-muted); margin: 4px 0; }
+.sl-result { margin-top: 4px; }

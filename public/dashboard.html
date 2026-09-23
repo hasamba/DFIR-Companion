@@ -205,6 +205,9 @@
   <script src="/js/dashboard-handoff.js"></script>
   <script src="/js/dashboard-sensitive-access.js"></script>
   <script src="/js/dashboard-jev-review.js"></script>
+  <!-- Second look (#1554). initSecondLook() binds the toolbar button, the run button and the
+       re-synthesise opt-out; the panel sits beside Missed Evidence Review. -->
+  <script src="/js/dashboard-second-look.js"></script>
   <script src="/js/dashboard-backup.js"></script>
   <script src="/js/dashboard-collection-plan.js"></script>
   <script src="/js/dashboard-host-scope.js"></script>
@@ -516,7 +519,7 @@
          spends money stays inside the panel, next to the row counts and the cost estimate. The
          ::before icon is not decoration — without one the label collapses to font-size:0 under
          .icons-only and the button disappears entirely. -->
-    <button id="jevReviewBtn" aria-label="Missed evidence review" data-tip="Missed evidence review: re-grade the Info-graded super-timeline rows the AI never reads, using a fast decision model, and rank what it finds. Opening this costs nothing — the review is a separate press inside the panel. It promotes nothing and changes no case data.">Missed evidence</button>
+    <button id="jevReviewBtn" aria-label="Missed evidence review" data-tip="Missed evidence review: re-grade the Info-graded super-timeline rows the AI never reads, using a fast decision model, and rank what it finds. Opening this costs nothing — the review is a separate press inside the panel, and promoting what it finds is a third press that asks first.">Missed evidence</button><button id="secondLookBtn" aria-label="Second look" data-tip="Second look: search the raw archive for this case's open questions, hypotheses and IOCs. Opening this costs nothing and shows what it would find; running it writes those rows into the forensic timeline, which is a separate press.">Second look</button>
     <button id="secondOpinion" data-safe-style="display:none" data-tip="Second LLM opinion: refreshes the primary synthesis (only if the timeline changed), then runs a DIFFERENT model over the same case as an independent QA cross-check, and shows where it disagrees with the primary (findings it adds/drops, severity, ATT&CK technique) for you to accept or reject each. A referee model (model A, the synthesis model, by default) reads the events each disputed finding cites and annotates every disagreement with accept B / keep A / review. On-demand; non-destructive until you accept. Needs DFIR_AI_SECOND_OPINION_MODEL — ideally a different provider.">2nd opinion</button>
     <button id="deepPassBtn" data-tip="Deep pass: read EVERY graded event at or above a severity floor you choose, in as many batches as it takes, then fold the result into one final synthesis. Normal synthesis shows the model one prompt's worth of events — on a multi-host case that leaves most of the timeline unread. Opens the pre-flight table showing what each floor would cost before anything is spent. Slow and expensive; cancellable.">Deep pass</button>
     <label id="deepReasoningLabel" data-safe-style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--text-muted);cursor:pointer;white-space:nowrap" data-tip="Deep reasoning (Chain-of-Thought): have the model think step-by-step (extended thinking) before writing findings — better on complex multi-hop cases, but slower and costs extra output tokens. Applies to the NEXT AI Re-synthesize and 2nd opinion on this case only. Off by default; no .env edit or restart needed. Needs a synthesis model on Anthropic, OpenRouter or Claude Code — greyed out on any other provider.">
@@ -1738,7 +1741,7 @@
         </div>
         <div class="settings-group-head">Missed evidence review (Jev) &mdash; off by default</div>
         <div class="sfield-row3">
-          <div class="sfield"><label for="env-DFIR_JEV_ENABLED">Enable the review<span class="sfield-hint">DFIR_JEV_ENABLED &mdash; a fast decision model re-grades the Info-graded super-timeline rows the analysis AI never reads, on a button the analyst presses. It promotes nothing and writes no case data. Set <code>1</code> to offer it (default off)</span></label><input id="env-DFIR_JEV_ENABLED" placeholder="0" /></div>
+          <div class="sfield"><label for="env-DFIR_JEV_ENABLED">Enable the review<span class="sfield-hint">DFIR_JEV_ENABLED &mdash; a fast decision model re-grades the Info-graded super-timeline rows the analysis AI never reads, on a button the analyst presses. The review writes nothing; promoting a reviewed row into the forensic timeline is a separate press that asks first. Set <code>1</code> to offer it (default off)</span></label><input id="env-DFIR_JEV_ENABLED" placeholder="0" /></div>
           <div class="sfield">
             <label for="env-DFIR_JEV_PROVIDER">Provider<span class="sfield-hint">DFIR_JEV_PROVIDER</span></label>
             <select id="env-DFIR_JEV_PROVIDER">
@@ -3332,7 +3335,7 @@
          Timeline. Each card is one sitting on one host; clicking it filters the timeline below to
          exactly that session's events. Derived server-side (GET /cases/:id/sessions), no AI. -->
     <section id="sec-sessions" data-safe-style="grid-column: 1 / -1"><h2>Attacker Sessions<span class="ev-sub">the timeline re-threaded as per-host chapters — a contiguous run on one host with no long gap inside it (derived, no AI); click a card to filter the timeline to that session</span><span id="sessionsCount" data-safe-style="margin-left:6px;font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted)"></span><button id="sessionsCollapseAllBtn" type="button" title="Collapse or expand every session card" data-safe-style="margin-left:8px;padding:2px 10px;font-size:11px;text-transform:none;letter-spacing:0;font-weight:400">⇕ Collapse all</button></h2><div id="sessions">—</div></section>
-    <section id="sec-timeline" data-safe-style="grid-column: 1 / -1"><h2>Forensic Timeline<span id="timelineCount" title="Total events in scope; updates in real time"></span><button id="evStarFilterBtn" type="button" title="Show only starred events">☆ Starred</button><button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><span class="sev-legend" title="Check/uncheck to show or hide events by severity" data-stop-click><label class="sev-item sev-Critical"><input type="checkbox" class="sev-filter" value="Critical" checked><span class="sev-dot"></span>Critical</label><label class="sev-item sev-High"><input type="checkbox" class="sev-filter" value="High" checked><span class="sev-dot"></span>High</label><label class="sev-item sev-Medium"><input type="checkbox" class="sev-filter" value="Medium" checked><span class="sev-dot"></span>Medium</label><label class="sev-item sev-Low"><input type="checkbox" class="sev-filter" value="Low" checked><span class="sev-dot"></span>Low</label></span><span class="src-legend" id="srcLegendWrap" data-safe-style="display:none" title="Show or hide events by the tool/source that produced them" data-stop-click><button type="button" id="srcFilterBtn" class="src-filter-btn">⛏ Sources</button><div id="srcFilterMenu" class="src-filter-menu" hidden></div></span><span class="src-legend" id="originLegendWrap" data-safe-style="display:none" title="Show or hide events by origin (the artifact that produced them)" data-stop-click><button type="button" id="originFilterBtn" class="src-filter-btn">⛏ Origins</button><div id="originFilterMenu" class="src-filter-menu" hidden></div></span><span class="src-legend" id="hostLegendWrap" data-safe-style="display:none" title="Show or hide events by affected host" data-stop-click><button type="button" id="hostFilterBtn" class="src-filter-btn">🖥 Hosts</button><div id="hostFilterMenu" class="src-filter-menu" hidden></div></span><select class="corrob-sel" id="corrobTimeline" title="Corroboration lens — show only events seen by ≥N distinct tools (a lens; nothing is deleted)" data-stop-click><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2>
+    <section id="sec-timeline" data-safe-style="grid-column: 1 / -1"><h2>Forensic Timeline<span id="timelineCount" title="Total events in scope; updates in real time"></span><button id="evStarFilterBtn" type="button" title="Show only starred events">☆ Starred</button><button class="add-toggle" type="button" title="Add an event manually" aria-label="Add an event manually">+</button><span class="sev-legend" title="Check/uncheck to show or hide events by severity" data-stop-click><label class="sev-item sev-Critical"><input type="checkbox" class="sev-filter" value="Critical" checked><span class="sev-dot"></span>Critical</label><label class="sev-item sev-High"><input type="checkbox" class="sev-filter" value="High" checked><span class="sev-dot"></span>High</label><label class="sev-item sev-Medium"><input type="checkbox" class="sev-filter" value="Medium" checked><span class="sev-dot"></span>Medium</label><label class="sev-item sev-Low"><input type="checkbox" class="sev-filter" value="Low" checked><span class="sev-dot"></span>Low</label><label class="sev-item sev-Info" title="Info rows reach the forensic timeline when an analyst promoted them, or when this case sets its forensic floor to Info. They are not hidden by default (#1554)."><input type="checkbox" class="sev-filter" value="Info" checked><span class="sev-dot"></span>Info</label></span><span class="src-legend" id="srcLegendWrap" data-safe-style="display:none" title="Show or hide events by the tool/source that produced them" data-stop-click><button type="button" id="srcFilterBtn" class="src-filter-btn">⛏ Sources</button><div id="srcFilterMenu" class="src-filter-menu" hidden></div></span><span class="src-legend" id="originLegendWrap" data-safe-style="display:none" title="Show or hide events by origin (the artifact that produced them)" data-stop-click><button type="button" id="originFilterBtn" class="src-filter-btn">⛏ Origins</button><div id="originFilterMenu" class="src-filter-menu" hidden></div></span><span class="src-legend" id="hostLegendWrap" data-safe-style="display:none" title="Show or hide events by affected host" data-stop-click><button type="button" id="hostFilterBtn" class="src-filter-btn">🖥 Hosts</button><div id="hostFilterMenu" class="src-filter-menu" hidden></div></span><select class="corrob-sel" id="corrobTimeline" title="Corroboration lens — show only events seen by ≥N distinct tools (a lens; nothing is deleted)" data-stop-click><option value="0">⊕ any</option><option value="2">⊕ 2+ src</option><option value="3">⊕ 3+ src</option></select></h2>
       <div class="ev-bulk-bar" id="evBulkBar"><span id="evBulkCount" data-safe-style="font-weight:600;color:var(--accent)"></span> <span>Actions:</span> <button class="ev-bulk-btn" id="evBulkStarBtn" title="Star or unstar all selected events">★ Toggle Star</button> <button class="ev-bulk-btn" id="evBulkTagBtn" title="Add a tag to all selected events">🏷 Modify Tags</button> <button class="ev-bulk-btn" id="evBulkFpBtn" title="Mark all selected events as a false positive (exclude from analysis)">🚫 Mark False Positive</button> <button class="ev-bulk-btn" id="evBulkClearBtn" data-safe-style="color:var(--text-muted)">✕ Clear</button></div>
       <div data-safe-style="font-size:11px; color:var(--text-muted); margin:-4px 0 8px;" title="Times are normalized to UTC on ingestion (a shown timezone offset is converted; a timezone-less time is kept as UTC).">🕑 All timestamps are in <strong>UTC</strong>.</div>
       <div class="manual-add" hidden>
@@ -3916,22 +3919,56 @@
       </div>
       <div id="superTimelineList">—</div>
     </section>
-    <!-- Missed evidence review (#1540): an analyst-pressed re-grade of the Info-graded
-         super-timeline rows the AI never reads. Ephemeral and read-only — it promotes nothing and
-         writes no case state, which the panel's own first line says. Wiring lives in
+    <!-- Missed evidence review (#1540) and promoting what it finds (#1568): an analyst-pressed
+         re-grade of the Info-graded super-timeline rows the AI never reads. The REVIEW is still
+         read-only. PROMOTING writes the ticked rows into the forensic timeline with the model's
+         grade as their severity, which is the panel's own first line. Wiring lives in
          js/dashboard-jev-review.js. -->
     <section id="sec-jev-review" data-safe-style="grid-column: 1 / -1" class="collapsed">
       <h2>Missed Evidence Review<span class="ev-sub">a fast decision model re-grades the Info-graded super-timeline rows the AI never sees, ranked by grade with the model&rsquo;s own confidence &mdash; a lead to look at, never a conclusion</span></h2>
-      <p class="jev-note"><strong>This review promotes nothing and changes no case data.</strong> It reads the rows, grades them and ranks them; the case record, the forensic timeline and the super-timeline are left exactly as they were.</p>
+      <p class="jev-note"><strong>Reviewing changes nothing. Promoting writes to the case.</strong> The review reads the rows, grades them and ranks them. Nothing moves until you tick rows and press <em>Promote selected</em> &mdash; and then each promoted row enters the forensic timeline carrying the model&rsquo;s grade as its severity, which is what decides whether the AI ever reads it. This panel cannot undo that.</p>
       <div class="jev-controls">
         <button type="button" id="jevRunBtn" disabled>Review missed evidence</button>
         <!-- The uncapped read. Secondary to the capped one on purpose: it can run for minutes and
              spend real money, so it asks first, inline in the panel, with the numbers from the last run. -->
         <button type="button" id="jevRunAllBtn" class="jev-secondary" disabled>Read every row</button>
         <label class="jev-tooling" for="jevHideTooling"><input type="checkbox" id="jevHideTooling" checked /> Hide rows the model reads as our own collection tooling (over 0.5)</label>
+        <!-- The two filters (#1568). They narrow the TABLE, and select-all follows the table, so
+             they also narrow what a promote can write. Native controls: tabbable, keyboard-operable,
+             and they pick up the :focus-visible ring in css/a11y.css. -->
+        <label class="jev-tooling" for="jevGradeFilter">Grade
+          <select id="jevGradeFilter" disabled>
+            <option value="">any</option>
+            <option value="Low">Low and above</option>
+            <option value="Medium">Medium and above</option>
+            <option value="High">High and above</option>
+            <option value="Critical">Critical only</option>
+          </select>
+        </label>
+        <label class="jev-tooling" for="jevMinConfidence">Model confidence at least
+          <input type="range" id="jevMinConfidence" min="0" max="100" step="5" value="0" disabled />
+          <span id="jevMinConfidenceOut" class="jev-conf">any</span>
+        </label>
       </div>
       <div id="jevReviewStatus" class="jev-status" role="status" aria-live="polite"></div>
       <div id="jevReviewPanel"></div>
+    </section>
+    <!-- Second look (#1554). Its own panel, beside Missed Evidence Review, because the two are the
+         same kind of thing: both read the raw super-timeline archive, both write rows into the
+         forensic timeline, and both cost nothing to open. It was a card inside Findings, under the
+         synthesis strip, and the analyst could not find it twice over.
+
+         The one-line summary on that strip STAYS THERE. It is synthesis metadata — a fact about the
+         last synthesis run — and it is not repeated here. Wiring lives in js/dashboard-second-look.js. -->
+    <section id="sec-second-look" data-safe-style="grid-column: 1 / -1" class="collapsed">
+      <h2>Second Look<span class="ev-sub">re-reads the raw archive for the questions this case has left open, and pulls what it finds into the forensic record</span></h2>
+      <p class="sl-note"><strong>Looking changes nothing. Running writes to the case.</strong> The panel measures what a sweep would find before anything is pressed &mdash; that costs no model call and writes nothing. <em>Run second look</em> promotes every matching archive row into the forensic timeline, where the AI reads it. This panel cannot undo that.</p>
+      <div id="secondLookCard" data-safe-style="display:none">
+        <div id="secondLookPreview" class="sl-preview"></div>
+        <div class="sl-actions"><button id="secondLookRunBtn" type="button" title="Search the raw archive for this case&rsquo;s open questions, hypotheses and IOCs, promote every row that matches into the forensic timeline, then re-synthesise">Run second look</button><label class="sl-opt" for="secondLookResynth" title="Leave this ticked unless you only want the rows. Unticked, the conclusions on this page stay the ones written before these rows arrived."><input type="checkbox" id="secondLookResynth" checked> Re-synthesise afterwards</label></div>
+        <div id="secondLookStatus" class="sl-status" role="status" aria-live="polite"></div>
+        <div id="secondLookResult" class="sl-result"></div>
+      </div>
     </section>
     <section id="sec-notebook" data-safe-style="grid-column: 1 / -1" class="collapsed">
       <h2>Analyst Notebook</h2>
@@ -4265,7 +4302,7 @@
       { id: "sec-inv-log",      label: "Investigation Log" },
       { id: "sec-activity",     label: "Activity Log" },
       { id: "sec-mcp",          label: "MCP Analysis" },
-      { id: "sec-custody",      label: "Chain of Custody" }, { id: "sec-intel-retirement", label: "Intel Retirement Review" }, { id: "sec-remediation", label: "Remediation Checks" }, { id: "sec-campaign-scope", label: "Campaign Scope" }, { id: "sec-served-exposure", label: "Served Exposure" }, { id: "sec-kerberoast-chain", label: "Kerberoast Chain" }, { id: "sec-tls-graph", label: "TLS Relationships" }, { id: "sec-handoff", label: "Handoff Brief" }, { id: "sec-sensitive-access", label: "Sensitive Access" }, { id: "sec-jev-review", label: "Missed Evidence Review" },
+      { id: "sec-custody",      label: "Chain of Custody" }, { id: "sec-intel-retirement", label: "Intel Retirement Review" }, { id: "sec-remediation", label: "Remediation Checks" }, { id: "sec-campaign-scope", label: "Campaign Scope" }, { id: "sec-served-exposure", label: "Served Exposure" }, { id: "sec-kerberoast-chain", label: "Kerberoast Chain" }, { id: "sec-tls-graph", label: "TLS Relationships" }, { id: "sec-handoff", label: "Handoff Brief" }, { id: "sec-sensitive-access", label: "Sensitive Access" }, { id: "sec-jev-review", label: "Missed Evidence Review" }, { id: "sec-second-look", label: "Second Look" },
       { id: "sec-case-details", label: "Case Details" },
     ];
     let DASHBOARD_VIEWS = [];                  // dashboard-view presets (#142), fetched from /dashboard-views
@@ -4689,7 +4726,7 @@
     // (#415) — they were never Background jobs'.
     if (typeof initDeepPass === "function") initDeepPass();
     else dfirFeatureUnavailable("Deep pass");
-    if (typeof initIocQuickActions === "function") initIocQuickActions(); if (typeof initJevReview === "function") initJevReview(); else dfirFeatureUnavailable("Missed evidence review");
+    if (typeof initIocQuickActions === "function") initIocQuickActions(); if (typeof initJevReview === "function") initJevReview(); else dfirFeatureUnavailable("Missed evidence review"); if (typeof initSecondLook === "function") initSecondLook(); else dfirFeatureUnavailable("Second look");
 
     // --- Screenshot OCR full-text search (#176) ---------------------------------------------
     // Queries GET /cases/:id/ocr-search and links each hit back to the screenshot it came from.
@@ -5030,11 +5067,11 @@
 
       const checked = document.querySelectorAll('.sev-filter:checked');
       const activeSevs = new Set([...checked].map(cb => cb.value));
-      // Info excluded: forensicGate demotes Info-severity events out of the forensic timeline server-side
-      // (they live in the super-timeline instead), so the forensic timeline never actually holds any.
-      const allSevs = ['Critical', 'High', 'Medium', 'Low'];
+      // Info IS in this list now (#1554). The old note claimed forensicGate leaves the forensic timeline with no
+      // Info rows at all; a PROMOTED row is exempt from that cut by design (forensicGate.ts) — 262 of them hid here.
+      const allSevs = ['Critical', 'High', 'Medium', 'Low', 'Info'];
       const filtering = activeSevs.size < allSevs.length;
-      let visible = filtering ? ft.filter(e => activeSevs.has(e.severity)) : ft;
+      let visible = filtering ? ft.filter(e => activeSevs.has(e.severity) || isPromotedEvent(e)) : ft;
       if (DfirTimelineView.eventIdFilterActive()) visible = visible.filter(e => DfirTimelineView.hasEventId(e.id));
       if (DfirTimelineView.starredOnly()) visible = visible.filter(e => DfirStarred.has(String(e.id)));
       if (DfirTimelineView.search()) visible = visible.filter(e => _evMatchesSearch(e, DfirTimelineView.search()));
@@ -5055,7 +5092,7 @@
       if (DfirTimelineView.corrobTimeline() > 1) visible = visible.filter(e => realSourceCount(e.sources, DfirFacets.sources.matcher()) >= DfirTimelineView.corrobTimeline());
       const view = DfirState.activeView();
       const viewSevFiltering = !!(view && view.filters && view.filters.minSeverity);
-      if (viewSevFiltering) visible = visible.filter(e => viewMeetsMinSev(e.severity));   // dashboard-view severity floor (#142)
+      if (viewSevFiltering) visible = visible.filter(e => viewMeetsMinSev(e.severity, e));   // dashboard-view severity floor (#142); a promoted row rides through it, as it does the server's cut (#1554)
       visible = sortTimelineEvents(visible);
       renderTimelineHeatmap(visible);   // buckets the FULL filtered set, not the paginated slice below (#219)
 
@@ -5069,7 +5106,7 @@
       renderEvIdFilterChip(visible.length, ft.length);
 
       renderTimelineCount(document.getElementById('timelineCount'), {
-        total: ft.length, totalFiltered, pageSize: tlPageSize, page: tlPage, totalPages,
+        total: ft.length, totalFiltered, pageSize: tlPageSize, page: tlPage, totalPages, promotedKept: promotedKeptCount(visible, filtering ? activeSevs : null, viewSevFiltering ? viewMeetsMinSev : null),
         filtering: filtering || DfirTimelineView.starredOnly() || sourceFiltering || originFiltering || viewSevFiltering || DfirTimelineView.eventIdFilterActive() || DfirTimelineView.corrobTimeline() > 1 || _hasActiveFilter(),
       });
       _updateSearchCount(totalFiltered, ft.length);
@@ -5167,7 +5204,7 @@
           + `</div>`
           + `<div class="ev-col-sev sev-${esc(e.severity)}" title="Severity: ${escAttr(e.severity || "unrated")}"><span class="ev-sq"></span>${esc(e.severity || "")}</div>`
           + `<div class="ev-col-time">${span}</div>`
-          + `<div class="ev-col-content">`
+          + `<div class="ev-col-content">${promotedBadge(e) || ""}`   // #1554: outside the badges toggle and outside [details] — provenance, not decoration; `|| ""` covers the facade stub
           + (tlShow("tags", tld) ? tagPills("event", e.id) : "")
           + (tlShow("badges", tld) ? `${newBadge}${badge}${corro}${chain}` : "")
           + (showHost ? host : "")

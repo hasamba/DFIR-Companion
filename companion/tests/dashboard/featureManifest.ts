@@ -171,6 +171,18 @@ export const FEATURES: Feature[] = [
       "busy",
       "hideTooling",
       "wired",
+      // #1568's write half. `promoting` is listed for the same reason as `busy`; `picked` and
+      // `sentIds` because a reachable copy of either would let another module decide what this
+      // panel writes into the forensic timeline.
+      "minGrade",
+      "minConfidence",
+      "picked",
+      "sentIds",
+      "promoting",
+      "promoteGen",
+      "confirmingPromote",
+      "promoteError",
+      "promoteResult",
     ],
   },
   { file: "dashboard-backup.js", publish: ["loadCaseBackups", "restoreCaseBackup"], private: [] },
@@ -460,10 +472,38 @@ export const FEATURES: Feature[] = [
   {
     // Narrative Timeline. Two of the six module-scope bindings under its banner stayed in the page:
     // they wire the import undo/redo buttons to a function six hundred lines away.
+    //
+    // Second look (#1554) used to live here too, on the argument that the synthesis strip this file
+    // renders is where the sweep's summary is read. The control moved out to its own panel and its
+    // own module; the ONE-LINE SUMMARY ON THE STRIP STAYED, because it is synthesis metadata, not
+    // the control. loadSynthMeta still renders it.
     file: "dashboard-narrative.js",
     initializer: "initNarrativeTimeline",
     publish: ["initNarrativeTimeline", "genNarrative", "loadSynthMeta"],
     private: [],
+  },
+  {
+    // Second look (#1554), a panel of its own beside Missed Evidence Review — same shape as
+    // dashboard-jev-review.js, and for the same reason: it reads the raw archive and writes to the
+    // forensic record, so the analyst has to be able to find it in the nav.
+    //
+    // The busy flag is listed as private for the reason #1540's is: it is the flag whose wedging
+    // this feature exists to avoid, and a copy of it reachable from outside the closure is a flag
+    // another module can leave on.
+    file: "dashboard-second-look.js",
+    initializer: "initSecondLook",
+    publish: ["initSecondLook", "loadSecondLookPreview", "runSecondLook"],
+    private: [
+      "slCaseId",
+      "slPreview",
+      "slPreviewError",
+      "slPreviewState",
+      "slResult",
+      "slRunError",
+      "slBusy",
+      "slRunGen",
+      "slLoadGen",
+    ],
   },
   {
     // Host & Account Ranking (#202). One delegated listener rather than per-row handlers, because
@@ -636,6 +676,12 @@ export const FEATURES: Feature[] = [
       "timelineCountLabel",
       "renderTimelineCount",
       "timelineMoreMatchesBar",
+      // The promotion rule the forensic timeline shares with companion/src/analysis/forensicGate.ts
+      // (#1554). It lives here because "what a timeline row shows, and what the count label says
+      // it is not showing" is already this module's subject, and because #inline-js is frozen.
+      "isPromotedEvent",
+      "promotedBadge",
+      "promotedKeptCount",
     ],
     private: ["timelineTotalIsFloor"],
   },

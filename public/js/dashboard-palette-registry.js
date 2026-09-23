@@ -68,6 +68,20 @@
       keywords: ["missed", "evidence", "review", "jev", "graded", "info", "super-timeline"],
     },
     {
+      id: "act.secondLook",
+      btn: "secondLookRunBtn",
+      category: "Actions",
+      label: "Run Second Look",
+      keywords: ["second", "look", "sweep", "promote", "archive", "questions", "leads"],
+    },
+    {
+      id: "act.secondLook",
+      btn: "secondLookBtn",
+      category: "Actions",
+      label: "Second look",
+      keywords: ["second", "look", "archive", "open questions", "promote", "sweep"],
+    },
+    {
       id: "act.secondOpinion",
       btn: "secondOpinion",
       category: "Actions",

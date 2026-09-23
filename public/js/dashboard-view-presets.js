@@ -29,7 +29,23 @@
   }
   // True when a severity is at or above the active view's threshold. Fails OPEN (unknown
   // severity / no threshold → shown) — missing a real finding is worse than one extra row.
-  function viewMeetsMinSev(sev) {
+  //
+  // `ev` is optional. Only the forensic timeline passes one, because only it has a row to ask
+  // about; the findings list calls this with a severity alone and is unaffected.
+  //
+  // A PROMOTED ROW RIDES THROUGH THE FLOOR, exactly as it rides through the server's own cut in
+  // companion/src/analysis/forensicGate.ts: "A promoted row stays regardless of severity: the
+  // analyst put it here on purpose, and the cut exists to keep unreviewed telemetry out, not to
+  // remove what an analyst asked to see" (#1432). A view's minSeverity is the same kind of
+  // automatic floor — nobody clicked it for this particular row — so it makes the same
+  // exception (#1554). Keep the two recognisably one rule.
+  //
+  // Lead and Executive keep their High floor and the intent behind it. What changes is that a row
+  // somebody deliberately pulled in is no longer silently absent from those views: it arrives
+  // wearing the "✓ Promoted" badge, which reads as "an analyst put this here", not as a
+  // high-severity finding.
+  function viewMeetsMinSev(sev, ev) {
+    if (ev && typeof isPromotedEvent === "function" && isPromotedEvent(ev)) return true;
     const min = viewFilters().minSeverity;
     if (!min) return true;
     const mi = SEV.indexOf(min);

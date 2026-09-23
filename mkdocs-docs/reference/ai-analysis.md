@@ -9,10 +9,11 @@ DFIR Companion never makes "one big AI call". The work is split into separate ru
 | **Screenshot OCR** | automatic, on capture | free — runs locally | searchable screenshot text; redaction before upload |
 | **Extraction** | automatic, after import | one call per batch of files/screenshots | forensic events (the timeline) |
 | **Synthesis** | automatic + **AI Re-synthesize** | one call | findings, MITRE, attacker path, questions, next steps |
-| **Second look** | automatic, inside synthesis | at most one extra call | raw evidence pulled up; collection leads |
+| **Second look** | **Run second look** button | the search is free; one call if you let it re-synthesise | raw evidence pulled up; collection leads |
 | **Deep reasoning** | 🧠 checkbox, before a run | the same call, plus thinking tokens | the same outputs, reasoned harder |
 | **Second opinion** | **2nd opinion** button | up to three calls | a rival model's disagreements, to accept or reject |
 | **Deep pass** | on demand (dashboard / API / CLI) | many calls — the expensive one | conclusions drawn from *every* graded event |
+| **Missed evidence review** | **Missed evidence** button | about a penny for a whole case's archive | a ranked read of the rows nothing else looks at; you tick what to keep |
 
 ### 1. Screenshot OCR
 
@@ -53,9 +54,41 @@ DFIR Companion never makes "one big AI call". The work is split into separate ru
 
 **What it's good for.** Cases with a large raw super-timeline behind a small forensic timeline — exactly where a quiet recon-or-exfil phase hides.
 
-**When to use it.** Nothing to click. Immediately after every real synthesis, the tool takes that run's own open hypotheses, unanswered key questions, top connecting IOCs and the model's own "I wasn't shown X" requests, turns them into concrete keyword searches, runs them against the raw record, pulls up any matching events (tagged 🔁 in the timeline so you can see why they appeared), and re-synthesizes **exactly once** so the conclusions include them. When a search matches nothing anywhere, that is reported as a **collection lead** — a gap in what you have collected, not a gap in the analysis.
+**When to use it.** Press **Run second look** after a synthesis has left you with open questions. It used to run by itself at the end of every synthesis; it no longer does, because it was the only automatic thing that **wrote rows into your forensic record**, and that is a decision you should make rather than discover.
 
-**Settings.** None — the caps are fixed and deliberately conservative (one extra AI call, never a loop). It only has something to search if the case has a super-timeline.
+It takes the case's open hypotheses, unanswered key questions, top connecting IOCs and the model's own "I wasn't shown X" requests, turns them into keyword searches, runs them against the raw record, and pulls up any matching events — tagged so you can see which question pulled each one, and badged **✓ Promoted** in the timeline. When a search matches nothing anywhere, that is a **collection lead**: a gap in what you collected, not a gap in the analysis.
+
+**Before you press it**, the panel tells you how many searches it would run and roughly how many rows it would write into the case. The search itself costs nothing — it is keyword matching, not a model call. Only the re-synthesis afterwards costs anything, and you can turn that off, though leaving it on is the default so your conclusions never fall behind your record.
+
+**What it will not do.** It promotes at most a dozen rows per question, and stops after three repeats of the same detection — one noisy rule cannot fill the record. A row it holds back is not deleted: it stays in the raw archive, searchable. Selection by model judgement was tried and rejected; on a real case, ranking by relevance predicted which rows a finding would cite no better than chance.
+
+**Settings.** None. The caps are fixed and deliberately conservative. It only has something to search if the case has a super-timeline.
+
+### 4a. Missed evidence review — reading what nothing else reads
+
+**Why we need it.** The content tagger gets one chance, at import, to lift a row above `Info`, and it only lifts what its rule set names. Everything else drops out of the forensic timeline and no rule written later can reach back for it. An attack class with no matching rule stays invisible for the life of the case.
+
+**What it's good for.** Answering "what did the grading miss?" for a whole archive, cheaply, without changing anything.
+
+**When to use it.** Press **Missed evidence** when you want a second read of the rows the AI never sees. It grades them with a decision model — a model that returns a grade and a confidence instead of prose — and ranks them. An ordinary press reads up to 2,000 rows; **Read every row** covers the whole archive and tells you the cost first.
+
+**Reading it costs you nothing but the run.** Grading changes no case data at all — press it as often as you like. Nothing moves until you tick rows and promote them.
+
+**Promoting a row.** Tick the rows worth keeping and promote them. Each one is copied into the forensic timeline, which is the record the AI reads, so a promoted row can appear in the next synthesis, in findings and in the report. A row you promote carries:
+
+- **The severity the model gave it.** The grade in the table becomes the row's severity. That is the point: an `Info` row is invisible to synthesis, so a promotion that kept the old grade would change nothing.
+- **A note saying a model graded it** — the review it came from, the grade, the confidence and the model's name, on the row itself. Six months later nobody has to guess whether an analyst, a tagger rule or a model set that severity.
+- **Its old severity, if that was higher.** A promotion can only raise a severity, never lower one.
+
+Rows already in the forensic timeline are skipped, not refused — the rest of your selection still goes through, and the reply says what was skipped and why. Sandbox rows are refused: you picked the row, but a model picked the grade, and a model's opinion of sandbox behaviour does not belong in the incident chronology.
+
+Promoting does not re-run the AI. Press **AI Re-synthesize** when you have finished picking.
+
+**Read it with the confidence column.** The grade says what; the confidence says whether to trust it. A Medium at 0.9 is worth your time; a Medium at 0.3 is the model admitting it is guessing.
+
+**What will fool it.** Your own collection kit. On one real archive, 39 of the 45 rows it graded Medium or above were the agent's own binary and service, or detection-pack rule files whose names read like the tools they hunt — `…pypykatz_cred_dump_lsass_access.yml` is a rule, not Mimikatz. The panel scores each row for that and hides the obvious ones by default.
+
+**Settings.** `DFIR_JEV_ENABLED` turns it on (off by default). On the OpenRouter provider a blank `DFIR_JEV_KEY` reuses the OpenRouter key you already have; the field tells you whether there is one to reuse.
 
 ### 5. Deep reasoning — the 🧠 checkbox
 

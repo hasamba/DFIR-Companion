@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Promote what the missed-evidence review finds** — tick rows, filter by grade and confidence, select everything the filters show, and promote; each row enters the forensic timeline carrying the model's grade as its severity, with a note recording the grade, the confidence and which model gave it (closes #1568)
+- **Second look is a button and a panel of its own** — the only automatic path that wrote into the forensic record now waits to be pressed, sits in the left nav beside Missed Evidence Review, shows what it would promote before you press it, and re-runs the conclusions afterwards unless you opt out (closes #1554)
+- **Promoted rows are visible in the forensic timeline** — a row someone pulled in from the archive is shown whatever its severity, wearing a `✓ Promoted` badge, and the timeline count says how many rows the filters are hiding
 - **Execute-assembly traces in CLR usage logs** — a `CLR_v*\UsageLogs\<host>.exe.log` named after rundll32, regsvr32, mshta or a similar host grades High (T1620) and tells the AI it is typical of Cobalt Strike execute-assembly (closes #1559)
 - **Egg-Cellent Resume playbook** — the playbook matcher can name The DFIR Report's more_eggs → Cobalt Strike → Pyramid resume-lure intrusion (closes #1560)
 - **Toolbar buttons are named by cluster** — a small Case / Modes / AI / Evidence / Report / View label under each run of buttons, drawn in the gap the row already leaves, so the toolbar is no taller at any width; the grouping dissolves below 900px, where it would have cost a phone 40px
@@ -29,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Deep pass says when it has nothing new to read** — the pre-flight preview reports what the last synthesis read; if it dropped no event for the size limit, the panel says a deep pass would read the same or fewer and Run is off unless the analyst ticks *Run anyway*; a timeline changed since is called stale (closes #1457)
 
 ### Fixed
+- **The missed-evidence review stops hiding real rows as "our own tooling"** — the collector's name is no longer part of what that question judges, so a Velociraptor-collected network connection is not mistaken for the collector itself; measured over 265 real rows, 66 hidden became 52 with all genuine rule files still caught (part of #1554)
+- **A second look no longer spends its budget on rows the AI can already see** — the per-question allowance is filled from rows that are actually new, so questions that returned nothing now return evidence; on a real case the questions yielding nothing fell from 3 of 6 to 1 of 6, promoting fewer rows overall (part of #1554)
+- **One detection cannot crowd out a whole sweep** — repeats of an already-promoted row are held back after three, and stay searchable in the archive; 40% of one real case's promotions were near-duplicates (part of #1554)
 - **The collector's whole PersistenceSniper session stays out of the record** — its 4100 record, and the BitsTransfer 4103/800 and 400 records of the same proven PowerShell runspace, grade Info as collector activity; collector rows no longer add IOCs (closes #1555)
 - **A file write and its launch stay two events** — correlation no longer folds a process launch into the write of the same file, so the launch's command line reaches the AI (closes #1557)
 - **No duplicate auto findings** — a sibling Sigma hit or a THOR repeat of a command line a finding already cites links onto that finding, and a finding id is never minted twice (closes #1556)

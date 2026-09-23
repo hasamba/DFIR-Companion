@@ -1,8 +1,10 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import request from "supertest";
+import { describe, expect, it, vi } from "vitest";
 import { AnalysisPipeline, VIEW_SUMMARY_MAX_ROWS } from "../../src/analysis/pipeline.js";
+import { createApp } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import { CaseStore } from "../../src/storage/caseStore.js";
@@ -66,7 +68,7 @@ async function harness(rawEvents: ForensicEvent[]) {
     superTimelineStore,
     imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
   });
-  return { pipeline, stateStore, superTimelineStore, provider };
+  return { cases, pipeline, stateStore, superTimelineStore, provider };
 }
 
 describe("starredReport promotes before the model reads", () => {
@@ -189,35 +191,41 @@ describe("viewSummary is the documented exception", () => {
   });
 });
 
+// A Jev stand-in that grades each row in the batch with the score at its index. At module scope
+// because BOTH Jev describes below use it: the grading half and the promotion half of #1568.
+const stubDeps = (scores: number[]): JevGraderDeps => ({
+  mask: (t) => t,
+  ask: async (_state, questions) => {
+    const answers: Record<string, JevAnswer> = {};
+    Object.keys(questions).forEach((qid) => {
+      answers[qid] = qid.endsWith("_tool")
+        ? { type: "noul", noul: 0 }
+        : {
+            type: "score",
+            score: scores[Number(qid.slice(1))] ?? 0,
+            legend: {},
+            probabilities: {},
+            confidence: 0.9,
+          };
+    });
+    return { model: "jev-test", answers, usage: { inputTokens: 1, outputTokens: 1 } };
+  },
+});
+
 // The Jev second grader (#1540) is the fourth path that touches the raw record, and the second
 // that reads it without promoting. viewSummary earned that exception because promoting thousands
 // of filtered Info rows would permanently drown the record the rule protects; this one reads the
 // same pile for the same reason, so it carries the same three bounds — analyst-pressed, ephemeral,
 // capped with the truncation disclosed. These assertions are what stop "ephemeral" being a comment.
+//
+// #1568 made the review actionable, and the clauses below did NOT weaken: GRADING still promotes
+// nothing. What promotes is a separate route the analyst reaches by ticking rows — the describe
+// after this one asserts that other half.
 describe("the Jev review reads the raw record but never writes to it", () => {
   const rawRows = [
     ev({ id: "raw1", description: "certutil -urlcache -split -f http://h/a.txt" }),
     ev({ id: "raw2", description: "routine OS update check" }),
   ];
-
-  const stubDeps = (scores: number[]): JevGraderDeps => ({
-    mask: (t) => t,
-    ask: async (_state, questions) => {
-      const answers: Record<string, JevAnswer> = {};
-      Object.keys(questions).forEach((qid) => {
-        answers[qid] = qid.endsWith("_tool")
-          ? { type: "noul", noul: 0 }
-          : {
-              type: "score",
-              score: scores[Number(qid.slice(1))] ?? 0,
-              legend: {},
-              probabilities: {},
-              confidence: 0.9,
-            };
-      });
-      return { model: "jev-test", answers, usage: { inputTokens: 1, outputTokens: 1 } };
-    },
-  });
 
   it("promotes nothing: the forensic timeline is still empty after a review", async () => {
     const { stateStore } = await harness(rawRows);
@@ -258,4 +266,175 @@ describe("the Jev review reads the raw record but never writes to it", () => {
 
   // Coverage disclosure itself is asserted at the route, in tests/server/jevReviewRoute.test.ts:
   // only the route can tell a row the cap dropped from a row that was already analyzed.
+});
+
+// #1568. THE EXCEPTION AS IT NOW STANDS, in two halves that must BOTH be asserted.
+//
+// "It promotes nothing, writes no case state" was the whole of the third exception. It is now half
+// of it. The grading pass still promotes nothing — the describe above — and an analyst who ticks
+// rows can promote those rows and only those rows, which is this one.
+//
+// Either half alone passes while the other is broken. A review that promoted every row it graded
+// would satisfy "the selection arrived" — the ticked rows would be in the timeline, along with
+// everything else — and that is exactly the automatic writer the boundary exists to prevent, wearing
+// the analyst's press as cover. A promotion route that promoted nothing at all would satisfy
+// "grading wrote nothing" and leave the feature dead. So: grade, assert the record is untouched,
+// THEN tick, and assert precisely what arrived.
+//
+// The precedent for the second half is `starred-report` and `explain`: both promote exactly what the
+// analyst picked, and neither is read as a boundary violation, because an analyst-gated promotion is
+// a decision being recorded rather than a pass writing to the record on its own.
+describe("grading promotes nothing; an analyst's selection promotes exactly itself (#1568)", () => {
+  const archive = [
+    ev({ id: "raw1", description: "certutil -urlcache -split -f http://h/a.txt" }),
+    ev({ id: "raw2", description: "vssadmin delete shadows /all /quiet" }),
+    ev({ id: "raw3", description: "routine OS update check" }),
+  ];
+
+  /** The same harness, plus the HTTP app — promotion is only reachable through the route. */
+  async function appHarness() {
+    const built = await harness(archive);
+    const app = createApp(built.cases, {
+      pipeline: built.pipeline,
+      stateStore: built.stateStore,
+      superTimelineStore: built.superTimelineStore,
+    });
+    return { ...built, app };
+  }
+
+  it("grades the whole archive Critical and the forensic timeline is still empty", async () => {
+    const { stateStore } = await appHarness();
+
+    const result = await gradeEvents(stubDeps([4, 4, 4]), archive, { batchSize: 10 });
+
+    expect(result.rows.every((r) => r.grade === "Critical")).toBe(true);
+    expect((await stateStore.load("c1")).forensicTimeline).toEqual([]);
+  });
+
+  it("promotes the ticked rows, at the model's grade, and leaves the rest in the archive", async () => {
+    const { app, stateStore, superTimelineStore } = await appHarness();
+
+    const res = await request(app)
+      .post("/cases/c1/jev/promote")
+      .send({
+        rows: [
+          { id: "raw1", grade: "High", confidence: 0.9, score: 3.2 },
+          { id: "raw2", grade: "Critical", confidence: 0.8, score: 3.7 },
+        ],
+        model: "jev-test",
+      });
+
+    expect(res.status).toBe(200);
+    const after = await stateStore.load("c1");
+    expect(after.forensicTimeline.map((e) => e.id).sort()).toEqual(["raw1", "raw2"]);
+    expect(after.forensicTimeline.find((e) => e.id === "raw1")?.severity).toBe("High");
+    expect(after.forensicTimeline.find((e) => e.id === "raw2")?.severity).toBe("Critical");
+    // Not a severity an analyst or the content tagger set: the row says which review graded it,
+    // how confident the model was, and which model it was.
+    expect(JSON.stringify(after.forensicTimeline)).toContain("missed-evidence");
+    expect(JSON.stringify(after.forensicTimeline)).toContain("jev-test");
+    // The raw record keeps its own copy at its own severity. Promotion copies up; it does not
+    // rewrite the archive, and the untouched row is still Info down there.
+    const { events } = await superTimelineStore.query("c1", { offset: 0, limit: 100 });
+    expect(events.every((e) => e.severity === "Info")).toBe(true);
+  });
+
+  it("promotes nothing when the analyst tick list is empty", async () => {
+    const { app, stateStore } = await appHarness();
+    const res = await request(app).post("/cases/c1/jev/promote").send({ rows: [] });
+    expect(res.status).toBe(400);
+    expect((await stateStore.load("c1")).forensicTimeline).toEqual([]);
+  });
+});
+
+// #1554. THE NEW GUARANTEE, and the reason the second look became a button.
+//
+// Synthesis used to end by sweeping the raw record for the terms its own conclusions implied,
+// promoting the matches and re-synthesizing — all inside one `synthesize()` call. It was the only
+// automatic path that WROTE to the forensic record: the analyst never asked for those rows, never
+// saw what was coming, and could not tell them from an import's. The rule above says the model may
+// not read the super-timeline; the sweep obeyed it literally by promoting first, which is exactly
+// how an automatic writer hides inside a rule about reading.
+//
+// So: a bare synthesize() promotes nothing and never touches the raw record at all. The promotion
+// lives behind ai/secondLookRun.ts, which an analyst presses. Both halves are asserted, because
+// either one alone can pass while the other is broken — a sweep that queried the store and promoted
+// nothing would satisfy the first, and a promotion from some other source would satisfy the second.
+describe("a bare synthesize() never touches the raw record (#1554)", () => {
+  // A minimal, schema-valid synthesis delta that ASKS for the raw row below by keyword. If the sweep
+  // were still wired in, this is the request that would pull `rawhit` into the forensic timeline.
+  const SYNTH_DELTA = JSON.stringify({
+    findings: [],
+    iocs: [],
+    mitreTechniques: [],
+    forensicEvents: [],
+    threadsOpened: [],
+    threadsClosed: [],
+    timelineNote: "",
+    summary: "s",
+    evidenceRequests: [{ keywords: ["rsync"], reason: "rows the prompt did not show" }],
+  });
+
+  async function synthHarness() {
+    const root = await mkdtemp(join(tmpdir(), "dfir-forensic-synth-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const stateStore = new StateStore(cases);
+    const seeded = emptyState("c1");
+    // Non-empty: synthesize() returns before the model call on an empty timeline, and a test that
+    // proves nothing was promoted because nothing ran proves nothing at all.
+    const graded = (id: string, description: string, timestamp: string) =>
+      ev({
+        id,
+        description,
+        timestamp,
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      });
+    seeded.forensicTimeline.push(
+      graded("e1", "powershell -enc", "2026-05-20T09:00:00Z"),
+      graded("e2", "net use", "2026-05-20T11:00:00Z"),
+    );
+    await stateStore.save(seeded);
+    const superTimelineStore = new SuperTimelineStore(cases);
+    await superTimelineStore.append("c1", [
+      ev({ id: "rawhit", description: "rsync -a /data nfs-01:/backup", timestamp: "2026-05-20T10:00:00Z" }),
+    ]);
+    const provider = new CapturingProvider(SYNTH_DELTA);
+    const pipeline = new AnalysisPipeline({
+      provider,
+      synthesisProvider: provider,
+      stateStore,
+      superTimelineStore,
+      imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
+    });
+    return { pipeline, stateStore, superTimelineStore };
+  }
+
+  it("promotes nothing: the forensic timeline holds exactly what it held before", async () => {
+    const { pipeline, stateStore } = await synthHarness();
+    await pipeline.synthesize("c1");
+    const after = await stateStore.load("c1");
+    expect(after.forensicTimeline.map((e) => e.id).sort()).toEqual(["e1", "e2"]);
+    expect(after.forensicTimeline.some((e) => e.id === "rawhit")).toBe(false);
+  });
+
+  it("never queries the super-timeline", async () => {
+    const { pipeline, superTimelineStore } = await synthHarness();
+    const query = vi.spyOn(superTimelineStore, "query");
+    await pipeline.synthesize("c1");
+    // Not one read. The sweep's candidate pool was a super-timeline query per run, so a single call
+    // here means the automatic path is back, whatever it then chose to do with the rows.
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it("leaves the raw row in the raw record, unpromoted and unstamped", async () => {
+    const { pipeline, superTimelineStore } = await synthHarness();
+    await pipeline.synthesize("c1");
+    const { events } = await superTimelineStore.query("c1", { offset: 0, limit: 100 });
+    expect(events.map((e) => e.id)).toContain("rawhit");
+    expect(events.every((e) => !e.promotedAt)).toBe(true);
+  });
 });

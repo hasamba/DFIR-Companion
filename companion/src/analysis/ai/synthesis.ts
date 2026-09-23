@@ -21,18 +21,9 @@ import {
   pendingNearDuplicates,
 } from "../hostDuplicateGate.js";
 import { autoGenerateHypotheses } from "./synthesisHypotheses.js";
-import { rankConnectiveIocs } from "../iocAnchors.js";
 import type { PlaybookTask } from "../playbook.js";
 import { deltaSchema, stripAiExtractedFrom } from "../responseSchema.js";
-import { filterEventsByScope, hasScope, NO_SCOPE, type ScopeWindow } from "../scope.js";
-import {
-  buildSecondLookPlan,
-  buildSecondLookRequests,
-  deriveWindow,
-  resolveSecondLookRequests,
-  summarizeSecondLook,
-  type ModelEvidenceRequest,
-} from "../secondLook.js";
+import { filterEventsByScope, NO_SCOPE, type ScopeWindow } from "../scope.js";
 import { applyAcceptedSecondOpinion } from "../secondOpinion.js";
 import type { SecondOpinionStore } from "../secondOpinionStore.js";
 import { effectiveTrustMap, type SourceTrustMap } from "../sourceTrust.js";
@@ -41,7 +32,7 @@ import type { StateLock } from "../stateLock.js";
 import { mergeDelta, type WindowContext } from "../stateMerge.js";
 import type { ForensicEvent, InvestigationState } from "../stateTypes.js";
 import type { SuperTimelineStore } from "../superTimelineStore.js";
-import type { SecondLookMeta, SynthMetaStore } from "../synthMeta.js";
+import type { SynthMetaStore } from "../synthMeta.js";
 import { resolveSynthThinking, type SynthThinkingInput, type SynthThinkingSource } from "../synthThinking.js";
 import { getSynthesisPrompt } from "./prompts/index.js";
 import type { AiCallContext } from "./aiContext.js";
@@ -58,7 +49,6 @@ import {
 import { carryOutOfWindowFindings, foldSynthesisDelta, gradeFindings } from "./synthesisMerge.js";
 import { persistSynthesis } from "./synthesisPersist.js";
 import { stampCollectDirectives } from "../collectSatisfaction.js";
-import { isPendingLabRow } from "../labIntel.js";
 import type { PromotionIntent } from "../ingest/timelineImports.js";
 
 /**
@@ -71,7 +61,9 @@ import type { PromotionIntent } from "../ingest/timelineImports.js";
  *
  * Prompt construction and the coverage audit live in ai/synthesisPrompt.ts. What is left here is the
  * orchestration: load, correlate, decide whether to run at all, call, fold the delta back in,
- * persist under the lock, record, notify, and sweep once for what the sampler did not show.
+ * persist under the lock, record and notify. It writes the case ONCE, from one model call: the
+ * second look that used to re-query the raw record and re-synthesize at the tail of every run is now
+ * an analyst-pressed button in ai/secondLookRun.ts (#1554).
  *
  * WHY THE CONTEXT IS SO WIDE. Every other family in this directory takes a narrow interface because
  * a report genuinely touches little. Synthesis touches most of PipelineOptions, and pretending
@@ -115,7 +107,7 @@ export interface SynthesisContext
     delta: Parameters<typeof mergeDelta>[1],
     ctx: WindowContext,
   ): Promise<InvestigationState>;
-  /** Promote raw super-timeline rows into the forensic timeline — the second-look sweep's seam. */
+  /** Promote raw super-timeline rows into the forensic timeline — the second-look button's seam. */
   promoteSuperTimeline(
     caseId: string,
     events: ForensicEvent[],
@@ -299,6 +291,14 @@ async function recordSynthesisOutcome(
     findingsCount: o.next.findings.length, // #74
     highSeverityBackfillCount: o.highSeverityBackfillCount, // #74
     parseRetries: o.call.parseRetries, // #74
+    // #1554: the model's own "I was not shown this" requests. Persisted because the second-look
+    // sweep no longer runs inside this call — the analyst presses it later, from another process.
+    modelEvidenceRequests: (o.call.delta.evidenceRequests ?? []).map((r) => ({
+      keywords: r.keywords,
+      reason: r.reason,
+      ...(r.host ? { host: r.host } : {}),
+      ...(r.timeWindow ? { timeWindow: r.timeWindow } : {}),
+    })),
   });
   const anonPolicy = toAnonPolicy(ctx.opts.anonStore ? await ctx.opts.anonStore.load(caseId) : null);
   await recordSynthesisRun(ctx.opts.analysisRunStore, caseId, {
@@ -461,10 +461,12 @@ async function resolveHostsOrThrow(
  * run can start — see JobManager.dropForExclusiveRegistration. That only works if this run then
  * stops. Handing `signal` to the model call is not enough: a provider that finishes the call anyway
  * (the claude-code provider completed a six-minute call after its signal was aborted) used to carry
- * on into the fold, the PERSIST — over the newer run's work — the run record and the second-look
- * sweep, which is another full synthesis of its own. Two top-level runs then held the whole case
- * state at once, state loads went from 0.6 s to 140 s, and neither reached its terminal `ai_status`,
- * which is what left the header pill stuck on "AI: synthesizing…" with no job left to explain it.
+ * on into the fold, the PERSIST — over the newer run's work — and the run record. When this run also
+ * swept for a second look, it carried a whole extra synthesis behind it too: two top-level runs held
+ * the whole case state at once, state loads went from 0.6 s to 140 s, and neither reached its
+ * terminal `ai_status`, which left the header pill stuck on "AI: synthesizing…" with no job to
+ * explain it. The sweep is a button now (#1554), but the boundary checks below are what stop a
+ * superseded run writing at all.
  *
  * Called at the stage boundaries rather than inside the steps: a step that has begun should finish
  * or throw on its own, and the boundaries are where nothing is half-written.
@@ -483,7 +485,7 @@ function throwIfSuperseded(signal: AbortSignal | undefined): void {
 /**
  * ABOVE 50 LINES ON PURPOSE (#453). Everything here is a single named step and a hand-off of its
  * result to the next one: load, prepare, decide-to-run, prompt, call, fold, finalize, persist,
- * record, notify, sweep. Each step's DETAIL lives in its own function or module; what is left is the
+ * record, notify. Each step's DETAIL lives in its own function or module; what is left is the
  * ORDER, and the order is the thing most likely to be got wrong.
  *
  * Splitting this further would mean inventing a "commit phase" or a "post-call phase" — groupings
@@ -500,7 +502,6 @@ export async function synthesize(
     dryRun?: boolean;
     provider?: AIProvider;
     signal?: AbortSignal;
-    skipSecondLook?: boolean;
     observationsBlock?: string;
     analysisParentRunId?: string;
   } & SynthThinkingInput = {},
@@ -616,167 +617,5 @@ export async function synthesize(
   ctx.opts.onSynth?.(caseId, findingsDiff, next);
   ctx.opts.onState?.(next);
 
-  return (
-    (await sweepSecondLook(ctx, caseId, opts, { next, scopedEvents, scope, prompt, delta, aliasIndex })) ??
-    next
-  );
-}
-
-/**
- * Second-look loop (investigation-guidance #11): now that this run has conclusions, open hypotheses
- * and key questions, re-query the COMPLETE raw record — the super-timeline plus the scoped events
- * the sampler omitted — for the terms those open questions imply, promote the matches, and trigger
- * EXACTLY ONE bounded re-synthesis so the conclusions fold them in.
- *
- * `skipSecondLook` on that re-synthesis (and on the second-opinion dryRun path, which returns before
- * reaching here) is the one-iteration guard that makes this terminate.
- *
- * Returns the re-synthesized state when a sweep promoted something, else null for "keep what you
- * have". Best-effort throughout: a sweep failure must never fail the synthesis that produced it.
- */
-async function sweepSecondLook(
-  ctx: SynthesisContext,
-  caseId: string,
-  opts: { skipSecondLook?: boolean; signal?: AbortSignal },
-  input: {
-    next: InvestigationState;
-    scopedEvents: ForensicEvent[];
-    scope: ScopeWindow;
-    prompt: Awaited<ReturnType<typeof buildSynthesisPrompt>>;
-    delta: ReturnType<typeof stripAiExtractedFrom>;
-    aliasIndex: HostAliasIndex;
-  },
-): Promise<InvestigationState | null> {
-  // Superseded AFTER the write, so this run's conclusions stand and are returned — but the sweep
-  // itself is an unbounded super-timeline query plus a second full synthesis, and the run that
-  // replaced this one is already doing that work. Skip it rather than throw: nothing is half-written
-  // here, and a throw would only be swallowed by the catch below as a "sweep failed" warning.
-  if (opts.skipSecondLook || opts.signal?.aborted || !ctx.opts.superTimelineStore) return null;
-  try {
-    const outcome = await runSecondLook(ctx, caseId, {
-      // The sweep treats anything not in `promptEvents` as a candidate to re-discover; events
-      // already covered by a grouped row HAVE been seen, so hand it the expanded set.
-      next: input.next,
-      scopedEvents: input.scopedEvents,
-      promptEvents: input.prompt.representedEvents,
-      scope: input.scope,
-      evidenceRequests: input.delta.evidenceRequests,
-      aliasIndex: input.aliasIndex,
-    });
-    if (!outcome) return null;
-    // Nothing new to promote still records — empty requests are surfaced as collection leads.
-    if (outcome.meta.promoted === 0) {
-      await ctx.opts.synthMetaStore?.recordSecondLook(caseId, outcome.meta);
-      return null;
-    }
-    // Promotion changed the in-scope timeline → the synthHash differs → this re-synthesis runs (not
-    // skipped) and, with skipSecondLook, does NOT sweep again. Bounded to one extra AI call.
-    const resynth = await synthesize(ctx, caseId, {
-      force: true,
-      skipSecondLook: true,
-      ...(opts.signal ? { signal: opts.signal } : {}),
-    });
-    await ctx.opts.synthMetaStore?.recordSecondLook(caseId, outcome.meta);
-    return resynth;
-  } catch (err) {
-    console.warn(`[DFIR] second-look sweep failed for case ${caseId}: ${(err as Error).message}`);
-    return null;
-  }
-}
-
-/**
- * The explicit scope when the analyst set one, else the span of the dated in-scope events. Bounds
- * the raw re-query so a huge super-timeline is searched only over the incident window.
- */
-function activeWindow(scope: ScopeWindow, scopedEvents: ForensicEvent[]): { from?: string; to?: string } {
-  return hasScope(scope)
-    ? { from: scope.start ?? undefined, to: scope.end ?? undefined }
-    : deriveWindow(scopedEvents);
-}
-
-/**
- * The pool the second look searches: the scoped events the sampler OMITTED from the prompt, plus the
- * super-timeline rows inside the active window, deduped by id.
- *
- * A super row that is a copy of a forensic event shares its id, so the caller's `forensicEventIds`
- * check correctly marks it non-promotable — only genuinely-new raw rows are ever promoted.
- */
-async function collectSecondLookCandidates(
-  superStore: NonNullable<SynthesisContext["opts"]["superTimelineStore"]>,
-  caseId: string,
-  window: { from?: string; to?: string },
-  input: { scopedEvents: ForensicEvent[]; promptEvents: ForensicEvent[] },
-): Promise<ForensicEvent[]> {
-  const shownIds = new Set(input.promptEvents.map((e) => e.id));
-  const omitted = input.scopedEvents.filter((e) => !shownIds.has(e.id));
-  const superRows = (await superStore.query(caseId, { from: window.from, to: window.to })).events;
-  const byId = new Map<string, ForensicEvent>();
-  // A pending lab row (sandbox behaviour nobody promoted) is out of the pool ENTIRELY — not just
-  // out of the promotable subset. It may not be promoted, and it may not satisfy a request either:
-  // a request whose only match is hidden lab evidence still needs a collection lead. A lab row the
-  // analyst promoted is in the forensic timeline by their choice and may match (#932 item 5 part B).
-  for (const e of [...omitted, ...superRows]) if (!byId.has(e.id) && !isPendingLabRow(e)) byId.set(e.id, e);
-  return [...byId.values()];
-}
-
-// Second-look sweep (investigation-guidance #11) — the impure orchestration around the pure secondLook
-// module. Mines the case's OPEN questions (open hypotheses, unknown/partial key questions with a
-// collect target, top connective IOCs) plus the model's own evidenceRequests into concrete searches,
-// resolves them against the omitted scoped events AND the super-timeline within the active window,
-// promotes the not-yet-analyzed matches (capped, tagged with provenance), and returns a meta summary.
-// Returns null when there was nothing to search for. Never re-synthesizes itself — the caller does.
-async function runSecondLook(
-  ctx: SynthesisContext,
-  caseId: string,
-  input: {
-    next: InvestigationState;
-    scopedEvents: ForensicEvent[];
-    promptEvents: ForensicEvent[];
-    scope: ScopeWindow;
-    evidenceRequests?: ModelEvidenceRequest[];
-    aliasIndex: HostAliasIndex;
-  },
-): Promise<{ meta: SecondLookMeta } | null> {
-  const superStore = ctx.opts.superTimelineStore;
-  if (!superStore) return null;
-
-  const window = activeWindow(input.scope, input.scopedEvents);
-
-  const requests = buildSecondLookRequests({
-    hypotheses: ctx.opts.hypothesisStore ? await ctx.opts.hypothesisStore.load(caseId) : [],
-    iocValueById: new Map(input.next.iocs.map((i) => [i.id, i.value] as const)),
-    keyQuestions: input.next.keyQuestions,
-    connectiveIocs: rankConnectiveIocs(input.next, input.scopedEvents, {
-      max: 5,
-      aliasIndex: input.aliasIndex,
-    }),
-    modelRequests: input.evidenceRequests,
-    window,
-  });
-  if (!requests.length) return null;
-
-  const candidates = await collectSecondLookCandidates(superStore, caseId, window, input);
-  const forensicEventIds = new Set(input.next.forensicTimeline.map((e) => e.id));
-  const resolutions = resolveSecondLookRequests(requests, candidates, forensicEventIds);
-  const plan = buildSecondLookPlan(resolutions);
-
-  if (plan.promotions.length) {
-    await ctx.promoteSuperTimeline(caseId, plan.promotions, {
-      intent: "second-look",
-      importedAt: new Date().toISOString(),
-      tagById: plan.tagById,
-      note: `Second look: promoted ${plan.promotions.length} raw event(s) matching open questions`,
-    });
-  }
-
-  return {
-    meta: {
-      promoted: plan.promotions.length,
-      requests: requests.length,
-      matched: resolutions.filter((r) => r.matchedEventIds.length > 0).length,
-      leads: plan.leads.map((l) => l.reason).slice(0, 10),
-      summary: summarizeSecondLook(plan),
-      at: new Date().toISOString(),
-    },
-  };
+  return next;
 }

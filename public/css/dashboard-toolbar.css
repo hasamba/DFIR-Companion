@@ -22,7 +22,7 @@
    collapse to font-size:0 and only the icon remains, so the toolbar fits one line; the
    hover tooltips (data-tip) keep every icon discoverable. */
 #connect::before, #newCaseBtn::before, #enrichToggle::before, #anonToggle::before,
-#aiToggle::before, #synthesize::before, #jevReviewBtn::before, #secondOpinion::before, #deepPassBtn::before,
+#aiToggle::before, #synthesize::before, #jevReviewBtn::before, #secondLookBtn::before, #secondOpinion::before, #deepPassBtn::before,
 #importBtn::before, #importCaseBtn::before,
 #importUndoBtn::before, #importRedoBtn::before, #presentBtn::before,
 #toggleAll::before, #toggleSearchBar::before {
@@ -40,6 +40,8 @@
    forensic timeline left out, being read after all. Distinct from the Enrich magnifier (a bare
    lens) and from Deep pass (stacked layers). */
 #jevReviewBtn::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M4 5h16'/><path d='M4 10h8'/><path d='M4 15h5'/><circle cx='16' cy='15' r='4'/><path d='M19 18l3 3'/></svg>"); }
+/* A loop closing on a stack of rows: go round again over what the case already holds. */
+#secondLookBtn::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M3 17h7'/><path d='M3 21h4'/><path d='M20 7a8 8 0 1 0-2.3 9.4'/><path d='M20 3v5h-5'/></svg>"); }
 /* Second opinion (#116) — balance scales = weighing an independent opinion against the primary. */
 #secondOpinion::before { background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 3v18'/><path d='M5 7h14'/><path d='M5 7l-3 6a3 3 0 0 0 6 0z'/><path d='M19 7l-3 6a3 3 0 0 0 6 0z'/><path d='M8 21h8'/></svg>"); }
 /* Deep pass (#204) — stacked layers under a magnifier: reading EVERY layer of the timeline, not

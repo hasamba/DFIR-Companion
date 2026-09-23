@@ -20,6 +20,10 @@ import type { RouteContext } from "./context.js";
  * initiated, ephemeral, and capped with the truncation disclosed. See ARCHITECTURE.md, "The
  * forensic / super-timeline boundary", and tests/analysis/forensicBoundary.test.ts, which pins
  * every clause.
+ *
+ * The analyst CAN act on what it finds, but never from here: ticking rows and promoting them is
+ * POST /cases/:id/jev/promote, in routes/jevPromote.ts. The two halves are separate modules so
+ * that "the grading pass promotes nothing" stays a property of this file and not a promise.
  */
 /**
  * A single super-timeline query is ceilinged by the store, so reading more than one page means

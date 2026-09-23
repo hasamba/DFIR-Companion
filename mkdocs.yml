@@ -63,6 +63,7 @@ nav:
     - Importing Evidence: reference/importing.md
     - Canonical Event Data: reference/canonical-events.md
     - AI Analysis: reference/ai-analysis.md
+    - What Each AI Run Sees: reference/ai-runs.md
     - MCP Analysis: reference/mcp-analysis.md
     - Presidio & PII Masking: reference/presidio.md
     - Dashboard Panels: reference/dashboard.md
