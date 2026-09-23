@@ -27,9 +27,16 @@
 // never shares a group with an intruder's identical command — the group would otherwise carry
 // whichever origin arrived first (eventAggregate.ts).
 //
+// The same ledger links the collector's RUNSPACE (#1555): a 4103 / 800 of the signed BitsTransfer
+// module PersistenceSniper auto-loads, and the session's 400 engine start, carry no Tools-tree path
+// but the same engine-written Host ID + Runspace ID as a record isDetectionToolScript already proved.
+// Only a proven row seeds a runspace, and a Critical one does not (veloDetectionNoise.ts, "The
+// runspace link").
+//
 // Order-independent, like collectorLineage: `offer` holds candidates until `resolve`, because a
 // hunt lists the PowerShell log before Sysmon. The bulk driver primes the ledger with every
-// process creation on its evidence-only pass and then resolves per batch.
+// process creation and every Tools-tree script record on its evidence-only pass and then resolves
+// per batch.
 
 import { getCI, parsePid, str, type MappedEvent } from "./siemImport.js";
 import { CollectorSpawnLineage, SPAWNED_SCRIPT_NOTE } from "./collectorLineage.js";
@@ -46,8 +53,11 @@ import {
   eventData,
   eventId,
   gradeScriptAsCollector,
+  isDetectionToolScript,
+  isRunspaceLinkCandidate,
   isSystemScriptRow,
   scriptHostPid,
+  scriptRunspace,
 } from "./veloDetectionNoise.js";
 import { processGuid } from "./processAccess.js";
 import { recordComputer, shortHostName } from "./hostIdentity.js";
@@ -57,6 +67,9 @@ type Row = Record<string, unknown>;
 export const SPAWNED_CHILD_NOTE =
   " [DFIR collector footprint — child process / file of the process the Velociraptor client spawned]";
 
+export const RUNSPACE_SCRIPT_NOTE =
+  " [DFIR collector footprint — PowerShell session the Velociraptor client ran from its tool tree]";
+
 /** How many generations below the spawn a GUID chain is followed (spawn → net → net1 is two). */
 export const CHILD_DEPTH = 4;
 const COLLECTOR_AGG_SUFFIX = "|collector";
@@ -65,7 +78,7 @@ const SYSMON_FILE_CREATE = 11;
 const SYSTEM_ACCOUNT = /^(?:NT AUTHORITY|WORKGROUP)\\SYSTEM$/i;
 
 interface Candidate {
-  kind: "script" | "process" | "file";
+  kind: "script" | "process" | "file" | "runspace";
   m: MappedEvent;
   host: string; // short host name, as resolved
   hosts: string[]; // the resolved name and the record's own Computer — see hostKeys
@@ -74,11 +87,20 @@ interface Candidate {
   parentGuid: string; // EID 1 only
   pid?: number; // the acting process (EID 11) or the script host (4104)
   parentPid?: number; // EID 1 only
+  runspace?: string; // "runspace" only: hostId|runspaceId (scriptRunspace)
 }
 
 /** Is this Sysmon record a process creation (EID 1)? The bulk driver's evidence pass keys on it. */
 export function isProcessCreateRow(raw: Row): boolean {
   return eventId(raw) === SYSMON_PROCESS_CREATE && !!eventData(raw);
+}
+
+/**
+ * Does this row carry evidence the ledger must see before any batch resolves: a process creation
+ * (a spawn) or a Tools-tree script record (a runspace seed, #1555)? The bulk evidence pass primes on it.
+ */
+export function isCollectorEvidenceRow(raw: Row): boolean {
+  return isProcessCreateRow(raw) || isDetectionToolScript(raw);
 }
 
 function hostKey(m: MappedEvent): string {
@@ -110,6 +132,8 @@ function candidate(raw: Row, m: MappedEvent): Candidate | null {
   if (!host || !Number.isFinite(at)) return null;
   const ed = eventData(raw);
   const eid = eventId(raw);
+  const runspace = isRunspaceLinkCandidate(raw) ? scriptRunspace(raw) : "";
+  if (runspace) return { kind: "runspace", m, host, hosts, at, guid: "", parentGuid: "", runspace };
   if (isSystemScriptRow(raw) && !engineScriptPath(raw))
     return { kind: "script", m, host, hosts, at, guid: "", parentGuid: "", pid: scriptHostPid(raw) };
   if (!ed || !ranAsSystem(raw, m)) return null;
@@ -142,6 +166,8 @@ export class CollectorFootprintLedger {
   private readonly lineage: CollectorSpawnLineage;
   // host|guid → epoch ms the process was created: the spawns, and every child claimed through one.
   private readonly claimed = new Map<string, number>();
+  // host|hostId|runspaceId of every PowerShell session a Tools-tree record proved (#1555).
+  private readonly runspaces = new Set<string>();
   private pending: Candidate[] = [];
 
   constructor(private readonly infra: CollectorInfrastructure = loadCollectorInfrastructure()) {
@@ -154,11 +180,13 @@ export class CollectorFootprintLedger {
    */
   prime(raw: Row, events: readonly (MappedEvent | null)[]): void {
     for (const m of events) if (m) this.noteProcess(raw, m);
+    this.noteRunspace(raw, events);
   }
 
   /** Offer ONE row's mapped events: grade the tool-tree scripts now, hold the rest for `resolve`. */
   offer(raw: Row, events: readonly (MappedEvent | null)[]): void {
     demoteDetectionToolScript(raw, events);
+    this.noteRunspace(raw, events);
     for (const m of events) {
       if (!m) continue;
       this.noteProcess(raw, m);
@@ -178,6 +206,17 @@ export class CollectorFootprintLedger {
     if (Number.isFinite(at)) this.remember(hostKeys(raw, m), ownGuid(raw, m), at);
   }
 
+  // A Tools-tree record seeds its runspace — only once it was actually graded the collector's. A
+  // Critical keeps its unset origin (gradeScriptAsCollector), and like a Critical spawn it must not
+  // vouch for the rest of its session.
+  private noteRunspace(raw: Row, events: readonly (MappedEvent | null)[]): void {
+    if (!isDetectionToolScript(raw)) return;
+    const runspace = scriptRunspace(raw);
+    if (!runspace) return;
+    for (const m of events)
+      if (m?.origin === "collector") for (const h of hostKeys(raw, m)) this.runspaces.add(`${h}|${runspace}`);
+  }
+
   private remember(hosts: readonly string[], guid: string, at: number): void {
     if (guid) for (const h of hosts) this.claimed.set(`${h}|${guid}`, at);
   }
@@ -189,6 +228,9 @@ export class CollectorFootprintLedger {
     for (const c of pending)
       if (c.kind === "script" && c.pid !== undefined && this.lineage.claims(c.host, c.pid, c.m.timestamp))
         gradeScriptAsCollector(c.m, SPAWNED_SCRIPT_NOTE);
+    for (const c of pending)
+      if (c.kind === "runspace" && c.hosts.some((h) => this.runspaces.has(`${h}|${c.runspace}`)))
+        claimSession(c.m);
     this.resolveProcesses(pending.filter((c) => c.kind === "process").sort((a, b) => a.at - b.at));
     for (const c of pending) if (c.kind === "file" && this.owns(c, c.guid, c.pid)) claim(c.m);
   }
@@ -224,6 +266,15 @@ export class CollectorFootprintLedger {
       });
     return pid !== undefined && this.lineage.claims(c.host, pid, c.m.timestamp);
   }
+}
+
+// A runspace-linked record: graded like a script, and partitioned like a child. Any script can
+// import BitsTransfer, so an intruder's `Start-BitsTransfer` logs the very 4103 / 800 text the
+// collector's session did; sharing a group with it would fold the intruder's record into Info.
+function claimSession(m: MappedEvent): void {
+  gradeScriptAsCollector(m, RUNSPACE_SCRIPT_NOTE);
+  if (m.origin === "collector" && !m.aggKey.endsWith(COLLECTOR_AGG_SUFFIX))
+    m.aggKey = `${m.aggKey}${COLLECTOR_AGG_SUFFIX}`;
 }
 
 // Info, the collector origin, the note, never lowering a Critical — and a partition of its own in
