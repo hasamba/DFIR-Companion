@@ -13,6 +13,10 @@
 // named one of them, and three launches of one binary 1 s apart (same path, three command lines)
 // became one row — the other files and launches simply left the forensic timeline.
 //
+// A fourth fact is the ACT a typed row records (#1557): a file write and a process start are two
+// facts about one binary — who dropped it, and what it ran — so a component holding one never takes
+// in the other, whatever path, hash or pid they share, and no untyped row can bridge the two.
+//
 // A member with no structured path, or no command line, constrains nothing and joins freely; a
 // pathless hash-only hit that could belong to either of two files stays on its own (that ambiguity
 // is real, and picking one would be the guess this refuses to make).
@@ -25,12 +29,18 @@
 // same end state without the cross product: no two distinct components remain compatible while an
 // eligible pair of their members exists.
 
-/** The three facts a merged row must never contradict, read once per event by the caller. */
+/** The facts a merged row must never contradict, read once per event by the caller. */
 export interface UnionFacts {
   path?: string;
   exec?: string;
   record?: string;
+  /** "file-write" or "process-start" for a typed row; unset when the row's act is not one of them (#1557). */
+  act?: string;
 }
+
+/** How many facts a component carries — the length of every `facts()` tuple. */
+const FACT_COUNT = 4;
+type Facts = [string, string, string, string];
 
 /** Union attempts and candidate probes, for the tests that pin the cost (#1483). */
 export interface UnionStats {
@@ -43,6 +53,7 @@ export class DSU {
   private paths: Array<Set<string> | undefined>;
   private execs: Array<Set<string> | undefined>;
   private records: Array<Set<string> | undefined>;
+  private acts: Array<Set<string> | undefined>;
   /** Every union() call, refused or not. */
   unions = 0;
   constructor(facts: readonly UnionFacts[]) {
@@ -50,6 +61,7 @@ export class DSU {
     this.paths = facts.map((f) => (f.path ? new Set([f.path]) : undefined));
     this.execs = facts.map((f) => (f.exec ? new Set([f.exec]) : undefined));
     this.records = facts.map((f) => (f.record ? new Set([f.record]) : undefined));
+    this.acts = facts.map((f) => (f.act ? new Set([f.act]) : undefined));
   }
   find(x: number): number {
     let i = x;
@@ -67,7 +79,8 @@ export class DSU {
     return (
       agree(this.paths[ra], this.paths[rb]) &&
       agree(this.execs[ra], this.execs[rb]) &&
-      agree(this.records[ra], this.records[rb])
+      agree(this.records[ra], this.records[rb]) &&
+      agree(this.acts[ra], this.acts[rb])
     );
   }
   /** Merge when compatible; returns whether the two now share a component. */
@@ -83,12 +96,13 @@ export class DSU {
     this.paths[keep] = mergeSets(this.paths[keep], this.paths[drop]);
     this.execs[keep] = mergeSets(this.execs[keep], this.execs[drop]);
     this.records[keep] = mergeSets(this.records[keep], this.records[drop]);
+    this.acts[keep] = mergeSets(this.acts[keep], this.acts[drop]);
     return true;
   }
   /** The component's current facts, "" where it recorded nothing. Every set is a singleton (agree). */
-  facts(x: number): [string, string, string] {
+  facts(x: number): Facts {
     const r = this.find(x);
-    return [single(this.paths[r]), single(this.execs[r]), single(this.records[r])];
+    return [single(this.paths[r]), single(this.execs[r]), single(this.records[r]), single(this.acts[r])];
   }
 }
 
@@ -124,7 +138,7 @@ export interface EligibleMember {
 interface Bucket {
   order: number;
   sig: string;
-  facts: [string, string, string];
+  facts: Facts;
   /** Live component roots, first-appearance order; compacted after every pairing. */
   roots: number[];
 }
@@ -223,9 +237,9 @@ function buildBuckets(members: readonly EligibleMember[], dsu: DSU): Bucket[] {
 
 // For each fact position, the buckets holding each value — "" is the blank a fixed value also matches.
 function indexByFact(buckets: Bucket[]): Array<Map<string, Bucket[]>> {
-  const index: Array<Map<string, Bucket[]>> = [new Map(), new Map(), new Map()];
+  const index: Array<Map<string, Bucket[]>> = Array.from({ length: FACT_COUNT }, () => new Map());
   for (const b of buckets)
-    for (let f = 0; f < 3; f++) {
+    for (let f = 0; f < FACT_COUNT; f++) {
       const m = index[f];
       const v = b.facts[f];
       (m.get(v) ?? m.set(v, []).get(v)!).push(b);
@@ -239,7 +253,7 @@ function indexByFact(buckets: Bucket[]): Array<Map<string, Bucket[]>> {
 function candidates(a: Bucket, all: Bucket[], index: Array<Map<string, Bucket[]>>): Bucket[] {
   let bestSame: Bucket[] | undefined;
   let bestBlank: Bucket[] = [];
-  for (let f = 0; f < 3; f++) {
+  for (let f = 0; f < FACT_COUNT; f++) {
     const v = a.facts[f];
     if (!v) continue;
     const same = index[f].get(v) ?? [];
@@ -265,8 +279,8 @@ function mergeByOrder(x: Bucket[], y: Bucket[]): Bucket[] {
   return out;
 }
 
-function factsAgree(a: [string, string, string], b: [string, string, string]): boolean {
-  for (let f = 0; f < 3; f++) if (a[f] && b[f] && a[f] !== b[f]) return false;
+function factsAgree(a: Facts, b: Facts): boolean {
+  for (let f = 0; f < FACT_COUNT; f++) if (a[f] && b[f] && a[f] !== b[f]) return false;
   return true;
 }
 

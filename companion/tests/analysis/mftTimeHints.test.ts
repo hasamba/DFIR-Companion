@@ -46,7 +46,10 @@ function ev(): MappedEvent {
 describe("detectCopiedBinary — $SI modified before $SI created is a copy", () => {
   it("fires on the decoy row and names both times", () => {
     const v = detectCopiedBinary(SI_CREATED, SI_MODIFIED);
-    expect(v?.note).toContain("copied binary");
+    // The verdict leads, so a clipped note still says what it is (#1558).
+    expect(v?.note).toMatch(
+      /^copied file, not timestomp \(\$SI Created = \$FN Created; modified time inherited from the source\)/,
+    );
     expect(v?.note).toContain("modified 2025-12-05T02:54:10Z");
     expect(v?.note).toContain("created 2026-09-19T11:28:24Z");
   });
@@ -72,7 +75,7 @@ describe("applyMftTimeHints — description-only lead, no grade, no technique", 
     const m = ev();
     applyMftTimeHints(mftRow(), m);
     expect(m.description).toMatch(
-      /— copied binary: modified 2025-12-05T02:54:10Z, created 2026-09-19T11:28:24Z/,
+      /— copied file, not timestomp \(.*\): modified 2025-12-05T02:54:10Z, created 2026-09-19T11:28:24Z/,
     );
     expect(m.severity).toBe("High");
     expect(m.mitre).toEqual([]);
@@ -84,16 +87,23 @@ describe("applyMftTimeHints — description-only lead, no grade, no technique", 
       { IsDir: false, Created0x10: SI_CREATED, LastModified0x10: SI_MODIFIED, Created0x30: SI_CREATED },
       m,
     );
-    expect(m.description).toContain("copied binary");
+    expect(m.description).toContain("copied file");
+  });
+
+  it('without $FN it still records the copy, but makes no "not timestomp" claim (#1558)', () => {
+    const m = ev();
+    applyMftTimeHints({ IsDir: false, Created0x10: SI_CREATED, LastModified0x10: SI_MODIFIED }, m);
+    expect(m.description).toContain("copied file ($FN not collected, timestomp not checked)");
+    expect(m.description).not.toContain("not timestomp (");
   });
 
   it("skips directories and rows without $SI times", () => {
     const dir = ev();
     applyMftTimeHints(mftRow({ IsDir: true }), dir);
-    expect(dir.description).not.toContain("copied binary");
+    expect(dir.description).not.toContain("copied file");
     const bare = ev();
     applyMftTimeHints({ OSPath: "C:\\x.exe" }, bare);
-    expect(bare.description).not.toContain("copied binary");
+    expect(bare.description).not.toContain("copied file");
   });
 
   it("still flags $SI-before-$FN backdating as timestomping (moved, not changed)", () => {
@@ -107,13 +117,13 @@ describe("applyMftTimeHints — description-only lead, no grade, no technique", 
     );
     expect(m.description).toMatch(/timestomping/i);
     expect(m.mitre).toContain("T1070.006");
-    expect(m.description).not.toContain("copied binary");
+    expect(m.description).not.toContain("copied file");
   });
 
   it("through the Velociraptor importer: the DetectRaptor MFT row carries the note, keeps its grade", () => {
     const r = parseVelociraptorJson(JSON.stringify([mftRow()]));
     const hit = r.events.find((e) => /secretsdump\.exe/.test(e.description));
-    expect(hit?.description).toContain("copied binary: modified 2025-12-05T02:54:10Z");
+    expect(hit?.description).toContain("copied file, not timestomp");
     expect(hit?.timestamp.slice(0, 19)).toBe("2026-09-19T11:28:24");
     expect(hit?.mitreTechniques ?? []).not.toContain("T1070.006");
   });
