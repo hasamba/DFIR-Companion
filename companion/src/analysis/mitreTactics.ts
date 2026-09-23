@@ -87,6 +87,7 @@ const TECHNIQUE_TACTIC: Record<string, IrisTactic> = {
   T1112: "Defense Evasion",
   T1562: "Defense Evasion",
   T1218: "Defense Evasion",
+  T1220: "Defense Evasion",
   T1140: "Defense Evasion",
   T1497: "Defense Evasion",
   T1480: "Defense Evasion",
