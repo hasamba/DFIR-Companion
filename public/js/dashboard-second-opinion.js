@@ -77,9 +77,18 @@
       return;
     }
     const pending = deltas.filter((d) => d.status === "pending").length;
-    const bulk =
+    const refCalls = refereeCalls(deltas);
+    const refereeBtn =
+      refCalls.accept + refCalls.keep > 0
+        ? `<button data-so-all="referee" title="Apply the referee's call on every pending delta: accept where it suggests accept B, reject where it suggests keep A. Deltas with no referee call stay pending.">⚖ follow referee (${refCalls.accept + refCalls.keep})</button>`
+        : "";
+    const allBtns =
       pending >= 2
-        ? `<div class="so-bulk"><button data-so-all="accept" title="Adopt model B's call on every pending delta (durable across re-synthesis)">✓ accept all (${pending})</button><button data-so-all="reject" title="Keep model A on every pending delta — just record the decisions">✕ reject all</button></div>`
+        ? `<button data-so-all="accept" title="Adopt model B's call on every pending delta (durable across re-synthesis)">✓ accept all (${pending})</button><button data-so-all="reject" title="Keep model A on every pending delta — just record the decisions">✕ reject all</button>`
+        : "";
+    const bulk =
+      refereeBtn || allBtns
+        ? `<div class="so-bulk">${refereeBtn}${allBtns}</div>`
         : "";
     const rows = deltas
       .map((d) => {
@@ -110,6 +119,14 @@
       .join("");
     el.innerHTML = head + summary + bulk + rows;
   }
+  // Pending deltas the referee made a call on — "review" (no call) is not counted.
+  function refereeCalls(deltas) {
+    const pending = deltas.filter((d) => d.status === "pending");
+    return {
+      accept: pending.filter((d) => d.recommendation === "accept_b").length,
+      keep: pending.filter((d) => d.recommendation === "keep_a").length,
+    };
+  }
   function applySecondOpinionDelta(caseId, deltaId, accept) {
     fetch(`/cases/${caseId}/second-opinion/apply`, {
       method: "POST",
@@ -136,11 +153,14 @@
             "second opinion error: " + e.message),
       );
   }
+  // accept: true | false | "referee" (follow the referee's call on each pending delta).
   function applyAllSecondOpinion(caseId, accept) {
     fetch(`/cases/${caseId}/second-opinion/apply-all`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ accept }),
+      body: JSON.stringify(
+        accept === "referee" ? { followReferee: true } : { accept },
+      ),
     })
       .then((r) => r.json())
       .then((rec) => {
@@ -260,6 +280,15 @@
             applyAllSecondOpinion(caseId, true);
         } else if (t.dataset.soAll === "reject")
           applyAllSecondOpinion(caseId, false);
+        else if (t.dataset.soAll === "referee") {
+          const c = refereeCalls(lastSecondOpinionRec?.deltas || []);
+          if (
+            confirm(
+              `Follow the referee on ${c.accept + c.keep} pending delta(s)? ${c.accept} will be accepted (model B's call is applied to the case findings, severities and ATT&CK techniques) and ${c.keep} rejected. Deltas with no referee call stay pending.`,
+            )
+          )
+            applyAllSecondOpinion(caseId, "referee");
+        }
       });
   }
 

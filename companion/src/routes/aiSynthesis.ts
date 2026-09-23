@@ -303,18 +303,18 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
   });
 
   // Bulk accept-all / reject-all over the still-pending second-opinion deltas, in one pass. Body:
-  // { accept }. Accept (re-)applies all accepted deltas to the case; reject just records decisions.
+  // { accept } or { followReferee: true } (accept_b → accept, keep_a → reject, no call → pending).
   app.post("/cases/:id/second-opinion/apply-all", async (req: Request, res: Response) => {
     if (!options.pipeline || !options.secondOpinionStore)
       return res.status(501).json({ error: "second opinion not configured" });
-    const accept = req.body?.accept === true;
+    const accept = req.body?.followReferee === true ? "referee" : req.body?.accept === true;
     try {
       const { record } = await options.pipeline.applyAllSecondOpinion(req.params.id, accept);
       options.onSecondOpinion?.(req.params.id);
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "ai",
         action: "second-opinion-apply-all",
-        detail: `all pending deltas — ${accept ? "accepted" : "rejected"}`,
+        detail: `all pending deltas — ${accept === "referee" ? "per the referee" : accept ? "accepted" : "rejected"}`,
       });
       return res.status(200).json(record);
     } catch (err) {

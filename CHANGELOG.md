@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Follow the referee in one click** — a `⚖ follow referee (N)` button on the 2nd opinion panel accepts every pending delta the referee said to accept and rejects every one it said to keep A; deltas with no referee call stay pending
 - **Promote what the missed-evidence review finds** — tick rows, filter by grade and confidence, select everything the filters show, and promote; each row enters the forensic timeline carrying the model's grade as its severity, with a note recording the grade, the confidence and which model gave it (closes #1568)
 - **Second look is a button and a panel of its own** — the only automatic path that wrote into the forensic record now waits to be pressed, sits in the left nav beside Missed Evidence Review, shows what it would promote before you press it, and re-runs the conclusions afterwards unless you opt out (closes #1554)
 - **Promoted rows are visible in the forensic timeline** — a row someone pulled in from the archive is shown whatever its severity, wearing a `✓ Promoted` badge, and the timeline count says how many rows the filters are hiding

@@ -116,6 +116,7 @@ const RECONCILE = JSON.stringify({
   summary: "Model B surfaces a C2 finding A missed.",
   verdicts: [
     { id: "b_only:b-finding-only", rationale: "Supported by event e1.", recommendation: "accept_b" },
+    { id: "a_only:finding-only", rationale: "A's finding stands.", recommendation: "keep_a" },
   ],
 });
 
@@ -331,6 +332,22 @@ describe("Second opinion routes (#116)", () => {
     expect(res.status).toBe(200);
     expect(res.body.deltas.every((d: { status: string }) => d.status === "rejected")).toBe(true);
     expect((await stateStore.load("c1")).findings).toHaveLength(before);
+  });
+
+  it("follow-referee accepts accept_b, rejects keep_a, and leaves review deltas pending", async () => {
+    const { app, stateStore } = await makeApp({ enabled: true });
+    await request(app).post("/cases/c1/second-opinion").send({});
+    const res = await request(app).post("/cases/c1/second-opinion/apply-all").send({ followReferee: true });
+    expect(res.status).toBe(200);
+    const byId = (id: string) => res.body.deltas.find((d: { id: string }) => d.id === id);
+    expect(byId("b_only:b-finding-only").status).toBe("accepted");
+    expect(byId("a_only:finding-only").status).toBe("rejected");
+    const rest = res.body.deltas.filter(
+      (d: { id: string }) => d.id !== "b_only:b-finding-only" && d.id !== "a_only:finding-only",
+    );
+    expect(rest.length).toBeGreaterThan(0);
+    expect(rest.every((d: { status: string }) => d.status === "pending")).toBe(true);
+    expect((await stateStore.load("c1")).findings.some((f) => f.title === "B only finding")).toBe(true);
   });
 
   it("apply-all leaves an already-decided delta untouched", async () => {

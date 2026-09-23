@@ -399,6 +399,22 @@ export function setAllPendingStatus(so: SecondOpinion, status: DeltaStatus): Sec
   return { ...so, deltas: so.deltas.map((d) => (d.status === "pending" ? { ...d, status } : d)) };
 }
 
+// Follow the referee on every still-pending delta: accept_b → accepted, keep_a → rejected. A
+// "review" delta (the referee made no call) stays pending for the analyst. Pure, immutable.
+const REFEREE_STATUS: Partial<Record<DeltaRecommendation, DeltaStatus>> = {
+  accept_b: "accepted",
+  keep_a: "rejected",
+};
+export function followRefereeStatus(so: SecondOpinion): SecondOpinion {
+  return {
+    ...so,
+    deltas: so.deltas.map((d) => {
+      const status = d.status === "pending" ? REFEREE_STATUS[d.recommendation] : undefined;
+      return status ? { ...d, status } : d;
+    }),
+  };
+}
+
 // Apply EVERY accepted delta onto a case state. Pure, immutable, IDEMPOTENT (safe to run on every
 // read/synthesis): b_only adds B's finding if absent by matchKey; a_only dismisses A's finding in
 // place; severity rewrites A's finding severity; mitre_added/removed add/remove the technique.

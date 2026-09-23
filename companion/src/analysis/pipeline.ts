@@ -786,10 +786,10 @@ export class AnalysisPipeline {
     return secondOpinionRun.applySecondOpinion(this.aiCtx, caseId, deltaId, accept);
   }
 
-  // Bulk accept-all / reject-all: decide every still-PENDING delta at once (already-decided deltas are left as the analyst set them), persist, and apply the accepted set to the case in ONE pass.
+  // Bulk accept-all / reject-all / follow-referee: decide every still-PENDING delta at once (already-decided deltas are left as the analyst set them), persist, and apply the accepted set to the case in ONE pass. "referee" leaves a delta with no referee call pending.
   applyAllSecondOpinion(
     caseId: string,
-    accept: boolean,
+    accept: boolean | "referee",
   ): Promise<{ record: SecondOpinion; state: InvestigationState }> {
     return secondOpinionRun.applyAllSecondOpinion(this.aiCtx, caseId, accept);
   }
