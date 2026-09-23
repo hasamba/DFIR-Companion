@@ -9,6 +9,7 @@
 
 import type { ForensicEvent, Severity } from "./stateTypes.js";
 import { matchEvent, SEVERITIES, type CompiledRuleset } from "./taggerRules.js";
+import { withClrUsageLogNote } from "./clrUsageLogNote.js";
 
 /** Per-rule outcome for a run — its match count, the events it hit, and the actions it carries. */
 export interface RuleMatch {
@@ -134,7 +135,9 @@ export function createTaggerAccumulator(ruleset: CompiledRuleset, sampleSize = 0
  * NOT written onto the event here — they live in TagsStore, applied by the caller. Idempotent:
  * re-applying the same result yields an equal event.
  */
-export function applyToForensicEvent(event: ForensicEvent, result: EventTagResult): ForensicEvent {
+export function applyToForensicEvent(input: ForensicEvent, result: EventTagResult): ForensicEvent {
+  // The one rule whose meaning must reach the AI states it as a derived note (#1559).
+  const event = withClrUsageLogNote(input, result.ruleIds);
   // A row the import attributed to the case's OWN collector keeps its import grade (#1477). The
   // rules that graded it Info read facts the tagger cannot see — the SYSTEM logon, the engine-written
   // script path under the collector's tool tree, the collector exe as parent — while the tagger reads

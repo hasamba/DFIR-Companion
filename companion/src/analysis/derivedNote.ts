@@ -58,6 +58,7 @@ export const DERIVED_NOTE_NAMES: readonly string[] = [
   "renamed binary",
   "build-time",
   "shared source mtime",
+  "CLR usage log",
 ];
 
 /**
