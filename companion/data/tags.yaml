@@ -234,6 +234,21 @@ staging_temp_executable:
   severity: Medium
   view: 'Temp-path executables'
 
+# The CLR writes `<host>.exe.log` under UsageLogs the first time a process loads .NET. These hosts
+# never load .NET on their own, so a usage log named after one is the disk trace of Cobalt Strike
+# execute-assembly — in scenario 019 the ONLY trace of Seatbelt/SharpShares (#1559). dotnet.exe and
+# powershell.exe are not listed: they load the CLR by design. The AI reads what the file means from
+# a derived note (analysis/clrUsageLogNote.ts) keyed on this rule's id — keep the id and the path
+# regex there in step with this one.
+clr_usagelog_lolbin_host:
+  description: CLR usage log named after a LOLBin (.NET assembly loaded into a sacrificial process — execute-assembly)
+  any:
+    - { field: path, regex: '\\microsoft\\clr_v[24]\.0(?:_32)?\\usagelogs\\(?:rundll32|regsvr32|mshta|wmic|msxsl|dllhost|werfault|svchost|notepad)\.exe\.log$', flags: 'i' }
+  tags: ['execute-assembly']
+  mitre: ['T1620', 'T1218.011']
+  severity: High
+  view: 'Execute-assembly traces'
+
 # ─────────────────────────── Removable media ───────────────────────────
 # A mass-storage mount arrives ungraded, and Info never reaches the forensic timeline — so without
 # this rule the AI cannot reason about a USB device at all, whichever bundle collected it. Low, not
