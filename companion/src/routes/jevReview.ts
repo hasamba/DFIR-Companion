@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { logActivity } from "../analysis/activityLog.js";
 import { buildImportAnonContext } from "../analysis/ai/providerCall.js";
 import { askJev } from "../analysis/ai/jev/jevClient.js";
-import { describeJevKeySource, resolveJevSettings } from "../analysis/ai/jev/jevConfig.js";
+import { describeJevKeySource, resolveJevSettings, type JevSettings } from "../analysis/ai/jev/jevConfig.js";
 import { gradeEvents } from "../analysis/ai/jev/jevGrader.js";
 import { getServerLogger } from "../logging/serverLogger.js";
 import type { SuperQuery } from "../analysis/superTimeline.js";
@@ -52,8 +52,11 @@ async function readMatchingRows(
   return { events, total };
 }
 
+/** Shown as-is by the panel, after "The review did not run: ". */
+const REVIEW_RUNNING = "a missed-evidence review of this case is already running — wait for it to finish";
+
 export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
-  const { options } = ctx;
+  const { store, options } = ctx;
 
   // Not case-scoped: the settings screen asks this before any case is open, so it can say whether
   // the key field may be left blank instead of promising an inheritance that may not exist (#1547).
@@ -69,6 +72,10 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
     return res.json({ configured: true, model: resolved.settings.model });
   });
 
+  // Cases with a review in flight. Every run bills the analyst, so a double-click or a second tab
+  // must not buy the same review twice (#1551). Held per app, so one test's app never locks another's.
+  const running = new Set<string>();
+
   app.post("/cases/:id/jev/review", async (req: Request, res: Response) => {
     const caseId = req.params.id;
     const resolved = resolveJevSettings();
@@ -76,7 +83,31 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
     if (!options.superTimelineStore || !options.stateStore) {
       return res.status(501).json({ error: "super-timeline not configured" });
     }
-    const settings = resolved.settings;
+    // BEFORE either store is touched: opening the per-case database creates the case directory, so
+    // a typo'd id would otherwise leave a case on disk that nobody made (#1549).
+    if (!(await store.getCaseMeta(caseId).catch(() => null))) {
+      return res.status(404).json({ error: "case not found" });
+    }
+    if (running.has(caseId)) {
+      return res.status(409).json({ error: REVIEW_RUNNING });
+    }
+    running.add(caseId);
+    // The finally covers every await after entry, so a store that throws never leaves the case locked.
+    try {
+      return await review(req, res, caseId, resolved.settings);
+    } finally {
+      running.delete(caseId);
+    }
+  });
+
+  async function review(
+    req: Request,
+    res: Response,
+    caseId: string,
+    settings: JevSettings,
+  ): Promise<Response> {
+    const superStore = options.superTimelineStore!;
+    const stateStore = options.stateStore!;
 
     // `all` is the analyst saying "read every row, never mind the cap". Everything else caps at
     // the configured default. One query cannot answer either: the store ceilings a single page, so
@@ -92,8 +123,8 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
     const capForWire = Number.isFinite(cap) ? cap : settings.maxRows;
     const filters: SuperQuery = { ...(req.body?.filters ?? {}) };
 
-    const state = await options.stateStore.load(caseId);
-    const { events: read, total } = await readMatchingRows(options.superTimelineStore, caseId, filters, cap);
+    const state = await stateStore.load(caseId);
+    const { events: read, total } = await readMatchingRows(superStore, caseId, filters, cap);
 
     // Rows already in the forensic timeline are the ones synthesis can ALREADY see. Reviewing them
     // would spend the analyst's money re-grading what is not missing.
@@ -171,5 +202,5 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
       getServerLogger().warn(`[jev] ${caseId}: review failed — ${detail}`, { caseId });
       return res.status(502).json({ error: `Jev review failed: ${detail}` });
     }
-  });
+  }
 }
