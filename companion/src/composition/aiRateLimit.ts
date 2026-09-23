@@ -45,6 +45,7 @@ export const AI_LIMIT_PATHS = new Set([
   "/import-log", // a single CSV/log AI analysis call
   "/synthesize",
   "/deep-pass", // explicit synthesis
+  "/second-look", // promotes, then re-synthesizes by default (#1554)
   "/second-opinion",
   "/second-opinion/apply",
   "/second-opinion/apply-all", // 2nd LLM opinion

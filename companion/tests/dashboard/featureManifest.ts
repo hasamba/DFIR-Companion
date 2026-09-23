@@ -462,8 +462,18 @@ export const FEATURES: Feature[] = [
     // they wire the import undo/redo buttons to a function six hundred lines away.
     file: "dashboard-narrative.js",
     initializer: "initNarrativeTimeline",
-    publish: ["initNarrativeTimeline", "genNarrative", "loadSynthMeta"],
-    private: [],
+    // Second look (#1554) is here rather than in a module of its own: the synthesis strip this
+    // file already renders is where the sweep's summary and leads are read, so the control that
+    // starts it belongs in the same card. Its initializer is called from initNarrativeTimeline,
+    // which keeps the page's one entry point for this card one entry point.
+    publish: [
+      "initNarrativeTimeline",
+      "genNarrative",
+      "loadSynthMeta",
+      "loadSecondLookPreview",
+      "runSecondLook",
+    ],
+    private: ["slCaseId", "slPreview", "slBusy", "slRunGen", "slResult"],
   },
   {
     // Host & Account Ranking (#202). One delegated listener rather than per-row handlers, because
@@ -636,6 +646,12 @@ export const FEATURES: Feature[] = [
       "timelineCountLabel",
       "renderTimelineCount",
       "timelineMoreMatchesBar",
+      // The promotion rule the forensic timeline shares with companion/src/analysis/forensicGate.ts
+      // (#1554). It lives here because "what a timeline row shows, and what the count label says
+      // it is not showing" is already this module's subject, and because #inline-js is frozen.
+      "isPromotedEvent",
+      "promotedBadge",
+      "promotedKeptCount",
     ],
     private: ["timelineTotalIsFloor"],
   },

@@ -58,6 +58,7 @@ import { registerAppShellRoutes } from "../routes/appShell.js";
 import { registerJobRoutes } from "../routes/jobs.js";
 import { registerDeepPassRoutes } from "../routes/deepPass.js";
 import { registerJevReviewRoutes } from "../routes/jevReview.js";
+import { registerSecondLookRoutes } from "../routes/secondLook.js";
 import { registerIncidentTypeRoutes } from "../routes/incidentTypes.js";
 import { registerCollectionPlanRoutes } from "../routes/collectionPlan.js";
 import { registerHostScopeRoutes } from "../routes/hostScope.js";
@@ -181,6 +182,7 @@ export function registerAllRoutes(app: Express, ctx: RouteContext): OutboundTran
   registerFindingsDisplayRoutes(app, ctx);
   registerDeepPassRoutes(app, ctx);
   registerJevReviewRoutes(app, ctx);
+  registerSecondLookRoutes(app, ctx);
   // MUST precede registerReportsExportRoutes: that file's `GET /cases/:id/report/:file` matches
   // `/report/interactive` too, and answers unknown names with 400 rather than calling next(), so
   // registering the interactive report after it makes the route permanently unreachable.

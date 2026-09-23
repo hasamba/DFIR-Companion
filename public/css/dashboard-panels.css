@@ -510,3 +510,25 @@ section#sec-sessions.ses-collapsed .ses-body { display: none; }
 
 /* A settings hint that is telling the analyst something is missing, not just describing a field. */
 .sfield-hint.sfield-hint-warn { color: var(--sev-medium); }
+
+/* Second look (#1554) — the analyst-pressed sweep, inside the findings card next to the synthesis
+   strip that already reports its summary and leads. A bordered block rather than a new section, so
+   it reads as part of that card and needs none of a panel's registrations.
+
+   Every state word is a word. .sl-warn adds a colour to text that already says "not", "NOT" or
+   "did not" on its own, so nothing here is carried by hue alone. */
+.sl-card { border: 1px solid var(--border-color); border-radius: 4px; padding: 10px 12px;
+  margin: 8px 0; background: var(--bg-elevated); }
+.sl-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.sl-title { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.sl-preview { margin-bottom: 8px; }
+.sl-line { font-size: 12px; color: var(--text-primary); margin: 4px 0; }
+.sl-muted { color: var(--text-muted); }
+.sl-warn { color: var(--sev-medium); }
+.sl-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 8px 0 4px; }
+/* The opt-out is beside the button it qualifies, never behind a disclosure: the analyst has to be
+   able to see that re-synthesis is on before they press, not discover it afterwards. */
+.sl-opt { display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+  color: var(--text-muted); cursor: pointer; }
+.sl-status { font-size: 12px; color: var(--text-muted); margin: 4px 0; }
+.sl-result { margin-top: 4px; }

@@ -81,6 +81,58 @@
   }
 
 
+  // ── Promotion: the display's half of a rule the server already follows (#1554) ────────
+  //
+  // MIRRORS companion/src/analysis/forensicGate.ts, demoteBelowSeverity(), whose comment reads:
+  // "A promoted row stays regardless of severity: the analyst put it here on purpose, and the cut
+  // exists to keep unreviewed telemetry out, not to remove what an analyst asked to see" (#1432).
+  //
+  // The two halves had drifted apart. On one real case the server kept 265 promoted rows in a
+  // 465-row forensic timeline — 262 of them graded Info — and the display dropped every one of
+  // them: the severity legend carried no Info entry, and the dashboard-view floor read
+  // `e.severity` alone. The analyst saw 182 rows, could not reconcile the arithmetic, and could
+  // not find the evidence they had themselves asked for. Server and display now make the same
+  // exception, on the same field, for the same stated reason.
+  function isPromotedEvent(e) {
+    return !!(e && e.promotedAt);
+  }
+
+  // The compact row's own cue — NOT buried in the collapsed details panel, which is where the
+  // second-look provenance line already hid. Deliberately the super-timeline's existing wording
+  // (see js/dashboard-super-timeline.js): one idiom for one idea, not a second vocabulary.
+  //
+  // The tick AND the word carry the meaning. The green is decoration; colour is never the only
+  // cue, and the title is where the date lives.
+  function promotedBadge(e) {
+    if (!isPromotedEvent(e)) return "";
+    const when = String(e.promotedAt).slice(0, 19).replace("T", " ");
+    return (
+      ` <span class="ev-promoted-badge" title="Pulled into the forensic timeline on purpose` +
+      ` (${escAttr(when)}). It stays whatever its severity — the same rule the server applies` +
+      ` in forensicGate.ts.">✓ Promoted</span>`
+    );
+  }
+
+  // HOW MANY ROWS ON SCREEN ARE THERE ONLY BECAUSE THEY WERE PROMOTED.
+  //
+  // With the exemption in place, an analyst who ticks "Critical" alone still sees every promoted
+  // Info row. That is correct and would otherwise be inexplicable, so the count label says the
+  // number out loud and the arithmetic closes on this screen — rather than sending the analyst
+  // off to work out where 262 rows they did not ask for came from (the failure #1547 named).
+  //
+  // `activeSevs` is the legend's checked set, or null when the legend is not filtering.
+  // `meetsFloor` is the view's severity test, or null when no view floor is in force.
+  function promotedKeptCount(visible, activeSevs, meetsFloor) {
+    let n = 0;
+    for (const e of visible || []) {
+      if (!isPromotedEvent(e)) continue;
+      const bySev = !activeSevs || activeSevs.has(e.severity);
+      const byFloor = typeof meetsFloor !== "function" || meetsFloor(e.severity);
+      if (!bySev || !byFloor) n++;
+    }
+    return n;
+  }
+
   // ── Forensic-timeline count label + truncated-search bar (#928) ────────────
   // Lifted out of the inline script rather than added to it: public/dashboard.html#inline-js is
   // frozen at its length by scripts/check-file-size.mjs, and a count that has to explain a FLOOR
@@ -95,19 +147,42 @@
     return !!(st && st.forensicTimelineTotalIsLowerBound);
   }
 
+  // SAY HOW MANY ROWS THE FILTERS ARE HOLDING BACK, IN THE LABEL (#1554).
+  //
+  // "203 of 465 events" states a subtraction and leaves the analyst to do it. The one who
+  // reported #1554 did the arithmetic by hand against a number they could not reconcile, twice.
+  // The difference is a fact this function already holds, so it prints it — and says "hidden by
+  // filters", because the rows are in the record, not missing from it.
   function timelineCountLabel(o) {
     const floor = timelineTotalIsFloor();
     const totalText = floor ? `${o.total}+` : `${o.total}`;
-    const base = o.filtering
-      ? `${o.totalFiltered} of ${totalText} events`
-      : `${totalText} event${o.total !== 1 ? "s" : ""}`;
+    const hidden = Math.max(0, (o.total || 0) - (o.totalFiltered || 0));
+    const promoted = o.promotedKept > 0 ? o.promotedKept : 0;
+    let base;
+    if (o.filtering) {
+      base = `${o.totalFiltered} of ${totalText} events`;
+      if (hidden > 0) base += `, ${hidden} hidden by filters`;
+      if (promoted > 0) base += `, ${promoted} promoted kept`;
+    } else {
+      base = `${totalText} event${o.total !== 1 ? "s" : ""}`;
+    }
     const text = o.pageSize > 0 && o.totalFiltered > o.pageSize
       ? `(${base} — page ${o.page + 1} of ${o.totalPages})`
       : `(${base})`;
-    const title = floor
+    let title = floor
       ? `This search matched more events than one response carries. Only the first ${o.total} are ` +
         "shown — narrow the search term to reach the rest."
       : "Total events in scope; updates in real time";
+    if (hidden > 0) {
+      title +=
+        `. The filters above are hiding ${hidden} of this case's ${o.total} forensic-timeline ` +
+        "events. They are still in the record — clear a filter to bring them back.";
+    }
+    if (promoted > 0) {
+      title +=
+        ` ${promoted} row(s) are shown although your severity filter excludes them: they carry a ` +
+        "promotion stamp, so they stay whatever their severity — the same rule the server applies.";
+    }
     return { text, title };
   }
 
@@ -129,6 +204,9 @@
     el.title = lbl.title;
   }
 
+  window.isPromotedEvent = isPromotedEvent;
+  window.promotedBadge = promotedBadge;
+  window.promotedKeptCount = promotedKeptCount;
   window.timelineCountLabel = timelineCountLabel;
   window.renderTimelineCount = renderTimelineCount;
   window.timelineMoreMatchesBar = timelineMoreMatchesBar;

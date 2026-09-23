@@ -7,6 +7,7 @@ import {
   summarizeSecondLook,
   deriveWindow,
   type SecondLookRequest,
+  type SecondLookResolution,
 } from "../../src/analysis/secondLook.js";
 import type { ForensicEvent, InvestigationQuestion } from "../../src/analysis/stateTypes.js";
 import type { Hypothesis } from "../../src/analysis/hypothesis.js";
@@ -339,5 +340,174 @@ describe("deriveWindow", () => {
 
   it("returns {} when nothing is dated", () => {
     expect(deriveWindow([ev({ id: "a", timestamp: "bad" })])).toEqual({});
+  });
+});
+
+// ── #1554 fix A: the per-request allowance is spent on rows the AI has NOT already seen ──────────
+describe("resolveSecondLookRequests — the allowance buys unseen rows", () => {
+  const req: SecondLookRequest = {
+    source: "question",
+    tag: "[second-look: q1]",
+    label: "q1",
+    keywords: ["powershell"],
+    reason: "how did they run code?",
+  };
+
+  // Measured on a real case: 35% of archive rows are already in the forensic timeline, and three of
+  // six open questions promoted ZERO rows because their earliest 50 matches were all already
+  // analysed. Filling the allowance from the promotable rows is the whole fix.
+  it("skips already-analysed matches instead of spending the allowance on them", () => {
+    const candidates = [
+      ev({ id: "a1", description: "powershell one", timestamp: "2026-01-01T00:00:01Z" }),
+      ev({ id: "a2", description: "powershell two", timestamp: "2026-01-01T00:00:02Z" }),
+      ev({ id: "a3", description: "powershell three", timestamp: "2026-01-01T00:00:03Z" }),
+      ev({ id: "s1", description: "powershell four", timestamp: "2026-01-01T00:00:04Z" }),
+      ev({ id: "s2", description: "powershell five", timestamp: "2026-01-01T00:00:05Z" }),
+    ];
+    const analysed = new Set(["a1", "a2", "a3"]);
+    const [res] = resolveSecondLookRequests([req], candidates, analysed, { perTerm: 3 });
+    expect(res.promotable.map((e) => e.id)).toEqual(["s1", "s2"]);
+  });
+
+  // The trap: matchedEventIds.length === 0 is the SOLE lead trigger. A request whose every hit is
+  // already analysed FOUND its evidence — it is satisfied, not a blind spot.
+  it("keeps a request whose every match is already analysed out of the leads", () => {
+    const candidates = [
+      ev({ id: "a1", description: "powershell one", timestamp: "2026-01-01T00:00:01Z" }),
+      ev({ id: "a2", description: "powershell two", timestamp: "2026-01-01T00:00:02Z" }),
+    ];
+    const resolutions = resolveSecondLookRequests([req], candidates, new Set(["a1", "a2"]), { perTerm: 3 });
+    expect(resolutions[0].promotable).toHaveLength(0);
+    expect(resolutions[0].matchedEventIds.length).toBeGreaterThan(0);
+    expect(buildSecondLookPlan(resolutions).leads).toHaveLength(0);
+  });
+
+  it("still records a request that matched nothing anywhere as a collection lead", () => {
+    const candidates = [ev({ id: "x1", description: "unrelated", timestamp: "2026-01-01T00:00:01Z" })];
+    const resolutions = resolveSecondLookRequests([req], candidates, new Set());
+    expect(resolutions[0].matchedEventIds).toEqual([]);
+    expect(buildSecondLookPlan(resolutions).leads).toHaveLength(1);
+  });
+
+  it("bounds matchedEventIds when the whole archive is already analysed", () => {
+    const candidates = Array.from({ length: 400 }, (_, i) =>
+      ev({
+        id: `a${i}`,
+        description: "powershell",
+        timestamp: `2026-01-01T00:00:00.${String(i).padStart(3, "0")}Z`,
+      }),
+    );
+    const analysed = new Set(candidates.map((e) => e.id));
+    const [res] = resolveSecondLookRequests([req], candidates, analysed, { perTerm: 3 });
+    expect(res.matchedEventIds).toHaveLength(3);
+  });
+});
+
+describe("buildSecondLookPlan — round-robin coverage", () => {
+  function resolution(tag: string, ids: string[], description = ""): SecondLookResolution {
+    return {
+      request: { source: "question", tag, label: tag, keywords: ["k"], reason: tag },
+      matchedEventIds: ids,
+      promotable: ids.map((id) => ev({ id, description })),
+    };
+  }
+
+  // Before this, the first request to claim the budget took it all — and the model's own "I was not
+  // shown this" requests are built LAST, so they starved first.
+  it("gives every request a turn before any request gets a second row", () => {
+    const plan = buildSecondLookPlan(
+      [
+        resolution("[second-look: q1]", ["q1a", "q1b", "q1c"]),
+        resolution("[second-look: q2]", ["q2a", "q2b", "q2c"]),
+        resolution("[second-look: model1]", ["m1a", "m1b", "m1c"]),
+      ],
+      { sweep: 3 },
+    );
+    expect(plan.promotions.map((e) => e.id)).toEqual(["q1a", "q2a", "m1a"]);
+    expect(plan.truncated).toBe(true);
+  });
+
+  it("spends every request's whole allowance when the sweep budget allows", () => {
+    const plan = buildSecondLookPlan([
+      resolution("[second-look: q1]", ["q1a", "q1b"]),
+      resolution("[second-look: model1]", ["m1a", "m1b"]),
+    ]);
+    expect(plan.promotions.map((e) => e.id)).toEqual(["q1a", "m1a", "q1b", "m1b"]);
+    expect(plan.truncated).toBe(false);
+  });
+});
+
+// ── #1554 fix B: 40% of what the sweep promoted was near-duplicate ───────────────────────────────
+describe("buildSecondLookPlan — per-shape cap", () => {
+  const SIGMA =
+    "Velociraptor [Windows.Sigma.Base] Sigma: Potentially Malicious PwSh - Windows PowerShell Script block logged";
+  const DETECTRAPTOR = "DetectRaptor Evtx detection: Powershell Suspicious CommandLet — IN DEVELOPMENT";
+  const CHAINSAW =
+    "[Windows.EventLogs.Chainsaw] Chainsaw/PowerShell Script: PowerShell - Script Block Auditing";
+
+  function one(tag: string, events: ForensicEvent[]): SecondLookResolution {
+    return {
+      request: { source: "question", tag, label: tag, keywords: ["k"], reason: tag },
+      matchedEventIds: events.map((e) => e.id),
+      promotable: events,
+    };
+  }
+
+  it("promotes only a few rows of one normalised shape, whatever the digits inside them", () => {
+    const rows = Array.from({ length: 10 }, (_, i) =>
+      ev({ id: `r${i}`, description: `${SIGMA} (EventID 4104, record ${1000 + i})`, asset: "ws-01" }),
+    );
+    const plan = buildSecondLookPlan([one("[second-look: q1]", rows)], { perShape: 3 });
+    expect(plan.promotions).toHaveLength(3);
+    expect(plan.shapeCapped).toBe(7);
+  });
+
+  it("keeps the three real repeat shapes apart", () => {
+    const rows = [SIGMA, DETECTRAPTOR, CHAINSAW].flatMap((shape, s) =>
+      Array.from({ length: 5 }, (_, i) =>
+        ev({ id: `r${s}_${i}`, description: `${shape} (record ${100 + i})`, asset: "ws-01" }),
+      ),
+    );
+    const plan = buildSecondLookPlan([one("[second-look: q1]", rows)], { perShape: 2 });
+    expect(plan.promotions).toHaveLength(6); // 2 per distinct shape, not 2 overall
+    expect(plan.shapeCapped).toBe(9);
+  });
+
+  it("counts a shape per host, so the same detection on a second host is not crowded out", () => {
+    const rows = ["ws-01", "ws-02"].flatMap((asset) =>
+      Array.from({ length: 4 }, (_, i) =>
+        ev({ id: `${asset}_${i}`, description: `${SIGMA} (record ${i})`, asset }),
+      ),
+    );
+    const plan = buildSecondLookPlan([one("[second-look: q1]", rows)], { perShape: 2 });
+    expect(plan.promotions.map((e) => e.asset)).toEqual(["ws-01", "ws-01", "ws-02", "ws-02"]);
+  });
+
+  it("never caps a row that has no stable shape", () => {
+    const rows = Array.from({ length: 6 }, (_, i) => ev({ id: `n${i}`, description: "" }));
+    const plan = buildSecondLookPlan([one("[second-look: q1]", rows)], { perShape: 2 });
+    expect(plan.promotions).toHaveLength(6);
+    expect(plan.shapeCapped).toBe(0);
+  });
+
+  it("frees the budget for a starved request instead of repeating one detection", () => {
+    const repeats = Array.from({ length: 6 }, (_, i) =>
+      ev({ id: `rep${i}`, description: `${SIGMA} (record ${i})`, asset: "ws-01" }),
+    );
+    const distinct = [ev({ id: "d1", description: "schtasks /create /tn updater", asset: "ws-01" })];
+    const plan = buildSecondLookPlan(
+      [one("[second-look: q1]", repeats), one("[second-look: model1]", distinct)],
+      { sweep: 4, perShape: 2 },
+    );
+    expect(plan.promotions.map((e) => e.id)).toContain("d1");
+  });
+
+  it("tells the analyst in the summary how many repeat rows were held back", () => {
+    const rows = Array.from({ length: 5 }, (_, i) =>
+      ev({ id: `r${i}`, description: `${SIGMA} (record ${i})`, asset: "ws-01" }),
+    );
+    const line = summarizeSecondLook(buildSecondLookPlan([one("[second-look: q1]", rows)], { perShape: 2 }));
+    expect(line).toContain("3 repeat row(s)");
+    expect(line).toContain("super-timeline");
   });
 });

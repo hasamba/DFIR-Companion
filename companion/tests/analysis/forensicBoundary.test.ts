@@ -1,7 +1,7 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AnalysisPipeline, VIEW_SUMMARY_MAX_ROWS } from "../../src/analysis/pipeline.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
@@ -258,4 +258,96 @@ describe("the Jev review reads the raw record but never writes to it", () => {
 
   // Coverage disclosure itself is asserted at the route, in tests/server/jevReviewRoute.test.ts:
   // only the route can tell a row the cap dropped from a row that was already analyzed.
+});
+
+// #1554. THE NEW GUARANTEE, and the reason the second look became a button.
+//
+// Synthesis used to end by sweeping the raw record for the terms its own conclusions implied,
+// promoting the matches and re-synthesizing — all inside one `synthesize()` call. It was the only
+// automatic path that WROTE to the forensic record: the analyst never asked for those rows, never
+// saw what was coming, and could not tell them from an import's. The rule above says the model may
+// not read the super-timeline; the sweep obeyed it literally by promoting first, which is exactly
+// how an automatic writer hides inside a rule about reading.
+//
+// So: a bare synthesize() promotes nothing and never touches the raw record at all. The promotion
+// lives behind ai/secondLookRun.ts, which an analyst presses. Both halves are asserted, because
+// either one alone can pass while the other is broken — a sweep that queried the store and promoted
+// nothing would satisfy the first, and a promotion from some other source would satisfy the second.
+describe("a bare synthesize() never touches the raw record (#1554)", () => {
+  // A minimal, schema-valid synthesis delta that ASKS for the raw row below by keyword. If the sweep
+  // were still wired in, this is the request that would pull `rawhit` into the forensic timeline.
+  const SYNTH_DELTA = JSON.stringify({
+    findings: [],
+    iocs: [],
+    mitreTechniques: [],
+    forensicEvents: [],
+    threadsOpened: [],
+    threadsClosed: [],
+    timelineNote: "",
+    summary: "s",
+    evidenceRequests: [{ keywords: ["rsync"], reason: "rows the prompt did not show" }],
+  });
+
+  async function synthHarness() {
+    const root = await mkdtemp(join(tmpdir(), "dfir-forensic-synth-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const stateStore = new StateStore(cases);
+    const seeded = emptyState("c1");
+    // Non-empty: synthesize() returns before the model call on an empty timeline, and a test that
+    // proves nothing was promoted because nothing ran proves nothing at all.
+    const graded = (id: string, description: string, timestamp: string) =>
+      ev({
+        id,
+        description,
+        timestamp,
+        severity: "High",
+        mitreTechniques: [],
+        relatedFindingIds: [],
+        sourceScreenshots: [],
+      });
+    seeded.forensicTimeline.push(
+      graded("e1", "powershell -enc", "2026-05-20T09:00:00Z"),
+      graded("e2", "net use", "2026-05-20T11:00:00Z"),
+    );
+    await stateStore.save(seeded);
+    const superTimelineStore = new SuperTimelineStore(cases);
+    await superTimelineStore.append("c1", [
+      ev({ id: "rawhit", description: "rsync -a /data nfs-01:/backup", timestamp: "2026-05-20T10:00:00Z" }),
+    ]);
+    const provider = new CapturingProvider(SYNTH_DELTA);
+    const pipeline = new AnalysisPipeline({
+      provider,
+      synthesisProvider: provider,
+      stateStore,
+      superTimelineStore,
+      imageLoader: async () => ({ base64: "", mimeType: "image/webp" }),
+    });
+    return { pipeline, stateStore, superTimelineStore };
+  }
+
+  it("promotes nothing: the forensic timeline holds exactly what it held before", async () => {
+    const { pipeline, stateStore } = await synthHarness();
+    await pipeline.synthesize("c1");
+    const after = await stateStore.load("c1");
+    expect(after.forensicTimeline.map((e) => e.id).sort()).toEqual(["e1", "e2"]);
+    expect(after.forensicTimeline.some((e) => e.id === "rawhit")).toBe(false);
+  });
+
+  it("never queries the super-timeline", async () => {
+    const { pipeline, superTimelineStore } = await synthHarness();
+    const query = vi.spyOn(superTimelineStore, "query");
+    await pipeline.synthesize("c1");
+    // Not one read. The sweep's candidate pool was a super-timeline query per run, so a single call
+    // here means the automatic path is back, whatever it then chose to do with the rows.
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it("leaves the raw row in the raw record, unpromoted and unstamped", async () => {
+    const { pipeline, superTimelineStore } = await synthHarness();
+    await pipeline.synthesize("c1");
+    const { events } = await superTimelineStore.query("c1", { offset: 0, limit: 100 });
+    expect(events.map((e) => e.id)).toContain("rawhit");
+    expect(events.every((e) => !e.promotedAt)).toBe(true);
+  });
 });

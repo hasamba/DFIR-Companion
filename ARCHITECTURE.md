@@ -245,8 +245,40 @@ None of them run on their own — each is a button the analyst presses. Two now 
 Promotion is not a workaround, it is the honest record of what happened: clicking "explain this" or
 starring an event **is** the analyst declaring it interesting, and the forensic timeline is where
 interesting events live. Each promotion carries a note saying which action caused it, so it can be
-told apart from an import six months later. This is the seam `runSecondLook` already used —
+told apart from an import six months later. This is the seam the second look uses too —
 deterministic search, promote with provenance, then re-synthesize.
+
+### The second look became a button (#1554)
+
+It used to run at the end of every synthesis, and it was the one automatic path that WROTE into the
+forensic record — the sentence at the top of this section was true of reads and quietly false of
+writes. It is now analyst-pressed, and `tests/analysis/forensicBoundary.test.ts` asserts both halves
+of what that means: a bare `synthesize()` promotes nothing, AND never queries the raw store at all.
+Either assertion alone can pass while the other is broken, which is why both are written down.
+
+Three things about the sweep were measured on a real case before the change, and each is a cap with
+a reason rather than a number:
+
+- **The per-question allowance is filled from rows that are actually new.** It used to cap first and
+  drop already-analysed rows second, so rows the model could already read consumed the budget and
+  produced nothing. Three of six open questions promoted ZERO rows for that reason.
+- **The budget is spent round-robin, not first-claimed-wins.** Requests are built hypotheses first,
+  questions next, then IOCs, then the model's own evidence requests — so the requests most often
+  starved were the ones where the model had explicitly said it was not shown something.
+- **Repeats of an already-promoted row stop after three.** 40% of one case's promotions were
+  near-duplicates: 38 copies of one Sigma hit, 25 of a rule that describes itself as in development.
+  A held-back row is not deleted — it stays in the super-timeline, searchable.
+
+The allowance is 12 per request, not 50. With at most 22 requests against a 200-row sweep, an equal
+share is about 9; 12 leaves depth for a case with few live questions while stopping any one request
+claiming more than 6% of what enters the record. The measured effect was better coverage with FEWER
+rows promoted, which is the shape to preserve if these numbers are ever revisited.
+
+**Selection by model judgement was tried and rejected — see #1553.** Scoring the rows one real case
+actually promoted, against that case's own open questions, put the rows its findings cite at median
+position 117 of 265 where chance is 132. A relevance floor kept 17 rows and dropped all 15 the
+findings used. The model does separate one question from another; that is not the same as knowing
+which rows will matter, and only the first was true when the work was proposed.
 
 ### `viewSummary` is the one sanctioned exception
 

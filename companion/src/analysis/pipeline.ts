@@ -44,6 +44,8 @@ import type { HuntContext } from "./ai/hunts.js";
 import * as synthesis from "./ai/synthesis.js";
 import type { SynthesisContext } from "./ai/synthesis.js";
 import * as deepPassRun from "./ai/deepPassRun.js";
+import * as secondLookRun from "./ai/secondLookRun.js";
+import type { SecondLookPreview, SecondLookRunResult } from "./ai/secondLookRun.js";
 import type { SecondOpinionContext } from "./ai/secondOpinionRun.js";
 import * as secondOpinionRun from "./ai/secondOpinionRun.js";
 import type { DeepPassPreview, DeepPassResult } from "./ai/deepPassRun.js";
@@ -261,14 +263,12 @@ export class AnalysisPipeline {
     return mergeDelta(state, delta, { ...ctx, iocAliases: aliases });
   }
 
-  // Serializes the load->merge->save critical section of every import/analyze method per caseId, so two concurrent imports for the same case can't race (second save clobbering the first's merged delta). See src/analysis/stateLock.ts. Falls back to running fn immediately when no lock is configured (e.g. some script/test call sites).
-  // CAUTION: never call this from inside another withStateLock/runExclusive callback for the SAME caseId — that nests onto the outer call's own unresolved promise and deadlocks.
+  // Serializes the load->merge->save critical section of every import/analyze method per caseId, so two concurrent imports for the same case can't race (second save clobbering the first's merged delta). See src/analysis/stateLock.ts. Falls back to running fn immediately when no lock is configured (e.g. some script/test call sites). CAUTION: never call this from inside another withStateLock/runExclusive callback for the SAME caseId — that nests onto the outer call's own unresolved promise and deadlocks.
   private withStateLock<T>(caseId: string, fn: () => Promise<T>): Promise<T> {
     return this.opts.stateLock ? this.opts.stateLock.runExclusive(caseId, fn) : fn();
   }
 
-  // Wraps the module-level withRetry() with server-log visibility: every AI call site in this class routes through here, not withRetry() directly —
-  // a failed/retried AI call also logs a WARN per attempt with the case id, call label, provider error kind, and retry/give-up state.
+  // Wraps the module-level withRetry() with server-log visibility: every AI call site in this class routes through here, not withRetry() directly — a failed/retried AI call also logs a WARN per attempt with the case id, call label, provider error kind, and retry/give-up state.
   private withRetry<T>(
     caseId: string,
     label: string,
@@ -341,11 +341,9 @@ export class AnalysisPipeline {
    * `!policy.enabled`) — with anonymization off there is no masked text for Presidio to see.
    */
 
-  // Hash of the last successfully-synthesized inputs per case, to skip the (expensive) AI call when
-  // nothing changed since the last run. In-memory: a fresh process (or `force`) always synthesizes.
+  // Hash of the last successfully-synthesized inputs per case, to skip the (expensive) AI call when nothing changed since the last run. In-memory: a fresh process (or `force`) always synthesizes.
   private readonly lastSynthHash = new Map<string, string>();
-  // Per-case log-aggregation truncation (investigation-guidance #10, trigger b): set by analyzeLog
-  // when the distinct-template cap dropped patterns the AI never saw; consumed once to stamp a cap-hit warning onto import-meta — a side channel since import methods return only the state.
+  // Per-case log-aggregation truncation (investigation-guidance #10, trigger b): set by analyzeLog when the distinct-template cap dropped patterns the AI never saw; consumed once to stamp a cap-hit warning onto import-meta — a side channel since import methods return only the state.
   private readonly importTruncation = new Map<string, AggregateStats>();
   consumeImportTruncation(caseId: string): AggregateStats | undefined {
     const v = this.importTruncation.get(caseId);
@@ -767,13 +765,19 @@ export class AnalysisPipeline {
     return synthesis.synthesize(this.aiCtx, ...args);
   }
 
+  secondLookPreview(caseId: string): Promise<SecondLookPreview> {
+    return secondLookRun.secondLookPreview(this.aiCtx, caseId);
+  }
+
+  secondLook(...args: AiArgs<typeof secondLookRun.secondLookRun>): Promise<SecondLookRunResult | null> {
+    return secondLookRun.secondLookRun(this.aiCtx, ...args);
+  }
+
   secondOpinion(caseId: string, opts: SynthThinkingInput = {}): Promise<SecondOpinion> {
     return secondOpinionRun.secondOpinion(this.aiCtx, caseId, opts);
   }
 
-  // Accept or reject ONE second-opinion delta. The analyst's decision is recorded on the delta, and
-  // ALL currently-accepted deltas are (re-)applied onto the live case state (idempotent) — so an
-  // accept adds/edits the finding/severity/technique now and survives the next synthesis (the same re-apply runs in synthesize()). A reject just records the decision; state is unchanged.
+  // Accept or reject ONE second-opinion delta. The decision is recorded on the delta, and ALL currently-accepted deltas are re-applied onto the live case state (idempotent) — so an accept survives the next synthesis, and a reject changes no state.
   applySecondOpinion(
     caseId: string,
     deltaId: string,
@@ -782,14 +786,11 @@ export class AnalysisPipeline {
     return secondOpinionRun.applySecondOpinion(this.aiCtx, caseId, deltaId, accept);
   }
 
-  // Bulk accept-all / reject-all: decide every still-PENDING delta at once (already-decided deltas
-  // are left as the analyst set them), persist, and apply the accepted set to the case in ONE pass.
+  // Bulk accept-all / reject-all: decide every still-PENDING delta at once (already-decided deltas are left as the analyst set them), persist, and apply the accepted set to the case in ONE pass.
   applyAllSecondOpinion(
     caseId: string,
     accept: boolean,
   ): Promise<{ record: SecondOpinion; state: InvestigationState }> {
     return secondOpinionRun.applyAllSecondOpinion(this.aiCtx, caseId, accept);
   }
-
-  // Save the (re)decided record, then re-apply ALL accepted deltas onto the live state (idempotent) — shared by the single + bulk apply methods so both persist and broadcast identically.
 }

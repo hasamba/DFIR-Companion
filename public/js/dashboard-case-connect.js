@@ -430,6 +430,7 @@
       ["savedStarredReport", () => loadSavedStarredReport(caseId)],
       ["playbook", () => loadPlaybook(caseId)],
       ["synthMeta", () => loadSynthMeta(caseId)],
+      ["secondLook", () => loadSecondLookPreview(caseId)], // #1554 measure what a second look would promote; spends nothing
       ["secondOpinion", () => loadSecondOpinion(caseId)],
       ["importMeta", () => loadImportMeta(caseId)],
       ["dropStatus", () => loadDropStatus(caseId)],
