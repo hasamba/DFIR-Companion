@@ -60,7 +60,7 @@ import { isFlatChainsawRow, mapFlatChainsawRow } from "./chainsawImport.js";
 import { mapPersistenceSniper, isPersistenceSniperRow } from "./persistenceSniperImport.js";
 import { mapBinaryRename } from "./binaryRenameImport.js";
 import { overlayFlatWindowsEid } from "./flatWindowsEvent.js";
-import { applyMftTimeHints } from "./mftTimeHints.js";
+import { applyMftTimeHints, markSharedSourceMtime } from "./mftTimeHints.js";
 import { networkTokens } from "./networkTokens.js";
 import { gradeMotwDownload, zoneText } from "./motwDownload.js";
 import { isAccountUsageRow, mapAccountUsage } from "./accountUsageImport.js";
@@ -1670,7 +1670,7 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
       // fingerprint into the agg key so they don't collapse on title alone — while truly identical
       // repeats (differing only in volatile ids) still merge. See msgFingerprint.
       if (fp) m.aggKey = `${m.aggKey}|m:${fp}`.slice(0, 440);
-      mergeRowIocs(ctx.iocSink, rowSink, m.aggKey);
+      if (m.origin !== "collector") mergeRowIocs(ctx.iocSink, rowSink, m.aggKey); // collector rows name its own tooling (#1555)
       out.push(m);
     }
   }
@@ -1690,7 +1690,7 @@ function finalizeVrParse(
   const maxIocs = opts.maxIocs ?? 5000;
   ctx.lineage.resolve(); // the whole file has been read: attribute the spawn's children (#1500)
   // Sample-host demotion happens per row in mapRowToEvents (hostIdentity.ts); the rename markers join here.
-  const { events, groups } = aggregateEvents([...mapped, ...ctx.renames.events()], {
+  const { events, groups } = aggregateEvents([...markSharedSourceMtime(mapped), ...ctx.renames.events()], {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,
     maxEvents: opts.maxEvents ?? maxEventsDefault(),
@@ -1817,5 +1817,5 @@ export async function parseVelociraptorJsonProgress(
 
 // The per-row mapping the bulk driver reuses (ingest/velociraptorBulk.ts, #1439) — every row mapped
 // byte-for-byte as the two drivers above do. Not a parse API.
-export const vrBulkInternals = { mapRowToEvents, newVrCtx };
+export const vrBulkInternals = { mapRowToEvents, newVrCtx, markSharedSourceMtime };
 export type { VrParseCtx };
