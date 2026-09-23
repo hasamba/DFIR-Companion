@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Missed evidence review refuses an unknown case and a second run** — a typo'd case id gets a 404 instead of leaving a case directory on disk, and a second press while a review of that case is running gets a 409 instead of paying for the same review twice (closes #1549, closes #1551)
+- **Missed evidence review can no longer hang on "Reviewing…"** — a Stop waiting button frees the panel while a review runs, and a capped review gives up after 15 minutes with a message that the server may still be working (closes #1552)
 - **The missed-evidence review stops hiding real rows as "our own tooling"** — the collector's name is no longer part of what that question judges, so a Velociraptor-collected network connection is not mistaken for the collector itself; measured over 265 real rows, 66 hidden became 52 with all genuine rule files still caught (part of #1554)
 - **A second look no longer spends its budget on rows the AI can already see** — the per-question allowance is filled from rows that are actually new, so questions that returned nothing now return evidence; on a real case the questions yielding nothing fell from 3 of 6 to 1 of 6, promoting fewer rows overall (part of #1554)
 - **One detection cannot crowd out a whole sweep** — repeats of an already-promoted row are held back after three, and stay searchable in the archive; 40% of one real case's promotions were near-duplicates (part of #1554)

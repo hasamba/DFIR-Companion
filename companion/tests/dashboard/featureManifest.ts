@@ -154,6 +154,26 @@ export const FEATURES: Feature[] = [
     private: ["reading", "currentCaseId", "loadGen", "status", "mutationError"],
   },
   {
+    // The Missed Evidence Review's pure formatting half — split out when #1552's "Stop waiting"
+    // control put dashboard-jev-review.js over the 800-line budget. Holds nothing; the review
+    // calls these at paint time. GRADES is private: published as an accessor, never as the array.
+    file: "dashboard-jev-review-format.js",
+    publish: [
+      "jevGrades",
+      "jevGradeRank",
+      "jevGradeClass",
+      "jevPct",
+      "jevWhen",
+      "jevMoney",
+      "jevNum",
+      "jevUnreadRows",
+      "jevFullReadPlan",
+      "jevCaptionHtml",
+      "jevFullReadConfirmHtml",
+    ],
+    private: ["GRADES"],
+  },
+  {
     // #1540. The busy flag is listed as private on purpose: it is the flag whose wedging this
     // feature exists to avoid, and a version of it reachable from outside the closure is a flag
     // another module can leave on.
@@ -169,6 +189,10 @@ export const FEATURES: Feature[] = [
       "result",
       "reviewError",
       "busy",
+      // #1552. The in-flight request's controller: a reachable copy would let another module abort
+      // a review, or keep one alive past the panel's own bookkeeping.
+      "activeRun",
+      "reviewNote",
       "hideTooling",
       "wired",
       // #1568's write half. `promoting` is listed for the same reason as `busy`; `picked` and

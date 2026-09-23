@@ -204,6 +204,7 @@
   <script src="/js/dashboard-tls-graph.js"></script>
   <script src="/js/dashboard-handoff.js"></script>
   <script src="/js/dashboard-sensitive-access.js"></script>
+  <script src="/js/dashboard-jev-review-format.js"></script>
   <script src="/js/dashboard-jev-review.js"></script>
   <!-- Second look (#1554). initSecondLook() binds the toolbar button, the run button and the
        re-synthesise opt-out; the panel sits beside Missed Evidence Review. -->
@@ -3932,6 +3933,9 @@
         <!-- The uncapped read. Secondary to the capped one on purpose: it can run for minutes and
              spend real money, so it asks first, inline in the panel, with the numbers from the last run. -->
         <button type="button" id="jevRunAllBtn" class="jev-secondary" disabled>Read every row</button>
+        <!-- Shown only while a review runs (#1552). It stops the browser waiting; it cannot stop the
+             run on the server, and the panel says so when it is pressed. -->
+        <button type="button" id="jevCancelBtn" class="jev-secondary" hidden title="Stop waiting for this review. The server may keep running it.">Stop waiting</button>
         <label class="jev-tooling" for="jevHideTooling"><input type="checkbox" id="jevHideTooling" checked /> Hide rows the model reads as our own collection tooling (over 0.5)</label>
         <!-- The two filters (#1568). They narrow the TABLE, and select-all follows the table, so
              they also narrow what a promote can write. Native controls: tabbable, keyboard-operable,

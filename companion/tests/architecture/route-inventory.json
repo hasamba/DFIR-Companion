@@ -595,6 +595,7 @@
     "ROUTE GET /js/dashboard-tls-graph.js",
     "ROUTE GET /js/dashboard-handoff.js",
     "ROUTE GET /js/dashboard-sensitive-access.js",
+    "ROUTE GET /js/dashboard-jev-review-format.js",
     "ROUTE GET /js/dashboard-jev-review.js",
     "ROUTE GET /js/dashboard-second-look.js",
     "ROUTE GET /js/dashboard-backup.js",

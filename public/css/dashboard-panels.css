@@ -495,6 +495,7 @@ section#sec-sessions.ses-collapsed .ses-body { display: none; }
 /* The uncapped read is the secondary action of the pair: outlined rather than filled, so the
    difference is a shape as well as a colour. */
 .jev-secondary { background: transparent; border: 1px solid var(--border-strong); }
+#jevCancelBtn[hidden] { display: none; } /* explicit — a button display rule would beat the [hidden] UA rule */
 /* Confirmation before a long, paid, uncapped run (#1540). Inline markup, never confirm() — a
    browser modal blocks the automation harness and cannot show the row count and the estimate.
    Bordered and headed, so it reads as a question without relying on its colour. */
