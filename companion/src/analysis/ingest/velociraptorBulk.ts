@@ -302,7 +302,9 @@ function mapBatch(
   }
   vrCtx.lineage.resolve(); // every spawn was primed before the first batch, so per-batch resolution is complete (#1500)
   const vr = opts.velociraptor ?? {};
-  const { events: grouped } = aggregateEvents(mapped, {
+  // Copies of one source file, noted per batch (#1558). A group split across two batches is counted
+  // in each batch apart; a batch holds thousands of rows, so a DetectRaptor hit list sits in one.
+  const { events: grouped } = aggregateEvents(vrBulkInternals.markSharedSourceMtime(mapped), {
     aggregate: mode === "super-only" ? false : vr.aggregate,
     minSeverity: vr.minSeverity,
     maxEvents: Number.MAX_SAFE_INTEGER,

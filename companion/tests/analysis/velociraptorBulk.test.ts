@@ -703,3 +703,32 @@ describe("runVelociraptorBulk — the collector's children do not depend on row 
     expect(net?.origin).toBe("collector");
   });
 });
+
+// #1558: the bounded driver notes copies of one source file per batch, as the whole-file driver does.
+describe("runVelociraptorBulk — shared source mtime", () => {
+  it("notes 2+ copied-file rows that share one modified second", async () => {
+    const copy = (file: string, created: string) => ({
+      _Source: "DetectRaptor.Windows.Detection.MFT",
+      Detection: { Name: "Suspicious Location", StringHit: ".exe", Criticality: "High" },
+      InUse: true,
+      OSPath: `\\\\.\\C:\\ProgramData\\${file}`,
+      IsDir: false,
+      SITimestamps: { Created0x10: created, LastModified0x10: "2025-12-05T02:54:10.1128473Z" },
+      FNTimestamps: { Created0x30: created },
+      Fqdn: "workstation01.example.com",
+    });
+    const rows = [
+      copy("VeeamHax.exe", "2026-09-22T14:38:34.1968708Z"),
+      copy("msxsl.exe", "2026-09-22T14:37:51.8296767Z"),
+    ];
+    const sink = memorySink();
+    const text = JSON.stringify({ "DetectRaptor.Windows.Detection.MFT": rows });
+    await runVelociraptorBulk(sink, "c1", text, baseOpts(), "forensic");
+    const notes = [...sink.forensic, ...sink.superRows].filter((e) =>
+      e.description.includes("[shared source mtime: 2 copies of one source file, not timestomping]"),
+    );
+    expect(new Set(notes.map((e) => e.description.match(/\w+\.exe/)?.[0]))).toEqual(
+      new Set(["VeeamHax.exe", "msxsl.exe"]),
+    );
+  });
+});
