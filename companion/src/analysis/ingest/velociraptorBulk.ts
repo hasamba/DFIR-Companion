@@ -11,7 +11,7 @@ import { deltaSchema } from "../responseSchema.js";
 import { mergeHostRenameRecords, type HostRenameRecord } from "../hostRenameRecord.js";
 import { mergeEvictions, type SuperEviction } from "../superTimelineStore.js";
 import { prepareRows, vrBulkInternals, type VelociraptorImportOptions } from "../velociraptorImport.js";
-import { isProcessCreateRow } from "../collectorChildren.js";
+import { isCollectorEvidenceRow } from "../collectorChildren.js";
 import { openVelociraptorRowStream, type Row } from "../velociraptorRowStream.js";
 import type { ImportContext } from "./importContext.js";
 
@@ -429,15 +429,17 @@ export async function runVelociraptorBulk(
       let seen = 0;
       // A scratch context for the process rows: the spawn ledger needs the MAPPED row (rule 2c reads
       // the rendered parent and command line), and mapping through the real context would count the
-      // row's IOCs and host twice. Only process creations are mapped here (#1500). It shares the
-      // real alias map, and the ledger also files every claim under the record's own Computer, so a
-      // rename learned after a spawn was primed still lets its children meet it.
+      // row's IOCs and host twice. Only process creations (#1500) and the Tools-tree script records
+      // that prove a PowerShell runspace (#1555 — a system-Modules record in an EARLIER batch needs
+      // that seed) are mapped here. It shares the real alias map, and the ledger also files every
+      // claim under the record's own Computer, so a rename learned after a spawn was primed still
+      // lets its children meet it.
       const scratch = { ...vrBulkInternals.newVrCtx(vr), aliases: vrCtx.aliases };
       for (const item of evidence.rows) {
         const rows = prepareRows([item.row]);
         vrCtx.aliases.learn(rows);
         for (const row of rows)
-          if (isProcessCreateRow(row))
+          if (isCollectorEvidenceRow(row))
             vrCtx.lineage.prime(row, vrBulkInternals.mapRowToEvents(row, scratch).events);
         if (++seen % sink.batchRows === 0) await yieldToLoop();
       }
@@ -555,6 +557,7 @@ export async function importVelociraptorBulk(
         type: c.type,
         value: c.value,
         ...(c.extractedFrom ? { extractedFrom: c.extractedFrom } : {}),
+        ...(c.provenance ? { provenance: c.provenance } : {}), // "mentioned" survives into the case (#1555)
       })),
       mitreTechniques: [],
       forensicEvents: [],

@@ -732,3 +732,63 @@ describe("runVelociraptorBulk — shared source mtime", () => {
     );
   });
 });
+
+// #1555: the two things the collector's PersistenceSniper run needs from the bulk driver.
+describe("importVelociraptorBulk — the collector's runspace and a mentioned IOC (#1555)", () => {
+  const HOST_ID = "eb783a16-e551-468f-9e88-5aadff244ce0";
+  const RUNSPACE = "d7fbdd55-850a-417f-8054-35baf6a0203f";
+  const PSNIPER =
+    "C:\\Program Files\\Velociraptor\\Tools\\tmp523676455\\PersistenceSniper\\PersistenceSniper.psm1";
+  const BITS = "C:\\WINDOWS\\system32\\WindowsPowerShell\\v1.0\\Modules\\BitsTransfer\\BitsTransfer.psm1";
+  // The real INC-2026-003 4103 shape (DetectRaptor.Windows.Detection.Evtx), payload trimmed.
+  const row4103 = (scriptName: string, payload: string) => ({
+    EventTime: "2026-09-22T17:28:44Z",
+    Computer: "DESKTOP-16OJFO6",
+    Detection: { Name: "T1059.001-Mimikatz Execution via PowerShell", EventId: "^(4103)$", Regex: "AdjPriv" },
+    Channel: "Microsoft-Windows-PowerShell/Operational",
+    EventID: 4103,
+    UserSID: "S-1-5-18",
+    EventData: {
+      ContextInfo:
+        `        Severity = Informational\r\n        Host Name = ConsoleHost\r\n        Host ID = ${HOST_ID}\r\n` +
+        `        Host Application = powershell -ExecutionPolicy bypass -command import-module "${PSNIPER}"\r\n` +
+        `        Runspace ID = ${RUNSPACE}\r\n        Command Name = Add-Type\r\n        Script Name = ${scriptName}\r\n` +
+        `        User = WORKGROUP\\SYSTEM\r\n        Shell ID = Microsoft.PowerShell\r\n`,
+      UserData: "",
+      Payload: payload,
+    },
+    Message: payload,
+    Fqdn: "DESKTOP-16OJFO6.example.com",
+  });
+  const evtxMap = (rows: object[]) => JSON.stringify({ "DetectRaptor.Windows.Detection.Evtx": rows });
+
+  // The BitsTransfer record is in batch 1, the PersistenceSniper record that proves the runspace in
+  // batch 2. Batch 1 resolves before batch 2 is read, so the seed must come from the evidence pass.
+  it("links a system-Modules record to a runspace a LATER batch proves", async () => {
+    const sink = memorySink({ batchRows: 1 });
+    const rows = [
+      row4103(
+        BITS,
+        'ParameterBinding(Add-Type): name="TypeDefinition"; value="using System; IsWow64Process2"',
+      ),
+      row4103(PSNIPER, 'ParameterBinding(Add-Type): name="MemberDefinition"; value="TokPriv1Luid AdjPriv"'),
+    ];
+    await runVelociraptorBulk(sink, "c1", evtxMap(rows), baseOpts("0007_velo-hunt_evtx.json"), "forensic");
+    const bits = sink.superRows.find((e) => e.description.includes("IsWow64Process2"));
+    expect(bits?.severity).toBe("Info");
+    expect(bits?.origin).toBe("collector");
+  });
+
+  it("carries a mentioned IOC's provenance into the case", async () => {
+    const { ctx, stateStore } = await contextWithStore();
+    const sink = memorySink({ batchRows: 10 });
+    const text = "Invoke-WebRequest https://stage.mentioned-only.test/a";
+    const user = { ...row4103("C:\\Users\\v\\stage.ps1", text), UserSID: "S-1-5-21-1-2-3-1001" };
+    await importVelociraptorBulk(ctx, sink, "c1", evtxMap([user]), baseOpts("0007_velo-hunt_evtx.json"));
+    const url = (await stateStore.load("c1")).iocs.find(
+      (i) => i.value === "https://stage.mentioned-only.test/a",
+    );
+    expect(url).toBeDefined();
+    expect(url?.provenance).toBe("mentioned");
+  });
+});
