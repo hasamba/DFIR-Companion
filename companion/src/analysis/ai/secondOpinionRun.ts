@@ -6,6 +6,7 @@ import {
   applyAcceptedSecondOpinion,
   setDeltaStatus,
   setAllPendingStatus,
+  followRefereeStatus,
   type SecondOpinion,
 } from "../secondOpinion.js";
 import type { InvestigationState } from "../stateTypes.js";
@@ -180,12 +181,16 @@ export async function applySecondOpinion(
 export async function applyAllSecondOpinion(
   ctx: SecondOpinionContext,
   caseId: string,
-  accept: boolean,
+  accept: boolean | "referee",
 ): Promise<{ record: SecondOpinion; state: InvestigationState }> {
   if (!ctx.opts.secondOpinionStore) throw new Error("second-opinion store not configured");
   const current = await ctx.opts.secondOpinionStore.load(caseId);
   if (!current) throw new Error("no second opinion to act on — run a second opinion first");
-  return persistSecondOpinion(ctx, caseId, setAllPendingStatus(current, accept ? "accepted" : "rejected"));
+  const next =
+    accept === "referee"
+      ? followRefereeStatus(current)
+      : setAllPendingStatus(current, accept ? "accepted" : "rejected");
+  return persistSecondOpinion(ctx, caseId, next);
 }
 
 async function persistSecondOpinion(
