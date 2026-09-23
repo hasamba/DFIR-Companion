@@ -1670,7 +1670,7 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
       // fingerprint into the agg key so they don't collapse on title alone — while truly identical
       // repeats (differing only in volatile ids) still merge. See msgFingerprint.
       if (fp) m.aggKey = `${m.aggKey}|m:${fp}`.slice(0, 440);
-      mergeRowIocs(ctx.iocSink, rowSink, m.aggKey);
+      if (m.origin !== "collector") mergeRowIocs(ctx.iocSink, rowSink, m.aggKey); // collector rows name its own tooling (#1555)
       out.push(m);
     }
   }
