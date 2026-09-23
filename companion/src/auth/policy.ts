@@ -78,6 +78,11 @@ const NON_CASE_PATHS = new Set(["/cases/import/encrypted", "/cases/seed-demo"]);
 function collectionPath(path: string): string {
   return (path.length > 1 ? path.replace(/\/+$/, "") : path).toLowerCase();
 }
+
+/** True for the two /cases/* paths that are not a case (see NON_CASE_PATHS), in Express's spelling. */
+export function isNonCasePath(path: string): boolean {
+  return NON_CASE_PATHS.has(collectionPath(path));
+}
 const CASE_READ_SEGMENTS = ["/unlock", "/lock-status", "/lock-forget"];
 /**
  * A BUCKET IS CHOSEN BY THE ROUTE, NEVER BY A VALUE THE ROUTE CARRIES.

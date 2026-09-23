@@ -2703,7 +2703,9 @@ describe("state and report routes", () => {
 
   it("POST /cases/:id/synthesize returns 501 when no pipeline is configured", async () => {
     const root = await mkdtemp(join(tmpdir(), "dfir-synth-noai-"));
-    const app = createApp(new CaseStore(root), {});
+    const store = new CaseStore(root);
+    await store.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const app = createApp(store, {});
     const res = await request(app).post("/cases/c1/synthesize");
     expect(res.status).toBe(501);
   });
