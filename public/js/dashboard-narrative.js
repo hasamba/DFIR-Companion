@@ -515,7 +515,21 @@
 
   // Wired from initNarrativeTimeline, not from a second initializer: the control sits in the card
   // this module already owns, so it shares the one entry point the page calls.
+  /**
+   * The toolbar button OPENS the card; it never starts the sweep. A second look writes rows into
+   * the forensic record, and a toolbar click that spends nothing is the only kind that can be
+   * pressed by accident safely. Same contract as the Missed evidence button beside it.
+   */
+  function revealSecondLook() {
+    const card = document.getElementById("secondLookCard");
+    const section = document.getElementById("sec-findings");
+    if (typeof markSectionRevealed === "function") markSectionRevealed("sec-findings");
+    if (section) section.classList.remove("collapsed");
+    (card || section)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
   function initSecondLook() {
+    document.getElementById("secondLookBtn")?.addEventListener("click", revealSecondLook);
     const btn = document.getElementById("secondLookRunBtn");
     if (!btn) return;
     btn.addEventListener("click", (e) => {

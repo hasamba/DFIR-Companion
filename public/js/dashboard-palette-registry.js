@@ -75,6 +75,13 @@
       keywords: ["second", "look", "sweep", "promote", "archive", "questions", "leads"],
     },
     {
+      id: "act.secondLook",
+      btn: "secondLookBtn",
+      category: "Actions",
+      label: "Second look",
+      keywords: ["second", "look", "archive", "open questions", "promote", "sweep"],
+    },
+    {
       id: "act.secondOpinion",
       btn: "secondOpinion",
       category: "Actions",
