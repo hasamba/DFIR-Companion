@@ -105,6 +105,7 @@ describe("dashboardViews — seed integrity", () => {
       "sec-velohunts",
       "sec-super-timeline",
       "sec-jev-review",
+      "sec-second-look",
       "sec-iocs",
       "sec-playbook",
       "sec-playbook-match",
@@ -318,6 +319,42 @@ describe("sec-jev-review registration (#1540)", () => {
     for (const id of ["executive", "report"]) {
       const view = BUILT_IN_DASHBOARD_VIEWS.find((v) => v.id === id)!;
       expect(view.sections, `${id} should not carry sec-jev-review`).not.toContain("sec-jev-review");
+    }
+  });
+});
+
+describe("sec-second-look registration (#1554)", () => {
+  it("is a registered dashboard section", () => {
+    expect(DASHBOARD_SECTION_IDS).toContain("sec-second-look");
+  });
+
+  // sec-jev-review's peer, and registered the same way for the same reason: it reads the raw
+  // super-timeline archive and writes rows into the forensic record. That is bench work, hypothesis
+  // work and hunt-lead work — not a lead's severity digest, not an executive brief, and not part of
+  // a written report. It was a card inside Findings and the analyst could not find it twice over,
+  // which is why it is a panel at all.
+  it("appears in the Analyst, Deep-Dive and Hunt Prep profiles", () => {
+    for (const id of ["analyst", "deep-dive", "hunt-prep"]) {
+      const view = BUILT_IN_DASHBOARD_VIEWS.find((v) => v.id === id)!;
+      expect(view.sections, `${id} is missing sec-second-look`).toContain("sec-second-look");
+    }
+  });
+
+  it("stays out of the Executive and Report profiles", () => {
+    for (const id of ["executive", "report"]) {
+      const view = BUILT_IN_DASHBOARD_VIEWS.find((v) => v.id === id)!;
+      expect(view.sections, `${id} should not carry sec-second-look`).not.toContain("sec-second-look");
+    }
+  });
+
+  // The two panels are peers, so they travel together: a profile that offers one and not the other
+  // is the bug this pairing exists to catch.
+  it("is offered wherever its peer is", () => {
+    for (const view of BUILT_IN_DASHBOARD_VIEWS) {
+      expect(
+        view.sections.includes("sec-second-look"),
+        `${view.id} offers one of the two archive-review panels but not the other`,
+      ).toBe(view.sections.includes("sec-jev-review"));
     }
   });
 });

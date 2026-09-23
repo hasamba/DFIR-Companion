@@ -530,16 +530,15 @@ section#sec-sessions.ses-collapsed .ses-body { display: none; }
 /* A settings hint that is telling the analyst something is missing, not just describing a field. */
 .sfield-hint.sfield-hint-warn { color: var(--sev-medium); }
 
-/* Second look (#1554) — the analyst-pressed sweep, inside the findings card next to the synthesis
-   strip that already reports its summary and leads. A bordered block rather than a new section, so
-   it reads as part of that card and needs none of a panel's registrations.
+/* Second look (#1554) — the analyst-pressed sweep, in its own panel beside Missed Evidence Review.
+   It was a bordered block inside the findings card; the analyst could not find it, so it carries a
+   section's own heading now and the .sl-card / .sl-head / .sl-title rules that drew that block are
+   gone with it.
 
    Every state word is a word. .sl-warn adds a colour to text that already says "not", "NOT" or
    "did not" on its own, so nothing here is carried by hue alone. */
-.sl-card { border: 1px solid var(--border-color); border-radius: 4px; padding: 10px 12px;
-  margin: 8px 0; background: var(--bg-elevated); }
-.sl-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin-bottom: 6px; }
-.sl-title { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+/* The panel's standing warning: what costs nothing, and what writes to the case. */
+.sl-note { font-size: 12px; color: var(--text-muted); margin: 0 0 10px; }
 .sl-preview { margin-bottom: 8px; }
 .sl-line { font-size: 12px; color: var(--text-primary); margin: 4px 0; }
 .sl-muted { color: var(--text-muted); }

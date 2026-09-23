@@ -18,7 +18,7 @@ import { loadDashboardModule } from "../helpers/dashboardModule.js";
 interface Api {
   loadSecondLookPreview(caseId: string): Promise<void>;
   runSecondLook(): Promise<void> | undefined;
-  initNarrativeTimeline(): void;
+  initSecondLook(): void;
 }
 
 interface Deferred {
@@ -71,6 +71,11 @@ function harness() {
     }
     return cur;
   };
+  // loadSynthMeta lives in another module now (js/dashboard-narrative.js), so the call across the
+  // seam is what this harness records. Before the panel moved it was the same file and the fetch
+  // it makes was observable in `pending`; the behaviour under test is unchanged — a run that lands
+  // refreshes the synthesis strip — only who owns the strip has.
+  const synthMetaCalls: string[] = [];
   const globals = {
     document: { getElementById: (id: string) => el(id), addEventListener: () => {} },
     fetch: (url: string, init?: { method?: string; body?: string }) =>
@@ -84,13 +89,13 @@ function harness() {
           reject: rej,
         });
       }),
-    relTime: (s: string) => String(s),
-    proseHtml: (s: string) => String(s),
-    isSectionVisible: () => true,
-    loadSectionsVis: () => ({}),
+    loadSynthMeta: (caseId: string) => {
+      synthMetaCalls.push(caseId);
+    },
+    markSectionRevealed: () => {},
   };
-  const api = loadDashboardModule<Api>("dashboard-narrative.js", ["dashboard-escape.js"], globals);
-  return { api, pending, el };
+  const api = loadDashboardModule<Api>("dashboard-second-look.js", ["dashboard-escape.js"], globals);
+  return { api, pending, el, synthMetaCalls };
 }
 
 const FULL_PREVIEW = {
@@ -111,7 +116,7 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
 
 async function withPreview(preview: unknown = FULL_PREVIEW) {
   const h = harness();
-  h.api.initNarrativeTimeline();
+  h.api.initSecondLook();
   const load = h.api.loadSecondLookPreview("case-1");
   h.pending.shift()!.resolve(preview);
   await load;
@@ -122,7 +127,7 @@ async function withPreview(preview: unknown = FULL_PREVIEW) {
 describe("the preview, before anything is pressed", () => {
   it("is fetched when the case loads, and asks the server to measure, not to run", async () => {
     const h = harness();
-    h.api.initNarrativeTimeline();
+    h.api.initSecondLook();
     void h.api.loadSecondLookPreview("case-1");
     expect(h.pending).toHaveLength(1);
     expect(h.pending[0].url).toBe("/cases/case-1/second-look/preview");
@@ -173,7 +178,7 @@ describe("the preview, before anything is pressed", () => {
   // A 501 IS an answer, not a request failure the analyst can do nothing with.
   it("turns a 501 into the reason, in the panel, with the button off", async () => {
     const h = harness();
-    h.api.initNarrativeTimeline();
+    h.api.initSecondLook();
     const load = h.api.loadSecondLookPreview("case-1");
     h.pending
       .shift()!
@@ -186,7 +191,7 @@ describe("the preview, before anything is pressed", () => {
 
   it("does not claim the archive is empty when it simply could not measure", async () => {
     const h = harness();
-    h.api.initNarrativeTimeline();
+    h.api.initSecondLook();
     const load = h.api.loadSecondLookPreview("case-1");
     h.pending.shift()!.reject(new Error("network down"));
     await load;
@@ -343,25 +348,63 @@ describe("the busy flag", () => {
     h.pending.shift()!.resolve({ promoted: 4, shapeCapped: 0, leads: [], summary: "", resynthesized: true });
     await run;
     await settle();
-    const urls = h.pending.map((p) => p.url);
-    expect(urls).toContain("/cases/case-1/synth-meta");
-    expect(urls).toContain("/cases/case-1/second-look/preview");
+    // The strip is another module's now, so the refresh is a call across the seam rather than a
+    // fetch this module makes. Rows are in the case either way, and both figures are stale.
+    expect(h.synthMetaCalls).toContain("case-1");
+    expect(h.pending.map((p) => p.url)).toContain("/cases/case-1/second-look/preview");
   });
 });
 
-describe("where the control lives", () => {
-  it("is in the findings card beside the synthesis strip, not a rival panel", async () => {
+// WHERE IT LIVES CHANGED, AND THAT IS THE POINT.
+//
+// It was a card inside the findings panel, under the synthesis strip. The analyst could not find it
+// — twice. It is a panel of its own now, beside Missed Evidence Review, which is its peer: both
+// read the raw archive, both write to the forensic record. The synthesis strip keeps its one-line
+// summary of the last sweep, because that line is synthesis metadata, not the control.
+describe("where the panel lives", () => {
+  it("is a section of its own, next to Missed Evidence Review", async () => {
     const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
-    const findings = html.slice(html.indexOf('id="sec-findings"'), html.indexOf('id="sec-timeline"'));
-    expect(findings).toContain('id="secondLookCard"');
-    expect(findings).toContain('id="secondLookRunBtn"');
-    // No new section id: reusing the card is what keeps it out of the section registry, the
-    // visibility editor and the seven built-in view profiles.
-    expect(html).not.toContain('id="sec-second-look"');
+    const panel = html.slice(html.indexOf('id="sec-second-look"'), html.indexOf('id="sec-notebook"'));
+    expect(panel).toContain('id="secondLookCard"');
+    expect(panel).toContain('id="secondLookRunBtn"');
+    expect(panel).toContain('id="secondLookResynth"');
+    expect(panel).toContain('id="secondLookStatus"');
+    expect(panel).toContain('id="secondLookResult"');
+    // Adjacency, not a coincidence of ordering: sec-jev-review is the section directly above it.
+    expect(html.indexOf('id="sec-jev-review"')).toBeLessThan(html.indexOf('id="sec-second-look"'));
+    // And it is gone from the findings card it used to sit in.
+    const findings = html.slice(html.indexOf('id="sec-findings"'), html.indexOf('id="sec-deep-pass"'));
+    expect(findings).not.toContain('id="secondLookCard"');
+  });
+
+  // The strip's summary of the last sweep is synthesis metadata and stays with the other synthesis
+  // facts. The control is the only thing that moved.
+  it("leaves the synthesis strip's own second-look line where it was", async () => {
+    const narrative = await readFile(
+      new URL("../../../public/js/dashboard-narrative.js", import.meta.url),
+      "utf8",
+    );
+    expect(narrative).toContain("m.secondLook");
+    expect(narrative).toContain("raw event(s) promoted");
+    // …and nothing of the control came with it.
+    expect(narrative).not.toContain("secondLookRunBtn");
+    expect(narrative).not.toContain("runSecondLook");
+  });
+
+  it("is registered everywhere a panel has to be, or it is invisible for the analyst", async () => {
+    const html = await readFile(new URL("../../../public/dashboard.html", import.meta.url), "utf8");
+    // SECTION_DEFS drives both the left nav and the section-visibility editor in Settings.
+    expect(html).toContain('{ id: "sec-second-look", label: "Second Look" }');
+    // The page's initializer fan-out, guarded the way every other module's is.
+    expect(html).toContain('if (typeof initSecondLook === "function") initSecondLook();');
+    expect(html).toContain('<script src="/js/dashboard-second-look.js"></script>');
   });
 
   it("uses inline markup for every question — a browser modal blocks the harness", async () => {
-    const src = await readFile(new URL("../../../public/js/dashboard-narrative.js", import.meta.url), "utf8");
+    const src = await readFile(
+      new URL("../../../public/js/dashboard-second-look.js", import.meta.url),
+      "utf8",
+    );
     const code = src
       .split("\n")
       .filter((l) => !l.trim().startsWith("//"))
@@ -376,6 +419,26 @@ describe("where the control lives", () => {
       "utf8",
     );
     expect(reg).toContain('btn: "secondLookRunBtn"');
+    expect(reg, "and the toolbar button that opens the panel").toContain('btn: "secondLookBtn"');
+  });
+
+  // The toolbar button OPENS the panel. It never starts the sweep, and it now points at the panel's
+  // own section rather than at the findings card.
+  it("is opened by the toolbar button, which starts nothing", async () => {
+    const src = await readFile(
+      new URL("../../../public/js/dashboard-second-look.js", import.meta.url),
+      "utf8",
+    );
+    const reveal = src.slice(
+      src.indexOf("function revealSecondLook()"),
+      src.indexOf("function initSecondLook()"),
+    );
+    expect(reveal).toContain('getElementById("sec-second-look")');
+    expect(reveal).toContain('markSectionRevealed("sec-second-look")');
+    expect(reveal, "the reveal must not run the sweep").not.toContain("runSecondLook(");
+    expect(src).toContain(
+      'document.getElementById("secondLookBtn")?.addEventListener("click", revealSecondLook)',
+    );
   });
 
   it("is measured on case connect by the panel-loader fan-out", async () => {

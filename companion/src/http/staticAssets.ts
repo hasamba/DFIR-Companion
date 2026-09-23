@@ -81,6 +81,7 @@ export const STATIC_ASSETS: Record<string, string> = {
   "/js/dashboard-handoff.js": "application/javascript; charset=utf-8",
   "/js/dashboard-sensitive-access.js": "application/javascript; charset=utf-8",
   "/js/dashboard-jev-review.js": "application/javascript; charset=utf-8",
+  "/js/dashboard-second-look.js": "application/javascript; charset=utf-8",
   "/js/dashboard-backup.js": "application/javascript; charset=utf-8",
   "/js/dashboard-collection-plan.js": "application/javascript; charset=utf-8",
   "/js/dashboard-host-scope.js": "application/javascript; charset=utf-8",

@@ -73,7 +73,7 @@ These rewrite your evidence, your findings or your tasks. Read the limitation on
 
 ### Second look
 
-**Where.** Run second look — you press it.
+**Where.** Second look · Run second look — you press it. The panel sits in the left nav beside Missed Evidence Review.
 
 **Sees.** The raw archive inside the active window, plus the in-scope forensic events. Searches built from your open hypotheses, unanswered questions, top IOCs, and the model's own “I wasn't shown X” requests.
 
