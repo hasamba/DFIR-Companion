@@ -213,10 +213,13 @@ describe("per-model performance telemetry (#74)", () => {
     await pipeline.secondOpinion("c1");
 
     const meta = await synthMetaStore.load("c1");
+    // The mock answers the referee call with its synthesis delta, which holds no verdict for any
+    // disagreement. Since #1587 that is a failed referee pass, not an empty success, so nobody is
+    // credited as the referee.
     expect(meta.secondOpinionPerf).toEqual({
       modelA: "primary/sonnet-5",
       modelB: "second/gpt-5",
-      referee: "primary/sonnet-5",
+      referee: "",
       agreementCount: 1,
       deltaCount: 1,
       agreementRate: 0.5,

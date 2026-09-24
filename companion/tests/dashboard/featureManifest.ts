@@ -1559,6 +1559,7 @@ export const FEATURES: Feature[] = [
       "runSecondOpinion",
       "applySecondOpinionDelta",
       "applyAllSecondOpinion",
+      "rerunSecondOpinionReferee",
     ],
     private: [
       "soCollapsed",

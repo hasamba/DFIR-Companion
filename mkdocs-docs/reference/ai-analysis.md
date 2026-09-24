@@ -238,6 +238,8 @@ Click **2nd Opinion** in the toolbar (requires `DFIR_AI_SECOND_OPINION_MODEL` to
 
 A **referee** model reads each disagreement together with the forensic events the disputed finding cites, and writes a *referee suggests: accept B* or *referee suggests: keep A* line under it. The referee is model A unless you change it under **Settings → AI → Referee for 2nd-opinion verdicts** (`same-as-b` lets model B judge its own findings; any other model ID names a neutral third referee).
 
+If the referee call fails, the panel header says so: *⚠ referee (name) failed: reason*. The disagreements are still listed, without referee lines, and **follow referee** stays hidden. Fix the cause (for example a referee CLI that is not on the server's PATH), then click **↻ re-run referee**. Only the referee runs again. Neither synthesis is repeated, and your accept/reject decisions stay. The re-run judges the same comparison the failed attempt was given, not the timeline as it is now.
+
 For each delta you can **Accept** (adopt the second model's view) or **Keep A** (keep the original). Accepted deltas survive future re-syntheses.
 
 !!! tip

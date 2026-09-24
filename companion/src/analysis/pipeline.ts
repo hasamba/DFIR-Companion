@@ -793,4 +793,7 @@ export class AnalysisPipeline {
   ): Promise<{ record: SecondOpinion; state: InvestigationState }> {
     return secondOpinionRun.applyAllSecondOpinion(this.aiCtx, caseId, accept);
   }
+  rerunSecondOpinionReferee(caseId: string): Promise<{ record: SecondOpinion; failed: boolean }> {
+    return secondOpinionRun.rerunSecondOpinionReferee(this.aiCtx, caseId); // #1587 — referee only
+  }
 }
