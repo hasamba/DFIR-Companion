@@ -38,12 +38,13 @@ For specifically recognised consoles (Security Onion Alerts/Hunt, Kibana, SO-CRA
 
 If Velociraptor is connected, start here. A hunt bundle collects a named set of artifacts from every enrolled endpoint and imports the results for you. No manual export, no file picker.
 
-Open the **Fleet Collection** panel on the dashboard. Four bundles ship built-in:
+Open the **Fleet Collection** panel on the dashboard. Five bundles ship built-in:
 
 | Bundle | What it collects | Where results land |
 |--------|------------------|--------------------|
 | **Best Practice** | The quick-wins detection sweep — DetectRaptor rules, Hayabusa, Chainsaw, condensed account usage, process and network state, persistence, scheduled tasks | Forensic timeline (the AI sees them) |
 | **Best Practice - Big Hogs** *(optional)* | The slow full-disk/file scans split out of Best Practice — the DetectRaptor YARA file and webshell scans, the DetectRaptor MFT keyword scan, and THOR. 7200s default timeout — longer than the other bundles' 6000s | Forensic timeline (the AI sees them) |
+| **Hayabusa Full** *(optional)* | Hayabusa alone, with every rule level and status. Only rules marked noisy stay out — the per-event Sysmon and WMI rules that Best Practice's Hayabusa skips all run here | Forensic timeline (the AI sees them) |
 | **Super-Timeline Triage** *(optional)* | Raw host artifacts — MFT, USN journal, prefetch, amcache, shellbags, SRUM, jump lists, registry, event logs | **Super-timeline only** |
 | **Linux Triage** | Linux host triage — users, persistence, network, packages, detection artifacts | Forensic timeline |
 
