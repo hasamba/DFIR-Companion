@@ -20,7 +20,17 @@ import { isAnalystDecisionGate } from "../../src/routes/presidioApproval.js";
 const read = (path: string) => readFileSync(new URL(`../../src/${path}`, import.meta.url), "utf8");
 
 /** Files whose catch blocks can see a rejection from pipeline.synthesize(). */
-const SYNTHESIS_CALLERS = ["routes/aiSynthesis.ts", "routes/deepPass.ts", "composition/captureAnalysis.ts"];
+const SYNTHESIS_CALLERS = [
+  "routes/aiSynthesis.ts",
+  "routes/secondOpinionRoutes.ts", // /second-opinion, moved out of aiSynthesis.ts (#1587)
+  "routes/deepPass.ts",
+  "composition/captureAnalysis.ts",
+];
+
+// The predicate, or the one helper that asks it on a route's behalf (routes/analystGate.ts). The
+// /synthesize route in aiSynthesis.ts hands its failures to sendSynthesisRouteFailure; before #1587
+// moved /second-opinion out, the literal predicate name in that file came only from that route.
+const ASKS_THE_GATE = /isAnalystDecisionGate|sendSynthesisRouteFailure/;
 
 describe("isAnalystDecisionGate", () => {
   it("recognises both gates", () => {
@@ -47,7 +57,7 @@ describe("every synthesis caller consults the shared gate predicate", () => {
       read(file),
       `${file} catches a synthesize() rejection but never asks whether it is a gate — a held run ` +
         `there reports as "AI: error" and a failed job`,
-    ).toContain("isAnalystDecisionGate");
+    ).toMatch(ASKS_THE_GATE);
   });
 
   // Scoped to HostMergeDecisionRequired on purpose. `err instanceof HostMergeDecisionRequired` in a
