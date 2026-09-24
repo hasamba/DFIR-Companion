@@ -4,6 +4,7 @@ import { buildImportAnonContext } from "../analysis/ai/providerCall.js";
 import { askJev } from "../analysis/ai/jev/jevClient.js";
 import { describeJevKeySource, resolveJevSettings, type JevSettings } from "../analysis/ai/jev/jevConfig.js";
 import { gradeEvents } from "../analysis/ai/jev/jevGrader.js";
+import { JevGradeStore } from "../analysis/ai/jev/jevGradeRecord.js";
 import { getServerLogger } from "../logging/serverLogger.js";
 import type { SuperQuery } from "../analysis/superTimeline.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
@@ -13,8 +14,10 @@ import type { RouteContext } from "./context.js";
  * The Jev second-grader review (#1540) — READ ONLY, analyst-pressed.
  *
  * Grades the archive rows the content tagger left at Info, which never reach the forensic timeline
- * and so are invisible to synthesis. It promotes NOTHING and writes no case state; the only thing
- * it persists is the run's cost, into the existing per-case cost store.
+ * and so are invisible to synthesis. It promotes NOTHING and writes no investigation state. It
+ * persists two things: the run's cost, into the existing per-case cost store, and the grades
+ * themselves, into the review grade record (analysis/ai/jev/jevGradeRecord.ts). The promote route
+ * reads a row's grade from that record, never from the browser (#1578).
  *
  * It reads the raw record, so it carries the same three bounds viewSummary carries: analyst
  * initiated, ephemeral, and capped with the truncation disclosed. See ARCHITECTURE.md, "The
@@ -57,6 +60,7 @@ const REVIEW_RUNNING = "a missed-evidence review of this case is already running
 
 export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
   const { store, options } = ctx;
+  const grades = options.jevGradeStore ?? new JevGradeStore(store);
 
   // Not case-scoped: the settings screen asks this before any case is open, so it can say whether
   // the key field may be left blank instead of promising an inheritance that may not exist (#1547).
@@ -184,6 +188,20 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
         outputTokens: result.usage.outputTokens,
         ...(result.usage.costUSD !== undefined ? { costUSD: result.usage.costUSD } : {}),
       });
+
+      // AFTER the cost, so money already spent is on the books whatever happens next. BEFORE the
+      // answer, and a failure here is the whole answer: grades the analyst can see and tick but the
+      // promote route cannot find would turn every tick into a "not graded" skip, and a table that
+      // cannot be acted on is worse than an error that says why.
+      try {
+        await grades.record(caseId, result.model, result.rows);
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        getServerLogger().error(`[jev] ${caseId}: review grades not saved — ${detail}`, { caseId });
+        return res.status(500).json({
+          error: `The review ran, but its grades could not be saved, so none of them can be promoted: ${detail}`,
+        });
+      }
 
       const promoted = result.rows.filter((r) => r.grade !== "Info").length;
       void logActivity(options.activityLogStore, options.onActivity, caseId, {

@@ -16,6 +16,7 @@ import {
   type JevGraderDeps,
 } from "../../src/analysis/ai/jev/jevGrader.js";
 import type { JevAnswer } from "../../src/analysis/ai/jev/jevClient.js";
+import { JevGradeStore } from "../../src/analysis/ai/jev/jevGradeRecord.js";
 
 // THE FORENSIC / SUPER-TIMELINE RULE, made executable (#384).
 //
@@ -312,17 +313,18 @@ describe("grading promotes nothing; an analyst's selection promotes exactly itse
   });
 
   it("promotes the ticked rows, at the model's grade, and leaves the rest in the archive", async () => {
-    const { app, stateStore, superTimelineStore } = await appHarness();
+    const { app, cases, stateStore, superTimelineStore } = await appHarness();
+    // What a review graded, as the server recorded it (#1578). The route reads the grade from here;
+    // the analyst's tick sends only the row id.
+    await new JevGradeStore(cases).record("c1", "jev-test", [
+      { id: "raw1", grade: "High", confidence: 0.9, score: 3.2 },
+      { id: "raw2", grade: "Critical", confidence: 0.8, score: 3.7 },
+      { id: "raw3", grade: "Critical", confidence: 0.8, score: 3.7 },
+    ]);
 
     const res = await request(app)
       .post("/cases/c1/jev/promote")
-      .send({
-        rows: [
-          { id: "raw1", grade: "High", confidence: 0.9, score: 3.2 },
-          { id: "raw2", grade: "Critical", confidence: 0.8, score: 3.7 },
-        ],
-        model: "jev-test",
-      });
+      .send({ rows: [{ id: "raw1" }, { id: "raw2" }] });
 
     expect(res.status).toBe(200);
     const after = await stateStore.load("c1");

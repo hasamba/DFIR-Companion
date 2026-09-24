@@ -443,8 +443,9 @@
   }
 
   // Write the ticked rows into the forensic timeline. The body comes from selectedRows() — the drawn
-  // rows, ticked — never from `picked`, so the rule this panel promises holds where it matters. The
-  // grade travels with each row because the grade IS the severity being written. ONE AT A TIME.
+  // rows, ticked — never from `picked`, so the rule this panel promises holds where it matters. ONLY
+  // THE IDS TRAVEL: the grade is the severity being written, so the server takes it, with the
+  // confidence and the model, from its own record of the review (#1578). ONE AT A TIME.
   function promoteSelected() {
     if (promoting || !currentCaseId) return;
     const rows = selectedRows();
@@ -459,10 +460,7 @@
     const caseId = currentCaseId;
     const gen = ++promoteGen;
     const ids = rows.map((r) => r.id);
-    const body = {
-      rows: rows.map((r) => ({ id: r.id, grade: r.grade, confidence: r.confidence, score: r.score })),
-    };
-    if (result && result.model) body.model = String(result.model);
+    const body = { rows: ids.map((id) => ({ id })) };
     promoting = true;
     confirmingPromote = false;
     promoteError = "";
