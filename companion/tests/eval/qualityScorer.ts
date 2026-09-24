@@ -102,22 +102,48 @@ const norm = (value: string): string => value.trim().toLowerCase();
 const ratio = (numerator: number, denominator: number): number =>
   denominator === 0 ? 1 : numerator / denominator;
 
-// Term matching folds the spelling variants a model produces for the same words (#1579): hyphens
-// and underscores read as spaces ("Impossible-Travel" = "impossible travel"), runs of whitespace
-// collapse, and a plural "s" reads as the singular ("sign-in log" = "sign-in logs"). Both sides go
-// through the same folding, so a folded word only ever meets another folded word. Words ending in
-// "ss" and words of three letters or fewer keep their "s" ("process", "its").
-const HYPHENS = /[-_\u2010-\u2015]+/g;
-const PLURAL_S = /\b([a-z0-9]{2,}[a-rt-z0-9])s\b/g;
-function termNorm(value: string): string {
-  return norm(value).replace(HYPHENS, " ").replace(/\s+/g, " ").replace(PLURAL_S, "$1");
+// Term matching compares WHOLE WORDS, folding the spelling variants a model produces (#1579):
+// text and term are split into lowercase alphanumeric words, so hyphens, underscores, slashes and
+// dots all separate words ("Impossible-Travel" = "impossible travel", "WS-11" = "ws 11"), and a
+// term must appear as a contiguous run of words — "user-b" never matches inside "user behavior",
+// "log" never inside "login", "ws-11" never inside "ws-110". A trailing plural "s" folds to the
+// singular ("logs" = "log") on words longer than three letters that do not end in "ss" ("process",
+// "its" keep theirs). Known merge: a word that differs from another only by a final "s" ("news"
+// and "new") is treated as the same word; no golden term depends on such a pair.
+//
+// A term may list alternatives separated by "|" ("collect|pull|correlate"): any one satisfies it.
+function singular(word: string): string {
+  return word.length > 3 && word.endsWith("s") && !word.endsWith("ss") ? word.slice(0, -1) : word;
+}
+
+function words(value: string): string[] {
+  return norm(value).split(/[^a-z0-9]+/).filter(Boolean).map(singular);
+}
+
+// Start index of every contiguous occurrence of `needle` in `haystack`.
+function occurrences(haystack: readonly string[], needle: readonly string[]): number[] {
+  const found: number[] = [];
+  for (let start = 0; start + needle.length <= haystack.length; start++) {
+    if (needle.every((word, offset) => haystack[start + offset] === word)) found.push(start);
+  }
+  return found;
+}
+
+function alternatives(term: string): string[] {
+  return term.split("|").map((alternative) => alternative.trim()).filter(Boolean);
 }
 
 // Single source of truth for "does this text carry this term" — every other check (the whole-
 // claim gate, the missing-terms split, the per-candidate term match) derives from this exact
 // predicate, so two independently-reimplemented matchers can never quietly diverge (#1226 review).
+// A term with no letters or digits (never in the corpus) falls back to a plain substring match.
 function hasTerm(text: string, term: string): boolean {
-  return termNorm(text).includes(termNorm(term));
+  const textWords = words(text);
+  return alternatives(term).some((alternative) => {
+    const termWords = words(alternative);
+    if (termWords.length === 0) return norm(text).includes(norm(alternative));
+    return occurrences(textWords, termWords).length > 0;
+  });
 }
 
 function containsTerms(text: string, terms: readonly string[]): boolean {
@@ -170,14 +196,25 @@ const REJECTION_SIGNALS = [
 ];
 
 // "A rather than B" negates B, never A (#1579: "a lead rather than a confirmed exfiltration" was
-// flagged as asserting exfiltration). So the contrast excuses a mention only when it comes BEFORE
-// the term in the same clause — "confirmed exfiltration rather than a backup" still asserts it.
-const CONTRAST_SIGNAL = "rather than";
+// flagged as asserting exfiltration). The contrast excuses ONE mention: the one that directly
+// follows "rather than" (optionally after "a", "an" or "the"). Every other mention in the clause is
+// judged on its own, so "a lead rather than confirmed exfiltration, but it is now confirmed
+// exfiltration" still asserts it, and so does "confirmed exfiltration rather than a backup".
+const ARTICLES = new Set(["a", "an", "the"]);
 
-function contrastedAway(clause: string, term: string): boolean {
-  const folded = termNorm(clause);
-  const contrast = folded.indexOf(CONTRAST_SIGNAL);
-  return contrast >= 0 && contrast < folded.indexOf(termNorm(term));
+function governedByContrast(clauseWords: readonly string[], start: number): boolean {
+  const before = ARTICLES.has(clauseWords[start - 1] ?? "") ? start - 1 : start;
+  return clauseWords[before - 2] === "rather" && clauseWords[before - 1] === "than";
+}
+
+// True when the clause mentions the term at least once OUTSIDE a "rather than" contrast.
+function mentionsUncontrasted(clause: string, term: string): boolean {
+  const clauseWords = words(clause);
+  return alternatives(term).some((alternative) => {
+    const termWords = words(alternative);
+    if (termWords.length === 0) return norm(clause).includes(norm(alternative));
+    return occurrences(clauseWords, termWords).some((start) => !governedByContrast(clauseWords, start));
+  });
 }
 
 // Split on sentence-ish boundaries. Known pathological cases (abbreviations like "e.g.",
@@ -222,8 +259,7 @@ function assertsAsFact(text: string, terms: readonly string[]): boolean {
     return REJECTION_SIGNALS.some((signal) => normalized.includes(signal));
   };
   return clauses.some((clause, index) => {
-    if (!hasTerm(clause, term)) return false;
-    if (contrastedAway(clause, term)) return false;
+    if (!mentionsUncontrasted(clause, term)) return false;
     const nextClause = clauses[index + 1];
     return !hasSignal(clause) && !(nextClause !== undefined && hasSignal(nextClause));
   });

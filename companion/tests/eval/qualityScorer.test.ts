@@ -730,3 +730,52 @@ describe("forbiddenConclusions treats 'no other evidence' as a rejection (#1579)
     expect(scoreCaseQuality(golden, output).forbiddenConclusions).toEqual([]);
   });
 });
+
+// Codex review of #1579: each counterexample below must fail the check it tries to slip past.
+describe("scorer hardening against the #1579 review counterexamples", () => {
+  const exfilGolden: CaseGolden = {
+    ...GOLDEN,
+    forbiddenConclusions: [{ id: "causal-overreach", terms: ["confirmed exfiltration"] }],
+  };
+  const claimSaying = (description: string): QualityOutput => ({
+    ...OUTPUT,
+    claims: [{ id: "f1", title: "Transfer", description, evidenceEventIds: [] }],
+  });
+  const stepSaying = (action: string): QualityOutput => ({
+    ...OUTPUT,
+    nextSteps: [{ action, rationale: "", pointer: "" }],
+  });
+
+  it("flags a later assertion in the same clause as an earlier contrasted mention", () => {
+    const output = claimSaying(
+      "This is a lead rather than confirmed exfiltration, but the transfer is now confirmed exfiltration",
+    );
+    expect(scoreCaseQuality(exfilGolden, output).forbiddenConclusions).toEqual(["causal-overreach"]);
+  });
+
+  it("does not excuse a mention that 'rather than' does not directly govern", () => {
+    const output = claimSaying("It is rather than we thought: this is confirmed exfiltration");
+    expect(scoreCaseQuality(exfilGolden, output).forbiddenConclusions).toEqual(["causal-overreach"]);
+  });
+
+  it("matches whole words: 'user-b' is not inside 'user behavior', 'log' is not inside 'login'", () => {
+    const golden: CaseGolden = { ...GOLDEN, nextSteps: [{ id: "review-cloud-audit", requiredTerms: ["sign-in", "log", "user-b"] }] };
+    expect(scoreCaseQuality(golden, stepSaying("Review user behavior at login/sign-in")).nextSteps.missed).toEqual([
+      "review-cloud-audit",
+    ]);
+  });
+
+  it("does not match a host id inside a longer id", () => {
+    const golden: CaseGolden = { ...GOLDEN, nextSteps: [{ id: "ws", requiredTerms: ["WS-11"] }] };
+    expect(scoreCaseQuality(golden, stepSaying("Collect logs from WS-110")).nextSteps.missed).toEqual(["ws"]);
+  });
+
+  it("accepts any one alternative in an 'a|b' term, and none of them missing fails", () => {
+    const golden: CaseGolden = {
+      ...GOLDEN,
+      nextSteps: [{ id: "collect", requiredTerms: ["WS-11", "collect|pull|correlate"] }],
+    };
+    expect(scoreCaseQuality(golden, stepSaying("Pull EDR data from WS-11")).nextSteps.missed).toEqual([]);
+    expect(scoreCaseQuality(golden, stepSaying("Reboot WS-11")).nextSteps.missed).toEqual(["collect"]);
+  });
+});

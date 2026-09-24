@@ -52,6 +52,14 @@ describe("versioned production golden corpus (#378)", () => {
   // phrase match scored them as misses. The golden terms test the concept, so these phrasings — copied
   // from that run — must earn credit, while a step that drops the concept must still miss.
   describe("credits a real model's equivalent phrasing (#1579)", () => {
+    it("network-egress-gap: an action that gathers no evidence earns no credit (review counterexample)", async () => {
+      const golden = await goldenFor("network-egress-gap");
+      const action = "Confirm WS-11 is enrolled in EDR before reconnecting it to the network";
+      expect(scoreCaseQuality(golden, outputWith({ nextSteps: [{ action, rationale: "", pointer: "" }] })).nextSteps.missed).toContain(
+        "collect-edr-network",
+      );
+    });
+
     const step = (action: string) => ({ action, rationale: "", pointer: "" });
     const outputWith = (parts: Partial<QualityOutput>): QualityOutput => ({
       evidenceEventIds: [],
@@ -128,6 +136,14 @@ describe("versioned production golden corpus (#378)", () => {
       });
       expect(scoreCaseQuality(golden, output).claims.missed).not.toContain("linux-root-compromise");
       // The evidence still has to be the right events: the same words citing only the brute-force row miss.
+      // Root access plus a sudoers change is not enough on its own: the claim must call it an attack.
+      const noCompromise = outputWith({
+        claims: [
+          claim("f2", "Root SSH login", "An SSH login for root was accepted.", ["lin-e2"]),
+          claim("f3", "Sudoers entry added", "", ["lin-e3"]),
+        ],
+      });
+      expect(scoreCaseQuality(golden, noCompromise).claims.missed).toContain("linux-root-compromise");
       const wrongEvidence = outputWith({
         claims: [claim("f1", "Root SSH brute-force then sudoers change", "", ["lin-e1"])],
       });
