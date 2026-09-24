@@ -16,8 +16,10 @@ import { AI_LIMIT_PATHS, AI_LIMIT_PATTERNS, IMPORT_LIMIT_PATHS } from "../../src
  *
  * Scanning the ROUTES is textual on purpose. Resolving the real Express layer stack would need a
  * booted app and would tell us which paths are mounted, not which ones spend money — and "spends
- * money" is the property this guards. The AI gate is a route's own `hasSynthesisProvider()` /
- * "AI provider not configured" precondition, which is uniform across the route files.
+ * money" is the property this guards. The AI gate is usually a route's own `hasSynthesisProvider()` /
+ * "AI provider not configured" precondition — but not always. The Jev missed-evidence review gates on
+ * its own settings, so the scan missed it and it shipped unmetered (#1577). The scan therefore also
+ * recognises the Jev grading calls themselves.
  *
  * The limiter's own coverage is IMPORTED, not parsed. The first version of this test read the two
  * declarations out of the source with a regex and passed — until Prettier collapsed the pattern
@@ -44,7 +46,9 @@ function aiGatedRoutes(): string[] {
       const rest = src.slice(m.index + m[0].length);
       const next = rest.indexOf("\n  app.");
       const handler = next > 0 ? rest.slice(0, next) : rest;
-      if (/hasSynthesisProvider|AI provider not configured|synthesisProvider/.test(handler)) {
+      if (
+        /hasSynthesisProvider|AI provider not configured|synthesisProvider|askJev|gradeEvents/.test(handler)
+      ) {
         found.add(m[1].slice("/cases/:id".length));
       }
     }
@@ -60,6 +64,8 @@ describe("AI rate limiter ↔ the routes that spend AI budget", () => {
     const routes = aiGatedRoutes();
     expect(routes.length).toBeGreaterThan(15);
     expect(routes).toContain("/synthesize");
+    // Gated on its own settings rather than the synthesis provider (#1577).
+    expect(routes).toContain("/jev/review");
   });
 
   it("imports a limiter coverage list that is actually populated", () => {
