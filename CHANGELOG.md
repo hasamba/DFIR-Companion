@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **The missed-evidence review is rate-limited** — it now counts against the per-case AI limit like every other paid AI button, and the check that catches unmetered AI routes can see it (closes #1577)
+- **The second look cannot run twice at once** — a second press while one is running is refused instead of paying for a second forced re-synthesis (closes #1576)
 - **A promoted row's grade comes from the review, not the browser** — the server keeps what each missed-evidence review graded, and promote reads the grade, confidence and model from that record, so a tampered request cannot write a severity or a model name no review gave; a row no review in the case graded is skipped with that reason (closes #1578)
 - **No write can create a case by accident** — every write to a case that was never created is refused with a 404 before it reaches storage, instead of leaving an unlisted case directory behind (closes #1570)
 - **Missed evidence review refuses an unknown case and a second run** — a typo'd case id gets a 404 instead of leaving a case directory on disk, and a second press while a review of that case is running gets a 409 instead of paying for the same review twice (closes #1549, closes #1551)
