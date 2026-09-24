@@ -13,6 +13,8 @@ import {
 } from "../synthGroup.js";
 import { selectSynthesisEventsAnnotated, type SelectionClass } from "../synthSelect.js";
 import { promptDescription } from "./promptDescription.js";
+import { byEventTime } from "../forensicSort.js";
+import { pinCap, promotedTag, rankPins } from "./promotedEvidence.js";
 
 /**
  * Which events reach the synthesis prompt, and how each one renders (#453, split from
@@ -56,7 +58,13 @@ export interface TimelineSelection {
   fitTo(count: number): void;
   /** Whether any shown row is supporting context, which is what earns the legend its tokens. */
   hasContextRows(): boolean;
+  /** New promoted rows in the prompt right now (#1586), how many are not, and how many were pinned. */
+  shownNew(): ForensicEvent[];
+  newLeftOut(): number;
+  pinnedCount(): number;
 }
+
+const NO_IDS: ReadonlySet<string> = new Set();
 
 /**
  * Collapse detection bursts, select the events that fit the cap, and build their renderer.
@@ -68,8 +76,18 @@ export function createTimelineSelection(
   state: InvestigationState,
   scopedEvents: ForensicEvent[],
   aliasIndex?: HostAliasIndex,
+  newPromotedIds: ReadonlySet<string> = NO_IDS,
 ): TimelineSelection {
-  const { grouping, omittedInfo } = collapseBursts(scopedEvents, aliasIndex);
+  // New promoted rows (#1586) skip the three prompt-only filters that would hide them: the Info
+  // filter, burst collapsing and the stratified fill. They are the rows the model most needs to see,
+  // and the reason the missed-evidence review exists. Their seats still count against the cap, and
+  // at most pinCap of them are pinned — the rest stay in the ordinary pool and compete for the seats
+  // left, so a big second-look promotion is not cut to the pin cap when the prompt has room.
+  const maxEvents = maxPromptEvents();
+  const pinned = rankPins(scopedEvents.filter((e) => newPromotedIds.has(e.id))).slice(0, pinCap(maxEvents));
+  const pinnedIds = new Set(pinned.map((e) => e.id));
+  const rest = pinned.length ? scopedEvents.filter((e) => !pinnedIds.has(e.id)) : scopedEvents;
+  const { grouping, omittedInfo } = collapseBursts(rest, aliasIndex);
   const collapsedEvents = grouping.events;
 
   // Per-case prevalence/baseline (investigation-guidance #15): how common each activity PATTERN is
@@ -85,10 +103,16 @@ export function createTimelineSelection(
   // (investigation-guidance #4) exposes which CLASS claimed each event. The deterministic
   // high-severity backfill still creates findings for any Critical/High event NOT shown here, so
   // capping the prompt never loses a severe detection.
-  const maxEvents = maxPromptEvents();
-  let selection = selectSynthesisEventsAnnotated(collapsedEvents, maxEvents, rarityOf);
-  let promptEvents = selection.events;
+  const choose = (count: number) => {
+    const pins = pinned.slice(0, count);
+    const chosen = selectOrNone(collapsedEvents, count - pins.length, rarityOf);
+    return { chosen, pins, events: [...chosen.events, ...pins].sort(byEventTime) };
+  };
+  let current = choose(maxEvents);
+  let selection = current.chosen;
+  let promptEvents = current.events;
   const isContext = (id: string): boolean => CONTEXT_CLASSES.has(selection.classOf.get(id) as SelectionClass);
+  const isNew = (id: string): boolean => newPromotedIds.has(id);
 
   return {
     grouping,
@@ -100,14 +124,35 @@ export function createTimelineSelection(
     get promptEvents() {
       return promptEvents;
     },
-    renderEvent: (event) => renderPromptEvent(event, { grouping, prevalenceIndex, isContext, aliasIndex }),
+    renderEvent: (event) =>
+      renderPromptEvent(event, { grouping, prevalenceIndex, isContext, isNew, aliasIndex }),
     fitTo(count) {
       if (count >= promptEvents.length) return;
-      selection = selectSynthesisEventsAnnotated(collapsedEvents, count, rarityOf);
-      promptEvents = selection.events;
+      current = choose(count);
+      selection = current.chosen;
+      promptEvents = current.events;
     },
     hasContextRows: () => promptEvents.some((e) => isContext(e.id)),
+    // Every new promoted row the prompt shows on its own line — pinned or seated by the stratifier.
+    shownNew: () => promptEvents.filter((e) => newPromotedIds.has(e.id)),
+    newLeftOut: () => newPromotedIds.size - promptEvents.filter((e) => newPromotedIds.has(e.id)).length,
+    pinnedCount: () => current.pins.length,
   };
+}
+
+/**
+ * The stratified selection for `max` seats. `selectSynthesisEventsAnnotated` reads max <= 0 as "no
+ * cap" and returns everything — right for its other callers, wrong here, where 0 seats left over
+ * after the pinned rows means none.
+ */
+function selectOrNone(
+  events: ForensicEvent[],
+  max: number,
+  rarityOf: (e: ForensicEvent) => number,
+): ReturnType<typeof selectSynthesisEventsAnnotated> {
+  if (max > 0) return selectSynthesisEventsAnnotated(events, max, rarityOf);
+  const empty = selectSynthesisEventsAnnotated([], 1, rarityOf);
+  return { ...empty, omitted: events.length };
 }
 
 /**
@@ -140,6 +185,7 @@ interface RenderContext {
   grouping: CollapsedPrompt;
   prevalenceIndex: ReturnType<typeof buildPrevalenceIndex>;
   isContext: (id: string) => boolean;
+  isNew: (id: string) => boolean;
   aliasIndex?: HostAliasIndex;
 }
 
@@ -162,5 +208,5 @@ function renderPromptEvent(e: ForensicEvent, ctx: RenderContext): string {
   // anchor), not itself a primary verdict-bearing event — so the model weights it as background.
   const prefix = ctx.isContext(e.id) ? "~" : "";
   const description = promptDescription(e.description);
-  return `${prefix}[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${description}${renderStructuredTags(e, ctx.aliasIndex)}${groupTag}${prevTag ? ` ⟨${prevTag}⟩` : ""}`;
+  return `${prefix}[${e.id}] ${e.timestamp || "(undated)"} [${e.severity}] ${description}${renderStructuredTags(e, ctx.aliasIndex)}${groupTag}${prevTag ? ` ⟨${prevTag}⟩` : ""}${promotedTag(e, ctx.isNew(e.id))}`;
 }

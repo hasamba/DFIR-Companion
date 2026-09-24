@@ -38,6 +38,7 @@ import { getSynthesisPrompt } from "./prompts/index.js";
 import type { AiCallContext } from "./aiContext.js";
 import { type HuntContext } from "./hunts.js";
 import { buildSynthesisPrompt, type SynthesisPromptContext } from "./synthesisPrompt.js";
+import { newPromotedIds, nextPromotedSeen, promotedSignature } from "./promotedEvidence.js";
 import { writeFindingTasks } from "./findingTaskPass.js";
 import type { FindingTaskStore } from "../findingTaskStore.js";
 import {
@@ -164,6 +165,9 @@ interface PreparedRun {
   blocks: SynthesisInputBlocks;
   playbookTasks: PlaybookTask[];
   synthHash: string;
+  /** The seen-set the last persisted run left, and the promoted rows new against it (#1586). */
+  promotedSeen: string[];
+  newPromotedIds: Set<string>;
 }
 
 /**
@@ -192,7 +196,10 @@ async function prepareSynthesisRun(
   // The pure inputs — notebook, hypotheses, prior work, incident type — all loaded BEFORE the hash
   // so changing any of them triggers a fresh synthesis rather than a skip.
   const { blocks, playbookTasks } = await loadSynthesisInputs(ctx, caseId);
+  const promotedSeen = await loadPromotedSeen(ctx, caseId);
   return {
+    promotedSeen,
+    newPromotedIds: newPromotedIds(scopedEvents, promotedSeen),
     state,
     sourceTrust,
     windowSeconds,
@@ -209,8 +216,27 @@ async function prepareSynthesisRun(
       markers,
       blocks,
       observationsBlock,
+      promoted: promotedSignature(scopedEvents),
     }),
   };
+}
+
+/**
+ * Fail-soft: synth-meta is an optional side file. A missing or unreadable one means no promoted row
+ * has been seen, so every promoted row counts as new (capped) — the safe direction for evidence.
+ */
+async function loadPromotedSeen(ctx: SynthesisContext, caseId: string): Promise<string[]> {
+  try {
+    return (await ctx.opts.synthMetaStore?.load(caseId))?.promotedShown ?? [];
+  } catch (err) {
+    ctx.log.warn(
+      `[synthesis] synth-meta unreadable, treating promoted rows as new: ${(err as Error).message}`,
+      {
+        caseId,
+      },
+    );
+    return [];
+  }
 }
 
 /**
@@ -285,7 +311,19 @@ async function recordSynthesisOutcome(
     durationMs: Date.now() - o.synthStart,
     eventCount: o.next.forensicTimeline.length,
     iocCount: o.next.iocs.length,
-    selectionCounts: { ...o.prompt.selection.counts }, // #4: the evidence mix the model saw
+    // #4: the evidence mix the model saw. Pinned new promoted rows (#1586) are not picked by the
+    // stratifier, so they are counted beside its seven classes rather than hidden from the mix.
+    selectionCounts: {
+      ...o.prompt.selection.counts,
+      ...(o.prompt.promotedPinned ? { promoted: o.prompt.promotedPinned } : {}),
+    },
+    // #1586: only rows shown on their OWN line count as seen — a member folded into a burst row was
+    // never presented to the model as the new evidence it is.
+    promotedShown: nextPromotedSeen(
+      o.run.promotedSeen,
+      o.next.forensicTimeline,
+      new Set(o.prompt.promptEvents.map((e) => e.id)),
+    ),
     coverage: o.prompt.coverage, // #62: included/omitted coverage audit
     synthModel: ctx.opts.synthesisModelLabel ?? `${o.synthProvider.name}/${o.synthProvider.model}`, // #74
     findingsCount: o.next.findings.length, // #74
@@ -529,6 +567,7 @@ export async function synthesize(
     scopedEvents,
     observationsBlock,
     aliasIndex,
+    newPromotedIds: run.newPromotedIds,
     ...run.blocks,
   });
 

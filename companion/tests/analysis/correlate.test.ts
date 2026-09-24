@@ -814,3 +814,41 @@ describe("correlateEvents — merging does not invent occurrences", () => {
     expect(out[0].count).toBeUndefined();
   });
 });
+
+// #1586: a promoted row that correlates into a non-promoted primary must still read as promoted,
+// or synthesis never learns the evidence is new.
+describe("correlateEvents — promotedAt across a merge (#1586)", () => {
+  const HASH = "b".repeat(64);
+  const member = (id: string, over: Partial<ForensicEvent> = {}): ForensicEvent =>
+    ev({ id, sha256: HASH, description: `file ${id} sha256 ${HASH}`, ...over });
+
+  it("keeps a promoted Low member's promotedAt when a non-promoted High row wins primary", () => {
+    const out = correlateEvents([
+      member("hi", { severity: "High", sources: ["THOR"] }),
+      member("lo", { severity: "Low", sources: ["CSV import"], promotedAt: "2026-09-20T10:00:00.000Z" }),
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0].severity).toBe("High");
+    expect(out[0].promotedAt).toBe("2026-09-20T10:00:00.000Z");
+  });
+
+  it("takes the later promotedAt when two members were promoted", () => {
+    const out = correlateEvents([
+      // The later stamp sits on a Low member, so it can only arrive through the merge, not the spread.
+      member("a", { sources: ["THOR"], promotedAt: "2026-09-20T23:00:00.000Z" }),
+      member("b", { severity: "Low", sources: ["CSV import"], promotedAt: "2026-09-21T09:00:00.000Z" }),
+      member("c", { sources: ["Chainsaw"], promotedAt: "not a date" }),
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0].promotedAt).toBe("2026-09-21T09:00:00.000Z");
+  });
+
+  it("adds no promotedAt key when no member was promoted", () => {
+    const out = correlateEvents([
+      member("a", { sources: ["THOR"] }),
+      member("b", { sources: ["CSV import"] }),
+    ]);
+    expect(out).toHaveLength(1);
+    expect("promotedAt" in out[0]).toBe(false);
+  });
+});

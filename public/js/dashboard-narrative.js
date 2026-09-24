@@ -156,11 +156,14 @@
       }
     }
     // Evidence mix (#4): the per-class counts of events the model actually saw this run, so the analyst
-    // understands the basis — e.g. "24 anchors · 60 context · 12 corroborated · 8 rare".
+    // understands the basis — e.g. "3 promoted · 24 anchors · 60 context · 12 corroborated · 8 rare".
+    // Promoted leads (#1586): rows the analyst just promoted are shown to the model once as new
+    // evidence, and this is where the analyst sees that they reached it.
     let evidenceMix = "";
     const sc = m.selectionCounts;
     if (sc && typeof sc === "object") {
       const LABELS = {
+        promoted: "promoted",
         anchor: "anchors",
         earliest: "earliest",
         anchor_context: "context",

@@ -201,6 +201,10 @@ export const synthMetaSchema = z.object({
   findingsCount: z.number().optional().catch(undefined),
   highSeverityBackfillCount: z.number().optional().catch(undefined),
   parseRetries: z.number().optional().catch(undefined),
+  // #1586: ids of the promoted rows the last persisted synthesis actually SHOWED the model. A
+  // promoted row not in this list is new evidence to the next run. A seen-set rather than a time,
+  // because lastSynthesizedAt is stamped when a run ends and a row promoted mid-run was never seen.
+  promotedShown: z.array(z.string()).optional().catch(undefined),
   // Second-opinion agreement (issue #74): set only by secondOpinion() runs — see secondOpinionPerfSchema.
   secondOpinionPerf: secondOpinionPerfSchema.nullable().optional().catch(undefined),
 });
@@ -220,6 +224,7 @@ export interface SynthPerfMetrics {
   highSeverityBackfillCount?: number; // #74: of those, how many the deterministic safety net added
   parseRetries?: number; // #74: retries the synthesis JSON parse needed
   modelEvidenceRequests?: StoredEvidenceRequest[]; // #1554: what the model said it was not shown
+  promotedShown?: string[]; // #1586: promoted rows this run showed the model — no longer "new"
 }
 
 export type ModelPerfSnapshot = Pick<

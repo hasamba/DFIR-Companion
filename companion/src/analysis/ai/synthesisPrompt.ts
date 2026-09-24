@@ -16,6 +16,7 @@ import {
   type SynthesisPromptContext,
 } from "./synthesisPromptBlocks.js";
 import { createTimelineSelection, type TimelineSelection } from "./synthesisPromptEvents.js";
+import { isPromoted, promotedLegend, renderNewPromotedBlock } from "./promotedEvidence.js";
 
 /**
  * Synthesis prompt construction and the coverage audit that describes it (#418, split further #453).
@@ -58,6 +59,8 @@ export interface SynthesisPromptInput {
   /** Canonical host identity for this run (#host-near-duplicate-merge-gate) — resolved once by the
    *  caller and threaded through every render/ranking site so a merged host shows as one machine. */
   aliasIndex?: HostAliasIndex;
+  /** Promoted rows no persisted synthesis has shown yet (#1586). NOT part of the skip-hash. */
+  newPromotedIds?: ReadonlySet<string>;
 }
 
 /** The prompt, plus what the run record and the second-look sweep need to describe it. */
@@ -72,6 +75,8 @@ export interface SynthesisPromptResult {
   coverage: SynthesisCoverage;
   maxEvents: number;
   omittedInfo: number;
+  /** How many new promoted rows this prompt pinned (#1586), for the run's evidence mix. */
+  promotedPinned: number;
 }
 
 /** Slack covering the JSON scaffolding around the blocks the overhead estimate counts. */
@@ -97,21 +102,42 @@ function trimTimelineToBudget(
   blocks: SynthesisBlocks,
   lastSummary: string,
 ): number {
+  // The promoted block is measured at its largest (every pin shown) — trimming only shrinks it.
   const overhead =
     estimateTokens(getSynthesisPrompt()) +
     estimateTokens(overheadSourceText(blocks, lastSummary)) +
+    estimateTokens(renderNewPromotedBlock(timeline.shownNew(), timeline.newLeftOut())) +
     OVERHEAD_SLACK_TOKENS;
   const budget = Math.max(0, inputTokenBudget() - overhead);
-  timeline.fitTo(fitItemsToBudget(timeline.promptEvents, (e) => timeline.renderEvent(e), budget));
+  // Re-measure after each re-selection: fitTo picks a DIFFERENT set of that size (pinned promoted
+  // rows first, #1586), so one measurement of the old set does not prove the new one fits.
+  for (let pass = 0; pass < MAX_FIT_PASSES; pass++) {
+    const fits = fitItemsToBudget(timeline.promptEvents, (e) => timeline.renderEvent(e), budget);
+    if (fits >= timeline.promptEvents.length) break;
+    timeline.fitTo(fits);
+  }
   return overhead;
 }
+
+const MAX_FIT_PASSES = 4;
 
 export async function buildSynthesisPrompt(
   ctx: SynthesisPromptContext,
   input: SynthesisPromptInput,
 ): Promise<SynthesisPromptResult> {
-  const { caseId, state, scope, markers, inWindowEvents, scopedEvents, aliasIndex, ...preloaded } = input;
-  const timeline = createTimelineSelection(state, scopedEvents, aliasIndex);
+  const {
+    caseId,
+    state,
+    scope,
+    markers,
+    inWindowEvents,
+    scopedEvents,
+    aliasIndex,
+    newPromotedIds: _n,
+    ...preloaded
+  } = input;
+  const { newPromotedIds } = input;
+  const timeline = createTimelineSelection(state, scopedEvents, aliasIndex, newPromotedIds);
   const blocks = await buildSynthesisBlocks(ctx, {
     caseId,
     state,
@@ -138,8 +164,11 @@ export async function buildSynthesisPrompt(
     timelineText,
     scopedCount: scopedEvents.length,
     truncatedNote: audit.truncatedNote,
-    contextLegend: timeline.hasContextRows() ? CONTEXT_LEGEND : "",
+    contextLegend:
+      (timeline.hasContextRows() ? CONTEXT_LEGEND : "") +
+      (timeline.promptEvents.some(isPromoted) ? promotedLegend(timeline.shownNew().length > 0) : ""),
     lastSummary: state.lastSummary || "",
+    promotedBlock: renderNewPromotedBlock(timeline.shownNew(), timeline.newLeftOut()),
   });
 
   return {
@@ -151,6 +180,7 @@ export async function buildSynthesisPrompt(
     coverage: audit.coverage,
     maxEvents: timeline.maxEvents,
     omittedInfo: timeline.omittedInfo,
+    promotedPinned: timeline.pinnedCount(),
   };
 }
 
