@@ -183,6 +183,12 @@ test("US-238: a toolbar that cannot fit its labels collapses to reachable icons"
     expect(icon.image, `${id} must draw its ::before icon when collapsed`).not.toBe("none");
     expect(icon.width, `${id}'s ::before icon must take up space`).toBeGreaterThan(0);
   }
+  // Demo case shows only while the instance has no cases, and other workers may have made one by
+  // now — so read its declared icon without requiring it to be on screen.
+  const demoIcon = await page
+    .locator("#seedDemoBtn")
+    .evaluate((el) => getComputedStyle(el, "::before").backgroundImage);
+  expect(demoIcon, "#seedDemoBtn must carry a ::before icon for the collapsed toolbar").not.toBe("none");
 
   // And the labels come back when the room does — the fit measures current geometry on the grow,
   // so no trigger beyond the header ResizeObserver is needed.
