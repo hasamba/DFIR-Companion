@@ -13,6 +13,7 @@ import { CLIENT_RE, matchClient, normalizeClientRow, type VeloClientRecord } fro
 export { matchClient, normalizeClientRow, type VeloClientRecord } from "./clientInventory.js";
 import { ChildOutputCollector } from "../childOutput.js";
 import { containedWhereOrThrow } from "../../analysis/vqlInput.js";
+import { buildHuntSpec } from "./huntSpec.js";
 import { noLaunchIdMessage, translateVelociraptorError, vqlLogErrors } from "./vqlDiagnostics.js";
 import { parseArtifactTools, parseToolInventory, type VeloArtifactTool } from "./artifactTools.js";
 
@@ -463,9 +464,7 @@ function slugify(s: string): string {
 // Sanitize free text (e.g. an event label with a `\\.\C:\…` path) for embedding in BOTH a YAML
 // double-quoted scalar and a VQL single-quoted string: collapse to one ASCII line and strip
 // backslashes and quotes (YAML treats `\` as an escape and a stray quote terminates the literal).
-// `max` defaults to a description-sized cap; parameter VALUES pass a larger one — a targeting glob
-// runs to several hundred characters, and truncating one mid-branch leaves an unbalanced `{` that
-// matches nothing, i.e. a scan that silently finds zero files instead of failing loudly.
+// For descriptions only — artifact parameter VALUES must arrive byte for byte; see vqlParamValue.
 function oneLine(s: string, max = 200): string {
   return String(s || "")
     .replace(/[\r\n]+/g, " ")
@@ -500,26 +499,6 @@ function normalizeOs(os?: string): "windows" | "linux" | "darwin" | undefined {
 // unless it is one contained boolean expression — see analysis/vqlInput.ts (#843, #853).
 function sanitizeWhere(where?: string): string {
   return where ? containedWhereOrThrow(String(where)) : "";
-}
-
-const PARAM_RE = /^[A-Za-z_][A-Za-z0-9_]*$/; // valid Velociraptor parameter name
-
-// Build the hunt's `spec` clause from per-artifact parameter overrides so a heavy artifact runs with
-// fewer/narrower outputs at the source (e.g. `Windows.Hayabusa.Rules`=dict(RuleLevel='Critical, High, and Medium')). Only
-// artifacts actually in this hunt are included; param names are validated and values are sanitized into
-// single-quoted strings (Velociraptor coerces). Returns undefined when there's nothing to set.
-function buildHuntSpec(names: string[], params?: Record<string, Record<string, string>>): string | undefined {
-  if (!params || typeof params !== "object") return undefined;
-  const inHunt = new Set(names);
-  const entries: string[] = [];
-  for (const [artifact, kv] of Object.entries(params)) {
-    if (!ARTIFACT_RE.test(artifact) || !inHunt.has(artifact) || !kv || typeof kv !== "object") continue;
-    const pairs = Object.entries(kv)
-      .filter(([k]) => PARAM_RE.test(k))
-      .map(([k, v]) => `${k}='${oneLine(String(v), 2000)}'`);
-    if (pairs.length) entries.push(`\`${artifact}\`=dict(${pairs.join(", ")})`);
-  }
-  return entries.length ? `spec=dict(${entries.join(", ")})` : undefined;
 }
 
 // A CLIENT artifact (YAML) with one source per pivot statement — collected by the hunt on every endpoint.
