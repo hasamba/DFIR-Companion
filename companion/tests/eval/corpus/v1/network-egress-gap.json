@@ -86,7 +86,12 @@
         "allowedStatuses": ["unknown", "inferred", "speculated"]
       }
     ],
-    "nextSteps": [{ "id": "collect-edr-network", "requiredTerms": ["EDR", "network", "WS-11", "collect|pull|correlate|telemetry|mapping"] }],
+    "nextSteps": [
+      {
+        "id": "collect-edr-network",
+        "requiredTerms": ["EDR", "network", "WS-11", "collect|pull|correlate|telemetry|mapping"]
+      }
+    ],
     "expectAbstention": false
   }
 }

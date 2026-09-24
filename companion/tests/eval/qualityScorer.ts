@@ -117,7 +117,10 @@ function singular(word: string): string {
 }
 
 function words(value: string): string[] {
-  return norm(value).split(/[^a-z0-9]+/).filter(Boolean).map(singular);
+  return norm(value)
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+    .map(singular);
 }
 
 // Start index of every contiguous occurrence of `needle` in `haystack`.
@@ -130,7 +133,10 @@ function occurrences(haystack: readonly string[], needle: readonly string[]): nu
 }
 
 function alternatives(term: string): string[] {
-  return term.split("|").map((alternative) => alternative.trim()).filter(Boolean);
+  return term
+    .split("|")
+    .map((alternative) => alternative.trim())
+    .filter(Boolean);
 }
 
 // Single source of truth for "does this text carry this term" — every other check (the whole-

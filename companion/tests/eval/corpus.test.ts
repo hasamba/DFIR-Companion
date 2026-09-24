@@ -55,9 +55,10 @@ describe("versioned production golden corpus (#378)", () => {
     it("network-egress-gap: an action that gathers no evidence earns no credit (review counterexample)", async () => {
       const golden = await goldenFor("network-egress-gap");
       const action = "Confirm WS-11 is enrolled in EDR before reconnecting it to the network";
-      expect(scoreCaseQuality(golden, outputWith({ nextSteps: [{ action, rationale: "", pointer: "" }] })).nextSteps.missed).toContain(
-        "collect-edr-network",
-      );
+      expect(
+        scoreCaseQuality(golden, outputWith({ nextSteps: [{ action, rationale: "", pointer: "" }] }))
+          .nextSteps.missed,
+      ).toContain("collect-edr-network");
     });
 
     const step = (action: string) => ({ action, rationale: "", pointer: "" });
@@ -76,7 +77,11 @@ describe("versioned production golden corpus (#378)", () => {
     };
 
     it.each([
-      ["cloud-vpn-contradiction", "review-cloud-audit", "Pull the full identity-provider sign-in log for user-b around 12:00Z"],
+      [
+        "cloud-vpn-contradiction",
+        "review-cloud-audit",
+        "Pull the full identity-provider sign-in log for user-b around 12:00Z",
+      ],
       [
         "cloud-vpn-contradiction",
         "review-cloud-audit",
@@ -89,9 +94,13 @@ describe("versioned production golden corpus (#378)", () => {
       ],
     ])("%s: next step %s", async (caseId, stepId, action) => {
       const golden = await goldenFor(caseId);
-      expect(scoreCaseQuality(golden, outputWith({ nextSteps: [step(action)] })).nextSteps.missed).not.toContain(stepId);
+      expect(
+        scoreCaseQuality(golden, outputWith({ nextSteps: [step(action)] })).nextSteps.missed,
+      ).not.toContain(stepId);
       const offTopic = step("Check firewall logs for the same window");
-      expect(scoreCaseQuality(golden, outputWith({ nextSteps: [offTopic] })).nextSteps.missed).toContain(stepId);
+      expect(scoreCaseQuality(golden, outputWith({ nextSteps: [offTopic] })).nextSteps.missed).toContain(
+        stepId,
+      );
     });
 
     it("linux-ssh-compromise: 'root account compromised' + a sudoers finding cover the root-compromise claim", async () => {
@@ -131,7 +140,9 @@ describe("versioned production golden corpus (#378)", () => {
             "The attacker obtained direct root-level shell access to the host over the network.",
             ["lin-e2"],
           ),
-          claim("f3", "Unrestricted Sudoers Entry Added for Persistence/Privilege Escalation", "", ["lin-e3"]),
+          claim("f3", "Unrestricted Sudoers Entry Added for Persistence/Privilege Escalation", "", [
+            "lin-e3",
+          ]),
         ],
       });
       expect(scoreCaseQuality(golden, output).claims.missed).not.toContain("linux-root-compromise");
@@ -151,4 +162,3 @@ describe("versioned production golden corpus (#378)", () => {
     });
   });
 });
-

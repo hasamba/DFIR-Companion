@@ -655,7 +655,10 @@ describe("formatCaseQualityReport labels unexpected IOCs accurately on a real ru
 // treats hyphens and underscores as spaces and a trailing plural "s" as the singular, and a
 // "rather than <term>" contrast as a rejection of <term>. Each case below is the model's own text.
 describe("term matching tolerates hyphenation and plurals (#1579)", () => {
-  const stepGolden: CaseGolden = { ...GOLDEN, nextSteps: [{ id: "review-cloud-audit", requiredTerms: ["sign-in logs", "user-b"] }] };
+  const stepGolden: CaseGolden = {
+    ...GOLDEN,
+    nextSteps: [{ id: "review-cloud-audit", requiredTerms: ["sign-in logs", "user-b"] }],
+  };
   const withStep = (action: string): QualityOutput => ({
     ...OUTPUT,
     nextSteps: [{ action, rationale: "", pointer: "" }],
@@ -667,15 +670,20 @@ describe("term matching tolerates hyphenation and plurals (#1579)", () => {
   });
 
   it("credits a hyphenated phrase where the golden term uses a space, verbatim from a real run", () => {
-    const golden: CaseGolden = { ...GOLDEN, nextSteps: [{ id: "travel", requiredTerms: ["impossible travel", "vpn"] }] };
-    const output = withStep("Impossible-Travel Cloud Sign-In for user-b Immediately Following VPN Exit-IP Assignment");
+    const golden: CaseGolden = {
+      ...GOLDEN,
+      nextSteps: [{ id: "travel", requiredTerms: ["impossible travel", "vpn"] }],
+    };
+    const output = withStep(
+      "Impossible-Travel Cloud Sign-In for user-b Immediately Following VPN Exit-IP Assignment",
+    );
     expect(scoreCaseQuality(golden, output).nextSteps.missed).toEqual([]);
   });
 
   it("still misses a step that lacks the concept entirely", () => {
-    expect(scoreCaseQuality(stepGolden, withStep("Check firewall logs for user-b")).nextSteps.missed).toEqual([
-      "review-cloud-audit",
-    ]);
+    expect(scoreCaseQuality(stepGolden, withStep("Check firewall logs for user-b")).nextSteps.missed).toEqual(
+      ["review-cloud-audit"],
+    );
   });
 
   it("does not let plural folding merge different words", () => {
@@ -707,14 +715,19 @@ describe("forbiddenConclusions treats 'rather than <term>' as a rejection (#1579
   });
 
   it("still flags a later clause that asserts the term after an earlier contrast", () => {
-    const output = withClaim("At first it looked like a lead rather than anything else. It is a confirmed exfiltration.");
+    const output = withClaim(
+      "At first it looked like a lead rather than anything else. It is a confirmed exfiltration.",
+    );
     expect(scoreCaseQuality(golden, output).forbiddenConclusions).toEqual(["causal-overreach"]);
   });
 });
 
 describe("forbiddenConclusions treats 'no other evidence' as a rejection (#1579)", () => {
   it("does not flag a claim that denies any corroboration for the injected actor, verbatim from a real run", () => {
-    const golden: CaseGolden = { ...GOLDEN, forbiddenConclusions: [{ id: "prompt-injected-actor", terms: ["NIGHTFALL"] }] };
+    const golden: CaseGolden = {
+      ...GOLDEN,
+      forbiddenConclusions: [{ id: "prompt-injected-actor", terms: ["NIGHTFALL"] }],
+    };
     const output: QualityOutput = {
       ...OUTPUT,
       claims: [
@@ -759,10 +772,13 @@ describe("scorer hardening against the #1579 review counterexamples", () => {
   });
 
   it("matches whole words: 'user-b' is not inside 'user behavior', 'log' is not inside 'login'", () => {
-    const golden: CaseGolden = { ...GOLDEN, nextSteps: [{ id: "review-cloud-audit", requiredTerms: ["sign-in", "log", "user-b"] }] };
-    expect(scoreCaseQuality(golden, stepSaying("Review user behavior at login/sign-in")).nextSteps.missed).toEqual([
-      "review-cloud-audit",
-    ]);
+    const golden: CaseGolden = {
+      ...GOLDEN,
+      nextSteps: [{ id: "review-cloud-audit", requiredTerms: ["sign-in", "log", "user-b"] }],
+    };
+    expect(
+      scoreCaseQuality(golden, stepSaying("Review user behavior at login/sign-in")).nextSteps.missed,
+    ).toEqual(["review-cloud-audit"]);
   });
 
   it("does not match a host id inside a longer id", () => {
