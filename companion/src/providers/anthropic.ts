@@ -30,6 +30,9 @@ const THINKING_OUTPUT_HEADROOM = 4096;
 const BUDGET_THINKING_MODEL = /^claude-(3|haiku-4|(opus|sonnet)-4(-[0-5])?(-\d{8})?$)/;
 // Opus 4.6 / Sonnet 4.6 take adaptive thinking but have no `xhigh` tier.
 const NO_XHIGH_MODEL = /^claude-(opus|sonnet)-4-6/;
+// Current models can think on every call (Opus 5 does so by default), and thinking counts toward
+// max_tokens. Reserve this much on top of the configured cap so the cap still means "answer room".
+const THINKING_ROOM = 16_000;
 
 export interface AnthropicOptions {
   apiKey: string;
@@ -82,6 +85,7 @@ export class AnthropicProvider implements AIProvider {
     // Current models: the same budget picks an effort tier (the claude-code mapping, #1468).
     const tier = legacyThinking ? undefined : effortForBudget(req.thinkingTokens);
     const effort = tier === "xhigh" && NO_XHIGH_MODEL.test(this.opts.model) ? "high" : tier;
+    if (!legacyThinking) maxTokens += THINKING_ROOM;
     const timeoutMs = this.opts.timeoutMs ?? 60_000;
     let res: Response;
     try {
@@ -127,6 +131,8 @@ export class AnthropicProvider implements AIProvider {
     }
     type AnthropicMessageResponse = {
       content?: { type: string; text?: string }[];
+      stop_reason?: string;
+      stop_details?: { category?: string | null } | null;
       usage?: {
         input_tokens?: number;
         output_tokens?: number;
@@ -143,6 +149,18 @@ export class AnthropicProvider implements AIProvider {
     } catch (err) {
       const kind = err instanceof ResponseTooLargeError ? "transport" : "other";
       throw new ProviderError(`Anthropic response error: ${(err as Error).message}`, kind);
+    }
+    // Check why the model stopped before reading content. A refusal is HTTP 200 with no usable
+    // answer; a max_tokens stop is a cut-off JSON document that would fail to parse downstream.
+    if (json.stop_reason === "refusal") {
+      const category = json.stop_details?.category;
+      throw new ProviderError(`Anthropic declined the request${category ? ` (${category})` : ""}`, "other");
+    }
+    if (json.stop_reason === "max_tokens") {
+      throw new ProviderError(
+        `Anthropic reply was cut off at max_tokens (${maxTokens}) — raise DFIR_AI_MAX_TOKENS`,
+        "context",
+      );
     }
     const text = json.content?.find((b) => b.type === "text")?.text;
     if (!text) throw new ProviderError("Anthropic returned no content", "other");
