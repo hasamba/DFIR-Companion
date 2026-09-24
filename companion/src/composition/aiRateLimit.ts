@@ -65,6 +65,7 @@ export const AI_LIMIT_PATHS = new Set([
   "/velociraptor/suggest-hunts",
   "/adversary-hints/hunt-technique", // per-technique hunt suggestions
   "/anon-control", // flipping the toggle forces a re-synthesis
+  "/jev/review", // Jev missed-evidence review — bills per press (#1577)
 ]);
 
 /** AI-cost POST routes carrying a dynamic segment, so the static set cannot express them. */
