@@ -102,11 +102,22 @@ const norm = (value: string): string => value.trim().toLowerCase();
 const ratio = (numerator: number, denominator: number): number =>
   denominator === 0 ? 1 : numerator / denominator;
 
+// Term matching folds the spelling variants a model produces for the same words (#1579): hyphens
+// and underscores read as spaces ("Impossible-Travel" = "impossible travel"), runs of whitespace
+// collapse, and a plural "s" reads as the singular ("sign-in log" = "sign-in logs"). Both sides go
+// through the same folding, so a folded word only ever meets another folded word. Words ending in
+// "ss" and words of three letters or fewer keep their "s" ("process", "its").
+const HYPHENS = /[-_\u2010-\u2015]+/g;
+const PLURAL_S = /\b([a-z0-9]{2,}[a-rt-z0-9])s\b/g;
+function termNorm(value: string): string {
+  return norm(value).replace(HYPHENS, " ").replace(/\s+/g, " ").replace(PLURAL_S, "$1");
+}
+
 // Single source of truth for "does this text carry this term" — every other check (the whole-
 // claim gate, the missing-terms split, the per-candidate term match) derives from this exact
 // predicate, so two independently-reimplemented matchers can never quietly diverge (#1226 review).
 function hasTerm(text: string, term: string): boolean {
-  return norm(text).includes(norm(term));
+  return termNorm(text).includes(termNorm(term));
 }
 
 function containsTerms(text: string, terms: readonly string[]): boolean {
@@ -155,7 +166,19 @@ const REJECTION_SIGNALS = [
   "was not followed",
   "untrusted",
   "no evidence", // #1224 — "no evidence ... of X" denies X, verified against a real abstention finding
+  "no other evidence", // #1579 — "no other evidence ... corroborates a X association", verbatim from a real run
 ];
+
+// "A rather than B" negates B, never A (#1579: "a lead rather than a confirmed exfiltration" was
+// flagged as asserting exfiltration). So the contrast excuses a mention only when it comes BEFORE
+// the term in the same clause — "confirmed exfiltration rather than a backup" still asserts it.
+const CONTRAST_SIGNAL = "rather than";
+
+function contrastedAway(clause: string, term: string): boolean {
+  const folded = termNorm(clause);
+  const contrast = folded.indexOf(CONTRAST_SIGNAL);
+  return contrast >= 0 && contrast < folded.indexOf(termNorm(term));
+}
 
 // Split on sentence-ish boundaries. Known pathological cases (abbreviations like "e.g.",
 // decimals, IPs, punctuation inside quoted attacker text) can fragment a clause unexpectedly —
@@ -199,7 +222,8 @@ function assertsAsFact(text: string, terms: readonly string[]): boolean {
     return REJECTION_SIGNALS.some((signal) => normalized.includes(signal));
   };
   return clauses.some((clause, index) => {
-    if (!norm(clause).includes(norm(term))) return false;
+    if (!hasTerm(clause, term)) return false;
+    if (contrastedAway(clause, term)) return false;
     const nextClause = clauses[index + 1];
     return !hasSignal(clause) && !(nextClause !== undefined && hasSignal(nextClause));
   });

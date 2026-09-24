@@ -70,6 +70,11 @@ describe("versioned production golden corpus (#378)", () => {
     it.each([
       ["cloud-vpn-contradiction", "review-cloud-audit", "Pull the full identity-provider sign-in log for user-b around 12:00Z"],
       [
+        "cloud-vpn-contradiction",
+        "review-cloud-audit",
+        "Review the cloud tenant sign-in and audit log for user-b around 12:00:00Z to determine whether the sign-in was allowed",
+      ],
+      [
         "network-egress-gap",
         "collect-edr-network",
         "Correlate the TLS session on ws-11 to the responsible process using Sysmon Event ID 3 / EDR network-to-process mapping",
@@ -98,6 +103,35 @@ describe("versioned production golden corpus (#378)", () => {
         ],
       });
       expect(scoreCaseQuality(golden, output).claims.missed).not.toContain("linux-root-compromise");
+    });
+
+    it("linux-ssh-compromise: 'root-level shell access' + a sudoers finding, from a second real run", async () => {
+      const golden = await goldenFor("linux-ssh-compromise");
+      const claim = (id: string, title: string, description: string, evidenceEventIds: string[]) => ({
+        id,
+        title,
+        description,
+        evidenceEventIds,
+        confidence: 90,
+        confidenceReason: "direct log evidence",
+      });
+      const output = outputWith({
+        claims: [
+          claim(
+            "f2",
+            "Successful Root SSH Authentication Following Brute-Force",
+            "The attacker obtained direct root-level shell access to the host over the network.",
+            ["lin-e2"],
+          ),
+          claim("f3", "Unrestricted Sudoers Entry Added for Persistence/Privilege Escalation", "", ["lin-e3"]),
+        ],
+      });
+      expect(scoreCaseQuality(golden, output).claims.missed).not.toContain("linux-root-compromise");
+      // The evidence still has to be the right events: the same words citing only the brute-force row miss.
+      const wrongEvidence = outputWith({
+        claims: [claim("f1", "Root SSH brute-force then sudoers change", "", ["lin-e1"])],
+      });
+      expect(scoreCaseQuality(golden, wrongEvidence).claims.missed).toContain("linux-root-compromise");
     });
   });
 });

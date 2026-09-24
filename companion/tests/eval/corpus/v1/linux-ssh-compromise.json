@@ -92,7 +92,7 @@
     "claims": [
       {
         "id": "linux-root-compromise",
-        "requiredTerms": ["root", "compromis", "sudoers"],
+        "requiredTerms": ["root", "sudoers"],
         "evidenceEventIds": ["lin-e2", "lin-e3"],
         "confidence": { "min": 60, "max": 100 }
       }
