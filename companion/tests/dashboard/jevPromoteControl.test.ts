@@ -12,8 +12,8 @@ import { loadDashboardModule } from "../helpers/dashboardModule.js";
 //   1. SELECT-ALL MEANS WHAT IS ON SCREEN. The tooling filter, the grade floor, the confidence
 //      floor and the draw cap each narrow the table, and a row held back by any of them must never
 //      reach the post body. A select-all the analyst could not see is the bug this exists to stop.
-//   2. THE BODY CARRIES WHAT WAS DISPLAYED — the ids AND the grades, because the grade is the
-//      severity being written.
+//   2. THE BODY CARRIES ONLY IDS. The grade is the severity being written, so the server takes it
+//      from its own record of the review, never from the browser (#1578).
 //   3. AN EMPTY SELECTION DOES NOT POST, and a refusal leaves the panel usable and says why.
 //   4. NOTHING ESCAPES AS AN UNHANDLED REJECTION. Every path through the promote clears its flag
 //      in a `finally`, and a floated promise in a dashboard module fails AFTER the test passes.
@@ -323,16 +323,14 @@ describe("the grade and confidence filters", () => {
 });
 
 describe("what the post says", () => {
-  it("carries the id, the grade, the confidence and the score actually displayed", async () => {
+  it("carries only the ticked row ids — the grade and the model are the server's to supply", async () => {
     const h = await reviewed();
     setTick(h, "e-crit", true);
     const req = promote(h)!;
     const body = JSON.parse(req.body);
     expect(req.url).toBe("/cases/case-1/jev/promote");
     expect(req.method).toBe("POST");
-    expect(body.rows).toEqual([{ id: "e-crit", grade: "Critical", confidence: 0.95, score: 4 }]);
-    // The model that made the judgement travels with it.
-    expect(body.model).toBe("typesafe/jev-1.13");
+    expect(body).toEqual({ rows: [{ id: "e-crit" }] });
   });
 
   it("does not post an empty selection", async () => {
