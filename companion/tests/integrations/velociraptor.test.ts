@@ -1227,6 +1227,45 @@ describe("VelociraptorClient.launchArtifactHunt", () => {
     expect(sent.split("{").length).toBe(sent.split("}").length);
   });
 
+  // A CSV-typed parameter (Hayabusa's RuleExclusions) is a header row plus data rows. The value
+  // sanitizer used to fold newlines into spaces, so Velociraptor read ONE header row with no data —
+  // the "noisy" exclusion silently vanished. Quotes and backslashes were stripped the same way.
+  it("carries a multi-line CSV parameter into the spec byte for byte", async () => {
+    let program = "";
+    const runner: VqlRunner = async (statements) => {
+      program = statements[0];
+      return { rows: [{ Hunt: { HuntId: "H.SP4", state: "RUNNING" } }], raw: "" };
+    };
+    const csv = "RuleTitleRegex,Reason\nnoisy,All rules marked noisy should be disabled by default.\n";
+    const path = `C:\\Users\\it's "here"`;
+    await new VelociraptorClient(cfg, runner).launchArtifactHunt(
+      ["Windows.Hayabusa.Rules"],
+      "x",
+      {},
+      { params: { "Windows.Hayabusa.Rules": { RuleExclusions: csv, ROOT: path, RuleLevel: "All" } } },
+    );
+    const decoded = (key: string) => {
+      const m = program.match(new RegExp(`${key}=base64decode\\(string='([A-Za-z0-9+/=]*)'\\)`));
+      expect(m, `${key} must be sent through base64decode`).toBeTruthy();
+      return Buffer.from(m![1], "base64").toString("utf8");
+    };
+    expect(decoded("RuleExclusions")).toBe(csv);
+    expect(decoded("ROOT")).toBe(path);
+    expect(program).toContain("RuleLevel='All'"); // a plain value stays a readable literal
+  });
+
+  it("refuses a parameter value too long to send, instead of truncating it", async () => {
+    const runner: VqlRunner = async () => ({ rows: [{ Hunt: { HuntId: "H.SP5" } }], raw: "" });
+    await expect(
+      new VelociraptorClient(cfg, runner).launchArtifactHunt(
+        ["Windows.Hayabusa.Rules"],
+        "x",
+        {},
+        { params: { "Windows.Hayabusa.Rules": { RuleExclusions: "a".repeat(70_000) } } },
+      ),
+    ).rejects.toThrow(/RuleExclusions.*too long/);
+  });
+
   it("omits the spec clause when there are no params", async () => {
     let program = "";
     const runner: VqlRunner = async (statements) => {
