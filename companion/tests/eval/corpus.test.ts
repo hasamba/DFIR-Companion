@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { loadGoldenCorpus } from "./corpus.js";
 import { runCorpusCase } from "./harness.js";
 import { mockProvider } from "./harness.js";
-import { passesCaseQuality, scoreCaseQuality } from "./qualityScorer.js";
+import { passesCaseQuality, scoreCaseQuality, type QualityOutput } from "./qualityScorer.js";
 
 const REQUIRED_SCENARIOS = [
   "ransomware",
@@ -21,7 +21,7 @@ describe("versioned production golden corpus (#378)", () => {
   it("documents safe provenance and covers the required investigative scenarios", async () => {
     const corpus = await loadGoldenCorpus();
     expect(corpus.schemaVersion).toBe(1);
-    expect(corpus.version).toBe("1.0.0");
+    expect(corpus.version).toBe("1.1.0");
     expect(new Set(corpus.cases.map((fixture) => fixture.scenario))).toEqual(new Set(REQUIRED_SCENARIOS));
     expect(corpus.cases.every((fixture) => fixture.provenance.origin === "synthetic")).toBe(true);
     expect(corpus.cases.every((fixture) => fixture.provenance.containsClientData === false)).toBe(true);
@@ -47,4 +47,58 @@ describe("versioned production golden corpus (#378)", () => {
       expect(passesCaseQuality(scoreCaseQuality(fixture.golden, output))).toBe(true);
     });
   }
+
+  // #1579: a real model run (claude-sonnet-5) got these three right in its own words and the literal
+  // phrase match scored them as misses. The golden terms test the concept, so these phrasings — copied
+  // from that run — must earn credit, while a step that drops the concept must still miss.
+  describe("credits a real model's equivalent phrasing (#1579)", () => {
+    const step = (action: string) => ({ action, rationale: "", pointer: "" });
+    const outputWith = (parts: Partial<QualityOutput>): QualityOutput => ({
+      evidenceEventIds: [],
+      claims: [],
+      iocs: [],
+      uncertainties: [],
+      nextSteps: [],
+      ...parts,
+    });
+    const goldenFor = async (id: string) => {
+      const fixture = (await loadGoldenCorpus()).cases.find((candidate) => candidate.id === id);
+      if (!fixture) throw new Error(`corpus case ${id} missing`);
+      return fixture.golden;
+    };
+
+    it.each([
+      ["cloud-vpn-contradiction", "review-cloud-audit", "Pull the full identity-provider sign-in log for user-b around 12:00Z"],
+      [
+        "network-egress-gap",
+        "collect-edr-network",
+        "Correlate the TLS session on ws-11 to the responsible process using Sysmon Event ID 3 / EDR network-to-process mapping",
+      ],
+    ])("%s: next step %s", async (caseId, stepId, action) => {
+      const golden = await goldenFor(caseId);
+      expect(scoreCaseQuality(golden, outputWith({ nextSteps: [step(action)] })).nextSteps.missed).not.toContain(stepId);
+      const offTopic = step("Check firewall logs for the same window");
+      expect(scoreCaseQuality(golden, outputWith({ nextSteps: [offTopic] })).nextSteps.missed).toContain(stepId);
+    });
+
+    it("linux-ssh-compromise: 'root account compromised' + a sudoers finding cover the root-compromise claim", async () => {
+      const golden = await goldenFor("linux-ssh-compromise");
+      const claim = (id: string, title: string, evidenceEventIds: string[]) => ({
+        id,
+        title,
+        description: "",
+        evidenceEventIds,
+        confidence: 90,
+        confidenceReason: "direct log evidence",
+      });
+      const output = outputWith({
+        claims: [
+          claim("f2", "Root account compromised via SSH following brute-force success", ["lin-e2"]),
+          claim("f3", "Unrestricted sudoers.d entry added immediately after compromise", ["lin-e3"]),
+        ],
+      });
+      expect(scoreCaseQuality(golden, output).claims.missed).not.toContain("linux-root-compromise");
+    });
+  });
 });
+
