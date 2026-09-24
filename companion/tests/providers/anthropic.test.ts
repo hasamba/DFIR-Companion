@@ -112,7 +112,7 @@ describe("AnthropicProvider", () => {
 
   it("enables extended thinking and bumps max_tokens above the budget when a CoT budget is set (#121)", async () => {
     const fetchFn = fetchMock(async () => jsonResponse(OK));
-    const p = new AnthropicProvider({ apiKey: "k", model: "claude-sonnet-4-6", fetchFn, maxTokens: 16000 });
+    const p = new AnthropicProvider({ apiKey: "k", model: "claude-haiku-4-5-20251001", fetchFn, maxTokens: 16000 });
     await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [], thinkingTokens: 8000 });
     const body = JSON.parse((fetchFn.mock.calls[0][1] as RequestInit).body as string);
     expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 8000 });
@@ -121,11 +121,37 @@ describe("AnthropicProvider", () => {
 
   it("raises max_tokens so the budget always fits when the configured cap is too low", async () => {
     const fetchFn = fetchMock(async () => jsonResponse(OK));
-    const p = new AnthropicProvider({ apiKey: "k", model: "m", fetchFn, maxTokens: 4000 });
+    const p = new AnthropicProvider({ apiKey: "k", model: "claude-sonnet-4-5", fetchFn, maxTokens: 4000 });
     await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [], thinkingTokens: 10000 });
     const body = JSON.parse((fetchFn.mock.calls[0][1] as RequestInit).body as string);
     expect(body.max_tokens).toBeGreaterThan(body.thinking.budget_tokens);
   });
+
+  it.each([
+    ["claude-opus-5", 8000, "high"],
+    ["claude-opus-4-8", 32000, "xhigh"],
+    ["claude-sonnet-4-6", 32000, "high"],
+    ["claude-opus-5", 2048, "medium"],
+  ])("sends adaptive thinking + effort, never budget_tokens, on %s at %i tokens", async (model, tokens, effort) => {
+    const fetchFn = fetchMock(async () => jsonResponse(OK));
+    const p = new AnthropicProvider({ apiKey: "k", model, fetchFn });
+    await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [], thinkingTokens: tokens });
+    const body = JSON.parse((fetchFn.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.thinking).toEqual({ type: "adaptive" });
+    expect(body.output_config).toEqual({ effort });
+  });
+
+  it.each(["claude-haiku-4-5", "claude-opus-4-5-20251101", "claude-sonnet-4-20250514", "claude-3-7-sonnet-latest"])(
+    "keeps budget_tokens on %s, which predates adaptive thinking",
+    async (model) => {
+      const fetchFn = fetchMock(async () => jsonResponse(OK));
+      const p = new AnthropicProvider({ apiKey: "k", model, fetchFn });
+      await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [], thinkingTokens: 8000 });
+      const body = JSON.parse((fetchFn.mock.calls[0][1] as RequestInit).body as string);
+      expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 8000 });
+      expect(body.output_config).toBeUndefined();
+    },
+  );
 
   it("does NOT enable thinking without a budget, or below the 1024-token minimum", async () => {
     const fetchFn = fetchMock(async () => jsonResponse(OK));
