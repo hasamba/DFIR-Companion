@@ -104,7 +104,7 @@ export interface AIProvider {
   readonly name: string;
   readonly model: string;
   // True only on a provider that ACTS on `AnalyzeRequest.thinkingTokens` (#1468): anthropic
-  // (budget_tokens), openrouter (unified `reasoning`), claude-code (`--effort` tier). Unset/false
+  // (budget_tokens or an effort tier), openrouter (unified `reasoning`), claude-code (`--effort` tier). Unset/false
   // means the 🧠 deep-reasoning toggle is a no-op here, and the dashboard says so instead of
   // silently accepting the click.
   readonly supportsThinking?: boolean;
