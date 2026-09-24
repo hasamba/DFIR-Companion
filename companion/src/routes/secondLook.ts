@@ -39,6 +39,12 @@ export function registerSecondLookRoutes(app: Express, ctx: RouteContext): void 
     }
   });
 
+  // Cases with a second look in flight (#1576). The re-synthesis is FORCED, so two overlapping
+  // presses would each plan the same promotions from the pre-promotion state and each pay for a full
+  // synthesis. The Jev review holds the same guard for the same reason (#1551). Held per app, so one
+  // test's app never locks another's.
+  const running = new Set<string>();
+
   app.post("/cases/:id/second-look", async (req: Request, res: Response) => {
     if (!options.pipeline || !options.superTimelineStore) return unconfigured(res);
     const caseId = req.params.id;
@@ -56,6 +62,11 @@ export function registerSecondLookRoutes(app: Express, ctx: RouteContext): void 
     // missing, misspelled or non-boolean field must never be what produces that state.
     const resynthesize = (req.body as { resynthesize?: unknown })?.resynthesize !== false;
 
+    if (running.has(caseId)) {
+      return res.status(409).json({ error: "a second look is already running for this case" });
+    }
+    running.add(caseId);
+    // The finally covers every await after entry, so a run that throws never leaves the case locked.
     try {
       const result = await options.pipeline.secondLook(caseId, { resynthesize });
       if (!result) return unconfigured(res);
@@ -75,6 +86,8 @@ export function registerSecondLookRoutes(app: Express, ctx: RouteContext): void 
       // gate rather than a failure. Report the hold, the way the deep-pass route does.
       if (isAnalystDecisionGate(error)) return sendPipelineError(res, error);
       return res.status(500).json({ error: String((error as Error).message) });
+    } finally {
+      running.delete(caseId);
     }
   });
 }
