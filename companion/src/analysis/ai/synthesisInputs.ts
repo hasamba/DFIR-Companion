@@ -162,6 +162,8 @@ export interface SynthHashInput {
   blocks: SynthesisInputBlocks;
   /** Deep-pass observations: a pure input, but one that changes what the model can see. */
   observationsBlock: string;
+  /** `id:promotedAt` of every promoted scoped row (#1586) — stable across runs. */
+  promoted?: string[];
 }
 
 /**
@@ -212,6 +214,9 @@ export function computeSynthHash(i: SynthHashInput): string {
         // Deep-pass observations are a pure INPUT synthesis never rewrites, but they change what the
         // model can see — so a run carrying fresh ones must never be skipped as "inputs unchanged".
         ob: i.observationsBlock,
+        // Promoting a row that is ALREADY in the forensic timeline only stamps it, which changes
+        // nothing above — yet the model must now read it as new evidence (#1586).
+        pr: i.promoted ?? [],
       }),
     )
     .digest("hex");

@@ -194,13 +194,16 @@ describe("promoting what the missed-evidence review found", () => {
     expect(res.body.reasons.join(" ")).toMatch(/no longer in the archive/i);
   });
 
-  it("warns that a row promoted at Info is still invisible to synthesis", async () => {
+  it("warns that a row promoted at Info reaches synthesis only once (#1586)", async () => {
     const { app } = await harness({ archive: [raw("r1")], reviewed: [tick("r1", "Info", 0.2, 0.1)] });
 
     const res = await promote(app, ids("r1"));
 
     expect(res.body.promoted).toBe(1);
-    expect(res.body.reasons.join(" ")).toMatch(/Info/);
+    const text = res.body.reasons.join(" ");
+    expect(text).toMatch(/stayed Info/);
+    expect(text).toMatch(/next synthesis reads them once as newly promoted evidence/);
+    expect(text).not.toMatch(/will not read them/);
   });
 });
 

@@ -175,10 +175,14 @@ export function registerJevPromoteRoutes(app: Express, ctx: RouteContext): void 
       if (missing) reasons.push(`${missing} row(s) are no longer in the archive`);
       if (lab) reasons.push(`${lab} sandbox-produced row(s) cannot be promoted by this review`);
       if (refused) reasons.push(`${refused} row(s) were refused by the promotion seam`);
-      // Said out loud, because a promoted Info row is visible to the analyst and invisible to
-      // synthesis (see promptIncludesInfo in analysis/synthGroup.ts) — which looks like the feature
-      // working right up until the model never mentions the row.
-      if (stayedInfo) reasons.push(`${stayedInfo} row(s) stayed Info, so AI synthesis will not read them`);
+      // Said out loud, because a promoted Info row reaches synthesis only once (#1586): the next run
+      // shows it as newly promoted evidence, and after that Info rows are left out of the prompt
+      // again (see promptIncludesInfo in analysis/synthGroup.ts). Without this, a row the model
+      // stops mentioning looks like the feature failing.
+      if (stayedInfo)
+        reasons.push(
+          `${stayedInfo} row(s) stayed Info — the next synthesis reads them once as newly promoted evidence; after that, Info rows are not shown to it`,
+        );
 
       void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "ai",
