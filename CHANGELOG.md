@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Negative answers name their evidence** — a collection inventory built in code (per host: raw vs detection-only evidence, cleared logs, recent hunt outcomes) reaches synthesis; an unsettled "not observed" answer becomes partial with one collection step, and a step asking for a cleared log is flagged (closes #1588)
 - **Hayabusa Full bundle** — a built-in Velociraptor bundle that runs Hayabusa alone with every rule level and status, excluding only rules marked noisy
 - **Follow the referee in one click** — a `⚖ follow referee (N)` button on the 2nd opinion panel accepts every pending delta the referee said to accept and rejects every one it said to keep A; deltas with no referee call stay pending
 - **Promote what the missed-evidence review finds** — tick rows, filter by grade and confidence, select everything the filters show, and promote; each row enters the forensic timeline carrying the model's grade as its severity, with a note recording the grade, the confidence and which model gave it (closes #1568)

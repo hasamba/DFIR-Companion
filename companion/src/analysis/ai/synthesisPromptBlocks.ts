@@ -1,3 +1,4 @@
+import { renderCollectionInventory, type CollectionInventory } from "../collectionInventory.js";
 import { detectBeacons, beaconEnvOptions } from "../beaconDetect.js";
 import { buildAttackPhases } from "../burstDetect.js";
 import { detectSatisfiedCollections, buildSatisfiedCollectionsBlock } from "../collectSatisfaction.js";
@@ -53,6 +54,8 @@ export interface SynthesisBlocks {
   beaconBlock: string;
   attackPhaseBlock: string;
   unknownsBlock: string;
+  /** What this case holds per source and host, and the rules for negative answers (#1588). */
+  collectionInventoryBlock: string;
   cloudCoverageBlock: string;
   adversaryBlock: string;
   notebookBlock: string;
@@ -91,6 +94,8 @@ export interface BlockInput {
   preloaded: PreloadedBlocks;
   /** Canonical host identity for this run — forwarded to every block that renders or ranks a host. */
   aliasIndex?: HostAliasIndex;
+  /** Built once per run by synthesis.ts (#1588); absent in callers that do not build one. */
+  collectionInventory?: CollectionInventory;
 }
 
 /**
@@ -130,6 +135,9 @@ export async function buildSynthesisBlocks(
     // likely-next techniques) so the model builds on what's MISSING instead of glossing over it.
     // Plus the (env-gated, default OFF) candidate-actor block.
     unknownsBlock: await knownUnknownsBlock(ctx, state, scopedEvents, caseId, aliasIndex),
+    collectionInventoryBlock: input.collectionInventory
+      ? withBreak(renderCollectionInventory(input.collectionInventory))
+      : "",
     // Per-upload cloud coverage (#1063): what each CloudTrail/GCP/Azure/M365/Workspace upload can
     // and cannot answer, so a missing category is never read as "nothing happened".
     cloudCoverageBlock: await cloudCoverageBlock(ctx, caseId),
@@ -210,6 +218,9 @@ function findingDetail(f: Finding): string {
 }
 
 const oneLine = (text: string): string => text.replace(/\s+/g, " ").trim();
+
+/** Blocks end with a blank line so the next one starts cleanly; "" stays "". */
+const withBreak = (block: string): string => (block ? `${block}\n\n` : "");
 
 function buildOpenThreads(state: InvestigationState): string {
   return (
@@ -315,6 +326,7 @@ function leadingBlocks(b: SynthesisBlocks): string {
     b.beaconBlock +
     b.attackPhaseBlock +
     b.unknownsBlock +
+    b.collectionInventoryBlock +
     b.cloudCoverageBlock +
     b.adversaryBlock +
     b.notebookBlock +

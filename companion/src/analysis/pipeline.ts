@@ -17,12 +17,7 @@ export type { PipelineOptions } from "./ai/pipelineOptions.js";
 import { withRetry } from "./ai/retry.js";
 import { buildImportOpts, type ImportContext } from "./ingest/importContext.js";
 
-/** The argument list of an importer, minus the ImportContext it takes first (#384). Every import method below is a one-line delegation to src/analysis/ingest/ — deriving the parameters rather than restating them means the two cannot drift: change an importer's signature and the delegation stops compiling, which a hand-copied signature would not have. */
-type ImporterArgs<F> = F extends (ctx: ImportContext, ...args: infer R) => unknown ? R : never;
-/** The same trick for the AI extraction calls, which take an ExtractionContext first (#418). */
-type AiExtractionArgs<F> = F extends (ctx: ExtractionContext, ...args: infer R) => unknown ? R : never;
-/** Ditto for the calls that take the widest context of all — synthesis and its two consumers. */
-type AiArgs<F> = F extends (ctx: SynthesisContext, ...args: infer R) => unknown ? R : never;
+import type { AiArgs, AiExtractionArgs, ImporterArgs } from "./ai/delegationArgs.js";
 // The prompt registry moved to ai/prompts/ (#384). Imported for the pipeline's own use and re-exported below, because 23 modules and the eval harness import these names from here.
 export * from "./ai/prompts/index.js";
 // The AI-backed families extracted in #418. Each method below is a one-line delegation; the result types moved with them and are re-exported here, because routes/reports/tests import them from this module and the extraction is not supposed to be visible to callers.
@@ -203,6 +198,9 @@ export class AnalysisPipeline {
         },
         get synthMetaStore() {
           return opts.synthMetaStore;
+        },
+        get veloHuntStore() {
+          return opts.veloHuntStore;
         },
         get analysisRunStore() {
           return opts.analysisRunStore;

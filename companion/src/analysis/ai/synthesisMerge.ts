@@ -1,4 +1,6 @@
 import { flagContradictedAnswers } from "../answerContradiction.js";
+import type { CollectionInventory } from "../collectionInventory.js";
+import { applyNegativeAnswerCoverage } from "../negativeAnswerCoverage.js";
 import { buildAssetGraph } from "../assetGraph.js";
 import { buildEvidenceGraph } from "../evidenceGraph.js";
 import { applyFalsePositive, falsePositiveEventIds, type FalsePositiveMarker } from "../falsePositive.js";
@@ -111,6 +113,10 @@ export interface DeltaFoldInput {
   markers: FalsePositiveMarker[];
   scopedEvents: ForensicEvent[];
   playbookTasks: PlaybookTask[];
+  /** What the case holds (#1588); the negative-answer backstop reads it. Absent → no backstop. */
+  inventory?: CollectionInventory;
+  /** Canonical host for a raw asset spelling — the same resolution the inventory was built with. */
+  hostOf?: (raw: string) => string;
 }
 
 export interface DeltaFoldResult {
@@ -140,7 +146,7 @@ export async function foldSynthesisDelta(
   ctx: DeltaFoldContext,
   input: DeltaFoldInput,
 ): Promise<DeltaFoldResult> {
-  const { caseId, state, markers, scopedEvents, playbookTasks } = input;
+  const { caseId, state, markers, scopedEvents, playbookTasks, inventory, hostOf } = input;
   // ONE normalization for the whole fold (#787). Everything below reads the delta again — the event
   // back-links here, the relevance verdict in grading — and each read matches the model's ids
   // against the ids the merge persisted. Renaming inside the merge alone would leave those reads
@@ -172,6 +178,10 @@ export async function foldSynthesisDelta(
   // this fold persists is what the model ASSERTED — a conclusion about the case rather than a
   // restatement of an event tag.
   next = demoteCompletedSteps(next, playbookTasks);
+  // A negative answer the case could not have seen is not settled, and a step that asks for a
+  // cleared log is flagged (#1588). After the model's own steps are in, so dedupe sees them.
+  if (inventory)
+    next = applyNegativeAnswerCoverage(next, inventory, { scopedEvents, ...(hostOf ? { hostOf } : {}) });
 
   return {
     next,

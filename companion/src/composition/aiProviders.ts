@@ -11,6 +11,7 @@
  * provider wiring tests import them from `src/server.js`.
  */
 import type { CaseStore } from "../storage/caseStore.js";
+import { VeloHuntStore } from "../analysis/veloHuntStore.js";
 import { StateStore as StateStoreImpl } from "../analysis/stateStore.js";
 import { AnalysisPipeline as AnalysisPipelineImpl } from "../analysis/pipeline.js";
 import { makeImageLoader } from "../analysis/imageLoader.js";
@@ -301,6 +302,7 @@ export function buildRuntimePipeline(params: RuntimePipelineParams): AnalysisPip
     customEntitiesStore: new CustomEntitiesStore(params.store),
     discoveredStore: new DiscoveredEntitiesStore(params.store),
     synthMetaStore: new SynthMetaStore(params.store),
+    veloHuntStore: new VeloHuntStore(params.store), // #1588 collection inventory
     analysisRunStore: params.analysisRunStore,
     operationalMetrics: params.operationalMetrics,
     aiCostStore: new AiCostStore(params.store),

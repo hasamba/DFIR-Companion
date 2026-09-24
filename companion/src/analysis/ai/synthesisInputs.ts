@@ -164,6 +164,8 @@ export interface SynthHashInput {
   observationsBlock: string;
   /** `id:promotedAt` of every promoted scoped row (#1586) — stable across runs. */
   promoted?: string[];
+  /** Hunt metadata the collection inventory reads (#1588) — stable across runs. */
+  inventory?: string;
 }
 
 /**
@@ -217,6 +219,9 @@ export function computeSynthHash(i: SynthHashInput): string {
         // Promoting a row that is ALREADY in the forensic timeline only stamps it, which changes
         // nothing above — yet the model must now read it as new evidence (#1586).
         pr: i.promoted ?? [],
+        // A hunt that returned no rows, failed, or went to the archive only changes the collection
+        // inventory the model judges its negative answers against, with no new timeline row (#1588).
+        hv: i.inventory ?? "",
       }),
     )
     .digest("hex");

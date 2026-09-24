@@ -2,6 +2,7 @@ import type { FalsePositiveMarker } from "../falsePositive.js";
 import type { HostAliasIndex } from "../hostAlias.js";
 import { estimateTokens, inputTokenBudget, fitItemsToBudget } from "../promptBudget.js";
 import type { ScopeWindow } from "../scope.js";
+import type { CollectionInventory } from "../collectionInventory.js";
 import type { ForensicEvent, InvestigationState } from "../stateTypes.js";
 import type { CollapsedPrompt } from "../synthGroup.js";
 import { buildSynthesisCoverage, type SynthesisCoverage } from "../synthMeta.js";
@@ -61,6 +62,8 @@ export interface SynthesisPromptInput {
   aliasIndex?: HostAliasIndex;
   /** Promoted rows no persisted synthesis has shown yet (#1586). NOT part of the skip-hash. */
   newPromotedIds?: ReadonlySet<string>;
+  /** What the case holds (#1588). NOT part of the skip-hash — its hunt signature is. */
+  collectionInventory?: CollectionInventory;
 }
 
 /** The prompt, plus what the run record and the second-look sweep need to describe it. */
@@ -134,6 +137,7 @@ export async function buildSynthesisPrompt(
     scopedEvents,
     aliasIndex,
     newPromotedIds: _n,
+    collectionInventory,
     ...preloaded
   } = input;
   const { newPromotedIds } = input;
@@ -146,6 +150,7 @@ export async function buildSynthesisPrompt(
     scopedEvents,
     preloaded,
     aliasIndex,
+    collectionInventory,
   });
 
   const overhead = trimTimelineToBudget(timeline, blocks, state.lastSummary || "");
