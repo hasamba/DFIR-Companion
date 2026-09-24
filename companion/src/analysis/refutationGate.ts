@@ -179,13 +179,13 @@ const CLASS_KEYWORDS: Record<EvidenceClass, readonly string[]> = {
 // normalized (lowercased, separator-stripped) source name, so "DetectRaptor.Windows.Detection.MFT",
 // "Windows.Sigma.Base" and "Generic.Scanner.ThorZIP" are all caught. A hit feed proves presence; it
 // can never prove absence, because its silence is the ruleset's silence rather than the artifact's.
-const DETECTION_FEED_RE = /detection|detectraptor|sigma|chainsaw|hayabusa|thor|yara|suricata/;
+export const DETECTION_FEED_RE = /detection|detectraptor|sigma|chainsaw|hayabusa|thor|yara|suricata/;
 
 // Source names that describe the host AT COLLECTION TIME rather than over the incident window: a
 // live process list, the open-socket table, currently-open handles. They are excellent evidence of
 // what is running now and no evidence at all about last Tuesday, so they cannot settle a claim about
 // something that did or did not happen during the window.
-const SNAPSHOT_SOURCE_RE = /pstree|netstat|processlist|runningprocess|openfiles|currentsession/;
+export const SNAPSHOT_SOURCE_RE = /pstree|netstat|processlist|runningprocess|openfiles|currentsession/;
 
 // One downgraded refutation, for reporting back to the caller (counts, logging, an analyst note).
 export interface GatedRefutation {

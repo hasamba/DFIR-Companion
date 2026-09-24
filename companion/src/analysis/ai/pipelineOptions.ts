@@ -1,3 +1,4 @@
+import type { VeloHuntStore } from "../veloHuntStore.js";
 import type { AIProvider, AnalyzeImage } from "../../providers/provider.js";
 import type { Logger } from "../../logging/logger.js";
 import type { AiControlStore } from "../aiControl.js";
@@ -134,6 +135,9 @@ export interface PipelineOptions {
   // Optional: record when synthesis actually ran + what changed in the findings, so the
   // dashboard can show "last synthesized N ago" and a what-changed diff. Absent → not recorded.
   synthMetaStore?: SynthMetaStore;
+  // Velociraptor hunt metadata: the collection inventory reads which artifacts came back empty,
+  // failed or went to the archive only (#1588). Optional; absent = no hunt lines.
+  veloHuntStore?: VeloHuntStore;
   analysisRunStore?: AnalysisRunStore; // append-only reproducibility ledger (#377)
   // Per-case AI cost/token accounting (vision / synthesis / other buckets), read by the
   // Diagnostics "AI cost — this case" card. Absent → cost tracking is skipped (CLI scripts).

@@ -1,3 +1,11 @@
+import type { VeloHuntJob, VeloHuntStore } from "../veloHuntStore.js";
+import {
+  buildCollectionInventory,
+  inventorySignature,
+  renderCollectionInventory,
+  sanitizeHuntJobs,
+  type CollectionInventory,
+} from "../collectionInventory.js";
 import type { AIProvider } from "../../providers/provider.js";
 import type { Logger } from "../../logging/logger.js";
 import { recordSynthesisRun } from "../analysisRunRecorders.js";
@@ -13,7 +21,7 @@ import { correlateEvents, correlationGroups, type CorrelateOptions } from "../co
 import { CorrelationProfileStore } from "../correlationProfile.js";
 import { filterFalsePositiveEvents, type FalsePositiveMarker } from "../falsePositive.js";
 import { diffFindings, type FindingsDiff } from "../findingsDiff.js";
-import { type HostAliasIndex } from "../hostAlias.js";
+import { resolveHost, type HostAliasIndex } from "../hostAlias.js";
 import { loadHostAliasIndex } from "../hostScopeLoad.js";
 import {
   HostMergeDecisionRequired,
@@ -90,6 +98,7 @@ export interface SynthesisContext
       secondOpinionStore?: SecondOpinionStore;
       superTimelineStore?: SuperTimelineStore;
       synthMetaStore?: SynthMetaStore;
+      veloHuntStore?: VeloHuntStore;
       analysisRunStore?: AnalysisRunStore;
       anonStore?: AnonControlStore;
       stateLock?: StateLock;
@@ -168,6 +177,8 @@ interface PreparedRun {
   /** The seen-set the last persisted run left, and the promoted rows new against it (#1586). */
   promotedSeen: string[];
   newPromotedIds: Set<string>;
+  /** What the case holds, per source and host (#1588) — the prompt block and the backstop share it. */
+  inventory: CollectionInventory;
 }
 
 /**
@@ -187,6 +198,7 @@ async function prepareSynthesisRun(
   caseId: string,
   loaded: InvestigationState,
   observationsBlock: string,
+  aliasIndex?: HostAliasIndex,
 ): Promise<PreparedRun> {
   const { state, sourceTrust, windowSeconds } = await correlateForSynthesis(ctx, caseId, loaded);
   const markers = ctx.opts.falsePositiveStore ? await ctx.opts.falsePositiveStore.load(caseId) : [];
@@ -197,8 +209,13 @@ async function prepareSynthesisRun(
   // so changing any of them triggers a fresh synthesis rather than a skip.
   const { blocks, playbookTasks } = await loadSynthesisInputs(ctx, caseId);
   const promotedSeen = await loadPromotedSeen(ctx, caseId);
+  const hunts = await loadHuntJobs(ctx, caseId);
+  // In-window, BEFORE the false-positive filter: a row marked benign still proves its source was
+  // collected (#1588).
+  const inventory = buildCollectionInventory({ events: inWindowEvents, hunts, aliasIndex });
   return {
     promotedSeen,
+    inventory,
     newPromotedIds: newPromotedIds(scopedEvents, promotedSeen),
     state,
     sourceTrust,
@@ -217,8 +234,26 @@ async function prepareSynthesisRun(
       blocks,
       observationsBlock,
       promoted: promotedSignature(scopedEvents),
+      // The inventory can change with no new row — a hunt came back empty, a host alias merged two
+      // spellings, a row's provenance changed — so the whole rendered inventory is hashed (#1588).
+      inventory: `${renderCollectionInventory(inventory)}\n${inventorySignature(hunts)}`,
     }),
   };
+}
+
+/** Fail-soft: hunt metadata is supplemental — unreadable means no hunt lines, never a failed run. */
+async function loadHuntJobs(ctx: SynthesisContext, caseId: string): Promise<VeloHuntJob[]> {
+  try {
+    return sanitizeHuntJobs((await ctx.opts.veloHuntStore?.list(caseId)) ?? []);
+  } catch (err) {
+    ctx.log.warn(
+      `[synthesis] velo-hunt.json unreadable, inventory has no hunt lines: ${(err as Error).message}`,
+      {
+        caseId,
+      },
+    );
+    return [];
+  }
 }
 
 /**
@@ -552,7 +587,7 @@ export async function synthesize(
   if (loaded.forensicTimeline.length === 0) return loaded;
   const aliasIndex = await resolveHostsOrThrow(ctx, caseId, loaded);
 
-  const run = await prepareSynthesisRun(ctx, caseId, loaded, observationsBlock);
+  const run = await prepareSynthesisRun(ctx, caseId, loaded, observationsBlock, aliasIndex);
   const { state, sourceTrust, markers, scope, scopedEvents, synthHash } = run;
   if (!opts.force && !opts.dryRun && ctx.lastSynthHash.get(caseId) === synthHash) return loaded;
 
@@ -568,6 +603,7 @@ export async function synthesize(
     observationsBlock,
     aliasIndex,
     newPromotedIds: run.newPromotedIds,
+    collectionInventory: run.inventory,
     ...run.blocks,
   });
 
@@ -596,6 +632,8 @@ export async function synthesize(
     markers,
     scopedEvents,
     playbookTasks: run.playbookTasks,
+    inventory: run.inventory,
+    hostOf: (raw) => resolveHost(aliasIndex, raw),
   });
   let next = folded;
   if (opts.dryRun) return next;
