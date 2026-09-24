@@ -9,6 +9,9 @@ import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { StateStore } from "../../src/analysis/stateStore.js";
 import { SecondOpinionStore } from "../../src/analysis/secondOpinionStore.js";
 import { FalsePositiveStore } from "../../src/analysis/falsePositive.js";
+import { PresidioApprovalRequired } from "../../src/analysis/presidio.js";
+import { SynthMetaStore } from "../../src/analysis/synthMeta.js";
+import { ProviderError } from "../../src/providers/provider.js";
 import type { AIProvider, AnalyzeRequest, AnalyzeResult } from "../../src/providers/provider.js";
 import { emptyState, type InvestigationState } from "../../src/analysis/stateTypes.js";
 
@@ -19,6 +22,10 @@ class ScriptedProvider implements AIProvider {
   reconcileCalls = 0; // how many times THIS provider was asked to referee (#1466)
   lastReconcilePrompt = "";
   failReconcile = false;
+  synthCalls = 0; // how many synthesis passes THIS provider ran (a referee-only re-run must add none)
+  reconcileThrows?: Error; // throw this instead of "referee down" (e.g. the Presidio gate)
+  reconcileReply?: string; // answer this instead of the scripted reconcile JSON
+  reconcileGate?: Promise<void>; // hold the referee call open until the test releases it
   constructor(
     private readonly synth: string,
     private readonly reconcile: string,
@@ -28,9 +35,12 @@ class ScriptedProvider implements AIProvider {
     if (/RECONCILING/i.test(req.systemPrompt)) {
       this.reconcileCalls += 1;
       this.lastReconcilePrompt = req.userPrompt;
+      if (this.reconcileGate) await this.reconcileGate;
+      if (this.reconcileThrows) throw this.reconcileThrows;
       if (this.failReconcile) throw new Error("referee down");
-      return { rawText: this.reconcile };
+      return { rawText: this.reconcileReply ?? this.reconcile };
     }
+    this.synthCalls += 1;
     return { rawText: this.synth };
   }
 }
@@ -238,6 +248,184 @@ describe("who referees the verdicts (#1466)", () => {
     expect(res.status).toBe(200);
     expect(res.body.referee).toBe("");
     expect(res.body.deltas.every((d: { rationale: string }) => d.rationale === "")).toBe(true);
+  });
+});
+
+// #1587 — a failed referee used to look exactly like a referee that chose to say nothing.
+describe("a failed referee pass is recorded, shown and re-runnable (#1587)", () => {
+  async function failedRun(opts: { referee?: "b" | "c" } = {}) {
+    const made = await makeApp({ enabled: true, ...opts });
+    // "auth" is not retried, so the failure lands on the first attempt instead of after backoff.
+    made.aProvider.reconcileThrows = new ProviderError("referee down: Codex CLI not found", "auth");
+    const res = await request(made.app).post("/cases/c1/second-opinion").send({});
+    made.aProvider.reconcileThrows = undefined;
+    return { ...made, res };
+  }
+
+  it("the saved record names the referee that failed and why, and keeps every delta", async () => {
+    const { app, res } = await failedRun();
+    expect(res.status).toBe(200);
+    expect(res.body.referee).toBe(""); // #1466: nobody is credited with verdicts never written
+    expect(res.body.refereeError).toMatchObject({
+      referee: "model-A",
+      message: expect.stringMatching(/referee down/),
+    });
+    expect(Date.parse(res.body.refereeError.at)).not.toBeNaN();
+    expect(res.body.deltas).toHaveLength(4);
+    // Survives the store's schema round trip — a field the loader drops is a field nobody sees.
+    const saved = await request(app).get("/cases/c1/second-opinion");
+    expect(saved.body.refereeError.referee).toBe("model-A");
+    expect(typeof saved.body.refereePrompt).toBe("string");
+  });
+
+  it("a successful run carries no failure and no saved prompt", async () => {
+    const { app } = await makeApp({ enabled: true });
+    const res = await request(app).post("/cases/c1/second-opinion").send({});
+    expect(res.body.refereeError).toBeUndefined();
+    expect(res.body.refereePrompt).toBeUndefined();
+  });
+
+  it("a referee answer that matches no disagreement is a failure, not an empty success", async () => {
+    const { app, aProvider } = await makeApp({ enabled: true });
+    aProvider.reconcileReply = JSON.stringify({
+      summary: "ok",
+      verdicts: [{ id: "nope", rationale: "x", recommendation: "keep_a" }],
+    });
+    const res = await request(app).post("/cases/c1/second-opinion").send({});
+    expect(res.body.referee).toBe("");
+    expect(res.body.refereeError.message).toMatch(/no verdict/i);
+  });
+
+  it("the error message is flattened and capped before it is saved", async () => {
+    const { app, aProvider } = await makeApp({ enabled: true });
+    aProvider.reconcileThrows = new ProviderError(`line one\n\tline two\u0007 ${"x".repeat(2000)}`, "auth");
+    const res = await request(app).post("/cases/c1/second-opinion").send({});
+    const msg: string = res.body.refereeError.message;
+    expect(msg.startsWith("line one line two")).toBe(true);
+    expect(msg).not.toMatch(/[\u0000-\u001f]/);
+    expect(msg.length).toBeLessThanOrEqual(300);
+  });
+
+  it("re-running only the referee fills the verdicts, clears the failure, and re-runs no synthesis", async () => {
+    const { app, aProvider, bProvider } = await failedRun();
+    const synthBefore = aProvider.synthCalls + bProvider.synthCalls;
+    const res = await request(app).post("/cases/c1/second-opinion/referee").send({});
+    expect(res.status).toBe(200);
+    expect(res.body.referee).toBe("model-A");
+    expect(res.body.refereeError).toBeUndefined();
+    expect(res.body.refereePrompt).toBeUndefined();
+    expect(res.body.summary).toBe("Model B surfaces a C2 finding A missed.");
+    const bOnly = res.body.deltas.find((d: { kind: string }) => d.kind === "b_only");
+    expect(bOnly.recommendation).toBe("accept_b");
+    expect(aProvider.synthCalls + bProvider.synthCalls).toBe(synthBefore);
+    const saved = await request(app).get("/cases/c1/second-opinion");
+    expect(saved.body.refereeError).toBeUndefined();
+    expect(saved.body.referee).toBe("model-A");
+  });
+
+  it("the re-run replays the exact prompt the failed attempt was given", async () => {
+    const { app, aProvider, stateStore } = await failedRun();
+    const firstPrompt = aProvider.lastReconcilePrompt;
+    // Evidence changes after the failure; the re-run must still judge the saved comparison.
+    const s = await stateStore.load("c1");
+    await stateStore.save({ ...s, forensicTimeline: [] });
+    await request(app).post("/cases/c1/second-opinion/referee").send({});
+    expect(aProvider.lastReconcilePrompt).toBe(firstPrompt);
+  });
+
+  it("an analyst decision made while the referee is thinking survives the re-run", async () => {
+    const { app, aProvider } = await failedRun();
+    let release!: () => void;
+    aProvider.reconcileGate = new Promise((r) => (release = r));
+    const rerun = request(app)
+      .post("/cases/c1/second-opinion/referee")
+      .send({})
+      .then((r) => r);
+    await new Promise((r) => setTimeout(r, 50)); // let the re-run reach the held referee call
+    const applied = await request(app)
+      .post("/cases/c1/second-opinion/apply")
+      .send({ deltaId: "a_only:finding-only", accept: false });
+    expect(applied.status).toBe(200);
+    release();
+    const res = await rerun;
+    expect(res.status).toBe(200);
+    const aOnly = res.body.deltas.find((d: { id: string }) => d.id === "a_only:finding-only");
+    expect(aOnly.status).toBe("rejected");
+    expect(aOnly.recommendation).toBe("keep_a");
+  });
+
+  it("a re-run whose comparison was replaced by a newer run refuses to write", async () => {
+    const { app, aProvider, store } = await failedRun();
+    let release!: () => void;
+    aProvider.reconcileGate = new Promise((r) => (release = r));
+    const rerun = request(app)
+      .post("/cases/c1/second-opinion/referee")
+      .send({})
+      .then((r) => r);
+    await new Promise((r) => setTimeout(r, 50));
+    const soStore = new SecondOpinionStore(store);
+    const current = (await soStore.load("c1"))!;
+    await soStore.save("c1", { ...current, generatedAt: "2099-01-01T00:00:00.000Z" });
+    release();
+    const res = await rerun;
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/newer second opinion/i);
+    expect((await soStore.load("c1"))!.generatedAt).toBe("2099-01-01T00:00:00.000Z");
+  });
+
+  it("a second re-run while one is in flight is refused, and the first one still lands", async () => {
+    const { app, aProvider } = await failedRun();
+    let release!: () => void;
+    aProvider.reconcileGate = new Promise((r) => (release = r));
+    const first = request(app)
+      .post("/cases/c1/second-opinion/referee")
+      .send({})
+      .then((r) => r);
+    await new Promise((r) => setTimeout(r, 50));
+    const second = await request(app).post("/cases/c1/second-opinion/referee").send({});
+    expect(second.status).toBe(409);
+    expect(second.body.error).toMatch(/already running/);
+    release();
+    const res = await first;
+    expect(res.status).toBe(200);
+    expect(res.body.referee).toBe("model-A");
+    expect(aProvider.reconcileCalls).toBe(2); // the failed full-run attempt + the one re-run
+  });
+
+  it("a re-run that fails again answers 502 with the record and a fresh failure time", async () => {
+    const { app, aProvider, res: first } = await failedRun();
+    aProvider.reconcileThrows = new ProviderError("referee down again", "auth");
+    await new Promise((r) => setTimeout(r, 5));
+    const res = await request(app).post("/cases/c1/second-opinion/referee").send({});
+    expect(res.status).toBe(502);
+    expect(res.body.error).toMatch(/referee down/);
+    expect(res.body.record.refereeError.referee).toBe("model-A");
+    expect(res.body.record.refereeError.at > first.body.refereeError.at).toBe(true);
+    expect(res.body.record.deltas).toHaveLength(4);
+  });
+
+  it("the Presidio gate is passed to the analyst, not recorded as a broken referee", async () => {
+    const { app, aProvider } = await failedRun();
+    aProvider.reconcileThrows = new PresidioApprovalRequired([]);
+    const res = await request(app).post("/cases/c1/second-opinion/referee").send({});
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe("presidio_approval_required");
+  });
+
+  it("refuses a re-run when there is no record, or nothing failed", async () => {
+    const { app } = await makeApp({ enabled: true });
+    expect((await request(app).post("/cases/c1/second-opinion/referee").send({})).status).toBe(409);
+    await request(app).post("/cases/c1/second-opinion").send({});
+    const res = await request(app).post("/cases/c1/second-opinion/referee").send({});
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/did not fail/i);
+  });
+
+  it("a successful re-run updates the referee in the agreement telemetry", async () => {
+    const { app, store } = await failedRun();
+    await request(app).post("/cases/c1/second-opinion/referee").send({});
+    const meta = await new SynthMetaStore(store).load("c1");
+    expect(meta?.secondOpinionPerf?.referee).toBe("model-A");
   });
 });
 

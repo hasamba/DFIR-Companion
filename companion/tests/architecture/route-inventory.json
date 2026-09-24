@@ -354,6 +354,7 @@
     "ROUTE GET /cases/:id/second-opinion",
     "ROUTE POST /cases/:id/second-opinion/apply",
     "ROUTE POST /cases/:id/second-opinion/apply-all",
+    "ROUTE POST /cases/:id/second-opinion/referee",
     "ROUTE POST /cases/:id/ask",
     "ROUTE POST /cases/:id/events/:eid/explain",
     "ROUTE POST /cases/:id/executive-summary",

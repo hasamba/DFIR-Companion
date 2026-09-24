@@ -49,6 +49,7 @@ export const AI_LIMIT_PATHS = new Set([
   "/second-opinion",
   "/second-opinion/apply",
   "/second-opinion/apply-all", // 2nd LLM opinion
+  "/second-opinion/referee", // referee-only re-run (#1587)
   "/ask", // Ask-the-case GraphRAG
   "/executive-summary",
   "/starred-report",
