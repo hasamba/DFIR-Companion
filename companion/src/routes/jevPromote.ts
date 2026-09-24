@@ -1,13 +1,8 @@
 import type { Express, Request, Response } from "express";
 import { logActivity } from "../analysis/activityLog.js";
-import { resolveJevSettings } from "../analysis/ai/jev/jevConfig.js";
+import { JevGradeStore, type JevGradeEntry } from "../analysis/ai/jev/jevGradeRecord.js";
 import { isLabProduced } from "../analysis/labIntel.js";
-import {
-  worstSeverity,
-  type ForensicEvent,
-  type InvestigationState,
-  type Severity,
-} from "../analysis/stateTypes.js";
+import { worstSeverity, type ForensicEvent, type InvestigationState } from "../analysis/stateTypes.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -25,19 +20,16 @@ import type { RouteContext } from "./context.js";
  *
  * NO RE-SYNTHESIS. Promoting spends nothing; an AI call the analyst did not ask for would. The
  * panel promotes, the analyst re-synthesizes when they have finished picking.
+ *
+ * THE BROWSER SENDS IDS, AND NOTHING ELSE IS READ FROM IT (#1578). The grade, the confidence and the
+ * model all come from the server's own record of what the review graded. They used to come from the
+ * request body, so a tampered body — or any session at all — could write a severity no review gave
+ * and tag it with a model that never saw the row. An older tab still sends those fields; they are
+ * ignored rather than refused, because the ids it sends beside them are still a real selection.
  */
 
-const SEVERITIES: readonly Severity[] = ["Info", "Low", "Medium", "High", "Critical"];
-
-const isSeverity = (value: unknown): value is Severity => SEVERITIES.includes(value as Severity);
-
-/** One ticked row, as the panel sends it: the id plus the decision the model returned for it. */
-interface PromoteSelection {
-  readonly id: string;
-  readonly grade: Severity;
-  readonly confidence: number;
-  readonly score: number;
-}
+/** Stands in for a model id only if a stored entry somehow has none. Never a plausible-looking id. */
+const UNKNOWN_MODEL = "unknown model";
 
 /** How much of a model id the provenance tag carries before it is cut. */
 const MODEL_ID_MAX = 48;
@@ -60,32 +52,28 @@ const MODEL_ID_MAX = 48;
  * already there, and the review response and the panel both keep it; spending tag width on it
  * would cost the thing that makes the tag worth having.
  */
-function reviewProvenance(sel: PromoteSelection, model: string): string {
-  const confidence = Number.isFinite(sel.confidence) ? sel.confidence.toFixed(2) : "?";
-  return `[missed-evidence: ${sel.grade} conf ${confidence} by ${model.slice(0, MODEL_ID_MAX)}]`;
+function reviewProvenance(entry: JevGradeEntry): string {
+  const confidence = Number.isFinite(entry.confidence) ? entry.confidence.toFixed(2) : "?";
+  const model = entry.model.trim() || UNKNOWN_MODEL;
+  return `[missed-evidence: ${entry.grade} conf ${confidence} by ${model.slice(0, MODEL_ID_MAX)}]`;
 }
 
 /**
  * Validate the selection at the boundary: a malformed tick list is refused whole rather than
  * half-promoted. Duplicate ids collapse — the same row ticked twice is one promotion, and the
- * merge would dedup it anyway.
+ * merge would dedup it anyway. Only `id` is read from each row.
  */
-function parseSelection(body: unknown): { rows: PromoteSelection[] } | { error: string } {
+function parseSelection(body: unknown): { ids: string[] } | { error: string } {
   const raw = (body as { rows?: unknown } | null | undefined)?.rows;
   if (!Array.isArray(raw) || raw.length === 0) return { error: "rows is required" };
-  const byId = new Map<string, PromoteSelection>();
+  const ids = new Set<string>();
   for (const entry of raw) {
-    const row = entry as Partial<Record<keyof PromoteSelection, unknown>> | null;
+    const row = entry as { id?: unknown } | null;
     const id = typeof row?.id === "string" ? row.id.trim() : "";
     if (!id) return { error: "every row needs an id" };
-    if (!isSeverity(row?.grade)) return { error: `row ${id}: grade must be one of ${SEVERITIES.join(", ")}` };
-    if (typeof row?.confidence !== "number" || !Number.isFinite(row.confidence))
-      return { error: `row ${id}: confidence must be a number` };
-    if (typeof row?.score !== "number" || !Number.isFinite(row.score))
-      return { error: `row ${id}: score must be a number` };
-    byId.set(id, { id, grade: row.grade, confidence: row.confidence, score: row.score });
+    ids.add(id);
   }
-  return { rows: [...byId.values()] };
+  return { ids: [...ids] };
 }
 
 /** The counts the panel refreshes from, in the shape POST /cases/:id/synthesize already returns. */
@@ -97,6 +85,7 @@ const freshCounts = (state: InvestigationState) => ({
 
 export function registerJevPromoteRoutes(app: Express, ctx: RouteContext): void {
   const { store, options } = ctx;
+  const grades = options.jevGradeStore ?? new JevGradeStore(store);
 
   app.post("/cases/:id/jev/promote", async (req: Request, res: Response) => {
     const caseId = req.params.id;
@@ -115,16 +104,10 @@ export function registerJevPromoteRoutes(app: Express, ctx: RouteContext): void 
     const parsed = parseSelection(req.body);
     if ("error" in parsed) return res.status(400).json({ error: parsed.error });
 
-    // The model that graded the selection. The panel sends it, because a review's rows may have
-    // been graded by a model the settings no longer name; the live setting is the fallback, and
-    // "unknown model" is the honest last resort rather than a silently plausible id.
-    const bodyModel = (req.body as { model?: unknown }).model;
-    const model =
-      (typeof bodyModel === "string" && bodyModel.trim()) ||
-      resolveJevSettings().settings?.model ||
-      "unknown model";
-
     try {
+      // Each row carries the model that graded it, so a row graded by a model the settings no
+      // longer name is still tagged with the model that actually graded it.
+      const record = await grades.load(caseId);
       const state = await options.stateStore.load(caseId);
       const inForensic = new Set(state.forensicTimeline.map((e) => e.id));
       const toPromote: ForensicEvent[] = [];
@@ -133,15 +116,24 @@ export function registerJevPromoteRoutes(app: Express, ctx: RouteContext): void 
       let missing = 0;
       let lab = 0;
       let stayedInfo = 0;
+      let ungraded = 0;
+      const models = new Set<string>();
 
-      for (const sel of parsed.rows) {
+      for (const id of parsed.ids) {
         // Already analyzed is a no-op, not an error: the analyst ticked a row a previous press (or
         // an import) already pulled up, and failing the batch over it would lose the rest.
-        if (inForensic.has(sel.id)) {
+        if (inForensic.has(id)) {
           already++;
           continue;
         }
-        const row = await superStore.get(caseId, sel.id);
+        // No review in this case graded the row, so there is no grade to write. The browser's word
+        // for one is exactly what this route no longer takes.
+        const graded = record.get(id);
+        if (!graded) {
+          ungraded++;
+          continue;
+        }
+        const row = await superStore.get(caseId, id);
         if (!row) {
           missing++;
           continue;
@@ -153,11 +145,12 @@ export function registerJevPromoteRoutes(app: Express, ctx: RouteContext): void 
           continue;
         }
         // RAISE ONLY. worstSeverity is the canonical "more severe of the two": a model grading a
-        // row below the severity it already carries can never demote it, whatever the panel sends.
-        const severity = worstSeverity(row.severity, sel.grade);
+        // row below the severity it already carries can never demote it.
+        const severity = worstSeverity(row.severity, graded.grade);
         if (severity === "Info") stayedInfo++;
         toPromote.push({ ...row, severity });
-        tagById[sel.id] = [reviewProvenance(sel, model)];
+        tagById[id] = [reviewProvenance(graded)];
+        models.add(graded.model.trim() || UNKNOWN_MODEL);
       }
 
       const after = toPromote.length
@@ -174,10 +167,11 @@ export function registerJevPromoteRoutes(app: Express, ctx: RouteContext): void 
       const landed = new Set(after.forensicTimeline.map((e) => e.id));
       const promoted = toPromote.filter((e) => landed.has(e.id)).length;
       const refused = toPromote.length - promoted;
-      const skipped = parsed.rows.length - promoted;
+      const skipped = parsed.ids.length - promoted;
 
       const reasons: string[] = [];
       if (already) reasons.push(`${already} row(s) were already in the forensic timeline`);
+      if (ungraded) reasons.push(`${ungraded} row(s) were not graded by a review in this case`);
       if (missing) reasons.push(`${missing} row(s) are no longer in the archive`);
       if (lab) reasons.push(`${lab} sandbox-produced row(s) cannot be promoted by this review`);
       if (refused) reasons.push(`${refused} row(s) were refused by the promotion seam`);
@@ -190,7 +184,8 @@ export function registerJevPromoteRoutes(app: Express, ctx: RouteContext): void 
         category: "ai",
         action: "jev-promote",
         detail:
-          `missed-evidence review: promoted ${promoted} archive row(s) at the grade ${model} gave them` +
+          `missed-evidence review: promoted ${promoted} archive row(s) at the grade ` +
+          `${models.size ? [...models].join(", ") : "the review"} gave them` +
           (skipped ? `; ${skipped} skipped (${reasons.join("; ")})` : ""),
       });
 

@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Deep pass says when it has nothing new to read** — the pre-flight preview reports what the last synthesis read; if it dropped no event for the size limit, the panel says a deep pass would read the same or fewer and Run is off unless the analyst ticks *Run anyway*; a timeline changed since is called stale (closes #1457)
 
 ### Fixed
+- **A promoted row's grade comes from the review, not the browser** — the server keeps what each missed-evidence review graded, and promote reads the grade, confidence and model from that record, so a tampered request cannot write a severity or a model name no review gave; a row no review in the case graded is skipped with that reason (closes #1578)
 - **No write can create a case by accident** — every write to a case that was never created is refused with a 404 before it reaches storage, instead of leaving an unlisted case directory behind (closes #1570)
 - **Missed evidence review refuses an unknown case and a second run** — a typo'd case id gets a 404 instead of leaving a case directory on disk, and a second press while a review of that case is running gets a 409 instead of paying for the same review twice (closes #1549, closes #1551)
 - **Missed evidence review can no longer hang on "Reviewing…"** — a Stop waiting button frees the panel while a review runs, and a capped review gives up after 15 minutes with a message that the server may still be working (closes #1552)

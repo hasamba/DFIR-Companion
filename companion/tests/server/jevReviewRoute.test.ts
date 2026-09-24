@@ -10,6 +10,7 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { SuperTimelineStore } from "../../src/analysis/superTimelineStore.js";
 import { createApp } from "../../src/server.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { JevGradeStore } from "../../src/analysis/ai/jev/jevGradeRecord.js";
 
 // The Jev review is OFF unless the analyst turns it on, and it reads the raw record — so the two
 // properties worth pinning at the route are that an unconfigured install offers nothing, and that
@@ -159,7 +160,7 @@ describe("what the analyst is told about coverage", () => {
   });
 
   /** `archive` rows in the super-timeline, the first `analyzed` of them also in the forensic one. */
-  async function caseWith(archive: number, analyzed: number) {
+  async function caseRoot(archive: number, analyzed: number) {
     const root = await mkdtemp(join(tmpdir(), "dfir-jev-cov-"));
     const cases = new CaseStore(root);
     await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
@@ -168,6 +169,11 @@ describe("what the analyst is told about coverage", () => {
     await stateStore.save({ ...emptyState("c1"), forensicTimeline: rows.slice(0, analyzed) });
     const superTimelineStore = new SuperTimelineStore(cases);
     await superTimelineStore.append("c1", rows);
+    return { cases, stateStore, superTimelineStore };
+  }
+
+  async function caseWith(archive: number, analyzed: number) {
+    const { cases, stateStore, superTimelineStore } = await caseRoot(archive, analyzed);
     return createApp(cases, { stateStore, superTimelineStore });
   }
 
@@ -251,5 +257,51 @@ describe("what the analyst is told about coverage", () => {
     const app = createApp(cases, { stateStore, superTimelineStore });
     await request(app).post("/cases/c1/jev/review").send({ all: true });
     expect((await stateStore.load("c1")).forensicTimeline).toEqual([]);
+  });
+
+  // #1578. The promote route writes a severity from the server's record of what a review graded,
+  // never from the browser. So the review has to leave that record behind, before it answers.
+  it("records every row it graded, with the model that graded it", async () => {
+    const { cases, stateStore, superTimelineStore } = await caseRoot(5, 2);
+    const app = createApp(cases, { stateStore, superTimelineStore });
+    const res = await request(app).post("/cases/c1/jev/review").send({});
+    expect(res.status).toBe(200);
+
+    const record = await new JevGradeStore(cases).load("c1");
+    // r0 and r1 are already analyzed, so the review never graded them and must not claim it did.
+    expect([...record.keys()].sort()).toEqual(["r2", "r3", "r4"]);
+    for (const graded of res.body.rows as { id: string; grade: string; confidence: number }[]) {
+      expect(record.get(graded.id)).toMatchObject({
+        grade: graded.grade,
+        confidence: graded.confidence,
+        model: res.body.model,
+      });
+    }
+  });
+
+  it("merges a second review into the record rather than replacing it", async () => {
+    const { cases, stateStore, superTimelineStore } = await caseRoot(6, 0);
+    const app = createApp(cases, { stateStore, superTimelineStore });
+    expect((await request(app).post("/cases/c1/jev/review").send({ limit: 2 })).status).toBe(200);
+    const first = await new JevGradeStore(cases).load("c1");
+    expect([...first.keys()].sort()).toEqual(["r0", "r1"]);
+
+    // A second review that reads further keeps the first review's rows and adds its own.
+    expect((await request(app).post("/cases/c1/jev/review").send({ limit: 4 })).status).toBe(200);
+    expect([...(await new JevGradeStore(cases).load("c1")).keys()].sort()).toEqual(["r0", "r1", "r2", "r3"]);
+  });
+
+  it("answers 500, not the grades, when it cannot record them", async () => {
+    const { cases, stateStore, superTimelineStore } = await caseRoot(3, 0);
+    const broken = new JevGradeStore(cases);
+    broken.record = () => Promise.reject(new Error("disk full"));
+    const app = createApp(cases, { stateStore, superTimelineStore, jevGradeStore: broken });
+
+    const res = await request(app).post("/cases/c1/jev/review").send({});
+
+    expect(res.status).toBe(500);
+    expect(String(res.body.error)).toMatch(/could not be saved/i);
+    expect(String(res.body.error)).toContain("disk full");
+    expect(res.body.rows).toBeUndefined();
   });
 });
