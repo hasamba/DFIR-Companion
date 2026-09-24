@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  baseCaseId,
   buildEvaluationReport,
   computeDirtyCaseAggregate,
   reportExitCode,
   type EvaluationCaseResult,
+  type EvaluationExtractionResult,
   type EvaluationReportInput,
 } from "./report.js";
 import { REAL_THRESHOLDS } from "./scorer.js";
@@ -279,5 +281,193 @@ describe("production-corpus real-run outcome uses aggregate recall, not all-or-n
     expect(Number.isNaN(aggregate.claimRecall)).toBe(false);
     const report = buildEvaluationReport(realInput([cleanCase]));
     expect(report.outcome).toBe("passed");
+  });
+});
+
+// #1579: a real run repeats the corpus 3 times. The summary is the per-run mean (so a 3-run
+// baseline stays on the 1-run scale), and an extraction fixture passes on its MEAN over the runs,
+// not on every single run. Infra failures and hard violations in any one run still fail.
+describe("pooled multi-run reports (#1579)", () => {
+  const IDENTITY = {
+    provider: "mock",
+    model: "mock-model",
+    promptHash: "a".repeat(64),
+    sourceHash: "b".repeat(64),
+    corpusHash: "c".repeat(64),
+  };
+  const GATE = { minPrecision: 0.7, minRecall: 0.7 };
+
+  function runId(id: string, run: number): string {
+    return run === 1 ? id : `${id}#run${run}`;
+  }
+
+  function dirtyRun(id: string, run: number, overrides: Partial<EvaluationCaseResult["metrics"]> = {}) {
+    return {
+      ...BASE_CASE,
+      id: runId(id, run),
+      runIndex: run,
+      scenario: "ransomware",
+      status: "passed",
+      metrics: { ...BASE_CASE.metrics, ...overrides },
+      resources: {
+        durationMs: 30,
+        calls: 3,
+        failedCalls: 0,
+        inputTokens: 90,
+        outputTokens: 30,
+        costUsd: 0.3,
+      },
+    } satisfies EvaluationCaseResult;
+  }
+
+  function extractionRun(
+    id: string,
+    run: number,
+    recall: number,
+    extra: Partial<EvaluationExtractionResult> = {},
+  ): EvaluationExtractionResult {
+    return {
+      id: runId(id, run),
+      runIndex: run,
+      modality: "csv",
+      status: recall >= GATE.minRecall ? "passed" : "quality_failed",
+      precision: 1,
+      recall,
+      resources: { ...BASE_CASE.resources },
+      gate: GATE,
+      ...extra,
+    };
+  }
+
+  function pooled(overrides: Partial<EvaluationReportInput> = {}): EvaluationReportInput {
+    return {
+      identity: IDENTITY,
+      corpusVersion: "1.0.0",
+      cases: [1, 2, 3].map((run) => dirtyRun("d1", run)),
+      extraction: [],
+      screenshot: [],
+      createdAt: "2026-07-31T00:00:00.000Z",
+      real: true,
+      runs: 3,
+      mode: "all",
+      expected: { cases: 1, extraction: 0, screenshot: 0 },
+      ...overrides,
+    };
+  }
+
+  it("strips the run suffix to find the fixture", () => {
+    expect(baseCaseId("csv-1#run2")).toBe("csv-1");
+    expect(baseCaseId("csv-1#run10")).toBe("csv-1");
+    expect(baseCaseId("csv-1")).toBe("csv-1");
+  });
+
+  it("averages ratios, divides counts and summary resources by the run count, and keeps the total resources", () => {
+    const cases = [
+      dirtyRun("d1", 1, { claimRecall: 0.9 }),
+      dirtyRun("d2", 1, { claimRecall: 0.7 }),
+      dirtyRun("d1", 2, { claimRecall: 0.8 }),
+      dirtyRun("d2", 2, { claimRecall: 1 }),
+      dirtyRun("d1", 3, { claimRecall: 0.6, confidenceIssues: 1 }),
+      dirtyRun("d2", 3, { claimRecall: 0.9 }),
+    ];
+    const report = buildEvaluationReport(pooled({ cases, real: false }));
+    const perRunMeans = [(0.9 + 0.7) / 2, (0.8 + 1) / 2, (0.6 + 0.9) / 2];
+    expect(report.summary.claimRecall).toBeCloseTo(perRunMeans.reduce((a, b) => a + b, 0) / 3, 10);
+    expect(report.summary.confidenceIssues).toBeCloseTo(1 / 3, 10);
+    expect(report.resources).toMatchObject({
+      durationMs: 180,
+      inputTokens: 540,
+      outputTokens: 180,
+      calls: 18,
+    });
+    expect(report.resources.costUsd).toBeCloseTo(1.8, 10);
+    expect(report.summary.durationMs).toBeCloseTo(60, 10);
+    expect(report.summary.inputTokens).toBeCloseTo(180, 10);
+    expect(report.summary.outputTokens).toBeCloseTo(60, 10);
+    expect(report.summary.costUsd).toBeCloseTo(0.6, 10);
+    expect(report.runs).toBe(3);
+    expect(report.mode).toBe("all");
+    expect(report.expected).toEqual({ cases: 1, extraction: 0, screenshot: 0 });
+  });
+
+  it("passes an extraction fixture on its mean recall (0.9, 0.9, 0.5 → 0.767) though one run failed", () => {
+    const extraction = [
+      extractionRun("csv-1", 1, 0.9),
+      extractionRun("csv-1", 2, 0.9),
+      extractionRun("csv-1", 3, 0.5),
+    ];
+    expect(extraction[2]?.status).toBe("quality_failed");
+    expect(buildEvaluationReport(pooled({ extraction })).outcome).toBe("passed");
+  });
+
+  it("fails an extraction fixture whose mean recall (0.9, 0.5, 0.5 → 0.633) is under its gate", () => {
+    const extraction = [
+      extractionRun("csv-1", 1, 0.9),
+      extractionRun("csv-1", 2, 0.5),
+      extractionRun("csv-1", 3, 0.5),
+    ];
+    expect(buildEvaluationReport(pooled({ extraction })).outcome).toBe("quality_failed");
+  });
+
+  it("judges each fixture on its own mean — a good fixture cannot carry a bad one", () => {
+    const extraction = [
+      ...[1, 2, 3].map((run) => extractionRun("csv-good", run, 1)),
+      ...[1, 2, 3].map((run) => extractionRun("csv-bad", run, 0.5)),
+    ];
+    expect(buildEvaluationReport(pooled({ extraction })).outcome).toBe("quality_failed");
+  });
+
+  it("judges screenshot fixtures on their mean too", () => {
+    const screenshot = [1, 2, 3].map((run) =>
+      extractionRun("shot-1", run, run === 3 ? 0.5 : 0.9, { modality: "screenshot" }),
+    );
+    expect(buildEvaluationReport(pooled({ screenshot })).outcome).toBe("passed");
+  });
+
+  it("falls back to the row status when a row has no gate", () => {
+    const extraction = [1, 2, 3].map((run) => {
+      const { gate: _gate, ...row } = extractionRun("csv-1", run, run === 3 ? 0.5 : 0.9);
+      return row;
+    });
+    expect(buildEvaluationReport(pooled({ extraction })).outcome).toBe("quality_failed");
+  });
+
+  it("fails on a hard violation in run 2 only", () => {
+    const cases = [dirtyRun("d1", 1), dirtyRun("d1", 2, { danglingEvidenceRefs: 1 }), dirtyRun("d1", 3)];
+    expect(buildEvaluationReport(pooled({ cases })).outcome).toBe("quality_failed");
+  });
+
+  it("reports provider_failed when any one run's row failed at the provider", () => {
+    const extraction = [
+      extractionRun("csv-1", 1, 0.9),
+      extractionRun("csv-1", 2, 0.9, { status: "provider_failed", errorKind: "timeout" }),
+      extractionRun("csv-1", 3, 0.9),
+    ];
+    expect(buildEvaluationReport(pooled({ extraction })).outcome).toBe("provider_failed");
+  });
+
+  it("defaults to one run in mode all and divides nothing", () => {
+    const report = buildEvaluationReport({
+      identity: IDENTITY,
+      corpusVersion: "1.0.0",
+      cases: [BASE_CASE],
+      extraction: [],
+      screenshot: [],
+      createdAt: "2026-07-31T00:00:00.000Z",
+    });
+    expect(report.runs).toBe(1);
+    expect(report.mode).toBe("all");
+    expect(report.expected).toBeUndefined();
+    expect(report.summary.durationMs).toBe(BASE_CASE.resources.durationMs);
+    expect(report.summary.inputTokens).toBe(BASE_CASE.resources.inputTokens);
+  });
+
+  it("keeps per-row verdicts on a mock run — one failed run fails the fixture", () => {
+    const extraction = [
+      extractionRun("csv-1", 1, 0.9),
+      extractionRun("csv-1", 2, 0.9),
+      extractionRun("csv-1", 3, 0.5),
+    ];
+    expect(buildEvaluationReport(pooled({ extraction, real: false })).outcome).toBe("quality_failed");
   });
 });

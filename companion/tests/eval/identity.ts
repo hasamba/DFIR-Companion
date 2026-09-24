@@ -31,6 +31,9 @@ export async function currentEvaluationSourceHash(): Promise<string> {
 export async function evaluationIdentity(
   provider: Pick<AIProvider, "name" | "model">,
   corpusHash: string,
+  // #1579: pass only when the screenshot section ran against a real vision provider.
+  vision?: Pick<AIProvider, "name" | "model">,
+  visionSetHash?: string,
 ): Promise<EvaluationIdentity> {
   return {
     provider: provider.name,
@@ -38,5 +41,14 @@ export async function evaluationIdentity(
     promptHash: evaluationPromptHash(),
     sourceHash: await currentEvaluationSourceHash(),
     corpusHash,
+    ...(vision
+      ? {
+          vision: {
+            provider: vision.name,
+            model: vision.model,
+            ...(visionSetHash ? { setHash: visionSetHash } : {}),
+          },
+        }
+      : {}),
   };
 }

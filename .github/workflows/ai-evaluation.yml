@@ -17,7 +17,7 @@ jobs:
     name: Pinned real-model quality and calibration
     runs-on: ubuntu-latest
     environment: ai-evaluation
-    timeout-minutes: 45
+    timeout-minutes: 120
     env:
       DFIR_AI_SYNTH_PROVIDER: ${{ vars.DFIR_EVAL_PROVIDER }}
       DFIR_AI_SYNTH_MODEL: ${{ vars.DFIR_EVAL_MODEL }}
@@ -44,7 +44,7 @@ jobs:
         working-directory: companion
         shell: bash
         run: |
-          args=(all --real --require-provider --output eval-artifacts/eval-report.json --write-baseline eval-artifacts/baselines)
+          args=(all --real --runs 3 --require-provider --output eval-artifacts/eval-report.json --write-baseline eval-artifacts/baselines)
           if [[ -n "${DFIR_EVAL_BASELINE_PATH}" ]]; then
             args+=(--baseline "${DFIR_EVAL_BASELINE_PATH}" --require-baseline --attestation eval-artifacts/no-regression.json)
           fi

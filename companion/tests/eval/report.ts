@@ -6,6 +6,15 @@ export type EvaluationOutcome = "passed" | "quality_failed" | "provider_failed" 
 export type EvaluationCaseStatus =
   "passed" | "quality_failed" | "provider_failed" | "runner_failed" | "skipped";
 
+export type EvaluationMode = "all" | "extraction" | "synthesis" | "screenshots";
+
+// Fixture and case counts for ONE run; a report of N runs holds N times these rows (#1579).
+export interface EvaluationExpectedCounts {
+  cases: number;
+  extraction: number;
+  screenshot: number;
+}
+
 export interface EvaluationResources {
   durationMs: number;
   calls: number;
@@ -35,6 +44,8 @@ export interface EvaluationCaseResult {
   metrics: EvaluationCaseMetrics;
   resources: EvaluationResources;
   errorKind?: string;
+  // 1-based run number; absent = run 1. Run k >= 2 also suffixes the id with `#run${k}`.
+  runIndex?: number;
 }
 
 export interface EvaluationExtractionResult {
@@ -45,6 +56,9 @@ export interface EvaluationExtractionResult {
   recall: number;
   resources: EvaluationResources;
   errorKind?: string;
+  runIndex?: number;
+  // The thresholds this row was scored against. Absent → the row's own status decides.
+  gate?: { minPrecision: number; minRecall: number };
 }
 
 export interface EvaluationReportInput {
@@ -61,10 +75,15 @@ export interface EvaluationReportInput {
   // Single source of truth: the SAME options.real already threaded into runCorpusSuite for the
   // #1217/#1226 precision relaxation — never set independently (#1224).
   real?: boolean;
+  runs?: number;
+  mode?: EvaluationMode;
+  expected?: EvaluationExpectedCounts;
 }
 
 export interface EvaluationReport extends EvaluationReportInput {
   schemaVersion: 1;
+  runs: number;
+  mode: EvaluationMode;
   outcome: EvaluationOutcome;
   summary: EvaluationSummary;
   resources: EvaluationResources;
@@ -93,6 +112,16 @@ function addResources(left: EvaluationResources, right: EvaluationResources): Ev
     outputTokens: left.outputTokens + right.outputTokens,
     costUsd: left.costUsd + right.costUsd,
   };
+}
+
+const RUN_SUFFIX = /#run\d+$/;
+
+export function baseCaseId(id: string): string {
+  return id.replace(RUN_SUFFIX, "");
+}
+
+function runCount(input: EvaluationReportInput): number {
+  return input.runs ?? 1;
 }
 
 function average(values: readonly number[]): number {
@@ -157,6 +186,31 @@ function hasTotalWhiff(cases: readonly EvaluationCaseResult[]): boolean {
   );
 }
 
+function meetsGate(rows: readonly EvaluationExtractionResult[]): boolean {
+  const scored = rows.filter((row) => row.status !== "skipped");
+  const gate = scored[0]?.gate;
+  if (!gate) return true;
+  return (
+    average(scored.map((row) => row.precision)) >= gate.minPrecision &&
+    average(scored.map((row) => row.recall)) >= gate.minRecall
+  );
+}
+
+// #1579: on a real run one fixture is extracted once per run, and a real model can miss on one
+// run and hit on the next. A gated fixture passes on its MEAN precision/recall over the runs vs
+// the thresholds it was scored against; a row without a gate keeps its own status. Mock runs
+// never reach this: every row's own verdict still gates.
+function hasFixtureQualityFailure(rows: readonly EvaluationExtractionResult[]): boolean {
+  const ungated = rows.filter((row) => !row.gate);
+  if (ungated.some((row) => row.status === "quality_failed")) return true;
+  const fixtures = new Map<string, EvaluationExtractionResult[]>();
+  for (const row of rows.filter((candidate) => candidate.gate)) {
+    const key = `${row.modality}:${baseCaseId(row.id)}`;
+    fixtures.set(key, [...(fixtures.get(key) ?? []), row]);
+  }
+  return [...fixtures.values()].some((fixture) => !meetsGate(fixture));
+}
+
 function determineOutcome(input: EvaluationReportInput): EvaluationOutcome {
   if (input.runnerError) return "runner_failed";
   if (input.providerFailureReason) return "provider_failed";
@@ -186,7 +240,10 @@ function determineOutcome(input: EvaluationReportInput): EvaluationOutcome {
       !hasTotalWhiff(input.cases) &&
       meetsRecallFloor(computeDirtyCaseAggregate(input.cases))
     : !caseStatuses.includes("quality_failed");
-  if (!casesOk || otherStatuses.includes("quality_failed")) return "quality_failed";
+  const otherOk = input.real
+    ? !hasFixtureQualityFailure([...input.extraction, ...input.screenshot])
+    : !otherStatuses.includes("quality_failed");
+  if (!casesOk || !otherOk) return "quality_failed";
 
   const allStatuses = [...caseStatuses, ...otherStatuses];
   if (allStatuses.length > 0 && allStatuses.every((status) => status === "skipped")) return "skipped";
@@ -201,8 +258,13 @@ function reportResources(input: EvaluationReportInput): EvaluationResources {
   ].reduce(addResources, EMPTY_RESOURCES);
 }
 
+// #1579: ratios are the mean over every pooled row (equal to the mean of the per-run means, since
+// each run holds the same rows). Counts and resources are divided by the run count so a 3-run
+// summary sits on the same per-run scale as a 1-run baseline. report.resources stays the total.
 function reportSummary(input: EvaluationReportInput, resources: EvaluationResources): EvaluationSummary {
   const extraction = [...input.extraction, ...input.screenshot];
+  const runs = runCount(input);
+  const perRun = (value: number): number => value / runs;
   const abstentionCases = input.cases.filter((result) => result.scenario === "clean");
   return {
     claimPrecision: average(input.cases.map((result) => result.metrics.claimPrecision)),
@@ -212,15 +274,19 @@ function reportSummary(input: EvaluationReportInput, resources: EvaluationResour
     iocPrecision: average(input.cases.map((result) => result.metrics.iocPrecision)),
     iocRecall: average(input.cases.map((result) => result.metrics.iocRecall)),
     abstentionRate: average(abstentionCases.map((result) => (result.metrics.abstained ? 1 : 0))),
-    forbiddenConclusions: input.cases.reduce((sum, result) => sum + result.metrics.forbiddenConclusions, 0),
-    danglingEvidenceRefs: input.cases.reduce((sum, result) => sum + result.metrics.danglingEvidenceRefs, 0),
-    confidenceIssues: input.cases.reduce((sum, result) => sum + result.metrics.confidenceIssues, 0),
+    forbiddenConclusions: perRun(
+      input.cases.reduce((sum, result) => sum + result.metrics.forbiddenConclusions, 0),
+    ),
+    danglingEvidenceRefs: perRun(
+      input.cases.reduce((sum, result) => sum + result.metrics.danglingEvidenceRefs, 0),
+    ),
+    confidenceIssues: perRun(input.cases.reduce((sum, result) => sum + result.metrics.confidenceIssues, 0)),
     uncertaintyRecall: average(input.cases.map((result) => result.metrics.uncertaintyRecall)),
     nextStepRecall: average(input.cases.map((result) => result.metrics.nextStepRecall)),
-    durationMs: resources.durationMs,
-    inputTokens: resources.inputTokens,
-    outputTokens: resources.outputTokens,
-    costUsd: resources.costUsd,
+    durationMs: perRun(resources.durationMs),
+    inputTokens: perRun(resources.inputTokens),
+    outputTokens: perRun(resources.outputTokens),
+    costUsd: perRun(resources.costUsd),
   };
 }
 
@@ -234,6 +300,10 @@ export function buildEvaluationReport(input: EvaluationReportInput): EvaluationR
     extraction: input.extraction.map((result) => ({ ...result })),
     screenshot: input.screenshot.map((result) => ({ ...result })),
     createdAt: input.createdAt,
+    runs: runCount(input),
+    mode: input.mode ?? "all",
+    ...(input.expected ? { expected: { ...input.expected } } : {}),
+    ...(input.real !== undefined ? { real: input.real } : {}),
     ...(input.skippedReason ? { skippedReason: input.skippedReason } : {}),
     ...(input.providerFailureReason ? { providerFailureReason: input.providerFailureReason } : {}),
     ...(input.runnerError ? { runnerError: input.runnerError } : {}),

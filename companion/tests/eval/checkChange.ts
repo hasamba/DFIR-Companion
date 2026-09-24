@@ -6,9 +6,13 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import {
   assessNoRegressionGate,
+  attestedReportShapeSchema,
   collectPromptSource,
   evaluationSourceHash,
   noRegressionAttestationSchema,
+  verifyAttestedReportShape,
+  visionInputsChanged,
+  type AttestedReportShape,
   type NoRegressionAttestation,
 } from "./changeGate.js";
 
@@ -34,50 +38,62 @@ async function baseFile(revision: string, path: string): Promise<string> {
   return git(["show", `${revision}:${path}`]);
 }
 
-async function currentSourceHash(): Promise<string> {
+interface EvaluatedSource {
+  prompts: string;
+  envExample: string;
+}
+
+async function currentSource(): Promise<EvaluatedSource> {
   const [prompts, envExample] = await Promise.all([
     collectPromptSource((path) => readFile(`${REPOSITORY_ROOT}/${path}`, "utf8")),
     readFile(`${REPOSITORY_ROOT}/companion/.env.example`, "utf8"),
   ]);
-  return evaluationSourceHash(prompts, envExample);
+  return { prompts, envExample };
 }
 
-async function baseSourceHash(revision: string): Promise<string> {
+async function baseSource(revision: string): Promise<EvaluatedSource> {
   const [prompts, envExample] = await Promise.all([
     collectPromptSource((path) => baseFile(revision, path)),
     baseFile(revision, "companion/.env.example"),
   ]);
-  return evaluationSourceHash(prompts, envExample);
+  return { prompts, envExample };
 }
 
-async function readAttestation(): Promise<NoRegressionAttestation | undefined> {
+interface ReadAttestation {
+  attestation: NoRegressionAttestation;
+  report: AttestedReportShape;
+}
+
+async function readAttestation(): Promise<ReadAttestation | undefined> {
   try {
     const raw = await readFile(ATTESTATION_PATH, "utf8");
     const attestation = noRegressionAttestationSchema.parse(JSON.parse(raw) as unknown);
-    await verifyAttestedReport(attestation);
-    return attestation;
+    const report = await verifyAttestedReport(attestation);
+    return { attestation, report };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
   }
 }
 
-const attestedReportSchema = z.object({
-  schemaVersion: z.literal(1),
-  outcome: z.literal("passed"),
-  identity: z.object({ sourceHash: z.string().regex(/^[a-f0-9]{64}$/) }),
-  baselineComparison: z.object({
-    status: z.literal("passed"),
-    baselineKey: z.string().min(1),
+const attestedReportSchema = attestedReportShapeSchema.and(
+  z.object({
+    schemaVersion: z.literal(1),
+    outcome: z.literal("passed"),
+    identity: z.object({ sourceHash: z.string().regex(/^[a-f0-9]{64}$/) }),
+    baselineComparison: z.object({
+      status: z.literal("passed"),
+      baselineKey: z.string().min(1),
+    }),
+    privacy: z.object({
+      containsEvidence: z.literal(false),
+      containsModelOutput: z.literal(false),
+      containsCredentials: z.literal(false),
+    }),
   }),
-  privacy: z.object({
-    containsEvidence: z.literal(false),
-    containsModelOutput: z.literal(false),
-    containsCredentials: z.literal(false),
-  }),
-});
+);
 
-async function verifyAttestedReport(attestation: NoRegressionAttestation): Promise<void> {
+async function verifyAttestedReport(attestation: NoRegressionAttestation): Promise<AttestedReportShape> {
   if (attestation.reportPath !== basename(attestation.reportPath)) {
     throw new Error("no-regression reportPath must name a file beside the attestation");
   }
@@ -92,16 +108,25 @@ async function verifyAttestedReport(attestation: NoRegressionAttestation): Promi
   if (report.baselineComparison.baselineKey !== attestation.baselineKey) {
     throw new Error("no-regression report baseline does not match its attestation");
   }
+  return report;
 }
 
 async function main(): Promise<void> {
   const revision = await baseRevision();
-  const [baseHash, currentHash, attestation] = await Promise.all([
-    baseSourceHash(revision),
-    currentSourceHash(),
-    readAttestation(),
-  ]);
-  const assessment = assessNoRegressionGate(baseHash, currentHash, attestation);
+  const [base, current, read] = await Promise.all([baseSource(revision), currentSource(), readAttestation()]);
+  const baseHash = evaluationSourceHash(base.prompts, base.envExample);
+  const currentHash = evaluationSourceHash(current.prompts, current.envExample);
+  let assessment = assessNoRegressionGate(baseHash, currentHash, read?.attestation);
+  if (assessment.status === "passed" && read) {
+    const visionChanged = visionInputsChanged(
+      base.prompts,
+      base.envExample,
+      current.prompts,
+      current.envExample,
+    );
+    const errors = verifyAttestedReportShape(read.report, read.attestation, { visionChanged });
+    if (errors.length > 0) assessment = { status: "failed", message: errors.join("; ") };
+  }
   console.log(`AI evaluation change gate: ${assessment.status} — ${assessment.message}`);
   if (!["not-required", "passed"].includes(assessment.status)) process.exitCode = 1;
 }

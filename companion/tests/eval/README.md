@@ -49,13 +49,16 @@ npm run eval:real:synthesis
 
 # Optional privacy-safe report/baseline artifacts
 npm run eval:real -- --require-provider --output eval-artifacts/eval-report.json
-npm run eval:real -- --baseline tests/eval/baselines/<baseline>.json \
+npm run eval:real -- --runs 3 --baseline tests/eval/baselines/<baseline>.json \
   --require-baseline --output tests/eval/reports/no-regression-report.json \
   --attestation tests/eval/reports/no-regression.json
+
+# Repeat the selected sections N times (1-10, default 1) and judge the pooled result
+npm run eval -- --runs 2
 ```
 
 Exit codes distinguish the cause: `0` = passed or optional run skipped, `1` = genuine quality
-failure/regression, `2` = runner/configuration error, `3` = provider failure. `--require-provider`
+failure/regression, `2` = runner/configuration error (including an `--attestation` run with the wrong shape), `3` = provider failure. `--require-provider`
 turns an absent provider into exit `3` for the protected workflow instead of a clean skip.
 
 ## Protected real-model workflow
@@ -70,6 +73,47 @@ The normal CI suite runs the deterministic corpus integration tests. Its `eval:c
 fingerprints the four evaluated built-in prompts and active default provider/model lines. If that
 fingerprint changes, CI requires both `reports/no-regression.json` and its hash-pinned privacy-safe
 report. An unrelated edit to `pipeline.ts` does not trigger the gate.
+
+### Repeated runs and the no-regression attestation (#1579)
+
+A real model scores a few points differently on unchanged input from one run to the next. One run
+is too noisy to prove "no regression", so an attestation needs repeated runs.
+
+`--runs N` (an integer from 1 to 10, default 1) runs the selected sections N times, one after
+another. Run 1 keeps each row's id. Run 2 and later add `#run2`, `#run3`, … to the id. Every row
+records its run number. The report records `runs`, `mode` and the expected row counts for one run.
+The summary is on a per-run scale: ratios are the mean over all rows, and counts, tokens, cost and
+duration are divided by the run count. `report.resources` stays the total for all runs.
+
+How a real multi-run report is judged:
+
+- **Extraction and screenshots:** each fixture passes on its **mean** precision and recall over the
+  runs, against the thresholds that fixture was scored with. One miss in one run can be carried by
+  the other runs.
+- **Synthesis:** the recall floors apply to the dirty-case aggregate pooled over all runs.
+- **Hard violations still fail in any run.** A forbidden conclusion, an invented evidence
+  reference, a confidence issue, a missed abstention or a case with zero recall on every dimension
+  fails the report, whichever run it came from. A provider or runner failure in any run also
+  decides the outcome.
+- **Baseline tolerance:** a real run may fall at most **5 points** below its baseline on a quality
+  ratio. A mock run keeps the **2-point** tolerance. Lower-is-better counts get no tolerance. A
+  baseline recorded with a different run count, mode or vision model is incompatible.
+
+`--attestation` is refused before any provider is built, so no model call is paid for, unless the
+run has all of these: `--real`, mode `all`, `--runs 3` or more, `--output`, `--baseline` and
+`--require-baseline`. A refused run exits `2` and still writes a `runner_failed` report when
+`--output` is set, so CI uploads the reason. The change gate checks the same shape again on the
+committed report.
+
+A change to `SYSTEM_PROMPT` or to a default `DFIR_VISION_*` model line changes the screenshot path.
+The change gate then needs an attested report that includes a real screenshot set
+(`DFIR_EVAL_SCREENSHOT_DIR`, see below).
+
+**Cost:** an attested run costs about 3× one run — about $4.20 and 65 minutes on the pinned
+model. The protected workflow runs `--runs 3` with a 120-minute timeout.
+
+**3 runs and a 5-point tolerance are a chosen policy to damp noise, not a statistical
+guarantee.** They make a false "regressed" less likely. They do not prove a regression is absent.
 
 ### Real screenshot grading (issue #135)
 
