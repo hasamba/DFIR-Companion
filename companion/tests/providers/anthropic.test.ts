@@ -112,7 +112,12 @@ describe("AnthropicProvider", () => {
 
   it("enables extended thinking and bumps max_tokens above the budget when a CoT budget is set (#121)", async () => {
     const fetchFn = fetchMock(async () => jsonResponse(OK));
-    const p = new AnthropicProvider({ apiKey: "k", model: "claude-haiku-4-5-20251001", fetchFn, maxTokens: 16000 });
+    const p = new AnthropicProvider({
+      apiKey: "k",
+      model: "claude-haiku-4-5-20251001",
+      fetchFn,
+      maxTokens: 16000,
+    });
     await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [], thinkingTokens: 8000 });
     const body = JSON.parse((fetchFn.mock.calls[0][1] as RequestInit).body as string);
     expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 8000 });
@@ -132,35 +137,46 @@ describe("AnthropicProvider", () => {
     ["claude-opus-4-8", 32000, "xhigh"],
     ["claude-sonnet-4-6", 32000, "high"],
     ["claude-opus-5", 2048, "medium"],
-  ])("sends adaptive thinking + effort, never budget_tokens, on %s at %i tokens", async (model, tokens, effort) => {
-    const fetchFn = fetchMock(async () => jsonResponse(OK));
-    const p = new AnthropicProvider({ apiKey: "k", model, fetchFn });
-    await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [], thinkingTokens: tokens });
-    const body = JSON.parse((fetchFn.mock.calls[0][1] as RequestInit).body as string);
-    expect(body.thinking).toEqual({ type: "adaptive" });
-    expect(body.output_config).toEqual({ effort });
-  });
-
-  it.each(["claude-haiku-4-5", "claude-opus-4-5-20251101", "claude-sonnet-4-20250514", "claude-3-7-sonnet-latest"])(
-    "keeps budget_tokens on %s, which predates adaptive thinking",
-    async (model) => {
+  ])(
+    "sends adaptive thinking + effort, never budget_tokens, on %s at %i tokens",
+    async (model, tokens, effort) => {
       const fetchFn = fetchMock(async () => jsonResponse(OK));
       const p = new AnthropicProvider({ apiKey: "k", model, fetchFn });
-      await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [], thinkingTokens: 8000 });
+      await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [], thinkingTokens: tokens });
       const body = JSON.parse((fetchFn.mock.calls[0][1] as RequestInit).body as string);
-      expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 8000 });
-      expect(body.output_config).toBeUndefined();
+      expect(body.thinking).toEqual({ type: "adaptive" });
+      expect(body.output_config).toEqual({ effort });
     },
   );
+
+  it.each([
+    "claude-haiku-4-5",
+    "claude-opus-4-5-20251101",
+    "claude-sonnet-4-20250514",
+    "claude-3-7-sonnet-latest",
+  ])("keeps budget_tokens on %s, which predates adaptive thinking", async (model) => {
+    const fetchFn = fetchMock(async () => jsonResponse(OK));
+    const p = new AnthropicProvider({ apiKey: "k", model, fetchFn });
+    await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [], thinkingTokens: 8000 });
+    const body = JSON.parse((fetchFn.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.thinking).toEqual({ type: "enabled", budget_tokens: 8000 });
+    expect(body.output_config).toBeUndefined();
+  });
 
   it("reserves thinking room above the configured cap on current models, which think by default", async () => {
     const fetchFn = fetchMock(async () => jsonResponse(OK));
     await new AnthropicProvider({ apiKey: "k", model: "claude-opus-5", fetchFn, maxTokens: 8192 }).analyze({
-      systemPrompt: "s", userPrompt: "u", images: [],
+      systemPrompt: "s",
+      userPrompt: "u",
+      images: [],
     });
-    await new AnthropicProvider({ apiKey: "k", model: "claude-haiku-4-5", fetchFn, maxTokens: 8192 }).analyze({
-      systemPrompt: "s", userPrompt: "u", images: [],
-    });
+    await new AnthropicProvider({ apiKey: "k", model: "claude-haiku-4-5", fetchFn, maxTokens: 8192 }).analyze(
+      {
+        systemPrompt: "s",
+        userPrompt: "u",
+        images: [],
+      },
+    );
     const [current, legacy] = fetchFn.mock.calls.map((c) => JSON.parse((c[1] as RequestInit).body as string));
     expect(current.max_tokens).toBeGreaterThan(8192);
     expect(legacy.max_tokens).toBe(8192);
@@ -169,18 +185,23 @@ describe("AnthropicProvider", () => {
   it.each([
     ["refusal", { category: "cyber" }, /declined the request \(cyber\)/],
     ["max_tokens", null, /cut off at max_tokens/],
-  ])("throws a clear error on stop_reason %s instead of reading a partial reply", async (stop_reason, stop_details, msg) => {
-    const fetchFn = fetchMock(async () => jsonResponse({ ...OK, stop_reason, stop_details }));
-    const p = new AnthropicProvider({ apiKey: "k", model: "claude-opus-5", fetchFn });
-    await expect(p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] })).rejects.toThrow(msg);
-  });
+  ])(
+    "throws a clear error on stop_reason %s instead of reading a partial reply",
+    async (stop_reason, stop_details, msg) => {
+      const fetchFn = fetchMock(async () => jsonResponse({ ...OK, stop_reason, stop_details }));
+      const p = new AnthropicProvider({ apiKey: "k", model: "claude-opus-5", fetchFn });
+      await expect(p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] })).rejects.toThrow(msg);
+    },
+  );
 
   it("labels a cut-off as a context error (not retried) and a refusal as other (retried once more)", async () => {
     const kinds: string[] = [];
     for (const stop_reason of ["max_tokens", "refusal"]) {
       const fetchFn = fetchMock(async () => jsonResponse({ ...OK, stop_reason }));
       const p = new AnthropicProvider({ apiKey: "k", model: "claude-opus-5", fetchFn });
-      const err = await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [] }).catch((e: unknown) => e);
+      const err = await p
+        .analyze({ systemPrompt: "s", userPrompt: "u", images: [] })
+        .catch((e: unknown) => e);
       expect(err).toBeInstanceOf(ProviderError);
       kinds.push((err as ProviderError).kind);
     }
