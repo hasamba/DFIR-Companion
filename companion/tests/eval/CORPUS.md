@@ -2,7 +2,7 @@
 
 ## License, privacy and provenance
 
-Corpus version `1.0.0` is distributed under the repository's `AGPL-3.0-only` license. Every case was
+Corpus version `1.1.0` is distributed under the repository's `AGPL-3.0-only` license. Every case was
 written from scratch as fictional evaluation data. No client case, production export, public breach
 dataset, credential, or real person's identity was used.
 

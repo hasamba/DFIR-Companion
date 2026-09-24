@@ -96,7 +96,7 @@
         "allowedStatuses": ["unknown", "inferred"]
       }
     ],
-    "nextSteps": [{ "id": "review-cloud-audit", "requiredTerms": ["sign-in logs", "user-b"] }],
+    "nextSteps": [{ "id": "review-cloud-audit", "requiredTerms": ["sign-in", "log", "user-b"] }],
     "expectAbstention": false
   }
 }
