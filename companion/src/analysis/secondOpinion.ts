@@ -47,6 +47,18 @@ export interface SecondOpinion {
   summary: string; // reconcile-AI overall assessment (default "")
   agreementCount: number; // findings BOTH models share (by matchKey — semanticKey or title)
   deltas: SecondOpinionDelta[];
+  // #1587 — the LAST referee attempt failed. Without it a failed pass saved a record identical to a
+  // referee that chose to say nothing, and the reason reached only the server log.
+  refereeError?: RefereeError;
+  // The exact user prompt the failed attempt was given, kept only while `refereeError` is set, so a
+  // referee-only re-run judges the same summaries and cited events instead of today's timeline.
+  refereePrompt?: string;
+}
+
+export interface RefereeError {
+  referee: string; // label of the referee that was tried
+  message: string; // flattened, capped provider error
+  at: string; // ISO time of the failed attempt
 }
 
 const norm = (title: string): string => String(title).trim().toLowerCase().replace(/\s+/g, " ");
