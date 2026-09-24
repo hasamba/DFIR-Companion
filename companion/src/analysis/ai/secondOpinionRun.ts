@@ -7,14 +7,18 @@ import {
   setDeltaStatus,
   setAllPendingStatus,
   followRefereeStatus,
+  type ReconcileResponse,
   type SecondOpinion,
 } from "../secondOpinion.js";
+import { PresidioApprovalRequired } from "../presidio.js";
+import { HostMergeDecisionRequired } from "../hostDuplicateGate.js";
 import type { InvestigationState } from "../stateTypes.js";
 import type { SynthThinkingInput } from "../synthThinking.js";
 import { getReconcilePrompt } from "./prompts/index.js";
 import type { AIProvider } from "../../providers/provider.js";
 import type { RefereeModel } from "./providerRoster.js";
 import { callAiJson, loadScopedEvents } from "./aiContext.js";
+import { StateLock } from "../stateLock.js";
 import { synthesize, type SynthesisContext } from "./synthesis.js";
 
 /**
@@ -49,6 +53,13 @@ export function pickReferee(opts: SecondOpinionContext["opts"], modelA: string):
   const provider = opts.synthesisProvider ?? opts.provider;
   return provider ? { provider, label: modelA } : undefined;
 }
+
+// Every read-modify-write of the saved record runs under this per-case lock (#1587 review): a
+// referee re-run holds the AI call OUTSIDE it, then re-reads, merges and saves inside it, so an
+// accept/reject or a newer full run can never land between its re-read and its save.
+const recordLock = new StateLock();
+// One referee re-run per case at a time; a second press answers 409 instead of racing the first.
+const refereeRerunsInFlight = new Set<string>();
 
 export async function secondOpinion(
   ctx: SecondOpinionContext,
@@ -94,7 +105,8 @@ export async function secondOpinion(
 
   if (referee) record = await reconcileDeltas(ctx, caseId, referee, { a, b, record });
 
-  await ctx.opts.secondOpinionStore.save(caseId, record);
+  const store = ctx.opts.secondOpinionStore;
+  await recordLock.runExclusive(caseId, () => store.save(caseId, record));
   await recordAgreementRate(ctx, caseId, record, modelA, modelB);
   return record;
 }
@@ -104,7 +116,10 @@ export async function secondOpinion(
  *
  * BEST-EFFORT by design: if the reconcile call fails, the deterministic deltas are kept without
  * rationales rather than failing the whole second opinion. A comparison with no explanations is
- * still useful; no comparison at all is not.
+ * still useful; no comparison at all is not. What the record must NOT do is hide the failure
+ * (#1587): it keeps who was tried, why it failed, and the prompt, so the panel says so and the
+ * analyst can re-run only this pass. A Presidio or merge gate is recorded the same way here — the
+ * A/B work is not thrown away for it — and the referee-only re-run then raises the real gate.
  */
 async function reconcileDeltas(
   ctx: SecondOpinionContext,
@@ -119,21 +134,130 @@ async function reconcileDeltas(
   const { scoped } = await loadScopedEvents(ctx, caseId, a);
   const userPrompt = buildReconcilePrompt(a, b, record.deltas, scoped);
   try {
-    const parsed = await callAiJson(
-      ctx,
-      caseId,
-      a,
-      referee.provider,
-      "second-opinion-reconcile",
-      getReconcilePrompt,
-      userPrompt,
-      (raw) => reconcileResponseSchema.parse(raw),
-    );
-    return { ...mergeReconcileVerdicts(record, parsed), referee: referee.label };
+    return foldVerdicts(record, await callReferee(ctx, caseId, a, referee, userPrompt, record), referee);
   } catch (err) {
-    ctx.log.warn(`[second-opinion] reconcile pass failed: ${(err as Error).message}`, { caseId });
-    return record;
+    return withRefereeFailure(ctx, caseId, record, referee, userPrompt, err);
   }
+}
+
+const REFEREE_ERROR_MAX = 300;
+
+/** One line, no control characters, capped — the message is persisted, logged and shown. */
+function flattenRefereeError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  const flat = raw
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return (flat || "referee call failed").slice(0, REFEREE_ERROR_MAX);
+}
+
+/** Ask the referee. A parse that names none of the saved deltas is a failure, not an empty success. */
+async function callReferee(
+  ctx: SecondOpinionContext,
+  caseId: string,
+  loaded: InvestigationState,
+  referee: RefereeModel,
+  userPrompt: string,
+  record: SecondOpinion,
+): Promise<ReconcileResponse> {
+  const parsed = await callAiJson(
+    ctx,
+    caseId,
+    loaded,
+    referee.provider,
+    "second-opinion-reconcile",
+    getReconcilePrompt,
+    userPrompt,
+    (raw) => reconcileResponseSchema.parse(raw),
+  );
+  const ids = new Set(record.deltas.map((d) => d.id));
+  if (!parsed.verdicts.some((v) => ids.has(v.id)))
+    throw new Error("referee returned no verdict for any disagreement");
+  return parsed;
+}
+
+/** Success: verdicts in, referee credited, any earlier failure and its saved prompt gone. */
+function foldVerdicts(
+  record: SecondOpinion,
+  parsed: ReconcileResponse,
+  referee: RefereeModel,
+): SecondOpinion {
+  const { refereeError: _e, refereePrompt: _p, ...rest } = mergeReconcileVerdicts(record, parsed);
+  return { ...rest, referee: referee.label };
+}
+
+function withRefereeFailure(
+  ctx: SecondOpinionContext,
+  caseId: string,
+  record: SecondOpinion,
+  referee: RefereeModel,
+  userPrompt: string,
+  err: unknown,
+): SecondOpinion {
+  const message = flattenRefereeError(err);
+  ctx.log.warn(`[second-opinion] reconcile pass failed: ${message}`, { caseId });
+  const refereeError = { referee: referee.label, message, at: new Date().toISOString() };
+  return { ...record, refereeError, refereePrompt: userPrompt };
+}
+
+/**
+ * Re-run ONLY the referee over a saved second opinion whose referee failed (#1587), replaying the
+ * exact prompt the failed attempt was given. No synthesis runs. The record is re-read after the AI
+ * call and only referee-owned fields are written back, so an accept/reject made while the referee
+ * was thinking survives, and a newer full run is never overwritten by an older one's verdicts.
+ */
+export async function rerunSecondOpinionReferee(
+  ctx: SecondOpinionContext,
+  caseId: string,
+): Promise<{ record: SecondOpinion; failed: boolean }> {
+  const store = ctx.opts.secondOpinionStore;
+  if (!store) throw new Error("second-opinion store not configured");
+  if (refereeRerunsInFlight.has(caseId)) throw new Error("a referee re-run is already running for this case");
+  refereeRerunsInFlight.add(caseId);
+  try {
+    return await rerunReferee(ctx, caseId, store);
+  } finally {
+    refereeRerunsInFlight.delete(caseId);
+  }
+}
+
+async function rerunReferee(
+  ctx: SecondOpinionContext,
+  caseId: string,
+  store: NonNullable<SecondOpinionContext["opts"]["secondOpinionStore"]>,
+): Promise<{ record: SecondOpinion; failed: boolean }> {
+  const before = await store.load(caseId);
+  if (!before) throw new Error("no second opinion to act on — run a second opinion first");
+  const prompt = before.refereePrompt;
+  if (!before.refereeError || !prompt)
+    throw new Error("the referee did not fail on this second opinion — nothing to re-run");
+  const referee = pickReferee(ctx.opts, before.modelA);
+  if (!referee) throw new Error("no referee model configured");
+  const state = await ctx.opts.stateStore.load(caseId);
+  let parsed: ReconcileResponse | undefined;
+  let failure: unknown;
+  try {
+    parsed = await callReferee(ctx, caseId, state, referee, prompt, before);
+  } catch (err) {
+    // A gate is a question for the analyst, not a broken referee — the route shows the approval.
+    if (err instanceof PresidioApprovalRequired || err instanceof HostMergeDecisionRequired) throw err;
+    failure = err;
+  }
+  const record = await recordLock.runExclusive(caseId, async () => {
+    const latest = await store.load(caseId);
+    if (!latest || latest.generatedAt !== before.generatedAt)
+      throw new Error(
+        "this second opinion was replaced by a newer second opinion — its referee result was discarded",
+      );
+    const next = parsed
+      ? foldVerdicts(latest, parsed, referee)
+      : withRefereeFailure(ctx, caseId, latest, referee, prompt, failure);
+    await store.save(caseId, next);
+    return next;
+  });
+  if (parsed) await recordAgreementRate(ctx, caseId, record, record.modelA, record.modelB);
+  return { record, failed: !parsed };
 }
 
 /**
@@ -166,16 +290,11 @@ export async function applySecondOpinion(
   deltaId: string,
   accept: boolean,
 ): Promise<{ record: SecondOpinion; state: InvestigationState }> {
-  if (!ctx.opts.secondOpinionStore) throw new Error("second-opinion store not configured");
-  const current = await ctx.opts.secondOpinionStore.load(caseId);
-  if (!current) throw new Error("no second opinion to act on — run a second opinion first");
-  if (!current.deltas.some((d) => d.id === deltaId))
-    throw new Error(`unknown second-opinion delta: ${deltaId}`);
-  return persistSecondOpinion(
-    ctx,
-    caseId,
-    setDeltaStatus(current, deltaId, accept ? "accepted" : "rejected"),
-  );
+  return updateSecondOpinion(ctx, caseId, (current) => {
+    if (!current.deltas.some((d) => d.id === deltaId))
+      throw new Error(`unknown second-opinion delta: ${deltaId}`);
+    return setDeltaStatus(current, deltaId, accept ? "accepted" : "rejected");
+  });
 }
 
 export async function applyAllSecondOpinion(
@@ -183,22 +302,28 @@ export async function applyAllSecondOpinion(
   caseId: string,
   accept: boolean | "referee",
 ): Promise<{ record: SecondOpinion; state: InvestigationState }> {
-  if (!ctx.opts.secondOpinionStore) throw new Error("second-opinion store not configured");
-  const current = await ctx.opts.secondOpinionStore.load(caseId);
-  if (!current) throw new Error("no second opinion to act on — run a second opinion first");
-  const next =
+  return updateSecondOpinion(ctx, caseId, (current) =>
     accept === "referee"
       ? followRefereeStatus(current)
-      : setAllPendingStatus(current, accept ? "accepted" : "rejected");
-  return persistSecondOpinion(ctx, caseId, next);
+      : setAllPendingStatus(current, accept ? "accepted" : "rejected"),
+  );
 }
 
-async function persistSecondOpinion(
+/** Load → decide → save under the record lock, then apply the accepted set to the case. */
+async function updateSecondOpinion(
   ctx: SecondOpinionContext,
   caseId: string,
-  record: SecondOpinion,
+  decide: (current: SecondOpinion) => SecondOpinion,
 ): Promise<{ record: SecondOpinion; state: InvestigationState }> {
-  await ctx.opts.secondOpinionStore!.save(caseId, record);
+  const store = ctx.opts.secondOpinionStore;
+  if (!store) throw new Error("second-opinion store not configured");
+  const record = await recordLock.runExclusive(caseId, async () => {
+    const current = await store.load(caseId);
+    if (!current) throw new Error("no second opinion to act on — run a second opinion first");
+    const next = decide(current);
+    await store.save(caseId, next);
+    return next;
+  });
   const state = await ctx.opts.stateStore.load(caseId);
   const applied = applyAcceptedSecondOpinion(state, record);
   if (applied !== state) {

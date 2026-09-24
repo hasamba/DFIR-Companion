@@ -238,6 +238,8 @@
 .so-toggle:hover { color: var(--text-bright); border-color: var(--border-strong); }
 .so-head .so-models { font-weight: 600; color: var(--text-bright); }
 .so-head .so-agree { color: var(--sev-low); }
+.so-head .so-referee-error { color: var(--badge-danger-text); font-weight: 600; }
+.so-head [data-so-referee-rerun] { font-size: 11px; padding: 2px 8px; }
 .so-summary { color: var(--text-muted); margin: 0 0 8px; font-style: italic; }
 .so-empty { color: var(--sev-low); }
 .so-delta { display: flex; align-items: flex-start; gap: 8px; padding: 7px 8px; margin: 4px 0;

@@ -50,6 +50,12 @@ export const secondOpinionSchema = z.object({
   summary: z.string().catch(""),
   agreementCount: z.number().catch(0),
   deltas: z.array(deltaSchema).catch([]),
+  // #1587 — a malformed value loads as absent rather than failing the whole record.
+  refereeError: z
+    .object({ referee: z.string().catch(""), message: z.string().catch(""), at: z.string().catch("") })
+    .optional()
+    .catch(undefined),
+  refereePrompt: z.string().optional().catch(undefined),
 });
 
 export class SecondOpinionStore {

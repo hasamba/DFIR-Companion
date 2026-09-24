@@ -59,6 +59,7 @@
       (typeof rec.referee === "string" && rec.referee
         ? `<span data-safe-style="color:var(--text-dim)" title="The model that wrote the 'referee suggests' line on each disagreement">· referee: ${esc(rec.referee)}</span>`
         : "") +
+      refereeErrorLine(rec) +
       `<span class="so-agree">✓ ${rec.agreementCount | 0} agreed</span>` +
       `<span data-safe-style="color:var(--text-dim)">${esc(relTime(rec.generatedAt))}</span></div>`;
     if (soCollapsed) {
@@ -78,8 +79,9 @@
     }
     const pending = deltas.filter((d) => d.status === "pending").length;
     const refCalls = refereeCalls(deltas);
+    // A failed referee pass leaves no calls worth following, even if an older pass left some.
     const refereeBtn =
-      refCalls.accept + refCalls.keep > 0
+      !rec.refereeError && refCalls.accept + refCalls.keep > 0
         ? `<button data-so-all="referee" title="Apply the referee's call on every pending delta: accept where it suggests accept B, reject where it suggests keep A. Deltas with no referee call stay pending.">⚖ follow referee (${refCalls.accept + refCalls.keep})</button>`
         : "";
     const allBtns =
@@ -118,6 +120,19 @@
       })
       .join("");
     el.innerHTML = head + summary + bulk + rows;
+  }
+  // A failed referee pass (#1587). Without this line the panel hides every empty referee field,
+  // so a referee that crashed looks exactly like one that ran and made no call. It lives in the
+  // head so the collapsed panel says it too.
+  function refereeErrorLine(rec) {
+    const err = rec.refereeError;
+    if (!err || typeof err !== "object") return "";
+    const who = err.referee ? `referee (${esc(err.referee)}) failed:` : "referee failed:";
+    const when = err.at ? ` · ${esc(relTime(err.at))}` : "";
+    return (
+      `<span class="so-referee-error">⚠ ${who} ${esc(err.message || "unknown error")}${when}</span>` +
+      `<button type="button" data-so-referee-rerun title="Run only the referee again on the existing disagreements. Model A and model B are not re-run."${refereeRerunInFlight ? " disabled" : ""}>↻ re-run referee</button>`
+    );
   }
   // Pending deltas the referee made a call on — "review" (no call) is not counted.
   function refereeCalls(deltas) {
@@ -180,6 +195,64 @@
           (document.getElementById("status").textContent =
             "second opinion error: " + e.message),
       );
+  }
+  // Re-run only the referee (#1587). One press at a time: the flag is cleared on every path, and
+  // the returned promise never rejects, so nothing escapes as an unhandled rejection.
+  let refereeRerunInFlight = false;
+  function setRefereeRerunDisabled(on) {
+    const panel = document.getElementById("secondOpinionPanel");
+    if (!panel || typeof panel.querySelectorAll !== "function") return;
+    panel
+      .querySelectorAll("[data-so-referee-rerun]")
+      .forEach((b) => (b.disabled = on));
+  }
+  function currentCaseId() {
+    const input = document.getElementById("caseId");
+    return input ? String(input.value || "").trim() : "";
+  }
+  function refereeStatus(text) {
+    const s = document.getElementById("status");
+    if (s) s.textContent = text;
+  }
+  async function postReferee(caseId) {
+    const r = await fetch(`/cases/${caseId}/second-opinion/referee`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const body = await r.json().catch(() => ({}));
+    // The analyst may have opened another case while the referee ran; this answer is not theirs.
+    if (currentCaseId() !== caseId) return;
+    if (r.ok && body && !body.error) {
+      renderSecondOpinion(body);
+      const n = Array.isArray(body.deltas)
+        ? body.deltas.filter((d) => d.recommendation === "accept_b" || d.recommendation === "keep_a").length
+        : 0;
+      refereeStatus(`referee: ${n} verdict${n === 1 ? "" : "s"}`);
+      return;
+    }
+    if (r.status === 409 && body && body.error === "presidio_approval_required") {
+      if (typeof setPresidioPending === "function") setPresidioPending(body.findings);
+      refereeStatus("referee held — Presidio found new value(s) to review (see Anonymization)");
+      return;
+    }
+    if (body && body.record) renderSecondOpinion(body.record);
+    refereeStatus("referee failed: " + ((body && body.error) || `HTTP ${r.status}`));
+  }
+  function rerunSecondOpinionReferee(caseId) {
+    if (refereeRerunInFlight || !caseId) return Promise.resolve();
+    refereeRerunInFlight = true;
+    setRefereeRerunDisabled(true);
+    refereeStatus("re-running the referee…");
+    return postReferee(caseId)
+      .catch((e) => {
+        if (currentCaseId() === caseId)
+          refereeStatus("referee error: " + (e && e.message ? e.message : String(e)));
+      })
+      .then(() => {
+        refereeRerunInFlight = false;
+        setRefereeRerunDisabled(false);
+      });
   }
   function runSecondOpinion() {
     const caseId = document.getElementById("caseId").value.trim();
@@ -267,7 +340,9 @@
         }
         const caseId = document.getElementById("caseId").value.trim();
         if (!caseId) return;
-        if (t.dataset.soAccept)
+        if (t.dataset.soRefereeRerun !== undefined)
+          rerunSecondOpinionReferee(caseId);
+        else if (t.dataset.soAccept)
           applySecondOpinionDelta(caseId, t.dataset.soAccept, true);
         else if (t.dataset.soReject)
           applySecondOpinionDelta(caseId, t.dataset.soReject, false);
@@ -300,4 +375,5 @@
   window.runSecondOpinion = runSecondOpinion;
   window.applySecondOpinionDelta = applySecondOpinionDelta;
   window.applyAllSecondOpinion = applyAllSecondOpinion;
+  window.rerunSecondOpinionReferee = rerunSecondOpinionReferee;
 })();

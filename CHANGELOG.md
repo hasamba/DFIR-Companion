@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Deep pass says when it has nothing new to read** — the pre-flight preview reports what the last synthesis read; if it dropped no event for the size limit, the panel says a deep pass would read the same or fewer and Run is off unless the analyst ticks *Run anyway*; a timeline changed since is called stale (closes #1457)
 
 ### Fixed
+- **A failed 2nd-opinion referee is shown, not hidden** — the panel names the referee and the error, and a `↻ re-run referee` button re-runs only the referee on the saved disagreements (closes #1587)
 - **The missed-evidence review is rate-limited** — it now counts against the per-case AI limit like every other paid AI button, and the check that catches unmetered AI routes can see it (closes #1577)
 - **The second look cannot run twice at once** — a second press while one is running is refused instead of paying for a second forced re-synthesis (closes #1576)
 - **A promoted row's grade comes from the review, not the browser** — the server keeps what each missed-evidence review graded, and promote reads the grade, confidence and model from that record, so a tampered request cannot write a severity or a model name no review gave; a row no review in the case graded is skipped with that reason (closes #1578)
