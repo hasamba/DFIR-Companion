@@ -11,9 +11,9 @@ import { HostMergeDecisionRequired } from "../hostDuplicateGate.js";
  */
 
 // Error kinds where the failure is inherent to the call (bad/expired creds, exhausted quota, a hung
-// process) rather than a transient blip — retrying just re-runs into the same wall, tripling the wait
-// before the analyst sees the same error.
-const NON_RETRYABLE_KINDS = new Set<ProviderErrorKind>(["auth", "rate_limit", "timeout"]);
+// process, a prompt or reply that does not fit) rather than a transient blip — retrying just re-runs
+// into the same wall, tripling the wait before the analyst sees the same error.
+const NON_RETRYABLE_KINDS = new Set<ProviderErrorKind>(["auth", "rate_limit", "timeout", "context"]);
 
 function isRetryableError(err: unknown): boolean {
   // An approval gate is not a transient failure. Retrying it re-runs the Presidio scan and delays

@@ -15,6 +15,7 @@ import {
   RESPONSE_SIZE_LIMITS,
   ResponseTooLargeError,
 } from "./boundedResponse.js";
+import { effortForBudget } from "./claudeEffort.js";
 
 type FetchFn = typeof fetch;
 
@@ -22,6 +23,16 @@ type FetchFn = typeof fetch;
 const MIN_THINKING_TOKENS = 1024;
 // Keep this much output room above the thinking budget (budget_tokens must be < max_tokens).
 const THINKING_OUTPUT_HEADROOM = 4096;
+// Only these models still take a fixed `thinking.budget_tokens`: Claude 3.x, the 4.0–4.5 Opus/Sonnet
+// line, and Haiku 4.5. Opus 4.7+, Sonnet 5 and the Opus 5 / Fable lines reject budget_tokens with a
+// 400; they take adaptive thinking plus an `output_config.effort` tier instead. Unknown ids (a proxy
+// alias) are treated as current models.
+const BUDGET_THINKING_MODEL = /^claude-(3|haiku-4|(opus|sonnet)-4(-[0-5])?(-\d{8})?$)/;
+// Opus 4.6 / Sonnet 4.6 take adaptive thinking but have no `xhigh` tier.
+const NO_XHIGH_MODEL = /^claude-(opus|sonnet)-4-6/;
+// Current models can think on every call (Opus 5 does so by default), and thinking counts toward
+// max_tokens. Reserve this much on top of the configured cap so the cap still means "answer room".
+const THINKING_ROOM = 16_000;
 
 export interface AnthropicOptions {
   apiKey: string;
@@ -35,7 +46,7 @@ export interface AnthropicOptions {
 export class AnthropicProvider implements AIProvider {
   readonly name = "anthropic";
   readonly model: string;
-  // thinkingTokens → `thinking.budget_tokens` below (#1468).
+  // thinkingTokens → `thinking.budget_tokens` on older models, an effort tier on current ones (#1468).
   readonly supportsThinking = true;
   private readonly fetchFn: FetchFn;
   private readonly baseUrl: string;
@@ -59,14 +70,22 @@ export class AnthropicProvider implements AIProvider {
 
     let maxTokens = this.opts.maxTokens ?? 16000;
     // Extended thinking / Chain-of-Thought (issue #121). When the caller asks for a thinking budget
-    // (synthesis only), enable it: the model reasons step-by-step in `thinking` blocks before the
-    // final answer. The Messages API requires budget_tokens ≥ 1024 AND < max_tokens, so we bump
-    // max_tokens to keep output headroom above the budget. Thinking forces temperature=1 — we never
+    // (synthesis only), enable it: the model reasons in `thinking` blocks before the final answer.
+    // Older models take the budget as-is; the Messages API requires budget_tokens ≥ 1024 AND
+    // < max_tokens, so we bump max_tokens to keep output headroom above the budget. Current models
+    // reject budget_tokens and get adaptive thinking at an effort tier instead. Thinking forces temperature=1 — we never
     // send a custom temperature, so the default is already compatible. Prompt caching is UNAFFECTED:
     // the cache breakpoint stays on the static system prompt (OPSEC) and thinking happens in the reply.
+    const legacyThinking = BUDGET_THINKING_MODEL.test(this.opts.model);
     const thinkingBudget =
-      req.thinkingTokens && req.thinkingTokens >= MIN_THINKING_TOKENS ? Math.floor(req.thinkingTokens) : 0;
+      legacyThinking && req.thinkingTokens && req.thinkingTokens >= MIN_THINKING_TOKENS
+        ? Math.floor(req.thinkingTokens)
+        : 0;
     if (thinkingBudget > 0) maxTokens = Math.max(maxTokens, thinkingBudget + THINKING_OUTPUT_HEADROOM);
+    // Current models: the same budget picks an effort tier (the claude-code mapping, #1468).
+    const tier = legacyThinking ? undefined : effortForBudget(req.thinkingTokens);
+    const effort = tier === "xhigh" && NO_XHIGH_MODEL.test(this.opts.model) ? "high" : tier;
+    if (!legacyThinking) maxTokens += THINKING_ROOM;
     const timeoutMs = this.opts.timeoutMs ?? 60_000;
     let res: Response;
     try {
@@ -81,6 +100,7 @@ export class AnthropicProvider implements AIProvider {
           model: this.opts.model,
           max_tokens: maxTokens,
           ...(thinkingBudget > 0 ? { thinking: { type: "enabled", budget_tokens: thinkingBudget } } : {}),
+          ...(effort ? { thinking: { type: "adaptive" }, output_config: { effort } } : {}),
           // Prompt caching (GA — no beta header). Mark ONLY the static system prompt as the
           // cacheable prefix: extraction reuses it across many screenshot batches, so the
           // prefix is billed once and read cheaply thereafter. The case content (user message
@@ -111,6 +131,8 @@ export class AnthropicProvider implements AIProvider {
     }
     type AnthropicMessageResponse = {
       content?: { type: string; text?: string }[];
+      stop_reason?: string;
+      stop_details?: { category?: string | null } | null;
       usage?: {
         input_tokens?: number;
         output_tokens?: number;
@@ -127,6 +149,18 @@ export class AnthropicProvider implements AIProvider {
     } catch (err) {
       const kind = err instanceof ResponseTooLargeError ? "transport" : "other";
       throw new ProviderError(`Anthropic response error: ${(err as Error).message}`, kind);
+    }
+    // Check why the model stopped before reading content. A refusal is HTTP 200 with no usable
+    // answer; a max_tokens stop is a cut-off JSON document that would fail to parse downstream.
+    if (json.stop_reason === "refusal") {
+      const category = json.stop_details?.category;
+      throw new ProviderError(`Anthropic declined the request${category ? ` (${category})` : ""}`, "other");
+    }
+    if (json.stop_reason === "max_tokens") {
+      throw new ProviderError(
+        `Anthropic reply was cut off at max_tokens (${maxTokens}) — raise DFIR_AI_MAX_TOKENS`,
+        "context",
+      );
     }
     const text = json.content?.find((b) => b.type === "text")?.text;
     if (!text) throw new ProviderError("Anthropic returned no content", "other");

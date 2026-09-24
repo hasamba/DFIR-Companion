@@ -1,8 +1,8 @@
 // Map a synthesis thinking budget (tokens) to the claude CLI's `--effort` tier (#1468).
 //
 // The dashboard's 🧠 deep-reasoning toggle puts `thinkingTokens` on the AnalyzeRequest. The API
-// providers spend it as an exact budget (anthropic → `thinking.budget_tokens`, openrouter →
-// `reasoning.max_tokens`). The claude-code provider has no such knob: the CLI takes a coarse
+// providers spend it as a budget (anthropic → `thinking.budget_tokens` on older models, this same
+// tier mapping as `output_config.effort` on current ones; openrouter → `reasoning.max_tokens`). The claude-code provider has no such knob: the CLI takes a coarse
 // `--effort <low|medium|high|xhigh|max>` tier, and because the provider runs with
 // `--setting-sources ""` the user's own effort setting never loads — only an explicit flag counts.
 // Without this mapping the toggle is a silent no-op on claude-code.
