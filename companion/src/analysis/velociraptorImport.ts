@@ -1632,9 +1632,8 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
       if (rh.assetRecord) m.assetRecord = rh.assetRecord; // a bare row's own name, for a rename learned later (#1495)
       noteInheritedFileTime(row, m); // a copied file is dated by Btime; keep its source Mtime beside it (#1603)
       demoteSampleHost(m, rh); // only a row with NO collector identity can be a sample-corpus host
-      // Stamp the event with the VQL artifact that emitted it — once here, since every mapper's result
-      // flows through with `artifact` resolved (the row's _Source/_Artifact, else the filename), so
-      // downstream (dwell-time window, evidence graph) tells "from the MFT" from "a Sigma detection".
+      // Stamp the VQL artifact that emitted the event (the row's _Source/_Artifact, else the filename),
+      // so downstream (dwell-time window, evidence graph) tells "from the MFT" from "a Sigma detection".
       if (artifact) m.artifactName = artifact;
       // Carry the FULL untruncated event message so the super-timeline row can reveal it expandably,
       // when it adds detail beyond the truncated `description`. Stamped here (like artifactName) so
