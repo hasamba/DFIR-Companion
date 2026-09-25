@@ -8,6 +8,7 @@ import {
   type Technique,
 } from "./stateTypes.js";
 import { matchKey, norm, resolveDecisionTargets } from "./secondOpinionTargets.js";
+import { heldForAnalyst } from "./secondOpinionGuard.js";
 import { byEventTime } from "./forensicSort.js";
 import { renderEventLine } from "./ai/eventLine.js";
 
@@ -41,7 +42,23 @@ export interface SecondOpinionDelta {
   carriedFrom?: string;
   // #1590 — response-only, never stored: this accepted decision matches no finding right now.
   unapplied?: UnappliedReason;
+  // #1596 — set only on a fresh, pending A-only delta the referee proposed to dismiss: why the
+  // dismissal is left for the analyst. No bulk action accepts a delta that carries one.
+  refereeFlags?: RefereeFlag[];
 }
+
+// "answers_open_item": the finding is the last one that bears on an open thread or an unresolved /
+// negative answer. "unquoted_reason": the reason quotes nothing from the cited events.
+// "unreadable": a stored flag that failed to parse — kept as a hold, never dropped (fail safe).
+export type RefereeFlag =
+  | {
+      kind: "answers_open_item";
+      itemId: string;
+      itemKind: "thread" | "question" | "negative";
+      text: string;
+    }
+  | { kind: "unquoted_reason" }
+  | { kind: "unreadable" };
 
 // "missing": no finding has its id or key any more. "changed": its id now holds a different claim.
 export type UnappliedReason = "missing" | "changed";
@@ -274,7 +291,12 @@ export const RECONCILE_PROMPT = [
 const sevLabel = (s?: Severity): string => s ?? "?";
 
 // Render one delta as a numbered line the reconcile model can judge.
-function renderDelta(d: SecondOpinionDelta): string {
+function renderDelta(d: SecondOpinionDelta, hint?: string): string {
+  const line = renderDeltaLine(d);
+  return hint ? `${line}\n  ${hint}` : line;
+}
+
+function renderDeltaLine(d: SecondOpinionDelta): string {
   const desc = d.finding?.description ? ` — ${d.finding.description.slice(0, 240)}` : "";
   switch (d.kind) {
     case "b_only":
@@ -333,8 +355,9 @@ function renderDeltaWithEvents(
   d: SecondOpinionDelta,
   events: readonly ForensicEvent[],
   budget: number,
+  hint?: string,
 ): { text: string; used: number } {
-  const lines = [renderDelta(d)];
+  const lines = [renderDelta(d, hint)];
   if (events.length === 0) {
     lines.push(`${EVENT_INDENT}(no cited events — this finding is ungrounded)`);
     return { text: lines.join("\n"), used: 0 };
@@ -353,12 +376,20 @@ function renderDeltaWithEvents(
 // and followed by the forensic events it cites. `events` is the SAME scoped set both syntheses read
 // (scope window applied, analyst-marked false positives removed — aiContext.loadScopedEvents), so the
 // referee cannot be handed an event neither model saw. Defaults to A's forensic timeline for callers
-// with no scope (tests, CLI).
+// with no scope (tests, CLI). `guard` (#1596) is the runtime context from secondOpinionGuard.ts: the
+// open threads / negative answers block and a hint line under each A-only delta that may be the
+// last evidence for one. Carried as user-prompt text so an ejected reconcile prompt still gets it.
+export interface ReconcileGuardText {
+  block: string;
+  hints: ReadonlyMap<string, string>;
+}
+
 export function buildReconcilePrompt(
   a: InvestigationState,
   b: InvestigationState,
   deltas: readonly SecondOpinionDelta[],
   events?: readonly ForensicEvent[],
+  guard?: ReconcileGuardText,
 ): string {
   const aSummary = a.lastSummary?.trim() || a.attackerPath?.trim() || "(no summary)";
   const bSummary = b.lastSummary?.trim() || b.attackerPath?.trim() || "(no summary)";
@@ -366,7 +397,7 @@ export function buildReconcilePrompt(
   const byId = new Map(timeline.map((e) => [e.id, e]));
   let budget = RECONCILE_EVENTS_TOTAL;
   const rendered = deltas.map((d) => {
-    const out = renderDeltaWithEvents(d, citedEvents(d, byId, timeline), budget);
+    const out = renderDeltaWithEvents(d, citedEvents(d, byId, timeline), budget, guard?.hints.get(d.id));
     budget -= out.used;
     return out.text;
   });
@@ -378,6 +409,7 @@ export function buildReconcilePrompt(
     `DISAGREEMENTS (${deltas.length}) — each followed by the forensic events the finding cites:`,
     ...rendered,
     "",
+    ...(guard?.block ? [guard.block, ""] : []),
     "Return your reconciliation as raw JSON in the required shape — one verdict object per delta id above.",
   ].join("\n");
 }
@@ -399,19 +431,31 @@ export function mergeReconcileVerdicts(so: SecondOpinion, parsed: ReconcileRespo
 // --- Analyst actions --------------------------------------------------------------------------
 
 // Immutably set one delta's status (pending | accepted | rejected). Other deltas are untouched.
+// The analyst's own decision settles the referee's flags (#1596), so they are dropped with it.
 export function setDeltaStatus(so: SecondOpinion, id: string, status: DeltaStatus): SecondOpinion {
-  return { ...so, deltas: so.deltas.map((d) => (d.id === id ? { ...d, status } : d)) };
+  return { ...so, deltas: so.deltas.map((d) => (d.id === id ? { ...withoutFlags(d), status } : d)) };
+}
+
+function withoutFlags(d: SecondOpinionDelta): SecondOpinionDelta {
+  const { refereeFlags: _f, ...rest } = d;
+  return rest;
 }
 
 // Bulk variant for accept-all / reject-all: set EVERY still-pending delta to `status`. Deltas the
 // analyst already decided (accepted/rejected) are left as-is, so a bulk action never silently
-// reverses an individual decision. Immutable.
+// reverses an individual decision. Accept-all skips a delta held for the analyst (#1596); reject-all
+// does not, because rejecting keeps Model A's finding. Immutable.
 export function setAllPendingStatus(so: SecondOpinion, status: DeltaStatus): SecondOpinion {
-  return { ...so, deltas: so.deltas.map((d) => (d.status === "pending" ? { ...d, status } : d)) };
+  const skip = (d: SecondOpinionDelta): boolean => status === "accepted" && heldForAnalyst(d);
+  return {
+    ...so,
+    deltas: so.deltas.map((d) => (d.status === "pending" && !skip(d) ? { ...withoutFlags(d), status } : d)),
+  };
 }
 
 // Follow the referee on every still-pending delta: accept_b → accepted, keep_a → rejected. A
-// "review" delta (the referee made no call) stays pending for the analyst. Pure, immutable.
+// "review" delta (the referee made no call) stays pending for the analyst, and so does a delta held
+// for the analyst by the dismissal guard (#1596). Pure, immutable.
 const REFEREE_STATUS: Partial<Record<DeltaRecommendation, DeltaStatus>> = {
   accept_b: "accepted",
   keep_a: "rejected",
@@ -420,7 +464,8 @@ export function followRefereeStatus(so: SecondOpinion): SecondOpinion {
   return {
     ...so,
     deltas: so.deltas.map((d) => {
-      const status = d.status === "pending" ? REFEREE_STATUS[d.recommendation] : undefined;
+      const status =
+        d.status === "pending" && !heldForAnalyst(d) ? REFEREE_STATUS[d.recommendation] : undefined;
       return status ? { ...d, status } : d;
     }),
   };

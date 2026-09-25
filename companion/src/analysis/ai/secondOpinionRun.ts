@@ -11,6 +11,12 @@ import {
   type SecondOpinion,
 } from "../secondOpinion.js";
 import { carryAcceptedDecisions, freshDeltas } from "../secondOpinionTargets.js";
+import {
+  flagRefereeDismissals,
+  guardCaseOf,
+  refereeContextBlock,
+  refereeHints,
+} from "../secondOpinionGuard.js";
 import { PresidioApprovalRequired } from "../presidio.js";
 import { HostMergeDecisionRequired } from "../hostDuplicateGate.js";
 import type { InvestigationState } from "../stateTypes.js";
@@ -138,9 +144,14 @@ async function reconcileDeltas(
   // The cited events the referee sees are the scoped set synthesis read — never an out-of-window
   // event or an analyst-marked false positive (#1466 review).
   const { scoped } = await loadScopedEvents(ctx, caseId, a);
-  const userPrompt = buildReconcilePrompt(a, b, record.deltas, scoped);
+  // #1596 — the referee sees the open threads and negative answers, and each A-only finding that may
+  // be the last evidence for one; the verdicts then pass the same check in code.
+  const guard = guardCaseOf(a, scoped);
+  const guardText = { block: refereeContextBlock(guard, record.deltas), hints: refereeHints(guard, record) };
+  const userPrompt = buildReconcilePrompt(a, b, record.deltas, scoped, guardText);
   try {
-    return foldVerdicts(record, await callReferee(ctx, caseId, a, referee, userPrompt, record), referee);
+    const parsed = await callReferee(ctx, caseId, a, referee, userPrompt, record);
+    return flagRefereeDismissals(foldVerdicts(record, parsed, referee), guard);
   } catch (err) {
     return withRefereeFailure(ctx, caseId, record, referee, userPrompt, err);
   }
@@ -241,6 +252,9 @@ async function rerunReferee(
   const referee = pickReferee(ctx.opts, before.modelA);
   if (!referee) throw new Error("no referee model configured");
   const state = await ctx.opts.stateStore.load(caseId);
+  // The replayed prompt is the failed attempt's, byte for byte; one saved before #1596 has no guard
+  // block. The deterministic flags below apply either way, against the case as it is now.
+  const guard = guardCaseOf(state, (await loadScopedEvents(ctx, caseId, state)).scoped);
   let parsed: ReconcileResponse | undefined;
   let failure: unknown;
   try {
@@ -257,7 +271,7 @@ async function rerunReferee(
         "this second opinion was replaced by a newer second opinion — its referee result was discarded",
       );
     const next = parsed
-      ? foldVerdicts(latest, parsed, referee)
+      ? flagRefereeDismissals(foldVerdicts(latest, parsed, referee), guard)
       : withRefereeFailure(ctx, caseId, latest, referee, prompt, failure);
     await store.save(caseId, next);
     return next;
@@ -308,11 +322,15 @@ export async function applyAllSecondOpinion(
   caseId: string,
   accept: boolean | "referee",
 ): Promise<{ record: SecondOpinion; state: InvestigationState }> {
-  return updateSecondOpinion(ctx, caseId, (current) =>
-    accept === "referee"
-      ? followRefereeStatus(current)
-      : setAllPendingStatus(current, accept ? "accepted" : "rejected"),
-  );
+  if (accept === false) return updateSecondOpinion(ctx, caseId, (c) => setAllPendingStatus(c, "rejected"));
+  // #1596 — a bulk accept re-checks the held dismissals against the case as it is NOW: a twin that
+  // supported an item when the referee ran may be gone, and a thread may have closed since.
+  const state = await ctx.opts.stateStore.load(caseId);
+  const guard = guardCaseOf(state, (await loadScopedEvents(ctx, caseId, state)).scoped);
+  return updateSecondOpinion(ctx, caseId, (current) => {
+    const checked = flagRefereeDismissals(current, guard);
+    return accept === "referee" ? followRefereeStatus(checked) : setAllPendingStatus(checked, "accepted");
+  });
 }
 
 /** Load → decide → save under the record lock, then apply the accepted set to the case. */
