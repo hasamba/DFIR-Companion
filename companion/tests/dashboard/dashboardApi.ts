@@ -189,6 +189,31 @@ export interface IocApi {
     },
   ): { visible: IocLike[]; suppressed: boolean };
   iocNoiseNoticeHtml(suppressed: boolean, total: number): string;
+  /** An unambiguous string naming what the analyst filters the IOC list on (#1649). */
+  iocFilterKey(f: IocFilterInputs): string;
+  /** The page a render lands on: reset only when the filter key changed, else clamped (#1649). */
+  resolveIocPage(p: { page: number; pageSize: number; total: number; key: string; lastKey: string | null }): {
+    page: number;
+    totalPages: number;
+    start: number;
+    end: number;
+  };
+}
+
+/** Everything the IOC panel filters on — its identity, not today's data (#1649). */
+export interface IocFilterInputs {
+  caseId: string;
+  scope: { start: string | null; end: string | null } | null;
+  search: string;
+  excludeTerms: string[];
+  flaggedOnly: boolean;
+  hiddenTypes: string[];
+  corroboration: number;
+  provenance?: string;
+  risk?: number;
+  hideFpNoIntel: boolean;
+  signalOnly: boolean;
+  hideSystemPaths: boolean;
 }
 
 /** The two element shapes the value helpers read off a node they are handed. */
@@ -425,6 +450,11 @@ export interface Facet {
   countIn(available?: Iterable<string> | null): number;
   /** A frozen `{ has }` view, for helpers that only need membership. The owner is never passed. */
   matcher(): HasOnly;
+  /**
+   * Every hidden name, sorted, as a fresh copy — for IDENTITY only (the IOC pager's filter key,
+   * #1649). Never a count: countIn() is the only "how many" read, for the reason given above.
+   */
+  hiddenNames(): string[];
   toggle(name: string, hidden?: boolean): number;
   hideAll(names?: Iterable<string> | null): number;
   showAll(): number;

@@ -253,10 +253,11 @@ describe("every moved function still resolves at its call sites", () => {
   // routes a picked BTM/sfl2/loginitems file as bytes instead of text (#1301); 116 with
   // undecodedBinaryImportHint, the client mirror of the server's "known but not decoded" refusal
   // for the v1 SessionLoginItems.sfl (#1360); 117 with jobBarPercent, the Background jobs
-  // popover's "how full is the bar" rule shared by the row builder and the in-place patch (#1428).
+  // popover's "how full is the bar" rule shared by the row builder and the in-place patch (#1428); 119
+  // with iocFilterKey and resolveIocPage, the IOC pager's "a refresh keeps the page" rule (#1649).
   // The number is a vacuity guard, not a budget.
-  it("moved 117 functions, so the check below is not vacuous", () => {
-    expect(MOVED.length).toBe(117);
+  it("moved 119 functions, so the check below is not vacuous", () => {
+    expect(MOVED.length).toBe(119);
   });
 
   it("provides every one of them as a global once the tagged scripts have run", async () => {

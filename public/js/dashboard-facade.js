@@ -506,6 +506,7 @@
     "setIocProvenanceFilter",
     "setRiskIocsFilter",
     "riskIocsFilterValue",
+    "iocProvenanceFilterValue",
     "loadIocSources",
     "scheduleIocSourcesReload",
     "loadIocProvenance",

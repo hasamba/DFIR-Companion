@@ -218,6 +218,25 @@ test("US-183: the IOC panel pages a long list while keeping totals and the case"
   // an empty list.
   await expect(bar.locator('[data-act="iocPageNext"]')).toBeDisabled();
 
+  // #1649: a background refresh must not send the analyst back to page 1. This spec flaked on
+  // exactly that — an IOC metadata loader the case load had started landed after the Next click and
+  // re-drew the list on page 1. Run both re-draws deliberately, AFTER page 2 is on screen: the one a
+  // websocket state push runs, and one loader, waited on until its response has been handled.
+  const riskLanded = page.waitForResponse((r) => r.url().includes("/ioc-risk"));
+  await page.evaluate((caseId) => {
+    const w = window as unknown as {
+      render(s: unknown): void;
+      loadIocRisk(id: string): void;
+      DfirState: { lastState(): unknown };
+    };
+    w.render(w.DfirState.lastState());
+    w.loadIocRisk(caseId);
+  }, demoCase);
+  await (await riskLanded).finished();
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 100))); // the loader's .then re-draw
+  await expect(bar.locator(".tl-page-info")).toHaveText(`${pageSize + 1}–${total} of ${total}`);
+  await expect(page.locator("#iocs .ioc-row")).toHaveCount(remainder);
+
   // "without losing the selected case state" — the pager is client-side, so the case must still be
   // the one under investigation, not reset by a navigation.
   expect(new URL(page.url()).searchParams.get("caseId")).toBe(demoCase);
