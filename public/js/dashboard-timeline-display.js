@@ -241,6 +241,17 @@
     return { page, totalPages, start, end };
   }
 
+  // The page a jump to event `id` opens (#1658): its place in `sorted` once `keeps` has dropped the
+  // rows the renderer will drop, divided by the page size. `sorted` is in the renderer's order.
+  // -1 means the list does not hold the event, or `keeps` rejects it. pageSize 0 means All.
+  function timelineJumpPage(sorted, id, pageSize, keeps) {
+    const want = String(id);
+    const rows = typeof keeps === "function" ? (sorted || []).filter(keeps) : sorted || [];
+    const idx = rows.findIndex((e) => String(e.id) === want);
+    if (idx < 0) return -1;
+    return pageSize > 0 ? Math.floor(idx / pageSize) : 0;
+  }
+
   window.isPromotedEvent = isPromotedEvent;
   window.promotedBadge = promotedBadge;
   window.promotedKeptCount = promotedKeptCount;
@@ -249,6 +260,7 @@
   window.timelineMoreMatchesBar = timelineMoreMatchesBar;
   window.timelineFilterKey = timelineFilterKey;
   window.resolveTimelinePage = resolveTimelinePage;
+  window.timelineJumpPage = timelineJumpPage;
 
   window.loadTlDisplay = loadTlDisplay;
   window.renderTlChecks = renderTlChecks;
