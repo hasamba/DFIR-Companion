@@ -11,11 +11,20 @@ import {
   promptCandidates,
   type CollapsedPrompt,
 } from "../synthGroup.js";
-import { selectSynthesisEventsAnnotated, type SelectionClass } from "../synthSelect.js";
+import {
+  selectSynthesisEventsAnnotated,
+  type CommandSeatOptions,
+  type SelectionClass,
+} from "../synthSelect.js";
 import { promptDescription } from "./promptDescription.js";
 import { byEventTime } from "../forensicSort.js";
 import { pinCap, promotedTag, rankPins } from "./promotedEvidence.js";
-import { findingSessionRowIds, sessionCommandSeats } from "./synthCommandSeats.js";
+import {
+  commandSeatCap,
+  findingSessionRowIds,
+  sessionCommandSeats,
+  type CommandSeat,
+} from "./synthCommandSeats.js";
 
 /**
  * Which events reach the synthesis prompt, and how each one renders (#453, split from
@@ -107,7 +116,12 @@ export function createTimelineSelection(
   const commandSeats = commandSeatRows(state, scopedEvents, grouping, pinnedIds, aliasIndex);
   const choose = (count: number) => {
     const pins = pinned.slice(0, count);
-    const chosen = selectOrNone(collapsedEvents, count - pins.length, rarityOf, commandSeats);
+    // The reserve is sized from the whole prompt count, not what the pins leave, and a pinned
+    // Critical/High row already satisfies the one-anchor guarantee (#1622).
+    const chosen = selectOrNone(collapsedEvents, count - pins.length, rarityOf, commandSeats, {
+      cap: commandSeatCap(count),
+      anchorShown: pins.some((e) => e.severity === "Critical" || e.severity === "High"),
+    });
     return { chosen, pins, events: [...chosen.events, ...pins].sort(byEventTime) };
   };
   let current = choose(maxEvents);
@@ -151,9 +165,10 @@ function selectOrNone(
   events: ForensicEvent[],
   max: number,
   rarityOf: (e: ForensicEvent) => number,
-  commandSeats: readonly ForensicEvent[],
+  commandSeats: readonly CommandSeat[],
+  seatOptions: CommandSeatOptions,
 ): ReturnType<typeof selectSynthesisEventsAnnotated> {
-  if (max > 0) return selectSynthesisEventsAnnotated(events, max, rarityOf, commandSeats);
+  if (max > 0) return selectSynthesisEventsAnnotated(events, max, rarityOf, commandSeats, seatOptions);
   const empty = selectSynthesisEventsAnnotated([], 1, rarityOf);
   return { ...empty, omitted: events.length };
 }
@@ -170,7 +185,7 @@ function commandSeatRows(
   grouping: CollapsedPrompt,
   pinnedIds: ReadonlySet<string>,
   aliasIndex?: HostAliasIndex,
-): ForensicEvent[] {
+): CommandSeat[] {
   const hostOf = (raw: string): string =>
     aliasIndex ? resolveHost(aliasIndex, raw) : raw.trim().toLowerCase();
   const seats = sessionCommandSeats({
@@ -183,14 +198,16 @@ function commandSeatRows(
   const representativeOf = new Map<string, string>();
   for (const [rep, members] of grouping.memberIdsByRepresentative)
     for (const id of members) representativeOf.set(id, rep);
-  const out: ForensicEvent[] = [];
+  const rowOf = (id: string): string => representativeOf.get(id) ?? id;
+  const out: CommandSeat[] = [];
   const seen = new Set<string>();
-  for (const e of seats) {
-    if (pinnedIds.has(e.id)) continue;
-    const row = pool.get(representativeOf.get(e.id) ?? e.id);
+  for (const { event, shadowedBy } of seats) {
+    // Pinned: already on the prompt. Shadowed by a pinned anchor: its command already is.
+    if (pinnedIds.has(event.id) || shadowedBy.some((id) => pinnedIds.has(id))) continue;
+    const row = pool.get(rowOf(event.id));
     if (!row || seen.has(row.id)) continue;
     seen.add(row.id);
-    out.push(row);
+    out.push({ event: row, shadowedBy: shadowedBy.map(rowOf) });
   }
   return out;
 }

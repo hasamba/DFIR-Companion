@@ -20,8 +20,10 @@ import { splitSessions } from "./sessionCommandNotes.js";
  * (`splitSessions`): per host, cut at gaps over 2 h, widen each cluster by 15 min.
  *
  * A CANDIDATE is a row graded Low or Medium, dated, on a host, inside a session on its own host, that
- * carries a process command line. One per host and command line (lowercased, whitespace collapsed);
- * a command an anchor on the same host already shows takes no seat.
+ * carries a process command line. One per host and command line (lowercased, whitespace collapsed).
+ * A candidate whose command a Critical/High row on the same host also carries is SHADOWED by that
+ * row: the selector skips it only when that row actually reaches the prompt (an anchor can be trimmed
+ * on overflow, and then the quiet copy is the only one the model would see).
  *
  * ORDER. Round-robin across hosts, so one busy host cannot use every seat. Within a host: nearest in
  * time to an anchor on that host first, then Medium before Low, then earliest, then id. The nearest
@@ -86,8 +88,15 @@ export interface CommandSeatInput {
   findingRowIds?: ReadonlySet<string>;
 }
 
+/** One reserved-seat candidate and the Critical/High rows that already show its command. */
+export interface CommandSeat {
+  readonly event: ForensicEvent;
+  readonly shadowedBy: readonly string[];
+}
+
 interface Ranked {
   e: ForensicEvent;
+  host: string;
   key: string;
   distance: number;
   sevRank: number;
@@ -114,7 +123,7 @@ function nearestDistance(sorted: readonly number[], t: number): number {
 }
 
 /** Candidate rows for the reserved command seats, in seat order. Pure. */
-export function sessionCommandSeats(input: CommandSeatInput): ForensicEvent[] {
+export function sessionCommandSeats(input: CommandSeatInput): CommandSeat[] {
   const { anchorTimes, anchorKeys } = collectAnchors(input);
   if (!anchorTimes.size) return [];
   const windowsByHost = new Map([...anchorTimes].map(([h, times]) => [h, splitSessions(times)] as const));
@@ -131,10 +140,10 @@ export function sessionCommandSeats(input: CommandSeatInput): ForensicEvent[] {
     const command = commandLineOf(e);
     if (!command) continue;
     const key = commandKey(command);
-    if (anchorKeys.get(host)?.has(key)) continue;
     const list = perHost.get(host) ?? [];
     list.push({
       e,
+      host,
       key,
       distance: nearestDistance(anchorTimes.get(host) ?? [], time),
       sevRank: SEVERITY_RANK[e.severity],
@@ -145,15 +154,18 @@ export function sessionCommandSeats(input: CommandSeatInput): ForensicEvent[] {
 
   const queues = [...perHost.entries()].map(([host, list]) => ({ host, list: rankAndDedupe(list) }));
   queues.sort((a, b) => a.list[0].distance - b.list[0].distance || a.host.localeCompare(b.host));
-  return roundRobin(queues.map((q) => q.list.map((r) => r.e)));
+  return roundRobin(queues.map((q) => q.list)).map((r) => ({
+    event: r.e,
+    shadowedBy: anchorKeys.get(r.host)?.get(r.key) ?? [],
+  }));
 }
 
 function collectAnchors(input: CommandSeatInput): {
   anchorTimes: Map<string, number[]>;
-  anchorKeys: Map<string, Set<string>>;
+  anchorKeys: Map<string, Map<string, string[]>>;
 } {
   const anchorTimes = new Map<string, number[]>();
-  const anchorKeys = new Map<string, Set<string>>();
+  const anchorKeys = new Map<string, Map<string, string[]>>(); // host → command key → anchor ids
   for (const e of input.events) {
     const byFinding = input.findingRowIds?.has(e.id) ?? false;
     if (!isAnchorSeverity(e) && !byFinding) continue;
@@ -164,13 +176,16 @@ function collectAnchors(input: CommandSeatInput): {
     const times = anchorTimes.get(host);
     if (times) times.push(time);
     else anchorTimes.set(host, [time]);
-    // Only a Critical/High row is certain to be on the prompt as an anchor; a finding-cited Low row
-    // is not, so it must not suppress its own command.
+    // Only a Critical/High row can shadow a candidate: the selector seats it as an anchor unless the
+    // cap trims it. A finding-cited Low row has no seat of its own, so it shadows nothing.
     if (!isAnchorSeverity(e)) continue;
     const command = commandLineOf(e);
     if (!command) continue;
-    const keys = anchorKeys.get(host) ?? new Set<string>();
-    keys.add(commandKey(command));
+    const keys = anchorKeys.get(host) ?? new Map<string, string[]>();
+    const key = commandKey(command);
+    const shadows = keys.get(key);
+    if (shadows) shadows.push(e.id);
+    else keys.set(key, [e.id]);
     anchorKeys.set(host, keys);
   }
   for (const times of anchorTimes.values()) times.sort((x, y) => x - y);
@@ -186,8 +201,8 @@ function rankAndDedupe(list: Ranked[]): Ranked[] {
   return sorted.filter((r) => (seen.has(r.key) ? false : (seen.add(r.key), true)));
 }
 
-function roundRobin(lists: readonly ForensicEvent[][]): ForensicEvent[] {
-  const out: ForensicEvent[] = [];
+function roundRobin<T>(lists: readonly T[][]): T[] {
+  const out: T[] = [];
   const longest = Math.max(0, ...lists.map((l) => l.length));
   for (let i = 0; i < longest; i++) for (const list of lists) if (i < list.length) out.push(list[i]);
   return out;

@@ -5,6 +5,7 @@ import {
   commandSeatCap,
   findingSessionRowIds,
   sessionCommandSeats,
+  type CommandSeat,
 } from "../../src/analysis/ai/synthCommandSeats.js";
 import { CANONICAL_EVENT_SCHEMA_VERSION } from "../../src/analysis/canonicalEvent.js";
 import { emptyState, type ForensicEvent, type Severity } from "../../src/analysis/stateTypes.js";
@@ -38,7 +39,7 @@ const anchor = (id: string, minutes: number, extra: Partial<ForensicEvent> = {})
   ev(id, minutes, "High", extra);
 const cmd = (id: string, minutes: number, commandLine: string, extra: Partial<ForensicEvent> = {}) =>
   ev(id, minutes, "Low", { commandLine, processName: "cmd.exe", ...extra });
-const ids = (events: readonly ForensicEvent[]): string[] => events.map((e) => e.id);
+const ids = (seats: readonly CommandSeat[]): string[] => seats.map((s) => s.event.id);
 
 describe("commandSeatCap", () => {
   it("reserves a tenth of the cap, at least one seat, at most 40", () => {
@@ -150,12 +151,19 @@ describe("sessionCommandSeats — candidates", () => {
     expect(ids(seats).sort()).toEqual(["near", "other-host"]);
   });
 
-  it("skips a command an anchor on the same host already shows", () => {
+  it("marks a command an anchor on the same host also carries as shadowed by that anchor", () => {
     const seats = sessionCommandSeats({
-      events: [anchor("a", 0, { commandLine: "net view /all" }), cmd("dup", 5, "net view /all")],
+      events: [
+        anchor("a", 0, { commandLine: "net view /all" }),
+        cmd("dup", 5, "net view /all"),
+        cmd("other", 6, "tasklist /v"),
+      ],
       hostOf: lower,
     });
-    expect(seats).toEqual([]);
+    expect(seats.map((s) => [s.event.id, s.shadowedBy])).toEqual([
+      ["dup", ["a"]],
+      ["other", []],
+    ]);
   });
 
   it("orders nearest first, then Medium before Low, and deals seats round-robin across hosts", () => {

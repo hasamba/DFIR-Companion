@@ -122,6 +122,26 @@ describe("selectSynthesisEventsAnnotated — command seats (#1622)", () => {
     }
   });
 
+  it("seats a command a High row shadows only when that High row is trimmed on overflow", () => {
+    const events = detectionHeavy(150);
+    // The same command as a High detection (a150, earliest-ranked last) and as a quiet Low row.
+    events.push(
+      ev("a-net", 149 * 60 + 30, "High", { commandLine: "net group /domain", description: "zz net" }),
+    );
+    events.push(ev("q-net", 149 * 60 + 90, "Low", { commandLine: "net group /domain" }));
+    const seats = seatsFor(events);
+    expect(seats.find((s) => s.event.id === "q-net")?.shadowedBy).toEqual(["a-net"]);
+    const sel = selectSynthesisEventsAnnotated(events, 100, undefined, seats);
+    expect(sel.classOf.has("a-net")).toBe(false); // trimmed: latest of the equal-severity anchors
+    expect(sel.classOf.get("q-net")).toBe("command");
+    expect(sel.events.length).toBe(100);
+
+    // With room for every anchor the High row shows the command, so the quiet copy takes no seat.
+    const roomy = selectSynthesisEventsAnnotated(events, 400, undefined, seats);
+    expect(roomy.classOf.get("a-net")).toBe("anchor");
+    expect(roomy.classOf.get("q-net")).not.toBe("command");
+  });
+
   it("changes nothing when there are no command seats", () => {
     const events = detectionHeavy(80).filter((e) => !quietIds.includes(e.id as (typeof quietIds)[number]));
     const before = selectSynthesisEventsAnnotated(events, 100);
@@ -132,7 +152,7 @@ describe("selectSynthesisEventsAnnotated — command seats (#1622)", () => {
   it("ignores seat rows that are not in the selection's input", () => {
     const events = detectionHeavy(80);
     const stranger = ev("stranger", 10, "Low", { commandLine: "net user" });
-    const sel = selectSynthesisEventsAnnotated(events, 100, undefined, [stranger]);
+    const sel = selectSynthesisEventsAnnotated(events, 100, undefined, [{ event: stranger, shadowedBy: [] }]);
     expect(sel.classOf.has("stranger")).toBe(false);
     expect(sel.counts.command).toBe(0);
   });
@@ -165,6 +185,33 @@ describe("createTimelineSelection — command seats end to end (#1622)", () => {
     expect(t.promptEvents.length).toBe(50);
     expect(t.selection.counts.command).toBe(3);
     for (const id of quietIds) expect(shown.has(id)).toBe(true);
+  });
+
+  it("sizes the reserve from the whole prompt, not what pinned rows leave", () => {
+    vi.stubEnv("DFIR_AI_SYNTH_MAX_EVENTS", "100");
+    const events = detectionHeavy(80);
+    for (let i = 0; i < 30; i++)
+      events.push(ev(`extra${i}`, 60 * 60 + i, "Low", { commandLine: `whoami /priv ${word(i)}` }));
+    const pins = new Set(
+      events
+        .filter((e) => e.id.startsWith("n"))
+        .slice(0, 50)
+        .map((e) => e.id),
+    );
+    const t = createTimelineSelection(stateOf(events), events, undefined, pins);
+    expect(t.pinnedCount()).toBeGreaterThan(0);
+    expect(t.selection.counts.command).toBe(10);
+  });
+
+  it("lets a pinned High row stand in for the one kept anchor at a two-row budget", () => {
+    vi.stubEnv("DFIR_AI_SYNTH_MAX_EVENTS", "100");
+    const events = detectionHeavy(80);
+    const t = createTimelineSelection(stateOf(events), events, undefined, new Set(["a79"]));
+    t.fitTo(2);
+    const shown = t.promptEvents.map((e) => e.id);
+    expect(shown).toHaveLength(2);
+    expect(shown).toContain("a79");
+    expect(t.selection.counts.command).toBe(1);
   });
 
   it("opens a session from a High row that is pinned as newly promoted", () => {
