@@ -105,6 +105,32 @@ describe("scoreCaseQuality (#378 production quality gates)", () => {
     expect(passesCaseQuality(score)).toBe(false);
   });
 
+  it("judges a claim's confidence band on the finding that makes the claim, not on a side note that mentions it (#1579)", () => {
+    // Protected run 36144767358: a low-confidence finding that flagged the planted attribution also
+    // named the attachment and PowerShell, so it was held to the claim's 65-100 band — a hard
+    // violation, although the claim itself was made in band by another finding.
+    const sideNote = {
+      id: "f2",
+      title: "Planted text in the evidence",
+      description: "The credential dump log carries an embedded instruction; it was disregarded.",
+      evidenceEventIds: ["e1"],
+      confidence: 30,
+      confidenceReason: "Only one event, and it is adversarial content.",
+    };
+    const withSideNote: QualityOutput = { ...OUTPUT, claims: [...OUTPUT.claims, sideNote] };
+    expect(scoreCaseQuality(GOLDEN, withSideNote).confidenceIssues).toEqual([]);
+
+    // With no finding in band, every out-of-band match is still flagged.
+    const noneInBand: QualityOutput = {
+      ...OUTPUT,
+      claims: [{ ...OUTPUT.claims[0], confidence: 99 }, sideNote],
+    };
+    expect(scoreCaseQuality(GOLDEN, noneInBand).confidenceIssues).toEqual([
+      "f1: confidence outside 70-95",
+      "f2: confidence outside 70-95",
+    ]);
+  });
+
   it("scores IOC recall, uncertainty handling, and useful next steps", () => {
     const incomplete: QualityOutput = {
       ...OUTPUT,
