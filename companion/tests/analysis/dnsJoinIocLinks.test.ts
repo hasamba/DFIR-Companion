@@ -90,6 +90,6 @@ describe("DNS join keeps IOC links for every row a query splits into (#1642)", (
       }),
       ev(22, "2026-03-01T11:00:00.000Z", { ...q, Hashes: `SHA256=${SHA}` }),
     ].join("")}</Events>`;
-    check((await parseEvtxXmlProgress(xml)) as unknown as Result);
+    check(await parseEvtxXmlProgress(xml));
   });
 });
