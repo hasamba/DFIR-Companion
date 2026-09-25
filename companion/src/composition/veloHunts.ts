@@ -218,23 +218,23 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
     // the `finally` regardless of where this pass stops.
     let scratchDir: string | null = null;
     try {
-      // A last live check right before collecting: was this hunt stopped/deleted in Velociraptor well
-      // before its own scheduled expiry? Checked HERE (not just in the status poller) so every entry
-      // point — the poller, the fixed-delay auto-collect timer, and a manual "Collect now" — gets the
-      // same signal. Best-effort: a failed check must not block the collect itself.
-      let stoppedEarly = job.stoppedEarly === true;
-      if (!stoppedEarly) {
-        try {
-          stoppedEarly = isHuntStoppedEarly(await client.huntStatus(job.huntId), Date.now());
-        } catch {
-          /* best-effort */
-        }
+      // A last live check right before collecting, so every entry point (poller, auto-collect timer,
+      // "Collect now") gets it: was the hunt stopped well before its own expiry, and how many clients did
+      // it reach (#1612)? Read before the rows, best effort. A failed read never blocks the collect; it
+      // leaves coverage unknown, so no empty result of this collect can settle an evidence class.
+      let live: Awaited<ReturnType<typeof client.huntStatus>> = null;
+      try {
+        live = await client.huntStatus(job.huntId);
+      } catch {
+        /* best-effort */
       }
+      const stoppedEarly = job.stoppedEarly === true || isHuntStoppedEarly(live, Date.now());
       job = {
         ...job,
         status: "collecting",
         collectPhase: "fetching",
         collectRows: undefined,
+        clientCounts: live?.clients,
         ...(stoppedEarly ? { stoppedEarly: true } : {}),
       };
       await huntStore.upsert(caseId, job);

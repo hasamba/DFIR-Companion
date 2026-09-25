@@ -48,6 +48,8 @@ function job(over: Partial<VeloHuntJob>): VeloHuntJob {
     waitMinutes: 5,
     collectAt: "2026-08-28T10:05:00Z",
     status: "imported",
+    // Every scheduled client finished (#1612), so a test about another bound isolates that bound.
+    clientCounts: { scheduled: 1, completed: 1, errors: 0 },
     ...over,
   };
 }
@@ -273,6 +275,63 @@ describe("collection inventory (#1588)", () => {
       expect(inventorySignature([{ ...base, timeScope: window([PF]) }])).not.toBe(
         inventorySignature([{ ...base, timeScope: window([]) }]),
       );
+    });
+  });
+
+  // #1612 — an empty result speaks only for the clients that ran the hunt. It settles a class only when
+  // the hunt reached at least one client and every scheduled client finished without error.
+  describe("client coverage of empty hunts (#1612)", () => {
+    const PF = "Windows.Forensics.Prefetch";
+    const inv = (hunts: VeloHuntJob[]) => buildCollectionInventory({ events: [], hunts });
+    const settled = (hunts: VeloHuntJob[]) => [...emptySettledClasses(inv(hunts))].sort();
+    const empty = (clientCounts?: unknown) =>
+      job({ artifacts: [PF], emptyArtifacts: [PF], clientCounts } as Partial<VeloHuntJob>);
+
+    it("settles when every scheduled client finished without error", () => {
+      expect(settled([empty({ scheduled: 3, completed: 3, errors: 0 })])).toEqual(["execution"]);
+    });
+
+    it("a hunt collected before the counts were recorded cannot settle, and says why", () => {
+      expect(settled([empty(undefined)])).toEqual([]);
+      expect(renderCollectionInventory(inv([empty(undefined)]))).toContain("client coverage not recorded");
+    });
+
+    it("a hunt that reached no client cannot settle, and says so", () => {
+      const hunts = [empty({ scheduled: 0, completed: 0, errors: 0 })];
+      expect(settled(hunts)).toEqual([]);
+      expect(renderCollectionInventory(inv(hunts))).toContain("the hunt reached no client");
+    });
+
+    it("a hunt some clients have not finished cannot settle, and names the count", () => {
+      const hunts = [empty({ scheduled: 4, completed: 1, errors: 0 })];
+      expect(settled(hunts)).toEqual([]);
+      expect(renderCollectionInventory(inv(hunts))).toContain("1 of 4 scheduled client(s) finished");
+    });
+
+    it("a hunt with a client error cannot settle, and names the errors", () => {
+      const hunts = [empty({ scheduled: 2, completed: 2, errors: 1 })];
+      expect(settled(hunts)).toEqual([]);
+      expect(renderCollectionInventory(inv(hunts))).toContain("1 with errors");
+    });
+
+    it("more finished than scheduled is an inconsistent snapshot and cannot settle", () => {
+      expect(settled([empty({ scheduled: 1, completed: 2, errors: 0 })])).toEqual([]);
+    });
+
+    it("malformed counts from an old velo-hunt.json never throw and never settle", () => {
+      for (const bad of [
+        "junk",
+        7,
+        { scheduled: "2", completed: 2, errors: 0 },
+        { scheduled: 2, completed: 2 },
+      ])
+        expect(settled([empty(bad)])).toEqual([]);
+    });
+
+    it("the signature changes with the counts", () => {
+      const sig = inventorySignature([empty({ scheduled: 3, completed: 1, errors: 0 })]);
+      expect(inventorySignature([empty({ scheduled: 3, completed: 3, errors: 0 })])).not.toBe(sig);
+      expect(inventorySignature([empty(undefined)])).not.toBe(sig);
     });
   });
 

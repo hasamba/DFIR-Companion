@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **AI eval gate averages three runs** — a no-regression attestation now needs three real runs of every section, averaged, with a 5-point tolerance; a SYSTEM_PROMPT or vision-model change also needs a real screenshot set (part of #1579)
 
 ### Fixed
+- **An empty hunt settles an evidence class only when every scheduled client finished** — each collect records the hunt's client counts; a hunt that reached no client, is still waiting on clients, or had client errors can only qualify an answer, and a hunt collected before this release settles nothing (closes #1612)
 - **Synthesis reads what the missed-evidence review promotes** — newly promoted rows always reach the next synthesis, tagged as new, with an instruction to correct any finding they contradict; a re-run also sees what each finding said before, so it keeps its details (closes #1586)
 - **A failed 2nd-opinion referee is shown, not hidden** — the panel names the referee and the error, and a `↻ re-run referee` button re-runs only the referee on the saved disagreements (closes #1587)
 - **The missed-evidence review is rate-limited** — it now counts against the per-case AI limit like every other paid AI button, and the check that catches unmetered AI routes can see it (closes #1577)

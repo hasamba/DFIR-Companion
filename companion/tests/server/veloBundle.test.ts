@@ -757,6 +757,44 @@ describe("Velociraptor hunt status polling — routes", () => {
     POLL_TIMEOUT_MS * 2,
   );
 
+  // #1612: an empty result speaks only for the clients that ran the hunt, so the collect records the
+  // hunt's client counts on the job — on every collect, even one already known to be stopped early.
+  it(
+    "collect records the hunt's client counts from Velociraptor's hunt stats",
+    async () => {
+      const runner: VqlRunner = async (statements) => {
+        const p = statements[0];
+        if (p.includes("hunt(") && p.includes("artifacts=["))
+          return { rows: [{ Hunt: { HuntId: "H.COUNT1", state: "RUNNING" } }], raw: "" };
+        if (p.includes("FROM hunts()"))
+          return {
+            rows: [
+              {
+                state: "STOPPED",
+                stats: {
+                  total_clients_scheduled: 3,
+                  total_finished_clients: 2,
+                  total_clients_with_errors: 1,
+                },
+              },
+            ],
+            raw: "",
+          };
+        return { rows: [], raw: "" };
+      };
+      const made = await makeApp(runner);
+      await request(made.app)
+        .post("/cases/c1/velociraptor/run-bundle")
+        .send({ bundleId: "best-practice", waitMinutes: 30 });
+      expect((await request(made.app).post("/cases/c1/velociraptor/collect")).status).toBe(202);
+
+      const job = await pollHuntJob<{ status: string; clientCounts?: unknown }>(made.app);
+      expect(job.status).toBe("imported");
+      expect(job.clientCounts).toEqual({ scheduled: 3, completed: 2, errors: 1 });
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
+
   it("poll-status marks the job deleted when Velociraptor has no record of the hunt", async () => {
     const runner: VqlRunner = async (statements) => {
       const p = statements[0];
