@@ -1,4 +1,3 @@
-import { ZodError } from "zod";
 import type { VeloHuntJob, VeloHuntStore } from "../veloHuntStore.js";
 import {
   buildCollectionInventory,
@@ -33,8 +32,11 @@ import {
 import { autoGenerateHypotheses } from "./synthesisHypotheses.js";
 import type { PlaybookTask } from "../playbook.js";
 import { deltaSchema, stripAiExtractedFrom } from "../responseSchema.js";
-import { fillOptionalSynthesisFields, synthesisRetryNote } from "./synthesisAnswerRepair.js";
-import { AiAnswerParseError } from "./providerCall.js";
+import {
+  fillOptionalSynthesisFields,
+  keepFailedAnswer,
+  synthesisRetryNote,
+} from "./synthesisAnswerRepair.js";
 import { filterEventsByScope, NO_SCOPE, type ScopeWindow } from "../scope.js";
 import { applyAcceptedSecondOpinion } from "../secondOpinion.js";
 import type { SecondOpinionStore } from "../secondOpinionStore.js";
@@ -534,7 +536,13 @@ async function callSynthesisModel(
       } catch (err) {
         parseRetries++;
         retryNote = synthesisRetryNote(err) ?? retryNote; // a provider error keeps the current note
-        await keepFailedAnswer(ctx, caseId, attempt, err, parsed);
+        await keepFailedAnswer(
+          { log: ctx.log, store: ctx.opts.synthMetaStore },
+          caseId,
+          attempt,
+          err,
+          parsed,
+        );
         throw err;
       }
     },
@@ -557,40 +565,6 @@ function parseSynthesisAnswer(
       caseId,
     });
   return stripAiExtractedFrom(deltaSchema.parse(value));
-}
-
-// #1602: keep an answer that failed to parse or validate in the case's logs folder. A save failure
-// is logged and never replaces the error the analyst is waiting on.
-async function keepFailedAnswer(
-  ctx: SynthesisContext,
-  caseId: string,
-  attempt: number,
-  err: unknown,
-  parsed: unknown,
-): Promise<void> {
-  const text =
-    err instanceof AiAnswerParseError
-      ? err.rawText
-      : err instanceof ZodError && parsed !== undefined
-        ? JSON.stringify(parsed, null, 2)
-        : undefined;
-  if (text === undefined) return;
-  const store = ctx.opts.synthMetaStore;
-  if (!store) {
-    ctx.log.warn(`[synthesis] attempt ${attempt} answer failed; raw answer not saved (no synth-meta store)`, {
-      caseId,
-    });
-    return;
-  }
-  const error = err instanceof Error ? err.message : String(err);
-  try {
-    const path = await store.saveFailedAnswer(caseId, { kind: "synthesis", attempt, error, text });
-    ctx.log.warn(`[synthesis] attempt ${attempt} answer failed; raw answer saved to ${path}`, { caseId });
-  } catch (saveErr) {
-    ctx.log.warn(`[synthesis] attempt ${attempt} answer failed; raw answer not saved: ${String(saveErr)}`, {
-      caseId,
-    });
-  }
 }
 
 // The pre-synthesis merge gate. Runs before the prompt is built so a blocked run spends no tokens
