@@ -59,7 +59,10 @@
 //
 //   - A process the client itself SPAWNED (rule 2c, #1477) needs both the collector exe as its parent
 //     — a path Sysmon recorded, not one the child chose — and a Tools-tree file on its command line.
-//     Either alone keeps the grade. Children of that process are not covered.
+//     Children of that process are not covered here (collectorChildren.ts follows them by GUID).
+//   - Any OTHER process the client started as SYSTEM (rule 2d, #1593) is claimed on the same parent
+//     and SYSTEM facts, unless its command line carries strong tradecraft. It is claimed alone: only
+//     a rule 2c spawn, proved by its Tools path, vouches for children and script blocks.
 //   - Every demotion here also sets `origin: "collector"`, the structured mark the post-import tagger
 //     honours (tagger.ts): the tagger matches the retained raw message, so without it a row graded
 //     Info here came back High when PersistenceSniper's `Add-Type … AdjPriv` met the bundled rule.
@@ -70,6 +73,8 @@
 import { readFileSync } from "node:fs";
 import { isIP } from "node:net";
 import type { MappedEvent } from "./siemImport.js";
+import { STRONG_CMD, tradecraftSignal } from "./tradecraftRules.js";
+import { commandCandidates } from "./commandNormalize.js";
 
 export interface CollectorInfrastructure {
   /** Lower-cased hostnames / IPs of the configured Velociraptor server(s). Empty ⇒ rule 1 is inert. */
@@ -81,6 +86,7 @@ const DEPLOYMENT_DOWNLOAD_NOTE =
 const DEPLOYMENT_INSTALL_NOTE = " [DFIR collector deployment — Velociraptor client install]";
 const FOOTPRINT_NOTE = " [DFIR collector footprint — tool run by the Velociraptor client]";
 const SPAWN_NOTE = " [DFIR collector footprint — spawned by the Velociraptor client]";
+const SERVICE_CHILD_NOTE = " [DFIR collector footprint — SYSTEM process the Velociraptor client started]";
 const MSI_TIME_CHANGE_NOTE =
   " [MSI install artifact — creation-time change by msiexec.exe is not timestomping]";
 const TIMESTOMP_TECHNIQUE = "T1070.006";
@@ -222,7 +228,7 @@ function hayabusaField(description: string, key: string): string {
 }
 
 // A rendered field by its Windows-mapper key, read in the shape the row's importer produced.
-function descriptionField(description: string, key: string): string {
+export function descriptionField(description: string, key: string): string {
   return HAYABUSA_PREFIX.test(description) ? hayabusaField(description, key) : mapperField(description, key);
 }
 
@@ -413,14 +419,50 @@ export function isCollectorFootprint(m: MappedEvent): boolean {
  * keeps for the same module's script blocks.
  */
 export function isCollectorSpawn(m: MappedEvent): boolean {
+  if (!isCollectorParentedSystemProcess(m)) return false;
+  for (const hit of commandLineOf(m).matchAll(COLLECTOR_TOOLS_ARG))
+    if (!PATH_TRAVERSAL.test(hit[1])) return true;
+  return false;
+}
+
+/**
+ * Rule 2d — is this ANY process the Velociraptor client started as SYSTEM (#1593)?
+ *
+ * Rule 2c needs a Tools-tree file on the command line, so it reaches only the artifacts that unpack a
+ * tool. Artifacts that run an inline script do not: on INC-2026-005 the client's `klist`-to-JSON
+ * collection (`powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "…klist
+ * sessions…"`) graded High as "Potential PowerShell Command Line Obfuscation". This rule keeps every
+ * other fact rule 2c rests on — a process row, run as SYSTEM, the parent exe under the install root
+ * with traversal refused — and the callers keep the foreign-destination veto (#1486) and the
+ * Critical floor. Two bounds replace the Tools path:
+ *
+ *   - A command line with STRONG tradecraft is refused: the STRONG_CMD markers (Mimikatz, lsadump, a
+ *     log clear, a hive save, …) and every strong rule of the importer's tradecraft tables (Defender
+ *     tampering, recovery inhibition, a remote scriptlet, …). A hijacked collector or an artifact the analyst did not intend can make the client run
+ *     anything; this keeps the loudest of those at their grade.
+ *   - The row is claimed ALONE. It is not a spawn for the GUID / pid lineage (#1488, #1500): only a
+ *     rule 2c spawn — proved by the Tools path — vouches for its children and script blocks. So an
+ *     ordinary-looking child that launches something worse does not carry the grandchild to Info.
+ */
+export function isCollectorServiceChild(m: MappedEvent): boolean {
+  if (!isCollectorParentedSystemProcess(m)) return false;
+  const image = imagePath(m);
+  const cmd = commandLineOf(m);
+  if (commandCandidates(image, cmd).some((c) => STRONG_CMD.test(c))) return false;
+  return tradecraftSignal(image, cmd)?.weight !== "strong";
+}
+
+function commandLineOf(m: MappedEvent): string {
+  return m.commandLine || descriptionField(m.description, "CommandLine");
+}
+
+// Rules 2c and 2d: a process row, run as SYSTEM, whose parent is the collector exe under its root.
+function isCollectorParentedSystemProcess(m: MappedEvent): boolean {
   if (!isProcessRow(m)) return false;
   if (!SYSTEM_ACCOUNT.test(m.canonical?.actor?.name ?? descriptionField(m.description, "User"))) return false;
   const parent =
     m.canonical?.process?.parent?.executable?.trim() || descriptionField(m.description, "ParentImage");
-  if (!parent || PATH_TRAVERSAL.test(parent) || !COLLECTOR_INSTALL_EXE.test(parent)) return false;
-  const cmd = m.commandLine || descriptionField(m.description, "CommandLine");
-  for (const hit of cmd.matchAll(COLLECTOR_TOOLS_ARG)) if (!PATH_TRAVERSAL.test(hit[1])) return true;
-  return false;
+  return !!parent && !PATH_TRAVERSAL.test(parent) && COLLECTOR_INSTALL_EXE.test(parent);
 }
 
 /**
@@ -459,6 +501,10 @@ export function annotateCollectorDeployment(m: MappedEvent, infra: CollectorInfr
   }
   if (isCollectorSpawn(m)) {
     if (!foreign && m.severity !== "Critical") gradeAsCollector(m, SPAWN_NOTE);
+    return;
+  }
+  if (isCollectorServiceChild(m)) {
+    if (!foreign && m.severity !== "Critical") gradeAsCollector(m, SERVICE_CHILD_NOTE);
     return;
   }
   if (isCollectorFootprint(m)) {
