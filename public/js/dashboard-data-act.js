@@ -114,14 +114,12 @@
     zoomToTimeWindow: (el) => zoomToTimeWindow(el.dataset.from, el.dataset.to),
     tlPagePrev: (el) => {
       if (tlPage > 0) {
-        _tlKeepPage = true;
         tlPage--;
         renderTimelineEvents(DfirState.lastFt());
       }
     },
     tlPageNext: (el) => {
       if (tlPage < Number(el.dataset.total)) {
-        _tlKeepPage = true;
         tlPage++;
         renderTimelineEvents(DfirState.lastFt());
       }

@@ -212,23 +212,29 @@
   function timelineFilterKey(f) {
     const sorted = (a) => (Array.isArray(a) ? a.map(String).sort() : []);
     const scope = f.scope || {};
+    // A host merge changes which events an active Hosts filter lets through, so it is part of the
+    // filter's identity. The caller passes it only while a host is hidden.
+    const merges = f.hostMerges && typeof f.hostMerges === "object" ? f.hostMerges : null;
     return JSON.stringify([
       String(f.caseId || ""), scope.start || null, scope.end || null, sorted(f.severities),
       Array.isArray(f.eventIds) ? sorted(f.eventIds) : null, !!f.starredOnly, String(f.search || ""),
       sorted(f.excludeTerms), f.from || null, f.to || null, sorted(f.hiddenSources), sorted(f.hiddenOrigins),
-      sorted(f.hiddenHosts), Number(f.corroboration) || 0, f.minSeverity || null, String(f.sortKey || ""),
+      sorted(f.hiddenHosts), merges ? Object.keys(merges).sort().map((k) => [k, merges[k]]) : null, Number(f.corroboration) || 0, f.minSeverity || null, String(f.sortKey || ""),
       String(f.sortDir || ""), Number(f.pageSize) || 0,
     ]);
   }
 
   // The page a render lands on, and the slice it shows. pageSize 0 means All. `keep` is the
-  // one-shot override a jump uses: it clears filters, then picks the page its event lands on.
+  // one-shot override a jump uses: it clears filters, then picks the page its event lands on. It
+  // never overrides a first render or a case change: a stale flag must not carry a page across cases.
   function resolveTimelinePage(p) {
     const total = Math.max(0, p.total | 0);
     const size = p.pageSize > 0 ? p.pageSize : 0;
     const totalPages = size > 0 ? Math.max(1, Math.ceil(total / size)) : 1;
-    const fresh = p.lastKey === null || p.lastKey === undefined || p.key !== p.lastKey;
-    let page = fresh && !p.keep ? 0 : p.page | 0;
+    const first = p.lastKey === null || p.lastKey === undefined;
+    const caseChanged = !first && p.caseId !== undefined && p.caseId !== p.lastCaseId;
+    const fresh = first || p.key !== p.lastKey;
+    let page = first || caseChanged || (fresh && !p.keep) ? 0 : p.page | 0;
     page = Math.min(Math.max(0, page), totalPages - 1);
     const start = size > 0 ? page * size : 0;
     const end = size > 0 ? Math.min(start + size, total) : total;

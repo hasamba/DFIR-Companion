@@ -26,6 +26,7 @@ interface TimelineFilterInputs {
   hiddenSources: string[];
   hiddenOrigins: string[];
   hiddenHosts: string[];
+  hostMerges?: Record<string, unknown> | null;
   corroboration: number;
   minSeverity?: string | null;
   sortKey: string;
@@ -40,6 +41,8 @@ interface PageInputs {
   key: string;
   lastKey: string | null;
   keep?: boolean;
+  caseId?: string;
+  lastCaseId?: string | null;
 }
 
 interface TimelinePageApi {
@@ -146,8 +149,37 @@ describe("resolveTimelinePage — which page a render lands on (#1652)", () => {
   });
 
   it("still clamps a kept page into range", () => {
-    const r = tl.resolveTimelinePage({ page: 9, pageSize: 50, total: 57, key, lastKey: null, keep: true });
+    const next = tl.timelineFilterKey({ ...base, starredOnly: true });
+    const r = tl.resolveTimelinePage({
+      page: 9,
+      pageSize: 50,
+      total: 57,
+      key: next,
+      lastKey: key,
+      keep: true,
+    });
     expect(r.page).toBe(1);
+  });
+
+  it("never lets a stale keep flag carry a page onto the first render", () => {
+    expect(
+      tl.resolveTimelinePage({ page: 2, pageSize: 50, total: 180, key, lastKey: null, keep: true }).page,
+    ).toBe(0);
+  });
+
+  it("never lets a stale keep flag carry a page across a case change", () => {
+    const other = tl.timelineFilterKey({ ...base, caseId: "case-b" });
+    const r = tl.resolveTimelinePage({
+      page: 2,
+      pageSize: 50,
+      total: 180,
+      key: other,
+      lastKey: key,
+      caseId: "case-b",
+      lastCaseId: "case-a",
+      keep: true,
+    });
+    expect(r.page).toBe(0);
   });
 });
 
@@ -168,6 +200,10 @@ describe("timelineFilterKey — what counts as a filter change (#1652)", () => {
     ["the hidden sources", { hiddenSources: ["EvtxECmd"] }],
     ["the hidden origins", { hiddenOrigins: ["screenshot"] }],
     ["the hidden hosts", { hiddenHosts: ["ws01"] }],
+    [
+      "a host merge under an active Hosts filter",
+      { hiddenHosts: ["ws01"], hostMerges: { "ws01.example.com": "ws01" } },
+    ],
     ["the corroboration lens", { corroboration: 2 }],
     ["the view's severity floor", { minSeverity: "High" }],
     ["the sort column", { sortKey: "severity" }],
@@ -180,6 +216,12 @@ describe("timelineFilterKey — what counts as a filter change (#1652)", () => {
   it("changes when the id filter swaps to a different set of the same size", () => {
     expect(tl.timelineFilterKey({ ...base, eventIds: ["a", "b"] })).not.toBe(
       tl.timelineFilterKey({ ...base, eventIds: ["a", "c"] }),
+    );
+  });
+
+  it("does not depend on the order host merges were recorded in", () => {
+    expect(tl.timelineFilterKey({ ...base, hostMerges: { b: "x", a: "y" } })).toBe(
+      tl.timelineFilterKey({ ...base, hostMerges: { a: "y", b: "x" } }),
     );
   });
 
@@ -262,7 +304,7 @@ describe("renderTimelineEvents no longer resets the page on every call (#1652)",
 
   it("feeds the key every filter the render applies", async () => {
     const src = await body();
-    const call = src.slice(src.indexOf("timelineFilterKey("), src.indexOf("resolveTimelinePage("));
+    const call = src.slice(src.indexOf("const totalFiltered"), src.indexOf("resolveTimelinePage("));
     for (const read of [
       'getElementById("caseId")',
       "DfirScope.get()",
@@ -283,6 +325,21 @@ describe("renderTimelineEvents no longer resets the page on every call (#1652)",
     ]) {
       expect(call, `the key must read ${read}`).toContain(read);
     }
+  });
+
+  it("keys host merges only while a host is hidden", async () => {
+    expect(await body()).toMatch(/hostMerges: hostHidden > 0 &&/);
+  });
+
+  it("leaves the keep override to the jump alone, so no other writer can leave it stale", async () => {
+    const dir = new URL("../../../public/js/", import.meta.url);
+    const { readdir } = await import("node:fs/promises");
+    const writers: string[] = [];
+    for (const f of await readdir(dir)) {
+      if (f.endsWith(".js") && /_tlKeepPage\s*=\s*true/.test(await readFile(new URL(f, dir), "utf8")))
+        writers.push(f);
+    }
+    expect(writers).toEqual(["dashboard-hunts-jumps.js"]);
   });
 
   it("has no unconditional reset to page 1 left in it", async () => {

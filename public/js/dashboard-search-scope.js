@@ -171,7 +171,6 @@
         "corrobFindings",
         () => DfirTimelineView.corrobFindings(),
         (v) => {
-          _tlKeepPage = true;
           DfirTimelineView.setCorroboration("findings", v);
           localStorage.setItem("dfir.corrob.findings", String(v));
         },
