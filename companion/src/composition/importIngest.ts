@@ -62,6 +62,16 @@ export interface ImportIngestDeps {
   resynthesizeInBackground: (caseId: string) => void;
 }
 
+/**
+ * A job-bound caller's hooks for the model call (#1629). Used only for an AI kind (csv/log) and only
+ * past the AI-off gate, so the row names a model exactly when one runs: `beforeModelRun` pins it,
+ * and `signal` rides on the model calls so the served-model stamp (#1601) finds the job.
+ */
+export interface ModelCallHooks {
+  signal?: AbortSignal;
+  beforeModelRun?: (kind: string) => void;
+}
+
 export interface ImportIngest {
   /** The live declarative-importer registry. An accessor: it is loaded async and reloaded on CRUD. */
   importerRegistry(): ImporterRegistry;
@@ -100,6 +110,8 @@ export interface ImportIngest {
     originalName: string,
     minSeverity?: Severity,
     provenance?: ArtifactProvenance,
+    assetHost?: string,
+    modelCall?: ModelCallHooks,
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
   /** The byte-native twin of ingestStreamed, for macOS Background Task Management (#933 item 8). */
   ingestMacLoginItemStreamed(
@@ -470,6 +482,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
     minSeverity?: Severity,
     provenance?: ArtifactProvenance,
     assetHost?: string, // the analyst-declared host (#1496): a drop subfolder named asset=<HOST>
+    modelCall?: ModelCallHooks,
   ): Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }> {
     const pipeline = options.pipeline;
     if (!pipeline) throw new Error("AI pipeline not configured");
@@ -490,6 +503,9 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
       });
       return { storedName, addedEvents: 0, addedIocs: 0, analyzed: false };
     }
+    // Past the one AI-off gate: a model runs now, so the caller's job may name it (#1629).
+    const signal = aiDependent ? modelCall?.signal : undefined;
+    if (aiDependent) modelCall?.beforeModelRun?.(kind);
 
     const onProgress = (done: number, total: number): void =>
       options.onAiStatus?.(caseId, {
@@ -526,6 +542,7 @@ export function createImportIngest(deps: ImportIngestDeps): ImportIngest {
         onProgress,
         minSeverity,
         ...(assetHost ? { assetHost } : {}),
+        ...(signal ? { signal } : {}),
       });
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
 
