@@ -13,7 +13,8 @@
  * Re-synthesize still supersedes — they asked for a fresh run now.
  *
  * A QUEUED synthesis (still waiting for the case slot) has made no call yet, so superseding it
- * stays free; only a `running` job makes a kick wait.
+ * stays free; only a `running` job — or the scheduled live run holding the slot — makes a kick
+ * wait.
  *
  * Kicks that arrive while one is already waiting collapse into it: one follow-up run per case, the
  * newest kick's start function winning.
@@ -21,8 +22,10 @@
 import type { Job } from "../analysis/jobRegistry.js";
 
 export interface SynthesisDeferralDeps {
-  /** The job registry. Absent → no exclusive supersede exists, so nothing ever waits. */
+  /** The job registry. Absent → only `inFlight` makes a kick wait. */
   jobManager?: { list(caseId: string): Job[]; get(jobId: string): Job | undefined };
+  /** Cases whose automatic scheduled synthesis holds the slot (queued or running) — also busy. */
+  inFlight?: ReadonlySet<string>;
   /** How long to wait between checks. */
   retryMs: number;
 }
@@ -54,7 +57,7 @@ export function createSynthesisDeferral(deps: SynthesisDeferralDeps): SynthesisD
   }
 
   function running(caseId: string): boolean {
-    return runningIds(caseId).length > 0;
+    return runningIds(caseId).length > 0 || deps.inFlight?.has(caseId) === true;
   }
 
   function wasCancelled(waiter: Waiter): boolean {
@@ -66,7 +69,7 @@ export function createSynthesisDeferral(deps: SynthesisDeferralDeps): SynthesisD
     if (!waiter) return;
     const ids = runningIds(caseId);
     ids.forEach((id) => waiter.watched.add(id));
-    if (ids.length > 0) {
+    if (ids.length > 0 || deps.inFlight?.has(caseId)) {
       wait(caseId);
       return;
     }

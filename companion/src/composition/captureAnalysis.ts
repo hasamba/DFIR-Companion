@@ -95,6 +95,7 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
   // between the check and the registration that would otherwise abort it.
   const deferral = createSynthesisDeferral({
     ...(options.jobManager ? { jobManager: options.jobManager } : {}),
+    inFlight: synthInFlight,
     retryMs: synthDebounceMs,
   });
 
@@ -223,10 +224,6 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
       caseId,
       setTimeout(() => {
         synthTimers.delete(caseId);
-        if (synthInFlight.has(caseId)) {
-          scheduleSynthesis(caseId);
-          return;
-        } // busy — retry after debounce
         startScheduledSynthesis(caseId);
       }, synthDebounceMs),
     );
@@ -234,11 +231,18 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
 
   function startScheduledSynthesis(caseId: string): void {
     void (async () => {
+      // #1608: a kick that waited may wake after the analyst paused AI for the case. Pausing means
+      // no model call, so say the conclusions are behind instead of starting one.
+      if (!(await getControl(caseId)).enabled) {
+        await markOutOfDate(caseId, "new evidence while AI was off");
+        options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+        return;
+      }
       // Held → say so and stop. No job is registered and synthInFlight is never entered, so
       // there is nothing to clean up and the next kick re-checks from scratch.
       if (!(await announceSynthesis(caseId, "synthesizing conclusions"))) return;
-      if (synthInFlight.has(caseId)) return scheduleSynthesis(caseId); // another auto run took the slot
-      // #1608: a run is already paying for a model call — wait for it rather than supersede it.
+      // #1608: another synthesis is running (or another auto run holds the slot) — wait for it
+      // rather than supersede it, in the one per-case queue every automatic kick shares.
       // Synchronous from here to register(), so nothing can start in between.
       if (deferral.running(caseId)) {
         deferral.defer(

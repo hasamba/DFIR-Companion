@@ -42,6 +42,7 @@ async function harness() {
       }),
   } as unknown as AnalysisPipeline;
   const marks: string[] = [];
+  const control = { enabled: true };
   const statuses: { status: string; detail?: string }[] = [];
   const options = {
     pipeline,
@@ -55,7 +56,7 @@ async function harness() {
     store,
     options,
     hasAiProvider: () => true,
-    getControl: async () => ({ enabled: true }) as AiControl,
+    getControl: async () => ({ enabled: control.enabled }) as AiControl,
     setControl: async () => ({ enabled: true }) as AiControl,
     recordAiError: () => {},
     autoEnrichIfEnabled: () => {},
@@ -66,7 +67,7 @@ async function harness() {
       runs.length === n ? true : undefined,
     );
   const settle = () => new Promise((r) => setTimeout(r, 60)); // several retry periods
-  return { analysis, jobManager, runs, marks, statuses, runningCount, settle };
+  return { analysis, jobManager, runs, marks, statuses, control, runningCount, settle };
 }
 
 describe("an automatic synthesis kick while a synthesis is running (#1608)", () => {
@@ -143,5 +144,38 @@ describe("an automatic synthesis kick while a synthesis is running (#1608)", () 
     expect(runs, "no fresh run after the analyst's Cancel").toHaveLength(1);
     expect(marks).toEqual(["synthesis cancelled with newer evidence waiting"]);
     expect(statuses.at(-1)?.status).toBe("idle");
+  });
+
+  it("a scheduled run in flight plus both kinds of kick still gives exactly one follow-up", async () => {
+    const { analysis, runs, runningCount, settle } = await harness();
+    analysis.scheduleSynthesis(CASE_ID);
+    await runningCount(1);
+
+    analysis.resynthesizeInBackground(CASE_ID);
+    analysis.scheduleSynthesis(CASE_ID);
+    await settle();
+    expect(runs[0].signal?.aborted).toBe(false);
+
+    runs[0].release();
+    await runningCount(2);
+    await settle();
+    expect(runs, "one shared queue for every automatic kick").toHaveLength(2);
+    runs[1].release();
+  });
+
+  it("a waiting live kick does not start a run after the analyst pauses AI", async () => {
+    const { analysis, runs, marks, control, runningCount, settle } = await harness();
+    analysis.resynthesizeInBackground(CASE_ID);
+    await runningCount(1);
+    analysis.scheduleSynthesis(CASE_ID);
+    await settle();
+
+    control.enabled = false; // the analyst pauses AI while the kick waits
+    runs[0].release();
+    await pollFor("the waiting kick to mark out of date", async () => (marks.length > 0 ? true : undefined));
+    await settle();
+
+    expect(runs).toHaveLength(1);
+    expect(marks).toEqual(["new evidence while AI was off"]);
   });
 });

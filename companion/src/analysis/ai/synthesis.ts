@@ -747,6 +747,10 @@ export async function synthesize(
   throwIfSuperseded(opts.signal);
   next = await persistSynthesis(ctx, caseId, { loaded, next, findingsDiff });
 
+  // #1608: superseded while persisting — the newer run owns the hypotheses, the finding tasks (one
+  // more model call) and the run record from here.
+  throwIfSuperseded(opts.signal);
+
   await autoGenerateHypotheses(ctx, caseId, delta.hypotheses, next, markers, aliasIndex);
   // #1418: one more call turns each Critical/High finding into an analyst task for the playbook.
   await writeFindingTasks(ctx, caseId, next, { provider: synthProvider });
