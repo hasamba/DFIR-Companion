@@ -42,6 +42,7 @@ function harness(initial: State | null) {
   const fetched: string[] = [];
   const el = (id: string) => (id === "caseId" ? { value: "CASE-1" } : null);
   const api = loadDashboardModule<ProvenanceApi>("dashboard-ioc-provenance.js", ["dashboard-escape.js"], {
+    activeCaseId: "CASE-1", // the loaders refuse a case that is not on screen (#1653)
     fetch: async (url: string) => {
       fetched.push(url);
       return { ok: true, json: async () => (url.endsWith("/ioc-sources") ? SOURCES : {}) };
