@@ -86,26 +86,41 @@ export function artifactRefs(artifact: string, sources: string[]): string[] {
  *
  * A caller who passed sources, or an already-qualified `Artifact/Source` ref, has said exactly what
  * it wants and is left alone. A catalog failure degrades to the bare read rather than failing the
- * collect. Rows are de-duplicated on merge: whether a single-source artifact answers to BOTH its
+ * collect, and says so (#1635): `sourcesUnknown` marks a read whose named sources were never asked
+ * for. The same holds when a catalog that DID load does not list the artifact. Rows are de-duplicated on merge: whether a single-source artifact answers to BOTH its
  * bare name and its source name is a Velociraptor storage detail, and double-counting evidence is
  * worse than the cost of the check.
  */
 export async function readHuntArtifactRows(
   read: (artifact: string, sources: string[]) => Promise<VelociraptorRunResult>,
-  catalog: () => Promise<{ name: string; sources?: string[] }[]>,
+  catalog: () => Promise<{ name: string; sources?: string[]; sourcesUnknown?: true }[]>,
   artifact: string,
   sources: string[] = [],
   max?: number, // row ceiling for the MERGED result — see capRun below
-): Promise<VelociraptorRunResult> {
+): Promise<HuntArtifactRead> {
   if (sources.length || artifact.includes("/")) return read(artifact, sources);
   const base = await read(artifact, []);
-  let named: string[] = [];
+  let entry: { name: string; sources?: string[]; sourcesUnknown?: true } | undefined;
   try {
-    named = (await catalog()).find((a) => a.name === artifact)?.sources ?? [];
+    entry = (await catalog()).find((a) => a.name === artifact);
   } catch {
-    return base; // catalog unreachable — report the bare read, don't fail the collect
+    entry = undefined; // catalog unreachable — report the bare read, don't fail the collect
   }
-  return named.length ? capRun(mergeRuns(base, await read(artifact, named)), max) : base;
+  // Without the artifact's definition nothing says whether it keeps rows under named sources: an
+  // empty bare read is "not read", never "empty" — a TaskScheduler empty would settle persistence.
+  // The same when the definition cannot prove its source list complete (#1635 review).
+  const named = entry?.sources ?? [];
+  const run = named.length ? capRun(mergeRuns(base, await read(artifact, named)), max) : base;
+  return !entry || entry.sourcesUnknown ? { ...run, sourcesUnknown: true } : run;
+}
+
+/**
+ * One hunt artifact's read. `sourcesUnknown` is set when the artifact's source list could not be
+ * looked up, so any rows it keeps under named sources were never read (#1635). The collect must record
+ * such an artifact as not read: its silence is not evidence of absence.
+ */
+export interface HuntArtifactRead extends VelociraptorRunResult {
+  sourcesUnknown?: true;
 }
 
 /**

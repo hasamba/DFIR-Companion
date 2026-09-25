@@ -102,6 +102,7 @@ export interface VeloHuntJob {
   skippedArtifacts?: SkippedArtifact[]; // fetch FAILED (oversized/timeout/error) — see the reason
   emptyArtifacts?: string[]; // fetched cleanly, zero rows — nothing to report, not an error
   truncatedArtifacts?: TruncatedArtifact[]; // fetched PARTIALLY — the read hit the row cap, findings missing
+  unreadArtifacts?: UnreadArtifact[]; // named sources NOT read — the source list lookup failed (#1635)
 }
 
 /**
@@ -133,6 +134,17 @@ export interface TruncatedArtifact {
 }
 
 /**
+ * An artifact whose source list could not be looked up at collect time (#1635): the catalog read
+ * failed, or the catalog did not list it. Only its bare-name read ran, so any rows it keeps under
+ * named sources were never read. With `rows: 0` it is NOT empty — TaskScheduler keeps every row under
+ * /Analysis, so its bare read is empty whether or not the host has tasks. It never settles a class.
+ */
+export interface UnreadArtifact {
+  name: string;
+  rows: number; // rows the bare-name read imported
+}
+
+/**
  * The operator-facing warnings for one collect: the artifacts that FAILED to fetch, and the ones that
  * fetched only PARTIALLY. Both name the knob that lifts them, and the truncation half is the one worth
  * having — a failed fetch is loud, a truncated one looks exactly like a clean success.
@@ -141,6 +153,7 @@ export function collectWarnings(
   huntId: string,
   skipped: readonly SkippedArtifact[],
   cut: readonly TruncatedArtifact[],
+  unread: readonly UnreadArtifact[] = [],
 ): string[] {
   const out: string[] = [];
   if (skipped.length)
@@ -154,6 +167,12 @@ export function collectWarnings(
       `[velociraptor] hunt ${huntId}: ${cut.length} artifact(s) hit the collection row cap — ` +
         `${cut.map((t) => `${t.name} (kept ${t.kept})`).join("; ")}. Findings BEYOND the cap were never ` +
         `read; raise DFIR_VELOCIRAPTOR_COLLECT_MAX_ROWS and collect again.`,
+    );
+  if (unread.length)
+    out.push(
+      `[velociraptor] hunt ${huntId}: ${unread.length} artifact(s) not fully read — the artifact ` +
+        `catalog did not give their source list, so rows under named sources were never read: ` +
+        `${unread.map((u) => u.name).join("; ")}. Collect again once the server answers.`,
     );
   return out;
 }

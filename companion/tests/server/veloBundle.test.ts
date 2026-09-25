@@ -75,16 +75,17 @@ async function makeApp(runnerOverride: VqlRunner = runner, cfg: Partial<Velocira
   const artifactBundleStore = new ArtifactBundleStore(join(dirname(root), "bundles"));
   const veloHuntStore = new VeloHuntStore(store);
   const importMetaStore = new ImportMetaStore(store);
+  const client = new VelociraptorClient({ ...veloCfg, ...cfg }, runnerOverride);
   const app = createApp(store, {
     pipeline,
     stateStore,
     importMetaStore,
-    velociraptorClient: new VelociraptorClient({ ...veloCfg, ...cfg }, runnerOverride),
+    velociraptorClient: client,
     artifactBundleStore,
     veloHuntStore,
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
-  return { app, stateStore, store };
+  return { app, stateStore, store, client };
 }
 
 /**
@@ -571,7 +572,13 @@ describe("Velociraptor triage bundles — routes", () => {
           // distinction this test asserts is collect-time skipped-vs-empty, not launch-time unknown.
           return {
             rows: [
-              { name: "Windows.System.Pslist", description: "Running processes", type: "CLIENT" },
+              // A complete source list (#1635): without one, an empty Pslist would be "not read".
+              {
+                name: "Windows.System.Pslist",
+                description: "Running processes",
+                type: "CLIENT",
+                sources: [{}],
+              },
               { name: "Generic.System.Pstree", description: "Process tree", type: "CLIENT" },
               {
                 name: "DetectRaptor.Windows.Detection.Amcache",
@@ -632,6 +639,49 @@ describe("Velociraptor triage bundles — routes", () => {
         { name: "DetectRaptor.Windows.Detection.Amcache", error: "output exceeded 1048576 bytes" },
       ]);
       expect(job.emptyArtifacts).toEqual(["Windows.System.Pslist"]);
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
+
+  // #1635 — the artifact catalog read fails at collect time. TaskScheduler keeps its rows only under
+  // named sources, so its empty bare read says nothing: it must be recorded as NOT READ, never as
+  // empty, or it settles persistence on every host the hunt reached.
+  it(
+    "collect records an artifact as not read, not empty, when its source lookup fails",
+    async () => {
+      let catalogDown = false;
+      const flakyRunner: VqlRunner = async (statements) => {
+        const p = statements[0];
+        if (p.includes("artifact_definitions()")) {
+          if (catalogDown) throw new Error("catalog read failed");
+          return {
+            rows: [{ name: "Windows.System.TaskScheduler", description: "Tasks", type: "CLIENT" }],
+            raw: "",
+          };
+        }
+        if (p.includes("hunt(") && p.includes("artifacts=["))
+          return { rows: [{ Hunt: { HuntId: "H.TS1", state: "RUNNING" } }], raw: "" };
+        return { rows: [], raw: "" };
+      };
+      const made = await makeApp(flakyRunner);
+      await request(made.app)
+        .post("/bundles")
+        .send({ id: "best-practice", name: "Best Practice", artifacts: ["Windows.System.TaskScheduler"] });
+      await request(made.app)
+        .post("/cases/c1/velociraptor/run-bundle")
+        .send({ bundleId: "best-practice", waitMinutes: 30 });
+      catalogDown = true;
+      made.client.invalidateArtifactCache(); // the launch pre-flight cached a good catalog
+      expect((await request(made.app).post("/cases/c1/velociraptor/collect")).status).toBe(202);
+
+      const job = await pollHuntJob<{
+        status: string;
+        emptyArtifacts?: string[];
+        unreadArtifacts?: { name: string; rows: number }[];
+      }>(made.app);
+      expect(job.status).toBe("imported");
+      expect(job.emptyArtifacts).toBeUndefined();
+      expect(job.unreadArtifacts).toEqual([{ name: "Windows.System.TaskScheduler", rows: 0 }]);
     },
     POLL_TIMEOUT_MS * 2,
   );

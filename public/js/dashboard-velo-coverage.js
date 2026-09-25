@@ -7,6 +7,8 @@
 //   failed     — the fetch errored (oversized/timeout). Loud already.
 //   empty      — fetched cleanly, nothing to report. Not a problem.
 //   CUT SHORT  — returned rows AND hit the row cap, so an unknown number of findings were never read.
+//   NOT READ   — the artifact's source list could not be looked up, so rows it keeps under named
+//                sources were never read (#1635). Zero rows here is NOT "no findings".
 //
 // The third is the one worth the screen space, because it is the one that looks exactly like success.
 // A THOR scan opens with ~1000 lines of startup chatter before it reports anything, so the old
@@ -19,16 +21,19 @@ function veloCoverageHtml(job) {
   const cut = job.truncatedArtifacts || [];
   const failed = job.skippedArtifacts || [];
   const empty = job.emptyArtifacts || [];
+  const unread = job.unreadArtifacts || [];
   const total = (job.artifacts || []).length;
-  if (job.status !== "imported" || (total <= 1 && !cut.length)) return "";
+  if (job.status !== "imported" || (total <= 1 && !cut.length && !unread.length)) return "";
 
   const box = (body, color) =>
     `<div data-safe-style="font-size:12px;color:${color};margin-top:2px">${body}</div>`;
   const tint = (text, color) => `<span data-safe-style="color:${color}">${text}</span>`;
 
-  const bits = [`${total - failed.length - empty.length}/${total} artifact(s) returned results`];
+  const unreadEmpty = unread.filter((u) => !u.rows).length;
+  const bits = [`${total - failed.length - empty.length - unreadEmpty}/${total} artifact(s) returned results`];
   if (cut.length) bits.push(tint(`${cut.length} cut short at the row cap`, "var(--sev-high)"));
   if (empty.length) bits.push(`${empty.length} had no findings`);
+  if (unread.length) bits.push(tint(`${unread.length} not read in full`, "#ff9f43"));
   if (failed.length) bits.push(tint(`${failed.length} failed to collect`, "#ff9f43"));
 
   let html = box(bits.join(" &middot; "), "var(--text-muted)");
@@ -40,6 +45,14 @@ function veloCoverageHtml(job) {
       `&#9888; INCOMPLETE &mdash; ${names}<br>Findings past the cap were never read. Raise ` +
         `DFIR_VELOCIRAPTOR_COLLECT_MAX_ROWS and collect again.`,
       "var(--sev-high)",
+    );
+  }
+  if (unread.length) {
+    html += box(
+      `&#9888; NOT READ &mdash; ${unread.map((u) => esc(u.name)).join(", ")}<br>The artifact list on ` +
+        "the server could not be read, so rows these artifacts keep under named sources were never " +
+        "read. No rows here does not mean nothing was found. Collect again.",
+      "#ff9f43",
     );
   }
   if (failed.length) {

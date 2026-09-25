@@ -5,6 +5,7 @@ import {
   emptySettledClasses,
   inventorySignature,
   renderCollectionInventory,
+  sanitizeHuntJobs,
 } from "../../src/analysis/collectionInventory.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 import type { VeloHuntJob } from "../../src/analysis/veloHuntStore.js";
@@ -380,6 +381,54 @@ describe("collection inventory (#1588)", () => {
       expect(inventorySignature([empty([win("C.2", "WS02"), win("C.1", "WS01")])])).toBe(
         inventorySignature([empty([win("C.1", "WS01"), win("C.2", "WS02")])]),
       );
+    });
+  });
+
+  // #1635 — when the artifact catalog lookup fails, the collect cannot know whether the artifact keeps
+  // rows under named sources. TaskScheduler keeps them all under /Analysis, so its bare read is empty
+  // whether or not the host has scheduled tasks. That silence must never settle persistence.
+  describe("artifacts whose named sources were not read (#1635)", () => {
+    const TS = "Windows.System.TaskScheduler";
+    const inv = (hunts: VeloHuntJob[]) => buildCollectionInventory({ events: [], hunts });
+
+    it("a zero-row artifact whose source list could not be looked up settles nothing, and says so", () => {
+      const hunts = [job({ artifacts: [TS], unreadArtifacts: [{ name: TS, rows: 0 }] })];
+      expect([...emptySettledClasses(inv(hunts), "WS01")]).toEqual([]);
+      const lines = inv(hunts).hunts;
+      expect(lines.map((l) => l.state)).toEqual(["unread"]);
+      const text = renderCollectionInventory(inv(hunts));
+      expect(text).toContain("not read");
+      expect(text).toContain("not evidence of absence");
+    });
+
+    it("an unread artifact listed as empty by a stale record still does not settle", () => {
+      const hunts = [
+        job({ artifacts: [TS], emptyArtifacts: [TS], unreadArtifacts: [{ name: TS, rows: 0 }] }),
+      ];
+      expect([...emptySettledClasses(inv(hunts), "WS01")]).toEqual([]);
+    });
+
+    it("a partly read artifact keeps its other line and says its named sources were not read", () => {
+      const hunts = [job({ artifacts: [TS], unreadArtifacts: [{ name: TS, rows: 4 }] })];
+      const states = inv(hunts)
+        .hunts.map((l) => l.state)
+        .sort();
+      expect(states).toEqual(["archive-only", "unread"]);
+      expect(renderCollectionInventory(inv(hunts))).toContain("partly read");
+    });
+
+    it("the signature changes with the unread list", () => {
+      const base = job({ artifacts: [TS], emptyArtifacts: [TS] });
+      expect(inventorySignature([{ ...base, unreadArtifacts: [{ name: TS, rows: 0 }] }])).not.toBe(
+        inventorySignature([base]),
+      );
+    });
+
+    it("a malformed unread list from an old velo-hunt.json never throws", () => {
+      const raw = [{ ...job({ artifacts: [TS] }), unreadArtifacts: [null, "x", { name: 7 }, { name: TS }] }];
+      const clean = sanitizeHuntJobs(raw);
+      expect(clean[0].unreadArtifacts).toEqual([{ name: TS, rows: 0 }]);
+      expect(() => inv(clean)).not.toThrow();
     });
   });
 
