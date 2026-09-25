@@ -761,7 +761,7 @@ describe("Velociraptor hunt status polling — routes", () => {
   // #1612: an empty result speaks only for the clients that ran the hunt, so the collect records the
   // hunt's client counts on the job — on every collect, even one already known to be stopped early.
   it(
-    "collect records the hunt's client counts from Velociraptor's hunt stats",
+    "collect records the hunt's client counts, and the clients whose flow finished cleanly",
     async () => {
       const runner: VqlRunner = async (statements) => {
         const p = statements[0];
@@ -781,6 +781,22 @@ describe("Velociraptor hunt status polling — routes", () => {
             ],
             raw: "",
           };
+        // #1625: the clients whose flow finished without error, one row per scheduled client.
+        if (p.includes("FROM hunt_flows("))
+          return {
+            rows: [
+              {
+                ClientId: "C.1",
+                State: "FINISHED",
+                Hostname: "ws01",
+                Fqdn: "ws01.example.com",
+                OS: "windows",
+              },
+              { ClientId: "C.2", State: "ERROR", Status: "boom", Hostname: "ws02", OS: "windows" },
+              { ClientId: "C.3", State: "RUNNING", Hostname: "ws03", OS: "windows" },
+            ],
+            raw: "",
+          };
         return { rows: [], raw: "" };
       };
       const made = await makeApp(runner);
@@ -789,9 +805,14 @@ describe("Velociraptor hunt status polling — routes", () => {
         .send({ bundleId: "best-practice", waitMinutes: 30 });
       expect((await request(made.app).post("/cases/c1/velociraptor/collect")).status).toBe(202);
 
-      const job = await pollHuntJob<{ status: string; clientCounts?: unknown }>(made.app);
+      const job = await pollHuntJob<{ status: string; clientCounts?: unknown; reachedClients?: unknown }>(
+        made.app,
+      );
       expect(job.status).toBe("imported");
       expect(job.clientCounts).toEqual({ scheduled: 3, completed: 2, errors: 1 });
+      expect(job.reachedClients).toEqual([
+        { clientId: "C.1", hostname: "ws01", fqdn: "ws01.example.com", os: "windows" },
+      ]);
     },
     POLL_TIMEOUT_MS * 2,
   );

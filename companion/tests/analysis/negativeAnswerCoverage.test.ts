@@ -35,6 +35,8 @@ const chainsaw = (id: string, host: string, severity: Severity = "Medium"): Fore
 const mft = (id: string, host: string): ForensicEvent =>
   ev(id, { asset: host, sources: ["Velociraptor"], artifactName: "Windows.NTFS.MFT" });
 
+const WS01_CLIENT = { clientId: "C.1", hostname: "WS01", fqdn: "", os: "windows" };
+
 function job(over: Partial<VeloHuntJob>): VeloHuntJob {
   return {
     bundleId: "b1",
@@ -46,6 +48,7 @@ function job(over: Partial<VeloHuntJob>): VeloHuntJob {
     collectAt: T,
     status: "imported",
     clientCounts: { scheduled: 2, completed: 2, errors: 0 }, // every scheduled client finished (#1612)
+    reachedClients: [WS01_CLIENT], // WS01's flow finished without error (#1625)
     ...over,
   };
 }
@@ -233,23 +236,41 @@ describe("applyNegativeAnswerCoverage — uncovered negative keyQuestion", () =>
     }
   });
 
-  // #1612: an empty result speaks only for the clients that ran the hunt.
-  it("does not let an empty hunt settle the class without full client coverage", () => {
-    const events = incEvents();
+  // #1625: an empty result speaks only for the hosts whose flow finished without error.
+  it("does not let an empty hunt settle the class for a host it did not finish on", () => {
     const FF = "Windows.Search.FileFinder";
-    for (const clientCounts of [
-      undefined, // collected before the counts were recorded
-      { scheduled: 0, completed: 0, errors: 0 },
-      { scheduled: 5, completed: 2, errors: 0 },
-      { scheduled: 2, completed: 2, errors: 1 },
-    ]) {
-      const hunt = job({ artifacts: [FF], emptyArtifacts: [FF], clientCounts });
-      const out = applyNegativeAnswerCoverage(
-        stateWith(events, [impactQ()]),
-        buildCollectionInventory({ events, hunts: [hunt] }),
+    // WS02 was offline: never scheduled, so the counts read 1/1/0 — yet the hunt says nothing about it.
+    const events = [...incEvents(), chainsaw("e4", "WS02", "High")];
+    const hunt = job({
+      artifacts: [FF],
+      emptyArtifacts: [FF],
+      clientCounts: { scheduled: 1, completed: 1, errors: 0 },
+    });
+    const out = applyNegativeAnswerCoverage(
+      stateWith(events, [impactQ()]),
+      buildCollectionInventory({ events, hunts: [hunt] }),
+    );
+    expect(out.keyQuestions[0].status).toBe("partial");
+    expect(out.keyQuestions[0].answer).toContain("not collected raw on WS02");
+    expect(out.keyQuestions[0].answer).not.toContain("WS01");
+    for (const reachedClients of [undefined, []]) {
+      const unknown = job({ artifacts: [FF], emptyArtifacts: [FF], reachedClients });
+      const res = applyNegativeAnswerCoverage(
+        stateWith(incEvents(), [impactQ()]),
+        buildCollectionInventory({ events: incEvents(), hunts: [unknown] }),
       );
-      expect(out.keyQuestions[0].status).toBe("partial");
+      expect(res.keyQuestions[0].status).toBe("partial");
     }
+  });
+
+  it("settles a class across hosts when each host is either collected raw or settled by the hunt", () => {
+    const FF = "Windows.Search.FileFinder";
+    // WS01: settled by the empty hunt. WS02: file listing collected raw, and the hunt never reached it.
+    const events = [...incEvents(), mft("m1", "WS02"), chainsaw("e4", "WS02", "High")];
+    const hunt = job({ artifacts: [FF], emptyArtifacts: [FF] });
+    const state = stateWith(events, [impactQ()]);
+    const out = applyNegativeAnswerCoverage(state, buildCollectionInventory({ events, hunts: [hunt] }));
+    expect(out.keyQuestions[0]).toEqual(state.keyQuestions[0]);
   });
 
   it("still qualifies an absence answer answerContradiction downgraded, keeping its contradiction", () => {

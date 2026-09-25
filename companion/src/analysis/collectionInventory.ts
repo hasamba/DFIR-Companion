@@ -1,4 +1,4 @@
-import { resolveHost, type HostAliasIndex } from "./hostAlias.js";
+import { canonicalHostName, resolveHost, type HostAliasIndex } from "./hostAlias.js";
 import {
   collectedEvidenceClasses,
   DETECTION_FEED_RE,
@@ -8,6 +8,8 @@ import {
 } from "./refutationGate.js";
 import type { ForensicEvent } from "./stateTypes.js";
 import type { VeloHuntJob } from "./veloHuntStore.js";
+
+type HuntReachedClient = NonNullable<VeloHuntJob["reachedClients"]>[number];
 
 /**
  * What this case actually holds, per source and per host (#1588) — built in code, never by the model.
@@ -91,6 +93,11 @@ export interface HuntArtifactLine {
    * "nothing matched", not "the artifact holds nothing". It can qualify an answer, never settle one.
    */
   bounded: boolean;
+  /**
+   * The hosts (canonical, lowercase) an unbounded empty speaks for: those whose hunt flow finished
+   * without error and that run this artifact's OS (#1625). [] on every other line.
+   */
+  reached: string[];
 }
 
 export interface CollectionInventory {
@@ -208,27 +215,58 @@ function windowText(ts: Record<string, unknown>): string {
 }
 
 /**
- * Why this hunt's silence speaks for only part of the fleet (#1612), or "" when every scheduled client
- * finished without error. HuntStats sees only clients that checked in, so full coverage means "every
- * client the hunt reached", which is why the hunt must also be fleet-wide to settle. Read without a
- * schema: a count that is not a non-negative integer, or more finished than scheduled, is unknown.
+ * What the hunt stats say beyond the per-host list (#1612), as text only: "" when every scheduled
+ * client finished without error or the counts are missing. The stats cannot see a client that never
+ * checked in, so they never decide settlement — the per-host list does (#1625).
  */
-function clientBound(job: VeloHuntJob): string {
+function countsNote(job: VeloHuntJob): string {
   const c = record(job.clientCounts);
-  const [scheduled, completed, errors] = [c.scheduled, c.completed, c.errors];
   const ok = (n: unknown): n is number => Number.isSafeInteger(n) && (n as number) >= 0;
-  if (!job.clientCounts) return "client coverage not recorded (collected before it was tracked)";
-  if (!ok(scheduled) || !ok(completed) || !ok(errors) || completed > scheduled)
-    return "client coverage unreadable";
-  if (scheduled === 0) return "the hunt reached no client";
+  const [scheduled, completed, errors] = [c.scheduled, c.completed, c.errors];
+  if (!ok(scheduled) || !ok(completed) || !ok(errors)) return "";
   if (completed === scheduled && errors === 0) return "";
-  const withErrors = errors ? `, ${errors} with errors` : "";
-  return `only ${completed} of ${scheduled} scheduled client(s) finished${withErrors}`;
+  return `; only ${completed} of ${scheduled} scheduled client(s) finished${errors ? `, ${errors} with errors` : ""}`;
+}
+
+/** velo-hunt.json is read without a schema: a list that is not an array is unknown (#1625). */
+function reachedClientsOf(job: VeloHuntJob): HuntReachedClient[] | undefined {
+  const raw: unknown = job.reachedClients;
+  if (!Array.isArray(raw)) return undefined;
+  const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
+  return raw.flatMap((c) => {
+    const r = record(c);
+    const clientId = str(r.clientId);
+    return clientId
+      ? [{ clientId, hostname: str(r.hostname), fqdn: str(r.fqdn), os: str(r.os).toLowerCase() }]
+      : [];
+  });
+}
+
+/** A Windows./Linux./MacOS. artifact runs only on that OS; a clean flow elsewhere skipped it. */
+const ARTIFACT_OS: readonly (readonly [RegExp, string])[] = [
+  [/^windows\./i, "windows"],
+  [/^linux\./i, "linux"],
+  [/^macos\./i, "darwin"],
+];
+const runsOn = (artifact: string, os: string): boolean => {
+  const need = ARTIFACT_OS.find(([re]) => re.test(artifact))?.[1];
+  return !need || need === os;
+};
+
+/**
+ * The canonical host of a reached client. The client id is the stable identity: when the alias index
+ * knows it, that alone decides. Otherwise the recorded hostname and FQDN, as full names only.
+ */
+function clientHosts(c: HuntReachedClient, aliasIndex?: HostAliasIndex): string[] {
+  const byId = aliasIndex?.canonicalOf.get(canonicalHostName(c.clientId));
+  if (byId) return [byId];
+  const resolve = (n: string) => (aliasIndex ? resolveHost(aliasIndex, n) : canonicalHostName(n));
+  return [c.hostname, c.fqdn].filter(Boolean).map(resolve);
 }
 
 /**
  * Why this hunt's silence for one artifact is bounded (#1604), or "" when it speaks for the whole
- * artifact. Client coverage (#1612) bounds every artifact of the hunt alike. velo-hunt.json is read without a schema and sanitizeHuntJobs spreads these fields raw.
+ * artifact. velo-hunt.json is read without a schema and sanitizeHuntJobs spreads these fields raw.
  * The time bound is per artifact: only the artifacts that took the window are bounded. A job written
  * before the names were recorded only counts them, so every artifact of it counts as possibly bounded.
  * A window that reached no artifact bounds nothing — `degraded` means the metadata was unknown, not
@@ -246,8 +284,8 @@ function silenceBound(job: VeloHuntJob, artifact: string): string {
   }
   const filter = record(job.filters)[artifact];
   if (typeof filter === "string" && filter.trim()) parts.push("result filter applied");
-  const clients = clientBound(job);
-  if (clients) parts.push(clients);
+  if (!reachedClientsOf(job))
+    parts.push("which hosts the hunt finished on is not recorded (collected before it was tracked)");
   return parts.join("; ");
 }
 
@@ -268,16 +306,64 @@ function preferred(a: HuntArtifactLine, b: HuntArtifactLine): HuntArtifactLine {
   return a.detail <= b.detail ? a : b;
 }
 
+const MAX_REACHED_NAMES = 10;
+
+/** The text of an empty that settles on the hosts it names, and on no other. */
+function reachedDetail(reached: readonly string[], note: string, hunts: number): string {
+  const shown = reached.slice(0, MAX_REACHED_NAMES).join(", ");
+  const more = reached.length > MAX_REACHED_NAMES ? ` +${reached.length - MAX_REACHED_NAMES} more` : "";
+  const across = hunts > 1 ? ` across ${hunts} hunts` : "";
+  return (
+    `returned no rows on ${shown}${more} — every host whose flow finished without error${across}${note}; ` +
+    "silence on any other host is not absence"
+  );
+}
+
+/** Two empties that can both settle speak together for every host either reached. */
+function mergeLines(a: HuntArtifactLine, b: HuntArtifactLine, hunts: number): HuntArtifactLine {
+  if (!(a.state === "empty" && canSettle(a) && canSettle(b))) return preferred(a, b);
+  const reached = [...new Set([...a.reached, ...b.reached])].sort();
+  return { ...a, reached, detail: reachedDetail(reached, "", hunts) };
+}
+
+/** An empty artifact's line: bounded silence, or silence on the hosts the hunt finished on (#1625). */
+function emptyLine(job: VeloHuntJob, artifact: string, aliasIndex?: HostAliasIndex) {
+  const bound = silenceBound(job, artifact);
+  const bounded = (why: string) => ({
+    detail: `returned no rows — ${why}; silence outside those bounds is not absence`,
+    bounded: true,
+    reached: [] as string[],
+  });
+  if (bound) return bounded(bound);
+  const clients = (reachedClientsOf(job) ?? []).filter((c) => runsOn(artifact, c.os));
+  const reached = [...new Set(clients.flatMap((c) => clientHosts(c, aliasIndex)))].sort();
+  if (!reached.length) return bounded("the hunt finished cleanly on no client that runs this artifact");
+  return { detail: reachedDetail(reached, countsNote(job), 1), bounded: false, reached };
+}
+
 /** Hunt metadata is supplemental: only imported jobs say anything, and only per artifact. */
-function huntLines(jobs: readonly VeloHuntJob[], inTimeline: ReadonlySet<string>): HuntArtifactLine[] {
+function huntLines(
+  jobs: readonly VeloHuntJob[],
+  inTimeline: ReadonlySet<string>,
+  aliasIndex?: HostAliasIndex,
+): HuntArtifactLine[] {
   const out = new Map<string, HuntArtifactLine>();
+  const hunts = new Map<string, number>();
   for (const job of jobs) {
     const fleetWide = isFleetWide(job);
-    const put = (artifact: string, state: HuntArtifactState, detail: string, bounded = false) => {
+    const put = (
+      artifact: string,
+      state: HuntArtifactState,
+      detail: string,
+      bounded = false,
+      reached: string[] = [],
+    ) => {
       const key = `${artifact}|${state}`;
-      const line = { artifact, state, detail, fleetWide, bounded };
+      const line = { artifact, state, detail, fleetWide, bounded, reached };
       const prev = out.get(key);
-      out.set(key, prev ? preferred(prev, line) : line);
+      const settling = canSettle(line) ? 1 : 0;
+      hunts.set(key, (hunts.get(key) ?? 0) + settling);
+      out.set(key, prev ? mergeLines(prev, line, hunts.get(key) ?? 0) : line);
     };
     if (job.status === "running" || job.status === "collecting") {
       for (const a of job.artifacts) put(a, "running", "still running");
@@ -291,10 +377,8 @@ function huntLines(jobs: readonly VeloHuntJob[], inTimeline: ReadonlySet<string>
       const t = truncated.get(a);
       if (failed.has(a)) put(a, "failed", "fetch failed");
       else if (empty.has(a)) {
-        const bound = silenceBound(job, a);
-        if (bound)
-          put(a, "empty", `returned no rows — ${bound}; silence outside those bounds is not absence`, true);
-        else put(a, "empty", "returned no rows");
+        const e = emptyLine(job, a, aliasIndex);
+        put(a, "empty", e.detail, e.bounded, e.reached);
       } else if (t) put(a, "truncated", `partial — kept ${t.kept} of ${t.total}`);
       else if (job.superTimelineOnly || !inTimeline.has(a)) put(a, "archive-only", "in the archive only");
     }
@@ -334,7 +418,7 @@ export function buildCollectionInventory(input: {
     hosts: [...byHost.keys()].sort(),
     sources,
     cleared: clearedLogs(input.events, host),
-    hunts: huntLines(input.hunts ?? [], inTimeline),
+    hunts: huntLines(input.hunts ?? [], inTimeline, input.aliasIndex),
   };
 }
 
@@ -363,13 +447,19 @@ const CLASS_SETTLING_ARTIFACTS: Record<EvidenceClass, readonly string[]> = {
 };
 
 /**
- * Classes a clean zero-row FLEET-WIDE hunt settles on every host: evidence of absence, which
+ * Classes a clean zero-row FLEET-WIDE hunt settles on THIS host: evidence of absence, which
  * re-collecting would only repeat. A label-filtered hunt names no hosts, so it settles nothing; a
- * time-scoped or result-filtered empty is bounded silence, so it settles nothing either (#1604), and
- * so is an empty that did not reach, or did not finish on, every scheduled client (#1612).
+ * time-scoped or result-filtered empty is bounded silence, so it settles nothing either (#1604). An
+ * empty speaks only for the hosts whose flow finished without error (#1625): a client that never
+ * checked in was never scheduled, so the hunt says nothing about it.
  */
-export function emptySettledClasses(inv: CollectionInventory): Set<EvidenceClass> {
-  const empty = new Set(inv.hunts.filter((h) => h.state === "empty" && canSettle(h)).map((h) => h.artifact));
+export function emptySettledClasses(inv: CollectionInventory, host: string): Set<EvidenceClass> {
+  const h = canonicalHostName(host);
+  const empty = new Set(
+    inv.hunts
+      .filter((l) => l.state === "empty" && canSettle(l) && !!h && l.reached.includes(h))
+      .map((l) => l.artifact),
+  );
   return new Set(EVIDENCE_CLASSES.filter((c) => CLASS_SETTLING_ARTIFACTS[c].some((a) => empty.has(a))));
 }
 
@@ -394,7 +484,13 @@ export function inventorySignature(hunts: readonly VeloHuntJob[]): string {
         .filter(([, f]) => typeof f === "string" && f.trim())
         .map(([name]) => name)
         .sort(),
-      JSON.stringify(j.clientCounts ?? null), // client coverage decides settlement too (#1612)
+      JSON.stringify(j.clientCounts ?? null), // shown in the text (#1612)
+      // Which hosts an empty speaks for (#1625); an unknown list (null) differs from an empty one ([]).
+      JSON.stringify(
+        reachedClientsOf(j)
+          ?.map((c) => [c.clientId, c.hostname, c.fqdn, c.os])
+          .sort((a, b) => a[0].localeCompare(b[0])) ?? null,
+      ),
     ]);
   return hunts.map(one).sort().join("\n");
 }

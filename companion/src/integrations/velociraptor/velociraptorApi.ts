@@ -16,6 +16,8 @@ import { containedWhereOrThrow } from "../../analysis/vqlInput.js";
 import { buildHuntSpec, HuntSpecError, type HuntSpecCheck } from "./huntSpec.js";
 import { parseHuntClientCounts, type HuntClientCounts } from "./huntClientCounts.js";
 export type { HuntClientCounts } from "./huntClientCounts.js";
+import { parseReachedClients, reachedClientsVql, type HuntReachedClient } from "./huntReachedClients.js";
+export type { HuntReachedClient } from "./huntReachedClients.js";
 export { HuntSpecError } from "./huntSpec.js"; // the route answers it 400: the bundle, not the server
 import { noLaunchIdMessage, translateVelociraptorError, vqlLogErrors } from "./vqlDiagnostics.js";
 import { parseArtifactTools, parseToolInventory, type VeloArtifactTool } from "./artifactTools.js";
@@ -772,6 +774,11 @@ export class VelociraptorClient {
       ...(expires ? { expires } : {}),
       ...(clients ? { clients } : {}),
     };
+  }
+
+  async huntReachedClients(huntId: string): Promise<HuntReachedClient[] | undefined> {
+    if (!HUNT_RE.test(huntId)) throw new Error("invalid hunt id");
+    return parseReachedClients(await this.runRaw(reachedClientsVql(huntId), this.collectCap()));
   }
 
   // The artifacts an EXTERNAL hunt collected — so the Companion can read the results of a hunt it did
