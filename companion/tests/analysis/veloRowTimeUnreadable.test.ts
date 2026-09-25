@@ -330,3 +330,19 @@ describe("vrTime — a year below 100 is read as written", () => {
     expect(vrTime("0001-01-01T00:00:00Z")).toBe("0001-01-01T00:00:00Z");
   });
 });
+
+describe("pickTime — an unreadable structured or numeric time blocks the collection time (#1631)", () => {
+  it("a { SystemTime } wrapper whose leaf is unreadable leaves the row undated", () => {
+    expect(pickTime({ System: { TimeCreated: { SystemTime: "unknown" } }, _ts: TS })).toBe("");
+    expect(pickTime({ System: { TimeCreated: { "#attributes": { SystemTime: "N/A" } } }, _ts: TS })).toBe("");
+  });
+
+  it("a positive epoch too large to be a date leaves the row undated", () => {
+    expect(pickTime({ EventTime: 1e20, _ts: TS })).toBe("");
+  });
+
+  it("a zero epoch or an empty wrapper is unset, not unreadable", () => {
+    expect(pickTime({ EventTime: 0, _ts: TS })).toBe(TS_ISO);
+    expect(pickTime({ System: { TimeCreated: {} }, _ts: TS })).toBe(TS_ISO);
+  });
+});

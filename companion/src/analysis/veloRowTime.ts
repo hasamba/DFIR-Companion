@@ -116,12 +116,19 @@ export function vrTime(v: unknown): string {
   return stringTime(str(v));
 }
 
-// A time column that holds a value vrTime cannot read — not blank, not an all-zero "unset" sentinel.
-// Such a row must not fall back to the collection time: that reads as incident activity (#1618, #1631).
+// A time column that holds a value vrTime cannot read — not blank, not a zero or negative "unset"
+// sentinel. A `{ SystemTime }` wrapper is judged by its leaf. Such a row must not fall back to the
+// collection time: that reads as incident activity (#1618, #1631).
 function unreadableTime(v: unknown, read: (v: unknown) => string): boolean {
+  if (read(v)) return false;
+  if (typeof v === "number") return Number.isFinite(v) && v > 0;
+  if (isObject(v)) {
+    const st = getCI(v, "SystemTime") ?? getPath(v, "#attributes.SystemTime");
+    return st != null && unreadableTime(st, vrTime);
+  }
   if (typeof v !== "string") return false;
   const s = v.trim();
-  return s !== "" && !/^0+(?:\.0+)?$/.test(s) && !read(v);
+  return s !== "" && !/^0+(?:\.0+)?$/.test(s);
 }
 
 // The artifact's OWN time first; `_ts` (collection time) only as a last resort. Includes a few
