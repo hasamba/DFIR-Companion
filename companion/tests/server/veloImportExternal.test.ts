@@ -233,7 +233,7 @@ describe("POST /cases/:id/velociraptor/import-external", () => {
   });
 
   it("imports the rows it did read and still names the artifact partly read", async () => {
-    const { app } = await makeApp(
+    const { app, stateStore } = await makeApp(
       { "Windows.NTFS.MFT": [MFT_ROW], "Windows.System.TaskScheduler": [] },
       [],
       ["Windows.NTFS.MFT", "Windows.System.TaskScheduler"],
@@ -247,6 +247,23 @@ describe("POST /cases/:id/velociraptor/import-external", () => {
       { name: "Windows.System.TaskScheduler", rows: 0 },
     ]);
     expect(res.body.note).toBeUndefined();
+    // #1651: the rows it did read are stamped, so they never count as full coverage of their class.
+    const mft = (await stateStore.load("c1")).forensicTimeline;
+    expect(mft.length).toBeGreaterThan(0);
+    for (const e of mft) expect(e.partlyReadArtifact).toBe("Windows.NTFS.MFT");
+  });
+
+  it("stamps a partly read artifact's rows on the super-only path too (#1651)", async () => {
+    const { app } = await makeApp({ "Windows.NTFS.MFT": [MFT_ROW] }, [], ["Windows.NTFS.MFT"]);
+    const res = await request(app)
+      .post("/cases/c1/velociraptor/import-external")
+      .send({ ref: "H.ABC", superTimelineOnly: true });
+    expect(res.status).toBe(200);
+    const rows = (await request(app).get("/cases/c1/super-timeline")).body.events as Array<{
+      partlyReadArtifact?: string;
+    }>;
+    expect(rows.length).toBeGreaterThan(0);
+    for (const e of rows) expect(e.partlyReadArtifact).toBe("Windows.NTFS.MFT");
   });
 
   it("still says 'no rows yet' when every read was complete and empty", async () => {

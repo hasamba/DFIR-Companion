@@ -28,7 +28,7 @@ import { isLabProduced } from "./labIntel.js";
 import { mergeGroupCanonical } from "./canonicalMerge.js";
 import { DERIVED_NOTE_NAMES } from "./derivedNote.js";
 import { collectorRecordGrade } from "./collectorMerge.js";
-import { promotionMarks } from "./promotionMerge.js";
+import { partlyReadArtifactOf, promotionMarks } from "./promotionMerge.js";
 
 export interface CorrelateOptions {
   windowSeconds?: number; // path+time match tolerance (default 2)
@@ -407,6 +407,7 @@ function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): Forensi
       events.find((e) => e.assetRecord && (e.asset ?? "") === (primary.asset ?? ""))?.assetRecord,
     message: primary.message ?? events.find((e) => e.message)?.message,
     veloUrl: primary.veloUrl ?? events.find((e) => e.veloUrl)?.veloUrl,
+    partlyReadArtifact: partlyReadArtifactOf(events), // every member, not the primary (#1651)
     sha256: events.find((e) => e.sha256)?.sha256,
     md5: events.find((e) => e.md5)?.md5,
     path: primary.path ?? events.find((e) => e.path)?.path,

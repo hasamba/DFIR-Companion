@@ -1,7 +1,7 @@
 import { canonicalHostName, resolveHost, type HostAliasIndex } from "./hostAlias.js";
 import {
-  collectedEvidenceClasses,
   DETECTION_FEED_RE,
+  eventEvidenceClasses,
   EVIDENCE_CLASSES,
   SNAPSHOT_SOURCE_RE,
   type EvidenceClass,
@@ -71,6 +71,8 @@ export interface SourceLine {
   name: string;
   kind: SourceKind;
   rows: number;
+  /** Rows of this source that came from a partly read artifact (#1651); 0 when none. */
+  partlyRead: number;
 }
 
 export interface ClearedLog {
@@ -101,8 +103,14 @@ export interface HuntArtifactLine {
 }
 
 export interface CollectionInventory {
-  /** Evidence classes collected raw, per canonical host. */
+  /** Evidence classes collected raw IN FULL, per canonical host. The only coverage that settles. */
   byHost: Map<string, Set<EvidenceClass>>;
+  /**
+   * Classes a host holds ONLY from partly read artifacts (#1651), with those artifacts: rows under
+   * their named sources were never read, so the class is qualified, never covered. A class also in
+   * byHost for the host is not listed here.
+   */
+  partlyByHost: Map<string, Map<EvidenceClass, Set<string>>>;
   /** Hosts with any in-window activity, canonical, sorted. */
   hosts: string[];
   sources: SourceLine[];
@@ -121,9 +129,12 @@ export function sourceKind(name: string): SourceKind {
   return "raw";
 }
 
-/** Classes one row vouches for: the name-based rules, plus a raw EVTX row's own record type. */
+/**
+ * Classes one row speaks for: the name-based rules, plus a raw EVTX row's own record type. Whether
+ * the read was complete is the caller's question (#1651).
+ */
 function rowClasses(e: ForensicEvent): EvidenceClass[] {
-  const named = [...collectedEvidenceClasses([e])];
+  const named = [...eventEvidenceClasses(e)];
   const isFeed = [...(e.sources ?? []), e.artifactName ?? ""].some((s) => s && sourceKind(s) !== "raw");
   if (isFeed || !e.sourceRecordId?.startsWith("evtx:")) return named;
   const byType = CATEGORY_CLASS[e.canonical?.event.category ?? ""];
@@ -418,23 +429,37 @@ export function buildCollectionInventory(input: {
     return raw && input.aliasIndex ? resolveHost(input.aliasIndex, raw) : raw;
   };
   const byHost = new Map<string, Set<EvidenceClass>>();
+  const partly = new Map<string, Map<EvidenceClass, Set<string>>>();
   const rows = new Map<string, number>();
+  const partlyRows = new Map<string, number>();
   for (const e of input.events) {
     const h = host(e);
+    const name = sourceName(e);
     if (h) {
       const set = byHost.get(h) ?? new Set<EvidenceClass>();
-      for (const c of rowClasses(e)) set.add(c);
       byHost.set(h, set);
+      if (e.partlyReadArtifact) {
+        const classes = partly.get(h) ?? new Map<EvidenceClass, Set<string>>();
+        for (const c of rowClasses(e))
+          classes.set(c, (classes.get(c) ?? new Set()).add(e.partlyReadArtifact));
+        partly.set(h, classes);
+      } else for (const c of rowClasses(e)) set.add(c);
     }
-    const name = sourceName(e);
     if (name) rows.set(name, (rows.get(name) ?? 0) + 1);
+    if (name && e.partlyReadArtifact) partlyRows.set(name, (partlyRows.get(name) ?? 0) + 1);
+  }
+  const partlyByHost = new Map<string, Map<EvidenceClass, Set<string>>>();
+  for (const [h, classes] of partly) {
+    const only = [...classes].filter(([c]) => !byHost.get(h)?.has(c));
+    if (only.length) partlyByHost.set(h, new Map(only));
   }
   const sources = [...rows.entries()]
-    .map(([name, n]) => ({ name, kind: sourceKind(name), rows: n }))
+    .map(([name, n]) => ({ name, kind: sourceKind(name), rows: n, partlyRead: partlyRows.get(name) ?? 0 }))
     .sort((a, b) => b.rows - a.rows || a.name.localeCompare(b.name));
   const inTimeline = new Set(input.events.map((e) => e.artifactName).filter((a): a is string => !!a));
   return {
     byHost,
+    partlyByHost,
     hosts: [...byHost.keys()].sort(),
     sources,
     cleared: clearedLogs(input.events, host),
@@ -523,13 +548,20 @@ export function renderCollectionInventory(inv: CollectionInventory): string {
   if (!inv.hosts.length && !inv.sources.length && !inv.hunts.length) return "";
   const lines: string[] = [];
   const missingAnywhere = new Set<EvidenceClass>();
+  const again = new Map<string, Set<string>>(); // partly read artifact → hosts (#1651)
   for (const h of inv.hosts) {
     const got = inv.byHost.get(h) ?? new Set<EvidenceClass>();
+    const part = inv.partlyByHost.get(h) ?? new Map<EvidenceClass, Set<string>>();
     const have = EVIDENCE_CLASSES.filter((c) => got.has(c));
-    const lack = EVIDENCE_CLASSES.filter((c) => !got.has(c));
+    const partly = EVIDENCE_CLASSES.filter((c) => part.has(c));
+    const lack = EVIDENCE_CLASSES.filter((c) => !got.has(c) && !part.has(c));
     for (const c of lack) missingAnywhere.add(c);
+    for (const arts of part.values()) for (const a of arts) again.set(a, (again.get(a) ?? new Set()).add(h));
+    const partlyText = partly.length
+      ? `; partly read (source list not looked up, not full coverage): ${partly.map((c) => `${c} (${[...(part.get(c) ?? [])].sort().join(", ")})`).join(", ")}`
+      : "";
     lines.push(
-      `- ${h}: collected raw: ${have.length ? have.join(", ") : "none"}; no raw collection found: ${lack.length ? lack.join(", ") : "none"}`,
+      `- ${h}: collected raw: ${have.length ? have.join(", ") : "none"}${partlyText}; no raw collection found: ${lack.length ? lack.join(", ") : "none"}`,
     );
   }
   if (missingAnywhere.size)
@@ -538,6 +570,8 @@ export function renderCollectionInventory(inv: CollectionInventory): string {
         .map((c) => `${c} → ${CLASS_COLLECTION[c].artifact} (${CLASS_COLLECTION[c].logSource})`)
         .join("; ")}`,
     );
+  for (const [artifact, hosts] of [...again].sort((a, b) => a[0].localeCompare(b[0])))
+    lines.push(`- Collect again (partly read): ${artifact} on ${[...hosts].sort().join(", ")}`);
   for (const c of inv.cleared) {
     const where = c.host ? ` on ${c.host}` : "";
     const what = c.channel ? `${c.channel} log` : "An event log (channel not recorded)";
@@ -546,7 +580,9 @@ export function renderCollectionInventory(inv: CollectionInventory): string {
     );
   }
   if (inv.sources.length) {
-    const shown = inv.sources.slice(0, MAX_SOURCE_LINES).map((s) => `${s.name} (${s.kind}) ${s.rows}`);
+    const shown = inv.sources
+      .slice(0, MAX_SOURCE_LINES)
+      .map((s) => `${s.name} (${s.kind}${s.partlyRead ? `; ${s.partlyRead} partly read` : ""}) ${s.rows}`);
     const more = inv.sources.length - shown.length;
     lines.push(
       `- Sources in the forensic timeline: ${shown.join(" · ")}${more > 0 ? ` · +${more} more` : ""}`,
@@ -568,6 +604,7 @@ export const NEGATIVE_ANSWER_RULES = [
   "- An answer, uncertainty or finding that says an activity was NOT observed must name the artifact that could have shown it.",
   '- If the inventory shows no raw collection for that evidence on the host in question (detections only, archive only, or a cleared log), the answer is not settled: set the question\'s status to "partial" and give a collect object naming the Velociraptor artifact above. At most ONE next step per missing artifact and host.',
   "- If the evidence is in the archive only, the step is to search the archive and promote the rows, not to collect again.",
+  "- A class the inventory lists as partly read is not settled either: rows under the artifact's named sources were never read. The step is to collect that artifact again, not to search the archive.",
   "- Do not suggest collecting a log the inventory lists as cleared for the period before the clear; suggest a log that was not cleared.",
   '- No generic "collect more" steps: a collection step must serve a negative answer that depends on missing evidence, or a cleared log.',
 ].join("\n");

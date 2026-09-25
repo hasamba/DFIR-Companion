@@ -219,23 +219,33 @@ export function requiredEvidenceClasses(text: string): EvidenceClass[] {
 // `artifactName`. See ForensicEvent in stateTypes.ts.
 export function collectedEvidenceClasses(events: readonly ForensicEvent[]): Set<EvidenceClass> {
   const found = new Set<EvidenceClass>();
-  const norm = (s: string) => s.toLowerCase().replace(/[\s_-]+/g, "");
   for (const e of events) {
-    for (const raw of [...(e.sources ?? []), e.artifactName ?? ""]) {
-      if (!raw) continue;
-      const s = norm(raw);
-      // Neither a DETECTION feed nor a point-in-time SNAPSHOT is coverage.
-      // "DetectRaptor.Windows.Detection.Amcache" returns only the Amcache rows that matched a rule —
-      // three hits, not the hive; "Windows.Network.NetstatEnriched" returns the sockets open right
-      // now. Only a full historical collection of the underlying artifact can vouch for an absence,
-      // which is the only thing this function is asked about.
-      if (DETECTION_FEED_RE.test(s) || SNAPSHOT_SOURCE_RE.test(s)) continue;
-      for (const c of EVIDENCE_CLASSES) {
-        if (found.has(c)) continue;
-        if (EVIDENCE_CLASS_SOURCES[c].some((p) => s.includes(norm(p)))) found.add(c);
-      }
-    }
+    // A row from a partly read artifact (#1651) is not coverage: rows under its named sources were
+    // never read, so its silence proves nothing. The collection inventory reports it as partly read.
+    if (e.partlyReadArtifact) continue;
+    for (const c of eventEvidenceClasses(e)) found.add(c);
     if (found.size === EVIDENCE_CLASSES.length) break; // nothing left to learn
+  }
+  return found;
+}
+
+/** The classes one row's source names, whether or not its read was complete. */
+export function eventEvidenceClasses(e: ForensicEvent): Set<EvidenceClass> {
+  const found = new Set<EvidenceClass>();
+  const norm = (s: string) => s.toLowerCase().replace(/[\s_-]+/g, "");
+  for (const raw of [...(e.sources ?? []), e.artifactName ?? ""]) {
+    if (!raw) continue;
+    const s = norm(raw);
+    // Neither a DETECTION feed nor a point-in-time SNAPSHOT is coverage.
+    // "DetectRaptor.Windows.Detection.Amcache" returns only the Amcache rows that matched a rule —
+    // three hits, not the hive; "Windows.Network.NetstatEnriched" returns the sockets open right
+    // now. Only a full historical collection of the underlying artifact can vouch for an absence,
+    // which is the only thing this function is asked about.
+    if (DETECTION_FEED_RE.test(s) || SNAPSHOT_SOURCE_RE.test(s)) continue;
+    for (const c of EVIDENCE_CLASSES) {
+      if (found.has(c)) continue;
+      if (EVIDENCE_CLASS_SOURCES[c].some((p) => s.includes(norm(p)))) found.add(c);
+    }
   }
   return found;
 }

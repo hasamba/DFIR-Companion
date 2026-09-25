@@ -538,9 +538,9 @@ export interface ForensicEvent {
   // super-timeline row can reveal it expandably. Set by importers that have the extra text
   // (currently velociraptorImport.ts); optional — only set when it adds beyond `description`.
   message?: string;
-  // Deep-link back to the originating Velociraptor hunt/flow in the Velociraptor GUI. Built at
-  // import time from the client's gui-url config; every event from one flow/hunt shares it. Optional.
+  // GUI deep-link to the originating Velociraptor hunt/flow (built from gui-url config), shared per flow/hunt.
   veloUrl?: string;
+  partlyReadArtifact?: string; // artifact read without its source list (#1635): qualifies, never covers (#1651)
   // A real TLP marking this event's own source carried (#933 item 21) — set only by an import
   // path that genuinely has a distribution-marking concept (currently theHiveImport.ts). Absent
   // means no such concept was ever applied to this event; see tlp.ts's own
