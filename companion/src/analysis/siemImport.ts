@@ -39,7 +39,7 @@ import { commandCandidates } from "./commandNormalize.js";
 import { secretSpillSignal } from "./secretSpillRules.js";
 import { streamOverlay } from "./ntfsStreams.js";
 import { boundDnsVariants } from "./dnsRecord.js";
-import { runWindowsDnsConnJoin } from "./siemDnsConnJoin.js";
+import { mergeRowIocsHoldingDns, runWindowsDnsConnJoin, type HeldDnsIocs } from "./siemDnsConnJoin.js";
 import { WIN_EVENTS, channelTable, windowsDnsOverlay, type WinEventDef } from "./winEventTables.js";
 export { WIN_EVENTS, type WinEventDef };
 import { processGuid, processOverlay } from "./processAccess.js";
@@ -1473,10 +1473,10 @@ export function buildSiemResult(
 ): SiemParseResult {
   const maxIocs = opts.maxIocs ?? 5000;
   const total = records.length;
-
   const iocSink = new Map<string, SiemIoc>();
   const hostTally = new Map<string, number>();
   const mapped: MappedEvent[] = [];
+  const dnsIocs: HeldDnsIocs = new Map(); // #1642 — a DNS row links its IOCs once its key is final
 
   for (const [recordIndex, rec] of records.entries()) {
     const host = pickHost(rec);
@@ -1484,12 +1484,12 @@ export function buildSiemResult(
     const rowSink = new Map<string, SiemIoc>();
     const m =
       mapWindows(rec, host, rowSink, { source: format, recordIndex }) ?? mapGeneric(rec, host, rowSink);
-    mergeRowIocs(iocSink, rowSink, m.aggKey);
+    mergeRowIocsHoldingDns(iocSink, rowSink, m, dnsIocs);
     mapped.push(m);
   }
 
   if (opts.aggregate !== false) boundDnsVariants(mapped, iocSink); // dnsRecord.ts, #933 item 2
-  runWindowsDnsConnJoin(mapped, iocSink); // #996 — always after boundDnsVariants
+  runWindowsDnsConnJoin(mapped, iocSink, dnsIocs); // #996 — always after boundDnsVariants
   const { events, groups } = aggregateEvents(mapped, {
     aggregate: opts.aggregate,
     minSeverity: opts.minSeverity,

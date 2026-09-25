@@ -52,7 +52,10 @@ interface MockVeloClient {
     artifacts: string[],
   ): Promise<{ results: Record<string, unknown[]>; skipped: string[] }>;
   // The import path reads ONE artifact at a time so a large hunt is never resident in full.
-  huntArtifactRows(huntId: string, artifact: string): Promise<VelociraptorRunResult>;
+  huntArtifactRows(
+    huntId: string,
+    artifact: string,
+  ): Promise<VelociraptorRunResult & { sourcesUnknown?: true }>;
   getFlowInfo(clientId: string, flowId: string): Promise<{ artifacts: string[]; hostname: string }>;
   collectionResults(clientId: string, flowId: string, artifact: string): Promise<VelociraptorRunResult>;
   huntGuiUrlFor(huntId: string): string | undefined;
@@ -67,6 +70,7 @@ interface MockVeloClient {
 async function makeApp(
   huntResults: Record<string, unknown[]> = { "Windows.NTFS.MFT": [MFT_ROW] },
   uploads: { name: string; clientId: string; content: string }[] = [],
+  sourcesUnknown: string[] = [], // artifacts whose source list the catalog could not give (#1645)
 ) {
   const root = await mkdtemp(join(tmpdir(), "dfir-velo-ext-"));
   const store = new CaseStore(root);
@@ -95,7 +99,8 @@ async function makeApp(
     async huntArtifactRows(_huntId: string, artifact: string) {
       rowsFetchCalls++;
       const rows = huntResults[artifact] ?? [];
-      return { rows, total: rows.length, truncated: false };
+      const unknown = sourcesUnknown.includes(artifact) ? { sourcesUnknown: true as const } : {};
+      return { rows, total: rows.length, truncated: false, ...unknown };
     },
     async getFlowInfo() {
       return { artifacts: ["Windows.NTFS.MFT"], hostname: "DESKTOP-01" };
@@ -207,6 +212,49 @@ describe("POST /cases/:id/velociraptor/import-external", () => {
     expect(
       forensic.every((e) => e.veloUrl === "https://velo.example/app/index.html?org_id=root#/hunts/H.ABC"),
     ).toBe(true);
+  });
+
+  // #1645 — the external import used to read only `.rows`, so an artifact whose named sources were
+  // never read showed as "the hunt returned no rows yet".
+  it("names an artifact not read in full, and never says the hunt returned no rows", async () => {
+    const { app, stateStore } = await makeApp(
+      { "Windows.System.TaskScheduler": [] },
+      [],
+      ["Windows.System.TaskScheduler"],
+    );
+    const res = await request(app).post("/cases/c1/velociraptor/import-external").send({ ref: "H.ABC" });
+    expect(res.status).toBe(200);
+    expect(res.body.artifacts).toEqual([]); // imported, not requested
+    expect(res.body.requestedArtifacts).toEqual(["Windows.System.TaskScheduler"]);
+    expect(res.body.unreadArtifacts).toEqual([{ name: "Windows.System.TaskScheduler", rows: 0 }]);
+    expect(res.body.note).not.toMatch(/returned no rows/);
+    expect(res.body.note).toMatch(/not read in full/);
+    expect((await stateStore.load("c1")).forensicTimeline).toHaveLength(0);
+  });
+
+  it("imports the rows it did read and still names the artifact partly read", async () => {
+    const { app } = await makeApp(
+      { "Windows.NTFS.MFT": [MFT_ROW], "Windows.System.TaskScheduler": [] },
+      [],
+      ["Windows.NTFS.MFT", "Windows.System.TaskScheduler"],
+    );
+    const res = await request(app).post("/cases/c1/velociraptor/import-external").send({ ref: "H.ABC" });
+    expect(res.status).toBe(200);
+    expect(res.body.artifacts).toEqual(["Windows.NTFS.MFT"]);
+    expect(res.body.addedEvents).toBeGreaterThan(0);
+    expect(res.body.unreadArtifacts).toEqual([
+      { name: "Windows.NTFS.MFT", rows: 1 },
+      { name: "Windows.System.TaskScheduler", rows: 0 },
+    ]);
+    expect(res.body.note).toBeUndefined();
+  });
+
+  it("still says 'no rows yet' when every read was complete and empty", async () => {
+    const { app } = await makeApp({ "Windows.NTFS.MFT": [] });
+    const res = await request(app).post("/cases/c1/velociraptor/import-external").send({ ref: "H.ABC" });
+    expect(res.body.note).toBe("the hunt returned no rows yet");
+    expect(res.body.artifacts).toEqual([]);
+    expect(res.body.unreadArtifacts).toBeUndefined();
   });
 
   it("imports an external flow attributing events to the resolved host", async () => {

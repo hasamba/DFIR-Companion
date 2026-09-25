@@ -1604,6 +1604,42 @@ describe("VelociraptorClient.huntResultsByArtifact", () => {
     expect(program).toContain("artifact='Custom.Hunt.Companion.x/Pivot0'");
     expect(results["Custom.Hunt.Companion.x"]).toHaveLength(1);
   });
+
+  // #1645 — this reader used to keep only `.rows`, so the Hunting Profile said "returned nothing" for
+  // an artifact whose named sources were never read.
+  it("names the artifacts not read in full, with or without rows, and leaves complete reads out", async () => {
+    const runner: VqlRunner = async (statements) => {
+      const p = statements[0];
+      if (p.includes("FROM artifact_definitions(")) throw new Error("server down");
+      if (p.includes("Windows.System.Pslist")) return { rows: [{ Name: "a" }], raw: "" };
+      return { rows: [], raw: "" };
+    };
+    const out = await new VelociraptorClient(cfg, runner).huntResultsByArtifact(
+      "H.OK1",
+      ["Windows.System.TaskScheduler", "Windows.System.Pslist", "Custom.Hunt.Companion.x"],
+      undefined,
+      { "Custom.Hunt.Companion.x": ["Pivot0"] }, // an explicit source list is a complete read
+    );
+    expect(out.unread).toEqual([
+      { name: "Windows.System.TaskScheduler", rows: 0 },
+      { name: "Windows.System.Pslist", rows: 1 },
+    ]);
+    expect(out.truncated).toEqual([]);
+  });
+
+  it("names a read cut short at the row cap", async () => {
+    const runner: VqlRunner = async (statements) => {
+      const p = statements[0];
+      if (p.includes("FROM artifact_definitions("))
+        return { rows: [{ name: "Windows.System.Pslist", type: "CLIENT", sources: [{}] }], raw: "" };
+      return { rows: Array.from({ length: 5 }, (_, i) => ({ i })), raw: "" };
+    };
+    const out = await new VelociraptorClient({ ...cfg, maxRows: 3 }, runner).huntResultsByArtifact("H.OK1", [
+      "Windows.System.Pslist",
+    ]);
+    expect(out.unread).toEqual([]);
+    expect(out.truncated).toEqual([{ name: "Windows.System.Pslist", kept: 3, total: 5 }]);
+  });
 });
 
 describe("retryTransientSpawn", () => {

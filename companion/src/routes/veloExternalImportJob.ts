@@ -18,6 +18,8 @@ import type { JobManager } from "../analysis/jobManager.js";
 import { getServerLogger } from "../logging/serverLogger.js";
 import { formatImportCancelled, formatImportFailed } from "../logging/importLog.js";
 import { redactedErrorMessage } from "../analysis/redactPaths.js";
+import type { TruncatedArtifact, UnreadArtifact } from "../analysis/veloHuntStore.js";
+import type { SkippedArtifact } from "../integrations/velociraptor/velociraptorApi.js";
 
 // The slice of the server's AiStatusEvent this loop emits, spelled out here: routes may not import
 // composition types (check:boundaries), and the server's own callback accepts this subset.
@@ -41,10 +43,29 @@ export interface ArtifactIngestResult {
   addedIocs: number;
 }
 
+/**
+ * One artifact's read. `sourcesUnknown` (#1635) means its source list could not be looked up, so rows
+ * it keeps under named sources were never read; `truncated` means the read hit the row cap.
+ */
+export interface ExternalArtifactRead {
+  rows: unknown[];
+  truncated?: boolean;
+  total?: number;
+  sourcesUnknown?: true;
+}
+
+/**
+ * What the loop did, per artifact. The three gap lists use the collect's own shapes (#1645), so the
+ * external import says "not read in full", "cut short" and "failed" the way a collect's hunt card does.
+ * None of them settles anything: this path records no hunt job and no per-artifact outcome.
+ */
 export interface ExternalImportOutcome {
   imported: string[];
   addedEvents: number;
   addedIocs: number;
+  failed: SkippedArtifact[];
+  truncated: TruncatedArtifact[];
+  unread: UnreadArtifact[];
 }
 
 /**
@@ -59,7 +80,7 @@ export async function importArtifactsUnderJob(
   caseId: string,
   what: string,
   artifacts: string[],
-  readRows: (artifact: string) => Promise<unknown[]>,
+  readRows: (artifact: string) => Promise<ExternalArtifactRead>,
   ingest: (artifact: string, rows: unknown[]) => Promise<ArtifactIngestResult>,
 ): Promise<ExternalImportOutcome> {
   const label = `velociraptor: ${what}`;
@@ -81,6 +102,9 @@ export async function importArtifactsUnderJob(
     if (job) deps.jobManager?.progress(job.jobId, done, total, detail);
   };
   const imported: string[] = [];
+  const failed: SkippedArtifact[] = [];
+  const truncated: TruncatedArtifact[] = [];
+  const unread: UnreadArtifact[] = [];
   let addedEvents = 0;
   let addedIocs = 0;
   try {
@@ -89,12 +113,26 @@ export async function importArtifactsUnderJob(
       // timeline never holds half an artifact — and surfaced as the request's error.
       if (job?.signal?.aborted)
         throw Object.assign(new Error("import cancelled by the analyst"), { name: "AbortError" });
-      let rows: unknown[];
+      let read: ExternalArtifactRead;
       try {
-        rows = await readRows(artifact);
+        read = await readRows(artifact);
       } catch (e) {
         deps.logLine(`[velociraptor] ${what}: artifact ${artifact} read failed: ${(e as Error).message}`);
+        failed.push({ name: artifact, error: (e as Error).message });
         continue;
+      }
+      let rows = read.rows;
+      // Logged as the read returns, not after the loop, so a later cancel or failed ingest keeps it.
+      if (read.sourcesUnknown) {
+        unread.push({ name: artifact, rows: rows.length });
+        deps.logLine(unreadLogLine(what, artifact, rows.length));
+      }
+      if (read.truncated) {
+        truncated.push({ name: artifact, kept: rows.length, total: Number(read.total) || rows.length });
+        deps.logLine(
+          `[velociraptor] ${what}: artifact ${artifact} cut short at the row cap (kept ${rows.length}); ` +
+            `raise DFIR_VELOCIRAPTOR_COLLECT_MAX_ROWS and import again.`,
+        );
       }
       if (!rows.length) continue;
       const step = `artifact ${index + 1}/${total} · ${artifact} (${rows.length} rows)`;
@@ -138,5 +176,47 @@ export async function importArtifactsUnderJob(
     });
     throw err;
   }
-  return { imported, addedEvents, addedIocs };
+  return { imported, addedEvents, addedIocs, failed, truncated, unread };
+}
+
+function unreadLogLine(what: string, artifact: string, rows: number): string {
+  return (
+    `[velociraptor] ${what}: artifact ${artifact} not read in full — the artifact catalog did not give ` +
+    `its source list, so rows under named sources were never read (${rows} row(s) from its default ` +
+    `source). Import again once the server answers.`
+  );
+}
+
+export interface ExternalImportFields {
+  artifacts: string[]; // the IMPORTED artifacts — never the requested list, which the UI would count
+  requestedArtifacts: string[];
+  failedArtifacts?: SkippedArtifact[];
+  truncatedArtifacts?: TruncatedArtifact[];
+  unreadArtifacts?: UnreadArtifact[];
+  note?: string;
+}
+
+/**
+ * The per-artifact half of the import-external response (#1645). `noRowsNote` ("the hunt returned no
+ * rows yet") is said only when nothing imported AND every read was complete: an artifact not read in
+ * full, or a read that failed, is not evidence the hunt found nothing.
+ */
+export function externalImportFields(
+  out: ExternalImportOutcome,
+  requested: string[],
+  noRowsNote: string,
+): ExternalImportFields {
+  const fields: ExternalImportFields = { artifacts: out.imported, requestedArtifacts: requested };
+  if (out.failed.length) fields.failedArtifacts = out.failed;
+  if (out.truncated.length) fields.truncatedArtifacts = out.truncated;
+  if (out.unread.length) fields.unreadArtifacts = out.unread;
+  if (out.imported.length) return fields;
+  const gaps = [
+    out.unread.length ? `${out.unread.length} artifact(s) not read in full (source list unknown)` : "",
+    out.failed.length ? `${out.failed.length} artifact(s) failed to read` : "",
+  ].filter(Boolean);
+  fields.note = gaps.length
+    ? `no rows imported — ${gaps.join(", ")}; this is not evidence that nothing was found`
+    : noRowsNote;
+  return fields;
 }
