@@ -34,7 +34,8 @@ import {
   gapBand,
 } from "./dnsConnJoin.js";
 import type { JoinState, Lead } from "./dnsConnJoin.js";
-import { DESCRIPTION_MAX, rewriteAggKeySink } from "./dnsRecord.js";
+import { DESCRIPTION_MAX } from "./dnsRecord.js";
+import { mergeRowIocs, type SiemIoc } from "./iocSink.js";
 import { leadBlock } from "./dnsWireRows.js";
 import { joinTag, leadTag, windowTag } from "./dnsWireWords.js";
 import { identityMark, packTags } from "./recordIdentity.js";
@@ -237,11 +238,9 @@ function applyWindowsDnsConnJoin(
   mapped: JoinableRow[],
   dnsCandidates: readonly SiemDnsCandidate[],
   connCandidates: readonly SiemConnCandidate[],
-  sink: Map<string, { sourceAggKeys?: string[] }>,
 ): void {
   if (!dnsCandidates.length) return;
   const results = joinWindowsDnsConn(dnsCandidates, connCandidates);
-  const rewritten = new Map<string, string>();
   for (const d of dnsCandidates) {
     const outcome = results.get(d.mappedIndex);
     const row = mapped[d.mappedIndex];
@@ -264,7 +263,6 @@ function applyWindowsDnsConnJoin(
     const outcomeDigest = leads.length ? `:${leads.map((l) => `${l.address}=${l.state}`).join(",")}` : "";
     const newAggKey = `${oldAggKey}|conn:${joinState}${outcomeDigest}`;
     row.aggKey = newAggKey;
-    rewritten.set(oldAggKey, newAggKey);
     const bare = row.description.replace(MARK_TAG, "");
     const mark = identityMark(newAggKey);
     row.description = `${bare}${packTags(tags, DESCRIPTION_MAX - bare.length - mark.length)}${mark}`;
@@ -284,7 +282,41 @@ function applyWindowsDnsConnJoin(
       ...(leads.length ? { "dns.leads": provenance } : {}),
     };
   }
-  rewriteAggKeySink(sink, rewritten);
+}
+
+/** A DNS row's own IOCs, held until the row's key is final (#1642). Keyed by the row object. */
+export type HeldDnsIocs = Map<object, Map<string, SiemIoc>>;
+
+/**
+ * Merge one row's IOCs into the file sink. A non-DNS row links to its key now. A DNS row's key is
+ * not final yet — `boundDnsVariants` and this join may rewrite it, and identical DNS records can
+ * split into rows with different connection outcomes (#1642) — so its IOCs merge now WITHOUT a
+ * link (the sink keeps its insertion order and plain-wins provenance) and its row sink is held.
+ * `runWindowsDnsConnJoin` links each held row to its final key, so an IOC links to exactly the
+ * rows whose records carried it: a query's domain to every outcome row, a hash to one.
+ */
+export function mergeRowIocsHoldingDns(
+  sink: Map<string, SiemIoc>,
+  rowSink: Map<string, SiemIoc>,
+  row: { aggKey: string; canonical?: { dns?: unknown } },
+  held: HeldDnsIocs,
+): void {
+  if (!row.canonical?.dns) return mergeRowIocs(sink, rowSink, row.aggKey);
+  mergeRowIocs(sink, rowSink);
+  held.set(row, rowSink);
+}
+
+function linkHeldDnsIocs(
+  mapped: readonly { aggKey: string }[],
+  sink: Map<string, SiemIoc>,
+  held: HeldDnsIocs,
+): void {
+  for (const row of mapped) {
+    const rowSink = held.get(row);
+    if (!rowSink) continue;
+    mergeRowIocs(sink, rowSink, row.aggKey);
+    held.delete(row);
+  }
 }
 
 /**
@@ -298,7 +330,8 @@ function applyWindowsDnsConnJoin(
  */
 export function runWindowsDnsConnJoin(
   mapped: (JoinableRow & DnsConnMappedRow)[],
-  sink: Map<string, { sourceAggKeys?: string[] }>,
+  sink: Map<string, SiemIoc>,
+  held: HeldDnsIocs,
   conns?: readonly SiemConnCandidate[],
 ): void {
   const dns: SiemDnsCandidate[] = [];
@@ -307,5 +340,6 @@ export function runWindowsDnsConnJoin(
     collectWindowsDnsCandidate(dns, i, row);
     if (!conns) collectWindowsConnCandidate(collected, row);
   });
-  applyWindowsDnsConnJoin(mapped, dns, conns ?? collected, sink);
+  applyWindowsDnsConnJoin(mapped, dns, conns ?? collected);
+  linkHeldDnsIocs(mapped, sink, held); // after the join: every held row's key is now final
 }

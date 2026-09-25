@@ -149,13 +149,13 @@ describe("runWindowsDnsConnJoin with pre-collected connections (#1636)", () => {
 
   it("uses the passed list as the whole connection side — a held row's own destination is not counted again", () => {
     const r = row();
-    runWindowsDnsConnJoin([r], new Map(), []);
+    runWindowsDnsConnJoin([r], new Map(), new Map(), []);
     expect(r.canonical.dns).toMatchObject({ joinState: "no connection records in this upload" });
   });
 
   it("without a passed list it still collects connections from the rows, as before", () => {
     const r = row();
-    runWindowsDnsConnJoin([r], new Map());
+    runWindowsDnsConnJoin([r], new Map(), new Map());
     expect(r.canonical.dns).toMatchObject({ joinState: "joined" });
   });
 

@@ -488,9 +488,10 @@ export function boundDnsVariants(
 
 /**
  * Follow an IOC's provenance when the row that sourced it gets its `aggKey` rewritten in place
- * (`boundDnsVariants` above, and the Windows DNS→connection join in `siemDnsConnJoin.ts` /
- * `siemImport.ts`) — an IOC's `sourceAggKeys` must keep pointing at the row's CURRENT key, or
- * provenance silently stops resolving after the rewrite.
+ * (`boundDnsVariants` above) — an IOC's `sourceAggKeys` must keep pointing at the row's CURRENT
+ * key, or provenance silently stops resolving after the rewrite. One old key to one new key only:
+ * the Windows DNS→connection join can split one key into several rows, so it does not use this —
+ * `siemDnsConnJoin.ts` links each DNS row's own IOCs once its key is final (#1642).
  */
 export function rewriteAggKeySink(
   sink: Map<string, { sourceAggKeys?: string[] }>,
