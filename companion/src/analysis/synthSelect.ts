@@ -19,6 +19,7 @@ import { intelOrigins, originsTag } from "./intelLineage.js";
 import { rankHosts, buildSignalConcentrationDigest } from "./hostRanking.js";
 import { isMentionedHash, mentionedHashNote } from "./iocMentionedHash.js";
 import { isMentionedIoc, mentionedNote } from "./iocMentioned.js";
+import { commandSeatCap } from "./ai/synthCommandSeats.js";
 
 // Widened to string keys: severity values reaching the selectors are not all statically Severity.
 const SEV_RANK: Record<string, number> = SEVERITY_RANK;
@@ -48,10 +49,11 @@ const BUDGET_RARE = 0.15; // prevalence #15: reserved seats for RARE (low-preval
 const RARE_SCORE_MIN = 0.34; // rarityOf(e) ≥ this counts as rare (≈ ≤2 occurrences via 1/count)
 
 // Why an event earned a synthesis seat. "anchor" = Critical/High verdict; "earliest" = initial-access
-// context; the rest are the behavioral fills. Exposed (via the annotated selection) so the dashboard
+// context; "command" = a reserved seat for a quiet session command (#1622); the rest are the
+// behavioral fills. Exposed (via the annotated selection) so the dashboard
 // can show the analyst what CLASSES of evidence the model actually saw.
 export type SelectionClass =
-  "anchor" | "earliest" | "anchor_context" | "corroborated" | "technique" | "rare" | "spread";
+  "anchor" | "earliest" | "command" | "anchor_context" | "corroborated" | "technique" | "rare" | "spread";
 
 export interface AnnotatedSelection {
   events: ForensicEvent[]; // chosen events, CHRONOLOGICAL (the model reads a story)
@@ -61,7 +63,16 @@ export interface AnnotatedSelection {
 }
 
 function emptyCounts(): Record<SelectionClass, number> {
-  return { anchor: 0, earliest: 0, anchor_context: 0, corroborated: 0, technique: 0, rare: 0, spread: 0 };
+  return {
+    anchor: 0,
+    earliest: 0,
+    command: 0,
+    anchor_context: 0,
+    corroborated: 0,
+    technique: 0,
+    rare: 0,
+    spread: 0,
+  };
 }
 
 function eventMs(e: ForensicEvent): number | null {
@@ -180,10 +191,19 @@ function anchorContextCandidates(
 // earliest initial-access events) and then fills with reserved per-class budgets — same-host context
 // around each anchor, cross-source-corroborated events, and ATT&CK-technique-tagged events — before an
 // even/whole-burst spread. Returns CHRONOLOGICAL order so the model reads the attack as a story.
+//
+// COMMAND SEATS (#1622): `commandSeats` is an ordered list of quiet Low/Medium session commands (see
+// ai/synthCommandSeats.ts) that get a small reserved share of the SAME cap. Tight-budget order:
+// at least one anchor → command seats → remaining anchors → earliest → the fractional fills. What the
+// reserve squeezes out, least to most pressure: (1) seats the context/corroborated/technique/rare/
+// spread fills would have used; (2) earliest rows, when anchors nearly fill the cap; (3) the lowest-
+// ranked Critical/High anchors, when anchors overflow — those are still recovered as findings by the
+// deterministic high-severity backfill. With no command seats the selection is unchanged.
 export function selectSynthesisEventsAnnotated(
   events: ForensicEvent[],
   max: number,
   rarityOf?: (e: ForensicEvent) => number, // prevalence #15: higher = rarer; omitted = no rarity bias
+  commandSeats: readonly ForensicEvent[] = [],
 ): AnnotatedSelection {
   const byTime = [...events].sort(byEventTime);
   if (events.length <= max || max <= 0) {
@@ -198,16 +218,22 @@ export function selectSynthesisEventsAnnotated(
 
   // GUARANTEED 1: anchors — every Critical/High event (the verdict-bearing rows).
   for (const e of events) if (e.severity === "Critical" || e.severity === "High") claim(e.id, "anchor");
+  const seats = reservableSeats(events, commandSeats, classOf);
+  const reserve = Math.min(commandSeatCap(max), seats.length, classOf.size > 0 ? max - 1 : max);
 
-  // Overflow: anchors alone exceed the budget. Keep the severest anchors, but RESERVE part of the cap
+  // Overflow: anchors alone exceed the budget (or leave no room for the command reserve). Keep the severest anchors, but RESERVE part of the cap
   // for the earliest events so the model always sees where the activity began. Within the same
   // severity, drop the most-repeated patterns first (they are already represented by their grouped
   // row) and keep the rare ones — a 1-off is far more likely to be the real signal than the 500×
   // baseline that happens to be graded High.
-  if (classOf.size > max) {
+  if (classOf.size > max - reserve) {
     const anchorEvents = byTime.filter((e) => classOf.get(e.id) === "anchor");
-    const reserve = Math.min(EARLIEST_KEEP, Math.floor(max * OVERFLOW_RESERVE_FRACTION));
-    const anchorBudget = Math.max(1, max - reserve);
+    const earliestReserve = Math.min(EARLIEST_KEEP, Math.floor(max * OVERFLOW_RESERVE_FRACTION));
+    // Anchors past the whole cap: the earliest reserve AND the command reserve come out of them. Anchors
+    // that fit the cap but not the command reserve (#1622): only the command reserve does — the earliest
+    // rows got nothing here before, and still get only what is left.
+    const anchorBudget =
+      anchorEvents.length > max ? Math.max(1, max - earliestReserve - reserve) : Math.max(1, max - reserve);
     const keptAnchors = [...anchorEvents]
       .sort(
         (a, b) =>
@@ -218,6 +244,7 @@ export function selectSynthesisEventsAnnotated(
       .slice(0, anchorBudget);
 
     const kept = new Map<string, SelectionClass>(keptAnchors.map((e) => [e.id, "anchor" as const]));
+    for (const e of seats.slice(0, reserve)) if (kept.size < max) kept.set(e.id, "command");
     for (const e of byTime) {
       // spend the reserve on the earliest events
       if (kept.size >= max) break;
@@ -231,10 +258,21 @@ export function selectSynthesisEventsAnnotated(
     return { events: trimmed, classOf: kept, counts, omitted: events.length - trimmed.length };
   }
 
-  // GUARANTEED 2: earliest events — initial-access context (guarded against the cap).
+  // GUARANTEED 2: earliest events — initial-access context (guarded against the cap, and leaving
+  // the command reserve free).
   for (const e of byTime.slice(0, EARLIEST_KEEP)) {
-    if (capacityLeft() <= 0) break;
+    if (capacityLeft() <= reserve) break;
     claim(e.id, "earliest");
+  }
+
+  // GUARANTEED 3 (#1622): reserved seats for quiet session commands. An earliest row that is also a
+  // command keeps its "earliest" class and frees its reserved seat for the next command.
+  let commandSeated = 0;
+  for (const e of seats) {
+    if (commandSeated >= reserve || capacityLeft() <= 0) break;
+    if (classOf.has(e.id)) continue;
+    classOf.set(e.id, "command");
+    commandSeated++;
   }
 
   const remaining = Math.max(0, max - classOf.size);
@@ -334,6 +372,23 @@ export function selectSynthesisEventsAnnotated(
   const counts = emptyCounts();
   for (const e of selected) counts[classOf.get(e.id) as SelectionClass]++;
   return { events: selected, classOf, counts, omitted: events.length - selected.length };
+}
+
+// The command seats that can still be reserved: rows of THIS selection's input, not already anchors,
+// each once, in the caller's order.
+function reservableSeats(
+  events: readonly ForensicEvent[],
+  commandSeats: readonly ForensicEvent[],
+  classOf: ReadonlyMap<string, SelectionClass>,
+): ForensicEvent[] {
+  if (!commandSeats.length) return [];
+  const present = new Set(events.map((e) => e.id));
+  const seen = new Set<string>();
+  return commandSeats.filter((e) => {
+    if (!present.has(e.id) || classOf.has(e.id) || seen.has(e.id)) return false;
+    seen.add(e.id);
+    return true;
+  });
 }
 
 // Backwards-compatible wrapper: the chosen events in chronological order. All existing callers use this;

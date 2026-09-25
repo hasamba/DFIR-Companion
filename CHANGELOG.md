@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Prompt seats for session commands** — synthesis reserves up to a tenth of its event cap (at most 40 rows) for distinct Low/Medium command lines near Critical/High rows on the same host, so quiet discovery and staging commands reach the model (closes #1622)
 - **Other commands in this session** — after synthesis, each Low-or-higher command line (or script/binary file write) from an attack session that no finding names is listed on the closest finding, in the dashboard and the reports (closes #1594)
 - **Negative answers name their evidence** — a collection inventory built in code (per host: raw vs detection-only evidence, cleared logs, recent hunt outcomes) reaches synthesis; an unsettled "not observed" answer becomes partial with one collection step, and a step asking for a cleared log is flagged (closes #1588)
 - **Hayabusa Full bundle** — a built-in Velociraptor bundle that runs Hayabusa alone with every rule level and status, excluding only rules marked noisy
