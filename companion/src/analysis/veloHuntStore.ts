@@ -112,10 +112,12 @@ export interface VeloHuntJob {
  * comes from the live in-flight map in composition/veloHunts.ts, never from the file. A persisted
  * status of "collecting" only means some process once started one; a server that died mid-collect
  * leaves it set forever, so reading the file as proof of activity makes the card assert work that
- * stopped hours ago. Present only for a job whose status IS "collecting" — it means nothing otherwise.
+ * stopped hours ago. Present on EVERY job (#1662): a re-collect of an "imported" hunt still says
+ * "imported" before its first write and after its last one, so only this flag tells a caller polling
+ * after "Collect now" that the collect has not finished. `imported` + `false` means it has.
  */
 export interface VeloHuntJobView extends VeloHuntJob {
-  collectActive?: boolean;
+  collectActive: boolean;
 }
 
 /**

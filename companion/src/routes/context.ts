@@ -232,9 +232,9 @@ export interface RouteContext {
   //   startVeloHuntCollect        — collect a hunt + import through the normal chain (also fired on a timer).
   //                                 Fire-and-forget: returns synchronously with what it decided, never
   //                                 drops the request (a concurrent one is coalesced — see #195).
-  //   listVeloHuntJobViews        — the case's hunt jobs plus `collectActive` on any still saying
-  //                                 "collecting". Liveness comes from the in-flight map; a persisted
-  //                                 "collecting" status survives the process that set it (#770).
+  //   listVeloHuntJobViews        — the case's hunt jobs plus `collectActive` on every job (#1662).
+  //                                 Liveness comes from the in-flight map; a persisted status is not
+  //                                 proof either way (#770).
   //   ingestVeloArtifactMap / ingestVeloUploads — the /import-external hunt/flow-map + uploads ingest cores.
   //   createVeloMonitor           — build + persist + schedule one monitor (manual + auto-monitor routes);
   //                                 enables the artifact in Velociraptor's Client Monitoring table (#1409).
