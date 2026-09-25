@@ -107,6 +107,7 @@ export interface VelociraptorImportOptions {
   hostFallbackBasis?: "collector" | "analyst"; // who supplied it: the flow's client, or the analyst (#1496)
   knownRenames?: readonly HostRenameRecord[]; // renames the case learned earlier (#1495), seeded before any row
   collectorHostnames?: readonly string[]; // collector identities the case has seen — never a former name
+  partlyReadArtifact?: string; // the read had no source list (#1635): stamp every row-derived event (#1651)
 }
 
 export interface VelociraptorParseResult {
@@ -1504,6 +1505,7 @@ interface VrParseCtx {
   renames: HostRenameLedger; // one Info marker per (host, former name) seen this import (#1417)
   aliases: HostRenameMap; // the file's own rename evidence, learned before any row is mapped (#1489)
   lineage: CollectorFootprintLedger; // the collector's spawn and what it did, resolved in finalizeVrParse (#1477, #1488, #1500)
+  partlyReadArtifact: string; // "" on a full read; else stamped on every row-derived event (#1651)
 }
 
 // Map ONE raw row to its forensic event(s) — one per row, or one per distinct MACB timestamp for an
@@ -1622,6 +1624,7 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
       // Stamp the VQL artifact that emitted the event (the row's _Source/_Artifact, else the filename),
       // so downstream (dwell-time window, evidence graph) tells "from the MFT" from "a Sigma detection".
       if (artifact) m.artifactName = artifact;
+      if (ctx.partlyReadArtifact) m.partlyReadArtifact = ctx.partlyReadArtifact; // #1651
       // Carry the FULL untruncated event message so the super-timeline row can reveal it expandably,
       // when it adds detail beyond the truncated `description`. Stamped here (like artifactName) so
       // every mapper's result benefits. Set only if the mapper didn't already provide one.
@@ -1724,6 +1727,7 @@ function newVrCtx(opts: VelociraptorImportOptions): VrParseCtx {
     renames: new HostRenameLedger(),
     aliases: HostRenameMap.from(opts.knownRenames, opts.collectorHostnames, opts.hostFallback), // the case's ledger, and the flow's client is a collector (#1495)
     lineage: new CollectorFootprintLedger(),
+    partlyReadArtifact: (opts.partlyReadArtifact ?? "").trim(),
   };
 }
 

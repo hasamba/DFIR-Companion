@@ -316,6 +316,8 @@ export function mergeDelta(
       if (incoming.sourceRecordId) existing.sourceRecordId = incoming.sourceRecordId;
       if (incoming.message) existing.message = incoming.message;
       if (incoming.veloUrl) existing.veloUrl = incoming.veloUrl;
+      // Monotonic (#1651): a stamped re-read marks the row; an unstamped one never clears it.
+      if (incoming.partlyReadArtifact) existing.partlyReadArtifact = incoming.partlyReadArtifact;
       if (incoming.processName) existing.processName = incoming.processName;
       if (incoming.parentName) existing.parentName = incoming.parentName;
       if (incoming.pid !== undefined) existing.pid = incoming.pid;
@@ -357,6 +359,7 @@ export function mergeDelta(
         ...(incoming.sourceRecordId ? { sourceRecordId: incoming.sourceRecordId } : {}),
         ...(incoming.message ? { message: incoming.message } : {}),
         ...(incoming.veloUrl ? { veloUrl: incoming.veloUrl } : {}),
+        ...(incoming.partlyReadArtifact ? { partlyReadArtifact: incoming.partlyReadArtifact } : {}),
         ...(incoming.processName ? { processName: incoming.processName } : {}),
         ...(incoming.parentName ? { parentName: incoming.parentName } : {}),
         ...(incoming.pid !== undefined ? { pid: incoming.pid } : {}),

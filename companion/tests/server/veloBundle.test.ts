@@ -686,6 +686,61 @@ describe("Velociraptor triage bundles — routes", () => {
     POLL_TIMEOUT_MS * 2,
   );
 
+  // #1651 — the rows the bare read DID return are stamped, so they qualify persistence on the host
+  // but never count as full raw coverage of it.
+  it(
+    "collect stamps the rows of a partly read artifact",
+    async () => {
+      let catalogDown = false;
+      const runner: VqlRunner = async (statements) => {
+        const p = statements[0];
+        if (p.includes("artifact_definitions()")) {
+          if (catalogDown) throw new Error("catalog read failed");
+          return {
+            rows: [{ name: "Windows.System.TaskScheduler", description: "Tasks", type: "CLIENT" }],
+            raw: "",
+          };
+        }
+        if (p.includes("hunt(") && p.includes("artifacts=["))
+          return { rows: [{ Hunt: { HuntId: "H.TS2", state: "RUNNING" } }], raw: "" };
+        if (p.includes("hunt_results(") && p.includes("Windows.System.TaskScheduler"))
+          return {
+            rows: [
+              {
+                _Source: "Windows.System.TaskScheduler",
+                Fqdn: "ws01.example.com",
+                Name: "\\Updater",
+                Command: "C:\\Users\\Public\\u.exe",
+              },
+            ],
+            raw: "",
+          };
+        return { rows: [], raw: "" };
+      };
+      const made = await makeApp(runner);
+      await request(made.app)
+        .post("/bundles")
+        .send({ id: "best-practice", name: "Best Practice", artifacts: ["Windows.System.TaskScheduler"] });
+      await request(made.app)
+        .post("/cases/c1/velociraptor/run-bundle")
+        .send({ bundleId: "best-practice", waitMinutes: 30 });
+      catalogDown = true;
+      made.client.invalidateArtifactCache();
+      expect((await request(made.app).post("/cases/c1/velociraptor/collect")).status).toBe(202);
+      const job = await pollHuntJob<{ status: string; unreadArtifacts?: { name: string; rows: number }[] }>(
+        made.app,
+      );
+      expect(job.status).toBe("imported");
+      expect(job.unreadArtifacts).toEqual([{ name: "Windows.System.TaskScheduler", rows: 1 }]);
+      const rows = (await made.stateStore.load("c1")).forensicTimeline.filter(
+        (e) => e.artifactName === "Windows.System.TaskScheduler",
+      );
+      expect(rows.length).toBeGreaterThan(0);
+      for (const e of rows) expect(e.partlyReadArtifact).toBe("Windows.System.TaskScheduler");
+    },
+    POLL_TIMEOUT_MS * 2,
+  );
+
   // The THIRD collect outcome. A read that hits the row cap imports real rows and reports success, so
   // it is indistinguishable from a complete collect — which is how a THOR scan's 40 warnings went
   // missing while the case showed a green import. Recorded on the job beside skipped/empty.

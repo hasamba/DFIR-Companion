@@ -209,6 +209,9 @@ export const deltaSchema = z.object({
         sourceRecordId: z.string().optional(),
         message: z.string().optional(),
         veloUrl: z.string().optional(),
+        // Importer-only (#1651): the partly read artifact this row came from. Stripped from model
+        // deltas by stripAiExtractedFrom; carried here so a deterministic promotion keeps it.
+        partlyReadArtifact: z.string().optional(),
         processName: z.string().optional(),
         parentName: z.string().optional(),
         pid: z.number().int().positive().optional(), // subject pid on process-creation events (cross-tool correlation)
@@ -502,7 +505,11 @@ export function stripAiExtractedFrom(delta: AnalysisDelta): AnalysisDelta {
     // a model must never be able to assert it on a host observation — a prompt-injected or merely
     // weak response saying origin:"lab" would silently misclassify real evidence. Same reason
     // extractedFrom is stripped above: provenance is not the model's to claim.
-    forensicEvents: (delta.forensicEvents ?? []).map(({ origin, assetRecord, ...rest }) => rest),
+    // `partlyReadArtifact` (#1651) likewise: a model claiming a read was incomplete would trigger
+    // collection steps; one clearing it cannot happen, because the merge never clears it on absence.
+    forensicEvents: (delta.forensicEvents ?? []).map(
+      ({ origin, assetRecord, partlyReadArtifact, ...rest }) => rest,
+    ),
   };
 }
 

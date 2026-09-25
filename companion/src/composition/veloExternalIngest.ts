@@ -69,6 +69,7 @@ export interface VeloExternalIngest {
       minSeverity?: Severity;
       hostFallback?: string;
       veloUrl?: string;
+      partlyReadArtifact?: string; // the read had no source list: stamp every row (#1651)
     },
   ): Promise<{ addedEvents: number; addedIocs: number; storedName: string }>;
   ingestVeloUploads(
@@ -131,6 +132,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
       minSeverity?: Severity;
       hostFallback?: string;
       veloUrl?: string;
+      partlyReadArtifact?: string; // the read had no source list: stamp every row (#1651)
     },
   ): Promise<{ addedEvents: number; addedIocs: number; storedName: string }> {
     const pipeline = options.pipeline;
@@ -168,6 +170,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
                 artifact,
                 hostFallback: opts.hostFallback,
                 ...knownHostIdentityOf(stateBefore),
+                partlyReadArtifact: opts.partlyReadArtifact,
               },
               minSeverity: opts.minSeverity,
               veloUrl: opts.veloUrl,
@@ -188,6 +191,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
           ...knownHostIdentityOf(stateBefore), // the case's rename ledger seeds this parse too (#1495)
           aggregate: false,
           maxEvents: Number(process.env.DFIR_SUPERTIMELINE_MAX) || 100000,
+          partlyReadArtifact: opts.partlyReadArtifact,
         });
         const floored = applySeverityFloor(parsed.events, opts.minSeverity); // honor the import floor (no-op when unset) — the forensic path floors via importVelociraptor
         // Same field set as collectVeloHuntOnce's super-only mapping (intentional parallel — the two
@@ -203,6 +207,7 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
           ...(e.artifactName ? { artifactName: e.artifactName } : {}),
           ...(e.message ? { message: e.message } : {}),
           ...(opts.veloUrl ? { veloUrl: opts.veloUrl } : {}),
+          ...(e.partlyReadArtifact ? { partlyReadArtifact: e.partlyReadArtifact } : {}),
           sources: e.sources?.length ? e.sources : ["Velociraptor"],
           ...(e.asset ? { asset: e.asset } : {}),
           ...(e.path ? { path: e.path } : {}),
@@ -225,7 +230,13 @@ export function createVeloExternalIngest(deps: VeloExternalIngestDeps): VeloExte
         idPrefix: `${seq}`,
         importedAt,
         minSeverity: opts.minSeverity,
-        velociraptor: opts.hostFallback ? { hostFallback: opts.hostFallback } : undefined,
+        velociraptor:
+          opts.hostFallback || opts.partlyReadArtifact
+            ? {
+                ...(opts.hostFallback ? { hostFallback: opts.hostFallback } : {}),
+                ...(opts.partlyReadArtifact ? { partlyReadArtifact: opts.partlyReadArtifact } : {}),
+              }
+            : undefined,
         veloUrl: opts.veloUrl,
       });
 

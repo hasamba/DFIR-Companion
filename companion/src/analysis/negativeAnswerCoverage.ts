@@ -119,6 +119,20 @@ interface CoverageGap {
   artifact: string;
   logSource: string;
   archiveOnly: boolean;
+  /** The first missing class is held on every host lacking it only from this partly read artifact (#1651). */
+  partlyRead?: string;
+}
+
+const PARTLY_LOG_SOURCE = "every source of the artifact (its source list could not be looked up last time)";
+
+/**
+ * The partly read artifact behind `c` on every host that lacks full coverage of it (#1651), or
+ * undefined when any such host holds no rows of the class at all. Sorted, so the choice is stable.
+ */
+function partlyReadArtifact(inv: CollectionInventory, hosts: string[], c: EvidenceClass): string | undefined {
+  if (!hosts.length) return undefined;
+  const per = hosts.map((h) => [...(inv.partlyByHost.get(h)?.get(c) ?? [])].sort());
+  return per.every((a) => a.length) ? per[0][0] : undefined;
 }
 
 function coverageGap(
@@ -136,6 +150,21 @@ function coverageGap(
   const missing = required.filter((c) => !hosts.length || !hosts.every((h) => holds(h, c)));
   if (!missing.length) return null;
   const uncoveredHosts = hosts.filter((h) => missing.some((c) => !holds(h, c)));
+  const partly = partlyReadArtifact(
+    inv,
+    hosts.filter((h) => !holds(h, missing[0])),
+    missing[0],
+  );
+  // A partly read class is collected again: promoting its archived rows cannot complete the read.
+  if (partly)
+    return {
+      missing,
+      uncoveredHosts,
+      artifact: partly,
+      logSource: PARTLY_LOG_SOURCE,
+      archiveOnly: false,
+      partlyRead: partly,
+    };
   const { artifact, logSource } = CLASS_COLLECTION[missing[0]];
   const archiveOnly = inv.hunts.some((h) => h.state === "archive-only" && h.artifact === artifact);
   return { missing, uncoveredHosts, artifact, logSource, archiveOnly };
@@ -146,6 +175,14 @@ function hostsText(gap: CoverageGap, none: string): string {
 }
 
 function qualification(gap: CoverageGap): string {
+  if (gap.partlyRead) {
+    const [first, ...rest] = gap.missing;
+    return (
+      `${QUALIFICATION_MARK}${first} evidence on ${hostsText(gap, "any host in this case")} comes only from ` +
+      `${gap.partlyRead}, which was only partly read (its source list could not be looked up); ` +
+      `collect ${gap.partlyRead} again.${rest.length ? ` Also not collected raw in full: ${rest.join(", ")}.` : ""}`
+    );
+  }
   const verb = gap.archiveOnly ? "search the archive for" : "collect";
   return (
     `${QUALIFICATION_MARK}${gap.missing.join(", ")} evidence was not collected raw on ` +
@@ -165,6 +202,7 @@ function directive(gap: CoverageGap): CollectDirective {
 
 function coverageStep(q: InvestigationQuestion, gap: CoverageGap): NextStep {
   const where = hostsText(gap, "the affected hosts");
+  if (gap.partlyRead) return partlyReadStep(q, gap, where);
   const action = gap.archiveOnly
     ? `Search the archive for ${gap.artifact} on ${where} and promote the relevant rows to settle: ${q.question}`
     : `Collect ${gap.artifact} (${gap.logSource}) on ${where} to settle: ${q.question}`;
@@ -177,6 +215,20 @@ function coverageStep(q: InvestigationQuestion, gap: CoverageGap): NextStep {
       `could have shown it was not collected raw on ${where}; a detection feed's silence is not evidence of absence.`,
     pointer: gap.logSource,
     ...(gap.archiveOnly ? {} : { collect: directive(gap) }),
+    relatedFindingIds: [...(q.relatedFindingIds ?? [])],
+  };
+}
+
+function partlyReadStep(q: InvestigationQuestion, gap: CoverageGap, where: string): NextStep {
+  return {
+    id: `${STEP_ID_PREFIX}${slug(q.id)}-${slug(gap.uncoveredHosts[0] ?? "")}`,
+    priority: "high",
+    action: `Collect ${gap.artifact} again on ${where} — it was only partly read — to settle: ${q.question}`,
+    rationale:
+      `The answer says the activity was not observed, but the ${gap.missing[0]} evidence on ${where} comes ` +
+      `only from ${gap.artifact}, whose named sources were never read; its silence is not evidence of absence.`,
+    pointer: gap.artifact,
+    collect: directive(gap),
     relatedFindingIds: [...(q.relatedFindingIds ?? [])],
   };
 }

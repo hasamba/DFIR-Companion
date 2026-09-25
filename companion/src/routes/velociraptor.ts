@@ -677,9 +677,10 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
           arts,
           // The whole read, not just `.rows`: it says which artifacts were not read in full (#1645).
           (art) => client.huntArtifactRows(ref.huntId, art, [], undefined, true),
-          (art, rows) =>
+          (art, rows, read) =>
             ctx.ingestVeloArtifactMap(caseId, JSON.stringify({ [art]: rows }), {
               label: `velo-hunt_${ref.huntId}_${art}.json`,
+              ...(read.partlyRead ? { partlyReadArtifact: art } : {}), // #1651
               // Namespaced per artifact: a running index across the whole hunt would collide now that
               // each artifact imports in its own pass.
               idBase: `${ref.huntId}-${art}`,
@@ -744,9 +745,10 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
         `flow ${ref.flowId} on ${info.hostname || ref.clientId} (external import)`,
         info.artifacts,
         (art) => client.collectionResults(ref.clientId, ref.flowId, art, [], undefined, true),
-        (art, rows) =>
+        (art, rows, read) =>
           ctx.ingestVeloArtifactMap(caseId, JSON.stringify({ [art]: rows }), {
             label: `velo-flow_${ref.flowId}_${art}.json`,
+            ...(read.partlyRead ? { partlyReadArtifact: art } : {}), // #1651
             idBase: `${ref.flowId}-${art}`,
             superOnly,
             minSeverity,

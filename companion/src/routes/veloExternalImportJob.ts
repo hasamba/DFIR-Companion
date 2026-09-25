@@ -81,7 +81,8 @@ export async function importArtifactsUnderJob(
   what: string,
   artifacts: string[],
   readRows: (artifact: string) => Promise<ExternalArtifactRead>,
-  ingest: (artifact: string, rows: unknown[]) => Promise<ArtifactIngestResult>,
+  // `partlyRead` (#1651): the read had no source list, so the ingest stamps every row it makes.
+  ingest: (artifact: string, rows: unknown[], read: { partlyRead: boolean }) => Promise<ArtifactIngestResult>,
 ): Promise<ExternalImportOutcome> {
   const label = `velociraptor: ${what}`;
   const startedAt = performance.now();
@@ -144,7 +145,7 @@ export async function importArtifactsUnderJob(
         at: new Date().toISOString(),
         detail: `importing ${what} — ${step}`,
       });
-      const one = await ingest(artifact, rows);
+      const one = await ingest(artifact, rows, { partlyRead: !!read.sourcesUnknown });
       rows = []; // release before the next artifact is read
       imported.push(artifact);
       addedEvents += one.addedEvents;

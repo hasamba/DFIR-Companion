@@ -367,10 +367,8 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       // 3) Result ROWS → the importer, one artifact at a time — mirrors step 4's uploads loop below,
       // and keeps the same at-most-one-artifact-in-memory bound on the way back in: each artifact is
       // read from its scratch file, imported, and released before the next is read.
-      // Deep-link back to the hunt in the Velociraptor GUI: reuse the URL saved on the job when
-      // present, else build it from the hunt id. Shared by every event from this hunt.
       const jobHuntId = job.huntId; // hoisted so later closures don't re-narrow the reassignable `job`
-      const veloUrl = job.guiUrl || client.huntGuiUrlFor(jobHuntId);
+      const veloUrl = job.guiUrl || client.huntGuiUrlFor(jobHuntId); // GUI deep-link every event shares
       // The importer's per-call event cap (DFIR_MAX_EVENTS, default 2000) used to bound the WHOLE hunt,
       // because the whole hunt was one importVelociraptor call. Now that each artifact imports
       // separately, a fresh per-call cap would let a 45-artifact bundle through 45x the intended
@@ -380,9 +378,8 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       let eventBudgetRemaining = maxEventsDefault();
       let budgetBaseline = options.stateStore ? stateBefore : null;
       let budgetExhaustedLogged = false;
-      // Same problem, same fix, for a super-only bundle: the super-timeline's own (much larger)
-      // cap used to bound the whole hunt in one parse; per-artifact now, so one budget is carried
-      // across the loop instead of each artifact getting a fresh DFIR_SUPERTIMELINE_MAX.
+      // Same fix for a super-only bundle: one budget of the super-timeline's own (much larger) cap is
+      // carried across the loop, instead of each artifact getting a fresh DFIR_SUPERTIMELINE_MAX.
       let superEventBudgetRemaining = Number(process.env.DFIR_SUPERTIMELINE_MAX) || 100000;
       let superBudgetExhaustedLogged = false;
       // Per-artifact progress on the import job (#1428). A big bundle used to sit in the Background
@@ -394,6 +391,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         if (importSlot) options.jobManager?.progress(importSlot.jobId, done, artifactFiles.length, detail);
       };
       for (const [index, { name, file, rows: rowCount }] of artifactFiles.entries()) {
+        const partly = unread.some((u) => u.name === name) ? name : undefined; // stamps every row (#1651)
         const step = `artifact ${index + 1}/${artifactFiles.length} · ${name} (${rowCount} rows)`;
         reportArtifactProgress(index, step);
         logLine(`[velociraptor] hunt ${job.huntId}: importing ${step}`);
@@ -431,7 +429,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
               label: storedName,
               idPrefix: `${jobHuntId}-${name}`,
               importedAt,
-              velociraptor: { artifact: name },
+              velociraptor: { artifact: name, partlyReadArtifact: partly },
               minSeverity,
               veloUrl,
             },
@@ -451,6 +449,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
             artifact: name,
             aggregate: false,
             maxEvents: superEventBudgetRemaining,
+            partlyReadArtifact: partly,
           });
           const floored = applySeverityFloor(parsed.events, minSeverity); // honor the import floor (no-op when unset) — the forensic path floors via importVelociraptor
           // Id by the HUNT id + ARTIFACT NAME, not a running index across the whole hunt: each artifact
@@ -471,6 +470,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
             ...(e.artifactName ? { artifactName: e.artifactName } : {}),
             ...(e.message ? { message: e.message } : {}),
             ...(veloUrl ? { veloUrl } : {}),
+            ...(e.partlyReadArtifact ? { partlyReadArtifact: e.partlyReadArtifact } : {}),
             sources: e.sources?.length ? e.sources : ["Velociraptor"],
             ...(e.asset ? { asset: e.asset } : {}),
             ...(e.path ? { path: e.path } : {}),
@@ -504,7 +504,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
             importedAt,
             minSeverity,
             veloUrl,
-            velociraptor: { maxEvents: eventBudgetRemaining },
+            velociraptor: { maxEvents: eventBudgetRemaining, partlyReadArtifact: partly },
           });
           importedAny = true;
           if (options.stateStore && budgetBaseline) {
