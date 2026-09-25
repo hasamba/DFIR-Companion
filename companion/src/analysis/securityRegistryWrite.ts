@@ -21,10 +21,13 @@ function field(ed: Row, key: string): string {
   return s === "-" ? "" : s;
 }
 
-// The same "is this the Security log" test the mapper's channel label uses. Accepts the provider
-// spelling (Microsoft-Windows-Security-Auditing) a `source_name`-only export carries.
+// The Security log, by its channel name or (a `source_name`-only export) its provider name. An
+// allowlist, not a substring test: Microsoft-Windows-SecurityHealthService and similar providers
+// are not Security-Auditing, and their 4657 would otherwise be graded as a Run-key write.
+const SECURITY_LOG = /^(?:security|microsoft-windows-security-auditing)$/i;
+
 function isSecurity4657(channel: string, eid: number): boolean {
-  return eid === REGISTRY_VALUE_MODIFIED && /security/i.test(channel) && !/sysmon/i.test(channel);
+  return eid === REGISTRY_VALUE_MODIFIED && SECURITY_LOG.test(channel.trim());
 }
 
 /** The subject keys the mapper appends for this event: ObjectName + ObjectValueName on a 4657 only. */
@@ -43,5 +46,6 @@ export function regWriteIdentity(channel: string, eid: number, ed: Row): string 
   if (!isSecurity4657(channel, eid)) return "";
   const key = field(ed, "ObjectName");
   const value = field(ed, "ObjectValueName");
-  return key || value ? `|regkey=${key}|regvalue=${value}` : "";
+  // JSON-encoded so a key or value name holding the delimiter cannot make two writes collide.
+  return key || value ? `|reg=${JSON.stringify([key, value])}` : "";
 }

@@ -100,6 +100,30 @@ describe("Security 4657 with no rendered message (#1670)", () => {
     expect(a.aggKey).not.toBe(b.aggKey);
     expect(c.aggKey).not.toBe(d.aggKey);
   });
+
+  it("keeps writes apart when a key or value name holds the identity delimiter", () => {
+    const base = `${RUN}\\${"y".repeat(200)}`;
+    const e = mapped(security(4657, { ...ACCOUNT, ObjectName: `${base}","x`, ObjectValueName: "v" }));
+    const f = mapped(security(4657, { ...ACCOUNT, ObjectName: base, ObjectValueName: `x","v` }));
+    // Rendered subjects cap each field at 140 chars, so only the identity can tell these apart.
+    const x = "z".repeat(150);
+    const g = mapped(security(4657, { ...ACCOUNT, ObjectName: `${base}|regvalue=${x}`, ObjectValueName: x }));
+    const h = mapped(security(4657, { ...ACCOUNT, ObjectName: base, ObjectValueName: `${x}|regvalue=${x}` }));
+    expect(e.aggKey).not.toBe(f.aggKey);
+    expect(g.aggKey).not.toBe(h.aggKey);
+  });
+
+  it("does not read another provider whose name contains Security as the Security log", () => {
+    const r = graded(
+      security(
+        4657,
+        { ObjectName: RUN, ObjectValueName: "Updater" },
+        "Microsoft-Windows-SecurityHealthService",
+      ),
+    );
+    expect(r.ruleIds).not.toContain("win_run_key");
+    expect(r.path).toBeUndefined();
+  });
 });
 
 describe("other events that carry ObjectName are unchanged (#1670)", () => {
@@ -109,7 +133,7 @@ describe("other events that carry ObjectName are unchanged (#1670)", () => {
     expect(one.description).not.toContain("ObjectName");
     expect(one.path).toBeUndefined();
     expect(one.aggKey).toBe(two.aggKey);
-    expect(one.aggKey).not.toContain("regkey");
+    expect(one.aggKey).not.toContain("|reg=");
   });
 
   it("the helpers are inert off Security 4657", () => {
@@ -120,6 +144,7 @@ describe("other events that carry ObjectName are unchanged (#1670)", () => {
       ["Security", 5145],
       ["Microsoft-Windows-Sysmon/Operational", 4657],
       ["Application", 4657],
+      ["Microsoft-Windows-SecurityHealthService", 4657],
     ] as const) {
       expect(regWriteKeys(["Image"], channel, eid)).toEqual(["Image"]);
       expect(regWritePath(channel, eid, ed)).toEqual({});
