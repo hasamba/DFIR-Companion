@@ -97,6 +97,8 @@ describe("synthesis on a partial model answer (#1602)", () => {
     expect(line).toBeDefined();
     for (const f of ["iocs", "mitreTechniques", "threadsOpened", "threadsClosed", "timelineNote"])
       expect(line).toContain(f);
+    // The MITRE table is rebuilt from the findings, not erased (Codex review of #1602).
+    expect(state.mitreTechniques.map((t) => t.id)).toContain("T1003.001");
   });
 
   it("retries an answer with only findings once, carrying the omitted-fields note, and saves the answer", async () => {

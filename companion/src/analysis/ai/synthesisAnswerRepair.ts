@@ -1,4 +1,5 @@
 import { ZodError } from "zod";
+import { techniqueName } from "../attackTechniqueNames.js";
 import { AiAnswerParseError } from "./providerCall.js";
 
 /**
@@ -10,11 +11,14 @@ import { AiAnswerParseError } from "./providerCall.js";
  *
  * - `fillOptionalSynthesisFields` defaults the four often-empty lists and the timeline note. It
  *   never fills `findings` or `summary`: an answer without those has nothing worth keeping.
+ *   `mitreTechniques` is NOT filled with `[]`: synthesis replaces the case's MITRE table with this
+ *   list, so an empty default would erase every technique the findings still carry. It is rebuilt
+ *   from the techniques the answer's own findings name instead.
  * - `synthesisRetryNote` turns the failure into one sentence the NEXT attempt appends to its
  *   request. It is runtime context, not prompt text, so the prompt constants stay untouched.
  */
 
-const LIST_FIELDS = ["iocs", "mitreTechniques", "threadsOpened", "threadsClosed"] as const;
+const LIST_FIELDS = ["iocs", "threadsOpened", "threadsClosed"] as const;
 const MAX_NAMED_PATHS = 10;
 
 export function fillOptionalSynthesisFields(parsed: unknown): { value: unknown; filled: string[] } {
@@ -28,11 +32,28 @@ export function fillOptionalSynthesisFields(parsed: unknown): { value: unknown; 
       filled.push(f);
     }
   }
+  if (src.mitreTechniques === undefined || src.mitreTechniques === null) {
+    out.mitreTechniques = techniquesFromFindings(src.findings);
+    filled.push("mitreTechniques");
+  }
   if (src.timelineNote === undefined || src.timelineNote === null) {
     out.timelineNote = "";
     filled.push("timelineNote");
   }
   return { value: out, filled };
+}
+
+// The distinct technique ids the findings name, as the table rows synthesis would have written.
+function techniquesFromFindings(findings: unknown): Array<{ id: string; name: string }> {
+  if (!Array.isArray(findings)) return [];
+  const ids = new Set<string>();
+  for (const f of findings) {
+    const techs: unknown =
+      f && typeof f === "object" ? (f as { mitreTechniques?: unknown }).mitreTechniques : undefined;
+    if (!Array.isArray(techs)) continue;
+    for (const t of techs) if (typeof t === "string" && t.trim()) ids.add(t.trim());
+  }
+  return [...ids].map((id) => ({ id, name: techniqueName(id) }));
 }
 
 function isOmitted(issue: ZodError["issues"][number]): boolean {

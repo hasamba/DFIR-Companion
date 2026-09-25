@@ -25,9 +25,24 @@ describe("fillOptionalSynthesisFields (#1602)", () => {
       threadsClosed: [],
       timelineNote: "",
     });
-    expect(filled).toEqual(["iocs", "mitreTechniques", "threadsOpened", "threadsClosed", "timelineNote"]);
+    expect(filled).toEqual(["iocs", "threadsOpened", "threadsClosed", "mitreTechniques", "timelineNote"]);
     expect(input).toEqual({ findings: [], summary: "s" }); // not mutated
     expect(deltaSchema.safeParse(value).success).toBe(true);
+  });
+
+  it("rebuilds an omitted MITRE table from the findings' techniques instead of emptying it", () => {
+    const { value, filled } = fillOptionalSynthesisFields({
+      findings: [
+        { mitreTechniques: ["T1003.001", "T1059.001"] },
+        { mitreTechniques: ["T1003.001", "T9999"] },
+      ],
+      summary: "s",
+    });
+    expect(filled).toContain("mitreTechniques");
+    const table = (value as { mitreTechniques: Array<{ id: string; name: string }> }).mitreTechniques;
+    expect(table.map((t) => t.id)).toEqual(["T1003.001", "T1059.001", "T9999"]);
+    expect(table[0].name).not.toBe("T1003.001"); // named from the ATT&CK table
+    expect(table[2].name).toBe("T9999"); // unknown id falls back to itself
   });
 
   it("fills a field the model set to null", () => {
