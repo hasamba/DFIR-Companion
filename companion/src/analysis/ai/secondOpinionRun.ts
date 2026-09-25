@@ -10,6 +10,7 @@ import {
   type ReconcileResponse,
   type SecondOpinion,
 } from "../secondOpinion.js";
+import { carryAcceptedDecisions, freshDeltas } from "../secondOpinionTargets.js";
 import { PresidioApprovalRequired } from "../presidio.js";
 import { HostMergeDecisionRequired } from "../hostDuplicateGate.js";
 import type { InvestigationState } from "../stateTypes.js";
@@ -105,10 +106,15 @@ export async function secondOpinion(
 
   if (referee) record = await reconcileDeltas(ctx, caseId, referee, { a, b, record });
 
+  // #1590 — the new run ADDS to what the analyst already accepted; it no longer replaces it.
   const store = ctx.opts.secondOpinionStore;
-  await recordLock.runExclusive(caseId, () => store.save(caseId, record));
+  const saved = await recordLock.runExclusive(caseId, async () => {
+    const merged = carryAcceptedDecisions(await store.load(caseId), record);
+    await store.save(caseId, merged);
+    return merged;
+  });
   await recordAgreementRate(ctx, caseId, record, modelA, modelB);
-  return record;
+  return saved;
 }
 
 /**
@@ -271,7 +277,7 @@ async function recordAgreementRate(
   modelA: string,
   modelB: string,
 ): Promise<void> {
-  const deltaCount = record.deltas.length;
+  const deltaCount = freshDeltas(record).length; // carried decisions are not this run's (#1590)
   const denom = record.agreementCount + deltaCount;
   await ctx.opts.synthMetaStore?.recordSecondOpinionPerf(caseId, {
     modelA,

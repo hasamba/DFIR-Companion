@@ -5,7 +5,8 @@ import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import type { SecondOpinion } from "./secondOpinion.js";
 
-// Per-case persistence for the Second LLM Opinion (issue #116). Holds the last second-opinion run:
+// Per-case persistence for the Second LLM Opinion (issue #116). Holds the last second-opinion run
+// plus every decision accepted in an earlier run (#1590):
 // the two model labels, the reconcile summary, and every disagreement delta with its analyst status
 // (pending | accepted | rejected). Side file `state/second-opinion.json`, written atomically (the
 // cases/ dir may live in a synced folder). NOT part of InvestigationState — and DELIBERATELY excluded
@@ -26,6 +27,9 @@ const findingSchema = z.object({
   firstSeen: z.string().catch(""),
   lastUpdated: z.string().catch(""),
   status: z.enum(["open", "confirmed", "dismissed"]).catch("open"),
+  // #1590 — the identity evidence an accepted decision needs to follow a retitled finding.
+  semanticKey: z.string().optional().catch(undefined),
+  relatedEventIds: z.array(z.string()).optional().catch(undefined),
 });
 
 const deltaSchema = z.object({
@@ -40,6 +44,7 @@ const deltaSchema = z.object({
   rationale: z.string().catch(""),
   recommendation: z.enum(["accept_b", "keep_a", "review"]).catch("review"),
   status: z.enum(["pending", "accepted", "rejected"]).catch("pending"),
+  carriedFrom: z.string().optional().catch(undefined), // #1590 — the run an accepted decision came from
 });
 
 export const secondOpinionSchema = z.object({
