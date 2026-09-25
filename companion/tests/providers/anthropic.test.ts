@@ -184,7 +184,7 @@ describe("AnthropicProvider", () => {
 
   it.each([
     ["refusal", { category: "cyber" }, /declined the request \(cyber\)/],
-    ["max_tokens", null, /cut off at max_tokens/],
+    ["max_tokens", null, /Anthropic stopped at its output limit of 32,000 tokens/],
   ])(
     "throws a clear error on stop_reason %s instead of reading a partial reply",
     async (stop_reason, stop_details, msg) => {
@@ -194,7 +194,7 @@ describe("AnthropicProvider", () => {
     },
   );
 
-  it("labels a cut-off as a context error (not retried) and a refusal as other (retried once more)", async () => {
+  it("labels a cut-off as an output_limit error (not retried) and a refusal as other (retried once more)", async () => {
     const kinds: string[] = [];
     for (const stop_reason of ["max_tokens", "refusal"]) {
       const fetchFn = fetchMock(async () => jsonResponse({ ...OK, stop_reason }));
@@ -205,7 +205,21 @@ describe("AnthropicProvider", () => {
       expect(err).toBeInstanceOf(ProviderError);
       kinds.push((err as ProviderError).kind);
     }
-    expect(kinds).toEqual(["context", "other"]);
+    expect(kinds).toEqual(["output_limit", "other"]);
+  });
+
+  it("names the max_tokens actually sent (cap plus thinking room) and throws even on an empty answer", async () => {
+    // Current models get THINKING_ROOM (16000) added on top of the configured cap, so the message
+    // must name the limit the API really enforced, not the configured one.
+    const fetchFn = fetchMock(async () =>
+      jsonResponse({ content: [{ type: "thinking", thinking: "..." }], stop_reason: "max_tokens" }),
+    );
+    const p = new AnthropicProvider({ apiKey: "k", model: "claude-opus-5", maxTokens: 8000, fetchFn });
+    const err = await p
+      .analyze({ systemPrompt: "s", userPrompt: "u", images: [], rejectTruncated: true })
+      .catch((e: unknown) => e);
+    expect((err as ProviderError).kind).toBe("output_limit");
+    expect((err as ProviderError).message).toContain("24,000 tokens");
   });
 
   it("does NOT enable thinking without a budget, or below the 1024-token minimum", async () => {

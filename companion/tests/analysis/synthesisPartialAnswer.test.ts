@@ -7,6 +7,7 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { SynthMetaStore } from "../../src/analysis/synthMeta.js";
 import { AnalysisPipeline } from "../../src/analysis/pipeline.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
+import { outputLimitError, type AnalyzeRequest } from "../../src/providers/provider.js";
 
 // #1602: a partial model answer must not throw a whole synthesis away. Always a temp case root.
 
@@ -24,6 +25,7 @@ let cases: CaseStore;
 let stateStore: StateStore;
 let synthMetaStore: SynthMetaStore;
 let prompts: string[];
+let requests: AnalyzeRequest[];
 let warns: string[];
 
 function ev(id: string): ForensicEvent {
@@ -49,7 +51,8 @@ const logger = {
 
 function pipelineAnswering(answers: Array<string | Error>, withMeta = true): AnalysisPipeline {
   let i = 0;
-  const analyze = vi.fn(async (req: { userPrompt?: string }) => {
+  const analyze = vi.fn(async (req: AnalyzeRequest) => {
+    requests.push(req);
     prompts.push(req.userPrompt ?? "");
     const a = answers[Math.min(i++, answers.length - 1)];
     if (a instanceof Error) throw a;
@@ -81,6 +84,7 @@ beforeEach(async () => {
   stateStore = new StateStore(cases);
   synthMetaStore = new SynthMetaStore(cases);
   prompts = [];
+  requests = [];
   warns = [];
   const s = emptyState("c1");
   s.forensicTimeline.push(ev("a"), ev("b"));
@@ -156,5 +160,22 @@ describe("synthesis on a partial model answer (#1602)", () => {
     const p = pipelineAnswering([JSON.stringify({ findings: [FINDING] })], false);
     await expect(p.synthesize("c1")).rejects.toThrow(/summary/);
     expect(warns.some((w) => w.includes("raw answer not saved"))).toBe(true);
+  });
+});
+
+// A reasoning model can spend its whole output limit thinking and return a cut-off answer. The JSON
+// repair then turned that into a stub finding, and the schema reported "relatedIocs Required" —
+// true, but the wrong thing to tell the analyst, and all four attempts failed the same way.
+describe("synthesis when the model hits its output limit", () => {
+  it("asks the provider to refuse a cut-off answer", async () => {
+    const p = pipelineAnswering([JSON.stringify({ findings: [FINDING], summary: "ok" })]);
+    await p.synthesize("c1");
+    expect(requests[0].rejectTruncated).toBe(true);
+  });
+
+  it("fails on the first attempt with the output-limit message, not a schema error", async () => {
+    const p = pipelineAnswering([outputLimitError("Ollama", 16000, 15600)]);
+    await expect(p.synthesize("c1")).rejects.toThrow(/output limit of 16,000 tokens.*DFIR_AI_MAX_TOKENS/s);
+    expect(prompts).toHaveLength(1);
   });
 });

@@ -83,3 +83,61 @@ describe("GeminiProvider — usageMetadata parsing (#3)", () => {
     expect(result.usage).toBeUndefined();
   });
 });
+
+describe("GeminiProvider — output-token limit (finishReason MAX_TOKENS)", () => {
+  const cutOff = (text: string | undefined, usageMetadata?: Record<string, number>) =>
+    new GeminiProvider({
+      apiKey: "k",
+      model: "gemini-2.5-pro",
+      maxTokens: 16000,
+      fetchFn: async () =>
+        jsonResponse({
+          candidates: [
+            { content: { parts: text === undefined ? [] : [{ text }] }, finishReason: "MAX_TOKENS" },
+          ],
+          ...(usageMetadata ? { usageMetadata } : {}),
+        }),
+    });
+  const run = (p: GeminiProvider, rejectTruncated?: boolean) =>
+    p
+      .analyze({
+        systemPrompt: "s",
+        userPrompt: "x",
+        images: [],
+        ...(rejectTruncated ? { rejectTruncated } : {}),
+      })
+      .catch((e: unknown) => e);
+
+  it("throws output_limit when the model was cut off with no answer text", async () => {
+    const err = await run(cutOff(undefined));
+    expect(err).toBeInstanceOf(ProviderError);
+    expect((err as ProviderError).kind).toBe("output_limit");
+    expect((err as ProviderError).message).toContain("16,000 tokens");
+  });
+
+  it("throws output_limit on a cut-off with text when the caller rejects truncated output", async () => {
+    const err = await run(cutOff('{"findings":['), true);
+    expect((err as ProviderError).kind).toBe("output_limit");
+  });
+
+  it("returns the partial text on a cut-off when the caller does not reject truncated output", async () => {
+    const result = (await run(cutOff('{"findings":['))) as AnalyzeResult;
+    expect(result.rawText).toBe('{"findings":[');
+  });
+
+  it("names the thinking tokens from usageMetadata.thoughtsTokenCount", async () => {
+    const err = await run(cutOff(undefined, { candidatesTokenCount: 20, thoughtsTokenCount: 15980 }));
+    expect((err as ProviderError).message).toContain("15,980");
+  });
+
+  it("keeps the plain no-content error when the reply was not cut off", async () => {
+    const p = new GeminiProvider({
+      apiKey: "k",
+      model: "gemini-2.5-pro",
+      fetchFn: async () => jsonResponse({ candidates: [{ content: { parts: [] }, finishReason: "STOP" }] }),
+    });
+    const err = await run(p);
+    expect((err as ProviderError).kind).toBe("other");
+    expect((err as ProviderError).message).toBe("Gemini returned no content");
+  });
+});

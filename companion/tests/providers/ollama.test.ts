@@ -63,9 +63,31 @@ describe("buildProviderFrom — ollama base-URL wiring", () => {
 });
 
 describe("OllamaCloudProvider — supportsThinking (#1468)", () => {
-  it("inherits no thinking claim from OpenAIProvider", () => {
-    // Read through the interface: the class does not declare the field, and that is the point.
-    const p: AIProvider = new OllamaCloudProvider({ apiKey: "k", model: "llama3.1" });
-    expect(p.supportsThinking).toBeFalsy();
+  it("declares that it acts on thinkingTokens (reasoning_effort)", () => {
+    const p: AIProvider = new OllamaCloudProvider({ apiKey: "k", model: "glm-5.3-flash" });
+    expect(p.supportsThinking).toBe(true);
+  });
+});
+
+describe("OllamaCloudProvider — reasoning_effort", () => {
+  const sentBody = async (thinkingTokens?: number) => {
+    const fetchFn = fetchMock(async () => jsonResponse({ choices: [{ message: { content: "{}" } }] }));
+    const p = new OllamaCloudProvider({ apiKey: "k", model: "glm-5.3-flash", fetchFn });
+    await p.analyze({ systemPrompt: "s", userPrompt: "u", images: [], thinkingTokens });
+    return JSON.parse((fetchFn.mock.calls[0][1] as RequestInit).body as string);
+  };
+
+  it("asks for low effort by default, so a reasoning model cannot spend the whole output limit thinking", async () => {
+    expect((await sentBody()).reasoning_effort).toBe("low");
+    expect((await sentBody(500)).reasoning_effort).toBe("low");
+  });
+
+  it("asks for high effort when deep reasoning is on", async () => {
+    expect((await sentBody(1024)).reasoning_effort).toBe("high");
+    expect((await sentBody(8000)).reasoning_effort).toBe("high");
+  });
+
+  it("never sends reasoning_effort none", async () => {
+    for (const t of [undefined, 0, 1024]) expect((await sentBody(t)).reasoning_effort).not.toBe("none");
   });
 });

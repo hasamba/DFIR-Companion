@@ -6,6 +6,7 @@ import {
   ProviderError,
   httpErrorKind,
   httpErrorMessage,
+  outputLimitError,
   requestSignal,
 } from "./provider.js";
 import { validateBaseUrl } from "./urlValidation.js";
@@ -156,12 +157,10 @@ export class AnthropicProvider implements AIProvider {
       const category = json.stop_details?.category;
       throw new ProviderError(`Anthropic declined the request${category ? ` (${category})` : ""}`, "other");
     }
-    if (json.stop_reason === "max_tokens") {
-      throw new ProviderError(
-        `Anthropic reply was cut off at max_tokens (${maxTokens}) — raise DFIR_AI_MAX_TOKENS`,
-        "context",
-      );
-    }
+    // Always thrown, even without rejectTruncated: the limit named is the one actually sent (thinking
+    // room included). No thinking share is passed — usage does not break it out, and current models
+    // return summarised or omitted thinking text, so a length estimate would mislead.
+    if (json.stop_reason === "max_tokens") throw outputLimitError("Anthropic", maxTokens);
     const text = json.content?.find((b) => b.type === "text")?.text;
     if (!text) throw new ProviderError("Anthropic returned no content", "other");
     const u = json.usage;
