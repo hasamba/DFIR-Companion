@@ -39,9 +39,9 @@
 // per batch.
 //
 // The same seam carries two cross-row rules about ordinary Windows behaviour, not the collector
-// (#1593), because it is the one place the Velociraptor and Chainsaw importers hand over the raw
-// record, the mapped row and a whole-file resolve: a parent's handle to its own child at creation
-// (processParentage.ts) and an AppX package update's firewall rule swap (appxFirewallChurn.ts).
+// (#1593): a parent's handle to its own child at creation (processParentage.ts) and an AppX package
+// update's firewall rule swap (appxFirewallChurn.ts). They run through OsBehaviourLedger
+// (osBehaviourRules.ts), which the native Hayabusa and Windows Event XML importers share (#1621).
 
 import { getCI, parsePid, str, type MappedEvent } from "./siemImport.js";
 import { CollectorSpawnLineage, SPAWNED_SCRIPT_NOTE } from "./collectorLineage.js";
@@ -65,9 +65,10 @@ import {
   scriptRunspace,
 } from "./veloDetectionNoise.js";
 import { processGuid } from "./processAccess.js";
-import { recordComputer, shortHostName } from "./hostIdentity.js";
-import { isInjectionEvidenceRow, ParentChildAccessLedger } from "./processParentage.js";
-import { AppxFirewallChurnLedger, isAppxFirewallRow } from "./appxFirewallChurn.js";
+import { shortHostName } from "./hostIdentity.js";
+import { isInjectionEvidenceRow } from "./processParentage.js";
+import { isAppxFirewallRow } from "./appxFirewallChurn.js";
+import { ledgerHostKeys as hostKeys, OsBehaviourLedger } from "./osBehaviourRules.js";
 
 type Row = Record<string, unknown>;
 
@@ -120,14 +121,6 @@ export function isCollectorEvidenceRow(raw: Row): boolean {
 
 function hostKey(m: MappedEvent): string {
   return shortHostName(m.asset ?? "");
-}
-
-// The names a row can be filed under: the host the importer resolved AND the name the record itself
-// carries. A renamed lab box (#1489) writes its old name into every record until the rename, and a
-// bulk import may resolve the spawn before the rename evidence is read and the child after it — so
-// a claim is stored and looked up under both, and two spellings of one machine still meet.
-function hostKeys(raw: Row, m: MappedEvent): string[] {
-  return [...new Set([hostKey(m), shortHostName(recordComputer(raw))].filter(Boolean))];
 }
 
 function ownGuid(raw: Row, m: MappedEvent): string {
@@ -184,8 +177,7 @@ export class CollectorFootprintLedger {
   // host|hostId|runspaceId of every PowerShell session a Tools-tree record proved (#1555).
   private readonly runspaces = new Set<string>();
   private pending: Candidate[] = [];
-  private readonly parentage = new ParentChildAccessLedger();
-  private readonly firewall = new AppxFirewallChurnLedger();
+  private readonly os = new OsBehaviourLedger();
 
   constructor(private readonly infra: CollectorInfrastructure = loadCollectorInfrastructure()) {
     this.lineage = new CollectorSpawnLineage(infra);
@@ -198,31 +190,19 @@ export class CollectorFootprintLedger {
   prime(raw: Row, events: readonly (MappedEvent | null)[]): void {
     for (const m of events) if (m) this.noteProcess(raw, m);
     this.noteRunspace(raw, events);
-    this.noteOs(raw, events);
-  }
-
-  // The OS-behaviour facts (#1593): every process creation, every AppX firewall change.
-  private noteOs(raw: Row, events: readonly (MappedEvent | null)[]): void {
-    for (const m of events) {
-      if (!m) continue;
-      const hosts = hostKeys(raw, m);
-      this.parentage.note(raw, m, hosts);
-      this.firewall.note(raw, m, hosts);
-    }
+    this.os.note(raw, events); // the OS-behaviour facts (#1593): process creations, firewall changes
   }
 
   /** Offer ONE row's mapped events: grade the tool-tree scripts now, hold the rest for `resolve`. */
   offer(raw: Row, events: readonly (MappedEvent | null)[]): void {
     demoteDetectionToolScript(raw, events);
     this.noteRunspace(raw, events);
-    this.noteOs(raw, events);
+    this.os.note(raw, events);
+    this.os.offer(raw, events);
     for (const m of events) {
       if (!m) continue;
       this.noteProcess(raw, m);
       if (m.origin === "collector") continue;
-      const hosts = hostKeys(raw, m);
-      this.parentage.offer(raw, m, hosts);
-      this.firewall.offer(raw, m, hosts);
       const c = candidate(raw, m);
       if (c) this.pending.push(c);
     }
@@ -265,8 +245,7 @@ export class CollectorFootprintLedger {
         claimSession(c.m);
     this.resolveProcesses(pending.filter((c) => c.kind === "process").sort((a, b) => a.at - b.at));
     for (const c of pending) if (c.kind === "file" && this.owns(c, c.guid, c.pid)) claim(c.m);
-    this.parentage.resolve();
-    this.firewall.resolve();
+    this.os.resolve();
   }
 
   // Fixed point over the time-ordered process rows: a claimed child vouches for its own children on

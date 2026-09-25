@@ -4,15 +4,20 @@
 // EVTX/SIEM JSON paths, just wrapped in the `<Events><Event>…</Event></Events>` schema, so this
 // module does NOT re-map anything: it parses the regular XML envelope into the SAME record shape
 // the SIEM importer's `mapWindows` already consumes ({ EventID, Channel, Computer, @timestamp,
-// EventData: { Name→value } }) and hands it to the shared `buildSiemResult` — reusing the per-EID
-// Windows/Sysmon mapping, severity derivation, IOC/asset extraction, aggregation and caps.
+// EventData: { Name→value } }) and hands it to the shared Windows-event builder (siemBuildProgress.ts)
+// — reusing the per-EID Windows/Sysmon mapping, severity derivation, IOC/asset extraction,
+// aggregation and caps, plus the cross-row OS-behaviour rules (#1621).
 //
 // The parser is dependency-free (no XML library — mirrors the hand-rolled MIME email importer):
 // the Windows event XML is highly regular, so a focused scan over `<Event>` blocks is robust and
 // avoids pulling an XML parser into the Node runtime / bundler graph. Pure.
 
-import { buildSiemResult, type SiemImportOptions, type SiemParseResult } from "./siemImport.js";
-import { buildSiemResultProgress, throwIfImportAborted } from "./siemBuildProgress.js";
+import type { SiemImportOptions, SiemParseResult } from "./siemImport.js";
+import {
+  buildSiemResultProgress,
+  buildWindowsEventResult,
+  throwIfImportAborted,
+} from "./siemBuildProgress.js";
 
 type Row = Record<string, unknown>;
 
@@ -209,10 +214,11 @@ export async function parseWinEventXmlProgress(
   return records;
 }
 
-// Parse a Windows Event Log XML export into a SIEM result (identical shape to parseSiemExport).
+// Parse a Windows Event Log XML export into a SIEM result (identical shape to parseSiemExport). The
+// same builder as the progress path the import route runs, so both give one answer (#1621).
 export function parseEvtxXml(text: string, opts: SiemImportOptions = {}): SiemParseResult {
   const records = parseWinEventXml(text);
-  return buildSiemResult(records, "winevent-xml", opts, text);
+  return buildWindowsEventResult(records, "winevent-xml", opts, text);
 }
 
 export async function parseEvtxXmlProgress(

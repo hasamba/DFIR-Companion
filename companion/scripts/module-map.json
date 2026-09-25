@@ -285,6 +285,7 @@
     "collectorLineage.ts": "analysis/ingest",
     "processParentage.ts": "analysis/ingest",
     "appxFirewallChurn.ts": "analysis/ingest",
+    "osBehaviourRules.ts": "analysis/ingest",
     "benignOsActivity.ts": "analysis/ingest",
     "collectorMerge.ts": "analysis/timeline",
     "collectionPlan.ts": "analysis/workflow",
