@@ -459,3 +459,26 @@ describe("renderInteractiveHtmlReport — session-command note (#1594)", () => {
     expect(card.sessionCommands[0]).not.toContain("http://");
   });
 });
+
+describe("renderInteractiveHtmlReport — session-command bounds (#1594 review)", () => {
+  it("drops notes whose row the report does not embed and caps the count per card", () => {
+    const state = emptyState("c1");
+    const notes = Array.from({ length: 15 }, (_, i) => {
+      const id = `e${i + 1}`;
+      state.forensicTimeline.push({ ...ev("e1", "Low", "ws01"), id });
+      return {
+        eventId: id,
+        timestamp: "2026-05-01T00:00:00Z",
+        host: "ws01",
+        kind: "process" as const,
+        text: `cmd${i + 1}`,
+      };
+    });
+    notes.push({ eventId: "not-embedded", timestamp: "", host: "ws01", kind: "process", text: "ghost" });
+    state.findings.push({ ...finding("f1", "High", 90), sessionCommands: notes });
+    const card = parseBlob(renderInteractiveHtmlReport(state, caseMeta, emptyReportMeta())).findings[0];
+    expect(card.sessionCommands).toHaveLength(13);
+    expect(card.sessionCommands[12]).toBe("… and 3 more in the case timeline");
+    expect(JSON.stringify(card.sessionCommands)).not.toContain("ghost");
+  });
+});

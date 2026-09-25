@@ -91,10 +91,11 @@ export function noteSessionCommands(
   const live = state.findings.filter((f) => f.status !== "dismissed");
   const texts = new Map(live.map((f) => [f.id, findingText(f)] as const));
   const cited = citedBy(state, live);
+  const hostsOf = findingHosts(state, live, byId, hostOf);
 
   const notes = new Map<string, SessionCommand[]>();
   for (const c of candidates(opts.scopedEvents, sessions, hostOf)) {
-    if (isNamed(c, texts, cited)) continue;
+    if (isNamed(c, texts, cited, hostsOf)) continue;
     const target = closestAnchor(c, anchors);
     if (!target) continue;
     const list = notes.get(target.finding.id) ?? [];
@@ -244,7 +245,8 @@ function describe(e: ForensicEvent): Described | undefined {
   const commandLine = (proc?.commandLine ?? e.commandLine ?? "").trim();
   if (commandLine) {
     const text = oneLine(commandLine);
-    return { kind: "process", text, program: programOf(tokenize(text)) };
+    // The real program, not a `cmd /c` wrapper: a finding that says "cmd" has not named `net view`.
+    return { kind: "process", text, program: programOf(unwrap(tokenize(text))) };
   }
   if (!isFileWrite(e)) return undefined;
   const path = (canonicalFile(e)?.path ?? e.path ?? "").trim();
@@ -312,17 +314,43 @@ function wordIn(text: string, word: string): boolean {
   return word.length > 0 && text.includes(` ${word} `);
 }
 
+/** Finding id -> the hosts of the scoped rows it cites. */
+function findingHosts(
+  state: InvestigationState,
+  findings: readonly Finding[],
+  byId: ReadonlyMap<string, ForensicEvent>,
+  hostOf: (raw: string) => string,
+): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  for (const f of findings) {
+    const hosts = new Set<string>();
+    for (const id of citedIds(state, f)) {
+      const asset = byId.get(id)?.asset?.trim();
+      if (asset) hosts.add(hostOf(asset));
+    }
+    out.set(f.id, hosts);
+  }
+  return out;
+}
+
+/**
+ * Only a finding about this row's host can name it: one that cites the row itself, or cites some row
+ * on the same host. `net view /all` named for host B says nothing about the same command on host A.
+ */
 function isNamed(
   c: Candidate,
   texts: ReadonlyMap<string, string>,
   cited: ReadonlyMap<string, Set<string>>,
+  hostsOf: ReadonlyMap<string, Set<string>>,
 ): boolean {
   const full = normalize(c.text);
   const core = coreOf(c);
+  const citing = cited.get(c.event.id);
   for (const [id, text] of texts) {
+    if (!citing?.has(id) && !hostsOf.get(id)?.has(c.host)) continue;
     if (text.includes(full)) return true;
     if (core && (core.includes(" ") || core.length >= 4) && wordIn(text, core)) return true;
-    if (cited.get(c.event.id)?.has(id) && wordIn(text, c.program)) return true;
+    if (citing?.has(id) && wordIn(text, c.program)) return true;
   }
   return false;
 }

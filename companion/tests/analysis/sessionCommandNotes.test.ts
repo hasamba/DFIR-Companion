@@ -291,3 +291,27 @@ describe("pruneSessionCommands (#1594)", () => {
     expect(pruneSessionCommands(s)).toBe(s);
   });
 });
+
+describe("noteSessionCommands — naming is scoped to the host (#1594 review)", () => {
+  it("a finding about another host does not name this host's command", () => {
+    const other = ev("e-b", { asset: "srv02.example.com", severity: "High", timestamp: at("09:01:00") });
+    const hostB = finding("f-b", {
+      title: "Discovery on SRV02",
+      description: "The actor ran net view /all on SRV02.",
+      relatedEventIds: ["e-b"],
+    });
+    const out = run([...quiet, ...loud, other], [mimikatz, hostB]);
+    expect(notedIds(out)).toContain("e-netview");
+  });
+
+  it("a citing finding that only says the wrapper (cmd) has not named the wrapped command", () => {
+    const wrapped = ev("e-wrap", { timestamp: at("09:01:00"), commandLine: "cmd.exe /c net view /all" });
+    const f = finding("f-cmd", {
+      title: "Shell activity",
+      description: "cmd spawned a child process.",
+      relatedEventIds: ["e-mimi", "e-wrap"],
+    });
+    const out = run([...loud, wrapped], [mimikatz, f]);
+    expect(notedIds(out)).toEqual(["e-wrap"]);
+  });
+});
