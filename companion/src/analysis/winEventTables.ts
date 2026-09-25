@@ -60,6 +60,7 @@ export const WIN_EVENTS: Record<number, WinEventDef> = {
   4689: { label: "Process exited", severity: "Info" },
   // Object / share / policy
   4663: { label: "Object access attempt", severity: "Low" },
+  4657: { label: "Registry value modified", severity: "Info", mitre: ["T1112"] }, // key rendered by securityRegistryWrite.ts (#1670)
   4670: { label: "Permissions on object changed", severity: "Medium" },
   5140: { label: "Network share accessed", severity: "Low", mitre: ["T1021.002"] },
   5142: { label: "Network share added", severity: "Medium" },
