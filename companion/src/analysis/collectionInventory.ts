@@ -80,7 +80,7 @@ export interface ClearedLog {
   count: number;
 }
 
-export type HuntArtifactState = "empty" | "truncated" | "failed" | "archive-only" | "running";
+export type HuntArtifactState = "empty" | "truncated" | "failed" | "archive-only" | "running" | "unread";
 
 export interface HuntArtifactLine {
   artifact: string;
@@ -200,6 +200,10 @@ export function sanitizeHuntJobs(jobs: readonly unknown[]): VeloHuntJob[] {
         const t = x as { name: string; kept?: unknown; total?: unknown };
         return { name: t.name, kept: Number(t.kept) || 0, total: Number(t.total) || 0 };
       }),
+      unreadArtifacts: named(j.unreadArtifacts).map((x) => ({
+        name: x.name,
+        rows: Number((x as { rows?: unknown }).rows) || 0,
+      })),
     });
   }
   return out;
@@ -341,6 +345,17 @@ function emptyLine(job: VeloHuntJob, artifact: string, aliasIndex?: HostAliasInd
   return { detail: reachedDetail(reached, countsNote(job), 1), bounded: false, reached };
 }
 
+/**
+ * The line for an artifact whose source list could not be looked up (#1635). Its named sources were
+ * never read, so its silence is not absence: an "unread" line never settles a class.
+ */
+function unreadDetail(rows: number): string {
+  const what = rows
+    ? `partly read — ${rows} row(s) from its default source imported`
+    : "not read — the default source returned no rows";
+  return `${what}, but its source list could not be looked up, so rows it keeps under named sources were never read; not evidence of absence`;
+}
+
 /** Hunt metadata is supplemental: only imported jobs say anything, and only per artifact. */
 function huntLines(
   jobs: readonly VeloHuntJob[],
@@ -373,9 +388,14 @@ function huntLines(
     const empty = new Set(job.emptyArtifacts ?? []);
     const failed = new Set((job.skippedArtifacts ?? []).map((s) => s.name));
     const truncated = new Map((job.truncatedArtifacts ?? []).map((t) => [t.name, t]));
+    const unread = new Map((job.unreadArtifacts ?? []).map((u) => [u.name, u.rows]));
     for (const a of job.artifacts) {
       const t = truncated.get(a);
+      const u = unread.get(a);
+      if (u !== undefined && !failed.has(a)) put(a, "unread", unreadDetail(u));
       if (failed.has(a)) put(a, "failed", "fetch failed");
+      else if (u === 0)
+        continue; // nothing was read: no empty, truncated or archive line
       else if (empty.has(a)) {
         const e = emptyLine(job, a, aliasIndex);
         put(a, "empty", e.detail, e.bounded, e.reached);
@@ -491,6 +511,10 @@ export function inventorySignature(hunts: readonly VeloHuntJob[]): string {
           ?.map((c) => [c.clientId, c.hostname, c.fqdn, c.os])
           .sort((a, b) => a[0].localeCompare(b[0])) ?? null,
       ),
+      // Appended only when present, so a job without it keeps the signature it had before #1635.
+      ...(Array.isArray(j.unreadArtifacts) && j.unreadArtifacts.length
+        ? [JSON.stringify(j.unreadArtifacts)]
+        : []),
     ]);
   return hunts.map(one).sort().join("\n");
 }

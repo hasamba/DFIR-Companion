@@ -286,6 +286,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       const snapshotFragments: HuntRunSnapshot[] = [];
       const skipped: SkippedArtifact[] = [];
       const cutShort: { name: string; kept: number; total: number }[] = []; // TruncatedArtifact
+      const unread: { name: string; rows: number }[] = []; // source list unknown — never "empty" (#1635)
       let totalRows = 0;
       for (const artifact of job.artifacts) {
         const name = String(artifact ?? "").trim();
@@ -297,6 +298,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
           const res = await client.huntArtifactRows(job.huntId, name, srcs, job.filters?.[name], true);
           rows = res.rows;
           if (res.truncated) cutShort.push({ name, kept: rows.length, total: res.total });
+          if (res.sourcesUnknown) unread.push({ name, rows: rows.length });
         } catch (e) {
           // oversized / slow / failed / invalid name — keep going so the rest of the bundle still
           // imports; logged + persisted below so a silent per-artifact failure doesn't read as "only
@@ -315,11 +317,11 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         await writeFile(file, JSON.stringify({ [name]: rows }), "utf8");
         artifactFiles.push({ name, file, rows: rows.length });
       }
-      for (const w of collectWarnings(job.huntId, skipped, cutShort)) logLine(w);
+      for (const w of collectWarnings(job.huntId, skipped, cutShort, unread)) logLine(w);
       // The artifacts that returned NEITHER rows nor an error — not a failure (they simply had nothing
       // to report), but worth distinguishing from `skipped` so "N artifacts collected, M had no findings,
       // K failed to collect" is fully accounted for instead of a bare "+X events" that reads as one artifact.
-      const skippedNames = new Set(skipped.map((s) => s.name));
+      const skippedNames = new Set([...skipped, ...unread].map((s) => s.name)); // unread: silence unproven
       const producedNames = new Set(artifactFiles.map((a) => a.name));
       const emptyArtifacts = job.artifacts.filter((a) => !producedNames.has(a) && !skippedNames.has(a));
 
@@ -683,6 +685,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         skippedArtifacts: skipped.length ? skipped : undefined,
         truncatedArtifacts: cutShort.length ? cutShort : undefined,
         emptyArtifacts: emptyArtifacts.length ? emptyArtifacts : undefined,
+        unreadArtifacts: unread.length ? unread : undefined,
       };
       await huntStore.upsert(caseId, job);
       options.onVeloHunt?.(caseId);

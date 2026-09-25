@@ -2336,6 +2336,50 @@ describe("VelociraptorClient.huntArtifactRows", () => {
     };
     const res = await new VelociraptorClient(cfg, runner).huntArtifactRows("H.1", "Generic.Scanner.ThorZIP");
     expect(res.rows).toEqual([]); // a catalog failure must not fail the collect
+    expect(res.sourcesUnknown).toBe(true); // #1635 — but the empty is "not read", never "empty"
+  });
+
+  // #1635 — TaskScheduler keeps its rows only under /Analysis. With the catalog down, its bare read is
+  // empty whether or not the host has tasks; the collect must be told the named sources went unread.
+  it("says the named sources went unread when the catalog fails, whatever the bare read returned", async () => {
+    const runner =
+      (bare: unknown[]): VqlRunner =>
+      async (statements) => {
+        if (statements[0].includes("FROM artifact_definitions(")) throw new Error("server down");
+        return { rows: bare, raw: "" };
+      };
+    for (const bare of [[], [{ a: 1 }]]) {
+      const res = await new VelociraptorClient(cfg, runner(bare)).huntArtifactRows(
+        "H.1",
+        "Windows.System.TaskScheduler",
+      );
+      expect(res.rows).toEqual(bare);
+      expect(res.sourcesUnknown).toBe(true);
+    }
+  });
+
+  it("treats an artifact missing from a successful catalog as sources unknown", async () => {
+    const runner: VqlRunner = async (statements) => {
+      if (statements[0].includes("FROM artifact_definitions("))
+        return { rows: [{ name: "Other.Artifact", type: "CLIENT", sources: [{}] }], raw: "" };
+      return { rows: [], raw: "" };
+    };
+    const res = await new VelociraptorClient(cfg, runner).huntArtifactRows(
+      "H.1",
+      "Windows.System.TaskScheduler",
+    );
+    expect(res.sourcesUnknown).toBe(true);
+  });
+
+  it("does not flag a complete read: catalog entry found, or an explicit source list", async () => {
+    const runner: VqlRunner = async (statements) => {
+      if (statements[0].includes("FROM artifact_definitions("))
+        return { rows: [{ name: "Windows.Sys.StartupItems", type: "CLIENT", sources: [{}] }], raw: "" };
+      return { rows: [], raw: "" };
+    };
+    const client = new VelociraptorClient(cfg, runner);
+    expect((await client.huntArtifactRows("H.1", "Windows.Sys.StartupItems")).sourcesUnknown).toBeUndefined();
+    expect((await client.huntArtifactRows("H.1", "Custom.Hunt", ["Pivot0"])).sourcesUnknown).toBeUndefined();
   });
 
   it("does not second-guess an explicit source list or an already-qualified ref", async () => {

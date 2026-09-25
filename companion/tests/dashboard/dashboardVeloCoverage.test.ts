@@ -50,6 +50,26 @@ describe("veloCoverageHtml", () => {
     expect(html).toContain("DFIR_VELOCIRAPTOR_COLLECT_MAX_ROWS");
   });
 
+  // #1635 — the artifact catalog lookup failed, so rows kept under named sources were never read.
+  it("warns on a SINGLE-artifact hunt whose named sources were not read", () => {
+    const html = cov.veloCoverageHtml({
+      status: "imported",
+      artifacts: ["Windows.System.TaskScheduler"],
+      unreadArtifacts: [{ name: "Windows.System.TaskScheduler", rows: 0 }],
+    });
+    expect(html).toContain("0/1 artifact(s) returned results");
+    expect(html).toContain("1 not read");
+    expect(html).toContain("Windows.System.TaskScheduler");
+    expect(html).toContain("Collect again");
+  });
+
+  it("counts a partly read artifact as returning results, and still names it", () => {
+    const html = cov.veloCoverageHtml(imported({ unreadArtifacts: [{ name: "A.one", rows: 3 }] }));
+    expect(html).toContain("3/3 artifact(s) returned results");
+    expect(html).toContain("1 not read");
+    expect(html).toContain("A.one");
+  });
+
   it("stays quiet for a clean single-artifact hunt, and for a job still running", () => {
     expect(cov.veloCoverageHtml({ status: "imported", artifacts: ["A.one"] })).toBe("");
     expect(cov.veloCoverageHtml({ status: "running", artifacts: ["A.one", "A.two"] })).toBe("");

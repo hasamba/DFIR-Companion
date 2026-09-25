@@ -876,7 +876,7 @@ export class VelociraptorClient {
     sources: string[] = [],
     where?: string,
     collect = false,
-  ): Promise<VelociraptorRunResult> {
+  ): ReturnType<typeof readHuntArtifactRows> {
     const read = (name: string, srcs: string[]) => this.huntResults(huntId, name, srcs, where, collect);
     const cat = () => this.listClientArtifacts(); // the MERGED two-read result obeys the cap too
     return readHuntArtifactRows(read, cat, artifact, sources, this.rowCap(collect));

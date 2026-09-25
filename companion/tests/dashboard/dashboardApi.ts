@@ -485,6 +485,7 @@ export interface VeloCoverageApi {
     skippedArtifacts?: { name: string; error: string }[];
     emptyArtifacts?: string[];
     truncatedArtifacts?: { name: string; kept: number; total: number }[];
+    unreadArtifacts?: { name: string; rows: number }[];
   }): string;
   veloLaunchNotesHtml(run: {
     unknownArtifacts?: string[];
