@@ -1,6 +1,6 @@
 import { eventPrevalence, buildPrevalenceIndex, prevalenceTag, rarityScore } from "../prevalence.js";
 import type { ForensicEvent, InvestigationState } from "../stateTypes.js";
-import type { HostAliasIndex } from "../hostAlias.js";
+import { resolveHost, type HostAliasIndex } from "../hostAlias.js";
 import { renderStructuredTags } from "../synthEvidence.js";
 import {
   collapseForPrompt,
@@ -11,10 +11,20 @@ import {
   promptCandidates,
   type CollapsedPrompt,
 } from "../synthGroup.js";
-import { selectSynthesisEventsAnnotated, type SelectionClass } from "../synthSelect.js";
+import {
+  selectSynthesisEventsAnnotated,
+  type CommandSeatOptions,
+  type SelectionClass,
+} from "../synthSelect.js";
 import { promptDescription } from "./promptDescription.js";
 import { byEventTime } from "../forensicSort.js";
 import { pinCap, promotedTag, rankPins } from "./promotedEvidence.js";
+import {
+  commandSeatCap,
+  findingSessionRowIds,
+  sessionCommandSeats,
+  type CommandSeat,
+} from "./synthCommandSeats.js";
 
 /**
  * Which events reach the synthesis prompt, and how each one renders (#453, split from
@@ -103,9 +113,15 @@ export function createTimelineSelection(
   // (investigation-guidance #4) exposes which CLASS claimed each event. The deterministic
   // high-severity backfill still creates findings for any Critical/High event NOT shown here, so
   // capping the prompt never loses a severe detection.
+  const commandSeats = commandSeatRows(state, scopedEvents, grouping, pinnedIds, aliasIndex);
   const choose = (count: number) => {
     const pins = pinned.slice(0, count);
-    const chosen = selectOrNone(collapsedEvents, count - pins.length, rarityOf);
+    // The reserve is sized from the whole prompt count, not what the pins leave, and a pinned
+    // Critical/High row already satisfies the one-anchor guarantee (#1622).
+    const chosen = selectOrNone(collapsedEvents, count - pins.length, rarityOf, commandSeats, {
+      cap: commandSeatCap(count),
+      anchorShown: pins.some((e) => e.severity === "Critical" || e.severity === "High"),
+    });
     return { chosen, pins, events: [...chosen.events, ...pins].sort(byEventTime) };
   };
   let current = choose(maxEvents);
@@ -149,10 +165,51 @@ function selectOrNone(
   events: ForensicEvent[],
   max: number,
   rarityOf: (e: ForensicEvent) => number,
+  commandSeats: readonly CommandSeat[],
+  seatOptions: CommandSeatOptions,
 ): ReturnType<typeof selectSynthesisEventsAnnotated> {
-  if (max > 0) return selectSynthesisEventsAnnotated(events, max, rarityOf);
+  if (max > 0) return selectSynthesisEventsAnnotated(events, max, rarityOf, commandSeats, seatOptions);
   const empty = selectSynthesisEventsAnnotated([], 1, rarityOf);
   return { ...empty, omitted: events.length };
+}
+
+/**
+ * The rows that get reserved command seats (#1622), as rows of the collapsed prompt pool. Sessions and
+ * candidates come from the UNCOLLAPSED scoped timeline, so a pinned or grouped Critical/High row still
+ * opens a session and a grouped command is not lost. A pinned candidate is already on the prompt and
+ * takes no reserve; a grouped one reserves the seat of the row that represents its burst.
+ */
+function commandSeatRows(
+  state: InvestigationState,
+  scopedEvents: readonly ForensicEvent[],
+  grouping: CollapsedPrompt,
+  pinnedIds: ReadonlySet<string>,
+  aliasIndex?: HostAliasIndex,
+): CommandSeat[] {
+  const hostOf = (raw: string): string =>
+    aliasIndex ? resolveHost(aliasIndex, raw) : raw.trim().toLowerCase();
+  const seats = sessionCommandSeats({
+    events: scopedEvents,
+    hostOf,
+    findingRowIds: findingSessionRowIds(state),
+  });
+  if (!seats.length) return [];
+  const pool = new Map(grouping.events.map((e) => [e.id, e] as const));
+  const representativeOf = new Map<string, string>();
+  for (const [rep, members] of grouping.memberIdsByRepresentative)
+    for (const id of members) representativeOf.set(id, rep);
+  const rowOf = (id: string): string => representativeOf.get(id) ?? id;
+  const out: CommandSeat[] = [];
+  const seen = new Set<string>();
+  for (const { event, shadowedBy } of seats) {
+    // Pinned: already on the prompt. Shadowed by a pinned anchor: its command already is.
+    if (pinnedIds.has(event.id) || shadowedBy.some((id) => pinnedIds.has(id))) continue;
+    const row = pool.get(rowOf(event.id));
+    if (!row || seen.has(row.id)) continue;
+    seen.add(row.id);
+    out.push({ event: row, shadowedBy: shadowedBy.map(rowOf) });
+  }
+  return out;
 }
 
 /**

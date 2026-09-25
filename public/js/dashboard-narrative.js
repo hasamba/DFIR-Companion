@@ -166,6 +166,7 @@
         promoted: "promoted",
         anchor: "anchors",
         earliest: "earliest",
+        command: "session commands",
         anchor_context: "context",
         corroborated: "corroborated",
         technique: "technique",
