@@ -49,7 +49,7 @@ import { LOLBINS, NOISY_LOLBINS, SUSP_PATH } from "./winProcessBaseline.js";
 import { extractDomains, TEXT_DOMAIN_SKIP_RE, TEXT_FILE_EXT_RE, hasPlausibleTld } from "./textDomains.js";
 import { trimSentencePunctuation } from "../ingest/textUriTrim.js";
 import { joinSubjectParts, renderSubjectField, subjectBudget } from "./renderCommandLine.js";
-
+import { regWriteIdentity, regWritePath, regWriteKeys } from "./securityRegistryWrite.js";
 // Re-exported for the sibling importers, which already source their shared helpers
 // (aggregateEvents / addIoc / cleanIp) from this module. `hasPlausibleTld` now lives in
 // textDomains.ts; bashHistoryImport keeps importing it from here.
@@ -770,7 +770,7 @@ export function mapWindows(
   const head = `${tool} ${def.label} (EID ${eid})${accts.length ? ` - ${accts.join(", ")}` : ""}`;
   const hostTail = host ? ` @ ${host}` : "";
   const subjectKeys = def.kind === "dns" ? SUBJECT_KEYS : [...SUBJECT_KEYS, "QueryName"]; // the overlay owns it
-  const subject = renderFields(ed, subjectKeys, subjectBudget(head, hostTail)); // #1416: the subject's share of 600
+  const subject = renderFields(ed, regWriteKeys(subjectKeys, channel, eid), subjectBudget(head, hostTail)); // #1416, #1670
   let description = defender
     ? defenderDescription(def.label, eid, accts, subject, host)
     : `${head}${subject ? ` - ${subject}` : ""}${hostTail}`.slice(0, 600);
@@ -1164,10 +1164,10 @@ export function mapWindows(
     // srv-a stay one host); a host-less export keys on "". pid keeps process creations distinct; a
     // Sysmon 15 stream carries its exact path's digest and the host file's hash (ntfsStreams.ts).
     aggKey:
-      `win|${host}|${channel}|${eid}|${accts.join(",")}${isSysmon && accountName ? `|u=${accountName}` : ""}|${pa ? "" : subject}${pid !== undefined ? `|pid=${pid}` : ""}${defender ? `|${defender.identity}` : ""}${ads?.identity ?? ""}${pa?.identity ?? ""}${dq?.identity ?? ""}`.toLowerCase(),
+      `win|${host}|${channel}|${eid}|${accts.join(",")}${isSysmon && accountName ? `|u=${accountName}` : ""}|${pa ? "" : subject}${pid !== undefined ? `|pid=${pid}` : ""}${defender ? `|${defender.identity}` : ""}${ads?.identity ?? ""}${pa?.identity ?? ""}${dq?.identity ?? ""}${regWriteIdentity(channel, eid, ed)}`.toLowerCase(),
     ...(sha256 ? { sha256 } : {}),
     ...(md5 ? { md5 } : {}),
-    ...(imagePath ? { path: imagePath } : {}),
+    ...(imagePath ? { path: imagePath } : regWritePath(channel, eid, ed)), // 4657: the written key (#1670)
     ...(host ? { asset: host } : {}),
     ...(processName ? { processName } : {}),
     ...(def.kind === "process" && parentName ? { parentName } : {}),

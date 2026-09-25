@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **AI eval gate averages three runs** — a no-regression attestation now needs three real runs of every section, averaged, with a 5-point tolerance; a SYSTEM_PROMPT or vision-model change also needs a real screenshot set (part of #1579)
 
 ### Fixed
+- **Message-less 4657 Run-key writes grade Medium** — a Security 4657 exported without its rendered message now shows the written key and value name, so the Run-key rule grades it; other object-access events are unchanged (closes #1670)
 - **Enumerated Run keys stay Info** — the content tagger no longer grades every PersistenceSniper Run/RunOnce entry Medium on a clean image; a real Run-key write (Sysmon 12/13, Security 4657) still grades Medium (closes #1666)
 - **Stock Store apps and OneDrive tasks stay Info** — PersistenceSniper no longer grades Paint, Notepad, Snipping Tool (catalog-signed Store apps) or the two per-user OneDrive tasks High on a clean Windows 11 image (closes #1665)
 - **Output-limit failures say so** — a synthesis a reasoning model cut off at `DFIR_AI_MAX_TOKENS` fails once with a message naming the limit and the thinking share, instead of four retries and a misleading "relatedIocs Required"; Ollama calls ask for low reasoning effort unless 🧠 is ticked

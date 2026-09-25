@@ -681,6 +681,7 @@
     "siemBuildProgress.ts": "analysis/ingest",
     "siemDnsConnJoin.ts": "analysis/ingest",
     "siemImport.ts": "analysis/ingest",
+    "securityRegistryWrite.ts": "analysis/ingest",
     "concatenatedJson.ts": "analysis/ingest",
     "sigmaCondition.ts": "analysis/hunt",
     "sigmaRule.ts": "analysis/hunt",
