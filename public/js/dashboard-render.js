@@ -429,6 +429,7 @@
             } else if (f.relevance === "unrelated-but-real") {
               relChip = ` <span class="rel-chip rel-parked" title="Genuine activity, but not part of this incident's attack path — parked.">🅿️ parked — real but unrelated</span>`;
             }
+            relChip += findingSimulationChip(f);
             return (
               `<div class="finding${isSelFinding ? " finding-selected" : ""}" data-fid="${escAttr(f.id)}">` +
               chevron +
@@ -444,7 +445,7 @@
                 : "") +
               `</span>` +
               `<span class="finding-conf-cell">${confMeter}</span>` +
-              `<span class="finding-actions-cell">${findingWorkflowControls(f.id)} ${findingOutcomeControls(f.id)} ${commentChip("finding", f.id)} ${tagAddBtn("finding", f.id)} ${pinBtn(f.id)} ${sigmaExportChip(f.id)} ${sigmaCompileChip(f.id)} ${ticketPushChips(f.id)} ${fpBtn("finding", f.title)}</span>` +
+              `<span class="finding-actions-cell">${findingWorkflowControls(f.id)} ${findingOutcomeControls(f.id, f)} ${commentChip("finding", f.id)} ${tagAddBtn("finding", f.id)} ${pinBtn(f.id)} ${sigmaExportChip(f.id)} ${sigmaCompileChip(f.id)} ${ticketPushChips(f.id)} ${fpBtn("finding", f.title)}</span>` +
               (hasEvidence
                 ? `<div class="finding-evidence-body" id="fev-${escAttr(f.id)}">${evidenceBody}</div>`
                 : "") +

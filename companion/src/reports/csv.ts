@@ -1,4 +1,5 @@
 import { getEffectiveSeverity, type InvestigationState } from "../analysis/stateTypes.js";
+import { simulationSeverityLabel } from "../analysis/simulationVerdict.js";
 import { byEventTime } from "../analysis/forensicSort.js";
 import { deriveIocSources } from "../analysis/iocCorroboration.js";
 import { scoreIocsFromState } from "../analysis/iocRiskScore.js";
@@ -19,8 +20,10 @@ export function findingsCsv(state: InvestigationState): string {
   // effectiveSeverity lets a spreadsheet sort/filter without a dismissed Critical (e.g. a confirmed
   // false positive) outranking genuine open findings — `severity` stays the original, unmodified
   // claim as an audit trail; `effectiveSeverity` is "Info" once status is "dismissed".
+  // #1595: a simulation verdict may cap `severity`; `liveIntrusionSeverity` keeps the severity before
+  // the cap and `simulation` names what the verdict did. Both empty on a finding it did not touch.
   const header =
-    "id,severity,effectiveSeverity,confidence,title,description,relatedIocs,mitreTechniques,sourceScreenshots,firstSeen,lastUpdated,status";
+    "id,severity,effectiveSeverity,confidence,title,description,relatedIocs,mitreTechniques,sourceScreenshots,firstSeen,lastUpdated,status,liveIntrusionSeverity,simulation";
   const rows = state.findings.map((f) =>
     row([
       f.id,
@@ -35,6 +38,8 @@ export function findingsCsv(state: InvestigationState): string {
       f.firstSeen,
       f.lastUpdated,
       f.status,
+      f.simulation?.originalSeverity ?? "",
+      simulationSeverityLabel(f).replace(/^\[|\]$/g, ""),
     ]),
   );
   return [header, ...rows].join("\n") + "\n";

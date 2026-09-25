@@ -85,15 +85,78 @@
       if (sel.classList.contains("fout-exec")) setFindingExecution(sel.getAttribute("data-fout"), sel.value);
       else if (sel.classList.contains("fout-ctl")) setFindingControl(sel.getAttribute("data-fout"), sel.value);
     });
+    document.addEventListener("click", (e) => {
+      const btn = e.target && e.target.closest && e.target.closest(".fsim-btn");
+      if (btn) setSimulationOverride(btn.getAttribute("data-fsim-real") === "true");
+    });
   }
-  function findingOutcomeControls(fid) {
+  function findingOutcomeControls(fid, finding) {
     const rec = outcomeByFinding.get(String(fid)) || {};
     return (
       `<span class="finding-outcome">` +
       axisControl(fid, "exec", rec.execution || "", EXECUTION_LABELS, ICON_TARGET, "Execution outcome") +
       axisControl(fid, "ctl", rec.control || "", CONTROL_LABELS, ICON_FLAG, "Control disposition") +
+      simulationButton(finding) +
       `</span>`
     );
+  }
+  // Simulation verdict (#1595). When the case's own findings conclude it is an authorized simulation,
+  // the attack findings are capped at Medium pending owner confirmation. The verdict card carries the
+  // one-click override; the server stores it per case and applies it at once — no synthesis runs.
+  function simulationButton(f) {
+    const sim = f && f.simulation;
+    if (!sim || sim.role !== "verdict") return "";
+    const real = !!sim.overridden;
+    const label = real ? "Undo: treat as simulation" : "Treat as real intrusion";
+    const title = real
+      ? "Re-apply the simulation verdict: cap the scenario findings at Medium, pending owner confirmation"
+      : "Overrule the simulation verdict: restore every finding's live-intrusion severity";
+    return (
+      `<button type="button" class="fwf-btn fsim-btn" data-fsim-real="${real ? "false" : "true"}" title="${escAttr(title)}">` +
+      `${esc(label)}</button>`
+    );
+  }
+  // The chip beside the title says what the verdict did to this finding.
+  function findingSimulationChip(f) {
+    const sim = f && f.simulation;
+    if (!sim) return "";
+    let text;
+    let tip;
+    if (sim.role === "verdict") {
+      text = sim.overridden ? "treated as real intrusion (analyst)" : "simulation verdict";
+      tip = sim.overridden
+        ? "The analyst overruled the simulation verdict — every finding keeps its live-intrusion severity."
+        : `The case is judged an authorized simulation${sim.originalSeverity !== f.severity ? ` — raised from ${sim.originalSeverity}` : ""}.`;
+    } else if (sim.role === "live-exposure") {
+      text = "live exposure — remediate regardless";
+      tip = "Persistence left on the host is a real exposure whatever the attribution.";
+    } else {
+      text =
+        "simulated — pending owner confirmation" +
+        (sim.originalSeverity !== f.severity ? ` · live-intrusion severity ${sim.originalSeverity}` : "");
+      tip = "Capped at Medium because the case is judged an authorized simulation. Confirm with the system owner.";
+    }
+    return ` <span class="rel-chip rel-sim rel-sim-${esc(sim.role)}" title="${escAttr(tip)}">🎭 ${esc(text)}</span>`;
+  }
+  function setSimulationOverride(treatAsReal) {
+    const caseId = document.getElementById("caseId").value.trim();
+    if (!caseId) return;
+    fetch(`/cases/${caseId}/simulation-override`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ treatAsReal: !!treatAsReal, updatedBy: investigatorName() }),
+    })
+      .then((r) => r.json().then((data) => ({ ok: r.ok, status: r.status, data })))
+      .then(({ ok, status, data }) => {
+        if (!ok) throw new Error((data && data.error) || `server returned ${status}`);
+        // The server broadcasts the new state; the cards re-render from it.
+        if (typeof showToast === "function")
+          showToast(treatAsReal ? "Treated as a real intrusion" : "Simulation verdict restored", "success");
+      })
+      .catch((err) => {
+        if (typeof showToast === "function")
+          showToast(`Simulation override not saved: ${(err && err.message) || "network error"}`, "error");
+      });
   }
   // PATCH one axis; the server drops the record when both axes and the note are empty.
   //
@@ -144,4 +207,6 @@
   window.findingOutcomeControls = findingOutcomeControls;
   window.setFindingExecution = setFindingExecution;
   window.setFindingControl = setFindingControl;
+  window.findingSimulationChip = findingSimulationChip;
+  window.setSimulationOverride = setSimulationOverride;
 })();

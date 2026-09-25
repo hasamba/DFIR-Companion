@@ -61,6 +61,7 @@ import {
 } from "./synthesisInputs.js";
 import { carryOutOfWindowFindings, foldSynthesisDelta, gradeFindings } from "./synthesisMerge.js";
 import { persistSynthesis } from "./synthesisPersist.js";
+import { reconcileSimulationVerdict } from "../simulationVerdict.js";
 import { stampCollectDirectives } from "../collectSatisfaction.js";
 import type { PromotionIntent } from "../ingest/timelineImports.js";
 
@@ -311,7 +312,7 @@ async function finalizeFindings(
   const withAccepted = ctx.opts.secondOpinionStore
     ? applyAcceptedSecondOpinion(folded, await ctx.opts.secondOpinionStore.load(caseId))
     : folded;
-  return gradeFindings({
+  const graded = gradeFindings({
     next: withAccepted,
     delta: input.delta,
     surviving: input.surviving,
@@ -319,6 +320,28 @@ async function finalizeFindings(
     sourceTrust: input.sourceTrust,
     kevCatalog: await ctx.getKevCatalog(),
     aliasIndex: input.aliasIndex,
+  });
+  // #1595: after grading, which only lowers — the simulation verdict RAISES its own finding. It
+  // judges the verdict on the model's own confidence, which grading may have capped.
+  const modelConfidence = new Map(
+    withAccepted.findings.flatMap((f) => (f.confidence !== undefined ? [[f.id, f.confidence] as const] : [])),
+  );
+  return reconcileSimulation(ctx, caseId, graded, input.aliasIndex, modelConfidence);
+}
+
+/** The simulation verdict (#1595) with the analyst's override read fresh. No store: never overridden. */
+async function reconcileSimulation(
+  ctx: SynthesisContext,
+  caseId: string,
+  state: InvestigationState,
+  aliasIndex: HostAliasIndex,
+  modelConfidence?: ReadonlyMap<string, number>,
+): Promise<InvestigationState> {
+  const treatAsReal = (await ctx.opts.synthMetaStore?.treatAsReal(caseId)) ?? false;
+  return reconcileSimulationVerdict(state, {
+    treatAsReal,
+    aliasIndex,
+    ...(modelConfidence ? { modelConfidence } : {}),
   });
 }
 
@@ -499,9 +522,7 @@ async function callSynthesisModel(
         );
         return parseSynthesisAnswer(ctx, caseId, parsed);
       } catch (err) {
-        // #1608: an abort is neither a parse retry nor a failed answer worth keeping — and thrown as
-        // an AbortError, withRetry does not call the provider again.
-        throwIfSuperseded(opts.signal);
+        throwIfSuperseded(opts.signal); // #1608: not a parse retry, and withRetry never retries it
         parseRetries++;
         retryNote = synthesisRetryNote(err) ?? retryNote; // a provider error keeps the current note
         await keepFailedAnswer(ctx, caseId, attempt, err, parsed);
@@ -605,8 +626,7 @@ async function resolveHostsOrThrow(
  * swept for a second look, it carried a whole extra synthesis behind it too: two top-level runs held
  * the whole case state at once, state loads went from 0.6 s to 140 s, and neither reached its
  * terminal `ai_status`, which left the header pill stuck on "AI: synthesizing…" with no job to
- * explain it. The sweep is a button now (#1554), but the boundary checks below are what stop a
- * superseded run writing at all.
+ * explain it. Only an analyst's run-now (Re-synthesize, /dfir, replay) supersedes one now (#1608).
  *
  * Called at the stage boundaries rather than inside the steps: a step that has begun should finish
  * or throw on its own, and the boundaries are where nothing is half-written.
@@ -743,14 +763,15 @@ export async function synthesize(
   // Lost-update guard (mirrors the pinned-questions re-load in the delta fold): a manual
   // event/IOC/thread added DURING the seconds-long AI call would otherwise be clobbered by this
   // write, because `next` was derived from the snapshot taken before the call.
-  // #1608: the fold and grading above are async too, so a run superseded during them stops here.
+  throwIfSuperseded(opts.signal); // #1608: superseded during the async fold and grading above
+  next = await persistSynthesis(ctx, caseId, {
+    loaded,
+    next,
+    findingsDiff,
+    reconcile: (merged) => reconcileSimulation(ctx, caseId, merged, aliasIndex),
+  });
+  // #1608: superseded while persisting — the newer run owns hypotheses, finding tasks, the record.
   throwIfSuperseded(opts.signal);
-  next = await persistSynthesis(ctx, caseId, { loaded, next, findingsDiff });
-
-  // #1608: superseded while persisting — the newer run owns the hypotheses, the finding tasks (one
-  // more model call) and the run record from here.
-  throwIfSuperseded(opts.signal);
-
   await autoGenerateHypotheses(ctx, caseId, delta.hypotheses, next, markers, aliasIndex);
   // #1418: one more call turns each Critical/High finding into an analyst task for the playbook.
   await writeFindingTasks(ctx, caseId, next, { provider: synthProvider });

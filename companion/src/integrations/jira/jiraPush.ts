@@ -3,6 +3,7 @@
 
 import type { Finding } from "../../analysis/stateTypes.js";
 import type { JiraClientLike, JiraIssueRef } from "./jiraClient.js";
+import { simulationSeverityLabel } from "../../analysis/simulationVerdict.js";
 
 export interface JiraPushInput {
   caseId: string;
@@ -46,7 +47,7 @@ function issueSummary(caseId: string, finding: Finding): string {
 function issueDescription(finding: Finding, _caseId: string): string {
   const lines = [
     `Finding ID: ${finding.id}`,
-    `Severity: ${finding.severity}`,
+    `Severity: ${finding.severity}${finding.simulation ? ` ${simulationSeverityLabel(finding)}` : ""}`,
     `Confidence: ${finding.confidence ?? "unknown"}`,
     `MITRE: ${finding.mitreTechniques.join(", ") || "none"}`,
     `IOCs: ${finding.relatedIocs.join(", ") || "none"}`,

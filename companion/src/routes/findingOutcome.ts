@@ -4,6 +4,8 @@ import type { FindingOutcomePatch } from "../analysis/findingOutcome.js";
 import { CONTROL_DISPOSITIONS, EXECUTION_OUTCOMES } from "../analysis/stateTypes.js";
 import type { RouteContext } from "./context.js";
 import { deriveSemanticKey } from "../analysis/semanticKey.js";
+import { reconcileSimulationVerdict } from "../analysis/simulationVerdict.js";
+import { loadHostAliasIndex } from "../analysis/hostScopeLoad.js";
 
 // Analyst attack-outcome statements per finding (#930 item 8), on the two axes defined in
 // stateTypes.ts: `execution` (was the action itself observed) and `control` (what a security
@@ -75,6 +77,60 @@ export function registerFindingOutcomeRoutes(app: Express, ctx: RouteContext): v
         targetId: req.params.findingId,
       });
       return res.status(200).json({ record });
+    } catch (err) {
+      return res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  registerSimulationOverrideRoute(app, ctx);
+}
+
+// "Treat as real intrusion" (#1595): the analyst's one-click answer to a simulation verdict, stored
+// per case in synth-meta (so every later synthesis honours it) and applied STRAIGHT to the stored
+// findings. It starts no synthesis and marks nothing out of date (#1599): the deterministic step
+// needs no model, so the cards and the reports change at once. `treatAsReal: false` undoes it.
+function registerSimulationOverrideRoute(app: Express, ctx: RouteContext): void {
+  const { options } = ctx;
+  app.post("/cases/:id/simulation-override", async (req: Request, res: Response) => {
+    const stateStore = options.stateStore;
+    const meta = options.synthMetaStore;
+    if (!stateStore || !meta) return res.status(501).json({ error: "simulation override not configured" });
+    const treatAsReal = req.body?.treatAsReal;
+    if (typeof treatAsReal !== "boolean")
+      return res.status(400).json({ error: "treatAsReal must be true or false" });
+    const by = typeof req.body?.updatedBy === "string" ? req.body.updatedBy.slice(0, 200) : "";
+    const caseId = req.params.id;
+    try {
+      // Flag first, then the findings, both before answering: a synthesis persisting in between
+      // reads the new flag under the state lock, and this write re-applies it over that result.
+      await meta.setSimulationOverride(caseId, treatAsReal, by);
+      // The same host identities synthesis uses, or an undo on a case whose hosts are joined only by
+      // an analyst merge would find nothing to cap.
+      const aliasIndex = await loadHostAliasIndex(
+        {
+          ...(options.assetOverridesStore ? { assetOverrides: options.assetOverridesStore } : {}),
+          ...(options.velociraptorClientStore ? { fleet: options.velociraptorClientStore } : {}),
+        },
+        caseId,
+      );
+      const next = await ctx.runStateExclusive(caseId, async () => {
+        const state = await stateStore.load(caseId);
+        const applied = reconcileSimulationVerdict(state, { treatAsReal, aliasIndex });
+        if (applied !== state) await stateStore.save({ ...applied, updatedAt: new Date().toISOString() });
+        return applied;
+      });
+      options.onState?.(next);
+      void logActivity(options.activityLogStore, options.onActivity, caseId, {
+        category: "triage",
+        action: "simulation-override",
+        actor: by,
+        detail: treatAsReal
+          ? "simulation verdict overruled: findings treated as a real intrusion"
+          : "simulation verdict restored: scenario findings capped pending owner confirmation",
+        targetType: "case",
+        targetId: caseId,
+      });
+      return res.status(200).json({ treatAsReal });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

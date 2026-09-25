@@ -31,6 +31,7 @@ import { trustForSources, type SourceTrustMap } from "./sourceTrust.js";
 import { deriveSemanticKey } from "./semanticKey.js";
 import { resolveHost, type HostAliasIndex } from "./hostAlias.js";
 import { outcomeLabel } from "./findingOutcome.js";
+import { simulationSeverityLabel } from "./simulationVerdict.js";
 import { decoyOnlyEvidence } from "./renamedBinaryNote.js";
 import { buildTimeSupport } from "./buildTimeWindow.js";
 
@@ -551,9 +552,15 @@ export function corroborationLabel(f: Finding): string {
 // corroborationLabel because markdown.ts already imports from here and sits at its size ledger —
 // one call, one existing import line, and the heading stays one line.
 export function findingHeadingSuffix(
-  f: Pick<Finding, "confidence" | "execution" | "control" | "executionSource" | "controlSource">,
+  f: Pick<
+    Finding,
+    "severity" | "simulation" | "confidence" | "execution" | "control" | "executionSource" | "controlSource"
+  >,
 ): string {
-  const conf = f.confidence !== undefined ? ` [${f.confidence}% confidence]` : "";
+  // #1595: the simulation label sits right after the [severity], so a capped severity is never
+  // printed without the live-intrusion severity beside it.
+  const sim = simulationSeverityLabel(f);
+  const conf = `${sim ? ` ${sim}` : ""}${f.confidence !== undefined ? ` [${f.confidence}% confidence]` : ""}`;
   const label = outcomeLabel(f);
   return label ? `${conf} ${label}` : conf;
 }

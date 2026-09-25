@@ -6,6 +6,7 @@ import {
   type FindingStatus,
   type Severity,
 } from "../analysis/stateTypes.js";
+import { simulationSeverityLabel } from "../analysis/simulationVerdict.js";
 import type { CaseMeta } from "../types.js";
 import type { ReportMeta } from "./reportMeta.js";
 import { emptyReportMeta } from "./reportMeta.js";
@@ -58,6 +59,7 @@ export interface TimelineRow {
 export interface FindingCard {
   id: string;
   severity: Severity;
+  severityNote?: string; // #1595: the simulation label, e.g. the live-intrusion severity beside a cap
   title: string;
   description: string;
   confidence?: number;
@@ -136,6 +138,7 @@ function toFindingCard(f: Finding, domains: string[], keptIds: ReadonlySet<strin
   return {
     id: f.id,
     severity: f.severity,
+    ...(f.simulation ? { severityNote: simulationSeverityLabel(f) } : {}),
     title: defangIndicators(f.title, domains),
     description: defangIndicators(f.description, domains),
     confidence: f.confidence,
@@ -261,6 +264,7 @@ const STYLES = `
   .finding-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; user-select: none; }
   .finding-head:hover { background: #f7f8fa; }
   .finding-head .title { font-weight: 600; flex: 1; }
+  .finding-head .sev-note { font-size: 12px; color: #6b4e00; }
   .finding-body { padding: 0 14px 12px; display: none; }
   .finding-card.open .finding-body { display: block; }
   .chevron { color: #5a6675; transition: transform .15s; }
@@ -387,6 +391,7 @@ const SCRIPT = `
       var head = el("div", { class: "finding-head" }, [
         el("span", { class: "chevron", text: "▶" }),
         el("span", { class: sevClass(f.severity), text: f.severity }),
+        f.severityNote ? el("span", { class: "sev-note", text: f.severityNote }) : null,
         el("span", { class: "title", text: f.title }),
         el("progress", { class: "conf-bar", max: "100", value: String(confidence(f)) }),
         el("span", { text: confidence(f) + "%" }),
