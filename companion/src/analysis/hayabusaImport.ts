@@ -51,6 +51,7 @@ import { HostRenameLedger, demoteSampleHost, resolveRowHost, withFormerHostSuffi
 import { HostRenameMap } from "./hostRenameEvidence.js";
 import { mergeHostRenameRecords, type HostRenameRecord } from "./hostRenameRecord.js";
 import { evtxRecordIdentity } from "./evtxRecordId.js";
+import { applyOsBehaviourRules } from "./osBehaviourRules.js";
 
 type Row = Record<string, unknown>;
 
@@ -361,6 +362,7 @@ export function parseHayabusaTimeline(text: string, opts: HayabusaImportOptions 
   const iocSink = new Map<string, SiemIoc>();
   const hostTally = new Map<string, number>();
   const mapped: MappedEvent[] = [];
+  const withRaw: { raw: Row; m: MappedEvent }[] = [];
   // The file's own rename evidence, read before any record is attributed (#1489). Only a
   // Velociraptor-wrapped row carries the raw `_Event` the rules read; a plain Hayabusa timeline
   // yields no evidence but still consumes what the wrapped rows of the same file establish.
@@ -374,7 +376,13 @@ export function parseHayabusaTimeline(text: string, opts: HayabusaImportOptions 
     if (!r) continue;
     if (r.host) hostTally.set(r.host, (hostTally.get(r.host) ?? 0) + 1);
     mapped.push(r.mapped);
+    withRaw.push({ raw: rec, m: r.mapped });
   }
+  // A parent's handle to its own child at creation, and an AppX update's firewall rule swap (#1621).
+  // Only a row that carries the parsed record (Velociraptor's Windows.Hayabusa.Rules `_Event`) gives
+  // the rules their fields; a plain csv/json timeline's rendered Details gives them none, and they
+  // stay silent (osBehaviourRules.ts).
+  applyOsBehaviourRules(withRaw);
 
   const { events, groups } = aggregateEvents([...mapped, ...renames.events()], {
     aggregate: opts.aggregate,
