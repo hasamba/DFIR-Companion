@@ -115,6 +115,8 @@ interface SynthesisRecord {
   startedAt: string;
   provider: string;
   model: string;
+  /** #1601: the concrete model the provider reported serving the call, when it reported one. */
+  resolvedModel?: string;
   eventIds: string[];
   inputState: InvestigationState;
   outputState: InvestigationState;
@@ -159,6 +161,7 @@ export async function recordSynthesisRun(
       promptHash: hashManifestValue(input.prompt),
       provider: input.provider,
       model: input.model,
+      ...(input.resolvedModel ? { resolvedModel: input.resolvedModel } : {}),
       parameters: {
         maxEvents: input.maxEvents,
         thinkingTokens: input.thinkingTokens,

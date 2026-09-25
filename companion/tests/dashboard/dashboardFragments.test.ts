@@ -151,6 +151,19 @@ describe("jobRowHtml", () => {
     expect(f.jobRowHtml({ ...view, detail: "" })).toContain('data-safe-style="display:none"');
   });
 
+  // #1601: the server's served-version label wins over the bare alias; the alias is the fallback.
+  it("shows the served-version label, falling back to the alias", () => {
+    const labelled = { ...view.job, model: "sonnet", modelLabel: "sonnet → Sonnet 5" };
+    expect(f.jobRowHtml({ ...view, job: labelled })).toContain("sonnet → Sonnet 5</span>");
+    expect(f.jobRowHtml({ ...view, job: { ...view.job, model: "sonnet" } })).toContain(">sonnet</span>");
+  });
+
+  it("escapes a model label", () => {
+    expect(f.jobRowHtml({ ...view, job: { ...view.job, model: "m", modelLabel: XSS } })).not.toContain(
+      "<img",
+    );
+  });
+
   it("escapes a label, which comes from an imported filename", () => {
     expect(f.jobRowHtml({ ...view, job: { ...view.job, label: XSS } })).not.toContain("<img");
   });

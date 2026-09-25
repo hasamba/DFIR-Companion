@@ -17,6 +17,7 @@
 // run — the opposite of what the analyst opened the panel for.
 import type { AnalysisPipeline } from "../analysis/pipeline.js";
 import type { RegisterInput } from "../analysis/jobManager.js";
+import type { JobModelIdentity } from "../analysis/jobServedModel.js";
 import { isAiDependent } from "../routes/importKinds.js";
 
 /**
@@ -31,12 +32,15 @@ import { isAiDependent } from "../routes/importKinds.js";
  */
 export function jobModelResolver(
   pipeline?: Pick<AnalysisPipeline, "analysisTextProviderModel">,
-): (input: RegisterInput) => string | undefined {
+): (input: RegisterInput) => JobModelIdentity {
   // Synthesis, deep pass and csv/log extraction are all TEXT work, and the pipeline resolves text
   // work to one provider (DFIR_AI_SYNTH_*, falling back to the vision config). Asked of the
   // pipeline rather than of process.env so the answer is the provider instance that will actually
   // run, not what the .env file says it should have been.
-  const textModel = (): string | undefined => pipeline?.analysisTextProviderModel()?.model;
+  //
+  // The provider is pinned beside the alias (#1601): the served-model stamp and the "last run"
+  // hint both match on the pair, so "sonnet" on one provider never borrows another's answer.
+  const textModel = (): JobModelIdentity => pipeline?.analysisTextProviderModel() ?? undefined;
   return (input) => {
     if (input.kind === "synthesis" || input.kind === "deep-pass") return textModel();
     if (input.kind !== "import") return undefined;

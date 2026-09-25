@@ -1,6 +1,8 @@
 import { ZodError } from "zod";
 import { techniqueName } from "../attackTechniqueNames.js";
 import { AiAnswerParseError } from "./providerCall.js";
+import type { Logger } from "../../logging/logger.js";
+import type { SynthMetaStore } from "../synthMeta.js";
 
 /**
  * Make synthesis survive a partial model answer (#1602).
@@ -76,4 +78,39 @@ export function synthesisRetryNote(err: unknown): string | undefined {
     `Your previous answer had invalid fields: ${paths.slice(0, MAX_NAMED_PATHS).join(", ")}. ` +
     "Return the complete JSON object with every field in the required shape."
   );
+}
+
+// #1602: keep an answer that failed to parse or validate in the case's logs folder. A save failure
+// is logged and never replaces the error the analyst is waiting on. Moved here from synthesis.ts
+// (#1601) to keep that file under the size limit.
+export async function keepFailedAnswer(
+  deps: { log: Pick<Logger, "warn">; store?: Pick<SynthMetaStore, "saveFailedAnswer"> | undefined },
+  caseId: string,
+  attempt: number,
+  err: unknown,
+  parsed: unknown,
+): Promise<void> {
+  const text =
+    err instanceof AiAnswerParseError
+      ? err.rawText
+      : err instanceof ZodError && parsed !== undefined
+        ? JSON.stringify(parsed, null, 2)
+        : undefined;
+  if (text === undefined) return;
+  const { log, store } = deps;
+  if (!store) {
+    log.warn(`[synthesis] attempt ${attempt} answer failed; raw answer not saved (no synth-meta store)`, {
+      caseId,
+    });
+    return;
+  }
+  const error = err instanceof Error ? err.message : String(err);
+  try {
+    const path = await store.saveFailedAnswer(caseId, { kind: "synthesis", attempt, error, text });
+    log.warn(`[synthesis] attempt ${attempt} answer failed; raw answer saved to ${path}`, { caseId });
+  } catch (saveErr) {
+    log.warn(`[synthesis] attempt ${attempt} answer failed; raw answer not saved: ${String(saveErr)}`, {
+      caseId,
+    });
+  }
 }

@@ -15,8 +15,24 @@ import { getCI, getPath, isObject, normalizeTime, str } from "./siemImport.js";
 
 type Row = Record<string, unknown>;
 
+// autorunsc -t (which Windows.Sysinternals.Autoruns passes) prints Time as "normalized UTC" in a
+// compact YYYYMMDD-hhmmss form. It is not ISO, so it used to pass through unchanged and the raw string
+// became the event time (#1618).
+const COMPACT_UTC_RE = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/;
+
+// ISO for a compact UTC time; "" when the digits are not a real calendar time (month 13, Feb 29 of a
+// common year, hour 24). The round trip through Date catches every rollover. Null when not that shape.
+function compactUtcTime(s: string): string | null {
+  const m = COMPACT_UTC_RE.exec(s.trim());
+  if (!m) return null;
+  const iso = `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}Z`;
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return "";
+  return new Date(ms).toISOString().replace(".000Z", "Z") === iso ? iso : "";
+}
+
 // Velociraptor times arrive as RFC3339 strings, epoch numbers (`_ts` is collection-time
-// epoch seconds), or `{ SystemTime }` objects. Normalize any of them to UTC ISO.
+// epoch seconds), `{ SystemTime }` objects, or the Autoruns compact form. Normalize any of them to UTC ISO.
 export function vrTime(v: unknown): string {
   if (v == null) return "";
   if (typeof v === "number") {
@@ -28,7 +44,8 @@ export function vrTime(v: unknown): string {
     const st = getCI(v, "SystemTime") ?? getPath(v, "#attributes.SystemTime");
     return st != null ? vrTime(st) : "";
   }
-  return normalizeTime(str(v));
+  const s = str(v);
+  return compactUtcTime(s) ?? normalizeTime(s);
 }
 
 // The artifact's OWN time first; `_ts` (collection time) only as a last resort. Includes a few
@@ -135,9 +152,13 @@ export function copiedFileTimes(row: Row): CopiedFileTimes | null {
 const RULE_META_RE = /^meta(?:data)?$/i;
 
 export function pickTime(row: Row): string {
+  let badCompact = false;
   for (const k of TIME_KEYS) {
     const v = k.includes(".") ? getPath(row, k) : getCI(row, k);
     const t = vrTime(v);
+    // A time column in the compact Autoruns shape that is not a real time. Keep looking for another
+    // artifact time, but never fall back to the collection time: that reads as incident activity.
+    if (!t && typeof v === "string" && compactUtcTime(v) === "") badCompact = true;
     if (!t) continue;
     if (k === "Mtime") return copiedFileTimes(row)?.created ?? t;
     return t;
@@ -170,5 +191,6 @@ export function pickTime(row: Row): string {
   };
   scan(row, "", 0);
   if (best) return best;
+  if (badCompact) return ""; // undated beats dated at the collection time (#1618)
   return vrTime(getCI(row, "_ts")); // collection time — absolute last resort, only when nothing else dated the row
 }

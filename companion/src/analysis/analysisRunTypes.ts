@@ -53,6 +53,8 @@ export interface AnalysisRunConfiguration {
   templateHash?: string;
   provider?: string;
   model?: string;
+  /** #1601: the concrete model that served the call (e.g. "claude-sonnet-5" for "sonnet"), when reported. */
+  resolvedModel?: string;
   parameters?: Record<string, ManifestValue>;
   anonymizationPolicy?: Record<string, ManifestValue>;
   filteringPolicy?: Record<string, ManifestValue>;
@@ -137,6 +139,7 @@ export const analysisRunManifestSchema: z.ZodType<AnalysisRunManifest> = z.objec
       templateHash: sha256Schema.optional(),
       provider: z.string().optional(),
       model: z.string().optional(),
+      resolvedModel: z.string().optional(),
       parameters: z.record(z.string(), manifestValueSchema).optional(),
       anonymizationPolicy: z.record(z.string(), manifestValueSchema).optional(),
       filteringPolicy: z.record(z.string(), manifestValueSchema).optional(),

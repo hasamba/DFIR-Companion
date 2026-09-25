@@ -1,8 +1,7 @@
 name: Protected AI quality evaluation
 
+# Manual only: each run costs real money (about $4.20), so nothing starts it on a schedule.
 on:
-  schedule:
-    - cron: "17 3 * * 2"
   workflow_dispatch:
 
 permissions:
