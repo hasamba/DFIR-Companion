@@ -14,6 +14,11 @@ export interface AnalyzeRequest {
   // External cancellation (#225). A background job (e.g. synthesis) threads its AbortSignal here so
   // the analyst can cancel a long call; providers combine it with their own timeout via requestSignal.
   signal?: AbortSignal;
+  // Refuse an answer the model cut off at its output limit, instead of returning the partial text.
+  // Synthesis sets it: a cut-off synthesis loses its last findings and its summary, and the JSON
+  // repair then hands the schema a stub that fails with a misleading "field missing" error.
+  // Other callers leave it unset and keep salvaging partial output.
+  rejectTruncated?: boolean;
 }
 
 // Token accounting a provider reports back, when it does. All optional — most providers
@@ -38,7 +43,30 @@ export interface AnalyzeResult {
 }
 
 export type ProviderErrorKind =
-  "auth" | "billing" | "rate_limit" | "timeout" | "transport" | "context" | "other";
+  "auth" | "billing" | "rate_limit" | "timeout" | "transport" | "context" | "output_limit" | "other";
+
+/**
+ * The model stopped at its output-token limit before it finished the answer. A reasoning model
+ * spends part of that limit on hidden thinking, so it can use the whole limit and write little or
+ * no answer — the same request fails the same way every time, so this kind is never retried.
+ * `reasoningTokens` is the thinking share when the provider reports or implies it.
+ */
+export function outputLimitError(
+  label: string,
+  limit: number | undefined,
+  reasoningTokens?: number,
+): ProviderError {
+  const cap = limit ? `its output limit of ${limit.toLocaleString("en-US")} tokens` : "its output limit";
+  const thinking =
+    reasoningTokens && reasoningTokens > 0
+      ? ` About ${reasoningTokens.toLocaleString("en-US")} of those tokens went on the model's hidden reasoning.`
+      : "";
+  return new ProviderError(
+    `${label} stopped at ${cap} before it finished the answer.${thinking} ` +
+      "Raise AI max tokens (DFIR_AI_MAX_TOKENS) in Settings and restart, or choose a model that reasons less.",
+    "output_limit",
+  );
+}
 
 export class ProviderError extends Error {
   constructor(
@@ -104,9 +132,9 @@ export interface AIProvider {
   readonly name: string;
   readonly model: string;
   // True only on a provider that ACTS on `AnalyzeRequest.thinkingTokens` (#1468): anthropic
-  // (budget_tokens or an effort tier), openrouter (unified `reasoning`), claude-code (`--effort` tier). Unset/false
-  // means the 🧠 deep-reasoning toggle is a no-op here, and the dashboard says so instead of
-  // silently accepting the click.
+  // (budget_tokens or an effort tier), openrouter (unified `reasoning`), ollama (`reasoning_effort`),
+  // claude-code (`--effort` tier). Unset/false means the 🧠 deep-reasoning toggle is a no-op here,
+  // and the dashboard says so instead of silently accepting the click.
   readonly supportsThinking?: boolean;
   analyze(req: AnalyzeRequest): Promise<AnalyzeResult>;
 }

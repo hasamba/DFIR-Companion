@@ -6,6 +6,7 @@ import {
   ProviderError,
   httpErrorKind,
   httpErrorMessage,
+  outputLimitError,
   requestSignal,
 } from "./provider.js";
 import { validateBaseUrl } from "./urlValidation.js";
@@ -38,6 +39,28 @@ export interface OpenAIOptions {
 // provider layer to it. Conservative enough with the 5% margin the guard applies.
 function estTokens(text: string): number {
   return Math.ceil(text.length / 4);
+}
+
+// The chat-completions response fields this provider reads. `finish_reason` is "length" when the
+// model hit max_tokens. `message.reasoning` is the thinking text hosted Ollama (and OpenRouter)
+// return; OpenAI proper reports only a count, in usage.completion_tokens_details.
+interface ChatCompletion {
+  choices?: { message?: { content?: string; reasoning?: unknown }; finish_reason?: string }[];
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    cost?: number;
+    completion_tokens_details?: { reasoning_tokens?: number };
+  };
+}
+
+// Tokens the model spent on hidden reasoning: the provider's own count when it sends one, else an
+// estimate from the returned reasoning text, else undefined.
+function reasoningTokensOf(json: ChatCompletion): number | undefined {
+  const reported = json.usage?.completion_tokens_details?.reasoning_tokens;
+  if (typeof reported === "number") return reported;
+  const reasoning = json.choices?.[0]?.message?.reasoning;
+  return typeof reasoning === "string" && reasoning.length > 0 ? estTokens(reasoning) : undefined;
 }
 
 export class OpenAIProvider implements AIProvider {
@@ -142,22 +165,40 @@ export class OpenAIProvider implements AIProvider {
       }).catch(() => "");
       throw new ProviderError(httpErrorMessage(this.label, res.status, body), httpErrorKind(res.status));
     }
-    const json = await readBoundedJson<{
-      choices?: { message?: { content?: string } }[];
-      usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number };
-    }>(res, { maxBytes: RESPONSE_SIZE_LIMITS.json, context: this.label });
-    const text = json.choices?.[0]?.message?.content;
-    if (!text) throw new ProviderError(`${this.label} returned no content`, "other");
-    const u = json.usage;
-    const usage: ProviderUsage | undefined = u && {
-      ...(u.prompt_tokens !== undefined ? { inputTokens: u.prompt_tokens } : {}),
-      ...(u.completion_tokens !== undefined ? { outputTokens: u.completion_tokens } : {}),
-      // Only OpenRouter (this.name === "openrouter") ever sends `usage.cost` — it's populated by
-      // the `usage: { include: true }` request flag above, which only that branch sends. A plain
-      // OpenAI/Ollama/LiteLLM endpoint that happened to echo a `cost` field is intentionally ignored
-      // here so a $ figure is never shown for a provider that didn't actually price the call.
-      ...(this.name === "openrouter" && u.cost !== undefined ? { costUSD: u.cost } : {}),
-    };
+    const json = await readBoundedJson<ChatCompletion>(res, {
+      maxBytes: RESPONSE_SIZE_LIMITS.json,
+      context: this.label,
+    });
+    const text = this.answerText(json, req, maxTokens);
+    const usage = this.usageOf(json.usage);
     return { rawText: text, ...(usage ? { usage } : {}) };
+  }
+
+  // The answer text, or the error that explains why there is none. finish_reason "length" means
+  // the model hit max_tokens: with no answer (a reasoning model thought the whole limit away), or
+  // when the caller cannot use a cut-off answer, that is an output_limit error naming the limit
+  // actually sent. A cut-off answer the caller can salvage is returned as-is.
+  private answerText(json: ChatCompletion, req: AnalyzeRequest, maxTokens: number | undefined): string {
+    const choice = json.choices?.[0];
+    const text = choice?.message?.content;
+    if (choice?.finish_reason === "length" && (!text || req.rejectTruncated)) {
+      throw outputLimitError(this.label, maxTokens, reasoningTokensOf(json));
+    }
+    if (!text) throw new ProviderError(`${this.label} returned no content`, "other");
+    return text;
+  }
+
+  private usageOf(u: ChatCompletion["usage"]): ProviderUsage | undefined {
+    return (
+      u && {
+        ...(u.prompt_tokens !== undefined ? { inputTokens: u.prompt_tokens } : {}),
+        ...(u.completion_tokens !== undefined ? { outputTokens: u.completion_tokens } : {}),
+        // Only OpenRouter (this.name === "openrouter") ever sends `usage.cost` — it's populated by
+        // the `usage: { include: true }` request flag above, which only that branch sends. A plain
+        // OpenAI/Ollama/LiteLLM endpoint that happened to echo a `cost` field is intentionally ignored
+        // here so a $ figure is never shown for a provider that didn't actually price the call.
+        ...(this.name === "openrouter" && u.cost !== undefined ? { costUSD: u.cost } : {}),
+      }
+    );
   }
 }

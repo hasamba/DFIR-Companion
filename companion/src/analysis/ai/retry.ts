@@ -13,7 +13,14 @@ import { HostMergeDecisionRequired } from "../hostDuplicateGate.js";
 // Error kinds where the failure is inherent to the call (bad/expired creds, exhausted quota, a hung
 // process, a prompt or reply that does not fit) rather than a transient blip — retrying just re-runs
 // into the same wall, tripling the wait before the analyst sees the same error.
-const NON_RETRYABLE_KINDS = new Set<ProviderErrorKind>(["auth", "rate_limit", "timeout", "context"]);
+// "output_limit": the model hit its output-token cap; the identical request hits it again.
+const NON_RETRYABLE_KINDS = new Set<ProviderErrorKind>([
+  "auth",
+  "rate_limit",
+  "timeout",
+  "context",
+  "output_limit",
+]);
 
 function isRetryableError(err: unknown): boolean {
   // A cancelled or superseded run (#1608). Retrying it only calls the provider again for a result
