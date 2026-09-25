@@ -96,6 +96,20 @@ describe("an accepted dismissal follows its finding across a re-synthesis (#1590
     ]);
   });
 
+  it("trusts the id of a decision saved before #1590, whose snapshot lost its cited events", () => {
+    const { relatedEventIds: _dropped, ...legacy } = f13Before;
+    const so = record([accepted("a_only", legacy)]);
+    const after = stateWith([
+      {
+        ...f13Before,
+        title: "AnyDesk dropped into a user profile",
+        mitreTechniques: ["T1105"],
+        relatedEventIds: ["e8"],
+      },
+    ]);
+    expect(applyAcceptedSecondOpinion(after, so).findings[0].status).toBe("dismissed");
+  });
+
   it("falls back to the derived key when the id is gone", () => {
     const so = record([accepted("a_only", f17Before)]);
     const after = stateWith([{ ...f17Before, id: "f40" }]);

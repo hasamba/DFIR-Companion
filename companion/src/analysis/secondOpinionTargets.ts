@@ -24,6 +24,10 @@ const overlaps = (a: readonly string[] | undefined, b: readonly string[] | undef
   !!a?.length && !!b?.length && a.some((x) => b.includes(x));
 
 function sameClaim(snapshot: Finding, now: Finding): boolean {
+  // A snapshot saved before #1590 lost its cited events to the store schema (the field is absent,
+  // not empty). It has no evidence to check, so its id is trusted as it stands — otherwise every
+  // decision accepted before this fix would fall to the old retitle/retag loss.
+  if (snapshot.relatedEventIds === undefined) return true;
   return (
     matchKey(snapshot) === matchKey(now) ||
     norm(snapshot.title) === norm(now.title) ||

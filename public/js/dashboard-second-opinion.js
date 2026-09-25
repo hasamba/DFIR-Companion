@@ -29,10 +29,7 @@
     fetch(`/cases/${caseId}/second-opinion`)
       .then((r) => r.json())
       .then((rec) => {
-        // The analyst may have opened another case while this was in flight (#1590).
-        const open = currentCaseId();
-        if (open && open !== caseId) return;
-        renderSecondOpinion(rec);
+        if (stillOpen(caseId)) renderSecondOpinion(rec);
       })
       .catch(() => {});
   }
@@ -200,6 +197,7 @@
     })
       .then((r) => r.json())
       .then((rec) => {
+        if (!stillOpen(caseId)) return; // the analyst left this case meanwhile
         if (rec && rec.error) {
           document.getElementById("status").textContent =
             "second opinion: " + rec.error;
@@ -209,7 +207,7 @@
         // The accept may have changed findings/MITRE — refresh the case view.
         fetch(`/cases/${caseId}/state`)
           .then((r) => r.json())
-          .then(render)
+          .then((st) => stillOpen(caseId) && render(st))
           .catch(() => {});
       })
       .catch(
@@ -229,6 +227,7 @@
     })
       .then((r) => r.json())
       .then((rec) => {
+        if (!stillOpen(caseId)) return; // the analyst left this case meanwhile
         if (rec && rec.error) {
           document.getElementById("status").textContent =
             "second opinion: " + rec.error;
@@ -237,7 +236,7 @@
         renderSecondOpinion(rec);
         fetch(`/cases/${caseId}/state`)
           .then((r) => r.json())
-          .then(render)
+          .then((st) => stillOpen(caseId) && render(st))
           .catch(() => {});
       })
       .catch(
@@ -255,6 +254,11 @@
     panel
       .querySelectorAll("[data-so-referee-rerun]")
       .forEach((b) => (b.disabled = on));
+  }
+  // A response for a case the analyst has since left must not paint this panel (#1590).
+  function stillOpen(caseId) {
+    const open = currentCaseId();
+    return !open || open === caseId;
   }
   function currentCaseId() {
     const input = document.getElementById("caseId");
@@ -337,6 +341,7 @@
       .then((rec) => {
         if (!rec) return; // handled above (409 presidio hold)
         if (btn) btn.disabled = false;
+        if (!stillOpen(caseId)) return; // the analyst left this case meanwhile
         if (rec && rec.error) {
           document.getElementById("status").textContent =
             "second opinion failed: " + rec.error;

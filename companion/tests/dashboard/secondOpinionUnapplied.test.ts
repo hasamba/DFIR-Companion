@@ -170,6 +170,17 @@ describe("2nd opinion — the list refreshes after a synthesis (#1590)", () => {
     expect(h.calls.map((c) => c.url)).toEqual(["/cases/case-1/second-opinion"]);
   });
 
+  it("drops a drop/apply answer for a case the analyst has since left", async () => {
+    const h = harness();
+    h.api.renderSecondOpinion(REC);
+    h.replies.push({ ...REC, deltas: [] });
+    h.press({ soReject: "gone" });
+    h.el("caseId").value = "case-2";
+    await settle();
+    expect(h.panel().innerHTML).toContain("so-unapplied");
+    expect(h.calls.map((c) => c.url)).toEqual(["/cases/case-1/second-opinion/apply"]);
+  });
+
   it("drops an answer for a case the analyst has since left", async () => {
     const h = harness();
     h.api.renderSecondOpinion(REC);
