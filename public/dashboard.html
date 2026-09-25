@@ -4450,7 +4450,7 @@
     let _tlKeepPage = false;                  // pagination buttons set this to avoid resetting to page 0
     let iocPage = 0;                          // current IOC page (0-based) — client-side paging, mirrors the timeline
     let iocPageSize = 100;                     // IOCs per page; user-selectable (0 = All)
-    let _iocKeepPage = false;                 // pagination buttons set this to avoid resetting to page 0
+    let _iocFilterKey = null;                 // last render's IOC filter key: the page resets only when it changes (#1649)
     let _lastRenderedIocs = [];               // exact array last passed to renderIocs, so pagination can re-render the same data
 
     function _hasActiveFilter() { return !!(DfirTimelineView.search() || DfirTimelineView.from() || DfirTimelineView.to() || DfirTimelineView.excludeTerms().length); }
@@ -4860,11 +4860,10 @@
     // Customer exposure + false positives live in public/js/dashboard-exposure-fp.js.
     if (typeof initExposureFp === "function") initExposureFp();
     // ── IOC rendering, pagination and the timeline filter renderers (core: renderIocs) ──
-    // Client-side IOC pagination controls (mirror the forensic-timeline pager). Step keeps the current
-    // page across the re-render (_iocKeepPage); a page-size change jumps back to the first page.
+    // Client-side IOC pagination controls (mirror the forensic-timeline pager). Every re-render keeps
+    // the page unless a filter changed (resolveIocPage, #1649); a page-size change jumps to page 1.
     function iocPageStep(delta) {
       iocPage = Math.max(0, iocPage + delta);
-      _iocKeepPage = true;
       renderIocs(_lastRenderedIocs);
     }
     function iocSetPageSize(n) {
@@ -4876,8 +4875,6 @@
       const el = document.getElementById("iocs");
       if (!el) return;
       _lastRenderedIocs = iocsRaw || [];        // cache exact data so pagination can re-render the same list
-      if (!_iocKeepPage) iocPage = 0;           // any non-pagination re-render (import, filter, state push) resets to page 1
-      _iocKeepPage = false;
       const iocs = sortIocsForDisplay(dedupeIocsById(iocsRaw));
       const iocTypeHidden = typeof renderIocTypeFilter === "function" && renderIocTypeFilter(iocs);   // effective count, so the chip below cannot claim a filter that is not there
       typeof renderIocExcludeRules === "function" && renderIocExcludeRules((DfirState.lastState() && DfirState.lastState().iocExcludeRules) || []);
@@ -4908,13 +4905,12 @@
       visible = noiseResult.visible;
       const noiseFiltersActive = hideFpNoIntel || showSignalIocsOnly || hideSystemPaths;
       // Client-side pagination (mirrors the forensic timeline) — slice the filtered set into pages.
-      const totalFiltered = visible.length;
-      const iocTotalPages = iocPageSize > 0 ? Math.max(1, Math.ceil(totalFiltered / iocPageSize)) : 1;
-      if (iocPage >= iocTotalPages) iocPage = iocTotalPages - 1;
-      if (iocPage < 0) iocPage = 0;
-      const iocStart = iocPageSize > 0 ? iocPage * iocPageSize : 0;
-      const iocEnd = iocPageSize > 0 ? Math.min(iocStart + iocPageSize, totalFiltered) : totalFiltered;
-      const pageVisible = iocPageSize > 0 ? visible.slice(iocStart, iocEnd) : visible;
+      // A refresh (state push, a metadata loader landing) keeps the page; a filter or case change resets it (#1649).
+      const totalFiltered = visible.length, iocKey = iocFilterKey({ caseId: document.getElementById("caseId").value.trim(), scope: DfirScope.get(), search: DfirTimelineView.search(), excludeTerms: DfirTimelineView.excludeTerms(), flaggedOnly: showFlaggedIocsOnly, hiddenTypes: DfirFacets.iocTypes.hiddenNames(), corroboration: DfirTimelineView.corrobIocs(),
+        provenance: typeof iocProvenanceFilterValue === "function" ? iocProvenanceFilterValue() : "all", risk: typeof riskIocsFilterValue === "function" ? riskIocsFilterValue() : 0, hideFpNoIntel, signalOnly: showSignalIocsOnly, hideSystemPaths });
+      const pg = resolveIocPage({ page: iocPage, pageSize: iocPageSize, total: totalFiltered, key: iocKey, lastKey: _iocFilterKey });
+      iocPage = pg.page; _iocFilterKey = iocKey;
+      const iocTotalPages = pg.totalPages, iocStart = pg.start, iocEnd = pg.end, pageVisible = visible.slice(iocStart, iocEnd);
       // Mirror the forensic/super timeline badges: "(N of M IOCs)" when a filter narrows the list,
       // else just the total — plus the flagged count, which always reflects the FULL unfiltered set.
       const cnt = document.getElementById("iocFlaggedCount");

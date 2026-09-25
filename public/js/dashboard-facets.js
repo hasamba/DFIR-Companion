@@ -87,6 +87,13 @@
         return Object.freeze({ has: (name) => hidden.has(name) });
       },
       /**
+       * Every hidden name, sorted, as a fresh copy. IDENTITY ONLY — the IOC pager keys its "did a
+       * filter change?" test on it (#1649). Never a count: countIn() is the only "how many" read.
+       */
+      hiddenNames() {
+        return [...cell.get()].sort();
+      },
+      /**
        * How many of `available` are hidden. THE DERIVED PRUNE: a name the analyst hid that no
        * longer exists simply does not count, instead of being deleted from their choice.
        */

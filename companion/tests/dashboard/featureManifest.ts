@@ -1512,6 +1512,7 @@ export const FEATURES: Feature[] = [
       "setIocProvenanceFilter",
       "setRiskIocsFilter",
       "riskIocsFilterValue",
+      "iocProvenanceFilterValue",
       "loadIocSources",
       "scheduleIocSourcesReload",
       "loadIocProvenance",

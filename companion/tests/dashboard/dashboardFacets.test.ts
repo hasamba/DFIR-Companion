@@ -167,11 +167,14 @@ describe("the owner can stand in for the hidden set it replaced", () => {
 });
 
 describe("the container never escapes", () => {
+  // hiddenNames (#1649) returns a sorted COPY — the IOC pager's filter key — so it is not a way to
+  // reach the Set; iocPageKeep.test.ts pins that pushing onto it changes nothing.
   it("publishes no way to obtain the Set", () => {
     const { DfirFacets } = load();
     expect(Object.keys(DfirFacets.sources).sort()).toEqual([
       "countIn",
       "has",
+      "hiddenNames",
       "hideAll",
       "matcher",
       "showAll",

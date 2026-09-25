@@ -202,6 +202,36 @@ function iocNoiseNoticeHtml(suppressed, shown) {
     `every one. Enrich the IOCs to make those filters meaningful.</div>`;
 }
 
+// The IOC pager's page rule (#1649). The page resets only when what the analyst FILTERS ON
+// changes — never on a refresh. A websocket state push, or an IOC metadata loader landing, re-draws
+// the list too, and each of those used to throw an analyst who had clicked Next back to page 1.
+//
+// The key is the analyst's choices, never today's data: keying on "hidden types that are present"
+// would reset the page when a refresh removed every IOC of a hidden type. JSON over a fixed shape,
+// arrays sorted, so no value can forge another state with a separator. A lens whose module failed
+// to load reads as its no-filter default.
+function iocFilterKey(f) {
+  const sorted = (a) => (Array.isArray(a) ? a.map(String).sort() : []);
+  const scope = f.scope || {};
+  return JSON.stringify([
+    String(f.caseId || ""), scope.start || null, scope.end || null, String(f.search || ""),
+    sorted(f.excludeTerms), !!f.flaggedOnly, sorted(f.hiddenTypes), Number(f.corroboration) || 0,
+    f.provenance || "all", Number(f.risk) || 0, !!f.hideFpNoIntel, !!f.signalOnly, !!f.hideSystemPaths,
+  ]);
+}
+
+// Which page a render lands on, and the slice it shows. pageSize 0 means All.
+function resolveIocPage(p) {
+  const total = Math.max(0, p.total | 0);
+  const size = p.pageSize > 0 ? p.pageSize : 0;
+  const totalPages = size > 0 ? Math.max(1, Math.ceil(total / size)) : 1;
+  let page = p.lastKey === null || p.lastKey === undefined || p.key !== p.lastKey ? 0 : p.page | 0;
+  page = Math.min(Math.max(0, page), totalPages - 1);
+  const start = size > 0 ? page * size : 0;
+  const end = size > 0 ? Math.min(start + size, total) : total;
+  return { page, totalPages, start, end };
+}
+
 // Published for the inline script and the other helper modules. EVERY function this file
 // defines is listed: a helper that stays private here but is still called by name from
 // dashboard.html is a ReferenceError, which is the mistake #414 shipped and then fixed.
@@ -216,6 +246,8 @@ window.DfirIoc = {
   sortIocsForDisplay,
   applyIocNoiseFilters,
   iocNoiseNoticeHtml,
+  iocFilterKey,
+  resolveIocPage,
   scoreCoversTag,
   originSuffix,
   enrichBadges,

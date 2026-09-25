@@ -561,6 +561,10 @@
   function riskIocsFilterValue() {
     return riskIocsFilter;
   }
+  // The provenance lens the analyst picked — read by the IOC pager's filter key (#1649).
+  function iocProvenanceFilterValue() {
+    return iocProvenanceFilter;
+  }
 
   window.initIocProvenance = initIocProvenance;
   window.iocCorroborationCount = iocCorroborationCount;
@@ -570,6 +574,7 @@
   window.setIocProvenanceFilter = setIocProvenanceFilter;
   window.setRiskIocsFilter = setRiskIocsFilter;
   window.riskIocsFilterValue = riskIocsFilterValue;
+  window.iocProvenanceFilterValue = iocProvenanceFilterValue;
   window.loadIocSources = loadIocSources;
   window.scheduleIocSourcesReload = scheduleIocSourcesReload;
   window.loadIocProvenance = loadIocProvenance;
