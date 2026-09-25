@@ -706,6 +706,9 @@ export const FEATURES: Feature[] = [
       "isPromotedEvent",
       "promotedBadge",
       "promotedKeptCount",
+      // The pager's "a refresh keeps the page" rule (#1652), the timeline twin of #1649.
+      "timelineFilterKey",
+      "resolveTimelinePage",
     ],
     private: ["timelineTotalIsFloor"],
   },

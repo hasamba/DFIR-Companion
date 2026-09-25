@@ -15,7 +15,10 @@ interface ProvenanceApi {
 function harness(opts: { importRunning: () => boolean; withJobs?: boolean }) {
   const fetched: string[] = [];
   const el = (id: string) => (id === "caseId" ? { value: "CASE-1" } : null);
+  // The loaders refuse a case that is not on screen (#1653), so the page's active case is named.
+  const activeCaseId = "CASE-1";
   const api = loadDashboardModule<ProvenanceApi>("dashboard-ioc-provenance.js", ["dashboard-escape.js"], {
+    activeCaseId,
     fetch: async (url: string) => {
       fetched.push(url);
       return { ok: true, json: async () => ({}) };

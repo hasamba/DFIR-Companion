@@ -416,6 +416,8 @@ export interface TimelineViewApi {
     eventIdFilterActive(): boolean;
     eventIdCount(): number;
     eventIdLabel(): string;
+    /** The id filter's members, sorted, as a copy, or null — identity only (#1652). */
+    eventIdNames(): string[] | null;
     corrobTimeline(): number;
     corrobIocs(): number;
     corrobFindings(): number;
