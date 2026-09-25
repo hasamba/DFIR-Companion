@@ -21,6 +21,7 @@ import type { RefereeModel } from "./providerRoster.js";
 import { callAiJson, loadScopedEvents } from "./aiContext.js";
 import { StateLock } from "../stateLock.js";
 import { reconcileSimulationVerdict } from "../simulationVerdict.js";
+import { loadHostAliasIndex } from "../hostScopeLoad.js";
 import { synthesize, type SynthesisContext } from "./synthesis.js";
 
 /**
@@ -331,15 +332,28 @@ async function updateSecondOpinion(
     await store.save(caseId, next);
     return next;
   });
-  const state = await ctx.opts.stateStore.load(caseId);
   // #1595: an accepted delta can add, dismiss or re-rate a finding, so the simulation verdict is
-  // re-applied over the result, with the analyst's override read fresh.
-  const applied = reconcileSimulationVerdict(applyAcceptedSecondOpinion(state, record), {
-    treatAsReal: (await ctx.opts.synthMetaStore?.treatAsReal(caseId)) ?? false,
-  });
-  if (applied !== state) {
-    await ctx.opts.stateStore.save(applied);
-    ctx.opts.onState?.(applied);
-  }
-  return { record, state: applied };
+  // re-applied over the result, with the analyst's override read fresh — under the state lock, so a
+  // "treat as real intrusion" saved meanwhile is not overwritten by a stale answer.
+  const aliasIndex = await loadHostAliasIndex(
+    {
+      ...(ctx.opts.assetOverridesStore ? { assetOverrides: ctx.opts.assetOverridesStore } : {}),
+      ...(ctx.opts.velociraptorClientStore ? { fleet: ctx.opts.velociraptorClientStore } : {}),
+    },
+    caseId,
+  );
+  const write = async (): Promise<{ state: InvestigationState; changed: boolean }> => {
+    const state = await ctx.opts.stateStore.load(caseId);
+    const applied = reconcileSimulationVerdict(applyAcceptedSecondOpinion(state, record), {
+      treatAsReal: (await ctx.opts.synthMetaStore?.treatAsReal(caseId)) ?? false,
+      aliasIndex,
+    });
+    if (applied !== state) await ctx.opts.stateStore.save(applied);
+    return { state: applied, changed: applied !== state };
+  };
+  const { state, changed } = ctx.opts.stateLock
+    ? await ctx.opts.stateLock.runExclusive(caseId, write)
+    : await write();
+  if (changed) ctx.opts.onState?.(state);
+  return { record, state };
 }

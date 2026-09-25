@@ -118,3 +118,38 @@ describe("POST /cases/:id/simulation-override (#1595)", () => {
     expect(await sev("f1")).toBe("Medium");
   });
 });
+
+// Review of #1595: an undo must see the same host identities synthesis saw. Here the verdict and the
+// attack sit on two host names joined only by an analyst merge.
+describe("POST /cases/:id/simulation-override with merged hosts", () => {
+  it("re-applies the caps through the analyst's host merge", async () => {
+    const cases = new CaseStore(await mkdtemp(join(tmpdir(), "dfir-sim-override-merge-")));
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const store = new StateStore(cases);
+    const merges = { "host:ws-renamed.example.com": "host:ws-01.example.com" };
+    const assetOverridesStore = {
+      load: async () => ({ renames: {}, added: [], removed: [], addedLinks: [], removedLinks: [], merges }),
+    };
+    const s = emptyState("c1");
+    s.forensicTimeline.push({ ...ev("e-f1"), asset: "ws-renamed.example.com" }, ev("e-f14"));
+    s.findings = [
+      finding("f1", "Critical", "Mimikatz executed against LSASS"),
+      finding("f14", "Info", "Activity is likely an authorized attack-simulation exercise", 85),
+    ];
+    await store.save(s);
+    const app2 = createApp(cases, {
+      stateStore: store,
+      synthMetaStore: new SynthMetaStore(cases),
+      assetOverridesStore: assetOverridesStore as never,
+    });
+    const find = async (id: string) => (await store.load("c1")).findings.find((f) => f.id === id);
+
+    await request(app2).post("/cases/c1/simulation-override").send({ treatAsReal: false });
+    expect((await find("f1"))?.severity).toBe("Medium");
+    await request(app2).post("/cases/c1/simulation-override").send({ treatAsReal: true });
+    expect((await find("f1"))?.severity).toBe("Critical");
+    await request(app2).post("/cases/c1/simulation-override").send({ treatAsReal: false });
+    expect((await find("f1"))?.severity).toBe("Medium");
+    expect((await find("f14"))?.simulation?.role).toBe("verdict");
+  });
+});

@@ -35,13 +35,18 @@ export const SIMULATED_LABEL = "simulated — pending owner confirmation";
 // conclusion about the case.
 const EXERCISE_NOUN =
   /\b(simulations?|exercises?|emulation|(red|purple)[- ]team(ing)?|penetration[- ]test(ing)?|pen[- ]?test(ing)?)\b/i;
-// The affirmative conclusion: the finding says the activity IS the exercise.
+// The affirmative conclusion: the finding says the activity IS the exercise. No bare "indicators":
+// "indicators of penetration-test tooling" names tooling, it concludes nothing.
 const VERDICT_MARKER =
-  /\b(authori[sz]ed|sanctioned|planned|scripted|controlled|rather than|not an? (real|genuine|actual|uncontrolled)|indicators?|likely|consistent with|appears to be|assessed as)\b/i;
+  /\b(authori[sz]ed|sanctioned|planned|scripted|controlled|rather than|not an? (real|genuine|actual|uncontrolled)|likely|consistent with|appears to be|assessed as)\b/i;
 // A title that says the tooling was turned against the case is the opposite verdict.
 const HOSTILE_MARKER =
-  /\b(unauthori[sz]ed|abused|abuse of|misused|misuse of|weaponi[sz]ed|attacker[- ](operated|controlled|used)|malicious use)\b/i;
+  /\b(unauthori[sz]ed|abused|abuse of|misused|misuse of|weaponi[sz]ed|attacker[- ](operated|controlled|used)|by (an? |the )?(attacker|threat actor|adversary)|malicious use)\b/i;
 const NEGATION = /\b(no|not|non|unlikely|ruled out|rules out|without|isn't|is not)\b/i;
+// A denial of authorization anywhere in the title, before or after the exercise noun: "red-team
+// exercise was not authorized", "authorized exercise ruled out".
+const DENIAL =
+  /\b((was|is|were|are|been|being)?\s*(not|never|no longer)\s+(an?\s+)?(authori[sz]ed|sanctioned|approved|planned|scripted|a simulation|an exercise|part of)|ruled out|rules out|unlikely|disproved|disproven)\b/i;
 
 // Persistence ATT&CK techniques: a mechanism that stays on the host after the exercise ends.
 const PERSISTENCE_TECHNIQUES = [
@@ -69,7 +74,7 @@ const PERSISTENCE_TITLE =
 export function isSimulationVerdictTitle(title: string): boolean {
   const noun = EXERCISE_NOUN.exec(title);
   if (!noun) return false;
-  if (!VERDICT_MARKER.test(title) || HOSTILE_MARKER.test(title)) return false;
+  if (!VERDICT_MARKER.test(title) || HOSTILE_MARKER.test(title) || DENIAL.test(title)) return false;
   // "No indication this was an authorized exercise": a negation BEFORE the noun flips the claim.
   return !NEGATION.test(title.slice(0, noun.index));
 }

@@ -5,6 +5,7 @@ import { CONTROL_DISPOSITIONS, EXECUTION_OUTCOMES } from "../analysis/stateTypes
 import type { RouteContext } from "./context.js";
 import { deriveSemanticKey } from "../analysis/semanticKey.js";
 import { reconcileSimulationVerdict } from "../analysis/simulationVerdict.js";
+import { loadHostAliasIndex } from "../analysis/hostScopeLoad.js";
 
 // Analyst attack-outcome statements per finding (#930 item 8), on the two axes defined in
 // stateTypes.ts: `execution` (was the action itself observed) and `control` (what a security
@@ -103,9 +104,18 @@ function registerSimulationOverrideRoute(app: Express, ctx: RouteContext): void 
       // Flag first, then the findings, both before answering: a synthesis persisting in between
       // reads the new flag under the state lock, and this write re-applies it over that result.
       await meta.setSimulationOverride(caseId, treatAsReal, by);
+      // The same host identities synthesis uses, or an undo on a case whose hosts are joined only by
+      // an analyst merge would find nothing to cap.
+      const aliasIndex = await loadHostAliasIndex(
+        {
+          ...(options.assetOverridesStore ? { assetOverrides: options.assetOverridesStore } : {}),
+          ...(options.velociraptorClientStore ? { fleet: options.velociraptorClientStore } : {}),
+        },
+        caseId,
+      );
       const next = await ctx.runStateExclusive(caseId, async () => {
         const state = await stateStore.load(caseId);
-        const applied = reconcileSimulationVerdict(state, { treatAsReal });
+        const applied = reconcileSimulationVerdict(state, { treatAsReal, aliasIndex });
         if (applied !== state) await stateStore.save({ ...applied, updatedAt: new Date().toISOString() });
         return applied;
       });

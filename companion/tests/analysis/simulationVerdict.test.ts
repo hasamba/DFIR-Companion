@@ -89,6 +89,11 @@ describe("simulation verdict detection (#1595)", () => {
     expect(isSimulationVerdictTitle("No indication this was an authorized exercise")).toBe(false);
     expect(isSimulationVerdictTitle("Penetration-test utility observed in real intrusion")).toBe(false);
     expect(isSimulationVerdictTitle("Mimikatz executed against LSASS")).toBe(false);
+    // Review of #1595: a denial AFTER the noun, and tooling named without a conclusion.
+    expect(isSimulationVerdictTitle("Red-team exercise was not authorized, likely hostile")).toBe(false);
+    expect(isSimulationVerdictTitle("Authorized exercise was ruled out")).toBe(false);
+    expect(isSimulationVerdictTitle("Indicators of penetration-test tooling")).toBe(false);
+    expect(isSimulationVerdictTitle("Penetration-test tooling likely used by the attacker")).toBe(false);
   });
 
   it("needs confidence of at least 80 and an undismissed finding", () => {
