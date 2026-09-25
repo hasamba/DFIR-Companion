@@ -4447,7 +4447,8 @@
     let _searchDebounce = null;
     let tlPage = 0;                           // current timeline page (0-based)
     let tlPageSize = 50;                      // rows per page; user-selectable
-    let _tlKeepPage = false;                  // pagination buttons set this to avoid resetting to page 0
+    let _tlKeepPage = false;                  // one-shot: keep tlPage even though the filters changed (a jump, #1652)
+    let _tlFilterKey = null, _tlFilterCase = null; // last render's timeline filter key + case: the page resets only when they change (#1652)
     let iocPage = 0;                          // current IOC page (0-based) — client-side paging, mirrors the timeline
     let iocPageSize = 100;                     // IOCs per page; user-selectable (0 = All)
     let _iocFilterKey = null;                 // last render's IOC filter key: the page resets only when it changes (#1649)
@@ -5053,8 +5054,6 @@
       // Build the prevalence index over the full loaded timeline (baseline is a corpus property), not the
       // filtered/paged subset, so counts are stable as the analyst filters.
       prevIndexClient = buildClientPrevalence((DfirState.lastState() && DfirState.lastState().forensicTimeline) ? DfirState.lastState().forensicTimeline : ft);
-      if (!_tlKeepPage) tlPage = 0;
-      _tlKeepPage = false;
       // When the corroboration lens is on, scope the Sources menu to the tools present on events that
       // CLEAR the lens (≥N distinct sources, counting all of them — so the facet list is stable as the
       // analyst toggles sources). Drives renderSourceFilter's display list.
@@ -5098,11 +5097,10 @@
       visible = sortTimelineEvents(visible);
       renderTimelineHeatmap(visible);   // buckets the FULL filtered set, not the paginated slice below (#219)
 
-      const totalFiltered = visible.length;
-      const totalPages = tlPageSize > 0 ? Math.max(1, Math.ceil(totalFiltered / tlPageSize)) : 1;
-      if (tlPage >= totalPages) tlPage = totalPages - 1;
-      const pStart = tlPage * tlPageSize;
-      const pEnd = tlPageSize > 0 ? Math.min(pStart + tlPageSize, totalFiltered) : totalFiltered;
+      const totalFiltered = visible.length, tlCase = document.getElementById("caseId").value.trim(), tlKey = timelineFilterKey({ caseId: tlCase, scope: DfirScope.get(), severities: [...activeSevs], eventIds: DfirTimelineView.eventIdNames(), starredOnly: DfirTimelineView.starredOnly(), search: DfirTimelineView.search(), excludeTerms: DfirTimelineView.excludeTerms(), from: DfirTimelineView.from(), to: DfirTimelineView.to(),
+        hiddenSources: DfirFacets.sources.hiddenNames(), hiddenOrigins: DfirFacets.origins.hiddenNames(), hiddenHosts: DfirFacets.hosts.hiddenNames(), hostMerges: hostHidden > 0 && typeof assetOverrideMerges === "function" ? assetOverrideMerges() : null, corroboration: DfirTimelineView.corrobTimeline(), minSeverity: viewSevFiltering ? view.filters.minSeverity : null, sortKey: timelineSort.key, sortDir: timelineSort.dir, pageSize: tlPageSize });
+      const { page: tlPg, totalPages, start: pStart, end: pEnd } = resolveTimelinePage({ page: tlPage, pageSize: tlPageSize, total: totalFiltered, key: tlKey, lastKey: _tlFilterKey, caseId: tlCase, lastCaseId: _tlFilterCase, keep: _tlKeepPage });
+      tlPage = tlPg; _tlFilterKey = tlKey; _tlFilterCase = tlCase; _tlKeepPage = false;   // a background refresh keeps the page; a filter/case/size/sort change resets it (#1652)
       const pageVisible = tlPageSize > 0 ? visible.slice(pStart, pEnd) : visible;
 
       renderEvIdFilterChip(visible.length, ft.length);
