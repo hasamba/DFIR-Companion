@@ -102,12 +102,46 @@ const TIME_NAME_RE =
 export const MIN_TIME_MS = Date.parse("2000-01-01T00:00:00Z");
 export const MAX_TIME_MS = Date.parse("2100-01-01T00:00:00Z");
 
+// A file whose Mtime predates its Btime by more than this is dated by Btime (#1603). The margin keeps
+// rounding and sub-second jitter between the two stamps from switching the time column.
+const COPIED_FILE_MARGIN_MS = 1000;
+const FILE_PATH_KEYS = ["OSPath", "FullPath", "Path"];
+
+export interface CopiedFileTimes {
+  created: string; // Btime — when this file was created on the scanned volume
+  modified: string; // Mtime — the modified time, inherited from the source file on a copy
+}
+
+// A file observation (a top-level path plus the Mtime/Btime pair from one stat of that file) whose
+// modified time predates its creation time. A file cannot be modified before it exists, so the
+// Mtime came with the content — a copy or an extraction keeps the source's modified time and gets a
+// fresh Btime. Btime is when the file appeared on this volume; Mtime says nothing about this host.
+// Null for a normal edit (Btime at or before Mtime), a row with no path, or a missing stamp.
+export function copiedFileTimes(row: Row): CopiedFileTimes | null {
+  if (!FILE_PATH_KEYS.some((k) => str(getCI(row, k)).trim())) return null;
+  const modified = vrTime(getCI(row, "Mtime"));
+  const created = vrTime(getCI(row, "Btime"));
+  if (!modified || !created) return null;
+  const m = Date.parse(modified);
+  const c = Date.parse(created);
+  if (Number.isNaN(m) || Number.isNaN(c) || c - m <= COPIED_FILE_MARGIN_MS) return null;
+  return { created, modified };
+}
+
+// A YARA hit carries the RULE's metadata beside the match. Its date / modified fields are when the
+// rule was written, never when anything happened on the host — the fallback scan dated a
+// process-memory hit to its rule's 2014 authoring date (#1603). Skipped only on a YARA-shaped row.
+const RULE_META_RE = /^meta(?:data)?$/i;
+
 export function pickTime(row: Row): string {
   for (const k of TIME_KEYS) {
     const v = k.includes(".") ? getPath(row, k) : getCI(row, k);
     const t = vrTime(v);
-    if (t) return t;
+    if (!t) continue;
+    if (k === "Mtime") return copiedFileTimes(row)?.created ?? t;
+    return t;
   }
+  const yaraRow = getCI(row, "Rule") != null;
   // Fallback: no known column matched (browser history, shellbags, userassist, and other raw artifacts
   // whose time column varies by Velociraptor version). Scan every time-NAMED column (incl. one nesting
   // level) for the EARLIEST plausible timestamp — a real artifact time beats the `_ts` collection time
@@ -118,6 +152,7 @@ export function pickTime(row: Row): string {
     for (const [k, v] of Object.entries(obj)) {
       if (v == null) continue;
       if (isObject(v)) {
+        if (yaraRow && depth === 0 && RULE_META_RE.test(k)) continue;
         if (depth < 1) scan(v, `${prefix}${k}.`, depth + 1);
         continue;
       }

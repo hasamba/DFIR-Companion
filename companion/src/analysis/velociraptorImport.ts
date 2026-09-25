@@ -60,7 +60,7 @@ import { isFlatChainsawRow, mapFlatChainsawRow } from "./chainsawImport.js";
 import { mapPersistenceSniper, isPersistenceSniperRow } from "./persistenceSniperImport.js";
 import { mapBinaryRename } from "./binaryRenameImport.js";
 import { overlayFlatWindowsEid } from "./flatWindowsEvent.js";
-import { applyMftTimeHints, markSharedSourceMtime } from "./mftTimeHints.js";
+import { applyMftTimeHints, markSharedSourceMtime, noteInheritedFileTime } from "./mftTimeHints.js";
 import { networkTokens } from "./networkTokens.js";
 import { gradeMotwDownload, zoneText } from "./motwDownload.js";
 import { isAccountUsageRow, mapAccountUsage } from "./accountUsageImport.js";
@@ -1630,6 +1630,7 @@ function mapRowToEvents(row: Row, ctx: VrParseCtx): { events: MappedEvent[]; det
       if (!m) continue;
       m.description = withFormerHostSuffix(m.description, rh.formerName);
       if (rh.assetRecord) m.assetRecord = rh.assetRecord; // a bare row's own name, for a rename learned later (#1495)
+      noteInheritedFileTime(row, m); // a copied file is dated by Btime; keep its source Mtime beside it (#1603)
       demoteSampleHost(m, rh); // only a row with NO collector identity can be a sample-corpus host
       // Stamp the event with the VQL artifact that emitted it — once here, since every mapper's result
       // flows through with `artifact` resolved (the row's _Source/_Artifact, else the filename), so
