@@ -3,6 +3,7 @@ import { parseVelociraptorJson } from "../../src/analysis/velociraptorImport.js"
 import { deltaSchema, stripAiExtractedFrom, type AnalysisDelta } from "../../src/analysis/responseSchema.js";
 import { mergeDelta } from "../../src/analysis/stateMerge.js";
 import { collectedEvidenceClasses } from "../../src/analysis/refutationGate.js";
+import { correlateEvents } from "../../src/analysis/correlate.js";
 import {
   buildCollectionInventory,
   coveredOnAll,
@@ -92,6 +93,40 @@ describe("the stamp survives the merge and stays the importer's alone (#1651)", 
     const parsed = deltaSchema.parse({ ...baseDelta, forensicEvents: [partialTask("e1")] });
     const stripped = stripAiExtractedFrom(parsed);
     expect(stripped.forensicEvents?.[0]).not.toHaveProperty("partlyReadArtifact");
+  });
+});
+
+describe("a correlation merge reads the stamp from every member (#1651)", () => {
+  const same = (id: string, over: Partial<ForensicEvent>): ForensicEvent =>
+    ev(id, { description: "[Windows.System.TaskScheduler] task \\Updater", artifactName: TS, ...over });
+
+  it("a complete re-read of the same artifact supersedes the partial one, in either order", () => {
+    for (const pair of [
+      [same("p1", { partlyReadArtifact: TS }), same("f1", {})],
+      [same("f1", {}), same("p1", { partlyReadArtifact: TS })],
+    ]) {
+      const out = correlateEvents(pair);
+      expect(out).toHaveLength(1);
+      expect(out[0].partlyReadArtifact).toBeUndefined();
+    }
+  });
+
+  it("stays partly read when every member is, whichever member wins the display", () => {
+    const out = correlateEvents([
+      same("p1", { partlyReadArtifact: TS, severity: "Low" }),
+      same("p2", { partlyReadArtifact: TS, severity: "High" }),
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0].partlyReadArtifact).toBe(TS);
+  });
+
+  it("a full row of ANOTHER artifact does not clear the stamp", () => {
+    const out = correlateEvents([
+      same("p1", { partlyReadArtifact: TS, severity: "Low" }),
+      same("o1", { artifactName: "Windows.Sysinternals.Autoruns", severity: "High" }),
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0].partlyReadArtifact).toBe(TS);
   });
 });
 

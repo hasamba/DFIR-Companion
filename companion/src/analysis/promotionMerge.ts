@@ -11,6 +11,9 @@
 //   ignored.
 //
 // A mark no member carries adds no key, so an unpromoted merge keeps the primary's shape.
+//
+// The partly read mark (#1651) is coverage provenance, not display attribution, so it too is read from
+// every member, never from the primary alone — see partlyReadArtifactOf.
 
 import type { ForensicEvent } from "./stateTypes.js";
 
@@ -37,4 +40,16 @@ function latestPromotedAt(events: readonly ForensicEvent[]): string | undefined 
     }
   }
   return best;
+}
+
+/**
+ * The partly read artifact a merge group keeps (#1651): a stamped member's artifact, unless a member
+ * read in full from that same artifact holds the same record — a complete re-read supersedes the
+ * partial one. A full member of ANOTHER artifact never clears it. undefined when nothing stays stamped.
+ */
+export function partlyReadArtifactOf(events: readonly ForensicEvent[]): string | undefined {
+  const fromArtifact = (name: string | undefined, artifact: string): boolean =>
+    !!name && (name === artifact || name.startsWith(`${artifact}/`));
+  const stamped = [...new Set(events.map((e) => e.partlyReadArtifact).filter((a): a is string => !!a))];
+  return stamped.find((a) => !events.some((e) => !e.partlyReadArtifact && fromArtifact(e.artifactName, a)));
 }
