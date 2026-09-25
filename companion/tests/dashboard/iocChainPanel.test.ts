@@ -39,6 +39,7 @@ function panel(chains: Record<string, unknown>) {
     return e;
   };
   const api = loadDashboardModule<ChainPanelApi>("dashboard-ioc-provenance.js", ["dashboard-escape.js"], {
+    activeCaseId: "CASE-1", // the loaders refuse a case that is not on screen (#1653)
     fetch: async () => ({ ok: true, json: async () => chains }),
     document: { getElementById: el, querySelectorAll: () => [] },
     DfirState: { lastState: () => null, lastFt: () => [] },
