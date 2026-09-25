@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { ARTIFACT_RE, artifactRefs, isArtifactRef, readHuntArtifactRows } from "./artifactRefs.js";
-import { parseArtifactParams, parseArtifactSources, type VeloArtifactInfo } from "./artifactCatalog.js";
+import { catalogSources, parseArtifactParams, type VeloArtifactInfo } from "./artifactCatalog.js";
 // Re-exported so the artifact-definition metadata keeps its long-standing import path.
 export {
   parseArtifactParams,
@@ -938,7 +938,6 @@ export class VelociraptorClient {
         .replace(/[\s-]+/g, "_");
       if (t !== wanted) continue;
       const tools = parseArtifactTools(r.tools);
-      const sources = parseArtifactSources(r.sources);
       out.push({
         name,
         description: String(r.description ?? "")
@@ -947,7 +946,7 @@ export class VelociraptorClient {
           .slice(0, 300),
         parameters: parseArtifactParams(r.parameters),
         ...(tools.length ? { tools } : {}), // absent, not [], so a server with no tool metadata reads the same
-        ...(sources.length ? { sources } : {}), // same: absent when every source is unnamed
+        ...catalogSources(r.sources), // `sources` absent when every one is unnamed; see sourcesUnknown
       });
     }
     return out;

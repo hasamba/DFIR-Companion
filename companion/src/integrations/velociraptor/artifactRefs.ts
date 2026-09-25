@@ -93,14 +93,14 @@ export function artifactRefs(artifact: string, sources: string[]): string[] {
  */
 export async function readHuntArtifactRows(
   read: (artifact: string, sources: string[]) => Promise<VelociraptorRunResult>,
-  catalog: () => Promise<{ name: string; sources?: string[] }[]>,
+  catalog: () => Promise<{ name: string; sources?: string[]; sourcesUnknown?: true }[]>,
   artifact: string,
   sources: string[] = [],
   max?: number, // row ceiling for the MERGED result — see capRun below
 ): Promise<HuntArtifactRead> {
   if (sources.length || artifact.includes("/")) return read(artifact, sources);
   const base = await read(artifact, []);
-  let entry: { name: string; sources?: string[] } | undefined;
+  let entry: { name: string; sources?: string[]; sourcesUnknown?: true } | undefined;
   try {
     entry = (await catalog()).find((a) => a.name === artifact);
   } catch {
@@ -108,9 +108,10 @@ export async function readHuntArtifactRows(
   }
   // Without the artifact's definition nothing says whether it keeps rows under named sources: an
   // empty bare read is "not read", never "empty" — a TaskScheduler empty would settle persistence.
-  if (!entry) return { ...base, sourcesUnknown: true };
-  const named = entry.sources ?? [];
-  return named.length ? capRun(mergeRuns(base, await read(artifact, named)), max) : base;
+  // The same when the definition cannot prove its source list complete (#1635 review).
+  const named = entry?.sources ?? [];
+  const run = named.length ? capRun(mergeRuns(base, await read(artifact, named)), max) : base;
+  return !entry || entry.sourcesUnknown ? { ...run, sourcesUnknown: true } : run;
 }
 
 /**

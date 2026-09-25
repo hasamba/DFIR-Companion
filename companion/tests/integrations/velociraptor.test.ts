@@ -23,6 +23,7 @@ import {
   type VelociraptorApiConfig,
   type VqlRunner,
 } from "../../src/integrations/velociraptor/velociraptorApi.js";
+import { catalogSources } from "../../src/integrations/velociraptor/artifactCatalog.js";
 import {
   artifactToolProblem,
   launchWithUnheldToolHint,
@@ -909,6 +910,7 @@ describe("VelociraptorClient.listClientArtifacts", () => {
       name: `Windows.Test.A${i}`,
       description: `d${i}`,
       type: "CLIENT",
+      sources: [{ query: "SELECT 1" }],
     }));
     const runner: VqlRunner = async (statements) => {
       program = statements[0];
@@ -993,7 +995,7 @@ describe("listClientArtifacts — tool metadata", () => {
             type: "CLIENT",
             tools: [{ name: "ThorZIP", url: "todo.thor-lite.zip.download.url" }],
           },
-          { name: "Windows.System.Pslist", description: "p", type: "CLIENT", tools: [] },
+          { name: "Windows.System.Pslist", description: "p", type: "CLIENT", tools: [], sources: [{}] },
         ],
         raw: "",
       };
@@ -2198,7 +2200,41 @@ describe("parseArtifactSources", () => {
   });
 });
 
+// #1635 review — a definition that cannot prove its source list complete must say so, or an artifact
+// whose named sources went unread is recorded as a clean empty.
+describe("catalogSources", () => {
+  it("is complete for a list of unnamed or safe named sources", () => {
+    expect(catalogSources([{ query: "SELECT 1" }])).toEqual({});
+    expect(catalogSources([{ name: "Analysis" }])).toEqual({ sources: ["Analysis"] });
+  });
+  it("is unknown when the column is missing or not a list", () => {
+    expect(catalogSources(undefined)).toEqual({ sourcesUnknown: true });
+    expect(catalogSources("sources")).toEqual({ sourcesUnknown: true });
+  });
+  it("is unknown when an element is malformed or a named source was dropped as unsafe", () => {
+    expect(catalogSources([null, { name: "Analysis" }])).toEqual({
+      sources: ["Analysis"],
+      sourcesUnknown: true,
+    });
+    expect(catalogSources([{ name: "a'b" }])).toEqual({ sourcesUnknown: true });
+  });
+});
+
 describe("VelociraptorClient.huntArtifactRows", () => {
+  it("flags an artifact whose catalog row has no source metadata (TaskScheduler)", async () => {
+    const runner: VqlRunner = async (statements) => {
+      if (statements[0].includes("FROM artifact_definitions("))
+        return { rows: [{ name: "Windows.System.TaskScheduler", type: "CLIENT" }], raw: "" };
+      return { rows: [], raw: "" };
+    };
+    const res = await new VelociraptorClient(cfg, runner).huntArtifactRows(
+      "H.1",
+      "Windows.System.TaskScheduler",
+    );
+    expect(res.rows).toEqual([]);
+    expect(res.sourcesUnknown).toBe(true);
+  });
+
   // A runner that only knows rows for the source-qualified refs — the multi-source server behaviour.
   function multiSourceRunner(programs: string[]): VqlRunner {
     return async (statements) => {

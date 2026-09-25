@@ -572,7 +572,13 @@ describe("Velociraptor triage bundles — routes", () => {
           // distinction this test asserts is collect-time skipped-vs-empty, not launch-time unknown.
           return {
             rows: [
-              { name: "Windows.System.Pslist", description: "Running processes", type: "CLIENT" },
+              // A complete source list (#1635): without one, an empty Pslist would be "not read".
+              {
+                name: "Windows.System.Pslist",
+                description: "Running processes",
+                type: "CLIENT",
+                sources: [{}],
+              },
               { name: "Generic.System.Pstree", description: "Process tree", type: "CLIENT" },
               {
                 name: "DetectRaptor.Windows.Detection.Amcache",

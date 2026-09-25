@@ -25,9 +25,12 @@ export interface VeloArtifactInfo {
   parameters: VeloArtifactParam[]; // [] when the server reports none (older versions / odd shapes)
   tools?: VeloArtifactTool[]; // omitted when the artifact needs none (most of them)
   // The artifact's NAMED sources, when it has any (see artifactRefs.ts for why they matter). Omitted,
-  // not [], when every source is unnamed — a server with no source metadata then reads exactly like
-  // one whose artifacts are all single-source, which is the pre-existing behaviour.
+  // not [], when every source is unnamed.
   sources?: string[];
+  // Set when the definition does not say which named sources it has: the `sources` column is missing
+  // or not a list, or a named source was dropped as unusable. Its absent `sources` then proves nothing,
+  // so a hunt read of it is "not read", never "empty" (#1635).
+  sourcesUnknown?: true;
 }
 
 // Tolerant parse of a definition's `parameters` column: anything that isn't an array of named objects
@@ -47,6 +50,22 @@ export function parseArtifactParams(raw: unknown): VeloArtifactParam[] {
     out.push(type ? { name, type } : { name });
   }
   return out;
+}
+
+// A definition's `sources` column as catalog fields: the named sources, plus `sourcesUnknown` when the
+// column cannot prove the list complete (#1635). Every artifact has at least one source, so a missing
+// or non-list column is version skew or a bad row, not "single-source". An element that is not an
+// object, or a named source the parser drops as unsafe, leaves the list incomplete too.
+export function catalogSources(raw: unknown): Pick<VeloArtifactInfo, "sources" | "sourcesUnknown"> {
+  const sources = parseArtifactSources(raw);
+  const incomplete =
+    !Array.isArray(raw) ||
+    raw.some((s) => {
+      if (!s || typeof s !== "object") return true;
+      const name = String((s as { name?: unknown }).name ?? "").trim();
+      return !!name && !isSafeSourceName(name);
+    });
+  return { ...(sources.length ? { sources } : {}), ...(incomplete ? { sourcesUnknown: true } : {}) };
 }
 
 // Tolerant parse of a definition's `sources` column into its NAMED source names. Unnamed sources (the
