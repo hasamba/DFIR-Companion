@@ -72,10 +72,15 @@
   // Repaint only a state that belongs to the answer's case. During A -> B, activeCaseId names B
   // before B's state replaces A's, so a fast B answer would otherwise redraw A's rows with B's
   // metadata. B's own state render picks the metadata up when it lands.
+  // lastState is read at each use, never cached: renderIocs can replace it (dashboardState.test).
+  function iocStateIsCase(caseId) {
+    if (!DfirState.lastState()) return false;
+    const stateCaseId = DfirState.lastState().caseId;
+    return !stateCaseId || stateCaseId === caseId;
+  }
   function repaintIocs(caseId) {
-    const state = DfirState.lastState();
-    if (!state || (state.caseId && state.caseId !== caseId)) return;
-    renderIocs(DfirScope.project(state).iocs || []);
+    if (!iocStateIsCase(caseId)) return;
+    renderIocs(DfirScope.project(DfirState.lastState()).iocs || []);
   }
   // Every reader goes through this: a map whose owner is not the active case answers empty. After a
   // cancelled switch (activeCaseId null) a re-render of the rows still on screen must not read the
