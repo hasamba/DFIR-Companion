@@ -462,6 +462,17 @@ describe("deriveCockpitStory — conclusions out of date (#1599)", () => {
     expect(story.conclusionsOutOfDate).toBe(true);
   });
 
+  it("is not flagged when no synthesis has ever run: there are no conclusions to be stale", () => {
+    const story = deriveCockpitStory(
+      state(),
+      synthMeta({
+        lastSynthesizedAt: "",
+        outOfDate: { reason: "anonymization changed", at: SYNTH_AT, revision: 1 },
+      }),
+    );
+    expect(story.conclusionsOutOfDate).toBe(false);
+  });
+
   it("is not flagged without a marker", () => {
     expect(deriveCockpitStory(state(), synthMeta()).conclusionsOutOfDate).toBe(false);
     expect(deriveCockpitStory(state()).conclusionsOutOfDate).toBe(false);

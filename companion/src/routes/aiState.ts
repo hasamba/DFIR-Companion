@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { deriveAiState, type AiState } from "../analysis/aiState.js";
+import { deriveAiState, effectiveOutOfDate, type AiState } from "../analysis/aiState.js";
 import { loadPendingHostDuplicates } from "../analysis/hostScopeLoad.js";
 import { PresidioPendingStore } from "../analysis/presidioPending.js";
 import { AiControlStore } from "../analysis/aiControl.js";
@@ -68,7 +68,8 @@ export function registerAiStateRoutes(app: Express, ctx: RouteContext): void {
   /** #1599: the "conclusions out of date" marker, or null. Fail-quiet like the gates above. */
   async function outOfDate(caseId: string) {
     try {
-      return (await (options.synthMetaStore ?? new SynthMetaStore(store)).load(caseId)).outOfDate ?? null;
+      const meta = await (options.synthMetaStore ?? new SynthMetaStore(store)).load(caseId);
+      return effectiveOutOfDate(meta.outOfDate, meta.lastSynthesizedAt);
     } catch {
       return null;
     }

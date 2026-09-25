@@ -251,6 +251,7 @@ export function deriveCockpitStory(state: InvestigationState, synthMeta?: StoryS
     attackerPath: leadSentences(state.attackerPath),
     synthesizedAt,
     staleEventCount: staleEventCount(state.forensicTimeline, synthesizedAt),
-    conclusionsOutOfDate: Boolean(synthMeta?.outOfDate),
+    // No finished synthesis means no conclusions, so there is nothing to be stale.
+    conclusionsOutOfDate: Boolean(synthMeta?.outOfDate) && synthesizedAt !== null,
   };
 }
