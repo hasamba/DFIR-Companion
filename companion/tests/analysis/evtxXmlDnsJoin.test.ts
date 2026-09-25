@@ -182,3 +182,51 @@ describe("the Windows-event builder matches the SIEM JSON builder on DNS rows (#
     }
   });
 });
+
+// #1643: a DNS Server Analytical record (resolver vantage) through the XML import — it must not
+// take part in the endpoint join, on the live (progress) path or the one-shot path.
+const serverEvent = (
+  eid: 257 | 258 | 259,
+  data: Record<string, string>,
+  time = "2026-03-01T10:00:02.000Z",
+): string => {
+  const fields = Object.entries(data)
+    .map(([k, v]) => `<Data Name="${k}">${v}</Data>`)
+    .join("");
+  return `<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event"><System><Provider Name="Microsoft-Windows-DNSServer"/><EventID>${eid}</EventID><Level>4</Level><TimeCreated SystemTime="${time}"/><Channel>Microsoft-Windows-DNSServer/Analytical</Channel><Computer>${HOST}</Computer></System><EventData>${fields}</EventData></Event>`;
+};
+
+const SERVER_FIELDS: Record<257 | 258 | 259, Record<string, string>> = {
+  257: { Destination: "10.0.0.42", QNAME: "srv.example.net.", QTYPE: "1", XID: "7", RCODE: "0" },
+  258: { Reason: "2", Destination: "10.0.0.42", QNAME: "srv.example.net.", QTYPE: "1", XID: "7", RCODE: "3" },
+  259: { Reason: "2", QNAME: "srv.example.net.", QTYPE: "1", XID: "7" },
+};
+
+describe("Windows Event XML — DNS Server records stay out of the endpoint join (#1643)", () => {
+  for (const eid of [257, 258, 259] as const) {
+    const input = xml(
+      query("ep.example.com", "::ffff:203.0.113.9;"),
+      serverEvent(eid, SERVER_FIELDS[eid]),
+      connection("203.0.113.9"),
+    );
+    for (const [name, run] of [
+      ["live (progress)", () => parseEvtxXmlProgress(input)],
+      ["one-shot", async () => parseEvtxXml(input)],
+    ] as const) {
+      it(`DNS Server ${eid} via the ${name} import gets no join state`, async () => {
+        const r = await run();
+        const server = r.events.find((e) => e.canonical?.dns?.vantage === "resolver")!;
+        expect(server).toBeDefined();
+        expect(server.canonical?.dns?.joinState).toBeUndefined();
+        expect(server.canonical?.dns?.leads).toBeUndefined();
+        expect(server.canonical?.fieldProvenance?.["dns.joinState"]).toBeUndefined();
+        expect(server.aggKey).not.toContain("|conn:");
+        expect(server.description).not.toMatch(/no address|connection record/i);
+        expect(canonicalConformanceIssues(server.canonical)).toEqual([]);
+        expect(r.iocs.find((i) => i.value === "srv.example.net")?.sourceAggKeys).toContain(server.aggKey);
+        const endpoint = r.events.find((e) => e.canonical?.dns?.vantage === "endpoint")!;
+        expect(endpoint.canonical?.dns?.joinState).toBe("joined");
+      });
+    }
+  }
+});

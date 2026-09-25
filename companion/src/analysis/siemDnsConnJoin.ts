@@ -25,6 +25,11 @@
 // peer address matches a returned DNS address shows as "connected" too (#1212). Fix both
 // `Initiated` and `Direction` together, not separately — they are the same limitation on two
 // sources, and threading only one through would leave the join inconsistent between vantages.
+//
+// Only ENDPOINT-vantage DNS rows join (#1643). A DNS Server Analytical record (dnsServerRecord.ts,
+// vantage "resolver") always carries `returned: []` and names no endpoint query, so it is neither a
+// DNS candidate nor a connection candidate: it gets no join state, no join wording and no `|conn:`
+// fold in its key. A DNS row with no vantage fails closed the same way.
 
 import {
   CONN_INDEX_MAX,
@@ -64,7 +69,7 @@ export interface SiemConnCandidate {
 export interface DnsConnMappedRow {
   timestamp: string;
   canonical?: {
-    dns?: { returned?: { kind: string; value: string }[] };
+    dns?: { vantage?: "endpoint" | "sensor" | "resolver"; returned?: { kind: string; value: string }[] };
     target?: { kind: string; name?: string };
     network?: { destination?: { address?: string; port?: number } };
   };
@@ -81,8 +86,9 @@ function collectWindowsDnsCandidate(
   mappedIndex: number,
   row: DnsConnMappedRow,
 ): void {
+  if (row.canonical?.dns?.vantage !== "endpoint") return; // #1643 — resolver/sensor rows never join here
   const at = rowHostAndTime(row);
-  const returned = row.canonical?.dns?.returned;
+  const returned = row.canonical.dns.returned;
   if (!at || !returned) return;
   const seen = new Set<string>();
   sink.push({
@@ -102,6 +108,7 @@ function collectWindowsDnsCandidate(
  * answers "connection records exceed the index", which needs only the count to pass the bound.
  */
 export function collectWindowsConnCandidate(sink: SiemConnCandidate[], row: DnsConnMappedRow): void {
+  if (row.canonical?.dns?.vantage === "resolver") return; // #1643 — a resolver record is not an endpoint connection
   const at = rowHostAndTime(row);
   const dst = row.canonical?.network?.destination;
   if (!at || !dst?.address || sink.length > CONN_INDEX_MAX) return;

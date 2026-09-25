@@ -205,3 +205,58 @@ describe("forensic timeline placement (#996)", () => {
     expect(events[0].canonical?.dns?.vantage).toBe("resolver");
   });
 });
+
+// #1643: a resolver-vantage record is not an endpoint query. It must not take part in the
+// endpoint DNS→connection join (siemDnsConnJoin.ts) at all — no join state, no join wording, no
+// `|conn:` fold in its key — even when the same host logged a connection in the same upload.
+const sysmon = (eid: 3 | 22, ed: Record<string, string>, ts: string): object => ({
+  "@timestamp": ts,
+  log_name: "Microsoft-Windows-Sysmon/Operational",
+  computer_name: "DC-01",
+  event_id: eid,
+  event_data: { Image: "C:\\Windows\\System32\\svchost.exe", ProcessId: "1234", ...ed },
+});
+
+const SERVER_FIELDS: Record<257 | 258 | 259, Record<string, string>> = {
+  257: { Destination: "10.0.0.42", QNAME: "srv.example.net.", QTYPE: "1", XID: "7", RCODE: "0" },
+  258: { Reason: "2", Destination: "10.0.0.42", QNAME: "srv.example.net.", QTYPE: "1", XID: "7", RCODE: "3" },
+  259: { Reason: "2", QNAME: "srv.example.net.", QTYPE: "1", XID: "7" },
+};
+
+describe("resolver records stay out of the endpoint DNS→connection join (#1643)", () => {
+  for (const eid of [257, 258, 259] as const) {
+    for (const positional of [false, true]) {
+      it(`DNS Server ${eid} (${positional ? "positional" : "named"}) gets no join state`, () => {
+        const r = parseSiemExport(
+          elastic(
+            dnsServer(eid, SERVER_FIELDS[eid], { positional }),
+            sysmon(
+              22,
+              { QueryName: "ep.example.com", QueryStatus: "0", QueryResults: "::ffff:203.0.113.9;" },
+              "2026-03-01T10:00:01Z",
+            ),
+            sysmon(
+              3,
+              { Protocol: "tcp", Initiated: "true", DestinationIp: "203.0.113.9", DestinationPort: "443" },
+              "2026-03-01T10:00:05Z",
+            ),
+          ),
+        );
+        const server = r.events.find((e) => e.canonical?.dns?.vantage === "resolver")!;
+        expect(server).toBeDefined();
+        expect(server.canonical?.dns?.joinState).toBeUndefined();
+        expect(server.canonical?.dns?.leads).toBeUndefined();
+        expect(server.canonical?.fieldProvenance?.["dns.joinState"]).toBeUndefined();
+        expect(server.canonical?.fieldProvenance?.["dns.leads"]).toBeUndefined();
+        expect(server.aggKey).not.toContain("|conn:");
+        expect(server.description).not.toMatch(/no address|connection record/i);
+        expect(canonicalConformanceIssues(server.canonical)).toEqual([]);
+        // its query IOC still links to its own final row
+        expect(r.iocs.find((i) => i.value === "srv.example.net")?.sourceAggKeys).toContain(server.aggKey);
+        // control: the endpoint query in the same upload still joins
+        const endpoint = r.events.find((e) => e.canonical?.dns?.vantage === "endpoint")!;
+        expect(endpoint.canonical?.dns?.joinState).toBe("joined");
+      });
+    }
+  }
+});
