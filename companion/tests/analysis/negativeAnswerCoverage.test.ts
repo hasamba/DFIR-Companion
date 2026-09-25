@@ -401,4 +401,98 @@ describe("applyNegativeAnswerCoverage — step asks for a cleared log", () => {
     );
     expect(out.nextSteps).toEqual([step]);
   });
+
+  // #1605: a clear is only evidence for the host it happened on.
+  describe("host matching (#1605)", () => {
+    const unnamedClear = (id: string): ForensicEvent => ({ ...clear(id, CLEAR_AT), asset: undefined });
+    const sysmonClear = (id: string, host: string | undefined): ForensicEvent =>
+      ev(id, {
+        asset: host,
+        timestamp: CLEAR_AT,
+        description: "The Microsoft-Windows-Sysmon/Operational log file was cleared",
+      });
+    const hostless = (id: string, action = "Collect Security 4624/4625 before 2026-08-28"): NextStep => ({
+      ...securityStep(id, ""),
+      action,
+      collect: undefined,
+    });
+    const run = (events: ForensicEvent[], steps: NextStep[], hostOf?: (raw: string) => string) =>
+      applyNegativeAnswerCoverage(stateWith(events, [], steps), buildCollectionInventory({ events }), {
+        hostOf,
+      }).nextSteps;
+
+    it("does not demote a step on a named host for a clear whose row names no host", () => {
+      const events = [unnamedClear("x1"), chainsaw("e1", "WS01"), chainsaw("e2", "WS02")];
+      const steps = [securityStep("n6", "WS02")];
+      expect(run(events, steps)).toEqual(steps);
+    });
+
+    it("does not guess the host of an unnamed clear from a one-host case", () => {
+      const events = [unnamedClear("x1"), chainsaw("e1", "WS01")];
+      const steps = [securityStep("n6", "WS01")];
+      expect(run(events, steps)).toEqual(steps);
+    });
+
+    it("demotes a step that names no host for an unnamed clear, and says the host is unnamed", () => {
+      const events = [unnamedClear("x1"), chainsaw("e1", "WS01"), chainsaw("e2", "WS02")];
+      const [n6] = run(events, [hostless("n6")]);
+      expect(n6.priority).toBe("low");
+      expect(n6.rationale).toContain(
+        `⚠ The case shows the Security log on an unnamed host was cleared at ${CLEAR_AT};`,
+      );
+    });
+
+    it("reads the step's host from its text when it has no collect directive", () => {
+      const events = [clear("x1", CLEAR_AT, "WS01"), chainsaw("e2", "WS02")];
+      const steps = [hostless("n6", "Collect Security 4624/4625 on WS02")];
+      expect(run(events, steps)).toEqual(steps);
+      const [onWs01] = run(events, [hostless("n7", "Collect Security 4624/4625 on WS01")]);
+      expect(onWs01.priority).toBe("low");
+    });
+
+    it("does not demote a hostless step when another host's log was not cleared", () => {
+      const events = [clear("x1", CLEAR_AT, "WS01"), chainsaw("e2", "WS02")];
+      const steps = [hostless("n6")];
+      expect(run(events, steps)).toEqual(steps);
+    });
+
+    it("names every host when a hostless step meets a clear on each of them", () => {
+      const later = "2026-08-27T12:00:00.000Z";
+      const events = [clear("x1", CLEAR_AT, "WS01"), clear("x2", later, "WS02")];
+      const [n6] = run(events, [hostless("n6")]);
+      expect(n6.priority).toBe("low");
+      expect(n6.rationale).toContain(
+        `⚠ The case shows the Security log was cleared on WS01 at ${CLEAR_AT} and on WS02 at ${later};`,
+      );
+    });
+
+    it("resolves the step's host through a proven alias, but never by short name alone", () => {
+      const events = [clear("x1", CLEAR_AT, "ws01.corp.example.com")];
+      const alias = (raw: string) => (raw.toLowerCase() === "ws01" ? "ws01.corp.example.com" : raw);
+      expect(run(events, [securityStep("n6", "WS01")], alias)[0].priority).toBe("low");
+      const steps = [securityStep("n6", "WS01")];
+      expect(run(events, steps)).toEqual(steps);
+    });
+
+    it("treats a short name shared by two hosts as no named host", () => {
+      const events = [clear("x1", CLEAR_AT, "ws01.corp.example.com"), chainsaw("e2", "ws01.lab.example.com")];
+      const steps = [hostless("n6", "Collect Security 4624/4625 on WS01")];
+      expect(run(events, steps)).toEqual(steps);
+      const [full] = run(events, [hostless("n7", "Collect Security 4624/4625 on ws01.corp.example.com")]);
+      expect(full.priority).toBe("low");
+    });
+
+    it("offers Sysmon when Sysmon was cleared only on a different host", () => {
+      const events = [clear("x1", CLEAR_AT, "WS01"), sysmonClear("s1", "WS03")];
+      const [n6] = run(events, [securityStep("n6", "WS01")]);
+      expect(n6.rationale).toContain("Prefer ");
+    });
+
+    it("does not offer Sysmon when a Sysmon clear names no host", () => {
+      const events = [clear("x1", CLEAR_AT, "WS01"), sysmonClear("s1", undefined)];
+      const [n6] = run(events, [securityStep("n6", "WS01")]);
+      expect(n6.priority).toBe("low");
+      expect(n6.rationale).not.toContain("Prefer ");
+    });
+  });
 });

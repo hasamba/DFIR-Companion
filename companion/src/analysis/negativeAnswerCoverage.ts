@@ -248,40 +248,97 @@ function asksForChannel(text: string, channel: string): boolean {
   return lower(channel) === "security" ? SECURITY_ASK_RE.test(text) : namesWord(text, channel);
 }
 
-function clearedLogFor(step: NextStep, inv: CollectionInventory): ClearedLog | undefined {
-  const host = lower(step.collect?.host);
-  const text = [step.action, step.pointer, step.collect?.logSource, step.collect?.artifact]
+function stepText(step: NextStep): string {
+  return [step.action, step.pointer, step.collect?.logSource, step.collect?.artifact]
     .filter(Boolean)
     .join(" ");
-  return inv.cleared.find(
-    (c) => !!c.channel && (!host || !c.host || lower(c.host) === host) && asksForChannel(text, c.channel),
-  );
 }
 
-function clearWarning(cleared: ClearedLog, inv: CollectionInventory): string {
-  const where = cleared.host ? ` on ${cleared.host}` : "";
-  const sysmonCleared = inv.cleared.some(
+// The step's target hosts, canonical: the collect directive's host through the alias index, else
+// inventory hosts the step's text names. [] = the step does not say which host (#1605). Identity is
+// exact after hostOf — a shared short name is not proof two hosts are one (hostAlias.ts).
+function stepTargetHosts(
+  step: NextStep,
+  inv: CollectionInventory,
+  hostOf: (raw: string) => string,
+): string[] {
+  const raw = (step.collect?.host ?? "").trim();
+  if (raw) return [lower(hostOf(raw))];
+  const text = stepText(step);
+  const label = (h: string): string => lower(h.split(".")[0]);
+  // A short name counts only when one inventory host carries it; ws01 alone never picks one of two
+  // ws01.* hosts.
+  const unique = (h: string): boolean => inv.hosts.filter((o) => label(o) === label(h)).length === 1;
+  return inv.hosts
+    .filter((h) => namesWord(text, h) || (unique(h) && namesWord(text, h.split(".")[0])))
+    .map(lower);
+}
+
+// A clear is evidence only for the host it happened on (#1605):
+// - named clear, known target → the target is that host;
+// - named clear, unknown target → every host the case shows has that log cleared, so the step cannot
+//   avoid the gap on any of them;
+// - unnamed clear → only a step that names no host either; the case cannot say where it happened.
+function clearHitsTarget(c: ClearedLog, targets: readonly string[], inv: CollectionInventory): boolean {
+  if (!c.host) return !targets.length;
+  if (targets.length) return targets.includes(lower(c.host));
+  const clearedHosts = new Set(
+    inv.cleared.filter((o) => o.host && lower(o.channel) === lower(c.channel)).map((o) => lower(o.host)),
+  );
+  return inv.hosts.length > 0 && inv.hosts.every((h) => clearedHosts.has(lower(h)));
+}
+
+// Every clear that bears on the step, for the first channel it asks for.
+function clearedLogsFor(step: NextStep, inv: CollectionInventory, targets: readonly string[]): ClearedLog[] {
+  const text = stepText(step);
+  const hits = inv.cleared.filter(
+    (c) => !!c.channel && asksForChannel(text, c.channel) && clearHitsTarget(c, targets, inv),
+  );
+  const channel = lower(hits[0]?.channel);
+  return hits.filter((c) => lower(c.channel) === channel);
+}
+
+// "Prefer Sysmon, which was not cleared" only when no Sysmon clear COULD cover the step's target: an
+// unnamed Sysmon clear, or any Sysmon clear against a step with no known target, rules it out.
+function sysmonMayBeCleared(targets: readonly string[], inv: CollectionInventory): boolean {
+  return inv.cleared.some(
     (c) =>
       lower(c.channel) === lower(SYSMON_CHANNEL) &&
-      (!c.host || !cleared.host || lower(c.host) === lower(cleared.host)),
-  );
-  const prefer = sysmonCleared
-    ? ""
-    : ` Prefer ${CLASS_COLLECTION.execution.artifact} on ${SYSMON_CHANNEL}, which was not cleared.`;
-  return (
-    `${CLEAR_WARNING_MARK}${cleared.channel} log${where} was cleared at ${cleared.at}; ` +
-    `this collection will likely return nothing from before then.${prefer}`
+      (!c.host || !targets.length || targets.includes(lower(c.host))),
   );
 }
 
-function demoteClearedLogSteps(steps: readonly NextStep[], inv: CollectionInventory): NextStep[] {
+const clearPlace = (c: ClearedLog): string => (c.host ? c.host : "an unnamed host");
+
+function clearWarning(
+  cleared: readonly ClearedLog[],
+  targets: readonly string[],
+  inv: CollectionInventory,
+): string {
+  const [first] = cleared;
+  const what =
+    cleared.length === 1
+      ? `${first.channel} log on ${clearPlace(first)} was cleared at ${first.at}`
+      : `${first.channel} log was cleared ${cleared.map((c) => `on ${clearPlace(c)} at ${c.at}`).join(" and ")}`;
+  const prefer = sysmonMayBeCleared(targets, inv)
+    ? ""
+    : ` Prefer ${CLASS_COLLECTION.execution.artifact} on ${SYSMON_CHANNEL}, which was not cleared.`;
+  return `${CLEAR_WARNING_MARK}${what}; this collection will likely return nothing from before then.${prefer}`;
+}
+
+function demoteClearedLogSteps(
+  steps: readonly NextStep[],
+  inv: CollectionInventory,
+  hostOf: (raw: string) => string,
+): NextStep[] {
   if (!inv.cleared.length) return [...steps];
   return steps.map((step) => {
     // The backstop's own steps already name the source to collect; a warning there is only noise.
     if (step.id.startsWith(STEP_ID_PREFIX) || step.rationale.startsWith(CLEAR_WARNING_MARK)) return step;
-    const cleared = clearedLogFor(step, inv);
-    if (!cleared) return step;
-    const rationale = `${clearWarning(cleared, inv)} ${step.rationale}`.trimEnd();
+    const targets = stepTargetHosts(step, inv, hostOf);
+    const cleared = clearedLogsFor(step, inv, targets);
+    if (!cleared.length) return step;
+    const rationale = `${clearWarning(cleared, targets, inv)} ${step.rationale}`.trimEnd();
     return { ...step, priority: "low", rationale };
   });
 }
@@ -296,5 +353,5 @@ export function applyNegativeAnswerCoverage(
   const hostOf = opts.hostOf ?? ((raw: string) => raw);
   const scoped = opts.scopedEvents ?? state.forensicTimeline;
   const { keyQuestions, nextSteps } = applyUncoveredNegatives(state, inv, hostOf, scoped);
-  return { ...state, keyQuestions, nextSteps: demoteClearedLogSteps(nextSteps, inv) };
+  return { ...state, keyQuestions, nextSteps: demoteClearedLogSteps(nextSteps, inv, hostOf) };
 }
