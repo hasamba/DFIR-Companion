@@ -117,7 +117,18 @@ export const deltaSchema = z.object({
       name: z.string(),
     }),
   ),
-  threadsOpened: z.array(z.object({ id: z.string().min(1), description: z.string() })),
+  // #1579: a model sometimes writes an open thread as bare text. The text becomes both id and
+  // description (so the same question re-asked later dedups by id), and a blank string is dropped —
+  // rejecting the whole answer over this lost the import's entire AI extraction.
+  threadsOpened: z.preprocess(
+    (v) =>
+      Array.isArray(v)
+        ? v.flatMap((t: unknown) =>
+            typeof t !== "string" ? [t] : t.trim() ? [{ id: t.trim(), description: t.trim() }] : [],
+          )
+        : v,
+    z.array(z.object({ id: z.string().min(1), description: z.string() })),
+  ),
   threadsClosed: z.array(z.string()), // thread ids
   timelineNote: z.string(),
   summary: z.string(),

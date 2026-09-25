@@ -24,6 +24,7 @@ import { MeteredProvider } from "./meter.js";
 import {
   buildEvaluationReport,
   computeDirtyCaseAggregate,
+  passesWithoutRecallFloor,
   reportExitCode,
   type EvaluationCaseResult,
   type EvaluationExpectedCounts,
@@ -244,7 +245,15 @@ async function writeRequestedArtifacts(report: EvaluationReport, options: EvalCl
     reportHash = await writeEvaluationReport(options.outputPath, report);
     console.log(`evaluation report: ${options.outputPath}`);
   }
-  if (options.baselineDirectory && report.outcome === "passed") {
+  const recordable =
+    report.outcome === "passed" ||
+    (!options.baselinePath && report.real === true && passesWithoutRecallFloor(report));
+  if (options.baselineDirectory && recordable) {
+    if (report.outcome !== "passed") {
+      console.log(
+        "recall floor not met — candidate baseline written anyway, for a human to accept or reject",
+      );
+    }
     const path = await writeBaseline(
       options.baselineDirectory,
       createBaseline(report.identity, report.summary, report.createdAt, {

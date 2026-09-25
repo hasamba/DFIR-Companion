@@ -90,7 +90,12 @@ How a real multi-run report is judged:
 - **Extraction and screenshots:** each fixture passes on its **mean** precision and recall over the
   runs, against the thresholds that fixture was scored with. One miss in one run can be carried by
   the other runs.
-- **Synthesis:** the recall floors apply to the dirty-case aggregate pooled over all runs.
+- **Synthesis:** the recall floors apply to the dirty-case aggregate pooled over all runs — but only
+  when no baseline is supplied. With a baseline, "no worse than the accepted baseline" replaces the
+  floor, so a model that sits below a floor (next-step recall, today) can still attest a prompt fix.
+- **First baseline:** a real run without a baseline whose only failure is the recall floor still
+  exits non-zero, but it writes its candidate baseline. A human reviews the scores and accepts it or
+  not. A hard violation, a total whiff, a fixture failure or a provider failure writes nothing.
 - **Hard violations still fail in any run.** A forbidden conclusion, an invented evidence
   reference, a confidence issue, a missed abstention or a case with zero recall on every dimension
   fails the report, whichever run it came from. A provider or runner failure in any run also

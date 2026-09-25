@@ -3,6 +3,7 @@ import {
   baseCaseId,
   buildEvaluationReport,
   computeDirtyCaseAggregate,
+  passesWithoutRecallFloor,
   reportExitCode,
   type EvaluationCaseResult,
   type EvaluationExtractionResult,
@@ -180,6 +181,71 @@ describe("production-corpus real-run outcome uses aggregate recall, not all-or-n
     expect(computeDirtyCaseAggregate(cases).claimRecall).toBeGreaterThanOrEqual(REAL_THRESHOLDS.minRecall);
     const report = buildEvaluationReport(realInput(cases));
     expect(report.outcome).toBe("quality_failed");
+  });
+
+  describe("a baseline replaces the recall floor on a real run (#1579)", () => {
+    // 2 hits + 1 next-step miss → nextStepRecall aggregate 2/3, below the 0.7 floor.
+    const belowFloor = (): EvaluationCaseResult[] => [
+      dirtyCase("hit-0"),
+      dirtyCase("hit-1"),
+      dirtyCase("low", { nextStepRecall: 0 }),
+    ];
+    const comparison = (status: "passed" | "regressed") => ({
+      status,
+      baselineKey: "k",
+      qualityRegressions: status === "regressed" ? ["nextStepRecall"] : [],
+      resourceRegressions: [],
+      reasons: [],
+    });
+
+    it("passes a below-floor run that did not regress against its baseline", () => {
+      const report = buildEvaluationReport({
+        ...realInput(belowFloor()),
+        baselineComparison: comparison("passed"),
+      });
+      expect(report.outcome).toBe("passed");
+    });
+
+    it("still fails a run that regressed against its baseline", () => {
+      const report = buildEvaluationReport({
+        ...realInput(belowFloor()),
+        baselineComparison: comparison("regressed"),
+      });
+      expect(report.outcome).toBe("quality_failed");
+    });
+
+    it("never relaxes a hard violation or a total whiff because a baseline is present", () => {
+      const violation = [...belowFloor(), dirtyCase("bad", { confidenceIssues: 1 })];
+      const whiff = [
+        ...belowFloor(),
+        dirtyCase("whiff", { claimRecall: 0, uncertaintyRecall: 0, nextStepRecall: 0 }),
+      ];
+      for (const cases of [violation, whiff]) {
+        const report = buildEvaluationReport({
+          ...realInput(cases),
+          baselineComparison: comparison("passed"),
+        });
+        expect(report.outcome).toBe("quality_failed");
+      }
+    });
+
+    it("without a baseline, fails the floor but still counts the run as recordable as the first baseline", () => {
+      const report = buildEvaluationReport(realInput(belowFloor()));
+      expect(report.outcome).toBe("quality_failed");
+      expect(passesWithoutRecallFloor(report)).toBe(true);
+    });
+
+    it("a run with a hard violation is never recordable as a baseline", () => {
+      const report = buildEvaluationReport(
+        realInput([...belowFloor(), dirtyCase("bad", { forbiddenConclusions: 1 })]),
+      );
+      expect(passesWithoutRecallFloor(report)).toBe(false);
+    });
+
+    it("a mock run is never recordable past a failed case", () => {
+      const report = buildEvaluationReport({ ...realInput(belowFloor()), real: false });
+      expect(passesWithoutRecallFloor(report)).toBe(false);
+    });
   });
 
   it("excludes the clean-maintenance case from the dirty-case aggregate denominator", () => {
