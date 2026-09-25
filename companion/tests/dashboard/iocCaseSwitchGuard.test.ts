@@ -53,6 +53,8 @@ function harness(opts: { importRunning?: () => boolean } = {}) {
     },
   };
   const caseInput = { value: "A" };
+  // The state the page holds — no caseId unless a test names one, like a pre-#1653 fixture.
+  const shown: { state: { iocs: unknown[]; caseId?: string } | null } = { state: { iocs: [] } };
   const el = (id: string) => (id === "caseId" ? caseInput : id === "iocChainOverlay" ? overlay : null);
   const api = loadDashboardModule<Api>("dashboard-ioc-provenance.js", ["dashboard-escape.js"], {
     activeCaseId: "A",
@@ -65,7 +67,7 @@ function harness(opts: { importRunning?: () => boolean } = {}) {
         });
       }),
     document: { getElementById: el, querySelectorAll: () => [] },
-    DfirState: { lastState: () => ({ iocs: [] }), lastFt: () => [] },
+    DfirState: { lastState: () => shown.state, lastFt: () => [] },
     DfirScope: { project: (s: unknown) => s },
     renderIocs: () => {
       renders++;
@@ -81,7 +83,7 @@ function harness(opts: { importRunning?: () => boolean } = {}) {
     if (!hit) throw new Error(`no request for ${caseId}/${suffix}`);
     return hit;
   };
-  return { api, pending, overlay, caseInput, find, renders: () => renders };
+  return { api, pending, overlay, caseInput, shown, find, renders: () => renders };
 }
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -230,5 +232,37 @@ describe("IOC metadata answers belong to the case that asked (#1653)", () => {
     h.overlay.dataset.iocid = "ioc-1";
     h.api.loadIocProvenanceChains("A");
     expect(h.overlay.classList.open).toBe(true);
+  });
+
+  it("B's answer landing while the page still holds A's state does not repaint A's rows", async () => {
+    const h = harness();
+    h.shown.state = { iocs: [], caseId: "A" };
+    h.api.activeCaseId = "B";
+    loadAll(h.api, "B");
+    await answerA(h, "B");
+    expect(h.renders()).toBe(0); // B's own state render reads the metadata when it lands
+    h.shown.state = { iocs: [], caseId: "B" };
+    h.api.loadIocRisk("B");
+    h.find("ioc-risk", "B").resolve(A_RISK);
+    await flush();
+    expect(h.renders()).toBe(1);
+  });
+
+  it("after a cancelled switch, metadata the abandoned case committed reads as empty", async () => {
+    const h = harness();
+    h.api.activeCaseId = "B";
+    loadAll(h.api, "B");
+    await answerA(h, "B");
+    expectA(h.api);
+    h.api.activeCaseId = null; // the analyst cancels B's load; A's rows may still be on screen
+    expectEmpty(h.api);
+  });
+
+  it("reload timers act for the active case, not for a case typed into the picker", async () => {
+    const h = harness();
+    h.caseInput.value = "B"; // typed, or left behind by a cancelled unlock; A is still loaded
+    h.api.scheduleIocProvenanceReload();
+    await new Promise((r) => setTimeout(r, 850));
+    expect(h.pending.map((p) => p.url)).toEqual(["/cases/A/ioc-provenance"]);
   });
 });
