@@ -225,6 +225,11 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     flush: analysis.flush,
   });
   const monitors = createVeloMonitors({ store, options, ingestStreamed: imports.ingestStreamed });
+  const markConclusionsOutOfDate = createConclusionsOutOfDate({
+    store,
+    options,
+    synthInFlight: () => analysis.synthInFlight,
+  });
   const hunts = createVeloHunts({
     store,
     options,
@@ -237,6 +242,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     getControl,
     pushImportCheckpoint: appliers.pushImportCheckpoint,
     resynthesizeInBackground: analysis.resynthesizeInBackground,
+    markConclusionsOutOfDate,
     recordImportFailure,
   });
   // The external hunt/flow import paths (POST .../import-external) — hunts the Companion did not
@@ -317,11 +323,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
     dispatchImport: imports.dispatchImport,
     demoteForensicForCase: imports.demoteForensicForCase,
     resynthesizeInBackground: analysis.resynthesizeInBackground,
-    markConclusionsOutOfDate: createConclusionsOutOfDate({
-      store,
-      options,
-      synthInFlight: () => analysis.synthInFlight,
-    }),
+    markConclusionsOutOfDate,
     pushImportCheckpoint: appliers.pushImportCheckpoint,
     applyWhitelistToCase: appliers.applyWhitelistToCase,
     applyNsrlToCase: appliers.applyNsrlToCase,

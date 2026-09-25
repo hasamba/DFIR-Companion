@@ -9,6 +9,7 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { ArtifactBundleStore } from "../../src/analysis/artifactBundleStore.js";
 import { VeloHuntStore } from "../../src/analysis/veloHuntStore.js";
 import { ImportMetaStore } from "../../src/analysis/importMeta.js";
+import { SynthMetaStore } from "../../src/analysis/synthMeta.js";
 import {
   VelociraptorClient,
   type VqlRunner,
@@ -793,6 +794,49 @@ describe("Velociraptor hunt status polling — routes", () => {
       expect(job.clientCounts).toEqual({ scheduled: 3, completed: 2, errors: 1 });
     },
     POLL_TIMEOUT_MS * 2,
+  );
+
+  // #1612 review: a zero-row collect imports nothing, so it starts no synthesis — but a changed outcome
+  // (new empties, new client counts) changes what can settle, so the conclusions are marked out of date.
+  it(
+    "a zero-row collect that changes the hunt outcome marks the conclusions out of date, and a repeat does not",
+    async () => {
+      let stats: unknown = { total_clients_scheduled: 2, total_finished_clients: 1 };
+      const runner: VqlRunner = async (statements) => {
+        const p = statements[0];
+        if (p.includes("hunt(") && p.includes("artifacts=["))
+          return { rows: [{ Hunt: { HuntId: "H.MARK1", state: "RUNNING" } }], raw: "" };
+        if (p.includes("FROM hunts()")) return { rows: [{ state: "RUNNING", stats }], raw: "" };
+        return { rows: [], raw: "" };
+      };
+      const made = await makeApp(runner);
+      const meta = new SynthMetaStore(made.store);
+      await request(made.app)
+        .post("/cases/c1/velociraptor/run-bundle")
+        .send({ bundleId: "best-practice", waitMinutes: 30 });
+      const collect = async () => {
+        expect((await request(made.app).post("/cases/c1/velociraptor/collect")).status).toBe(202);
+        await pollFor(
+          () => "the collect to finish",
+          async () => {
+            const job = (await request(made.app).get("/cases/c1/velociraptor/hunt-jobs")).body[0];
+            return job?.status === "imported" && !job.collectActive ? job : undefined;
+          },
+        );
+      };
+
+      await collect();
+      const first = (await meta.load("c1")).outOfDate;
+      expect(first?.reason).toBe("hunt outcome changed");
+
+      await collect(); // same outcome, same counts: nothing new to mark
+      expect((await meta.load("c1")).outOfDate?.revision).toBe(first?.revision);
+
+      stats = { total_clients_scheduled: 2, total_finished_clients: 2 };
+      await collect(); // every client finished now: what settles changed
+      expect((await meta.load("c1")).outOfDate?.revision).toBe((first?.revision ?? 0) + 1);
+    },
+    POLL_TIMEOUT_MS * 4,
   );
 
   it("poll-status marks the job deleted when Velociraptor has no record of the hunt", async () => {

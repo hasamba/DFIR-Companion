@@ -28,6 +28,7 @@ import type { ImportBase } from "../routes/context.js";
 import type { AiControl } from "../analysis/aiControl.js";
 import { collectWarnings, superOnlyHunt, type VeloHuntJobView } from "../analysis/veloHuntStore.js";
 import { isHuntStoppedEarly } from "../integrations/velociraptor/huntStatusPoller.js";
+import { inventorySignature } from "../analysis/collectionInventory.js";
 import { createVeloHuntStatusTimers } from "./veloHuntStatusTimers.js";
 import type { HuntUpload, SkippedArtifact } from "../integrations/velociraptor/velociraptorApi.js";
 import { parseVelociraptorJson } from "../analysis/velociraptorImport.js";
@@ -78,6 +79,7 @@ export interface VeloHuntsDeps {
   getControl: (caseId: string) => Promise<AiControl>;
   pushImportCheckpoint: (caseId: string, beforeState: InvestigationState, label: string) => Promise<void>;
   resynthesizeInBackground: (caseId: string) => void;
+  markConclusionsOutOfDate?: (caseId: string, reason: string) => Promise<void>; // #1599: no run of its own
   /** The diagnostics ring + FAILED log line (#1438); a collect that dies is otherwise only a job status. */
   recordImportFailure?: (caseId: string, kind: string, filename: string, err: unknown) => void;
 }
@@ -207,6 +209,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
 
     let job = await huntStore.get(caseId, huntId);
     if (!job) return;
+    const before = job; // what the inventory said before this collect
     // NOTE: a persisted status of "collecting" is deliberately NOT treated as "in flight" — see the
     // file header. The authority on what is actually running now is `collectingNow`.
     // Both held from just before the first write until the diff is recorded; released in the
@@ -218,10 +221,8 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
     // the `finally` regardless of where this pass stops.
     let scratchDir: string | null = null;
     try {
-      // A last live check right before collecting, so every entry point (poller, auto-collect timer,
-      // "Collect now") gets it: was the hunt stopped well before its own expiry, and how many clients did
-      // it reach (#1612)? Read before the rows, best effort. A failed read never blocks the collect; it
-      // leaves coverage unknown, so no empty result of this collect can settle an evidence class.
+      // A last live check before the rows, for every entry point: was the hunt stopped before its expiry,
+      // and how many clients did it reach (#1612)? A failed read leaves coverage unknown: nothing settles.
       let live: Awaited<ReturnType<typeof client.huntStatus>> = null;
       try {
         live = await client.huntStatus(job.huntId);
@@ -689,6 +690,8 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
       await huntStore.upsert(caseId, job);
       options.onVeloHunt?.(caseId);
       if (importedAny) resynthesizeInBackground(caseId);
+      else if (inventorySignature([before]) !== inventorySignature([job]))
+        await deps.markConclusionsOutOfDate?.(caseId, "hunt outcome changed"); // what settles moved (#1612)
     } catch (err) {
       recordImportFailure?.(caseId, "velociraptor-hunt", `hunt ${huntId}`, err);
       try {
