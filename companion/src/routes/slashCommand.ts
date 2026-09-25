@@ -30,6 +30,9 @@ import { SlackSocketMode, type SlackCommandPayload } from "../analysis/slackSock
 import { isValidCaseId } from "../storage/caseStore.js";
 import type { RouteContext } from "./context.js";
 
+/** /dfir synthesize is an analyst's "run now" (#1608) — see resynthesizeInBackground. */
+const RUN_NOW = { analyst: true } as const;
+
 /**
  * Two-way war-room slash-command bot (#235). Receives Slack / Teams / Telegram slash commands,
  * authenticates them, rate-limits per channel, and dispatches:
@@ -579,7 +582,9 @@ async function runActionCommand(cmd: ResolvedSlashCommand, input: DispatchInput)
     deliverAsyncResult(input, r, ephemeral);
 
   if (cmd.name === "synthesize") {
-    ctx.resynthesizeInBackground(cmd.caseId);
+    // An analyst's "run now", like the dashboard button: it supersedes a running synthesis instead of
+    // waiting behind it the way an automatic kick does (#1608).
+    ctx.resynthesizeInBackground(cmd.caseId, RUN_NOW);
     audit({
       category: "ai",
       action: "slash-command-synthesize",

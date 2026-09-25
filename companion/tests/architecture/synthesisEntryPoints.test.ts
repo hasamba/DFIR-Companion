@@ -43,8 +43,9 @@ const RESYNTHESIZE_IN_BACKGROUND: Sites = {
 };
 
 const SCHEDULE_SYNTHESIS: Sites = {
-  // 1. AI on (backfill ×2) and screenshot windows analyzed (flush ×1), plus its own busy retry.
-  "composition/captureAnalysis.ts": 4,
+  // 1. AI on (backfill ×2) and screenshot windows analyzed (flush ×1), plus its own busy retries
+  // (×2: the debounce timer, and startScheduledSynthesis when another auto run took the slot).
+  "composition/captureAnalysis.ts": 5,
 };
 
 // Direct pipeline.synthesize() calls. Each must sit inside an exclusive `synthesis` job — the one

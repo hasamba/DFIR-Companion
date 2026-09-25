@@ -138,6 +138,22 @@ describe("defaultClaudeRunner", () => {
     expect(r.spawnError?.code).toBe("ENOENT");
   });
 
+  it("starts no process when the signal is already aborted (#1608)", async () => {
+    const ac = new AbortController();
+    ac.abort();
+    // A missing binary would report ENOENT if the runner tried to spawn it.
+    const r = await defaultClaudeRunner({
+      bin: "dfir-no-such-binary-1608",
+      args: [],
+      stdin: "",
+      timeoutMs: 10_000,
+      signal: ac.signal,
+    });
+    expect(r.spawnError).toBeUndefined();
+    expect(r.timedOut).toBe(true);
+    expect(r.code).toBeNull();
+  });
+
   it("kills the process and sets timedOut when the signal aborts", async () => {
     const ac = new AbortController();
     const p = defaultClaudeRunner({

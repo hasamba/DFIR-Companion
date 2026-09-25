@@ -479,6 +479,7 @@ async function callSynthesisModel(
     caseId,
     "synthesis",
     async () => {
+      throwIfSuperseded(opts.signal); // #1608: a retry after a supersede calls no provider
       attempt++;
       let parsed: unknown;
       try {
@@ -498,6 +499,9 @@ async function callSynthesisModel(
         );
         return parseSynthesisAnswer(ctx, caseId, parsed);
       } catch (err) {
+        // #1608: an abort is neither a parse retry nor a failed answer worth keeping — and thrown as
+        // an AbortError, withRetry does not call the provider again.
+        throwIfSuperseded(opts.signal);
         parseRetries++;
         retryNote = synthesisRetryNote(err) ?? retryNote; // a provider error keeps the current note
         await keepFailedAnswer(ctx, caseId, attempt, err, parsed);
@@ -739,6 +743,8 @@ export async function synthesize(
   // Lost-update guard (mirrors the pinned-questions re-load in the delta fold): a manual
   // event/IOC/thread added DURING the seconds-long AI call would otherwise be clobbered by this
   // write, because `next` was derived from the snapshot taken before the call.
+  // #1608: the fold and grading above are async too, so a run superseded during them stops here.
+  throwIfSuperseded(opts.signal);
   next = await persistSynthesis(ctx, caseId, { loaded, next, findingsDiff });
 
   await autoGenerateHypotheses(ctx, caseId, delta.hypotheses, next, markers, aliasIndex);

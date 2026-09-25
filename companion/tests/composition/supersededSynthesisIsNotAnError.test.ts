@@ -86,7 +86,8 @@ describe("a live synthesis superseded by a newer kick", () => {
       started.length === 1 ? true : undefined,
     );
 
-    analysis.resynthesizeInBackground(CASE_ID); // the newer kick supersedes it
+    // An analyst's "run now" supersedes it. An automatic kick would wait for it instead (#1608).
+    analysis.resynthesizeInBackground(CASE_ID, { analyst: true });
     await kicks.waitFor(2);
 
     // The superseded run's rejection has to settle before anything can be asserted about it.
