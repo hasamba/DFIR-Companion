@@ -19,6 +19,7 @@ import {
 import { persistenceAggKey } from "./veloAggKeys.js";
 import { isStagedCommandValue } from "./stagingPaths.js";
 import { withHostSuffix } from "./velociraptorTitle.js";
+import { isMicrosoftStoreAppPath, isStockOneDriveTask } from "./persistenceStockOs.js";
 
 type Row = Record<string, unknown>;
 
@@ -139,7 +140,14 @@ export function mapPersistenceSniper(
   // Signature is only worth surfacing when it says something OTHER than "found and valid" — a
   // clean Authenticode signature is the common case and just adds noise to the title.
   const sigStatus = /status\s*=\s*([^,]*)/i.exec(signature)?.[1]?.trim() ?? "";
-  const sigFlag = sigStatus && sigStatus.toLowerCase() !== "valid" ? sigStatus : "";
+  // A Store app's files are catalog-signed, so NotSigned is expected for an App Paths entry that
+  // points exactly into a Microsoft package folder (#1665; bounds in persistenceStockOs.ts). Every
+  // other status, technique or path keeps the flag.
+  const storeAppNotSigned =
+    sigStatus.toLowerCase() === "notsigned" &&
+    technique.toLowerCase() === "app paths" &&
+    isMicrosoftStoreAppPath(value);
+  const sigFlag = sigStatus && sigStatus.toLowerCase() !== "valid" && !storeAppNotSigned ? sigStatus : "";
 
   // IsLolbin alone is a weak, noisy signal: rundll32.exe/sc.exe/cmd.exe/msiexec.exe are all
   // catalogued LOLBins, and they're ALSO how a large fraction of Windows' own stock scheduled
@@ -153,7 +161,11 @@ export function mapPersistenceSniper(
   // EITHER it isn't a recognised built-in, OR one of the other anomaly signals also fired for the
   // same row — a builtin tool alone, cleanly signed, not staged anywhere unusual, is the routine
   // case and stays suppressed; anything else earns the promotion.
-  const lolbinFlag = isLolbin && (!isBuiltinBinary || sigFlag !== "" || staged);
+  // The stock per-user OneDrive tasks run a LOLBAS binary from the profile, so the module never
+  // calls it built-in (#1665). The exact stock shape counts as built-in here only; a bad signature
+  // or a staged path still escalates below.
+  const stockOneDrive = isStockOneDriveTask({ technique, path, value, accessGained });
+  const lolbinFlag = isLolbin && (!(isBuiltinBinary || stockOneDrive) || sigFlag !== "" || staged);
 
   // Grade directly from the module's own STRUCTURED verdict columns — never from the free-text
   // description below. `subject` is built from Value/Path, real filesystem/registry content on the
