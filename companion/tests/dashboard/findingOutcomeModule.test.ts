@@ -8,7 +8,9 @@ import { loadDashboardModule } from "../helpers/dashboardModule.js";
 
 interface Api {
   loadFindingOutcome(caseId: string): void;
-  findingOutcomeControls(fid: string): string;
+  findingOutcomeControls(fid: string, finding?: unknown): string;
+  findingSimulationChip(finding: unknown): string;
+  setSimulationOverride(treatAsReal: boolean): void;
   setFindingControl(fid: string, value: string): void;
   setFindingExecution(fid: string, value: string): void;
 }
@@ -20,16 +22,17 @@ interface Deferred {
 }
 
 function harness() {
-  const pending: Deferred[] = [];
+  const pending: (Deferred & { body?: string })[] = [];
   const renders: number[] = [];
   const toasts: string[] = [];
   let caseInput = "";
   const globals = {
     document: { getElementById: () => ({ value: caseInput }), addEventListener: () => {} },
-    fetch: (url: string) =>
+    fetch: (url: string, init?: { body?: string }) =>
       new Promise((res, rej) => {
         pending.push({
           url,
+          body: init?.body,
           resolve: (body, init = {}) =>
             res({ ok: init.ok ?? true, status: init.status ?? 200, json: () => Promise.resolve(body) }),
           reject: rej,
@@ -40,6 +43,7 @@ function harness() {
     investigatorName: () => "Alice",
     showToast: (t: string) => toasts.push(t),
     escAttr: (s: string) => String(s),
+    esc: (s: string) => String(s),
     ICON_TARGET: "<svg/>",
     ICON_FLAG: "<svg/>",
   };
@@ -147,5 +151,62 @@ describe("dashboard-finding-outcome ordering", () => {
     await tick();
     expect(h.toasts[0]).toMatch(/not saved: Failed to fetch/);
     expect(selected(h.api.findingOutcomeControls("f1"), "exec")).toBe("");
+  });
+
+  // #1595: the simulation verdict's one-click override lives with the finding controls.
+  describe("simulation verdict", () => {
+    const verdict = (overridden = false) => ({
+      id: "f14",
+      severity: "Critical",
+      simulation: { role: "verdict", originalSeverity: "Info", appliedSeverity: "Critical", overridden },
+    });
+
+    it("offers the override only on the verdict card", () => {
+      const h = harness();
+      expect(h.api.findingOutcomeControls("f1", { id: "f1", severity: "High" })).not.toMatch(/fsim-btn/);
+      const capped = {
+        id: "f1",
+        severity: "Medium",
+        simulation: { role: "simulated", originalSeverity: "Critical" },
+      };
+      expect(h.api.findingOutcomeControls("f1", capped)).not.toMatch(/fsim-btn/);
+      expect(h.api.findingOutcomeControls("f14", verdict())).toMatch(
+        /data-fsim-real="true"[^>]*>Treat as real intrusion/,
+      );
+      expect(h.api.findingOutcomeControls("f14", verdict(true))).toMatch(
+        /data-fsim-real="false"[^>]*>Undo: treat as simulation/,
+      );
+    });
+
+    it("the chip keeps the live-intrusion severity beside the cap", () => {
+      const h = harness();
+      const capped = {
+        id: "f1",
+        severity: "Medium",
+        simulation: { role: "simulated", originalSeverity: "Critical" },
+      };
+      expect(h.api.findingSimulationChip(capped)).toMatch(
+        /simulated — pending owner confirmation · live-intrusion severity Critical/,
+      );
+      const live = {
+        id: "f4",
+        severity: "Critical",
+        simulation: { role: "live-exposure", originalSeverity: "Critical" },
+      };
+      expect(h.api.findingSimulationChip(live)).toMatch(/live exposure — remediate regardless/);
+      expect(h.api.findingSimulationChip({ id: "f9", severity: "High" })).toBe("");
+    });
+
+    it("posts the override and reports a failure on screen", async () => {
+      const h = harness();
+      h.setCase("A");
+      h.api.setSimulationOverride(true);
+      const req = h.pending.shift()!;
+      expect(req.url).toBe("/cases/A/simulation-override");
+      expect(JSON.parse(req.body!)).toEqual({ treatAsReal: true, updatedBy: "Alice" });
+      req.resolve({ error: "disk full" }, { ok: false, status: 500 });
+      await tick();
+      expect(h.toasts[0]).toMatch(/Simulation override not saved: disk full/);
+    });
   });
 });

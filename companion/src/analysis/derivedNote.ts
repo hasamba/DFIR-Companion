@@ -60,6 +60,8 @@ export const DERIVED_NOTE_NAMES: readonly string[] = [
   "shared source mtime",
   "inherited modified time",
   "CLR usage log",
+  "own-child handle",
+  "normal OS behaviour",
 ];
 
 /**
@@ -70,7 +72,11 @@ export const DERIVED_NOTE_NAMES: readonly string[] = [
  * through the shared helper qualifies without the store learning its name. If you are adding a
  * `*_MARKER` above and your pass lowers a severity, add the name here too.
  */
-export const DERIVED_NOTE_DOWNGRADES: readonly string[] = ["build-time"];
+export const DERIVED_NOTE_DOWNGRADES: readonly string[] = [
+  "build-time",
+  "own-child handle",
+  "normal OS behaviour",
+];
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 // The first registered note, and everything after it. Anchored to a registered NAME so an

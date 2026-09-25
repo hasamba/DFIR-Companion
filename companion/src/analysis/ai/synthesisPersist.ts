@@ -36,6 +36,12 @@ export interface SynthesisPersistInput {
   next: InvestigationState;
   /** What this run changed, for the Investigation-Log line. */
   findingsDiff: FindingsDiff;
+  /**
+   * A last deterministic pass over the merged state, run INSIDE the locked write (#1595): the
+   * simulation verdict reads the analyst's override there, so an override saved while the model was
+   * thinking is not overwritten by this run's stale answer.
+   */
+  reconcile?: (merged: InvestigationState) => Promise<InvestigationState>;
 }
 
 /**
@@ -53,7 +59,8 @@ export async function persistSynthesis(
   let persisted = input.next;
   const write = async (): Promise<void> => {
     const latest = await ctx.opts.stateStore.load(caseId);
-    const merged = mergeConcurrentAdditions(input.loaded, input.next, latest);
+    const concurrent = mergeConcurrentAdditions(input.loaded, input.next, latest);
+    const merged = input.reconcile ? await input.reconcile(concurrent) : concurrent;
     // Record THIS synthesis run as a durable, cross-session Investigation-Log line (#165) — imports
     // already log via timelineNote; synthesis didn't. Final merged counts; one entry per real run.
     persisted = {

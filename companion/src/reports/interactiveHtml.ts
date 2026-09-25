@@ -6,6 +6,7 @@ import {
   type FindingStatus,
   type Severity,
 } from "../analysis/stateTypes.js";
+import { simulationSeverityLabel } from "../analysis/simulationVerdict.js";
 import type { CaseMeta } from "../types.js";
 import type { ReportMeta } from "./reportMeta.js";
 import { emptyReportMeta } from "./reportMeta.js";
@@ -58,6 +59,7 @@ export interface TimelineRow {
 export interface FindingCard {
   id: string;
   severity: Severity;
+  severityNote?: string; // #1595: the simulation label, e.g. the live-intrusion severity beside a cap
   title: string;
   description: string;
   confidence?: number;
@@ -66,6 +68,8 @@ export interface FindingCard {
   relatedIocs: string[];
   firstSeen: string;
   status: FindingStatus;
+  /** "Other commands in this session" (#1594), one defanged line each. */
+  sessionCommands?: string[];
 }
 
 export interface InteractiveCaseData {
@@ -129,10 +133,12 @@ function toTimelineRow(e: ForensicEvent, domains: string[]): TimelineRow {
 
 // `relatedIocs` holds IOC IDS, not values (stateTypes.ts) — and this projection embeds no IOC
 // values at all, by design (see the header). So the prose fields are the whole exposure here.
-function toFindingCard(f: Finding, domains: string[]): FindingCard {
+function toFindingCard(f: Finding, domains: string[], keptIds: ReadonlySet<string>): FindingCard {
+  const notes = sessionCommandLines(f, domains, keptIds);
   return {
     id: f.id,
     severity: f.severity,
+    ...(f.simulation ? { severityNote: simulationSeverityLabel(f) } : {}),
     title: defangIndicators(f.title, domains),
     description: defangIndicators(f.description, domains),
     confidence: f.confidence,
@@ -142,7 +148,22 @@ function toFindingCard(f: Finding, domains: string[]): FindingCard {
     relatedIocs: f.relatedIocs,
     firstSeen: f.firstSeen,
     status: f.status,
+    ...(notes.length ? { sessionCommands: notes } : {}),
   };
+}
+
+/** Commands shown per finding card; each line is already capped at MAX_NOTE_TEXT characters. */
+const SESSION_COMMANDS_PER_CARD = 12;
+
+// #1594. Only notes whose row this report embeds, so no line points at a row the timeline cut, and a
+// fixed count per card, so a dense session cannot grow the file past the timeline's own budget.
+function sessionCommandLines(f: Finding, domains: string[], keptIds: ReadonlySet<string>): string[] {
+  const shown = (f.sessionCommands ?? []).filter((c) => keptIds.has(c.eventId));
+  const lines = shown
+    .slice(0, SESSION_COMMANDS_PER_CARD)
+    .map((c) => defangIndicators(`${c.timestamp || "(undated)"} on ${c.host}: ${c.text}`, domains));
+  const more = shown.length - lines.length;
+  return more > 0 ? [...lines, `… and ${more} more in the case timeline`] : lines;
 }
 
 function serializedBytes(value: unknown): number {
@@ -197,6 +218,7 @@ function buildData(
 ): InteractiveCaseData {
   const domains = caseDomains(state);
   const { rows, truncated } = selectTimeline(state.forensicTimeline, domains);
+  const keptIds = new Set(rows.map((r) => r.id));
   return {
     caseId: state.caseId,
     caseName: caseMeta?.name ?? "",
@@ -205,7 +227,7 @@ function buildData(
     incidentId: reportMeta.incidentId,
     companyName: reportMeta.companyName,
     restrictions: reportMeta.restrictions,
-    findings: state.findings.map((f) => toFindingCard(f, domains)),
+    findings: state.findings.map((f) => toFindingCard(f, domains, keptIds)),
     timeline: rows,
     truncated,
     totalEvents: state.forensicTimeline.length,
@@ -242,6 +264,7 @@ const STYLES = `
   .finding-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; cursor: pointer; user-select: none; }
   .finding-head:hover { background: #f7f8fa; }
   .finding-head .title { font-weight: 600; flex: 1; }
+  .finding-head .sev-note { font-size: 12px; color: #6b4e00; }
   .finding-body { padding: 0 14px 12px; display: none; }
   .finding-card.open .finding-body { display: block; }
   .chevron { color: #5a6675; transition: transform .15s; }
@@ -368,6 +391,7 @@ const SCRIPT = `
       var head = el("div", { class: "finding-head" }, [
         el("span", { class: "chevron", text: "▶" }),
         el("span", { class: sevClass(f.severity), text: f.severity }),
+        f.severityNote ? el("span", { class: "sev-note", text: f.severityNote }) : null,
         el("span", { class: "title", text: f.title }),
         el("progress", { class: "conf-bar", max: "100", value: String(confidence(f)) }),
         el("span", { text: confidence(f) + "%" }),
@@ -378,6 +402,7 @@ const SCRIPT = `
         el("p", null, [el("b", { text: "First seen: " }), el("span", { text: f.firstSeen || "—" })]),
         el("p", null, [el("b", { text: "Status: " }), el("span", { text: f.status })]),
         el("p", { text: f.description }),
+        f.sessionCommands && f.sessionCommands.length ? el("p", null, [el("b", { text: "Other commands in this session: " }), el("span", { text: f.sessionCommands.join(" | ") })]) : null,
         f.confidenceReason ? el("p", null, [el("b", { text: "Confidence reason: " }), el("span", { text: f.confidenceReason })]) : null,
         el("p", null, [el("b", { text: "MITRE: " }), el("span", { text: (f.mitreTechniques || []).join(", ") || "—" })]),
         el("p", null, [el("b", { text: "Related IOCs: " }), el("span", { text: (f.relatedIocs || []).join(", ") || "—" })]),
