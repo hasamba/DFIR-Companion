@@ -16,7 +16,9 @@ import {
 } from "./siemImport.js";
 import {
   collectWindowsConnCandidate,
+  mergeRowIocsHoldingDns,
   runWindowsDnsConnJoin,
+  type HeldDnsIocs,
   type SiemConnCandidate,
 } from "./siemDnsConnJoin.js";
 
@@ -55,6 +57,7 @@ export class WindowsEventBuilder {
   private readonly os = new OsBehaviourLedger();
   private held: { m: MappedEvent; rowSink: Map<string, SiemIoc>; ordinal: number }[] = [];
   private dnsHeld: MappedEvent[] = [];
+  private readonly dnsIocs: HeldDnsIocs = new Map(); // #1642 — linked once each row's key is final
   private dnsOrdinals: number[] = [];
   private readonly conns: SiemConnCandidate[] = [];
   private total = 0;
@@ -85,7 +88,7 @@ export class WindowsEventBuilder {
       this.held.push({ m: mapped, rowSink, ordinal: recordIndex });
       return;
     }
-    mergeRowIocs(this.iocSink, rowSink, mapped.aggKey);
+    mergeRowIocsHoldingDns(this.iocSink, rowSink, mapped, this.dnsIocs);
     if (mapped.canonical?.dns) {
       this.dnsHeld.push(mapped);
       this.dnsOrdinals.push(recordIndex);
@@ -111,7 +114,7 @@ export class WindowsEventBuilder {
     this.dnsOrdinals = [];
     if (!dns.length) return;
     if (this.opts.aggregate !== false) boundDnsVariants(dns, this.iocSink); // dnsRecord.ts, #933 item 2
-    runWindowsDnsConnJoin(dns, this.iocSink, this.conns); // #996 — always after boundDnsVariants
+    runWindowsDnsConnJoin(dns, this.iocSink, this.dnsIocs, this.conns); // #996 — always after boundDnsVariants
     for (const [i, m] of dns.entries()) {
       this.aggregator.add(m, ordinals[i]);
       yield i + 1;
