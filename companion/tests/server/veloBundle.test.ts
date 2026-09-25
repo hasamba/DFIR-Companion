@@ -106,7 +106,11 @@ async function pollHuntJob<T extends { status: string }>(target: Parameters<type
       const job = (await request(target).get("/cases/c1/velociraptor/hunt-jobs")).body[0] as T | undefined;
       if (!job) return undefined;
       last = job.status;
-      return job.status === "imported" || job.status === "error" ? job : undefined;
+      // #1662: a terminal status is written before the pass ends; collectActive says when it has.
+      const done =
+        (job.status === "imported" || job.status === "error") &&
+        (job as { collectActive?: boolean }).collectActive === false;
+      return done ? job : undefined;
     },
   );
 }
@@ -946,7 +950,7 @@ describe("Velociraptor hunt status polling — routes", () => {
           () => "the collect to finish",
           async () => {
             const job = (await request(made.app).get("/cases/c1/velociraptor/hunt-jobs")).body[0];
-            return job?.status === "imported" && !job.collectActive ? job : undefined;
+            return job?.status === "imported" && job.collectActive === false ? job : undefined;
           },
         );
       };

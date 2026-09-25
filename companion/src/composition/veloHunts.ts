@@ -92,9 +92,9 @@ export interface VeloHunts {
   startVeloHuntCollect(caseId: string, huntId: string): "started" | "queued";
   /**
    * The case's hunt jobs as the dashboard reads them: the persisted records, plus `collectActive` on
-   * any still saying "collecting". That flag comes from the in-flight map, the only authority (see
-   * the file header) — the persisted status is not, because a process that died mid-collect leaves
-   * it set forever, and a card that trusts it claims live work that stopped (#770).
+   * every job, whatever its status (#1662). That flag comes from the in-flight map, the only authority
+   * (see the file header) — the persisted status is not: a dead process leaves "collecting" forever
+   * (#770), and a re-collect says "imported" both before its first write and after its last one.
    */
   listVeloHuntJobViews(caseId: string): Promise<VeloHuntJobView[]>;
   scheduleVeloHuntStatusPoll(caseId: string, huntId: string): void;
@@ -734,11 +734,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
   // file header for why dropping the second request instead was a real, silent bug (#195).
   async function listVeloHuntJobViews(caseId: string): Promise<VeloHuntJobView[]> {
     const jobs = (await options.veloHuntStore?.list(caseId)) ?? [];
-    return jobs.map((j) =>
-      j.status === "collecting"
-        ? { ...j, collectActive: collectingNow.has(collectKey(caseId, j.huntId)) }
-        : j,
-    );
+    return jobs.map((j) => ({ ...j, collectActive: collectingNow.has(collectKey(caseId, j.huntId)) }));
   }
 
   function startVeloHuntCollect(caseId: string, huntId: string): "started" | "queued" {
