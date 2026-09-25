@@ -4,7 +4,11 @@ import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import { StateLock } from "./stateLock.js";
 import type { Severity } from "./stateTypes.js";
-import type { HuntTarget, SkippedArtifact } from "../integrations/velociraptor/velociraptorApi.js";
+import type {
+  HuntClientCounts,
+  HuntTarget,
+  SkippedArtifact,
+} from "../integrations/velociraptor/velociraptorApi.js";
 
 // The per-case record of Velociraptor BUNDLE hunts: which bundle was launched, the returned hunt id,
 // when results should be collected, and the outcome once they are. Persisted to a side file
@@ -78,6 +82,11 @@ export interface VeloHuntJob {
   // generic "no new results collected yet — collect again later", which is misleading for a hunt that
   // will never produce anything again.
   stoppedEarly?: boolean;
+  // The hunt's client coverage, read from Velociraptor's hunt stats at the last collect (#1612). An
+  // empty result speaks only for the clients that ran the hunt, so it settles an evidence class only
+  // when scheduled > 0 and every scheduled client finished without error. Absent on a job collected
+  // before this was recorded, or when the stats read failed: coverage unknown, and nothing settles.
+  clientCounts?: HuntClientCounts;
   importedAt?: string; // ISO — when results were collected + imported
   importFile?: string; // stored evidence filename
   addedEvents?: number;

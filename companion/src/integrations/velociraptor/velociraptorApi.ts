@@ -14,6 +14,8 @@ export { matchClient, normalizeClientRow, type VeloClientRecord } from "./client
 import { ChildOutputCollector } from "../childOutput.js";
 import { containedWhereOrThrow } from "../../analysis/vqlInput.js";
 import { buildHuntSpec, HuntSpecError, type HuntSpecCheck } from "./huntSpec.js";
+import { parseHuntClientCounts, type HuntClientCounts } from "./huntClientCounts.js";
+export type { HuntClientCounts } from "./huntClientCounts.js";
 export { HuntSpecError } from "./huntSpec.js"; // the route answers it 400: the bundle, not the server
 import { noLaunchIdMessage, translateVelociraptorError, vqlLogErrors } from "./vqlDiagnostics.js";
 import { parseArtifactTools, parseToolInventory, type VeloArtifactTool } from "./artifactTools.js";
@@ -749,17 +751,27 @@ export class VelociraptorClient {
   // shows up here as ordinary STOPPED (confirmed against a live server); it does not disappear from
   // hunts(). `expires` (the hunt's own scheduled end, converted from Velociraptor's microsecond epoch
   // to ISO) lets a caller tell that apart from natural completion — see isHuntStoppedEarly().
-  async huntStatus(huntId: string): Promise<{ state: string; expires?: string } | null> {
+  // `clients` is the hunt's client coverage (#1612), absent when the server reported no usable stats.
+  async huntStatus(
+    huntId: string,
+  ): Promise<{ state: string; expires?: string; clients?: HuntClientCounts } | null> {
     if (!HUNT_RE.test(huntId)) throw new Error("invalid hunt id");
-    const rows = await this.runRaw(`SELECT state, expires FROM hunts() WHERE hunt_id='${huntId}' LIMIT 1`);
+    const rows = await this.runRaw(
+      `SELECT state, expires, stats FROM hunts() WHERE hunt_id='${huntId}' LIMIT 1`,
+    );
     if (!rows.length) return null;
-    const r = (rows[0] ?? {}) as { state?: unknown; expires?: unknown };
+    const r = (rows[0] ?? {}) as { state?: unknown; expires?: unknown; stats?: unknown };
+    const clients = parseHuntClientCounts(r.stats);
     const expiresMicros = Number(r.expires);
     const expires =
       Number.isFinite(expiresMicros) && expiresMicros > 0
         ? new Date(expiresMicros / 1000).toISOString()
         : undefined;
-    return { state: String(r.state ?? "").trim(), ...(expires ? { expires } : {}) };
+    return {
+      state: String(r.state ?? "").trim(),
+      ...(expires ? { expires } : {}),
+      ...(clients ? { clients } : {}),
+    };
   }
 
   // The artifacts an EXTERNAL hunt collected — so the Companion can read the results of a hunt it did
