@@ -36,7 +36,8 @@ export interface GuardCase {
   events: readonly ForensicEvent[];
 }
 
-const MAX_ITEMS = 20;
+// How many items the PROMPT lists. The deterministic check always uses every item.
+const PROMPT_ITEMS_MAX = 40;
 const ITEM_TEXT_MAX = 200;
 
 /** Open threads, plus key questions not yet answered or answered with an absence. */
@@ -58,7 +59,7 @@ export function openItemsOf(state: Pick<InvestigationState, "openThreads" | "key
       negative,
     });
   }
-  return [...threads, ...questions].slice(0, MAX_ITEMS);
+  return [...threads, ...questions];
 }
 
 export const guardCaseOf = (state: InvestigationState, events: readonly ForensicEvent[]): GuardCase => ({
@@ -254,10 +255,16 @@ export function refereeHints(gc: GuardCase, so: SecondOpinion): Map<string, stri
 /** The runtime context block appended to the referee's user prompt. Empty when no A-only delta. */
 export function refereeContextBlock(gc: GuardCase, deltas: readonly SecondOpinionDelta[]): string {
   if (!deltas.some((d) => d.kind === "a_only")) return "";
-  const items = gc.openItems.length ? gc.openItems.map(renderItem) : ["- (none)"];
+  // Negative answers first, then open questions, then threads: a cap drops the threads first.
+  const rank = (i: OpenItem): number => (i.kind === "thread" ? 2 : i.negative ? 0 : 1);
+  const ordered = [...gc.openItems].sort((x, y) => rank(x) - rank(y));
+  const shown = ordered.slice(0, PROMPT_ITEMS_MAX);
+  const items = shown.length ? shown.map(renderItem) : ["- (none)"];
+  const more = ordered.length - shown.length;
   return [
     `OPEN QUESTIONS AND NEGATIVE ANSWERS (${gc.openItems.length}) — what this case has not settled:`,
     ...items,
+    ...(more > 0 ? [`- … +${more} more open threads not listed (the system still checks them)`] : []),
     "",
     "RULES FOR A-ONLY FINDINGS (accept_b dismisses Model A's finding):",
     "- Before you recommend accept_b, check whether the finding's cited events bear on any item above.",

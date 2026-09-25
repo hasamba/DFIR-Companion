@@ -320,6 +320,33 @@ describe("flagRefereeDismissals (#1596)", () => {
   });
 });
 
+describe("many open items (#1596)", () => {
+  const threads = Array.from({ length: 45 }, (_, i) => ({
+    id: `tx${i}`,
+    description: `unrelated lead ${i}`,
+    status: "open" as const,
+    openedAt: "",
+    closedAt: null,
+  }));
+  const a = caseA({ openThreads: threads });
+
+  it("still checks a negative answer behind 45 open threads", () => {
+    const flagged = flagRefereeDismissals(refereeDismissesAll(record(a)), guardCaseOf(a, EVENTS));
+    expect(
+      aOnly(flagged, "f-auto-2e22").refereeFlags?.some(
+        (f) => f.kind === "answers_open_item" && f.itemId === "q_impact",
+      ),
+    ).toBe(true);
+  });
+
+  it("lists negative answers first in the prompt and says how many threads it left out", () => {
+    const block = refereeContextBlock(guardCaseOf(a, EVENTS), record(a).deltas);
+    expect(block).toContain("OPEN QUESTIONS AND NEGATIVE ANSWERS (46)");
+    expect(block.indexOf("[q_impact]")).toBeLessThan(block.indexOf("[tx0]"));
+    expect(block).toContain("+6 more open threads not listed");
+  });
+});
+
 describe("quotesEvidence (#1596)", () => {
   const text = EVENTS[0].description;
   it("accepts a verbatim quoted span of the cited events", () => {

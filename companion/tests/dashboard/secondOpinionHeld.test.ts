@@ -137,6 +137,21 @@ describe("2nd opinion — dismissals held for the analyst (#1596)", () => {
     for (const msg of h.confirms) expect(msg).toContain("1 dismissal(s) marked ⚠ stay pending");
   });
 
+  it("offers reject all over every pending delta, held ones included", () => {
+    const h = harness();
+    h.api.renderSecondOpinion(REC);
+    expect(h.panel().innerHTML).toContain("✕ reject all (3)");
+    const heldOnly = {
+      ...REC,
+      deltas: [REC.deltas[2], { ...REC.deltas[2], id: "d4" }],
+    };
+    h.api.renderSecondOpinion(heldOnly);
+    const html = h.panel().innerHTML;
+    expect(html).toContain("✕ reject all (2)");
+    expect(html).not.toContain('data-so-all="accept"');
+    expect(html).not.toContain('data-so-all="referee"');
+  });
+
   it("shows no held line once the analyst decided the delta", () => {
     const h = harness();
     const decided = {

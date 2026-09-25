@@ -721,4 +721,34 @@ describe("the referee's dismissal guard (#1596)", () => {
     expect(decided.status).toBe("accepted");
     expect(decided.refereeFlags).toBeUndefined();
   });
+
+  it("a bulk accept re-checks the hold against the case as it is now", async () => {
+    const { app, aProvider, stateStore } = await makeApp({ enabled: true, synthA });
+    aProvider.reconcileReply = JSON.stringify({
+      summary: "",
+      verdicts: [
+        {
+          id: "a_only:finding-only",
+          rationale: 'Same as "beaconing to 1.2.3.4".',
+          recommendation: "accept_b",
+        },
+      ],
+    });
+    const run = await request(app).post("/cases/c1/second-opinion").send({});
+    const held = run.body.deltas.find((d: { id: string }) => d.id === "a_only:finding-only");
+    expect(held.refereeFlags).toEqual([expect.objectContaining({ itemId: "t6" })]);
+
+    // The analyst closes t6: nothing is left for the dismissal to take away.
+    const s = await stateStore.load("c1");
+    await stateStore.save({
+      ...s,
+      openThreads: s.openThreads.map((t) => ({ ...t, status: "closed" as const })),
+    });
+    const follow = await request(app)
+      .post("/cases/c1/second-opinion/apply-all")
+      .send({ followReferee: true });
+    const after = follow.body.deltas.find((d: { id: string }) => d.id === "a_only:finding-only");
+    expect(after.status).toBe("accepted");
+    expect((await stateStore.load("c1")).findings.find((f) => f.id === "f2")?.status).toBe("dismissed");
+  });
 });

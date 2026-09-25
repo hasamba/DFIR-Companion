@@ -322,11 +322,15 @@ export async function applyAllSecondOpinion(
   caseId: string,
   accept: boolean | "referee",
 ): Promise<{ record: SecondOpinion; state: InvestigationState }> {
-  return updateSecondOpinion(ctx, caseId, (current) =>
-    accept === "referee"
-      ? followRefereeStatus(current)
-      : setAllPendingStatus(current, accept ? "accepted" : "rejected"),
-  );
+  if (accept === false) return updateSecondOpinion(ctx, caseId, (c) => setAllPendingStatus(c, "rejected"));
+  // #1596 — a bulk accept re-checks the held dismissals against the case as it is NOW: a twin that
+  // supported an item when the referee ran may be gone, and a thread may have closed since.
+  const state = await ctx.opts.stateStore.load(caseId);
+  const guard = guardCaseOf(state, (await loadScopedEvents(ctx, caseId, state)).scoped);
+  return updateSecondOpinion(ctx, caseId, (current) => {
+    const checked = flagRefereeDismissals(current, guard);
+    return accept === "referee" ? followRefereeStatus(checked) : setAllPendingStatus(checked, "accepted");
+  });
 }
 
 /** Load → decide → save under the record lock, then apply the accepted set to the case. */

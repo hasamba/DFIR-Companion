@@ -122,7 +122,9 @@
         `<div class="so-empty">No disagreements — both models concur on the findings, severities and ATT&amp;CK techniques.</div>`;
       return;
     }
-    const pending = deltas.filter((d) => d.status === "pending" && !heldForAnalyst(d)).length;
+    const pending = deltas.filter((d) => d.status === "pending").length;
+    // Accept-all skips a dismissal held for the analyst (#1596); reject-all does not.
+    const acceptable = deltas.filter((d) => d.status === "pending" && !heldForAnalyst(d)).length;
     const refCalls = refereeCalls(deltas);
     // A failed referee pass leaves no calls worth following, even if an older pass left some.
     const refereeBtn =
@@ -130,9 +132,12 @@
         ? `<button data-so-all="referee" title="Apply the referee's call on every pending delta: accept where it suggests accept B, reject where it suggests keep A. Deltas with no referee call, and dismissals marked ⚠ for you, stay pending.">⚖ follow referee (${refCalls.accept + refCalls.keep})</button>`
         : "";
     const allBtns =
-      pending >= 2
-        ? `<button data-so-all="accept" title="Adopt model B's call on every pending delta (durable across re-synthesis). Dismissals marked ⚠ for you stay pending.">✓ accept all (${pending})</button><button data-so-all="reject" title="Keep model A on every pending delta — just record the decisions">✕ reject all</button>`
-        : "";
+      (acceptable >= 2
+        ? `<button data-so-all="accept" title="Adopt model B's call on every pending delta (durable across re-synthesis). Dismissals marked ⚠ for you stay pending.">✓ accept all (${acceptable})</button>`
+        : "") +
+      (pending >= 2
+        ? `<button data-so-all="reject" title="Keep model A on every pending delta — just record the decisions">✕ reject all (${pending})</button>`
+        : "");
     const bulk =
       refereeBtn || allBtns
         ? `<div class="so-bulk">${refereeBtn}${allBtns}</div>`
