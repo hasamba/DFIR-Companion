@@ -251,6 +251,8 @@
     "findingOutcomeControls",
     "setFindingExecution",
     "setFindingControl",
+    "findingSimulationChip",
+    "setSimulationOverride",
     "renderPinned",
     "loadPins",
     "pinBtn",

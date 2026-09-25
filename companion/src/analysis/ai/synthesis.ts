@@ -60,6 +60,7 @@ import {
 } from "./synthesisInputs.js";
 import { carryOutOfWindowFindings, foldSynthesisDelta, gradeFindings } from "./synthesisMerge.js";
 import { persistSynthesis } from "./synthesisPersist.js";
+import { reconcileSimulationVerdict } from "../simulationVerdict.js";
 import { stampCollectDirectives } from "../collectSatisfaction.js";
 import type { PromotionIntent } from "../ingest/timelineImports.js";
 
@@ -310,7 +311,7 @@ async function finalizeFindings(
   const withAccepted = ctx.opts.secondOpinionStore
     ? applyAcceptedSecondOpinion(folded, await ctx.opts.secondOpinionStore.load(caseId))
     : folded;
-  return gradeFindings({
+  const graded = gradeFindings({
     next: withAccepted,
     delta: input.delta,
     surviving: input.surviving,
@@ -318,6 +319,28 @@ async function finalizeFindings(
     sourceTrust: input.sourceTrust,
     kevCatalog: await ctx.getKevCatalog(),
     aliasIndex: input.aliasIndex,
+  });
+  // #1595: after grading, which only lowers — the simulation verdict RAISES its own finding. It
+  // judges the verdict on the model's own confidence, which grading may have capped.
+  const modelConfidence = new Map(
+    withAccepted.findings.flatMap((f) => (f.confidence !== undefined ? [[f.id, f.confidence] as const] : [])),
+  );
+  return reconcileSimulation(ctx, caseId, graded, input.aliasIndex, modelConfidence);
+}
+
+/** The simulation verdict (#1595) with the analyst's override read fresh. No store: never overridden. */
+async function reconcileSimulation(
+  ctx: SynthesisContext,
+  caseId: string,
+  state: InvestigationState,
+  aliasIndex: HostAliasIndex,
+  modelConfidence?: ReadonlyMap<string, number>,
+): Promise<InvestigationState> {
+  const treatAsReal = (await ctx.opts.synthMetaStore?.treatAsReal(caseId)) ?? false;
+  return reconcileSimulationVerdict(state, {
+    treatAsReal,
+    aliasIndex,
+    ...(modelConfidence ? { modelConfidence } : {}),
   });
 }
 
@@ -735,7 +758,12 @@ export async function synthesize(
   // Lost-update guard (mirrors the pinned-questions re-load in the delta fold): a manual
   // event/IOC/thread added DURING the seconds-long AI call would otherwise be clobbered by this
   // write, because `next` was derived from the snapshot taken before the call.
-  next = await persistSynthesis(ctx, caseId, { loaded, next, findingsDiff });
+  next = await persistSynthesis(ctx, caseId, {
+    loaded,
+    next,
+    findingsDiff,
+    reconcile: (merged) => reconcileSimulation(ctx, caseId, merged, aliasIndex),
+  });
 
   await autoGenerateHypotheses(ctx, caseId, delta.hypotheses, next, markers, aliasIndex);
   // #1418: one more call turns each Critical/High finding into an analyst task for the playbook.

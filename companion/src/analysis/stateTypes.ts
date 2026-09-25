@@ -416,6 +416,20 @@ export interface Finding {
   control?: ControlDisposition;
   executionSource?: OutcomeSource;
   controlSource?: OutcomeSource;
+  // Set post-synthesis by applySimulationVerdict (#1595) when the case's own findings conclude it is
+  // an authorized simulation. Never model-set. See analysis/simulationVerdict.ts.
+  simulation?: FindingSimulation;
+}
+
+// How the simulation verdict (#1595) changed one finding. `originalSeverity` is the live-intrusion
+// severity before the step; `appliedSeverity` is what the step set, so a later rewrite of the
+// severity (a model re-run, an accepted second opinion) is recognised and wins.
+export interface FindingSimulation {
+  role: "verdict" | "simulated" | "live-exposure";
+  originalSeverity: Severity;
+  appliedSeverity: Severity;
+  verdictId?: string; // simulated / live-exposure: the verdict finding that explains it
+  overridden?: boolean; // verdict only: the analyst said "treat as real intrusion"
 }
 
 export interface Thread {

@@ -177,6 +177,14 @@ const outOfDateSchema = z.object({
   revision: z.number().int().nonnegative().catch(0),
 });
 
+// #1595: the analyst's "treat as real intrusion" answer to a simulation verdict. Kept here because
+// synthesis already reads this file; record() carries it over, since it is not about one run.
+const simulationOverrideSchema = z.object({
+  treatAsReal: z.boolean(),
+  at: z.string().catch(""),
+  by: z.string().catch(""),
+});
+
 export const synthMetaSchema = z.object({
   lastSynthesizedAt: z.string().catch(""),
   lastDiff: z
@@ -221,6 +229,7 @@ export const synthMetaSchema = z.object({
   // (two writes in the same millisecond). A real run clears `outOfDate`; see record().
   revision: z.number().int().nonnegative().optional().catch(undefined),
   outOfDate: outOfDateSchema.nullable().optional().catch(undefined),
+  simulationOverride: simulationOverrideSchema.optional().catch(undefined),
 });
 
 export type SynthMeta = z.infer<typeof synthMetaSchema>;
@@ -327,10 +336,37 @@ export class SynthMetaStore {
         ...perf,
         ...(cur.revision !== undefined ? { revision: cur.revision } : {}),
         ...(keep ? { outOfDate: pending } : {}),
+        ...(cur.simulationOverride ? { simulationOverride: cur.simulationOverride } : {}),
       };
       await atomicWrite(this.path(caseId), JSON.stringify(meta, null, 2));
       return meta;
     });
+  }
+
+  // #1595: the analyst's simulation override. Load-merge-save like markOutOfDate. It is NOT a mark:
+  // the override is applied straight to the stored findings, so the conclusions stay current.
+  setSimulationOverride(
+    caseId: string,
+    treatAsReal: boolean,
+    by = "",
+    at: string = new Date().toISOString(),
+  ): Promise<SynthMeta> {
+    return synthMetaLock.runExclusive(caseId, async () => {
+      const cur = await this.load(caseId);
+      const meta: SynthMeta = { ...cur, simulationOverride: { treatAsReal, at, by } };
+      await atomicWrite(this.path(caseId), JSON.stringify(meta, null, 2));
+      return meta;
+    });
+  }
+
+  // #1595: whether the analyst said "treat as real intrusion". An UNREADABLE file answers true: a
+  // read failure must never quietly turn an analyst's decision back into capped severities.
+  async treatAsReal(caseId: string): Promise<boolean> {
+    try {
+      return (await this.load(caseId)).simulationOverride?.treatAsReal === true;
+    } catch {
+      return true;
+    }
   }
 
   /** The current out-of-date revision (0 before any mark). Read by synthesize() before it loads the case. */

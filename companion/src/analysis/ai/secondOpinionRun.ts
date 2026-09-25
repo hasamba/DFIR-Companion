@@ -20,6 +20,7 @@ import type { AIProvider } from "../../providers/provider.js";
 import type { RefereeModel } from "./providerRoster.js";
 import { callAiJson, loadScopedEvents } from "./aiContext.js";
 import { StateLock } from "../stateLock.js";
+import { reconcileSimulationVerdict } from "../simulationVerdict.js";
 import { synthesize, type SynthesisContext } from "./synthesis.js";
 
 /**
@@ -331,7 +332,11 @@ async function updateSecondOpinion(
     return next;
   });
   const state = await ctx.opts.stateStore.load(caseId);
-  const applied = applyAcceptedSecondOpinion(state, record);
+  // #1595: an accepted delta can add, dismiss or re-rate a finding, so the simulation verdict is
+  // re-applied over the result, with the analyst's override read fresh.
+  const applied = reconcileSimulationVerdict(applyAcceptedSecondOpinion(state, record), {
+    treatAsReal: (await ctx.opts.synthMetaStore?.treatAsReal(caseId)) ?? false,
+  });
   if (applied !== state) {
     await ctx.opts.stateStore.save(applied);
     ctx.opts.onState?.(applied);

@@ -678,6 +678,7 @@
     "sigmaToVql.ts": "analysis/hunt",
     "sigmaVqlTemplates.ts": "analysis/hunt",
     "sigmaVqlValues.ts": "analysis/hunt",
+    "simulationVerdict.ts": "analysis/findings",
     "slackSocketMode.ts": "analysis/notify",
     "slashCommand.ts": "analysis/notify",
     "slashCommandAuth.ts": "analysis/notify",

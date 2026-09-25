@@ -850,7 +850,14 @@ export const FEATURES: Feature[] = [
     // Finding attack outcome (#930 item 8): two analyst-set axes (execution, control) per finding,
     // server-backed like workflow so synthesis cannot wipe them.
     file: "dashboard-finding-outcome.js",
-    publish: ["loadFindingOutcome", "findingOutcomeControls", "setFindingExecution", "setFindingControl"],
+    publish: [
+      "loadFindingOutcome",
+      "findingOutcomeControls",
+      "setFindingExecution",
+      "setFindingControl",
+      "findingSimulationChip",
+      "setSimulationOverride",
+    ],
     private: ["outcomeByFinding", "activeCase", "patchSeq", "EXECUTION_LABELS", "CONTROL_LABELS", "bound"],
   },
   {
