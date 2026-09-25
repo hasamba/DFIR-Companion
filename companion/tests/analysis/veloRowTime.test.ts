@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { pickTime } from "../../src/analysis/veloRowTime.js";
+import { pickTime, vrTime } from "../../src/analysis/veloRowTime.js";
+import { parseVelociraptorJson } from "../../src/analysis/velociraptorImport.js";
 
 // #1415. A copied binary keeps the SOURCE file's $SI LastModified — cmd.exe's build date survives the
 // copy, while every Created stamp records the drop. Dating a nested MFT row from LastModified0x10
@@ -156,5 +157,54 @@ describe("pickTime — a YARA rule's metadata is never the row's time (#1603)", 
     expect(pickTime({ Name: "x", Meta: { LastVisited: "2026-09-01T10:00:00Z" } })).toMatch(
       /^2026-09-01T10:00:00/,
     );
+  });
+});
+
+// #1618. autorunsc -t (which Windows.Sysinternals.Autoruns passes) prints its Time column in a compact
+// "normalized UTC" form, YYYYMMDD-hhmmss. It is not ISO, so the raw string used to be stored as the
+// event time: the row sorted as text and every time-based pass skipped or misplaced it.
+describe("vrTime / pickTime — the Autoruns compact UTC time (#1618)", () => {
+  it("reads YYYYMMDD-hhmmss as UTC ISO", () => {
+    expect(vrTime("20190621-054222")).toBe("2019-06-21T05:42:22Z");
+    expect(vrTime("  20190621-054222 ")).toBe("2019-06-21T05:42:22Z");
+  });
+
+  it("rejects a compact value that is not a real calendar time", () => {
+    for (const bad of ["20191345-054222", "20190229-000000", "20190621-240000", "20190621-056099"]) {
+      expect(vrTime(bad)).toBe("");
+    }
+    expect(vrTime("20200229-120000")).toBe("2020-02-29T12:00:00Z"); // leap day is real
+  });
+
+  it("dates an Autoruns row by its Time column", () => {
+    const row = { Time: "20190621-054222", Entry: "OneDrive", Enabled: "enabled", _ts: 1_790_000_000 };
+    expect(pickTime(row)).toBe("2019-06-21T05:42:22Z");
+  });
+
+  it("leaves a row with an unparseable compact time undated, never at collection time", () => {
+    const row = { Time: "20191345-054222", Entry: "OneDrive", Enabled: "enabled", _ts: 1_790_000_000 };
+    expect(pickTime(row)).toBe("");
+  });
+
+  it("still dates the row from a later valid time column when a compact one is invalid", () => {
+    const row = { EventTime: "20191345-054222", Mtime: "2019-06-21T05:42:22Z", _ts: 1_790_000_000 };
+    expect(pickTime(row)).toBe("2019-06-21T05:42:22Z");
+  });
+
+  it("stores the ISO time on an imported Windows.Sysinternals.Autoruns event", () => {
+    const row = {
+      _Source: "Windows.Sysinternals.Autoruns",
+      Time: "20190621-054222",
+      "Entry Location": "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run",
+      Entry: "OneDrive",
+      Enabled: "enabled",
+      Category: "Logon",
+      "Image Path": "c:\\users\\alice\\appdata\\local\\microsoft\\onedrive\\onedrive.exe",
+      "Launch String": '"C:\\Users\\alice\\AppData\\Local\\Microsoft\\OneDrive\\OneDrive.exe" /background',
+      _ts: 1_790_000_000,
+    };
+    const events = parseVelociraptorJson(JSON.stringify([row])).events;
+    expect(events.length).toBeGreaterThan(0);
+    for (const e of events) expect(e.timestamp).toBe("2019-06-21T05:42:22Z");
   });
 });
