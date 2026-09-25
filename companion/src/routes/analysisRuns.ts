@@ -228,19 +228,23 @@ async function replayTagger(ctx: RouteContext, run: AnalysisRunManifest): Promis
 async function replaySynthesis(ctx: RouteContext, run: AnalysisRunManifest): Promise<void> {
   const { options } = ctx;
   if (!options.pipeline) throw new Error("pipeline not configured");
+  // #1601: a replay runs the manifest's provider, not the current text model — name that one on
+  // the job, so the served-model stamp matches the call that actually runs.
+  const provider = replayProvider(ctx, run);
   const job = options.jobManager?.register({
     caseId: run.caseId,
     kind: "synthesis",
     label: "synthesis replay",
     cancellable: true,
     exclusive: true,
+    ...(provider ? { model: { model: provider.model, provider: provider.name } } : {}),
   });
   try {
     await job?.ready;
     await options.pipeline.synthesize(run.caseId, {
       force: true,
       analysisParentRunId: run.id,
-      provider: replayProvider(ctx, run),
+      provider,
       ...(job?.signal ? { signal: job.signal } : {}),
     });
     if (job) await options.jobManager?.finish(job.jobId);

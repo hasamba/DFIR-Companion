@@ -1,4 +1,3 @@
-import { ZodError } from "zod";
 import type { VeloHuntJob, VeloHuntStore } from "../veloHuntStore.js";
 import {
   buildCollectionInventory,
@@ -33,8 +32,11 @@ import {
 import { autoGenerateHypotheses } from "./synthesisHypotheses.js";
 import type { PlaybookTask } from "../playbook.js";
 import { deltaSchema, stripAiExtractedFrom } from "../responseSchema.js";
-import { fillOptionalSynthesisFields, synthesisRetryNote } from "./synthesisAnswerRepair.js";
-import { AiAnswerParseError } from "./providerCall.js";
+import {
+  fillOptionalSynthesisFields,
+  keepFailedAnswer,
+  synthesisRetryNote,
+} from "./synthesisAnswerRepair.js";
 import { filterEventsByScope, NO_SCOPE, type ScopeWindow } from "../scope.js";
 import { applyAcceptedSecondOpinion } from "../secondOpinion.js";
 import type { SecondOpinionStore } from "../secondOpinionStore.js";
@@ -63,6 +65,7 @@ import { carryOutOfWindowFindings, foldSynthesisDelta, gradeFindings } from "./s
 import { persistSynthesis } from "./synthesisPersist.js";
 import { reconcileSimulationVerdict } from "../simulationVerdict.js";
 import { stampCollectDirectives } from "../collectSatisfaction.js";
+import { collectServedModel } from "../servedModels.js";
 import type { PromotionIntent } from "../ingest/timelineImports.js";
 
 /**
@@ -409,6 +412,7 @@ async function recordSynthesisOutcome(
     startedAt: new Date(o.synthStart).toISOString(),
     provider: o.synthProvider.name,
     model: o.synthProvider.model,
+    ...(o.call.resolvedModel ? { resolvedModel: o.call.resolvedModel } : {}),
     eventIds: [...o.prompt.shownIds],
     inputState: o.run.state,
     outputState: o.next,
@@ -481,6 +485,7 @@ interface SynthesisCall {
   thinkingTokens: number;
   thinkingSource: SynthThinkingSource; // #1468: toggle / env / off, recorded on the run
   parseRetries: number;
+  resolvedModel?: string; // #1601: the concrete model the provider reported, recorded on the run
 }
 
 async function callSynthesisModel(
@@ -498,6 +503,9 @@ async function callSynthesisModel(
   let parseRetries = 0;
   let retryNote: string | undefined; // #1602: what the last bad answer got wrong, for the next attempt
   let attempt = 0;
+  // #1601: the model of the ACCEPTED attempt only. Collected per attempt (scoped to this call chain),
+  // so a failed attempt's model never labels an answer that came back without one.
+  let resolvedModel: string | undefined;
   const delta = await ctx.withRetry(
     caseId,
     "synthesis",
@@ -506,33 +514,44 @@ async function callSynthesisModel(
       attempt++;
       let parsed: unknown;
       try {
-        parsed = await ctx.analyzeRestored(
-          caseId,
-          state,
-          provider,
-          {
-            systemPrompt: getSynthesisPrompt(),
-            // Appended at the END so the cached prompt prefix is unchanged on the retry.
-            userPrompt: retryNote ? `${userPrompt}\n\n${retryNote}` : userPrompt,
-            images: [],
-            ...(thinkingTokens > 0 ? { thinkingTokens } : {}),
-            ...(opts.signal ? { signal: opts.signal } : {}),
-          },
-          "synthesis",
+        const served = await collectServedModel(() =>
+          ctx.analyzeRestored(
+            caseId,
+            state,
+            provider,
+            {
+              systemPrompt: getSynthesisPrompt(),
+              // Appended at the END so the cached prompt prefix is unchanged on the retry.
+              userPrompt: retryNote ? `${userPrompt}\n\n${retryNote}` : userPrompt,
+              images: [],
+              ...(thinkingTokens > 0 ? { thinkingTokens } : {}),
+              ...(opts.signal ? { signal: opts.signal } : {}),
+            },
+            "synthesis",
+          ),
         );
-        return parseSynthesisAnswer(ctx, caseId, parsed);
+        parsed = served.value;
+        const answer = parseSynthesisAnswer(ctx, caseId, parsed);
+        resolvedModel = served.resolvedModel;
+        return answer;
       } catch (err) {
         throwIfSuperseded(opts.signal); // #1608: not a parse retry, and withRetry never retries it
         parseRetries++;
         retryNote = synthesisRetryNote(err) ?? retryNote; // a provider error keeps the current note
-        await keepFailedAnswer(ctx, caseId, attempt, err, parsed);
+        await keepFailedAnswer(
+          { log: ctx.log, store: ctx.opts.synthMetaStore },
+          caseId,
+          attempt,
+          err,
+          parsed,
+        );
         throw err;
       }
     },
     ctx.opts.retries ?? 3,
     ctx.opts.backoffMs ?? 500,
   );
-  return { delta, thinkingTokens, thinkingSource, parseRetries };
+  return { delta, thinkingTokens, thinkingSource, parseRetries, ...(resolvedModel ? { resolvedModel } : {}) };
 }
 
 // #1602: default the often-empty parts of a partial answer, and say which ones, so a model that
@@ -548,40 +567,6 @@ function parseSynthesisAnswer(
       caseId,
     });
   return stripAiExtractedFrom(deltaSchema.parse(value));
-}
-
-// #1602: keep an answer that failed to parse or validate in the case's logs folder. A save failure
-// is logged and never replaces the error the analyst is waiting on.
-async function keepFailedAnswer(
-  ctx: SynthesisContext,
-  caseId: string,
-  attempt: number,
-  err: unknown,
-  parsed: unknown,
-): Promise<void> {
-  const text =
-    err instanceof AiAnswerParseError
-      ? err.rawText
-      : err instanceof ZodError && parsed !== undefined
-        ? JSON.stringify(parsed, null, 2)
-        : undefined;
-  if (text === undefined) return;
-  const store = ctx.opts.synthMetaStore;
-  if (!store) {
-    ctx.log.warn(`[synthesis] attempt ${attempt} answer failed; raw answer not saved (no synth-meta store)`, {
-      caseId,
-    });
-    return;
-  }
-  const error = err instanceof Error ? err.message : String(err);
-  try {
-    const path = await store.saveFailedAnswer(caseId, { kind: "synthesis", attempt, error, text });
-    ctx.log.warn(`[synthesis] attempt ${attempt} answer failed; raw answer saved to ${path}`, { caseId });
-  } catch (saveErr) {
-    ctx.log.warn(`[synthesis] attempt ${attempt} answer failed; raw answer not saved: ${String(saveErr)}`, {
-      caseId,
-    });
-  }
 }
 
 // The pre-synthesis merge gate. Runs before the prompt is built so a blocked run spends no tokens

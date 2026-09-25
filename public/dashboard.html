@@ -1501,7 +1501,8 @@
       <div class="stab-pane" id="stab-ai">
         <div class="srestart-note" data-essential>⚠ All AI settings require a server restart to take effect</div>
         <p class="rm-hint" data-essential data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 8px">New here? <a href="#" id="rerunAiWizard" data-safe-style="color:var(--accent-solid)">Re-run the setup wizard</a> for a guided provider/model/key flow with a built-in connection test (#181).</p>
-        <div class="settings-group-head" data-essential>Vision model (screenshots)</div>
+        <div class="settings-group-head" data-essential>Screenshot model (vision)</div>
+        <p class="rm-hint" data-essential data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 8px">Screenshots only. Synthesis and imports use the <b>Text model — synthesis and imports</b> further down. When that is not set, they use this model too.</p>
         <div class="sfield-row" data-essential>
           <div class="sfield" data-essential>
             <label for="env-DFIR_VISION_PROVIDER">Provider (screenshots)<span class="sfield-hint">DFIR_VISION_PROVIDER</span></label>
@@ -1516,7 +1517,7 @@
               <option value="claude-code">claude code (subscription, no key)</option>
             </select>
           </div>
-          <div class="sfield" data-essential><label>Model (screenshots, must support vision)<span class="sfield-hint">DFIR_VISION_MODEL</span></label><div data-safe-style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><select id="ai-model-picker-vision" aria-label="Available screenshot models" aria-describedby="ai-model-status-vision" data-safe-style="flex:1 1 0;min-width:0"><option value="">Loading models…</option><option value="__custom__">Enter model ID manually…</option></select><input id="env-DFIR_VISION_MODEL" aria-label="Manually entered screenshot model ID" aria-describedby="ai-model-status-vision" data-safe-style="display:none;flex:1 1 0;min-width:0" placeholder="Model ID, e.g. gpt-4o-mini" /><button type="button" id="load-ai-models-vision" class="btn-mini" data-safe-style="white-space:nowrap;margin-left:auto;order:1">Refresh</button></div><span id="ai-model-status-vision" class="sfield-hint" role="status"></span></div>
+          <div class="sfield" data-essential><label>Model (screenshots only, must support vision)<span class="sfield-hint">DFIR_VISION_MODEL</span></label><div data-safe-style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><select id="ai-model-picker-vision" aria-label="Available screenshot models" aria-describedby="ai-model-status-vision" data-safe-style="flex:1 1 0;min-width:0"><option value="">Loading models…</option><option value="__custom__">Enter model ID manually…</option></select><input id="env-DFIR_VISION_MODEL" aria-label="Manually entered screenshot model ID" aria-describedby="ai-model-status-vision" data-safe-style="display:none;flex:1 1 0;min-width:0" placeholder="Model ID, e.g. gpt-4o-mini" /><button type="button" id="load-ai-models-vision" class="btn-mini" data-safe-style="white-space:nowrap;margin-left:auto;order:1">Refresh</button></div><span id="ai-model-status-vision" class="sfield-hint" role="status"></span></div>
         </div>
         <div id="claude-code-status" class="sfield" data-essential data-safe-style="display:none;padding:8px 10px;border-radius:8px;border:1px solid var(--border-color);background:var(--bg-secondary)">
           <div data-safe-style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -1597,10 +1598,11 @@
           <div class="sfield"><label for="env-DFIR_SYNTH_INCLUDE_INFO">Include Info events in synthesis<span class="sfield-hint">DFIR_SYNTH_INCLUDE_INFO — send Info-severity events prompt seats too (default off; they'd otherwise crowd out graded detections). Info events always remain in the case/timeline/coverage report either way</span></label><input id="env-DFIR_SYNTH_INCLUDE_INFO" placeholder="0" /></div>
           <div class="sfield"><label for="env-DFIR_DEEP_PASS_MAX_BATCHES">Deep-pass max batches<span class="sfield-hint">DFIR_DEEP_PASS_MAX_BATCHES — hard ceiling on batches for an analyst-triggered deep pass; above it the run is refused and a floor that would fit is suggested (default 30)</span></label><input id="env-DFIR_DEEP_PASS_MAX_BATCHES" placeholder="30" /></div>
         </div>
-        <div class="settings-group-head" data-essential>Synthesis model (optional — stronger model for one-shot synthesis)</div>
+        <div class="settings-group-head" data-essential>Text model — synthesis and imports (optional, can be a stronger model)</div>
+        <p class="rm-hint" data-essential data-safe-style="font-size:11px;color:var(--text-muted);margin:2px 0 8px">Synthesis, deep pass and CSV/log imports. Screenshots use the <b>Screenshot model</b> above. The Background Jobs panel shows the alias set here and, after an arrow, the version that answered.</p>
         <div class="sfield-row" data-essential>
           <div class="sfield" data-essential>
-            <label for="env-DFIR_AI_SYNTH_PROVIDER">Synth provider<span class="sfield-hint">DFIR_AI_SYNTH_PROVIDER</span></label>
+            <label for="env-DFIR_AI_SYNTH_PROVIDER">Provider (synthesis and imports)<span class="sfield-hint">DFIR_AI_SYNTH_PROVIDER</span></label>
             <select id="env-DFIR_AI_SYNTH_PROVIDER">
               <option value="">— same as extraction —</option>
               <option value="openai">openai</option>
@@ -1613,7 +1615,7 @@
               <option value="codex">codex (text-only, no key)</option>
             </select>
           </div>
-          <div class="sfield" data-essential><label>Text model<span class="sfield-hint">DFIR_AI_SYNTH_MODEL — CSV/log + synthesis</span></label><div data-safe-style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><select id="ai-model-picker-synthesis" aria-label="Available synthesis models" aria-describedby="ai-model-status-synthesis" data-safe-style="flex:1 1 0;min-width:0"><option value="">Loading models…</option><option value="__custom__">Enter model ID manually…</option></select><input id="env-DFIR_AI_SYNTH_MODEL" aria-label="Manually entered synthesis model ID" aria-describedby="ai-model-status-synthesis" data-safe-style="display:none;flex:1 1 0;min-width:0" placeholder="Model ID, e.g. gpt-4o" /><button type="button" id="load-ai-models-synthesis" class="btn-mini" data-safe-style="white-space:nowrap;margin-left:auto;order:1">Refresh</button></div><span id="ai-model-status-synthesis" class="sfield-hint" role="status"></span></div>
+          <div class="sfield" data-essential><label>Model (synthesis and imports)<span class="sfield-hint">DFIR_AI_SYNTH_MODEL — synthesis, deep pass, CSV/log imports</span></label><div data-safe-style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><select id="ai-model-picker-synthesis" aria-label="Available synthesis models" aria-describedby="ai-model-status-synthesis" data-safe-style="flex:1 1 0;min-width:0"><option value="">Loading models…</option><option value="__custom__">Enter model ID manually…</option></select><input id="env-DFIR_AI_SYNTH_MODEL" aria-label="Manually entered synthesis model ID" aria-describedby="ai-model-status-synthesis" data-safe-style="display:none;flex:1 1 0;min-width:0" placeholder="Model ID, e.g. gpt-4o" /><button type="button" id="load-ai-models-synthesis" class="btn-mini" data-safe-style="white-space:nowrap;margin-left:auto;order:1">Refresh</button></div><span id="ai-model-status-synthesis" class="sfield-hint" role="status"></span></div>
         </div>
         <div class="sfield-row" data-essential>
           <div class="sfield" data-essential><label for="env-DFIR_AI_SYNTH_KEY">Synth API key<span class="sfield-hint">DFIR_AI_SYNTH_KEY</span></label><input id="env-DFIR_AI_SYNTH_KEY" type="password" placeholder="(not set)" autocomplete="new-password" /></div>

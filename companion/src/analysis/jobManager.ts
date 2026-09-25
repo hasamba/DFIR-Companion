@@ -9,6 +9,14 @@ import { sanitizeManifestValue } from "./analysisRunHash.js";
 import { manifestValueSchema, type ManifestValue } from "./analysisRunTypes.js";
 import type { JobLedgerStore } from "./jobLedgerStore.js";
 import {
+  modelIdentityFields,
+  servedStampTarget,
+  withModelLabels,
+  type JobListItem,
+  type JobModelIdentity,
+} from "./jobServedModel.js";
+import type { ServedModelRegistry } from "./servedModels.js";
+import {
   emptyJobTable,
   createJob,
   startJob,
@@ -16,6 +24,7 @@ import {
   progressJob,
   warnJob,
   finishJob,
+  stampServedModel,
   failJob,
   cancelJob,
   interruptJob,
@@ -63,6 +72,8 @@ export interface RegisterInput {
   maxRetries?: number;
   resourceBudget?: JobResourceBudget;
   resumable?: boolean;
+  /** The model that will run this job, when the caller knows better than the resolver (a replay). */
+  model?: { model: string; provider: string };
 }
 
 export interface RegisteredJob {
@@ -168,7 +179,8 @@ export class JobManager {
    * because runtimeStores.ts builds this manager before the pipeline exists; createApp holds both.
    * Unset in a minimal wiring, and every job then simply carries no model.
    */
-  private modelFor?: (input: RegisterInput) => string | undefined;
+  private modelFor?: (input: RegisterInput) => JobModelIdentity;
+  private servedModels?: { registry: ServedModelRegistry; unsubscribe: () => void };
   private readonly controllers = new Map<string, AbortController>();
   private readonly admissions = new Map<string, Deferred>();
   private readonly durabilities = new Map<string, Deferred>();
@@ -214,8 +226,26 @@ export class JobManager {
   }
 
   /** Install the "which model runs this job" resolver. Called once, by createApp. */
-  useModelResolver(resolve: (input: RegisterInput) => string | undefined): void {
+  useModelResolver(resolve: (input: RegisterInput) => JobModelIdentity): void {
     this.modelFor = resolve;
+  }
+
+  /** Stamp each job with the concrete model its call ran on (#1601). Replaces any earlier binding. */
+  useServedModels(registry: ServedModelRegistry): void {
+    this.servedModels?.unsubscribe();
+    const unsubscribe = registry.subscribe((event) => {
+      const job = servedStampTarget(event, this.controllers, (id) => getJob(this.table, id));
+      if (!job) return;
+      this.table = stampServedModel(this.table, job.id, event.resolvedModel, this.now());
+      const updated = getJob(this.table, job.id);
+      if (!updated || updated === job) return;
+      void this.persistUpdate(updated)
+        .then(() => this.emit(updated.caseId))
+        .catch((error: unknown) =>
+          this.reportError(error instanceof Error ? error : new Error(String(error))),
+        );
+    });
+    this.servedModels = { registry, unsubscribe };
   }
 
   register(input: RegisterInput): RegisteredJob {
@@ -257,14 +287,14 @@ export class JobManager {
       : undefined;
     // Asked once, here: the model a job runs is pinned when the work is queued, not re-read while
     // the row is drawn. See composition/jobModel.ts.
-    const model = this.modelFor?.(input);
+    const model = modelIdentityFields(input.model ?? this.modelFor?.(input));
     this.table = this.limitTable(
       createJob(this.table, {
         id: jobId,
         caseId,
         kind: input.kind,
         ...(input.label !== undefined ? { label: input.label } : {}),
-        ...(model ? { model } : {}),
+        ...model,
         ...(input.detail !== undefined ? { detail: input.detail } : {}),
         ...(input.priority ? { priority: input.priority } : {}),
         ...(input.parentJobId ? { parentJobId: input.parentJobId } : {}),
@@ -444,7 +474,12 @@ export class JobManager {
       return { ok: false, reason: "retry-exhausted" };
     }
 
-    this.table = requeueJob(this.table, jobId, this.now());
+    const repin = this.modelFor
+      ? modelIdentityFields(
+          this.modelFor({ kind: job.kind, ...(job.parameters ? { parameters: job.parameters } : {}) }),
+        )
+      : undefined;
+    this.table = requeueJob(this.table, jobId, this.now(), repin);
     if (registration.options.cancellable?.(job)) {
       this.table = allowJobCancellation(this.table, jobId);
     }
@@ -477,8 +512,10 @@ export class JobManager {
     return { ok: true, job: queued };
   }
 
-  list(caseId?: string): Job[] {
-    return listJobs(this.table, caseId !== undefined ? { caseId } : {});
+  list(caseId?: string): JobListItem[] {
+    const jobs = listJobs(this.table, caseId !== undefined ? { caseId } : {});
+    const registry = this.servedModels?.registry;
+    return withModelLabels(jobs, this.table.jobs, registry && ((p, a) => registry.lastFor(p, a)));
   }
 
   hasActive(caseId: string, kind: JobKind): boolean {
