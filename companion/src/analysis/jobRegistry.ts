@@ -330,11 +330,23 @@ export function interruptJob(table: JobTable, id: string, now: string): JobTable
   });
 }
 
-export function requeueJob(table: JobTable, id: string, now: string): JobTable {
+/**
+ * `model`, when given, re-pins the model identity for the new attempt (#1601): a resumed attempt
+ * runs on the provider configured NOW, which a restart may have changed. The served model always
+ * clears — it belonged to the attempt that ended.
+ */
+export function requeueJob(
+  table: JobTable,
+  id: string,
+  now: string,
+  model?: Pick<Job, "model" | "modelProvider">,
+): JobTable {
   return patchJob(table, id, (job) => {
     if (job.status !== "interrupted" && job.status !== "failed") return job;
     return {
       ...job,
+      ...(model ? { model: model.model, modelProvider: model.modelProvider } : {}),
+      servedModel: undefined,
       status: "queued",
       queuedAt: now,
       updatedAt: now,

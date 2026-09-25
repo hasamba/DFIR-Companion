@@ -474,7 +474,12 @@ export class JobManager {
       return { ok: false, reason: "retry-exhausted" };
     }
 
-    this.table = requeueJob(this.table, jobId, this.now());
+    const repin = this.modelFor
+      ? modelIdentityFields(
+          this.modelFor({ kind: job.kind, ...(job.parameters ? { parameters: job.parameters } : {}) }),
+        )
+      : undefined;
+    this.table = requeueJob(this.table, jobId, this.now(), repin);
     if (registration.options.cancellable?.(job)) {
       this.table = allowJobCancellation(this.table, jobId);
     }

@@ -9,6 +9,8 @@ import {
   createJob,
   emptyJobTable,
   finishJob,
+  failJob,
+  requeueJob,
   jobSchema,
   stampServedModel,
   getJob,
@@ -145,6 +147,31 @@ describe("served model on the ledger", () => {
     expect(parsed.modelProvider).toBe("claude-code");
   });
 
+  // A resumed attempt runs on the provider configured now; the old attempt's answer is not its own.
+  it("a resume clears the served model and re-pins the model identity", () => {
+    let table = createJob(emptyJobTable(), {
+      id: "job_1",
+      caseId: "c1",
+      kind: "deep-pass",
+      model: "sonnet",
+      modelProvider: "claude-code",
+      status: "running",
+      now: T0,
+    });
+    table = stampServedModel(table, "job_1", "claude-sonnet-5", T0);
+    table = failJob(table, "job_1", { code: "x", message: "x", retryable: true, at: T0 }, T0);
+    const requeued = getJob(
+      requeueJob(table, "job_1", T0, { model: "gpt-6-sol", modelProvider: "openai" }),
+      "job_1",
+    );
+    expect(requeued?.servedModel).toBeUndefined();
+    expect(requeued?.model).toBe("gpt-6-sol");
+    expect(requeued?.modelProvider).toBe("openai");
+    const kept = getJob(requeueJob(table, "job_1", T0), "job_1");
+    expect(kept?.model).toBe("sonnet");
+    expect(kept?.servedModel).toBeUndefined();
+  });
+
   it("does not stamp a finished job", () => {
     let table = createJob(emptyJobTable(), {
       id: "job_1",
@@ -275,6 +302,15 @@ describe("synthesis records the served model", () => {
     ).synthesize("c1", { force: true });
     const run = (await runStore.list("c1"))[0];
     expect(run.configuration?.resolvedModel).toBe("claude-sonnet-5");
+  });
+
+  // A failed attempt's model must not label an accepted answer that came back without one.
+  it("records nothing when only a rejected attempt reported a model", async () => {
+    await pipelineWith(
+      provider([{ rawText: "not json", resolvedModel: "claude-sonnet-4-6" }, { rawText: answer }]),
+    ).synthesize("c1", { force: true });
+    const run = (await runStore.list("c1"))[0];
+    expect(run.configuration?.resolvedModel).toBeUndefined();
   });
 
   it("leaves both the job and the manifest alias-only when the provider reports nothing", async () => {

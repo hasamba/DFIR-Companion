@@ -477,16 +477,18 @@ async function callSynthesisModel(
   let parseRetries = 0;
   let retryNote: string | undefined; // #1602: what the last bad answer got wrong, for the next attempt
   let attempt = 0;
-  // #1601: scoped to this call chain, so the run records the model that served THIS synthesis.
-  const { value: delta, resolvedModel } = await collectServedModel(() =>
-    ctx.withRetry(
-      caseId,
-      "synthesis",
-      async () => {
-        attempt++;
-        let parsed: unknown;
-        try {
-          parsed = await ctx.analyzeRestored(
+  // #1601: the model of the ACCEPTED attempt only. Collected per attempt (scoped to this call chain),
+  // so a failed attempt's model never labels an answer that came back without one.
+  let resolvedModel: string | undefined;
+  const delta = await ctx.withRetry(
+    caseId,
+    "synthesis",
+    async () => {
+      attempt++;
+      let parsed: unknown;
+      try {
+        const served = await collectServedModel(() =>
+          ctx.analyzeRestored(
             caseId,
             state,
             provider,
@@ -499,18 +501,21 @@ async function callSynthesisModel(
               ...(opts.signal ? { signal: opts.signal } : {}),
             },
             "synthesis",
-          );
-          return parseSynthesisAnswer(ctx, caseId, parsed);
-        } catch (err) {
-          parseRetries++;
-          retryNote = synthesisRetryNote(err) ?? retryNote; // a provider error keeps the current note
-          await keepFailedAnswer(ctx, caseId, attempt, err, parsed);
-          throw err;
-        }
-      },
-      ctx.opts.retries ?? 3,
-      ctx.opts.backoffMs ?? 500,
-    ),
+          ),
+        );
+        parsed = served.value;
+        const answer = parseSynthesisAnswer(ctx, caseId, parsed);
+        resolvedModel = served.resolvedModel;
+        return answer;
+      } catch (err) {
+        parseRetries++;
+        retryNote = synthesisRetryNote(err) ?? retryNote; // a provider error keeps the current note
+        await keepFailedAnswer(ctx, caseId, attempt, err, parsed);
+        throw err;
+      }
+    },
+    ctx.opts.retries ?? 3,
+    ctx.opts.backoffMs ?? 500,
   );
   return { delta, thinkingTokens, thinkingSource, parseRetries, ...(resolvedModel ? { resolvedModel } : {}) };
 }
