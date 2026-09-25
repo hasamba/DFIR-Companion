@@ -183,6 +183,7 @@ describe("hunting feedback loop — routes (#157)", () => {
     const ok = await request(app).post("/cases/c1/velociraptor/hunt-rows").send({ huntId: "H.DEPLOY1" });
     expect(ok.status).toBe(200);
     expect(ok.body.rows).toHaveLength(1);
+    expect(ok.body.unread).toEqual([]); // #1645: a named-source read is complete
     const missing = await request(app).post("/cases/c1/velociraptor/hunt-rows").send({ huntId: "H.NOPE" });
     expect(missing.status).toBe(404);
   });

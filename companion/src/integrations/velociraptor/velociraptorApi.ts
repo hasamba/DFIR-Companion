@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { ARTIFACT_RE, artifactRefs, isArtifactRef, readHuntArtifactRows } from "./artifactRefs.js";
+import type { HuntResultsByArtifact } from "./artifactRefs.js";
 import { catalogSources, parseArtifactParams, type VeloArtifactInfo } from "./artifactCatalog.js";
 // Re-exported so the artifact-definition metadata keeps its long-standing import path.
 export {
@@ -1101,28 +1102,25 @@ export class VelociraptorClient {
     };
   }
 
-  // Read a bundle hunt's results, keyed by artifact name — the artifact-map shape importVelociraptor
-  // consumes ({ "Windows.System.Pslist": [...rows], ... }). RESILIENT: each artifact is fetched
-  // independently, and one that fails (e.g. output still over the cap) is added to `skipped` instead of
-  // aborting the whole collection — so a bundle with a heavy artifact (Hayabusa) still imports the rest.
-  // Only artifacts that returned rows are in `results` (empty ones are dropped; clients may not have
-  // checked in yet, and the artifact-map needs non-empty arrays).
+  // A hunt's results keyed by artifact name ({ "Windows.System.Pslist": [...rows] }). RESILIENT: one
+  // artifact that fails (e.g. over the cap) goes to `skipped` and the rest still read. Only artifacts
+  // with rows are in `results`; `unread`/`truncated` name the reads that were not complete (#1645).
   async huntResultsByArtifact(
     huntId: string,
     artifacts: string[],
     filters?: Record<string, string>,
     sourcesByArtifact?: Record<string, string[]>,
     collect = false, // ingestion read (import-external); the dashboard's own view keeps maxRows
-  ): Promise<{ results: Record<string, unknown[]>; skipped: SkippedArtifact[] }> {
+  ): Promise<HuntResultsByArtifact> {
     if (!HUNT_RE.test(huntId)) throw new Error("invalid hunt id");
-    const results: Record<string, unknown[]> = {};
-    const skipped: SkippedArtifact[] = [];
+    // unread/truncated: reads that were not complete, so their silence is not absence (#1645).
+    const out: HuntResultsByArtifact = { results: {}, skipped: [], unread: [], truncated: [] };
     for (const artifact of artifacts ?? []) {
       const name = String(artifact ?? "").trim();
       // isArtifactRef, not ARTIFACT_RE: a caller may pass an already source-qualified name, and this
       // pre-check must agree with the reader below or it rejects a ref the reader would have run.
       if (!isArtifactRef(name)) {
-        skipped.push({ name: name || artifact, error: "invalid artifact name" });
+        out.skipped.push({ name: name || artifact, error: "invalid artifact name" });
         continue;
       }
       try {
@@ -1137,15 +1135,17 @@ export class VelociraptorClient {
           filters?.[name],
           collect,
         );
-        if (res.rows.length) results[name] = res.rows;
+        if (res.rows.length) out.results[name] = res.rows;
+        if (res.sourcesUnknown) out.unread.push({ name, rows: res.rows.length });
+        if (res.truncated) out.truncated.push({ name, kept: res.rows.length, total: res.total });
       } catch (e) {
         // oversized / slow / failed — keep going so the rest of the bundle still imports; the caller
         // logs + persists this reason so a silent per-artifact failure doesn't read as "only one artifact
         // collected" with no way to tell why.
-        skipped.push({ name, error: (e as Error).message });
+        out.skipped.push({ name, error: (e as Error).message });
       }
     }
-    return { results, skipped };
+    return out;
   }
 
   // Read a hunt's uploaded JSON files (content included), so an artifact whose meaningful output is an
