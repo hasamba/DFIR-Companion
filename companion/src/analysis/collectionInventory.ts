@@ -86,6 +86,11 @@ export interface HuntArtifactLine {
   detail: string;
   /** No label filter: the hunt went to every enrolled client, so its result speaks for every host. */
   fleetWide: boolean;
+  /**
+   * An empty result limited by a time window or a result filter (#1604): "nothing in the window" or
+   * "nothing matched", not "the artifact holds nothing". It can qualify an answer, never settle one.
+   */
+  bounded: boolean;
 }
 
 export interface CollectionInventory {
@@ -193,15 +198,65 @@ export function sanitizeHuntJobs(jobs: readonly unknown[]): VeloHuntJob[] {
   return out;
 }
 
+const record = (v: unknown): Record<string, unknown> =>
+  v && typeof v === "object" ? (v as Record<string, unknown>) : {};
+
+/** The window a time-scoped hunt was launched with, as far as its (schema-less) record says. */
+function windowText(ts: Record<string, unknown>): string {
+  const at = (v: unknown, none: string) => (typeof v === "string" && v ? v : none);
+  return `analyst window ${at(ts.start, "?")} → ${at(ts.end, "open")}`;
+}
+
+/**
+ * Why this hunt's silence for one artifact is bounded (#1604), or "" when it speaks for the whole
+ * artifact. velo-hunt.json is read without a schema and sanitizeHuntJobs spreads these fields raw.
+ * The time bound is per artifact: only the artifacts that took the window are bounded. A job written
+ * before the names were recorded only counts them, so every artifact of it counts as possibly bounded.
+ * A window that reached no artifact bounds nothing — `degraded` means the metadata was unknown, not
+ * that a window was applied.
+ */
+function silenceBound(job: VeloHuntJob, artifact: string): string {
+  const parts: string[] = [];
+  if (job.timeScope && typeof job.timeScope === "object") {
+    const ts = record(job.timeScope);
+    if (Array.isArray(ts.scopedArtifactNames)) {
+      if (strings(ts.scopedArtifactNames).includes(artifact))
+        parts.push(`time-bounded collection (${windowText(ts)})`);
+    } else if (Number(ts.scopedArtifacts) > 0)
+      parts.push(`possibly time-bounded (${windowText(ts)}; which artifacts took it is not recorded)`);
+  }
+  const filter = record(job.filters)[artifact];
+  if (typeof filter === "string" && filter.trim()) parts.push("result filter applied");
+  return parts.join("; ");
+}
+
+/**
+ * A hunt restricted by label (either way) or by OS reached only part of the fleet, and the job does not
+ * say which hosts: its result speaks for none of them. Settlement is case-wide, so an OS-targeted empty
+ * must not settle a class for a host of another OS that the hunt never reached.
+ */
+const isFleetWide = (job: VeloHuntJob): boolean =>
+  !job.target?.includeLabels?.length && !job.target?.excludeLabels?.length && !job.target?.os;
+
+const canSettle = (l: HuntArtifactLine): boolean => l.fleetWide && !l.bounded;
+
+/** Which of two lines for one artifact+state to keep: the one that can settle, then fleet-wide, then stable. */
+function preferred(a: HuntArtifactLine, b: HuntArtifactLine): HuntArtifactLine {
+  if (canSettle(a) !== canSettle(b)) return canSettle(a) ? a : b;
+  if (a.fleetWide !== b.fleetWide) return a.fleetWide ? a : b;
+  return a.detail <= b.detail ? a : b;
+}
+
 /** Hunt metadata is supplemental: only imported jobs say anything, and only per artifact. */
 function huntLines(jobs: readonly VeloHuntJob[], inTimeline: ReadonlySet<string>): HuntArtifactLine[] {
   const out = new Map<string, HuntArtifactLine>();
   for (const job of jobs) {
-    const fleetWide = !job.target?.includeLabels?.length;
-    const put = (artifact: string, state: HuntArtifactState, detail: string) => {
+    const fleetWide = isFleetWide(job);
+    const put = (artifact: string, state: HuntArtifactState, detail: string, bounded = false) => {
       const key = `${artifact}|${state}`;
+      const line = { artifact, state, detail, fleetWide, bounded };
       const prev = out.get(key);
-      if (!prev || (fleetWide && !prev.fleetWide)) out.set(key, { artifact, state, detail, fleetWide });
+      out.set(key, prev ? preferred(prev, line) : line);
     };
     if (job.status === "running" || job.status === "collecting") {
       for (const a of job.artifacts) put(a, "running", "still running");
@@ -214,8 +269,12 @@ function huntLines(jobs: readonly VeloHuntJob[], inTimeline: ReadonlySet<string>
     for (const a of job.artifacts) {
       const t = truncated.get(a);
       if (failed.has(a)) put(a, "failed", "fetch failed");
-      else if (empty.has(a)) put(a, "empty", "returned no rows");
-      else if (t) put(a, "truncated", `partial — kept ${t.kept} of ${t.total}`);
+      else if (empty.has(a)) {
+        const bound = silenceBound(job, a);
+        if (bound)
+          put(a, "empty", `returned no rows — ${bound}; silence outside those bounds is not absence`, true);
+        else put(a, "empty", "returned no rows");
+      } else if (t) put(a, "truncated", `partial — kept ${t.kept} of ${t.total}`);
       else if (job.superTimelineOnly || !inTimeline.has(a)) put(a, "archive-only", "in the archive only");
     }
   }
@@ -284,10 +343,11 @@ const CLASS_SETTLING_ARTIFACTS: Record<EvidenceClass, readonly string[]> = {
 
 /**
  * Classes a clean zero-row FLEET-WIDE hunt settles on every host: evidence of absence, which
- * re-collecting would only repeat. A label-filtered hunt names no hosts, so it settles nothing.
+ * re-collecting would only repeat. A label-filtered hunt names no hosts, so it settles nothing; a
+ * time-scoped or result-filtered empty is bounded silence, so it settles nothing either (#1604).
  */
 export function emptySettledClasses(inv: CollectionInventory): Set<EvidenceClass> {
-  const empty = new Set(inv.hunts.filter((h) => h.state === "empty" && h.fleetWide).map((h) => h.artifact));
+  const empty = new Set(inv.hunts.filter((h) => h.state === "empty" && canSettle(h)).map((h) => h.artifact));
   return new Set(EVIDENCE_CLASSES.filter((c) => CLASS_SETTLING_ARTIFACTS[c].some((a) => empty.has(a))));
 }
 
@@ -305,6 +365,13 @@ export function inventorySignature(hunts: readonly VeloHuntJob[]): string {
       (j.skippedArtifacts ?? []).map((s) => s.name).sort(),
       (j.truncatedArtifacts ?? []).map((t) => `${t.name}:${t.kept}/${t.total}`).sort(),
       !!j.superTimelineOnly,
+      // What decides fleet-wide and bounded (#1604) — a change there changes what the inventory says.
+      JSON.stringify(j.target ?? null),
+      JSON.stringify(j.timeScope ?? null),
+      Object.entries(record(j.filters))
+        .filter(([, f]) => typeof f === "string" && f.trim())
+        .map(([name]) => name)
+        .sort(),
     ]);
   return hunts.map(one).sort().join("\n");
 }

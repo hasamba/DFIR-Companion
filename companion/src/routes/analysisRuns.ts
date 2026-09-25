@@ -220,6 +220,36 @@ async function replayTagger(ctx: RouteContext, run: AnalysisRunManifest): Promis
   });
 }
 
+/**
+ * Replay a synthesis run inside the SAME busy check as every other synthesis (#1599): an exclusive
+ * `synthesis` job. It used to call synthesize() bare, so it could run alongside a live synthesis on
+ * the same case — the overlap the anonymization switch caused on a lab case, by the same route.
+ */
+async function replaySynthesis(ctx: RouteContext, run: AnalysisRunManifest): Promise<void> {
+  const { options } = ctx;
+  if (!options.pipeline) throw new Error("pipeline not configured");
+  const job = options.jobManager?.register({
+    caseId: run.caseId,
+    kind: "synthesis",
+    label: "synthesis replay",
+    cancellable: true,
+    exclusive: true,
+  });
+  try {
+    await job?.ready;
+    await options.pipeline.synthesize(run.caseId, {
+      force: true,
+      analysisParentRunId: run.id,
+      provider: replayProvider(ctx, run),
+      ...(job?.signal ? { signal: job.signal } : {}),
+    });
+    if (job) await options.jobManager?.finish(job.jobId);
+  } catch (err) {
+    if (job) await options.jobManager?.fail(job.jobId, err).catch(() => {});
+    throw err;
+  }
+}
+
 async function executeReplay(ctx: RouteContext, run: AnalysisRunManifest): Promise<"completed" | "accepted"> {
   const { options } = ctx;
   switch (run.kind) {
@@ -233,12 +263,7 @@ async function executeReplay(ctx: RouteContext, run: AnalysisRunManifest): Promi
       ctx.enrichInBackground(run.caseId, true, run.id);
       return "accepted";
     case "synthesis":
-      if (!options.pipeline) throw new Error("pipeline not configured");
-      await options.pipeline.synthesize(run.caseId, {
-        force: true,
-        analysisParentRunId: run.id,
-        provider: replayProvider(ctx, run),
-      });
+      await replaySynthesis(ctx, run);
       return "completed";
     case "deep-pass": {
       if (!options.pipeline) throw new Error("pipeline not configured");

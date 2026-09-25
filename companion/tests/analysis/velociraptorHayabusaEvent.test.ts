@@ -109,7 +109,9 @@ describe("BinaryRename rename note survives a long row (#1476)", () => {
     const e = parseVelociraptorJson(JSON.stringify([row]), {
       artifact: "DetectRaptor.Windows.Detection.BinaryRename",
     }).events[0];
-    const m = /\[renamed binary: ([^\]]+)\]$/.exec(e.description);
+    // The note may be followed by a later registered note — the copied file's inherited modified
+    // time (#1603) — but it must close complete, before any other note opens.
+    const m = /\[renamed binary: ([^\]]+)\](?: \[inherited modified time: [^\]]+\])?$/.exec(e.description);
     expect(m, e.description).not.toBeNull();
     expect(m![1]).toContain(longName.slice(0, 40));
     expect(m![1]).toContain("is really");

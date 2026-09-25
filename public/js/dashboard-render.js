@@ -102,7 +102,7 @@
               `<span class="step-priority">${esc(String(s.priority || "").toUpperCase())}</span> ${esc(s.action)}` +
               // Immediate FP cascade (#12): this step advanced a finding just marked false positive.
               (s.staleReSynth
-                ? ` <span class="stale-badge" title="A finding this step relied on was marked false positive — re-synthesis is queued to refresh it.">⏳ stale — re-synthesis queued</span>`
+                ? ` <span class="stale-badge" title="A finding this step relied on was marked false positive — press AI Re-synthesize to refresh it.">⏳ stale — press Re-synthesize</span>`
                 : "") +
               (s.rationale
                 ? `<span class="step-rationale">${esc(s.rationale)}</span>`
@@ -135,9 +135,9 @@
                 : "") +
               ` <span class="q-status q-status-${st}">${QSTATUS[st]}</span> <strong>${esc(q.question)}</strong>` +
               // Immediate FP cascade (#12): a finding that backed this answer was just marked false
-              // positive; the answer was neutralized now and re-synthesis is queued to recompute it.
+              // positive; the answer was neutralized now and the next Re-synthesize recomputes it (#1599).
               (q.staleReSynth
-                ? ` <span class="stale-badge" title="A finding this answer relied on was marked false positive — this answer was cleared and re-synthesis is queued.">⏳ stale — re-synthesis queued</span>`
+                ? ` <span class="stale-badge" title="A finding this answer relied on was marked false positive — this answer was cleared; press AI Re-synthesize to recompute it.">⏳ stale — press Re-synthesize</span>`
                 : "") +
               `</div>` +
               `<span class="q-answer">${esc(q.answer || "unknown")}</span>` +

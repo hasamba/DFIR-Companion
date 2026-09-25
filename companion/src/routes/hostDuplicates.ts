@@ -64,8 +64,8 @@ export function registerHostDuplicateRoutes(app: Express, ctx: RouteContext): vo
 
   // Both resolve paths answer with the freshly-recomputed pending list.
   // Resolving the LAST BLOCKING pair is what lifts the gate, so that TRANSITION — not the raw list
-  // merely becoming empty — is the moment worth a synthesis. `wasBlocking` is a snapshot the caller
-  // takes BEFORE the mutation, since respond() itself only ever sees the AFTER state. Kicking on
+  // merely becoming empty — is the moment worth a synthesis. `before` is the pending list the caller
+  // reads BEFORE the mutation, since respond() itself only ever sees the AFTER state. Kicking on
   // every resolve while only non-blocking network-identity candidates remain (e.g. checking
   // `remaining.every(reason === "network-identity")` on the AFTER state alone, an earlier draft of
   // this fix) would spend one full synthesis run per candidate instead of the single run the
@@ -73,10 +73,15 @@ export function registerHostDuplicateRoutes(app: Express, ctx: RouteContext): vo
   // is kept as its own, separate trigger purely for exact backward compatibility with this route's
   // original, pre-#1167 behavior — resolving the very last candidate of any kind still kicks once,
   // even when it was never a blocking one.
-  async function respond(caseId: string, res: Response, wasBlocking: boolean): Promise<Response> {
+  //
+  // #1599: both halves are TRANSITIONS. The list must BECOME empty — a retried resolve, or a dismiss
+  // sent against a list that was already empty, changes nothing and must not buy another paid run.
+  async function respond(caseId: string, res: Response, before: readonly NearDuplicate[]): Promise<Response> {
     const remaining = await pending(caseId);
+    const wasBlocking = before.some(isBlocking);
     const nowBlocking = remaining.some(isBlocking);
-    if ((wasBlocking && !nowBlocking) || remaining.length === 0) ctx.resynthesizeInBackground(caseId);
+    const becameEmpty = before.length > 0 && remaining.length === 0;
+    if ((wasBlocking && !nowBlocking) || becameEmpty) ctx.resynthesizeInBackground(caseId);
     return res.status(200).json({ pending: remaining });
   }
 
@@ -94,7 +99,7 @@ export function registerHostDuplicateRoutes(app: Express, ctx: RouteContext): vo
     const pair = readPair(req);
     if (!pair) return res.status(400).json({ error: "canonical and other must be two different hosts" });
     try {
-      const wasBlocking = (await pending(req.params.id)).some(isBlocking);
+      const before = await pending(req.params.id);
       // The alias index is keyed by host NAME; asset-override merges are keyed by asset id.
       await options.assetOverridesStore!.mergeAsset(
         req.params.id,
@@ -103,7 +108,7 @@ export function registerHostDuplicateRoutes(app: Express, ctx: RouteContext): vo
       );
       // Every other asset-override mutation fires this; skipping it leaves the derived graph stale.
       options.onAssetOverrides?.(req.params.id);
-      return await respond(req.params.id, res, wasBlocking);
+      return await respond(req.params.id, res, before);
     } catch (err) {
       // 400, not 500: mergeAsset throws only on analyst-caused conditions (self-merge, cycle).
       return res.status(400).json({ error: (err as Error).message });
@@ -115,14 +120,14 @@ export function registerHostDuplicateRoutes(app: Express, ctx: RouteContext): vo
     const pair = readPair(req);
     if (!pair) return res.status(400).json({ error: "canonical and other must be two different hosts" });
     try {
-      const wasBlocking = (await pending(req.params.id)).some(isBlocking);
+      const before = await pending(req.params.id);
       await options.hostDuplicateDismissalStore!.append(req.params.id, {
         canonical: pair.canonical,
         other: pair.other,
         dismissedAt: new Date().toISOString(),
         dismissedBy: requestAuthentication(req)?.identity.displayName ?? "local",
       });
-      return await respond(req.params.id, res, wasBlocking);
+      return await respond(req.params.id, res, before);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
     }

@@ -450,6 +450,24 @@ describe("deriveCockpitStory — synthesis freshness", () => {
   });
 });
 
+// #1599: dismissing a finding or changing the scope starts no synthesis any more. No new rows arrive,
+// so the event count stays 0 — the story must still say its conclusion is stale.
+describe("deriveCockpitStory — conclusions out of date (#1599)", () => {
+  it("flags the story when synth-meta carries an out-of-date marker", () => {
+    const story = deriveCockpitStory(
+      state(),
+      synthMeta({ outOfDate: { reason: "false positive marked", at: SYNTH_AT, revision: 1 } }),
+    );
+    expect(story.staleEventCount).toBe(0);
+    expect(story.conclusionsOutOfDate).toBe(true);
+  });
+
+  it("is not flagged without a marker", () => {
+    expect(deriveCockpitStory(state(), synthMeta()).conclusionsOutOfDate).toBe(false);
+    expect(deriveCockpitStory(state()).conclusionsOutOfDate).toBe(false);
+  });
+});
+
 describe("deriveCockpitStory — shape (#1493)", () => {
   it("spans the staged events only — an Info or untagged event outside the window never widens it", () => {
     const story = deriveCockpitStory(

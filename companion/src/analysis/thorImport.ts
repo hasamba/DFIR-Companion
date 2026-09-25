@@ -87,8 +87,13 @@ function firstStr(row: Row, keys: string[]): string {
 
 // The artifact's own incident time when available (process create, file mtime…),
 // falling back to the THOR scan time. Never the current time.
+//
+// A file inside an archive has no `created` of its own, only the archive entry's `modified` — the
+// time the file had where the archive was built. Mimikatz's 2013 build time came through that way and
+// dated the hit nine years before the intrusion (#1603). `archive_created` is the containing
+// archive's own creation time on the scanned host, so it outranks the member's inherited `modified`.
 function pickTimestamp(row: Row): string {
-  return firstStr(row, ["created", "modified", "log_modified", "log_created", "time"]);
+  return firstStr(row, ["created", "archive_created", "modified", "log_modified", "log_created", "time"]);
 }
 
 // Pull MITRE technique ids out of THOR tag/class fields (e.g. "ATTACK.T1059").

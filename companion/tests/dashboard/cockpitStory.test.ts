@@ -51,6 +51,8 @@ interface Story {
   // Optional: a snapshot from a server older than #1493 has neither.
   shape?: Shape;
   missingStages?: string[];
+  // Optional: a snapshot from a server older than #1599 has none.
+  conclusionsOutOfDate?: boolean;
 }
 interface Snapshot {
   caseId: string;
@@ -338,6 +340,15 @@ describe("cockpit story — freshness and text", () => {
     );
     await h.render(snapshot({ caseId: "CASE-2", story: story({ staleEventCount: 1 }) }));
     expect(h.body.innerHTML).toContain("stale — 1 event since synthesis");
+  });
+
+  // #1599: a dismissed finding or a new scope window starts no synthesis and adds no rows.
+  it("flags a synthesis the case has moved past without new rows", async () => {
+    const h = harness();
+    await h.render(snapshot({ story: story({ staleEventCount: 0, conclusionsOutOfDate: true }) }));
+    expect(h.body.innerHTML).toContain(
+      '<span class="now-story-fresh now-story-stale">stale — conclusions out of date</span>',
+    );
   });
 
   it("replaces the text with the no-synthesis hint when nothing has run yet", async () => {

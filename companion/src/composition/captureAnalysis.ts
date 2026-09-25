@@ -29,6 +29,7 @@ import type { CaptureMetadata } from "../types.js";
 import type { NotificationEvent } from "../analysis/notifications.js";
 import { milestoneEvent } from "../analysis/notifications.js";
 import { loadPendingHostDuplicates } from "../analysis/hostScopeLoad.js";
+import { SynthMetaStore } from "../analysis/synthMeta.js";
 // The class, for its MESSAGE — announceSynthesis words the pre-emptive "blocked" with it so the
 // header pill and the gate's own 409 can never drift into saying different things.
 import { HostMergeDecisionRequired } from "../analysis/hostDuplicateGate.js";
@@ -451,6 +452,15 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
     }
   }
 
+  /** Best-effort: a marker that cannot be written must never break the import that asked for it. */
+  async function markOutOfDate(caseId: string, reason: string): Promise<void> {
+    try {
+      await (options.synthMetaStore ?? new SynthMetaStore(store)).markOutOfDate(caseId, reason);
+    } catch (err) {
+      warnLine(`[synthesis] ${caseId}: could not mark conclusions out of date: ${(err as Error).message}`);
+    }
+  }
+
   function resynthesizeInBackground(caseId: string): void {
     // FIRST, above every early return below. The two guards that follow (no pipeline, no synthesis
     // provider) are exactly the AI-disabled install this notification exists to serve: put this
@@ -471,6 +481,9 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
       // re-synthesized. Enrichment is a separate, independently-gated feature (threat-intel
       // lookups, not an LLM call), so it still runs regardless of the AI toggle.
       if (!(await getControl(caseId)).enabled) {
+        // #1599: the case changed and no run follows, so the conclusions no longer match it. Without
+        // this the pill read "up to date — live analysis paused" over evidence the model never saw.
+        await markOutOfDate(caseId, "new evidence while AI was off");
         autoEnrichIfEnabled(caseId);
         return;
       }
