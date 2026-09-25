@@ -29,6 +29,8 @@ interface Sandbox {
     starredOnly(): boolean;
   };
   DfirState: {
+    activeView(): unknown;
+    setActiveView(v: unknown): void;
     lastState(): { caseId?: string; forensicTimeline?: Ev[] } | null;
     setLastState(s: unknown): void;
     setLastFt(ft: unknown): void;
@@ -39,7 +41,10 @@ interface Sandbox {
 const PAGE = 2;
 const ev = (id: string): Ev => ({ id, severity: "High" });
 const FULL = ["a", "b", "c", "d", "e", "f"].map(ev);
-const state = (ids: string[], caseId = "INC-1") => ({ caseId, forensicTimeline: ids.map(ev) });
+const state = (ids: string[], caseId = "INC-1") => ({
+  caseId,
+  forensicTimeline: ids.map((id) => (id === "d" ? { id, severity: "Info" } : ev(id))),
+});
 
 function harness() {
   const caseEl = { value: "INC-1" };
@@ -74,7 +79,8 @@ function harness() {
     _hostMenuSig: "",
     DfirFacets: { sources: facet, origins: facet, hosts: facet },
     sortTimelineEvents: (list: Ev[]) => list,
-    viewMeetsMinSev: () => true,
+    // A view floor of High, when the test sets one (#1658).
+    viewMeetsMinSev: (sev: string) => !sb.DfirState.activeView() || sev === "High",
     showToast: (text: string) => toasts.push(text),
     fetch: (url: string) =>
       new Promise((resolve, reject) => {
@@ -85,7 +91,9 @@ function harness() {
         });
       }),
     // The page's render(): the single writer of the snapshot, then the timeline's own paint.
-    render: (s: { forensicTimeline?: Ev[] }) => {
+    // It drops a state that names a case the analyst has left (#174).
+    render: (s: { caseId?: string; forensicTimeline?: Ev[] }) => {
+      if (s.caseId && s.caseId !== caseEl.value) return;
       sb.DfirState.setLastState(s);
       sb.DfirState.setLastFt(s.forensicTimeline || []);
       renderTimeline();
@@ -229,6 +237,45 @@ describe("jumpToEvent while a server-side search is painted (#1663)", () => {
     await h.answer(state(FULL.map((e) => e.id)));
     expect(h.toasts).toHaveLength(1);
     expect(h.toasts[0]).toMatch(/past the part of the timeline/i);
+  });
+
+  it("lets a newer jump that lands at once cancel the one still waiting", async () => {
+    const h = await searched(["a", "c", "e", "f"]);
+    h.sb.jumpToEvent("f"); // off the page: waits for the reload
+    h.sb.jumpToEvent("a"); // on the page: lands now
+    await h.answer(state(FULL.map((e) => e.id)));
+    expect(h.sb.tlPage).toBe(0); // f's jump did not come back and move the analyst
+  });
+
+  it("does not jump when the analyst switched case before the clear was answered", async () => {
+    const h = await searched(["a", "c", "e", "f"]);
+    h.sb.jumpToEvent("f");
+    h.caseEl.value = "INC-2"; // the switch has started; INC-2 has not painted yet
+    await h.answer(state(FULL.map((e) => e.id))); // INC-1's clear: refused by render
+    (h.sb as unknown as { render: (s: unknown) => void }).render(
+      state(
+        FULL.map((e) => e.id),
+        "INC-2",
+      ),
+    );
+    await h.settle();
+    expect(h.sb.tlPage).toBe(0);
+    expect(h.toasts).toEqual([]);
+  });
+
+  it("refuses a target outside the matches that the view's floor hides, keeping the other filters", async () => {
+    const h = harness();
+    h.sb.DfirState.setActiveView({ name: "Executive", filters: { minSeverity: "High" } });
+    h.sb.loadSearchedTimeline();
+    await h.answer(state(FULL.map((e) => e.id)));
+    h.sb.DfirTimelineView.showOnlyStarred(true);
+    h.sb.DfirTimelineView.setSearch("x");
+    await h.answer(state(["a", "c", "e", "f"]));
+    h.sb.jumpToEvent("d"); // Info, below the floor, and not among the matches
+    await h.answer(state(FULL.map((e) => e.id)));
+    expect(h.toasts).toHaveLength(1);
+    expect(h.toasts[0]).toMatch(/floor/);
+    expect(h.sb.DfirTimelineView.starredOnly()).toBe(true); // not cleared for a refused jump
   });
 
   it("jumps at once, with no refetch, when no search is painted", async () => {

@@ -306,6 +306,9 @@
   // event the whole timeline does not hold; a direct jump stays silent there, as it always has.
   function jumpToEvent(id, missing) {
     id = String(id);
+    if (typeof DfirTimelineSearch !== "undefined" && DfirTimelineSearch.cancelAfterClear) {
+      DfirTimelineSearch.cancelAfterClear(); // the newest jump wins, even one that lands at once
+    }
     const sec = document.getElementById("sec-timeline");
     if (sec) sec.classList.remove("collapsed");
     if (swLocateInTable(id)) return; // already on the current page
@@ -346,10 +349,12 @@
       && DfirTimelineSearch.showingSearchedSubset();
   }
 
-  // Clear the search, then jump again once the unfiltered timeline has painted (#1663). A lens that
-  // hides an event already in the matches refuses now, before any filter is cleared (#1658). The
-  // re-run is dropped if the analyst changed a filter while the reload was out: the render's
-  // filter key moves, and jumping would clear their new choice.
+  // Clear the search ALONE, then jump again once the unfiltered timeline has painted (#1663). The
+  // other filters stay until the re-run has checked the view's floor and lens against the whole
+  // timeline, so a jump those refuse (#1658) leaves them as the analyst set them. An event already
+  // in the matches is checked now, before the reload. The re-run is dropped if the analyst changed
+  // a filter while the reload was out: the render's filter key moves, and jumping would clear
+  // their new choice.
   function jumpThroughSearchClear(id) {
     const inMatches = (DfirState.lastFt() || []).some((e) => String(e.id) === id);
     const lensBlock = inMatches ? timelineLensHiding(id) : "";
@@ -357,7 +362,7 @@
       showToast(lensBlock, "warn");
       return;
     }
-    resetTimelineViewFilters(); // starts the unfiltered reload
+    DfirTimelineView.clearSearch(); // starts the unfiltered reload
     const key = _tlFilterKey;
     DfirTimelineSearch.afterUnfilteredPaint(
       () => {

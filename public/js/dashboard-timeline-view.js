@@ -197,6 +197,16 @@
       refresh("searchBox", "serverSearch", "all", "superTimeline", "falsePositives");
     },
 
+    /**
+     * Drop the search term ALONE and empty the box (#1663). A jump uses this to get the whole
+     * timeline back before it knows whether the target can be shown: clearing every filter first
+     * would destroy the analyst's other filters for a jump the view's floor or lens then refuses.
+     */
+    clearSearch() {
+      search.set("");
+      refresh("searchBox", "searchInput", "serverSearch", "all", "superTimeline", "falsePositives");
+    },
+
     /** Exclude terms (#216). Persisted by the caller — this owns the value, not the storage. */
     setExcludeTerms(terms) {
       exclude.set(Object.freeze([...(terms || [])]));

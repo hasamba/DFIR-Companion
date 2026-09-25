@@ -176,7 +176,8 @@
         // and the single-writer gate in tests/dashboard/dashboardState.test.ts), so the new
         // timeline reaches the page through it rather than by poking DfirState directly.
         paint(state);
-        settleAfterClear(caseId, asked, true);
+        // render() drops a state for a case the analyst has left; only a painted answer counts.
+        settleAfterClear(caseId, asked, DfirState.lastState() === state ? "painted" : "dropped");
       })
       .catch(function () {
         // Offline, a cancelled case, or a non-JSON error body. The rows already on screen are still
@@ -197,7 +198,7 @@
         // A plain failure of the CURRENT question. It is not recorded as answered, so the next
         // refresh retries -- retrying here would spin against an offline server.
         painted = null;
-        settleAfterClear(caseId, asked, false);
+        settleAfterClear(caseId, asked, "failed");
       });
   }
 
@@ -207,18 +208,24 @@
    * failed reload is reported, because the analyst pressed a jump and the search box is now empty
    * over rows that are still the old search's matches.
    */
-  function settleAfterClear(caseId, asked, ok) {
+  function settleAfterClear(caseId, asked, outcome) {
     var job = afterClear;
     if (!job) return;
     afterClear = null;
-    if (asked || job.caseId !== caseId) return;
-    if (ok) job.run();
-    else job.fail();
+    if (asked || job.caseId !== caseId || job.caseId !== caseIdOf()) return;
+    if (outcome === "painted") job.run();
+    else if (outcome === "failed") job.fail();
+    // "dropped": the page refused the answer (another case is loading) — the jump has nothing to land on.
   }
 
   /** Run `run` once the unfiltered timeline has painted; `fail` if that reload fails (#1663). */
   function afterUnfilteredPaint(run, fail) {
     afterClear = { caseId: caseIdOf(), run: run, fail: fail };
+  }
+
+  /** Forget a waiting jump: a newer jump replaces it, even one that finds its row at once. */
+  function cancelAfterClear() {
+    afterClear = null;
   }
 
   /** Whether the rows on screen are a server search's matches rather than the case's timeline. */
@@ -303,6 +310,7 @@
     loadMoreMatches: loadMoreMatches,
     hasMoreMatches: hasMoreMatches,
     afterUnfilteredPaint: afterUnfilteredPaint,
+    cancelAfterClear: cancelAfterClear,
     showingSearchedSubset: showingSearchedSubset,
     // Test seam: whether an answer for this case+term is already painted.
     paintedKey: function () { return painted; },
