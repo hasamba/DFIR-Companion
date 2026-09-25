@@ -90,7 +90,7 @@ import { rdpLateralSignal } from "./rdpLateralDetect.js";
 import { mapHijackLib } from "./hijackLibImport.js";
 import { decodeHitContext } from "./yaraHitContext.js";
 import { amcacheMasquerade } from "./amcacheMasquerade.js";
-import { MAX_TIME_MS, MIN_TIME_MS, pickTime, vrTime } from "./veloRowTime.js";
+import { MAX_TIME_MS, MIN_TIME_MS, pickTime, usDateTime, vrTime } from "./veloRowTime.js";
 import { winRowToFlat } from "./veloWinRow.js";
 import { prefetchSignal } from "./prefetchExecution.js";
 import { isSamAccountRow, mapSamAccount } from "./samAccountImport.js";
@@ -1008,17 +1008,6 @@ function mapMft(row: Row, artifact: string, host: string): MappedEvent[] {
 // These mappers lead with the action verb and the RIGHT subject (the URL, the target folder, the
 // executable), so a super-timeline row states what occurred, not just which file the row came from.
 
-// The first parseable timestamp among `keys` (dotted paths allowed; arrays take [0]), else "" so the
-// caller can fall back to pickTime(row).
-function firstTime(row: Row, keys: string[]): string {
-  for (const k of keys) {
-    const v = k.includes(".") ? getPath(row, k) : getCI(row, k);
-    const t = vrTime(Array.isArray(v) ? v[0] : v);
-    if (t) return t;
-  }
-  return "";
-}
-
 // Shared "<action> (N×): <subject> @ host" shape. `aggSubject` overrides the agg-key subject when the
 // visible subject is too volatile to group on (a URL with a cache-buster, a versioned path).
 function actionEvent(o: {
@@ -1079,9 +1068,7 @@ function mapBrowserHistory(
     action: "Visited",
     subject: subject || "(url)",
     aggSubject: url,
-    time:
-      firstTime(row, ["visit_time", "last_visit_time", "VisitTime", "AccessedTime", "LastAccessTime"]) ||
-      pickTime(row),
+    time: pickTime(row, ["visit_time", "last_visit_time", "VisitTime", "AccessedTime", "LastAccessTime"]),
     count: getCI(row, "visit_count") ?? getCI(row, "AccessCount"),
   });
 }
@@ -1098,7 +1085,7 @@ function mapShellbag(row: Row, artifact: string, host: string): MappedEvent {
     host,
     action: "Folder browsed (shellbag)",
     subject: folder || "(folder)",
-    time: firstTime(row, ["ModTime", "ModificationTime"]) || pickTime(row),
+    time: pickTime(row, ["ModTime", "ModificationTime"]),
     path: folder || undefined,
   });
 }
@@ -1113,7 +1100,7 @@ function mapUserAssist(row: Row, artifact: string, host: string): MappedEvent {
     action: "Ran (UserAssist)",
     subject: prog || "(program)",
     count: getCI(row, "NumberOfExecutions"),
-    time: firstTime(row, ["LastExecution", "LastExecutionTS", "LastExecutionTime"]) || pickTime(row),
+    time: pickTime(row, ["LastExecution", "LastExecutionTS", "LastExecutionTime"]),
     path: prog || undefined,
   });
 }
@@ -1140,7 +1127,7 @@ function mapShimcache(row: Row, artifact: string, host: string): MappedEvent {
       ? "Present in ShimCache, execution flag set (time shown is the file's modification time)"
       : "Present in ShimCache (time shown is the file's modification time, not a run time)",
     subject: path || "(path)",
-    time: firstTime(row, ["ModificationTime"]) || pickTime(row),
+    time: pickTime(row, ["ModificationTime"]),
     path: path || undefined,
     processName: path || undefined,
   });
@@ -1159,7 +1146,7 @@ function mapAmcacheApp(row: Row, artifact: string, host: string): MappedEvent {
     action: "Installed program (Amcache)",
     subject: subject || name || "(program)",
     aggSubject: name,
-    time: firstTime(row, ["Timestamp", "InstallDate"]) || pickTime(row),
+    time: pickTime(row, ["Timestamp", "InstallDate"], (v) => vrTime(v) || usDateTime(v)),
   });
 }
 
@@ -1175,7 +1162,7 @@ function mapAmcacheFile(row: Row, artifact: string, host: string, sink: Map<stri
     host,
     action: "Program file present (Amcache)",
     subject: path || "(file)",
-    time: firstTime(row, ["Timestamp"]) || pickTime(row),
+    time: pickTime(row, ["Timestamp"]),
     path: path || undefined,
     processName: path || undefined,
   });
@@ -1193,7 +1180,7 @@ function mapPrefetch(row: Row, artifact: string, host: string): MappedEvent {
     action: "Executed (prefetch)",
     subject: subject || "(executable)",
     count: getCI(row, "RunCount"),
-    time: firstTime(row, ["LastRunTimes", "CreationTime", "ModificationTime"]) || pickTime(row),
+    time: pickTime(row, ["LastRunTimes", "CreationTime", "ModificationTime"]),
     path: exePath || undefined,
     processName: exe || undefined,
     aggSubject: exe || exePath,
