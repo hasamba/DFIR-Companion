@@ -6,6 +6,8 @@ import {
   StreamEnds,
   StreamTail,
 } from "./childStreamBuffer.js";
+import { superviseChild } from "./childSupervisor.js";
+import { treeSpawnOptions } from "./processTree.js";
 
 // Result of one CLI invocation. Process-level failures (missing binary, timeout/abort) come
 // back as fields rather than rejections, so the provider maps them to ProviderError uniformly.
@@ -68,38 +70,11 @@ export const defaultClaudeRunner: ClaudeRunner = (opts) =>
       resolve({ code: null, stdout: "", stderr: "", timedOut: true });
       return;
     }
-    let settled = false;
-    let timedOut = false;
+    const child = spawn(opts.bin, opts.args, {
+      stdio: ["pipe", "pipe", "pipe"],
+      ...treeSpawnOptions(),
+    });
 
-    const child = spawn(opts.bin, opts.args, { stdio: ["pipe", "pipe", "pipe"] });
-
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGKILL");
-    }, opts.timeoutMs);
-    const onAbort = () => {
-      timedOut = true;
-      child.kill("SIGKILL");
-    };
-    if (opts.signal) {
-      if (opts.signal.aborted) onAbort();
-      else opts.signal.addEventListener("abort", onAbort, { once: true });
-    }
-    const cleanup = () => {
-      clearTimeout(timer);
-      if (opts.signal) opts.signal.removeEventListener("abort", onAbort);
-    };
-    const done = (r: ClaudeRunResult) => {
-      if (!settled) {
-        settled = true;
-        cleanup();
-        resolve(r);
-      }
-    };
-
-    child.on("error", (err: NodeJS.ErrnoException) =>
-      done({ code: null, stdout: stdout.text(), stderr: stderr.text(), spawnError: err }),
-    );
     // Decode through the stream's own StringDecoder, which holds a partial multi-byte sequence back
     // until the rest arrives. Calling toString() on each Buffer instead turns any character split
     // across a ~64 KB pipe chunk into two U+FFFDs that concatenation cannot repair — corrupting
@@ -116,13 +91,21 @@ export const defaultClaudeRunner: ClaudeRunner = (opts) =>
       stderr.push(chunk);
       opts.onStderr?.(chunk);
     });
-    child.on("close", (code) =>
-      done({
-        code,
-        stdout: stdout.text(),
-        stderr: stderr.text(),
-        ...(timedOut ? { timedOut: true } : {}),
-      }),
+    void superviseChild(child, {
+      timeoutMs: opts.timeoutMs,
+      signal: opts.signal,
+      label: "claude",
+    }).then((outcome) =>
+      resolve(
+        outcome.kind === "error"
+          ? { code: null, stdout: stdout.text(), stderr: stderr.text(), spawnError: outcome.error }
+          : {
+              code: outcome.code,
+              stdout: stdout.text(),
+              stderr: stderr.text(),
+              ...(outcome.timedOut ? { timedOut: true } : {}),
+            },
+      ),
     );
 
     child.stdin.on("error", () => {
