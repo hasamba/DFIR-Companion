@@ -564,7 +564,7 @@ export async function analyzeRestored(
     const result = await analyzeProvider(ctx, provider, req, label);
     logAiUsage(ctx, caseId, label, provider, result);
     await recordAiCost(ctx, caseId, label, provider, result);
-    return parseJsonLoose(result.rawText);
+    return parseAnswer(result.rawText, (t) => t);
   }
   const known = await knownEntitiesFor(ctx, caseId, state);
   const anon = createAnonymizer(policy, known);
@@ -586,5 +586,29 @@ export async function analyzeRestored(
   const result = await analyzeProvider(ctx, provider, { ...req, userPrompt: maskedPrompt, images }, label);
   logAiUsage(ctx, caseId, label, provider, result);
   await recordAiCost(ctx, caseId, label, provider, result);
-  return anon.restoreDeep(parseJsonLoose(result.rawText));
+  return anon.restoreDeep(parseAnswer(result.rawText, (t) => anon.restore(t)));
+}
+
+/**
+ * A model answer that is not parseable JSON (#1602). Carries the raw text — restored to real values
+ * when anonymization is on, the same as a parsed answer — so a caller can keep it for the analyst.
+ * The message is the parser's own, so every existing log line and error reads as before.
+ */
+export class AiAnswerParseError extends Error {
+  constructor(
+    readonly rawText: string,
+    cause: unknown,
+  ) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "AiAnswerParseError";
+  }
+}
+
+// Wraps ONLY the JSON parse, so a provider, Presidio or accounting error is never mistaken for a bad answer.
+function parseAnswer(rawText: string, restore: (text: string) => string): unknown {
+  try {
+    return parseJsonLoose(rawText);
+  } catch (err) {
+    throw new AiAnswerParseError(restore(rawText), err);
+  }
 }

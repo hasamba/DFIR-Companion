@@ -5,6 +5,7 @@ import type { CaseStore } from "../storage/caseStore.js";
 import { atomicWrite } from "../storage/atomicWrite.js";
 import { StateLock } from "./stateLock.js";
 import type { FindingsDiff } from "./findingsDiff.js";
+import { writeFailedAnswer, type FailedAnswer } from "./ai/failedAnswerLog.js";
 
 // Lightweight per-case record of the LAST synthesis run: when it actually ran (the AI call, not a
 // skipped no-op) and what changed in the findings. Kept in a side file (`state/synth-meta.json`)
@@ -297,6 +298,13 @@ export class SynthMetaStore {
       await atomicWrite(this.path(caseId), JSON.stringify(meta, null, 2));
       return meta;
     });
+  }
+
+  // Keep a synthesis answer that failed parsing or validation in the case's logs folder (#1602), so
+  // a model that keeps failing is diagnosable. Lives here because this store already owns the
+  // per-model synthesis quality record. Returns the written path.
+  saveFailedAnswer(caseId: string, answer: FailedAnswer): Promise<string> {
+    return writeFailedAnswer(this.cases.caseDir(caseId), answer);
   }
 
   // Stamp the second-look sweep result onto the CURRENT synth-meta (#11). Called AFTER the sweep and its
