@@ -304,6 +304,7 @@
     "ROUTE DELETE /cases/:id/notebook/:entryId",
     "ROUTE GET /cases/:id/finding-outcome",
     "ROUTE PATCH /cases/:id/findings/:findingId/outcome",
+    "ROUTE POST /cases/:id/simulation-override",
     "ROUTE GET /cases/:id/remediation",
     "ROUTE POST /cases/:id/remediation",
     "ROUTE DELETE /cases/:id/remediation/:bid",

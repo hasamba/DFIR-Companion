@@ -201,11 +201,15 @@ function detailedFindingIds(findings: readonly Finding[]): Set<string> {
   return new Set(
     findings
       .map((f, i) => ({ f, i }))
-      .sort((a, b) => SEVERITY_RANK[a.f.severity] - SEVERITY_RANK[b.f.severity] || a.i - b.i)
+      .sort((a, b) => SEVERITY_RANK[echoRank(a.f)] - SEVERITY_RANK[echoRank(b.f)] || a.i - b.i)
       .slice(0, FINDING_DETAIL_COUNT)
       .map(({ f }) => f.id),
   );
 }
+
+// A finding capped by the simulation verdict (#1595) keeps its live-intrusion rank here, so the cap
+// never starves it of detail in the next run's prompt.
+const echoRank = (f: Finding): Finding["severity"] => f.simulation?.originalSeverity ?? f.severity;
 
 function findingDetail(f: Finding): string {
   const said = oneLine(f.description ?? "");

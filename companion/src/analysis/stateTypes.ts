@@ -421,6 +421,7 @@ export interface Finding {
   // relatedEventIds and the description are untouched. Recomputed every synthesis; a projection shows
   // an entry only while its event is in the visible forensic timeline (scope and false positives).
   sessionCommands?: SessionCommand[];
+  simulation?: import("./findingSimulation.js").FindingSimulation; // #1595, applySimulationVerdict
 }
 
 /** One quiet command (or script/binary file write) noted on the closest finding (#1594). */
