@@ -29,6 +29,7 @@ import type { MappedEvent } from "./siemImport.js";
 import { worst } from "./siemImport.js";
 import { detectTimestomp, timestompThresholdMs } from "./timestompDetect.js";
 import { appendDerivedNote } from "./derivedNote.js";
+import { copiedFileTimes } from "./veloRowTime.js";
 
 type Row = Record<string, unknown>;
 
@@ -113,4 +114,25 @@ export function markSharedSourceMtime(events: readonly MappedEvent[]): MappedEve
     const note = `${n} copies of one source file, not timestomping`;
     return { ...e, description: appendDerivedNote(e.description, SHARED_SOURCE_MTIME_MARKER, note) };
   });
+}
+
+// Registered in DERIVED_NOTE_NAMES, so the base-text clip keeps it and correlate strips it from the
+// duplicate key (#1603).
+export const INHERITED_MTIME_MARKER = "[inherited modified time:";
+
+/**
+ * A file observation dated by its creation time because its modified time predates it (#1603,
+ * veloRowTime.copiedFileTimes). The modified time is kept as the structured `fileModified` and named
+ * in a note, so the analyst still sees it and knows why the row is not dated by it. Touches only an
+ * event whose time IS that creation time — a mapper that dated the row from another column is left
+ * alone. Mutates `m` in place, like applyMftTimeHints.
+ */
+export function noteInheritedFileTime(row: Row, m: MappedEvent): void {
+  const copy = copiedFileTimes(row);
+  if (!copy || Date.parse(m.timestamp) !== Date.parse(copy.created)) return;
+  if (!m.fileModified) m.fileModified = copy.modified;
+  const note =
+    `${copy.modified} predates this file's creation time ${copy.created}, usually a copy or an ` +
+    `extraction that kept the source's modified time; the event is dated by the creation time`;
+  m.description = appendDerivedNote(m.description, INHERITED_MTIME_MARKER, note);
 }

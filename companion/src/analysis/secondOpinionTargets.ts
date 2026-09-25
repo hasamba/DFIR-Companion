@@ -111,7 +111,11 @@ function repeats(carried: SecondOpinionDelta, fresh: SecondOpinionDelta): boolea
 export function carryAcceptedDecisions(prev: SecondOpinion | null, next: SecondOpinion): SecondOpinion {
   const carried = (prev?.deltas ?? [])
     .filter((d) => d.status === "accepted")
-    .map(({ unapplied: _u, ...d }) => ({ ...d, carriedFrom: d.carriedFrom || prev?.generatedAt || "" }));
+    // A flag holds a PENDING dismissal for the analyst (#1596); an accepted decision has settled it.
+    .map(({ unapplied: _u, refereeFlags: _f, ...d }) => ({
+      ...d,
+      carriedFrom: d.carriedFrom || prev?.generatedAt || "",
+    }));
   if (carried.length === 0) return next;
   const fresh = next.deltas.filter((n) => !carried.some((c) => repeats(c, n)));
   return { ...next, deltas: [...carried, ...fresh] };

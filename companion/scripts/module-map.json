@@ -656,6 +656,7 @@
     "secondOpinion.ts": "analysis/ai",
     "secondOpinionStore.ts": "analysis/ai",
     "secondOpinionTargets.ts": "analysis/ai",
+    "secondOpinionGuard.ts": "analysis/ai",
     "secretSpillRules.ts": "analysis/privacy",
     "ssmExecution.ts": "analysis/detect",
     "securityOnionImport.ts": "analysis/ingest",

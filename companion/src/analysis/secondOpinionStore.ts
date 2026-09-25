@@ -32,6 +32,21 @@ const findingSchema = z.object({
   relatedEventIds: z.array(z.string()).optional().catch(undefined),
 });
 
+// #1596 — a flag holds a dismissal back from every bulk accept. A malformed stored flag must not
+// silently release it, so anything unreadable loads as a blocking "unreadable" flag.
+const UNREADABLE_FLAG = [{ kind: "unreadable" as const }];
+const refereeFlagSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("answers_open_item"),
+    itemId: z.string(),
+    itemKind: z.enum(["thread", "question", "negative"]),
+    text: z.string().catch(""),
+  }),
+  z.object({ kind: z.literal("unquoted_reason") }),
+  z.object({ kind: z.literal("unreadable") }),
+]);
+const refereeFlagsSchema = z.array(refereeFlagSchema).optional().catch(UNREADABLE_FLAG);
+
 const deltaSchema = z.object({
   id: z.string(),
   kind: z.enum(["b_only", "a_only", "severity", "mitre_added", "mitre_removed"]),
@@ -45,6 +60,7 @@ const deltaSchema = z.object({
   recommendation: z.enum(["accept_b", "keep_a", "review"]).catch("review"),
   status: z.enum(["pending", "accepted", "rejected"]).catch("pending"),
   carriedFrom: z.string().optional().catch(undefined), // #1590 — the run an accepted decision came from
+  refereeFlags: refereeFlagsSchema,
 });
 
 export const secondOpinionSchema = z.object({

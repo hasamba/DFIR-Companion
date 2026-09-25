@@ -123,16 +123,21 @@
       return;
     }
     const pending = deltas.filter((d) => d.status === "pending").length;
+    // Accept-all skips a dismissal held for the analyst (#1596); reject-all does not.
+    const acceptable = deltas.filter((d) => d.status === "pending" && !heldForAnalyst(d)).length;
     const refCalls = refereeCalls(deltas);
     // A failed referee pass leaves no calls worth following, even if an older pass left some.
     const refereeBtn =
       !rec.refereeError && refCalls.accept + refCalls.keep > 0
-        ? `<button data-so-all="referee" title="Apply the referee's call on every pending delta: accept where it suggests accept B, reject where it suggests keep A. Deltas with no referee call stay pending.">⚖ follow referee (${refCalls.accept + refCalls.keep})</button>`
+        ? `<button data-so-all="referee" title="Apply the referee's call on every pending delta: accept where it suggests accept B, reject where it suggests keep A. Deltas with no referee call, and dismissals marked ⚠ for you, stay pending.">⚖ follow referee (${refCalls.accept + refCalls.keep})</button>`
         : "";
     const allBtns =
-      pending >= 2
-        ? `<button data-so-all="accept" title="Adopt model B's call on every pending delta (durable across re-synthesis)">✓ accept all (${pending})</button><button data-so-all="reject" title="Keep model A on every pending delta — just record the decisions">✕ reject all</button>`
-        : "";
+      (acceptable >= 2
+        ? `<button data-so-all="accept" title="Adopt model B's call on every pending delta (durable across re-synthesis). Dismissals marked ⚠ for you stay pending.">✓ accept all (${acceptable})</button>`
+        : "") +
+      (pending >= 2
+        ? `<button data-so-all="reject" title="Keep model A on every pending delta — just record the decisions">✕ reject all (${pending})</button>`
+        : "");
     const bulk =
       refereeBtn || allBtns
         ? `<div class="so-bulk">${refereeBtn}${allBtns}</div>`
@@ -149,9 +154,9 @@
           ? `<div class="so-rationale">${esc(d.rationale)}</div>`
           : "";
         const suggest =
-          d.recommendation === "accept_b" || d.recommendation === "keep_a"
+          (d.recommendation === "accept_b" || d.recommendation === "keep_a"
             ? `<div class="so-rec so-${esc(d.recommendation)}">referee suggests: ${d.recommendation === "accept_b" ? "accept B" : "keep A"}</div>`
-            : "";
+            : "") + (d.status === "pending" ? heldLines(d) : "");
         let acts;
         if (d.status === "accepted" && d.unapplied)
           acts = `<span class="so-status" data-safe-style="color:var(--badge-danger-text)" title="${esc(SO_UNAPPLIED_WHY[d.unapplied] || "matches no finding")}">⚠ accepted · not applied</span>`;
@@ -181,13 +186,40 @@
       `<button type="button" data-so-referee-rerun title="Run only the referee again on the existing disagreements. Model A and model B are not re-run."${refereeRerunInFlight ? " disabled" : ""}>↻ re-run referee</button>`
     );
   }
-  // Pending deltas the referee made a call on — "review" (no call) is not counted.
+  // #1596 — a dismissal the server held back from every bulk action: it may remove the last evidence
+  // for an open question, or its reason quotes nothing from the evidence. Only a per-row accept
+  // applies it.
+  function heldForAnalyst(d) {
+    return Array.isArray(d.refereeFlags) && d.refereeFlags.length > 0;
+  }
+  const SO_HELD_KIND = { thread: "open thread", question: "open question", negative: "negative answer" };
+  function heldLine(f) {
+    if (f && f.kind === "answers_open_item")
+      return `may be the only evidence for ${esc(f.itemId)} (${esc(SO_HELD_KIND[f.itemKind] || "open item")}): ${esc(f.text || "")}`;
+    if (f && f.kind === "unquoted_reason") return "the referee's reason quotes nothing from the cited events";
+    return "the saved check could not be read";
+  }
+  function heldLines(d) {
+    if (!heldForAnalyst(d)) return "";
+    return (
+      `<div class="so-held" data-safe-style="color:var(--badge-danger-text)" title="Not applied by 'follow referee' or 'accept all' — decide this one yourself">` +
+      d.refereeFlags.map((f) => `<div>⚠ ${heldLine(f)}</div>`).join("") +
+      `</div>`
+    );
+  }
+  // Pending deltas the referee made a call on — "review" (no call) is not counted, and neither is a
+  // dismissal held for the analyst (#1596): the server would leave it pending.
   function refereeCalls(deltas) {
-    const pending = deltas.filter((d) => d.status === "pending");
+    const pending = deltas.filter((d) => d.status === "pending" && !heldForAnalyst(d));
     return {
       accept: pending.filter((d) => d.recommendation === "accept_b").length,
       keep: pending.filter((d) => d.recommendation === "keep_a").length,
     };
+  }
+  function heldNote(rec) {
+    const deltas = rec && Array.isArray(rec.deltas) ? rec.deltas : [];
+    const n = deltas.filter((d) => d.status === "pending" && heldForAnalyst(d)).length;
+    return n ? ` ${n} dismissal(s) marked ⚠ stay pending for you to decide one by one.` : "";
   }
   function applySecondOpinionDelta(caseId, deltaId, accept) {
     fetch(`/cases/${caseId}/second-opinion/apply`, {
@@ -406,7 +438,8 @@
         else if (t.dataset.soAll === "accept") {
           if (
             confirm(
-              "Accept ALL pending second-opinion deltas? This adds/edits the case findings, severities and ATT&CK techniques to match model B.",
+              "Accept ALL pending second-opinion deltas? This adds/edits the case findings, severities and ATT&CK techniques to match model B." +
+                heldNote(lastSecondOpinionRec),
             )
           )
             applyAllSecondOpinion(caseId, true);
@@ -416,7 +449,8 @@
           const c = refereeCalls(lastSecondOpinionRec?.deltas || []);
           if (
             confirm(
-              `Follow the referee on ${c.accept + c.keep} pending delta(s)? ${c.accept} will be accepted (model B's call is applied to the case findings, severities and ATT&CK techniques) and ${c.keep} rejected. Deltas with no referee call stay pending.`,
+              `Follow the referee on ${c.accept + c.keep} pending delta(s)? ${c.accept} will be accepted (model B's call is applied to the case findings, severities and ATT&CK techniques) and ${c.keep} rejected. Deltas with no referee call stay pending.` +
+                heldNote(lastSecondOpinionRec),
             )
           )
             applyAllSecondOpinion(caseId, "referee");
