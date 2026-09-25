@@ -45,6 +45,7 @@ function job(over: Partial<VeloHuntJob>): VeloHuntJob {
     waitMinutes: 5,
     collectAt: T,
     status: "imported",
+    clientCounts: { scheduled: 2, completed: 2, errors: 0 }, // every scheduled client finished (#1612)
     ...over,
   };
 }
@@ -224,6 +225,25 @@ describe("applyNegativeAnswerCoverage — uncovered negative keyQuestion", () =>
       }),
       job({ artifacts: [FF], emptyArtifacts: [FF], filters: { [FF]: "OSPath =~ 'x'" } }),
     ]) {
+      const out = applyNegativeAnswerCoverage(
+        stateWith(events, [impactQ()]),
+        buildCollectionInventory({ events, hunts: [hunt] }),
+      );
+      expect(out.keyQuestions[0].status).toBe("partial");
+    }
+  });
+
+  // #1612: an empty result speaks only for the clients that ran the hunt.
+  it("does not let an empty hunt settle the class without full client coverage", () => {
+    const events = incEvents();
+    const FF = "Windows.Search.FileFinder";
+    for (const clientCounts of [
+      undefined, // collected before the counts were recorded
+      { scheduled: 0, completed: 0, errors: 0 },
+      { scheduled: 5, completed: 2, errors: 0 },
+      { scheduled: 2, completed: 2, errors: 1 },
+    ]) {
+      const hunt = job({ artifacts: [FF], emptyArtifacts: [FF], clientCounts });
       const out = applyNegativeAnswerCoverage(
         stateWith(events, [impactQ()]),
         buildCollectionInventory({ events, hunts: [hunt] }),

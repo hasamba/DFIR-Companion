@@ -208,8 +208,27 @@ function windowText(ts: Record<string, unknown>): string {
 }
 
 /**
+ * Why this hunt's silence speaks for only part of the fleet (#1612), or "" when every scheduled client
+ * finished without error. HuntStats sees only clients that checked in, so full coverage means "every
+ * client the hunt reached", which is why the hunt must also be fleet-wide to settle. Read without a
+ * schema: a count that is not a non-negative integer, or more finished than scheduled, is unknown.
+ */
+function clientBound(job: VeloHuntJob): string {
+  const c = record(job.clientCounts);
+  const [scheduled, completed, errors] = [c.scheduled, c.completed, c.errors];
+  const ok = (n: unknown): n is number => Number.isSafeInteger(n) && (n as number) >= 0;
+  if (!job.clientCounts) return "client coverage not recorded (collected before it was tracked)";
+  if (!ok(scheduled) || !ok(completed) || !ok(errors) || completed > scheduled)
+    return "client coverage unreadable";
+  if (scheduled === 0) return "the hunt reached no client";
+  if (completed === scheduled && errors === 0) return "";
+  const withErrors = errors ? `, ${errors} with errors` : "";
+  return `only ${completed} of ${scheduled} scheduled client(s) finished${withErrors}`;
+}
+
+/**
  * Why this hunt's silence for one artifact is bounded (#1604), or "" when it speaks for the whole
- * artifact. velo-hunt.json is read without a schema and sanitizeHuntJobs spreads these fields raw.
+ * artifact. Client coverage (#1612) bounds every artifact of the hunt alike. velo-hunt.json is read without a schema and sanitizeHuntJobs spreads these fields raw.
  * The time bound is per artifact: only the artifacts that took the window are bounded. A job written
  * before the names were recorded only counts them, so every artifact of it counts as possibly bounded.
  * A window that reached no artifact bounds nothing — `degraded` means the metadata was unknown, not
@@ -227,6 +246,8 @@ function silenceBound(job: VeloHuntJob, artifact: string): string {
   }
   const filter = record(job.filters)[artifact];
   if (typeof filter === "string" && filter.trim()) parts.push("result filter applied");
+  const clients = clientBound(job);
+  if (clients) parts.push(clients);
   return parts.join("; ");
 }
 
@@ -344,7 +365,8 @@ const CLASS_SETTLING_ARTIFACTS: Record<EvidenceClass, readonly string[]> = {
 /**
  * Classes a clean zero-row FLEET-WIDE hunt settles on every host: evidence of absence, which
  * re-collecting would only repeat. A label-filtered hunt names no hosts, so it settles nothing; a
- * time-scoped or result-filtered empty is bounded silence, so it settles nothing either (#1604).
+ * time-scoped or result-filtered empty is bounded silence, so it settles nothing either (#1604), and
+ * so is an empty that did not reach, or did not finish on, every scheduled client (#1612).
  */
 export function emptySettledClasses(inv: CollectionInventory): Set<EvidenceClass> {
   const empty = new Set(inv.hunts.filter((h) => h.state === "empty" && canSettle(h)).map((h) => h.artifact));
@@ -372,6 +394,7 @@ export function inventorySignature(hunts: readonly VeloHuntJob[]): string {
         .filter(([, f]) => typeof f === "string" && f.trim())
         .map(([name]) => name)
         .sort(),
+      JSON.stringify(j.clientCounts ?? null), // client coverage decides settlement too (#1612)
     ]);
   return hunts.map(one).sort().join("\n");
 }

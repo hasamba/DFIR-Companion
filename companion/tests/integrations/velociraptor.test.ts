@@ -501,6 +501,56 @@ describe("VelociraptorClient.huntStatus", () => {
     const runner: VqlRunner = async () => ({ rows: [{ state: "RUNNING", expires: 0 }], raw: "" });
     expect(await new VelociraptorClient(cfg, runner).huntStatus("H.ABC123")).toEqual({ state: "RUNNING" });
   });
+
+  // #1612 — the hunt's client counts decide whether an empty result can settle an evidence class.
+  describe("client counts (#1612)", () => {
+    const status = (stats: unknown) =>
+      new VelociraptorClient(cfg, async () => ({ rows: [{ state: "STOPPED", stats }], raw: "" })).huntStatus(
+        "H.ABC123",
+      );
+
+    it("selects the hunt's stats", async () => {
+      let program = "";
+      const runner: VqlRunner = async (s) => {
+        program = s[0];
+        return { rows: [{ state: "RUNNING" }], raw: "" };
+      };
+      await new VelociraptorClient(cfg, runner).huntStatus("H.ABC123");
+      expect(program).toContain("SELECT state, expires, stats FROM hunts()");
+    });
+
+    it("reads scheduled, finished and error counts, numbers or numeric strings", async () => {
+      const stats = {
+        total_clients_scheduled: "3",
+        total_finished_clients: 3,
+        total_clients_with_results: 1,
+        total_clients_with_errors: 1,
+      };
+      expect((await status(stats))?.clients).toEqual({ scheduled: 3, completed: 3, errors: 1 });
+    });
+
+    it("falls back to total_clients_with_results when the server has no finished count", async () => {
+      const stats = { total_clients_scheduled: 2, total_clients_with_results: 2 };
+      expect((await status(stats))?.clients).toEqual({ scheduled: 2, completed: 2, errors: 0 });
+    });
+
+    it("reads an absent counter as zero, because protobuf JSON omits zero fields", async () => {
+      expect((await status({}))?.clients).toEqual({ scheduled: 0, completed: 0, errors: 0 });
+    });
+
+    it("reports no counts when stats are missing or any counter is malformed", async () => {
+      expect((await status(undefined))?.clients).toBeUndefined();
+      expect((await status("junk"))?.clients).toBeUndefined();
+      for (const bad of ["x", "", -1, 1.5, Number.MAX_SAFE_INTEGER + 2, null, true]) {
+        const stats = {
+          total_clients_scheduled: 1,
+          total_finished_clients: 1,
+          total_clients_with_errors: bad,
+        };
+        expect((await status(stats))?.clients).toBeUndefined();
+      }
+    });
+  });
 });
 
 describe("VelociraptorClient.getHuntArtifacts", () => {
