@@ -189,7 +189,8 @@ export interface RouteContext {
   //   moveDropFile              — move a processed drop file to _processed/_failed (shared w/ poller).
   dispatchImport(kind: string, caseId: string, text: string, base: ImportBase): Promise<unknown>;
   demoteForensicForCase(caseId: string): Promise<InvestigationState>;
-  resynthesizeInBackground(caseId: string): void;
+  /** `analyst`: a person asked for this run now, so it supersedes a running one (#1608). */
+  resynthesizeInBackground(caseId: string, opts?: { analyst?: boolean }): void;
   markConclusionsOutOfDate(caseId: string, reason: string): Promise<void>;
   pushImportCheckpoint(caseId: string, beforeState: InvestigationState, label: string): Promise<void>;
   applyWhitelistToCase(caseId: string): Promise<{ matched: number; added: number }>;

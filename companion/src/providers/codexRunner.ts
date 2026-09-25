@@ -70,6 +70,12 @@ export const defaultCodexRunner: CodexRunner = (opts) =>
       opts.maxStderrHeadBytes ?? DEFAULT_MAX_STDERR_HEAD_BYTES,
       opts.maxStderrTailBytes ?? DEFAULT_MAX_STDERR_TAIL_BYTES,
     );
+    // #1608: a run cancelled or superseded before it began starts no process at all — killing one
+    // right after spawn could still let the CLI send its request.
+    if (opts.signal?.aborted) {
+      resolve({ code: null, stdout: "", stderr: "", timedOut: true });
+      return;
+    }
     let settled = false;
     let timedOut = false;
 
