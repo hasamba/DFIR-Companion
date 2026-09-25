@@ -228,3 +228,44 @@ describe("veloCanCollect", () => {
     expect(cov.veloCanCollect(null)).toBe(false);
   });
 });
+
+// #1645 — the external import and the Hunting Profile's live view read hunts too, without a collect.
+// They must say "not read in full" the way a collect's hunt card does, with their own next step.
+describe("veloReadGapsHtml", () => {
+  it("is empty when every read was complete", () => {
+    expect(cov.veloReadGapsHtml({}, "Import again.")).toBe("");
+    expect(cov.veloReadGapsHtml({ unread: [], truncated: [], failed: [] }, "Import again.")).toBe("");
+  });
+
+  it("says NOT READ with the hunt card's own wording and the surface's next step", () => {
+    const card = cov.veloCoverageHtml({
+      status: "imported",
+      artifacts: ["Windows.System.TaskScheduler"],
+      unreadArtifacts: [{ name: "Windows.System.TaskScheduler", rows: 0 }],
+    });
+    const ext = cov.veloReadGapsHtml(
+      { unread: [{ name: "Windows.System.TaskScheduler", rows: 0 }] },
+      "Import again once the server answers.",
+    );
+    expect(ext).toContain("NOT READ");
+    expect(ext).toContain("No rows here does not mean nothing was found.");
+    expect(ext).toContain("Import again once the server answers.");
+    expect(ext).not.toContain("Collect again");
+    expect(card).toContain(ext.replace("Import again once the server answers.", "Collect again."));
+  });
+
+  it("names a read cut short and a read that failed, escaped", () => {
+    const html = cov.veloReadGapsHtml(
+      {
+        truncated: [{ name: "Generic.Scanner.ThorZIP", kept: 1000, total: 1001 }],
+        failed: [{ name: "<b>X</b>", error: "timeout" }],
+      },
+      "Import again.",
+    );
+    expect(html).toContain("INCOMPLETE");
+    expect(html).toContain("Generic.Scanner.ThorZIP (kept 1000 rows");
+    expect(html).toContain("FAILED TO READ");
+    expect(html).toContain("&lt;b&gt;X&lt;/b&gt;: timeout");
+    expect(html).not.toContain("<b>X</b>");
+  });
+});

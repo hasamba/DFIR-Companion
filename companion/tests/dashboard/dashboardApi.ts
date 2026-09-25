@@ -487,6 +487,15 @@ export interface VeloCoverageApi {
     truncatedArtifacts?: { name: string; kept: number; total: number }[];
     unreadArtifacts?: { name: string; rows: number }[];
   }): string;
+  veloUnreadHtml(unread: { name: string; rows: number }[] | undefined, again: string): string;
+  veloReadGapsHtml(
+    gaps: {
+      unread?: { name: string; rows: number }[];
+      truncated?: { name: string; kept: number; total: number }[];
+      failed?: { name: string; error: string }[];
+    },
+    again: string,
+  ): string;
   veloLaunchNotesHtml(run: {
     unknownArtifacts?: string[];
     unavailableArtifacts?: { artifact: string; reason: string }[];
