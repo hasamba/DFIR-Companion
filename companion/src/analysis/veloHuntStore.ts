@@ -62,6 +62,9 @@ export interface VeloHuntJob {
     end?: string; // ISO
     scopedArtifacts: number; // how many artifacts actually received the window
     totalArtifacts: number; // how many were launched
+    // WHICH artifacts took the window (#1604). A job written before this field existed records only
+    // the count, so a reader cannot tell which of its artifacts were bounded.
+    scopedArtifactNames?: string[];
     // true = the server reported no parameter metadata for this bundle's artifacts (the catalog fetch
     // failed or came back empty), so the bounded/unbounded split above could NOT be verified — it may
     // understate what actually got scoped. Distinguishes "this bundle genuinely has no date-parameterized

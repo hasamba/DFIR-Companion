@@ -220,3 +220,17 @@ export function buildTimeScopePlan(input: TimeScopePlanInput): TimeScopePlan {
 
   return { scoped, unscoped, params, degraded: !sawAnyMetadata };
 }
+
+// The window a hunt job records as provenance. `scopedArtifactNames` says WHICH artifacts took it
+// (#1604): an empty result from one of them is "nothing in the window", and must not settle an
+// evidence class — while an artifact that collected in full still speaks for all time.
+export function timeScopeProvenance(scope: TimeScope, plan: TimeScopePlan, totalArtifacts: number) {
+  return {
+    start: scope.start,
+    ...(scope.end ? { end: scope.end } : {}),
+    scopedArtifacts: plan.scoped.length,
+    scopedArtifactNames: plan.scoped.map((s) => s.artifact),
+    totalArtifacts,
+    degraded: plan.degraded,
+  };
+}
