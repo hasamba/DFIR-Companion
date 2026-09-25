@@ -401,14 +401,22 @@ function danglingRefs(output: QualityOutput): CaseQualityScore["danglingEvidence
   });
 }
 
+const inBand = (claim: QualityClaim, band: { min: number; max: number }): boolean =>
+  typeof claim.confidence === "number" && claim.confidence >= band.min && claim.confidence <= band.max;
+
+// #1579: a golden claim's band is met when ANY finding that makes the claim sits inside it. A
+// low-confidence side note that merely mentions the claim's terms (e.g. flagging planted text in the
+// same attachment) is not the claim, so it is flagged only when no finding made the claim in band.
 function confidenceIssues(golden: readonly GoldenClaim[], claims: readonly QualityClaim[]): string[] {
   const issues: string[] = [];
+  const matches = (candidate: GoldenClaim): QualityClaim[] =>
+    claims.filter((claim) => containsTerms(claimText(claim), candidate.requiredTerms));
   for (const claim of claims) {
     const expected = golden.find((candidate) => containsTerms(claimText(claim), candidate.requiredTerms));
-    if (expected?.confidence && typeof claim.confidence === "number") {
-      const { min, max } = expected.confidence;
-      if (claim.confidence < min || claim.confidence > max) {
-        issues.push(`${claim.id}: confidence outside ${min}-${max}`);
+    const band = expected?.confidence;
+    if (band && typeof claim.confidence === "number" && !inBand(claim, band)) {
+      if (!matches(expected).some((match) => inBand(match, band))) {
+        issues.push(`${claim.id}: confidence outside ${band.min}-${band.max}`);
       }
     }
     if (typeof claim.confidence === "number" && !String(claim.confidenceReason ?? "").trim()) {
