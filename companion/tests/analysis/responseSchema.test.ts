@@ -25,6 +25,24 @@ describe("deltaSchema", () => {
     expect(delta.findings[0].id).toBe("f1");
   });
 
+  it("accepts an open thread written as plain text instead of rejecting the whole response (#1579)", () => {
+    // claude-sonnet-5 on the CSV prompt returned threadsOpened as bare strings in 5 of 6 protected
+    // eval calls; the strict object shape failed every retry and the import got no AI extraction.
+    const delta = deltaSchema.parse({
+      findings: [],
+      iocs: [],
+      mitreTechniques: [],
+      threadsOpened: ["  check logons from 10.0.0.5  ", { id: "t2", description: "trace parent" }, "   "],
+      threadsClosed: [],
+      timelineNote: "",
+      summary: "",
+    });
+    expect(delta.threadsOpened).toEqual([
+      { id: "check logons from 10.0.0.5", description: "check logons from 10.0.0.5" },
+      { id: "t2", description: "trace parent" },
+    ]);
+  });
+
   it("degrades unexpected enum values instead of rejecting the whole response", () => {
     // A model returning a novel severity / IOC type must NOT nuke the entire synthesis.
     const delta = deltaSchema.parse({
