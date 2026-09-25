@@ -371,6 +371,7 @@
     "falsePositive.ts": "analysis/findings",
     "falsePositiveSimilarity.ts": "analysis/findings",
     "findingGrounding.ts": "analysis/findings",
+    "findingSimulation.ts": "shared",
     "findingRelevance.ts": "analysis/findings",
     "findingWorkflow.ts": "analysis/findings",
     "findingOutcome.ts": "analysis/findings",

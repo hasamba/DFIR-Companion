@@ -421,9 +421,7 @@ export interface Finding {
   // relatedEventIds and the description are untouched. Recomputed every synthesis; a projection shows
   // an entry only while its event is in the visible forensic timeline (scope and false positives).
   sessionCommands?: SessionCommand[];
-  // Set post-synthesis by applySimulationVerdict (#1595) when the case's own findings conclude it is
-  // an authorized simulation. Never model-set. See analysis/simulationVerdict.ts.
-  simulation?: FindingSimulation;
+  simulation?: import("./findingSimulation.js").FindingSimulation; // #1595, applySimulationVerdict
 }
 
 /** One quiet command (or script/binary file write) noted on the closest finding (#1594). */
@@ -435,17 +433,6 @@ export interface SessionCommand {
   /** The command line, or "<process> wrote <path>" for a file write. One line, capped. */
   text: string;
   accounts?: string[];
-}
-
-// How the simulation verdict (#1595) changed one finding. `originalSeverity` is the live-intrusion
-// severity before the step; `appliedSeverity` is what the step set, so a later rewrite of the
-// severity (a model re-run, an accepted second opinion) is recognised and wins.
-export interface FindingSimulation {
-  role: "verdict" | "simulated" | "live-exposure";
-  originalSeverity: Severity;
-  appliedSeverity: Severity;
-  verdictId?: string; // simulated / live-exposure: the verdict finding that explains it
-  overridden?: boolean; // verdict only: the analyst said "treat as real intrusion"
 }
 
 export interface Thread {

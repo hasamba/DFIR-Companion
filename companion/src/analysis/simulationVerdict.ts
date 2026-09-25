@@ -1,9 +1,9 @@
+import type { FindingSimulation } from "./findingSimulation.js";
 import type { HostAliasIndex } from "./hostAlias.js";
 import { canonicalHostName, resolveHost } from "./hostAlias.js";
 import {
   SEVERITY_RANK,
   type Finding,
-  type FindingSimulation,
   type ForensicEvent,
   type InvestigationState,
   type Severity,
