@@ -533,6 +533,7 @@
     "setSecondOpinionCapabilities",
     "isFpAiConfigured",
     "loadSecondOpinion",
+    "scheduleSecondOpinionReload",
     "renderSecondOpinion",
     "runSecondOpinion",
     "applySecondOpinionDelta",

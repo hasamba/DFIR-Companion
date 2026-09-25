@@ -572,6 +572,7 @@
         loadPlaybook(caseId);
         loadHypotheses(caseId);
         loadSuperTimeline(caseId);
+        scheduleSecondOpinionReload(caseId); // #1590 — refresh the "no longer applies" list
       } else if (msg.type === "second_opinion_changed")
         loadSecondOpinion(caseId);
       else if (msg.type === "ai_status") applyAiStatus(msg);

@@ -1555,6 +1555,7 @@ export const FEATURES: Feature[] = [
       "setSecondOpinionCapabilities",
       "isFpAiConfigured",
       "loadSecondOpinion",
+      "scheduleSecondOpinionReload", // #1590 — the state push refreshes the "no longer applies" list
       "renderSecondOpinion",
       "runSecondOpinion",
       "applySecondOpinionDelta",
