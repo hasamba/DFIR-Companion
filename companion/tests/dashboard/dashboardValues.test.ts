@@ -235,6 +235,25 @@ describe("updateJobRow", () => {
     expect(row.cells[".job-detail"].textContent).toBe("3/10");
   });
 
+  // #1601: an in-place patch shows the same text a fresh render would.
+  it("patches the model cell with the served-version label, or the alias", () => {
+    const row = fakeRow();
+    v.updateJobRow(row, {
+      job: {
+        kind: "synthesis",
+        status: "running",
+        model: "sonnet",
+        modelLabel: "sonnet (last run: Sonnet 5)",
+      },
+      detail: "",
+    });
+    expect(row.cells[".job-model"].textContent).toBe("sonnet (last run: Sonnet 5)");
+    v.updateJobRow(row, { job: { kind: "synthesis", status: "running", model: "sonnet" }, detail: "" });
+    expect(row.cells[".job-model"].textContent).toBe("sonnet");
+    v.updateJobRow(row, { job: { kind: "enrichment", status: "running" }, detail: "" });
+    expect((row.cells[".job-model"].style as Record<string, string>).display).toBe("none");
+  });
+
   it("hides the detail cell when there is no detail, rather than leaving an empty gap", () => {
     const row = fakeRow();
     v.updateJobRow(row, { job: { kind: "k", status: "done" }, detail: "" });

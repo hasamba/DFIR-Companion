@@ -61,17 +61,19 @@ describe("job model", () => {
 
 describe("jobModelResolver", () => {
   const pipeline = { analysisTextProviderModel: () => ({ provider: "openrouter", model: "sonnet" }) };
+  // #1601: the provider is pinned beside the alias, so the served-model stamp matches on both.
+  const SONNET = { provider: "openrouter", model: "sonnet" };
 
   it("names the text model for synthesis and for a deep pass", () => {
     const resolve = jobModelResolver(pipeline);
-    expect(resolve({ kind: "synthesis" })).toBe("sonnet");
-    expect(resolve({ kind: "deep-pass" })).toBe("sonnet");
+    expect(resolve({ kind: "synthesis" })).toEqual(SONNET);
+    expect(resolve({ kind: "deep-pass" })).toEqual(SONNET);
   });
 
   it("names it for a csv/log import, which runs the model to extract", () => {
     const resolve = jobModelResolver(pipeline);
-    expect(resolve({ kind: "import", parameters: { kind: "csv" } })).toBe("sonnet");
-    expect(resolve({ kind: "import", parameters: { kind: "log" } })).toBe("sonnet");
+    expect(resolve({ kind: "import", parameters: { kind: "csv" } })).toEqual(SONNET);
+    expect(resolve({ kind: "import", parameters: { kind: "log" } })).toEqual(SONNET);
   });
 
   // A deterministic import parses locally, and the Velociraptor collect that borrows an import slot

@@ -147,8 +147,10 @@ function updateJobRow(row, view) {
   row.querySelector(".job-kind").textContent = view.job.kind;
   row.querySelector(".job-label").textContent = view.job.label || "";
   if (model) {
-    model.textContent = view.job.model || "";
-    model.style.display = view.job.model ? "" : "none";
+    // #1601: same rule as jobRowHtml — the served-version label first, the bare alias as fallback.
+    const modelText = view.job.modelLabel || view.job.model || "";
+    model.textContent = modelText;
+    model.style.display = modelText ? "" : "none";
   }
   status.className = `job-st job-${view.job.status}`;
   status.textContent = view.job.status;

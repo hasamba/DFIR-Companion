@@ -61,6 +61,7 @@ import {
 import { carryOutOfWindowFindings, foldSynthesisDelta, gradeFindings } from "./synthesisMerge.js";
 import { persistSynthesis } from "./synthesisPersist.js";
 import { stampCollectDirectives } from "../collectSatisfaction.js";
+import { collectServedModel } from "../servedModels.js";
 import type { PromotionIntent } from "../ingest/timelineImports.js";
 
 /**
@@ -385,6 +386,7 @@ async function recordSynthesisOutcome(
     startedAt: new Date(o.synthStart).toISOString(),
     provider: o.synthProvider.name,
     model: o.synthProvider.model,
+    ...(o.call.resolvedModel ? { resolvedModel: o.call.resolvedModel } : {}),
     eventIds: [...o.prompt.shownIds],
     inputState: o.run.state,
     outputState: o.next,
@@ -457,6 +459,7 @@ interface SynthesisCall {
   thinkingTokens: number;
   thinkingSource: SynthThinkingSource; // #1468: toggle / env / off, recorded on the run
   parseRetries: number;
+  resolvedModel?: string; // #1601: the concrete model the provider reported, recorded on the run
 }
 
 async function callSynthesisModel(
@@ -474,39 +477,42 @@ async function callSynthesisModel(
   let parseRetries = 0;
   let retryNote: string | undefined; // #1602: what the last bad answer got wrong, for the next attempt
   let attempt = 0;
-  const delta = await ctx.withRetry(
-    caseId,
-    "synthesis",
-    async () => {
-      attempt++;
-      let parsed: unknown;
-      try {
-        parsed = await ctx.analyzeRestored(
-          caseId,
-          state,
-          provider,
-          {
-            systemPrompt: getSynthesisPrompt(),
-            // Appended at the END so the cached prompt prefix is unchanged on the retry.
-            userPrompt: retryNote ? `${userPrompt}\n\n${retryNote}` : userPrompt,
-            images: [],
-            ...(thinkingTokens > 0 ? { thinkingTokens } : {}),
-            ...(opts.signal ? { signal: opts.signal } : {}),
-          },
-          "synthesis",
-        );
-        return parseSynthesisAnswer(ctx, caseId, parsed);
-      } catch (err) {
-        parseRetries++;
-        retryNote = synthesisRetryNote(err) ?? retryNote; // a provider error keeps the current note
-        await keepFailedAnswer(ctx, caseId, attempt, err, parsed);
-        throw err;
-      }
-    },
-    ctx.opts.retries ?? 3,
-    ctx.opts.backoffMs ?? 500,
+  // #1601: scoped to this call chain, so the run records the model that served THIS synthesis.
+  const { value: delta, resolvedModel } = await collectServedModel(() =>
+    ctx.withRetry(
+      caseId,
+      "synthesis",
+      async () => {
+        attempt++;
+        let parsed: unknown;
+        try {
+          parsed = await ctx.analyzeRestored(
+            caseId,
+            state,
+            provider,
+            {
+              systemPrompt: getSynthesisPrompt(),
+              // Appended at the END so the cached prompt prefix is unchanged on the retry.
+              userPrompt: retryNote ? `${userPrompt}\n\n${retryNote}` : userPrompt,
+              images: [],
+              ...(thinkingTokens > 0 ? { thinkingTokens } : {}),
+              ...(opts.signal ? { signal: opts.signal } : {}),
+            },
+            "synthesis",
+          );
+          return parseSynthesisAnswer(ctx, caseId, parsed);
+        } catch (err) {
+          parseRetries++;
+          retryNote = synthesisRetryNote(err) ?? retryNote; // a provider error keeps the current note
+          await keepFailedAnswer(ctx, caseId, attempt, err, parsed);
+          throw err;
+        }
+      },
+      ctx.opts.retries ?? 3,
+      ctx.opts.backoffMs ?? 500,
+    ),
   );
-  return { delta, thinkingTokens, thinkingSource, parseRetries };
+  return { delta, thinkingTokens, thinkingSource, parseRetries, ...(resolvedModel ? { resolvedModel } : {}) };
 }
 
 // #1602: default the often-empty parts of a partial answer, and say which ones, so a model that

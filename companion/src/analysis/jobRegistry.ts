@@ -52,6 +52,13 @@ export interface Job {
    * Unset for jobs no model runs (enrichment, a deterministic import, a Velociraptor collect).
    */
   model?: string;
+  /** The provider `model` belongs to (e.g. "claude-code"), pinned with it. Keys "last run" (#1601). */
+  modelProvider?: string;
+  /**
+   * The concrete model the provider reported serving this job's call (#1601), e.g. "claude-sonnet-5"
+   * for the alias "sonnet". Set only from a real answer; a provider that reports none leaves it unset.
+   */
+  servedModel?: string;
   status: JobStatus;
   priority: JobPriority;
   parentJobId?: string;
@@ -98,6 +105,7 @@ export interface CreateJobInput {
   kind: JobKind;
   label?: string;
   model?: string;
+  modelProvider?: string;
   detail?: string;
   priority?: JobPriority;
   parentJobId?: string;
@@ -121,6 +129,7 @@ export function createJob(table: JobTable, input: CreateJobInput): JobTable {
     kind: input.kind,
     ...(input.label !== undefined ? { label: input.label } : {}),
     ...(input.model !== undefined ? { model: input.model } : {}),
+    ...(input.modelProvider !== undefined ? { modelProvider: input.modelProvider } : {}),
     ...(input.detail !== undefined ? { detail: input.detail } : {}),
     status,
     priority: input.priority ?? "normal",
@@ -231,6 +240,13 @@ export function warnJob(table: JobTable, id: string, warning: string, now: strin
           warnings: [...job.warnings, normalized],
           updatedAt: now,
         },
+  );
+}
+
+/** Record the concrete model that served this job's call (#1601). Ignored once the job has ended. */
+export function stampServedModel(table: JobTable, id: string, servedModel: string, now: string): JobTable {
+  return patchJob(table, id, (job) =>
+    isTerminal(job.status) || job.servedModel === servedModel ? job : { ...job, servedModel, updatedAt: now },
   );
 }
 
@@ -421,6 +437,8 @@ export const jobSchema: z.ZodType<Job> = z.object({
   kind: z.enum(JOB_KINDS),
   label: z.string().optional(),
   model: z.string().min(1).max(200).optional(),
+  modelProvider: z.string().min(1).max(200).optional(),
+  servedModel: z.string().min(1).max(200).optional(),
   status: z.enum(JOB_STATUSES),
   priority: z.enum(["low", "normal", "high"]),
   parentJobId: z.string().optional(),

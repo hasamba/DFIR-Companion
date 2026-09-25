@@ -111,7 +111,7 @@ identities, emergency access, and the one-writer deployment model.
 ## AI
 
 - Provider, model, API key, base URL (extraction)
-- Synthesis model (optional separate model for findings/attacker path) — also configurable directly in the first-run **setup wizard**'s AI step, not just here
+- **Text model — synthesis and imports** (optional separate model for synthesis, Deep Pass and CSV/log imports; blank uses the screenshot model) — also configurable directly in the first-run **setup wizard**'s AI step, not just here. The **Screenshot model (vision)** above it is used for screenshots only. The two are labelled so one is not read as the other.
 - VQL-generation model (optional dedicated model — many general models struggle with VQL syntax)
 - Second-opinion model (optional rival model for the **2nd opinion** button) and the **referee** that judges each A-vs-B disagreement (blank = model A)
 - Timeout, max tokens, context window size

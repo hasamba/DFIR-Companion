@@ -47,6 +47,7 @@ import { createCaseNotifier } from "./composition/caseNotifier.js";
 import { createOcrIndexer } from "./composition/ocrIndexer.js";
 import { createAiControlCache } from "./composition/aiControlCache.js";
 import { jobModelResolver } from "./composition/jobModel.js";
+import { servedModels } from "./analysis/servedModels.js";
 import { buildIrisClient, buildTimesketchClient } from "./composition/integrationClients.js";
 import { createConclusionsOutOfDate } from "./composition/conclusionsOutOfDate.js";
 
@@ -105,6 +106,7 @@ export function createApp(store: CaseStore, options: AppOptions = {}): Express {
   // this is the first place holding BOTH the job manager and the pipeline whose provider answers
   // the question. See composition/jobModel.ts for what counts as an AI job and why.
   options.jobManager?.useModelResolver(jobModelResolver(options.pipeline));
+  options.jobManager?.useServedModels(servedModels); // #1601: stamp the version each AI job ran on
 
   // Automatic content-based tagger: after an import dual-writes its new events into the super-timeline,
   // tag just those events (Timesketch tagger analyzer, ported). Best-effort + non-fatal + gated on

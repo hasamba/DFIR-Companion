@@ -121,6 +121,15 @@ run still names the model that produced it after you point synthesis somewhere e
 model named run none: enrichment is HTTP lookups, a non-CSV/log import parses locally, and an MCP
 run uses whatever model the Claude Code CLI defaults to unless `DFIR_MCP_MODEL` sets one.
 
+An alias such as `sonnet` can map to a newer model without any Settings change. When the provider
+reports the model that answered, the row shows it after an arrow: `sonnet → Sonnet 5`. A queued or
+running row that has no answer yet shows the version this alias answered with most recently:
+`sonnet (last run: Sonnet 5)`. Today only the Claude Code provider reports this. Other providers show
+the alias alone, because nothing is guessed. Model IDs the dashboard does not recognise, such as an
+OpenRouter `vendor/model` path, are shown exactly as the provider sent them. Each synthesis run record
+also stores this served model as `resolvedModel`, so a later review of the case can tell which model
+version wrote its conclusions.
+
 If the server stops during an import or Deep Pass, the old running row becomes **interrupted** on
 startup instead of disappearing. A **Resume** button appears only when that job saved restart-safe
 parameters and still has retry attempts left. CSV/log imports continue after the last evidence batch

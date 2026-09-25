@@ -51,7 +51,7 @@ function documentedEnvKeys(example: string): Set<string> {
 describe("Settings modal group placement", () => {
   it("labels the vision model and places synthesis grouping after every model", async () => {
     const ai = settingsPane(await dashboardHtml(), "ai");
-    const visionHeading = ai.indexOf('<div class="settings-group-head" data-essential>Vision model');
+    const visionHeading = ai.indexOf('<div class="settings-group-head" data-essential>Screenshot model');
     const visionProvider = ai.indexOf('id="env-DFIR_VISION_PROVIDER"');
     const secondOpinion = ai.indexOf('id="env-DFIR_AI_SECOND_OPINION_BASE_URL"');
     const synthesisGrouping = ai.indexOf("Synthesis detection-burst grouping");
@@ -59,6 +59,21 @@ describe("Settings modal group placement", () => {
     expect(visionHeading).toBeGreaterThan(-1);
     expect(visionProvider).toBeGreaterThan(visionHeading);
     expect(synthesisGrouping).toBeGreaterThan(secondOpinion);
+  });
+
+  // #1601: an analyst read the screenshot model as the synthesis model. Each model field says which
+  // work it runs, and each group names the other one.
+  it("labels the screenshot and text models by the work each runs", async () => {
+    const ai = settingsPane(await dashboardHtml(), "ai");
+    expect(ai).toContain("Model (screenshots only, must support vision)");
+    expect(ai).toContain("Model (synthesis and imports)");
+    expect(ai).toContain("Provider (synthesis and imports)");
+    const visionHead = ai.indexOf(">Screenshot model (vision)<");
+    const textHead = ai.indexOf(">Text model — synthesis and imports");
+    expect(visionHead).toBeGreaterThan(-1);
+    expect(textHead).toBeGreaterThan(visionHead);
+    expect(ai.indexOf('id="env-DFIR_VISION_MODEL"')).toBeGreaterThan(visionHead);
+    expect(ai.indexOf('id="env-DFIR_AI_SYNTH_MODEL"')).toBeGreaterThan(textHead);
   });
 
   // The referee (#1466) is its own role with its own four keys. It sits right after the
