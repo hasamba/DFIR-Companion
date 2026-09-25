@@ -33,13 +33,46 @@ describe("buildHuntSpec — refuses what it used to drop (#1606)", () => {
     expect(build).toThrow(/RuleLevl.*RuleLevel, RuleStatus/);
   });
 
-  it("accepts a declared name in any letter case", () => {
+  // Velociraptor matches parameter names case-sensitively: `rulelevel` would not bind to RuleLevel.
+  it("sends a case-only mismatch in the artifact's own spelling", () => {
     const check: HuntSpecCheck = {
       ...noCheck(),
       definitions: [{ name: HAYA, parameters: [{ name: "RuleLevel" }] }],
     };
     expect(buildHuntSpec([HAYA], { [HAYA]: { rulelevel: "All" } }, check)).toBe(
-      `spec=dict(\`${HAYA}\`=dict(rulelevel='All'))`,
+      `spec=dict(\`${HAYA}\`=dict(RuleLevel='All'))`,
+    );
+  });
+
+  it("refuses two keys that name the same declared parameter", () => {
+    const check: HuntSpecCheck = {
+      ...noCheck(),
+      definitions: [{ name: HAYA, parameters: [{ name: "RuleLevel" }] }],
+    };
+    expect(() => buildHuntSpec([HAYA], { [HAYA]: { RuleLevel: "All", rulelevel: "High" } }, check)).toThrow(
+      /RuleLevel is set twice/,
+    );
+  });
+
+  // Autoruns declares names like `Boot execute`. VQL takes them as backtick-quoted keys.
+  it("sends a declared name with spaces backtick-quoted", () => {
+    const AR = "Windows.Sysinternals.Autoruns";
+    const check: HuntSpecCheck = {
+      ...noCheck(),
+      definitions: [{ name: AR, parameters: [{ name: "Boot execute" }, { name: "All" }] }],
+    };
+    expect(buildHuntSpec([AR], { [AR]: { "Boot execute": "Y" } }, check)).toBe(
+      `spec=dict(\`${AR}\`=dict(\`Boot execute\`='Y'))`,
+    );
+  });
+
+  it("with metadata, a malformed name that is not declared is still named as malformed", () => {
+    const check: HuntSpecCheck = {
+      ...noCheck(),
+      definitions: [{ name: HAYA, parameters: [{ name: "RuleLevel" }] }],
+    };
+    expect(() => buildHuntSpec([HAYA], { [HAYA]: { "Rule Level": "All" } }, check)).toThrow(
+      /invalid parameter name "Rule Level"/,
     );
   });
 

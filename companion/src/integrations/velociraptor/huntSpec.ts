@@ -2,6 +2,8 @@
 import { ARTIFACT_RE } from "./artifactRefs.js";
 
 const PARAM_RE = /^[A-Za-z_][A-Za-z0-9_]*$/; // valid Velociraptor parameter name
+// A declared name that is not a plain identifier, safe inside backticks: printable ASCII, no backtick or backslash.
+const QUOTABLE_PARAM_RE = /^[\x20-\x5B\x5D-\x5F\x61-\x7E]+$/;
 const PLAIN_PARAM_VALUE_RE = /^[\x20-\x7E]*$/; // printable ASCII: safe as a literal once quotes are ruled out
 const MAX_PARAM_VALUE_CHARS = 64_000;
 const MAX_NAME_IN_MESSAGE = 120; // names come from stored bundle JSON: cap what a message echoes back
@@ -67,10 +69,26 @@ function declaredParams(check?: HuntSpecCheck): Map<string, string[]> {
   return out;
 }
 
-// A well-formed name the artifact does not declare is a typo too ("RuleLevl"): the override would be
-// ignored exactly like a malformed one. Case-insensitive, so only a name with no match at all is refused.
-function assertDeclared(artifact: string, key: string, declared: string[] | undefined): void {
-  if (!declared || declared.some((d) => d.toLowerCase() === key.toLowerCase())) return;
+const malformed = (artifact: string, key: string): HuntSpecError =>
+  new HuntSpecError(
+    `invalid parameter name ${quoted(key)} for artifact ${quoted(artifact)} — use letters, digits and _ only; fix it in the bundle's parameters`,
+  );
+
+// The parameter name to SEND. When the server reports the artifact's parameters, the name must be one of
+// them: a well-formed name it does not declare ("RuleLevl") is ignored on the endpoint exactly like a
+// malformed one. Velociraptor matches names case-sensitively, so a case-only difference is sent in the
+// artifact's own spelling, and a declared name with spaces (Autoruns' `Boot execute`) is sent backtick-
+// quoted. Without metadata, only a plain identifier can be trusted.
+function paramName(artifact: string, key: string, declared: string[] | undefined): string {
+  if (!declared) {
+    if (!PARAM_RE.test(key)) throw malformed(artifact, key);
+    return key;
+  }
+  const match =
+    declared.find((d) => d === key) ?? declared.find((d) => d.toLowerCase() === key.toLowerCase());
+  if (match && PARAM_RE.test(match)) return match;
+  if (match && QUOTABLE_PARAM_RE.test(match)) return `\`${match}\``;
+  if (match || !PARAM_RE.test(key)) throw malformed(artifact, key);
   const extra = declared.length - MAX_DECLARED_IN_MESSAGE;
   const shown = declared.slice(0, MAX_DECLARED_IN_MESSAGE).join(", ") + (extra > 0 ? `, +${extra} more` : "");
   throw new HuntSpecError(
@@ -82,14 +100,14 @@ function artifactSpec(artifact: string, kv: unknown, declared: string[] | undefi
   if (!isPlainObject(kv)) {
     throw new HuntSpecError(`parameters for artifact ${quoted(artifact)} must be an object of name: value`);
   }
+  const sent = new Set<string>();
   const pairs = Object.entries(kv).map(([k, v]) => {
-    if (!PARAM_RE.test(k)) {
-      throw new HuntSpecError(
-        `invalid parameter name ${quoted(k)} for artifact ${quoted(artifact)} — use letters, digits and _ only; fix it in the bundle's parameters`,
-      );
+    const name = paramName(artifact, k, declared);
+    if (sent.has(name)) {
+      throw new HuntSpecError(`parameter ${name} is set twice for artifact ${quoted(artifact)}`);
     }
-    assertDeclared(artifact, k, declared);
-    return `${k}=${vqlParamValue(artifact, k, v)}`;
+    sent.add(name);
+    return `${name}=${vqlParamValue(artifact, k, v)}`;
   });
   return pairs.length ? `\`${artifact}\`=dict(${pairs.join(", ")})` : undefined;
 }
