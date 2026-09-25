@@ -176,6 +176,9 @@
       return ids ? ids.has(String(id)) : false;
     },
     eventIdFilterActive: () => eventIds.get() !== null,
+    /** The id filter's members, sorted, as a fresh copy, or null. IDENTITY ONLY — the timeline
+     *  pager keys its "did a filter change?" test on it (#1652). */
+    eventIdNames: () => (eventIds.get() ? [...eventIds.get()].sort() : null),
     eventIdCount: () => (eventIds.get() ? eventIds.get().size : 0),
     eventIdLabel: () => eventIdsLabel.get(),
     corrobTimeline: () => corrobTimeline.get(),

@@ -204,12 +204,45 @@
     el.title = lbl.title;
   }
 
+  // ── Which page a render lands on (#1652, the timeline twin of #1649's IOC rule) ─────────
+  // A background re-draw (a websocket state push after every imported artifact, a promote, a star)
+  // keeps the analyst's page. The page resets only when what the analyst filters or orders the
+  // timeline on changes, or the case changes. IDENTITY ONLY: the key reads the analyst's choices,
+  // never today's data, so a refresh that adds or removes events is not a "filter change".
+  function timelineFilterKey(f) {
+    const sorted = (a) => (Array.isArray(a) ? a.map(String).sort() : []);
+    const scope = f.scope || {};
+    return JSON.stringify([
+      String(f.caseId || ""), scope.start || null, scope.end || null, sorted(f.severities),
+      Array.isArray(f.eventIds) ? sorted(f.eventIds) : null, !!f.starredOnly, String(f.search || ""),
+      sorted(f.excludeTerms), f.from || null, f.to || null, sorted(f.hiddenSources), sorted(f.hiddenOrigins),
+      sorted(f.hiddenHosts), Number(f.corroboration) || 0, f.minSeverity || null, String(f.sortKey || ""),
+      String(f.sortDir || ""), Number(f.pageSize) || 0,
+    ]);
+  }
+
+  // The page a render lands on, and the slice it shows. pageSize 0 means All. `keep` is the
+  // one-shot override a jump uses: it clears filters, then picks the page its event lands on.
+  function resolveTimelinePage(p) {
+    const total = Math.max(0, p.total | 0);
+    const size = p.pageSize > 0 ? p.pageSize : 0;
+    const totalPages = size > 0 ? Math.max(1, Math.ceil(total / size)) : 1;
+    const fresh = p.lastKey === null || p.lastKey === undefined || p.key !== p.lastKey;
+    let page = fresh && !p.keep ? 0 : p.page | 0;
+    page = Math.min(Math.max(0, page), totalPages - 1);
+    const start = size > 0 ? page * size : 0;
+    const end = size > 0 ? Math.min(start + size, total) : total;
+    return { page, totalPages, start, end };
+  }
+
   window.isPromotedEvent = isPromotedEvent;
   window.promotedBadge = promotedBadge;
   window.promotedKeptCount = promotedKeptCount;
   window.timelineCountLabel = timelineCountLabel;
   window.renderTimelineCount = renderTimelineCount;
   window.timelineMoreMatchesBar = timelineMoreMatchesBar;
+  window.timelineFilterKey = timelineFilterKey;
+  window.resolveTimelinePage = resolveTimelinePage;
 
   window.loadTlDisplay = loadTlDisplay;
   window.renderTlChecks = renderTlChecks;
