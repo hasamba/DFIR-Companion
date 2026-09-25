@@ -206,6 +206,32 @@ describe("applyNegativeAnswerCoverage — uncovered negative keyQuestion", () =>
     }
   });
 
+  // #1604: an empty hunt bounded by a time window or a result filter can qualify, never settle.
+  it("does not let a time-scoped or filtered empty hunt settle the class", () => {
+    const events = incEvents();
+    const FF = "Windows.Search.FileFinder";
+    for (const hunt of [
+      job({
+        artifacts: [FF],
+        emptyArtifacts: [FF],
+        timeScope: {
+          start: "2026-08-01T00:00:00.000Z",
+          scopedArtifacts: 1,
+          totalArtifacts: 1,
+          degraded: false,
+          scopedArtifactNames: [FF],
+        },
+      }),
+      job({ artifacts: [FF], emptyArtifacts: [FF], filters: { [FF]: "OSPath =~ 'x'" } }),
+    ]) {
+      const out = applyNegativeAnswerCoverage(
+        stateWith(events, [impactQ()]),
+        buildCollectionInventory({ events, hunts: [hunt] }),
+      );
+      expect(out.keyQuestions[0].status).toBe("partial");
+    }
+  });
+
   it("still qualifies an absence answer answerContradiction downgraded, keeping its contradiction", () => {
     const events = incEvents();
     const contradicted = impactQ({

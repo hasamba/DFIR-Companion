@@ -16,7 +16,12 @@ import {
 import type { VeloHuntJob } from "../analysis/veloHuntStore.js";
 import { parseDeployHuntBody, deployHuntBodyProblem } from "./huntDeployBody.js";
 import { resolveCollectVql } from "../analysis/collectDirectiveResolve.js";
-import { resolveTimeScope, buildTimeScopePlan, type TimeScope } from "../analysis/veloTimeScope.js";
+import {
+  resolveTimeScope,
+  buildTimeScopePlan,
+  timeScopeProvenance,
+  type TimeScope,
+} from "../analysis/veloTimeScope.js";
 import type { ArtifactBundle } from "../analysis/artifactBundleStore.js";
 import { sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
@@ -433,13 +438,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
     );
     return {
       huntParams: scopePlan.params,
-      timeScopeProvenance: {
-        start: timeScope.start,
-        ...(timeScope.end ? { end: timeScope.end } : {}),
-        scopedArtifacts: scopePlan.scoped.length,
-        totalArtifacts: artifactsToRun.length,
-        degraded: scopePlan.degraded,
-      },
+      timeScopeProvenance: timeScopeProvenance(timeScope, scopePlan, artifactsToRun.length),
     };
   }
 

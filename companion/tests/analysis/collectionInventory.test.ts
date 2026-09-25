@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildCollectionInventory,
   coveredOnAll,
+  emptySettledClasses,
   inventorySignature,
   renderCollectionInventory,
 } from "../../src/analysis/collectionInventory.js";
@@ -165,6 +166,114 @@ describe("collection inventory (#1588)", () => {
     const two = job({ huntId: "H.2", artifacts: ["B"] });
     expect(inventorySignature([one, two])).toBe(inventorySignature([two, one]));
     expect(inventorySignature([one])).not.toBe(inventorySignature([{ ...one, emptyArtifacts: ["A"] }]));
+  });
+
+  // #1604 — a hunt's silence can be BOUNDED: by the analyst's time window or by a result filter.
+  // "Nothing in the window" or "nothing matched" is not "the artifact holds nothing", so a bounded
+  // empty may qualify an answer but never settle an evidence class.
+  describe("bounded empty hunts (#1604)", () => {
+    const PF = "Windows.Forensics.Prefetch";
+    const MFT = "Windows.NTFS.MFT";
+    const window = (names: string[] | undefined, over: Record<string, unknown> = {}) => ({
+      start: "2026-06-01T00:00:00.000Z",
+      end: "2026-06-30T00:00:00.000Z",
+      scopedArtifacts: names ? names.length : 1,
+      totalArtifacts: 2,
+      degraded: false,
+      ...(names ? { scopedArtifactNames: names } : {}),
+      ...over,
+    });
+    const settled = (hunts: VeloHuntJob[]) =>
+      [...emptySettledClasses(buildCollectionInventory({ events: [], hunts }))].sort();
+
+    it("a clean unbounded fleet-wide empty still settles its class", () => {
+      expect(settled([job({ artifacts: [PF], emptyArtifacts: [PF] })])).toEqual(["execution"]);
+    });
+
+    it("an empty artifact that took the time window does not settle, and says it was time-bounded", () => {
+      const hunts = [job({ artifacts: [PF], emptyArtifacts: [PF], timeScope: window([PF]) })];
+      expect(settled(hunts)).toEqual([]);
+      const text = renderCollectionInventory(buildCollectionInventory({ events: [], hunts }));
+      expect(text).toContain("time-bounded");
+      expect(text).toContain("2026-06-01T00:00:00.000Z → 2026-06-30T00:00:00.000Z");
+    });
+
+    it("in a mixed hunt only the artifact that took the window is bounded", () => {
+      const hunts = [job({ artifacts: [PF, MFT], emptyArtifacts: [PF, MFT], timeScope: window([MFT]) })];
+      expect(settled(hunts)).toEqual(["execution"]);
+    });
+
+    it("a legacy scoped job that does not name its scoped artifacts bounds every artifact", () => {
+      const hunts = [job({ artifacts: [PF], emptyArtifacts: [PF], timeScope: window(undefined) })];
+      expect(settled(hunts)).toEqual([]);
+      expect(renderCollectionInventory(buildCollectionInventory({ events: [], hunts }))).toContain(
+        "not recorded",
+      );
+    });
+
+    it("a window that reached no artifact bounds nothing, degraded or not", () => {
+      for (const degraded of [false, true]) {
+        const hunts = [job({ artifacts: [PF], emptyArtifacts: [PF], timeScope: window([], { degraded }) })];
+        expect(settled(hunts)).toEqual(["execution"]);
+      }
+    });
+
+    it("a result filter on the artifact bounds it; a filter on another artifact does not", () => {
+      const filtered = [job({ artifacts: [PF], emptyArtifacts: [PF], filters: { [PF]: "Name =~ 'x'" } })];
+      expect(settled(filtered)).toEqual([]);
+      expect(renderCollectionInventory(buildCollectionInventory({ events: [], hunts: filtered }))).toContain(
+        "filter",
+      );
+      const other = [job({ artifacts: [PF], emptyArtifacts: [PF], filters: { [MFT]: "x", [PF]: "  " } })];
+      expect(settled(other)).toEqual(["execution"]);
+    });
+
+    it("names both bounds when a filter and a time window apply", () => {
+      const hunts = [
+        job({ artifacts: [PF], emptyArtifacts: [PF], filters: { [PF]: "x" }, timeScope: window([PF]) }),
+      ];
+      const text = renderCollectionInventory(buildCollectionInventory({ events: [], hunts }));
+      expect(text).toContain("time-bounded");
+      expect(text).toContain("filter");
+    });
+
+    it("an unbounded empty beside a bounded one for the same artifact still settles, in either order", () => {
+      const bounded = job({ huntId: "H.1", artifacts: [PF], emptyArtifacts: [PF], timeScope: window([PF]) });
+      const clean = job({ huntId: "H.2", artifacts: [PF], emptyArtifacts: [PF] });
+      expect(settled([bounded, clean])).toEqual(["execution"]);
+      expect(settled([clean, bounded])).toEqual(["execution"]);
+    });
+
+    it("an exclude-label or OS-targeted hunt is not fleet-wide and settles nothing", () => {
+      for (const target of [{ excludeLabels: ["dc"] }, { os: "windows" }] as VeloHuntJob["target"][])
+        expect(settled([job({ artifacts: [PF], emptyArtifacts: [PF], target })])).toEqual([]);
+    });
+
+    it("malformed time scope or filters from an old velo-hunt.json never throw", () => {
+      const raw = [
+        { ...job({ artifacts: [PF], emptyArtifacts: [PF] }), timeScope: "junk", filters: 7 },
+        {
+          ...job({ huntId: "H.2", artifacts: [MFT], emptyArtifacts: [MFT] }),
+          timeScope: { scopedArtifactNames: "x" },
+        },
+      ] as unknown as VeloHuntJob[];
+      expect(() => settled(raw)).not.toThrow();
+    });
+
+    it("the signature changes with the bounds and the target", () => {
+      const base = job({ artifacts: [PF], emptyArtifacts: [PF] });
+      const sig = inventorySignature([base]);
+      for (const changed of [
+        { ...base, timeScope: window([PF]) },
+        { ...base, filters: { [PF]: "x" } },
+        { ...base, target: { excludeLabels: ["dc"] } },
+        { ...base, target: { includeLabels: ["finance"] } },
+      ])
+        expect(inventorySignature([changed])).not.toBe(sig);
+      expect(inventorySignature([{ ...base, timeScope: window([PF]) }])).not.toBe(
+        inventorySignature([{ ...base, timeScope: window([]) }]),
+      );
+    });
   });
 
   it("renders nothing for an empty case", () => {

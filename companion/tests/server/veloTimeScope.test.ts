@@ -223,6 +223,7 @@ describe("bundle time scope — run-bundle", () => {
       scopedArtifacts: 1,
       totalArtifacts: 2,
       degraded: false,
+      scopedArtifactNames: ["Windows.EventLogs.Evtx"],
     });
   });
 
@@ -257,6 +258,7 @@ describe("bundle time scope — run-bundle", () => {
       scopedArtifacts: 0,
       totalArtifacts: 2,
       degraded: true,
+      scopedArtifactNames: [],
     });
   });
 
