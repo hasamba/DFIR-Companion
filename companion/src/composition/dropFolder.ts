@@ -59,6 +59,7 @@ import type { DropFailure, PendingRawInput } from "../analysis/dropStatus.js";
 import { assetHostFromDropRelpath } from "../analysis/assetHost.js";
 import { milestoneEvent, type NotificationEvent } from "../analysis/notifications.js";
 import type { RegisteredJob } from "../analysis/jobManager.js";
+import type { ModelCallHooks } from "./importIngest.js";
 import { logLine } from "../logging/serverLogger.js";
 
 /** A case's drop inbox. Exported so the SO-CRATES hand-off can close its drop-log line (#416). */
@@ -103,6 +104,7 @@ export interface DropFolderDeps {
     minSeverity?: undefined,
     provenance?: undefined,
     assetHost?: string, // the declared host of a file under drop/asset=<HOST>/ (#1496)
+    modelCall?: ModelCallHooks, // names the sweep job's model when a CSV/log runs one (#1629)
   ) => Promise<{ storedName: string; addedEvents: number; addedIocs: number; analyzed: boolean }>;
   // The one binary import kind this codebase natively decodes (#1013's own macOS Background Task
   // Management parser) — consulted BEFORE the raw-tool-input routing below claims a matching file,
@@ -339,6 +341,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
     // (#721). It never outlives the sweep, so the custody record it feeds says "the rules as they
     // stood when this sweep began" — a boundary an analyst can state.
     cache: ToolRunCache,
+    modelCall?: ModelCallHooks,
   ): Promise<{ ok: boolean; reason?: string; pending?: PendingRawInput; submitted?: string }> {
     const full = join(dropDir, file.relpath);
     const name = basename(file.relpath);
@@ -462,7 +465,16 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         };
       // A file under drop/asset=<HOST>/ imports with that host declared (#1496).
       const assetHost = assetHostFromDropRelpath(file.relpath);
-      const r = await ingestStreamed(caseId, kind, text, name, undefined, undefined, assetHost || undefined);
+      const r = await ingestStreamed(
+        caseId,
+        kind,
+        text,
+        name,
+        undefined,
+        undefined,
+        assetHost || undefined,
+        modelCall,
+      );
       if (!r.analyzed)
         return {
           ok: false,
@@ -504,12 +516,22 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
       // One job per sweep, kind "import" (same panel row as the Import button). Non-cancellable: the
       // sweep runs mixed importers that don't thread an abort signal, and a file already imported and
       // moved to _processed/ can't be un-imported — so there's nothing safe to cancel mid-flight.
+      // modelCallSignal (#1629): the row names the text model once a CSV/log actually runs one, and
+      // the calls carry this job's signal so the served version (#1601) reaches the row. Still not
+      // cancellable. The file kind is known only after reading, hence the late pin.
       job = options.jobManager?.register({
         caseId,
         kind: "import",
         label: `drop import (${ready.length} file${ready.length === 1 ? "" : "s"})`,
+        modelCallSignal: true,
       });
       if (job) await job.ready;
+      const sweepJob = job;
+      const modelCall: ModelCallHooks | undefined = sweepJob && {
+        ...(sweepJob.signal ? { signal: sweepJob.signal } : {}),
+        beforeModelRun: (kind: string) =>
+          options.jobManager?.pinModel(sweepJob.jobId, { kind: "import", parameters: { kind } }),
+      };
 
       const runCache = createToolRunCache();
       const imported: string[] = [];
@@ -524,7 +546,7 @@ export function createDropFolder(deps: DropFolderDeps): DropFolder {
         await Promise.all(
           batch.map(async (file) => {
             try {
-              const res = await processDropFile(caseId, dropDir, file, runCache);
+              const res = await processDropFile(caseId, dropDir, file, runCache, modelCall);
               if (res.pending) {
                 // Raw input awaiting a tool: keep it in place (don't move, keep tracked) so the banner's
                 // "Run <tool>" can act on it and a later config/auto-run picks it up next sweep.
