@@ -8,6 +8,7 @@ import {
 } from "../../src/analysis/collectionInventory.js";
 import type { ForensicEvent } from "../../src/analysis/stateTypes.js";
 import type { VeloHuntJob } from "../../src/analysis/veloHuntStore.js";
+import { buildHostAliasIndex, type HostAliasIndex } from "../../src/analysis/hostAlias.js";
 
 // #1588 — the collection inventory is what the model judges every "not observed" answer against, so
 // it must be deterministic and must never call a detection feed "collection". Built on the
@@ -48,8 +49,10 @@ function job(over: Partial<VeloHuntJob>): VeloHuntJob {
     waitMinutes: 5,
     collectAt: "2026-08-28T10:05:00Z",
     status: "imported",
-    // Every scheduled client finished (#1612), so a test about another bound isolates that bound.
+    // Every scheduled client finished (#1612) and the one client, WS01, finished cleanly (#1625), so a
+    // test about another bound isolates that bound.
     clientCounts: { scheduled: 1, completed: 1, errors: 0 },
+    reachedClients: [{ clientId: "C.1", hostname: "WS01", fqdn: "", os: "windows" }],
     ...over,
   };
 }
@@ -186,7 +189,7 @@ describe("collection inventory (#1588)", () => {
       ...over,
     });
     const settled = (hunts: VeloHuntJob[]) =>
-      [...emptySettledClasses(buildCollectionInventory({ events: [], hunts }))].sort();
+      [...emptySettledClasses(buildCollectionInventory({ events: [], hunts }), "WS01")].sort();
 
     it("a clean unbounded fleet-wide empty still settles its class", () => {
       expect(settled([job({ artifacts: [PF], emptyArtifacts: [PF] })])).toEqual(["execution"]);
@@ -278,60 +281,105 @@ describe("collection inventory (#1588)", () => {
     });
   });
 
-  // #1612 — an empty result speaks only for the clients that ran the hunt. It settles a class only when
-  // the hunt reached at least one client and every scheduled client finished without error.
-  describe("client coverage of empty hunts (#1612)", () => {
+  // #1625 — Velociraptor schedules a hunt on a client only when it checks in, so the hunt counts
+  // cannot see a client that stayed offline. An empty result settles a class only for the hosts whose
+  // flow finished without error.
+  describe("per-host settlement of empty hunts (#1625)", () => {
     const PF = "Windows.Forensics.Prefetch";
-    const inv = (hunts: VeloHuntJob[]) => buildCollectionInventory({ events: [], hunts });
-    const settled = (hunts: VeloHuntJob[]) => [...emptySettledClasses(inv(hunts))].sort();
-    const empty = (clientCounts?: unknown) =>
-      job({ artifacts: [PF], emptyArtifacts: [PF], clientCounts } as Partial<VeloHuntJob>);
+    type Reached = { clientId: string; hostname: string; fqdn: string; os: string };
+    const win = (id: string, hostname: string, fqdn = ""): Reached => ({
+      clientId: id,
+      hostname,
+      fqdn,
+      os: "windows",
+    });
+    const inv = (hunts: VeloHuntJob[], aliasIndex?: HostAliasIndex) =>
+      buildCollectionInventory({ events: [], hunts, aliasIndex });
+    const settledOn = (host: string, hunts: VeloHuntJob[], aliasIndex?: HostAliasIndex) =>
+      [...emptySettledClasses(inv(hunts, aliasIndex), host)].sort();
+    const empty = (reachedClients?: unknown, over: Partial<VeloHuntJob> = {}) =>
+      job({ artifacts: [PF], emptyArtifacts: [PF], reachedClients, ...over } as Partial<VeloHuntJob>);
 
-    it("settles when every scheduled client finished without error", () => {
-      expect(settled([empty({ scheduled: 3, completed: 3, errors: 0 })])).toEqual(["execution"]);
+    it("1 of 100 clients online: the empty settles for that host only, not for the 99 it never reached", () => {
+      const hunts = [
+        empty([win("C.1", "WS01")], { clientCounts: { scheduled: 1, completed: 1, errors: 0 } }),
+      ];
+      expect(settledOn("WS01", hunts)).toEqual(["execution"]);
+      expect(settledOn("WS02", hunts)).toEqual([]);
+      const text = renderCollectionInventory(inv(hunts));
+      expect(text).toContain("returned no rows on ws01");
+      expect(text).toContain("silence on any other host is not absence");
     });
 
-    it("a hunt collected before the counts were recorded cannot settle, and says why", () => {
-      expect(settled([empty(undefined)])).toEqual([]);
-      expect(renderCollectionInventory(inv([empty(undefined)]))).toContain("client coverage not recorded");
+    it("a hunt collected before the per-host list was recorded settles nothing, and says why", () => {
+      const hunts = [empty(undefined)];
+      expect(settledOn("WS01", hunts)).toEqual([]);
+      expect(renderCollectionInventory(inv(hunts))).toContain(
+        "which hosts the hunt finished on is not recorded",
+      );
     });
 
-    it("a hunt that reached no client cannot settle, and says so", () => {
-      const hunts = [empty({ scheduled: 0, completed: 0, errors: 0 })];
-      expect(settled(hunts)).toEqual([]);
-      expect(renderCollectionInventory(inv(hunts))).toContain("the hunt reached no client");
+    it("a hunt that finished on no client settles nothing, and says so", () => {
+      const hunts = [empty([])];
+      expect(settledOn("WS01", hunts)).toEqual([]);
+      expect(renderCollectionInventory(inv(hunts))).toContain("finished cleanly on no client");
     });
 
-    it("a hunt some clients have not finished cannot settle, and names the count", () => {
-      const hunts = [empty({ scheduled: 4, completed: 1, errors: 0 })];
-      expect(settled(hunts)).toEqual([]);
-      expect(renderCollectionInventory(inv(hunts))).toContain("1 of 4 scheduled client(s) finished");
+    it("a clean flow on a Linux client does not settle a Windows artifact there", () => {
+      const hunts = [
+        empty([{ clientId: "C.2", hostname: "web01", fqdn: "", os: "linux" }, win("C.1", "WS01")]),
+      ];
+      expect(settledOn("web01", hunts)).toEqual([]);
+      expect(settledOn("WS01", hunts)).toEqual(["execution"]);
+      expect(settledOn("WS01", [empty([{ clientId: "C.1", hostname: "WS01", fqdn: "", os: "" }])])).toEqual(
+        [],
+      );
     });
 
-    it("a hunt with a client error cannot settle, and names the errors", () => {
-      const hunts = [empty({ scheduled: 2, completed: 2, errors: 1 })];
-      expect(settled(hunts)).toEqual([]);
-      expect(renderCollectionInventory(inv(hunts))).toContain("1 with errors");
+    it("unfinished or failed clients no longer block the hosts that did finish, and the counts are shown", () => {
+      const hunts = [
+        empty([win("C.1", "WS01")], { clientCounts: { scheduled: 4, completed: 2, errors: 1 } }),
+      ];
+      expect(settledOn("WS01", hunts)).toEqual(["execution"]);
+      expect(renderCollectionInventory(inv(hunts))).toContain(
+        "only 2 of 4 scheduled client(s) finished, 1 with errors",
+      );
     });
 
-    it("more finished than scheduled is an inconsistent snapshot and cannot settle", () => {
-      expect(settled([empty({ scheduled: 1, completed: 2, errors: 0 })])).toEqual([]);
+    it("matches the host by FQDN, and by client id through the alias index", () => {
+      expect(settledOn("ws01.example.com", [empty([win("C.1", "WS01", "ws01.example.com")])])).toEqual([
+        "execution",
+      ]);
+      // The short name alone is never proof: ws01 does not match ws01.example.com.
+      expect(settledOn("ws01.example.com", [empty([win("C.1", "WS01")])])).toEqual([]);
+      const idx = buildHostAliasIndex([{ clientId: "C.9", hostname: "ws09", fqdn: "ws09.example.com" }], {});
+      // The client id decides when the index knows it, even if the recorded name went stale.
+      expect(settledOn("ws09.example.com", [empty([win("C.9", "old-name")])], idx)).toEqual(["execution"]);
+      expect(settledOn("old-name", [empty([win("C.9", "old-name")])], idx)).toEqual([]);
     });
 
-    it("malformed counts from an old velo-hunt.json never throw and never settle", () => {
-      for (const bad of [
-        "junk",
-        7,
-        { scheduled: "2", completed: 2, errors: 0 },
-        { scheduled: 2, completed: 2 },
-      ])
-        expect(settled([empty(bad)])).toEqual([]);
+    it("two empty hunts that reached different hosts settle for both", () => {
+      const hunts = [
+        empty([win("C.1", "WS01")], { huntId: "H.1" }),
+        empty([win("C.2", "WS02")], { huntId: "H.2" }),
+      ];
+      expect(settledOn("WS01", hunts)).toEqual(["execution"]);
+      expect(settledOn("WS02", hunts)).toEqual(["execution"]);
+      expect(renderCollectionInventory(inv(hunts))).toContain("across 2 hunts");
     });
 
-    it("the signature changes with the counts", () => {
-      const sig = inventorySignature([empty({ scheduled: 3, completed: 1, errors: 0 })]);
-      expect(inventorySignature([empty({ scheduled: 3, completed: 3, errors: 0 })])).not.toBe(sig);
-      expect(inventorySignature([empty(undefined)])).not.toBe(sig);
+    it("malformed per-host lists from an old velo-hunt.json never throw and never settle", () => {
+      for (const bad of ["junk", 7, { clientId: "C.1" }, [{ hostname: "WS01", os: "windows" }], [null, 3]])
+        expect(settledOn("WS01", [empty(bad)])).toEqual([]);
+    });
+
+    it("the signature changes with the per-host list, and unknown differs from empty", () => {
+      const sig = inventorySignature([empty([win("C.1", "WS01")])]);
+      expect(inventorySignature([empty([win("C.1", "WS01"), win("C.2", "WS02")])])).not.toBe(sig);
+      expect(inventorySignature([empty(undefined)])).not.toBe(inventorySignature([empty([])]));
+      expect(inventorySignature([empty([win("C.2", "WS02"), win("C.1", "WS01")])])).toBe(
+        inventorySignature([empty([win("C.1", "WS01"), win("C.2", "WS02")])]),
+      );
     });
   });
 

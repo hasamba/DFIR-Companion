@@ -6,6 +6,7 @@ import { StateLock } from "./stateLock.js";
 import type { Severity } from "./stateTypes.js";
 import type {
   HuntClientCounts,
+  HuntReachedClient,
   HuntTarget,
   SkippedArtifact,
 } from "../integrations/velociraptor/velociraptorApi.js";
@@ -87,6 +88,11 @@ export interface VeloHuntJob {
   // when scheduled > 0 and every scheduled client finished without error. Absent on a job collected
   // before this was recorded, or when the stats read failed: coverage unknown, and nothing settles.
   clientCounts?: HuntClientCounts;
+  // The clients whose hunt flow finished without error, read from hunt_flows() at the last collect
+  // (#1625). A client that never checked in is never scheduled, so the counts above cannot see it: an
+  // empty result settles an evidence class only for the hosts listed here. Absent on a job collected
+  // before this was recorded, or when the read failed: coverage unknown, and nothing settles.
+  reachedClients?: HuntReachedClient[];
   importedAt?: string; // ISO — when results were collected + imported
   importFile?: string; // stored evidence filename
   addedEvents?: number;

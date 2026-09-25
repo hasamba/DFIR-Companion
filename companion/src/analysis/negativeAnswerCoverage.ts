@@ -22,7 +22,6 @@
 import { assertsAbsence } from "./answerContradiction.js";
 import {
   CLASS_COLLECTION,
-  coveredOnAll,
   emptySettledClasses,
   type ClearedLog,
   type CollectionInventory,
@@ -92,7 +91,7 @@ function hostsOfCitedEvents(
 }
 
 // Named in the text → hosts of the events the answer's findings cite → hosts with High/Critical
-// activity → every host. Coverage must then hold on EVERY one (coveredOnAll), like refutationGate.
+// activity → every host. Coverage must then hold on EVERY one, like refutationGate.
 function subjectHosts(
   q: InvestigationQuestion,
   state: InvestigationState,
@@ -129,12 +128,14 @@ function coverageGap(
 ): CoverageGap | null {
   const required = requiredEvidenceClasses(`${q.question} ${q.answer}`);
   if (!required.length) return null;
-  const covered = coveredOnAll(inv, hosts);
-  // A clean zero-row fleet-wide hunt of a single-record-type artifact is evidence of absence.
-  const settled = emptySettledClasses(inv);
-  const missing = required.filter((c) => !covered.has(c) && !settled.has(c));
+  // Per host and class: collected raw there, or settled there by a clean zero-row fleet-wide hunt of
+  // a single-record-type artifact that finished on that host (#1625). No subject host: nothing holds.
+  const settled = new Map(hosts.map((h) => [h, emptySettledClasses(inv, h)]));
+  const holds = (h: string, c: EvidenceClass): boolean =>
+    !!inv.byHost.get(h)?.has(c) || !!settled.get(h)?.has(c);
+  const missing = required.filter((c) => !hosts.length || !hosts.every((h) => holds(h, c)));
   if (!missing.length) return null;
-  const uncoveredHosts = hosts.filter((h) => missing.some((c) => !inv.byHost.get(h)?.has(c)));
+  const uncoveredHosts = hosts.filter((h) => missing.some((c) => !holds(h, c)));
   const { artifact, logSource } = CLASS_COLLECTION[missing[0]];
   const archiveOnly = inv.hunts.some((h) => h.state === "archive-only" && h.artifact === artifact);
   return { missing, uncoveredHosts, artifact, logSource, archiveOnly };

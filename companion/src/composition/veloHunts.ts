@@ -28,6 +28,7 @@ import type { ImportBase } from "../routes/context.js";
 import type { AiControl } from "../analysis/aiControl.js";
 import { collectWarnings, superOnlyHunt, type VeloHuntJobView } from "../analysis/veloHuntStore.js";
 import { isHuntStoppedEarly } from "../integrations/velociraptor/huntStatusPoller.js";
+import { readHuntCoverage } from "../integrations/velociraptor/huntReachedClients.js";
 import { inventorySignature } from "../analysis/collectionInventory.js";
 import { createVeloHuntStatusTimers } from "./veloHuntStatusTimers.js";
 import type { HuntUpload, SkippedArtifact } from "../integrations/velociraptor/velociraptorApi.js";
@@ -223,12 +224,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
     try {
       // A last live check before the rows, for every entry point: was the hunt stopped before its expiry,
       // and how many clients did it reach (#1612)? A failed read leaves coverage unknown: nothing settles.
-      let live: Awaited<ReturnType<typeof client.huntStatus>> = null;
-      try {
-        live = await client.huntStatus(job.huntId);
-      } catch {
-        /* best-effort */
-      }
+      const { live, reachedClients } = await readHuntCoverage(client, job.huntId); // + who finished (#1625)
       const stoppedEarly = job.stoppedEarly === true || isHuntStoppedEarly(live, Date.now());
       job = {
         ...job,
@@ -236,6 +232,7 @@ export function createVeloHunts(deps: VeloHuntsDeps): VeloHunts {
         collectPhase: "fetching",
         collectRows: undefined,
         clientCounts: live?.clients,
+        reachedClients,
         ...(stoppedEarly ? { stoppedEarly: true } : {}),
       };
       await huntStore.upsert(caseId, job);
