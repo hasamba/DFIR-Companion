@@ -32,7 +32,12 @@ export function maxEventsDefault(): number {
 // super-timeline line-by-line) can feed events one at a time without ever materializing the full
 // mapped[] array — memory stays bounded by the distinct-key set, not the row count. Stateful.
 export interface EventAggregator {
-  add(m: MappedEvent): void;
+  /**
+   * `ordinal` is the row's position in its source (default: the order rows arrive). A group sorts by
+   * its lowest one when severity, count and time tie — so a builder that adds some rows late (the
+   * Windows-event builder's held rows, #1621/#1636) still keeps the source order at the cap.
+   */
+  add(m: MappedEvent, ordinal?: number): void;
   finish(): { events: SiemEvent[]; groups: number };
 }
 
@@ -92,11 +97,14 @@ export function createEventAggregator(
 
   const byKey = new Map<string, SiemEvent>();
   const order: string[] = [];
+  const firstOrdinal = new Map<SiemEvent, number>();
+  let arrivals = 0;
   // The case's own DFIR infrastructure, read once per aggregator (collectorDeployment.ts, #1460).
   const collector = loadCollectorInfrastructure();
 
   return {
-    add(m: MappedEvent): void {
+    add(m: MappedEvent, ordinal: number = arrivals): void {
+      arrivals++;
       // Every importer ends here, so this is the one seam where the collector's own deployment
       // (download from the configured server, msiexec install, the MSI's creation-time change) is
       // recognised for every source at once. Before the floor, so a demoted row is floored as Info.
@@ -107,6 +115,7 @@ export function createEventAggregator(
       const existing = byKey.get(key);
       if (existing) {
         existing.count = (existing.count ?? 1) + 1;
+        if (ordinal < firstOrdinal.get(existing)!) firstOrdinal.set(existing, ordinal);
         // STICKY, unlike every identity field below: a collapsed group whose rows disagree about
         // whether the year was recorded is ambiguous as a whole, so one year-less row makes the
         // group clamp-eligible and no later row can clear it. Deliberately NOT in
@@ -161,6 +170,7 @@ export function createEventAggregator(
           ...(m.origin ? { origin: m.origin } : {}),
         };
         applyEventIdentity(e, m);
+        firstOrdinal.set(e, ordinal);
         byKey.set(key, e);
         order.push(key);
       }
@@ -180,7 +190,8 @@ export function createEventAggregator(
         (a, b) =>
           SEVERITY_RANK[a.severity] - SEVERITY_RANK[b.severity] ||
           (b.count ?? 1) - (a.count ?? 1) ||
-          (a.timestamp || "~").localeCompare(b.timestamp || "~"),
+          (a.timestamp || "~").localeCompare(b.timestamp || "~") ||
+          firstOrdinal.get(a)! - firstOrdinal.get(b)!,
       );
 
       return { events: events.slice(0, maxEvents), groups };

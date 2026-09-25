@@ -1,4 +1,5 @@
 import { stampSourceArtifactHash } from "./canonicalEvent.js";
+import { boundDnsVariants } from "./dnsRecord.js";
 import { isOsBehaviourCandidateRow, OsBehaviourLedger } from "./osBehaviourRules.js";
 import {
   createEventAggregator,
@@ -13,6 +14,11 @@ import {
   type SiemIoc,
   type SiemParseResult,
 } from "./siemImport.js";
+import {
+  collectWindowsConnCandidate,
+  runWindowsDnsConnJoin,
+  type SiemConnCandidate,
+} from "./siemDnsConnJoin.js";
 
 type Row = Record<string, unknown>;
 
@@ -37,12 +43,20 @@ async function yieldToServer(signal?: AbortSignal): Promise<void> {
 // firewall change), which waits with its own IOC sink until every row has been noted (#1621). Its
 // IOCs merge only after the rules ran, under the aggKey the row finally carries, so provenance still
 // finds it. Shared by the progress builder and the sync parseEvtxXml, so both give one answer.
+//
+// A DNS row waits too (#1636): variant bounding and the DNS→connection join (buildSiemResult's two
+// whole-upload steps) rewrite its aggKey, and the join needs every connection first. Its IOCs merge
+// at once, as buildSiemResult does, and both steps follow the rewrite through the IOC sink. A
+// connection row is aggregated at once; only its small join candidate is kept.
 export class WindowsEventBuilder {
   private readonly iocSink = new Map<string, SiemIoc>();
   private readonly hostTally = new Map<string, number>();
   private readonly aggregator: EventAggregator;
   private readonly os = new OsBehaviourLedger();
-  private held: { m: MappedEvent; rowSink: Map<string, SiemIoc> }[] = [];
+  private held: { m: MappedEvent; rowSink: Map<string, SiemIoc>; ordinal: number }[] = [];
+  private dnsHeld: MappedEvent[] = [];
+  private dnsOrdinals: number[] = [];
+  private readonly conns: SiemConnCandidate[] = [];
   private total = 0;
 
   constructor(
@@ -65,13 +79,17 @@ export class WindowsEventBuilder {
       mapWindows(record, host, rowSink, { source: this.format, recordIndex }) ??
       mapGeneric(record, host, rowSink);
     this.os.note(record, [mapped]);
+    collectWindowsConnCandidate(this.conns, mapped);
     if (isOsBehaviourCandidateRow(record)) {
       this.os.offer(record, [mapped]);
-      this.held.push({ m: mapped, rowSink });
+      this.held.push({ m: mapped, rowSink, ordinal: recordIndex });
       return;
     }
     mergeRowIocs(this.iocSink, rowSink, mapped.aggKey);
-    this.aggregator.add(mapped);
+    if (mapped.canonical?.dns) {
+      this.dnsHeld.push(mapped);
+      this.dnsOrdinals.push(recordIndex);
+    } else this.aggregator.add(mapped, recordIndex);
   }
 
   /** Judge the held rows, then add each to the aggregator, yielding the running count. Idempotent. */
@@ -79,15 +97,30 @@ export class WindowsEventBuilder {
     this.os.resolve();
     const held = this.held;
     this.held = [];
-    for (const [i, { m, rowSink }] of held.entries()) {
+    for (const [i, { m, rowSink, ordinal }] of held.entries()) {
       mergeRowIocs(this.iocSink, rowSink, m.aggKey);
-      this.aggregator.add(m);
+      this.aggregator.add(m, ordinal);
+      yield i + 1;
+    }
+  }
+
+  /** Bound and join the held DNS rows, then add each to the aggregator, yielding the running count. Idempotent. */
+  *drainDns(): Generator<number> {
+    const [dns, ordinals] = [this.dnsHeld, this.dnsOrdinals];
+    this.dnsHeld = [];
+    this.dnsOrdinals = [];
+    if (!dns.length) return;
+    if (this.opts.aggregate !== false) boundDnsVariants(dns, this.iocSink); // dnsRecord.ts, #933 item 2
+    runWindowsDnsConnJoin(dns, this.iocSink, this.conns); // #996 — always after boundDnsVariants
+    for (const [i, m] of dns.entries()) {
+      this.aggregator.add(m, ordinals[i]);
       yield i + 1;
     }
   }
 
   finish(sourceText?: string): SiemParseResult {
     Array.from(this.drainHeld()); // a no-op once the progress builder has drained them
+    Array.from(this.drainDns()); // likewise
     const { events, groups } = this.aggregator.finish();
     const finalEvents = sourceText ? stampSourceArtifactHash(events, sourceText) : events;
     const represented = finalEvents.reduce((count, event) => count + (event.count ?? 1), 0);
@@ -143,6 +176,9 @@ export async function buildSiemResultProgress(
   throwIfImportAborted(signal);
   // The held rows: a Sysmon-heavy export can hold many, so this phase yields and cancels too.
   for (const n of builder.drainHeld()) if (n % YIELD_CHUNK_SIZE === 0) await yieldToServer(signal);
+  await yieldToServer(signal);
+  // The held DNS rows (#1636): one bound + join pass, then the adds yield and cancel like the rest.
+  for (const n of builder.drainDns()) if (n % YIELD_CHUNK_SIZE === 0) await yieldToServer(signal);
   throwIfImportAborted(signal);
   return builder.finish(sourceText);
 }

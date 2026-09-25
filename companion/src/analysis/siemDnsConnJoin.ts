@@ -59,11 +59,6 @@ export interface SiemConnCandidate {
   destinationPort?: number;
 }
 
-export interface DnsConnSink {
-  dns: SiemDnsCandidate[];
-  conns: SiemConnCandidate[];
-}
-
 /** The already-mapped row's own fields carry everything a join candidate needs — see #0 in the plan. */
 export interface DnsConnMappedRow {
   timestamp: string;
@@ -74,31 +69,42 @@ export interface DnsConnMappedRow {
   };
 }
 
-function collectWindowsDnsConnCandidate(sink: DnsConnSink, mappedIndex: number, row: DnsConnMappedRow): void {
+function rowHostAndTime(row: DnsConnMappedRow): { host: string; ts: number } | undefined {
   const ts = Date.parse(row.timestamp);
   const host = row.canonical?.target?.kind === "host" ? row.canonical.target.name : undefined;
-  if (!Number.isFinite(ts) || !host) return;
+  return Number.isFinite(ts) && host ? { host, ts } : undefined;
+}
+
+function collectWindowsDnsCandidate(
+  sink: SiemDnsCandidate[],
+  mappedIndex: number,
+  row: DnsConnMappedRow,
+): void {
+  const at = rowHostAndTime(row);
   const returned = row.canonical?.dns?.returned;
-  if (returned) {
-    const seen = new Set<string>();
-    sink.dns.push({
-      mappedIndex,
-      host,
-      ts,
-      addresses: returned
-        .filter((v) => v.kind === "address")
-        .map((v) => v.value)
-        .filter((a) => (seen.has(a) ? false : (seen.add(a), true))),
-    });
-  }
+  if (!at || !returned) return;
+  const seen = new Set<string>();
+  sink.push({
+    mappedIndex,
+    ...at,
+    addresses: returned
+      .filter((v) => v.kind === "address")
+      .map((v) => v.value)
+      .filter((a) => (seen.has(a) ? false : (seen.add(a), true))),
+  });
+}
+
+/**
+ * The connection side of one row, if it has one. Exported so a builder that streams rows (the
+ * Windows Event XML import, siemBuildProgress.ts, #1636) can keep only these small candidates
+ * instead of every connection row. Stops storing past CONN_INDEX_MAX + 1: the join then already
+ * answers "connection records exceed the index", which needs only the count to pass the bound.
+ */
+export function collectWindowsConnCandidate(sink: SiemConnCandidate[], row: DnsConnMappedRow): void {
+  const at = rowHostAndTime(row);
   const dst = row.canonical?.network?.destination;
-  if (dst?.address)
-    sink.conns.push({
-      host,
-      ts,
-      destinationIp: dst.address,
-      ...(dst.port ? { destinationPort: dst.port } : {}),
-    });
+  if (!at || !dst?.address || sink.length > CONN_INDEX_MAX) return;
+  sink.push({ ...at, destinationIp: dst.address, ...(dst.port ? { destinationPort: dst.port } : {}) });
 }
 
 /**
@@ -119,22 +125,40 @@ export function normalizeAddress(address: string): string {
 
 const indexKey = (host: string, address: string): string => `${host}|${normalizeAddress(address)}`;
 
+const isOwnExchange = (c: SiemConnCandidate, d: SiemDnsCandidate): boolean =>
+  c.destinationPort === OWN_EXCHANGE_PORT && Math.abs(c.ts - d.ts) <= DNS_WINDOW_SLACK_S * S;
+
+/** First index in a ts-sorted bucket whose ts is at or after `ts`. */
+function firstAtOrAfter(conns: readonly SiemConnCandidate[], ts: number): number {
+  let [lo, hi] = [0, conns.length];
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (conns[mid].ts < ts) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/**
+ * `conns` is one host/address bucket, sorted by time once per upload (#1636: re-sorting it per DNS
+ * record made a dense upload superlinear). Only the DNS exchange's own port-53 connections are
+ * skipped, and those sit within the slack of the query, so each walk below stays short.
+ */
 function leadFor(d: SiemDnsCandidate, address: string, conns: readonly SiemConnCandidate[]): Lead {
   const window = { basis: "fixed" as const, seconds: DNS_FIXED_WINDOW_S };
-  const usable = conns
-    .filter(
-      (c) => !(c.destinationPort === OWN_EXCHANGE_PORT && Math.abs(c.ts - d.ts) <= DNS_WINDOW_SLACK_S * S),
-    )
-    .slice()
-    .sort((a, b) => a.ts - b.ts);
-  const after = usable.find((c) => c.ts >= d.ts);
+  const start = firstAtOrAfter(conns, d.ts);
+  let i = start;
+  while (i < conns.length && isOwnExchange(conns[i], d)) i++;
+  const after = conns[i];
   if (after) {
     const gapMs = after.ts - d.ts;
     const state: Lead["state"] =
       gapMs <= WINDOW_MS ? "connected inside the window" : "first connection after the window";
     return { address, state, band: gapBand(gapMs), window };
   }
-  if (usable.some((c) => c.ts < d.ts)) return { address, state: "earlier connections only", window };
+  let j = start - 1;
+  while (j >= 0 && isOwnExchange(conns[j], d)) j--;
+  if (j >= 0) return { address, state: "earlier connections only", window };
   return { address, state: "no connection in this upload", window };
 }
 
@@ -158,6 +182,7 @@ export function joinWindowsDnsConn(
       const k = indexKey(c.host, c.destinationIp);
       (byHostAddress.get(k) ?? byHostAddress.set(k, []).get(k)!).push(c);
     }
+  for (const bucket of byHostAddress.values()) bucket.sort((a, b) => a.ts - b.ts);
 
   for (const d of dns) {
     if (!d.host) {
@@ -266,12 +291,21 @@ function applyWindowsDnsConnJoin(
  * The single entry point `buildSiemResult` calls (siemImport.ts is a ledgered, zero-headroom
  * file — this keeps its footprint to one call): collects every row's join candidate, then runs
  * and applies the join. Call AFTER `boundDnsVariants`, before `aggregateEvents`.
+ *
+ * `conns`, when given, is the upload's WHOLE connection side, already collected row by row with
+ * `collectWindowsConnCandidate` (the streaming Windows-event builder holds only its DNS rows, #1636);
+ * `mapped` then supplies only the DNS side, so no row's connection is counted twice.
  */
 export function runWindowsDnsConnJoin(
   mapped: (JoinableRow & DnsConnMappedRow)[],
   sink: Map<string, { sourceAggKeys?: string[] }>,
+  conns?: readonly SiemConnCandidate[],
 ): void {
-  const dnsConnSink: DnsConnSink = { dns: [], conns: [] };
-  mapped.forEach((row, i) => collectWindowsDnsConnCandidate(dnsConnSink, i, row));
-  applyWindowsDnsConnJoin(mapped, dnsConnSink.dns, dnsConnSink.conns, sink);
+  const dns: SiemDnsCandidate[] = [];
+  const collected: SiemConnCandidate[] = [];
+  mapped.forEach((row, i) => {
+    collectWindowsDnsCandidate(dns, i, row);
+    if (!conns) collectWindowsConnCandidate(collected, row);
+  });
+  applyWindowsDnsConnJoin(mapped, dns, conns ?? collected, sink);
 }

@@ -6,7 +6,9 @@ import {
   DNS_WINDOW_SLACK_S,
 } from "../../src/analysis/dnsConnJoin.js";
 import {
+  collectWindowsConnCandidate,
   joinWindowsDnsConn,
+  runWindowsDnsConnJoin,
   type SiemConnCandidate,
   type SiemDnsCandidate,
 } from "../../src/analysis/siemDnsConnJoin.js";
@@ -129,5 +131,39 @@ describe("joinWindowsDnsConn", () => {
     const r = joinWindowsDnsConn([queryA, queryB], [conn({ ts: T0 + 500, destinationPort: 53 })]);
     expect(r.get(0)!.leads[0].state).toBe("no connection in this upload");
     expect(r.get(1)!.leads[0].state).toBe("earlier connections only");
+  });
+});
+
+describe("runWindowsDnsConnJoin with pre-collected connections (#1636)", () => {
+  const row = () => ({
+    aggKey: "k",
+    description: "Sysmon DNS query",
+    timestamp: new Date(T0).toISOString(),
+    canonical: {
+      target: { kind: "host", name: H },
+      dns: { returned: [{ kind: "address", value: A1 }] },
+      network: { destination: { address: A1, port: 443 } },
+      evidence: { rawRecords: [{ locator: "r0" }] },
+    },
+  });
+
+  it("uses the passed list as the whole connection side — a held row's own destination is not counted again", () => {
+    const r = row();
+    runWindowsDnsConnJoin([r], new Map(), []);
+    expect(r.canonical.dns).toMatchObject({ joinState: "no connection records in this upload" });
+  });
+
+  it("without a passed list it still collects connections from the rows, as before", () => {
+    const r = row();
+    runWindowsDnsConnJoin([r], new Map());
+    expect(r.canonical.dns).toMatchObject({ joinState: "joined" });
+  });
+
+  it("the connection collector keeps a candidate only when the row has a host, a time and a destination", () => {
+    const conns: SiemConnCandidate[] = [];
+    collectWindowsConnCandidate(conns, row());
+    collectWindowsConnCandidate(conns, { ...row(), timestamp: "not a time" });
+    collectWindowsConnCandidate(conns, { ...row(), canonical: { target: { kind: "host", name: H } } });
+    expect(conns).toEqual([{ host: H, ts: T0, destinationIp: A1, destinationPort: 443 }]);
   });
 });
