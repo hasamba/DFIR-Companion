@@ -105,7 +105,8 @@ export const MAX_TIME_MS = Date.parse("2100-01-01T00:00:00Z");
 // A file whose Mtime predates its Btime by more than this is dated by Btime (#1603). The margin keeps
 // rounding and sub-second jitter between the two stamps from switching the time column.
 const COPIED_FILE_MARGIN_MS = 1000;
-const FILE_PATH_KEYS = ["OSPath", "FullPath", "Path"];
+// The same path columns mapYara reads, so every row it treats as a file hit qualifies.
+const FILE_PATH_KEYS = ["OSPath", "FullPath", "_FullPath", "File", "FilePath", "Path"];
 
 export interface CopiedFileTimes {
   created: string; // Btime — when this file was created on the scanned volume

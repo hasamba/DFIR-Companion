@@ -115,6 +115,13 @@ describe("pickTime — a copied file is dated by its creation time (#1603)", () 
     expect(pickTime(noPath)).toBe("2013-01-23T01:50:12Z");
   });
 
+  it("recognises every path column the YARA mapper reads", () => {
+    const { OSPath: p, ...rest } = copiedYaraHit;
+    for (const key of ["FullPath", "_FullPath", "File", "FilePath", "Path"]) {
+      expect(pickTime({ ...rest, [key]: p }), key).toBe("2026-09-24T08:58:30.6531008Z");
+    }
+  });
+
   it("leaves a row whose own event time outranks Mtime alone", () => {
     expect(pickTime({ ...copiedYaraHit, EventTime: "2026-09-20T00:00:00Z" })).toBe("2026-09-20T00:00:00Z");
   });
