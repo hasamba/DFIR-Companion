@@ -250,6 +250,23 @@ export function stampServedModel(table: JobTable, id: string, servedModel: strin
   );
 }
 
+/**
+ * Name the model of a job that learned it only once its work started (#1629): a drop-folder sweep
+ * knows a CSV will run a model only after reading the file. Never overwrites a pin, never touches a
+ * finished job, and an empty identity changes nothing.
+ */
+export function pinJobModel(
+  table: JobTable,
+  id: string,
+  fields: Pick<Job, "model" | "modelProvider">,
+  now: string,
+): JobTable {
+  if (!fields.model) return table;
+  return patchJob(table, id, (job) =>
+    isTerminal(job.status) || job.model ? job : { ...job, ...fields, updatedAt: now },
+  );
+}
+
 export function progressJob(
   table: JobTable,
   id: string,

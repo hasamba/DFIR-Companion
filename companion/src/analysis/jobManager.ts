@@ -25,6 +25,7 @@ import {
   warnJob,
   finishJob,
   stampServedModel,
+  pinJobModel,
   failJob,
   cancelJob,
   interruptJob,
@@ -72,6 +73,8 @@ export interface RegisterInput {
   maxRetries?: number;
   resourceBudget?: JobResourceBudget;
   resumable?: boolean;
+  // A signal for the served-model stamp (#1601) WITHOUT cancel (#1629); only case deletion aborts it.
+  modelCallSignal?: boolean;
   /** The model that will run this job, when the caller knows better than the resolver (a replay). */
   model?: { model: string; provider: string };
 }
@@ -235,17 +238,28 @@ export class JobManager {
     this.servedModels?.unsubscribe();
     const unsubscribe = registry.subscribe((event) => {
       const job = servedStampTarget(event, this.controllers, (id) => getJob(this.table, id));
-      if (!job) return;
-      this.table = stampServedModel(this.table, job.id, event.resolvedModel, this.now());
-      const updated = getJob(this.table, job.id);
-      if (!updated || updated === job) return;
-      void this.persistUpdate(updated)
-        .then(() => this.emit(updated.caseId))
-        .catch((error: unknown) =>
-          this.reportError(error instanceof Error ? error : new Error(String(error))),
-        );
+      if (job) this.publishPatch(job, stampServedModel(this.table, job.id, event.resolvedModel, this.now()));
     });
     this.servedModels = { registry, unsubscribe };
+  }
+
+  /** Name the model of a job that learns it just before a model runs (#1629); a pin is kept. */
+  pinModel(jobId: string, input: Pick<RegisterInput, "kind" | "parameters">): void {
+    const job = getJob(this.table, jobId);
+    if (!job || !this.modelFor) return;
+    const fields = modelIdentityFields(this.modelFor(input));
+    this.publishPatch(job, pinJobModel(this.table, jobId, fields, this.now()));
+  }
+
+  /** Adopt a patched table; when `before` changed, persist its new row and tell the dashboard. */
+  private publishPatch(before: Job, table: JobTable): void {
+    this.table = table;
+    const updated = getJob(table, before.id);
+    if (!updated || updated === before) return;
+    if (!this.ledger) return this.emit(updated.caseId);
+    void this.persistUpdate(updated)
+      .then(() => this.emit(updated.caseId))
+      .catch((error: unknown) => this.reportError(error instanceof Error ? error : new Error(String(error))));
   }
 
   register(input: RegisterInput): RegisteredJob {
@@ -313,7 +327,7 @@ export class JobManager {
   }
 
   private prepareRegistration(jobId: string, input: RegisterInput): RegisteredJob {
-    if (input.cancellable || input.resourceBudget?.maxRuntimeMs) {
+    if (input.cancellable || input.modelCallSignal || input.resourceBudget?.maxRuntimeMs) {
       this.controllers.set(jobId, new AbortController());
     }
     const admission = deferred();
@@ -343,16 +357,8 @@ export class JobManager {
 
   progress(jobId: string, done: number, total: number, detail?: string): void {
     const before = getJob(this.table, jobId);
-    this.table = progressJob(this.table, jobId, { done, total }, detail, this.now());
-    const updated = getJob(this.table, jobId);
-    if (!before || !updated || updated === before) return;
-    if (!this.ledger) {
-      this.emit(updated.caseId);
-      return;
-    }
-    void this.persistUpdate(updated)
-      .then(() => this.emit(updated.caseId))
-      .catch((error: unknown) => this.reportError(error instanceof Error ? error : new Error(String(error))));
+    if (before)
+      this.publishPatch(before, progressJob(this.table, jobId, { done, total }, detail, this.now()));
   }
 
   async checkpoint(jobId: string, input: CheckpointInput): Promise<void> {
