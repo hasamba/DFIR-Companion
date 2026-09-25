@@ -68,3 +68,93 @@ describe("pickTime — nested MFT timestamp containers", () => {
     expect(pickTime(row)).toMatch(/^2026-09-19T11:28:25/);
   });
 });
+
+// #1603. A YARA file hit on a copied file carries the SOURCE file's Mtime. The mimikatz release
+// binaries in the GoGoogle lab cases kept their 2013–2022 build times, while Btime recorded when
+// each file was created on the host. Dated by Mtime, the hits formed "waves" across nine years.
+describe("pickTime — a copied file is dated by its creation time (#1603)", () => {
+  // Shape of the DetectRaptor.Generic.Detection.YaraFile row for mimidrv.sys, values sanitized.
+  const copiedYaraHit = {
+    OSPath: "C:\\e\\tools\\Win32\\mimidrv.sys",
+    Size: 30552,
+    Mtime: "2013-01-23T01:50:12Z",
+    Atime: "2026-09-24T09:44:33.4520952Z",
+    Ctime: "2013-01-23T01:50:12Z",
+    Btime: "2026-09-24T08:58:30.6531008Z",
+    Rule: "EXAMPLE_Hacktool_Mimikatz",
+    Meta: { description: "example rule", date: "2017-08-11", modified: "2017-08-11" },
+  };
+
+  it("uses Btime when it is later than Mtime", () => {
+    expect(pickTime(copiedYaraHit)).toBe("2026-09-24T08:58:30.6531008Z");
+  });
+
+  it("keeps Mtime for a normal edit — Btime earlier than Mtime", () => {
+    const edited = { ...copiedYaraHit, Mtime: "2026-09-24T10:00:00Z", Btime: "2026-09-01T08:00:00Z" };
+    expect(pickTime(edited)).toBe("2026-09-24T10:00:00Z");
+  });
+
+  it("keeps Mtime when the two are equal or Btime is later by under a second", () => {
+    expect(pickTime({ ...copiedYaraHit, Mtime: "2026-09-24T08:00:00Z", Btime: "2026-09-24T08:00:00Z" })).toBe(
+      "2026-09-24T08:00:00Z",
+    );
+    expect(
+      pickTime({ ...copiedYaraHit, Mtime: "2026-09-24T08:00:00.1Z", Btime: "2026-09-24T08:00:00.9Z" }),
+    ).toBe("2026-09-24T08:00:00.1Z");
+  });
+
+  it("keeps Mtime when Btime is absent or unparseable", () => {
+    for (const Btime of [undefined, "", "not a date"]) {
+      expect(pickTime({ ...copiedYaraHit, Btime })).toBe("2013-01-23T01:50:12Z");
+    }
+  });
+
+  it("keeps Mtime on a row that names no file", () => {
+    const { OSPath: _p, ...noPath } = copiedYaraHit;
+    void _p;
+    expect(pickTime(noPath)).toBe("2013-01-23T01:50:12Z");
+  });
+
+  it("recognises every path column the YARA mapper reads", () => {
+    const { OSPath: p, ...rest } = copiedYaraHit;
+    for (const key of ["FullPath", "_FullPath", "File", "FilePath", "Path"]) {
+      expect(pickTime({ ...rest, [key]: p }), key).toBe("2026-09-24T08:58:30.6531008Z");
+    }
+  });
+
+  it("leaves a row whose own event time outranks Mtime alone", () => {
+    expect(pickTime({ ...copiedYaraHit, EventTime: "2026-09-20T00:00:00Z" })).toBe("2026-09-20T00:00:00Z");
+  });
+});
+
+// #1603. A process-memory YARA hit has no time column of its own. The fallback scan read the
+// RULE's metadata (Meta.date, the rule's authoring date) and dated the hit 2014.
+describe("pickTime — a YARA rule's metadata is never the row's time (#1603)", () => {
+  const processHit = {
+    ProcessName: "powershell.exe",
+    Pid: "6892",
+    Rule: "EXAMPLE_Mimikatz_Memory_Rule",
+    Meta: { description: "example", date: "2014-12-22", modified: "2014-12-22" },
+    YaraString: "$s2",
+  };
+
+  it("does not date a process hit by Meta.date", () => {
+    expect(pickTime(processHit)).toBe("");
+  });
+
+  it("falls to the collection time when that is all the row has", () => {
+    expect(pickTime({ ...processHit, _ts: 1_790_000_000 })).toBe(new Date(1_790_000_000_000).toISOString());
+  });
+
+  it("ignores a Metadata container on a YARA row too", () => {
+    const { Meta: _m, ...rest } = processHit;
+    void _m;
+    expect(pickTime({ ...rest, Metadata: { date: "2014-12-22" } })).toBe("");
+  });
+
+  it("still reads a Meta time on a row that is not a YARA hit", () => {
+    expect(pickTime({ Name: "x", Meta: { LastVisited: "2026-09-01T10:00:00Z" } })).toMatch(
+      /^2026-09-01T10:00:00/,
+    );
+  });
+});
