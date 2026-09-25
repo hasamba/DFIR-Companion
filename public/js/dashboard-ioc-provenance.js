@@ -25,17 +25,63 @@
   // cross as questions, not variables — and note the facade direction INVERTS here: a stub that
   // answers falsy means NO filtering, so the analyst sees more rows, not fewer. Safer than
   // hiding evidence, but it has to be said on screen rather than left silent.
-  let iocSourcesById = {};
-  let iocSourcesTimer = null;
-  function loadIocSources(caseId) {
-    fetch(`/cases/${caseId}/ioc-sources`)
-      .then((r) => r.json())
+  // CASE OWNERSHIP (#1653). The four loaders below answer for one case, and the maps they fill
+  // are page-level. A slow answer for case A that landed after the switch to case B used to install
+  // A's corroboration, provenance, risk and chain data and repaint B through it. Same authority as
+  // the false-positive markers (#937, js/dashboard-exposure-fp.js): the page's activeCaseId, set by
+  // dashboard-case-connect.js before any loader runs and nulled on a cancelled load.
+  //
+  //   • A loader for a case that is not active returns at entry — no request, no deferred-flag
+  //     change, no clear. A debounce timer armed for A before the switch lands here.
+  //   • A loader for the active case clears its map at once when the map belongs to another case,
+  //     so B never shows A's badges while B's own answer is pending, or after it fails.
+  //   • An answer commits only while its case is still active AND it is the newest request for that
+  //     resource. The sequence closes the A -> B -> A gap, where the first A answer would pass an
+  //     active-case check and overwrite the second.
+  //
+  // Stateless on purpose: a sequence number, never an in-flight flag. An aborted case load hands
+  // its loaders a promise that never settles, so a flag cleared in .finally would stick on.
+  function iocMetaCaseIsActive(caseId) {
+    return typeof activeCaseId !== "undefined" && !!caseId && caseId === activeCaseId;
+  }
+  function iocMetaSlot(reset) {
+    return { owner: null, seq: 0, reset };
+  }
+  // Returns false when the caller is stale and nothing was done.
+  function loadIocMeta(slot, caseId, path, commit) {
+    if (!iocMetaCaseIsActive(caseId)) return false;
+    const seq = ++slot.seq;
+    if (slot.owner !== caseId) {
+      slot.owner = caseId;
+      slot.reset();
+    }
+    fetch(`/cases/${caseId}/${path}`)
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
       .then((m) => {
-        iocSourcesById = m && typeof m === "object" ? m : {};
-        if (DfirState.lastState())
-          renderIocs(DfirScope.project(DfirState.lastState()).iocs || []);
+        if (slot.seq !== seq || !iocMetaCaseIsActive(caseId)) return;
+        commit(m && typeof m === "object" ? m : {});
       })
       .catch(() => {});
+    return true;
+  }
+  function repaintIocs() {
+    if (DfirState.lastState())
+      renderIocs(DfirScope.project(DfirState.lastState()).iocs || []);
+  }
+
+  let iocSourcesById = {};
+  let iocSourcesTimer = null;
+  const iocSourcesSlot = iocMetaSlot(() => {
+    iocSourcesById = {};
+  });
+  function loadIocSources(caseId) {
+    loadIocMeta(iocSourcesSlot, caseId, "ioc-sources", (m) => {
+      iocSourcesById = m;
+      repaintIocs();
+    });
   }
   function scheduleIocSourcesReload() {
     const caseId = document.getElementById("caseId").value.trim();
@@ -52,16 +98,18 @@
   let iocProvenanceTimer = null;
   // "All" (default) / "detection" / "telemetry" — client-side lens over the rendered IOC rows.
   let iocProvenanceFilter = "all";
+  const iocProvenanceSlot = iocMetaSlot(() => {
+    iocProvenance = {};
+  });
   function loadIocProvenance(caseId) {
+    // The deferred flag is cleared only by a real load for the case on screen: a stale caller
+    // must not cancel the reload the active case has parked (#1653).
+    if (!iocMetaCaseIsActive(caseId)) return;
     iocProvenanceDeferred = false;
-    fetch(`/cases/${caseId}/ioc-provenance`)
-      .then((r) => r.json())
-      .then((m) => {
-        iocProvenance = m && typeof m === "object" ? m : {};
-        if (DfirState.lastState())
-          renderIocs(DfirScope.project(DfirState.lastState()).iocs || []);
-      })
-      .catch(() => {});
+    loadIocMeta(iocProvenanceSlot, caseId, "ioc-provenance", (m) => {
+      iocProvenance = m;
+      repaintIocs();
+    });
   }
   // #1447: both reloads answer a `state` push, and an import pushes one after EVERY artifact.
   // Each reload is a full super-timeline scan on the server (~75 s on a capped case), queued on
@@ -164,15 +212,14 @@
   // also the right value if the read ever fails.
   let riskIocsFilter = 0; // min risk RANK to show
   const RISK_RANK = { critical: 4, high: 3, medium: 2, low: 1, benign: 0 };
+  const iocRiskSlot = iocMetaSlot(() => {
+    iocRisk = {};
+  });
   function loadIocRisk(caseId) {
-    fetch(`/cases/${caseId}/ioc-risk`)
-      .then((r) => r.json())
-      .then((m) => {
-        iocRisk = m && typeof m === "object" ? m : {};
-        if (DfirState.lastState())
-          renderIocs(DfirScope.project(DfirState.lastState()).iocs || []);
-      })
-      .catch(() => {});
+    loadIocMeta(iocRiskSlot, caseId, "ioc-risk", (m) => {
+      iocRisk = m;
+      repaintIocs();
+    });
   }
   function scheduleIocRiskReload() {
     const caseId = document.getElementById("caseId").value.trim();
@@ -203,14 +250,22 @@
   // this is the full timestamped chain shown in the per-IOC chain panel. Loaded once per case connect
   // (same bulk-fetch shape as loadIocSources/loadIocProvenance); the panel itself only reads from it.
   let iocProvenanceChains = {};
+  // A new case's chains also close a chain panel still open from the old case: its DOM was
+  // rendered from the old map, and its export button reads the IOC id it carries (#1653).
+  const iocProvenanceChainSlot = iocMetaSlot(() => {
+    iocProvenanceChains = {};
+    const overlay = document.getElementById("iocChainOverlay");
+    if (overlay) {
+      overlay.classList.remove("open");
+      delete overlay.dataset.iocid;
+    }
+  });
   function loadIocProvenanceChains(caseId) {
+    if (!iocMetaCaseIsActive(caseId)) return;
     iocProvenanceChainDeferred = false;
-    fetch(`/cases/${caseId}/ioc-provenance-chain`)
-      .then((r) => r.json())
-      .then((m) => {
-        iocProvenanceChains = m && typeof m === "object" ? m : {};
-      })
-      .catch(() => {});
+    loadIocMeta(iocProvenanceChainSlot, caseId, "ioc-provenance-chain", (m) => {
+      iocProvenanceChains = m;
+    });
   }
   // Chip that opens the chain panel for one IOC (mirrors explainChip's button shape).
   function iocChainChip(iocId) {
