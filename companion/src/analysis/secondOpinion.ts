@@ -7,7 +7,7 @@ import {
   type Severity,
   type Technique,
 } from "./stateTypes.js";
-import { deriveSemanticKey } from "./semanticKey.js";
+import { matchKey, norm, resolveDecisionTargets } from "./secondOpinionTargets.js";
 import { byEventTime } from "./forensicSort.js";
 import { renderEventLine } from "./ai/eventLine.js";
 
@@ -37,7 +37,14 @@ export interface SecondOpinionDelta {
   rationale: string; // one-line reconcile-AI judgement (default "")
   recommendation: DeltaRecommendation; // reconcile-AI suggestion (default "review")
   status: DeltaStatus; // pending | accepted | rejected
+  // #1590 — set on an accepted decision carried into a newer run: the run it was first accepted in.
+  carriedFrom?: string;
+  // #1590 — response-only, never stored: this accepted decision matches no finding right now.
+  unapplied?: UnappliedReason;
 }
+
+// "missing": no finding has its id or key any more. "changed": its id now holds a different claim.
+export type UnappliedReason = "missing" | "changed";
 
 export interface SecondOpinion {
   generatedAt: string;
@@ -61,16 +68,8 @@ export interface RefereeError {
   at: string; // ISO time of the failed attempt
 }
 
-const norm = (title: string): string => String(title).trim().toLowerCase().replace(/\s+/g, " ");
-
-// The STABLE cross-run identity of a finding (issue #69). Keying deltas by the raw normalized title
-// made a trivial rewording between runs ("Encoded PowerShell execution" vs "PowerShell encoded
-// command") register as a brand-new delta, so second-opinion tracking filled with noise. The
-// semanticKey (dominant technique + order-independent noun phrase) collapses those to one key. Falls
-// back to DERIVING it from the finding (so it works even on the second-opinion dry-run findings,
-// which aren't persisted through grounding and so carry no stored semanticKey). deriveSemanticKey
-// never returns empty (it slugs the title when no salient tokens survive), so this is always defined.
-const matchKey = (f: Finding): string => f.semanticKey?.trim() || deriveSemanticKey(f);
+// The cross-run finding key (semanticKey, else derived — issue #69) and the title normalizer live in
+// secondOpinionTargets.ts, which also resolves an accepted decision to its finding by id (#1590).
 
 // URL/id-safe slug for a stable delta id. Collapses runs of non-alphanumerics to single dashes.
 function slug(text: string): string {
@@ -430,8 +429,8 @@ export function followRefereeStatus(so: SecondOpinion): SecondOpinion {
 // Apply EVERY accepted delta onto a case state. Pure, immutable, IDEMPOTENT (safe to run on every
 // read/synthesis): b_only adds B's finding if absent by matchKey; a_only dismisses A's finding in
 // place; severity rewrites A's finding severity; mitre_added/removed add/remove the technique.
-// Findings are matched by matchKey (semanticKey, falling back to title — issue #69) so an accepted
-// delta re-applies to the same finding even after a reworded re-synthesis.
+// a_only / severity find their finding by id first, while it still holds the same claim, and by
+// matchKey only when it does not (#1590) — so a retitled or retagged finding keeps the decision.
 // Used by both the apply route (on the live state) and synthesize() post-processing (durability).
 export function applyAcceptedSecondOpinion(
   state: InvestigationState,
@@ -444,21 +443,19 @@ export function applyAcceptedSecondOpinion(
   let findings = state.findings;
   let techniques = state.mitreTechniques;
 
-  // The stable key a finding-bearing delta targets: its carried finding's matchKey, falling back to
-  // the delta's normalized title for a (defensive) delta with no finding attached.
-  const deltaKey = (d: SecondOpinionDelta): string => (d.finding ? matchKey(d.finding) : norm(d.title));
-
   for (const d of accepted) {
     if (d.kind === "b_only" && d.finding) {
-      const key = deltaKey(d);
-      if (!findings.some((f) => matchKey(f) === key)) {
-        findings = [...findings, { ...d.finding, id: `so:${slug(d.title)}`, status: "open" }];
+      // Present already by the id it was adopted under (the model may have retitled it), or by key.
+      const key = matchKey(d.finding);
+      const adoptedId = `so:${slug(d.title)}`;
+      if (!findings.some((f) => f.id === adoptedId || matchKey(f) === key)) {
+        findings = [...findings, { ...d.finding, id: adoptedId, status: "open" }];
       }
     } else if (d.kind === "a_only") {
-      findings = mapByKey(findings, deltaKey(d), (f) => ({ ...f, status: "dismissed" as const }));
+      findings = mapTargets(findings, d, (f) => ({ ...f, status: "dismissed" as const }));
     } else if (d.kind === "severity" && d.bSeverity) {
       const sev = d.bSeverity;
-      findings = mapByKey(findings, deltaKey(d), (f) => ({ ...f, severity: sev }));
+      findings = mapTargets(findings, d, (f) => ({ ...f, severity: sev }));
     } else if (d.kind === "mitre_added") {
       // `analystAccepted` is what keeps it visible: the projection drops a technique nothing
       // surviving supports, and an accepted addition has no finding and no event behind it by
@@ -487,6 +484,11 @@ export function applyAcceptedSecondOpinion(
   return { ...state, findings, mitreTechniques: techniques };
 }
 
-function mapByKey(findings: readonly Finding[], key: string, fn: (f: Finding) => Finding): Finding[] {
-  return findings.map((f) => (matchKey(f) === key ? fn(f) : f));
+function mapTargets(
+  findings: readonly Finding[],
+  d: SecondOpinionDelta,
+  fn: (f: Finding) => Finding,
+): Finding[] {
+  const { ids } = resolveDecisionTargets(findings, d);
+  return findings.map((f) => (ids.has(f.id) ? fn(f) : f));
 }

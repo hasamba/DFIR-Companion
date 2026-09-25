@@ -28,8 +28,50 @@
   function loadSecondOpinion(caseId) {
     fetch(`/cases/${caseId}/second-opinion`)
       .then((r) => r.json())
-      .then(renderSecondOpinion)
+      .then((rec) => {
+        // The analyst may have opened another case while this was in flight (#1590).
+        const open = currentCaseId();
+        if (open && open !== caseId) return;
+        renderSecondOpinion(rec);
+      })
       .catch(() => {});
+  }
+  // #1590 — a synthesis can retitle or drop the finding an accepted decision targets. On every case
+  // state push, re-fetch the panel (debounced) so its "no longer applies" list stays current — but
+  // only when the record holds a decision that can stop applying, so most pushes cost nothing.
+  const SO_TARGETED_KINDS = { a_only: true, severity: true };
+  let soReloadTimer = null;
+  function hasTargetedDecision(rec) {
+    const deltas = rec && Array.isArray(rec.deltas) ? rec.deltas : [];
+    return deltas.some((d) => d.status === "accepted" && SO_TARGETED_KINDS[d.kind]);
+  }
+  function scheduleSecondOpinionReload(caseId) {
+    if (!caseId || !hasTargetedDecision(lastSecondOpinionRec)) return;
+    clearTimeout(soReloadTimer);
+    soReloadTimer = setTimeout(() => loadSecondOpinion(caseId), 800);
+  }
+  // Accepted decisions that match no finding right now — the server marks them (#1590).
+  const SO_UNAPPLIED_WHY = {
+    missing: "its finding is gone",
+    changed: "its finding id now holds a different claim",
+  };
+  function unappliedDeltas(rec) {
+    const deltas = rec && Array.isArray(rec.deltas) ? rec.deltas : [];
+    return deltas.filter((d) => d.status === "accepted" && d.unapplied);
+  }
+  function unappliedBlock(list) {
+    if (list.length === 0) return "";
+    const items = list
+      .map(
+        (d) =>
+          `<li><span class="so-kind so-${esc(d.kind)}">${esc(SO_KIND_LABEL[d.kind] || d.kind)}</span> ${esc(d.title)} <span data-safe-style="color:var(--text-dim)">— ${esc(SO_UNAPPLIED_WHY[d.unapplied] || "it matches no finding")}</span> <button data-so-reject="${esc(d.id)}" title="Drop this accepted decision. Nothing on the case changes; act on the finding itself if the decision still holds.">drop</button></li>`,
+      )
+      .join("");
+    return (
+      `<div class="so-unapplied" data-safe-style="border:1px solid var(--badge-danger-text);border-radius:6px;padding:6px 8px;margin:6px 0">` +
+      `<div>⚠ ${list.length} accepted decision${list.length === 1 ? " no longer applies" : "s no longer apply"} — a later synthesis changed or removed the finding. Drop each one, or act on the finding directly.</div>` +
+      `<ul data-safe-style="margin:4px 0 0 18px;padding:0">${items}</ul></div>`
+    );
   }
   const SO_KIND_LABEL = {
     b_only: "only in B",
@@ -53,6 +95,7 @@
       return;
     }
     el.style.display = "block";
+    const unapplied = unappliedDeltas(rec);
     const toggle = `<button type="button" class="so-toggle" data-so-toggle title="${soCollapsed ? "Expand" : "Collapse"} the 2nd opinion panel">${soCollapsed ? "▸" : "▾"}</button>`;
     const head =
       `<div class="so-head">${toggle}<span class="so-models">🔁 2nd opinion · A: ${esc(rec.modelA || "model A")} vs B: ${esc(rec.modelB || "model B")}</span>` +
@@ -60,6 +103,9 @@
         ? `<span data-safe-style="color:var(--text-dim)" title="The model that wrote the 'referee suggests' line on each disagreement">· referee: ${esc(rec.referee)}</span>`
         : "") +
       refereeErrorLine(rec) +
+      (unapplied.length
+        ? `<span class="so-unapplied-count" data-safe-style="color:var(--badge-danger-text)" title="Accepted decisions that match no finding after the last synthesis">⚠ ${unapplied.length} not applied</span>`
+        : "") +
       `<span class="so-agree">✓ ${rec.agreementCount | 0} agreed</span>` +
       `<span data-safe-style="color:var(--text-dim)">${esc(relTime(rec.generatedAt))}</span></div>`;
     if (soCollapsed) {
@@ -69,7 +115,9 @@
     const summary = rec.summary
       ? `<p class="so-summary">${esc(rec.summary)}</p>`
       : "";
-    const deltas = Array.isArray(rec.deltas) ? rec.deltas : [];
+    // Decisions carried in from an earlier run sit below this run's disagreements (#1590).
+    const all = Array.isArray(rec.deltas) ? rec.deltas : [];
+    const deltas = [...all.filter((d) => !d.carriedFrom), ...all.filter((d) => d.carriedFrom)];
     if (deltas.length === 0) {
       el.innerHTML =
         head +
@@ -108,8 +156,10 @@
             ? `<div class="so-rec so-${esc(d.recommendation)}">referee suggests: ${d.recommendation === "accept_b" ? "accept B" : "keep A"}</div>`
             : "";
         let acts;
-        if (d.status === "accepted")
-          acts = `<span class="so-status" data-safe-style="color:var(--sev-low)">✓ accepted</span>`;
+        if (d.status === "accepted" && d.unapplied)
+          acts = `<span class="so-status" data-safe-style="color:var(--badge-danger-text)" title="${esc(SO_UNAPPLIED_WHY[d.unapplied] || "matches no finding")}">⚠ accepted · not applied</span>`;
+        else if (d.status === "accepted")
+          acts = `<span class="so-status" data-safe-style="color:var(--sev-low)">✓ accepted${d.carriedFrom ? ` <span data-safe-style="color:var(--text-dim)" title="Accepted in the second opinion of ${esc(d.carriedFrom)}">· earlier run</span>` : ""}</span>`;
         else if (d.status === "rejected")
           acts = `<span class="so-status" data-safe-style="color:var(--badge-danger-text)">✕ rejected</span>`;
         else
@@ -119,7 +169,7 @@
         return `<div class="so-delta so-${esc(d.status)}"><div class="so-body"><span class="so-kind so-${esc(d.kind)}">${esc(kindLabel)}</span><span class="so-title">${title}</span>${rationale}${suggest}</div><div class="so-acts">${acts}</div></div>`;
       })
       .join("");
-    el.innerHTML = head + summary + bulk + rows;
+    el.innerHTML = head + summary + unappliedBlock(unapplied) + bulk + rows;
   }
   // A failed referee pass (#1587). Without this line the panel hides every empty referee field,
   // so a referee that crashed looks exactly like one that ran and made no call. It lives in the
@@ -292,7 +342,9 @@
             "second opinion failed: " + rec.error;
           return;
         }
-        const n = Array.isArray(rec.deltas) ? rec.deltas.length : 0;
+        const n = Array.isArray(rec.deltas)
+          ? rec.deltas.filter((d) => !d.carriedFrom).length
+          : 0;
         document.getElementById("status").textContent =
           `second opinion: ${n} disagreement${n === 1 ? "" : "s"} (${rec.agreementCount | 0} agreed)`;
         renderSecondOpinion(rec);
@@ -371,6 +423,7 @@
   window.setSecondOpinionCapabilities = setSecondOpinionCapabilities;
   window.isFpAiConfigured = isFpAiConfigured;
   window.loadSecondOpinion = loadSecondOpinion;
+  window.scheduleSecondOpinionReload = scheduleSecondOpinionReload;
   window.renderSecondOpinion = renderSecondOpinion;
   window.runSecondOpinion = runSecondOpinion;
   window.applySecondOpinionDelta = applySecondOpinionDelta;

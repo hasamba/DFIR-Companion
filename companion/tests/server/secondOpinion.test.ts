@@ -182,7 +182,7 @@ async function makeApp(opts: { enabled: boolean; referee?: "b" | "c" }) {
   });
   await request(app).post("/cases").send({ caseId: "c1", name: "n", investigator: "i", aiProvider: "mock" });
   await stateStore.save(seededState());
-  return { app, stateStore, store, aProvider, bProvider, cProvider };
+  return { app, stateStore, store, aProvider, bProvider, cProvider, pipeline };
 }
 
 // The AI limiter is process-wide (20 calls / 60 s); this file now runs enough second opinions to
@@ -582,5 +582,90 @@ describe("Second opinion routes (#116)", () => {
     const { app } = await makeApp({ enabled: false });
     const res = await request(app).post("/cases/c1/second-opinion").send({});
     expect(res.status).toBe(501);
+  });
+});
+
+// #1590 — an accepted decision follows its finding by identity, survives a later second-opinion
+// run, and is reported when it no longer matches any finding.
+describe("accepted decisions survive re-synthesis and later runs (#1590)", () => {
+  // Model A's second finding cites e1 and carries a technique, so it has identity evidence.
+  function synthA(title: string, technique: string, severity = "Medium"): string {
+    const base = JSON.parse(SYNTH_A);
+    base.findings[1] = {
+      ...base.findings[1],
+      title,
+      severity,
+      mitreTechniques: [technique],
+      relatedEventIds: ["e1"],
+    };
+    return JSON.stringify(base);
+  }
+  // Model B agrees on "A only finding" except for its severity, so the run yields a severity delta.
+  function synthBWithSeverity(title: string, technique: string): string {
+    const base = JSON.parse(SYNTH_B);
+    base.findings.push({ ...JSON.parse(synthA(title, technique, "Low")).findings[1], id: "g9" });
+    return JSON.stringify(base);
+  }
+  const setSynth = (p: ScriptedProvider, text: string): void => {
+    (p as unknown as { synth: string }).synth = text;
+  };
+  const f2 = async (stateStore: StateStore) =>
+    (await stateStore.load("c1")).findings.find((f) => f.id === "f2");
+
+  it("a dismissal stays applied after a re-synthesis retitles and retags the finding", async () => {
+    const { app, stateStore, aProvider, pipeline } = await makeApp({ enabled: true });
+    setSynth(aProvider, synthA("A only finding", "T1219"));
+    const run = await request(app).post("/cases/c1/second-opinion").send({});
+    const dismissal = run.body.deltas.find((d: { kind: string }) => d.kind === "a_only");
+    await request(app).post("/cases/c1/second-opinion/apply").send({ deltaId: dismissal.id, accept: true });
+    expect((await f2(stateStore))?.status).toBe("dismissed");
+
+    setSynth(aProvider, synthA("Remote tooling staged in a user profile", "T1105"));
+    await pipeline.synthesize("c1", { force: true });
+    const after = await f2(stateStore);
+    expect(after?.title).toBe("Remote tooling staged in a user profile");
+    expect(after?.status).toBe("dismissed");
+  });
+
+  it("a severity change still applies after a second second-opinion run and a re-synthesis", async () => {
+    const { app, stateStore, aProvider, bProvider, pipeline } = await makeApp({ enabled: true });
+    setSynth(aProvider, synthA("A only finding", "T1219"));
+    setSynth(bProvider, synthBWithSeverity("A only finding", "T1219"));
+    const run = await request(app).post("/cases/c1/second-opinion").send({});
+    const sev = run.body.deltas.find((d: { kind: string }) => d.kind === "severity");
+    expect(sev).toBeDefined();
+    await request(app).post("/cases/c1/second-opinion/apply").send({ deltaId: sev.id, accept: true });
+    expect((await f2(stateStore))?.severity).toBe("Low");
+
+    // Model B now agrees with A — the second run has no severity delta of its own.
+    setSynth(bProvider, SYNTH_B);
+    const second = await request(app).post("/cases/c1/second-opinion").send({});
+    const carried = second.body.deltas.find((d: { id: string }) => d.id === sev.id);
+    expect(carried.status).toBe("accepted");
+    expect(carried.carriedFrom).toBe(run.body.generatedAt);
+
+    setSynth(aProvider, synthA("A only finding", "T1046"));
+    await pipeline.synthesize("c1", { force: true });
+    expect((await f2(stateStore))?.severity).toBe("Low");
+  });
+
+  it("a decision whose finding is really gone is listed as unapplied, not dropped", async () => {
+    const { app, aProvider, pipeline } = await makeApp({ enabled: true });
+    setSynth(aProvider, synthA("A only finding", "T1219"));
+    const run = await request(app).post("/cases/c1/second-opinion").send({});
+    const dismissal = run.body.deltas.find((d: { kind: string }) => d.kind === "a_only");
+    await request(app).post("/cases/c1/second-opinion/apply").send({ deltaId: dismissal.id, accept: true });
+
+    const gone = JSON.parse(SYNTH_A);
+    gone.findings = [gone.findings[0]];
+    setSynth(aProvider, JSON.stringify(gone));
+    await pipeline.synthesize("c1", { force: true });
+
+    const rec = await request(app).get("/cases/c1/second-opinion");
+    const d = rec.body.deltas.find((x: { id: string }) => x.id === dismissal.id);
+    expect(d.status).toBe("accepted");
+    expect(d.unapplied).toBe("missing");
+    // Response-only: the stored record never carries the flag.
+    expect(rec.body.deltas.filter((x: { unapplied?: string }) => x.unapplied)).toHaveLength(1);
   });
 });

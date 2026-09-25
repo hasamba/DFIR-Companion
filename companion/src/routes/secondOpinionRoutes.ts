@@ -3,6 +3,9 @@ import { logActivity } from "../analysis/activityLog.js";
 import { PresidioApprovalRequired } from "../analysis/presidio.js";
 import { isAnalystDecisionGate, sendPipelineError } from "./presidioApproval.js";
 import type { RouteContext } from "./context.js";
+import type { SecondOpinion } from "../analysis/secondOpinion.js";
+import type { Finding } from "../analysis/stateTypes.js";
+import { freshDeltas, markUnappliedDecisions } from "../analysis/secondOpinionTargets.js";
 
 /**
  * The Second LLM Opinion routes (#116): the two-model run, the saved record, the analyst's
@@ -14,6 +17,14 @@ import type { RouteContext } from "./context.js";
  */
 export function registerSecondOpinionRoutes(app: Express, ctx: RouteContext): void {
   const { options } = ctx;
+
+  // #1590 — every record the panel receives marks the accepted decisions that match no finding
+  // now, against the case as it is at this moment, so none of them is skipped silently.
+  async function marked(caseId: string, record: SecondOpinion | null, findings?: readonly Finding[]) {
+    if (!record) return record;
+    const current = findings ?? (await options.stateStore?.load(caseId))?.findings;
+    return current ? markUnappliedDecisions(record, current) : record;
+  }
 
   // Second LLM opinion (issue #116): run a DIFFERENT model over the same case (independent
   // re-synthesis + reconcile) and surface where it disagrees, for analyst QA. On-demand, two
@@ -41,9 +52,9 @@ export function registerSecondOpinionRoutes(app: Express, ctx: RouteContext): vo
       void logActivity(options.activityLogStore, options.onActivity, caseId, {
         category: "ai",
         action: "second-opinion",
-        detail: `second opinion ran — ${record.deltas.length} delta(s)${deepReasoning ? " (deep reasoning)" : ""}`,
+        detail: `second opinion ran — ${freshDeltas(record).length} delta(s)${deepReasoning ? " (deep reasoning)" : ""}`,
       });
-      return res.status(200).json(record);
+      return res.status(200).json(await marked(caseId, record));
     } catch (err) {
       // secondOpinion() calls synthesize() twice (secondOpinionRun.ts), so it inherits the merge
       // gate — and a gate is a question, not a failed second opinion.
@@ -60,7 +71,8 @@ export function registerSecondOpinionRoutes(app: Express, ctx: RouteContext): vo
   app.get("/cases/:id/second-opinion", async (req: Request, res: Response) => {
     if (!options.secondOpinionStore) return res.status(200).json(null);
     try {
-      return res.status(200).json(await options.secondOpinionStore.load(req.params.id));
+      const record = await options.secondOpinionStore.load(req.params.id);
+      return res.status(200).json(await marked(req.params.id, record));
     } catch (err) {
       return sendPipelineError(res, err);
     }
@@ -76,14 +88,14 @@ export function registerSecondOpinionRoutes(app: Express, ctx: RouteContext): vo
     const accept = req.body?.accept === true;
     if (!deltaId) return res.status(400).json({ error: "deltaId is required" });
     try {
-      const { record } = await options.pipeline.applySecondOpinion(req.params.id, deltaId, accept);
+      const { record, state } = await options.pipeline.applySecondOpinion(req.params.id, deltaId, accept);
       options.onSecondOpinion?.(req.params.id);
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "ai",
         action: "second-opinion-apply",
         detail: `delta ${deltaId} — ${accept ? "accepted" : "rejected"}`,
       });
-      return res.status(200).json(record);
+      return res.status(200).json(await marked(req.params.id, record, state.findings));
     } catch (err) {
       if (err instanceof PresidioApprovalRequired)
         return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
@@ -100,14 +112,14 @@ export function registerSecondOpinionRoutes(app: Express, ctx: RouteContext): vo
       return res.status(501).json({ error: "second opinion not configured" });
     const accept = req.body?.followReferee === true ? "referee" : req.body?.accept === true;
     try {
-      const { record } = await options.pipeline.applyAllSecondOpinion(req.params.id, accept);
+      const { record, state } = await options.pipeline.applyAllSecondOpinion(req.params.id, accept);
       options.onSecondOpinion?.(req.params.id);
       void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
         category: "ai",
         action: "second-opinion-apply-all",
         detail: `all pending deltas — ${accept === "referee" ? "per the referee" : accept ? "accepted" : "rejected"}`,
       });
-      return res.status(200).json(record);
+      return res.status(200).json(await marked(req.params.id, record, state.findings));
     } catch (err) {
       if (err instanceof PresidioApprovalRequired)
         return sendPipelineError(res, err, { caseId: req.params.id, onAiStatus: options.onAiStatus });
@@ -136,8 +148,11 @@ export function registerSecondOpinionRoutes(app: Express, ctx: RouteContext): vo
           : `referee re-run — ${record.referee}`,
       });
       if (failed)
-        return res.status(502).json({ error: record.refereeError?.message ?? "referee failed", record });
-      return res.status(200).json(record);
+        return res.status(502).json({
+          error: record.refereeError?.message ?? "referee failed",
+          record: await marked(caseId, record),
+        });
+      return res.status(200).json(await marked(caseId, record));
     } catch (err) {
       if (isAnalystDecisionGate(err))
         return sendPipelineError(res, err, { caseId, onAiStatus: options.onAiStatus });
