@@ -24,8 +24,9 @@ export async function writeNoRegressionAttestation(
   const comparison = report.baselineComparison;
   if (!comparison) throw new Error("a baseline comparison is required to write an attestation");
   const attestation: NoRegressionAttestation = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     sourceHash: report.identity.sourceHash,
+    runs: report.runs,
     status: report.outcome === "passed" && comparison.status === "passed" ? "passed" : "failed",
     reportPath: basename(reportPath),
     reportSha256,
