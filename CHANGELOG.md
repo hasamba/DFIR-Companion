@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **AI eval gate averages three runs** — a no-regression attestation now needs three real runs of every section, averaged, with a 5-point tolerance; a SYSTEM_PROMPT or vision-model change also needs a real screenshot set (part of #1579)
 
 ### Fixed
+- **Stock Store apps and OneDrive tasks stay Info** — PersistenceSniper no longer grades Paint, Notepad, Snipping Tool (catalog-signed Store apps) or the two per-user OneDrive tasks High on a clean Windows 11 image (closes #1665)
 - **Output-limit failures say so** — a synthesis a reasoning model cut off at `DFIR_AI_MAX_TOKENS` fails once with a message naming the limit and the thinking share, instead of four retries and a misleading "relatedIocs Required"; Ollama calls ask for low reasoning effort unless 🧠 is ticked
 - **An empty hunt settles an evidence class only for the hosts it finished on** — each collect records the clients whose flow finished without error; a host the hunt never reached keeps a partial answer (closes #1625)
 - **Each hunt collect records its client counts** — scheduled, finished and failed clients show beside an empty result, and a hunt collected before this release settles nothing (closes #1612)
