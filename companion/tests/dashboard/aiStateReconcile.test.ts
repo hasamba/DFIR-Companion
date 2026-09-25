@@ -20,6 +20,7 @@ const read = (f: string) =>
   readFileSync(new URL(`../../../public/js/${f}`, import.meta.url), "utf8").replace(/\r\n/g, "\n");
 
 const connect = read("dashboard-case-connect.js");
+const liveSocket = read("dashboard-live-socket.js");
 const status = read("dashboard-ai-status.js");
 const duplicates = read("dashboard-host-duplicates.js");
 const presidio = read("dashboard-presidio.js");
@@ -44,7 +45,8 @@ describe("the pill's starting state", () => {
 
 describe("the four moments the pill re-derives", () => {
   it("re-reads when the websocket reconnects, because the gap delivered nothing", () => {
-    expect(connect).toMatch(/ws\.onopen[\s\S]{0,300}refreshAiState\(/);
+    // #1675 moved the socket to js/dashboard-live-socket.js, which also reconnects it.
+    expect(liveSocket).toMatch(/sock\.onopen[\s\S]{0,700}refreshAiState\(caseId\)/);
   });
 
   // "idle" is the event most likely to be wrong: it is emitted by whichever run just finished, and

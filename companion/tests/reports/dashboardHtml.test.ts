@@ -1306,7 +1306,10 @@ describe("dashboard.html — plain-English MCP investigations", () => {
     // Handlers come off BEFORE close(): onclose writes "disconnected" into the same status line
     // the cancel message claims, and close() fires it asynchronously — so an attached handler
     // overwrites the explanation a beat later.
-    expect(html).toMatch(/ws\.onclose = null;[\s\S]{0,160}ws\.close\(\)/);
+    // Since #1675 that detach lives in js/dashboard-live-socket.js, which cancel reaches through
+    // closeCaseSocket() — so a retry already scheduled is dropped with it.
+    expect(html).toMatch(/sock\.onclose = null;[\s\S]{0,160}sock\.close\(\)/);
+    expect(html).toMatch(/closeCaseSocket\(\);\s*if \(typeof retireCount === "function"\) retireCount\(\);/);
   });
 
   it("drops a case-scoped state push when no case is active", async () => {

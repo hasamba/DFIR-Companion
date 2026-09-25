@@ -765,7 +765,9 @@ export const FEATURES: Feature[] = [
     // reads the 🧠 box, so it owns greying the box out.
     file: "dashboard-search-scope.js",
     initializer: "initSearchAndScope",
-    publish: ["initSearchAndScope", "setDeepReasoningCapability"],
+    // resynthesize (#1675) is the Synthesize click, published so its pill paint can be driven
+    // without the ~20 other bindings initSearchAndScope needs a whole page for.
+    publish: ["initSearchAndScope", "setDeepReasoningCapability", "resynthesize"],
     private: [],
   },
   {
@@ -1134,6 +1136,25 @@ export const FEATURES: Feature[] = [
       "setVeloMonAutoBrowsed",
     ],
     private: ["_veloBundles", "_veloClients", "_veloMonAutoBrowsed"],
+  },
+  {
+    // The case's live WebSocket (#1675): open, reconnect with capped backoff, catch up after a gap,
+    // and re-derive on tab wake. Split from dashboard-case-connect.js, which had no room for it.
+    // The session and timer state is private: a retry timer reachable from outside could reopen a
+    // socket for a case the analyst has already left.
+    file: "dashboard-live-socket.js",
+    publish: ["openCaseSocket", "closeCaseSocket"],
+    private: [
+      "liveCaseId",
+      "liveOnMessage",
+      "sockGen",
+      "reconnectDelay",
+      "reconnectTimer",
+      "stableTimer",
+      "connectTimer",
+      "hiddenAt",
+      "visibilityBound",
+    ],
   },
   {
     // The case-load path. Second non-feature extraction, same contract as dashboard-render.js:

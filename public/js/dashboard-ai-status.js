@@ -163,12 +163,19 @@
     else setAi("idle", s.detail || "up to date");
   }
 
+  // Newest request wins (#1675). The socket reconnect, a tab waking and the Re-synthesize button all
+  // call this now, and an answer that lands late — for a case the analyst has left, or behind a
+  // newer answer for the same case — must not repaint the pill over the truth.
+  let aiStateSeq = 0;
   async function refreshAiState(caseId) {
     if (!caseId) return;
+    const seq = ++aiStateSeq;
     try {
       const r = await fetch(`/cases/${encodeURIComponent(caseId)}/ai-state`);
       if (!r.ok) return; // leave the pill as it is; a failed correction must not invent a state
-      paintAiState(await r.json());
+      const s = await r.json();
+      if (seq !== aiStateSeq || caseId !== activeCaseId) return;
+      paintAiState(s);
     } catch {
       // Never let the corrector be the thing that breaks the page it exists to fix.
     }

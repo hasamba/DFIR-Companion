@@ -692,6 +692,7 @@
     "ROUTE GET /js/dashboard-velo-labels.js",
     "ROUTE GET /js/dashboard-velo-collect.js",
     "ROUTE GET /js/dashboard-velo-triage.js",
+    "ROUTE GET /js/dashboard-live-socket.js",
     "ROUTE GET /js/dashboard-case-connect.js",
     "ROUTE GET /js/dashboard-render.js",
     "ROUTE GET /js/dashboard-facet-filters.js",

@@ -300,7 +300,8 @@ describe("who may write the window", () => {
   // for a cell with more than one writer.
   const WRITERS = [
     { op: "receive", owner: "loadScope", why: "the case-load GET" },
-    { op: "receive", owner: "proceedConnect", why: "another client's scope_changed broadcast" },
+    // handleCaseMessage since #1675: the socket's push handler, named so a reconnect reuses it.
+    { op: "receive", owner: "handleCaseMessage", why: "another client's scope_changed broadcast" },
     { op: "confirm", owner: "applyScope", why: "this analyst's POST" },
   ] as const;
 
