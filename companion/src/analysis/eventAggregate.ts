@@ -1,6 +1,7 @@
 import { SEVERITY_RANK, type Severity } from "./stateTypes.js";
 import type { MappedEvent, SiemEvent } from "./siemImport.js";
 import { annotateCollectorDeployment, loadCollectorInfrastructure } from "./collectorDeployment.js";
+import { annotateBenignOsActivity } from "./benignOsActivity.js";
 import { combineMarkings } from "./tlp.js";
 
 /**
@@ -100,6 +101,7 @@ export function createEventAggregator(
       // (download from the configured server, msiexec install, the MSI's creation-time change) is
       // recognised for every source at once. Before the floor, so a demoted row is floored as Info.
       annotateCollectorDeployment(m, collector);
+      annotateBenignOsActivity(m); // ordinary Windows behaviour with a grader-visible shape (#1593)
       if (SEVERITY_RANK[m.severity] > floorRank) return; // below the severity floor
       const key = aggregate ? m.aggKey : `${order.length}`; // no-agg ⇒ unique key per row
       const existing = byKey.get(key);
