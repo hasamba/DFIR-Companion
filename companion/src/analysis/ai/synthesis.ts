@@ -502,6 +502,7 @@ async function callSynthesisModel(
     caseId,
     "synthesis",
     async () => {
+      throwIfSuperseded(opts.signal); // #1608: a retry after a supersede calls no provider
       attempt++;
       let parsed: unknown;
       try {
@@ -521,6 +522,7 @@ async function callSynthesisModel(
         );
         return parseSynthesisAnswer(ctx, caseId, parsed);
       } catch (err) {
+        throwIfSuperseded(opts.signal); // #1608: not a parse retry, and withRetry never retries it
         parseRetries++;
         retryNote = synthesisRetryNote(err) ?? retryNote; // a provider error keeps the current note
         await keepFailedAnswer(ctx, caseId, attempt, err, parsed);
@@ -624,8 +626,7 @@ async function resolveHostsOrThrow(
  * swept for a second look, it carried a whole extra synthesis behind it too: two top-level runs held
  * the whole case state at once, state loads went from 0.6 s to 140 s, and neither reached its
  * terminal `ai_status`, which left the header pill stuck on "AI: synthesizing…" with no job to
- * explain it. The sweep is a button now (#1554), but the boundary checks below are what stop a
- * superseded run writing at all.
+ * explain it. Only an analyst's run-now (Re-synthesize, /dfir, replay) supersedes one now (#1608).
  *
  * Called at the stage boundaries rather than inside the steps: a step that has begun should finish
  * or throw on its own, and the boundaries are where nothing is half-written.
@@ -762,13 +763,15 @@ export async function synthesize(
   // Lost-update guard (mirrors the pinned-questions re-load in the delta fold): a manual
   // event/IOC/thread added DURING the seconds-long AI call would otherwise be clobbered by this
   // write, because `next` was derived from the snapshot taken before the call.
+  throwIfSuperseded(opts.signal); // #1608: superseded during the async fold and grading above
   next = await persistSynthesis(ctx, caseId, {
     loaded,
     next,
     findingsDiff,
     reconcile: (merged) => reconcileSimulation(ctx, caseId, merged, aliasIndex),
   });
-
+  // #1608: superseded while persisting — the newer run owns hypotheses, finding tasks, the record.
+  throwIfSuperseded(opts.signal);
   await autoGenerateHypotheses(ctx, caseId, delta.hypotheses, next, markers, aliasIndex);
   // #1418: one more call turns each Critical/High finding into an analyst task for the playbook.
   await writeFindingTasks(ctx, caseId, next, { provider: synthProvider });

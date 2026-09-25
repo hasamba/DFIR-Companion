@@ -28,6 +28,7 @@ import type { AiControl } from "../analysis/aiControl.js";
 import type { CaptureMetadata } from "../types.js";
 import type { NotificationEvent } from "../analysis/notifications.js";
 import { milestoneEvent } from "../analysis/notifications.js";
+import { createSynthesisDeferral } from "./synthesisDeferral.js";
 import { loadPendingHostDuplicates } from "../analysis/hostScopeLoad.js";
 import { SynthMetaStore } from "../analysis/synthMeta.js";
 // The class, for its MESSAGE — announceSynthesis words the pre-emptive "blocked" with it so the
@@ -62,10 +63,11 @@ export interface CaptureAnalysis {
   scheduleSynthesis(caseId: string): void;
   /**
    * Immediate background re-synthesis after an import or a false-positive change. Self-coalescing:
-   * a newer kick supersedes an older one for the same case, so N rapid changes (a multi-file
-   * import, a batch false-positive) cost one synthesis, not N.
+   * a newer kick supersedes an older QUEUED one for the same case, so N rapid changes (a multi-file
+   * import, a batch false-positive) cost one synthesis, not N. A RUNNING synthesis is waited for
+   * instead (#1608), unless `analyst` says a person asked for this run now (/dfir synthesize).
    */
-  resynthesizeInBackground(caseId: string): void;
+  resynthesizeInBackground(caseId: string, opts?: { analyst?: boolean }): void;
 }
 
 export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysis {
@@ -88,6 +90,14 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
   const synthDebounceMs = options.autoSynthesizeDebounceMs ?? 8000;
   const synthTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const synthInFlight = new Set<string>();
+  // #1608: an automatic kick waits for a running synthesis rather than superseding it — see
+  // synthesisDeferral.ts. Checked synchronously right before each register(), so no run can start
+  // between the check and the registration that would otherwise abort it.
+  const deferral = createSynthesisDeferral({
+    ...(options.jobManager ? { jobManager: options.jobManager } : {}),
+    inFlight: synthInFlight,
+    retryMs: synthDebounceMs,
+  });
 
   /**
    * What both synthesis paths in this file do when the run rejects.
@@ -214,19 +224,48 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
       caseId,
       setTimeout(() => {
         synthTimers.delete(caseId);
-        if (synthInFlight.has(caseId)) {
-          scheduleSynthesis(caseId);
-          return;
-        } // busy — retry after debounce
-        void (async () => {
-          // Held → say so and stop. No job is registered and synthInFlight is never entered, so
-          // there is nothing to clean up and the next kick re-checks from scratch.
-          if (!(await announceSynthesis(caseId, "synthesizing conclusions"))) return;
-          synthInFlight.add(caseId);
-          runScheduledSynthesis(caseId);
-        })();
+        startScheduledSynthesis(caseId);
       }, synthDebounceMs),
     );
+  }
+
+  function startScheduledSynthesis(caseId: string): void {
+    void (async () => {
+      // #1608: a kick that waited may wake after the analyst paused AI for the case. Pausing means
+      // no model call, so say the conclusions are behind instead of starting one.
+      if (!(await getControl(caseId)).enabled) {
+        await markOutOfDate(caseId, "new evidence while AI was off");
+        options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+        return;
+      }
+      // Held → say so and stop. No job is registered and synthInFlight is never entered, so
+      // there is nothing to clean up and the next kick re-checks from scratch.
+      if (!(await announceSynthesis(caseId, "synthesizing conclusions"))) return;
+      // #1608: another synthesis is running (or another auto run holds the slot) — wait for it
+      // rather than supersede it, in the one per-case queue every automatic kick shares.
+      // Synchronous from here to register(), so nothing can start in between.
+      if (deferral.running(caseId)) {
+        deferral.defer(
+          caseId,
+          () => startScheduledSynthesis(caseId),
+          () => void cancelledWhileWaiting(caseId),
+        );
+        return;
+      }
+      synthInFlight.add(caseId);
+      runScheduledSynthesis(caseId);
+    })();
+  }
+
+  /**
+   * The analyst cancelled the synthesis an automatic kick was waiting on (#1608). Starting a new
+   * run now would undo their Cancel, so leave the choice with them: mark the conclusions out of
+   * date (the pill then says "press Re-synthesize") and refresh the pill.
+   */
+  async function cancelledWhileWaiting(caseId: string): Promise<void> {
+    await markOutOfDate(caseId, "synthesis cancelled with newer evidence waiting");
+    if (options.jobManager?.hasActive(caseId, "synthesis")) return; // a newer run owns the status
+    options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
   }
 
   /** The synthesis run itself, once the gate has been consulted and the slot taken. */
@@ -236,7 +275,8 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
       // catch-up) previously ran outside the job registry, so it never showed up in the Jobs panel
       // or offered a Cancel button — only the manual "re-synthesize" button did. Track it the same way.
       // exclusive: a manual re-synthesize racing this live run (synthInFlight only serializes
-      // auto-vs-auto) supersedes rather than running alongside it.
+      // auto-vs-auto) supersedes rather than running alongside it. This registration itself only
+      // ever supersedes a QUEUED synthesis: startScheduledSynthesis waits out a running one (#1608).
       const job = options.jobManager?.register({
         caseId,
         kind: "synthesis",
@@ -461,7 +501,7 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
     }
   }
 
-  function resynthesizeInBackground(caseId: string): void {
+  function resynthesizeInBackground(caseId: string, opts: { analyst?: boolean } = {}): void {
     // FIRST, above every early return below. The two guards that follow (no pipeline, no synthesis
     // provider) are exactly the AI-disabled install this notification exists to serve: put this
     // inside the IIFE and the case that can never reach the synthesize() gate also never gets told.
@@ -473,56 +513,73 @@ export function createCaptureAnalysis(deps: CaptureAnalysisDeps): CaptureAnalysi
       autoEnrichIfEnabled(caseId);
       return;
     }
-    void (async () => {
-      // Synthesis is an LLM call — respect the per-case AI toggle, exactly like the /captures
-      // path (AI analysis only runs when enabled for the case). With AI off, a deterministic
-      // import still populates the forensic timeline + IOCs; it just doesn't trigger LLM
-      // synthesis — findings / attacker-path / MITRE wait until AI is turned on and the case is
-      // re-synthesized. Enrichment is a separate, independently-gated feature (threat-intel
-      // lookups, not an LLM call), so it still runs regardless of the AI toggle.
-      if (!(await getControl(caseId)).enabled) {
-        // #1599: the case changed and no run follows, so the conclusions no longer match it. Without
-        // this the pill read "up to date — live analysis paused" over evidence the model never saw.
-        await markOutOfDate(caseId, "new evidence while AI was off");
-        autoEnrichIfEnabled(caseId);
-        return;
-      }
-      // #225: track synthesis as a cancellable job so the dashboard can list it + abort a long/stuck run.
-      // exclusive, like the two sibling synthesis registrations: EVERY caller of this function is a
-      // "the case changed, re-derive it" kick, and synthesize() reads the case fresh, so the newest
-      // kick subsumes every older one — running them in series would spend N LLM calls to reach the
-      // answer the last one produces on its own. That matters most for a multi-file import, where
-      // the dashboard POSTs each file separately and each completed import kicks again: without
-      // exclusive, a six-file import stacked six full re-syntheses behind the case's single
-      // concurrency slot instead of running one after the last file landed.
-      const job = options.jobManager?.register({
+    void startResynthesis(caseId, pipeline, opts.analyst === true);
+  }
+
+  async function startResynthesis(
+    caseId: string,
+    pipeline: NonNullable<AppOptions["pipeline"]>,
+    analyst: boolean,
+  ): Promise<void> {
+    // Synthesis is an LLM call — respect the per-case AI toggle, exactly like the /captures
+    // path (AI analysis only runs when enabled for the case). With AI off, a deterministic
+    // import still populates the forensic timeline + IOCs; it just doesn't trigger LLM
+    // synthesis — findings / attacker-path / MITRE wait until AI is turned on and the case is
+    // re-synthesized. Enrichment is a separate, independently-gated feature (threat-intel
+    // lookups, not an LLM call), so it still runs regardless of the AI toggle.
+    if (!(await getControl(caseId)).enabled) {
+      // #1599: the case changed and no run follows, so the conclusions no longer match it. Without
+      // this the pill read "up to date — live analysis paused" over evidence the model never saw.
+      await markOutOfDate(caseId, "new evidence while AI was off");
+      autoEnrichIfEnabled(caseId);
+      return;
+    }
+    // #1608: an automatic kick waits for a running synthesis instead of superseding it — the
+    // superseded run's model call is still billed. The re-check of the AI toggle above runs again
+    // when the wait ends. Synchronous from here to register(), so nothing can start in between.
+    if (!analyst && deferral.running(caseId)) {
+      deferral.defer(
         caseId,
-        kind: "synthesis",
-        label: "re-synthesis",
-        cancellable: true,
-        exclusive: true,
+        () => void startResynthesis(caseId, pipeline, false),
+        () => void cancelledWhileWaiting(caseId),
+      );
+      return;
+    }
+    // #225: track synthesis as a cancellable job so the dashboard can list it + abort a long/stuck run.
+    // exclusive, like the two sibling synthesis registrations: EVERY caller of this function is a
+    // "the case changed, re-derive it" kick, and synthesize() reads the case fresh, so the newest
+    // kick subsumes every older one — running them in series would spend N LLM calls to reach the
+    // answer the last one produces on its own. That matters most for a multi-file import, where
+    // the dashboard POSTs each file separately and each completed import kicks again: without
+    // exclusive, a six-file import stacked six full re-syntheses behind the case's single
+    // concurrency slot instead of running one after the last file landed.
+    const job = options.jobManager?.register({
+      caseId,
+      kind: "synthesis",
+      label: "re-synthesis",
+      cancellable: true,
+      exclusive: true,
+    });
+    try {
+      // Inside the try: superseding a still-QUEUED run rejects its admission (never resolving it),
+      // and this function is fired-and-forgotten, so a rejection escaping here is an unhandled
+      // one rather than a cancellation the catch below can report.
+      if (job) await job.ready;
+      options.onAiStatus?.(caseId, {
+        status: "analyzing",
+        phase: "synthesizing",
+        at: new Date().toISOString(),
+        detail: "re-synthesizing without legitimate items",
       });
-      try {
-        // Inside the try: superseding a still-QUEUED run rejects its admission (never resolving it),
-        // and this function is fired-and-forgotten, so a rejection escaping here is an unhandled
-        // one rather than a cancellation the catch below can report.
-        if (job) await job.ready;
-        options.onAiStatus?.(caseId, {
-          status: "analyzing",
-          phase: "synthesizing",
-          at: new Date().toISOString(),
-          detail: "re-synthesizing without legitimate items",
-        });
-        await pipeline.synthesize(caseId, job?.signal ? { signal: job.signal } : {});
-        if (job) await options.jobManager?.finish(job.jobId);
-        options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-        autoEnrichIfEnabled(caseId);
-      } catch (err) {
-        // No errorPhase: this path never wrote to the AI-error ledger, and adding it here would be
-        // a behaviour change unrelated to the gate.
-        await settleSynthesisRejection(caseId, job, err);
-      }
-    })();
+      await pipeline.synthesize(caseId, job?.signal ? { signal: job.signal } : {});
+      if (job) await options.jobManager?.finish(job.jobId);
+      options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+      autoEnrichIfEnabled(caseId);
+    } catch (err) {
+      // No errorPhase: this path never wrote to the AI-error ledger, and adding it here would be
+      // a behaviour change unrelated to the gate.
+      await settleSynthesisRejection(caseId, job, err);
+    }
   }
 
   return {

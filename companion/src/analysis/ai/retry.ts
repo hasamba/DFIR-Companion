@@ -16,6 +16,9 @@ import { HostMergeDecisionRequired } from "../hostDuplicateGate.js";
 const NON_RETRYABLE_KINDS = new Set<ProviderErrorKind>(["auth", "rate_limit", "timeout", "context"]);
 
 function isRetryableError(err: unknown): boolean {
+  // A cancelled or superseded run (#1608). Retrying it only calls the provider again for a result
+  // nobody will keep.
+  if (err instanceof Error && err.name === "AbortError") return false;
   // An approval gate is not a transient failure. Retrying it re-runs the Presidio scan and delays
   // the 409 the analyst is waiting on, so surface it on the first throw.
   if (err instanceof PresidioApprovalRequired) return false;
