@@ -77,8 +77,9 @@ function harness() {
   return { api, calls, replies, el, panel, press, runTimers };
 }
 
+const tick = () => new Promise((r) => setTimeout(r, 0));
 const settle = async () => {
-  for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+  for (let i = 0; i < 5; i++) await tick();
 };
 
 const REC = {
