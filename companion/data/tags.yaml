@@ -64,20 +64,45 @@ win_wmi_persistence:
   severity: High
   view: 'WMI persistence'
 
+# A Run / RunOnce key being WRITTEN: Sysmon 12/13, Security 4657, a registry-change record. The key
+# name may end the line (4657's Object Name, a Sysmon 12 on the key itself), and a record with no
+# rendered message carries the key only in its description, so all three fields are read.
+# PersistenceSniper rows are excluded (#1666). The module ENUMERATES every autostart that already
+# exists, so its Path IS a Run key on every host: on a clean image this rule graded the stock VMware
+# Tools, OneDrive and Edge WebView entries Medium. Such a row is known by its artifact name (the test
+# the Velociraptor dispatcher uses) or, when the upload carried no artifact name, by the fixed prefix
+# persistenceSniperImport.ts writes at the start of its description.
 win_run_key:
   description: Registry Run / RunOnce autorun key written
   any:
-    - { field: path, regex: '\\currentversion\\run(?:once)?\\', flags: 'i' }
-    - { field: message, regex: '\\currentversion\\run(?:once)?\\', flags: 'i' }
+    - { field: path, regex: '\\currentversion\\run(?:once)?(?:\\|\s|$)', flags: 'i' }
+    - { field: message, regex: '\\currentversion\\run(?:once)?(?:\\|\s|$)', flags: 'i' }
+    - { field: description, regex: '\\currentversion\\run(?:once)?(?:\\|\s|$)', flags: 'i' }
+  none:
+    - { field: artifactName, contains: 'persistencesniper' }
+    - { field: description, regex: '^Velociraptor(?: \[[^\]]*\])?: Persistence \[' }
   tags: ['autorun', 'persistence']
   mitre: ['T1547.001']
   severity: Medium
   view: 'Autorun keys'
 
+# The same Run / RunOnce key as PersistenceSniper enumerated it: tagged and in the view, no grade.
+win_run_key_enumerated:
+  description: Registry Run / RunOnce autorun entry present (PersistenceSniper enumeration)
+  all:
+    - { field: path, regex: '\\currentversion\\run(?:once)?(?:\\|\s|$)', flags: 'i' }
+  any:
+    - { field: artifactName, contains: 'persistencesniper' }
+    - { field: description, regex: '^Velociraptor(?: \[[^\]]*\])?: Persistence \[' }
+  tags: ['autorun', 'persistence']
+  mitre: ['T1547.001']
+  view: 'Autorun keys'
+
 # PersistenceSniper (Windows.Forensics.PersistenceSniper) enumerates every autostart mechanism on the
-# box — the large majority signed, first-party, and ordinary — so it grades Info by default and is
-# NOT re-graded here. Its two anomaly signals (a known LOLBin used for persistence; a target with a
-# non-valid Authenticode signature) are graded High/Medium directly in analysis/persistenceSniperImport.ts,
+# box — the large majority signed, first-party, and ordinary — so it grades Info by default and no
+# rule here grades it: win_run_key excludes it and win_run_key_enumerated only tags it. Its two
+# anomaly signals (a known LOLBin used for persistence; a target with a non-valid Authenticode
+# signature) are graded High/Medium directly in analysis/persistenceSniperImport.ts,
 # from the module's own structured IsLolbin/Signature columns — not by a tagger rule matching the
 # rendered description, which would be re-deriving the verdict from text an adversary partly controls
 # (Value/Path, real filesystem/registry content on the target) and would silently miss it once the
