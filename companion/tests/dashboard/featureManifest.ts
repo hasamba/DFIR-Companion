@@ -709,6 +709,8 @@ export const FEATURES: Feature[] = [
       // The pager's "a refresh keeps the page" rule (#1652), the timeline twin of #1649.
       "timelineFilterKey",
       "resolveTimelinePage",
+      // Which page a jump to an event opens, counted the way the pager renders (#1658).
+      "timelineJumpPage",
     ],
     private: ["timelineTotalIsFloor"],
   },

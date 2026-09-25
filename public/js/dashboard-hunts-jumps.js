@@ -293,23 +293,71 @@
   // links. The timeline is PAGINATED and FILTERABLE, so the target row may not be in the DOM: expand
   // the section, and if the row isn't on the current page, clear the view filters that could hide it,
   // page to where it lands, re-render, then locate.
+  //
+  // Two lenses survive that reset: the dashboard view's severity floor and the corroboration lens
+  // (#1658). The page is counted in the list the renderer shows under them, not in the raw list —
+  // otherwise every row they drop before the event pushes the jump to a later page. When one of
+  // them hides the event, the jump REFUSES and says which lens to change: it does not switch the
+  // analyst's view or lens for them, and it does not clear their filters for nothing.
   function jumpToEvent(id) {
     id = String(id);
     const sec = document.getElementById("sec-timeline");
     if (sec) sec.classList.remove("collapsed");
     if (swLocateInTable(id)) return; // already on the current page
     if (!(DfirState.lastFt() || []).some((e) => String(e.id) === id)) return; // not in the in-scope timeline
-    resetTimelineViewFilters(); // unhide it if a filter excluded it
+    const lensBlock = timelineLensHiding(id);
+    if (lensBlock) {
+      showToast(lensBlock, "warn");
+      return;
+    }
+    // Counted BEFORE the reset: the sort is not a filter, so the reset leaves the order alone, and
+    // the lenses read here are the two the reset leaves on.
     // Read fresh at each use rather than held in a local. The cached value was correct — nothing
     // between these lines replaces it — but the no-stale-snapshot gate cannot see that through
     // this module's IIFE wrapper, and "do not hold a snapshot across a refresher" is the rule it
     // enforces. Obeying it costs two extra reads and removes the question.
-    const sorted = sortTimelineEvents((DfirState.lastFt() || []).slice());
-    const idx = sorted.findIndex((e) => String(e.id) === id);
-    if (idx >= 0 && tlPageSize > 0) tlPage = Math.floor(idx / tlPageSize); // page the event lands on
+    const page = timelineJumpPage(
+      sortTimelineEvents((DfirState.lastFt() || []).slice()),
+      id,
+      tlPageSize,
+      timelineLensKeeps(),
+    );
+    resetTimelineViewFilters(); // unhide it if a filter excluded it
+    if (page >= 0) tlPage = page; // page the event lands on
     _tlKeepPage = true; // don't let the re-render reset the page
     renderTimelineEvents(DfirState.lastFt() || []);
     swLocateInTable(id);
+  }
+
+  // The rows the two surviving lenses let through, as renderTimelineEvents applies them — or null
+  // when neither is on. The corroboration count reads every source: that is what the reset leaves
+  // the Sources facet at.
+  function timelineLensKeeps() {
+    const floor = timelineViewFloor();
+    const corrob = DfirTimelineView.corrobTimeline();
+    if (!floor && !(corrob > 1)) return null;
+    return (e) =>
+      (!floor || viewMeetsMinSev(e.severity, e)) && (!(corrob > 1) || realSourceCount(e.sources) >= corrob);
+  }
+  function timelineViewFloor() {
+    const view = DfirState.activeView();
+    return (view && view.filters && view.filters.minSeverity) || null;
+  }
+  // Why the event cannot be shown, in the analyst's words — or "" when it can.
+  function timelineLensHiding(id) {
+    const ev = (DfirState.lastFt() || []).find((e) => String(e.id) === id);
+    if (!ev) return "";
+    const floor = timelineViewFloor();
+    if (floor && !viewMeetsMinSev(ev.severity, ev)) {
+      const view = DfirState.activeView();
+      const name = view && view.name ? `"${view.name}"` : "the active";
+      return `That event is ${ev.severity || "unrated"}, below the ${name} dashboard view's ${floor}+ floor. Switch to a view without a severity floor (e.g. Analyst) to see it.`;
+    }
+    const corrob = DfirTimelineView.corrobTimeline();
+    if (corrob > 1 && realSourceCount(ev.sources) < corrob) {
+      return `That event has fewer than ${corrob} corroborating sources, so the timeline's corroboration lens hides it. Set the timeline's ⊕ lens to "any" to see it.`;
+    }
+    return "";
   }
 
   function jumpToEventFromHash() {
