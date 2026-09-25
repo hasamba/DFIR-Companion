@@ -517,9 +517,15 @@
         const counts = j.superTimelineOnly
           ? `+${j.addedEvents || 0} events`
           : `+${j.addedEvents || 0} events, +${j.addedIocs || 0} IOCs`;
+        // Reads that were not complete (#1645), worded like a collect's hunt card.
+        const gaps = veloReadGapsHtml(
+          { unread: j.unreadArtifacts, truncated: j.truncatedArtifacts, failed: j.failedArtifacts },
+          "Import again once the server answers.",
+        );
         msg.innerHTML =
           `${where}${dest} — imported ${(j.artifacts || []).length} artifact(s), ${counts}` +
-          (j.note ? ` (${esc(j.note)})` : "");
+          (j.note ? ` (${esc(j.note)})` : "") +
+          gaps;
         loadVeloHuntJobs(caseId);
       })
       .catch(

@@ -150,3 +150,15 @@ function mergeRuns(a: VelociraptorRunResult, b: VelociraptorRunResult): Velocira
     truncated: a.truncated || b.truncated,
   };
 }
+
+/**
+ * VelociraptorClient.huntResultsByArtifact's answer. `unread` names the artifacts whose source list
+ * could not be looked up, so rows under named sources were never read (#1635/#1645); `truncated` the
+ * reads cut at the row cap. Neither is "no findings".
+ */
+export interface HuntResultsByArtifact {
+  results: Record<string, unknown[]>;
+  skipped: { name: string; error: string }[];
+  unread: { name: string; rows: number }[];
+  truncated: { name: string; kept: number; total: number }[];
+}

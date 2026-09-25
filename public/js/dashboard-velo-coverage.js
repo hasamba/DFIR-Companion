@@ -47,20 +47,55 @@ function veloCoverageHtml(job) {
       "var(--sev-high)",
     );
   }
-  if (unread.length) {
-    html += box(
-      `&#9888; NOT READ &mdash; ${unread.map((u) => esc(u.name)).join(", ")}<br>The artifact list on ` +
-        "the server could not be read, so rows these artifacts keep under named sources were never " +
-        "read. No rows here does not mean nothing was found. Collect again.",
-      "#ff9f43",
-    );
-  }
+  html += veloUnreadHtml(unread, "Collect again.");
   if (failed.length) {
     html += box(
       failed.map((s) => `${esc(s.name)}: ${esc(s.error)}`).join("<br>"),
       "#ff9f43",
     );
   }
+  return html;
+}
+
+// The NOT READ warning (#1635), shared by a collect's hunt card and the two live reads that are not a
+// collect — the external import and the Hunting Profile's results view (#1645) — so all three say it
+// the same way. `again` is what the analyst does next, which differs per surface.
+
+/* exported veloUnreadHtml */
+function veloUnreadHtml(unread, again) {
+  if (!Array.isArray(unread) || !unread.length) return "";
+  return (
+    `<div data-safe-style="font-size:12px;color:#ff9f43;margin-top:2px">&#9888; NOT READ &mdash; ` +
+    `${unread.map((u) => esc(u.name)).join(", ")}<br>The artifact list on the server could not be ` +
+    "read, so rows these artifacts keep under named sources were never read. No rows here does not " +
+    `mean nothing was found. ${esc(again)}</div>`
+  );
+}
+
+// Every read that was not complete, for a read that is not a collect (#1645): not read in full, cut
+// short at the row cap, or failed. Takes the lists in the collect's own shapes.
+
+/* exported veloReadGapsHtml */
+function veloReadGapsHtml(gaps, again) {
+  const list = (v) => (Array.isArray(v) ? v : []);
+  const box = (body, color) =>
+    `<div data-safe-style="font-size:12px;color:${color};margin-top:2px">${body}</div>`;
+  const cut = list(gaps && gaps.truncated);
+  const failed = list(gaps && gaps.failed);
+  let html = veloUnreadHtml(list(gaps && gaps.unread), again);
+  if (cut.length)
+    html += box(
+      `&#9888; INCOMPLETE &mdash; ${cut
+        .map((t) => `${esc(t.name)} (kept ${esc(String(t.kept))} rows, there were more)`)
+        .join("<br>")}<br>Rows past the cap were never read.`,
+      "var(--sev-high)",
+    );
+  if (failed.length)
+    html += box(
+      "&#9888; FAILED TO READ &mdash; " +
+        failed.map((f) => `${esc(f.name)}: ${esc(f.error)}`).join("<br>"),
+      "#ff9f43",
+    );
   return html;
 }
 
