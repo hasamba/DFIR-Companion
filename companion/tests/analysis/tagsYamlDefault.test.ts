@@ -70,8 +70,9 @@ describe("bundled data/tags.yaml — removable media", () => {
 // tests. A tagger rule re-deriving the same verdict from the rendered description was tried first
 // and reverted: it was spoofable via a crafted Value/Path (a file literally named "evil.exe
 // [lolbin]" faked a High grade the module never gave) and lossy (the description's 600-char cap
-// could truncate a genuine marker, leaving a real LOLBin at Info). There is deliberately no
-// PersistenceSniper-specific rule in tags.yaml.
+// could truncate a genuine marker, leaving a real LOLBin at Info). No tags.yaml rule grades a
+// PersistenceSniper row: win_run_key excludes it, and win_run_key_enumerated only tags it (#1666,
+// tagsYamlRunKey.test.ts).
 
 // End to end over the REAL importer: map a Windows record, then run the shipped ruleset over the
 // event it produced. These rules key on `message`, which mapWindows did not populate — so twelve of
