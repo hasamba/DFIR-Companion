@@ -184,22 +184,30 @@ function buildSessions(anchors: readonly Anchor[]): Map<string, [number, number]
   const timesByHost = new Map<string, number[]>();
   for (const a of anchors) timesByHost.set(a.host, [...(timesByHost.get(a.host) ?? []), ...a.times]);
   const sessions = new Map<string, [number, number][]>();
-  for (const [host, times] of timesByHost) {
-    const sorted = [...times].sort((x, y) => x - y);
-    const windows: [number, number][] = [];
-    let start = sorted[0];
-    let prev = sorted[0];
-    for (const t of sorted.slice(1)) {
-      if (t - prev > SESSION_GAP_MS) {
-        windows.push([start - SESSION_PAD_MS, prev + SESSION_PAD_MS]);
-        start = t;
-      }
-      prev = t;
-    }
-    windows.push([start - SESSION_PAD_MS, prev + SESSION_PAD_MS]);
-    sessions.set(host, windows);
-  }
+  for (const [host, times] of timesByHost) sessions.set(host, splitSessions(times));
   return sessions;
+}
+
+/**
+ * One host's anchor times as [start, end] session windows: split wherever two consecutive times are
+ * more than SESSION_GAP_MS apart, and each cluster widened by SESSION_PAD_MS on both sides. Shared with
+ * the synthesis prompt's command seats (#1622), so "attack session" has one shape. Empty in, empty out.
+ */
+export function splitSessions(times: readonly number[]): [number, number][] {
+  const sorted = times.filter((t) => Number.isFinite(t)).sort((x, y) => x - y);
+  if (!sorted.length) return [];
+  const windows: [number, number][] = [];
+  let start = sorted[0];
+  let prev = sorted[0];
+  for (const t of sorted.slice(1)) {
+    if (t - prev > SESSION_GAP_MS) {
+      windows.push([start - SESSION_PAD_MS, prev + SESSION_PAD_MS]);
+      start = t;
+    }
+    prev = t;
+  }
+  windows.push([start - SESSION_PAD_MS, prev + SESSION_PAD_MS]);
+  return windows;
 }
 
 function candidates(

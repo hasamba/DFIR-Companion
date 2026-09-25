@@ -35,4 +35,10 @@ describe("evidence mix labels (#1586)", () => {
   it("leaves promoted out when synthesis saw none", async () => {
     expect(mix(await labels(), { anchor: 24, promoted: 0 })).toBe("24 anchors");
   });
+
+  it("names the reserved session-command seats (#1622)", async () => {
+    expect(mix(await labels(), { anchor: 24, command: 3, anchor_context: 60 })).toBe(
+      "24 anchors · 3 session commands · 60 context",
+    );
+  });
 });
