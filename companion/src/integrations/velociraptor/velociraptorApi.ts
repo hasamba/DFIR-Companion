@@ -13,7 +13,8 @@ import { CLIENT_RE, matchClient, normalizeClientRow, type VeloClientRecord } fro
 export { matchClient, normalizeClientRow, type VeloClientRecord } from "./clientInventory.js";
 import { ChildOutputCollector } from "../childOutput.js";
 import { containedWhereOrThrow } from "../../analysis/vqlInput.js";
-import { buildHuntSpec } from "./huntSpec.js";
+import { buildHuntSpec, HuntSpecError, type HuntSpecCheck } from "./huntSpec.js";
+export { HuntSpecError } from "./huntSpec.js"; // the route answers it 400: the bundle, not the server
 import { noLaunchIdMessage, translateVelociraptorError, vqlLogErrors } from "./vqlDiagnostics.js";
 import { parseArtifactTools, parseToolInventory, type VeloArtifactTool } from "./artifactTools.js";
 
@@ -1044,13 +1045,14 @@ export class VelociraptorClient {
     opts: {
       timeoutSeconds?: number;
       params?: Record<string, Record<string, string>>;
+      paramCheck?: HuntSpecCheck; // the bundle pre-flight: what it left out, and each artifact's parameters
       expirySeconds?: number;
     } = {},
   ): Promise<ArtifactHuntLaunchResult> {
     const names = (artifacts ?? []).map((a) => String(a ?? "").trim()).filter(Boolean);
     if (names.length === 0) throw new Error("no artifacts to hunt");
     for (const n of names) {
-      if (!ARTIFACT_RE.test(n)) throw new Error(`invalid artifact name: ${n}`);
+      if (!ARTIFACT_RE.test(n)) throw new HuntSpecError(`invalid artifact name: ${n}`);
     }
     const expires = normalizeHuntExpirySeconds(opts.expirySeconds); // relative; defaults to one hour
     const clauses = [
@@ -1066,7 +1068,7 @@ export class VelociraptorClient {
     if (os) clauses.push(`os='${os}'`);
     const timeout = Number(opts.timeoutSeconds);
     if (Number.isFinite(timeout) && timeout > 0) clauses.push(`timeout=${Math.floor(timeout)}`); // collection timeout (s)
-    const spec = buildHuntSpec(names, opts.params); // per-artifact parameters (e.g. Hayabusa RuleLevel/RuleStatus)
+    const spec = buildHuntSpec(names, opts.params, opts.paramCheck); // per-artifact parameters (e.g. Hayabusa RuleLevel/RuleStatus)
     if (spec) clauses.push(spec);
     const program = `SELECT hunt(${clauses.join(", ")}) AS Hunt FROM scope()`;
     const { rows, reason } = await this.runRawLogged(program);

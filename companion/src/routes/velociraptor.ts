@@ -11,6 +11,7 @@ import {
   normalizeHuntExpirySeconds,
   type HuntTarget,
   type VeloArtifactInfo,
+  HuntSpecError,
 } from "../integrations/velociraptor/velociraptorApi.js";
 import type { VeloHuntJob } from "../analysis/veloHuntStore.js";
 import { parseDeployHuntBody, deployHuntBodyProblem } from "./huntDeployBody.js";
@@ -493,8 +494,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
         Number(req.body?.expirySeconds) > 0 ? req.body.expirySeconds : bundle.expirySeconds,
       );
 
-      // Resolve the analyst's collection window (undefined = all time, the default). Validation errors
-      // are the analyst's input — fail with 400 BEFORE launching anything.
+      // The analyst's collection window (undefined = all time). Bad input is a 400 BEFORE anything launches.
       let timeScope;
       try {
         timeScope = resolveTimeScope(req.body?.timeScope);
@@ -530,7 +530,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
       logLine(
         `[velociraptor] run bundle "${bundle.name}" (${artifactsToRun.length} artifact(s)${unknownArtifacts.length ? `, ${unknownArtifacts.length} skipped` : ""}${unavailableArtifacts.length ? `, ${unavailableArtifacts.length} missing a tool` : ""}${unheldTools.length ? `, ${unheldTools.length} tool(s) not yet on the server` : ""}), collect in ${waitMinutes}m, expires in ${expirySeconds}s${minSeverity ? `, min severity ${minSeverity}` : ""}${timeoutSeconds ? `, timeout ${timeoutSeconds}s` : ""}`,
       );
-      const huntOpts = { timeoutSeconds, params: huntParams, expirySeconds };
+      const huntOpts = { timeoutSeconds, params: huntParams, paramCheck: pre, expirySeconds };
       const launch = await launchWithUnheldToolHint(unheldTools, () =>
         velo.launchArtifactHunt(artifactsToRun, bundle.name, target, huntOpts),
       );
@@ -590,7 +590,7 @@ export function registerVelociraptorRoutes(app: Express, ctx: RouteContext): voi
       });
     } catch (err) {
       logLine(`[velociraptor] run bundle ERROR: ${(err as Error).message}`);
-      return res.status(502).json({ error: (err as Error).message });
+      return res.status(err instanceof HuntSpecError ? 400 : 502).json({ error: (err as Error).message });
     }
   });
 

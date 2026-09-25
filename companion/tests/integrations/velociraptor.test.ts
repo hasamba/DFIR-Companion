@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { BUILT_IN_BUNDLES } from "../../src/analysis/artifactBundleStore.js";
+import { HuntSpecError } from "../../src/integrations/velociraptor/huntSpec.js";
 import {
   ARTIFACT_CATALOG_TTL_MS,
   parseVqlOutput,
@@ -1282,6 +1283,8 @@ describe("VelociraptorClient.launchArtifactHunt", () => {
     await expect(c.launchArtifactHunt(["Windows.System.Pslist", "bad name'"], "x")).rejects.toThrow(
       /invalid artifact/,
     );
+    // A bundle's own bad artifact name is the analyst's input (a 400 at the route), not a server fault.
+    await expect(c.launchArtifactHunt(["bad name'"], "x")).rejects.toBeInstanceOf(HuntSpecError);
     await expect(c.launchArtifactHunt([], "x")).rejects.toThrow(/no artifacts/);
   });
 
