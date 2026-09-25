@@ -65,6 +65,9 @@ beforeEach(async () => {
     promoteSuperTimeline: vi.fn(async () => {}),
   } as unknown as AnalysisPipeline;
   meta = new SynthMetaStore(cases);
+  // The case already has conclusions: an earlier synthesis finished. Without one there is nothing
+  // to be out of date (see the no-synthesis test at the end).
+  await meta.record("c1", null as never, "2026-04-22T12:00:00.000Z");
   app = createApp(cases, {
     stateStore,
     pipeline,
@@ -195,5 +198,22 @@ describe("the allowed triggers still run (#1599)", () => {
     const res = await request(app).post("/cases/c1/synthesize").send({});
     expect(res.status).toBe(200);
     expect(synthesize).toHaveBeenCalledTimes(1);
+  });
+});
+
+// A new case with no finished synthesis has no conclusions. Changing a setting there must not say
+// "conclusions out of date — press Re-synthesize" (reported on a fresh case after masking was
+// switched off before the first run).
+describe("a case with no finished synthesis never reads as out of date", () => {
+  it("anonymization switch on a case that was never synthesized", async () => {
+    await cases.createCase({ caseId: "c2", name: "n", investigator: "i", aiProvider: null });
+    await new AiControlStore(cases).save("c2", { enabled: false, lastAnalyzedSeq: 0 });
+    const res = await request(app).post("/cases/c2/anon-control").send({ enabled: false });
+    expect(res.status).toBe(200);
+    await settle();
+    expect(synthesize).not.toHaveBeenCalled();
+    const state = await request(app).get("/cases/c2/ai-state");
+    expect(state.body.outOfDate).toBe(false);
+    expect(state.body.detail).not.toContain("out of date");
   });
 });

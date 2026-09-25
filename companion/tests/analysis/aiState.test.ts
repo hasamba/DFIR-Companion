@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { deriveAiState, type AiStateInput } from "../../src/analysis/aiState.js";
+import {
+  deriveAiState,
+  effectiveOutOfDate,
+  PRESIDIO_CLEARED_REASON,
+  type AiStateInput,
+} from "../../src/analysis/aiState.js";
 import type { Job } from "../../src/analysis/jobRegistry.js";
 import type { CustomEntity } from "../../src/analysis/anonymize.js";
 
@@ -202,5 +207,32 @@ describe("deriveAiState — conclusions out of date (#1599)", () => {
   it("running work still wins over out of date", () => {
     const s = deriveAiState({ ...base, jobs: [job()], outOfDate: mark("x") });
     expect(s.state).toBe("analyzing");
+  });
+});
+
+// A case that has never finished a synthesis has no conclusions, so nothing can be out of date. The
+// trigger: a brand-new case, masking switched off before any run, and the pill said "conclusions out
+// of date — press Re-synthesize" about conclusions that did not exist.
+describe("effectiveOutOfDate — no conclusions, nothing out of date", () => {
+  const marker = { reason: "anonymization changed", at: "2026-09-25T10:00:00Z", revision: 1 };
+
+  it("drops the marker when no synthesis has ever finished", () => {
+    expect(effectiveOutOfDate(marker, "")).toBeNull();
+    expect(effectiveOutOfDate(marker, undefined)).toBeNull();
+    expect(effectiveOutOfDate(marker, "   ")).toBeNull();
+  });
+
+  it("keeps the marker once a synthesis has finished", () => {
+    expect(effectiveOutOfDate(marker, "2026-09-25T09:00:00Z")).toBe(marker);
+  });
+
+  it("keeps the Presidio-cleared marker even before the first run: the held run is now ready", () => {
+    const cleared = { ...marker, reason: PRESIDIO_CLEARED_REASON };
+    expect(effectiveOutOfDate(cleared, "")).toBe(cleared);
+  });
+
+  it("returns null with no marker", () => {
+    expect(effectiveOutOfDate(null, "2026-09-25T09:00:00Z")).toBeNull();
+    expect(effectiveOutOfDate(undefined, "")).toBeNull();
   });
 });

@@ -75,6 +75,21 @@ export interface AiStateOutOfDate {
 /** The reason the Presidio route marks with when its last approval clears the gate. */
 export const PRESIDIO_CLEARED_REASON = "presidio-cleared";
 
+/**
+ * The marker as the analyst should see it. A case that has never finished a synthesis has no
+ * conclusions, so no change can make them out of date — the marker is dropped until the first run
+ * (which clears it anyway). The Presidio-cleared marker is the exception: it says the held run is
+ * now ready, which is true before the first run too.
+ */
+export function effectiveOutOfDate<T extends AiStateOutOfDate>(
+  marker: T | null | undefined,
+  lastSynthesizedAt: string | null | undefined,
+): T | null {
+  if (!marker) return null;
+  if (marker.reason === PRESIDIO_CLEARED_REASON) return marker;
+  return lastSynthesizedAt?.trim() ? marker : null;
+}
+
 export interface AiStateInput {
   /** Is any model configured at all (server-wide). */
   aiConfigured: boolean;
