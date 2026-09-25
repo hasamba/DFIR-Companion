@@ -8,6 +8,7 @@ import { projectAlignment } from "../analysis/clockSkew.js";
 import { projectScope } from "../analysis/scopeProject.js";
 import { applyFalsePositive, filterFalsePositiveEvents } from "../analysis/falsePositive.js";
 import { withEventTechniques } from "../analysis/eventTechniques.js";
+import { pruneSessionCommands } from "../analysis/ai/sessionCommandNotes.js";
 import { FindingOutcomeStore, withAnalystOutcomes } from "../analysis/findingOutcome.js";
 import { RemediationStore } from "../analysis/remediationBoundary.js";
 import { ServedLocationStore } from "../analysis/servedLocation.js";
@@ -72,5 +73,6 @@ export async function loadFilteredState(
     outcomes,
   );
   // MITRE completed LAST, from the events that survived both filters — see eventTechniques.ts (#893).
-  return withEventTechniques(applyFalsePositive(withOutcomes, markers));
+  // A session-command note (#1594) shows only while its row survived scope and the FP filter.
+  return pruneSessionCommands(withEventTechniques(applyFalsePositive(withOutcomes, markers)));
 }

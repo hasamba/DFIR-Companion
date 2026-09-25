@@ -66,6 +66,8 @@ export interface FindingCard {
   relatedIocs: string[];
   firstSeen: string;
   status: FindingStatus;
+  /** "Other commands in this session" (#1594), one defanged line each. */
+  sessionCommands?: string[];
 }
 
 export interface InteractiveCaseData {
@@ -142,6 +144,13 @@ function toFindingCard(f: Finding, domains: string[]): FindingCard {
     relatedIocs: f.relatedIocs,
     firstSeen: f.firstSeen,
     status: f.status,
+    ...(f.sessionCommands?.length
+      ? {
+          sessionCommands: f.sessionCommands.map((c) =>
+            defangIndicators(`${c.timestamp || "(undated)"} on ${c.host}: ${c.text}`, domains),
+          ),
+        }
+      : {}),
   };
 }
 
@@ -378,6 +387,7 @@ const SCRIPT = `
         el("p", null, [el("b", { text: "First seen: " }), el("span", { text: f.firstSeen || "—" })]),
         el("p", null, [el("b", { text: "Status: " }), el("span", { text: f.status })]),
         el("p", { text: f.description }),
+        f.sessionCommands && f.sessionCommands.length ? el("p", null, [el("b", { text: "Other commands in this session: " }), el("span", { text: f.sessionCommands.join(" | ") })]) : null,
         f.confidenceReason ? el("p", null, [el("b", { text: "Confidence reason: " }), el("span", { text: f.confidenceReason })]) : null,
         el("p", null, [el("b", { text: "MITRE: " }), el("span", { text: (f.mitreTechniques || []).join(", ") || "—" })]),
         el("p", null, [el("b", { text: "Related IOCs: " }), el("span", { text: (f.relatedIocs || []).join(", ") || "—" })]),

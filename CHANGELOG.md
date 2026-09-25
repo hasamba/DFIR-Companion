@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Other commands in this session** — after synthesis, each Low-or-higher command line (or script/binary file write) from an attack session that no finding names is listed on the closest finding, in the dashboard and the reports (closes #1594)
 - **Negative answers name their evidence** — a collection inventory built in code (per host: raw vs detection-only evidence, cleared logs, recent hunt outcomes) reaches synthesis; an unsettled "not observed" answer becomes partial with one collection step, and a step asking for a cleared log is flagged (closes #1588)
 - **Hayabusa Full bundle** — a built-in Velociraptor bundle that runs Hayabusa alone with every rule level and status, excluding only rules marked noisy
 - **Follow the referee in one click** — a `⚖ follow referee (N)` button on the 2nd opinion panel accepts every pending delta the referee said to accept and rejects every one it said to keep A; deltas with no referee call stay pending
