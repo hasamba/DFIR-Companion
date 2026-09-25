@@ -18,7 +18,7 @@ import { handoffBriefSection } from "./handoffSection.js";
 import { byEventTime } from "../analysis/forensicSort.js";
 import { emptyReportMeta, type ReportMeta, type ReportRevision } from "./reportMeta.js";
 import { deriveGlossary } from "./glossary.js";
-import { blockMd, cellMd, oneLineMd } from "./mdText.js";
+import { blockMd, cellMd, oneLineMd, sessionCommandsMd } from "./mdText.js";
 import { buildAssetGraph, type AssetGraph } from "../analysis/assetGraph.js";
 import { buildEvidenceGraph, buildLateralPaths, type LateralPath } from "../analysis/evidenceGraph.js";
 import { buildAttackPhases, DEFAULT_GAP_SECONDS } from "../analysis/burstDetect.js";
@@ -782,7 +782,7 @@ function investigation(
       // prominent "⚠️ …" caution for a finding a gate lowered, so a hypothesis never reads as fact.
       const caution = findingCautionLine(f);
       if (caution) lines.push(caution);
-      lines.push(blockMd(f.description) || "_no description_");
+      lines.push(blockMd(f.description) || "_no description_", ...sessionCommandsMd(f, eventById));
       if (f.relatedIocs.length) lines.push(`- IOCs: ${f.relatedIocs.join(", ")}`);
       if (f.mitreTechniques.length)
         lines.push(`- MITRE: ${f.mitreTechniques.map(attackTechniqueMd).join(", ")}`);
