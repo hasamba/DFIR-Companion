@@ -163,7 +163,7 @@
           detail.innerHTML = note + gaps + (n ? renderVqlRows(j) : none);
           const ib = detail.querySelector(".hp-collect-inline");
           if (ib) ib.onclick = () => collectHunt(ib.dataset.hid, ib);
-          detail.dataset.loaded = "1";
+          if (!gaps) detail.dataset.loaded = "1";   // an incomplete read is fetched again on the next open
         })
         .catch((e) => { detail.innerHTML = `<div data-safe-style="color:var(--sev-high);font-size:12px">error: ${esc(e.message)} — restart the companion server if this 404s</div>`; });
     });
