@@ -39,10 +39,12 @@ const STORY_TEXT_MAX_CHARS = 320;
 const STORY_HEADLINE_MAX_CHARS = 400;
 const ELLIPSIS = "…";
 
-// The one synthMeta field the story reads. Structural on purpose: importing SynthMeta would add a
+// The synthMeta fields the story reads. Structural on purpose: importing SynthMeta would add a
 // workflow -> ai boundary edge that cockpit.ts already pays for (scripts/check-boundaries.mjs).
 export interface StorySynthesisMeta {
   lastSynthesizedAt?: string;
+  // #1599: set when a case change marked the conclusions out of date instead of starting a run.
+  outOfDate?: { reason: string } | null;
 }
 
 export interface CockpitStoryHeadline {
@@ -76,6 +78,9 @@ export interface CockpitStory {
   attackerPath: string;
   synthesizedAt: string | null;
   staleEventCount: number;
+  // #1599: the case changed since the conclusion was written without adding rows (a dismissed
+  // finding, a new scope window…) — staleEventCount cannot see that, the synth-meta marker can.
+  conclusionsOutOfDate: boolean;
 }
 
 function capText(text: string, max: number): string {
@@ -246,5 +251,6 @@ export function deriveCockpitStory(state: InvestigationState, synthMeta?: StoryS
     attackerPath: leadSentences(state.attackerPath),
     synthesizedAt,
     staleEventCount: staleEventCount(state.forensicTimeline, synthesizedAt),
+    conclusionsOutOfDate: Boolean(synthMeta?.outOfDate),
   };
 }

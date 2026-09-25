@@ -170,6 +170,13 @@ export function coverageLabel(c: SynthesisCoverage): string {
   return s;
 }
 
+// #1599: why the stored conclusions no longer match the case, and which mark said so.
+const outOfDateSchema = z.object({
+  reason: z.string().catch(""),
+  at: z.string().catch(""),
+  revision: z.number().int().nonnegative().catch(0),
+});
+
 export const synthMetaSchema = z.object({
   lastSynthesizedAt: z.string().catch(""),
   lastDiff: z
@@ -208,9 +215,16 @@ export const synthMetaSchema = z.object({
   promotedShown: z.array(z.string()).optional().catch(undefined),
   // Second-opinion agreement (issue #74): set only by secondOpinion() runs — see secondOpinionPerfSchema.
   secondOpinionPerf: secondOpinionPerfSchema.nullable().optional().catch(undefined),
+  // #1599: only four actions start a synthesis. Every other change to the case marks the conclusions
+  // out of date instead, and the analyst decides when to pay for a run. `revision` counts the marks
+  // and never goes back, so a run can tell whether a mark landed after it started — a clock cannot
+  // (two writes in the same millisecond). A real run clears `outOfDate`; see record().
+  revision: z.number().int().nonnegative().optional().catch(undefined),
+  outOfDate: outOfDateSchema.nullable().optional().catch(undefined),
 });
 
 export type SynthMeta = z.infer<typeof synthMetaSchema>;
+export type ConclusionsOutOfDate = z.infer<typeof outOfDateSchema>;
 
 const EMPTY: SynthMeta = { lastSynthesizedAt: "", lastDiff: null };
 
@@ -226,6 +240,9 @@ export interface SynthPerfMetrics {
   parseRetries?: number; // #74: retries the synthesis JSON parse needed
   modelEvidenceRequests?: StoredEvidenceRequest[]; // #1554: what the model said it was not shown
   promotedShown?: string[]; // #1586: promoted rows this run showed the model — no longer "new"
+  // #1599: the out-of-date revision the run read before it loaded the case. NOT persisted: record()
+  // uses it to decide whether a mark made during the run survives. See record().
+  startRevision?: number;
 }
 
 export type ModelPerfSnapshot = Pick<
@@ -287,14 +304,47 @@ export class SynthMetaStore {
 
   // Record a completed synthesis run: stamp the time, store the findings diff, and
   // optionally store performance metrics (duration, event/IOC counts).
+  //
+  // #1599: `perf.startRevision` is the revision the run read before it loaded the case. A mark with a
+  // HIGHER revision landed while the run was in flight, so the run never saw that change and the
+  // marker stays. Anything else is cleared: this run's conclusions are current. `revision` itself is
+  // carried over — it must never go back, or an old run could clear a newer mark.
   record(
     caseId: string,
     diff: FindingsDiff,
     at: string = new Date().toISOString(),
-    perf?: SynthPerfMetrics,
+    perfIn?: SynthPerfMetrics,
   ): Promise<SynthMeta> {
+    const { startRevision, ...perf } = perfIn ?? {};
     return synthMetaLock.runExclusive(caseId, async () => {
-      const meta: SynthMeta = { lastSynthesizedAt: at, lastDiff: diff, ...perf };
+      // An unreadable file must not stop a run from being recorded — that was never a failure here.
+      const cur = await this.load(caseId).catch(() => ({ ...EMPTY }));
+      const pending = cur.outOfDate;
+      const keep = pending && startRevision !== undefined && pending.revision > startRevision;
+      const meta: SynthMeta = {
+        lastSynthesizedAt: at,
+        lastDiff: diff,
+        ...perf,
+        ...(cur.revision !== undefined ? { revision: cur.revision } : {}),
+        ...(keep ? { outOfDate: pending } : {}),
+      };
+      await atomicWrite(this.path(caseId), JSON.stringify(meta, null, 2));
+      return meta;
+    });
+  }
+
+  /** The current out-of-date revision (0 before any mark). Read by synthesize() before it loads the case. */
+  async revision(caseId: string): Promise<number> {
+    return (await this.load(caseId).catch(() => ({ ...EMPTY }))).revision ?? 0;
+  }
+
+  // #1599: the case changed in a way the stored conclusions do not reflect. Load-merge-save like the
+  // two methods below, so the rest of the card survives. The newest reason wins.
+  markOutOfDate(caseId: string, reason: string, at: string = new Date().toISOString()): Promise<SynthMeta> {
+    return synthMetaLock.runExclusive(caseId, async () => {
+      const cur = await this.load(caseId).catch(() => ({ ...EMPTY }));
+      const revision = (cur.revision ?? 0) + 1;
+      const meta: SynthMeta = { ...cur, revision, outOfDate: { reason, at, revision } };
       await atomicWrite(this.path(caseId), JSON.stringify(meta, null, 2));
       return meta;
     });

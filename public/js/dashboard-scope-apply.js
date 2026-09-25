@@ -12,7 +12,7 @@
       end: utcInputToIso(document.getElementById("scopeEnd").value),
     };
     document.getElementById("status").textContent =
-      "applying scope & re-synthesizing…";
+      "applying scope…";
     fetch(`/cases/${caseId}/scope`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -27,18 +27,19 @@
         // writing them back is not this path's business. (The server's own scope_changed echo
         // does write them, with its normalised ISO form — see the handler.)
         DfirScope.confirm(s.start, s.end);
-        // The view is scope-consistent immediately (client-side projection); AI
-        // re-synthesis continues in the background and is reported via AI status.
+        // The view is scope-consistent immediately (client-side projection). A scope change starts
+        // no synthesis (#1599): the conclusions are marked out of date and the AI status pill says
+        // so, until the analyst presses AI Re-synthesize.
         document.getElementById("status").textContent = !DfirScope.isEmpty()
-          ? "scope applied — AI re-synthesizing in background (see AI status)"
-          : "scope cleared — AI re-synthesizing in background (see AI status)";
+          ? "scope applied — conclusions out of date (see AI status)"
+          : "scope cleared — conclusions out of date (see AI status)";
         fetch(`/cases/${caseId}/state`)
           .then((r) => r.json())
           .then(render)
           .catch(() => {});
         // These panels are derived server-side straight from the (now re-scoped) forensic
-        // timeline — no AI call needed, so refresh them right away instead of waiting on the
-        // background re-synthesis's WS "state" broadcast (which never fires when AI is off).
+        // timeline — no AI call needed, so refresh them right away: no synthesis follows a scope
+        // change (#1599), so no WS "state" broadcast will do it.
         scheduleAssetGraphReload();
         scheduleEvidenceGraphReload();
         schedulePhasesReload();

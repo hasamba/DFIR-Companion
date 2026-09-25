@@ -334,6 +334,8 @@ interface SynthesisOutcome {
   highSeverityBackfillCount: number;
   observationsBlock: string;
   parentRunId: string | undefined;
+  /** #1599: the out-of-date revision read before the case load — see SynthMetaStore.record. */
+  startRevision: number;
 }
 
 /**
@@ -367,6 +369,7 @@ async function recordSynthesisOutcome(
     findingsCount: o.next.findings.length, // #74
     highSeverityBackfillCount: o.highSeverityBackfillCount, // #74
     parseRetries: o.call.parseRetries, // #74
+    startRevision: o.startRevision, // #1599: not persisted — decides whether the out-of-date mark survives
     // #1554: the model's own "I was not shown this" requests. Persisted because the second-look
     // sweep no longer runs inside this call — the analyst presses it later, from another process.
     modelEvidenceRequests: (o.call.delta.evidenceRequests ?? []).map((r) => ({
@@ -642,6 +645,9 @@ export async function synthesize(
   const synthProvider = opts.provider ?? ctx.opts.synthesisProvider ?? ctx.requireProvider("synthesis");
   ctx.warnOnPromptDrift(); // once per process: a stale synthesis-prompt override silently drops shipped capabilities
   throwIfSuperseded(opts.signal); // a run superseded before it started spends no state load and no prompt
+  // #1599: read BEFORE the case load, so a change marked after this point is one this run cannot see
+  // and its "conclusions out of date" marker survives the run's record.
+  const startRevision = (await ctx.opts.synthMetaStore?.revision(caseId)) ?? 0;
   const loaded = await ctx.opts.stateStore.load(caseId);
   if (loaded.forensicTimeline.length === 0) return loaded;
   const aliasIndex = await resolveHostsOrThrow(ctx, caseId, loaded);
@@ -747,6 +753,7 @@ export async function synthesize(
     highSeverityBackfillCount,
     observationsBlock,
     parentRunId: opts.analysisParentRunId,
+    startRevision,
   });
   // Notify on new/escalated findings (issue #58). Best-effort, fire-and-forget — never blocks or
   // fails synthesis. Only on a real run, so a skipped (unchanged) re-synthesis sends nothing.

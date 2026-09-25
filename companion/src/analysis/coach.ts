@@ -171,7 +171,7 @@ function isConfirmedOrDismissed(finding: Finding): boolean {
  * deliberately carries no "done" field, because playbook.ts keeps the per-task todo/in_progress/
  * done/skipped status in a side file so a re-synthesis can never wipe analyst progress. So count the
  * next-step-derived tasks that are still open. `staleReSynth` is NOT a stand-in for that — it badges
- * "stale, re-synthesis queued" after an FP cascade (see fpCascade.ts), so filtering on it produces a
+ * "stale — press Re-synthesize" after an FP cascade (see fpCascade.ts), so filtering on it produces a
  * count that never falls, no matter how much of the playbook the analyst has worked through.
  *
  * No next_step-sourced tasks at all means no playbook store is configured, or one that has never

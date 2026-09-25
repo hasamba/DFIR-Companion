@@ -13,6 +13,7 @@ import { isValidCaseId } from "../storage/caseStore.js";
 import { normalizeHuntPlatform, HUNT_PLATFORMS, type HuntPlatform } from "../analysis/huntPlatforms.js";
 import { visionEnv } from "../config/aiEnv.js";
 import { sendPipelineError } from "./presidioApproval.js";
+import { PRESIDIO_CLEARED_REASON } from "../analysis/aiState.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -25,7 +26,7 @@ import type { RouteContext } from "./context.js";
  * is shared back with createApp beyond two already-graduated members reused via ctx:
  *   - applyDeobfuscationToCase — the shared deobfuscation sweep (owned by createApp; also fired by
  *     the push-ingest seam), graduated for the import domain and reused by POST /deobfuscate here.
- *   - resynthesizeInBackground — the shared post-mutation re-synthesis kick, likewise graduated.
+ *   - markConclusionsOutOfDate — what a change here does instead of starting a synthesis (#1599).
  * Plus the stable ctx surface (store, options, serverLogger).
  *
  * Domain-local state is rebuilt in-module from ctx.store: the three stateless disk-backed stores
@@ -55,21 +56,27 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
   const presidioPending = new PresidioPendingStore(store);
 
   /**
-   * Restart the synthesis the approval gate was holding, once nothing is left to approve.
+   * Tell the analyst the held case is ready, once nothing is left to approve.
    *
-   * The chip is driven by the pending list, so it vanishes on the last approval — and until this
-   * existed, that was the ONLY thing that happened. No run was kicked and no ai_status was emitted,
-   * so the header pill sat on "AI: on hold — Presidio…" forever and the analyst had to know to press
-   * Re-synthesize. Reported verbatim: "i handled all, the presidio chip is gone but ai does not
-   * continue."
+   * The chip is driven by the pending list, so it vanishes on the last approval. Before #579 that was
+   * the ONLY thing that happened: the header pill sat on "AI: on hold — Presidio…" forever. Reported
+   * verbatim: "i handled all, the presidio chip is gone but ai does not continue."
    *
-   * ONLY ON THE LAST ONE, the same rule the sibling gate documents in routes/hostDuplicates.ts:
-   * kicking per approval would spend one run per finding, and every run but the last would re-throw
-   * on whatever is still pending. The two gates are the same shape and report the same "blocked"
-   * status, so they must resolve the same way.
+   * It used to answer that by starting a synthesis. #1599 took that away: clearing a gate is not one
+   * of the four synthesis triggers. The pill now reads "ready — press Re-synthesize" instead of
+   * "on hold", and the analyst starts the run. ONLY ON THE LAST ONE: an earlier approval leaves the
+   * gate holding, and the pill must keep saying so.
    */
-  function resumeIfClear(caseId: string, remaining: readonly unknown[]): void {
-    if (remaining.length === 0) ctx.resynthesizeInBackground(caseId);
+  async function readyIfClear(caseId: string, remaining: readonly unknown[]): Promise<void> {
+    if (remaining.length === 0) await ctx.markConclusionsOutOfDate(caseId, PRESIDIO_CLEARED_REASON);
+  }
+
+  /** Did the analyst change anything the model would see? Field by field — key order is not a change. */
+  function anonPolicyChanged(a: AnonControl, b: AnonControl): boolean {
+    if (a.enabled !== b.enabled || a.redactSecrets !== b.redactSecrets || a.presidio !== b.presidio)
+      return true;
+    const keys = Object.keys(a.categories) as (keyof AnonControl["categories"])[];
+    return keys.some((k) => a.categories[k] !== b.categories[k]);
   }
   const visionIsLocal = isLocalAiProvider(
     visionEnv(process.env, "PROVIDER"),
@@ -85,9 +92,9 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
   const presidioConfigured = (process.env.DFIR_PRESIDIO_URL ?? "").trim() !== "";
 
   // Anonymization control: GET reports the control + whether screenshots are exposed (anon on +
-  // external vision) + whether Presidio is available. POST updates it and, when `enabled` flips,
-  // forces a re-synth so conclusions reflect the new wire policy (the skip-if-unchanged hash is keyed
-  // on real inputs and won't notice).
+  // external vision) + whether Presidio is available. POST updates it and, when the policy
+  // changes, marks the conclusions out of date (#1599) — the analyst presses Re-synthesize, which
+  // forces a run (the skip-if-unchanged hash is keyed on real inputs and won't notice the policy).
   app.get("/cases/:id/anon-control", async (req: Request, res: Response) => {
     try {
       const c = await anonControl.load(req.params.id);
@@ -117,8 +124,11 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
         presidio: typeof req.body?.presidio === "boolean" ? req.body.presidio : cur.presidio,
       };
       await anonControl.save(req.params.id, next);
-      if (next.enabled !== cur.enabled && options.pipeline && options.pipeline.hasSynthesisProvider()) {
-        void options.pipeline.synthesize(req.params.id, { force: true }).catch(() => {});
+      // #1599: a policy change alters what the model would see, so the stored conclusions no longer
+      // match — but it starts no run. This used to call synthesize() directly, with no job and no busy
+      // check, and ran alongside the AI-on catch-up synthesis for seven minutes on a lab case.
+      if (anonPolicyChanged(cur, next)) {
+        await ctx.markConclusionsOutOfDate(req.params.id, "anonymization changed");
       }
       if (next.enabled !== cur.enabled) {
         void logActivity(options.activityLogStore, options.onActivity, req.params.id, {
@@ -288,7 +298,7 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
         action: "presidio-approve",
         detail: `Approved a Presidio ${entities[0].category} finding for masking`,
       });
-      resumeIfClear(caseId, rest);
+      await readyIfClear(caseId, rest);
       return res.json({ pending: rest });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -316,7 +326,7 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
         action: "presidio-suppress",
         detail: "Suppressed a Presidio finding (marked not PII)",
       });
-      resumeIfClear(caseId, rest);
+      await readyIfClear(caseId, rest);
       return res.json({ pending: rest });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -374,8 +384,8 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
   });
 
   // On-demand deobfuscation (#97): scan the case's forensic timeline for obfuscated command
-  // lines, decode them, extract hidden IOCs, and re-synthesize so findings reflect the decoded
-  // content. Idempotent: already-decoded events are skipped.
+  // lines, decode them, extract hidden IOCs, and mark the conclusions out of date (#1599) so
+  // the analyst re-synthesizes over the decoded content. Idempotent: already-decoded events are skipped.
   app.post("/cases/:id/deobfuscate", async (req: Request, res: Response) => {
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     const caseId = req.params.id;
@@ -386,7 +396,7 @@ export function registerAnonymizationRoutes(app: Express, ctx: RouteContext): vo
       // shallower result.
       const reanalyzeStale = req.body?.reanalyze === true || req.query?.reanalyze === "1";
       const result = await ctx.applyDeobfuscationToCase(caseId, { reanalyzeStale });
-      if (result.deobfuscated > 0) ctx.resynthesizeInBackground(caseId);
+      if (result.deobfuscated > 0) await ctx.markConclusionsOutOfDate(caseId, "commands deobfuscated"); // #1599
       logLine(
         `[deobfuscate] ${caseId} apply — decoded ${result.deobfuscated} event(s), ` +
           `re-analyzed ${result.reanalyzed}, +${result.newIocs} new IOC(s)`,

@@ -156,7 +156,11 @@
       const first = s.running && s.running[0];
       if (first && first.kind === "import") paintIngest((s.detail || first.label) + heldNote);
       else setAi("analyzing", (s.detail || "working…") + heldNote);
-    } else setAi("idle", s.detail || "up to date");
+    } else if (s.outOfDate)
+      // #1599: a case change that started no synthesis. Not the green "up to date" — the stored
+      // conclusions no longer match the case until the analyst presses AI Re-synthesize.
+      setAi("stale", s.detail || "conclusions out of date — press Re-synthesize");
+    else setAi("idle", s.detail || "up to date");
   }
 
   async function refreshAiState(caseId) {

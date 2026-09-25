@@ -69,7 +69,7 @@ import type { RouteContext } from "./context.js";
  * logLine/errLine mirror createApp's (serverLogger.info/error) so the moved call sites stay verbatim.
  *
  * Shared surface — reuses stable ctx fields (store, options, serverLogger, hasAiProvider), stable helpers
- * (dispatchNotify, resynthesizeInBackground, syncPlaybook) and the live irisClient() accessor, plus five
+ * (dispatchNotify, markConclusionsOutOfDate, syncPlaybook) and the live irisClient() accessor, plus five
  * members GRADUATED for this domain (see context.ts):
  *   - ensureDropFolders — create-case makes the drop inbox; the drop watcher (stays) also calls it.
  *   - runStateExclusive — the manual-event write serializes on the per-case state mutex the staying
@@ -90,7 +90,6 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
     dispatchNotify,
     ensureDropFolders,
     runStateExclusive,
-    resynthesizeInBackground,
     reloadImporters,
   } = ctx;
   // Module-private wrappers mirroring createApp's logLine/errLine (serverLogger.info/error) so the
@@ -592,8 +591,9 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
   registerCasePushRoutes(app, ctx);
 
   // Manually add a forensic event the AI didn't catch. Appended to the timeline (kept sorted by
-  // event time), then re-synthesized so it weaves into findings/MITRE (a high-severity manual
-  // event earns a finding via the backfill). Synthesis preserves the timeline, so it survives.
+  // event time). The conclusions are then marked out of date (#1599): the analyst's Re-synthesize
+  // weaves it into findings/MITRE (a high-severity manual event earns a finding via the backfill).
+  // Synthesis preserves the timeline, so it survives.
   app.post("/cases/:id/events", async (req: Request, res: Response) => {
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     const caseId = req.params.id;
@@ -607,7 +607,7 @@ export function registerCaseLifecycleRoutes(app: Express, ctx: RouteContext): vo
         await stateStore.save(next);
         options.onState?.(next);
       });
-      resynthesizeInBackground(caseId);
+      await ctx.markConclusionsOutOfDate(caseId, "manual event added"); // #1599: no run of its own
       logLine(`[manual] ${caseId} added event ${event.id} (${event.severity})`);
       return res.status(201).json(event);
     } catch (err) {
