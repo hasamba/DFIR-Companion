@@ -319,6 +319,39 @@ describe("auto-run on last resolve", () => {
   });
 });
 
+// #1599: the list must BECOME empty. A retried resolve changes nothing and must not buy a run.
+describe("auto-run fires on a transition, not on an empty list", () => {
+  it("does not kick again when the resolve that emptied the list is retried", async () => {
+    const root = await mkdtemp(join(tmpdir(), "dfir-hostdup-retry-"));
+    const cases = new CaseStore(root);
+    await cases.createCase({ caseId: "c1", name: "n", investigator: "i", aiProvider: null });
+    const stateStore = new StateStore(cases);
+    const s = emptyState("c1");
+    s.forensicTimeline.push(ev("a", "WS01"), ev("b", "WS01.example.com"));
+    await stateStore.save(s);
+    const kick = vi.fn();
+    const retryApp = express();
+    retryApp.use(express.json());
+    registerHostDuplicateRoutes(retryApp, {
+      store: cases,
+      options: {
+        stateStore,
+        assetOverridesStore: new AssetOverridesStore(cases),
+        hostDuplicateDismissalStore: new HostDuplicateDismissalStore(cases),
+      },
+      resynthesizeInBackground: kick,
+    } as unknown as RouteContext);
+    const pair = { canonical: "ws01.example.com", other: "ws01" };
+    await request(retryApp).post("/cases/c1/host-duplicates/dismiss").send(pair);
+    expect(kick).toHaveBeenCalledTimes(1);
+    await request(retryApp).post("/cases/c1/host-duplicates/dismiss").send(pair);
+    await request(retryApp)
+      .post("/cases/c1/host-duplicates/dismiss")
+      .send({ canonical: "fs01.example.com", other: "fs01" });
+    expect(kick).toHaveBeenCalledTimes(1);
+  });
+});
+
 // #1167: a non-blocking network-identity candidate must not delay the kick that resolving the
 // LAST BLOCKING (shortname-fqdn) pair earns — synthesis was never held on network-identity rows
 // in the first place (hostDuplicateGate.ts's own pendingNearDuplicates never reads them).

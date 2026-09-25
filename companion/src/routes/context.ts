@@ -179,6 +179,10 @@ export interface RouteContext {
   //   dispatchImport            — route a detected import kind to the matching pipeline.importX(...).
   //   demoteForensicForCase     — drop sub-threshold telemetry to the super-timeline; returns state.
   //   resynthesizeInBackground  — fire the AI re-synthesis (+ auto-enrich) after an import lands.
+  //                               ONLY an allowed synthesis trigger may call it (#1599) — see
+  //                               tests/architecture/synthesisEntryPoints.test.ts.
+  //   markConclusionsOutOfDate  — what every OTHER case change calls instead (#1599): persist
+  //                               "conclusions out of date" and let the analyst press Re-synthesize.
   //   pushImportCheckpoint      — snapshot pre-import state onto the #76 undo stack (best-effort).
   //   applyWhitelistToCase / applyNsrlToCase / applyDeobfuscationToCase — pre-synthesis passes that
   //                               auto-mark known-good indicators + decode obfuscated commands.
@@ -186,6 +190,7 @@ export interface RouteContext {
   dispatchImport(kind: string, caseId: string, text: string, base: ImportBase): Promise<unknown>;
   demoteForensicForCase(caseId: string): Promise<InvestigationState>;
   resynthesizeInBackground(caseId: string): void;
+  markConclusionsOutOfDate(caseId: string, reason: string): Promise<void>;
   pushImportCheckpoint(caseId: string, beforeState: InvestigationState, label: string): Promise<void>;
   applyWhitelistToCase(caseId: string): Promise<{ matched: number; added: number }>;
   applyNsrlToCase(caseId: string): Promise<{ matchedIocs: number; matchedEvents: number; added: number }>;

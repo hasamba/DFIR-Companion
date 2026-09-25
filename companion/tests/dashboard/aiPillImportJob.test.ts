@@ -143,3 +143,34 @@ describe("the pill re-derives when the last job ends (#1525)", () => {
     expect(refreshed).toEqual([]);
   });
 });
+
+// #1599: dismissing a finding, changing the scope or clearing the Presidio gate starts no synthesis.
+// The pill must not paint the green "up to date" over conclusions the case no longer supports.
+describe("the derived pill when the conclusions are out of date (#1599)", () => {
+  it("paints the stale class with the server's wording", async () => {
+    const { pill, api } = pillHarness({
+      state: "idle",
+      detail: "conclusions out of date — press Re-synthesize",
+      holds: [],
+      running: [],
+      livePaused: false,
+      outOfDate: true,
+    });
+    await api.refreshAiState("INC-1");
+    expect(pill.className).toBe("ai-stale");
+    expect(pill.textContent).toBe("AI: conclusions out of date — press Re-synthesize");
+  });
+
+  it("keeps the green idle when nothing is out of date", async () => {
+    const { pill, api } = pillHarness({
+      state: "idle",
+      detail: "up to date",
+      holds: [],
+      running: [],
+      livePaused: false,
+      outOfDate: false,
+    });
+    await api.refreshAiState("INC-1");
+    expect(pill.className).toBe("ai-idle");
+  });
+});

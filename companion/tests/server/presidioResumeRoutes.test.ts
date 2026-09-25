@@ -1,17 +1,15 @@
-// Clearing the last Presidio approval must restart the synthesis it was holding.
+// Clearing the last Presidio approval must tell the analyst the case is ready — and start nothing.
 //
-// REPORTED: "i had presidio blocking, i handled all, the presidio chip is gone but ai does not
-// continue." Exactly right. The chip is driven by the pending list, so it disappears on the last
-// approval — but nothing kicked the held run, and nothing emitted a new ai_status either, so the
-// header pill stayed on "AI: on hold — Presidio…" indefinitely. The only way forward was to press
-// Re-synthesize and know to do so.
+// REPORTED (#579): "i had presidio blocking, i handled all, the presidio chip is gone but ai does not
+// continue." The chip is driven by the pending list, so it disappeared on the last approval, but the
+// header pill stayed on "AI: on hold — Presidio…" indefinitely.
 //
-// The sibling gate has done this from the start: hostDuplicates.ts calls resynthesizeInBackground
-// when the last pair resolves. These two gates are the same shape and must behave the same way —
-// especially now that both report the same "blocked" status, which invites the same expectation.
+// #579 answered that by starting a synthesis on the last approval. #1599 took that away: clearing a
+// gate is not one of the four synthesis triggers (AI on, Re-synthesize, import completion, the last
+// duplicate-host resolve). The last approval now marks the case "ready — press Re-synthesize", and
+// the analyst decides when to pay for the run. The kick spy stays wired so a regression shows up.
 //
-// Only on the LAST one, for the reason the host-duplicate route documents: kicking per approval
-// would spend a run per item, and every run but the last would re-throw on what is still pending.
+// Only on the LAST one: an earlier approval leaves the gate holding, and the pill must keep saying so.
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -23,9 +21,11 @@ import { StateStore } from "../../src/analysis/stateStore.js";
 import { PresidioPendingStore } from "../../src/analysis/presidioPending.js";
 import { registerAnonymizationRoutes } from "../../src/routes/anonymization.js";
 import type { RouteContext } from "../../src/routes/context.js";
+import { PRESIDIO_CLEARED_REASON } from "../../src/analysis/aiState.js";
 
 let app: express.Express;
 let kick: ReturnType<typeof vi.fn>;
+let mark: ReturnType<typeof vi.fn>;
 let pendingStore: PresidioPendingStore;
 
 /** Seed `values` as pending Presidio findings and wire the routes with a spy on the kick. */
@@ -39,6 +39,7 @@ async function seed(values: string[]) {
     values.map((value) => ({ value, category: "PERSON" as const })),
   );
   kick = vi.fn();
+  mark = vi.fn(async () => {});
   app = express();
   app.use(express.json());
   // The route builds its own stores from ctx.store, so only the case store is wired here. It also
@@ -49,6 +50,7 @@ async function seed(values: string[]) {
     options: { stateStore: new StateStore(cases) },
     serverLogger: { info: () => {}, warn: () => {}, error: () => {} },
     resynthesizeInBackground: kick,
+    markConclusionsOutOfDate: mark,
   } as unknown as RouteContext);
 }
 
@@ -61,18 +63,20 @@ describe("clearing the last pending Presidio finding", () => {
     await seed(["Jane Doe"]);
   });
 
-  it("restarts the held synthesis when the last one is approved", async () => {
+  it("marks the case ready when the last one is approved, and starts no synthesis", async () => {
     const res = await approve("Jane Doe");
     expect(res.status).toBe(200);
     expect(res.body.pending).toEqual([]);
-    expect(kick).toHaveBeenCalledWith("c1");
+    expect(mark).toHaveBeenCalledWith("c1", PRESIDIO_CLEARED_REASON);
+    expect(kick).not.toHaveBeenCalled();
   });
 
-  it("restarts the held synthesis when the last one is suppressed", async () => {
+  it("marks the case ready when the last one is suppressed, and starts no synthesis", async () => {
     const res = await suppress("Jane Doe");
     expect(res.status).toBe(200);
     expect(res.body.pending).toEqual([]);
-    expect(kick).toHaveBeenCalledWith("c1");
+    expect(mark).toHaveBeenCalledWith("c1", PRESIDIO_CLEARED_REASON);
+    expect(kick).not.toHaveBeenCalled();
   });
 });
 
@@ -81,16 +85,16 @@ describe("clearing one of several pending Presidio findings", () => {
     await seed(["Jane Doe", "John Smith"]);
   });
 
-  it("does not restart synthesis while another is still pending", async () => {
+  it("does not mark the case ready while another is still pending", async () => {
     await approve("Jane Doe");
-    expect(kick).not.toHaveBeenCalled();
+    expect(mark).not.toHaveBeenCalled();
   });
 
-  it("restarts exactly once, on the last one, whichever way it is resolved", async () => {
+  it("marks it ready exactly once, on the last one, whichever way it is resolved", async () => {
     await approve("Jane Doe");
     await suppress("John Smith");
-    expect(kick).toHaveBeenCalledWith("c1");
-    expect(kick).toHaveBeenCalledTimes(1);
+    expect(mark).toHaveBeenCalledTimes(1);
+    expect(kick).not.toHaveBeenCalled();
   });
 });
 
@@ -100,10 +104,10 @@ describe("a malformed resolve", () => {
     await seed(["Jane Doe"]);
   });
 
-  it("does not restart synthesis", async () => {
+  it("does not mark the case ready", async () => {
     const res = await request(app).post("/cases/c1/presidio-pending/suppress").send({ value: "  " });
     expect(res.status).toBe(400);
-    expect(kick).not.toHaveBeenCalled();
+    expect(mark).not.toHaveBeenCalled();
     expect(await pendingStore.load("c1")).toHaveLength(1);
   });
 });

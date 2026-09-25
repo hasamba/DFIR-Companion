@@ -3,8 +3,8 @@
 // async) re-synthesis the dashboard keeps showing answers and next-steps that rested on the rejected
 // finding. This module is the PURE core of a synchronous reconsideration the FP-mark route runs the
 // instant a marker is saved: any key question or next-step that depended on a now-rejected finding is
-// flipped to a neutral "re-evaluate" state and badged "stale — re-synthesis queued", so the analyst is
-// never shown a conclusion the evidence no longer supports.
+// flipped to a neutral "re-evaluate" state and badged "stale — press Re-synthesize" (#1599: marking
+// starts no run), so the analyst is never shown a conclusion the evidence no longer supports.
 //
 // The SAME reconsiderKeyQuestions transform is reused by synthesize() (its long-standing deterministic
 // backstop that a key question can never keep citing a finding that's gone) — with staleReSynth off,

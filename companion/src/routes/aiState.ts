@@ -3,6 +3,7 @@ import { deriveAiState, type AiState } from "../analysis/aiState.js";
 import { loadPendingHostDuplicates } from "../analysis/hostScopeLoad.js";
 import { PresidioPendingStore } from "../analysis/presidioPending.js";
 import { AiControlStore } from "../analysis/aiControl.js";
+import { SynthMetaStore } from "../analysis/synthMeta.js";
 import type { RouteContext } from "./context.js";
 
 /**
@@ -64,16 +65,26 @@ export function registerAiStateRoutes(app: Express, ctx: RouteContext): void {
     }
   }
 
+  /** #1599: the "conclusions out of date" marker, or null. Fail-quiet like the gates above. */
+  async function outOfDate(caseId: string) {
+    try {
+      return (await (options.synthMetaStore ?? new SynthMetaStore(store)).load(caseId)).outOfDate ?? null;
+    } catch {
+      return null;
+    }
+  }
+
   app.get("/cases/:id/ai-state", async (req: Request, res: Response) => {
     const caseId = req.params.id;
     try {
       if (!(await store.caseExists(caseId))) {
         return res.status(404).json({ error: `case ${caseId} does not exist` });
       }
-      const [dupes, presidio, isEnabled] = await Promise.all([
+      const [dupes, presidio, isEnabled, stale] = await Promise.all([
         hostDuplicates(caseId),
         presidioPending(caseId),
         enabled(caseId),
+        outOfDate(caseId),
       ]);
       const state: AiState = deriveAiState({
         // Mirrors server.ts's own hasAiProvider: the explicit flag wins, the pipeline answers
@@ -83,6 +94,7 @@ export function registerAiStateRoutes(app: Express, ctx: RouteContext): void {
         hostDuplicates: dupes,
         presidioPending: presidio,
         jobs: options.jobManager?.list(caseId) ?? [],
+        outOfDate: stale,
       });
       return res.status(200).json(state);
     } catch (err) {

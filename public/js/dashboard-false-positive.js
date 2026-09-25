@@ -198,7 +198,7 @@
           closeFalsePositiveModal();
           if (onDone) onDone();
           document.getElementById("status").textContent =
-            "marked false positive — AI is re-synthesizing (see AI status)";
+            "marked false positive — conclusions out of date (see AI status)";
         } catch (err) {
           document.getElementById("fpMsg").textContent =
             `error: ${err.message}`;

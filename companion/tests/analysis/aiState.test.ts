@@ -169,3 +169,38 @@ describe("deriveAiState — the quiet case", () => {
     expect(deriveAiState({ aiConfigured: true, enabled: true }).state).toBe("idle");
   });
 });
+
+// #1599: an action that no longer starts a synthesis leaves the case "out of date" — the pill must
+// not keep saying "up to date" over conclusions the analyst just changed underneath.
+describe("deriveAiState — conclusions out of date (#1599)", () => {
+  const mark = (reason: string) => ({ reason, at: "2026-09-25T10:00:00.000Z", revision: 1 });
+
+  it("says the conclusions are out of date and names Re-synthesize", () => {
+    const s = deriveAiState({ ...base, outOfDate: mark("false positive marked") });
+    expect(s.state).toBe("idle");
+    expect(s.outOfDate).toBe(true);
+    expect(s.detail).toBe("conclusions out of date — press Re-synthesize");
+  });
+
+  it("says ready, not on hold, once the last Presidio approval clears the gate", () => {
+    const s = deriveAiState({ ...base, outOfDate: mark("presidio-cleared") });
+    expect(s.state).toBe("idle");
+    expect(s.detail).toBe("ready — press Re-synthesize");
+  });
+
+  it("reports up to date with no marker", () => {
+    const s = deriveAiState({ ...base, outOfDate: null });
+    expect(s.outOfDate).toBe(false);
+    expect(s.detail).toBe("up to date");
+  });
+
+  it("a hold still wins over out of date", () => {
+    const s = deriveAiState({ ...base, presidioPending: [FINDING], outOfDate: mark("x") });
+    expect(s.state).toBe("blocked");
+  });
+
+  it("running work still wins over out of date", () => {
+    const s = deriveAiState({ ...base, jobs: [job()], outOfDate: mark("x") });
+    expect(s.state).toBe("analyzing");
+  });
+});

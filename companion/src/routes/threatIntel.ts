@@ -44,7 +44,7 @@ import type { RouteContext } from "./context.js";
  *     module's POST/DELETE /nsrl/db routes swap it at runtime, and createApp's applyNsrlToCase reads
  *     it, so the read+reassign go through the graduated accessor+setter rather than a captured copy.
  * Plus already-graduated members reused here: enrichHealth() (shared provider reachability cache),
- * applyWhitelistToCase / applyNsrlToCase (the false-positive sweeps), resynthesizeInBackground.
+ * applyWhitelistToCase / applyNsrlToCase (the false-positive sweeps), markConclusionsOutOfDate (#1599).
  *
  * Domain-local state is (re)built in-module from ctx.options/ctx.store: the static provider catalogue
  * (ALL_KNOWN_PROVIDERS) and the stateless per-case stores (enrichControl, customerStore,
@@ -561,14 +561,14 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   });
 
   // Apply the whitelist to THIS case's current IOCs now (the analyst just added rules, or wants to
-  // sweep an already-imported case). Marks matches false-positive, then re-synthesizes so they drop.
+  // sweep an already-imported case). Marks matches false-positive and the conclusions out of date (#1599).
   app.post("/cases/:id/ioc-whitelist/apply", async (req: Request, res: Response) => {
     if (!options.iocWhitelistStore) return res.status(501).json({ error: "IOC whitelist not configured" });
     if (!options.stateStore) return res.status(501).json({ error: "state store not configured" });
     const caseId = req.params.id;
     try {
       const result = await ctx.applyWhitelistToCase(caseId);
-      if (result.added > 0) ctx.resynthesizeInBackground(caseId);
+      if (result.added > 0) await ctx.markConclusionsOutOfDate(caseId, "IOC whitelist applied"); // #1599
       logLine(`[whitelist] ${caseId} apply — matched ${result.matched}, added ${result.added}`);
       return res.status(200).json({ ...result, legitimate: await falsePositives.load(caseId) });
     } catch (err) {
@@ -722,7 +722,7 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
   });
 
   // Apply the NSRL set to THIS case now (the analyst just loaded a set, or wants to sweep an
-  // already-imported case). Marks matches legitimate, then re-synthesizes so they drop from findings.
+  // already-imported case). Marks matches legitimate and the conclusions out of date (#1599).
   app.post("/cases/:id/nsrl/apply", async (req: Request, res: Response) => {
     if (!options.nsrlStore && !ctx.nsrlDb())
       return res.status(501).json({ error: "NSRL not configured (no hash set or RDS database)" });
@@ -730,7 +730,7 @@ export function registerThreatIntelRoutes(app: Express, ctx: RouteContext): void
     const caseId = req.params.id;
     try {
       const result = await ctx.applyNsrlToCase(caseId);
-      if (result.added > 0) ctx.resynthesizeInBackground(caseId);
+      if (result.added > 0) await ctx.markConclusionsOutOfDate(caseId, "NSRL applied"); // #1599
       logLine(
         `[nsrl] ${caseId} apply — matched ${result.matchedIocs} IOC(s) + ${result.matchedEvents} event(s), added ${result.added}`,
       );

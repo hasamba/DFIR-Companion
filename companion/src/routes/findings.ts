@@ -40,8 +40,8 @@ import type { RouteContext } from "./context.js";
  *
  * Pure structural move out of createApp (see routes/system.ts for the conventions). Nothing here is
  * shared back with createApp beyond one already-graduated member reused via ctx:
- *   - resynthesizeInBackground — the shared post-mutation re-synthesis kick (owned by createApp,
- *     graduated for the import domain); the false-positive + scope mutations reuse it.
+ *   - markConclusionsOutOfDate — what the false-positive, scope and source-trust mutations call instead
+ *     of starting a synthesis (#1599).
  * Plus the stable ctx surface (store, options).
  *
  * Domain-local state is rebuilt in-module from ctx.store:
@@ -64,7 +64,7 @@ import type { RouteContext } from "./context.js";
  * floor, which belongs to the aiSynthesis domain, not analyst annotations).
  */
 export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
-  const { store, options, resynthesizeInBackground, dispatchNotify } = ctx;
+  const { store, options, markConclusionsOutOfDate, dispatchNotify } = ctx;
 
   // Domain-local stateless disk-backed stores, rebuilt from ctx.store (see module header).
   const falsePositives = new FalsePositiveStore(store);
@@ -119,11 +119,11 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
   };
 
   // Immediate FP cascade (investigation-guidance #12): the instant markers are saved, synchronously
-  // reconsider the STORED conclusions a background re-synthesis would otherwise leave stale for the
-  // seconds it runs — key questions + next-steps that rested on a now-rejected finding (badged "stale —
-  // re-synthesis queued"), and hypotheses whose supporting evidence was just rejected. Best-effort: a
-  // failure here must never fail the FP marking itself. Runs under the state lock so it can't race the
-  // re-synthesis's read-modify-write. The authoritative re-synthesis (kicked right after) clears the flags.
+  // reconsider the STORED conclusions that stay stale until the analyst re-synthesizes (#1599: marking
+  // starts no run) — key questions + next-steps that rested on a now-rejected finding (badged "stale —
+  // press Re-synthesize"), and hypotheses whose supporting evidence was just rejected. Best-effort: a
+  // failure here must never fail the FP marking itself. Runs under the state lock so it can't race a
+  // running synthesis's read-modify-write. The next real synthesis clears the flags.
   const cascadeFalsePositive = async (caseId: string, markers: FalsePositiveMarker[]): Promise<void> => {
     try {
       const stateStore = options.stateStore;
@@ -251,7 +251,7 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
         targetId: marker.ref,
       });
       await cascadeFalsePositive(req.params.id, next); // #12: neutralize dependent conclusions NOW
-      resynthesizeInBackground(req.params.id); // re-derive conclusions without it
+      await markConclusionsOutOfDate(req.params.id, "false positive marked"); // #1599: no run of its own
       return res.status(200).json(next);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -306,7 +306,7 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
         detail: `${built.length} item(s) marked false-positive`,
       });
       await cascadeFalsePositive(req.params.id, next); // #12: neutralize dependent conclusions NOW
-      resynthesizeInBackground(req.params.id); // ONE re-synthesis for the whole batch
+      await markConclusionsOutOfDate(req.params.id, "false positives marked"); // #1599: no run of its own
       return res.status(200).json(next);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -328,7 +328,7 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
         detail: removedMarker ? `${removedMarker.kind} ${removedMarker.ref}` : `marker ${id}`,
         ...(removedMarker ? { targetType: removedMarker.kind, targetId: removedMarker.ref } : {}),
       });
-      resynthesizeInBackground(req.params.id);
+      await markConclusionsOutOfDate(req.params.id, "false positive removed"); // #1599
       return res.status(200).json(next);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -424,7 +424,7 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
             ? `scope set: ${scope.start ?? "…"} to ${scope.end ?? "…"}`
             : "scope cleared",
       });
-      resynthesizeInBackground(req.params.id); // re-derive within the window
+      await markConclusionsOutOfDate(req.params.id, "scope window changed"); // #1599: no run of its own
       return res.status(200).json(scope);
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });
@@ -477,7 +477,7 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
 
   // Per-source trust (#66). GET returns the built-in DEFAULT map + this case's overrides (the dashboard
   // renders defaults, lets the analyst override a noisy source for the case). PUT replaces the overrides
-  // (sanitized to [0,1]) and re-synthesizes so the new weights re-apply to merge + confidence.
+  // (sanitized to [0,1]) and marks the conclusions out of date (#1599): the next synthesis re-applies them.
   app.get("/cases/:id/source-trust", async (req: Request, res: Response) => {
     if (!options.sourceTrustStore) return res.status(501).json({ error: "source trust not configured" });
     try {
@@ -493,7 +493,7 @@ export function registerFindingsRoutes(app: Express, ctx: RouteContext): void {
     try {
       const saved = await options.sourceTrustStore.save(req.params.id, req.body?.overrides ?? req.body ?? {});
       options.onSourceTrust?.(req.params.id);
-      resynthesizeInBackground(req.params.id); // re-apply the new weights to merge + confidence
+      await markConclusionsOutOfDate(req.params.id, "source trust changed"); // #1599: no run of its own
       return res.status(200).json({ defaults: DEFAULT_SOURCE_TRUST, overrides: saved });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });

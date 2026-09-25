@@ -676,7 +676,7 @@ export interface InvestigationQuestion {
   collect?: CollectDirective;
   // Immediate FP cascade (investigation-guidance #12): set by reconsiderKeyQuestions when the FP-mark
   // route synchronously reset this question because a supporting finding was just rejected — the answer
-  // is neutralized NOW and this badges "stale — re-synthesis queued" until the background re-synthesis
+  // is neutralized NOW and this badges "stale — press Re-synthesize" until the next real synthesis
   // recomputes the authoritative answer (which clears the flag). Absent = current.
   staleReSynth?: boolean;
 }
