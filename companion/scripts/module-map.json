@@ -591,6 +591,7 @@
     "passwordSprayFanout.ts": "analysis/ingest",
     "pesieveImport.ts": "analysis/ingest",
     "persistenceSniperImport.ts": "analysis/ingest",
+    "persistenceStockOs.ts": "analysis/ingest",
     "prefetchExecution.ts": "analysis/ingest",
     "processAccess.ts": "analysis/ingest",
     "recordIdentity.ts": "analysis/ingest",
