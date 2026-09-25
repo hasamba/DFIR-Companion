@@ -73,6 +73,11 @@
   // the value it already held. Treating that as a replacement retired the token of the search that
   // had just been issued, so the reply was discarded and NO server search ever painted.
   var seenState = null;
+  // A jump waiting for the unfiltered timeline (#1663). Jumping to an event while a search answer
+  // is painted clears the search, and the whole timeline then comes back ASYNCHRONOUSLY — so the
+  // jump can only find its page once that answer has painted. One-shot, last jump wins, and tied
+  // to the case it was made in: { caseId, run, fail }.
+  var afterClear = null;
 
   function caseIdOf() {
     var el = document.getElementById("caseId");
@@ -171,6 +176,7 @@
         // and the single-writer gate in tests/dashboard/dashboardState.test.ts), so the new
         // timeline reaches the page through it rather than by poking DfirState directly.
         paint(state);
+        settleAfterClear(caseId, asked, true);
       })
       .catch(function () {
         // Offline, a cancelled case, or a non-JSON error body. The rows already on screen are still
@@ -191,7 +197,33 @@
         // A plain failure of the CURRENT question. It is not recorded as answered, so the next
         // refresh retries -- retrying here would spin against an offline server.
         painted = null;
+        settleAfterClear(caseId, asked, false);
       });
+  }
+
+  /**
+   * Hand a waiting jump its answer, once. It runs only for an UNFILTERED answer in the case it was
+   * made in: an answer to a new term means the analyst has moved on, and the jump is dropped. A
+   * failed reload is reported, because the analyst pressed a jump and the search box is now empty
+   * over rows that are still the old search's matches.
+   */
+  function settleAfterClear(caseId, asked, ok) {
+    var job = afterClear;
+    if (!job) return;
+    afterClear = null;
+    if (asked || job.caseId !== caseId) return;
+    if (ok) job.run();
+    else job.fail();
+  }
+
+  /** Run `run` once the unfiltered timeline has painted; `fail` if that reload fails (#1663). */
+  function afterUnfilteredPaint(run, fail) {
+    afterClear = { caseId: caseIdOf(), run: run, fail: fail };
+  }
+
+  /** Whether the rows on screen are a server search's matches rather than the case's timeline. */
+  function showingSearchedSubset() {
+    return painted !== null && painted !== answerKey(caseIdOf(), questionFor(""));
   }
 
   /** Whether the server held back matches this view has not asked for yet. */
@@ -254,6 +286,10 @@
       seenState = next;
       if (!replaced || applying) return;
       invalidate();
+      // A waiting jump belongs to one case. Another case's timeline landing ends it; a live update
+      // of the same case does not -- the re-ask below (or the superseded request's) still answers it.
+      var nextCase = next && typeof next.caseId === "string" ? next.caseId : caseIdOf();
+      if (afterClear && afterClear.caseId !== nextCase) afterClear = null;
       // Abandoning the request is only half of it. What has just been painted is the UNFILTERED
       // case, while the search box still holds a term -- so the analyst is looking at rows their
       // own filter excludes, with nothing to say the search stopped applying. Ask again. Our own
@@ -266,6 +302,8 @@
     loadSearchedTimeline: loadSearchedTimeline,
     loadMoreMatches: loadMoreMatches,
     hasMoreMatches: hasMoreMatches,
+    afterUnfilteredPaint: afterUnfilteredPaint,
+    showingSearchedSubset: showingSearchedSubset,
     // Test seam: whether an answer for this case+term is already painted.
     paintedKey: function () { return painted; },
   };

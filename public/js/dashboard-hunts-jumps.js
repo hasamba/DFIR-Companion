@@ -299,12 +299,24 @@
   // otherwise every row they drop before the event pushes the jump to a later page. When one of
   // them hides the event, the jump REFUSES and says which lens to change: it does not switch the
   // analyst's view or lens for them, and it does not clear their filters for nothing.
-  function jumpToEvent(id) {
+  //
+  // A server search answer on screen holds only the matches (#1663), so neither "is it here?" nor
+  // "which page?" can be answered from it. The jump clears the search and finishes once the whole
+  // timeline has come back — see jumpThroughSearchClear. `missing` is the re-run's message for an
+  // event the whole timeline does not hold; a direct jump stays silent there, as it always has.
+  function jumpToEvent(id, missing) {
     id = String(id);
     const sec = document.getElementById("sec-timeline");
     if (sec) sec.classList.remove("collapsed");
     if (swLocateInTable(id)) return; // already on the current page
-    if (!(DfirState.lastFt() || []).some((e) => String(e.id) === id)) return; // not in the in-scope timeline
+    if (searchedSubsetShown()) {
+      jumpThroughSearchClear(id);
+      return;
+    }
+    if (!(DfirState.lastFt() || []).some((e) => String(e.id) === id)) {
+      if (typeof missing === "string" && missing) showToast(missing, "warn");
+      return; // not in the in-scope timeline
+    }
     const lensBlock = timelineLensHiding(id);
     if (lensBlock) {
       showToast(lensBlock, "warn");
@@ -328,6 +340,37 @@
     renderTimelineEvents(DfirState.lastFt() || []);
     swLocateInTable(id);
   }
+
+  function searchedSubsetShown() {
+    return typeof DfirTimelineSearch !== "undefined" && !!DfirTimelineSearch.showingSearchedSubset
+      && DfirTimelineSearch.showingSearchedSubset();
+  }
+
+  // Clear the search, then jump again once the unfiltered timeline has painted (#1663). A lens that
+  // hides an event already in the matches refuses now, before any filter is cleared (#1658). The
+  // re-run is dropped if the analyst changed a filter while the reload was out: the render's
+  // filter key moves, and jumping would clear their new choice.
+  function jumpThroughSearchClear(id) {
+    const inMatches = (DfirState.lastFt() || []).some((e) => String(e.id) === id);
+    const lensBlock = inMatches ? timelineLensHiding(id) : "";
+    if (lensBlock) {
+      showToast(lensBlock, "warn");
+      return;
+    }
+    resetTimelineViewFilters(); // starts the unfiltered reload
+    const key = _tlFilterKey;
+    DfirTimelineSearch.afterUnfilteredPaint(
+      () => {
+        if (_tlFilterKey === key) jumpToEvent(id, inMatches ? JUMP_PAST_LOADED : JUMP_NOT_IN_TIMELINE);
+      },
+      () => showToast(JUMP_RELOAD_FAILED, "warn"),
+    );
+  }
+  const JUMP_PAST_LOADED =
+    "That event is past the part of the timeline the dashboard loads without a search. Search for it to see it.";
+  const JUMP_NOT_IN_TIMELINE = "That event is not in the forensic timeline.";
+  const JUMP_RELOAD_FAILED =
+    "The timeline could not be reloaded without the search, so the jump did not reach the event. Try again.";
 
   // The rows the two surviving lenses let through, as renderTimelineEvents applies them — or null
   // when neither is on. The corroboration count reads every source: that is what the reset leaves
