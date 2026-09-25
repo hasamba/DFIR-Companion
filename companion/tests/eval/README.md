@@ -63,7 +63,7 @@ turns an absent provider into exit `3` for the protected workflow instead of a c
 
 ## Protected real-model workflow
 
-`.github/workflows/ai-evaluation.yml` runs weekly and on demand in the protected
+`.github/workflows/ai-evaluation.yml` runs only on demand (no schedule, because each run costs money) in the protected
 `ai-evaluation` GitHub Environment. Set environment variables `DFIR_EVAL_PROVIDER` and
 `DFIR_EVAL_MODEL`, secret `DFIR_EVAL_KEY`, and optionally `DFIR_EVAL_BASELINE_PATH`. The job uploads
 only metrics, status, hashes, timing, token counts and cost—never prompts, evidence, model output or

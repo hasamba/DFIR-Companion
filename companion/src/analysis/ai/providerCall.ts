@@ -34,6 +34,7 @@ import {
 } from "../presidio.js";
 import type { PresidioPendingStore } from "../presidioPending.js";
 import type { InvestigationState } from "../stateTypes.js";
+import { servedModels } from "../servedModels.js";
 
 /**
  * The AI-call gate (#418).
@@ -120,6 +121,13 @@ async function analyzeProvider(
   try {
     const result = await provider.analyze(req);
     const usage = result.usage;
+    // #1601: which concrete model served this call — for the job row and the run manifest.
+    servedModels.record({
+      provider: provider.name,
+      alias: provider.model,
+      resolvedModel: usage?.resolvedModel,
+      ...(req.signal ? { signal: req.signal } : {}),
+    });
     void ctx.opts.operationalMetrics?.record({
       type: "ai",
       phase: safeAiPhase(label),

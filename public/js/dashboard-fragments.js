@@ -70,8 +70,11 @@ function jobRowHtml(view) {
   // more often than it rebuilds them, and a span conditional on the FIRST render is a node the
   // patch path cannot find. Placed after the status and its buttons so the header line is exactly
   // what it was before the model existed; the CSS gives it the next line, above the detail.
-  const model = `<span class="job-model"${j.model ? "" : ' data-safe-style="display:none"'}`
-    + ` title="The AI model this job uses">${esc(j.model || "")}</span>`;
+  // #1601: modelLabel is the server's "sonnet → Sonnet 5" / "sonnet (last run: Sonnet 5)"; the bare
+  // alias is the fallback for a row from a server that does not send one.
+  const modelText = j.modelLabel || j.model || "";
+  const model = `<span class="job-model"${modelText ? "" : ' data-safe-style="display:none"'}`
+    + ` title="The AI model this job uses. After the arrow: the version that answered. Last run: the version this model answered with most recently.">${esc(modelText)}</span>`;
   // The progress bar (#1428), same rule as the model span: always emitted, hidden until the job
   // reports progress, so the in-place patch has a node to fill. jobBarPercent is a global from
   // js/dashboard-values.js, loaded before this file.
