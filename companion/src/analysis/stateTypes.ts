@@ -416,6 +416,22 @@ export interface Finding {
   control?: ControlDisposition;
   executionSource?: OutcomeSource;
   controlSource?: OutcomeSource;
+  // Quiet commands from this finding's attack session that no finding names (#1594). A deterministic
+  // note set after grading (analysis/ai/sessionCommandNotes.ts), never evidence the finding claims:
+  // relatedEventIds and the description are untouched. Recomputed every synthesis; a projection shows
+  // an entry only while its event is in the visible forensic timeline (scope and false positives).
+  sessionCommands?: SessionCommand[];
+}
+
+/** One quiet command (or script/binary file write) noted on the closest finding (#1594). */
+export interface SessionCommand {
+  eventId: string;
+  timestamp: string;
+  host: string;
+  kind: "process" | "file-write";
+  /** The command line, or "<process> wrote <path>" for a file write. One line, capped. */
+  text: string;
+  accounts?: string[];
 }
 
 export interface Thread {

@@ -1,3 +1,5 @@
+import type { Finding } from "../analysis/stateTypes.js";
+
 // One home for "untrusted text → safe Markdown fragment".
 //
 // Report text — finding titles and descriptions, hypothesis titles and reasons, analyst free-text,
@@ -46,4 +48,31 @@ export function blockMd(value: string): string {
       /^ {0,3}(#{1,6}(\s|$)|=+[ \t]*$|-{2,}[ \t]*$)/.test(line) ? line.replace(/^([ \t]*)/, "$1\\") : line,
     )
     .join("\n");
+}
+
+/**
+ * A finding's "other commands in this session" note (#1594) as Markdown list lines.
+ *
+ * The command text is attacker-chosen, so each one goes in a code span whose backtick fence is longer
+ * than any backtick run inside it (CommonMark), on one line — it can neither open a section nor
+ * borrow emphasis or link syntax. Only entries whose row is in the report's projected timeline are
+ * shown (scope and false positives already applied).
+ */
+export function sessionCommandsMd(f: Finding, visible: ReadonlyMap<string, unknown>): string[] {
+  const shown = (f.sessionCommands ?? []).filter((c) => visible.has(c.eventId));
+  if (!shown.length) return [];
+  return [
+    "- Other commands in this session (not named above):",
+    ...shown.map((c) => {
+      const who = c.accounts?.length ? ` (${oneLineMd(c.accounts.join(", "))})` : "";
+      return `  - ${oneLineMd(c.timestamp || "(undated)")} on ${codeSpan(c.host)}${who}: ${codeSpan(c.text)}`;
+    }),
+  ];
+}
+
+function codeSpan(value: string): string {
+  const text = oneLineMd(value);
+  const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = "`".repeat(longest + 1);
+  return `${fence} ${text} ${fence}`;
 }
