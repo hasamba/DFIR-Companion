@@ -23,8 +23,8 @@ import { registerSigmaCompileRoutes } from "./sigmaCompile.js";
  * Pure structural move out of createApp (see routes/system.ts for the conventions). Nothing here is
  * shared back with createApp beyond the stable ctx surface (options, serverLogger) and
  * one already-graduated member reused via ctx:
- *   - resynthesizeInBackground — the shared post-mutation re-synthesis kick (owned by createApp; fired
- *     here after /super-timeline/promote merges events into the forensic timeline). No new graduations.
+ *   - markConclusionsOutOfDate — called after /super-timeline/promote merges events into the forensic
+ *     timeline, instead of starting a synthesis (#1599). No new graduations.
  *
  * BOUNDARY: the interleaved /cases/:id/dwell-windows routes (analysisGraph domain) and
  * /cases/:id/activity-log route (caseLifecycle domain) were intentionally LEFT in createApp — they
@@ -35,7 +35,7 @@ import { registerSigmaCompileRoutes } from "./sigmaCompile.js";
 export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
   registerHuntWorkbenchRoutes(app, ctx);
   registerSigmaCompileRoutes(app);
-  const { options, resynthesizeInBackground } = ctx;
+  const { options, markConclusionsOutOfDate } = ctx;
   // Module-private wrapper mirroring createApp's logLine (serverLogger.info), so the moved handler
   // bodies keep their original `logLine(...)` calls verbatim.
   const logLine = (msg: string): void => ctx.serverLogger.info(msg);
@@ -302,7 +302,7 @@ export function registerTimelineRoutes(app: Express, ctx: RouteContext): void {
         importedAt: new Date().toISOString(),
         intent: "manual",
       });
-      resynthesizeInBackground(req.params.id);
+      await markConclusionsOutOfDate(req.params.id, "rows promoted"); // #1599: no run of its own
       return res.status(200).json({ promoted: events.length });
     } catch (err) {
       return res.status(500).json({ error: (err as Error).message });

@@ -351,6 +351,8 @@
 .ai-unknown { background: var(--border-color); color: var(--text-muted); }
 .ai-off { background: var(--border-color); color: var(--text-muted); }
 .ai-idle { background: var(--success-bg); color: var(--sev-low); }
+/* #1599: idle, but the conclusions no longer match the case — amber text, no pulse: nothing is running. */
+.ai-stale { background: var(--warning-bg-strong); color: var(--sev-medium); }
 .ai-analyzing { background: var(--warning-bg-strong); color: var(--sev-medium); }
 .ai-error { background: var(--danger-bg); color: var(--sev-critical); }
 /* A gate waiting on the analyst — amber like the chips it points at, deliberately NOT the red of

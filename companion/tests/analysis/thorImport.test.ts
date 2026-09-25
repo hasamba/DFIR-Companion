@@ -160,3 +160,33 @@ describe("parseThorReport", () => {
     expect(r.dropped).toBeGreaterThanOrEqual(2);
   });
 });
+
+// #1603. A file inside an archive carries only the archive entry's modified time — for mimikatz,
+// its 2013 build time. The archive's own creation time on the host is when the file arrived.
+describe("parseThorReport — a file inside an archive (#1603)", () => {
+  const ARCHIVE_MEMBER = {
+    time: "2026-09-24T09:44:33Z",
+    hostname: "WS-01",
+    level: "Warning",
+    module: "Filescan",
+    message: "Malware file found",
+    file: "C:\\e\\tools.zip\\Win32\\mimidrv.sys",
+    modified: "2013-01-22T16:50:10.7357693Z",
+    archive_file: "C:\\e\\tools.zip",
+    archive_type: "ZIP",
+    archive_created: "2026-09-24T01:58:12.8919861-07:00",
+    archive_modified: "2026-09-24T01:58:13.4946244-07:00",
+    reason_1: "YARA rule mimikatz / mimikatz",
+  };
+
+  it("dates the member by the archive's creation time, not the entry's inherited modified time", () => {
+    const e = parseThorReport(jsonl(ARCHIVE_MEMBER)).events[0];
+    expect(Date.parse(e.timestamp)).toBe(Date.parse(ARCHIVE_MEMBER.archive_created));
+    expect(e.timestamp.startsWith("2026-09-24")).toBe(true);
+  });
+
+  it("keeps a file's own created time when THOR reports one", () => {
+    const e = parseThorReport(jsonl({ ...ARCHIVE_MEMBER, created: "2026-09-24T08:58:30Z" })).events[0];
+    expect(e.timestamp).toBe("2026-09-24T08:58:30Z");
+  });
+});

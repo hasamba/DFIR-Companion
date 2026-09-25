@@ -60,7 +60,20 @@ export interface AiState {
    * genuinely held at a gate as merely paused — hiding the decision the analyst has to make.
    */
   livePaused: boolean;
+  /**
+   * #1599: the stored conclusions no longer match the case. Only four actions start a synthesis;
+   * every other change marks this instead, and the pill says so rather than "up to date".
+   */
+  outOfDate: boolean;
 }
+
+/** The synth-meta out-of-date marker, structurally — see analysis/synthMeta.ts. */
+export interface AiStateOutOfDate {
+  reason: string;
+}
+
+/** The reason the Presidio route marks with when its last approval clears the gate. */
+export const PRESIDIO_CLEARED_REASON = "presidio-cleared";
 
 export interface AiStateInput {
   /** Is any model configured at all (server-wide). */
@@ -70,6 +83,8 @@ export interface AiStateInput {
   hostDuplicates?: readonly NearDuplicate[];
   presidioPending?: readonly CustomEntity[];
   jobs?: readonly Job[];
+  /** #1599: the synth-meta out-of-date marker, or null/absent when the conclusions are current. */
+  outOfDate?: AiStateOutOfDate | null;
 }
 
 const ACTIVE: readonly Job["status"][] = ["running", "queued"];
@@ -119,7 +134,8 @@ export function deriveAiState(input: AiStateInput): AiState {
   const running = active.map((job) => ({ kind: job.kind, label: job.label ?? job.kind }));
 
   const livePaused = !input.enabled;
-  const common = { holds, running, livePaused };
+  const outOfDate = Boolean(input.outOfDate);
+  const common = { holds, running, livePaused, outOfDate };
 
   // "Off" means nothing can run AT ALL, which is only true with no model configured. The per-case
   // toggle is deliberately NOT here — see AiState.livePaused.
@@ -147,6 +163,16 @@ export function deriveAiState(input: AiStateInput): AiState {
       detail: last.error || last.detail || `${last.kind} ${last.status}`,
       ...common,
     };
+  }
+
+  if (input.outOfDate) {
+    // A cleared gate is not a change to the evidence: the run it held simply never happened, so the
+    // case is ready rather than stale. Both leave the run to the analyst.
+    const detail =
+      input.outOfDate.reason === PRESIDIO_CLEARED_REASON
+        ? "ready — press Re-synthesize"
+        : "conclusions out of date — press Re-synthesize";
+    return { state: "idle", detail, ...common };
   }
 
   return {

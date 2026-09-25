@@ -124,6 +124,10 @@
         text: `stale — ${n} event${n === 1 ? "" : "s"} since synthesis`,
         stale: true,
       };
+    // #1599: a dismissed finding or a new scope window adds no rows, so the count above cannot
+    // see it — the server's out-of-date marker can.
+    if (story.conclusionsOutOfDate)
+      return { text: "stale — conclusions out of date", stale: true };
     return {
       text: `synthesis ${cockpitAge(story.synthesizedAt)}`,
       stale: false,
