@@ -141,7 +141,7 @@ describe("runWindowsDnsConnJoin with pre-collected connections (#1636)", () => {
     timestamp: new Date(T0).toISOString(),
     canonical: {
       target: { kind: "host", name: H },
-      dns: { returned: [{ kind: "address", value: A1 }] },
+      dns: { vantage: "endpoint" as const, returned: [{ kind: "address", value: A1 }] },
       network: { destination: { address: A1, port: 443 } },
       evidence: { rawRecords: [{ locator: "r0" }] },
     },
@@ -165,5 +165,26 @@ describe("runWindowsDnsConnJoin with pre-collected connections (#1636)", () => {
     collectWindowsConnCandidate(conns, { ...row(), timestamp: "not a time" });
     collectWindowsConnCandidate(conns, { ...row(), canonical: { target: { kind: "host", name: H } } });
     expect(conns).toEqual([{ host: H, ts: T0, destinationIp: A1, destinationPort: 443 }]);
+  });
+
+  it("a resolver-vantage row is neither a DNS candidate nor a connection candidate (#1643)", () => {
+    const base = row();
+    const r = {
+      ...base,
+      canonical: { ...base.canonical, dns: { ...base.canonical.dns, vantage: "resolver" as const } },
+    };
+    runWindowsDnsConnJoin([r], new Map(), new Map());
+    expect(r.canonical.dns).not.toHaveProperty("joinState");
+    expect(r.aggKey).toBe("k");
+    const conns: SiemConnCandidate[] = [];
+    collectWindowsConnCandidate(conns, r);
+    expect(conns).toEqual([]);
+  });
+
+  it("a DNS row with no vantage fails closed — it is not an endpoint candidate (#1643)", () => {
+    const base = row();
+    const r = { ...base, canonical: { ...base.canonical, dns: { returned: base.canonical.dns.returned } } };
+    runWindowsDnsConnJoin([r], new Map(), new Map());
+    expect(r.canonical.dns).not.toHaveProperty("joinState");
   });
 });
