@@ -407,6 +407,7 @@ function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): Forensi
       events.find((e) => e.assetRecord && (e.asset ?? "") === (primary.asset ?? ""))?.assetRecord,
     message: primary.message ?? events.find((e) => e.message)?.message,
     veloUrl: primary.veloUrl ?? events.find((e) => e.veloUrl)?.veloUrl,
+    partlyReadArtifact: events.find((e) => e.partlyReadArtifact)?.partlyReadArtifact, // any member (#1651)
     sha256: events.find((e) => e.sha256)?.sha256,
     md5: events.find((e) => e.md5)?.md5,
     path: primary.path ?? events.find((e) => e.path)?.path,

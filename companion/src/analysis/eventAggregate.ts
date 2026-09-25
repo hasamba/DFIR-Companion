@@ -121,6 +121,8 @@ export function createEventAggregator(
         // group clamp-eligible and no later row can clear it. Deliberately NOT in
         // applyEventIdentity, which clears a field the incoming row lacks (#739).
         if (m.yearInferred) existing.yearInferred = true;
+        // Sticky for the same reason (#1651): a group holding one partly read row is not a full read.
+        if (m.partlyReadArtifact) existing.partlyReadArtifact ??= m.partlyReadArtifact;
         const t = m.timestamp;
         if (t) {
           if (!existing.timestamp || t < existing.timestamp) existing.timestamp = t;
@@ -164,6 +166,7 @@ export function createEventAggregator(
           ...(m.sources?.length ? { sources: [...m.sources] } : {}),
           ...(m.fileModified ? { fileModified: m.fileModified } : {}),
           ...(m.yearInferred ? { yearInferred: true } : {}),
+          ...(m.partlyReadArtifact ? { partlyReadArtifact: m.partlyReadArtifact } : {}),
           ...(m.sharingMarking ? { sharingMarking: m.sharingMarking } : {}),
           // Sandbox rows must stay recognisable as lab evidence through aggregation — the origin is
           // what keeps them out of host correlation. Rows sharing a key share an origin by construction.

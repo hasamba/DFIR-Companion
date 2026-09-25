@@ -261,6 +261,7 @@ export interface RouteContext {
       minSeverity?: Severity;
       hostFallback?: string;
       veloUrl?: string;
+      partlyReadArtifact?: string; // the read had no source list: stamp every row (#1651)
     },
   ): Promise<{ addedEvents: number; addedIocs: number; storedName: string }>;
   ingestVeloUploads(

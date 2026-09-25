@@ -152,6 +152,26 @@ describe("importArtifactsUnderJob", () => {
     expect(lines.some((l) => l.includes("Cut") && /row cap/.test(l))).toBe(true);
   });
 
+  it("tells the ingest which reads were partial, so it stamps their rows (#1651)", async () => {
+    const seen: Array<[string, boolean]> = [];
+    await importArtifactsUnderJob(
+      deps([]),
+      "c1",
+      "label",
+      ["Part", "Full"],
+      async (art) =>
+        art === "Part" ? { rows: [{ x: 1 }], sourcesUnknown: true as const } : { rows: [{ x: 2 }] },
+      async (art, _rows, read) => {
+        seen.push([art, read.partlyRead]);
+        return { addedEvents: 1, addedIocs: 0 };
+      },
+    );
+    expect(seen).toEqual([
+      ["Part", true],
+      ["Full", false],
+    ]);
+  });
+
   it("logs a not-read artifact even when a later ingest fails the job", async () => {
     const lines: string[] = [];
     await expect(

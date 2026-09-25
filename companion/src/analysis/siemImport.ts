@@ -67,7 +67,7 @@ export interface SiemImportOptions {
 }
 
 // A delta-shaped forensic event (matches deltaSchema.forensicEvents), produced deterministically.
-export interface SiemEvent extends Pick<ForensicEvent, "origin" | "assetRecord"> {
+export interface SiemEvent extends Pick<ForensicEvent, "origin" | "assetRecord" | "partlyReadArtifact"> {
   id: string;
   timestamp: string;
   description: string;
@@ -592,7 +592,7 @@ export function isSuspiciousCmd(image: string, cmd: string): "strong" | "weak" |
   return LOLBINS.has(base) && !NOISY_LOLBINS.has(base) ? "weak" : null;
 }
 
-export interface MappedEvent extends Pick<ForensicEvent, "origin" | "assetRecord"> {
+export interface MappedEvent extends Pick<ForensicEvent, "origin" | "assetRecord" | "partlyReadArtifact"> {
   timestamp: string;
   description: string;
   severity: Severity;
