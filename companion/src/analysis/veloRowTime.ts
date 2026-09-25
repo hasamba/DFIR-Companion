@@ -12,6 +12,7 @@
 // room under the file-size ratchet. Pure — no I/O, no mutation.
 
 import { getCI, getPath, isObject, normalizeTime, str } from "./siemImport.js";
+import { toUtcIso } from "./timeUtc.js";
 
 type Row = Record<string, unknown>;
 
@@ -21,31 +22,106 @@ type Row = Record<string, unknown>;
 const COMPACT_UTC_RE = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/;
 
 // ISO for a compact UTC time; "" when the digits are not a real calendar time (month 13, Feb 29 of a
-// common year, hour 24). The round trip through Date catches every rollover. Null when not that shape.
+// common year, hour 24). Null when not that shape.
 function compactUtcTime(s: string): string | null {
   const m = COMPACT_UTC_RE.exec(s.trim());
   if (!m) return null;
-  const iso = `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}Z`;
-  const ms = Date.parse(iso);
-  if (Number.isNaN(ms)) return "";
-  return new Date(ms).toISOString().replace(".000Z", "Z") === iso ? iso : "";
+  return canonicalOrEmpty(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}Z`);
+}
+
+// A canonical UTC ISO time with its parts: YYYY-MM-DDTHH:MM:SS, an optional fraction of any length, Z.
+const CANONICAL_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?Z$/;
+// Go's time.String form, which Velociraptor prints for some nested times: "2025-12-05 02:41:36 +0000 UTC".
+const GO_TIME_RE = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}(?:\.\d+)?) ([+-]\d{4})(?: [A-Za-z]{1,6})?$/;
+const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+// The leading date and clock of an ISO-like string, checked BEFORE an offset conversion: Date rolls
+// "2024-02-30T10:00:00+02:00" over to March 1 instead of rejecting it.
+const LEADING_PARTS_RE = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/;
+// Epoch digits as a string (a CSV export): 10 digits are seconds, 13 are milliseconds.
+const EPOCH_S_RE = /^\d{10}(?:\.\d+)?$/;
+const EPOCH_MS_RE = /^\d{13}$/;
+// Amcache InventoryApplication InstallDate: MM/DD/YYYY hh:mm:ss (US order, no zone).
+const US_DATE_TIME_RE = /^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2}):(\d{2})$/;
+
+// True when the parts name a real calendar time. Date.UTC rolls Feb 30 over to Mar 1 and hour 24 over
+// to the next day, so every part must read back unchanged. setUTCFullYear, because Date.UTC reads a
+// year below 100 as 19xx — and Go's zero time "0001-01-01T00:00:00Z" must read back as year 1.
+function realTime([y, mo, d, h, mi, s]: readonly number[]): boolean {
+  const t = new Date(0);
+  t.setUTCFullYear(y, mo - 1, d);
+  t.setUTCHours(h, mi, s);
+  return (
+    t.getUTCFullYear() === y &&
+    t.getUTCMonth() === mo - 1 &&
+    t.getUTCDate() === d &&
+    t.getUTCHours() === h &&
+    t.getUTCMinutes() === mi &&
+    t.getUTCSeconds() === s
+  );
+}
+
+// The string itself when it is a canonical UTC ISO time on a real calendar day, else "". The fraction
+// is kept as written, so Velociraptor's 7-digit precision survives.
+function canonicalOrEmpty(s: string): string {
+  const m = CANONICAL_RE.exec(s);
+  if (!m) return "";
+  return realTime(m.slice(1, 7).map(Number)) ? s : "";
+}
+
+function epochIso(ms: number): string {
+  const d = new Date(ms);
+  return Number.isNaN(d.getTime()) ? "" : d.toISOString();
+}
+
+// ISO for Amcache's US MM/DD/YYYY hh:mm:ss, read as UTC (the naive-is-UTC convention); "" otherwise.
+// Kept out of vrTime: DD/MM and MM/DD are indistinguishable in general, and only this column is known.
+export function usDateTime(v: unknown): string {
+  const m = US_DATE_TIME_RE.exec(str(v).trim());
+  if (!m) return "";
+  const [mo, d, y, h, mi, s] = m.slice(1, 7).map(Number);
+  if (!realTime([y, mo, d, h, mi, s])) return "";
+  return `${m[3]}-${m[1]}-${m[2]}T${m[4]}:${m[5]}:${m[6]}Z`;
+}
+
+// A time string as canonical UTC ISO, or "" when it is not a readable time (#1631). An unreadable
+// value such as "unknown" or "N/A" used to pass through unchanged and become the event time.
+function stringTime(raw: string): string {
+  const s = raw.trim();
+  if (!s) return "";
+  const compact = compactUtcTime(s);
+  if (compact !== null) return compact;
+  if (EPOCH_S_RE.test(s)) return epochIso(Number(s) * 1000);
+  if (EPOCH_MS_RE.test(s)) return epochIso(Number(s));
+  const lead = LEADING_PARTS_RE.exec(s);
+  if (lead && !realTime(lead.slice(1, 7).map(Number))) return "";
+  const go = GO_TIME_RE.exec(s);
+  if (go) return canonicalOrEmpty(toUtcIso(`${go[1]}T${go[2]}${go[3]}`));
+  if (DATE_ONLY_RE.test(s)) return canonicalOrEmpty(`${s}T00:00:00Z`);
+  return canonicalOrEmpty(normalizeTime(s));
 }
 
 // Velociraptor times arrive as RFC3339 strings, epoch numbers (`_ts` is collection-time
-// epoch seconds), `{ SystemTime }` objects, or the Autoruns compact form. Normalize any of them to UTC ISO.
+// epoch seconds), `{ SystemTime }` objects, or the Autoruns compact form. Normalize any of them to UTC
+// ISO; "" for anything that is not a readable time.
 export function vrTime(v: unknown): string {
   if (v == null) return "";
   if (typeof v === "number") {
     if (!Number.isFinite(v) || v <= 0) return "";
-    const d = new Date(v > 1e12 ? v : v * 1000); // >1e12 ⇒ already ms
-    return Number.isNaN(d.getTime()) ? "" : d.toISOString();
+    return epochIso(v > 1e12 ? v : v * 1000); // >1e12 ⇒ already ms
   }
   if (isObject(v)) {
     const st = getCI(v, "SystemTime") ?? getPath(v, "#attributes.SystemTime");
     return st != null ? vrTime(st) : "";
   }
-  const s = str(v);
-  return compactUtcTime(s) ?? normalizeTime(s);
+  return stringTime(str(v));
+}
+
+// A time column that holds a value vrTime cannot read — not blank, not an all-zero "unset" sentinel.
+// Such a row must not fall back to the collection time: that reads as incident activity (#1618, #1631).
+function unreadableTime(v: unknown, read: (v: unknown) => string): boolean {
+  if (typeof v !== "string") return false;
+  const s = v.trim();
+  return s !== "" && !/^0+(?:\.0+)?$/.test(s) && !read(v);
 }
 
 // The artifact's OWN time first; `_ts` (collection time) only as a last resort. Includes a few
@@ -151,15 +227,30 @@ export function copiedFileTimes(row: Row): CopiedFileTimes | null {
 // process-memory hit to its rule's 2014 authoring date (#1603). Skipped only on a YARA-shaped row.
 const RULE_META_RE = /^meta(?:data)?$/i;
 
-export function pickTime(row: Row): string {
-  let badCompact = false;
+// `preferred` columns (an artifact's own time names; dotted paths allowed, an array reads its first
+// element) are tried before TIME_KEYS, through `readPreferred` when the artifact has its own format.
+export function pickTime(
+  row: Row,
+  preferred: readonly string[] = [],
+  readPreferred: (v: unknown) => string = vrTime,
+): string {
+  let unreadable = false;
+  for (const k of preferred) {
+    const raw = k.includes(".") ? getPath(row, k) : getCI(row, k);
+    const v = Array.isArray(raw) ? raw[0] : raw;
+    const t = readPreferred(v);
+    if (t) return t;
+    if (unreadableTime(v, readPreferred)) unreadable = true;
+  }
   for (const k of TIME_KEYS) {
     const v = k.includes(".") ? getPath(row, k) : getCI(row, k);
     const t = vrTime(v);
-    // A time column in the compact Autoruns shape that is not a real time. Keep looking for another
-    // artifact time, but never fall back to the collection time: that reads as incident activity.
-    if (!t && typeof v === "string" && compactUtcTime(v) === "") badCompact = true;
-    if (!t) continue;
+    // An unreadable time column: keep looking for another artifact time, but never fall back to the
+    // collection time below.
+    if (!t) {
+      if (unreadableTime(v, vrTime)) unreadable = true;
+      continue;
+    }
     if (k === "Mtime") return copiedFileTimes(row)?.created ?? t;
     return t;
   }
@@ -191,6 +282,6 @@ export function pickTime(row: Row): string {
   };
   scan(row, "", 0);
   if (best) return best;
-  if (badCompact) return ""; // undated beats dated at the collection time (#1618)
+  if (unreadable) return ""; // undated beats dated at the collection time (#1618, #1631)
   return vrTime(getCI(row, "_ts")); // collection time — absolute last resort, only when nothing else dated the row
 }
