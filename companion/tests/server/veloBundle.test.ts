@@ -361,6 +361,77 @@ describe("Velociraptor triage bundles — routes", () => {
     expect(run.body.error).toContain("Server Artifacts"); // where to fix it
   });
 
+  // #1606: a mis-edited param used to be dropped and the hunt ran with the artifact's defaults. Now the
+  // run refuses with a 400 that names the key and the artifact, and nothing is launched or recorded.
+  describe("run-bundle refuses parameters it cannot send (#1606)", () => {
+    const launches: string[] = [];
+    const paramRunner: VqlRunner = async (statements) => {
+      const p = statements[0];
+      if (p.includes("artifact_definitions()"))
+        return {
+          rows: [
+            {
+              name: "Windows.System.Pslist",
+              description: "Running processes",
+              type: "CLIENT",
+              parameters: [{ name: "ProcessRegex" }],
+            },
+          ],
+          raw: "",
+        };
+      if (p.includes("hunt(") && p.includes("artifacts=[")) {
+        launches.push(p);
+        return { rows: [{ Hunt: { HuntId: "H.PRM1", state: "RUNNING" } }], raw: "" };
+      }
+      return { rows: [], raw: "" };
+    };
+    const runWith = async (params: Record<string, Record<string, string>>) => {
+      launches.length = 0;
+      const made = await makeApp(paramRunner);
+      const bundle = await request(made.app)
+        .post("/bundles")
+        .send({ name: "Params", artifacts: ["Windows.System.Pslist", "Custom.NotOnServer"], params });
+      const run = await request(made.app)
+        .post("/cases/c1/velociraptor/run-bundle")
+        .send({ bundleId: bundle.body.id, waitMinutes: 30 });
+      const jobs = (await request(made.app).get("/cases/c1/velociraptor/hunt-jobs")).body;
+      return { run, jobs };
+    };
+
+    it("a malformed parameter name is a 400 naming the key and artifact, and launches nothing", async () => {
+      const { run, jobs } = await runWith({ "Windows.System.Pslist": { "Process Regex": "evil" } });
+      expect(run.status).toBe(400);
+      expect(run.body.error).toMatch(/"Process Regex".*Windows\.System\.Pslist/);
+      expect(launches).toHaveLength(0);
+      expect(jobs).toHaveLength(0);
+    });
+
+    it("a well-formed name the server's artifact does not declare is a 400 too", async () => {
+      const { run } = await runWith({ "Windows.System.Pslist": { ProcesRegex: "evil" } });
+      expect(run.status).toBe(400);
+      expect(run.body.error).toMatch(/ProcesRegex.*ProcessRegex/);
+      expect(launches).toHaveLength(0);
+    });
+
+    it("params for an artifact not in the bundle are a 400", async () => {
+      const { run } = await runWith({ "Windows.System.Pslst": { ProcessRegex: "evil" } });
+      expect(run.status).toBe(400);
+      expect(run.body.error).toMatch(/"Windows\.System\.Pslst".*not in this bundle/);
+      expect(launches).toHaveLength(0);
+    });
+
+    it("params for a bundle artifact the pre-flight left out do not block the launch", async () => {
+      const { run } = await runWith({
+        "Windows.System.Pslist": { ProcessRegex: "evil" },
+        "Custom.NotOnServer": { Anything: "x" },
+      });
+      expect(run.status).toBe(202);
+      expect(run.body.unknownArtifacts).toEqual(["Custom.NotOnServer"]);
+      expect(launches[0]).toContain("`Windows.System.Pslist`=dict(ProcessRegex='evil')");
+      expect(launches[0]).not.toContain("Custom.NotOnServer");
+    });
+  });
+
   it("run-bundle reports the un-downloaded tools on a successful launch too", async () => {
     const made = await makeApp(toolRunner({ HuntId: "H.TOOL1", state: "RUNNING" }));
     const bundle = await request(made.app)
