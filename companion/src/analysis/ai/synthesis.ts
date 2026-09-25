@@ -525,6 +525,7 @@ async function callSynthesisModel(
               userPrompt: retryNote ? `${userPrompt}\n\n${retryNote}` : userPrompt,
               images: [],
               ...(thinkingTokens > 0 ? { thinkingTokens } : {}),
+              rejectTruncated: true, // a cut-off synthesis is never merged; say why instead
               ...(opts.signal ? { signal: opts.signal } : {}),
             },
             "synthesis",

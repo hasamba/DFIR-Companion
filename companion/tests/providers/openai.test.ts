@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { fetchMock, jsonResponse } from "../helpers/fetchMock.js";
 import { OpenAIProvider } from "../../src/providers/openai.js";
+import { LiteLlmProvider } from "../../src/providers/litellm.js";
 import { ProviderError, type AIProvider } from "../../src/providers/provider.js";
 
 describe("OpenAIProvider — base URL validation (#246)", () => {
@@ -193,5 +194,91 @@ describe("OpenAIProvider — supportsThinking (#1468)", () => {
     // Read through the interface: the class does not declare the field, and that is the point.
     const p: AIProvider = new OpenAIProvider({ apiKey: "k", model: "gpt-4o" });
     expect(p.supportsThinking).toBeFalsy();
+  });
+});
+
+describe('OpenAIProvider — output limit (finish_reason "length")', () => {
+  const lengthResponse = (message: Record<string, unknown>, usage?: Record<string, unknown>) =>
+    jsonResponse({ choices: [{ message, finish_reason: "length" }], ...(usage ? { usage } : {}) });
+  const req = { systemPrompt: "s", userPrompt: "u", images: [] };
+
+  it("throws output_limit when the limit is hit with no answer, naming the limit and the reasoning share", async () => {
+    const fetchFn = fetchMock(async () => lengthResponse({ content: "", reasoning: "x".repeat(4000) }));
+    const p = new OpenAIProvider({ apiKey: "k", model: "m", fetchFn, maxTokens: 16000 });
+    const err = await p.analyze(req).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ProviderError);
+    expect((err as ProviderError).kind).toBe("output_limit");
+    expect((err as ProviderError).message).toContain("16,000");
+    expect((err as ProviderError).message).toContain("About 1,000 of those tokens");
+  });
+
+  it("throws output_limit on a missing message, with no reasoning estimate", async () => {
+    const fetchFn = fetchMock(async () => jsonResponse({ choices: [{ finish_reason: "length" }] }));
+    const p = new OpenAIProvider({ apiKey: "k", model: "m", fetchFn, maxTokens: 16000 });
+    const err = (await p.analyze(req).catch((e: unknown) => e)) as ProviderError;
+    expect(err.kind).toBe("output_limit");
+    expect(err.message).not.toContain("hidden reasoning");
+  });
+
+  it("names the max_tokens actually sent, after the context guard shrank it", async () => {
+    const fetchFn = fetchMock(async () => lengthResponse({ content: "" }));
+    const p = new OpenAIProvider({ apiKey: "k", model: "m", fetchFn, maxTokens: 16000, contextTokens: 8000 });
+    const err = (await p.analyze(req).catch((e: unknown) => e)) as ProviderError;
+    const sent = JSON.parse((fetchFn.mock.calls[0][1] as RequestInit).body as string).max_tokens as number;
+    expect(sent).toBeLessThan(16000);
+    expect(err.message).toContain(sent.toLocaleString("en-US"));
+  });
+
+  it("throws output_limit on a truncated answer when the caller sets rejectTruncated", async () => {
+    const fetchFn = fetchMock(async () => lengthResponse({ content: '{"summary":"cut' }));
+    const p = new OpenAIProvider({ apiKey: "k", model: "m", fetchFn, maxTokens: 16000 });
+    await expect(p.analyze({ ...req, rejectTruncated: true })).rejects.toMatchObject({
+      kind: "output_limit",
+    } as Partial<ProviderError>);
+  });
+
+  it("returns a truncated answer unchanged when the caller does not set rejectTruncated", async () => {
+    const fetchFn = fetchMock(async () => lengthResponse({ content: '{"summary":"cut' }));
+    const p = new OpenAIProvider({ apiKey: "k", model: "m", fetchFn, maxTokens: 16000 });
+    const result = await p.analyze(req);
+    expect(result.rawText).toBe('{"summary":"cut');
+  });
+
+  it("prefers usage.completion_tokens_details.reasoning_tokens over the estimate", async () => {
+    const fetchFn = fetchMock(async () =>
+      lengthResponse(
+        { content: "", reasoning: "x".repeat(4000) },
+        {
+          prompt_tokens: 10,
+          completion_tokens: 16000,
+          completion_tokens_details: { reasoning_tokens: 15500 },
+        },
+      ),
+    );
+    const p = new OpenAIProvider({ apiKey: "k", model: "m", fetchFn, maxTokens: 16000 });
+    const err = (await p.analyze(req).catch((e: unknown) => e)) as ProviderError;
+    expect(err.message).toContain("About 15,500 of those tokens");
+    expect(err.message).not.toContain("About 1,000");
+  });
+
+  it("keeps the 'returned no content' error when the model stopped normally with no answer", async () => {
+    const fetchFn = fetchMock(async () =>
+      jsonResponse({ choices: [{ message: { content: "" }, finish_reason: "stop" }] }),
+    );
+    const p = new OpenAIProvider({ apiKey: "k", model: "m", fetchFn });
+    await expect(p.analyze(req)).rejects.toMatchObject({ kind: "other" } as Partial<ProviderError>);
+  });
+
+  it("sends no reasoning_effort on OpenAI or LiteLLM, whatever the thinking budget", async () => {
+    const fetchFn = fetchMock(async () => jsonResponse({ choices: [{ message: { content: "{}" } }] }));
+    for (const p of [
+      new OpenAIProvider({ apiKey: "k", model: "m", fetchFn }),
+      new LiteLlmProvider({ apiKey: "k", model: "m", fetchFn }),
+    ]) {
+      await p.analyze({ ...req, thinkingTokens: 8000 });
+    }
+    for (const call of fetchFn.mock.calls) {
+      expect(JSON.parse((call[1] as RequestInit).body as string).reasoning_effort).toBeUndefined();
+    }
   });
 });

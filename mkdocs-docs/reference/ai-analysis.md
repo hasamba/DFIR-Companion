@@ -96,7 +96,9 @@ Promoting does not re-run the AI. Press **AI Re-synthesize** when you have finis
 
 **What it's good for.** Complex, multi-host, multi-stage cases; findings that look thin or that miss the link between two hosts.
 
-**When to use it.** Tick 🧠 in the toolbar *before* clicking **AI Re-synthesize** or **2nd opinion** — it applies to the next run on this case only, no `.env` edit and no restart. It is slower and costs extra output tokens, so leave it off for routine re-syntheses. It needs a synthesis (or second-opinion) model on Anthropic, OpenRouter or Claude Code; on any other provider the box is greyed out and its tooltip names the provider that does not support it.
+**When to use it.** Tick 🧠 in the toolbar *before* clicking **AI Re-synthesize** or **2nd opinion** — it applies to the next run on this case only, no `.env` edit and no restart. It is slower and costs extra output tokens, so leave it off for routine re-syntheses. It needs a synthesis (or second-opinion) model on Anthropic, OpenRouter, Ollama or Claude Code; on any other provider the box is greyed out and its tooltip names the provider that does not support it. On Ollama the box sets the model's reasoning effort to high; with the box off, every Ollama call asks for low effort, so a reasoning model such as GLM does not spend its whole output limit thinking.
+
+**If a run stops at the output limit.** A reasoning model's hidden thinking counts against `DFIR_AI_MAX_TOKENS`. When a synthesis reply is cut off, the run fails at once with a message that names the limit and, when the provider reports it, how much of it went on thinking. Raise **AI max tokens** in Settings and restart, or choose a model that reasons less.
 
 **Settings.** `DFIR_AI_SYNTH_THINKING_TOKENS` — the global default budget for *every* synthesis (unset = off). The checkbox is the per-run override; when you tick it without setting the variable, it uses 8000 thinking tokens.
 
