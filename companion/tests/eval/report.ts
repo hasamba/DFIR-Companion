@@ -211,7 +211,14 @@ function hasFixtureQualityFailure(rows: readonly EvaluationExtractionResult[]): 
   return [...fixtures.values()].some((fixture) => !meetsGate(fixture));
 }
 
-function determineOutcome(input: EvaluationReportInput): EvaluationOutcome {
+// #1579: the fixed recall floor is a stand-in for "good enough" until a human accepts a real
+// baseline. Once a real run is compared against one, "no worse than the accepted baseline" is the
+// bar, so a model that sits below the floor (next-step recall, today) can still attest a prompt
+// fix. Hard violations and a total whiff are never relaxed.
+function determineOutcome(
+  input: EvaluationReportInput,
+  recallFloor = !input.baselineComparison,
+): EvaluationOutcome {
   if (input.runnerError) return "runner_failed";
   if (input.providerFailureReason) return "provider_failed";
   if (input.skippedReason) return "skipped";
@@ -238,7 +245,7 @@ function determineOutcome(input: EvaluationReportInput): EvaluationOutcome {
   const casesOk = input.real
     ? !hasHardViolation(input.cases) &&
       !hasTotalWhiff(input.cases) &&
-      meetsRecallFloor(computeDirtyCaseAggregate(input.cases))
+      (!recallFloor || meetsRecallFloor(computeDirtyCaseAggregate(input.cases)))
     : !caseStatuses.includes("quality_failed");
   const otherOk = input.real
     ? !hasFixtureQualityFailure([...input.extraction, ...input.screenshot])
@@ -248,6 +255,12 @@ function determineOutcome(input: EvaluationReportInput): EvaluationOutcome {
   const allStatuses = [...caseStatuses, ...otherStatuses];
   if (allStatuses.length > 0 && allStatuses.every((status) => status === "skipped")) return "skipped";
   return "passed";
+}
+
+// True when the run fails, if at all, only on the recall floor. Such a real run may still be
+// written as the FIRST candidate baseline, so today's real scores can be accepted as the bar.
+export function passesWithoutRecallFloor(input: EvaluationReportInput): boolean {
+  return determineOutcome(input, false) === "passed";
 }
 
 function reportResources(input: EvaluationReportInput): EvaluationResources {
