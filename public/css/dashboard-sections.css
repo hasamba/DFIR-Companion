@@ -34,12 +34,12 @@
   .now-stage-finding button{min-width:0;padding:0;border:0;background:transparent;font-size:12px;font-weight:400;text-transform:none;letter-spacing:0;text-align:left;color:var(--text-primary);overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-height:1.35}
   .now-stage-finding button:hover{color:var(--text-bright);text-decoration:underline}
   .now-stage-nofinding{color:var(--text-faint);font-style:italic}
-  .now-story-cards .now-stage-missing{border:1px dashed var(--border-subtle);opacity:.75;color:var(--text-muted)}
+  /* #1616: no opacity fade on a missing stage. Opacity dimmed its muted text below 4.5:1; a hollow card on --bg-primary (the surface --text-faint is tuned against) marks it as missing instead. */ .now-story-cards .now-stage-missing{border:1px dashed var(--border-color);background:var(--bg-primary);color:var(--text-muted)}
   .now-stage-missing .now-stage-name{color:var(--text-muted)}
   .now-stage-missing .now-stage-nofinding{margin-top:4px;font-size:11px}
   .now-stage-missing .now-stage-nofinding button{padding:0 4px;font-size:10px;font-weight:400;font-style:normal;letter-spacing:0;text-transform:none;background:var(--badge-bg-neutral);border-color:var(--border-color);color:var(--text-muted)}
   .now-stage-missing .now-stage-nofinding button:hover{color:var(--text-bright);border-color:var(--accent)}
-  .now-sev{display:inline-block;flex-shrink:0;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:700;letter-spacing:.03em;background:color-mix(in oklab,currentColor 15%,transparent)}
+  /* #1616: outlined, never filled. The --sev-* text colours are tuned to 4.5:1 on the plain card; a currentColor tint behind them fell to ~3.6:1. */ .now-sev{display:inline-block;flex-shrink:0;padding:0 5px;border:1px solid currentColor;border-radius:4px;font-size:10px;font-weight:700;letter-spacing:.03em;background:transparent}
   .now-story-text p{margin:0 0 4px;font-size:12px;line-height:1.45;color:var(--text-muted)}
   .now-story-text p:last-child{margin-bottom:0}
   .now-story-text button{padding:1px 6px;font-size:10px;text-transform:none;letter-spacing:0;font-weight:400;background:var(--badge-bg-neutral);border-color:var(--border-color);color:var(--text-muted)}

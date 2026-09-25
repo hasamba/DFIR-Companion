@@ -772,11 +772,12 @@ describe("cockpit story — wiring", () => {
     ]) {
       expect(css).toContain(cls);
     }
-    // A missing card is a dashed outline with no severity colour, dimmed.
+    // A missing card is a dashed outline with no severity colour, set hollow on --bg-primary. It was
+    // dimmed with opacity until #1616: the fade took its muted text below 4.5:1.
     expect(css).toMatch(
-      /\.now-story-cards \.now-stage-missing\{[^}]*border:1px dashed var\(--border-subtle\)/,
+      /\.now-story-cards \.now-stage-missing\{[^}]*border:1px dashed var\(--border-color\)/,
     );
-    expect(css).toMatch(/\.now-story-cards \.now-stage-missing\{[^}]*opacity:\.75/);
+    expect(css).toMatch(/\.now-story-cards \.now-stage-missing\{[^}]*background:var\(--bg-primary\)/);
     // The chip chain is gone for good: no dead rules left behind.
     for (const cls of [".now-story-chain{", ".now-stage{", ".now-stage-meta{", ".now-stage-arrow{"]) {
       expect(css).not.toContain(cls);
