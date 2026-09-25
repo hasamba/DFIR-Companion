@@ -36,7 +36,7 @@ function apply(mapped: Partial<ForensicEvent>): Tagged {
 
 function windows(rec: Record<string, unknown>): Tagged {
   const mapped = parseSiemExport(JSON.stringify([{ "@timestamp": "2026-01-02T03:04:05Z", ...rec }]));
-  return apply(mapped.events[0] as Partial<ForensicEvent>);
+  return apply(mapped.events[0]);
 }
 
 function sysmon(eid: number, data: Record<string, string>, message?: string): Tagged {
@@ -69,7 +69,7 @@ function sniperRow(path: string, value: string, technique = "Registry Run Key"):
 // A Velociraptor flow export: the artifact-map shape the lab cases were imported from.
 function sniper(row: Record<string, string>): Tagged {
   const parsed = parseVelociraptorJson(JSON.stringify({ "Windows.Forensics.PersistenceSniper": [row] }));
-  return apply(parsed.events[0] as Partial<ForensicEvent>);
+  return apply(parsed.events[0]);
 }
 
 describe("bundled data/tags.yaml — Run keys: enumeration vs write (#1666)", () => {
@@ -100,7 +100,7 @@ describe("bundled data/tags.yaml — Run keys: enumeration vs write (#1666)", ()
       JSON.stringify([sniperRow(`${RUN}\\OneDrive`, '"C:\\Users\\u\\OneDrive.exe" /background')]),
       { artifact: "results" },
     );
-    const r = apply(parsed.events[0] as Partial<ForensicEvent>);
+    const r = apply(parsed.events[0]);
     expect(r.severity).toBe("Info");
     expect(r.ruleIds).not.toContain("win_run_key");
   });
