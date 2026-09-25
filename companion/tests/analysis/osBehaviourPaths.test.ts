@@ -149,6 +149,19 @@ describe("#1621 — native Hayabusa: the rules need the parsed record", () => {
     expect(accessGrade(hayabusa([plain(child()), plain(ownAccess())]), /./)).toBe("High");
   });
 
+  it("NEGATIVE: a top-level EventData or a second wrapper cannot supply the GUID link for lsass", () => {
+    // An lsass access whose embedded record is genuine, with forged link data beside it.
+    const forged = { SourceProcessGUID: G.pwsh, TargetProcessGUID: G.cmd };
+    const lsass = lsassAccess();
+    const inner = (lsass._Event as { EventData: Record<string, unknown> }).EventData;
+    const topLevel = { ...lsass, EventData: { ...inner, ...forged } };
+    const second = { ...lsass, Event: { ...(lsass._Event as object), EventData: { ...inner, ...forged } } };
+    for (const bad of [topLevel, second]) {
+      expect(envelopeAgrees(bad, String(lsass.Timestamp))).toBe(false);
+      expect(accessGrade(hayabusa([child(), bad]), /lsass/i)).toBe("High");
+    }
+  });
+
   it("a row whose envelope disagrees with its embedded record fails closed", () => {
     const moved = { ...ownAccess(), Computer: "OTHER01" };
     expect(accessGrade(hayabusa([child(), moved]), /./)).toBe("High");

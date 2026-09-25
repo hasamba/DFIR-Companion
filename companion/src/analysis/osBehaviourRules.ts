@@ -94,19 +94,21 @@ function embeddedTime(system: Row): number {
  * with no wrapper (an XML-derived record) has one envelope and agrees trivially.
  */
 export function envelopeAgrees(raw: Row, timestamp: string): boolean {
-  for (const w of EVENT_WRAPPERS) {
-    const inner = getCI(raw, w);
-    if (!isObject(inner)) continue;
-    const system = getCI(inner, "System");
-    if (!isObject(system)) return false;
-    if (eventId({ System: system }) !== eventId(raw)) return false;
-    const outerHost = str(getCI(raw, "Computer")).trim().toLowerCase();
-    const innerHost = str(getCI(system, "Computer")).trim().toLowerCase();
-    if (outerHost && innerHost && outerHost !== innerHost) return false;
-    const at = embeddedTime(system);
-    return !Number.isFinite(at) || Math.abs(at - Date.parse(timestamp)) <= ENVELOPE_TIME_SLACK_MS;
-  }
-  return true;
+  const wrapped = EVENT_WRAPPERS.map((w) => getCI(raw, w)).filter(isObject);
+  if (wrapped.length === 0) return true;
+  // Exactly one record, and the EventData the rules will read must be THAT record's: `eventData`
+  // prefers a top-level EventData, which would let a row validate one record and link another's
+  // GUIDs (Codex, review of #1621).
+  const [inner] = wrapped;
+  if (wrapped.length > 1 || eventData(raw) !== getCI(inner, "EventData")) return false;
+  const system = getCI(inner, "System");
+  if (!isObject(system)) return false;
+  if (eventId({ System: system }) !== eventId(raw)) return false;
+  const outerHost = str(getCI(raw, "Computer")).trim().toLowerCase();
+  const innerHost = str(getCI(system, "Computer")).trim().toLowerCase();
+  if (outerHost && innerHost && outerHost !== innerHost) return false;
+  const at = embeddedTime(system);
+  return !Number.isFinite(at) || Math.abs(at - Date.parse(timestamp)) <= ENVELOPE_TIME_SLACK_MS;
 }
 
 /**
