@@ -37,6 +37,11 @@
 // hunt lists the PowerShell log before Sysmon. The bulk driver primes the ledger with every
 // process creation and every Tools-tree script record on its evidence-only pass and then resolves
 // per batch.
+//
+// The same seam carries two cross-row rules about ordinary Windows behaviour, not the collector
+// (#1593), because it is the one place the Velociraptor and Chainsaw importers hand over the raw
+// record, the mapped row and a whole-file resolve: a parent's handle to its own child at creation
+// (processParentage.ts) and an AppX package update's firewall rule swap (appxFirewallChurn.ts).
 
 import { getCI, parsePid, str, type MappedEvent } from "./siemImport.js";
 import { CollectorSpawnLineage, SPAWNED_SCRIPT_NOTE } from "./collectorLineage.js";
@@ -61,6 +66,8 @@ import {
 } from "./veloDetectionNoise.js";
 import { processGuid } from "./processAccess.js";
 import { recordComputer, shortHostName } from "./hostIdentity.js";
+import { isInjectionEvidenceRow, ParentChildAccessLedger } from "./processParentage.js";
+import { AppxFirewallChurnLedger, isAppxFirewallRow } from "./appxFirewallChurn.js";
 
 type Row = Record<string, unknown>;
 
@@ -97,10 +104,18 @@ export function isProcessCreateRow(raw: Row): boolean {
 
 /**
  * Does this row carry evidence the ledger must see before any batch resolves: a process creation
- * (a spawn) or a Tools-tree script record (a runspace seed, #1555)? The bulk evidence pass primes on it.
+ * (a spawn, or a child whose parent may open it — #1593), a Tools-tree script record (a runspace
+ * seed, #1555), a remote thread / tampering record (it keeps a child's handle row, #1593), or an
+ * AppX firewall rule change (one half of a package update, #1593)? The bulk
+ * evidence pass primes on it.
  */
 export function isCollectorEvidenceRow(raw: Row): boolean {
-  return isProcessCreateRow(raw) || isDetectionToolScript(raw);
+  return (
+    isProcessCreateRow(raw) ||
+    isDetectionToolScript(raw) ||
+    isAppxFirewallRow(raw) ||
+    isInjectionEvidenceRow(raw)
+  );
 }
 
 function hostKey(m: MappedEvent): string {
@@ -169,6 +184,8 @@ export class CollectorFootprintLedger {
   // host|hostId|runspaceId of every PowerShell session a Tools-tree record proved (#1555).
   private readonly runspaces = new Set<string>();
   private pending: Candidate[] = [];
+  private readonly parentage = new ParentChildAccessLedger();
+  private readonly firewall = new AppxFirewallChurnLedger();
 
   constructor(private readonly infra: CollectorInfrastructure = loadCollectorInfrastructure()) {
     this.lineage = new CollectorSpawnLineage(infra);
@@ -181,16 +198,31 @@ export class CollectorFootprintLedger {
   prime(raw: Row, events: readonly (MappedEvent | null)[]): void {
     for (const m of events) if (m) this.noteProcess(raw, m);
     this.noteRunspace(raw, events);
+    this.noteOs(raw, events);
+  }
+
+  // The OS-behaviour facts (#1593): every process creation, every AppX firewall change.
+  private noteOs(raw: Row, events: readonly (MappedEvent | null)[]): void {
+    for (const m of events) {
+      if (!m) continue;
+      const hosts = hostKeys(raw, m);
+      this.parentage.note(raw, m, hosts);
+      this.firewall.note(raw, m, hosts);
+    }
   }
 
   /** Offer ONE row's mapped events: grade the tool-tree scripts now, hold the rest for `resolve`. */
   offer(raw: Row, events: readonly (MappedEvent | null)[]): void {
     demoteDetectionToolScript(raw, events);
     this.noteRunspace(raw, events);
+    this.noteOs(raw, events);
     for (const m of events) {
       if (!m) continue;
       this.noteProcess(raw, m);
       if (m.origin === "collector") continue;
+      const hosts = hostKeys(raw, m);
+      this.parentage.offer(raw, m, hosts);
+      this.firewall.offer(raw, m, hosts);
       const c = candidate(raw, m);
       if (c) this.pending.push(c);
     }
@@ -233,6 +265,8 @@ export class CollectorFootprintLedger {
         claimSession(c.m);
     this.resolveProcesses(pending.filter((c) => c.kind === "process").sort((a, b) => a.at - b.at));
     for (const c of pending) if (c.kind === "file" && this.owns(c, c.guid, c.pid)) claim(c.m);
+    this.parentage.resolve();
+    this.firewall.resolve();
   }
 
   // Fixed point over the time-ordered process rows: a claimed child vouches for its own children on

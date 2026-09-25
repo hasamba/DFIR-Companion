@@ -25,6 +25,24 @@
     return f.status === "dismissed" ? "Info" : f.severity;
   }
 
+  // "Other commands in this session" (#1594): quiet commands no finding names, noted by synthesis on
+  // the closest finding. Only entries whose row is in the visible (scoped, FP-filtered) timeline.
+  // The first 12 are spelled out; the full text of each sits in the title.
+  const SESSION_COMMANDS_SHOWN = 12;
+  function sessionCommandsLine(f, visibleIds) {
+    const shown = (f.sessionCommands || []).filter((c) => visibleIds.has(c.eventId));
+    if (!shown.length) return "";
+    const items = shown.slice(0, SESSION_COMMANDS_SHOWN).map((c) => {
+      const when = String(c.timestamp || "").replace("T", " ").slice(0, 19);
+      return `<span title="${escAttr(`${c.timestamp} on ${c.host}: ${c.text}`)}">${esc(when)} <code>${esc(c.text)}</code></span>`;
+    });
+    const more = shown.length - items.length;
+    return (
+      `<span class="finding-session-commands" data-safe-style="display:block;font-size:11px;color:var(--text-muted)">` +
+      `Other commands in this session: ${items.join(" · ")}${more > 0 ? ` · and ${more} more in the timeline` : ""}</span>`
+    );
+  }
+
   function render(rawState) {
     // Ignore a state response/WS push for a case the analyst has already left (#174) — otherwise
     // a slow response for an abandoned case load can silently overwrite the case now on screen.
@@ -225,6 +243,7 @@
       }
     }
     DfirState.setLastFt(ft);
+    const ftIds = new Set(ft.map((e) => e.id)); // session-command notes show only for visible rows (#1594)
     renderTimelineEvents(ft);
     renderKillChain(ft);
     toggleMemNextSteps(ft); // show the Memory Next Steps panel only when Volatility/Rekall evidence exists (#101)
@@ -420,6 +439,7 @@
               `<span class="finding-main-cell">` +
               `<span class="finding-title"><strong>${esc(f.title)}</strong>${auto}${relChip}</span>` +
               `<span class="finding-desc" title="${escAttr(f.description)}">${esc(f.description)}</span>` +
+              sessionCommandsLine(f, ftIds) +
               (tagPillsHtml
                 ? `<span class="finding-tagline">${tagPillsHtml}</span>`
                 : "") +

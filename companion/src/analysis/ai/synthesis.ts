@@ -10,6 +10,7 @@ import {
 import type { AIProvider } from "../../providers/provider.js";
 import type { Logger } from "../../logging/logger.js";
 import { recordSynthesisRun } from "../analysisRunRecorders.js";
+import { noteSessionCommands } from "./sessionCommandNotes.js";
 import type { AnalysisRunStore } from "../analysisRunStore.js";
 import { toAnonPolicy, type AnonControlStore } from "../anonControl.js";
 import type { AssetOverridesStore } from "../assetOverrides.js";
@@ -733,6 +734,9 @@ export async function synthesize(
     sourceTrust,
     aliasIndex,
   });
+  // Quiet session commands no finding names (#1594): a structured note, set AFTER grading because it
+  // is not evidence the finding claims. Reads the scoped forensic timeline only.
+  next = noteSessionCommands(next, { scopedEvents, hostOf: (raw) => resolveHost(aliasIndex, raw) });
 
   // Scope is a lens, not a shredder (#751). This run rebuilt its conclusions from an empty base over
   // the events inside the window, so a narrowed window would otherwise DELETE the deterministic
