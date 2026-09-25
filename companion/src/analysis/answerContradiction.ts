@@ -91,7 +91,10 @@ export function assertsAbsence(answer: string): boolean {
   return NEGATION_RE.test(a) && ABSENCE_CONTEXT_RE.test(a);
 }
 
-function matchesRule(q: Pick<InvestigationQuestion, "id" | "question">, rule: ContradictionRule): boolean {
+export function matchesRule(
+  q: Pick<InvestigationQuestion, "id" | "question">,
+  rule: ContradictionRule,
+): boolean {
   const id = String(q.id ?? "").toLowerCase();
   if (rule.idPatterns.some((p) => id.includes(p))) return true;
   const text = String(q.question ?? "").toLowerCase();

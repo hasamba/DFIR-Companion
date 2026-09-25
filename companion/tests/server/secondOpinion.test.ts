@@ -147,12 +147,12 @@ function seededState(): InvestigationState {
 
 // Every provider can answer a reconcile call, so which one ACTUALLY referees is observable (#1466):
 // model A by default, model B or a third model when `referee` says so.
-async function makeApp(opts: { enabled: boolean; referee?: "b" | "c" }) {
+async function makeApp(opts: { enabled: boolean; referee?: "b" | "c"; synthA?: string }) {
   const root = await mkdtemp(join(tmpdir(), "dfir-secopinion-"));
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
   const secondOpinionStore = new SecondOpinionStore(store);
-  const aProvider = new ScriptedProvider(SYNTH_A, RECONCILE, "model-a");
+  const aProvider = new ScriptedProvider(opts.synthA ?? SYNTH_A, RECONCILE, "model-a");
   const bProvider = new ScriptedProvider(SYNTH_B, RECONCILE, "model-b");
   const cProvider = new ScriptedProvider(SYNTH_A, RECONCILE, "model-c");
   const referee =
@@ -667,5 +667,58 @@ describe("accepted decisions survive re-synthesis and later runs (#1590)", () =>
     expect(d.unapplied).toBe("missing");
     // Response-only: the stored record never carries the flag.
     expect(rec.body.deltas.filter((x: { unapplied?: string }) => x.unapplied)).toHaveLength(1);
+  });
+});
+
+// #1596 — the referee may not quietly dismiss the only finding that answers an open thread.
+describe("the referee's dismissal guard (#1596)", () => {
+  // Model A's A-only finding is the only one that cites e1, and an open thread asks about 1.2.3.4.
+  const synthA = JSON.stringify({
+    ...JSON.parse(SYNTH_A),
+    findings: JSON.parse(SYNTH_A).findings.map((f: { id: string }) =>
+      f.id === "f2" ? { ...f, relatedEventIds: ["e1"] } : f,
+    ),
+    threadsOpened: [{ id: "t6", description: "What is the host 1.2.3.4?" }],
+  });
+  const dismiss = JSON.stringify({
+    summary: "",
+    verdicts: [
+      { id: "a_only:finding-only", rationale: "Already covered elsewhere.", recommendation: "accept_b" },
+    ],
+  });
+
+  it("shows the referee the open thread, flags the dismissal, and follow-referee leaves it pending", async () => {
+    const { app, aProvider, stateStore } = await makeApp({ enabled: true, synthA });
+    aProvider.reconcileReply = dismiss;
+    const run = await request(app).post("/cases/c1/second-opinion").send({});
+    expect(run.status).toBe(200);
+    // The prompt goes through the anonymizer, so the address itself shows as a placeholder there.
+    expect(aProvider.lastReconcilePrompt).toContain("[t6] (open thread) What is the host ");
+    expect(aProvider.lastReconcilePrompt).toMatch(/! may be the only evidence for t6/);
+    const flagged = run.body.deltas.find((d: { id: string }) => d.id === "a_only:finding-only");
+    expect(flagged.refereeFlags).toEqual([
+      { kind: "answers_open_item", itemId: "t6", itemKind: "thread", text: "What is the host 1.2.3.4?" },
+      { kind: "unquoted_reason" },
+    ]);
+
+    const follow = await request(app)
+      .post("/cases/c1/second-opinion/apply-all")
+      .send({ followReferee: true });
+    expect(follow.body.deltas.find((d: { id: string }) => d.id === "a_only:finding-only").status).toBe(
+      "pending",
+    );
+    const all = await request(app).post("/cases/c1/second-opinion/apply-all").send({ accept: true });
+    expect(all.body.deltas.find((d: { id: string }) => d.id === "a_only:finding-only").status).toBe(
+      "pending",
+    );
+    expect((await stateStore.load("c1")).findings.find((f) => f.id === "f2")?.status).toBe("open");
+
+    // The analyst can still decide it by hand.
+    const one = await request(app)
+      .post("/cases/c1/second-opinion/apply")
+      .send({ deltaId: "a_only:finding-only", accept: true });
+    const decided = one.body.deltas.find((d: { id: string }) => d.id === "a_only:finding-only");
+    expect(decided.status).toBe("accepted");
+    expect(decided.refereeFlags).toBeUndefined();
   });
 });
