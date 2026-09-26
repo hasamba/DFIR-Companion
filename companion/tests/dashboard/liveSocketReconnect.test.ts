@@ -415,7 +415,7 @@ describe("the Re-synthesize click (#1675)", () => {
       loadSynthMeta: () => {},
     });
     api.resynthesize();
-    return events;
+    return Object.assign(events, { status: els.status as { textContent: string } });
   }
 
   it("paints the pill before the POST is sent, and re-derives it when the POST ends", async () => {
@@ -427,6 +427,21 @@ describe("the Re-synthesize click (#1675)", () => {
     expect(events[1]).toBe("fetch /cases/INC-1/synthesize");
     await vi.advanceTimersByTimeAsync(0);
     expect(events).toContain("refresh INC-1");
+  });
+
+  it("says nothing was synthesized when the forensic timeline is empty (#1676)", async () => {
+    const message = "nothing to synthesize — the forensic timeline is empty";
+    const events = click({
+      answer: () =>
+        Promise.resolve({
+          status: 200,
+          json: () =>
+            Promise.resolve({ skipped: "empty-timeline", message, findings: 0, mitreTechniques: 0 }),
+        }),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(events.status.textContent).toBe(message);
+    expect(events.at(-1)).toBe("refresh INC-1");
   });
 
   it("names deep reasoning on the pill", () => {

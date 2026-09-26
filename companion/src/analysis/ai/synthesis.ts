@@ -63,6 +63,7 @@ import {
 } from "./synthesisInputs.js";
 import { carryOutOfWindowFindings, foldSynthesisDelta, gradeFindings } from "./synthesisMerge.js";
 import { persistSynthesis } from "./synthesisPersist.js";
+import { skipEmptyTimeline, type SynthesisSkipReason } from "./synthesisSkip.js";
 import { reconcileSimulationVerdict } from "../simulationVerdict.js";
 import { stampCollectDirectives } from "../collectSatisfaction.js";
 import { collectServedModel } from "../servedModels.js";
@@ -650,6 +651,8 @@ export async function synthesize(
     signal?: AbortSignal;
     observationsBlock?: string;
     analysisParentRunId?: string;
+    /** #1676: called when the run stops before any model call because there is nothing to synthesize. */
+    onSkip?: (reason: SynthesisSkipReason) => void;
   } & SynthThinkingInput = {},
 ): Promise<InvestigationState> {
   const observationsBlock = opts.observationsBlock ?? "";
@@ -660,7 +663,8 @@ export async function synthesize(
   // and its "conclusions out of date" marker survives the run's record.
   const startRevision = (await ctx.opts.synthMetaStore?.revision(caseId)) ?? 0;
   const loaded = await ctx.opts.stateStore.load(caseId);
-  if (loaded.forensicTimeline.length === 0) return loaded;
+  if (loaded.forensicTimeline.length === 0)
+    return skipEmptyTimeline(ctx.opts.synthMetaStore, caseId, loaded, startRevision, opts);
   const aliasIndex = await resolveHostsOrThrow(ctx, caseId, loaded);
 
   const run = await prepareSynthesisRun(ctx, caseId, loaded, observationsBlock, aliasIndex);

@@ -386,6 +386,20 @@ export class SynthMetaStore {
     });
   }
 
+  // #1676: drop the out-of-date marker WITHOUT recording a run. For a synthesis that had nothing to
+  // synthesize (empty forensic timeline, no findings): the empty conclusions already match the case.
+  // Same revision rule as record(): a mark newer than `startRevision` landed after the caller read
+  // the case, so it stays. The rest of the card — last run, diff, revision — is untouched.
+  clearOutOfDate(caseId: string, startRevision: number): Promise<SynthMeta> {
+    return synthMetaLock.runExclusive(caseId, async () => {
+      const cur = await this.load(caseId).catch(() => ({ ...EMPTY }));
+      if (!cur.outOfDate || cur.outOfDate.revision > startRevision) return cur;
+      const { outOfDate: _cleared, ...rest } = cur;
+      await atomicWrite(this.path(caseId), JSON.stringify(rest, null, 2));
+      return rest;
+    });
+  }
+
   // Keep a synthesis answer that failed parsing or validation in the case's logs folder (#1602), so
   // a model that keeps failing is diagnosable. Lives here because this store already owns the
   // per-model synthesis quality record. Returns the written path.
