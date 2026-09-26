@@ -416,11 +416,11 @@ export interface Finding {
   control?: ControlDisposition;
   executionSource?: OutcomeSource;
   controlSource?: OutcomeSource;
-  // Quiet commands from this finding's attack session that no finding names (#1594). A deterministic
-  // note set after grading (analysis/ai/sessionCommandNotes.ts), never evidence the finding claims:
-  // relatedEventIds and the description are untouched. Recomputed every synthesis; a projection shows
-  // an entry only while its event is in the visible forensic timeline (scope and false positives).
+  // Quiet commands from this finding's attack session that no finding names (#1594): a deterministic note
+  // set after grading (ai/sessionCommandNotes.ts), never evidence — relatedEventIds and the description are
+  // untouched. Recomputed each synthesis; shown only while its row is in the visible forensic timeline.
   sessionCommands?: SessionCommand[];
+  sessionCommandsMore?: number; // #1683: notes past MAX_SESSION_COMMANDS, shown as "N more"
   simulation?: import("./findingSimulation.js").FindingSimulation; // #1595, applySimulationVerdict
 }
 

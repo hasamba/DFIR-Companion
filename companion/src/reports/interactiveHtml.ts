@@ -162,8 +162,9 @@ function sessionCommandLines(f: Finding, domains: string[], keptIds: ReadonlySet
   const lines = shown
     .slice(0, SESSION_COMMANDS_PER_CARD)
     .map((c) => defangIndicators(`${c.timestamp || "(undated)"} on ${c.host}: ${c.text}`, domains));
-  const more = shown.length - lines.length;
-  return more > 0 ? [...lines, `… and ${more} more in the case timeline`] : lines;
+  // Plus the notes the synthesis itself capped (#1683).
+  const more = shown.length - lines.length + Math.max(0, Math.floor(Number(f.sessionCommandsMore) || 0));
+  return lines.length && more > 0 ? [...lines, `… and ${more} more in the case timeline`] : lines;
 }
 
 function serializedBytes(value: unknown): number {
