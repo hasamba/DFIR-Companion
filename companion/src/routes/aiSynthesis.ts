@@ -186,8 +186,12 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       // What the kept findings were tagged with before this run, for the tag-change lines (#1684).
       const before = await options.stateStore?.load(caseId).catch(() => undefined);
       // Explicit user action → force, so it always runs even if inputs are unchanged.
+      let skipped: string | undefined;
       const state = await options.pipeline.synthesize(caseId, {
         force: true,
+        onSkip: (reason) => {
+          skipped = reason;
+        },
         deepReasoning,
         ...(thinkingTokens !== undefined ? { thinkingTokens } : {}),
         ...(job?.signal ? { signal: job.signal } : {}),
@@ -204,6 +208,9 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
         }
       }
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
+      // #1676: an empty forensic timeline stops synthesize() before any model call. Say so — never
+      // "synthesis ran", which told the analyst a run happened when none did.
+      const skipMessage = skipped ? "nothing to synthesize — the forensic timeline is empty" : undefined;
       // Best-effort and in order: one line per kept finding whose ATT&CK tags moved (#1684), then
       // the run summary.
       const log = (action: string, detail: string) =>
@@ -216,10 +223,12 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
         .then(() =>
           log(
             "synthesis",
-            `synthesis ran — ${state.findings.length} finding(s), ${state.mitreTechniques.length} technique(s)${deepReasoning ? " (deep reasoning)" : ""}`,
+            skipMessage ??
+              `synthesis ran — ${state.findings.length} finding(s), ${state.mitreTechniques.length} technique(s)${deepReasoning ? " (deep reasoning)" : ""}`,
           ),
         );
       return res.status(200).json({
+        ...(skipped ? { skipped, message: skipMessage } : {}),
         findings: state.findings.length,
         mitreTechniques: state.mitreTechniques.length,
         forensicEvents: state.forensicTimeline.length,
