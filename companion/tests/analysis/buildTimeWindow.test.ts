@@ -421,3 +421,112 @@ describe("the adversarial cases a code review found (#1529)", () => {
     expect(block).toContain("2026-01-15T22:10:00Z");
   });
 });
+
+// Scenario 022 (#1695): the Vagrant box's interactive account is `vagrant`, so the emulation's own
+// rows named the provisioner, and the Windows Update churn of the same hour supplied a second marker
+// kind. A 12:33–14:06 "build" window on the run day capped every attack finding at Low.
+describe("a user session is not a build (#1695)", () => {
+  const RUN = "2026-09-26T13:10";
+
+  // The emulation: the `vagrant` user runs renamed tools out of C:\Users\Public.
+  const emulation = (): ForensicEvent[] =>
+    Array.from({ length: 10 }, (_, i) =>
+      ev(`e${i}`, `${RUN}:${String(40 + i).padStart(2, "0")}Z`, {
+        severity: "High",
+        path: "C:\\Users\\Public\\BlackSuit15DaySim\\beachhead\\operator.exe",
+        description: `Sigma: HackTool - Bloodhound/Sharphound Execution - User: ${HOST}\\vagrant - CurrentDirectory: C:\\Users\\vagrant\\Desktop\\`,
+      }),
+    );
+
+  // Routine servicing in the same hour: Windows Update and an MSI install.
+  const servicing = (): ForensicEvent[] => [
+    ev("w1", "2026-09-26T13:03:00Z", {
+      severity: "Medium",
+      processName: "C:\\Windows\\System32\\wuauclt.exe",
+    }),
+    ev("w2", "2026-09-26T13:12:00Z", {
+      severity: "Medium",
+      path: "C:\\Windows\\SoftwareDistribution\\Download\\x.cab",
+    }),
+    ev("w3", "2026-09-26T13:20:00Z", {
+      severity: "Medium",
+      processName: "C:\\Windows\\System32\\MoUsoCoreWorker.exe",
+    }),
+    ev("w4", "2026-09-26T13:30:00Z", { severity: "Medium", path: "C:\\Windows\\Installer\\1a2b3c.msi" }),
+    ev("w5", "2026-09-26T13:36:00Z", { severity: "Medium", path: "C:\\Windows\\Installer\\4d5e6f.msi" }),
+  ];
+
+  it("does not read a user name or profile path as the Vagrant provisioner", () => {
+    expect(buildMarkerKind(ev("u1", RUN, { description: `Logon - User: ${HOST}\\vagrant` }))).toBeNull();
+    expect(buildMarkerKind(ev("u2", RUN, { path: "C:\\Users\\vagrant\\Downloads\\tool.exe" }))).toBeNull();
+    expect(
+      buildMarkerKind(ev("u3", RUN, { path: "C:\\Users\\vagrant\\Downloads\\vagrant-shell.ps1" })),
+    ).toBeNull();
+  });
+
+  it("still reads what the Vagrant provisioner itself writes", () => {
+    expect(buildMarkerKind(ev("v1", RUN, { path: "C:\\vagrant\\provision.ps1" }))).toBe("vagrant");
+    expect(buildMarkerKind(ev("v2", RUN, { path: "C:\\tmp\\vagrant-elevated-shell.ps1" }))).toBe("vagrant");
+    expect(
+      buildMarkerKind(ev("v3", RUN, { commandLine: "powershell -File C:\\tmp\\vagrant-shell.ps1" })),
+    ).toBe("vagrant");
+  });
+
+  it("does not read a user named packer as the Packer provisioner", () => {
+    expect(buildMarkerKind(ev("k1", RUN, { path: "C:\\Users\\packer\\Desktop\\notes.txt" }))).toBeNull();
+    expect(buildMarkerKind(ev("k2", RUN, { description: `Logon - User: ${HOST}\\packer` }))).toBeNull();
+    expect(buildMarkerKind(ev("k3", RUN, { path: "C:\\Windows\\Temp\\packer\\Autounattend.ps1" }))).toBe(
+      "packer",
+    );
+  });
+
+  it("opens no window over an emulation run by the vagrant user during Windows Update", () => {
+    const events = [...emulation(), ...servicing()];
+    expect(buildTimeWindows(events, renames)).toEqual([]);
+    const { state } = capBuildTimeRows(stateWith(events));
+    for (const e of state.forensicTimeline.filter((x) => x.id.startsWith("e"))) {
+      expect(e.severity).toBe("High");
+      expect(e.buildTime).toBeUndefined();
+    }
+  });
+
+  it("opens no window from routine servicing alone, even beside the host's own rename", () => {
+    const renamedToday: HostRenameRecord[] = [
+      ...renames,
+      {
+        formerName: "WIN-0NNTB2RTNB1",
+        currentName: HOST,
+        until: "2026-09-26T13:15:00.000Z",
+        basis: "collector",
+      },
+    ];
+    expect(buildTimeWindows(servicing(), renamedToday)).toEqual([]);
+  });
+
+  it("opens no unbounded window from one provisioner kind plus servicing", () => {
+    const lateChoco = [
+      ev("c1", "2026-09-26T13:05:00Z", {
+        severity: "Medium",
+        path: "C:\\ProgramData\\chocolatey\\lib\\git\\tools\\x.ps1",
+      }),
+      ev("c2", "2026-09-26T13:06:00Z", { severity: "Medium", commandLine: "choco upgrade all -y" }),
+      ...servicing(),
+    ];
+    expect(buildTimeWindows(lateChoco, renames)).toEqual([]);
+  });
+
+  it("still opens an unbounded window from two different provisioners, labelled by the provisioner", () => {
+    const build = [
+      ev("b1", "2027-02-01T10:00:00Z", { path: "C:\\ProgramData\\chocolatey\\tools\\7z.exe" }),
+      ev("b2", "2027-02-01T10:05:00Z", { path: "C:\\Windows\\Temp\\packer\\Autounattend.ps1" }),
+      ...Array.from({ length: 4 }, (_, i) =>
+        ev(`b${3 + i}`, `2027-02-01T10:1${i}:00Z`, {
+          path: "C:\\Windows\\SoftwareDistribution\\Download\\y.cab",
+        }),
+      ),
+    ];
+    const windows = buildTimeWindows(build, renames);
+    expect(windows).toHaveLength(1);
+    expect(["chocolatey", "packer"]).toContain(windows[0].marker);
+  });
+});

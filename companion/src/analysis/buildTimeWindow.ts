@@ -24,9 +24,11 @@
 //   2. CLUSTERS  — consecutive markers no more than CLUSTER_GAP_MS apart, spanning no more than
 //                  MAX_MARKER_SPAN_MS in total. A cluster that runs longer than that is not a build
 //                  and is discarded rather than grown, so growth cannot walk across a busy host.
-//   3. CORROBORATION — a cluster becomes a window only when an observed rename bound falls inside
-//                  it, or it holds at least MIN_MARKERS rows of at least two different marker kinds.
-//                  One stray `\Windows\Installer\` row never opens a window.
+//   3. CORROBORATION — a cluster becomes a window only when it holds at least one PROVISIONER marker
+//                  (not just servicing), AND either an observed rename bound falls inside it or it
+//                  holds at least MIN_MARKERS rows naming at least two different provisioners.
+//                  Windows Update and servicing run on every live host, so they add to a window but
+//                  never open one (#1695). One stray `\Windows\Installer\` row never opens a window.
 //   4. VETO      — a window holding a hard attacker signal (NTDS.dit, an LSASS dump, recovery
 //                  inhibition, coercion tooling, a ransomware signal, an analyst-promoted row) is
 //                  dropped whole, the same way gapHostHistory.ts leaves a host whole when its
@@ -71,8 +73,12 @@ const MIN_MARKER_KINDS = 2;
 // reused — it refuses any row graded above Low, and recognising a Medium Chocolatey script block as
 // a build marker is exactly what this needs.
 const MARKER_PATTERNS: ReadonlyArray<{ kind: string; re: RegExp }> = [
-  { kind: "packer", re: /\bpacker\b|\bautounattend\b|autounattend-first-logon/ },
-  { kind: "vagrant", re: /\bvagrant\b/ },
+  // Anchored on what the provisioner writes, never a bare word: on a Vagrant box the interactive
+  // account IS `vagrant` (and could be `packer`), so a user name or profile path matched the whole
+  // user session as "build" (#1695). Packer's temp tree and build names; Vagrant's synced folder and
+  // the shell provisioner's upload path.
+  { kind: "packer", re: /\\temp\\packer\\|\bpacker-[0-9a-f]{8}\b|\bautounattend\b|autounattend-first-logon/ },
+  { kind: "vagrant", re: /c:\\vagrant\\|\\tmp\\vagrant-(?:elevated-)?shell\.ps1\b/ },
   { kind: "chocolatey", re: /\\programdata\\chocolatey\\|\bchoco(?:latey)?(?:\.exe)?\b/ },
   { kind: "sysprep/unattend", re: /\bsysprep\b|\\windows\\panther\\|\bunattend\.xml\b|\boobe\b/ },
   {
@@ -84,6 +90,9 @@ const MARKER_PATTERNS: ReadonlyArray<{ kind: string; re: RegExp }> = [
     re: /\\windows\\servicing\\|\\windows\\winsxs\\|\btiworker\.exe\b|\btrustedinstaller\.exe\b|\\windows\\installer\\|\\windows\\system32\\driverstore\\/,
   },
 ];
+
+// Kinds every live host produces on its own. They extend a window but never open one (#1695).
+const SERVICING_KINDS: ReadonlySet<string> = new Set(["windows-update", "servicing"]);
 
 // Account-management records. A build creates its own accounts, and Windows records the machine
 // account as the SUBJECT when it does.
@@ -249,14 +258,16 @@ export function buildTimeWindows(
     // Only THIS host's own observed bounds corroborate it: another machine's rename, or an analyst's
     // manual attribution, says nothing about what this one was doing.
     const hasBound = (bounds.get(c.chain.host) ?? []).some((ms) => ms >= start && ms <= end);
-    const dense = count >= MIN_MARKERS && c.kinds.size >= MIN_MARKER_KINDS;
+    const provisioners = new Map([...c.kinds].filter(([kind]) => !SERVICING_KINDS.has(kind)));
+    if (provisioners.size === 0) continue;
+    const dense = count >= MIN_MARKERS && provisioners.size >= MIN_MARKER_KINDS;
     if (!hasBound && !dense) continue;
     windows.push({
       host: c.chain.host,
       names: [...c.chain.names],
       start: iso(start),
       end: iso(end),
-      marker: dominant(c.kinds),
+      marker: dominant(provisioners),
       markerCount: count,
     });
   }
