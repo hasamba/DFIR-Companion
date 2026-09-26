@@ -23,6 +23,83 @@ export const matchKey = (f: Finding): string => f.semanticKey?.trim() || deriveS
 const overlaps = (a: readonly string[] | undefined, b: readonly string[] | undefined): boolean =>
   !!a?.length && !!b?.length && a.some((x) => b.includes(x));
 
+// --- Pairing by what a finding describes (#1682) -------------------------------------------------
+//
+// Two models often title the same activity differently, so the key/title match leaves an A-only
+// AND a B-only delta for one finding. Leftover findings are paired by their cited events instead.
+
+/** The share of cited events two findings have in common before they count as the same finding. */
+export const OVERLAP_PAIR_THRESHOLD = 0.5;
+
+/** |a ∩ b| / |a ∪ b| over cited event ids; 0 when either side cites nothing. */
+export function jaccard(a: readonly string[] | undefined, b: readonly string[] | undefined): number {
+  if (!a?.length || !b?.length) return 0;
+  const sa = new Set(a);
+  const sb = new Set(b);
+  let shared = 0;
+  for (const x of sa) if (sb.has(x)) shared++;
+  return shared / (sa.size + sb.size - shared);
+}
+
+// Punctuation and case do not make a different finding: "Quick Assist executed." = "quick-assist executed".
+const looseTitle = (title: string): string =>
+  String(title)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
+function pairScore(a: Finding, b: Finding): number {
+  const t = looseTitle(a.title);
+  if (t && t === looseTitle(b.title)) return 1;
+  return jaccard(a.relatedEventIds, b.relatedEventIds);
+}
+
+/**
+ * Pair A and B findings that describe the same activity, 1:1, as [aIndex, bIndex]. GLOBAL greedy:
+ * every candidate pair is scored, the strongest is taken first, and a pair is taken only while
+ * neither side is used. A per-B "best A" loop is wrong — a broad B finding can claim an A finding
+ * that another B finding matches exactly, and strand that exact match. Pure, deterministic.
+ */
+export function pairByOverlap(as: readonly Finding[], bs: readonly Finding[]): Array<[number, number]> {
+  const candidates: Array<{ score: number; i: number; j: number }> = [];
+  as.forEach((a, i) =>
+    bs.forEach((b, j) => {
+      const score = pairScore(a, b);
+      if (score >= OVERLAP_PAIR_THRESHOLD) candidates.push({ score, i, j });
+    }),
+  );
+  candidates.sort((x, y) => y.score - x.score || x.i - y.i || x.j - y.j);
+  const usedA = new Set<number>();
+  const usedB = new Set<number>();
+  const pairs: Array<[number, number]> = [];
+  for (const { i, j } of candidates) {
+    if (usedA.has(i) || usedB.has(j)) continue;
+    usedA.add(i);
+    usedB.add(j);
+    pairs.push([i, j]);
+  }
+  return pairs;
+}
+
+/**
+ * The live finding an accepted B-only finding duplicates, if any: the open (not dismissed) finding
+ * whose cited events overlap it most, at or above the pairing threshold. Accepting it then changes
+ * that finding's severity instead of adding a second copy (#1682).
+ */
+export function overlappingFinding(findings: readonly Finding[], bf: Finding): Finding | undefined {
+  let best: Finding | undefined;
+  let bestScore = 0;
+  for (const f of findings) {
+    if (f.status === "dismissed") continue;
+    const score = jaccard(f.relatedEventIds, bf.relatedEventIds);
+    if (score >= OVERLAP_PAIR_THRESHOLD && score > bestScore) {
+      best = f;
+      bestScore = score;
+    }
+  }
+  return best;
+}
+
 function sameClaim(snapshot: Finding, now: Finding): boolean {
   // A snapshot saved before #1590 lost its cited events to the store schema (the field is absent,
   // not empty). It has no evidence to check, so its id is trusted as it stands — otherwise every
