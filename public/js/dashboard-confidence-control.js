@@ -14,6 +14,26 @@
   // in-flight timer and silently drop the edit, reverting to the last-saved value.
   let confSaveTimer = null;
   let confPending = null; // { caseId, minConfidence } once a keystroke schedules a save, else null
+  // A push re-reads these controls (#1691), and the hub echoes every push to its sender too. So a
+  // response may only paint if it is the newest load, no local edit happened since it started, and
+  // its case is still the open one — otherwise an older value overwrites the analyst's newer one.
+  let confLoadGen = 0;
+  let confEditGen = 0;
+  // A save still on its way to the server: a load now would read the value from before it and
+  // briefly roll the control back. The load waits instead, and runs once when the last save
+  // settles — on failure too, so the control then shows what the server really holds.
+  let confSavesInFlight = 0;
+  let confReloadOwed = null; // the case id a skipped load was for, else null
+  function trackConfidenceSave(saving) {
+    confSavesInFlight++;
+    return saving.finally(() => {
+      confSavesInFlight--;
+      if (confSavesInFlight > 0 || !confReloadOwed) return;
+      const caseId = confReloadOwed;
+      confReloadOwed = null;
+      loadConfidenceControl(caseId);
+    });
+  }
   function putConfidenceControl(caseId, minConfidence, opts) {
     return fetch(`/cases/${caseId}/confidence-control`, {
       method: "PUT",
@@ -34,9 +54,19 @@
     );
   }
   function loadConfidenceControl(caseId) {
+    // The analyst's own edit is still waiting to save; its echo will re-read the newer value.
+    if (confPending && confPending.caseId === caseId) return;
+    if (confSavesInFlight > 0) {
+      confReloadOwed = caseId;
+      return;
+    }
+    const load = ++confLoadGen;
+    const editsAtStart = confEditGen;
     fetch(`/cases/${caseId}/confidence-control`)
       .then((r) => r.json())
       .then((c) => {
+        if (load !== confLoadGen || editsAtStart !== confEditGen) return;
+        if (document.getElementById("caseId").value.trim() !== caseId) return;
         document.getElementById("confFilter").value = c.minConfidence ?? 0;
         document.getElementById("hideAutoFindings").checked =
           !!c.hideAutoFindings;
@@ -48,11 +78,14 @@
       .catch(() => {});
   }
   function saveConfidenceControl(caseId, minConfidence) {
+    confEditGen++;
     clearTimeout(confSaveTimer);
     confPending = { caseId, minConfidence };
     confSaveTimer = setTimeout(() => {
       confPending = null;
-      putConfidenceControl(caseId, minConfidence).catch(() => {});
+      trackConfidenceSave(putConfidenceControl(caseId, minConfidence)).catch(
+        () => {},
+      );
     }, 500);
   }
 
@@ -63,11 +96,14 @@
   // from clobbering a field; `ConfidenceControlStore.set` wraps the cycle in a per-case lock, so
   // concurrent saves are safe in either order.
   function saveFindingOriginFilters(caseId, patch) {
-    return fetch(`/cases/${caseId}/confidence-control`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
-    }).catch(() => {});
+    confEditGen++;
+    return trackConfidenceSave(
+      fetch(`/cases/${caseId}/confidence-control`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      }),
+    ).catch(() => {});
   }
 
   // Registered here rather than at load: see the manifest note. Both events fire long after the

@@ -286,6 +286,9 @@ const MISSED_TYPES = [
   "learned_patterns_changed",
   "source_trust_changed",
   "clock_skew_changed",
+  // #1691: the two case settings a dashboard control shows.
+  "confidence_control_changed",
+  "report_template_changed",
 ];
 
 describe("a reconnect re-reads every push-driven panel the gap missed (#1681)", () => {

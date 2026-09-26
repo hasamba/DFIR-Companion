@@ -111,6 +111,8 @@
     "learned_patterns_changed",
     "source_trust_changed",
     "clock_skew_changed",
+    "confidence_control_changed",
+    "report_template_changed",
   ];
 
   function stillCurrent(sock, caseId) {
