@@ -6,6 +6,13 @@ import {
 } from "../canonicalEvent.js";
 import { byEventTime } from "../forensicSort.js";
 import {
+  isBaselineProcess,
+  isBaselineWrite,
+  MAX_SESSION_COMMANDS,
+  processImage,
+  relevanceRank,
+} from "./sessionCommandBaseline.js";
+import {
   SEVERITY_RANK,
   type Finding,
   type ForensicEvent,
@@ -34,7 +41,9 @@ import {
  *
  * A CANDIDATE is a scoped row graded Low or higher (the tagger's verdict, not Info) inside a session
  * on its own host that carries a process command line, or that records a script or binary file
- * being written. Distinct per host and command text; the earliest row wins.
+ * being written. Distinct per host and command text; the earliest row wins. Ordinary system activity
+ * is never a candidate (#1683, sessionCommandBaseline.ts): a trusted system image that is not a LOLBin
+ * or discovery binary, a benign allowlisted shape, or a script/binary written into a stock location.
  *
  * NAMED means some non-dismissed finding's title or description already carries the command: the
  * full command, or its core (program plus its next two arguments, after unwrapping `cmd /c` and
@@ -42,7 +51,12 @@ import {
  * names its program also counts.
  *
  * Each unnamed candidate is noted on the closest anchor on the same host: nearest cited row in time,
- * then a shared account, then the higher severity, then the lower finding id.
+ * then a shared account, then the higher severity, then the lower finding id. A row that finding
+ * already cites is skipped: it is the finding's evidence, not a command the finding missed (#1683).
+ *
+ * Each finding keeps at most MAX_SESSION_COMMANDS notes, chosen by relevance (a tool of interest or a
+ * user/temp path first, then time) and listed in time order; the rest are counted in
+ * `sessionCommandsMore` so the reports can say "N more".
  */
 
 export const SESSION_PAD_MS = 15 * 60_000;
@@ -70,6 +84,8 @@ interface Anchor {
 
 interface Candidate {
   event: ForensicEvent;
+  /** The process image, or the written file's path: what the relevance rank judges. */
+  path?: string;
   host: string;
   time: number;
   kind: SessionCommand["kind"];
@@ -93,25 +109,48 @@ export function noteSessionCommands(
   const cited = citedBy(state, live);
   const hostsOf = findingHosts(state, live, byId, hostOf);
 
-  const notes = new Map<string, SessionCommand[]>();
+  const anchorsByHost = groupByHost(anchors);
+  const picked = new Map<string, Candidate[]>();
   for (const c of candidates(opts.scopedEvents, sessions, hostOf)) {
     if (isNamed(c, texts, cited, hostsOf)) continue;
-    const target = closestAnchor(c, anchors);
-    if (!target) continue;
-    const list = notes.get(target.finding.id) ?? [];
-    list.push(toNote(c));
-    notes.set(target.finding.id, list);
+    const target = closestAnchor(c, anchorsByHost.get(c.host) ?? []);
+    if (!target || cited.get(c.event.id)?.has(target.finding.id)) continue;
+    picked.set(target.finding.id, [...(picked.get(target.finding.id) ?? []), c]);
   }
   return {
     ...state,
     findings: state.findings.map((f) => {
-      const note = notes.get(f.id);
-      if (note) return { ...f, sessionCommands: note };
-      if (!f.sessionCommands) return f;
-      const { sessionCommands: _stale, ...rest } = f;
-      return rest;
+      const list = picked.get(f.id);
+      if (!list && !f.sessionCommands && f.sessionCommandsMore === undefined) return f;
+      const { sessionCommands: _stale, sessionCommandsMore: _staleMore, ...rest } = f;
+      if (!list) return rest;
+      const kept = capByRelevance(list);
+      const more = list.length - kept.length;
+      return {
+        ...rest,
+        sessionCommands: kept.map(toNote),
+        ...(more > 0 ? { sessionCommandsMore: more } : {}),
+      };
     }),
   };
+}
+
+/** The MAX_SESSION_COMMANDS most relevant candidates (rank, then time), back in time order. */
+function capByRelevance(list: readonly Candidate[]): Candidate[] {
+  if (list.length <= MAX_SESSION_COMMANDS) return [...list];
+  const ranked = list
+    .map((c, order) => ({ c, order, rank: relevanceRank(c.kind, c.path, c.program) }))
+    .sort((x, y) => x.rank - y.rank || x.order - y.order);
+  return ranked
+    .slice(0, MAX_SESSION_COMMANDS)
+    .sort((x, y) => x.order - y.order)
+    .map((r) => r.c);
+}
+
+function groupByHost(anchors: readonly Anchor[]): Map<string, Anchor[]> {
+  const out = new Map<string, Anchor[]>();
+  for (const a of anchors) out.set(a.host, [...(out.get(a.host) ?? []), a]);
+  return out;
 }
 
 /** Keep only entries whose row is in the (projected, filtered) timeline — scope and false positives. */
@@ -125,7 +164,7 @@ export function pruneSessionCommands(state: InvestigationState): InvestigationSt
       const kept = f.sessionCommands.filter((s) => visible.has(s.eventId));
       if (kept.length === f.sessionCommands.length) return f;
       if (kept.length) return { ...f, sessionCommands: kept };
-      const { sessionCommands: _gone, ...rest } = f;
+      const { sessionCommands: _gone, sessionCommandsMore: _goneMore, ...rest } = f;
       return rest;
     }),
   };
@@ -245,20 +284,26 @@ function baseName(path: string): string {
   return path.split(/[\\/]/).pop() ?? path;
 }
 
-type Described = Pick<Candidate, "kind" | "text" | "program" | "fileName">;
+type Described = Pick<Candidate, "kind" | "text" | "program" | "fileName" | "path">;
 
-/** The row's command line, or its script/binary file write; undefined for anything else. */
+/**
+ * The row's command line, or its script/binary file write; undefined for anything else, and for
+ * ordinary system activity the baseline knows (#1683).
+ */
 function describe(e: ForensicEvent): Described | undefined {
   const proc = canonicalProcess(e);
   const commandLine = (proc?.commandLine ?? e.commandLine ?? "").trim();
   if (commandLine) {
+    const image = processImage(proc?.executable, commandLine);
+    if (isBaselineProcess(image, commandLine)) return undefined;
     const text = oneLine(commandLine);
     // The real program, not a `cmd /c` wrapper: a finding that says "cmd" has not named `net view`.
-    return { kind: "process", text, program: programOf(unwrap(tokenize(text))) };
+    return { kind: "process", text, program: programOf(unwrap(tokenize(text))), path: image };
   }
   if (!isFileWrite(e)) return undefined;
   const path = (canonicalFile(e)?.path ?? e.path ?? "").trim();
   if (!path || !SCRIPT_OR_BINARY.test(path)) return undefined;
+  if (isBaselineWrite(path, writerImage(e, path))) return undefined;
   const writer = proc?.name ?? e.processName;
   const text = oneLine(`${writer ? baseName(writer) : "a process"} wrote ${path}`);
   return {
@@ -266,7 +311,16 @@ function describe(e: ForensicEvent): Described | undefined {
     text,
     program: writer ? stripExe(baseName(writer)) : "",
     fileName: baseName(path),
+    path,
   };
+}
+
+/** The writing process's image path, when the row records one (never the written file itself). */
+function writerImage(e: ForensicEvent, target: string): string | undefined {
+  const proc = canonicalProcess(e);
+  return [proc?.executable, proc?.name, e.processName].find(
+    (p) => p && /[\\/]/.test(p) && p.trim().toLowerCase() !== target.toLowerCase(),
+  );
 }
 
 function isFileWrite(e: ForensicEvent): boolean {
@@ -371,15 +425,14 @@ function coreOf(c: Candidate): string {
   return normalize([stripExe(baseName(tokens[0])), ...tokens.slice(1, 3)].join(" "));
 }
 
+/** `anchors` are the candidate's own host's (grouped once per run). */
 function closestAnchor(c: Candidate, anchors: readonly Anchor[]): Anchor | undefined {
   const accounts = new Set(c.accounts.map((a) => a.toLowerCase()));
-  const scored = anchors
-    .filter((a) => a.host === c.host)
-    .map((a) => ({
-      a,
-      distance: Math.min(...a.times.map((t) => Math.abs(t - c.time))),
-      sharesAccount: [...a.accounts].some((x) => accounts.has(x)) ? 0 : 1,
-    }));
+  const scored = anchors.map((a) => ({
+    a,
+    distance: Math.min(...a.times.map((t) => Math.abs(t - c.time))),
+    sharesAccount: [...a.accounts].some((x) => accounts.has(x)) ? 0 : 1,
+  }));
   scored.sort(
     (x, y) =>
       x.distance - y.distance ||

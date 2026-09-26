@@ -374,6 +374,7 @@
     "findingGrounding.ts": "analysis/findings",
     "findingSimulation.ts": "shared",
     "findingRelevance.ts": "analysis/findings",
+    "findingTagDiff.ts": "analysis/findings",
     "findingWorkflow.ts": "analysis/findings",
     "findingOutcome.ts": "analysis/findings",
     "findingsDiff.ts": "analysis/findings",

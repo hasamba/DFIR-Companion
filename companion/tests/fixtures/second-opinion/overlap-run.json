@@ -1,0 +1,285 @@
+{
+  "_note": "Synthetic event ids. Finding overlap shaped like a real lab second-opinion run (#1682): 19 B-only and 18 A-only deltas, most the same activity under two titles.",
+  "a": [
+    {
+      "id": "f1",
+      "title": "Nitrogen/BlackCat emulation kit staged in C:\\Users\\Public\\NitrogenBlackCatSim (beachhead, impact-canary, evidence)",
+      "severity": "High",
+      "mitreTechniques": ["T1105", "T1074.001"],
+      "relatedEventIds": [
+        "e1",
+        "e2",
+        "e3",
+        "e4",
+        "e5",
+        "e6",
+        "e7",
+        "e8",
+        "e20",
+        "e21",
+        "e29",
+        "e30",
+        "e70",
+        "e71",
+        "e72",
+        "e73",
+        "e74",
+        "e75"
+      ]
+    },
+    {
+      "id": "f2",
+      "title": "Nitrogen-style DLL side-loading setup: setup.exe placed beside python311.dll and python3.dll, from Version.zip",
+      "severity": "High",
+      "mitreTechniques": ["T1574.002", "T1204.002", "T1036.005"],
+      "relatedEventIds": ["e1", "e2", "e3", "e4", "e5", "e6"]
+    },
+    {
+      "id": "f3",
+      "title": "Python-based loader and backdoor staging (slv.py data.aes StartW, wo14.py and wo12.py) that emulate Sliver C2",
+      "severity": "High",
+      "mitreTechniques": ["T1059.006", "T1071.001", "T1027"],
+      "relatedEventIds": ["e9", "e10", "e11", "e8"]
+    },
+    {
+      "id": "f5",
+      "title": "Active Directory and network discovery (net group, nltest, ipconfig, PowerView, BloodHound)",
+      "severity": "Medium",
+      "mitreTechniques": ["T1087.002", "T1069.002", "T1482", "T1016", "T1018"],
+      "relatedEventIds": ["e12", "e13", "e14", "e15", "e16", "e17", "e18", "e19", "e76", "e20"]
+    },
+    {
+      "id": "f7",
+      "title": "Lateral movement tooling: wmiexec against APP-SRV as admin",
+      "severity": "High",
+      "mitreTechniques": ["T1047", "T1021.003"],
+      "relatedEventIds": ["e21", "e22", "e23"]
+    },
+    {
+      "id": "f8",
+      "title": "Data exfiltration emulated with restic to a REST server at 203.0.113.7:8000",
+      "severity": "High",
+      "mitreTechniques": ["T1567", "T1041", "T1560"],
+      "relatedEventIds": ["e24", "e25", "e26", "e27"]
+    },
+    {
+      "id": "f9",
+      "title": "BlackCat ransomware deployment staged (impact-canary: PsExec64, example.exe, up.bat, 1.bat)",
+      "severity": "High",
+      "mitreTechniques": ["T1569.002", "T1486", "T1490"],
+      "relatedEventIds": ["e28", "e29", "e30", "e31", "e32", "e33"]
+    },
+    {
+      "id": "f10",
+      "title": "Emulation toolkit delivered by VMware drag-and-drop (021-Nitrogen_Sliver_CobaltStrike\u2026)",
+      "severity": "Medium",
+      "mitreTechniques": ["T1105"],
+      "relatedEventIds": ["e34", "e35"]
+    },
+    {
+      "id": "f-auto-8e19",
+      "title": "PowerShell wrote kit files into C:\\Users\\Public\\NitrogenBlackCatSim (Sysmon EID 11)",
+      "severity": "Medium",
+      "mitreTechniques": ["T1105", "T1059.001"],
+      "relatedEventIds": ["e77", "e78", "e79", "e4"]
+    },
+    {
+      "id": "f11",
+      "title": "Mimikatz/REDLEAVES YARA hits on sysmonconfig-export.xml are false positives (Sysmon install)",
+      "severity": "Info",
+      "mitreTechniques": [],
+      "relatedEventIds": ["e36", "e37", "e38", "e39", "e40", "e41"]
+    },
+    {
+      "id": "f12",
+      "title": "WinPwn 'privilege escalation tool' MFT hits are Sigma rule files (benign)",
+      "severity": "Info",
+      "mitreTechniques": [],
+      "relatedEventIds": ["e42", "e43", "e44"]
+    },
+    {
+      "id": "f16",
+      "title": "Temporary WMI event consumer at Sysmon start-up (likely benign tooling)",
+      "severity": "Low",
+      "mitreTechniques": ["T1546.003"],
+      "relatedEventIds": ["e54"]
+    },
+    {
+      "id": "f17",
+      "title": "csrss.exe \u2192 lsass.exe handle access at boot is benign",
+      "severity": "Info",
+      "mitreTechniques": [],
+      "relatedEventIds": ["e55", "e56", "e57", "e58"]
+    },
+    {
+      "id": "f19",
+      "title": "CreateRemoteThread from an unknown source into powershell.exe and svchost.exe during Sysmon start-up",
+      "severity": "Low",
+      "mitreTechniques": ["T1055"],
+      "relatedEventIds": ["e63", "e64", "e65"]
+    },
+    {
+      "id": "f13",
+      "title": "Quick Assist present and executed (possible RMM access); timestomp flag likely image servicing",
+      "severity": "Low",
+      "mitreTechniques": ["T1219"],
+      "relatedEventIds": ["e45", "e46"]
+    },
+    {
+      "id": "f14",
+      "title": "Outbound connections from 203.0.113.7, including unclassified 203.0.113.7:443",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "relatedEventIds": ["e47", "e48", "e49", "e50", "e51", "e80", "e52"]
+    },
+    {
+      "id": "f18",
+      "title": "Newly promoted PowerShell rows on 2025-12-05 are Packer image-build activity (benign)",
+      "severity": "Info",
+      "mitreTechniques": [],
+      "relatedEventIds": ["e59", "e60", "e61", "e62", "e81", "e82", "e83"]
+    },
+    {
+      "id": "f-gap-host-history",
+      "title": "Host history before provisioning: HOST-A: 75 events before 2025-12-05T03:11:54.000Z, first 2019-06-21T05:42:22Z",
+      "severity": "Info",
+      "mitreTechniques": [],
+      "relatedEventIds": ["e66", "e84", "e67", "e68"]
+    }
+  ],
+  "b": [
+    {
+      "id": "f1",
+      "title": "Nitrogen/BlackCat emulation kit staged in C:\\Users\\Public\\NitrogenBlackCatSim",
+      "severity": "High",
+      "mitreTechniques": ["T1105", "T1059.001"],
+      "relatedEventIds": ["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8"]
+    },
+    {
+      "id": "f2",
+      "title": "Nitrogen-style DLL side-loading setup staged",
+      "severity": "High",
+      "mitreTechniques": ["T1574.002", "T1036.005"],
+      "relatedEventIds": ["e1", "e2", "e3", "e4", "e5", "e6"]
+    },
+    {
+      "id": "f3",
+      "title": "Python-based loader and backdoor staging emulating Sliver C2",
+      "severity": "Medium",
+      "mitreTechniques": ["T1059.006", "T1140"],
+      "relatedEventIds": ["e9", "e10", "e11", "e8"]
+    },
+    {
+      "id": "f5",
+      "title": "Active Directory and network discovery commands executed",
+      "severity": "High",
+      "mitreTechniques": ["T1087.002", "T1016", "T1018", "T1069.002"],
+      "relatedEventIds": ["e12", "e13", "e14", "e15", "e16", "e17", "e18", "e19", "e20"]
+    },
+    {
+      "id": "f7",
+      "title": "Lateral movement tooling emulated via wmiexec against APP-SRV",
+      "severity": "Medium",
+      "mitreTechniques": ["T1047", "T1021.002"],
+      "relatedEventIds": ["e21", "e22", "e23"]
+    },
+    {
+      "id": "f8",
+      "title": "Data exfiltration emulated with restic to remote REST server",
+      "severity": "Medium",
+      "mitreTechniques": ["T1567", "T1048"],
+      "relatedEventIds": ["e24", "e25", "e26", "e27"]
+    },
+    {
+      "id": "f9",
+      "title": "BlackCat ransomware deployment staged in impact-canary",
+      "severity": "High",
+      "mitreTechniques": ["T1486", "T1490", "T1569.002"],
+      "relatedEventIds": ["e28", "e29", "e30", "e31", "e32", "e33"]
+    },
+    {
+      "id": "f10",
+      "title": "Emulation toolkit delivered via VMware drag-and-drop",
+      "severity": "Medium",
+      "mitreTechniques": ["T1105"],
+      "relatedEventIds": ["e34", "e35"]
+    },
+    {
+      "id": "f-auto-8e19",
+      "title": "PowerShell file writes into C:\\Users\\Public\\NitrogenBlackCatSim",
+      "severity": "Medium",
+      "mitreTechniques": ["T1059.001", "T1105"],
+      "relatedEventIds": ["e4"]
+    },
+    {
+      "id": "f11",
+      "title": "Mimikatz and REDLEAVES YARA hits on sysmonconfig-export.xml are benign",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "relatedEventIds": ["e36", "e37", "e38", "e39", "e40", "e41"]
+    },
+    {
+      "id": "f12",
+      "title": "WinPwn detection hits on .yml files are scanner Sigma rules",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "relatedEventIds": ["e42", "e43", "e44"]
+    },
+    {
+      "id": "f13",
+      "title": "Quick Assist present and executed prior to emulation",
+      "severity": "Low",
+      "mitreTechniques": ["T1219"],
+      "relatedEventIds": ["e45", "e46"]
+    },
+    {
+      "id": "f14",
+      "title": "Outbound network traffic to legitimate and unclassified external IPs",
+      "severity": "Low",
+      "mitreTechniques": ["T1071.001"],
+      "relatedEventIds": ["e47", "e48", "e49", "e50", "e51", "e52", "e53"]
+    },
+    {
+      "id": "f16",
+      "title": "Temporary WMI event consumer registered at Sysmon startup",
+      "severity": "Low",
+      "mitreTechniques": ["T1546.003"],
+      "relatedEventIds": ["e54"]
+    },
+    {
+      "id": "f17",
+      "title": "Boot-time csrss.exe access to lsass.exe is normal system operation",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "relatedEventIds": ["e55", "e56", "e57", "e58"]
+    },
+    {
+      "id": "f18",
+      "title": "PowerShell executions on 2025-12-05 represent Packer image provisioning",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "relatedEventIds": ["e59", "e60", "e61", "e62"]
+    },
+    {
+      "id": "f19",
+      "title": "Remote thread creation into powershell.exe and svchost.exe during Sysmon setup",
+      "severity": "Low",
+      "mitreTechniques": ["T1055"],
+      "relatedEventIds": ["e63", "e64", "e65"]
+    },
+    {
+      "id": "f-gap-host-history",
+      "title": "Host history artifacts predate baseline provisioning",
+      "severity": "Low",
+      "mitreTechniques": [],
+      "relatedEventIds": ["e66", "e67", "e68", "e69"]
+    },
+    {
+      "id": "f-auto-8e12",
+      "title": "[Windows.EventLogs.Chainsaw] Chainsaw/Sigma: HackTool - SharpView Execution - Sysmon Proc\u2026",
+      "severity": "High",
+      "mitreTechniques": ["T1059"],
+      "relatedEventIds": []
+    }
+  ]
+}
