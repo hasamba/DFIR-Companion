@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "key": "openrouter/anthropic/claude-sonnet-5/e0e41325d3b3999f488112a2cb2ee4c6a7a2d9e1537759b6395a86fc359054a2/r3",
+  "identity": {
+    "provider": "openrouter",
+    "model": "anthropic/claude-sonnet-5",
+    "promptHash": "e0e41325d3b3999f488112a2cb2ee4c6a7a2d9e1537759b6395a86fc359054a2",
+    "sourceHash": "1ca6a04842ebfb962200554e6798b024dce631c16b54dbf05eeee72db583dcfe",
+    "corpusHash": "aff653be19e36790f42052b3e14be58e6bac00e97c746ebbfd570d53a0940989"
+  },
+  "recordedAt": "2026-09-26T09:13:50.875Z",
+  "summary": {
+    "claimPrecision": 0.8555555555555556,
+    "claimRecall": 0.9666666666666667,
+    "eventPrecision": 0.5375,
+    "eventRecall": 1,
+    "iocPrecision": 0.2944444444444444,
+    "iocRecall": 0.95,
+    "abstentionRate": 1,
+    "forbiddenConclusions": 0,
+    "danglingEvidenceRefs": 0,
+    "confidenceIssues": 0,
+    "uncertaintyRecall": 0.8333333333333334,
+    "nextStepRecall": 0.3333333333333333,
+    "durationMs": 1102089.0387686666,
+    "inputTokens": 112491,
+    "outputTokens": 124919.33333333333,
+    "costUsd": 1.4741753333333334
+  },
+  "runs": 3,
+  "mode": "all"
+}
