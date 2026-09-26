@@ -502,6 +502,20 @@ export interface PassesCaseQualityOptions {
   real?: boolean;
 }
 
+// #1579: the findings behind each forbidden-conclusion hit, so a real run can show WHAT the model
+// wrote. The corpus is synthetic, so the text holds no real evidence; it goes to the job log only,
+// never into the privacy-safe report.
+export function forbiddenConclusionFindings(
+  golden: CaseGolden,
+  output: QualityOutput,
+): { forbiddenId: string; findingId: string; text: string }[] {
+  return golden.forbiddenConclusions.flatMap((forbidden) =>
+    output.claims
+      .filter((claim) => assertsAsFact(claimText(claim), forbidden.terms))
+      .map((claim) => ({ forbiddenId: forbidden.id, findingId: claim.id, text: claimText(claim) })),
+  );
+}
+
 export function passesCaseQuality(score: CaseQualityScore, options: PassesCaseQualityOptions = {}): boolean {
   const precisionOk = options.real ? true : score.claims.precision === 1 && score.iocs.precision === 1;
   return (
