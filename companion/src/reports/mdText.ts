@@ -56,17 +56,20 @@ export function blockMd(value: string): string {
  * The command text is attacker-chosen, so each one goes in a code span whose backtick fence is longer
  * than any backtick run inside it (CommonMark), on one line — it can neither open a section nor
  * borrow emphasis or link syntax. Only entries whose row is in the report's projected timeline are
- * shown (scope and false positives already applied).
+ * shown (scope and false positives already applied). The notes the synthesis capped (#1683) are
+ * counted on a last line; the count is a number, never attacker text.
  */
 export function sessionCommandsMd(f: Finding, visible: ReadonlyMap<string, unknown>): string[] {
   const shown = (f.sessionCommands ?? []).filter((c) => visible.has(c.eventId));
   if (!shown.length) return [];
+  const more = Math.max(0, Math.floor(Number(f.sessionCommandsMore) || 0));
   return [
     "- Other commands in this session (not named above):",
     ...shown.map((c) => {
       const who = c.accounts?.length ? ` (${oneLineMd(c.accounts.join(", "))})` : "";
       return `  - ${oneLineMd(c.timestamp || "(undated)")} on ${codeSpan(c.host)}${who}: ${codeSpan(c.text)}`;
     }),
+    ...(more ? [`  - … and ${more} more in the case timeline`] : []),
   ];
 }
 

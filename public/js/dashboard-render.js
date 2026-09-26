@@ -36,7 +36,8 @@
       const when = String(c.timestamp || "").replace("T", " ").slice(0, 19);
       return `<span title="${escAttr(`${c.timestamp} on ${c.host}: ${c.text}`)}">${esc(when)} <code>${esc(c.text)}</code></span>`;
     });
-    const more = shown.length - items.length;
+    // Plus the notes the synthesis itself capped (#1683); a number, never attacker text.
+    const more = shown.length - items.length + Math.max(0, Math.floor(Number(f.sessionCommandsMore) || 0));
     return (
       `<span class="finding-session-commands" data-safe-style="display:block;font-size:11px;color:var(--text-muted)">` +
       `Other commands in this session: ${items.join(" · ")}${more > 0 ? ` · and ${more} more in the timeline` : ""}</span>`
