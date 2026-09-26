@@ -198,6 +198,7 @@
     "bplistReader.ts": "analysis/ingest",
     "bulkExtractorUrlImport.ts": "analysis/ingest",
     "bulkExtractorCarvedImport.ts": "analysis/ingest",
+    "buildTimeMerge.ts": "analysis/timeline",
     "buildTimeWindow.ts": "analysis/detect",
     "burstDetect.ts": "analysis/detect",
     "canonicalEvent.ts": "shared",

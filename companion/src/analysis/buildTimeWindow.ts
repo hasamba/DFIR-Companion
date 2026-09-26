@@ -46,11 +46,20 @@ import { hostBuildMarkers, type HostHistoryMarker } from "./gapHostHistory.js";
 import { assetKey } from "./gapEdgeClass.js";
 import type { HostRenameRecord } from "./hostRenameRecord.js";
 import { ransomwareSignal } from "./ransomwareDetect.js";
-import { SEVERITY_RANK, type ForensicEvent, type InvestigationState, type Severity } from "./stateTypes.js";
+import { BUILD_TIME_MARKER } from "./buildTimeMerge.js";
+import {
+  SEVERITY_RANK,
+  worstSeverity,
+  type ForensicEvent,
+  type InvestigationState,
+  type Severity,
+} from "./stateTypes.js";
 
-/** The derived note this module writes; registered in derivedNote.ts DERIVED_NOTE_NAMES. */
-export const BUILD_TIME_MARKER = "[build-time:";
+// The derived note this module writes lives in buildTimeMerge.ts (analysis/timeline), where
+// correlation reads it too; re-exported so every existing reader keeps its import.
+export { BUILD_TIME_MARKER };
 const BUILD_TIME_NOTE_RE = /\s*\[build-time:[^\]]*\]/gu;
+const HAS_BUILD_TIME_NOTE = /\[build-time:[^\]]*\]/u;
 
 /** The severity a row inside a provisioning window is capped at. Never a raise, never below Low. */
 export const BUILD_TIME_SEVERITY_CAP: Severity = "Low";
@@ -318,6 +327,12 @@ function withNote(e: ForensicEvent, w: BuildTimeWindow): ForensicEvent {
   return next;
 }
 
+// The row with every build-time note removed and nothing else changed. For a note that arrived without
+// its record (#1698) — a correlated row that unioned a capped member's note — so no grade is touched.
+function stripNote(e: ForensicEvent): ForensicEvent {
+  return { ...e, description: e.description.replace(BUILD_TIME_NOTE_RE, "").trim() };
+}
+
 function withoutNote(e: ForensicEvent): ForensicEvent {
   const { buildTime, ...rest } = e;
   return {
@@ -345,9 +360,12 @@ export function capBuildTimeRows(state: InvestigationState): {
   const forensicTimeline = state.forensicTimeline.map((e) => {
     const found = windowFor(windows, e);
     const w = found && !protectedFromCap(e) ? found : undefined;
+    // One rule whatever path produced the row (#1698): inside a window, one note and nothing above
+    // Low; outside every window, no note. A merge can bring a note without its record, or a record
+    // with a grade it raised, and every branch below exists because one of those reached a case.
     if (w && !e.buildTime) {
       changed++;
-      return withNote(e, w);
+      return withNote(HAS_BUILD_TIME_NOTE.test(e.description) ? stripNote(e) : e, w);
     }
     // The window moved (a later import extended or narrowed the burst): restore first, then re-mark,
     // so the note and the recorded pre-cap severity describe the window that exists now.
@@ -355,11 +373,51 @@ export function capBuildTimeRows(state: InvestigationState): {
       changed++;
       return withNote(withoutNote(e), w);
     }
+    // A merge raised a capped row inside its own window. Re-cap it and keep the WORSE of the two
+    // original grades, so a later un-cap restores the grade the evidence actually carries.
+    if (w && e.buildTime && capped(e.severity) !== e.severity) {
+      changed++;
+      const cappedFrom = worstSeverity(e.buildTime.cappedFrom ?? e.severity, e.severity);
+      return { ...e, severity: capped(e.severity), buildTime: { ...e.buildTime, cappedFrom } };
+    }
     if (!w && e.buildTime) {
       changed++;
       return withoutNote(e);
     }
+    if (!w && HAS_BUILD_TIME_NOTE.test(e.description)) {
+      changed++;
+      return stripNote(e);
+    }
     return e;
+  });
+  return changed ? { state: { ...state, forensicTimeline }, changed } : { state, changed: 0 };
+}
+
+/**
+ * The consistency repair synthesis runs after its own correlation (#1698) — never window discovery.
+ *
+ * The import seam finds windows BEFORE demote, while the build's Info markers are still in the forensic
+ * timeline. Synthesis sees only what demote kept, so recomputing windows there would find a window
+ * "gone" and lift a valid cap (Codex review of #1698). This pass therefore never un-caps and never
+ * opens a window. It only makes a row agree with itself: a note with no record is removed (grade
+ * untouched), and a recorded row a merge raised above the cap is capped again with the worse original
+ * grade kept. Protected rows (a hard attacker signal, an analyst's pull) are left as they are.
+ */
+export function repairBuildTimeRows(state: InvestigationState): {
+  state: InvestigationState;
+  changed: number;
+} {
+  let changed = 0;
+  const forensicTimeline = state.forensicTimeline.map((e) => {
+    if (!e.buildTime) {
+      if (!HAS_BUILD_TIME_NOTE.test(e.description)) return e;
+      changed++;
+      return stripNote(e);
+    }
+    if (protectedFromCap(e) || capped(e.severity) === e.severity) return e;
+    changed++;
+    const cappedFrom = worstSeverity(e.buildTime.cappedFrom ?? e.severity, e.severity);
+    return { ...e, severity: capped(e.severity), buildTime: { ...e.buildTime, cappedFrom } };
   });
   return changed ? { state: { ...state, forensicTimeline }, changed } : { state, changed: 0 };
 }

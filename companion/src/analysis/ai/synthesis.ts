@@ -19,6 +19,7 @@ import type { EvidenceAttestationStore } from "../evidenceAttestationStore.js";
 import { alignedEpoch, detectClockSkew, detectHostTimeGaps, effectiveOffsets } from "../clockSkew.js";
 import type { ClockSkewStore } from "../clockSkewStore.js";
 import { correlateEvents, correlationGroups, type CorrelateOptions } from "../correlate.js";
+import { repairBuildTimeRows } from "../buildTimeWindow.js";
 import { CorrelationProfileStore } from "../correlationProfile.js";
 import { filterFalsePositiveEvents, type FalsePositiveMarker } from "../falsePositive.js";
 import { diffFindings, type FindingsDiff } from "../findingsDiff.js";
@@ -452,18 +453,19 @@ async function correlateForSynthesis(
   const trustOverrides = ctx.opts.sourceTrustStore ? await ctx.opts.sourceTrustStore.load(caseId) : undefined;
   const sourceTrust = effectiveTrustMap(trustOverrides);
   const skew = await detectSkew(ctx, caseId, loaded.forensicTimeline, { windowSeconds, sourceTrust });
-  return {
-    windowSeconds,
-    sourceTrust,
-    state: {
-      ...loaded,
-      forensicTimeline: correlateEvents(loaded.forensicTimeline, {
-        windowSeconds,
-        sourceTrust,
-        epochOf: skew,
-      }),
-    },
+  const correlated: InvestigationState = {
+    ...loaded,
+    forensicTimeline: correlateEvents(loaded.forensicTimeline, {
+      windowSeconds,
+      sourceTrust,
+      epochOf: skew,
+    }),
   };
+  // Correlation merges rows, and this timeline is persisted (#1698). A repair, not the import-time cap:
+  // windows are found at the import seam before demote, and this record no longer holds the Info
+  // markers that opened them, so recomputing here could lift a valid cap. It also repairs a case
+  // correlated before this rule, on its next synthesis rather than its next import.
+  return { windowSeconds, sourceTrust, state: repairBuildTimeRows(correlated).state };
 }
 
 /**
