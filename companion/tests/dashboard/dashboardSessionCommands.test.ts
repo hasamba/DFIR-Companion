@@ -54,6 +54,11 @@ describe("dashboard session-command line (#1594)", () => {
     expect(html).toContain("and 3 more in the timeline");
   });
 
+  it("adds the notes the synthesis capped to the count (#1683)", () => {
+    const html = line({ sessionCommands: [cmd(1)], sessionCommandsMore: 13 }, new Set(["e1"]));
+    expect(html).toContain("and 13 more in the timeline");
+  });
+
   it("render() calls it", () => {
     const fn = functionsOf(scriptFromSource("dashboard-render.js", SOURCE)).find(
       (f) => f.name === "render" && f.declaration,

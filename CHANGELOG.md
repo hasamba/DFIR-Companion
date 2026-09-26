@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **AI eval gate averages three runs** — a no-regression attestation now needs three real runs of every section, averaged, with a 5-point tolerance; a SYSTEM_PROMPT or vision-model change also needs a real screenshot set (part of #1579)
 
 ### Fixed
+- **Session-command notes skip ordinary system activity** — Edge, Windows Update, task-host and SecurityHealth rows and a finding's own cited rows are no longer listed; each finding shows at most 12, attack rows first, and says "N more" (closes #1683)
 - **Live updates come back after a sleep** — the dashboard reconnects its live socket with backoff, catches up on the AI pill, jobs and case state, re-checks when the tab wakes, and Re-synthesize shows "synthesizing" at once (closes #1675)
 - **Message-less 4657 Run-key writes grade Medium** — a Security 4657 exported without its rendered message now shows the written key and value name, so the Run-key rule grades it; other object-access events are unchanged (closes #1670)
 - **Enumerated Run keys stay Info** — the content tagger no longer grades every PersistenceSniper Run/RunOnce entry Medium on a clean image; a real Run-key write (Sysmon 12/13, Security 4657) still grades Medium (closes #1666)
