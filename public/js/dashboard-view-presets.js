@@ -70,7 +70,8 @@
     if (!btn) return;
     const view = DfirState.activeView();
     btn.classList.toggle("dv-on", !!view);
-    btn.title = view
+    // data-tip, not title — a native title draws a second bubble over the styled card.
+    btn.dataset.tip = view
       ? `Dashboard view: ${view.name} — click to switch or edit`
       : "Dashboard view: Custom — click to choose a layout preset";
   }
