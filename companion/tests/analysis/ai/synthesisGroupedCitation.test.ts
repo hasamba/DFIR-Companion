@@ -181,3 +181,71 @@ describe("a finding citing a grouped prompt row covers every member (#1702)", ()
     expect(autoFindings(next).length).toBe(1);
   });
 });
+
+describe("a DISMISSED grouped row does not reach a different act in its group (#1702, Codex review)", () => {
+  // Members the prompt group holds by rule head alone: another program, much later, another host.
+  const attacker = (id: string, at: string, over: Partial<ForensicEvent> = {}): ForensicEvent => ({
+    ...event(id, at),
+    ...over,
+  });
+  const cases: Array<[string, ForensicEvent]> = [
+    [
+      "another acting image",
+      attacker("x1", "2026-08-30T15:00:50.000Z", {
+        description:
+          "Velociraptor [Windows.Sigma.Base] Sigma: Reg Key Value Set (Sysmon Alert) - Image=C:\\Users\\Public\\evil.exe - TargetObject=HKLM\\System\\CurrentControlSet\\Services\\evil\\ImagePath",
+      }),
+    ],
+    ["the same image 30 minutes later", attacker("x1", "2026-08-30T15:30:39.000Z")],
+    ["another host", attacker("x1", "2026-08-30T15:00:45.000Z", { asset: "HOST-B" })],
+  ];
+
+  for (const [label, row] of cases) {
+    it(`leaves ${label} uncovered, so the backfill still raises it`, async () => {
+      const state = { ...emptyState("c1"), forensicTimeline: [...burst(), row] };
+      const next = await fold(
+        state,
+        delta([modelFinding("f18", "dismissed", [REP])]),
+        new Map([[REP, [...MEMBERS, "x1"]]]),
+      );
+      expect(linkedTo(next, "f18")).toEqual(MEMBERS);
+      const auto = autoFindings(next);
+      expect(auto).toHaveLength(1);
+      expect(linkedTo(next, auto[0].id)).toEqual(["x1"]);
+    });
+  }
+
+  it("a LIVE finding still covers every member of the group", async () => {
+    const far = attacker("x1", "2026-08-30T15:30:39.000Z");
+    const state = { ...emptyState("c1"), forensicTimeline: [...burst(), far] };
+    const next = await fold(
+      state,
+      delta([modelFinding("f5", "open", [REP])]),
+      new Map([[REP, [...MEMBERS, "x1"]]]),
+    );
+    expect(linkedTo(next, "f5")).toEqual([...MEMBERS, "x1"].sort());
+    expect(autoFindings(next)).toEqual([]);
+  });
+});
+
+describe("an echoed auto finding that cites nothing (#1702, Codex review)", () => {
+  it("is dropped when the events it held before this synthesis are all dismissed now", async () => {
+    const linkedBefore = burst().map((e) => (e.id === REP ? e : { ...e, relatedFindingIds: ["f-auto-e2"] }));
+    const state = { ...emptyState("c1"), forensicTimeline: linkedBefore, findings: [priorAuto([])] };
+    const echoedWithoutEvents = {
+      id: "f-auto-e2",
+      severity: "High",
+      title: "Reg Key Value Set (Sysmon Alert)",
+      description: "auto-flagged",
+      relatedIocs: [],
+      mitreTechniques: ["T1112"],
+      status: "open",
+    };
+    const next = await fold(
+      state,
+      delta([modelFinding("f18", "dismissed", [REP]), echoedWithoutEvents]),
+      grouping(),
+    );
+    expect(next.findings.map((f) => f.id)).not.toContain("f-auto-e2");
+  });
+});
