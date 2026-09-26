@@ -19,6 +19,7 @@ import type { EvidenceAttestationStore } from "../evidenceAttestationStore.js";
 import { alignedEpoch, detectClockSkew, detectHostTimeGaps, effectiveOffsets } from "../clockSkew.js";
 import type { ClockSkewStore } from "../clockSkewStore.js";
 import { correlateEvents, correlationGroups, type CorrelateOptions } from "../correlate.js";
+import { capBuildTimeRows } from "../buildTimeWindow.js";
 import { CorrelationProfileStore } from "../correlationProfile.js";
 import { filterFalsePositiveEvents, type FalsePositiveMarker } from "../falsePositive.js";
 import { diffFindings, type FindingsDiff } from "../findingsDiff.js";
@@ -452,18 +453,19 @@ async function correlateForSynthesis(
   const trustOverrides = ctx.opts.sourceTrustStore ? await ctx.opts.sourceTrustStore.load(caseId) : undefined;
   const sourceTrust = effectiveTrustMap(trustOverrides);
   const skew = await detectSkew(ctx, caseId, loaded.forensicTimeline, { windowSeconds, sourceTrust });
-  return {
-    windowSeconds,
-    sourceTrust,
-    state: {
-      ...loaded,
-      forensicTimeline: correlateEvents(loaded.forensicTimeline, {
-        windowSeconds,
-        sourceTrust,
-        epochOf: skew,
-      }),
-    },
+  const correlated: InvestigationState = {
+    ...loaded,
+    forensicTimeline: correlateEvents(loaded.forensicTimeline, {
+      windowSeconds,
+      sourceTrust,
+      epochOf: skew,
+    }),
   };
+  // Correlation merges rows, and this timeline is persisted (#1698). The import seam re-applies the
+  // build-window cap after its own correlation; this one must too, or a merged row keeps a note its
+  // window no longer backs, or a grade the merge raised inside a window. It also repairs a case that
+  // was correlated before this rule, on its next synthesis rather than its next import.
+  return { windowSeconds, sourceTrust, state: capBuildTimeRows(correlated).state };
 }
 
 /**

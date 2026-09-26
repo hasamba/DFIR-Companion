@@ -46,11 +46,18 @@ import { hostBuildMarkers, type HostHistoryMarker } from "./gapHostHistory.js";
 import { assetKey } from "./gapEdgeClass.js";
 import type { HostRenameRecord } from "./hostRenameRecord.js";
 import { ransomwareSignal } from "./ransomwareDetect.js";
-import { SEVERITY_RANK, type ForensicEvent, type InvestigationState, type Severity } from "./stateTypes.js";
+import {
+  SEVERITY_RANK,
+  worstSeverity,
+  type ForensicEvent,
+  type InvestigationState,
+  type Severity,
+} from "./stateTypes.js";
 
 /** The derived note this module writes; registered in derivedNote.ts DERIVED_NOTE_NAMES. */
 export const BUILD_TIME_MARKER = "[build-time:";
 const BUILD_TIME_NOTE_RE = /\s*\[build-time:[^\]]*\]/gu;
+const HAS_BUILD_TIME_NOTE = /\[build-time:[^\]]*\]/u;
 
 /** The severity a row inside a provisioning window is capped at. Never a raise, never below Low. */
 export const BUILD_TIME_SEVERITY_CAP: Severity = "Low";
@@ -318,6 +325,12 @@ function withNote(e: ForensicEvent, w: BuildTimeWindow): ForensicEvent {
   return next;
 }
 
+// The row with every build-time note removed and nothing else changed. For a note that arrived without
+// its record (#1698) — a correlated row that unioned a capped member's note — so no grade is touched.
+function stripNote(e: ForensicEvent): ForensicEvent {
+  return { ...e, description: e.description.replace(BUILD_TIME_NOTE_RE, "").trim() };
+}
+
 function withoutNote(e: ForensicEvent): ForensicEvent {
   const { buildTime, ...rest } = e;
   return {
@@ -345,9 +358,12 @@ export function capBuildTimeRows(state: InvestigationState): {
   const forensicTimeline = state.forensicTimeline.map((e) => {
     const found = windowFor(windows, e);
     const w = found && !protectedFromCap(e) ? found : undefined;
+    // One rule whatever path produced the row (#1698): inside a window, one note and nothing above
+    // Low; outside every window, no note. A merge can bring a note without its record, or a record
+    // with a grade it raised, and every branch below exists because one of those reached a case.
     if (w && !e.buildTime) {
       changed++;
-      return withNote(e, w);
+      return withNote(HAS_BUILD_TIME_NOTE.test(e.description) ? stripNote(e) : e, w);
     }
     // The window moved (a later import extended or narrowed the burst): restore first, then re-mark,
     // so the note and the recorded pre-cap severity describe the window that exists now.
@@ -355,13 +371,53 @@ export function capBuildTimeRows(state: InvestigationState): {
       changed++;
       return withNote(withoutNote(e), w);
     }
+    // A merge raised a capped row inside its own window. Re-cap it and keep the WORSE of the two
+    // original grades, so a later un-cap restores the grade the evidence actually carries.
+    if (w && e.buildTime && capped(e.severity) !== e.severity) {
+      changed++;
+      const cappedFrom = worstSeverity(e.buildTime.cappedFrom ?? e.severity, e.severity);
+      return { ...e, severity: capped(e.severity), buildTime: { ...e.buildTime, cappedFrom } };
+    }
     if (!w && e.buildTime) {
       changed++;
       return withoutNote(e);
     }
+    if (!w && HAS_BUILD_TIME_NOTE.test(e.description)) {
+      changed++;
+      return stripNote(e);
+    }
     return e;
   });
   return changed ? { state: { ...state, forensicTimeline }, changed } : { state, changed: 0 };
+}
+
+/**
+ * The build-time record a correlated row keeps (#1698). Correlation unions every member's notes, so it
+ * must carry the record with them: from the primary when it has one, else from the first member that
+ * does, with the WORST pre-cap grade across the members as the grade to restore. Undefined when no
+ * member carries a record — the caller then drops any build-time note from the union.
+ */
+export function mergedBuildTime(
+  primary: ForensicEvent,
+  members: readonly ForensicEvent[],
+): ForensicEvent["buildTime"] {
+  const recorded = members.find((m) => m.buildTime)?.buildTime;
+  if (!recorded) return undefined;
+  const base = primary.buildTime ?? recorded;
+  const original = members.reduce<Severity>(
+    (acc, m) => worstSeverity(acc, m.buildTime?.cappedFrom ?? m.severity),
+    "Info",
+  );
+  return {
+    marker: base.marker,
+    window: base.window,
+    ...(capped(original) !== original ? { cappedFrom: original } : {}),
+  };
+}
+
+/** Is this one of the notes this module writes? The correlation union keeps or drops them by this. */
+export function isBuildTimeNote(note: string): boolean {
+  return note.trim().startsWith(BUILD_TIME_MARKER);
 }
 
 // ───────────────────────────── what the readers need ─────────────────────────────

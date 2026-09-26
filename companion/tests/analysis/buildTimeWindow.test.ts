@@ -530,3 +530,62 @@ describe("a user session is not a build (#1695)", () => {
     expect(["chocolatey", "packer"]).toContain(windows[0].marker);
   });
 });
+
+// #1698: a row can carry the build-time note without the record, or the record with a grade a merge
+// raised. On INC-2026-014 a correlated row kept a capped member's note and lost its record, and the
+// synthesis quoted a window that no longer existed. The pass now enforces one rule, whatever produced
+// the row: inside a window, one note and nothing above Low; outside every window, no note.
+describe("the cap pass repairs a row whose note and record disagree (#1698)", () => {
+  const STALE = " [build-time: vagrant, 2026-09-26T12:34Z–13:59Z]";
+
+  it("strips a stray note from a row outside every window and leaves its grade", () => {
+    const stray = ev("x1", "2026-09-26T13:03:24Z", { severity: "High", description: `Defender row${STALE}` });
+    const { state, changed } = capBuildTimeRows(stateWith([...decemberBuild(), stray]));
+    const row = state.forensicTimeline.find((e) => e.id === "x1")!;
+    expect(changed).toBeGreaterThan(0);
+    expect(row.description).toBe("Defender row");
+    expect(row.severity).toBe("High");
+    expect(row.buildTime).toBeUndefined();
+    expect(capBuildTimeRows(state).changed).toBe(0);
+  });
+
+  it("gives a row inside a window exactly one note when it arrived with a stray one", () => {
+    const stray = ev("x2", "2025-12-05T03:20:00Z", { severity: "High", description: `firewall row${STALE}` });
+    const { state } = capBuildTimeRows(stateWith([...decemberBuild(), stray]));
+    const row = state.forensicTimeline.find((e) => e.id === "x2")!;
+    expect((row.description.match(/\[build-time:/g) ?? []).length).toBe(1);
+    expect(row.description).not.toContain("vagrant");
+    expect(row.severity).toBe("Low");
+    expect(row.buildTime?.cappedFrom).toBe("High");
+    expect(capBuildTimeRows(state).changed).toBe(0);
+  });
+
+  it("re-caps a row a merge raised inside its own window, keeping the worse original grade", () => {
+    const first = capBuildTimeRows(stateWith([...decemberBuild()]));
+    const raised = first.state.forensicTimeline.map((e) =>
+      e.id === "d4" ? { ...e, severity: "High" as const } : e,
+    );
+    const { state } = capBuildTimeRows({ ...first.state, forensicTimeline: raised });
+    const row = state.forensicTimeline.find((e) => e.id === "d4")!;
+    expect(row.severity).toBe("Low");
+    expect(row.buildTime?.cappedFrom).toBe("High"); // was Medium before the merge raised it
+    expect((row.description.match(/\[build-time:/g) ?? []).length).toBe(1);
+  });
+
+  it("never lowers the recorded original grade when a merge brings a milder one", () => {
+    const first = capBuildTimeRows(stateWith([...decemberBuild()]));
+    const d6 = first.state.forensicTimeline.find((e) => e.id === "d6")!; // Critical, capped
+    const merged = first.state.forensicTimeline.map((e) =>
+      e.id === "d6" ? { ...e, severity: "Medium" as const } : e,
+    );
+    const { state } = capBuildTimeRows({ ...first.state, forensicTimeline: merged });
+    expect(d6.buildTime?.cappedFrom).toBe("Critical");
+    expect(state.forensicTimeline.find((e) => e.id === "d6")!.buildTime?.cappedFrom).toBe("Critical");
+  });
+
+  it("leaves an Info row inside a window Info", () => {
+    const info = ev("i2", "2025-12-05T03:00:00Z", { description: `session logoff${STALE}` });
+    const { state } = capBuildTimeRows(stateWith([...decemberBuild(), info]));
+    expect(state.forensicTimeline.find((e) => e.id === "i2")!.severity).toBe("Info");
+  });
+});
