@@ -259,6 +259,37 @@ export function backfillHighSeverityFindings(
   };
 }
 
+// An f-auto-* finding's tags ARE the union of its cited events' tags (buildFinding below). Synthesis
+// rebuilds findings from the model's delta, and the model may echo an f-auto id with other tags —
+// the backfill then sees the id already present and does not rebuild it, so the model's tags won
+// (#1684: T1021.002 + T1570 became T1105 + T1059.001 with no new evidence). This re-derives them
+// from the events linked in either direction. A finding whose events carry no tags keeps what it
+// has: there is nothing to derive from. Model findings are left alone. Pure.
+export function rederiveAutoFindingTechniques(state: InvestigationState): InvestigationState {
+  const eventById = new Map(state.forensicTimeline.map((e) => [e.id, e] as const));
+  const derived = new Map<string, Set<string>>();
+  const add = (findingId: string, e: ForensicEvent | undefined): void => {
+    if (!e || !findingId.startsWith(AUTO_FINDING_ID_PREFIX)) return;
+    const set = derived.get(findingId) ?? new Set<string>();
+    for (const t of e.mitreTechniques) set.add(t);
+    derived.set(findingId, set);
+  };
+  for (const e of state.forensicTimeline) for (const fid of e.relatedFindingIds) add(fid, e);
+  for (const f of state.findings) for (const eid of f.relatedEventIds ?? []) add(f.id, eventById.get(eid));
+
+  let changed = false;
+  const findings = state.findings.map((f) => {
+    const tags = derived.get(f.id);
+    if (!tags?.size) return f;
+    const next = [...tags];
+    const same = next.length === f.mitreTechniques.length && next.every((t) => f.mitreTechniques.includes(t));
+    if (same) return f;
+    changed = true;
+    return { ...f, mitreTechniques: next };
+  });
+  return changed ? { ...state, findings } : state;
+}
+
 // Uncovered eligible High/Critical events, split into the ones that need a new finding and the ones
 // an existing finding already explains (event id -> that finding's id): a dismissed corpus-level
 // finding over the same directory, or a live finding citing the event's twin (#1556).

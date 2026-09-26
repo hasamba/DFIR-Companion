@@ -194,8 +194,8 @@ const FINDING_CITED_IDS = 8;
 
 export const EXISTING_FINDINGS_HEADER =
   "EXISTING FINDINGS (update by id, do not duplicate). Indented lines show what a finding said last run and " +
-  "the events it cited. Keep every concrete detail it names (file, command, host, account, time) unless the " +
-  "evidence now contradicts it — then say why in the new description:";
+  "the events it cited and its ATT&CK tags. Keep every concrete detail it names (file, command, host, account, " +
+  "time) and every ATT&CK tag unless the evidence now contradicts it — then say why in the new description:";
 
 function detailedFindingIds(findings: readonly Finding[]): Set<string> {
   return new Set(
@@ -214,10 +214,15 @@ const echoRank = (f: Finding): Finding["severity"] => f.simulation?.originalSeve
 function findingDetail(f: Finding): string {
   const said = oneLine(f.description ?? "");
   const cited = (f.relatedEventIds ?? []).slice(0, FINDING_CITED_IDS);
+  // The tags it carried last run (#1684): without them a re-run re-guessed each finding's
+  // techniques from the title and dropped ones the unchanged evidence still supported.
+  const tags = f.mitreTechniques ?? [];
   return (
     (said
       ? `\n    said: ${said.length > FINDING_DETAIL_CHARS ? `${said.slice(0, FINDING_DETAIL_CHARS)}…` : said}`
-      : "") + (cited.length ? `\n    cites: ${cited.join(", ")}` : "")
+      : "") +
+    (cited.length ? `\n    cites: ${cited.join(", ")}` : "") +
+    (tags.length ? `\n    tags: ${tags.join(", ")}` : "")
   );
 }
 
