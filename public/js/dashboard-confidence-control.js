@@ -19,6 +19,21 @@
   // its case is still the open one — otherwise an older value overwrites the analyst's newer one.
   let confLoadGen = 0;
   let confEditGen = 0;
+  // A save still on its way to the server: a load now would read the value from before it and
+  // briefly roll the control back. The load waits instead, and runs once when the last save
+  // settles — on failure too, so the control then shows what the server really holds.
+  let confSavesInFlight = 0;
+  let confReloadOwed = null; // the case id a skipped load was for, else null
+  function trackConfidenceSave(saving) {
+    confSavesInFlight++;
+    return saving.finally(() => {
+      confSavesInFlight--;
+      if (confSavesInFlight > 0 || !confReloadOwed) return;
+      const caseId = confReloadOwed;
+      confReloadOwed = null;
+      loadConfidenceControl(caseId);
+    });
+  }
   function putConfidenceControl(caseId, minConfidence, opts) {
     return fetch(`/cases/${caseId}/confidence-control`, {
       method: "PUT",
@@ -41,6 +56,10 @@
   function loadConfidenceControl(caseId) {
     // The analyst's own edit is still waiting to save; its echo will re-read the newer value.
     if (confPending && confPending.caseId === caseId) return;
+    if (confSavesInFlight > 0) {
+      confReloadOwed = caseId;
+      return;
+    }
     const load = ++confLoadGen;
     const editsAtStart = confEditGen;
     fetch(`/cases/${caseId}/confidence-control`)
@@ -64,7 +83,9 @@
     confPending = { caseId, minConfidence };
     confSaveTimer = setTimeout(() => {
       confPending = null;
-      putConfidenceControl(caseId, minConfidence).catch(() => {});
+      trackConfidenceSave(putConfidenceControl(caseId, minConfidence)).catch(
+        () => {},
+      );
     }, 500);
   }
 
@@ -76,11 +97,13 @@
   // concurrent saves are safe in either order.
   function saveFindingOriginFilters(caseId, patch) {
     confEditGen++;
-    return fetch(`/cases/${caseId}/confidence-control`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch),
-    }).catch(() => {});
+    return trackConfidenceSave(
+      fetch(`/cases/${caseId}/confidence-control`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      }),
+    ).catch(() => {});
   }
 
   // Registered here rather than at load: see the manifest note. Both events fire long after the

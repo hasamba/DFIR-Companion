@@ -11,7 +11,12 @@ const PICKER = read("dashboard-case-template-picker.js");
 const CONNECT = read("dashboard-case-connect.js");
 const LIVE = read("dashboard-live-socket.js");
 
-type Deferred = { url: string; init?: { method?: string }; resolve: (body: unknown) => void };
+type Deferred = {
+  url: string;
+  init?: { method?: string };
+  resolve: (body: unknown) => void;
+  reject: (err: Error) => void;
+};
 
 function harness(src: string) {
   const els: Record<string, Record<string, unknown>> = {
@@ -28,8 +33,13 @@ function harness(src: string) {
     window: win,
     document: { getElementById: (id: string) => els[id] ?? null },
     fetch: (url: string, init?: { method?: string }) =>
-      new Promise((res) =>
-        fetches.push({ url, init, resolve: (body) => res({ ok: true, json: async () => body }) }),
+      new Promise((res, rej) =>
+        fetches.push({
+          url,
+          init,
+          resolve: (body) => res({ ok: true, json: async () => body }),
+          reject: rej,
+        }),
       ),
     setTimeout: (fn: () => void) => timers.push(fn),
     clearTimeout: () => {},
@@ -40,7 +50,8 @@ function harness(src: string) {
   runInNewContext(src, sandbox);
   const fn = (name: string) => win[name] as (...a: unknown[]) => unknown;
   const gets = () => fetches.filter((f) => !f.init?.method);
-  return { els, fetches, gets, timers, fn };
+  const puts = () => fetches.filter((f) => f.init?.method === "PUT");
+  return { els, fetches, gets, puts, timers, fn };
 }
 
 const settle = () => new Promise((r) => setTimeout(r, 0));
@@ -95,6 +106,31 @@ describe("confidence control re-read on push (#1691)", () => {
     expect(h.els.confFilter.value).toBe(80);
   });
 
+  it("waits for a save still on its way, then re-reads once it lands", async () => {
+    const h = harness(CONF);
+    h.fn("saveFindingOriginFilters")("INC-1", { hideAutoFindings: true });
+    h.fn("loadConfidenceControl")("INC-1");
+    expect(h.gets()).toHaveLength(0);
+    h.puts()[0].resolve({});
+    await settle();
+    expect(h.gets()).toHaveLength(1);
+    h.gets()[0].resolve({ minConfidence: 0, hideAutoFindings: true });
+    await settle();
+    expect(h.els.hideAutoFindings.checked).toBe(true);
+  });
+
+  it("re-reads the server's value after a save fails", async () => {
+    const h = harness(CONF);
+    h.els.hideAutoFindings.checked = true;
+    h.fn("saveFindingOriginFilters")("INC-1", { hideAutoFindings: true });
+    h.fn("loadConfidenceControl")("INC-1");
+    h.puts()[0].reject(new Error("offline"));
+    await settle();
+    h.gets()[0].resolve({ minConfidence: 0, hideAutoFindings: false });
+    await settle();
+    expect(h.els.hideAutoFindings.checked).toBe(false);
+  });
+
   it("drops a response for a case that is no longer open", async () => {
     const h = harness(CONF);
     h.fn("loadConfidenceControl")("INC-1");
@@ -143,6 +179,19 @@ describe("report-template picker re-read on push (#1691)", () => {
     answer(h, 0, "standard");
     await settle();
     expect(h.els["rm-reportTemplate"].value).toBe("exec");
+  });
+
+  it("waits for a pick still on its way, then re-reads once it lands", async () => {
+    const h = harness(PICKER);
+    h.els["rm-reportTemplate"].value = "exec";
+    h.fn("saveCaseTemplate")();
+    h.fn("loadCaseTemplatePicker")("INC-1");
+    expect(h.gets()).toHaveLength(0);
+    h.puts()[0].reject(new Error("offline"));
+    await settle();
+    answer(h, 0, "standard");
+    await settle();
+    expect(h.els["rm-reportTemplate"].value).toBe("standard");
   });
 
   it("drops a response for a case that is no longer open", async () => {

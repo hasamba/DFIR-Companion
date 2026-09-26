@@ -9,6 +9,10 @@
   // is still the open one — rapid picks otherwise race and the older choice can win the paint.
   let pickerLoadGen = 0;
   let pickerEditGen = 0;
+  // A pick still on its way to the server: a load now would read the old choice. The load waits
+  // and runs once the last pick settles, failed or not, so the picker then shows the server's value.
+  let pickerSavesInFlight = 0;
+  let pickerReloadOwed = null; // the case id a skipped load was for, else null
   function refreshCaseTemplatePicker() {
     const caseId = document.getElementById("caseId").value.trim();
     if (caseId) loadCaseTemplatePicker(caseId);
@@ -16,6 +20,10 @@
   function loadCaseTemplatePicker(caseId) {
     const sel = document.getElementById("rm-reportTemplate");
     if (!sel) return;
+    if (pickerSavesInFlight > 0) {
+      pickerReloadOwed = caseId;
+      return;
+    }
     const load = ++pickerLoadGen;
     const editsAtStart = pickerEditGen;
     Promise.all([
@@ -44,12 +52,21 @@
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
     pickerEditGen++;
+    pickerSavesInFlight++;
     const templateId = document.getElementById("rm-reportTemplate").value;
     fetch(`/cases/${encodeURIComponent(caseId)}/report-template`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ templateId }),
-    }).catch(() => {});
+    })
+      .catch(() => {})
+      .finally(() => {
+        pickerSavesInFlight--;
+        if (pickerSavesInFlight > 0 || !pickerReloadOwed) return;
+        const owed = pickerReloadOwed;
+        pickerReloadOwed = null;
+        loadCaseTemplatePicker(owed);
+      });
   }
 
   // The controls the page bound at module scope. Order unchanged.
