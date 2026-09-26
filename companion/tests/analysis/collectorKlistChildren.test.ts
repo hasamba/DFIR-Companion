@@ -279,3 +279,22 @@ describe("the klist lineage refuses everything else (#1699)", () => {
     expectKept(one(events, KLIST, "-li 0x3009c"), "Low");
   });
 });
+
+describe("the klist lineage reads one envelope (#1699, Codex review)", () => {
+  // A row whose top-level EventData links to the klist script while its embedded record says something
+  // else. The ledger must not read the command from one record and the parent GUID from another.
+  function forked(row: object, embedded: Record<string, unknown>): object {
+    const r = row as { SystemData: Record<string, unknown>; EventData: Record<string, unknown> };
+    return { ...r, _Event: { System: { ...r.SystemData }, EventData: { ...r.EventData, ...embedded } } };
+  }
+
+  it("keeps a klist child whose embedded record disagrees with its top-level EventData", () => {
+    const events = velo([script(), forked(cmdChild(), { ParentProcessGuid: OTHER_GUID })]);
+    expectKept(one(events, CMD), "Medium");
+  });
+
+  it("does not seed from a klist script whose envelope disagrees", () => {
+    const events = velo([forked(script(), { ProcessGuid: OTHER_GUID }), cmdChild()]);
+    expectKept(one(events, CMD), "Medium");
+  });
+});
