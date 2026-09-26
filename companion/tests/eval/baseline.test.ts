@@ -167,6 +167,27 @@ describe("real-run tolerance and evaluation profile (#1579)", () => {
     expect(mock.qualityRegressions).toContain("claimRecall");
   });
 
+  it("never gates a real run on precision, which counts every extra finding as wrong (#1579)", () => {
+    const baseline = createBaseline(IDENTITY, SUMMARY, RECORDED, { runs: 3, mode: "all" });
+    const lowerPrecision = {
+      ...SUMMARY,
+      claimPrecision: SUMMARY.claimPrecision - 0.3,
+      eventPrecision: SUMMARY.eventPrecision - 0.3,
+      iocPrecision: SUMMARY.iocPrecision - 0.3,
+    };
+    expect(compareWithBaseline(baseline, lowerPrecision, IDENTITY, REAL_3).status).toBe("passed");
+    // A mock run is deterministic, so its precision still gates.
+    const mock = compareWithBaseline(
+      createBaseline(IDENTITY, SUMMARY, RECORDED),
+      lowerPrecision,
+      IDENTITY,
+      MOCK_PROFILE,
+    );
+    expect(mock.qualityRegressions).toEqual(
+      expect.arrayContaining(["claimPrecision", "eventPrecision", "iocPrecision"]),
+    );
+  });
+
   it("fails a real run that drops 6 points", () => {
     const baseline = createBaseline(IDENTITY, SUMMARY, RECORDED, { runs: 3, mode: "all" });
     const comparison = compareWithBaseline(

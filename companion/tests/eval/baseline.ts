@@ -195,13 +195,21 @@ function incompatibleReasons(
   return reasons;
 }
 
+// #1579: precision counts every extra finding as wrong, including correct ones the golden set does
+// not list. The per-case report already marks extra conclusions "not gated" on a real run, so the
+// baseline comparison must not gate them either. Invention still fails as a hard violation.
+const REAL_UNGATED: ReadonlySet<string> = new Set(["claimPrecision", "eventPrecision", "iocPrecision"]);
+
 function qualityRegressions(
   baseline: EvaluationSummary,
   current: EvaluationSummary,
   tolerance: number,
+  real: boolean,
 ): string[] {
   return [
-    ...QUALITY_HIGHER_IS_BETTER.filter((key) => current[key] < baseline[key] - tolerance),
+    ...QUALITY_HIGHER_IS_BETTER.filter(
+      (key) => !(real && REAL_UNGATED.has(key)) && current[key] < baseline[key] - tolerance,
+    ),
     ...QUALITY_LOWER_IS_BETTER.filter((key) => current[key] > baseline[key]),
   ];
 }
@@ -230,7 +238,7 @@ export function compareWithBaseline(
     };
   }
   const tolerance = profile.real ? REAL_QUALITY_TOLERANCE : QUALITY_TOLERANCE;
-  const quality = qualityRegressions(baseline.summary, current, tolerance);
+  const quality = qualityRegressions(baseline.summary, current, tolerance, profile.real);
   const resources = resourceRegressions(baseline.summary, current);
   return {
     status: quality.length || resources.length ? "regressed" : "passed",
