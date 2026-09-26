@@ -55,9 +55,7 @@
       canRedo && s.nextRedo
         ? `Redo — re-apply "${s.nextRedo.label}"`
         : "Nothing to redo";
-    undoBtn.title = undoTip;
     undoBtn.dataset.tip = undoTip;
-    redoBtn.title = redoTip;
     redoBtn.dataset.tip = redoTip;
   }
   function doImportUndoRedo(which) {

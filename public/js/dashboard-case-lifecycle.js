@@ -32,7 +32,8 @@
           btn.style.display = caseId ? "inline-flex" : "none";
           btn.classList.toggle("lc-closed", isClosed);
           btn.classList.toggle("lc-archived", isArchived);
-          btn.title = isArchived
+          // data-tip, not title — a native title draws a second bubble over the styled card.
+          btn.dataset.tip = isArchived
             ? "Case ARCHIVED — click to restore"
             : isClosed
               ? "Case CLOSED — click to reopen or archive"
