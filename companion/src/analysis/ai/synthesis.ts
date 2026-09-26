@@ -714,6 +714,7 @@ export async function synthesize(
     playbookTasks: run.playbookTasks,
     inventory: run.inventory,
     hostOf: (raw) => resolveHost(aliasIndex, raw),
+    membersOf: prompt.membersOf,
   });
   let next = folded;
   if (opts.dryRun) return next;

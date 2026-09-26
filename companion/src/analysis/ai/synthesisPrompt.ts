@@ -80,6 +80,8 @@ export interface SynthesisPromptResult {
   omittedInfo: number;
   /** How many new promoted rows this prompt pinned (#1586), for the run's evidence mix. */
   promotedPinned: number;
+  /** Grouped row → every event it stood for, so a finding citing it covers the burst (#1702). */
+  membersOf: ReadonlyMap<string, readonly string[]>;
 }
 
 /** Slack covering the JSON scaffolding around the blocks the overhead estimate counts. */
@@ -186,6 +188,7 @@ export async function buildSynthesisPrompt(
     maxEvents: timeline.maxEvents,
     omittedInfo: timeline.omittedInfo,
     promotedPinned: timeline.pinnedCount(),
+    membersOf: timeline.grouping.memberIdsByRepresentative,
   };
 }
 
