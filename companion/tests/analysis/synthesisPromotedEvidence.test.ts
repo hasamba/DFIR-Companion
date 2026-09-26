@@ -159,6 +159,14 @@ describe("newly promoted rows reach the synthesis prompt, marked as new (#1586)"
     expect(p).toMatch(/Keep every concrete detail/);
   });
 
+  it("echoes each existing finding's ATT&CK tags, so a re-run does not silently drop one (#1684)", async () => {
+    await seed(LAB_ROWS());
+    await pipeline().synthesize("c1", { force: true });
+    const p = prompts[0];
+    expect(p).toMatch(/\[f12\][^\n]*\n(?: {4}[^\n]*\n)* {4}tags: T1486\n/);
+    expect(p).toMatch(/ATT&CK tags/);
+  });
+
   it("after a run has shown them, the rows stay tagged promoted but are no longer new", async () => {
     await seed(LAB_ROWS());
     const pl = pipeline();

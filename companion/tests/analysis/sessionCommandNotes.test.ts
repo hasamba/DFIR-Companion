@@ -306,7 +306,9 @@ describe("noteSessionCommands — naming is scoped to the host (#1594 review)", 
 
   it("a citing finding that only says the wrapper (cmd) has not named the wrapped command", () => {
     const wrapped = ev("e-wrap", { timestamp: at("09:01:00"), commandLine: "cmd.exe /c net view /all" });
+    // Low, so it is not an anchor: an anchor never gets a note for a row it cites (#1683).
     const f = finding("f-cmd", {
+      severity: "Low",
       title: "Shell activity",
       description: "cmd spawned a child process.",
       relatedEventIds: ["e-mimi", "e-wrap"],

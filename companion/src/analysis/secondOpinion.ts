@@ -7,7 +7,13 @@ import {
   type Severity,
   type Technique,
 } from "./stateTypes.js";
-import { matchKey, norm, resolveDecisionTargets } from "./secondOpinionTargets.js";
+import {
+  matchKey,
+  norm,
+  overlappingFinding,
+  pairByOverlap,
+  resolveDecisionTargets,
+} from "./secondOpinionTargets.js";
 import { heldForAnalyst } from "./secondOpinionGuard.js";
 import { byEventTime } from "./forensicSort.js";
 import { renderEventLine } from "./ai/eventLine.js";
@@ -140,13 +146,12 @@ function indexFindings(findings: readonly Finding[]): FindingIndex {
 // b_only: B raised a finding A missed; a_only: A has a finding B dropped; severity: matched finding,
 // different severity; mitre_added/removed: ATT&CK techniques present on one side only (by id).
 export function buildSecondOpinionDeltas(a: InvestigationState, b: InvestigationState): SecondOpinionDelta[] {
-  const aIdx = indexFindings(a.findings);
-  const bIdx = indexFindings(b.findings);
+  const { aAll, bAll, counterpart } = pairFindings(a, b);
   const deltas: SecondOpinionDelta[] = [];
   const matchedA = new Set<Finding>();
 
-  for (const bf of bIdx.all) {
-    const af = aIdx.match(bf);
+  for (const bf of bAll) {
+    const af = counterpart.get(bf);
     if (!af) {
       deltas.push(delta("b_only", matchKey(bf), bf.title, { finding: bf, bSeverity: bf.severity }));
     } else if (!matchedA.has(af)) {
@@ -163,7 +168,7 @@ export function buildSecondOpinionDeltas(a: InvestigationState, b: Investigation
       }
     }
   }
-  for (const af of aIdx.all) {
+  for (const af of aAll) {
     if (!matchedA.has(af))
       deltas.push(delta("a_only", matchKey(af), af.title, { finding: af, aSeverity: af.severity }));
   }
@@ -203,14 +208,29 @@ function delta(
 // Findings BOTH models produced — a simple agreement signal. Matched by the same union rule as the
 // deltas (semanticKey then title), counting each A finding at most once.
 function agreementCount(a: InvestigationState, b: InvestigationState): number {
+  return new Set(pairFindings(a, b).counterpart.values()).size;
+}
+
+// Each B finding's A counterpart. First by semanticKey then title (#69). The findings still unpaired
+// after that are paired by cited-event overlap or a near-identical title, globally greedy and 1:1
+// (#1682), so one finding under two titles is an agreement or a severity delta, never an A-only
+// plus a B-only delta.
+function pairFindings(
+  a: InvestigationState,
+  b: InvestigationState,
+): { aAll: readonly Finding[]; bAll: readonly Finding[]; counterpart: Map<Finding, Finding> } {
   const aIdx = indexFindings(a.findings);
   const bIdx = indexFindings(b.findings);
-  const matchedA = new Set<Finding>();
+  const counterpart = new Map<Finding, Finding>();
   for (const bf of bIdx.all) {
     const af = aIdx.match(bf);
-    if (af && !matchedA.has(af)) matchedA.add(af);
+    if (af) counterpart.set(bf, af);
   }
-  return matchedA.size;
+  const claimed = new Set(counterpart.values());
+  const aLeft = aIdx.all.filter((f) => !claimed.has(f));
+  const bLeft = bIdx.all.filter((f) => !counterpart.has(f));
+  for (const [i, j] of pairByOverlap(aLeft, bLeft)) counterpart.set(bLeft[j], aLeft[i]);
+  return { aAll: aIdx.all, bAll: bIdx.all, counterpart };
 }
 
 export interface BuildSecondOpinionInput {
@@ -493,9 +513,14 @@ export function applyAcceptedSecondOpinion(
       // Present already by the id it was adopted under (the model may have retitled it), or by key.
       const key = matchKey(d.finding);
       const adoptedId = `so:${slug(d.title)}`;
-      if (!findings.some((f) => f.id === adoptedId || matchKey(f) === key)) {
-        findings = [...findings, { ...d.finding, id: adoptedId, status: "open" }];
-      }
+      if (findings.some((f) => f.id === adoptedId || matchKey(f) === key)) continue;
+      // #1682 — B's finding cites mostly the same events as a live finding: it is that finding
+      // under another title. Accepting B takes B's severity on it; the finding count never grows.
+      const dup = overlappingFinding(findings, d.finding);
+      const sev = d.bSeverity ?? d.finding.severity;
+      findings = dup
+        ? findings.map((f) => (f.id === dup.id ? { ...f, severity: sev } : f))
+        : [...findings, { ...d.finding, id: adoptedId, status: "open" }];
     } else if (d.kind === "a_only") {
       findings = mapTargets(findings, d, (f) => ({ ...f, status: "dismissed" as const }));
     } else if (d.kind === "severity" && d.bSeverity) {

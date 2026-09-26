@@ -130,6 +130,15 @@ const RECONCILE = JSON.stringify({
   ],
 });
 
+// #1682 — findings that cite the same events are one finding under two titles, so a test whose
+// A-only finding cites e1 needs a B-only finding that does not, or the two pair up.
+const SYNTH_B_APART = JSON.stringify({
+  ...JSON.parse(SYNTH_B),
+  findings: JSON.parse(SYNTH_B).findings.map((f: { id: string }) =>
+    f.id === "g3" ? { ...f, relatedEventIds: [] } : f,
+  ),
+});
+
 // Only the timeline is seeded; model A's findings/MITRE come from the Pass-0 primary re-synthesis.
 function seededState(): InvestigationState {
   const s = emptyState("c1");
@@ -147,13 +156,13 @@ function seededState(): InvestigationState {
 
 // Every provider can answer a reconcile call, so which one ACTUALLY referees is observable (#1466):
 // model A by default, model B or a third model when `referee` says so.
-async function makeApp(opts: { enabled: boolean; referee?: "b" | "c"; synthA?: string }) {
+async function makeApp(opts: { enabled: boolean; referee?: "b" | "c"; synthA?: string; synthB?: string }) {
   const root = await mkdtemp(join(tmpdir(), "dfir-secopinion-"));
   const store = new CaseStore(root);
   const stateStore = new StateStore(store);
   const secondOpinionStore = new SecondOpinionStore(store);
   const aProvider = new ScriptedProvider(opts.synthA ?? SYNTH_A, RECONCILE, "model-a");
-  const bProvider = new ScriptedProvider(SYNTH_B, RECONCILE, "model-b");
+  const bProvider = new ScriptedProvider(opts.synthB ?? SYNTH_B, RECONCILE, "model-b");
   const cProvider = new ScriptedProvider(SYNTH_A, RECONCILE, "model-c");
   const referee =
     opts.referee === "b"
@@ -613,7 +622,7 @@ describe("accepted decisions survive re-synthesis and later runs (#1590)", () =>
     (await stateStore.load("c1")).findings.find((f) => f.id === "f2");
 
   it("a dismissal stays applied after a re-synthesis retitles and retags the finding", async () => {
-    const { app, stateStore, aProvider, pipeline } = await makeApp({ enabled: true });
+    const { app, stateStore, aProvider, pipeline } = await makeApp({ enabled: true, synthB: SYNTH_B_APART });
     setSynth(aProvider, synthA("A only finding", "T1219"));
     const run = await request(app).post("/cases/c1/second-opinion").send({});
     const dismissal = run.body.deltas.find((d: { kind: string }) => d.kind === "a_only");
@@ -650,7 +659,7 @@ describe("accepted decisions survive re-synthesis and later runs (#1590)", () =>
   });
 
   it("a decision whose finding is really gone is listed as unapplied, not dropped", async () => {
-    const { app, aProvider, pipeline } = await makeApp({ enabled: true });
+    const { app, aProvider, pipeline } = await makeApp({ enabled: true, synthB: SYNTH_B_APART });
     setSynth(aProvider, synthA("A only finding", "T1219"));
     const run = await request(app).post("/cases/c1/second-opinion").send({});
     const dismissal = run.body.deltas.find((d: { kind: string }) => d.kind === "a_only");
@@ -688,7 +697,7 @@ describe("the referee's dismissal guard (#1596)", () => {
   });
 
   it("shows the referee the open thread, flags the dismissal, and follow-referee leaves it pending", async () => {
-    const { app, aProvider, stateStore } = await makeApp({ enabled: true, synthA });
+    const { app, aProvider, stateStore } = await makeApp({ enabled: true, synthA, synthB: SYNTH_B_APART });
     aProvider.reconcileReply = dismiss;
     const run = await request(app).post("/cases/c1/second-opinion").send({});
     expect(run.status).toBe(200);
@@ -723,7 +732,7 @@ describe("the referee's dismissal guard (#1596)", () => {
   });
 
   it("a bulk accept re-checks the hold against the case as it is now", async () => {
-    const { app, aProvider, stateStore } = await makeApp({ enabled: true, synthA });
+    const { app, aProvider, stateStore } = await makeApp({ enabled: true, synthA, synthB: SYNTH_B_APART });
     aProvider.reconcileReply = JSON.stringify({
       summary: "",
       verdicts: [

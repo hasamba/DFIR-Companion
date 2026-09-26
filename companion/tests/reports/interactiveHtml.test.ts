@@ -481,4 +481,19 @@ describe("renderInteractiveHtmlReport — session-command bounds (#1594 review)"
     expect(card.sessionCommands[12]).toBe("… and 3 more in the case timeline");
     expect(JSON.stringify(card.sessionCommands)).not.toContain("ghost");
   });
+
+  it('adds the notes the synthesis capped to the "more" count (#1683)', () => {
+    const state = emptyState("c1");
+    state.forensicTimeline.push(ev("e1", "Low", "ws01"));
+    state.findings.push({
+      ...finding("f1", "High", 90),
+      sessionCommands: [{ eventId: "e1", timestamp: "", host: "ws01", kind: "process", text: "net view" }],
+      sessionCommandsMore: 7,
+    });
+    const card = parseBlob(renderInteractiveHtmlReport(state, caseMeta, emptyReportMeta())).findings[0];
+    expect(card.sessionCommands).toEqual([
+      "(undated) on ws01: net view",
+      "… and 7 more in the case timeline",
+    ]);
+  });
 });
