@@ -4,6 +4,7 @@ import { JevGradeStore, type JevGradeEntry } from "../analysis/ai/jev/jevGradeRe
 import { isLabProduced } from "../analysis/labIntel.js";
 import { worstSeverity, type ForensicEvent, type InvestigationState } from "../analysis/stateTypes.js";
 import type { RouteContext } from "./context.js";
+import { rowsInBuildWindow } from "./jevBuildWindow.js";
 
 /**
  * The WRITE half of the missed-evidence review (#1568) — one route, and a separate module from
@@ -118,6 +119,7 @@ export function registerJevPromoteRoutes(app: Express, ctx: RouteContext): void 
       let stayedInfo = 0;
       let ungraded = 0;
       const models = new Set<string>();
+      const eligible: Array<{ row: ForensicEvent; graded: JevGradeEntry }> = [];
 
       for (const id of parsed.ids) {
         // Already analyzed is a no-op, not an error: the analyst ticked a row a previous press (or
@@ -144,6 +146,22 @@ export function registerJevPromoteRoutes(app: Express, ctx: RouteContext): void 
           lab++;
           continue;
         }
+        eligible.push({ row, graded });
+      }
+
+      // Refused here, not only left out of the review (#1700): a grade recorded before the review
+      // set build-window rows aside, or an older tab, must not land a provisioning log clear at the
+      // model's Critical. The analyst's own row-by-row promotion from the super-timeline is the
+      // override, and it does not come through this route.
+      const inBuild = await rowsInBuildWindow(
+        superStore,
+        caseId,
+        state,
+        eligible.map((p) => p.row),
+      );
+      for (const { row, graded } of eligible) {
+        if (inBuild.has(row.id)) continue;
+        const id = row.id;
         // RAISE ONLY. worstSeverity is the canonical "more severe of the two": a model grading a
         // row below the severity it already carries can never demote it.
         const severity = worstSeverity(row.severity, graded.grade);
@@ -174,6 +192,11 @@ export function registerJevPromoteRoutes(app: Express, ctx: RouteContext): void 
       if (ungraded) reasons.push(`${ungraded} row(s) were not graded by a review in this case`);
       if (missing) reasons.push(`${missing} row(s) are no longer in the archive`);
       if (lab) reasons.push(`${lab} sandbox-produced row(s) cannot be promoted by this review`);
+      if (inBuild.size)
+        reasons.push(
+          `${inBuild.size} row(s) sit inside the host's own build window — the machine being built, not ` +
+            `the incident. Promote one from the super-timeline yourself if you mean it`,
+        );
       if (refused) reasons.push(`${refused} row(s) were refused by the promotion seam`);
       // Said out loud, because a promoted Info row reaches synthesis only once (#1586): the next run
       // shows it as newly promoted evidence, and after that Info rows are left out of the prompt

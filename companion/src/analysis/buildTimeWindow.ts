@@ -62,6 +62,11 @@ const CLUSTER_GAP_MS = 30 * MINUTE;
 const WINDOW_MARGIN_MS = 30 * MINUTE;
 // A "build" that runs longer than this is not a build. The cluster is discarded, never trimmed.
 const MAX_MARKER_SPAN_MS = 6 * 60 * MINUTE;
+// How far from a row its window's evidence can sit: a window's markers lie within one span of each
+// other plus the margin, and one more span on either side is what it takes to see that a longer burst
+// is NOT a build (a cluster over MAX_MARKER_SPAN_MS is discarded). A caller that reads only part of the
+// record reads this far around the rows it asks about (#1700).
+export const BUILD_WINDOW_REACH_MS = 2 * MAX_MARKER_SPAN_MS + WINDOW_MARGIN_MS;
 // Markers needed to corroborate a cluster that contains no rename bound.
 const MIN_MARKERS = 3;
 const MIN_MARKER_KINDS = 2;

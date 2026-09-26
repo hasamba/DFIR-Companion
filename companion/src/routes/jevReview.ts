@@ -7,6 +7,7 @@ import { gradeEvents } from "../analysis/ai/jev/jevGrader.js";
 import { JevGradeStore } from "../analysis/ai/jev/jevGradeRecord.js";
 import { getServerLogger } from "../logging/serverLogger.js";
 import type { SuperQuery } from "../analysis/superTimeline.js";
+import { rowsInBuildWindow } from "./jevBuildWindow.js";
 import type { ForensicEvent } from "../analysis/stateTypes.js";
 import type { RouteContext } from "./context.js";
 
@@ -133,7 +134,12 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
     // Rows already in the forensic timeline are the ones synthesis can ALREADY see. Reviewing them
     // would spend the analyst's money re-grading what is not missing.
     const analyzed = new Set(state.forensicTimeline.map((e) => e.id));
-    const candidates = read.filter((e) => !analyzed.has(e.id));
+    const unanalyzed = read.filter((e) => !analyzed.has(e.id));
+    // Rows inside the host's own build window are the machine being built (#1529). The grader is not
+    // told that, so it grades a Chocolatey firewall change Medium and a provisioning log clear Critical
+    // (#1700). They are set aside here, before anything is spent, and counted so the sum still closes.
+    const inBuild = await rowsInBuildWindow(superStore, caseId, state, unanalyzed);
+    const candidates = unanalyzed.filter((e) => !inBuild.has(e.id));
 
     // Coverage, as four facts rather than one flag. `capped` is the ONLY one that may blame the
     // cap, and it is true only when the cap actually held rows back: an earlier version inferred
@@ -142,7 +148,8 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
     const coverage = {
       matched: total,
       read: read.length,
-      alreadyAnalyzed: read.length - candidates.length,
+      alreadyAnalyzed: read.length - unanalyzed.length,
+      buildWindow: inBuild.size,
       graded: candidates.length,
       capped: read.length < total,
       cap: capForWire,
@@ -150,6 +157,14 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
     };
 
     if (!candidates.length) {
+      if (inBuild.size)
+        void logActivity(options.activityLogStore, options.onActivity, caseId, {
+          category: "ai",
+          action: "jev-review",
+          detail:
+            `missed-evidence review graded nothing: ${inBuild.size} archive row(s) sit inside the ` +
+            `host's own build window and were set aside, ${coverage.alreadyAnalyzed} already analyzed`,
+        });
       return res.json({
         model: settings.model,
         rows: [],
@@ -210,6 +225,7 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
         detail:
           `missed-evidence review graded ${coverage.graded} archive row(s) of ${total} matching ` +
           `(${coverage.alreadyAnalyzed} already analyzed` +
+          (coverage.buildWindow ? `, ${coverage.buildWindow} set aside: host build window` : "") +
           (coverage.capped ? `, ${total - coverage.read} not read: row cap` : "") +
           `); ${promoted} above Info — nothing was promoted`,
       });
