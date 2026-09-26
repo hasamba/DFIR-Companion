@@ -22,7 +22,12 @@ import { shortHost } from "../iocAnchors.js";
 import { extractCveIds, matchKevEntries, type KevCatalog } from "../kev.js";
 import type { PlaybookTask } from "../playbook.js";
 import { demoteCompletedNextSteps } from "../priorWork.js";
-import { isDeterministicFindingId, renameForgedFindingIds, type deltaSchema } from "../responseSchema.js";
+import {
+  AUTO_FINDING_ID_PREFIX,
+  isDeterministicFindingId,
+  renameForgedFindingIds,
+  type deltaSchema,
+} from "../responseSchema.js";
 import type { SourceTrustMap } from "../sourceTrust.js";
 import type { StateStore } from "../stateStore.js";
 import type { ForensicEvent, InvestigationQuestion, InvestigationState } from "../stateTypes.js";
@@ -117,6 +122,12 @@ export interface DeltaFoldInput {
   inventory?: CollectionInventory;
   /** Canonical host for a raw asset spelling — the same resolution the inventory was built with. */
   hostOf?: (raw: string) => string;
+  /**
+   * The prompt's grouped rows (#1702): representative event id → every event id it stood for. The
+   * model saw one row per burst, so a finding citing the representative covers the whole burst.
+   * Absent → each finding covers exactly the ids it cites.
+   */
+  membersOf?: ReadonlyMap<string, readonly string[]>;
 }
 
 export interface DeltaFoldResult {
@@ -146,7 +157,7 @@ export async function foldSynthesisDelta(
   ctx: DeltaFoldContext,
   input: DeltaFoldInput,
 ): Promise<DeltaFoldResult> {
-  const { caseId, state, markers, scopedEvents, playbookTasks, inventory, hostOf } = input;
+  const { caseId, state, markers, scopedEvents, playbookTasks, inventory, hostOf, membersOf } = input;
   // ONE normalization for the whole fold (#787). Everything below reads the delta again — the event
   // back-links here, the relevance verdict in grading — and each read matches the model's ids
   // against the ids the merge persisted. Renaming inside the merge alone would leave those reads
@@ -158,7 +169,7 @@ export async function foldSynthesisDelta(
   // Safety net: drop anything confirmed false-positive even if the model re-introduced it.
   const filtered = applyFalsePositive(merged, markers);
   const surviving = new Set(filtered.findings.map((f) => f.id));
-  const linked = linkEventsToFindings(filtered, delta, surviving);
+  const linked = dropAutoCoveredByDismissal(linkEventsToFindings(filtered, delta, surviving, membersOf));
 
   // The backfills are restricted to the events synthesis actually considered.
   const eligibleIds = new Set(scopedEvents.map((e) => e.id));
@@ -228,11 +239,16 @@ function linkEventsToFindings(
   filtered: InvestigationState,
   delta: DeltaFoldInput["delta"],
   surviving: Set<string>,
+  membersOf?: ReadonlyMap<string, readonly string[]>,
 ): InvestigationState {
   const eventToFindings = new Map<string, string[]>();
   for (const f of delta.findings) {
     if (!surviving.has(f.id)) continue;
-    for (const eid of f.relatedEventIds ?? []) {
+    // A cited grouped row stands for its whole burst (#1702): the model saw one row, so its verdict —
+    // live or dismissed — is about every member. Without this the uncited members read as uncovered
+    // and the High backfill raised them as a second, open finding beside the one that dismissed them.
+    const cited = (f.relatedEventIds ?? []).flatMap((eid) => [eid, ...(membersOf?.get(eid) ?? [])]);
+    for (const eid of cited) {
       const arr = eventToFindings.get(eid) ?? [];
       if (!arr.includes(f.id)) arr.push(f.id);
       eventToFindings.set(eid, arr);
@@ -355,6 +371,41 @@ export function carryOutOfWindowFindings(
       const add = relink.get(e.id)?.filter((fid) => !e.relatedFindingIds.includes(fid));
       return add?.length ? { ...e, relatedFindingIds: [...e.relatedFindingIds, ...add] } : e;
     }),
+  };
+}
+
+/**
+ * An echoed auto finding (#1702) exists only because its events looked uncovered. When every event it
+ * holds is now linked to a DISMISSED model finding, it would say "High, open" about rows the analysis
+ * just called benign — so it is dropped, and its links with it. One event outside the dismissal keeps
+ * it. Model findings are never touched.
+ */
+function dropAutoCoveredByDismissal(state: InvestigationState): InvestigationState {
+  const dismissed = new Set(
+    state.findings
+      .filter((f) => f.status === "dismissed" && !f.id.startsWith(AUTO_FINDING_ID_PREFIX))
+      .map((f) => f.id),
+  );
+  if (!dismissed.size) return state;
+  const eventById = new Map(state.forensicTimeline.map((e) => [e.id, e] as const));
+  const covered = (eid: string) =>
+    eventById.get(eid)?.relatedFindingIds.some((fid) => dismissed.has(fid)) ?? false;
+  const drop = new Set<string>();
+  for (const f of state.findings) {
+    if (!f.id.startsWith(AUTO_FINDING_ID_PREFIX) || f.status === "dismissed") continue;
+    const events = new Set(f.relatedEventIds ?? []);
+    for (const e of state.forensicTimeline) if (e.relatedFindingIds.includes(f.id)) events.add(e.id);
+    if (events.size && [...events].every(covered)) drop.add(f.id);
+  }
+  if (!drop.size) return state;
+  return {
+    ...state,
+    findings: state.findings.filter((f) => !drop.has(f.id)),
+    forensicTimeline: state.forensicTimeline.map((e) =>
+      e.relatedFindingIds.some((fid) => drop.has(fid))
+        ? { ...e, relatedFindingIds: e.relatedFindingIds.filter((fid) => !drop.has(fid)) }
+        : e,
+    ),
   };
 }
 
