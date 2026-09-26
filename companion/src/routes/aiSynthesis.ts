@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { logActivity } from "../analysis/activityLog.js";
+import { describeFindingTagDiffs, diffFindingTags } from "../analysis/findingTagDiff.js";
 import { parseMinSeverity } from "../analysis/severityFloor.js";
 import { registerAskCaseRoute } from "./askCase.js";
 import { registerSecondOpinionRoutes } from "./secondOpinionRoutes.js";
@@ -182,6 +183,8 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
       await job?.ready;
       // Pre-synthesis backup (#180): snapshot state before overwriting conclusions. Best-effort.
       await options.backupManager?.createBackup(caseId, "pre-synthesis").catch(() => {});
+      // What the kept findings were tagged with before this run, for the tag-change lines (#1684).
+      const before = await options.stateStore?.load(caseId).catch(() => undefined);
       // Explicit user action → force, so it always runs even if inputs are unchanged.
       const state = await options.pipeline.synthesize(caseId, {
         force: true,
@@ -201,11 +204,21 @@ export function registerAiSynthesisRoutes(app: Express, ctx: RouteContext): void
         }
       }
       options.onAiStatus?.(caseId, { status: "idle", at: new Date().toISOString() });
-      void logActivity(options.activityLogStore, options.onActivity, caseId, {
-        category: "ai",
-        action: "synthesis",
-        detail: `synthesis ran — ${state.findings.length} finding(s), ${state.mitreTechniques.length} technique(s)${deepReasoning ? " (deep reasoning)" : ""}`,
-      });
+      // Best-effort and in order: one line per kept finding whose ATT&CK tags moved (#1684), then
+      // the run summary.
+      const log = (action: string, detail: string) =>
+        logActivity(options.activityLogStore, options.onActivity, caseId, { category: "ai", action, detail });
+      const tagLines = before
+        ? describeFindingTagDiffs(diffFindingTags(before.findings, state.findings))
+        : [];
+      void tagLines
+        .reduce((p, line) => p.then(() => log("synthesis-tag-change", line)), Promise.resolve())
+        .then(() =>
+          log(
+            "synthesis",
+            `synthesis ran — ${state.findings.length} finding(s), ${state.mitreTechniques.length} technique(s)${deepReasoning ? " (deep reasoning)" : ""}`,
+          ),
+        );
       return res.status(200).json({
         findings: state.findings.length,
         mitreTechniques: state.mitreTechniques.length,
