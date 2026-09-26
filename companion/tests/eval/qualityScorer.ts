@@ -223,13 +223,29 @@ function governedByContrast(clauseWords: readonly string[], start: number): bool
   return clauseWords[before - 2] === "rather" && clauseWords[before - 1] === "than";
 }
 
-// True when the clause mentions the term at least once OUTSIDE a "rather than" contrast.
+// A direct negation right before the term negates it (#1579: "a strong exfiltration lead but is not
+// yet a confirmed exfiltration event"): "not", "not yet", "no" or "never", then optionally "a", "an"
+// or "the". Only the words directly before the term count, so "It is not a backup; this is a
+// confirmed exfiltration" still asserts it.
+const NEGATIONS = new Set(["not", "no", "never"]);
+
+function governedByNegation(clauseWords: readonly string[], start: number): boolean {
+  const before = ARTICLES.has(clauseWords[start - 1] ?? "") ? start - 1 : start;
+  const previous = clauseWords[before - 1] ?? "";
+  if (NEGATIONS.has(previous)) return true;
+  return previous === "yet" && clauseWords[before - 2] === "not";
+}
+
+// True when the clause mentions the term at least once OUTSIDE a "rather than" contrast or a
+// direct negation.
 function mentionsUncontrasted(clause: string, term: string): boolean {
   const clauseWords = words(clause);
   return alternatives(term).some((alternative) => {
     const termWords = words(alternative);
     if (termWords.length === 0) return norm(clause).includes(norm(alternative));
-    return occurrences(clauseWords, termWords).some((start) => !governedByContrast(clauseWords, start));
+    return occurrences(clauseWords, termWords).some(
+      (start) => !governedByContrast(clauseWords, start) && !governedByNegation(clauseWords, start),
+    );
   });
 }
 

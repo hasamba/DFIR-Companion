@@ -750,6 +750,23 @@ describe("forbiddenConclusions treats 'rather than <term>' as a rejection (#1579
     expect(scoreCaseQuality(golden, output).forbiddenConclusions).toEqual(["causal-overreach"]);
   });
 
+  it("does not flag a term negated right before it, verbatim from a real run", () => {
+    const output = withClaim(
+      "This is a strong exfiltration lead but is not yet a confirmed exfiltration event: there is no observed staging step.",
+    );
+    expect(scoreCaseQuality(golden, output).forbiddenConclusions).toEqual([]);
+    expect(
+      scoreCaseQuality(golden, withClaim("It was never a confirmed exfiltration.")).forbiddenConclusions,
+    ).toEqual([]);
+  });
+
+  it("still flags a term whose negation is not directly before it", () => {
+    const output = withClaim("It is not a backup; this is a confirmed exfiltration.");
+    expect(scoreCaseQuality(golden, output).forbiddenConclusions).toEqual(["causal-overreach"]);
+    const far = withClaim("We have not seen a backup job, and this is a confirmed exfiltration.");
+    expect(scoreCaseQuality(golden, far).forbiddenConclusions).toEqual(["causal-overreach"]);
+  });
+
   it("still flags a later clause that asserts the term after an earlier contrast", () => {
     const output = withClaim(
       "At first it looked like a lead rather than anything else. It is a confirmed exfiltration.",
