@@ -46,6 +46,7 @@ import { hostBuildMarkers, type HostHistoryMarker } from "./gapHostHistory.js";
 import { assetKey } from "./gapEdgeClass.js";
 import type { HostRenameRecord } from "./hostRenameRecord.js";
 import { ransomwareSignal } from "./ransomwareDetect.js";
+import { BUILD_TIME_MARKER } from "./buildTimeMerge.js";
 import {
   SEVERITY_RANK,
   worstSeverity,
@@ -54,8 +55,9 @@ import {
   type Severity,
 } from "./stateTypes.js";
 
-/** The derived note this module writes; registered in derivedNote.ts DERIVED_NOTE_NAMES. */
-export const BUILD_TIME_MARKER = "[build-time:";
+// The derived note this module writes lives in buildTimeMerge.ts (analysis/timeline), where
+// correlation reads it too; re-exported so every existing reader keeps its import.
+export { BUILD_TIME_MARKER };
 const BUILD_TIME_NOTE_RE = /\s*\[build-time:[^\]]*\]/gu;
 const HAS_BUILD_TIME_NOTE = /\[build-time:[^\]]*\]/u;
 
@@ -418,35 +420,6 @@ export function repairBuildTimeRows(state: InvestigationState): {
     return { ...e, severity: capped(e.severity), buildTime: { ...e.buildTime, cappedFrom } };
   });
   return changed ? { state: { ...state, forensicTimeline }, changed } : { state, changed: 0 };
-}
-
-/**
- * The build-time record a correlated row keeps (#1698). Correlation unions every member's notes, so it
- * must carry the record with them: from the primary when it has one, else from the first member that
- * does, with the WORST pre-cap grade across the members as the grade to restore. Undefined when no
- * member carries a record — the caller then drops any build-time note from the union.
- */
-export function mergedBuildTime(
-  primary: ForensicEvent,
-  members: readonly ForensicEvent[],
-): ForensicEvent["buildTime"] {
-  const recorded = members.find((m) => m.buildTime)?.buildTime;
-  if (!recorded) return undefined;
-  const base = primary.buildTime ?? recorded;
-  const original = members.reduce<Severity>(
-    (acc, m) => worstSeverity(acc, m.buildTime?.cappedFrom ?? m.severity),
-    "Info",
-  );
-  return {
-    marker: base.marker,
-    window: base.window,
-    ...(capped(original) !== original ? { cappedFrom: original } : {}),
-  };
-}
-
-/** Is this one of the notes this module writes? The correlation union keeps or drops them by this. */
-export function isBuildTimeNote(note: string): boolean {
-  return note.trim().startsWith(BUILD_TIME_MARKER);
 }
 
 // ───────────────────────────── what the readers need ─────────────────────────────

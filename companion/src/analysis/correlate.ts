@@ -27,7 +27,7 @@ import { DSU, unionEligible, type UnionFacts } from "./correlateUnion.js";
 import { isLabProduced } from "./labIntel.js";
 import { mergeGroupCanonical } from "./canonicalMerge.js";
 import { DERIVED_NOTE_NAMES } from "./derivedNote.js";
-import { isBuildTimeNote, mergedBuildTime } from "./buildTimeWindow.js";
+import { mergeDerivedNotes } from "./buildTimeMerge.js";
 import { collectorRecordGrade } from "./collectorMerge.js";
 import { partlyReadArtifactOf, promotionMarks } from "./promotionMerge.js";
 
@@ -355,18 +355,8 @@ function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): Forensi
   // must survive, or the timestomp comparison loses its input at the merge.
   // Every registered note from every member, deduplicated, in member order — not one note from
   // one member: a non-primary row carrying two passes' notes used to keep only its first (#987).
-  // The build-time note travels with its record, never alone (#1698): a member capped by one import
-  // merged with a fresh copy from the next once kept the note, lost the record, and synthesis quoted a
-  // window that no longer existed.
-  // When the collector's own reading of the record sets the grade (#1477), that grade is final: a
-  // build-time record carried beside it would restore an older, higher grade on a later un-cap (Codex
-  // review of #1698), so the merged row then carries none.
-  const collector = collectorRecordGrade(primary, events); // #1477, collectorMerge.ts
-  const buildTime = collector ? undefined : mergedBuildTime(primary, events);
-  const allNotes = uniq(
-    events.flatMap((e) => Array.from(e.description.matchAll(DERIVED_NOTE_ALL), (m) => m[0].trim())),
-  );
-  const notes = allNotes.filter((n) => buildTime || !isBuildTimeNote(n));
+  const collector = collectorRecordGrade(primary, events); // #1477; build-time notes #1698
+  const { buildTime, allNotes, notes } = mergeDerivedNotes(primary, events, DERIVED_NOTE_ALL, !!collector);
   const fileModified = primary.fileModified ?? events.find((e) => e.fileModified)?.fileModified;
   // Combined across every correlated member, not just `primary` (#933 item 21) — same reasoning
   // as `sources`/`provenance` below: a marking on a non-primary member must not disappear just
@@ -375,7 +365,6 @@ function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): Forensi
     (acc, e) => combineMarkings(acc, e.sharingMarking),
     undefined,
   );
-
   const { buildTime: _primaryBuildTime, ...primaryFields } = primary;
   const merged: ForensicEvent = {
     ...primaryFields,
