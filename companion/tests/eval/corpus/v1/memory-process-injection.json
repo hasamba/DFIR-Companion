@@ -81,7 +81,7 @@
     "claims": [
       {
         "id": "memory-injection",
-        "requiredTerms": ["process injection", "outbound connection"],
+        "requiredTerms": ["process injection", "outbound connection|network connection|callback|c2|socket"],
         "evidenceEventIds": ["mem-e1", "mem-e2"],
         "confidence": { "min": 55, "max": 100 }
       }
