@@ -10,8 +10,9 @@
 //    same case is still connected and only if the socket that closed is still the current `ws`.
 //    proceedConnect (a case switch) and dismissCaseLoading (a cancel) retire the old socket through
 //    closeCaseSocket(), which detaches it first, so neither can ever reconnect.
-//  - A REconnect catches up on what the gap missed: the pill, the jobs chip, and the case state
-//    (handed to the same message handler a `state` push uses, so the same panels refresh).
+//  - A REconnect catches up on what the gap missed: the pill, the jobs chip, the case state (handed
+//    to the same message handler a `state` push uses, so the same panels refresh), the scope, and
+//    one bare message per other push-driven panel (CATCH_UP_TYPES, #1681).
 //  - A tab that becomes visible re-derives the pill. A closed socket is reopened at once. After a
 //    long hide (a sleep) even an OPEN socket is replaced, because a half-open socket reads OPEN and
 //    never fires onclose; the server's 30 s ping reaper cleans up its end.
@@ -82,17 +83,69 @@
     return liveCaseId === caseId && activeCaseId === caseId;
   }
 
+  // The push types whose panels the `state` replay does NOT reload (#1681). A push of any of these
+  // during the gap was lost, so a reconnect sends each one through the handler once, bare. Every
+  // branch in handleCaseMessage for these types reads nothing but msg.type — a test enforces it.
+  // Left out on purpose: capture_ingest and import_ingest are one-off events, not state, and a
+  // replay would raise a false case-mismatch banner; scope_changed needs msg.start/msg.end, so
+  // catchUp fetches the window and sends it with them.
+  const CATCH_UP_TYPES = [
+    "comments_changed",
+    "activity_changed",
+    "tags_changed",
+    "pins_changed",
+    "finding_workflow_changed",
+    "finding_outcome_changed",
+    "notebook_changed",
+    "dwell_window_changed",
+    "super_timeline_changed",
+    "asset_overrides_changed",
+    "import_meta_changed",
+    "drop_status_changed",
+    "import_undo_changed",
+    "velo_hunt_changed",
+    "velo_monitor_changed",
+    "push_token_changed",
+    "importers_changed",
+    "false_positive_changed",
+    "learned_patterns_changed",
+    "source_trust_changed",
+    "clock_skew_changed",
+  ];
+
+  function stillCurrent(sock, caseId) {
+    return sock === ws && stillWanted(caseId) && !!liveOnMessage;
+  }
+
   // What the page missed while the socket was down. AI state and jobs are cheap reads; the case
-  // state goes through the `state` handler so its panel fan-out runs exactly as a push would.
+  // state goes through the `state` handler so its panel fan-out runs exactly as a push would, and
+  // every other push-driven panel is re-read the same way (#1681).
   function catchUp(sock, caseId) {
     if (typeof loadJobs === "function") loadJobs(caseId);
+    const base = `/cases/${encodeURIComponent(caseId)}`;
     const pushesAtStart = statePushes;
-    fetch(`/cases/${encodeURIComponent(caseId)}/state`)
+    fetch(`${base}/state`)
       .then((r) => (r.ok ? r.json() : null))
       .then((state) => {
         if (pushesAtStart !== statePushes) return; // a newer state already arrived by push
-        if (state && sock === ws && stillWanted(caseId) && liveOnMessage)
+        if (state && stillCurrent(sock, caseId))
           liveOnMessage({ type: "state", state });
+      })
+      .catch(() => {});
+    for (const type of CATCH_UP_TYPES) {
+      if (!stillCurrent(sock, caseId)) return;
+      try {
+        liveOnMessage({ type });
+      } catch (err) {
+        console.warn(`live catch-up for ${type} failed:`, err);
+      }
+    }
+    // The scope branch redraws with the window it is given, which loadScope alone would not do.
+    fetch(`${base}/scope`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((s) => {
+        if (s && stillCurrent(sock, caseId))
+          liveOnMessage({ type: "scope_changed", start: s.start, end: s.end });
       })
       .catch(() => {});
   }
