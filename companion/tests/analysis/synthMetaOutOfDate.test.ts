@@ -86,6 +86,24 @@ describe("SynthMetaStore — conclusions out of date", () => {
     expect((await store.load("c1")).outOfDate ?? null).toBeNull();
   });
 
+  it("clearOutOfDate() drops a mark the caller saw, and keeps the rest of the card (#1676)", async () => {
+    await store.record("c1", DIFF, "2026-09-25T09:00:00.000Z");
+    await store.markOutOfDate("c1", "anonymization changed");
+    const start = await store.revision("c1");
+    await store.clearOutOfDate("c1", start);
+    const meta = await store.load("c1");
+    expect(meta.outOfDate ?? null).toBeNull();
+    expect(meta.revision).toBe(1);
+    expect(meta.lastSynthesizedAt).toBe("2026-09-25T09:00:00.000Z");
+  });
+
+  it("clearOutOfDate() keeps a mark that landed after the caller read the revision (#1676)", async () => {
+    const start = await store.revision("c1");
+    await store.markOutOfDate("c1", "row promoted");
+    await store.clearOutOfDate("c1", start);
+    expect((await store.load("c1")).outOfDate?.reason).toBe("row promoted");
+  });
+
   it("record() still writes over an unreadable synth-meta file", async () => {
     await writeFile(join(cases.stateDir("c1"), "synth-meta.json"), "{not json", "utf8");
     await store.record("c1", DIFF, "2026-09-25T09:00:00.000Z");

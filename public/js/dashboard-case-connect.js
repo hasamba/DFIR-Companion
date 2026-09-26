@@ -611,6 +611,14 @@
       loadLearnedPatterns(caseId);
     else if (msg.type === "source_trust_changed") loadSourceTrust(caseId);
     else if (msg.type === "clock_skew_changed") loadClockSkew(caseId);
+    else if (msg.type === "confidence_control_changed")
+      loadConfidenceControl(caseId);
+    else if (msg.type === "report_template_changed")
+      loadCaseTemplatePicker(caseId);
+    // Two server pushes need no branch (#1691). ioc_merge_changed: a merge (POST) also pushes the
+    // case state, which redraws the IOC panels; an unmerge (DELETE) edits only the alias map, which
+    // no panel shows. forensic_gate_changed: no panel shows the per-case gate, and changing it
+    // re-grades nothing already imported. Add a branch here if a panel ever shows either.
     else if (msg.type === "scope_changed") {
       // The same commit loadScope makes — the window came from the server either way, so the
       // two controls are a sink here. Unlike loadScope this path then redraws, because the

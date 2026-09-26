@@ -497,7 +497,7 @@
       <div class="hero-text">
         <div class="hero-badge animate">
           <span class="pulse"></span>
-          v0.37.0 — open source, AGPL-3.0 · Second pair of (A)eyes
+          v0.38.0 — open source, AGPL-3.0 · Second pair of (A)eyes
         </div>
         <h1 class="animate animate-d1">
           Second pair of<br>
@@ -522,7 +522,7 @@
           <div class="terminal-body">
             <span class="comment"># Start the companion</span><br>
             <span class="prompt">$</span> <span class="cmd">cd</span> companion && <span class="cmd">npm</span> run dev<br><br>
-            <span class="output">[DFIR] companion v0.37.0 — localhost only</span><br>
+            <span class="output">[DFIR] companion v0.38.0 — localhost only</span><br>
             <span class="output">[DFIR] cases root: ./cases</span><br>
             <span class="success">[DFIR] listening on http://127.0.0.1:4773</span><br>
             <span class="success">[DFIR] dashboard: http://127.0.0.1:4773/dashboard</span><br><br>
@@ -876,6 +876,18 @@
           <h3>Attack Outcome on Two Axes</h3>
           <p>Every finding records what happened on two separate axes — was the malicious action observed, and what did a security control do: blocked, remediated, failed, allowed, none seen. A blocked attack is no longer dismissed as a false positive or left open at High, and the report prints both axes with their attribution.</p>
           <span class="tag">v0.37.0 — detected is not the same as succeeded</span>
+        </div>
+        <div class="feature-card animate">
+          <div class="feature-icon amber">🔎</div>
+          <h3>Missed Evidence Review</h3>
+          <p>The content tagger grades what its rules name, and everything else stays Info, where the AI never looks. One press sends those rows to a fast decision model, which grades them and says how sure it is. Tick the rows that matter and promote them into the forensic timeline with the model's grade on the record. Nothing moves until you say so.</p>
+          <span class="tag">v0.38.0 — a second pass over what the rules left behind</span>
+        </div>
+        <div class="feature-card animate">
+          <div class="feature-icon purple">📖</div>
+          <h3>Story So Far</h3>
+          <p>The Now cockpit shows one card per kill-chain stage: first seen, host, headline event and top finding, with the intrusion's span, dwell, hosts and accounts above it. A stage with no evidence is greyed and links to Evidence Gaps. Copy the whole story as a plain-text brief. Derived from the case — no AI call.</p>
+          <span class="tag">v0.38.0 — the intrusion at a glance</span>
         </div>
       </div>
     </div>

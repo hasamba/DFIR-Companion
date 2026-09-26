@@ -322,10 +322,12 @@
             "synthesis failed: " + p.error;
           return;
         }
-        document.getElementById("status").textContent =
-          `synthesized: ${p.findings} findings, ${p.mitreTechniques} techniques` +
-          (p.attackerPath ? ", attack path" : "") +
-          (p.narrativeTimeline ? ", narrative" : "");
+        // #1676: an empty forensic timeline runs nothing — say that, not "synthesized: 0 findings".
+        document.getElementById("status").textContent = p.skipped
+          ? p.message || "nothing to synthesize"
+          : `synthesized: ${p.findings} findings, ${p.mitreTechniques} techniques` +
+            (p.attackerPath ? ", attack path" : "") +
+            (p.narrativeTimeline ? ", narrative" : "");
         // refresh state in case the WS push was missed
         fetch(`/cases/${caseId}/state`)
           .then((r) => r.json())
