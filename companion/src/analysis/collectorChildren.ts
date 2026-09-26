@@ -46,8 +46,10 @@
 import { getCI, parsePid, str, type MappedEvent } from "./siemImport.js";
 import { CollectorSpawnLineage, SPAWNED_SCRIPT_NOTE } from "./collectorLineage.js";
 import {
+  isCollectorKlistScript,
   isCollectorSpawn,
   isForeignDestination,
+  isKlistSessionCommand,
   isProcessRow,
   loadCollectorInfrastructure,
   type CollectorInfrastructure,
@@ -68,7 +70,7 @@ import { processGuid } from "./processAccess.js";
 import { shortHostName } from "./hostIdentity.js";
 import { isInjectionEvidenceRow } from "./processParentage.js";
 import { isAppxFirewallRow } from "./appxFirewallChurn.js";
-import { ledgerHostKeys as hostKeys, OsBehaviourLedger } from "./osBehaviourRules.js";
+import { envelopeAgrees, ledgerHostKeys as hostKeys, OsBehaviourLedger } from "./osBehaviourRules.js";
 
 type Row = Record<string, unknown>;
 
@@ -96,6 +98,7 @@ interface Candidate {
   pid?: number; // the acting process (EID 11) or the script host (4104)
   parentPid?: number; // EID 1 only
   runspace?: string; // "runspace" only: hostId|runspaceId (scriptRunspace)
+  oneEnvelope?: boolean; // "process" only: the GUIDs and the mapped command come from one record (#1699)
 }
 
 /** Is this Sysmon record a process creation (EID 1)? The bulk driver's evidence pass keys on it. */
@@ -155,6 +158,7 @@ function candidate(raw: Row, m: MappedEvent): Candidate | null {
       guid: ownGuid(raw, m),
       parentGuid: processGuid(str(getCI(ed, "ParentProcessGuid"))),
       parentPid: parsePid(str(getCI(ed, "ParentProcessId"))),
+      oneEnvelope: envelopeAgrees(raw, m.timestamp ?? ""),
     };
   if (eid === SYSMON_FILE_CREATE && str(getCI(ed, "TargetFilename")).trim())
     return {
@@ -174,6 +178,9 @@ export class CollectorFootprintLedger {
   private readonly lineage: CollectorSpawnLineage;
   // host|guid → epoch ms the process was created: the spawns, and every child claimed through one.
   private readonly claimed = new Map<string, number>();
+  // host|guid → birth of the client's klist collection script and every klist command claimed under it
+  // (#1699). Separate from `claimed`: it vouches only for rows isKlistSessionCommand accepts.
+  private readonly klistOwners = new Map<string, number>();
   // host|hostId|runspaceId of every PowerShell session a Tools-tree record proved (#1555).
   private readonly runspaces = new Set<string>();
   private pending: Candidate[] = [];
@@ -212,10 +219,14 @@ export class CollectorFootprintLedger {
   // and a process the pipeline still calls Critical must not vouch for what it went on to do.
   private noteProcess(raw: Row, m: MappedEvent): void {
     this.lineage.note(m);
-    if (m.severity === "Critical" || !isProcessRow(m) || !isCollectorSpawn(m)) return;
-    if (isForeignDestination(m, this.infra)) return;
+    if (m.severity === "Critical" || !isProcessRow(m) || isForeignDestination(m, this.infra)) return;
     const at = Date.parse(m.timestamp ?? "");
-    if (Number.isFinite(at)) this.remember(hostKeys(raw, m), ownGuid(raw, m), at);
+    if (!Number.isFinite(at)) return;
+    if (isCollectorSpawn(m)) this.remember(hostKeys(raw, m), ownGuid(raw, m), at);
+    // The klist lineage reads the command from the mapped event and the GUID from the raw record, so
+    // both must be the same record (the OS-behaviour ledger's guard, Codex review of #1699).
+    else if (isCollectorKlistScript(m) && envelopeAgrees(raw, m.timestamp ?? ""))
+      this.remember(hostKeys(raw, m), ownGuid(raw, m), at, this.klistOwners);
   }
 
   // A Tools-tree record seeds its runspace — only once it was actually graded the collector's. A
@@ -229,8 +240,8 @@ export class CollectorFootprintLedger {
       if (m?.origin === "collector") for (const h of hostKeys(raw, m)) this.runspaces.add(`${h}|${runspace}`);
   }
 
-  private remember(hosts: readonly string[], guid: string, at: number): void {
-    if (guid) for (const h of hosts) this.claimed.set(`${h}|${guid}`, at);
+  private remember(hosts: readonly string[], guid: string, at: number, into = this.claimed): void {
+    if (guid) for (const h of hosts) into.set(`${h}|${guid}`, at);
   }
 
   /** Judge every held candidate. Drains the candidates; the spawns and claims are kept. */
@@ -255,6 +266,10 @@ export class CollectorFootprintLedger {
     for (let depth = 0; depth < CHILD_DEPTH && open.length > 0; depth++) {
       const next: Candidate[] = [];
       for (const c of open) {
+        if (this.ownsKlist(c)) {
+          if (claim(c.m)) this.remember(c.hosts, c.guid, c.at, this.klistOwners);
+          continue;
+        }
         if (!this.owns(c, c.parentGuid, c.parentPid)) {
           next.push(c);
           continue;
@@ -266,6 +281,16 @@ export class CollectorFootprintLedger {
       if (next.length === open.length) return;
       open = next;
     }
+  }
+
+  // Is this an exact klist command whose parent GUID is the klist collection or a klist command claimed
+  // under it (#1699)? GUID only — no pid fallback — and created at or after its owner.
+  private ownsKlist(c: Candidate): boolean {
+    if (!c.parentGuid || !c.oneEnvelope || !isKlistSessionCommand(c.m)) return false;
+    return c.hosts.some((h) => {
+      const born = this.klistOwners.get(`${h}|${c.parentGuid}`);
+      return born !== undefined && c.at >= born;
+    });
   }
 
   // Does a claimed process own this candidate? By GUID when the row names one (no fallback — a GUID
