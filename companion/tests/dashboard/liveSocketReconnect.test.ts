@@ -53,6 +53,7 @@ interface LiveApi {
   closeCaseSocket: () => void;
   ws: FakeSocket | null;
   activeCaseId: string | null;
+  fetch: (url: string) => Promise<unknown>;
 }
 
 function harness() {
@@ -87,6 +88,8 @@ function harness() {
     },
     setTimeout: (fn: () => void, ms: number) => globalThis.setTimeout(fn, ms),
     clearTimeout: (id: unknown) => globalThis.clearTimeout(id as number),
+    setInterval: (fn: () => void, ms: number) => globalThis.setInterval(fn, ms),
+    clearInterval: (id: unknown) => globalThis.clearInterval(id as number),
   });
   const onMessage = (msg: { type: string; state?: unknown }) => messages.push(msg);
   const setVisibility = (v: "visible" | "hidden") => {
@@ -207,6 +210,23 @@ describe("the case socket reconnects after it drops (#1675)", () => {
     expect(h.messages).toEqual([{ type: "state", state: { caseId: "INC-1", forensicTimeline: [] } }]);
   });
 
+  it("drops a catch-up snapshot that lands after a newer state push", async () => {
+    const h = harness();
+    let answer: (v: unknown) => void = () => {};
+    h.api.fetch = () =>
+      Promise.resolve({ ok: true, json: () => new Promise((resolve) => (answer = resolve)) });
+    h.api.openCaseSocket("INC-1", h.onMessage);
+    FakeSocket.made[0].open();
+    FakeSocket.made[0].drop();
+    await vi.advanceTimersByTimeAsync(1000);
+    FakeSocket.made[1].open(); // catch-up GET now in flight
+    await vi.advanceTimersByTimeAsync(0);
+    FakeSocket.made[1].push({ type: "state", state: { caseId: "INC-1", v: "newer" } });
+    answer({ caseId: "INC-1", v: "older" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.messages).toEqual([{ type: "state", state: { caseId: "INC-1", v: "newer" } }]);
+  });
+
   it("delivers pushes from the current socket only", () => {
     const h = harness();
     h.api.openCaseSocket("INC-1", h.onMessage);
@@ -266,6 +286,20 @@ describe("a tab that becomes visible again (#1675)", () => {
     expect(h.api.ws).toBe(FakeSocket.made[1]);
   });
 
+  it("recycles the socket after a sleep in a tab that stayed visible", async () => {
+    const h = harness();
+    h.api.openCaseSocket("INC-1", h.onMessage);
+    const halfOpen = FakeSocket.made[0];
+    halfOpen.open();
+    h.aiRefreshed.length = 0;
+    // The machine sleeps: no timer runs, the wall clock jumps, no visibilitychange fires.
+    vi.setSystemTime(Date.now() + 13 * 60_000);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(h.aiRefreshed).toEqual(["INC-1"]);
+    expect(halfOpen.closeCalls).toBe(1);
+    expect(h.api.ws).toBe(FakeSocket.made[1]);
+  });
+
   it("leaves an OPEN socket alone after a short tab switch", () => {
     const h = harness();
     h.api.openCaseSocket("INC-1", h.onMessage);
@@ -289,6 +323,7 @@ describe("a tab that becomes visible again (#1675)", () => {
 // ── The pill's own guard ────────────────────────────────────────────────────────────────────────
 interface AiStatusApi {
   refreshAiState: (caseId: string) => Promise<void>;
+  applyAiStatus: (evt: Record<string, unknown>) => void;
   activeCaseId: string | null;
 }
 
@@ -304,6 +339,7 @@ describe("refreshAiState paints only the case on screen, newest answer wins (#16
         el.textContent = "AI: " + text;
       },
       activeCaseId: "INC-1",
+      aiEnabled: true,
       ws: null,
     });
     return { el, api, pending };
@@ -317,6 +353,28 @@ describe("refreshAiState paints only the case on screen, newest answer wins (#16
     pending[0]({ state: "idle", outOfDate: true, detail: "conclusions out of date" });
     await done;
     expect(el.textContent).toBe("");
+  });
+
+  it("does not let a call for a case the analyst left cancel the current case's correction", async () => {
+    const { el, api, pending } = pill();
+    api.activeCaseId = "INC-2";
+    const current = api.refreshAiState("INC-2");
+    await vi.advanceTimersByTimeAsync(0);
+    await api.refreshAiState("INC-1"); // the old case's Re-synthesize finally, landing late
+    pending[0]({ state: "analyzing", detail: "synthesizing findings…" });
+    await current;
+    expect(el.textContent).toBe("AI: synthesizing findings…");
+  });
+
+  it("drops a correction that lands after a newer pushed status", async () => {
+    const { el, api, pending } = pill();
+    const late = api.refreshAiState("INC-1");
+    await vi.advanceTimersByTimeAsync(0);
+    api.applyAiStatus({ status: "analyzing", phase: "synthesizing", detail: "" });
+    const pushed = el.textContent;
+    pending[0]({ state: "idle", outOfDate: true, detail: "conclusions out of date" });
+    await late;
+    expect(el.textContent).toBe(pushed);
   });
 
   it("drops an older answer that lands after a newer one", async () => {

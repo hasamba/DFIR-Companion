@@ -1154,6 +1154,9 @@ export const FEATURES: Feature[] = [
       "connectTimer",
       "hiddenAt",
       "visibilityBound",
+      "wakeTimer",
+      "lastTick",
+      "statePushes",
     ],
   },
   {

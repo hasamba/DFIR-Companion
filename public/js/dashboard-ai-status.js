@@ -5,6 +5,8 @@
 // and nothing there touches this.
 (function () {
   function applyAiStatus(evt) {
+    // A push is newer than any correction still in flight; that correction must not repaint over it.
+    aiStateSeq++;
     if (evt.status === "analyzing") {
       // Drive the progress bar from server-side "kind import — N/M" updates (40 → 95%).
       const m =
@@ -168,7 +170,9 @@
   // newer answer for the same case — must not repaint the pill over the truth.
   let aiStateSeq = 0;
   async function refreshAiState(caseId) {
-    if (!caseId) return;
+    // An inactive case is rejected BEFORE the counter moves: a late call for a case the analyst left
+    // must not invalidate a correction still in flight for the case on screen.
+    if (!caseId || caseId !== activeCaseId) return;
     const seq = ++aiStateSeq;
     try {
       const r = await fetch(`/cases/${encodeURIComponent(caseId)}/ai-state`);

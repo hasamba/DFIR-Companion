@@ -41,6 +41,15 @@
   let connectTimer = null;
   let hiddenAt = 0;
   let visibilityBound = false;
+  // Wake detector. Timers do not run while the machine sleeps, so a tick that lands long after the
+  // previous one means the page just woke — even in a tab that stayed visible the whole time, which
+  // never fires visibilitychange.
+  const WAKE_TICK_MS = 5000;
+  let wakeTimer = null;
+  let lastTick = 0;
+  // Counts `state` pushes, so a catch-up snapshot that lands after a newer push is dropped instead
+  // of painting older evidence over newer.
+  let statePushes = 0;
 
   // The connection line shares #status with synthesis results, report paths and import warnings. A
   // reconnect can happen at any moment, so it only replaces text that is itself about the
@@ -77,9 +86,11 @@
   // state goes through the `state` handler so its panel fan-out runs exactly as a push would.
   function catchUp(sock, caseId) {
     if (typeof loadJobs === "function") loadJobs(caseId);
+    const pushesAtStart = statePushes;
     fetch(`/cases/${encodeURIComponent(caseId)}/state`)
       .then((r) => (r.ok ? r.json() : null))
       .then((state) => {
+        if (pushesAtStart !== statePushes) return; // a newer state already arrived by push
         if (state && sock === ws && stillWanted(caseId) && liveOnMessage)
           liveOnMessage({ type: "state", state });
       })
@@ -140,7 +151,10 @@
       scheduleReconnect();
     };
     sock.onmessage = (ev) => {
-      if (sock === ws && liveOnMessage) liveOnMessage(JSON.parse(ev.data));
+      if (sock !== ws || !liveOnMessage) return;
+      const msg = JSON.parse(ev.data);
+      if (msg && msg.type === "state") statePushes++;
+      liveOnMessage(msg);
     };
   }
 
@@ -151,6 +165,12 @@
     }
     const slept = hiddenAt && Date.now() - hiddenAt >= LONG_HIDE_MS;
     hiddenAt = 0;
+    recheck(slept);
+  }
+
+  // Re-derive the pill, and reopen the socket if it is closed — or, after a sleep, even if it reads
+  // OPEN. Shared by the tab-visible and the wake paths.
+  function recheck(slept) {
     const caseId = liveCaseId;
     if (!caseId || !stillWanted(caseId)) return;
     refreshAiState(caseId);
@@ -164,12 +184,21 @@
     openSocket(true);
   }
 
+  function onWakeTick() {
+    const now = Date.now();
+    const slept = now - lastTick >= LONG_HIDE_MS;
+    lastTick = now;
+    if (slept) recheck(true);
+  }
+
   /** Retire the case socket: no reconnect, no pending retry, no late event. */
   function closeCaseSocket() {
     sockGen++;
     liveCaseId = null;
     liveOnMessage = null;
     clearTimers();
+    clearInterval(wakeTimer);
+    wakeTimer = null;
     if (ws) detach(ws);
     ws = null;
   }
@@ -184,6 +213,8 @@
       visibilityBound = true;
       document.addEventListener("visibilitychange", onVisibilityChange);
     }
+    lastTick = Date.now();
+    wakeTimer = setInterval(onWakeTick, WAKE_TICK_MS);
     openSocket(false);
   }
 
