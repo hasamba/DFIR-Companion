@@ -57,4 +57,15 @@ describe("sessionCommandsMd (#1594)", () => {
     expect(lines.join("\n")).not.toContain("hidden");
     expect(lines.every((l) => !l.includes("\n"))).toBe(true);
   });
+
+  it("says how many more the synthesis capped (#1683)", () => {
+    const f: Finding = {
+      ...base,
+      sessionCommands: [{ eventId: "e1", timestamp: "", host: "ws01", kind: "process", text: "net view" }],
+      sessionCommandsMore: 13,
+    };
+    const lines = sessionCommandsMd(f, new Map([["e1", 1]]));
+    expect(lines).toHaveLength(3);
+    expect(lines[2]).toBe("  - … and 13 more in the case timeline");
+  });
 });
