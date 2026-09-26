@@ -392,6 +392,35 @@ export function capBuildTimeRows(state: InvestigationState): {
 }
 
 /**
+ * The consistency repair synthesis runs after its own correlation (#1698) — never window discovery.
+ *
+ * The import seam finds windows BEFORE demote, while the build's Info markers are still in the forensic
+ * timeline. Synthesis sees only what demote kept, so recomputing windows there would find a window
+ * "gone" and lift a valid cap (Codex review of #1698). This pass therefore never un-caps and never
+ * opens a window. It only makes a row agree with itself: a note with no record is removed (grade
+ * untouched), and a recorded row a merge raised above the cap is capped again with the worse original
+ * grade kept. Protected rows (a hard attacker signal, an analyst's pull) are left as they are.
+ */
+export function repairBuildTimeRows(state: InvestigationState): {
+  state: InvestigationState;
+  changed: number;
+} {
+  let changed = 0;
+  const forensicTimeline = state.forensicTimeline.map((e) => {
+    if (!e.buildTime) {
+      if (!HAS_BUILD_TIME_NOTE.test(e.description)) return e;
+      changed++;
+      return stripNote(e);
+    }
+    if (protectedFromCap(e) || capped(e.severity) === e.severity) return e;
+    changed++;
+    const cappedFrom = worstSeverity(e.buildTime.cappedFrom ?? e.severity, e.severity);
+    return { ...e, severity: capped(e.severity), buildTime: { ...e.buildTime, cappedFrom } };
+  });
+  return changed ? { state: { ...state, forensicTimeline }, changed } : { state, changed: 0 };
+}
+
+/**
  * The build-time record a correlated row keeps (#1698). Correlation unions every member's notes, so it
  * must carry the record with them: from the primary when it has one, else from the first member that
  * does, with the WORST pre-cap grade across the members as the grade to restore. Undefined when no

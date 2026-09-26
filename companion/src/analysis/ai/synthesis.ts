@@ -19,7 +19,7 @@ import type { EvidenceAttestationStore } from "../evidenceAttestationStore.js";
 import { alignedEpoch, detectClockSkew, detectHostTimeGaps, effectiveOffsets } from "../clockSkew.js";
 import type { ClockSkewStore } from "../clockSkewStore.js";
 import { correlateEvents, correlationGroups, type CorrelateOptions } from "../correlate.js";
-import { capBuildTimeRows } from "../buildTimeWindow.js";
+import { repairBuildTimeRows } from "../buildTimeWindow.js";
 import { CorrelationProfileStore } from "../correlationProfile.js";
 import { filterFalsePositiveEvents, type FalsePositiveMarker } from "../falsePositive.js";
 import { diffFindings, type FindingsDiff } from "../findingsDiff.js";
@@ -461,11 +461,11 @@ async function correlateForSynthesis(
       epochOf: skew,
     }),
   };
-  // Correlation merges rows, and this timeline is persisted (#1698). The import seam re-applies the
-  // build-window cap after its own correlation; this one must too, or a merged row keeps a note its
-  // window no longer backs, or a grade the merge raised inside a window. It also repairs a case that
-  // was correlated before this rule, on its next synthesis rather than its next import.
-  return { windowSeconds, sourceTrust, state: capBuildTimeRows(correlated).state };
+  // Correlation merges rows, and this timeline is persisted (#1698). A repair, not the import-time cap:
+  // windows are found at the import seam before demote, and this record no longer holds the Info
+  // markers that opened them, so recomputing here could lift a valid cap. It also repairs a case
+  // correlated before this rule, on its next synthesis rather than its next import.
+  return { windowSeconds, sourceTrust, state: repairBuildTimeRows(correlated).state };
 }
 
 /**

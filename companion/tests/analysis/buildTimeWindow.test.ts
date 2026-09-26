@@ -7,6 +7,7 @@ import {
   buildTimeWindows,
   capBuildTimeRows,
   hardAttackerSignal,
+  repairBuildTimeRows,
   protectedFromCap,
   renderBuildTimeTag,
 } from "../../src/analysis/buildTimeWindow.js";
@@ -587,5 +588,41 @@ describe("the cap pass repairs a row whose note and record disagree (#1698)", ()
     const info = ev("i2", "2025-12-05T03:00:00Z", { description: `session logoff${STALE}` });
     const { state } = capBuildTimeRows(stateWith([...decemberBuild(), info]));
     expect(state.forensicTimeline.find((e) => e.id === "i2")!.severity).toBe("Info");
+  });
+});
+
+// Synthesis only repairs (#1698, Codex review): the import seam opened the window while the build's
+// Info markers were still in the forensic timeline; synthesis sees what demote kept, so it must never
+// conclude that a window is gone.
+describe("the synthesis-time repair never lifts a cap (#1698)", () => {
+  it("keeps a capped row capped when the markers that opened its window are gone", () => {
+    const capped = capBuildTimeRows(stateWith([...decemberBuild()]));
+    const markersDemoted = capped.state.forensicTimeline.filter((e) => e.id === "d6");
+    const { state, changed } = repairBuildTimeRows({ ...capped.state, forensicTimeline: markersDemoted });
+    expect(changed).toBe(0);
+    expect(state.forensicTimeline[0].severity).toBe("Low");
+    expect(state.forensicTimeline[0].buildTime?.cappedFrom).toBe("Critical");
+  });
+
+  it("removes a note that has no record, and leaves the grade", () => {
+    const stray = ev("x1", "2026-09-26T13:03:24Z", {
+      severity: "High",
+      description: "Defender row [build-time: vagrant, 2026-09-26T12:34Z–13:59Z]",
+    });
+    const { state } = repairBuildTimeRows(stateWith([stray]));
+    expect(state.forensicTimeline[0].description).toBe("Defender row");
+    expect(state.forensicTimeline[0].severity).toBe("High");
+  });
+
+  it("re-caps a recorded row a merge raised, keeping the worse original grade", () => {
+    const capped = capBuildTimeRows(stateWith([...decemberBuild()]));
+    const raised = capped.state.forensicTimeline.map((e) =>
+      e.id === "d4" ? { ...e, severity: "High" as const } : e,
+    );
+    const { state } = repairBuildTimeRows({ ...capped.state, forensicTimeline: raised });
+    const row = state.forensicTimeline.find((e) => e.id === "d4")!;
+    expect(row.severity).toBe("Low");
+    expect(row.buildTime?.cappedFrom).toBe("High");
+    expect(repairBuildTimeRows(state).changed).toBe(0);
   });
 });

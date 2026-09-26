@@ -65,3 +65,20 @@ describe("correlation keeps the build-time note and record together (#1698)", ()
     expect(m.severity).toBe("High");
   });
 });
+
+describe("a collector reading of the same record wins over the build-time record (#1698, Codex review)", () => {
+  it("carries no build-time record or note when the merge takes the collector's Info grade", () => {
+    const parser = { ...capped(), sourceRecordId: "rec-1" };
+    const collector = {
+      ...fresh(),
+      sourceRecordId: "rec-1",
+      origin: "collector" as const,
+      severity: "Info" as const,
+    };
+    const [m] = correlateEvents([parser, collector], { windowSeconds: 2 });
+    expect(m.severity).toBe("Info");
+    expect(m.origin).toBe("collector");
+    expect(m.buildTime).toBeUndefined();
+    expect(m.description).not.toContain("[build-time:");
+  });
+});

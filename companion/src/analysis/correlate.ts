@@ -358,7 +358,11 @@ function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): Forensi
   // The build-time note travels with its record, never alone (#1698): a member capped by one import
   // merged with a fresh copy from the next once kept the note, lost the record, and synthesis quoted a
   // window that no longer existed.
-  const buildTime = mergedBuildTime(primary, events);
+  // When the collector's own reading of the record sets the grade (#1477), that grade is final: a
+  // build-time record carried beside it would restore an older, higher grade on a later un-cap (Codex
+  // review of #1698), so the merged row then carries none.
+  const collector = collectorRecordGrade(primary, events); // #1477, collectorMerge.ts
+  const buildTime = collector ? undefined : mergedBuildTime(primary, events);
   const allNotes = uniq(
     events.flatMap((e) => Array.from(e.description.matchAll(DERIVED_NOTE_ALL), (m) => m[0].trim())),
   );
@@ -372,7 +376,6 @@ function mergeGroup(events: ForensicEvent[], trustMap?: SourceTrustMap): Forensi
     undefined,
   );
 
-  const collector = collectorRecordGrade(primary, events); // #1477, collectorMerge.ts
   const { buildTime: _primaryBuildTime, ...primaryFields } = primary;
   const merged: ForensicEvent = {
     ...primaryFields,
