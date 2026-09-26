@@ -116,9 +116,11 @@ function singular(word: string): string {
   return word.length > 3 && word.endsWith("s") && !word.endsWith("ss") ? word.slice(0, -1) : word;
 }
 
+// A run of digits and a run of letters are separate words too, so "850MB" = "850 MB" (#1579).
 function words(value: string): string[] {
   return norm(value)
     .split(/[^a-z0-9]+/)
+    .flatMap((word) => word.split(/(?<=\d)(?=[a-z])|(?<=[a-z])(?=\d)/))
     .filter(Boolean)
     .map(singular);
 }

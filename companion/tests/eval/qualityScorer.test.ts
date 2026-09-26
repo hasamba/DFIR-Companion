@@ -706,6 +706,15 @@ describe("term matching tolerates hyphenation and plurals (#1579)", () => {
     expect(scoreCaseQuality(golden, output).nextSteps.missed).toEqual([]);
   });
 
+  it("credits a number written against its unit where the golden term spaces them, verbatim from a real run", () => {
+    const golden: CaseGolden = { ...GOLDEN, nextSteps: [{ id: "volume", requiredTerms: ["850 MB"] }] };
+    const output = withStep("Large anomalous outbound TLS transfer (850MB) from WS-11 to upload.example");
+    expect(scoreCaseQuality(golden, output).nextSteps.missed).toEqual([]);
+    // Splitting at the digit boundary never merges different numbers or units.
+    expect(scoreCaseQuality(golden, withStep("sent 8500MB")).nextSteps.missed).toEqual(["volume"]);
+    expect(scoreCaseQuality(golden, withStep("sent 850KB")).nextSteps.missed).toEqual(["volume"]);
+  });
+
   it("still misses a step that lacks the concept entirely", () => {
     expect(scoreCaseQuality(stepGolden, withStep("Check firewall logs for user-b")).nextSteps.missed).toEqual(
       ["review-cloud-audit"],
