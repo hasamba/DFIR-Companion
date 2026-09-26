@@ -23,6 +23,7 @@ import { createApp, buildRuntimePipeline } from "../../src/server.js";
 import { emptyState, type ForensicEvent } from "../../src/analysis/stateTypes.js";
 import type { HostRenameRecord } from "../../src/analysis/hostRenameRecord.js";
 import { JevGradeStore } from "../../src/analysis/ai/jev/jevGradeRecord.js";
+import { rowsInBuildWindow } from "../../src/routes/jevBuildWindow.js";
 
 const HOST = "DESKTOP-16OJFO6";
 const renames: HostRenameRecord[] = [
@@ -133,6 +134,10 @@ describe("the missed-evidence review sets build-window rows aside (#1700)", () =
     expect(res.body.graded).toBe(1);
     expect(res.body.rows.map((r: { id: string }) => r.id)).toEqual(["x-incident"]);
     expect(res.body.alreadyAnalyzed + res.body.buildWindow + res.body.graded).toBe(res.body.read);
+    // Where, not just how many: the window goes back so the analyst can open it.
+    expect(res.body.buildWindows).toHaveLength(1);
+    expect(res.body.buildWindows[0].host).toBe(HOST);
+    expect(Date.parse(res.body.buildWindows[0].start)).toBeLessThan(Date.parse("2025-12-05T02:43:39Z"));
   });
 
   it("reviews the whole window when the archive holds a hard attacker signal inside it", async () => {
@@ -203,5 +208,29 @@ describe("the promote route refuses build-window rows (#1700)", () => {
       .post("/cases/c1/jev/promote")
       .send({ rows: [{ id: "b-clear" }, { id: "b-ntds" }] });
     expect(res.body.promoted).toBe(2);
+  });
+});
+
+describe("a partial archive read fails open (#1700, Codex review)", () => {
+  it("sets nothing aside when the cap cut the read of a row's range short", async () => {
+    // The markers come first in time, the veto after them. A read that stops before the veto must not
+    // conclude "build window" from the markers alone.
+    const dump = row("b-ntds", "2025-12-05T03:20:00Z", {
+      description: "Credential store theft: ntdsutil ifm create full c:\\temp\\ntds.dit",
+    });
+    const archive = [...buildRows(), dump];
+    const { stateStore, superTimelineStore } = await caseWith(archive);
+    const state = await stateStore.load("c1");
+    const partial = await rowsInBuildWindow(superTimelineStore, "c1", state, [buildRows()[3]], 2);
+    expect(partial.ids.size).toBe(0);
+    const full = await rowsInBuildWindow(superTimelineStore, "c1", state, [buildRows()[3]]);
+    expect(full.ids.size).toBe(0); // the veto, read in full, keeps the whole window reviewable
+  });
+
+  it("sets a row aside when its range was read to the end", async () => {
+    const { stateStore, superTimelineStore } = await caseWith(buildRows());
+    const state = await stateStore.load("c1");
+    const res = await rowsInBuildWindow(superTimelineStore, "c1", state, [buildRows()[3]]);
+    expect([...res.ids]).toEqual(["b-clear"]);
   });
 });

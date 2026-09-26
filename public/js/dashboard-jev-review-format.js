@@ -94,11 +94,22 @@
     const skipped = [];
     if (analyzed > 0)
       skipped.push(`${num(analyzed)} were skipped because the case has already analysed them — the AI can see those`);
-    if (buildWindow > 0)
+    if (buildWindow > 0) {
+      // WHERE, not just how many (Codex review of #1700): the analyst can open these ranges in the
+      // super-timeline and check a set-aside row by hand. Host names come from the case's own data
+      // and still go through esc().
+      const windows = Array.isArray(result.buildWindows) ? result.buildWindows : [];
+      const where = windows
+        .slice(0, 3)
+        .map((w) => `${esc(w.host)} ${when(w.start).slice(0, 16)}–${when(w.end).slice(11, 16)} UTC`)
+        .join("; ");
+      const more = windows.length > 3 ? `; ${num(windows.length - 3)} more` : "";
       skipped.push(
         `${num(buildWindow)} were set aside because they sit inside the host's own build window` +
-          ` — the machine being built, not the incident`,
+          ` — the machine being built, not the incident` +
+          (where ? ` (${where}${more}; open that range in the super-timeline to check them)` : ""),
       );
+    }
     if (skipped.length) {
       line += ` Another ${skipped.join(". Another ")}.`;
       line +=

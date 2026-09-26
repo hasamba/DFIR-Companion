@@ -138,7 +138,8 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
     // Rows inside the host's own build window are the machine being built (#1529). The grader is not
     // told that, so it grades a Chocolatey firewall change Medium and a provisioning log clear Critical
     // (#1700). They are set aside here, before anything is spent, and counted so the sum still closes.
-    const inBuild = await rowsInBuildWindow(superStore, caseId, state, unanalyzed);
+    const setAside = await rowsInBuildWindow(superStore, caseId, state, unanalyzed);
+    const inBuild = setAside.ids;
     const candidates = unanalyzed.filter((e) => !inBuild.has(e.id));
 
     // Coverage, as four facts rather than one flag. `capped` is the ONLY one that may blame the
@@ -150,6 +151,7 @@ export function registerJevReviewRoutes(app: Express, ctx: RouteContext): void {
       read: read.length,
       alreadyAnalyzed: read.length - unanalyzed.length,
       buildWindow: inBuild.size,
+      buildWindows: setAside.windows,
       graded: candidates.length,
       capped: read.length < total,
       cap: capForWire,

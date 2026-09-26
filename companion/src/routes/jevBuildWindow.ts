@@ -19,8 +19,9 @@ import type { RouteContext } from "./context.js";
  *
  * Bounded: nothing is read on a case with no rename chain (it can have no window), the archive is read
  * only within BUILD_WINDOW_REACH_MS of the rows asked about, nearby ranges are merged into one query,
- * and the read stops at NEIGHBOURHOOD_CAP rows. A window whose evidence lies past the cap is not seen,
- * and its rows stay reviewable — the direction a wrong answer must fall.
+ * and the read stops at NEIGHBOURHOOD_CAP rows. A row whose range was not read to the end is never
+ * set aside: the part not read could hold the signal that vetoes its window. A wrong answer here must
+ * fall towards showing the row.
  */
 
 const PAGE_ROWS = 2000;
@@ -45,34 +46,76 @@ function ranges(rows: readonly ForensicEvent[]): Array<[number, number]> {
   return out;
 }
 
-async function neighbourhood(store: SuperStore, caseId: string, rows: readonly ForensicEvent[]) {
+interface Neighbourhood {
+  rows: ForensicEvent[];
+  complete: Array<[number, number]>; // the ranges read to the end; every other range failed open
+}
+
+// The archive rows around `rows`, and which ranges were read in full. A range cut short by the cap is
+// NOT complete: it can hold a build's markers and miss the hard attacker signal that vetoes the window
+// (Codex review of #1700), so its rows are never set aside on a partial read.
+async function neighbourhood(
+  store: SuperStore,
+  caseId: string,
+  rows: readonly ForensicEvent[],
+  cap: number,
+): Promise<Neighbourhood> {
   const seen = new Map<string, ForensicEvent>();
+  const complete: Array<[number, number]> = [];
   for (const [from, to] of ranges(rows)) {
     const window = { from: new Date(from).toISOString(), to: new Date(to).toISOString() };
-    for (let offset = 0; seen.size < NEIGHBOURHOOD_CAP;) {
-      const limit = Math.min(PAGE_ROWS, NEIGHBOURHOOD_CAP - seen.size);
+    let done = false;
+    for (let offset = 0; seen.size < cap;) {
+      const limit = Math.min(PAGE_ROWS, cap - seen.size);
       const page = await store.query(caseId, { ...window, offset, limit });
       for (const e of page.events) seen.set(e.id, e);
       offset += page.events.length;
-      if (!page.events.length || offset >= page.total) break;
+      if (!page.events.length || offset >= page.total) {
+        done = true;
+        break;
+      }
     }
+    if (done) complete.push([from, to]);
   }
-  return [...seen.values()];
+  return { rows: [...seen.values()], complete };
 }
 
-/** The ids of `rows` inside a build window of this case, or an empty set when there is none. */
+export interface BuildWindowSetAside {
+  ids: Set<string>; // the rows inside a window, read in full
+  windows: Array<{ host: string; start: string; end: string }>; // the windows they sit in, for the analyst
+}
+
+/**
+ * The rows of `rows` inside a build window of this case, and those windows. Empty on a case with no
+ * rename chain. The windows go back to the analyst so a set-aside row can be found and checked in
+ * the super-timeline: the count alone would say rows are hidden without saying where.
+ */
 export async function rowsInBuildWindow(
   store: SuperStore,
   caseId: string,
   state: InvestigationState,
   rows: readonly ForensicEvent[],
-): Promise<Set<string>> {
+  cap = NEIGHBOURHOOD_CAP,
+): Promise<BuildWindowSetAside> {
+  const none: BuildWindowSetAside = { ids: new Set(), windows: [] };
   const renames = state.hostRenames ?? [];
-  if (!renames.length || !rows.length) return new Set();
+  if (!renames.length || !rows.length) return none;
+  const near = await neighbourhood(store, caseId, rows, cap);
   const byId = new Map<string, ForensicEvent>();
-  for (const e of [...state.forensicTimeline, ...(await neighbourhood(store, caseId, rows)), ...rows])
-    if (!byId.has(e.id)) byId.set(e.id, e);
+  for (const e of [...state.forensicTimeline, ...near.rows, ...rows]) if (!byId.has(e.id)) byId.set(e.id, e);
   const windows = buildTimeWindows([...byId.values()], renames);
-  if (!windows.length) return new Set();
-  return new Set(rows.filter((e) => windowFor(windows, e)).map((e) => e.id));
+  if (!windows.length) return none;
+  const readInFull = (e: ForensicEvent) => {
+    const t = Date.parse(e.timestamp);
+    return near.complete.some(([from, to]) => t >= from && t <= to);
+  };
+  const ids = new Set<string>();
+  const used = new Map<string, { host: string; start: string; end: string }>();
+  for (const e of rows) {
+    const w = windowFor(windows, e);
+    if (!w || !readInFull(e)) continue;
+    ids.add(e.id);
+    used.set(`${w.host}|${w.start}`, { host: w.host, start: w.start, end: w.end });
+  }
+  return { ids, windows: [...used.values()].sort((a, b) => a.start.localeCompare(b.start)) };
 }

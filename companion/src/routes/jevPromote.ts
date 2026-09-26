@@ -153,7 +153,7 @@ export function registerJevPromoteRoutes(app: Express, ctx: RouteContext): void 
       // set build-window rows aside, or an older tab, must not land a provisioning log clear at the
       // model's Critical. The analyst's own row-by-row promotion from the super-timeline is the
       // override, and it does not come through this route.
-      const inBuild = await rowsInBuildWindow(
+      const { ids: inBuild } = await rowsInBuildWindow(
         superStore,
         caseId,
         state,

@@ -60,6 +60,44 @@ describe("the review caption and the build window (#1700)", () => {
     expect(line).toMatch(/Nothing was left for this review to grade/);
   });
 
+  it("says where the set-aside rows are, so the analyst can check them in the super-timeline", () => {
+    const line = text(
+      api().jevCaptionHtml(
+        {
+          matched: 216,
+          read: 216,
+          alreadyAnalyzed: 0,
+          buildWindow: 216,
+          buildWindows: [
+            { host: "HOST-A", start: "2025-12-05T02:13:11.924Z", end: "2025-12-05T03:56:37.181Z" },
+          ],
+          graded: 0,
+          rows: [],
+        },
+        counts,
+      ),
+    );
+    expect(line).toMatch(/HOST-A 2025-12-05 02:13–03:56 UTC/);
+    expect(line).toMatch(/open that range in the super-timeline/);
+  });
+
+  it("escapes a host name that carries markup", () => {
+    const html = api().jevCaptionHtml(
+      {
+        matched: 1,
+        read: 1,
+        buildWindow: 1,
+        buildWindows: [
+          { host: "<img src=x onerror=1>", start: "2025-12-05T02:13:00Z", end: "2025-12-05T03:56:00Z" },
+        ],
+        graded: 0,
+        rows: [],
+      },
+      counts,
+    );
+    expect(html).not.toContain("<img");
+  });
+
   it("keeps the old wording when nothing was set aside", () => {
     const line = text(
       api().jevCaptionHtml({ matched: 10, read: 10, alreadyAnalyzed: 0, graded: 10, rows: [] }, counts),
