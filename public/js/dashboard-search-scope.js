@@ -256,61 +256,7 @@
         applyScope();
       };
     });
-    document.getElementById("synthesize").onclick = () => {
-      const caseId = document.getElementById("caseId").value.trim();
-      if (!caseId) return;
-      const deep = !!document.getElementById("deepReasoning")?.checked;
-      document.getElementById("status").textContent = deep
-        ? "synthesizing (deep reasoning)…"
-        : "synthesizing…";
-      fetch(`/cases/${caseId}/synthesize`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ deepReasoning: deep }),
-      })
-        .then(async (r) => {
-          if (r.status === 409) {
-            const body = await r.json().catch(() => ({}));
-            if (body.error === "presidio_approval_required") {
-              if (typeof setPresidioPending === "function")
-                setPresidioPending(body.findings);
-              document.getElementById("status").textContent =
-                "synthesis held — Presidio found new value(s) to review (see Anonymization)";
-              return null;
-            }
-          }
-          if (r.status === 423)
-            return r.json().then((p) => {
-              throw Object.assign(new Error(p.error || "Case is closed"), {
-                locked: true,
-              });
-            });
-          return r.json();
-        })
-        .then((p) => {
-          if (!p) return; // handled above (409 presidio hold)
-          if (p.error) {
-            document.getElementById("status").textContent =
-              "synthesis failed: " + p.error;
-            return;
-          }
-          document.getElementById("status").textContent =
-            `synthesized: ${p.findings} findings, ${p.mitreTechniques} techniques` +
-            (p.attackerPath ? ", attack path" : "") +
-            (p.narrativeTimeline ? ", narrative" : "");
-          // refresh state in case the WS push was missed
-          fetch(`/cases/${caseId}/state`)
-            .then((r) => r.json())
-            .then(render)
-            .catch(() => {});
-          loadSynthMeta(caseId);
-        })
-        .catch(
-          (e) =>
-            (document.getElementById("status").textContent =
-              "synthesis error: " + e.message),
-        );
-    };
+    document.getElementById("synthesize").onclick = resynthesize;
     // The #secondOpinion button and the #secondOpinionPanel handler moved to their own feature
     // (js/dashboard-second-opinion.js, #415). They were never search-scope's — an earlier
     // extraction swept them in, and three of that feature's bindings stayed in the page to be
@@ -330,6 +276,71 @@
       if (e.target.id === "anonOverlay")
         document.getElementById("anonOverlay").classList.remove("open");
     });
+  }
+
+  function resynthesize() {
+    const caseId = document.getElementById("caseId").value.trim();
+    if (!caseId) return;
+    const deep = !!document.getElementById("deepReasoning")?.checked;
+    document.getElementById("status").textContent = deep
+      ? "synthesizing (deep reasoning)…"
+      : "synthesizing…";
+    // #1675: paint the pill now rather than wait for the server's `analyzing` push. A dead socket
+    // delivers no push, and the pill then kept "conclusions out of date" through the whole run.
+    setAi(
+      "analyzing",
+      deep ? "synthesizing findings (deep reasoning)…" : "synthesizing findings…",
+    );
+    fetch(`/cases/${caseId}/synthesize`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ deepReasoning: deep }),
+    })
+      .then(async (r) => {
+        if (r.status === 409) {
+          const body = await r.json().catch(() => ({}));
+          if (body.error === "presidio_approval_required") {
+            if (typeof setPresidioPending === "function")
+              setPresidioPending(body.findings);
+            document.getElementById("status").textContent =
+              "synthesis held — Presidio found new value(s) to review (see Anonymization)";
+            return null;
+          }
+        }
+        if (r.status === 423)
+          return r.json().then((p) => {
+            throw Object.assign(new Error(p.error || "Case is closed"), {
+              locked: true,
+            });
+          });
+        return r.json();
+      })
+      .then((p) => {
+        if (!p) return; // handled above (409 presidio hold)
+        if (p.error) {
+          document.getElementById("status").textContent =
+            "synthesis failed: " + p.error;
+          return;
+        }
+        document.getElementById("status").textContent =
+          `synthesized: ${p.findings} findings, ${p.mitreTechniques} techniques` +
+          (p.attackerPath ? ", attack path" : "") +
+          (p.narrativeTimeline ? ", narrative" : "");
+        // refresh state in case the WS push was missed
+        fetch(`/cases/${caseId}/state`)
+          .then((r) => r.json())
+          .then(render)
+          .catch(() => {});
+        loadSynthMeta(caseId);
+      })
+      .catch(
+        (e) =>
+          (document.getElementById("status").textContent =
+            "synthesis error: " + e.message),
+      )
+      // Whatever the outcome — done, held by Presidio, case closed, failed — ask the case what the
+      // pill should say, so the optimistic "synthesizing" above never outlives the run.
+      .finally(() => refreshAiState(caseId));
   }
 
   // The 🧠 deep-reasoning box (#1468). Written by the page's /health poller. Only a provider that
@@ -358,4 +369,7 @@
 
   window.initSearchAndScope = initSearchAndScope;
   window.setDeepReasoningCapability = setDeepReasoningCapability;
+  // Published for the #1675 tests: the click is bound in initSearchAndScope, whose ~20 other
+  // bindings need a whole page to run.
+  window.resynthesize = resynthesize;
 })();

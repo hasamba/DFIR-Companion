@@ -198,20 +198,10 @@
     // Order matters: drop activeCaseId LAST. render()'s stale guard compares against it, so
     // clearing it before the socket is closed would open a window where a push in flight is
     // measured against nothing.
-    if (ws) {
-      // Detach BEFORE closing. close() fires onclose asynchronously, and this socket's onclose
-      // writes "disconnected" into the same status line the cancel message below claims — so
-      // leaving it attached lets the teardown overwrite the explanation a beat later. Nulling
-      // onmessage with it also closes the gap between close() and the socket actually closing,
-      // during which a frame already in flight can still be delivered.
-      try {
-        ws.onclose = null;
-        ws.onmessage = null;
-        ws.onopen = null;
-        ws.close();
-      } catch {}
-      ws = null;
-    }
+    // Detach BEFORE closing (js/dashboard-live-socket.js): close() fires onclose asynchronously,
+    // and a still-attached handler would overwrite the cancel message below — or, since #1675,
+    // schedule a reconnect to the case the analyst just walked out of. It also drops a pending retry.
+    if (typeof closeCaseSocket === "function") closeCaseSocket();
     if (typeof retireCount === "function") retireCount();
     activeCaseId = null;
     hideCaseLoadingOverlay();
@@ -240,12 +230,9 @@
     showCaseLoadingOverlay();
     hideCaseMismatch();
     mismatchDismissed = ""; // fresh start for the newly-connected case
-    if (ws) {
-      try {
-        ws.close();
-      } catch {}
-      ws = null;
-    }
+    // The old case's socket must never reconnect (#1675). Guarded: a missing socket module must
+    // cost live updates, never the case load itself.
+    if (typeof closeCaseSocket === "function") closeCaseSocket();
     // Remember the case so a page refresh reconnects automatically.
     localStorage.setItem("dfir.caseId", caseId);
     if (typeof syncCasePicker === "function") syncCasePicker();
@@ -523,136 +510,124 @@
       })
       .catch(() => {});
 
-    try {
-      ws = new WebSocket(
-        `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/ws?caseId=${encodeURIComponent(caseId)}`,
-      );
-    } catch (wsErr) {
+    // The live socket, its reconnect and its catch-up live in js/dashboard-live-socket.js (#1675).
+    if (typeof openCaseSocket === "function")
+      openCaseSocket(caseId, (msg) => handleCaseMessage(caseId, msg));
+    else
       document.getElementById("status").textContent =
-        "live updates unavailable (WebSocket blocked — HTTPS/ws mismatch?)";
-      console.warn("WebSocket connection failed:", wsErr);
-      ws = null;
-      return;
+        "live updates unavailable (js/dashboard-live-socket.js did not load)";
+  }
+
+  // Every push the case socket delivers. Named so a reconnected socket reuses it (#1675).
+  function handleCaseMessage(caseId, msg) {
+    if (msg.type === "state") {
+      typeof render === "function" && render(msg.state);
+      loadCockpit(caseId);
+      scheduleAssetGraphReload();
+      scheduleEvidenceGraphReload();
+      schedulePhasesReload();
+      scheduleTimelineGapsReload();
+      scheduleEvidenceGapsReload();
+      scheduleCloudCoverageReload();
+      scheduleBeaconsReload();
+      scheduleAnomaliesReload();
+      scheduleSessionsReload();
+      scheduleAdversaryHintsReload();
+      schedulePlaybookMatchReload();
+      scheduleHostRankingReload();
+      scheduleD3fendReload();
+      scheduleAttackMitigationsReload();
+      scheduleComplianceReload();
+      scheduleGeoMapReload();
+      scheduleSwimlaneReload();
+      scheduleIocSourcesReload();
+      scheduleIocProvenanceReload();
+      scheduleIocRiskReload();
+      scheduleIocProvenanceChainReload();
+      loadSynthMeta(caseId);
+      loadPlaybook(caseId);
+      loadHypotheses(caseId);
+      loadSuperTimeline(caseId);
+      scheduleSecondOpinionReload(caseId); // #1590 — refresh the "no longer applies" list
+    } else if (msg.type === "second_opinion_changed")
+      loadSecondOpinion(caseId);
+    else if (msg.type === "ai_status") applyAiStatus(msg);
+    else if (msg.type === "job_changed") scheduleJobUiRefresh(caseId, msg.jobs);
+    else if (msg.type === "capture_ingest") {
+      // A capture arrived somewhere. If it's for OUR case, all good (clear any warning);
+      // otherwise the extension is feeding a different case than we're viewing — warn.
+      if (msg.caseId && msg.caseId !== caseId)
+        showCaseMismatch(msg.caseId, caseId, "Screenshots");
+      else hideCaseMismatch();
+    } else if (msg.type === "import_ingest") {
+      // Same trap for pushed artifacts (extension "Push to DFIR-Companion" → /import): warn when
+      // they're landing in a case other than the one we're viewing.
+      if (msg.caseId && msg.caseId !== caseId)
+        showCaseMismatch(msg.caseId, caseId, "Artifacts");
+      else hideCaseMismatch();
+    } else if (msg.type === "comments_changed") loadComments(caseId);
+    else if (msg.type === "activity_changed") {
+      loadActivityLog(caseId);
+      loadCockpit(caseId);
+    } else if (msg.type === "tags_changed") loadTags(caseId);
+    else if (msg.type === "pins_changed") {
+      loadPins(caseId);
+      loadCockpit(caseId);
+    } else if (msg.type === "finding_workflow_changed") {
+      loadFindingWorkflow(caseId);
+      loadCockpit(caseId);
+    } else if (msg.type === "finding_outcome_changed") {
+      loadFindingOutcome(caseId);
+    } else if (msg.type === "notebook_changed") {
+      loadNotebook(caseId);
+      loadNbAiToggle(caseId);
+    } else if (msg.type === "hypotheses_changed") {
+      loadHypotheses(caseId);
+      loadCockpit(caseId);
+    } else if (msg.type === "dwell_window_changed")
+      loadSavedTimeframes(caseId);
+    else if (msg.type === "super_timeline_changed") {
+      loadSuperTimeline(caseId);
+      scheduleLoginGraphReload(caseId);
+    } else if (msg.type === "playbook_changed") loadPlaybook(caseId);
+    else if (msg.type === "asset_overrides_changed") {
+      loadAssetGraph(caseId);
+      loadAssetOverrides(caseId);
+    } else if (msg.type === "import_meta_changed") {
+      loadImportMeta(caseId);
+      loadCockpit(caseId);
+    } else if (msg.type === "drop_status_changed") loadDropStatus(caseId);
+    else if (msg.type === "import_undo_changed") loadUndoStack(caseId);
+    else if (msg.type === "velo_hunt_changed") {
+      loadVeloHuntJobs(caseId);
+      loadHuntProfile(caseId);
+    } else if (msg.type === "velo_monitor_changed") loadVeloMonitors(caseId);
+    else if (msg.type === "push_token_changed") loadPushToken(caseId);
+    else if (msg.type === "importers_changed") {
+      if (document.getElementById("stab-importers")) loadImporters();
+    } else if (msg.type === "false_positive_changed")
+      loadFalsePositives(caseId);
+    else if (msg.type === "learned_patterns_changed")
+      loadLearnedPatterns(caseId);
+    else if (msg.type === "source_trust_changed") loadSourceTrust(caseId);
+    else if (msg.type === "clock_skew_changed") loadClockSkew(caseId);
+    else if (msg.type === "scope_changed") {
+      // The same commit loadScope makes — the window came from the server either way, so the
+      // two controls are a sink here. Unlike loadScope this path then redraws, because the
+      // change came from outside and nothing else is going to.
+      //
+      // The hub broadcasts to every subscriber with no sender exclusion (src/live/hub.ts:67-80),
+      // so applyScope receives its own echo and this runs a second time after it — which is why
+      // applying a scope renders twice and the analyst's typed input is replaced by the
+      // server's normalised form. Pre-existing behaviour, preserved.
+      DfirScope.receive(msg.start, msg.end);
+      // render() projects with the freshly-updated window AND caches its argument as
+      // `DfirState.lastState()`, so pass the RAW state — passing an already-projected one would
+      // cache a scope-narrowed subset, permanently dropping out-of-window events on the next
+      // scope widen/clear until a fresh server state arrives.
+      if (DfirState.lastState())
+        typeof render === "function" && render(DfirState.lastState());
     }
-    ws.onopen = () => {
-      document.getElementById("status").textContent = "connected (live)";
-      // Anything that happened while the socket was down was never delivered, so the pill may be
-      // holding a state the case left behind. Re-derive rather than assume the gap was quiet.
-      refreshAiState(document.getElementById("caseId").value.trim());
-    };
-    ws.onclose = () =>
-      (document.getElementById("status").textContent = "disconnected");
-    ws.onmessage = (ev) => {
-      const msg = JSON.parse(ev.data);
-      if (msg.type === "state") {
-        typeof render === "function" && render(msg.state);
-        loadCockpit(caseId);
-        scheduleAssetGraphReload();
-        scheduleEvidenceGraphReload();
-        schedulePhasesReload();
-        scheduleTimelineGapsReload();
-        scheduleEvidenceGapsReload();
-        scheduleCloudCoverageReload();
-        scheduleBeaconsReload();
-        scheduleAnomaliesReload();
-        scheduleSessionsReload();
-        scheduleAdversaryHintsReload();
-        schedulePlaybookMatchReload();
-        scheduleHostRankingReload();
-        scheduleD3fendReload();
-        scheduleAttackMitigationsReload();
-        scheduleComplianceReload();
-        scheduleGeoMapReload();
-        scheduleSwimlaneReload();
-        scheduleIocSourcesReload();
-        scheduleIocProvenanceReload();
-        scheduleIocRiskReload();
-        scheduleIocProvenanceChainReload();
-        loadSynthMeta(caseId);
-        loadPlaybook(caseId);
-        loadHypotheses(caseId);
-        loadSuperTimeline(caseId);
-        scheduleSecondOpinionReload(caseId); // #1590 — refresh the "no longer applies" list
-      } else if (msg.type === "second_opinion_changed")
-        loadSecondOpinion(caseId);
-      else if (msg.type === "ai_status") applyAiStatus(msg);
-      else if (msg.type === "job_changed") scheduleJobUiRefresh(caseId, msg.jobs);
-      else if (msg.type === "capture_ingest") {
-        // A capture arrived somewhere. If it's for OUR case, all good (clear any warning);
-        // otherwise the extension is feeding a different case than we're viewing — warn.
-        if (msg.caseId && msg.caseId !== caseId)
-          showCaseMismatch(msg.caseId, caseId, "Screenshots");
-        else hideCaseMismatch();
-      } else if (msg.type === "import_ingest") {
-        // Same trap for pushed artifacts (extension "Push to DFIR-Companion" → /import): warn when
-        // they're landing in a case other than the one we're viewing.
-        if (msg.caseId && msg.caseId !== caseId)
-          showCaseMismatch(msg.caseId, caseId, "Artifacts");
-        else hideCaseMismatch();
-      } else if (msg.type === "comments_changed") loadComments(caseId);
-      else if (msg.type === "activity_changed") {
-        loadActivityLog(caseId);
-        loadCockpit(caseId);
-      } else if (msg.type === "tags_changed") loadTags(caseId);
-      else if (msg.type === "pins_changed") {
-        loadPins(caseId);
-        loadCockpit(caseId);
-      } else if (msg.type === "finding_workflow_changed") {
-        loadFindingWorkflow(caseId);
-        loadCockpit(caseId);
-      } else if (msg.type === "finding_outcome_changed") {
-        loadFindingOutcome(caseId);
-      } else if (msg.type === "notebook_changed") {
-        loadNotebook(caseId);
-        loadNbAiToggle(caseId);
-      } else if (msg.type === "hypotheses_changed") {
-        loadHypotheses(caseId);
-        loadCockpit(caseId);
-      } else if (msg.type === "dwell_window_changed")
-        loadSavedTimeframes(caseId);
-      else if (msg.type === "super_timeline_changed") {
-        loadSuperTimeline(caseId);
-        scheduleLoginGraphReload(caseId);
-      } else if (msg.type === "playbook_changed") loadPlaybook(caseId);
-      else if (msg.type === "asset_overrides_changed") {
-        loadAssetGraph(caseId);
-        loadAssetOverrides(caseId);
-      } else if (msg.type === "import_meta_changed") {
-        loadImportMeta(caseId);
-        loadCockpit(caseId);
-      } else if (msg.type === "drop_status_changed") loadDropStatus(caseId);
-      else if (msg.type === "import_undo_changed") loadUndoStack(caseId);
-      else if (msg.type === "velo_hunt_changed") {
-        loadVeloHuntJobs(caseId);
-        loadHuntProfile(caseId);
-      } else if (msg.type === "velo_monitor_changed") loadVeloMonitors(caseId);
-      else if (msg.type === "push_token_changed") loadPushToken(caseId);
-      else if (msg.type === "importers_changed") {
-        if (document.getElementById("stab-importers")) loadImporters();
-      } else if (msg.type === "false_positive_changed")
-        loadFalsePositives(caseId);
-      else if (msg.type === "learned_patterns_changed")
-        loadLearnedPatterns(caseId);
-      else if (msg.type === "source_trust_changed") loadSourceTrust(caseId);
-      else if (msg.type === "clock_skew_changed") loadClockSkew(caseId);
-      else if (msg.type === "scope_changed") {
-        // The same commit loadScope makes — the window came from the server either way, so the
-        // two controls are a sink here. Unlike loadScope this path then redraws, because the
-        // change came from outside and nothing else is going to.
-        //
-        // The hub broadcasts to every subscriber with no sender exclusion (src/live/hub.ts:67-80),
-        // so applyScope receives its own echo and this runs a second time after it — which is why
-        // applying a scope renders twice and the analyst's typed input is replaced by the
-        // server's normalised form. Pre-existing behaviour, preserved.
-        DfirScope.receive(msg.start, msg.end);
-        // render() projects with the freshly-updated window AND caches its argument as
-        // `DfirState.lastState()`, so pass the RAW state — passing an already-projected one would
-        // cache a scope-narrowed subset, permanently dropping out-of-window events on the next
-        // scope widen/clear until a fresh server state arrives.
-        if (DfirState.lastState())
-          typeof render === "function" && render(DfirState.lastState());
-      }
-    };
   }
 
   // Case templates and incident types moved to js/dashboard-case-templates.js (#415 tier 3).

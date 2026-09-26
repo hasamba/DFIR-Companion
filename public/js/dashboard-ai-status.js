@@ -5,6 +5,8 @@
 // and nothing there touches this.
 (function () {
   function applyAiStatus(evt) {
+    // A push is newer than any correction still in flight; that correction must not repaint over it.
+    aiStateSeq++;
     if (evt.status === "analyzing") {
       // Drive the progress bar from server-side "kind import — N/M" updates (40 → 95%).
       const m =
@@ -163,12 +165,21 @@
     else setAi("idle", s.detail || "up to date");
   }
 
+  // Newest request wins (#1675). The socket reconnect, a tab waking and the Re-synthesize button all
+  // call this now, and an answer that lands late — for a case the analyst has left, or behind a
+  // newer answer for the same case — must not repaint the pill over the truth.
+  let aiStateSeq = 0;
   async function refreshAiState(caseId) {
-    if (!caseId) return;
+    // An inactive case is rejected BEFORE the counter moves: a late call for a case the analyst left
+    // must not invalidate a correction still in flight for the case on screen.
+    if (!caseId || caseId !== activeCaseId) return;
+    const seq = ++aiStateSeq;
     try {
       const r = await fetch(`/cases/${encodeURIComponent(caseId)}/ai-state`);
       if (!r.ok) return; // leave the pill as it is; a failed correction must not invent a state
-      paintAiState(await r.json());
+      const s = await r.json();
+      if (seq !== aiStateSeq || caseId !== activeCaseId) return;
+      paintAiState(s);
     } catch {
       // Never let the corrector be the thing that breaks the page it exists to fix.
     }
