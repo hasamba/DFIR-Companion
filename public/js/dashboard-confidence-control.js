@@ -14,6 +14,11 @@
   // in-flight timer and silently drop the edit, reverting to the last-saved value.
   let confSaveTimer = null;
   let confPending = null; // { caseId, minConfidence } once a keystroke schedules a save, else null
+  // A push re-reads these controls (#1691), and the hub echoes every push to its sender too. So a
+  // response may only paint if it is the newest load, no local edit happened since it started, and
+  // its case is still the open one — otherwise an older value overwrites the analyst's newer one.
+  let confLoadGen = 0;
+  let confEditGen = 0;
   function putConfidenceControl(caseId, minConfidence, opts) {
     return fetch(`/cases/${caseId}/confidence-control`, {
       method: "PUT",
@@ -34,9 +39,15 @@
     );
   }
   function loadConfidenceControl(caseId) {
+    // The analyst's own edit is still waiting to save; its echo will re-read the newer value.
+    if (confPending && confPending.caseId === caseId) return;
+    const load = ++confLoadGen;
+    const editsAtStart = confEditGen;
     fetch(`/cases/${caseId}/confidence-control`)
       .then((r) => r.json())
       .then((c) => {
+        if (load !== confLoadGen || editsAtStart !== confEditGen) return;
+        if (document.getElementById("caseId").value.trim() !== caseId) return;
         document.getElementById("confFilter").value = c.minConfidence ?? 0;
         document.getElementById("hideAutoFindings").checked =
           !!c.hideAutoFindings;
@@ -48,6 +59,7 @@
       .catch(() => {});
   }
   function saveConfidenceControl(caseId, minConfidence) {
+    confEditGen++;
     clearTimeout(confSaveTimer);
     confPending = { caseId, minConfidence };
     confSaveTimer = setTimeout(() => {
@@ -63,6 +75,7 @@
   // from clobbering a field; `ConfidenceControlStore.set` wraps the cycle in a per-case lock, so
   // concurrent saves are safe in either order.
   function saveFindingOriginFilters(caseId, patch) {
+    confEditGen++;
     return fetch(`/cases/${caseId}/confidence-control`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },

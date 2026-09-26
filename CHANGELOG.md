@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **AI eval gate averages three runs** — a no-regression attestation now needs three real runs of every section, averaged, with a 5-point tolerance; a SYSTEM_PROMPT or vision-model change also needs a real screenshot set (part of #1579)
 
 ### Fixed
+- **Confidence filter and report-template picker update live** — another analyst's change shows at once, and after a reconnect, without overwriting your own newer edit (closes #1691)
 - **Second opinion pairs findings by their cited events** — two titles for the same activity become an agreement or a severity change, and accepting B lowers A's severity instead of adding a duplicate finding (closes #1682)
 - **Session-command notes skip ordinary system activity** — Edge, Windows Update, task-host and SecurityHealth rows and a finding's own cited rows are no longer listed; each finding shows at most 12, attack rows first, and says "N more" (closes #1683)
 - **Re-synthesis keeps finding ATT&CK tags** — the model sees each finding's previous tags, auto findings keep their event-derived tags, and tag changes are logged (closes #1684)
