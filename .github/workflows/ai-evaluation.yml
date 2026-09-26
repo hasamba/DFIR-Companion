@@ -22,6 +22,8 @@ jobs:
       DFIR_AI_SYNTH_MODEL: ${{ vars.DFIR_EVAL_MODEL }}
       DFIR_AI_SYNTH_KEY: ${{ secrets.DFIR_EVAL_KEY }}
       DFIR_EVAL_BASELINE_PATH: ${{ vars.DFIR_EVAL_BASELINE_PATH }}
+      # A reasoning model can spend ~7k of 16k output tokens thinking and cut the answer off (#1579).
+      DFIR_AI_MAX_TOKENS: ${{ vars.DFIR_EVAL_MAX_TOKENS || '32000' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
