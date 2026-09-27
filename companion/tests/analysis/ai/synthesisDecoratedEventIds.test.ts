@@ -107,8 +107,11 @@ describe("a decorated event citation keeps a synthesis finding's evidence (#1693
 
   it("does not resolve a decorated citation onto an event outside this run's scope", async () => {
     const all = [...timeline(), event("cld-e9", "2026-08-29T10:00:00.000Z")];
-    const { delta: folded } = await fold(delta(["cld-e1", "e_cld-e9"]), timeline(), all);
+    const { next, delta: folded } = await fold(delta(["cld-e1", "e_cld-e9"]), timeline(), all);
     expect(folded.findings[0].relatedEventIds).toEqual(["cld-e1", "e_cld-e9"]);
+    // …and the merge inside the fold does not widen it to the whole timeline.
+    expect(next.findings.find((f) => f.id === "f1")?.relatedEventIds).toEqual(["cld-e1", "e_cld-e9"]);
+    expect(linkedTo(next, "f1")).toEqual(["cld-e1"]);
   });
 
   it("keeps a citation that names no event as the model sent it", async () => {

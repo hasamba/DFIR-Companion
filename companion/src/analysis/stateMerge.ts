@@ -83,6 +83,11 @@ export interface WindowContext {
   // this it would read every prior deterministic finding as newly invented and rename the model's
   // legitimate update to one — losing the finding the carry-forward exists to protect (#751).
   knownFindingIds?: ReadonlySet<string>;
+  // The events a cited id may resolve onto (#1693). Defaults to what the merge will hold. Synthesis
+  // passes the events its run was SHOWN — it already resolved against them at the top of the fold,
+  // and resolving again against the whole timeline would link an out-of-window or analyst-rejected
+  // event the fold deliberately left unresolved.
+  knownEventIds?: ReadonlySet<string>;
 }
 
 function uniq(values: string[]): string[] {
@@ -121,10 +126,11 @@ export function mergeDelta(
   const delta = citesEvents(renamed)
     ? resolveCitedEventIds(
         renamed,
-        new Set([
-          ...state.forensicTimeline.map((e) => e.id),
-          ...(renamed.forensicEvents ?? []).filter((e) => !isAnalystWorkLog(e)).map((e) => e.id),
-        ]),
+        ctx.knownEventIds ??
+          new Set([
+            ...state.forensicTimeline.map((e) => e.id),
+            ...(renamed.forensicEvents ?? []).filter((e) => !isAnalystWorkLog(e)).map((e) => e.id),
+          ]),
       )
     : renamed;
   // IOCs first — we need the id remap before processing findings so their
