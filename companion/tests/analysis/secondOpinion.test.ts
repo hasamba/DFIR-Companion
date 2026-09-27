@@ -401,7 +401,8 @@ describe("applyAcceptedSecondOpinion", () => {
     const out = applyAcceptedSecondOpinion(A, so);
     const ids = out.mitreTechniques.map((t) => t.id);
     expect(ids).toContain("T1071");
-    expect(ids).not.toContain("T1078");
+    // #1742: a removal is recorded and hidden at read time (rejectedTechniques.ts), not deleted.
+    expect(out.rejectedTechniques).toEqual(["T1078"]);
   });
 
   it("setAllPendingStatus flips only the pending deltas (accept-all), leaving decided ones", () => {

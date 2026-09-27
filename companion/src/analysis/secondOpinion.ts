@@ -18,6 +18,7 @@ import { heldForAnalyst } from "./secondOpinionGuard.js";
 import { byEventTime } from "./forensicSort.js";
 import { renderEventLine } from "./ai/eventLine.js";
 import { stateEventResolver } from "./eventAliasLookup.js";
+import { rejectedTechniqueIds, withRejectedTechniqueIds } from "./rejectedTechniques.js";
 
 // Second LLM opinion (issue #116). A QA control: a DIFFERENT model independently re-synthesizes
 // the same case, and we surface where it disagrees with the primary synthesis so the analyst can
@@ -494,7 +495,8 @@ export function followRefereeStatus(so: SecondOpinion): SecondOpinion {
 
 // Apply EVERY accepted delta onto a case state. Pure, immutable, IDEMPOTENT (safe to run on every
 // read/synthesis): b_only adds B's finding if absent by matchKey; a_only dismisses A's finding in
-// place; severity rewrites A's finding severity; mitre_added/removed add/remove the technique.
+// place; severity rewrites A's finding severity; mitre_added adds the technique; mitre_removed is
+// RECORDED in rejectedTechniques and hidden at read time, never deleted from stored data (#1742).
 // a_only / severity find their finding by id first, while it still holds the same claim, and by
 // matchKey only when it does not (#1590) — so a retitled or retagged finding keeps the decision.
 // Used by both the apply route (on the live state) and synthesize() post-processing (durability).
@@ -504,7 +506,9 @@ export function applyAcceptedSecondOpinion(
 ): InvestigationState {
   if (!so) return state;
   const accepted = so.deltas.filter((d) => d.status === "accepted");
-  if (accepted.length === 0) return state;
+  // Recomputed from the whole record every time, so switching a removal back to rejected clears it.
+  const base = withRejectedTechniqueIds(state, rejectedTechniqueIds(accepted));
+  if (accepted.length === 0) return base;
 
   let findings = state.findings;
   let techniques = state.mitreTechniques;
@@ -552,13 +556,11 @@ export function applyAcceptedSecondOpinion(
         // Already present, but now also affirmed by hand — it outlives whatever first put it there.
         techniques = techniques.map((t) => (t.id === d.title ? { ...t, analystAccepted: true } : t));
       }
-    } else if (d.kind === "mitre_removed") {
-      techniques = techniques.filter((t) => t.id !== d.title);
     }
   }
 
-  if (findings === state.findings && techniques === state.mitreTechniques) return state;
-  return { ...state, findings, mitreTechniques: techniques };
+  if (findings === state.findings && techniques === state.mitreTechniques) return base;
+  return { ...base, findings, mitreTechniques: techniques };
 }
 
 function mapTargets(

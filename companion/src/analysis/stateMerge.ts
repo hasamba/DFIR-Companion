@@ -628,6 +628,8 @@ export function mergeDelta(
     intelRetirementDecisions: state.intelRetirementDecisions ?? [],
     // The correlation lineage (#1715) only grows; the remap below adds this merge's folds to it.
     ...(state.eventAliases ? { eventAliases: state.eventAliases } : {}),
+    // The analyst's technique removals (#1742): a decision, not evidence — every merge keeps it.
+    ...(state.rejectedTechniques?.length ? { rejectedTechniques: state.rejectedTechniques } : {}),
     updatedAt: ctx.timestamp,
   };
   // Every citation of an event correlation folded away follows it to the survivor (#1714).

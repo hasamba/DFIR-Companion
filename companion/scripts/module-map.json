@@ -372,6 +372,7 @@
     "eventAliases.ts": "analysis/timeline",
     "eventRelevance.ts": "analysis/findings",
     "eventTechniques.ts": "analysis/timeline",
+    "rejectedTechniques.ts": "analysis/timeline",
     "flossResultImport.ts": "analysis/ingest",
     "evidenceAttestationStore.ts": "analysis/ai",
     "huntRequirementStore.ts": "analysis/ai",

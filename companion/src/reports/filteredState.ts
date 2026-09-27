@@ -8,6 +8,7 @@ import { projectAlignment } from "../analysis/clockSkew.js";
 import { projectScope } from "../analysis/scopeProject.js";
 import { applyFalsePositive, filterFalsePositiveEvents } from "../analysis/falsePositive.js";
 import { withEventTechniques } from "../analysis/eventTechniques.js";
+import { withoutRejectedTechniques } from "../analysis/rejectedTechniques.js";
 import { pruneSessionCommands } from "../analysis/ai/sessionCommandNotes.js";
 import { FindingOutcomeStore, withAnalystOutcomes } from "../analysis/findingOutcome.js";
 import { RemediationStore } from "../analysis/remediationBoundary.js";
@@ -74,5 +75,8 @@ export async function loadFilteredState(
   );
   // MITRE completed LAST, from the events that survived both filters — see eventTechniques.ts (#893).
   // A session-command note (#1594) shows only while its row survived scope and the FP filter.
-  return pruneSessionCommands(withEventTechniques(applyFalsePositive(withOutcomes, markers)));
+  // The analyst's technique removals (#1742) are hidden last, after the table is completed from tags.
+  return withoutRejectedTechniques(
+    pruneSessionCommands(withEventTechniques(applyFalsePositive(withOutcomes, markers))),
+  );
 }
