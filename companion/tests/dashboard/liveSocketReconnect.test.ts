@@ -279,6 +279,7 @@ describe("a frame that is not a live message is skipped (#1707)", () => {
     '{"type":42}',
     '{"type":"state"}',
     '{"type":"state","state":null}',
+    '{"type":"state","state":[]}',
   ];
 
   function raw(sock: FakeSocket, data: string) {
@@ -331,6 +332,7 @@ describe("a frame that is not a live message is skipped (#1707)", () => {
     await vi.advanceTimersByTimeAsync(0);
     raw(FakeSocket.made[1], '{"type":"state"}');
     raw(FakeSocket.made[1], '{"type":"state","state":null}');
+    raw(FakeSocket.made[1], '{"type":"state","state":[]}');
     answer({ caseId: "INC-1", v: "snapshot" });
     await vi.advanceTimersByTimeAsync(0);
     expect(h.messages.filter((m) => m.type === "state")).toEqual([

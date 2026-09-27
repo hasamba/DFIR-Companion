@@ -175,7 +175,8 @@
     }
     if (!msg || typeof msg !== "object" || Array.isArray(msg)) return null;
     if (typeof msg.type !== "string") return null;
-    if (msg.type === "state" && (!msg.state || typeof msg.state !== "object")) return null;
+    const s = msg.state;
+    if (msg.type === "state" && (!s || typeof s !== "object" || Array.isArray(s))) return null;
     return msg;
   }
 
