@@ -1,6 +1,7 @@
 import { performance } from "node:perf_hooks";
 import { ProviderError, type AIProvider } from "../../src/providers/provider.js";
 import { runCorpusCase } from "./harness.js";
+import { JudgeFailure, judgeForbiddenConclusions, type JudgeOutcome } from "./forbiddenJudge.js";
 import { MeteredProvider } from "./meter.js";
 import {
   forbiddenConclusionFindings,
@@ -57,12 +58,27 @@ function errorStatus(
   if (error instanceof ProviderError) {
     return { status: "provider_failed", errorKind: error.kind };
   }
+  // #1704: a judge that cannot grade is an evaluation-infrastructure failure, never a quiet pass
+  // and never a fall-back to the word list.
+  if (error instanceof JudgeFailure) return { status: "provider_failed", errorKind: error.kind };
   if (real) return { status: "quality_failed", errorKind: "invalid-model-output" };
   return { status: "runner_failed", errorKind: "deterministic-runner-error" };
 }
 
 function withTotalDuration(resources: EvaluationResources, started: number): EvaluationResources {
   return { ...resources, durationMs: performance.now() - started };
+}
+
+// #1704: job log only — the judge's verdict beside the word list's, with the finding text and the
+// judge's reason when either side says "asserted". Model text is JSON-escaped, never raw.
+function logJudged(judged: JudgeOutcome): void {
+  for (const detail of judged.details) {
+    if (!detail.asserts && !detail.wordList) continue;
+    console.log(
+      `  judge ${detail.forbiddenId} in ${detail.findingId}: asserts=${detail.asserts} word-list=${detail.wordList}` +
+        ` reason=${JSON.stringify(detail.reason)} text=${JSON.stringify(detail.text)}`,
+    );
+  }
 }
 
 async function runOne(
@@ -74,10 +90,18 @@ async function runOne(
   const started = performance.now();
   try {
     const output = await runCorpusCase(fixture, metered);
-    const score = scoreCaseQuality(fixture.golden, output);
+    const judged = real ? await judgeForbiddenConclusions(fixture.golden, output, metered) : undefined;
+    const score = scoreCaseQuality(
+      fixture.golden,
+      output,
+      judged ? { forbiddenIds: judged.assertedIds } : {},
+    );
     console.log(formatCaseQualityReport(fixture.id, score, { real }));
-    for (const hit of forbiddenConclusionFindings(fixture.golden, output)) {
-      console.log(`  forbidden ${hit.forbiddenId} in ${hit.findingId}: ${JSON.stringify(hit.text)}`);
+    if (judged) logJudged(judged);
+    else {
+      for (const hit of forbiddenConclusionFindings(fixture.golden, output)) {
+        console.log(`  forbidden ${hit.forbiddenId} in ${hit.findingId}: ${JSON.stringify(hit.text)}`);
+      }
     }
     return {
       id: fixture.id,
@@ -85,6 +109,7 @@ async function runOne(
       status: passesCaseQuality(score, { real }) ? "passed" : "quality_failed",
       metrics: metrics(score, fixture),
       resources: withTotalDuration(metered.snapshot(), started),
+      ...(judged && judged.stats.pairs > 0 ? { judge: { ...judged.stats } } : {}),
     };
   } catch (error) {
     const classified = errorStatus(error, real);

@@ -9,6 +9,7 @@ import {
 import type { AIProvider } from "../../src/providers/provider.js";
 import type { EvaluationIdentity } from "./baseline.js";
 import { collectPromptSource, evaluationSourceHash } from "./changeGate.js";
+import { judgeContractHash } from "./forbiddenJudge.js";
 
 export function evaluationPromptHash(): string {
   return hashManifestValue({
@@ -34,6 +35,8 @@ export async function evaluationIdentity(
   // #1579: pass only when the screenshot section ran against a real vision provider.
   vision?: Pick<AIProvider, "name" | "model">,
   visionSetHash?: string,
+  // #1704: pass only when the semantic judge graded synthesis cases on a real run.
+  judge?: Pick<AIProvider, "name" | "model">,
 ): Promise<EvaluationIdentity> {
   return {
     provider: provider.name,
@@ -49,6 +52,9 @@ export async function evaluationIdentity(
             ...(visionSetHash ? { setHash: visionSetHash } : {}),
           },
         }
+      : {}),
+    ...(judge
+      ? { judge: { provider: judge.name, model: judge.model, contractHash: judgeContractHash() } }
       : {}),
   };
 }

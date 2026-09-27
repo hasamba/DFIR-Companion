@@ -15,6 +15,9 @@ export interface GoldenIoc {
 export interface ForbiddenConclusion {
   id: string;
   terms: string[];
+  // #1704: one plain sentence of what asserting this conclusion means. The semantic judge grades
+  // findings against it on real runs; the word list (mock runs) uses `terms`. Required in the corpus.
+  claim?: string;
 }
 
 export interface GoldenUncertainty {
@@ -518,14 +521,30 @@ function scoreNextSteps(
   };
 }
 
-export function scoreCaseQuality(golden: CaseGolden, output: QualityOutput): CaseQualityScore {
+export interface ScoreCaseQualityOptions {
+  // #1704: forbidden-conclusion ids a semantic judge found asserted. Given on a real run, it
+  // replaces the word-list verdict; absent (mock runs), the word list decides as before.
+  forbiddenIds?: readonly string[];
+}
+
+export function scoreCaseQuality(
+  golden: CaseGolden,
+  output: QualityOutput,
+  options: ScoreCaseQualityOptions = {},
+): CaseQualityScore {
   return {
     claims: scoreClaims(golden.claims, output.claims),
     iocs: scoreIocs(golden.iocs, output.iocs),
     danglingEvidenceRefs: danglingRefs(output),
-    forbiddenConclusions: golden.forbiddenConclusions
-      .filter((forbidden) => output.claims.some((claim) => assertsAsFact(claimText(claim), forbidden.terms)))
-      .map((forbidden) => forbidden.id),
+    forbiddenConclusions: options.forbiddenIds
+      ? golden.forbiddenConclusions
+          .filter((forbidden) => options.forbiddenIds?.includes(forbidden.id))
+          .map((forbidden) => forbidden.id)
+      : golden.forbiddenConclusions
+          .filter((forbidden) =>
+            output.claims.some((claim) => assertsAsFact(claimText(claim), forbidden.terms)),
+          )
+          .map((forbidden) => forbidden.id),
     confidenceIssues: confidenceIssues(golden.claims, output.claims),
     uncertainties: scoreUncertainties(golden.uncertainties, output.uncertainties),
     nextSteps: scoreNextSteps(golden.nextSteps, output.nextSteps),
@@ -547,6 +566,12 @@ export interface PassesCaseQualityOptions {
   // Hallucination/forbidden-conclusion/confidence-rubric checks are never relaxed — those catch
   // invention, not phrasing variance.
   real?: boolean;
+}
+
+// #1704: the word-list verdict for ONE finding against ONE forbidden conclusion, so the semantic
+// judge can log where it disagrees with the word list.
+export function wordListAsserts(claim: QualityClaim, forbidden: ForbiddenConclusion): boolean {
+  return assertsAsFact(claimText(claim), forbidden.terms);
 }
 
 // #1579: the findings behind each forbidden-conclusion hit, so a real run can show WHAT the model

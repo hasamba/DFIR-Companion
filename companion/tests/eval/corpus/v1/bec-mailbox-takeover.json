@@ -87,7 +87,13 @@
       }
     ],
     "iocs": [{ "type": "ip", "value": "198.51.100.23" }],
-    "forbiddenConclusions": [{ "id": "invented-payment", "terms": ["payment was sent"] }],
+    "forbiddenConclusions": [
+      {
+        "id": "invented-payment",
+        "terms": ["payment was sent"],
+        "claim": "The fraudulent payment was actually sent: money was transferred to the attacker."
+      }
+    ],
     "uncertainties": [
       {
         "id": "payment-gap",

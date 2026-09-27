@@ -1,3 +1,6 @@
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { z } from "zod";
 export interface EvaluationIdentity {
   provider: string;
   model: string;
@@ -7,6 +10,9 @@ export interface EvaluationIdentity {
   // #1579: set only when the screenshot section ran against a real vision provider.
   // setHash pins WHICH screenshots were graded, so a swapped or reduced set is not comparable.
   vision?: { provider: string; model: string; setHash?: string };
+  // #1704: set only when the semantic forbidden-conclusion judge graded synthesis cases.
+  // contractHash covers the judge's prompts, answer schema and policy version.
+  judge?: { provider: string; model: string; contractHash: string };
 }
 
 export interface EvaluationSummary {
@@ -64,6 +70,10 @@ const evaluationIdentitySchema: z.ZodType<EvaluationIdentity> = z
     corpusHash: sha256Schema,
     vision: z
       .object({ provider: z.string().min(1), model: z.string().min(1), setHash: sha256Schema.optional() })
+      .strict()
+      .optional(),
+    judge: z
+      .object({ provider: z.string().min(1), model: z.string().min(1), contractHash: sha256Schema })
       .strict()
       .optional(),
   })
@@ -161,6 +171,13 @@ function sameVision(left: EvaluationIdentity["vision"], right: EvaluationIdentit
   return left.provider === right.provider && left.model === right.model && left.setHash === right.setHash;
 }
 
+function sameJudge(left: EvaluationIdentity["judge"], right: EvaluationIdentity["judge"]): boolean {
+  if (!left || !right) return left === right;
+  return (
+    left.provider === right.provider && left.model === right.model && left.contractHash === right.contractHash
+  );
+}
+
 function safePart(value: string): string {
   return value
     .toLowerCase()
@@ -190,6 +207,7 @@ function incompatibleReasons(
   if (baseline.identity.corpusHash !== identity.corpusHash) reasons.push("corpus changed");
   if (!sameVision(baseline.identity.vision, identity.vision))
     reasons.push("vision model or screenshot set changed");
+  if (!sameJudge(baseline.identity.judge, identity.judge)) reasons.push("forbidden-conclusion judge changed");
   if (runsOf(baseline) !== profile.runs) reasons.push("run count changed");
   if ((baseline.mode ?? DEFAULT_MODE) !== profile.mode) reasons.push("evaluation mode changed");
   return reasons;
@@ -267,6 +285,3 @@ export async function writeBaseline(directory: string, baseline: EvaluationBasel
   });
   return path;
 }
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-import { z } from "zod";

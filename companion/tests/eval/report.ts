@@ -46,6 +46,9 @@ export interface EvaluationCaseResult {
   errorKind?: string;
   // 1-based run number; absent = run 1. Run k >= 2 also suffixes the id with `#run${k}`.
   runIndex?: number;
+  // #1704: counts only, never text — how many (statement, finding) pairs the semantic judge graded,
+  // how many it found asserted, and how many it graded differently from the word list.
+  judge?: { pairs: number; asserted: number; disagreements: number };
 }
 
 export interface EvaluationExtractionResult {
