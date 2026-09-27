@@ -10,6 +10,15 @@
 // buttons are wired inside the renderer, at the point the rows are created, which is where they
 // have to be.
 (function () {
+  // #1713: a debounced reload fires through the page's shared request cap
+  // (js/case-load-progress.js), so a burst of them cannot fill the connection pool. Without that
+  // module it runs at once, as before — a reload must never be dropped.
+  const panelReload = (key, caseId, run) => {
+    const clp = window.DfirCaseLoadProgress;
+    return clp && typeof clp.runPanelReload === "function"
+      ? clp.runPanelReload(key, caseId, run)
+      : run();
+  };
   // ── Adversary Hints (#46) ─────────────────────────────────────────────────────────────
   // Known ATT&CK groups ranked by technique overlap with the case — offline hypothesis fuel,
   // NOT attribution. Derived server-side (GET /cases/:id/adversary-hints) from the bundled MITRE
@@ -76,7 +85,7 @@
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
     clearTimeout(adversaryHintsTimer);
-    adversaryHintsTimer = setTimeout(() => loadAdversaryHints(caseId), 800);
+    adversaryHintsTimer = setTimeout(() => panelReload("adversaryHints", caseId, () => loadAdversaryHints(caseId)), 800);
   }
   function renderAdversaryHints() {
     const el = document.getElementById("adversaryHints");

@@ -102,7 +102,30 @@ export interface PanelRunOptions {
   /** Maximum loaders in flight at once. Absent or non-positive means unbounded. Bounding it
    *  reserves connections in the browser's six-per-origin HTTP/1.1 pool for the analyst. */
   concurrency?: number;
+  /** A pool shared with other runs (#1713), used instead of a private one sized by `concurrency`,
+   *  so several runs together stay under one cap. */
+  lanes?: LanePool;
 }
+
+/** A request semaphore several panel runs can share (#1713). `take` returns null when a lane is
+ *  granted now, else a promise of whether one was (`false`: the signal aborted while it waited). */
+export interface LanePool {
+  take(signal?: AbortSignal): Promise<boolean> | null;
+  free(): void;
+}
+
+/** Lanes the page-wide pool holds: four of the browser's six connections per origin. */
+export declare const PAGE_PANEL_LANES: number;
+
+/** A lane pool of `limit` lanes; a non-positive limit is unbounded. */
+export declare function createLanePool(limit: number): LanePool;
+
+/** Debounced panel reloads run one loader each under `lanes`. `retire` abandons them all and names
+ *  the case now on screen (`null`: none), after which a reload for any other case is dropped. */
+export declare function createPanelReloader(lanes: LanePool): {
+  run(key: string, caseId: string, loader: () => void): void;
+  retire(caseId?: string | null): void;
+};
 
 /**
  * Run every `[name, thunk]` panel loader, tallying each as its requests settle.

@@ -200,6 +200,8 @@
     if (typeof runner === "function" && typeof AbortController === "function") {
       catchUpAbort = new AbortController();
       runner(entries, null, {
+        // The page-wide pool (#1713), shared with the case load and the debounced panel reloads.
+        lanes: window.DfirCaseLoadProgress.panelLanes,
         concurrency: CATCH_UP_CONCURRENCY,
         signal: catchUpAbort.signal,
       });

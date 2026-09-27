@@ -17,6 +17,15 @@
 //
 // No initializer: none of them wires anything at load. The page calls load…() when a case opens.
 (function () {
+  // #1713: a debounced reload fires through the page's shared request cap
+  // (js/case-load-progress.js), so a burst of them cannot fill the connection pool. Without that
+  // module it runs at once, as before — a reload must never be dropped.
+  const panelReload = (key, caseId, run) => {
+    const clp = window.DfirCaseLoadProgress;
+    return clp && typeof clp.runPanelReload === "function"
+      ? clp.runPanelReload(key, caseId, run)
+      : run();
+  };
 
   // ── Beacon Candidates (#82) ───────────────────────────────────────────────────────────
   // Periodic outbound channels (source → dest:port) whose inter-arrival jitter is low enough to
@@ -34,7 +43,7 @@
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
     clearTimeout(beaconsTimer);
-    beaconsTimer = setTimeout(() => loadBeacons(caseId), 800);
+    beaconsTimer = setTimeout(() => panelReload("beacons", caseId, () => loadBeacons(caseId)), 800);
   }
   function renderBeacons() {
     const el = document.getElementById("beacons");
@@ -76,7 +85,7 @@
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
     clearTimeout(evidenceGapsTimer);
-    evidenceGapsTimer = setTimeout(() => loadEvidenceGaps(caseId), 800);
+    evidenceGapsTimer = setTimeout(() => panelReload("evidenceGaps", caseId, () => loadEvidenceGaps(caseId)), 800);
   }
   function renderEvidenceGaps() {
     const el = document.getElementById("evidenceGaps");
@@ -137,7 +146,7 @@
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
     clearTimeout(cloudCoverageTimer);
-    cloudCoverageTimer = setTimeout(() => loadCloudCoverage(caseId), 800);
+    cloudCoverageTimer = setTimeout(() => panelReload("cloudCoverage", caseId, () => loadCloudCoverage(caseId)), 800);
   }
   const CC_PROVIDER_LABEL = { "aws-cloudtrail": "AWS CloudTrail", gcp: "GCP", azure: "Azure", m365: "M365", "google-workspace": "Google Workspace" };
   function renderCloudCoverage() {
@@ -184,7 +193,7 @@
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
     clearTimeout(playbookMatchTimer);
-    playbookMatchTimer = setTimeout(() => loadPlaybookMatch(caseId), 800);
+    playbookMatchTimer = setTimeout(() => panelReload("playbookMatch", caseId, () => loadPlaybookMatch(caseId)), 800);
   }
   function renderPlaybookMatch() {
     const el = document.getElementById("playbookMatch");
@@ -263,7 +272,7 @@
     const caseId = document.getElementById("caseId").value.trim();
     if (!caseId) return;
     clearTimeout(mitigationsTimer);
-    mitigationsTimer = setTimeout(() => loadAttackMitigations(caseId), 800);
+    mitigationsTimer = setTimeout(() => panelReload("attackMitigations", caseId, () => loadAttackMitigations(caseId)), 800);
   }
 
   // ── ATT&CK Mitigations (#178) — the concrete "what to do" layer above D3FEND ───────────────
