@@ -252,7 +252,10 @@ describe("narrativeLead", () => {
       times: ["09:04"],
       rest: "The host rebooted",
     });
-    expect(f.narrativeLead("On 2026-09-24 at 08:49, x")).toMatchObject({ date: "2026-09-24", times: ["08:49"] });
+    expect(f.narrativeLead("On 2026-09-24 at 08:49, x")).toMatchObject({
+      date: "2026-09-24",
+      times: ["08:49"],
+    });
     expect(f.narrativeLead("On September 24, 2026, x")).toMatchObject({ date: "2026-09-24", times: [] });
   });
 
