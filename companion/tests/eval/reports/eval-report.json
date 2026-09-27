@@ -3,9 +3,14 @@
   "identity": {
     "provider": "claude-code",
     "model": "claude-sonnet-5",
-    "promptHash": "dcff25ad119f584cdbeb58f4c4641507d9af9a1117f9c0c30f9fd7436ddbfbb3",
-    "sourceHash": "8924706e91dd64367624edc6525a5a5dfc85a4064896ed29457b7fdfddd18221",
+    "promptHash": "58a3b80fda9e8f177475978b645131df1d753f57e908a045504fb787d220a9d2",
+    "sourceHash": "c20129c68f1cf72c13db7257be8fa57d057c21426bd35ec8afcf930d5a4d8f32",
     "corpusHash": "438504a0124a9f411bb33b7b4b1f4124251500d970105384a456f9f0f48749f5",
+    "vision": {
+      "provider": "claude-code",
+      "model": "claude-sonnet-5",
+      "setHash": "298849f8ce5fc935edf27939b9227f536d5c5ca39f35e2de51ff509dca42b133"
+    },
     "judge": {
       "provider": "claude-code",
       "model": "claude-sonnet-5",
@@ -17,13 +22,13 @@
     {
       "id": "ransomware-impact",
       "scenario": "ransomware",
-      "status": "passed",
+      "status": "quality_failed",
       "metrics": {
-        "claimPrecision": 1,
+        "claimPrecision": 0.5,
         "claimRecall": 1,
         "iocPrecision": 0,
         "iocRecall": 1,
-        "uncertaintyRecall": 1,
+        "uncertaintyRecall": 0,
         "nextStepRecall": 1,
         "abstained": true,
         "forbiddenConclusions": 0,
@@ -31,15 +36,15 @@
         "confidenceIssues": 0
       },
       "resources": {
-        "durationMs": 145135.213709,
+        "durationMs": 171921.41744,
         "calls": 2,
         "failedCalls": 0,
         "inputTokens": 6,
-        "outputTokens": 15635,
-        "costUsd": 0.313378
+        "outputTokens": 18711,
+        "costUsd": 0.3208054
       },
       "judge": {
-        "pairs": 3,
+        "pairs": 6,
         "asserted": 0,
         "disagreements": 0
       },
@@ -52,7 +57,7 @@
       "metrics": {
         "claimPrecision": 1,
         "claimRecall": 1,
-        "iocPrecision": 0.25,
+        "iocPrecision": 0.3333333333333333,
         "iocRecall": 1,
         "uncertaintyRecall": 1,
         "nextStepRecall": 1,
@@ -62,12 +67,12 @@
         "confidenceIssues": 0
       },
       "resources": {
-        "durationMs": 165664.079193,
+        "durationMs": 139100.47442100005,
         "calls": 2,
         "failedCalls": 0,
         "inputTokens": 6,
-        "outputTokens": 16341,
-        "costUsd": 0.2919156
+        "outputTokens": 14260,
+        "costUsd": 0.2635484
       },
       "judge": {
         "pairs": 2,
@@ -79,40 +84,9 @@
     {
       "id": "insider-removable-media",
       "scenario": "insider-threat",
-      "status": "quality_failed",
-      "metrics": {
-        "claimPrecision": 1,
-        "claimRecall": 1,
-        "iocPrecision": 0,
-        "iocRecall": 1,
-        "uncertaintyRecall": 1,
-        "nextStepRecall": 0,
-        "abstained": true,
-        "forbiddenConclusions": 0,
-        "danglingEvidenceRefs": 0,
-        "confidenceIssues": 0
-      },
-      "resources": {
-        "durationMs": 182212.11760300002,
-        "calls": 2,
-        "failedCalls": 0,
-        "inputTokens": 4,
-        "outputTokens": 18477,
-        "costUsd": 0.2759046
-      },
-      "judge": {
-        "pairs": 1,
-        "asserted": 0,
-        "disagreements": 0
-      },
-      "runIndex": 1
-    },
-    {
-      "id": "lateral-psexec",
-      "scenario": "lateral-movement",
       "status": "passed",
       "metrics": {
-        "claimPrecision": 1,
+        "claimPrecision": 0.5,
         "claimRecall": 1,
         "iocPrecision": 0,
         "iocRecall": 1,
@@ -124,12 +98,43 @@
         "confidenceIssues": 0
       },
       "resources": {
-        "durationMs": 126042.56207500002,
+        "durationMs": 141053.5251059999,
+        "calls": 2,
+        "failedCalls": 0,
+        "inputTokens": 6,
+        "outputTokens": 14367,
+        "costUsd": 0.2683156
+      },
+      "judge": {
+        "pairs": 2,
+        "asserted": 0,
+        "disagreements": 0
+      },
+      "runIndex": 1
+    },
+    {
+      "id": "lateral-psexec",
+      "scenario": "lateral-movement",
+      "status": "quality_failed",
+      "metrics": {
+        "claimPrecision": 1,
+        "claimRecall": 1,
+        "iocPrecision": 0,
+        "iocRecall": 1,
+        "uncertaintyRecall": 0,
+        "nextStepRecall": 0,
+        "abstained": true,
+        "forbiddenConclusions": 0,
+        "danglingEvidenceRefs": 0,
+        "confidenceIssues": 0
+      },
+      "resources": {
+        "durationMs": 130876.76326500007,
         "calls": 1,
         "failedCalls": 0,
         "inputTokens": 4,
-        "outputTokens": 14971,
-        "costUsd": 0.23168840000000002
+        "outputTokens": 13972,
+        "costUsd": 0.21970520000000002
       },
       "runIndex": 1
     },
@@ -150,38 +155,38 @@
         "confidenceIssues": 0
       },
       "resources": {
-        "durationMs": 132317.89121399994,
+        "durationMs": 142833.36207599996,
         "calls": 1,
         "failedCalls": 0,
         "inputTokens": 4,
-        "outputTokens": 14613,
-        "costUsd": 0.2277738
+        "outputTokens": 14550,
+        "costUsd": 0.2275986
       },
       "runIndex": 1
     },
     {
       "id": "cloud-vpn-contradiction",
       "scenario": "cloud-identity",
-      "status": "quality_failed",
+      "status": "passed",
       "metrics": {
         "claimPrecision": 1,
         "claimRecall": 1,
         "iocPrecision": 0,
         "iocRecall": 1,
         "uncertaintyRecall": 1,
-        "nextStepRecall": 0,
+        "nextStepRecall": 1,
         "abstained": true,
         "forbiddenConclusions": 0,
         "danglingEvidenceRefs": 0,
         "confidenceIssues": 0
       },
       "resources": {
-        "durationMs": 134412.12264000007,
+        "durationMs": 146353.4787150002,
         "calls": 2,
         "failedCalls": 0,
         "inputTokens": 6,
-        "outputTokens": 14122,
-        "costUsd": 0.2639394
+        "outputTokens": 17191,
+        "costUsd": 0.3075642
       },
       "judge": {
         "pairs": 1,
@@ -197,7 +202,7 @@
       "metrics": {
         "claimPrecision": 0.6666666666666666,
         "claimRecall": 1,
-        "iocPrecision": 0.3333333333333333,
+        "iocPrecision": 0.25,
         "iocRecall": 0.5,
         "uncertaintyRecall": 1,
         "nextStepRecall": 1,
@@ -207,12 +212,12 @@
         "confidenceIssues": 0
       },
       "resources": {
-        "durationMs": 211337.207695,
+        "durationMs": 191904.84977599978,
         "calls": 2,
         "failedCalls": 0,
         "inputTokens": 6,
-        "outputTokens": 22599,
-        "costUsd": 0.37247979999999997
+        "outputTokens": 20188,
+        "costUsd": 0.3458966
       },
       "judge": {
         "pairs": 3,
@@ -238,12 +243,12 @@
         "confidenceIssues": 0
       },
       "resources": {
-        "durationMs": 113166.98257800005,
+        "durationMs": 108308.92287299992,
         "calls": 1,
         "failedCalls": 0,
         "inputTokens": 4,
-        "outputTokens": 12640,
-        "costUsd": 0.1944114
+        "outputTokens": 13168,
+        "costUsd": 0.20573419999999998
       },
       "runIndex": 1
     },
@@ -264,12 +269,12 @@
         "confidenceIssues": 0
       },
       "resources": {
-        "durationMs": 130147.21221400006,
+        "durationMs": 112154.06689299992,
         "calls": 2,
         "failedCalls": 0,
         "inputTokens": 6,
-        "outputTokens": 12065,
-        "costUsd": 0.2333264
+        "outputTokens": 12782,
+        "costUsd": 0.24871120000000002
       },
       "judge": {
         "pairs": 1,
@@ -295,12 +300,12 @@
         "confidenceIssues": 0
       },
       "resources": {
-        "durationMs": 80456.36201799987,
+        "durationMs": 81613.70391399995,
         "calls": 1,
         "failedCalls": 0,
         "inputTokens": 4,
-        "outputTokens": 8997,
-        "costUsd": 0.1563816
+        "outputTokens": 9291,
+        "costUsd": 0.1588524
       },
       "runIndex": 1
     },
@@ -321,12 +326,12 @@
         "confidenceIssues": 0
       },
       "resources": {
-        "durationMs": 163344.69351999997,
+        "durationMs": 159424.3300890003,
         "calls": 2,
         "failedCalls": 0,
         "inputTokens": 6,
-        "outputTokens": 17636,
-        "costUsd": 0.26038120000000003
+        "outputTokens": 17149,
+        "costUsd": 0.2555168
       },
       "judge": {
         "pairs": 3,
@@ -338,13 +343,13 @@
     {
       "id": "bec-mailbox-takeover#run2",
       "scenario": "bec",
-      "status": "quality_failed",
+      "status": "passed",
       "metrics": {
         "claimPrecision": 1,
         "claimRecall": 1,
-        "iocPrecision": 0.5,
+        "iocPrecision": 0.3333333333333333,
         "iocRecall": 1,
-        "uncertaintyRecall": 0,
+        "uncertaintyRecall": 1,
         "nextStepRecall": 1,
         "abstained": true,
         "forbiddenConclusions": 0,
@@ -352,12 +357,12 @@
         "confidenceIssues": 0
       },
       "resources": {
-        "durationMs": 144088.43369500013,
+        "durationMs": 163638.23121900018,
         "calls": 2,
         "failedCalls": 0,
         "inputTokens": 6,
-        "outputTokens": 14478,
-        "costUsd": 0.2247952
+        "outputTokens": 16782,
+        "costUsd": 0.25594480000000003
       },
       "judge": {
         "pairs": 2,
@@ -369,37 +374,6 @@
     {
       "id": "insider-removable-media#run2",
       "scenario": "insider-threat",
-      "status": "quality_failed",
-      "metrics": {
-        "claimPrecision": 1,
-        "claimRecall": 1,
-        "iocPrecision": 0,
-        "iocRecall": 1,
-        "uncertaintyRecall": 0,
-        "nextStepRecall": 0,
-        "abstained": true,
-        "forbiddenConclusions": 0,
-        "danglingEvidenceRefs": 0,
-        "confidenceIssues": 0
-      },
-      "resources": {
-        "durationMs": 132428.07638700004,
-        "calls": 2,
-        "failedCalls": 0,
-        "inputTokens": 6,
-        "outputTokens": 13544,
-        "costUsd": 0.2171576
-      },
-      "judge": {
-        "pairs": 1,
-        "asserted": 0,
-        "disagreements": 0
-      },
-      "runIndex": 2
-    },
-    {
-      "id": "lateral-psexec#run2",
-      "scenario": "lateral-movement",
       "status": "passed",
       "metrics": {
         "claimPrecision": 1,
@@ -414,12 +388,43 @@
         "confidenceIssues": 0
       },
       "resources": {
-        "durationMs": 128660.92017200007,
+        "durationMs": 171255.86122999992,
+        "calls": 2,
+        "failedCalls": 0,
+        "inputTokens": 6,
+        "outputTokens": 17080,
+        "costUsd": 0.2666872
+      },
+      "judge": {
+        "pairs": 1,
+        "asserted": 0,
+        "disagreements": 0
+      },
+      "runIndex": 2
+    },
+    {
+      "id": "lateral-psexec#run2",
+      "scenario": "lateral-movement",
+      "status": "quality_failed",
+      "metrics": {
+        "claimPrecision": 1,
+        "claimRecall": 1,
+        "iocPrecision": 0,
+        "iocRecall": 1,
+        "uncertaintyRecall": 0,
+        "nextStepRecall": 0,
+        "abstained": true,
+        "forbiddenConclusions": 0,
+        "danglingEvidenceRefs": 0,
+        "confidenceIssues": 0
+      },
+      "resources": {
+        "durationMs": 147791.78860099986,
         "calls": 1,
         "failedCalls": 0,
         "inputTokens": 4,
-        "outputTokens": 13983,
-        "costUsd": 0.17548
+        "outputTokens": 16267,
+        "costUsd": 0.20746560000000003
       },
       "runIndex": 2
     },
@@ -428,7 +433,7 @@
       "scenario": "linux",
       "status": "quality_failed",
       "metrics": {
-        "claimPrecision": 0.5,
+        "claimPrecision": 0.6666666666666666,
         "claimRecall": 1,
         "iocPrecision": 0.3333333333333333,
         "iocRecall": 1,
@@ -440,25 +445,25 @@
         "confidenceIssues": 0
       },
       "resources": {
-        "durationMs": 187888.64691699995,
+        "durationMs": 152153.97427699994,
         "calls": 1,
         "failedCalls": 0,
         "inputTokens": 4,
-        "outputTokens": 21290,
-        "costUsd": 0.2730528
+        "outputTokens": 16877,
+        "costUsd": 0.21517640000000002
       },
       "runIndex": 2
     },
     {
       "id": "cloud-vpn-contradiction#run2",
       "scenario": "cloud-identity",
-      "status": "quality_failed",
+      "status": "passed",
       "metrics": {
         "claimPrecision": 1,
         "claimRecall": 1,
         "iocPrecision": 0,
         "iocRecall": 1,
-        "uncertaintyRecall": 0,
+        "uncertaintyRecall": 1,
         "nextStepRecall": 1,
         "abstained": true,
         "forbiddenConclusions": 0,
@@ -466,12 +471,12 @@
         "confidenceIssues": 0
       },
       "resources": {
-        "durationMs": 143244.28067900008,
+        "durationMs": 126118.56619399972,
         "calls": 2,
         "failedCalls": 0,
         "inputTokens": 6,
-        "outputTokens": 15090,
-        "costUsd": 0.2340348
+        "outputTokens": 12898,
+        "costUsd": 0.2154404
       },
       "judge": {
         "pairs": 1,
@@ -485,27 +490,27 @@
       "scenario": "email",
       "status": "quality_failed",
       "metrics": {
-        "claimPrecision": 0.6666666666666666,
+        "claimPrecision": 0.5,
         "claimRecall": 1,
-        "iocPrecision": 0.3333333333333333,
+        "iocPrecision": 0.25,
         "iocRecall": 0.5,
         "uncertaintyRecall": 1,
-        "nextStepRecall": 0,
+        "nextStepRecall": 1,
         "abstained": true,
         "forbiddenConclusions": 0,
         "danglingEvidenceRefs": 0,
         "confidenceIssues": 0
       },
       "resources": {
-        "durationMs": 235442.22206000006,
+        "durationMs": 183231.22421299992,
         "calls": 2,
         "failedCalls": 0,
         "inputTokens": 6,
-        "outputTokens": 17714,
-        "costUsd": 0.2653236
+        "outputTokens": 18790,
+        "costUsd": 0.2815692
       },
       "judge": {
-        "pairs": 3,
+        "pairs": 4,
         "asserted": 0,
         "disagreements": 0
       },
@@ -528,12 +533,12 @@
         "confidenceIssues": 0
       },
       "resources": {
-        "durationMs": 125308.74580699997,
+        "durationMs": 131000.57499099988,
         "calls": 1,
         "failedCalls": 0,
         "inputTokens": 4,
-        "outputTokens": 13564,
-        "costUsd": 0.17229200000000003
+        "outputTokens": 14268,
+        "costUsd": 0.1775056
       },
       "runIndex": 2
     },
@@ -554,12 +559,12 @@
         "confidenceIssues": 0
       },
       "resources": {
-        "durationMs": 134571.0680180001,
+        "durationMs": 127458.526511,
         "calls": 2,
         "failedCalls": 0,
         "inputTokens": 6,
-        "outputTokens": 14074,
-        "costUsd": 0.22187680000000004
+        "outputTokens": 12900,
+        "costUsd": 0.20766240000000002
       },
       "judge": {
         "pairs": 1,
@@ -585,12 +590,12 @@
         "confidenceIssues": 0
       },
       "resources": {
-        "durationMs": 71699.18761700019,
+        "durationMs": 67045.57158300001,
         "calls": 1,
         "failedCalls": 0,
         "inputTokens": 2,
-        "outputTokens": 8281,
-        "costUsd": 0.0898322
+        "outputTokens": 7734,
+        "costUsd": 0.08442500000000001
       },
       "runIndex": 2
     },
@@ -599,7 +604,7 @@
       "scenario": "ransomware",
       "status": "passed",
       "metrics": {
-        "claimPrecision": 1,
+        "claimPrecision": 0.5,
         "claimRecall": 1,
         "iocPrecision": 0,
         "iocRecall": 1,
@@ -611,15 +616,15 @@
         "confidenceIssues": 0
       },
       "resources": {
-        "durationMs": 152703.24028900033,
+        "durationMs": 175750.55985999992,
         "calls": 2,
         "failedCalls": 0,
         "inputTokens": 6,
-        "outputTokens": 16230,
-        "costUsd": 0.2407732
+        "outputTokens": 19037,
+        "costUsd": 0.2816848
       },
       "judge": {
-        "pairs": 3,
+        "pairs": 6,
         "asserted": 0,
         "disagreements": 0
       },
@@ -642,12 +647,12 @@
         "confidenceIssues": 0
       },
       "resources": {
-        "durationMs": 203946.7541799997,
+        "durationMs": 142237.64266000036,
         "calls": 2,
         "failedCalls": 0,
-        "inputTokens": 4,
-        "outputTokens": 20484,
-        "costUsd": 0.25542020000000004
+        "inputTokens": 6,
+        "outputTokens": 14842,
+        "costUsd": 0.2323048
       },
       "judge": {
         "pairs": 2,
@@ -673,12 +678,12 @@
         "confidenceIssues": 0
       },
       "resources": {
-        "durationMs": 110437.67900400003,
+        "durationMs": 153458.20006600022,
         "calls": 2,
         "failedCalls": 0,
-        "inputTokens": 6,
-        "outputTokens": 11520,
-        "costUsd": 0.18710159999999998
+        "inputTokens": 4,
+        "outputTokens": 16984,
+        "costUsd": 0.22138419999999998
       },
       "judge": {
         "pairs": 1,
@@ -704,12 +709,12 @@
         "confidenceIssues": 0
       },
       "resources": {
-        "durationMs": 135007.4582390003,
+        "durationMs": 158223.51740300003,
         "calls": 1,
         "failedCalls": 0,
         "inputTokens": 4,
-        "outputTokens": 14496,
-        "costUsd": 0.182282
+        "outputTokens": 17714,
+        "costUsd": 0.2252116
       },
       "runIndex": 3
     },
@@ -720,7 +725,7 @@
       "metrics": {
         "claimPrecision": 0,
         "claimRecall": 0,
-        "iocPrecision": 1,
+        "iocPrecision": 0.3333333333333333,
         "iocRecall": 1,
         "uncertaintyRecall": 1,
         "nextStepRecall": 1,
@@ -730,38 +735,38 @@
         "confidenceIssues": 0
       },
       "resources": {
-        "durationMs": 77159.83330000006,
+        "durationMs": 158847.53228100017,
         "calls": 1,
         "failedCalls": 0,
-        "inputTokens": 2,
-        "outputTokens": 8703,
-        "costUsd": 0.09417240000000002
+        "inputTokens": 4,
+        "outputTokens": 17612,
+        "costUsd": 0.2246744
       },
       "runIndex": 3
     },
     {
       "id": "cloud-vpn-contradiction#run3",
       "scenario": "cloud-identity",
-      "status": "quality_failed",
+      "status": "passed",
       "metrics": {
         "claimPrecision": 1,
         "claimRecall": 1,
         "iocPrecision": 0,
         "iocRecall": 1,
         "uncertaintyRecall": 1,
-        "nextStepRecall": 0,
+        "nextStepRecall": 1,
         "abstained": true,
         "forbiddenConclusions": 0,
         "danglingEvidenceRefs": 0,
         "confidenceIssues": 0
       },
       "resources": {
-        "durationMs": 159838.7125260001,
+        "durationMs": 147829.3840979999,
         "calls": 2,
         "failedCalls": 0,
         "inputTokens": 6,
-        "outputTokens": 16692,
-        "costUsd": 0.2577628
+        "outputTokens": 15875,
+        "costUsd": 0.24755039999999998
       },
       "judge": {
         "pairs": 1,
@@ -775,7 +780,7 @@
       "scenario": "email",
       "status": "quality_failed",
       "metrics": {
-        "claimPrecision": 0.6666666666666666,
+        "claimPrecision": 0.5,
         "claimRecall": 1,
         "iocPrecision": 0.3333333333333333,
         "iocRecall": 0.5,
@@ -787,15 +792,15 @@
         "confidenceIssues": 0
       },
       "resources": {
-        "durationMs": 149921.08133700024,
+        "durationMs": 177986.0476389993,
         "calls": 2,
         "failedCalls": 0,
-        "inputTokens": 6,
-        "outputTokens": 15990,
-        "costUsd": 0.2433916
+        "inputTokens": 8,
+        "outputTokens": 18818,
+        "costUsd": 0.290296
       },
       "judge": {
-        "pairs": 3,
+        "pairs": 4,
         "asserted": 0,
         "disagreements": 0
       },
@@ -818,12 +823,12 @@
         "confidenceIssues": 0
       },
       "resources": {
-        "durationMs": 130206.66868499992,
+        "durationMs": 116577.29693899956,
         "calls": 1,
         "failedCalls": 0,
         "inputTokens": 4,
-        "outputTokens": 14060,
-        "costUsd": 0.174688
+        "outputTokens": 13497,
+        "costUsd": 0.1678956
       },
       "runIndex": 3
     },
@@ -844,12 +849,12 @@
         "confidenceIssues": 0
       },
       "resources": {
-        "durationMs": 124481.36847400013,
+        "durationMs": 125285.69716899935,
         "calls": 2,
         "failedCalls": 0,
-        "inputTokens": 8,
-        "outputTokens": 12695,
-        "costUsd": 0.21161680000000002
+        "inputTokens": 4,
+        "outputTokens": 13064,
+        "costUsd": 0.1819658
       },
       "judge": {
         "pairs": 1,
@@ -875,12 +880,12 @@
         "confidenceIssues": 0
       },
       "resources": {
-        "durationMs": 143144.32812199928,
+        "durationMs": 93796.76826999988,
         "calls": 1,
         "failedCalls": 0,
-        "inputTokens": 4,
-        "outputTokens": 15758,
-        "costUsd": 0.2030284
+        "inputTokens": 2,
+        "outputTokens": 11356,
+        "costUsd": 0.120645
       },
       "runIndex": 3
     }
@@ -893,12 +898,12 @@
       "precision": 0.4,
       "recall": 1,
       "resources": {
-        "durationMs": 27532.250872,
+        "durationMs": 31443.926730000003,
         "calls": 1,
         "failedCalls": 0,
-        "inputTokens": 4,
-        "outputTokens": 3206,
-        "costUsd": 0.0880968
+        "inputTokens": 2,
+        "outputTokens": 3615,
+        "costUsd": 0.0812106
       },
       "gate": {
         "minPrecision": 0,
@@ -910,15 +915,15 @@
       "id": "sshd-log",
       "modality": "log",
       "status": "passed",
-      "precision": 1,
+      "precision": 0.5,
       "recall": 1,
       "resources": {
-        "durationMs": 25035.745250000004,
+        "durationMs": 18321.560582,
         "calls": 1,
         "failedCalls": 0,
-        "inputTokens": 2,
-        "outputTokens": 1222,
-        "costUsd": 0.0628208
+        "inputTokens": 4,
+        "outputTokens": 1392,
+        "costUsd": 0.0668974
       },
       "gate": {
         "minPrecision": 0,
@@ -933,12 +938,12 @@
       "precision": 0.5,
       "recall": 1,
       "resources": {
-        "durationMs": 31626.285303000004,
+        "durationMs": 26699.503439,
         "calls": 1,
         "failedCalls": 0,
-        "inputTokens": 4,
-        "outputTokens": 2822,
-        "costUsd": 0.0811516
+        "inputTokens": 2,
+        "outputTokens": 2461,
+        "costUsd": 0.0687706
       },
       "gate": {
         "minPrecision": 0,
@@ -953,12 +958,12 @@
       "precision": 1,
       "recall": 1,
       "resources": {
-        "durationMs": 11868.723966999998,
+        "durationMs": 16555.790374000004,
         "calls": 1,
         "failedCalls": 0,
-        "inputTokens": 2,
-        "outputTokens": 1232,
-        "costUsd": 0.0557488
+        "inputTokens": 4,
+        "outputTokens": 1438,
+        "costUsd": 0.0682512
       },
       "gate": {
         "minPrecision": 0,
@@ -973,12 +978,12 @@
       "precision": 0.4,
       "recall": 1,
       "resources": {
-        "durationMs": 34779.48456000001,
+        "durationMs": 27814.8979679998,
         "calls": 1,
         "failedCalls": 0,
         "inputTokens": 2,
-        "outputTokens": 3846,
-        "costUsd": 0.04382
+        "outputTokens": 3582,
+        "costUsd": 0.0412428
       },
       "gate": {
         "minPrecision": 0,
@@ -993,12 +998,12 @@
       "precision": 0.5,
       "recall": 1,
       "resources": {
-        "durationMs": 8724.198727000039,
+        "durationMs": 18871.876426000148,
         "calls": 1,
         "failedCalls": 0,
         "inputTokens": 2,
-        "outputTokens": 796,
-        "costUsd": 0.013397800000000001
+        "outputTokens": 1562,
+        "costUsd": 0.021120600000000003
       },
       "gate": {
         "minPrecision": 0,
@@ -1010,15 +1015,15 @@
       "id": "powershell-encoded-csv#run2",
       "modality": "csv",
       "status": "passed",
-      "precision": 0.25,
+      "precision": 0.5,
       "recall": 1,
       "resources": {
-        "durationMs": 22233.23186499998,
+        "durationMs": 30239.658979000058,
         "calls": 1,
         "failedCalls": 0,
         "inputTokens": 2,
-        "outputTokens": 2141,
-        "costUsd": 0.026725000000000002
+        "outputTokens": 3166,
+        "costUsd": 0.037037799999999996
       },
       "gate": {
         "minPrecision": 0,
@@ -1033,12 +1038,12 @@
       "precision": 1,
       "recall": 1,
       "resources": {
-        "durationMs": 9986.6058149999,
+        "durationMs": 12698.748953999951,
         "calls": 1,
         "failedCalls": 0,
-        "inputTokens": 2,
-        "outputTokens": 845,
-        "costUsd": 0.013901600000000002
+        "inputTokens": 4,
+        "outputTokens": 1052,
+        "costUsd": 0.0238888
       },
       "gate": {
         "minPrecision": 0,
@@ -1053,12 +1058,12 @@
       "precision": 0.4,
       "recall": 1,
       "resources": {
-        "durationMs": 26114.053045999724,
+        "durationMs": 30919.145181000233,
         "calls": 1,
         "failedCalls": 0,
         "inputTokens": 2,
-        "outputTokens": 3038,
-        "costUsd": 0.03574
+        "outputTokens": 3502,
+        "costUsd": 0.040442799999999994
       },
       "gate": {
         "minPrecision": 0,
@@ -1070,15 +1075,15 @@
       "id": "sshd-log#run3",
       "modality": "log",
       "status": "passed",
-      "precision": 0.5,
+      "precision": 1,
       "recall": 1,
       "resources": {
-        "durationMs": 17869.59360399982,
+        "durationMs": 14170.255084000062,
         "calls": 1,
         "failedCalls": 0,
-        "inputTokens": 4,
-        "outputTokens": 1550,
-        "costUsd": 0.0298316
+        "inputTokens": 2,
+        "outputTokens": 1214,
+        "costUsd": 0.0176406
       },
       "gate": {
         "minPrecision": 0,
@@ -1090,15 +1095,15 @@
       "id": "powershell-encoded-csv#run3",
       "modality": "csv",
       "status": "passed",
-      "precision": 0.25,
+      "precision": 0.5,
       "recall": 1,
       "resources": {
-        "durationMs": 28200.005811000243,
+        "durationMs": 359250.7035699999,
         "calls": 1,
         "failedCalls": 0,
-        "inputTokens": 4,
-        "outputTokens": 2623,
-        "costUsd": 0.040487999999999996
+        "inputTokens": 2,
+        "outputTokens": 3118,
+        "costUsd": 0.0365578
       },
       "gate": {
         "minPrecision": 0,
@@ -1113,12 +1118,12 @@
       "precision": 1,
       "recall": 1,
       "resources": {
-        "durationMs": 14551.150881000329,
+        "durationMs": 11704.95062599983,
         "calls": 1,
         "failedCalls": 0,
-        "inputTokens": 2,
-        "outputTokens": 1371,
-        "costUsd": 0.0191616
+        "inputTokens": 4,
+        "outputTokens": 991,
+        "costUsd": 0.0230588
       },
       "gate": {
         "minPrecision": 0,
@@ -1127,49 +1132,350 @@
       "runIndex": 3
     }
   ],
-  "screenshot": [],
-  "createdAt": "2026-09-27T13:13:45.630Z",
+  "screenshot": [
+    {
+      "id": "chainsaw",
+      "modality": "screenshot",
+      "status": "passed",
+      "precision": 1,
+      "recall": 1,
+      "resources": {
+        "durationMs": 32984.88935700001,
+        "calls": 1,
+        "failedCalls": 0,
+        "inputTokens": 4,
+        "outputTokens": 3169,
+        "costUsd": 0.1095682
+      },
+      "gate": {
+        "minPrecision": 0,
+        "minRecall": 0.7
+      },
+      "runIndex": 1
+    },
+    {
+      "id": "hayabusa1",
+      "modality": "screenshot",
+      "status": "passed",
+      "precision": 0,
+      "recall": 1,
+      "resources": {
+        "durationMs": 50345.495653999984,
+        "calls": 1,
+        "failedCalls": 0,
+        "inputTokens": 4,
+        "outputTokens": 5095,
+        "costUsd": 0.11970820000000001
+      },
+      "gate": {
+        "minPrecision": 0,
+        "minRecall": 0.7
+      },
+      "runIndex": 1
+    },
+    {
+      "id": "hayabusa2",
+      "modality": "screenshot",
+      "status": "passed",
+      "precision": 1,
+      "recall": 1,
+      "resources": {
+        "durationMs": 46848.485289000004,
+        "calls": 1,
+        "failedCalls": 0,
+        "inputTokens": 4,
+        "outputTokens": 5612,
+        "costUsd": 0.12147279999999999
+      },
+      "gate": {
+        "minPrecision": 0,
+        "minRecall": 0.7
+      },
+      "runIndex": 1
+    },
+    {
+      "id": "mft1",
+      "modality": "screenshot",
+      "status": "passed",
+      "precision": 0.5,
+      "recall": 1,
+      "resources": {
+        "durationMs": 50053.086253999965,
+        "calls": 1,
+        "failedCalls": 0,
+        "inputTokens": 4,
+        "outputTokens": 4597,
+        "costUsd": 0.11871280000000001
+      },
+      "gate": {
+        "minPrecision": 0,
+        "minRecall": 0.7
+      },
+      "runIndex": 1
+    },
+    {
+      "id": "yara",
+      "modality": "screenshot",
+      "status": "passed",
+      "precision": 0,
+      "recall": 1,
+      "resources": {
+        "durationMs": 57750.90118699998,
+        "calls": 1,
+        "failedCalls": 0,
+        "inputTokens": 4,
+        "outputTokens": 7161,
+        "costUsd": 0.142764
+      },
+      "gate": {
+        "minPrecision": 0,
+        "minRecall": 0.7
+      },
+      "runIndex": 1
+    },
+    {
+      "id": "chainsaw#run2",
+      "modality": "screenshot",
+      "status": "passed",
+      "precision": 1,
+      "recall": 1,
+      "resources": {
+        "durationMs": 32922.038067999994,
+        "calls": 1,
+        "failedCalls": 0,
+        "inputTokens": 4,
+        "outputTokens": 3193,
+        "costUsd": 0.094023
+      },
+      "gate": {
+        "minPrecision": 0,
+        "minRecall": 0.7
+      },
+      "runIndex": 2
+    },
+    {
+      "id": "hayabusa1#run2",
+      "modality": "screenshot",
+      "status": "passed",
+      "precision": 0,
+      "recall": 1,
+      "resources": {
+        "durationMs": 36696.297965999926,
+        "calls": 1,
+        "failedCalls": 0,
+        "inputTokens": 2,
+        "outputTokens": 4285,
+        "costUsd": 0.09505459999999999
+      },
+      "gate": {
+        "minPrecision": 0,
+        "minRecall": 0.7
+      },
+      "runIndex": 2
+    },
+    {
+      "id": "hayabusa2#run2",
+      "modality": "screenshot",
+      "status": "passed",
+      "precision": 1,
+      "recall": 1,
+      "resources": {
+        "durationMs": 51227.53803399997,
+        "calls": 1,
+        "failedCalls": 0,
+        "inputTokens": 4,
+        "outputTokens": 6049,
+        "costUsd": 0.128635
+      },
+      "gate": {
+        "minPrecision": 0,
+        "minRecall": 0.7
+      },
+      "runIndex": 2
+    },
+    {
+      "id": "mft1#run2",
+      "modality": "screenshot",
+      "status": "passed",
+      "precision": 0.5,
+      "recall": 1,
+      "resources": {
+        "durationMs": 46399.766184000066,
+        "calls": 1,
+        "failedCalls": 0,
+        "inputTokens": 4,
+        "outputTokens": 4524,
+        "costUsd": 0.1142758
+      },
+      "gate": {
+        "minPrecision": 0,
+        "minRecall": 0.7
+      },
+      "runIndex": 2
+    },
+    {
+      "id": "yara#run2",
+      "modality": "screenshot",
+      "status": "passed",
+      "precision": 0,
+      "recall": 1,
+      "resources": {
+        "durationMs": 69253.11646100017,
+        "calls": 1,
+        "failedCalls": 0,
+        "inputTokens": 4,
+        "outputTokens": 8439,
+        "costUsd": 0.1597848
+      },
+      "gate": {
+        "minPrecision": 0,
+        "minRecall": 0.7
+      },
+      "runIndex": 2
+    },
+    {
+      "id": "chainsaw#run3",
+      "modality": "screenshot",
+      "status": "passed",
+      "precision": 1,
+      "recall": 1,
+      "resources": {
+        "durationMs": 40449.898765999824,
+        "calls": 1,
+        "failedCalls": 0,
+        "inputTokens": 2,
+        "outputTokens": 4700,
+        "costUsd": 0.0997286
+      },
+      "gate": {
+        "minPrecision": 0,
+        "minRecall": 0.7
+      },
+      "runIndex": 3
+    },
+    {
+      "id": "hayabusa1#run3",
+      "modality": "screenshot",
+      "status": "passed",
+      "precision": 0,
+      "recall": 1,
+      "resources": {
+        "durationMs": 40113.327209999785,
+        "calls": 1,
+        "failedCalls": 0,
+        "inputTokens": 4,
+        "outputTokens": 4682,
+        "costUsd": 0.1164944
+      },
+      "gate": {
+        "minPrecision": 0,
+        "minRecall": 0.7
+      },
+      "runIndex": 3
+    },
+    {
+      "id": "hayabusa2#run3",
+      "modality": "screenshot",
+      "status": "passed",
+      "precision": 1,
+      "recall": 1,
+      "resources": {
+        "durationMs": 47061.710360000376,
+        "calls": 1,
+        "failedCalls": 0,
+        "inputTokens": 2,
+        "outputTokens": 5460,
+        "costUsd": 0.1073286
+      },
+      "gate": {
+        "minPrecision": 0,
+        "minRecall": 0.7
+      },
+      "runIndex": 3
+    },
+    {
+      "id": "mft1#run3",
+      "modality": "screenshot",
+      "status": "passed",
+      "precision": 0.5,
+      "recall": 1,
+      "resources": {
+        "durationMs": 46690.76093999995,
+        "calls": 1,
+        "failedCalls": 0,
+        "inputTokens": 4,
+        "outputTokens": 4409,
+        "costUsd": 0.11264560000000001
+      },
+      "gate": {
+        "minPrecision": 0,
+        "minRecall": 0.7
+      },
+      "runIndex": 3
+    },
+    {
+      "id": "yara#run3",
+      "modality": "screenshot",
+      "status": "passed",
+      "precision": 0,
+      "recall": 1,
+      "resources": {
+        "durationMs": 55701.93703899998,
+        "calls": 1,
+        "failedCalls": 0,
+        "inputTokens": 2,
+        "outputTokens": 6837,
+        "costUsd": 0.12056660000000001
+      },
+      "gate": {
+        "minPrecision": 0,
+        "minRecall": 0.7
+      },
+      "runIndex": 3
+    }
+  ],
+  "createdAt": "2026-09-27T20:24:51.119Z",
   "runs": 3,
   "mode": "all",
   "expected": {
     "extraction": 4,
     "cases": 10,
-    "screenshot": 0
+    "screenshot": 5
   },
   "real": true,
   "baselineComparison": {
     "status": "passed",
-    "baselineKey": "claude-code/claude-sonnet-5/e0e41325d3b3999f488112a2cb2ee4c6a7a2d9e1537759b6395a86fc359054a2/r3",
+    "baselineKey": "claude-code/claude-sonnet-5/dcff25ad119f584cdbeb58f4c4641507d9af9a1117f9c0c30f9fd7436ddbfbb3/r3",
     "qualityRegressions": [],
     "resourceRegressions": [],
     "reasons": []
   },
   "outcome": "passed",
   "summary": {
-    "claimPrecision": 0.9055555555555556,
+    "claimPrecision": 0.85,
     "claimRecall": 0.9666666666666667,
-    "eventPrecision": 0.6,
+    "eventPrecision": 0.5629629629629629,
     "eventRecall": 1,
-    "iocPrecision": 0.325,
+    "iocPrecision": 0.2944444444444444,
     "iocRecall": 0.95,
     "abstentionRate": 1,
     "forbiddenConclusions": 0,
     "danglingEvidenceRefs": 0,
     "confidenceIssues": 0,
     "uncertaintyRecall": 0.8333333333333334,
-    "nextStepRecall": 0.6333333333333333,
-    "durationMs": 1510978.8265560002,
-    "inputTokens": 60.666666666666664,
-    "outputTokens": 157144.66666666666,
-    "costUsd": 2.418848599999999
+    "nextStepRecall": 0.7333333333333333,
+    "durationMs": 1849474.0421513335,
+    "inputTokens": 78,
+    "outputTokens": 187776.33333333334,
+    "costUsd": 3.0715402
   },
   "resources": {
-    "durationMs": 4532936.479668001,
-    "calls": 60,
+    "durationMs": 5548422.126454,
+    "calls": 75,
     "failedCalls": 0,
-    "inputTokens": 182,
-    "outputTokens": 471434,
-    "costUsd": 7.256545799999997
+    "inputTokens": 234,
+    "outputTokens": 563329,
+    "costUsd": 9.2146206
   },
   "privacy": {
     "containsEvidence": false,
