@@ -508,7 +508,9 @@ async function callSynthesisModel(
   state: InvestigationState,
   provider: AIProvider,
   userPrompt: string,
-  opts: { signal?: AbortSignal } & SynthThinkingInput,
+  // `provider` here is the CALLER's override (second-opinion model B, a replay): when set, the call
+  // runs on exactly that model and never falls back (#1734).
+  opts: { signal?: AbortSignal; provider?: AIProvider } & SynthThinkingInput,
 ): Promise<SynthesisCall> {
   const { tokens: thinkingTokens, source: thinkingSource } = resolveSynthThinking(
     opts,
@@ -522,7 +524,7 @@ async function callSynthesisModel(
   let resolvedModel: string | undefined;
   // #1734: a safety-filter stop switches to the fallback for the rest of THIS call — later parse
   // retries stay on it, so the primary is never re-asked with evidence that already stopped it.
-  const fallback = ctx.opts.synthesisFallbackProvider;
+  const fallback = opts.provider ? undefined : ctx.opts.synthesisFallbackProvider;
   let active = provider;
   let fallbackFrom: string | undefined;
   const ask = (p: AIProvider) =>

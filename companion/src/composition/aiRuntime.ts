@@ -131,6 +131,11 @@ export function buildAiRuntime(deps: AiRuntimeDeps) {
       `[presidio] enabled — scanning masked AI prompts via ${presidioUrl} ` +
         `(minScore ${presidio.minScore}, ${presidioTimeoutMs}ms per request)`,
     );
+  if (!synthesisFallback && process.env.DFIR_AI_SYNTH_FALLBACK_MODEL?.trim())
+    logLine(
+      "[synthesis] fallback model ignored — it names the synthesis model itself, or no provider can " +
+        "be resolved for it (DFIR_AI_SYNTH_FALLBACK_*)",
+    );
   if (synthesisFallback)
     logLine(
       `[synthesis] fallback model "${synthesisFallback.label}" (${synthesisFallback.provider.name}) — used when a safety filter stops a synthesis`,

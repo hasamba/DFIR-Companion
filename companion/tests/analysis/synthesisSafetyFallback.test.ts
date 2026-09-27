@@ -145,4 +145,15 @@ describe("synthesis fallback on a safety-filter stop (#1734)", () => {
     ).rejects.toBeDefined();
     expect(fallback.analyze).not.toHaveBeenCalled();
   });
+
+  it("never replaces a provider the caller chose, such as second-opinion model B", async () => {
+    const primary = provider("claude-code", "opus", [GOOD]);
+    const modelB = provider("openrouter", "b-model", [safetyStopError("model B")]);
+    const fallback = provider("codex", "gpt-6-sol", [GOOD]);
+    await expect(pipeline(primary, fallback).synthesize("c1", { provider: modelB })).rejects.toMatchObject({
+      kind: "safety_stop",
+    });
+    expect(modelB.analyze).toHaveBeenCalledTimes(1);
+    expect(fallback.analyze).not.toHaveBeenCalled();
+  });
 });

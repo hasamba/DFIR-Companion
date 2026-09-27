@@ -58,4 +58,22 @@ describe("synthesisFallbackConfig (#1734)", () => {
       }),
     ).toBeUndefined();
   });
+
+  it("follows blank provider fields to the provider synthesis really runs on", () => {
+    const env = {
+      DFIR_VISION_PROVIDER: "openrouter",
+      DFIR_VISION_MODEL: "anthropic/claude-opus-5.5",
+      DFIR_AI_SYNTH_PROVIDER: "",
+      DFIR_AI_SYNTH_FALLBACK_PROVIDER: "",
+    };
+    expect(
+      synthesisFallbackConfig({ ...env, DFIR_AI_SYNTH_FALLBACK_MODEL: "openai/gpt-6-sol" }),
+    ).toMatchObject({
+      provider: "openrouter",
+      model: "openai/gpt-6-sol",
+    });
+    expect(
+      synthesisFallbackConfig({ ...env, DFIR_AI_SYNTH_FALLBACK_MODEL: "anthropic/claude-opus-5.5" }),
+    ).toBeUndefined();
+  });
 });

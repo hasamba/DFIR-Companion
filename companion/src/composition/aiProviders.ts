@@ -166,11 +166,13 @@ export interface SynthesisFallbackConfig {
 export function synthesisFallbackConfig(env: NodeJS.ProcessEnv): SynthesisFallbackConfig | undefined {
   const model = env.DFIR_AI_SYNTH_FALLBACK_MODEL?.trim();
   if (!model) return undefined;
-  const synthProvider = AI_ROLE_SOURCES.synthesis.provider(env)?.trim();
+  // The provider and model synthesis REALLY runs on: a blank synthesis field means "same as vision"
+  // in Settings, and a blank synthesis provider leaves synthesis on the vision provider at runtime.
+  const synthProvider = env.DFIR_AI_SYNTH_PROVIDER?.trim() || visionEnv(env, "PROVIDER")?.trim();
   const ownProvider = env.DFIR_AI_SYNTH_FALLBACK_PROVIDER?.trim();
   const provider = ownProvider || synthProvider;
   if (!provider) return undefined;
-  const synthModel = (env.DFIR_AI_SYNTH_MODEL ?? visionEnv(env, "MODEL"))?.trim();
+  const synthModel = env.DFIR_AI_SYNTH_MODEL?.trim() || visionEnv(env, "MODEL")?.trim();
   if (provider.toLowerCase() === synthProvider?.toLowerCase() && model === synthModel) return undefined;
   const setting = (s: "KEY" | "BASE_URL"): string | undefined => {
     const own = env[`DFIR_AI_SYNTH_FALLBACK_${s}`];
