@@ -309,8 +309,15 @@
     if (typeof DfirTimelineSearch !== "undefined" && DfirTimelineSearch.cancelAfterClear) {
       DfirTimelineSearch.cancelAfterClear(); // the newest jump wins, even one that lands at once
     }
-    const sec = document.getElementById("sec-timeline");
-    if (sec) sec.classList.remove("collapsed");
+    // Reveal, not just expand: the Executive and Report views hide the whole section while still
+    // showing panels that link into it (the Narrative Timeline rail, the Playbook), and a row found
+    // inside a display:none section flashes where nobody can see it. revealSection shows the one
+    // section and leaves the analyst's view as it is, as the cockpit's stage cards do.
+    if (typeof revealSection === "function") revealSection("sec-timeline");
+    else {
+      const sec = document.getElementById("sec-timeline");
+      if (sec) sec.classList.remove("collapsed");
+    }
     if (swLocateInTable(id)) return; // already on the current page
     if (searchedSubsetShown()) {
       jumpThroughSearchClear(id);
